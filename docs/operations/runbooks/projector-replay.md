@@ -11,10 +11,10 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Trigger | Per-source projection is stale or missing rows for a known ledger range (e.g. post-decoder-fix re-walk). Also the runbook for `stellarindex_projector_replay_stalled` — a replay STARTED here that has stopped advancing. |
+| Trigger | Per-source projection is stale or missing rows for a known ledger range (e.g. an outage gap; a post-decoder-fix re-walk over rows a re-derive already stamped needs `projected-rebuild -write`). Also the runbook for `stellarindex_projector_replay_stalled` — a replay STARTED here that has stopped advancing. |
 | Tool | `stellarindex-ops projector-replay -source <name> -from <ledger> -write` (fail-closed: no `-write` = dry run) |
 | Typical wall time | The rewind is ≤ 5 s of SQL, but the command does **not** return then: by default it blocks until the projector has re-walked the range (≈ 1 min per 100k ledgers per source, bounded by `-wait-timeout`, default 30 min) and then re-materializes the seven `prices_*` continuous aggregates over it (its context allows a further 30 min). Run it under `tmux`/`screen`, not a bare ssh session. `-wait=false` or `-refresh-caggs=false` restore the old return-immediately behaviour and hand the refresh to you — see [After the rewind](#after-the-rewind-the-command-waits-then-refreshes-the-price-caggs). |
-| Impact | Data-safe, not load-free. The rewind only moves a cursor and the projector tails `soroban_events` (ADR-0029); `ON CONFLICT DO NOTHING` makes re-writes idempotent. The load is what follows: the projector re-walks the range (see the decompress-first pre-flight below — a replay through compressed chunks livelocks), and the post-replay refresh runs seven `refresh_continuous_aggregate` calls over the replayed time range. Each is padded to its view's minimum window (up to ~93 days for `prices_1mo`), reads `trades`, and can contend with that view's own refresh policy (Timescale rejects the loser with 55P03; the store retries within a bound). |
+| Impact | Data-safe, not load-free. The rewind only moves a cursor and the projector tails `soroban_events` (ADR-0029); the per-source writers' generation-guarded upsert makes re-writes idempotent. The load is what follows: the projector re-walks the range (see the decompress-first pre-flight below — a replay through compressed chunks livelocks), and the post-replay refresh runs seven `refresh_continuous_aggregate` calls over the replayed time range. Each is padded to its view's minimum window (up to ~93 days for `prices_1mo`), reads `trades`, and can contend with that view's own refresh policy (Timescale rejects the loser with 55P03; the store retries within a bound). |
 
 ## Before you start: is this the right tool?
 
@@ -54,8 +54,11 @@ rewind and writes nothing (pass `-write` to actually rewind the cursor).
 The projector goroutine in `stellarindex-indexer` is already
 tailing `soroban_events`; rewinding the per-source cursor makes it
 re-project the requested window on its next cycle (≤ 5 s
-projector interval). Per-source tables use ON CONFLICT DO NOTHING
-so re-writes are idempotent.
+projector interval). Per-source writers upsert guarded by
+`derive_generation <= EXCLUDED.derive_generation`, and the projector
+writes at generation 0: a replay re-writes gen-0 rows but cannot
+correct a row a re-derive (`projected-rebuild`, `ch-rebuild`) already
+stamped higher. Correct those with `projected-rebuild -write`.
 
 ## Quick diagnosis (≤ 5 min)
 

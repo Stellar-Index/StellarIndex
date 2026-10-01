@@ -12,7 +12,7 @@ import (
 )
 
 // ledgerOpsReader is a capReader whose OperationsByLedger returns a
-// caller-supplied fixed page — used to feed GET /v1/operations?ledger=N
+// caller-supplied fixed page — used to feed GET /v1/ledgers/{seq}/operations
 // rows with controlled BodyXDR sizes.
 type ledgerOpsReader struct {
 	*capReader
@@ -56,7 +56,9 @@ func TestOperations_LedgerPath_BoundsDecodedResponseBytes(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	h.Operations(rec, httptest.NewRequest(http.MethodGet, "/v1/operations?ledger=42", nil))
+	req := httptest.NewRequest(http.MethodGet, "/v1/ledgers/42/operations", nil)
+	req.SetPathValue("seq", "42")
+	h.LedgerOperations(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}

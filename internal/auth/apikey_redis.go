@@ -39,33 +39,53 @@ import (
 //
 // Concurrency: safe for use across goroutines — every Lookup is one
 // GET. The only mutable state is the account-status cache, guarded by
-// its own mutex (see [accountActive]).
+// its own mutex (see [accountStatusGate]).
 type RedisAPIKeyValidator struct {
 	rdb redis.Cmdable
 	now func() time.Time
-	// accounts, when non-nil, enables the account-level kill switch:
-	// a record whose Identifier names a platform account
+	// status, when its reader is set, enables the account-level kill
+	// switch: a record whose Identifier names a platform account
 	// ([AccountIdentifier]) is rejected when that account is not
 	// active. See [WithAccountStatus].
-	accounts AccountStatusReader
-
-	// statusTTL / statusMaxStale bound the account-status cache below.
-	// See [DefaultAccountStatusCacheTTL] and [accountActive].
-	statusTTL      time.Duration
-	statusMaxStale time.Duration
+	status accountStatusGate
 
 	// mirroredKeyIdleTTL is the sliding idle window re-applied to a
 	// TTL-bearing record on every successful validated Lookup — the
 	// read-path half of the [MirroredKeyIdleTTL] bound. Zero disables
 	// refresh-on-use. See [Lookup] and [refreshIdleTTL].
 	mirroredKeyIdleTTL time.Duration
-	// statusCache memoises the last-read account status per slug so the
+}
+
+// accountStatusGate is the account-level kill switch both validators
+// apply to a record naming a platform account. See [accountStatusGate.check].
+type accountStatusGate struct {
+	// accounts, when nil, disables the gate.
+	accounts AccountStatusReader
+
+	// ttl / maxStale bound the status cache below.
+	// See [DefaultAccountStatusCacheTTL].
+	ttl      time.Duration
+	maxStale time.Duration
+
+	// cache memoises the last-read account status per slug so the
 	// kill-switch GetBySlug is read at most once per account per
-	// statusTTL window (bounding hot-path Postgres load) and a transient
+	// ttl window (bounding hot-path Postgres load) and a transient
 	// Postgres blip rides out on last-known status (auth-ks-1). Only
-	// populated when accounts != nil. Guarded by statusMu.
-	statusMu    sync.RWMutex
-	statusCache map[string]cachedAccountStatus
+	// populated when accounts != nil. Guarded by mu.
+	mu    sync.RWMutex
+	cache map[string]cachedAccountStatus
+}
+
+// init sets the freshness window. Ride-out staleness is a fixed multiple
+// of it: past the fresh TTL each request still re-reads Postgres, and a
+// cached status is only used to cover a GetBySlug *error* up to this
+// bound. A Postgres outage also blocks the suspension write itself, so
+// riding out on last-known status cannot mask a suspension an operator
+// could actually have applied during the outage.
+func (g *accountStatusGate) init(ttl time.Duration) {
+	g.ttl = ttl
+	g.maxStale = 10 * ttl
+	g.cache = make(map[string]cachedAccountStatus)
 }
 
 // cachedAccountStatus is one memoised account read: the status the kill
@@ -76,7 +96,7 @@ type cachedAccountStatus struct {
 }
 
 // DefaultAccountStatusCacheTTL is the freshness window of the Redis
-// validator's account-status cache: within it, [accountActive] serves
+// validators' account-status cache: within it, [accountStatusGate] serves
 // the last-read status without touching Postgres, so the kill-switch
 // read costs at most one query per account per window rather than one
 // per request. Matches the 30s dwell-time the rest of the auth layer
@@ -86,7 +106,8 @@ const DefaultAccountStatusCacheTTL = 30 * time.Second
 // MirroredKeyIdleTTL bounds a register-mirrored credential's lifetime in
 // the validator pool as a SLIDING idle window rather than a
 // hard expiry (W1-flow-register-2). The record is written with this TTL
-// ([RedisAPIKeyStore.CreateWithSecret]) and every successful validated
+// ([RedisAPIKeyStore.CreateWithSecret], and [RedisAPIKeyStore.Create] for
+// a SelfService request) and every successful validated
 // [Lookup] slides it forward, so an actively-used key never expires while
 // a key untouched for the whole window TTLs out on its own — capping the
 // keyspace growth that open, anonymous /v1/register would otherwise make
@@ -263,7 +284,7 @@ func WithClock(now func() time.Time) RedisOption {
 // Nil (the default) preserves the pre-fix behaviour exactly: no account
 // lookup, no per-request Postgres read.
 func WithAccountStatus(accounts AccountStatusReader) RedisOption {
-	return func(v *RedisAPIKeyValidator) { v.accounts = accounts }
+	return func(v *RedisAPIKeyValidator) { v.status.accounts = accounts }
 }
 
 // WithMirroredKeyIdleTTL overrides the sliding idle window re-applied on
@@ -285,20 +306,12 @@ func NewRedisAPIKeyValidator(rdb redis.Cmdable, opts ...RedisOption) *RedisAPIKe
 	v := &RedisAPIKeyValidator{
 		rdb:                rdb,
 		now:                time.Now,
-		statusTTL:          DefaultAccountStatusCacheTTL,
-		statusCache:        make(map[string]cachedAccountStatus),
 		mirroredKeyIdleTTL: MirroredKeyIdleTTL,
 	}
+	v.status.init(DefaultAccountStatusCacheTTL)
 	for _, opt := range opts {
 		opt(v)
 	}
-	// Ride-out staleness is a fixed multiple of the freshness window:
-	// past the fresh TTL each request still re-reads Postgres, and a
-	// cached status is only used to cover a GetBySlug *error* up to this
-	// bound. A Postgres outage also blocks the suspension write itself,
-	// so riding out on last-known status here cannot mask a suspension an
-	// operator could actually have applied during the outage.
-	v.statusMaxStale = 10 * v.statusTTL
 	return v
 }
 
@@ -338,7 +351,7 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 	if !rec.ExpiresAt.IsZero() && !v.now().Before(rec.ExpiresAt) {
 		return Subject{}, ErrTokenExpired
 	}
-	acct, isAccount, err := v.accountActive(ctx, rec.Identifier)
+	acct, isAccount, err := v.status.check(ctx, rec.Identifier, v.now())
 	if err != nil {
 		return Subject{}, err
 	}
@@ -433,8 +446,8 @@ func recordFromSubject(sub Subject) APIKeyRecord {
 
 // refreshIdleTTL slides a TTL-bearing record's idle window forward to
 // mirroredKeyIdleTTL. Uses EXPIRE ... XX so it is a no-op on records
-// written without a TTL (operator-seeded / self-service keys), keeping
-// their persistent semantics intact; only the register-mirror records,
+// written without a TTL (operator-seeded keys), keeping their persistent
+// semantics intact; only register-mirror and self-service records,
 // written with an idle TTL, are re-warmed. Best-effort: any error is
 // swallowed — the worst case is the key expiring on its existing TTL, an
 // idle key by definition.
@@ -445,24 +458,24 @@ func (v *RedisAPIKeyValidator) refreshIdleTTL(ctx context.Context, hash string) 
 	_ = v.rdb.ExpireXX(ctx, cachekeys.APIKey(hash).String(), v.mirroredKeyIdleTTL).Err()
 }
 
-// accountActive enforces the account-level kill switch for a record
-// that names a platform account, and returns the account read so Lookup
-// can resolve its overrides. isAccount is false (and err nil) when the
+// check enforces the account-level kill switch for a record that names
+// a platform account, and returns the account read so the caller can
+// resolve its overrides. isAccount is false (and err nil) when the
 // check does not apply (no reader wired, or a non-account identifier).
-// Override changes therefore propagate within statusTTL, like suspension.
+// Override changes therefore propagate within ttl, like suspension.
 //
 // A short-TTL in-process cache fronts the kill-switch GetBySlug so the
-// status is read at most once per account per statusTTL window
+// status is read at most once per account per ttl window
 // (auth-ks-1): within the fresh window it serves last-read status
 // without touching Postgres, bounding hot-path Postgres load and
-// suspension-propagation latency to statusTTL.
+// suspension-propagation latency to ttl.
 //
 // Degradation posture (auth-ks-1):
 //
 //   - ErrNotFound: the record references an account that no longer
 //     exists — the closed-account case, rejected as [ErrUnauthorized]
 //     (unchanged).
-//   - Transport error WITH a cached status within statusMaxStale:
+//   - Transport error WITH a cached status within maxStale:
 //     ride out on last-known status (bounded staleness). A Postgres
 //     blip no longer 401s every active customer; a still-suspended
 //     account is still rejected off its cached status.
@@ -471,10 +484,10 @@ func (v *RedisAPIKeyValidator) refreshIdleTTL(ctx context.Context, hash string) 
 //     default. Still fails closed, but with correct, non-key-rotating
 //     semantics rather than mis-signalling "your credential is invalid"
 //     during a server-side outage.
-func (v *RedisAPIKeyValidator) accountActive(
-	ctx context.Context, identifier string,
+func (g *accountStatusGate) check(
+	ctx context.Context, identifier string, now time.Time,
 ) (acct platform.Account, isAccount bool, err error) {
-	if v.accounts == nil {
+	if g.accounts == nil {
 		return platform.Account{}, false, nil
 	}
 	slug, ok := strings.CutPrefix(identifier, AccountIdentifierPrefix)
@@ -482,13 +495,12 @@ func (v *RedisAPIKeyValidator) accountActive(
 		return platform.Account{}, false, nil // legacy signup-<hash> record: no account to check
 	}
 
-	now := v.now()
 	// Fresh cache hit: serve without a Postgres read.
-	if cached, ok := v.cachedStatus(slug); ok && now.Sub(cached.at) <= v.statusTTL {
+	if cached, ok := g.cachedStatus(slug); ok && now.Sub(cached.at) <= g.ttl {
 		return cached.acct, true, statusToError(cached.acct.Status)
 	}
 
-	acct, err = v.accounts.GetBySlug(ctx, slug)
+	acct, err = g.accounts.GetBySlug(ctx, slug)
 	if err != nil {
 		if errors.Is(err, platform.ErrNotFound) {
 			return platform.Account{}, false, ErrUnauthorized
@@ -496,7 +508,7 @@ func (v *RedisAPIKeyValidator) accountActive(
 		// Transport/degradation error. Ride out on a last-known status
 		// within the staleness bound rather than degrading auth for
 		// every active customer on a transient Postgres blip.
-		if cached, ok := v.cachedStatus(slug); ok && now.Sub(cached.at) <= v.statusMaxStale {
+		if cached, ok := g.cachedStatus(slug); ok && now.Sub(cached.at) <= g.maxStale {
 			return cached.acct, true, statusToError(cached.acct.Status)
 		}
 		// Truly unknown: no usable cached status. Fail closed, but as a
@@ -506,7 +518,7 @@ func (v *RedisAPIKeyValidator) accountActive(
 			fmt.Errorf("auth: apikey account status %q: %w: %w", slug, ErrAccountStatusUnavailable, err)
 	}
 
-	v.storeStatus(slug, acct, now)
+	g.storeStatus(slug, acct, now)
 	return acct, true, statusToError(acct.Status)
 }
 
@@ -520,35 +532,33 @@ func statusToError(status platform.AccountStatus) error {
 	return nil
 }
 
-func (v *RedisAPIKeyValidator) cachedStatus(slug string) (cachedAccountStatus, bool) {
-	v.statusMu.RLock()
-	defer v.statusMu.RUnlock()
-	cached, ok := v.statusCache[slug]
+func (g *accountStatusGate) cachedStatus(slug string) (cachedAccountStatus, bool) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	cached, ok := g.cache[slug]
 	return cached, ok
 }
 
-func (v *RedisAPIKeyValidator) storeStatus(slug string, acct platform.Account, at time.Time) {
-	v.statusMu.Lock()
-	defer v.statusMu.Unlock()
+func (g *accountStatusGate) storeStatus(slug string, acct platform.Account, at time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	// Keep only what the gate and the cascade read; no PII in the cache.
-	v.statusCache[slug] = cachedAccountStatus{acct: platform.Account{
+	g.cache[slug] = cachedAccountStatus{acct: platform.Account{
 		Status:                      acct.Status,
 		RateLimitPerMinOverride:     acct.RateLimitPerMinOverride,
 		MonthlyRequestQuotaOverride: acct.MonthlyRequestQuotaOverride,
 	}, at: at}
-	v.evictStaleStatusLocked(at)
+	g.evictStaleStatusLocked(at)
 }
 
-// evictStaleStatusLocked drops every statusCache entry older than
-// statusMaxStale. Past that bound accountActive never reads an entry
-// again (the ride-out gate refuses it), so retaining it only grows the
-// map for the lifetime of the process with no cache-hit benefit —
-// Q183/T150 (reverification 2026-09-18): the cache had no eviction of
-// any kind, only a staleness check on read. Called with statusMu held.
-func (v *RedisAPIKeyValidator) evictStaleStatusLocked(now time.Time) {
-	for slug, cached := range v.statusCache {
-		if now.Sub(cached.at) > v.statusMaxStale {
-			delete(v.statusCache, slug)
+// evictStaleStatusLocked drops every cache entry older than maxStale.
+// Past that bound check never reads an entry again (the ride-out gate
+// refuses it), so retaining it only grows the map for the lifetime of
+// the process with no cache-hit benefit. Called with mu held.
+func (g *accountStatusGate) evictStaleStatusLocked(now time.Time) {
+	for slug, cached := range g.cache {
+		if now.Sub(cached.at) > g.maxStale {
+			delete(g.cache, slug)
 		}
 	}
 }

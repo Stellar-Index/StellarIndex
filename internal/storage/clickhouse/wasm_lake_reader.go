@@ -9,6 +9,8 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // ErrContractWasmUnresolved is returned by ContractWasm when the contract's
@@ -86,41 +88,111 @@ type ContractWasmInfo struct {
 // the captured window — historical deploy-time entries are largely outside the
 // live ledger_entry_changes capture (extract.go G12-03 note).
 func (r *ExplorerReader) ContractWasm(ctx context.Context, contractID string) (ContractWasmInfo, error) {
+	wasmHash, err := r.resolveContractWasmHash(ctx, contractID)
+	if err != nil {
+		return ContractWasmInfo{}, err
+	}
+
+	info, err := r.wasmModuleView(ctx, wasmHash)
+	if err != nil {
+		return ContractWasmInfo{}, err
+	}
+	info.ContractID = contractID
+	return info, nil
+}
+
+// ContractWasmHash is ContractWasm's first hop alone: the contract's CURRENT
+// wasm hash as lower hex, without reading or disassembling the module.
+// Returns ErrContractIsSAC / ErrContractWasmUnresolved exactly as ContractWasm.
+func (r *ExplorerReader) ContractWasmHash(ctx context.Context, contractID string) (string, error) {
+	h, err := r.resolveContractWasmHash(ctx, contractID)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h[:]), nil
+}
+
+func (r *ExplorerReader) resolveContractWasmHash(ctx context.Context, contractID string) (xdr.Hash, error) {
 	dec, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {
-		return ContractWasmInfo{}, fmt.Errorf("clickhouse: bad contract id %q: %w", contractID, err)
+		return xdr.Hash{}, fmt.Errorf("clickhouse: bad contract id %q: %w", contractID, err)
 	}
 	var cidHash xdr.Hash
 	copy(cidHash[:], dec)
 
 	wasmHash, ok, err := r.contractWasmHash(ctx, cidHash)
 	if err != nil {
-		return ContractWasmInfo{}, err
+		return xdr.Hash{}, err
 	}
 	if !ok {
-		return ContractWasmInfo{}, ErrContractWasmUnresolved
+		return xdr.Hash{}, ErrContractWasmUnresolved
 	}
+	return wasmHash, nil
+}
 
-	code, ok, err := r.wasmCodeByHash(ctx, wasmHash)
-	if err != nil {
-		return ContractWasmInfo{}, err
+// wasmModuleFlightTimeout bounds one shared per-hash fill: the code read plus
+// both wabt runs (wasmToolTimeout each).
+const wasmModuleFlightTimeout = 30 * time.Second
+
+var errWasmModuleFillPanicked = errors.New("clickhouse: wasm module fill panicked")
+
+// wasmModuleView assembles everything keyed by the wasm hash alone. The
+// contract→hash hop above stays per request because upgrades move it; the
+// hash→bytes→disassembly stage is immutable, so it is memoised and run as one
+// detached flight per hash — waiters keep their own deadline, and a caller
+// that gives up does not cancel the fill for the others.
+func (r *ExplorerReader) wasmModuleView(ctx context.Context, wasmHash xdr.Hash) (ContractWasmInfo, error) {
+	key := hex.EncodeToString(wasmHash[:])
+	//nolint:contextcheck // the fill is shared by every waiter, so no single caller's cancellation may abort it
+	ch := r.wasmFlight.DoChan(key, func() (val any, err error) {
+		// singleflight re-raises a panic on a goroutine nothing can recover.
+		defer func() {
+			if rec := recover(); rec != nil {
+				worker.Report(nil, "explorer-wasm-module-fill", rec)
+				val, err = nil, errWasmModuleFillPanicked
+			}
+		}()
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), wasmModuleFlightTimeout)
+		defer cancel()
+		return r.fillWasmModule(fctx, wasmHash, key)
+	})
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return ContractWasmInfo{}, res.Err
+		}
+		info, _ := res.Val.(ContractWasmInfo)
+		return info, nil
+	case <-ctx.Done():
+		return ContractWasmInfo{}, ctx.Err()
 	}
+}
+
+func (r *ExplorerReader) fillWasmModule(ctx context.Context, wasmHash xdr.Hash, key string) (ContractWasmInfo, error) {
+	mod, ok := r.moduleCache.get(key)
 	if !ok {
-		return ContractWasmInfo{}, ErrContractWasmUnresolved
+		code, found, err := r.wasmCodeByHash(ctx, wasmHash)
+		if err != nil {
+			return ContractWasmInfo{}, err
+		}
+		if !found {
+			return ContractWasmInfo{}, ErrContractWasmUnresolved
+		}
+		exports, perr := parseWasmExports(code)
+		mod = wasmModuleEntry{code: code, exports: exports}
+		if perr != nil {
+			// A parse miss is non-fatal: still serve the resolved hash + size.
+			mod.parseNote = "export parse: " + perr.Error() + "; "
+		}
+		r.moduleCache.put(key, mod, time.Now())
 	}
-
-	exports, perr := parseWasmExports(code)
 	info := ContractWasmInfo{
-		ContractID: contractID,
-		WasmHash:   hex.EncodeToString(wasmHash[:]),
-		SizeBytes:  len(code),
-		Exports:    exports,
+		WasmHash:  key,
+		SizeBytes: len(mod.code),
+		Exports:   mod.exports,
+		ToolNote:  mod.parseNote,
 	}
-	if perr != nil {
-		// A parse miss is non-fatal: still serve the resolved hash + size.
-		info.ToolNote = "export parse: " + perr.Error() + "; "
-	}
-	r.buildWasmDisassembly(ctx, &info, code)
+	r.buildWasmDisassembly(ctx, &info, mod.code)
 	return info, nil
 }
 
@@ -335,13 +407,39 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 	// be served as an authoritative "never upgraded"; only a NON-EMPTY
 	// result is trusted, exactly like contractWasmHashIndexed's ok=false
 	// miss falling through to the legacy read.
+	// A contract that does have index rows (a SAC: no wasm rows) is covered,
+	// so its empty timeline is authoritative and skips the legacy scan.
 	if r.instanceChangesIndexAvailable(ctx) {
 		out, err := r.contractCodeHistoryIndexed(ctx, cidHash)
 		if err != nil || len(out) > 0 {
 			return out, err
 		}
+		indexed, err := r.contractInInstanceIndex(ctx, cidHash)
+		if err != nil || indexed {
+			return nil, err
+		}
 	}
 	return r.contractCodeHistoryLegacy(ctx, cidHash)
+}
+
+// contractInInstanceIndexQuery names only the primary-key prefix, so it
+// serves both key shapes.
+const contractInInstanceIndexQuery = `SELECT 1 FROM stellar.contract_instance_changes
+		  WHERE contract_hash = ?
+		  LIMIT 1`
+
+// contractInInstanceIndex reports whether the instance index holds any row
+// for the contract, i.e. the backfill has reached it.
+func (r *ExplorerReader) contractInInstanceIndex(ctx context.Context, cid xdr.Hash) (bool, error) {
+	rows, err := r.conn.Query(ctx, contractInInstanceIndexQuery, hex.EncodeToString(cid[:]))
+	if err != nil {
+		return false, fmt.Errorf("clickhouse: instance index presence: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	if rows.Next() {
+		return true, nil
+	}
+	return false, rows.Err()
 }
 
 // contractCodeHistoryLegacy is ContractCodeHistory's scan over the changes

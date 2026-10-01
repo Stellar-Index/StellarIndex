@@ -64,8 +64,9 @@ ss -ltnp | grep :9100          # expect exactly ONE listener
 # If SSH fails: Hetzner Robot (https://robot.hetzner.com) → server r1
 # (FSN1) → KVM console / Rescue system / Reset. There is no customer
 # IPMI on Hetzner dedicated servers.
-# TODO(maintainer): record the Robot server number and who holds Robot login
-# here — nothing in the repo documents it.
+# Robot server numbers: r1 = EX63 #2982698; the testnet/futurenet host =
+# Server Auction #3057275. The Robot login is held by the maintainer
+# (see docs/operations/maintainer-workflow.md); there is no shared account.
 ```
 
 ## Typical root causes

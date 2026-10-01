@@ -795,7 +795,9 @@ func (s *Server) rwaPremiumReferenceDays(
 		seen[c.feed] = struct{}{}
 		assets = append(assets, canonical.Asset{Type: canonical.AssetRWA, Code: c.feed})
 	}
-	rows, err := s.oracleHistory.DailyOraclePrices(ctx, assets, rwaPremiumHistoryQuote, time.Time{}, to)
+	// Full history on purpose: one assembly serves every timeframe including
+	// `all`; the genesis floor excludes no row and keeps the range bounded.
+	rows, err := s.oracleHistory.DailyOraclePrices(ctx, assets, rwaPremiumHistoryQuote, coverageFloorEpoch, to)
 	if err != nil {
 		s.logger.Warn("rwa premium: oracle day-bucket read failed", "err", err)
 		return nil, false
@@ -816,8 +818,10 @@ func (s *Server) rwaPremiumMarketDays(
 			Type: canonical.AssetClassic, Code: c.code, Issuer: c.issuer,
 		})
 	}
+	// Full history for the same reason as the reference leg; the first
+	// observed day also bounds the reference-only count.
 	rows, err := s.marketHistory.DailyMarketDays(
-		ctx, assets, s.rwaPremiumUSDQuotes(), time.Time{}, to)
+		ctx, assets, s.rwaPremiumUSDQuotes(), coverageFloorEpoch, to)
 	if err != nil {
 		s.logger.Warn("rwa premium: market day read failed", "err", err)
 		return nil, false

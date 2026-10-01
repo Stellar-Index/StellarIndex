@@ -100,6 +100,9 @@ type USDVolumeFXResolver interface {
 //     usd_volume = base_amount/1e7 × XLM/USD. See
 //     [tradeUSDVolumeViaXLMBaseAnchor].
 //
+// On a DEX trade with an XLM leg on EITHER side, that XLM anchor runs
+// ahead of tier 3 (base side first, then [tradeUSDVolumeViaXLMQuoteAnchorFor]).
+//
 // Tiers 1 + 2 trust their pegs at insert time — depeg events
 // are observed separately via the divergence + anomaly paths and
 // do NOT change the inserted usd_volume retroactively. Tiers 3 + 4
@@ -193,6 +196,13 @@ func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolume
 	// SubclassDEX-only, so CEX pricing is untouched.
 	if isXLMAsset(t.Pair.Base) {
 		if v := tradeUSDVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver); v != nil {
+			return v
+		}
+	}
+	// Same anchor when the pool stored XLM as the QUOTE leg: orientation is
+	// the pool's token order, so both sides of one economic swap must value alike.
+	if isXLMAsset(t.Pair.Quote) && !isXLMAsset(t.Pair.Base) {
+		if v := tradeUSDVolumeViaXLMQuoteAnchorFor(ctx, t, fxResolver); v != nil {
 			return v
 		}
 	}
@@ -388,14 +398,13 @@ func fxLegValue(ctx context.Context, r USDVolumeFXResolver, asset canonical.Asse
 	return v.Mul(v, rate)
 }
 
-// tradeUSDVolumeViaXLMBaseAnchor is L7.6 (ROADMAP #37): the
-// write-time counterpart of [Store.SorobanVolume24hUSDForAsset]'s
-// query-time `base_asset IN ('native', SAC)` CASE. It fires only
-// when [tradeUSDVolumeViaFX] declined the quote asset — i.e. the
-// trade's quote is a pure-Soroban SEP-41 token with no direct
-// USD-pegged market (or no market against XLM either) — AND the
-// trade's BASE asset is native XLM or its Stellar Asset Contract
-// wrapper.
+// tradeUSDVolumeViaXLMBaseAnchor is the write-time counterpart of
+// [Store.SorobanVolume24hUSDForAsset]'s query-time
+// `base_asset IN ('native', SAC)` CASE. It fires only when
+// [tradeUSDVolumeViaFX] declined the quote asset — i.e. the trade's
+// quote is a pure-Soroban SEP-41 token with no direct USD-pegged
+// market (or no market against XLM either) — AND the trade's BASE
+// asset passes [baseAnchorEligible].
 //
 // A pool that quotes a pure SEP-41 token in XLM (its primary
 // liquidity route) can store the trade either way round depending
@@ -420,20 +429,17 @@ func fxLegValue(ctx context.Context, r USDVolumeFXResolver, asset canonical.Asse
 // means a tier-4 hit here is picked up there too, with no
 // double-count.
 //
-// Widened 2026-07-22 from XLM-only to any base leg whose amounts are
-// known to sit at the Stellar classic 10^7 scale (see
-// [baseAnchorEligible]). The original guard was `isXLMAsset(base)`
-// because the XLM leg was the only base the resolver could price; now
-// that the resolver bridges arbitrary tokens through XLM (tier 3b), a
-// TOKEN_A/TOKEN_B trade whose QUOTE leg cannot be priced can still be
-// valued off its BASE leg. That matters because the largest remaining
-// unpriced class is exactly token/token — for a 6T/F8 trade where F8
-// has no usable market, 6T may well have one.
+// Any on-chain base leg is eligible, not just XLM: the resolver bridges
+// arbitrary tokens through XLM (tier 3b), so a TOKEN_A/TOKEN_B trade
+// whose QUOTE leg cannot be priced can still be valued off its BASE
+// leg. That matters because the largest remaining unpriced class is
+// exactly token/token — for a 6T/F8 trade where F8 has no usable
+// market, 6T may well have one.
 //
-// Pure SEP-41 bases stay excluded: their decimals are per-contract and
-// are not plumbed through the trade-insert path, so assuming 10^7
-// would silently mis-scale the value. That is the remaining documented
-// scope boundary (needs per-asset decimals or a per-token oracle).
+// Pure SEP-41 bases are eligible too, whatever their decimals: the
+// token's scale cancels in the raw-rate product (see
+// [baseAnchorEligible]). Only per-whole-unit price tiers need real
+// decimals, and those stay restricted to classic + SAC.
 func tradeUSDVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subclass external.Subclass, r USDVolumeFXResolver) *string {
 	if r == nil || subclass != external.SubclassDEX {
 		// Off-chain sources don't have this orientation problem —
@@ -659,8 +665,10 @@ func tradeUSDVolumeViaXLMBaseAnchorFor(ctx context.Context, t canonical.Trade, r
 // timestamp; mirroring the row is therefore the whole difference between
 // the two tiers, and a change to the anchor moves both at once.
 //
-// ONLY the XLM leg, deliberately. The live insert path reaches this
-// population through [tradeUSDVolumeViaFX], which additionally
+// The insert path ([tradeUSDVolume]) takes this branch ahead of
+// [tradeUSDVolumeViaFX], so a re-derive and a fresh insert agree.
+//
+// ONLY the XLM leg, deliberately. [tradeUSDVolumeViaFX] additionally
 // cross-checks the two legs and stores the SMALLER when they diverge by
 // more than [usdLegAgreementFactor]. That cross-check defends a value
 // resting on a token leg an attacker can author (the tier-3b bridge, the
@@ -912,10 +920,9 @@ var ErrNoFXQuote = errors.New("timescale: no FX quote at or before cutoff")
 // because their amounts are normalised onto a fixed integer scale
 // (AGENTS.md "External-source amount scaling is NOT uniform") where
 // an equal-value reading doesn't carry the same "decoder is broken"
-// signal an on-chain 1:1 does. canonical.Trade.Validate() already
-// requires both amounts to be strictly positive before a trade can
-// reach either insert path, so the nonzero check here is
-// defence-in-depth, not load-bearing.
+// signal an on-chain 1:1 does. canonical.Trade.Validate() admits one
+// zero leg (an SDEX rounding fill) and there is no DB CHECK on the legs,
+// so the nonzero check here is load-bearing: 0 == 0 is not a 1:1 trade.
 func isDexUnitRatioTrade(ledger uint32, base, quote canonical.Amount) bool {
 	if ledger == 0 {
 		return false
@@ -992,6 +999,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	if err := t.Validate(); err != nil {
 		return err
 	}
+	countZeroLegAdmitted(t)
 
 	// One statement, two effects, fully atomic:
 	//   1. Upsert the trade (idempotent-corrective on its PK). On
@@ -1209,16 +1217,12 @@ func emitBatchTradeOutcomeMetrics(trades []canonical.Trade, perSourceNew, perSou
 	}
 }
 
-// The statement runs in its own transaction with the TimescaleDB
-// decompression cap lifted (SET LOCAL, so nothing leaks onto the pooled
-// connection). This writer is the fallback for every range whose trades
-// chunks are compressed — the bulk COPY path steps aside on a non-empty
-// range — and an upsert into a compressed chunk decompresses whole
-// segments per conflict: on 2026-09-18 every 5,000-row sub-batch of a
-// Soroban-era SDEX re-derive failed with SQLSTATE 53400 "tuple
-// decompression limit exceeded" and the writer dropped to one INSERT per
-// row, which is exactly the five-hour chunk the sub-batching had just
-// fixed. The restamp and COPY writers already lift the cap the same way.
+// The statement runs in its own transaction. A re-derive store
+// (deriveGeneration > 0) lifts the TimescaleDB decompression cap with SET
+// LOCAL: its upserts into compressed chunks decompress whole segments per
+// conflict and would otherwise fail with SQLSTATE 53400. Live ingest keeps
+// the server cap, so a runaway decompression there surfaces as a 53400
+// retry instead of proceeding unbounded across concurrent persist workers.
 func (s *Store) scanBatchTradeOutcome(ctx context.Context, query string, args []any) (
 	perSourceNew, perSourceUnitRatio map[string]int,
 	seenAssets map[string]registryObservation, err error,
@@ -1233,8 +1237,10 @@ func (s *Store) scanBatchTradeOutcome(ctx context.Context, query string, args []
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err := tx.ExecContext(ctx, batchTradeDecompressionCapSQL); err != nil {
-		return nil, nil, nil, fmt.Errorf("timescale: BatchInsertTrades: decompression cap: %w", err)
+	if s.deriveGeneration > 0 {
+		if _, err := tx.ExecContext(ctx, batchTradeDecompressionCapSQL); err != nil {
+			return nil, nil, nil, fmt.Errorf("timescale: BatchInsertTrades: decompression cap: %w", err)
+		}
 	}
 	perSourceNew, perSourceUnitRatio, seenAssets, err = scanBatchTradeRows(ctx, tx, query, args)
 	if err != nil {
@@ -1248,8 +1254,8 @@ func (s *Store) scanBatchTradeOutcome(ctx context.Context, query string, args []
 }
 
 // batchTradeDecompressionCapSQL lifts the per-transaction cap on tuples a
-// DML statement may decompress (0 = unbounded), for the batch upsert's
-// transaction only. See scanBatchTradeOutcome.
+// DML statement may decompress (0 = unbounded), for a re-derive batch
+// upsert's transaction only. See scanBatchTradeOutcome.
 const batchTradeDecompressionCapSQL = "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"
 
 // scanBatchTradeRows runs the batch statement on tx and folds its RETURNING
@@ -1421,17 +1427,13 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
 // re-runs don't inflate the count.
 //
 // Storability pre-filter: each sub-batch is ONE all-or-nothing multi-row
-// INSERT, so a single row that violates a DB constraint aborts that whole
-// sub-batch — which is exactly what an SDEX one-side-zero fill does (the
-// decoder KEEPS those rounding-artifact fills for the ADR-0033 census, but the served
-// tier's `base_amount > 0 AND quote_amount > 0` CHECK — INV-6, migration
-// 0001 — cannot hold a zero leg). [Store.filterStorableTrades] drops the
-// rows that would fail so they can never sink a batch of otherwise-good
-// trades. This mirrors the single-row [Store.InsertTrade] Validate gate and
-// the authoritative completeness reconcile's own Validate gate
-// (reDeriveSDEXCensusViaDecoder), so census/served/reconcile stay
-// consistent. USD-volume is computed per row from the store's USD-volume
-// resolver, same as the single row path.
+// INSERT, so one invalid row would abort that whole sub-batch.
+// [Store.filterStorableTrades] drops rows that fail [canonical.Trade.Validate]
+// (the same gate as the single-row [Store.InsertTrade]) so they can never
+// sink a batch of otherwise-good trades. An SDEX one-side-zero fill passes
+// Validate and is stored (unpriceable: every price path filters on
+// `base_amount > 0 AND quote_amount > 0`). USD-volume is computed per row
+// from the store's USD-volume resolver, same as the single row path.
 //
 // Partial success is explicit. Each sub-batch commits in its own
 // transaction (one transaction across them would hold every row lock and
@@ -1450,10 +1452,8 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 		return nil
 	}
 
-	// Drop rows the served tier cannot hold BEFORE building the
-	// all-or-nothing sub-batch INSERTs (see the godoc). A one-side-zero SDEX
-	// fill would otherwise trip the base/quote > 0 CHECK and roll back every
-	// good trade in its sub-batch. When the whole batch is unstorable this
+	// Drop invalid rows BEFORE building the all-or-nothing sub-batch
+	// INSERTs (see the godoc). When the whole batch is unstorable this
 	// returns early — there is nothing to insert, and the skips are already
 	// accounted for inside the filter.
 	storable := s.filterStorableTrades(trades)
@@ -1491,6 +1491,10 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	// isolate-on-non-infra-error fallback in
 	// internal/pipeline/trade_sink.go::flushTradeBatch stays as
 	// belt-and-braces for whatever this doesn't catch.
+	//
+	// Clone first: filterStorableTrades returns the caller's slice when every
+	// row is valid, and callers replay that slice in their own order on error.
+	storable = slices.Clone(storable)
 	sortTradesByConflictKey(storable)
 
 	// Collapse intra-batch PK duplicates BEFORE building the statement.
@@ -1622,27 +1626,16 @@ func (s *Store) registerBatchLandedAssets(ctx context.Context, seenAssets map[st
 	}
 }
 
-// filterStorableTrades returns the subset of a batch the served `trades`
-// tier can actually hold — the rows for which [canonical.Trade.Validate]
-// passes (in particular base_amount > 0 AND quote_amount > 0, the INV-6
-// CHECK from migration 0001). It exists because each [Store.BatchInsertTrades]
-// sub-batch is ONE all-or-nothing multi-row INSERT: a single row that fails
-// that CHECK aborts the entire statement, rolling back every good trade in
-// its sub-batch, failing the batch from there on, and forcing a slow per-row fallback that also counts the offending
-// row as an insert error (tripping stellarindex_source_insert_errors_total).
+// filterStorableTrades returns the subset of a batch for which
+// [canonical.Trade.Validate] passes. Each [Store.BatchInsertTrades] sub-batch
+// is ONE all-or-nothing multi-row INSERT, so a malformed row (negative leg,
+// both legs zero, missing identity) would otherwise take the good trades of
+// its sub-batch down with it. A dropped row is a genuine upstream/decoder bug
+// and stays loud (SourceInsertErrorsTotal + ERROR), exactly as the single-row
+// InsertTrade path surfaces it.
 //
-// The dominant — and only EXPECTED — unstorable row is the SDEX one-side-
-// zero fill: internal/sources/sdex.decodeClaimAtom KEEPS a fill whose base
-// OR quote leg rounded to 0 (it is a real on-chain trade effect the ADR-0033
-// census counts and the ClickHouse substrate retains), but that row has no
-// price and cannot satisfy the served tier's `> 0` CHECK. The authoritative
-// completeness reconcile (chops.reDeriveSDEXCensusViaDecoder) already
-// excludes these from the served-EXPECTED count through the identical
-// Validate gate, so dropping them here keeps census/served/reconcile
-// consistent rather than introducing a mismatch. Such a fill is a benign
-// no-op (DEBUG). Any OTHER validation failure is a genuine upstream/decoder
-// bug and stays loud (SourceInsertErrorsTotal + ERROR), exactly as the
-// single-row InsertTrade path surfaces it.
+// An SDEX one-side-zero fill (one leg rounded to 0) passes Validate and is
+// stored; it is counted on [obs.TradesZeroLegAdmittedTotal].
 //
 // The common case — an all-valid batch — allocates nothing and returns the
 // input slice unchanged.
@@ -1653,6 +1646,7 @@ func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade
 			firstBad = i
 			break
 		}
+		countZeroLegAdmitted(trades[i])
 	}
 	if firstBad == -1 {
 		return trades
@@ -1662,13 +1656,8 @@ func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade
 	for _, t := range trades[firstBad:] {
 		err := t.Validate()
 		if err == nil {
+			countZeroLegAdmitted(t)
 			storable = append(storable, t)
-			continue
-		}
-		if IsOneSideZeroFill(t) {
-			slog.Default().Debug("timescale: batch skipped one-side-zero fill (no served price; kept in CH substrate, census-counted — INV-6)",
-				"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash, "op_index", t.OpIndex,
-				"base", t.BaseAmount.String(), "quote", t.QuoteAmount.String())
 			continue
 		}
 		obs.SourceInsertErrorsTotal.WithLabelValues(t.Source, obs.InsertErrorKindTradeDropped).Inc()
@@ -1679,14 +1668,21 @@ func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade
 }
 
 // IsOneSideZeroFill reports whether t is the SDEX rounding artifact where
-// exactly one leg rounded to 0 while the other stayed positive — the single
-// [canonical.Trade.Validate] failure the ingest path expects and treats as a
-// benign no-op (see [Store.filterStorableTrades]). A both-zero atom is
-// already dropped in the decoder, and a negative leg is never a valid Stellar
-// amount, so neither qualifies.
+// exactly one leg rounded to 0 while the other stayed positive. Such a trade
+// is stored but unpriceable. A both-zero atom is dropped in the decoder, and
+// a negative leg is never a valid Stellar amount, so neither qualifies.
 func IsOneSideZeroFill(t canonical.Trade) bool {
 	bs, qs := t.BaseAmount.Sign(), t.QuoteAmount.Sign()
 	return bs >= 0 && qs >= 0 && (bs == 0) != (qs == 0)
+}
+
+// countZeroLegAdmitted bumps [obs.TradesZeroLegAdmittedTotal] for a trade
+// that passed Validate with exactly one zero leg. Called only after Validate,
+// at each Go write gate, so the counter reads "stored but unpriceable".
+func countZeroLegAdmitted(t canonical.Trade) {
+	if IsOneSideZeroFill(t) {
+		obs.TradesZeroLegAdmittedTotal.WithLabelValues(t.Source).Inc()
+	}
 }
 
 // registryObservation is the highest-ledger observation of a landed asset
@@ -1746,8 +1742,11 @@ type registryObservation struct {
 //
 // The union of each direction's newest `limit`, re-sorted and cut to
 // `limit`, is exactly the market's newest `limit`, so the arms may be
-// limited individually. Ties on (ts, ledger) are broken by the
-// database, as they were when this read spanned one direction.
+// limited individually. Each arm keeps every row tying its cut on
+// (ts, ledger) — the order the indexes and compressed batches serve
+// cheaply — so the outer sort can break ties on the full key
+// /v1/history orders on, and the answer is one fixed row rather than
+// whichever of a ledger's trades the plan happened to meet first.
 //
 // Unbounded in time on purpose, and for the same two reasons as
 // [Store.LatestTradePerSource] — read the "no time bound, deliberately"
@@ -1756,7 +1755,8 @@ type registryObservation struct {
 // only runs its length for a market with none, which is precisely the
 // market a recency bound would answer WRONG. This read backs
 // /v1/price's last-trade arm, so a window here would stop serving a
-// price for a quiet market rather than merely slow it down.
+// price for a quiet market rather than merely slow it down. Zero-leg
+// (unpriceable) rows are excluded so the last trade is always a price.
 func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit int) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 100
@@ -1771,8 +1771,9 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
            FROM trades
           WHERE base_asset  = $1
             AND quote_asset = $2
+            AND base_amount > 0 AND quote_amount > 0
           ORDER BY ts DESC, ledger DESC
-          LIMIT $3)
+          FETCH FIRST $3 ROWS WITH TIES)
         UNION ALL
         (SELECT source, ledger, tx_hash, op_index, ts,
                 base_asset, quote_asset,
@@ -1783,9 +1784,10 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
            FROM trades
           WHERE base_asset  = $2
             AND quote_asset = $1
+            AND base_amount > 0 AND quote_amount > 0
           ORDER BY ts DESC, ledger DESC
-          LIMIT $3)
-        ORDER BY ts DESC, ledger DESC
+          FETCH FIRST $3 ROWS WITH TIES)
+        ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
         LIMIT $3
     `
 	rows, err := s.db.QueryContext(ctx, q,
@@ -1824,7 +1826,11 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 // (migration 0037) covers the (base_asset, quote_asset, source, ts
 // DESC, ledger DESC) order exactly, and each arm uses it as it always
 // did. The cost is ~O(num_sources) per direction rather than
-// O(rows_in_market).
+// O(rows_in_market). A ledger can hold several of one source's trades,
+// so the LATERAL then picks among that head's rows by (tx_hash,
+// op_index). Those keys must stay out of the DISTINCT ON's ORDER BY:
+// the index does not cover them, and the skip scan degrades to a sort
+// of the whole market.
 //
 // A source that traded the market BOTH ways round therefore arrives
 // twice, and one row per source is what this returns, so the two are
@@ -1884,31 +1890,49 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 // unbounded-latest-ok: see point 3 above; TestLatestTradeReadsTakeNoRecencyBound pins it.
 func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sourceFilter string) ([]canonical.Trade, error) {
 	const q = `
-        (SELECT DISTINCT ON (source)
-                source, ledger, tx_hash, op_index, ts,
-                base_asset, quote_asset,
-                base_amount, quote_amount,
-                COALESCE(maker, '')      AS maker,
-                COALESCE(taker, '')      AS taker,
-                COALESCE(routed_via, '') AS routed_via
-           FROM trades
-          WHERE base_asset  = $1
-            AND quote_asset = $2
-            AND ($3 = '' OR source = $3)
-          ORDER BY source, ts DESC, ledger DESC)
+        (SELECT t.source, t.ledger, t.tx_hash, t.op_index, t.ts,
+                t.base_asset, t.quote_asset,
+                t.base_amount, t.quote_amount,
+                COALESCE(t.maker, '')      AS maker,
+                COALESCE(t.taker, '')      AS taker,
+                COALESCE(t.routed_via, '') AS routed_via
+           FROM (SELECT DISTINCT ON (source) source, ts, ledger
+                   FROM trades
+                  WHERE base_asset  = $1
+                    AND quote_asset = $2
+                    AND ($3 = '' OR source = $3)
+                  ORDER BY source, ts DESC, ledger DESC) head
+          CROSS JOIN LATERAL
+                (SELECT * FROM trades
+                  WHERE base_asset  = $1
+                    AND quote_asset = $2
+                    AND source = head.source
+                    AND ts     = head.ts
+                    AND ledger = head.ledger
+                  ORDER BY tx_hash DESC, op_index DESC
+                  LIMIT 1) t)
         UNION ALL
-        (SELECT DISTINCT ON (source)
-                source, ledger, tx_hash, op_index, ts,
-                base_asset, quote_asset,
-                base_amount, quote_amount,
-                COALESCE(maker, '')      AS maker,
-                COALESCE(taker, '')      AS taker,
-                COALESCE(routed_via, '') AS routed_via
-           FROM trades
-          WHERE base_asset  = $2
-            AND quote_asset = $1
-            AND ($3 = '' OR source = $3)
-          ORDER BY source, ts DESC, ledger DESC)
+        (SELECT t.source, t.ledger, t.tx_hash, t.op_index, t.ts,
+                t.base_asset, t.quote_asset,
+                t.base_amount, t.quote_amount,
+                COALESCE(t.maker, '')      AS maker,
+                COALESCE(t.taker, '')      AS taker,
+                COALESCE(t.routed_via, '') AS routed_via
+           FROM (SELECT DISTINCT ON (source) source, ts, ledger
+                   FROM trades
+                  WHERE base_asset  = $2
+                    AND quote_asset = $1
+                    AND ($3 = '' OR source = $3)
+                  ORDER BY source, ts DESC, ledger DESC) head
+          CROSS JOIN LATERAL
+                (SELECT * FROM trades
+                  WHERE base_asset  = $2
+                    AND quote_asset = $1
+                    AND source = head.source
+                    AND ts     = head.ts
+                    AND ledger = head.ledger
+                  ORDER BY tx_hash DESC, op_index DESC
+                  LIMIT 1) t)
         ORDER BY source
     `
 	rows, err := s.db.QueryContext(ctx, q,

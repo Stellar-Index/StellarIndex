@@ -1,0 +1,127 @@
+---
+# promtool unit tests for the verify-lake alerts in deploy/monitoring/rules/storage.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/lake-verify_test.yml
+#
+# verify-lake.timer runs daily and writes lake_verify.prom only after every
+# requested check completed, so a crashed run leaves last_run_unix to age.
+
+rule_files:
+  - ../rules/storage.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ═══ stellarindex_lake_verify_stale ═════════════════════════════════════
+
+  # (RED) a lake host that has never produced a verdict: the series is
+  # absent, so the stale arm is anchored on the schema snapshot's stamp.
+  - interval: 1m
+    name: a lake host with no verify-lake verdict tickets stale
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+60x180'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_lake_verify_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/lake-verify.md
+              summary: "verify-lake has not completed a run on r1:9100 in 2 days"
+              description: |
+                Timer not running, or every run crashed before its verdict —
+                `systemctl status verify-lake.timer verify-lake.service`,
+                `journalctl -u verify-lake --since -50h`.
+
+  # (GREEN) a run that completed recently.
+  - interval: 1m
+    name: a fresh verify-lake run does not ticket stale
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+60x180'
+      - series: 'stellarindex_lake_verify_last_run_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+60x180'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_lake_verify_stale
+        exp_alerts: []
+
+  # (RED) the last completed run is 49 h old: silent at 47 h, fires past
+  # 48 h + for.
+  - interval: 1m
+    name: a verify-lake run older than 48h tickets stale
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+60x3060'
+      - series: 'stellarindex_lake_verify_last_run_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0x3060'
+    alert_rule_test:
+      - eval_time: 47h
+        alertname: stellarindex_lake_verify_stale
+        exp_alerts: []
+      - eval_time: 50h
+        alertname: stellarindex_lake_verify_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/lake-verify.md
+              summary: "verify-lake has not completed a run on r1:9100 in 2 days"
+              description: |
+                Timer not running, or every run crashed before its verdict —
+                `systemctl status verify-lake.timer verify-lake.service`,
+                `journalctl -u verify-lake --since -50h`.
+
+  # ═══ stellarindex_lake_verify_failed ════════════════════════════════════
+
+  # (RED) the raw-table census found three short partitions.
+  - interval: 1m
+    name: a verify-lake raw_census failure tickets
+    input_series:
+      - series: 'stellarindex_lake_verify_failures{job="node_exporter", instance="r1:9100", check="raw_census"}'
+        values: '3x10'
+      - series: 'stellarindex_lake_verify_failures{job="node_exporter", instance="r1:9100", check="contiguity"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_lake_verify_failed
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9100
+              check: raw_census
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/lake-verify.md
+              summary: "verify-lake found 3 raw_census failure(s) on r1:9100"
+              description: |
+                Per-check triage is in the runbook; `journalctl -u verify-lake -n 300`
+                holds the gap / deficiency / SHORT lines of the last run.
+
+  # (GREEN) every check that ran found nothing.
+  - interval: 1m
+    name: an all-zero verify-lake verdict does not ticket
+    input_series:
+      - series: 'stellarindex_lake_verify_failures{job="node_exporter", instance="r1:9100", check="contiguity"}'
+        values: '0x10'
+      - series: 'stellarindex_lake_verify_failures{job="node_exporter", instance="r1:9100", check="entry_changes"}'
+        values: '0x10'
+      - series: 'stellarindex_lake_verify_failures{job="node_exporter", instance="r1:9100", check="hash_chain"}'
+        values: '0x10'
+      - series: 'stellarindex_lake_verify_failures{job="node_exporter", instance="r1:9100", check="raw_census"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_lake_verify_failed
+        exp_alerts: []

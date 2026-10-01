@@ -70,9 +70,12 @@ const VALUATION_REASON: Record<string, string> = {
 const BASIS_PROSE: Record<string, string> = {
   oracle_rwa_feed: 'priced by an independent oracle feed',
   sep1_isin_declaration: 'declared by the issuer under a registered ISIN',
-  third_party_curated: 'listed by a named third-party curator, not an attestation or a feed',
-  curated_contract_instrument: 'bound by a curated in-repo entry to a named real-world instrument',
-  contract_oracle_rwa_feed: "priced by an independent oracle feed, keyed on the contract's declared symbol",
+  third_party_curated:
+    'listed by a named third-party curator, not an attestation or a feed',
+  curated_contract_instrument:
+    'bound by a curated in-repo entry to a named real-world instrument',
+  contract_oracle_rwa_feed:
+    "priced by an independent oracle feed, keyed on the contract's declared symbol",
 };
 const BASIS_PROSE_FALLBACK = 'priced by an independent oracle feed';
 
@@ -238,6 +241,22 @@ const ARM_PROSE: Record<string, { title: string; lede: string }> = {
   },
 };
 
+/** The valuation arm's copy once the reference total mixes provenances. */
+const MIXED_VALUATION_ARM_PROSE = {
+  title: 'Whose backing is valued by a published reference',
+  lede: 'Not a membership narrowing — every asset here is already in the set. It continues past the served rows to say which of them carry a published reference valuation of their backing, and why each of the others does not. Nothing in it admits or refuses an asset.',
+};
+
+function armProse(
+  arm: string,
+  provenances: ReferenceProvenances,
+): { title: string; lede: string } | undefined {
+  if (arm === 'valuation' && !oracleOnly(provenances)) {
+    return MIXED_VALUATION_ARM_PROSE;
+  }
+  return ARM_PROSE[arm];
+}
+
 /** Who can move a number, in the page's voice. */
 const FUNNEL_ACTOR_PROSE: Record<string, string> = {
   operator: 'ours to fix',
@@ -323,11 +342,16 @@ export function RWAView() {
     <div className="space-y-6">
       <HeadlineStats
         summary={summary}
+        assets={assets}
         total={total}
         referenceTotal={referenceTotal}
       />
 
-      <SectorTotals summary={summary} stable={stable} />
+      <SectorTotals
+        summary={summary}
+        stable={stable}
+        provenances={summary.reference_valuation?.provenances}
+      />
 
       {/* Everything else on this page is a snapshot. The set's whole
           claim is about real-world value on chain, and "is it growing"
@@ -411,8 +435,15 @@ export function RWAView() {
         </div>
       )}
 
-      <DefinitionPanel definition={data.definition} refused={refused} />
-      <CoveragePanel funnel={data.funnel} />
+      <DefinitionPanel
+        definition={data.definition}
+        refused={refused}
+        provenances={summary.reference_valuation?.provenances}
+      />
+      <CoveragePanel
+        funnel={data.funnel}
+        provenances={summary.reference_valuation?.provenances}
+      />
       <UnreachedPanel entities={data.unreached_entities} />
     </div>
   );
@@ -679,7 +710,13 @@ function monthLabel(asOf: string): string {
   });
 }
 
-function CoveragePanel({ funnel }: { funnel?: Schemas['RWAFunnel'] }) {
+function CoveragePanel({
+  funnel,
+  provenances,
+}: {
+  funnel?: Schemas['RWAFunnel'];
+  provenances: ReferenceProvenances;
+}) {
   if (!funnel || funnel.stages.length === 0) return null;
   // Grouped by arm, in served order. The two arms narrow different
   // populations from different roots, so running them together as one
@@ -702,17 +739,20 @@ function CoveragePanel({ funnel }: { funnel?: Schemas['RWAFunnel'] }) {
       {arms.map(({ arm, stages }) => (
         <section key={arm} className="mt-4">
           <h3 className="text-ink-body text-xs font-medium">
-            {ARM_PROSE[arm]?.title ?? arm}
+            {armProse(arm, provenances)?.title ?? arm}
           </h3>
           <p className="text-ink-faint mt-0.5 text-[11px] leading-relaxed">
-            {ARM_PROSE[arm]?.lede ?? ''}
+            {armProse(arm, provenances)?.lede ?? ''}
           </p>
           <ol className="border-line mt-2 space-y-2 border-t pt-3 text-xs leading-relaxed">
             {stages.map((s) => (
               <li key={`${arm}-${s.stage}`}>
                 <div className="flex justify-between gap-4">
                   <span className="text-ink-body">
-                    {FUNNEL_STAGE_PROSE[s.stage] ?? s.stage}
+                    {s.stage === 'assets_reference_valued' &&
+                    !oracleOnly(provenances)
+                      ? 'Whose backing carries a published reference valuation'
+                      : (FUNNEL_STAGE_PROSE[s.stage] ?? s.stage)}
                   </span>
                   <span className="tnum text-ink-body font-medium">
                     {s.count.toLocaleString('en-US')}{' '}
@@ -963,17 +1003,63 @@ export function splitBasis(
  * field, or the degenerate zero-contributor case) rather than
  * asserting a mix that isn't confirmed.
  */
-function referenceBasisPhrase(
-  provenances: Schemas['RWAReferenceSummary']['provenances'],
-): string {
-  if (
-    provenances != null &&
-    provenances.length > 0 &&
-    !provenances.every((p) => p === 'oracle_instrument_nav')
-  ) {
-    return 'the published reference valuation';
+function referenceBasisPhrase(provenances: ReferenceProvenances): string {
+  return oracleOnly(provenances)
+    ? "an independent oracle's valuation"
+    : 'the published reference valuation';
+}
+
+type ReferenceProvenances = Schemas['RWAReferenceSummary']['provenances'];
+
+/** Whether every copy line may call the reference total an oracle's. */
+function oracleOnly(provenances: ReferenceProvenances): boolean {
+  return (
+    provenances == null ||
+    provenances.length === 0 ||
+    provenances.every((p) => p === 'oracle_instrument_nav')
+  );
+}
+
+/** The value-of-backing definition once the total mixes provenances. */
+const MIXED_REFERENCE_PROSE =
+  "the published reference value of one unit — an oracle's valuation of the underlying instrument, the fund's own published NAV per share, a listing platform's price for the token, or the NAV the fund's prospectus fixes, depending on the row";
+
+const PROVENANCE_SOURCE_PROSE: Record<string, string> = {
+  oracle_instrument_nav: 'oracle feeds',
+  fund_nav: 'fund NAVs published to the cent',
+  listing_platform_price: 'listing-platform prices for the token',
+  prospectus_constant_nav: 'constant NAV fixed by the fund’s prospectus',
+};
+
+/**
+ * The contributing publishers grouped by the kind of claim each made,
+ * read off the rows because the summary's flat `sources` list cannot say
+ * which kind a publisher contributed. A prospectus row's `source` is a
+ * sentence naming its NAV page, so that kind is counted rather than
+ * listed. Null when any contributing row carries no provenance, so the
+ * caller falls back to the flat list rather than dropping a publisher.
+ */
+export function referenceSourcesByProvenance(
+  assets: RWAAsset[],
+): { provenance: string; sources: string[]; rows: number }[] | null {
+  const groups = new Map<string, { sources: Set<string>; rows: number }>();
+  for (const a of assets) {
+    const ref = a.reference;
+    if (a.reference_valuation.value_usd == null || !ref?.source) continue;
+    if (!ref.provenance) return null;
+    const g = groups.get(ref.provenance) ?? { sources: new Set(), rows: 0 };
+    g.sources.add(ref.source);
+    g.rows++;
+    groups.set(ref.provenance, g);
   }
-  return "an independent oracle's valuation";
+  if (groups.size === 0) return null;
+  return [...groups.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([provenance, g]) => ({
+      provenance,
+      sources: [...g.sources].sort(),
+      rows: g.rows,
+    }));
 }
 
 /** The full basis, one click away from the figure it describes. */
@@ -1171,11 +1257,16 @@ export type StablecoinTotals = {
 function SectorTotals({
   summary,
   stable,
+  provenances,
 }: {
   summary: Schemas['RWASummary'];
   stable: StablecoinTotals;
+  provenances: ReferenceProvenances;
 }) {
   const reference = summary.reference_valuation;
+  const backing = oracleOnly(provenances)
+    ? 'An oracle’s valuation of the backing'
+    : 'The published reference valuation of the backing';
   const rwaTotal = reference?.value_usd ?? null;
   const stableTotal = stable.available ? stable.total : null;
   // Combined needs BOTH arms. One arm missing makes the sum a smaller
@@ -1269,18 +1360,17 @@ function SectorTotals({
           <p className="text-ink-muted mt-2 text-xs leading-relaxed">
             {stable.listingPriced > 0 ? (
               <>
-                <strong className="text-ink">Three bases, added.</strong> An
-                oracle&rsquo;s valuation of the backing, plus observed
-                stablecoin market caps, plus {stable.listingPriced} stablecoin
+                <strong className="text-ink">Three bases, added.</strong>{' '}
+                {backing}, plus observed stablecoin market caps, plus{' '}
+                {stable.listingPriced} stablecoin
                 {stable.listingPriced === 1 ? '' : 's'} valued at an independent
                 listing platform&rsquo;s price because this index will not
                 publish a market cap from the thin market it observed.
               </>
             ) : (
               <>
-                <strong className="text-ink">Two bases, added.</strong> An
-                oracle&rsquo;s valuation of the backing plus observed stablecoin
-                market caps.
+                <strong className="text-ink">Two bases, added.</strong>{' '}
+                {backing} plus observed stablecoin market caps.
               </>
             )}{' '}
             It is not a market capitalisation, and it is not the
@@ -1303,15 +1393,19 @@ function SectorTotals({
  */
 function HeadlineStats({
   summary,
+  assets,
   total,
   referenceTotal,
 }: {
   summary: Schemas['RWASummary'];
+  assets: RWAAsset[];
   total: string | null;
   referenceTotal: string | null;
 }) {
   const reference = summary.reference_valuation;
   const both = summary.both_bases;
+  const oracle = oracleOnly(reference?.provenances);
+  const byProvenance = referenceSourcesByProvenance(assets);
   return (
     <div className="space-y-3">
       {/* The two bases, in the order a reader should meet them, and
@@ -1351,13 +1445,16 @@ function HeadlineStats({
       </StatGrid>
       <p className="text-ink-muted text-xs leading-relaxed">
         <strong>Two different kinds of number.</strong> The value of the backing
-        is what an independent oracle says the underlying instrument is worth,
-        multiplied by the tokens in circulation — nobody was seen paying it, and
-        no gate here can check it. The market cap is what buyers were observed
-        paying, under the same price, liquidity and trust gates the asset pages
-        apply. A tokenized treasury is bought and held, so most of this set has
-        no market price at all and the two figures cover different assets. They
-        are never added together.{' '}
+        is{' '}
+        {oracle
+          ? 'what an independent oracle says the underlying instrument is worth'
+          : MIXED_REFERENCE_PROSE}
+        , multiplied by the tokens in circulation — nobody was seen paying it,
+        and no gate here can check it. The market cap is what buyers were
+        observed paying, under the same price, liquidity and trust gates the
+        asset pages apply. A tokenized treasury is bought and held, so most of
+        this set has no market price at all and the two figures cover different
+        assets. They are never added together.{' '}
         {both != null && both.assets > 0 && (
           <>
             <strong>Where both exist.</strong> {both.assets} of {summary.assets}{' '}
@@ -1369,17 +1466,30 @@ function HeadlineStats({
         {summary.assets_with_reference > 0 && (
           <>
             <strong>Compared against the instrument.</strong>{' '}
-            {summary.assets_with_reference} of {summary.assets} carry an
-            independent oracle valuation of the instrument they anchor to, and{' '}
-            {summary.assets_compared} of those also have a Stellar market price
-            to measure it against. The rest state which requirement stopped the
-            comparison rather than showing a zero.{' '}
+            {summary.assets_with_reference} of {summary.assets} carry{' '}
+            {oracle
+              ? 'an independent oracle valuation of the instrument they anchor to'
+              : 'a published reference valuation'}
+            , and {summary.assets_compared} of those also have a Stellar market
+            price to measure it against. The rest state which requirement
+            stopped the comparison rather than showing a zero.{' '}
           </>
         )}
         {reference?.sources != null && reference.sources.length > 0 && (
           <>
             <strong>Where the reference comes from.</strong>{' '}
-            {reference.sources.join(', ')}
+            {byProvenance == null
+              ? reference.sources.join(', ')
+              : byProvenance
+                  .map(
+                    (g) =>
+                      `${PROVENANCE_SOURCE_PROSE[g.provenance] ?? g.provenance}: ${
+                        g.provenance === 'prospectus_constant_nav'
+                          ? `${g.rows} ${g.rows === 1 ? 'asset' : 'assets'}, each row naming its NAV page`
+                          : g.sources.join(', ')
+                      }`,
+                  )
+                  .join('; ')}
             {reference.provenances != null &&
             reference.provenances.length > 1 ? (
               <>
@@ -1558,13 +1668,28 @@ function ReferenceValueCell({ asset }: { asset: RWAAsset }) {
     <div>
       <div
         className="tnum"
-        title={`Circulating supply times ${asset.reference?.source ?? 'an oracle'}’s value for the instrument. Not a market capitalisation: nobody was observed paying this, and the liquidity and price gates behind the market-cap column cannot check it.`}
+        title={`Circulating supply times ${referenceValueWhose(asset.reference)}. Not a market capitalisation: nobody was observed paying this, and the liquidity and price gates behind the market-cap column cannot check it.`}
       >
         {value}
       </div>
       <div className="text-ink-faint text-[11px]">at reference price</div>
     </div>
   );
+}
+
+/** Whose per-unit value a row's reference valuation multiplies. */
+function referenceValueWhose(ref: RWAAsset['reference']): string {
+  // A prospectus row's `source` is a sentence naming its NAV page, not a publisher.
+  switch (ref?.provenance) {
+    case 'prospectus_constant_nav':
+      return 'the NAV fixed by the fund’s prospectus';
+    case 'fund_nav':
+      return `the fund’s published NAV per share (via ${ref.source})`;
+    case 'listing_platform_price':
+      return `${ref.source}’s price for the token`;
+    default:
+      return `${ref?.source ?? 'an oracle'}’s value for the instrument`;
+  }
 }
 
 /**
@@ -1745,9 +1870,11 @@ function GroupTable({
 function DefinitionPanel({
   definition,
   refused,
+  provenances,
 }: {
   definition: Schemas['RWADefinition'];
   refused: Schemas['RWARefusal'][];
+  provenances: ReferenceProvenances;
 }) {
   const refusedTotal = refused.reduce((n, r) => n + r.assets, 0);
   return (
@@ -1843,10 +1970,12 @@ function DefinitionPanel({
           observed paying, and it reaches this page only after the same
           thin-market, dust-liquidity and scam-issuer gates the asset pages
           apply have each declined to withhold it. <em>Value of backing</em> is
-          circulating supply times what an independent oracle says one unit of
-          the underlying instrument is worth. Nobody was observed paying that,
-          and none of those gates can check it — there is no market in it for
-          them to measure.
+          circulating supply times{' '}
+          {oracleOnly(provenances)
+            ? 'what an independent oracle says one unit of the underlying instrument is worth'
+            : MIXED_REFERENCE_PROSE}
+          . Nobody was observed paying that, and none of those gates can check
+          it — there is no market in it for them to measure.
         </p>
         <p className="mt-2">
           Both are published because neither alone is honest here. A tokenized

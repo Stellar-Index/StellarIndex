@@ -128,7 +128,7 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	sample := fs.Int("sample", 10, "estimated tiers only: how many changed rows to print in the report's sample (deterministic reservoir)")
 	batch := fs.Int("batch", defaultRestampBatch, "estimated tiers only: rows per UPDATE transaction")
 	minRelDelta := fs.String("min-rel-delta", "", "estimated tiers only: skip writing rows whose relative move |new-old|/|old| is below this fraction (0.01 = 1%). Empty/0 = write every row that differs. Never skips a NULL fill. RECOMMENDED 0.001 for a full-window run: it drops ~8% of the write set that moves <0.1% purely from prices_1m finalisation — see the report footer.")
-	maxGeneration := fs.Int64("max-generation", -1, "estimated tiers only: only consider rows at derive_generation <= this. -1 = the run's own generation (everything). 0 targets exactly the never-re-derived population.")
+	maxGeneration := fs.Int64("max-generation", -1, "estimated tiers only: only consider rows at derive_generation <= this. -1 = the run's own generation (everything); a value above the run's generation is refused. 0 targets exactly the never-re-derived population.")
 	chunks := fs.Bool("chunks", false, "EITHER tier: chunk-by-chunk mode — pause the trades compression policy, then for each trades chunk in the window: decompress_chunk (if it was compressed), restamp inside it, compress_chunk (if it was compressed); re-enable the policy on exit. Use for a window whose chunks are compressed (anything older than the policy's 7 days): in-place UPDATEs into compressed chunks measured ~1,574 rows/min. Dry run prints the chunk plan and decompresses nothing; -write first checks free space on the data volume (> 2 x the largest chunk's uncompressed size, re-checked before every decompress) and refuses a window reaching into the policy's lag (see -allow-live-adjacent). Run on the database host.")
 	chunkBatch := fs.Int("chunk-batch", defaultChunkBatch, "-chunks with an estimated tier only: rows per UPDATE transaction inside a decompressed chunk. The exact tier's transaction is one -slice window and takes no row batch.")
 	minFreeBytes := fs.Int64("min-free-bytes", 0, "-chunks only: OVERRIDE the free-space measurement with this many bytes, for a host where the data volume cannot be statfs'd (the tool warns loudly and trusts the figure). Check the database host yourself first.")
@@ -222,9 +222,9 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	if *runGeneration > 0 {
 		generation = *runGeneration
 	}
-	maxGen := *maxGeneration
-	if maxGen < 0 {
-		maxGen = generation
+	maxGen, err := resolveRestampMaxGeneration(*maxGeneration, generation)
+	if err != nil {
+		return err
 	}
 
 	// ─── one-writer contract: the window must be BEHIND the live tail ──
@@ -248,6 +248,7 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	copts := chunkRestampOptions{
 		Batch: *chunkBatch, MinFreeBytes: *minFreeBytes, AllowLiveAdjacent: *allowLiveAdjacent,
 		ResumePausedPolicy: *resumePausedPolicy,
+		RemoteDBHost:       remoteDSNHost(cfg.Storage.PostgresDSN),
 	}
 
 	if restampTierIsEstimated(*tier) {

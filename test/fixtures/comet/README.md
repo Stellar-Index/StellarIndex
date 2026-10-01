@@ -15,17 +15,22 @@ Comet has exactly one deployed pool (`docs/operations/wasm-audits/comet.md`),
 so this single capture covers the whole allowlist per GH-932's fix
 direction.
 
-## Known gap
+## Self-pair swaps
 
-The 2026-08-25 Blend/Comet exploit self-pair swaps
-(`docs/operations/runbooks/amm-self-pair-swap-burst.md`, ledger
-~64,112,340) are **not** captured here: the public RPC's `getEvents`
-retention window only reaches back roughly 120k ledgers from the
-chain tip, so that historical ledger is outside its range at capture
-time. Proving the self-pair zero-rows path (`decodeSwap` →
-`canonical.ErrPairMismatch`) against real exploit bytes needs the
-archival lake (ClickHouse raw tier, ADR-0034), not stellar-rpc — a
-follow-up for whoever has query access to it.
+`<wasm>/self_pair/` holds two real self-pair swaps (`token_in ==
+token_out`, `docs/operations/runbooks/amm-self-pair-swap-burst.md`) at
+ledgers 64,112,340 and 64,112,891. They are older than the public RPC's
+`getEvents` retention (~120k ledgers from the tip), so they were read
+from the archival lake (ClickHouse `stellar.contract_events`, ADR-0034),
+not stellar-rpc. In ledgers 64,111,000–64,114,000 the pool emitted 928
+`POOL` events (700 swap, 156 deposit, 72 exit_pool); 36 of the swaps,
+in 36 distinct transactions, are self-pair. The pool has run WASM
+`8abc2891…` for its whole life (`stellar.contract_instance_changes`),
+so these share the ordinary capture's directory.
+`TestRealMainnetFixtures_cometSelfPair` asserts the production path
+(`Matches` + `Decode`) yields zero rows and no error, via
+`canonical.ErrPairMismatch`; the subdirectory keeps them out of
+`TestRealMainnetFixtures_comet`, which expects an ordinary trade.
 
 ## Fixture file shape
 

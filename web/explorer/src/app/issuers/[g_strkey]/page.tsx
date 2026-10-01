@@ -16,7 +16,7 @@ import {
   formatRelative,
 } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
-import { ogImageFor } from '@/lib/seo';
+import { ogImageFor, shellMetadata } from '@/lib/seo';
 import { StellarExpertLink } from '@/components/StellarExpertLink';
 import { routeAvailable } from '@/lib/network-routes';
 import { CURRENT_NETWORK, stellarChainEntityUrl } from '@/lib/networks';
@@ -132,32 +132,13 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { g_strkey } = await params;
-  // The runtime-fallback shell's HTML (functions/issuers/[[path]].js)
-  // serves for ARBITRARY long-tail issuer URLs beyond the pre-rendered
-  // top-100, so its baked metadata must be generic — the literal 'shell'
-  // param would title/canonical every such page as the shell itself,
-  // consolidating every long-tail issuer onto one indexed URL (F086).
-  // IssuerPathView restamps document.title client-side once the real
-  // issuer loads. Same pattern as assets/[slug] and markets/[pair].
+  // The runtime-fallback shell's HTML serves for arbitrary long-tail
+  // issuers; IssuerPathView restamps document.title once the issuer loads.
   if (g_strkey === 'shell') {
-    return {
-      title: 'Issuer',
-      description:
-        'Identity, auth flags, and issued assets for a Stellar issuer.',
-      // This one document answers 200 for EVERY unmatched /issuers/*
-      // path, so indexing it files a soft-404 under whatever URL the
-      // crawler happened to try. noindex is the same posture the other
-      // long-tail shells take route-wide (/accounts, /contracts,
-      // /ledgers, /transactions, /assets, /markets); follow stays on so
-      // the crawler still walks out through the nav.
-      // Metadata merges shallowly per top-level key, so omitting
-      // `alternates` here would inherit the root layout's
-      // `alternates: { canonical: '/' }` verbatim — every long-tail
-      // issuer would bake a rel=canonical pointing at the homepage.
-      // Override with an empty object so no canonical is emitted.
-      robots: { index: false, follow: true },
-      alternates: {},
-    };
+    return shellMetadata(
+      'Issuer',
+      'Identity, auth flags, and issued assets for a Stellar issuer.',
+    );
   }
   const short = `${g_strkey.slice(0, 8)}…${g_strkey.slice(-4)}`;
   const canonical = `${CURRENT_NETWORK.explorerUrl}/issuers/${g_strkey}`;
@@ -430,8 +411,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                     <>
                       {' '}
                       (ledger{' '}
-                      {detail.auth_flags_as_of_ledger.toLocaleString('en-US')}
-                      )
+                      {detail.auth_flags_as_of_ledger.toLocaleString('en-US')})
                     </>
                   )}
                   . This account no longer exists on the ledger, so these are

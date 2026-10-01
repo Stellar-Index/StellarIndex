@@ -95,7 +95,7 @@ func TestRWADefinitionDocProvenanceTableMatchesCode(t *testing.T) {
 			got = append(got, c)
 		}
 	}
-	want := sortedStrings(RWAReferenceOracleNAV, RWAReferenceListingPrice,
+	want := sortedStrings(RWAReferenceOracleNAV, RWAReferenceFundNAV, RWAReferenceListingPrice,
 		RWAReferenceProspectusCNAV, RWAReferenceCuratorPrice)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("provenance table lists %v, the code issues %v", got, want)

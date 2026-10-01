@@ -101,6 +101,11 @@ narrated the response). T+0 = trigger injection at 14:32 UTC.
   against staging — first-time muscle memory. Action: include
   a quarterly chaos drill where we actually run the command on
   staging.
+- **The T+18:00 mitigation is no longer sanctioned.**
+  [`runbooks/db-disk-full.md`](../runbooks/db-disk-full.md) now
+  forbids `drop_chunks` on data tables; disk relief is pool-level
+  via [`runbooks/zfs-pool-full.md`](../runbooks/zfs-pool-full.md).
+  The timeline above records what was practised, not what to do.
 
 ## Action items
 
@@ -115,12 +120,18 @@ solo drill. A real 3-person drill should file these under the
 - [x] **Cross-link §5.3 internal-channel template from
       `timescale-primary-down.md` Mitigation** — owner the maintainer, done
       in same PR.
-- [ ] **Quarterly chaos drill that actually runs `drop_chunks` on
-      staging** — owner the maintainer, due 2026-Q3 (post-launch chaos
-      Wave 2).
-- [ ] **Add Patroni-driven failover scenario script as a
+- [x] *Withdrawn:* `runbooks/db-disk-full.md` forbids `drop_chunks`
+      on data tables because it destroys served history; disk relief is
+      pool-level per `runbooks/zfs-pool-full.md`. A future disk-full
+      drill rehearses those pool-level levers on the post-launch
+      Wave 2 staging box instead. Original item: **Quarterly chaos
+      drill that actually runs `drop_chunks` on staging** — owner the
+      maintainer, due 2026-Q3 (post-launch chaos Wave 2).
+- [x] **Add Patroni-driven failover scenario script as a
       successor to `sev1-timescale-primary-failover.md`** —
-      owner the maintainer, due 2026-Q3.
+      owner the maintainer, due 2026-Q3. Drafted as
+      [`scenarios/sev1-patroni-failover.md`](scenarios/sev1-patroni-failover.md);
+      unvalidated until a Patroni cluster exists.
 - [ ] **3-person tabletop after launch with the next on-call
       hire** — owner the maintainer, due 2026-Q3.
 

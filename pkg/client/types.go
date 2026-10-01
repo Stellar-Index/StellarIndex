@@ -97,6 +97,8 @@ type Flags struct {
 	// chain. Mirrors the server's envelope flag; omitempty hides it
 	// when false.
 	Rerouted bool `json:"rerouted,omitempty"`
+	// PivotUnverified: a composite leg was all stablecoin prints at par, so a de-peg in it went unchecked.
+	PivotUnverified bool `json:"pivot_unverified,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.
@@ -367,15 +369,23 @@ type AssetDetail struct {
 
 	// FDVUSD = max_supply × USD price / 10^Decimals. Null when
 	// max_supply is null (uncapped issuer + no override + no SEP-1
-	// declaration) or when USD price is unavailable.
+	// declaration), when USD price is unavailable, or when suppressed
+	// (see MarketCapLowLiquidity and MarketCapDecimalsMismatch).
 	FDVUSD *string `json:"fdv_usd,omitempty"`
 
-	// MarketCapLowLiquidity is true when market_cap_usd (and fdv_usd) were
-	// deliberately suppressed — served null — because the backing price came
-	// from negligible liquidity (a single venue AND trailing-24h USD volume
-	// below the server's valuation-integrity floor). Distinguishes
-	// "suppressed on purpose" from "no supply/price data"; the price_usd
-	// itself still serves. Omitted (false) when a cap is present.
+	// MarketCapLowLiquidity is true when market_cap_usd or fdv_usd were
+	// deliberately suppressed — served null — by either of two guards:
+	//
+	//   - the floor: the backing price came from negligible liquidity (a
+	//     single venue AND trailing-24h USD volume below the server's
+	//     valuation-integrity floor), or
+	//   - the ceiling: the figure exceeds the server's maximum multiple of
+	//     the asset's own trailing-24h USD volume. FDV (over max_supply, so
+	//     >= the cap) can breach it alone, leaving market_cap_usd served.
+	//
+	// Distinguishes "suppressed on purpose" from "no supply/price data";
+	// the price_usd itself still serves. Omitted (false) when neither
+	// figure was suppressed.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 
 	// MarketCapDecimalsMismatch is true when market_cap_usd (and fdv_usd)
@@ -582,7 +592,8 @@ type FiatCodeAnchor struct {
 // are decimal strings (ADR-0003); `Price` is the pre-computed
 // quote/base ratio at 10 fractional digits for consumer
 // convenience (the storage layer never persists a derived price,
-// so the server computes it at response time).
+// so the server computes it at response time). Price is nil when one
+// leg is zero (an SDEX rounding fill): such a trade has no price.
 type TradeRow struct {
 	Source      string    `json:"source"`
 	Ledger      uint32    `json:"ledger"`
@@ -593,7 +604,7 @@ type TradeRow struct {
 	QuoteAsset  string    `json:"quote_asset"`
 	BaseAmount  string    `json:"base_amount"`
 	QuoteAmount string    `json:"quote_amount"`
-	Price       string    `json:"price"`
+	Price       *string   `json:"price"`
 	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each
 	// side: divide BaseAmount by 10^BaseDecimals (QuoteAmount by
 	// 10^QuoteDecimals) for whole-asset units.
@@ -1101,6 +1112,10 @@ type Status struct {
 	// "unknown" is how a status banner publishes "0 active alerts"
 	// while alerting is blind.
 	IncidentsStatus string `json:"incidents_status"`
+	// FreshnessStatus is the same trust signal for the Freshness block:
+	// "ok" (every enabled source active), "degraded" (active < total) or
+	// "unknown" (a count query failed; the counts are nil).
+	FreshnessStatus string `json:"freshness_status"`
 }
 
 // StatusRegion identifies which region produced the response.
@@ -1135,11 +1150,12 @@ type StatusLatency struct {
 	P99TargetMs float64 `json:"p99_target_ms"`
 }
 
-// StatusFreshness summarises the ingest layer.
+// StatusFreshness summarises the ingest layer. A nil count was not
+// measured (its query failed); a served 0 is a non-nil 0.
 type StatusFreshness struct {
 	LastAggregatorTick time.Time `json:"last_aggregator_tick,omitempty"`
-	ActiveSources      int       `json:"active_sources"`
-	TotalSources       int       `json:"total_sources"`
+	ActiveSources      *int      `json:"active_sources,omitempty"`
+	TotalSources       *int      `json:"total_sources,omitempty"`
 }
 
 // StatusIncidents counts currently-firing alerts grouped by
@@ -1500,7 +1516,7 @@ type AssetListingValuation struct {
 }
 
 // VerifiedCurrencyListItem is one row in the response to
-// [Client.AssetsVerified] (`GET /v1/assets/verified`) — a directory
+// `GET /v1/assets/verified` (no Client method yet) — a directory
 // entry from the verified-currency catalogue. Identity-only;
 // pricing requires a per-row fetch via [Client.Asset] with the
 // `Slug` value.
@@ -2121,10 +2137,16 @@ type RWAReference struct {
 	// Stale marks a reference older than 72h — labelled, not withheld.
 	Stale bool `json:"stale,omitempty"`
 	// Provenance names what kind of figure PriceUSD is:
-	// "oracle_instrument_nav", "listing_platform_price",
+	// "oracle_instrument_nav", "fund_nav", "listing_platform_price",
 	// "prospectus_constant_nav" or "curator_uploaded_price". Only the
 	// first is a statement about the backing instrument.
 	Provenance string `json:"provenance"`
+	// DecimalsPublished is the publisher's stated precision; 2 on a
+	// "fund_nav" reference.
+	DecimalsPublished *int `json:"decimals_published,omitempty"`
+	// NAVDisagreement marks an oracle reference that the fund's own
+	// fresh NAV differs from by more than half a cent.
+	NAVDisagreement bool `json:"nav_disagreement,omitempty"`
 }
 
 // RWAPremium is the token's market price measured against the oracle's

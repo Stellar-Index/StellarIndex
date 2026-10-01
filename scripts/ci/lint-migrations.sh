@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Migration lint: money-column (ADR-0003) + file integrity (audit C4-7)
 # + register completeness (wave-D PS-01) + ClickHouse money-column
-# + hypertable index builds + CAGG re-materialization.
+# + hypertable index builds + CAGG re-materialization + atomicity
+# + priceable leg division.
 #
-# Eight passes, all gating (exit non-zero on any violation):
+# Nine passes, all gating (exit non-zero on any violation):
 #   1. money-column — monetary columns must be NUMERIC (ADR-0003).
 #   2. file integrity — every NNNN_*.up.sql has a matching NON-EMPTY
 #      *.down.sql (and no orphan downs), no duplicate NNNN prefixes, and
@@ -27,6 +28,9 @@
 #   7. CAGG re-materialization — a file that recreates a continuous
 #      aggregate WITH NO DATA names its refresh (see the pass).
 #   8. atomicity — no SQL after a file's first COMMIT/ROLLBACK (see the
+#      pass).
+#   9. priceable division — an up.sql statement that divides by
+#      base_amount or quote_amount carries the priceable filter (see the
 #      pass).
 #
 # ── register-completeness detail ──
@@ -56,8 +60,17 @@
 # migrations/*.up.sql this flags a column definition whose name looks
 # monetary next to a non-NUMERIC numeric type.
 #
+# This pass covers single-line `name type` DDL only: a view/CAGG column
+# typed by its expression (`… ::double precision AS volume_usd`), a type
+# on the next line or a float DOMAIN pass it. The authoritative check is
+# TestMoneyColumnsAreNumeric (test/integration/money_columns_test.go),
+# which reads the resolved type of every column from pg_catalog
+# (domains and array elements resolved) and reuses the `name` stem
+# pattern below.
+#
 # Escape hatch: append `-- lint-money:ok <reason>` on the flagged
-# line. Reasons are mandatory — every escape is a design decision
+# line, and list the column in the test's moneyColumnExceptions.
+# Reasons are mandatory — every escape is a design decision
 # (e.g. SDEX price_n/price_d, a protocol-defined int32 rational pair
 # whose money value lives in the sibling NUMERIC `price` column).
 #
@@ -555,8 +568,85 @@ if [ "$txn_files" -eq 0 ]; then
 fi
 echo "lint-migrations: atomicity pass inspected ${txn_files} file(s) under ${TXN_DIR}."
 
+# ── pass 9: priceable leg division ──────────────────────────────────
+# trades admits one zero leg (an SDEX rounding fill) with no CHECK, so a
+# statement dividing by base_amount/quote_amount without the priceable
+# filter `base_amount > 0 AND quote_amount > 0` either raises
+# division_by_zero (aborting a cagg refresh) or publishes a zero price.
+# Escape: `-- lint-priceable:ok <reason>` on any line of the statement;
+# a marker on a statement with no leg division is stale and fails.
+# Shipped files are immutable, so the pre-admission ones are listed
+# below (0187 injects its filter through format(), which this pass cannot
+# see); an entry that no longer has an unguarded division fails.
+priceable_baseline='0002_create_price_aggregates.up.sql
+0036_create_pools_per_source_cagg.up.sql
+0115_ohlc_extremes_notional_floor.up.sql
+0147_ohlc_deterministic_tiebreak.up.sql
+0166_twap_notional_floor.up.sql
+0187_price_caggs_priceable_filter.up.sql'
+
+# priceable_hits <file>: `U <line>` per unguarded, unescaped leg division
+# and `S <line>` per stale escape marker; <line> is the statement's first.
+priceable_hits() {
+  awk '
+    function check(   s) {
+      s = stmt; gsub(/[ \t]+/, " ", s)
+      div = (s ~ /\/ *(([a-z_]+ *)?\( *)*([a-z_]+\.)?(base_amount|quote_amount)([^a-z0-9_]|$)/)
+      guard = (s ~ /([a-z_]+\.)?base_amount *> *0 and ([a-z_]+\.)?quote_amount *> *0/ ||
+               s ~ /([a-z_]+\.)?quote_amount *> *0 and ([a-z_]+\.)?base_amount *> *0/)
+      if (div && !guard && !esc) print "U " start
+      if (esc && !div) print "S " escline
+      stmt = ""; esc = 0; start = 0
+    }
+    {
+      line = $0
+      if (line ~ /--[ \t]*lint-priceable:ok[ \t]+[^ \t]/) { esc = 1; escline = FNR }
+      sub(/--.*$/, "", line); line = tolower(line)
+      while ((i = index(line, ";")) > 0) {
+        if (start == 0) start = FNR
+        stmt = stmt " " substr(line, 1, i - 1); check(); line = substr(line, i + 1)
+      }
+      if (line ~ /[^ \t]/ && start == 0) start = FNR
+      stmt = stmt " " line
+    }
+    END { if (stmt ~ /[^ ]/ || esc) check() }' "$1"
+}
+
+pr_seen=""
+pr_files=0
+for f in "$MIG_DIR"/*.up.sql; do
+  [ -e "$f" ] || continue
+  pr_files=$((pr_files + 1))
+  b="$(basename "$f")"
+  hits="$(priceable_hits "$f")"
+  while read -r kind ln; do
+    [ -n "$kind" ] || continue
+    if [ "$kind" = S ]; then
+      echo "lint-migrations ❌ ${f}:${ln}: stale lint-priceable:ok marker (its statement divides by no leg) — remove it" >&2
+      fail=1
+    elif grep -qx "$b" <<<"$priceable_baseline"; then
+      pr_seen="${pr_seen}${b}"$'\n'
+    else
+      echo "lint-migrations ❌ ${f}:${ln}: divides by base_amount/quote_amount without the priceable filter — trades holds zero-leg rows, so add \`base_amount > 0 AND quote_amount > 0\` to the statement's WHERE or FILTER, or mark it \`-- lint-priceable:ok <reason>\`" >&2
+      fail=1
+    fi
+  done <<<"$hits"
+done
+while IFS= read -r entry; do
+  [ -n "$entry" ] || continue
+  [ -e "${MIG_DIR}/${entry}" ] || continue
+  if ! grep -qx "$entry" <<<"$pr_seen"; then
+    echo "lint-migrations ❌ stale priceable_baseline entry ${entry} — it no longer holds an unguarded leg division; remove it (the list only shrinks)" >&2
+    fail=1
+  fi
+done <<<"$priceable_baseline"
+if [ "$pr_files" -eq 0 ]; then
+  echo "lint-migrations ❌ no *.up.sql under ${MIG_DIR} — the priceable-division pass cannot pass vacuously" >&2
+  fail=1
+fi
+echo "lint-migrations: priceable-division pass inspected ${pr_files} file(s) under ${MIG_DIR}."
 
 if [ "$fail" -eq 0 ]; then
-  echo "✅ migration lint passed (money-column + pairing/numbering/non-empty + register + ClickHouse money + down-delete, ${down_files} downs + hypertable index + CAGG re-materialization + atomicity)."
+  echo "✅ migration lint passed (money-column + pairing/numbering/non-empty + register + ClickHouse money + down-delete, ${down_files} downs + hypertable index + CAGG re-materialization + atomicity + priceable division)."
 fi
 exit "$fail"

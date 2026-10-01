@@ -151,6 +151,8 @@ parts of the runbook:
 
 ## Pairs with
 
+- [SEV-1 Patroni-driven failover](sev1-patroni-failover.md)
+  — the successor once the Patroni cluster is deployed.
 - [SEV-2 source decoder regression](sev2-source-decoder-regression.md)
   — different severity tier; can be drilled together as a
   back-to-back if time permits.

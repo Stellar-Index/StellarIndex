@@ -68,7 +68,7 @@ severity: P1
 |---|---|---|---|
 | 0.1 | **`main` must be green** | agent | **DONE** (`6ce95d191`). It had been red since `e68f8eaa0`: #331 F1 moved the listing's price derivation into a worker-maintained rollup and two integration tests still refreshed only the old continuous aggregate, so every asset came back unpriced. An all-unpriced board COLLAPSES rank tier 0 into tier 1, which is why the visible symptom was a wrong sort order rather than a missing price. `make verify` cannot see this class — it does not run integration tests. |
 | 0.2 | **`/terms` + `/privacy`** | **owner — legal read only** | **BLOCKED ON THE OWNER.** Both URLs 404 today. PR #237 has the code and the tests; it needs wording signed off, nothing else. |
-| 0.3 | ~~Stop the status page saying `degraded`~~ | — | **NOT A BLOCKER — the measurement was contaminated, and the contamination was ours.** The audit sampled `/v1/status` and a 1-hour Prometheus window while TEN subagents were running cold ClickHouse and Postgres scans against r1. Two 6-hour windows from r1's own Prometheus settle it: ending **2026-09-02T20:00Z, before that load, p99 = 48.6 ms and p95 = 20.5 ms**; ending 2026-09-03T07:00Z, during it, p99 = 566.2 ms and p95 = 82.1 ms. Targets are 500 ms and 200 ms, so the steady state sits inside both by an order of magnitude. With the agents drained, live `/v1/status` reads `overall: ok`, p50 1 / p95 21 / p99 34 ms, zero active incidents. The per-route figures the audit quoted (`/v1/pairs` 4,975 ms, `/v1/accounts/{g}/operations` 4,966 ms, `/v1/pools` 4,700 ms) are load artefacts. **Neither of the audit's two options — 2-4 days of optimisation, or renegotiating the published target — is needed.** Two of those three routes were independently fixed anyway (`dea56efec` for `/v1/accounts/{g}/operations`, `12590a65a` for `/v1/pools`); `/v1/pairs` is being re-measured cleanly for cold-variant cost, which is a different and much smaller question. |
+| 0.3 | ~~Stop the status page saying `degraded`~~ | — | **NOT A BLOCKER — the measurement was contaminated, and the contamination was ours.** The audit sampled `/v1/status` and a 1-hour Prometheus window while TEN subagents were running cold ClickHouse and Postgres scans against r1. Two 6-hour windows from r1's own Prometheus settle it: ending **2026-09-02T20:00Z, before that load, p99 = 48.6 ms and p95 = 20.5 ms**; ending 2026-09-03T07:00Z, during it, p99 = 566.2 ms and p95 = 82.1 ms. Targets are 500 ms and 200 ms, so the steady state sits inside both by an order of magnitude. With the agents drained, live `/v1/status` reads `overall: ok`, p50 1 / p95 21 / p99 34 ms, zero active incidents. The per-route figures the audit quoted (`/v1/pairs` 4,975 ms, `/v1/accounts/{g}/operations` 4,966 ms, `/v1/pools` 4,700 ms) are load artefacts. **Neither of the audit's two options — 2-4 days of optimisation, or renegotiating the published target — is needed.** Two of those three routes were independently fixed anyway (`dea56efec` for `/v1/accounts/{g}/operations`, `12590a65a` for `/v1/pools`); `/v1/pairs` was re-measured cleanly on 2026-09-30 03:20Z on r1 against the local API (`curl -w '%{time_total}'`, 3 samples per variant, load 9/20 cores, no heavy jobs, no agent load): hot XLM/USDC 38–82 ms (alias fan-out), cold first hit sUSD/XRP 22 ms and AFR/USDC 38 ms, repeats 4–9 ms — the audit's 4,975 ms was a load artefact; cold-variant cost is tens of ms and needs no fix (INV-0837). |
 | 0.4 | **Email/DNS perimeter (#334)** | agent + **2 clicks from the maintainer** | **RECORDS LIVE** (`7b914f351`). MX, SPF (`-all`), DMARC (`p=quarantine`), a second DKIM selector and CAA are published and verified against the authoritative nameservers, with a drift check (`scripts/ops/dns-perimeter-check.sh`) and a weekly workflow. Two steps need the maintainer: click Cloudflare's destination-verification link so `security@` can forward, and publish the DS record at the registrar. Both are on #334. |
 
 ### Tier 1 — do before announcing; cheap; does not strictly block
@@ -338,11 +338,14 @@ honest ceiling of "independent", and it is written here so it is not re-derived.
 > **6. Carried out of the tail-triage pass (owner: agent unless noted):**
 > C1-041 residual — `sep41_total_only` missing from the `supply_basis` spec
 > enum since v0.21.0; C6-081 — six Dockerfiles `FROM` by tag, not digest;
-> C2-038/C4-086 — the PG pipeline sink's undrained-on-exit is log-only
-> (counter + alert, like #368's CH half); C6-056 — ADR-0011 lacks the
-> amendment for the diagnostic-only over-mint leg; C2-049 — the chainlink
-> source takes feed decimals from config and never reads `decimals()` (r1
-> runs the EUR/USD feed enabled — LIVE, fix in flight); C4-069 —
+> ~~C2-038/C4-086 — the PG pipeline sink's undrained-on-exit is log-only
+> (counter + alert, like #368's CH half)~~ **fixed** for on-chain trades: once
+> the producer has stopped, shutdown rewinds the ledgerstream cursor below the
+> lowest abandoned trade; ledger-less rows stay counter + ERROR; C6-056 — ADR-0011 lacks the
+> amendment for the diagnostic-only over-mint leg; C2-049 — ~~the chainlink
+> source takes feed decimals from config and never reads `decimals()`~~
+> **FIXED `8bb7095a1` (v0.90.0): `decimals()` is read on-chain and a mismatch
+> is refused + alerted; r1 2026-09-30 shows 0 mismatches on 6 live feeds**; C4-069 —
 > `sdf_reserve_accounts` has no list-level diff against SDF's published
 > list (2% value cross-check only); C1-050 — aggregator and API resolve
 > token decimals independently, market-cap/FDV computed regardless; C1-022
@@ -831,7 +834,7 @@ call): **3.5–4.5 wk** if external review is post-launch (signed off as such);
 #### Afternoon addendum — 2026-08-28 (executed after the refresh above)
 - [V] **Testnet archive re-export live on the new schema.** Wipe of 1,555,392 objects finished 11:02Z; `galexie-backfill` restarted 11:58Z under `Restart=on-failure` with backfill-only vars (#230: `galexie_backfill_ledgers_per_file=64`, `files_per_partition=1000`); bucket manifest confirms `ledgersPerBatch:64, batchesPerPartition:1000`; reader-compat probe `ch-backfill 2..1025 -parallel 1` passed (785 ledgers/s, 111 MB RSS). tip-lag/contiguity/tier-a timers PAUSED for the window (tier-a state reset); re-enable after export + the tip-lag parser fix (#234).
 - [V] **issuer-flags backlog drained** in one bounded run: 48,981/59,192 flagged (383 auth_required, 2,202 clawback); 10,211 absent = outside the lake's captured window.
-- [V] **NEEDS-DATA closures:** 13b `account_activity` watermark at lake tip (30.7M rows); 14b already codified (`04-users.yml` sets `/srv/history-archive` 0755); 1c explained — the network page's `total_coins` (~105B, includes the 2019 burn account) vs `/v1/assets/native` 50.0018B (burn-excluded) = the 2.11× — a captioning fix, not a data bug. 8c/8d have no definitions in-repo (private mirror) — the maintainer to supply or drop.
+- [V] **NEEDS-DATA closures:** 13b `account_activity` watermark at lake tip (30.7M rows); 14b already codified (`04-users.yml` sets `/srv/history-archive` 0755); 1c explained — the network page's `total_coins` (~105B, includes the 2019 burn account) vs `/v1/assets/native` 50.0018B (burn-excluded) = the 2.11× — a captioning fix, not a data bug. 8c/8d have no definitions in-repo (private mirror) — dropped as WONT-FIX; no NEEDS-DATA entry remains open.
 - [V] **W5.3 is build work** (no `usd-volume-restamp` tool exists yet) → engineering wave. **W5.4 precondition holds** (9 burn>mint contracts, all within the 39 watched) but the runbook's 2M-ledger `ch-rebuild` dry-run drove r1 load to 12.9 and starved the aggregator's supply refresher (39-contract `supply_refresh_error_dominant`, cleared once killed). Root mechanism: the heavy-job wrapper's CPU/IO weights do not reach inside ClickHouse; ops readers connect as the default CH user with no priority profile (only the API has ADR-0048's `api_serving`). Retry requires an `ops_batch` CH profile + client option, smaller windows, off-peak.
 - [V] **CVE items were stale:** CVE-2026-56865/-56864/-17106 were bumped in f319060d (#169, 2026-08-25); `govulncheck` 0; `security.yml` dispatched and green.
 - [V] **New defect found via main CI:** `TestAsyncSink_StopDrainsPendingRows_NoChannelClose` flaked on the ansible-only #230 merge; reading the sink shows an in-flight steady-state flush is aborted (rows counted lost) when `Stop()` races it — shutdown data-loss in the raw `soroban_events` landing zone on every indexer restart. Fix in flight with a stress-proven test.
@@ -879,12 +882,19 @@ outstanding set:
 
 - **D1 — ✅ RESOLVED BY ENGINEERING (better than the recommendation).** The
   2026-08-24 corroborated-release amendment + the synthetic USD-cross
-  reference (#142/#149, v0.41.x) give the thin fiat pairs a second source:
-  `success_count=2` medians verified live on XLM/EUR + XLM/GBP first tick,
-  auto-release works unattended, and `writer_wired` was fixed 2026-08-22 —
-  the pager now sits behind real automatic protection. The old
-  "stop paging when sources=1" recommendation is superseded. Unblocks
-  W6.7's gating logic.
+  reference (#142/#149, v0.41.x) give the thin fiat pairs a corroborating
+  reference for release — it never counts toward `SourceCount`
+  (`composite_reference.go`, `confidence.go`), so Phase 2 still engages on a
+  single-source pair, but `success_count=2` medians release it unattended
+  (verified live on XLM/EUR + XLM/GBP first tick) and `writer_wired` was
+  fixed 2026-08-22, so a freeze holds the served value. Measured 2026-09-30:
+  `stellarindex_anomaly_freeze_engaged_total` counts frozen TICKS, not
+  freezes — 575 ticks over 14 d were 10 freeze events (`freeze_events`:
+  9 XLM/GBP, 1 ETH/EUR, median hold 31 min, all self-released); the anomaly
+  alerts are ticket severity and only `freeze_escalated` pages. The old
+  "stop paging when sources=1" recommendation is superseded; the pair-level
+  fix is INV-2031 (derivation as the served base below a liquidity floor).
+  Unblocks W6.7's gating logic.
 - **W3.2 — ✅ MERGED** (#126, harness + first measurement; W3.3's
   account-family cost is root-caused further: the ops-by-account tip-walk,
   tracked with a designed fix in the session task list).
@@ -1403,7 +1413,22 @@ land WITH the rebuild.
 **W5.7 — [C]** CEX dust DELETE (#68); monthly galexie trim timer enable.
 
 **W5.8 — [C]** ClickHouse Phase 8 `soroban_events` decommission (#803) —
-destructive, LAST, enumerate live readers first.
+destructive, LAST. Every live Postgres `soroban_events` reader below must be
+moved to the ClickHouse lake or deleted before any TRUNCATE or DROP; a
+TRUNCATE leaves the table present, so each of these reads an empty table as
+"nothing happened" rather than failing. Re-grep before executing
+(`StreamSorobanEvents|FirstSorobanEventLedger|MaxSorobanEventLedger|FindSorobanEventsLedgerGaps|DistinctSorobanTopicSamples|ReDeriveOutputCountsByKind\(`).
+
+| reader | file:line | path |
+|---|---|---|
+| projector legacy branch (`clickhouse_projector_source=false`) | `internal/projector/projector.go:1262` (stream), `:1664` (first-ledger probe) | falls back to PG when `chAddr` is empty |
+| `preseedFactoryChildren` callers | `internal/ops/chops/compute_completeness.go:1951`, `verify_reconciliation.go:127`, `ch_rebuild.go:635`, `ch_reproject.go:105` | **moved to the lake** — streams `contract_events` and errors on zero seeded |
+| projection re-derive, `completeness.ReDeriveOutputCountsByKind` | `internal/completeness/reconcile.go:291`, `:417`; callers `compute_completeness.go:1819` (non-`-ch` mode), `verify_reconciliation.go:131` | PG |
+| `resume-stalled` data-gap gate | `internal/ops/ingest/resume_stalled.go:699` (`FindSorobanEventsLedgerGaps`) | PG |
+| `seed-protocol-contracts` | `internal/ops/ingest/seed_protocol_contracts.go:88` (`MaxSorobanEventLedger`), `:216` (factory walk) | PG |
+| recognition claim, `computeRecognitionGaps` | `internal/ops/chops/compute_completeness.go:2549` (non-`-ch` mode; `-ch` uses `computeRecognitionGapsCH`) | PG |
+| `verify-recognition` | `internal/ops/chops/verify_recognition.go:74` (`DistinctSorobanTopicSamples`) | PG |
+| gap-detector `soroban-events` target | `internal/storage/timescale/per_source_gaps.go:423` | PG; `gapVerdictTrustworthy` (`gap_detector.go:619`) refuses a clean verdict over zero rows — delete the target with the table |
 
 **Sequencing rule (unchanged, still binding):** one heavy job at a time under
 `/usr/local/sbin/run-heavy-job.sh`; decompress before replaying through
@@ -1514,12 +1539,12 @@ older `### D — Decisions only the maintainer can make` table further down, **t
 
 ### D — Decisions only the maintainer can make
 
-**D1 — [V] Anomaly-freeze pages on CORRECT prices.** Verified worsening:
-`stellarindex_anomaly_freeze_engaged_total{class="default"}` was 382 on
-2026-07-27 and is **1,700** now. Fires on thin FX crosses with `sources=1`;
-the served prices were independently verified correct (0.06% / 0.21% off).
-`writer_wired=false`, so the page has no automatic protection behind it.
-Recommendation: stop paging when `sources=1`. **Blocks W6.7.**
+**D1 — ✅ RESOLVED 2026-08-24 (see the verified-live list above).** The
+2026-07-27 reading (`engaged_total` 382 → 1,700, `writer_wired=false`,
+"stop paging when `sources=1`") is superseded: the counter counts frozen
+ticks, the writer is wired, the alerts are ticket severity, and the served
+value is held during a freeze. Nothing left for the maintainer to decide
+here; the thin-pair serving rule is INV-2031.
 
 **D2** HA at v1 vs fast-follow (single-box SPOF as accepted risk + tested
 restore; warm standby fast-follow).
@@ -1575,12 +1600,11 @@ reach are in `runbooks/account-erasure.md`.
 >   bug, a captioning one — and the caption shipped in #250, pinned by
 >   `LedgerView.test.tsx` asserting "ledger header · includes the 2019 burn".
 >   Closed.
-> - **8c / 8d confidence data-halves — BLOCKED ON THE OWNER.** These two have **no
->   definition anywhere in the repo**; they exist only in the private audit
->   mirror. They cannot be measured, reproduced or closed by anyone working
->   from this repository. the maintainer to supply the definitions or drop the items —
->   they are the only NEEDS-DATA entries still open, and the only thing
->   standing between W8 and fully closed.
+> - **8c / 8d confidence data-halves — DROPPED (WONT-FIX).** These two have
+>   **no definition anywhere in the repo**; they exist only in the private
+>   audit mirror and cannot be measured, reproduced or closed from this
+>   repository, so they are dropped rather than carried as open. With this,
+>   no W8 NEEDS-DATA entry remains open.
 
 > **✅ RECONCILED 2026-08-25 (autonomous run, two independent read-only
 > passes over HEAD ~7ce2d213 — full table in the private audit mirror
