@@ -61,7 +61,9 @@ func TestSEP41SupplyRollupComment(t *testing.T) {
 		t.Fatalf("migrate.New: %v", err)
 	}
 	defer func() { _, _ = m.Close() }()
-	if err := m.Steps(-1); err != nil {
+	// Migrate to 193, not Steps(-1): the latter rolls back whichever
+	// migration is newest, so every later migration would turn this red.
+	if err := m.Migrate(193); err != nil {
 		t.Fatalf("0194 down: %v", err)
 	}
 	table, lastLedger = sep41RollupComments(t, ctx, db)
