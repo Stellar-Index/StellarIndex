@@ -4175,6 +4175,18 @@ order.
 **When to look:** any sustained rate means sandwich detection is being
 skipped; lower `txIndexChunk` in `internal/storage/clickhouse/tx_index_reader.go`.
 
+### `stellarindex_tx_index_tag_lookup_skipped_total`
+
+Counter, no labels.
+
+The `trades.tx_index` tagger's twin of the MEV counter above: tx hashes
+left untagged because a chunk of its `stellar.tx_hash_index` lookup failed.
+Covers the indexer's live sweep and `stellarindex-ops tag-tx-index`. The
+rows stay NULL until a later pass resolves them.
+
+**When to look:** a sustained rate means the live sweep is not keeping
+`tx_index` current; same remedy as above (`txIndexChunk`).
+
 ### `stellarindex_mev_detect_duration_seconds`
 
 Histogram, label `outcome` (same set as the runs counter).

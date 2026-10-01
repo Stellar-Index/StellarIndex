@@ -314,6 +314,7 @@ func registerAppMetricsTail() {
 		MEVDetectDurationSeconds,
 		MEVScanTruncatedTotal,
 		MEVLakeOrderLookupSkippedTotal,
+		TxIndexTagLookupSkippedTotal,
 
 		PostgresPingTotal,
 		PostgresPingFailureStreak,
@@ -3017,6 +3018,14 @@ var MEVLakeOrderLookupSkippedTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_mev_lake_order_lookup_skipped_total",
 		Help: "tx hashes dropped from ClickHouse tx_hash_index resolution because a lookup chunk failed (e.g. MEMORY_LIMIT_EXCEEDED); the whole call's hashes are left unordered for that tick rather than guessed.",
+	},
+)
+
+// TxIndexTagLookupSkippedTotal counts tx hashes the trades.tx_index tagger left untagged because a tx_hash_index chunk failed.
+var TxIndexTagLookupSkippedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_tx_index_tag_lookup_skipped_total",
+		Help: "tx hashes the trades.tx_index tagger (live sweep and tag-tx-index) left untagged because a ClickHouse tx_hash_index lookup chunk failed; the page's rows stay NULL until a later pass resolves them.",
 	},
 )
 

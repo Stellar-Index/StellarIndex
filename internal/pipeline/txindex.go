@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -24,10 +25,10 @@ const (
 	TxIndexPageSize = 1000
 )
 
-// TxIndexLakeReader resolves tx hashes to their intra-ledger apply order.
-// *clickhouse.TxIndexReader satisfies it; hashes it does not know are absent.
+// TxIndexLakeReader resolves tx hashes to every (ledger, apply order) the lake
+// holds for them. *clickhouse.TxIndexReader satisfies it; unknown hashes are absent.
 type TxIndexLakeReader interface {
-	TxIndexes(ctx context.Context, hashes []string) (map[string]uint32, error)
+	TxLedgerIndexes(ctx context.Context, hashes []string) (map[string][]clickhouse.TxLedgerIndex, error)
 }
 
 // TxIndexTradeTagger is the Postgres seam the tx-index walk reads and writes
@@ -73,14 +74,14 @@ func tagTxIndexPage(ctx context.Context, lake TxIndexLakeReader, store TxIndexTr
 	for i, k := range keys {
 		hashes[i] = k.TxHash
 	}
-	order, err := lake.TxIndexes(ctx, hashes)
+	order, err := lake.TxLedgerIndexes(ctx, hashes)
 	if err != nil {
 		return 0, fmt.Errorf("lake tx-index read (ledgers %d..%d): %w", keys[0].Ledger, keys[len(keys)-1].Ledger, err)
 	}
 	tags := make([]timescale.TxIndexTag, 0, len(keys))
 	var tsFrom, tsTo time.Time
 	for _, k := range keys {
-		idx, ok := order[k.TxHash]
+		idx, ok := txIndexAtLedger(order[k.TxHash], k.Ledger)
 		if !ok {
 			continue
 		}
@@ -97,6 +98,18 @@ func tagTxIndexPage(ctx context.Context, lake TxIndexLakeReader, store TxIndexTr
 	}
 	// +1s makes the inclusive max representable in the half-open ts bound.
 	return store.TagTradesTxIndex(ctx, tsFrom, tsTo.Add(time.Second), tags)
+}
+
+// txIndexAtLedger picks the lake row on the trade's own ledger. A stale or
+// mismatched index row would tag an order the trade's ledger cannot vouch for,
+// so a hash known only at another ledger stays untagged.
+func txIndexAtLedger(rows []clickhouse.TxLedgerIndex, ledger uint32) (uint32, bool) {
+	for _, r := range rows {
+		if r.Ledger == ledger {
+			return r.TxIndex, true
+		}
+	}
+	return 0, false
 }
 
 // RunTxIndexTagger sweeps the trailing lookback window every interval,

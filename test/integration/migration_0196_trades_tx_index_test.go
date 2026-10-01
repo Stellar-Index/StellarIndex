@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -140,7 +141,13 @@ func TestTagTradesTxIndex_FillsOnChainRowsFirstWins(t *testing.T) {
 		t.Errorf("keyset page after aa = %s (err %v), want ff", keyHashes(page), err)
 	}
 
-	lake := txIndexLake{txIndexHash("ff"): 0, txIndexHash("aa"): 1, txIndexHash("bb"): 3, txIndexHash("cc"): 7, txIndexHash("dd"): 2}
+	lake := txIndexLake{
+		txIndexHash("ff"): {{Ledger: 61_000_000, TxIndex: 0}},
+		txIndexHash("aa"): {{Ledger: 61_000_000, TxIndex: 1}},
+		txIndexHash("bb"): {{Ledger: 61_000_001, TxIndex: 3}},
+		txIndexHash("cc"): {{Ledger: 0, TxIndex: 7}},
+		txIndexHash("dd"): {{Ledger: 60_999_000, TxIndex: 2}},
+	}
 	tagged, err := pipeline.TagTxIndexWindow(ctx, lake, store, from, to, pipeline.TxIndexPageSize)
 	if err != nil {
 		t.Fatalf("TagTxIndexWindow: %v", err)
@@ -155,6 +162,7 @@ func TestTagTradesTxIndex_FillsOnChainRowsFirstWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read apply order: %v", err)
 	}
+	defer func() { _ = rows.Close() }()
 	var order []string
 	for rows.Next() {
 		var h string
@@ -163,7 +171,9 @@ func TestTagTradesTxIndex_FillsOnChainRowsFirstWins(t *testing.T) {
 		}
 		order = append(order, strings.TrimLeft(h, "0"))
 	}
-	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read apply order rows: %v", err)
+	}
 	if strings.Join(order, ",") != "ff,aa" {
 		t.Errorf("ORDER BY ledger, tx_index = %v, want [ff aa] (apply order, not tx_hash order)", order)
 	}
@@ -196,10 +206,10 @@ func TestTagTradesTxIndex_FillsOnChainRowsFirstWins(t *testing.T) {
 	}
 }
 
-type txIndexLake map[string]uint32
+type txIndexLake map[string][]clickhouse.TxLedgerIndex
 
-func (m txIndexLake) TxIndexes(_ context.Context, hashes []string) (map[string]uint32, error) {
-	out := map[string]uint32{}
+func (m txIndexLake) TxLedgerIndexes(_ context.Context, hashes []string) (map[string][]clickhouse.TxLedgerIndex, error) {
+	out := map[string][]clickhouse.TxLedgerIndex{}
 	for _, h := range hashes {
 		if v, ok := m[h]; ok {
 			out[h] = v
