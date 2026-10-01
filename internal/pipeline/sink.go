@@ -628,7 +628,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 		blend_emitter.DistributeEvent, blend_emitter.DropEvent, blend_emitter.SwapConfigEvent,
 		cctp.Event, rozo.Event,
 		sorocredit.Event,
-		defindex.Event, defindex.VaultEvent, defindex.DFeesEvent,
+		defindex.Event, defindex.VaultEvent, defindex.DFeesEvent, defindex.AdminEvent,
 		upshift.Event,
 		sep41_supply.Event, sep41_transfers.Event:
 		return true
@@ -1184,6 +1184,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		}
 		bumpEntryCount(ctx, logger, store, defindex.SourceName)
 		return nil
+	case defindex.AdminEvent:
+		return persistDefindexAdmin(ctx, logger, store, e.Admin)
 	case external.TradeEvent:
 		return persistTrade(ctx, logger, store, e.Trade)
 	case external.UpdateEvent:
@@ -2472,6 +2474,12 @@ func persistPhoenixInitialize(ctx context.Context, logger *slog.Logger, store *t
 }
 
 func persistPhoenixAdmin(ctx context.Context, logger *slog.Logger, store *timescale.Store, e phoenix.AdminEvent) error {
+	// Only the min-trading settings carry a value; the zero Amount of every
+	// other action must stay NULL, not "0".
+	value := ""
+	if e.AdminAction == phoenix.AdminActionBlendSetMinTradingA || e.AdminAction == phoenix.AdminActionBlendSetMinTradingB {
+		value = e.Value.String()
+	}
 	if err := store.InsertPhoenixAdmin(ctx, timescale.PhoenixAdminEvent{
 		Pool:            e.Pool,
 		Ledger:          e.Ledger,
@@ -2481,6 +2489,7 @@ func persistPhoenixAdmin(ctx context.Context, logger *slog.Logger, store *timesc
 		EventIndex:      e.EventIndex,
 		AdminAction:     e.AdminAction,
 		Admin:           e.Admin,
+		Value:           value,
 	}); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(phoenix.SourceName, "phoenix_admin_events").Inc()
 		logger.Error("insert Phoenix admin failed",
@@ -2492,6 +2501,35 @@ func persistPhoenixAdmin(ctx context.Context, logger *slog.Logger, store *timesc
 	logger.Debug("Phoenix admin ingested",
 		"source", phoenix.SourceName, "pool", e.Pool, "ledger", e.Ledger,
 		"admin_action", e.AdminAction, "admin", e.Admin)
+	return nil
+}
+
+func persistDefindexAdmin(ctx context.Context, logger *slog.Logger, store *timescale.Store, a defindex.VaultAdmin) error {
+	var amount string
+	if a.Amount != nil {
+		amount = a.Amount.String()
+	}
+	if err := store.InsertDefindexAdminEvent(ctx, timescale.DefindexAdminEvent{
+		Ledger:          a.Ledger,
+		LedgerCloseTime: a.ClosedAt,
+		TxHash:          a.TxHash,
+		OpIndex:         uint32(a.OpIndex),
+		EventIndex:      a.EventIndex,
+		ContractID:      a.Vault,
+		EventKind:       a.Kind,
+		Caller:          a.Caller,
+		Strategy:        a.Strategy,
+		NewAddress:      a.NewAddress,
+		Amount:          amount,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(defindex.SourceName, "defindex_admin_events").Inc()
+		logger.Warn("defindex admin persist failed",
+			"source", defindex.SourceName,
+			"tx_hash", a.TxHash, "ledger", a.Ledger, "kind", a.Kind,
+			"err", err)
+		return err
+	}
+	bumpEntryCount(ctx, logger, store, defindex.SourceName)
 	return nil
 }
 

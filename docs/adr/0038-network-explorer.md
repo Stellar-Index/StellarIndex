@@ -179,7 +179,12 @@ fetch the API client-side at runtime** (the explorer already fetches
   `/contract?id` + search wiring (query-param pages, static-export-safe).
 - **OpenAPI (shipped):** all explorer endpoints documented.
 
-**Remaining = two operator-gated data jobs** (each multi-day, consumes r1
-for days, changes live ingest): the Phase B participant-index derive and
-the Phase C entry-change history backfill + its read layer. The code/UI
-for everything is in place; these are resource-significant backfills.
+**Both operator-gated data jobs have run** (measured on r1 2026-09-30,
+active `system.parts` rows grouped by the `intDiv(ledger_seq, 1000000)`
+partition): the Phase C entry-change history backfill —
+`stellar.ledger_entry_changes`, 163,658,626,082 rows — and the Phase B
+participant-index derive — `stellar.operation_participants`,
+4,513,850,669 rows — are each populated in every 1M-ledger partition
+0..64 (tip ≈ ledger 64.69M). The Phase C read layer is served as
+`GET /v1/accounts/{g}`. This is a per-partition population check, not a
+row-level completeness proof.

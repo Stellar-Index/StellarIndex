@@ -15,6 +15,7 @@ import {
 import type { components } from '@/api/types';
 import { scaleBaseUnits } from '@/lib/format';
 import { downloadText, toCsv } from '@/lib/export';
+import { trailingEnvelope } from './envelope';
 
 /** A tip tick drives the chart's live price line while fresher than this
  * (producer window ~5s; 30s of silence = wedged stream / backgrounded tab
@@ -179,6 +180,14 @@ const WINDOWS: {
   },
 ];
 
+// Trailing high/low envelope windows. Only windows longer than the candle are
+// offered: a one-candle envelope is just that candle's wicks.
+const BAND_WINDOWS = [
+  { key: '1h', sec: 3600 },
+  { key: '4h', sec: 14_400 },
+  { key: '24h', sec: 86_400 },
+];
+
 function limitFor(spanSec: number, interval: string): number {
   const isec = INTERVAL_SEC[interval] ?? 3600;
   return Math.min(OHLC_CAP, Math.ceil(spanSec / isec) + 2);
@@ -200,6 +209,7 @@ export function MarketChart({
   height = 380,
   defaultTimeframe = '7d',
   liveTip = false,
+  volatilityBand = false,
 }: {
   base: string;
   quote: string;
@@ -214,6 +224,8 @@ export function MarketChart({
    * open an SSE tip connection — turn it on for single-pair/asset pages.
    */
   liveTip?: boolean;
+  /** Offer a trailing high/low envelope (1h/4h/24h) over the candles. */
+  volatilityBand?: boolean;
 }) {
   const [winKey, setWinKey] = useState<Win>(defaultTimeframe);
   const win = WINDOWS.find((w) => w.key === winKey) ?? WINDOWS[1];
@@ -222,6 +234,17 @@ export function MarketChart({
   // to the window default (keeps the two controls consistent).
   const activeGrain = win.grains.includes(grain) ? grain : win.def;
   const limit = limitFor(win.spanSec, activeGrain);
+  const grainSec = INTERVAL_SEC[activeGrain] ?? 3600;
+  const bandOptions = volatilityBand
+    ? BAND_WINDOWS.filter((b) => b.sec > grainSec)
+    : [];
+  const [bandKey, setBandKey] = useState('off');
+  // Looked up in the module constant, not bandOptions, so the band memo below
+  // depends on a value the compiler knows is never mutated.
+  const activeBand =
+    (volatilityBand &&
+      BAND_WINDOWS.find((b) => b.key === bandKey && b.sec > grainSec)) ||
+    null;
 
   const selectWindow = (key: Win) => {
     const next = WINDOWS.find((w) => w.key === key);
@@ -247,6 +270,21 @@ export function MarketChart({
   // Chart numbers are lossy doubles; export reads the raw strings instead.
   const raw = query.data;
   const data = useMemo(() => (raw ?? []).map(toChartBar), [raw]);
+  // Envelope selection runs over the served strings; only the plotted
+  // edges become doubles. Memoized: a new array would make CandleChart re-fit
+  // and reset the user's zoom on every clock tick.
+  const bandSec = activeBand?.sec;
+  const band = useMemo(
+    () =>
+      raw && bandSec
+        ? trailingEnvelope(raw, bandSec, grainSec).map((p) => ({
+            time: p.time,
+            upper: Number(p.upper),
+            lower: Number(p.lower),
+          }))
+        : null,
+    [raw, bandSec, grainSec],
+  );
   const loading = query.isLoading;
   const error = query.error ? query.error.message : null;
 
@@ -282,6 +320,20 @@ export function MarketChart({
           value={activeGrain}
           onChange={setGrain}
         />
+        {bandOptions.length > 0 && (
+          <Segmented
+            ariaLabel="Volatility band"
+            options={[
+              { label: 'No band', value: 'off' },
+              ...bandOptions.map((b) => ({
+                label: `${b.key} band`,
+                value: b.key,
+              })),
+            ]}
+            value={activeBand?.key ?? 'off'}
+            onChange={setBandKey}
+          />
+        )}
         <span className="text-ink-faint ml-auto font-mono tracking-wider uppercase">
           {baseLabel} / {quoteLabel}
         </span>
@@ -339,7 +391,8 @@ export function MarketChart({
             data={data}
             height={height}
             livePrice={livePrice}
-            ariaLabel={`${baseLabel}/${quoteLabel} OHLC candlestick chart with volume, ${activeGrain} candles`}
+            band={band}
+            ariaLabel={`${baseLabel}/${quoteLabel} OHLC candlestick chart with volume, ${activeGrain} candles${activeBand ? `, ${activeBand.key} high/low band` : ''}`}
           />
           {coverageNote && (
             <p className="text-ink-faint font-mono text-[11px]">

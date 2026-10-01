@@ -794,8 +794,8 @@ type SEP41RollupAdvance struct {
 // sep41_supply_events into its sep41_supply_rollup checkpoint — the
 // incremental maintainer that keeps the SEP41KindTotalsAtOrBefore fast
 // path cheap (migration 0085, incident 2026-07-06). The fold columns have two
-// other writers: [Store.ResetSEP41SupplyRollupFold] zeroes them, and
-// [Store.UpsertSEP41GenesisBaseline] zeroes them and re-folds through the
+// other writers, [Store.ResetSEP41SupplyRollupFold] and
+// [Store.UpsertSEP41GenesisBaseline]; both zero them and re-fold through the
 // same statement this pass runs. The genesis columns are the seed's alone.
 //
 // It sums only rows with `ledger > last_ledger` that are SETTLED by BOTH
@@ -845,8 +845,8 @@ type SEP41RollupAdvance struct {
 // accumulated in Postgres NUMERIC (ADR-0003).
 //
 // NOTE: a re-derive that rewrites sep41_supply_events history BELOW an
-// existing checkpoint must reset the fold columns first so the worker
-// re-folds from zero; the incremental watermark cannot see edits it
+// existing checkpoint must then re-fold from zero; the incremental
+// watermark cannot see edits it
 // already passed. `ch-rebuild -sep41 -write` does this automatically via
 // [Store.ResetSEP41SupplyRollupFold] (which preserves the genesis
 // baseline, unlike a bare `TRUNCATE sep41_supply_rollup`).
@@ -869,7 +869,7 @@ type SEP41RollupAdvance struct {
 // UNDERCOUNT that the next pass can never repair. Taking the row lock
 // first makes the two orderings the only two outcomes: the reset lands
 // before this pass (which then re-folds from zero under the current
-// floor) or after it (which re-folds on the next cadence).
+// floor) or after it (and re-folds the row itself).
 func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string) (SEP41RollupAdvance, error) {
 	if contractID == "" {
 		return SEP41RollupAdvance{}, errors.New("timescale: AdvanceSEP41SupplyRollup: empty contractID")
@@ -1170,12 +1170,11 @@ func (s *Store) SEP41SupplyEventKindResum(ctx context.Context, contractID string
 	return parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
 }
 
-// ResetSEP41SupplyRollupFold zeroes the WORKER-OWNED fold columns
+// ResetSEP41SupplyRollupFold rebuilds the WORKER-OWNED fold columns
 // (mint_total, burn_total, clawback_total, last_ledger) of
-// sep41_supply_rollup so the aggregator's rollup worker
-// ([Store.AdvanceSEP41SupplyRollup]) re-folds a re-derived
-// sep41_supply_events history FROM ZERO instead of trusting a checkpoint
-// that no longer matches the events beneath it. Incident 2026-07-06 follow-up.
+// sep41_supply_rollup FROM ZERO over a re-derived sep41_supply_events
+// history, instead of trusting a checkpoint that no longer matches the
+// events beneath it. Incident 2026-07-06 follow-up.
 //
 // Why it exists. `ch-rebuild -sep41 -write` rewrites sep41_supply_events
 // history BELOW an existing checkpoint. The worker only ever folds
@@ -1189,13 +1188,15 @@ func (s *Store) SEP41SupplyEventKindResum(ctx context.Context, contractID string
 //
 // Resetting the fold columns forces a clean re-fold over the corrected set.
 //
-// Two callers rely on this, for the identical reason: `ch-rebuild -sep41
-// -write` (above) and `stellarindex-ops projector-replay -source
+// Three callers rely on this, for the identical reason: `ch-rebuild -sep41
+// -write` (above), `stellarindex-ops projector-replay -source
 // sep41_supply` (internal/ops/ingest/projector.go's resetSEP41RollupAfterReplay),
 // which rewinds and re-walks the projector's own cursor over the same
-// checkpointed range and would otherwise leave any row it re-drives or
-// corrects at-or-below the checkpoint permanently invisible to the fold
-// (finding F024/F107).
+// checkpointed range, and `projected-rebuild -source sep41_supply -write`
+// (internal/ops/chops/projected_rebuild.go's resetSEP41RollupAfterRebuild),
+// which bulk-writes history behind the live tail. Each would otherwise leave
+// any row it re-drives or corrects at-or-below the checkpoint permanently
+// invisible to the fold (finding F024/F107).
 //
 // It replaces a bare `TRUNCATE sep41_supply_rollup` because it PRESERVES the
 // migration-0088 pre-Soroban genesis-baseline columns (genesis_mint_total / genesis_burn_total
@@ -1210,33 +1211,112 @@ func (s *Store) SEP41SupplyEventKindResum(ctx context.Context, contractID string
 //   - contractIDs non-empty → SCOPED reset: only those contracts' rows (for a
 //     `-contracts` scoped dropped-rows recovery).
 //
-// Correctness during the gap: a reset row's `last_ledger` returns to 0, so the
-// reader ([Store.SEP41KindTotalsAtOrBefore]) serves the exact full-sum fallback
-// until the worker re-folds it — supply stays correct throughout, just off the
-// fast path for a cadence or two. Returns the number of rows reset.
+// The fold is rebuilt in-transaction, one contract per transaction, exactly as
+// [Store.UpsertSEP41GenesisBaseline] does: the zero and the re-fold up to the
+// settled cursor commit together, so the reader
+// ([Store.SEP41KindTotalsAtOrBefore]) sees the old row or the re-folded one,
+// never last_ledger = 0 and the unbounded per-contract aggregate migration 0085
+// keeps off the hot path. A contending aggregator pass yields after
+// [sep41RollupLockTimeout]; one contract's failure does not roll back another's.
+//
+// A contract whose re-fold does not commit (lock timeout, cancelled ctx) still
+// holds the fold the caller's rewrite invalidated, so it is zeroed on its own
+// and left for the worker — the exact full-sum read serves it meanwhile — and
+// the call returns an error naming how many fell back. Returns the number of
+// rows reset either way.
 func (s *Store) ResetSEP41SupplyRollupFold(ctx context.Context, contractIDs []string) (int64, error) {
-	var (
-		res sql.Result
-		err error
-	)
-	if len(contractIDs) == 0 {
-		const q = `
-            UPDATE sep41_supply_rollup
-               SET mint_total = 0, burn_total = 0, clawback_total = 0,
-                   last_ledger = 0, updated_at = now()
-        `
-		res, err = s.db.ExecContext(ctx, q)
-	} else {
-		const q = `
-            UPDATE sep41_supply_rollup
-               SET mint_total = 0, burn_total = 0, clawback_total = 0,
-                   last_ledger = 0, updated_at = now()
-             WHERE contract_id = ANY($1)
-        `
-		res, err = s.db.ExecContext(ctx, q, contractIDs)
+	ids := contractIDs
+	if len(ids) == 0 {
+		cps, err := s.ListSEP41RollupCheckpoints(ctx, nil)
+		if err != nil {
+			return 0, fmt.Errorf("timescale: ResetSEP41SupplyRollupFold: %w", err)
+		}
+		ids = make([]string, len(cps))
+		for i, cp := range cps {
+			ids[i] = cp.ContractID
+		}
 	}
+	var (
+		refolded int64
+		failed   []string
+		errs     []error
+	)
+	for i, id := range ids {
+		if err := ctx.Err(); err != nil {
+			failed = append(failed, ids[i:]...)
+			errs = append(errs, err)
+			break
+		}
+		ok, err := s.refoldSEP41RollupRow(ctx, id)
+		switch {
+		case err != nil:
+			failed = append(failed, id)
+			errs = append(errs, err)
+		case ok:
+			refolded++
+		}
+	}
+	if len(failed) == 0 {
+		return refolded, nil
+	}
+	zeroed, zerr := zeroSEP41RollupFold(ctx, s.db, failed)
+	if zerr != nil {
+		return refolded, fmt.Errorf("timescale: ResetSEP41SupplyRollupFold: %d contract(s) not re-folded and the zeroing fallback failed, so they may still serve a stale fold: %w",
+			len(failed), errors.Join(append(errs, zerr)...))
+	}
+	return refolded + zeroed, fmt.Errorf("timescale: ResetSEP41SupplyRollupFold: %d contract(s) zeroed instead of re-folded (served exactly via the full-sum read until the worker re-folds them): %w",
+		len(failed), errors.Join(errs...))
+}
+
+// refoldSEP41RollupRow zeroes one contract's fold and re-folds it in the same
+// transaction. The UPDATE takes the row lock in a statement of its own, ahead
+// of the fold ([lockSEP41RollupRow] says why). Reports false for a contract
+// with no rollup row: there is no fold to invalidate.
+func (s *Store) refoldSEP41RollupRow(ctx context.Context, contractID string) (bool, error) {
+	tx, err := beginSEP41RollupTx(ctx, s.db)
 	if err != nil {
-		return 0, fmt.Errorf("timescale: ResetSEP41SupplyRollupFold: %w", err)
+		return false, fmt.Errorf("%s: %w", contractID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	const zero = `
+        UPDATE sep41_supply_rollup
+           SET mint_total = 0, burn_total = 0, clawback_total = 0,
+               last_ledger = 0, updated_at = now()
+         WHERE contract_id = $1
+    `
+	res, err := tx.ExecContext(ctx, zero, contractID)
+	if err != nil {
+		return false, fmt.Errorf("%s: zero: %w", contractID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return false, nil
+	}
+	if _, _, _, err := foldSEP41RollupLocked(ctx, tx, contractID); err != nil {
+		return false, fmt.Errorf("%s: %w", contractID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("%s: commit: %w", contractID, err)
+	}
+	return true, nil
+}
+
+// sep41RollupZeroFallbackTimeout bounds the zeroing fallback, which runs
+// detached from the caller's ctx: a cancelled reset must still not leave a
+// stale fold behind.
+const sep41RollupZeroFallbackTimeout = time.Minute
+
+func zeroSEP41RollupFold(ctx context.Context, db *sql.DB, contractIDs []string) (int64, error) {
+	zctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sep41RollupZeroFallbackTimeout)
+	defer cancel()
+	const q = `
+        UPDATE sep41_supply_rollup
+           SET mint_total = 0, burn_total = 0, clawback_total = 0,
+               last_ledger = 0, updated_at = now()
+         WHERE contract_id = ANY($1)
+    `
+	res, err := db.ExecContext(zctx, q, contractIDs)
+	if err != nil {
+		return 0, err
 	}
 	n, _ := res.RowsAffected()
 	return n, nil

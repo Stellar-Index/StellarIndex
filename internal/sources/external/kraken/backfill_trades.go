@@ -21,7 +21,7 @@ import (
 
 // tradesPath is Kraken's raw-fills endpoint. Unlike /OHLC (which
 // serves only the most recent 720 intervals — the reason the 2018-era
-// XLM/USD backfill returned zero candles, board #44), /Trades serves
+// XLM/USD backfill returned zero candles), /Trades serves
 // the FULL history of a pair, paginated by a nanosecond `since`
 // cursor with up to 1000 fills per page.
 const tradesPath = "/0/public/Trades"

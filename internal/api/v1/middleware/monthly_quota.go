@@ -68,8 +68,8 @@ func WithMonthlyQuotaDwellTime(d time.Duration) MonthlyQuotaOption {
 // monthlyQuotaGate holds the dwell-time fail-open→fail-closed state
 // shared across every request through one [MonthlyQuota] instance
 // (constructed once at wire-up; safe for concurrent use). The state
-// machine is the exact mirror of [auth.RedisSignupIPThrottle] and
-// [ratelimit.Bucket] (REL-06) — the read errors it observes are Redis
+// machine mirrors [auth.RedisSignupIPThrottle] and [ratelimit.Bucket]
+// (REL-06) — the read errors it observes are Redis
 // transport failures, not per-key, so a single process-wide clock is
 // the right granularity.
 type monthlyQuotaGate struct {
@@ -84,6 +84,9 @@ type monthlyQuotaGate struct {
 	// single stray success under a flapping counter must NOT reopen the
 	// unmetered window (REL-06).
 	healthySince time.Time
+	// lastFailure lets a success that follows a failure-free dwellTime clear
+	// the clock, so a long-ago outage cannot make the next blip fail closed.
+	lastFailure time.Time
 }
 
 // observeReadFailure stamps the dwell-time clock and reports whether
@@ -99,6 +102,7 @@ func (g *monthlyQuotaGate) observeReadFailure() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.healthySince = time.Time{} // any failure breaks the recovery streak
+	g.lastFailure = now
 	if g.redisErrorSince.IsZero() {
 		g.redisErrorSince = now
 		return false
@@ -109,7 +113,10 @@ func (g *monthlyQuotaGate) observeReadFailure() bool {
 // observeReadSuccess advances the recovery streak. The fail-closed
 // clock is cleared only after dwellTime of UNBROKEN successes — never
 // on a single success, which under a flapping counter would keep the
-// ceiling fail-open indefinitely (REL-06). Mirror of
+// ceiling fail-open indefinitely (REL-06). A success after dwellTime with
+// no observed failure also clears it: the flap evidence has aged out, and
+// otherwise a sparse-traffic outage long past would make the first error
+// of an unrelated blip fail closed. Mirror of
 // [ratelimit.Bucket.observeRedisSuccess].
 func (g *monthlyQuotaGate) observeReadSuccess() {
 	now := g.nowFn()
@@ -121,7 +128,7 @@ func (g *monthlyQuotaGate) observeReadSuccess() {
 	if g.healthySince.IsZero() {
 		g.healthySince = now
 	}
-	if now.Sub(g.healthySince) >= g.dwellTime {
+	if now.Sub(g.healthySince) >= g.dwellTime || now.Sub(g.lastFailure) > g.dwellTime {
 		g.redisErrorSince = time.Time{}
 		g.healthySince = time.Time{}
 	}
@@ -171,14 +178,14 @@ func (g *monthlyQuotaGate) observeReadSuccess() {
 //
 // # Dwell-time fail-open inversion (W1-flow-register-4)
 //
-// The fail-open→fail-closed state machine is the exact mirror of
+// The fail-open→fail-closed state machine mirrors
 // [auth.RedisSignupIPThrottle] and [ratelimit.Bucket] (REL-06): a
 // read error inside the dwell window (default 30s, see
 // [DefaultMonthlyQuotaDwellTime]) falls open; once errors have
 // persisted past the window the middleware fails closed; and the
-// clock is cleared only after dwellTime of UNBROKEN success, so a
-// single stray success under a flapping counter cannot reopen an
-// indefinite unmetered window.
+// clock is cleared only after dwellTime of UNBROKEN success (or a
+// success after dwellTime with no failure), so a single stray success
+// under a flapping counter cannot reopen an indefinite unmetered window.
 //
 // Wire AFTER [Auth] (so SubjectFrom returns) and BEFORE
 // [RateLimit] so a request rejected by the monthly cap doesn't

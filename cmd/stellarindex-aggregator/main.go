@@ -453,7 +453,7 @@ func run(cfgPath string, dryRun bool) error {
 	// `flags.divergence_warning` stays false — pre-Phase behaviour
 	// preserved.
 	var divRefresher orchestrator.DivergenceRefresher
-	divRefs := buildDivergenceReferences(cfg.Divergence, store, logger)
+	divRefs := buildDivergenceReferences(cfg.Divergence, cfg.External.CoinGecko, store, logger)
 	if len(divRefs) > 0 {
 		// Durable per-reference mirror — every (pair, reference) tick
 		// lands in the divergence_observations hypertable so the
@@ -1537,8 +1537,15 @@ func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Dur
 		out := r.Tick(ctx)
 		obs.AggregatorSupplyRefreshTotal.WithLabelValues(assetKey, string(out.Kind)).Inc()
 		obs.AggregatorSupplyRefreshDurationSeconds.WithLabelValues(string(out.Kind)).Observe(time.Since(start).Seconds())
+		if out.BandBreach != "" {
+			obs.SupplyWriteBandBreachTotal.WithLabelValues(assetKey, out.BandBreach).Inc()
+		}
 	}
 
+	// Seed both directions so increase() reads zero, not absent, before a breach.
+	for _, direction := range []string{"up", "down"} {
+		obs.SupplyWriteBandBreachTotal.WithLabelValues(assetKey, direction)
+	}
 	tick() // immediate first refresh
 
 	ticker := time.NewTicker(cadence)
@@ -2519,16 +2526,20 @@ func (obsSupplyDivergenceEmitter) Duration(kind divergence.SupplyOutcomeKind, se
 // oracle_updates rows) the `divergence.Service` runs on each tick. The
 // API binary builds a cache-reading Service with no References.
 //
-// oracles may be nil (no Postgres) — the on-chain references are
-// skipped with a warning when any is enabled.
-func buildDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.OracleReader, logger *slog.Logger) []divergence.Reference {
+// cgKeys are the external CoinGecko poller's keys; the price reference
+// authenticates with them. oracles may be nil (no Postgres) — the on-chain
+// references are skipped with a warning when any is enabled.
+func buildDivergenceReferences(cfg config.DivergenceConfig, cgKeys config.CoinGeckoVenueConfig, oracles divergence.OracleReader, logger *slog.Logger) []divergence.Reference {
 	var refs []divergence.Reference
 
 	if cfg.CoinGecko.Enabled {
 		refs = append(refs, divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
-			BaseURL: cfg.CoinGecko.BaseURL,
-			IDMap:   cfg.CoinGecko.IDMap,
-			MaxAge:  time.Duration(cfg.CoinGecko.MaxAgeMinutes) * time.Minute,
+			BaseURL:    cfg.CoinGecko.BaseURL,
+			APIKey:     cgKeys.APIKey,
+			DemoAPIKey: cgKeys.DemoAPIKey,
+			Logger:     logger,
+			IDMap:      cfg.CoinGecko.IDMap,
+			MaxAge:     time.Duration(cfg.CoinGecko.MaxAgeMinutes) * time.Minute,
 		}))
 	}
 

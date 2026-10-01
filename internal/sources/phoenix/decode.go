@@ -209,6 +209,10 @@ const (
 	actionSwapMap
 	actionProvideLiquidity
 	actionWithdrawLiquidity
+	// actionProvideLiquidityMap / actionWithdrawLiquidityMap are the Map
+	// schema's single-event liquidity actions (decode*LiquidityMap).
+	actionProvideLiquidityMap
+	actionWithdrawLiquidityMap
 	actionBond
 	actionUnbond
 	// actionAdmin / actionInitialize are governance/lifecycle events
@@ -231,7 +235,29 @@ const (
 	// its whole job is to admit the announced pool into the identity
 	// gate (dispatcher_adapter.go, ADR-0040 §1 mechanism 1).
 	actionCreatePool
+	// Single-event shapes, each fully specified by its topic pair (or
+	// single Symbol topic); see events.go EventActionCreateDistributionFlow.
+	actionCreateDistributionFlow
+	actionStakeMigration
+	actionFactoryConfig
+	actionBlendPoolAdmin
 )
+
+type topicPair struct{ t0, t1 string }
+
+// topicPairActions lists every accepted (topic[0], topic[1]) for the
+// single-event shapes; any other topic[1] under these topic[0]s stays
+// actionUnknown, a visible recognition gap rather than a guess.
+var topicPairActions = map[topicPair]action{
+	{TopicCreateDistributionFlow, TopicSymbolDRAsset}: actionCreateDistributionFlow,
+	{TopicStakeMigration, TopicMigrationStarted}:      actionStakeMigration,
+	{TopicStakeMigration, TopicMigrationQueried}:      actionStakeMigration,
+	{TopicStake, TopicMigrationCompleted}:             actionStakeMigration,
+	{TopicFactory, TopicFactoryUpdatedConfig}:         actionFactoryConfig,
+	{TopicBlendPool, TopicBlendSetDelegate}:           actionBlendPoolAdmin,
+	{TopicBlendPool, TopicBlendSetMinTradingA}:        actionBlendPoolAdmin,
+	{TopicBlendPool, TopicBlendSetMinTradingB}:        actionBlendPoolAdmin,
+}
 
 // classifyAny is the union of classify + liquidity / stake topic
 // matching. Returns (action, topic[1] blob) when the event is one
@@ -248,8 +274,13 @@ func classifyAny(e *events.Event) (action, string) {
 	// this event has only one topic. See README Q5 and
 	// docs/architecture/contract-schema-evolution.md.
 	if len(e.Topic) == 1 {
-		if e.Topic[0] == TopicSymbolSwapMap {
+		switch e.Topic[0] {
+		case TopicSymbolSwapMap:
 			return actionSwapMap, ""
+		case TopicSymbolProvideLiquidityMap:
+			return actionProvideLiquidityMap, ""
+		case TopicSymbolWithdrawLiquidityMap:
+			return actionWithdrawLiquidityMap, ""
 		}
 		return actionUnknown, ""
 	}
@@ -287,6 +318,9 @@ func classifyAny(e *events.Event) (action, string) {
 			return actionUnknown, ""
 		}
 		return actionCreatePool, e.Topic[1]
+	}
+	if a, ok := topicPairActions[topicPair{e.Topic[0], e.Topic[1]}]; ok {
+		return a, e.Topic[1]
 	}
 	return actionUnknown, ""
 }
@@ -447,31 +481,9 @@ func noteReceivedDivergence(pool, txHash string, ledger uint32, offer, received 
 // Decode is by Map-field name (contract-schema-evolution.md), so extra
 // / reordered fields don't break us.
 func decodeSwapMap(ev *events.Event, closedAt time.Time) (canonical.Trade, error) {
-	sv, err := scval.Parse(ev.Value)
+	addr, amount, err := mapBodyReaders(ev.Value)
 	if err != nil {
-		return canonical.Trade{}, fmt.Errorf("parse swap map body: %w", err)
-	}
-	entries, err := scval.AsMap(sv)
-	if err != nil {
-		return canonical.Trade{}, fmt.Errorf("swap map body: %w", err)
-	}
-
-	// Local field readers keyed by Symbol name. entries' element type
-	// stays inferred so this package needn't import xdr (ADR-0013 /
-	// lint rule B — scval is the sole xdr boundary).
-	addr := func(key string) (string, error) {
-		v, ferr := scval.MustMapField(entries, key)
-		if ferr != nil {
-			return "", ferr
-		}
-		return scval.AsAddressStrkey(v)
-	}
-	amount := func(key string) (canonical.Amount, error) {
-		v, ferr := scval.MustMapField(entries, key)
-		if ferr != nil {
-			return canonical.Amount{}, ferr
-		}
-		return scval.AsAmountFromI128(v)
+		return canonical.Trade{}, fmt.Errorf("swap %w", err)
 	}
 
 	// Map keys reuse the swap field names shared with the String
@@ -532,6 +544,131 @@ func decodeSwapMap(ev *events.Event, closedAt time.Time) (canonical.Trade, error
 		BaseAmount:  offer,
 		QuoteAmount: returned,
 		Taker:       sender,
+	}, nil
+}
+
+// mapBodyReaders parses a Map-schema event body and returns readers for
+// its Address and i128 fields, keyed by Symbol name.
+func mapBodyReaders(valueB64 string) (
+	addr func(string) (string, error),
+	amount func(string) (canonical.Amount, error),
+	err error,
+) {
+	sv, err := scval.Parse(valueB64)
+	if err != nil {
+		return nil, nil, fmt.Errorf("map body parse: %w", err)
+	}
+	entries, err := scval.AsMap(sv)
+	if err != nil {
+		return nil, nil, fmt.Errorf("map body: %w", err)
+	}
+	// entries' element type stays inferred so this package needn't import
+	// xdr (ADR-0013 / lint rule B — scval is the sole xdr boundary).
+	addr = func(key string) (string, error) {
+		v, ferr := scval.MustMapField(entries, key)
+		if ferr != nil {
+			return "", ferr
+		}
+		return scval.AsAddressStrkey(v)
+	}
+	amount = func(key string) (canonical.Amount, error) {
+		v, ferr := scval.MustMapField(entries, key)
+		if ferr != nil {
+			return canonical.Amount{}, ferr
+		}
+		return scval.AsAmountFromI128(v)
+	}
+	return addr, amount, nil
+}
+
+// Map-schema liquidity keys. sender / token_a / token_b / shares_amount /
+// return_amount_a / return_amount_b share the String schema's spelling.
+const (
+	mapFieldActualReceivedA = "actual_received_a"
+	mapFieldActualReceivedB = "actual_received_b"
+)
+
+// decodeProvideLiquidityMap decodes the Map schema's single-event
+// provide_liquidity into the same LiquidityChange decodeProvideLiquidity
+// builds from the String schema's 5 events. Decode is by field name, so
+// extra or reordered keys don't break it.
+func decodeProvideLiquidityMap(ev *events.Event, closedAt time.Time) (LiquidityChange, error) {
+	addr, amount, err := mapBodyReaders(ev.Value)
+	if err != nil {
+		return LiquidityChange{}, fmt.Errorf("provide_liquidity %w", err)
+	}
+	sender, err := addr(FieldPLSender)
+	if err != nil {
+		return LiquidityChange{}, fmt.Errorf("provide_liquidity sender: %w", err)
+	}
+	tokenA, err := addr(FieldPLTokenA)
+	if err != nil {
+		return LiquidityChange{}, fmt.Errorf("provide_liquidity token_a: %w", err)
+	}
+	tokenB, err := addr(FieldPLTokenB)
+	if err != nil {
+		return LiquidityChange{}, fmt.Errorf("provide_liquidity token_b: %w", err)
+	}
+	amountA, err := amount(mapFieldActualReceivedA)
+	if err != nil {
+		return LiquidityChange{}, fmt.Errorf("provide_liquidity %s: %w", mapFieldActualReceivedA, err)
+	}
+	amountB, err := amount(mapFieldActualReceivedB)
+	if err != nil {
+		return LiquidityChange{}, fmt.Errorf("provide_liquidity %s: %w", mapFieldActualReceivedB, err)
+	}
+	return LiquidityChange{
+		Action:     EventActionProvideLiquidity,
+		Pool:       ev.ContractID,
+		Ledger:     ev.Ledger,
+		TxHash:     ev.TxHash,
+		OpIndex:    ev.OperationIndex,
+		EventIndex: ev.EventIndex,
+		ClosedAt:   closedAt,
+		Sender:     sender,
+		TokenA:     tokenA,
+		AmountA:    amountA,
+		TokenB:     tokenB,
+		AmountB:    amountB,
+	}, nil
+}
+
+// decodeWithdrawLiquidityMap is decodeProvideLiquidityMap's withdraw
+// counterpart. The body's Option-typed auto_unstake_* keys are not read,
+// mirroring the String schema's dropped `auto unbonded` event.
+func decodeWithdrawLiquidityMap(ev *events.Event, closedAt time.Time) (LiquidityChange, error) {
+	addr, amount, err := mapBodyReaders(ev.Value)
+	if err != nil {
+		return LiquidityChange{}, fmt.Errorf("withdraw_liquidity %w", err)
+	}
+	sender, err := addr(FieldWLSender)
+	if err != nil {
+		return LiquidityChange{}, fmt.Errorf("withdraw_liquidity sender: %w", err)
+	}
+	shares, err := amount(FieldWLSharesAmount)
+	if err != nil {
+		return LiquidityChange{}, fmt.Errorf("withdraw_liquidity shares_amount: %w", err)
+	}
+	returnA, err := amount(FieldWLReturnAmountA)
+	if err != nil {
+		return LiquidityChange{}, fmt.Errorf("withdraw_liquidity return_amount_a: %w", err)
+	}
+	returnB, err := amount(FieldWLReturnAmountB)
+	if err != nil {
+		return LiquidityChange{}, fmt.Errorf("withdraw_liquidity return_amount_b: %w", err)
+	}
+	return LiquidityChange{
+		Action:       EventActionWithdrawLiquidity,
+		Pool:         ev.ContractID,
+		Ledger:       ev.Ledger,
+		TxHash:       ev.TxHash,
+		OpIndex:      ev.OperationIndex,
+		EventIndex:   ev.EventIndex,
+		ClosedAt:     closedAt,
+		Sender:       sender,
+		SharesAmount: shares,
+		AmountA:      returnA,
+		AmountB:      returnB,
 	}, nil
 }
 

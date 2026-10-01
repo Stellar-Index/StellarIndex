@@ -59,6 +59,12 @@ rationale: `docs/frontend/dark-redesign-direction.md`. Restructuring companion:
 Charts (lightweight-charts) theme from these same tokens via
 `src/components/charts/chartTheme.ts` — no hardcoded colours.
 
+## Browser support
+
+The explorer is built on Tailwind CSS v4, which relies on cascade layers,
+`@property` and `color-mix()`: supported browsers are **Safari 16.4+, Chrome
+111+ and Firefox 128+**. Older browsers are unsupported and may render unstyled.
+
 ## Components (`@/components/ui`)
 
 `Button`/`ButtonLink`, `Card`/`CardHeader`/`CardBody`/`CardFooter`, `Badge`,

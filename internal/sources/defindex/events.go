@@ -26,19 +26,17 @@
 // is what the 2026-05-21 cross-check vs Soroban RPC revealed
 // (~27% coverage in a 12-hour sample; pre-rc.63 walker only 14%).
 //
-// Phase B (this revision, 2026-05-21) adds the DeFindexVault
-// topic-match. Dispatch is still PURELY by topic — we don't
-// hardcode any contract addresses — so any current or future
-// DeFindex vault wrapper, whether listed in mainnet.contracts.json
-// or spawned later, gets decoded automatically. This mirrors the
-// comet/aquarius shared-emitter topology elsewhere in the codebase.
+// Phase B (2026-05-21) adds the DeFindexVault topic-match. Topic
+// only classifies an event; a match additionally requires contract
+// identity (ADR-0035/0040): flows only from a registered vault or
+// strategy (MainnetGatedSet + protocol_contracts), factory events only
+// from MainnetFactories. An unregistered emitter fails closed.
 //
 // We surface vault + strategy deposit/withdraw events for flow
 // attribution only — they are NOT price-discovery events and never
 // contribute to VWAP. Out of scope here: factory `create`/`n_fee`
-// events, strategy `harvest` events, vault `rebalance`/admin events
-// — all flagged in docs/operations/wasm-audits/defindex.md as
-// Phase-B-or-later follow-ups.
+// bodies, vault `rebalance` and `n_wasm` — flagged in
+// docs/operations/wasm-audits/defindex.md as follow-ups.
 //
 // See README.md for scope.
 package defindex
@@ -103,11 +101,9 @@ const (
 	// Vault-layer governance / admin events. Per Phase-B audit doc:
 	//   rescue, paused, unpaused, nreceiver, nmanager, nemanager,
 	//   rbmanager, dfees, rebalance
-	// Of these only `rebalance` is multiplexed (four bodies share the
-	// topic — discriminate by `rebalance_method` Symbol in body).
-	// `dfees` graduated from recognised-only to fully modelled (W5.2,
-	// 2026-08 — see [DFee]) once its body shape was proven from real
-	// lake blobs; the other admin topics remain classification-only.
+	// `dfees` is modelled as [DFee] and the seven role/pause/rescue
+	// topics as [VaultAdmin], each from real lake bodies; `rebalance`
+	// remains classification-only.
 	EventRescue    = "rescue"
 	EventPaused    = "paused"
 	EventUnpaused  = "unpaused"
@@ -153,9 +149,8 @@ var (
 	TopicPrefixFactory  = scval.MustEncodeString(PrefixFactory)
 	TopicSymbolDeposit  = scval.MustEncodeSymbol(EventDeposit)
 	TopicSymbolWithdraw = scval.MustEncodeSymbol(EventWithdraw)
-	// Further topic[1] symbols. harvest (strategy, audit 2026-08-04
-	// finding 4) and dfees (vault, W5.2) have decoders; the rest are
-	// classification-only today.
+	// Further topic[1] symbols. rebalance, n_wasm and the factory
+	// symbols are classification-only; the rest have decoders.
 	TopicSymbolHarvest   = scval.MustEncodeSymbol(EventHarvest)
 	TopicSymbolRescue    = scval.MustEncodeSymbol(EventRescue)
 	TopicSymbolPaused    = scval.MustEncodeSymbol(EventPaused)
@@ -372,6 +367,40 @@ func (e DFeesEvent) EventKind() string {
 // Source implements [consumer.Event].
 func (e DFeesEvent) Source() string { return SourceName }
 
+// VaultAdmin is one vault-layer governance event: a role rotation
+// (nmanager / nemanager / rbmanager / nreceiver), a strategy pause
+// toggle (paused / unpaused) or an emergency strategy rescue. Bodies
+// are proven from r1-lake samples (test/fixtures/defindex/); a field a
+// kind's body does not carry stays empty (nil for Amount).
+type VaultAdmin struct {
+	Vault      string // the emitting DeFindex vault-wrapper contract C-strkey
+	Ledger     uint32
+	ClosedAt   time.Time
+	TxHash     string
+	OpIndex    int
+	EventIndex uint32
+	Kind       string            // topic[1] symbol verbatim (EventRescue … EventRBManager)
+	Caller     string            // rescue / paused / unpaused / nreceiver
+	Strategy   string            // rescue / paused / unpaused: the strategy acted on
+	NewAddress string            // nreceiver / nmanager / nemanager / rbmanager: the new role holder
+	Amount     *canonical.Amount // rescue only: amount_withdrawn (i128, ADR-0003)
+}
+
+// AdminEvent wraps one VaultAdmin for the dispatcher / pipeline path.
+type AdminEvent struct {
+	Admin VaultAdmin
+}
+
+var _ consumer.Event = AdminEvent{}
+
+// EventKind implements [consumer.Event]. One kind for all seven topics
+// (the row's event_kind column carries the topic), so the reconcile
+// target maps 1:1 onto defindex_admin_events.
+func (e AdminEvent) EventKind() string { return "defindex.vault.admin" }
+
+// Source implements [consumer.Event].
+func (e AdminEvent) Source() string { return SourceName }
+
 // Errors returned by the decode path. Callers classify via
 // errors.Is.
 var (
@@ -399,6 +428,11 @@ var MainnetFactories = []string{
 	"CAVP2QLPIG7FQNHI57KXF7KS6NIAAUQKHZZDM3AGVADE64WHFBC5YURX", // earliest (3 creates, 55.48M → 55.51M)
 	"CDOIC7245ONYVOTEDLGKUM263EQ7SEEQ74ZQCN4SSH4TSYXOCMU6254O", // 2 creates, 56.89M → 56.93M
 }
+
+// GenesisLedger is the earliest ledger any routed defindex contract has
+// data: CAVP2QLP…'s first factory `create`. It is the density denominator
+// (ADR-0031) and gap-detector floor; a later value hides early-history gaps.
+const GenesisLedger uint32 = 55_484_403
 
 // MainnetVaults is the curated gated vault-wrapper set (ADR-0040
 // §1 mechanism 2 — curated-set registry). The factory `create`

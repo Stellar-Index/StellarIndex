@@ -8,16 +8,18 @@ import (
 	"time"
 )
 
-// validPhoenixAdminActions is the closed set the migration 0132 CHECK
-// enforces.
+// validPhoenixAdminActions is the closed set the admin_action CHECK
+// enforces (migrations 0132, 0195).
 var validPhoenixAdminActions = map[string]bool{
 	"replace_requested": true, "replace_set": true,
 	"undo": true, "accepted": true,
+	"factory_config_updated": true, "blend_set_delegate": true,
+	"blend_set_min_trading_a": true, "blend_set_min_trading_b": true,
 }
 
-// PhoenixAdminEvent is one observed Phoenix pool admin-rotation event
-// (migration 0132). Admin is the address the body carries when present,
-// empty otherwise (stored NULL).
+// PhoenixAdminEvent is one observed Phoenix admin/config event
+// (migrations 0132, 0195). Admin is the address the body carries when
+// present, empty otherwise (stored NULL).
 type PhoenixAdminEvent struct {
 	Pool            string
 	Ledger          uint32
@@ -27,6 +29,7 @@ type PhoenixAdminEvent struct {
 	EventIndex      uint32
 	AdminAction     string
 	Admin           string // "" → NULL
+	Value           string // decimal i128 of blend_set_min_trading_*; "" → NULL
 }
 
 // InsertPhoenixAdmin lands one admin-rotation event, idempotent on the
@@ -57,19 +60,20 @@ func (s *Store) InsertPhoenixAdmin(ctx context.Context, e PhoenixAdminEvent) err
 	const q = `
         INSERT INTO phoenix_admin_events (
             pool, ledger, ledger_close_time, tx_hash,
-            op_index, event_index, admin_action, admin, derive_generation
+            op_index, event_index, admin_action, admin, value, derive_generation
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
         )
         ON CONFLICT (ledger_close_time, pool, ledger, tx_hash, op_index, event_index) DO UPDATE SET
             admin_action      = EXCLUDED.admin_action,
             admin             = EXCLUDED.admin,
+            value             = EXCLUDED.value,
             derive_generation = EXCLUDED.derive_generation
           WHERE phoenix_admin_events.derive_generation <= EXCLUDED.derive_generation
     `
 	if _, err := s.db.ExecContext(ctx, q,
 		e.Pool, int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash,
-		int(e.OpIndex), int(e.EventIndex), e.AdminAction, admin,
+		int(e.OpIndex), int(e.EventIndex), e.AdminAction, admin, nullNumeric(e.Value),
 		s.deriveGeneration,
 	); err != nil {
 		return fmt.Errorf("timescale: InsertPhoenixAdmin %s@%d: %w", e.Pool, e.Ledger, err)

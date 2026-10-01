@@ -322,8 +322,8 @@ func ExampleClient_Status() {
 	fmt.Printf("%s — p95=%.2fms, %d/%d sources active\n",
 		got.Data.Overall,
 		got.Data.Latency.P95Ms,
-		got.Data.Freshness.ActiveSources,
-		got.Data.Freshness.TotalSources)
+		*got.Data.Freshness.ActiveSources,
+		*got.Data.Freshness.TotalSources)
 
 	// Output: ok — p95=3.85ms, 13/17 sources active
 }
@@ -632,7 +632,11 @@ func ExampleClient_Observations() {
 		return
 	}
 	for _, row := range got.Data {
-		fmt.Printf("%s @ %s: %s\n", row.Source, row.Timestamp.Format("15:04:05Z"), row.Price)
+		price := "no price" // a zero-leg fill has a null price
+		if row.Price != nil {
+			price = *row.Price
+		}
+		fmt.Printf("%s @ %s: %s\n", row.Source, row.Timestamp.Format("15:04:05Z"), price)
 	}
 
 	// Output:
@@ -1117,8 +1121,11 @@ func ExampleClient_History() {
 		return
 	}
 	for _, t := range got.Data {
+		if t.Price == nil { // a zero-leg fill has no price
+			continue
+		}
 		fmt.Printf("%s %s @ %s\n",
-			t.Source, t.Timestamp.Format("15:04:05"), t.Price)
+			t.Source, t.Timestamp.Format("15:04:05"), *t.Price)
 	}
 
 	// Output:

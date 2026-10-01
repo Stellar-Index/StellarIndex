@@ -16,6 +16,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
+// replayGenerationNote is printed on every rewind and dry-run: the live
+// projector writes at derive_generation 0, and the writers' ON CONFLICT
+// guard refuses to overwrite a row a re-derive stamped higher.
+const replayGenerationNote = "note: the projector re-writes at derive_generation 0 — rows in this range that a re-derive " +
+	"(projected-rebuild, ch-rebuild) already stamped with a higher generation keep their stored values; " +
+	"to correct those, re-derive the range with projected-rebuild -write instead.\n"
+
 const replayNotReachedMsg = "projector cursor for source=%q is at ledger %d, which has not yet passed requested ledger %d — " +
 	"nothing to rewind; the live projector's forward pass will project it (%d ledgers still ahead of the cursor).\n"
 
@@ -33,8 +40,9 @@ const replayNotReachedMsg = "projector cursor for source=%q is at ledger %d, whi
 //     bound and tails forward to the live tip.
 //   - If `-from` is already at or below the cursor, no-op (operator
 //     is asking for ground that's already been re-walked).
-//   - `INSERT … ON CONFLICT DO NOTHING` in every per-source table
-//     makes the re-walk idempotent.
+//   - Every per-source writer's generation-guarded upsert makes the
+//     re-walk idempotent in row count; it overwrites gen-0 rows only, so
+//     a row a re-derive stamped higher is not corrected by a replay.
 //
 // The rewind itself is one SQL operation — the projector goroutine in
 // `stellarindex-indexer` does the re-walk. The command then STAYS to
@@ -153,6 +161,7 @@ func projectorReplay(w io.Writer, args []string) error {
 				*catchUpTimeout, currentLedger, target, currentLedger)
 		}
 		printSEP41ReplayDryRunNote(w, *source)
+		_, _ = fmt.Fprint(w, replayGenerationNote)
 		return nil
 	}
 	rewoundFrom, err := rewindRecordingDirtyWindow(ctx, w, store, *source, target, currentLedger)
@@ -221,6 +230,7 @@ func rewindRecordingDirtyWindow(ctx context.Context, w io.Writer, store replayRe
 	_, _ = fmt.Fprintf(w,
 		"projector cursor rewound from %d — next projector cycle (≤ 5s) will start re-projecting from ledger %d\n",
 		rewoundFrom, target)
+	_, _ = fmt.Fprint(w, replayGenerationNote)
 	return rewoundFrom, nil
 }
 
@@ -341,8 +351,8 @@ type sep41RollupResetter interface {
 // A FULL reset (nil contractIDs), not scoped: a source-level replay
 // re-walks every watched contract's events over the rewound range, not
 // just the one row that triggered it, and a reset is always safe —
-// [Store.ResetSEP41SupplyRollupFold]'s doc guarantees served supply
-// stays correct (just off the fast path) until the worker re-folds.
+// [Store.ResetSEP41SupplyRollupFold] re-folds each row in place up to the
+// just-rewound cursor, and the worker folds the replayed range as it lands.
 //
 // Returns reset=false (and does nothing) for every source other than
 // sep41_supply — a replay of trades/blend/phoenix/etc. never touches
@@ -370,7 +380,7 @@ func reportSEP41RollupReset(ctx context.Context, w io.Writer, store sep41RollupR
 	}
 	if reset {
 		_, _ = fmt.Fprintf(w,
-			"reset %d sep41_supply_rollup fold row(s) — the aggregator worker will re-fold sep41_supply_events from zero as the replayed range lands (genesis baseline preserved)\n", n)
+			"reset %d sep41_supply_rollup fold row(s), re-folded in place up to the rewound cursor — the aggregator worker folds the replayed range as it lands (genesis baseline preserved)\n", n)
 	}
 	return nil
 }

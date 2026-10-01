@@ -1036,8 +1036,9 @@ Each served reference carries a `provenance`:
 | `provenance` | what it values | what it rests on |
 |---|---|---|
 | `oracle_instrument_nav` | the **instrument** | an oracle's published valuation, plus the issuer's own domain-bound declaration that one token is one unit of it |
+| `fund_nav` | the **fund share** | the fund's own SEC-reported daily NAV per share, relayed by Tiingo, for a token bound on the exact `(code, issuer)` as one share of that fund; taken only when no oracle binding exists for the row, and ahead of any listing price or prospectus NAV |
 | `listing_platform_price` | the **token** | a listing platform's aggregate of what the token changes hands at on the venues it tracks |
-| `prospectus_constant_nav` | the **share class** | the issuer's published NAV for a share class whose fund rules fix it (a constant-NAV money-market fund), bound on the exact `(code, issuer)`; taken only when neither an oracle binding nor a usable listing price exists for the row |
+| `prospectus_constant_nav` | the **share class** | the issuer's published NAV for a share class whose fund rules fix it (a constant-NAV money-market fund), bound on the exact `(code, issuer)`; taken only when no oracle binding, fund NAV or usable listing price exists for the row |
 | `curator_uploaded_price` | the **token** | a curator's own uploaded price per token. Curated rows are served apart, in `curated_assets`, and never enter `summary.reference_valuation` |
 
 The second is weaker in one way — nobody independent has said what
@@ -1056,6 +1057,20 @@ than two accounts of one event. A prospectus constant NAV and a
 curator's uploaded price are refused the same way, each under its own
 status (`reference_is_a_prospectus_nav`, `reference_is_a_curator_price`)
 so the refusal always names the figure it refused.
+
+**A fund NAV is published to the cent.** The fund administrator rounds
+the NAV to two decimal places, and the reference says so in
+`decimals_published: 2`: the figure cannot resolve a difference smaller
+than half a cent, which on a one-dollar share is half a percent. For that
+reason no premium is published against it either
+(`reference_is_a_fund_nav`). `as_of` is the business day the NAV was
+struck, not the moment it was read, so a Friday NAV is served `stale:
+true` from the following Monday until Monday's NAV lands. A fund NAV
+older than five calendar days is refused as `reference_expired` rather
+than served. When a row carries an oracle NAV and its fund's own NAV is
+also fresh, the oracle figure is served and `nav_disagreement: true`
+marks a gap of more than half a cent between the two; the values are
+never swapped.
 
 `summary.reference_valuation.provenances` lists the distinct kinds in
 the total, and the basis prose is **derived from the rows that
