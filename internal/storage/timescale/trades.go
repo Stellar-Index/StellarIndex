@@ -2301,6 +2301,8 @@ func (s *Store) TradesInRangeAfter(
 //     ticker within [fxQuotesSnapLookback] wins; USD legs are exact 1
 //     (rate_usd is USD-anchored). See [fxSnapFromRows] for the exact-
 //     Rat cross/inversion math.
+//     A leg set fully covered by fx_fixings (bar_end ≤ cutoff − [FXFixingLag],
+//     within [fxFixingStoreMaxAge]) is priced from those bars first.
 //  2. `trades` filtered by `fxSources` — structurally empty today: no
 //     FXSources() member writes trades (massive writes fx_quotes,
 //     exchangeratesapi writes oracle_updates), so re-enabling a
@@ -2339,6 +2341,13 @@ func (s *Store) FXQuoteAtOrBefore(
 	}
 
 	if slices.Contains(fxSources, fxQuotesSourceLabel) {
+		price, observedAt, source, err = s.fxFixingSnapAtOrBefore(ctx, pair, cutoff)
+		switch {
+		case err == nil:
+			return price, observedAt, source, nil
+		case !errors.Is(err, ErrNoFXQuote):
+			return nil, time.Time{}, "", err
+		}
 		price, observedAt, source, err = s.fxQuotesSnapAtOrBefore(ctx, pair, cutoff)
 		switch {
 		case err == nil:

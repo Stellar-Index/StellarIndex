@@ -90,7 +90,7 @@ type ReadyChecker interface {
 // This constant MUST equal the head under migrations/; the parity test
 // TestExpectedSchemaVersionMatchesMigrationsHead fails CI if a migration
 // is added without bumping it.
-const ExpectedSchemaVersion uint = 192
+const ExpectedSchemaVersion uint = 193
 
 // nonAtomicMigrationVersions lists migration numbers whose up.sql commits
 // mid-file, breaking golang-migrate's one-transaction-per-file guarantee
@@ -480,7 +480,9 @@ type Server struct {
 	// fxCrossMaxAge bounds how old the forex snapshot's matched rate may
 	// be before [Server.tryFiatCrossRate] / [Server.tryUSDAnchoredFiatCross]
 	// refuse to serve it (T650). See fxCrossStale's doc comment.
-	fxCrossMaxAge    time.Duration
+	fxCrossMaxAge time.Duration
+	// fxFixings binds closed-bucket FX legs; nil leaves those crosses unserved.
+	fxFixings        *fxFixingCache
 	explorer         ExplorerReader
 	issuerAuthFlags  IssuerAuthFlagsReader
 	staticHomeDomain func(ctx context.Context, issuer string) (string, bool)
@@ -1324,6 +1326,10 @@ type Options struct {
 	// identical fx_quotes staleness profile.
 	FXCrossMaxAgeHours int
 
+	// FXFixings binds the closed surfaces' FX legs to the vendor's time
+	// series (fx_fixings). Nil: closed fiat crosses are not served.
+	FXFixings FXFixingReader
+
 	// Explorer, when non-nil, backs the network-explorer endpoints
 	// (ADR-0038): /v1/ledgers, /v1/tx, /v1/operations, /v1/contracts,
 	// /v1/search — reading the certified ClickHouse lake directly.
@@ -1817,6 +1823,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		maxMarketCapVolumeRatio: opts.MaxMarketCapVolumeRatio,
 		currencies:              opts.Currencies,
 		fxCrossMaxAge:           fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours),
+		fxFixings:               newFXFixingCache(opts.FXFixings, logger, fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours)),
 		explorer:                opts.Explorer,
 		issuerAuthFlags:         opts.IssuerAuthFlags,
 		staticHomeDomain:        opts.StaticHomeDomain,

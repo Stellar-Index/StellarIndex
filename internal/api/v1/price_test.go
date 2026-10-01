@@ -15,6 +15,7 @@ import (
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // stubPriceReader implements v1.PriceReader.
@@ -1574,7 +1575,8 @@ func TestPrice_FiatCrossRate_EURUSD(t *testing.T) {
 			PublishedAt: now,
 		},
 	}
-	srv := v1.New(v1.Options{Prices: reader, Currencies: currencies})
+	fixings := fixingsOf(hourlyFixing("EUR", "0.92", now.Add(-timescale.FXFixingLag).Truncate(time.Hour)))
+	srv := v1.New(v1.Options{Prices: reader, Currencies: currencies, FXFixings: fixings})
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/price?asset=fiat:EUR&quote=fiat:USD")

@@ -544,9 +544,10 @@ export interface paths {
          *        and the `/v1/observations` triangulation hint — except
          *        that the two SEP-40 point reads answer 404 instead of the
          *        declaration, since their shape has no `price_type` to mark it.
-         *     4. Fiat-vs-fiat cross-rate from the forex snapshot when both
-         *        sides are `fiat:` typed (e.g.
-         *        `?asset=fiat:EUR&quote=fiat:USD`). Computed as
+         *     4. Fiat-vs-fiat cross-rate when both sides are `fiat:` typed
+         *        (e.g. `?asset=fiat:EUR&quote=fiat:USD`), from the vendor FX
+         *        fixings bound to the current minute (`/v1/price/tip`: the
+         *        live forex snapshot). Computed as
          *        `rate_usd[Y] / rate_usd[X]`. Returned with
          *        `flags.triangulated=true` since the value is derived
          *        rather than a direct trade. Same fallback fires on
@@ -579,6 +580,16 @@ export interface paths {
          *     genuine miss — see that route's description),
          *     the SEP-40 oracle endpoints, and the `price_usd` enrichment on
          *     asset surfaces.
+         *
+         *     A fiat cross this route derives (fiat/fiat, or a non-fiat asset
+         *     in a fiat with no market of its own) converts at the vendor FX
+         *     fixing bound to the bucket's close, never at the live rate. When
+         *     no fixing binds within the 76 h lookback the price is withheld:
+         *     a `price-withheld` 404 titled "Price withheld — FX leg
+         *     unavailable", omitted and listed as withheld on
+         *     `/v1/price/batch`. A failed FX read is a 503
+         *     `price-unavailable`, and the batch row is omitted without being
+         *     listed. `/v1/price/tip` keeps the live rate.
          */
         get: operations["getPrice"];
         put?: never;
@@ -10808,6 +10819,28 @@ export interface components {
             observed_at: string;
             /** @description Window size for vwap/twap; omitted for last_trade. */
             window_seconds?: number;
+            /** @description Decimal string, quote units per 1 USD. Present only on a closed-surface USD-anchored fiat cross (`/v1/price`, `/v1/price/batch`, SEP-40): the vendor FX fixing the USD leg was converted at, verbatim. The fixing is the bar with the greatest close at or before the USD bucket's end minus 3 h, within the 76 h lookback, so the answer is the same whenever and wherever it is read. `/v1/price/tip` converts at the live rate and omits it. */
+            fx_rate?: string;
+            /**
+             * Format: date-time
+             * @description Close of the bound FX fixing (a vendor time). On a fiat/fiat cross, the older of the two legs' closes. Present only on a closed-surface fiat cross.
+             */
+            fx_as_of?: string;
+            /** @description Feed that published the bound FX fixing. Present only on a closed-surface USD-anchored fiat cross. */
+            fx_source?: string;
+            /**
+             * @description Grain of the bound FX fixing. `daily` before the hourly series begins for the currency; a daily fixing reports no FX staleness of its own. Present only on a closed-surface fiat cross.
+             * @enum {string}
+             */
+            fx_resolution?: "hourly" | "daily";
+            /** @description The USD price a closed-surface USD-anchored fiat cross converted: `price` × `fx_rate` equals the served price up to its rendering (15 fractional digits, more for a very small rate, trailing zeros trimmed), and `observed_at` is the served `observed_at`. */
+            usd_leg?: {
+                /** @description Decimal string. Never JSON number. */
+                price: string;
+                /** Format: date-time */
+                observed_at: string;
+                sources: string[];
+            } | null;
             /** @description Trailing-24h percentage change vs the asset's USD price ~24h ago (signed, two fractional digits — "+1.27"). Present on /v1/price/batch rows when the quote is fiat:USD and a closed comparison bucket exists; omitted otherwise. Pairs current price with 24h change in ONE bulk call for wallet portfolio screens. */
             change_24h_pct?: string | null;
             /**
