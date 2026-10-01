@@ -281,6 +281,11 @@ expect_status 400 "assets bad limit"     "/v1/assets?limit=999999" \
 expect_status 404 "asset not found"      "/v1/assets/AAAA-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" \
   --timeout 30 \
   -- '.type | endswith("/asset-not-found")'
+# An off-chain source is served only beside other sources, never selected
+# on its own; an on-chain source filter still answers.
+expect_status 400 "markets off-chain source" "/v1/markets?source=binance&limit=1" \
+  -- '.type | endswith("/off-chain-source-filter")'
+check "markets on-chain source" "/v1/markets?source=sdex&limit=1"
 
 # Pins queued for promotion once rc.38 deploys. Each verifies a
 # documented behaviour shipped in this session that's currently
@@ -301,7 +306,7 @@ expect_status 404 "asset not found"      "/v1/assets/AAAA-GA5ZSEJYB37JRC5AVCIA5M
 #   /v1/oracle/latest?source=fakesrc 400
 #   /metrics 404 from public host + binary loopback gate
 #   /v1/markets?asset=USDC 400 invalid-asset-id
-#   /v1/markets?source=binance&asset=native 400 conflicting-filters
+#   /v1/markets?source=sdex&asset=native 400 conflicting-filters
 #   /v1/pools?asset=USDC 400 invalid-asset-id
 #   /v1/pools?asset=native&base=native 400 conflicting-filters
 #

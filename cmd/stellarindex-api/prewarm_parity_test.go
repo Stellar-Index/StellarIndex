@@ -42,9 +42,6 @@ import (
 //     `PoolsFilter{Sources: DexSourceNames()}`, not `Sources: nil`. The
 //     prewarm passed the zero filter, whose key fragment is `[]` rather
 //     than `[aquarius comet phoenix sdex soroswap]`.
-//   - LIMIT. /v1/markets?source=… is fired by the explorer at
-//     limit=200; the prewarm covered only the unfiltered pair list, so
-//     every /exchanges/{name} visit paid the 8s ceiling (R-002).
 //
 // A test that re-states the prewarm's own constants cannot catch any of
 // these — it would agree with the prewarm and be wrong in the same
@@ -189,11 +186,6 @@ var hotRequests = []struct {
 		name: "markets-alphabetical",
 		path: "/v1/markets?limit=100&order_by=pair",
 		why:  "stable-keyset order a full-catalogue walker passes explicitly",
-	},
-	{
-		name: "markets-per-cex",
-		path: "/v1/markets?source=binance&limit=200",
-		why:  "explorer /exchanges/{name} PairsTable.tsx (R-002: 8s ceiling per cold visit)",
 	},
 }
 

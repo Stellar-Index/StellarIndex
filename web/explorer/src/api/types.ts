@@ -1406,7 +1406,8 @@ export interface paths {
          *     return MORE than one row when it publishes the asset against
          *     more than one live quote (e.g. Redstone's EUROC/EUR and
          *     EUROC/USD are two independent feeds, not the same reading
-         *     twice). Optional source filter restricts to a single source;
+         *     twice). Optional source filter restricts to a single on-chain
+         *     source (an off-chain one such as coingecko returns 400);
          *     optional quote filter restricts to a single quote.
          *
          *     Asset translation: classic Stellar identifiers map to the
@@ -1743,20 +1744,25 @@ export interface paths {
         };
         /**
          * Cross-reference divergence board (ADR-0019).
-         * @description The current divergence board: the latest comparison per
-         *     (asset, quote, reference) over the trailing window, from
-         *     `divergence_observations`. Each row is our VWAP vs one external
+         * @description The current divergence board, one entry per (asset, quote) pair:
+         *     our VWAP beside the latest comparison against each external
          *     reference (CoinGecko / Chainlink / Reflector DEX·CEX·FX /
-         *     Redstone / Band) with `delta_pct = (our − ref) / ref × 100`.
-         *     Ordered widest |delta_pct| first.
+         *     Redstone / Band) over the trailing window, from
+         *     `divergence_observations`, with
+         *     `delta_pct = (our − ref) / ref × 100` per reference. A
+         *     reference's price is served only inside its pair, beside our
+         *     price and the other references; there is no per-reference
+         *     selector. Pairs are ordered widest |delta_pct| first, and each
+         *     pair's references likewise.
          *
-         *     A row with `status: firing` breached its per-(reference, pair)
-         *     threshold at its latest observation — the signal behind
-         *     `flags.divergence_warning`. `?firing=true` restricts to those;
-         *     `?window_days=` (default 7); `?limit=` (default 100, max 500).
-         *     200 + empty payload when the reader isn't wired. A row whose
-         *     market `/v1/price` withholds is omitted: `our_price` is that
-         *     market's price.
+         *     A reference with `status: firing` breached its per-(reference,
+         *     pair) threshold at its latest observation — the signal behind
+         *     `flags.divergence_warning`. `?firing=true` keeps pairs with at
+         *     least one firing reference; `?window_days=` (default 7);
+         *     `?limit=` counts pairs (default 100, max 500). 200 + empty
+         *     payload when the reader isn't wired. A pair whose market
+         *     `/v1/price` withholds is omitted: `our_price` is that market's
+         *     price.
          */
         get: operations["getDivergenceBoard"];
         put?: never;
@@ -1775,13 +1781,17 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Δ% time-series for one (pair, reference).
+         * Δ% time-series for one pair against every reference.
          * @description The history companion to the `/v1/divergence` board: the
-         *     bucketed Δ% series for ONE (asset, quote, reference) triple
-         *     from `divergence_observations`. Each point is the LAST
-         *     observation inside its bucket (last-value downsampling — the
-         *     board semantics, not an average); `firing` is true when ANY
-         *     observation in the bucket breached its threshold, so a brief
+         *     bucketed Δ% series for ONE (asset, quote) pair against every
+         *     reference, from `divergence_observations`. Each point carries
+         *     our price beside each reference's comparison; a reference is
+         *     never served alone, so there is no `reference` selector
+         *     (passing one returns 400). Each reference's values are its LAST
+         *     observation inside the bucket (last-value downsampling — the
+         *     board semantics, not an average) and `our_price` is the
+         *     bucket's newest; a reference's `firing` is true when ANY of its
+         *     observations in the bucket breached its threshold, so a brief
          *     breach never disappears into a bucket. `bucket_seconds`
          *     reports the effective resolution (1d → 5 min, 7d → 30 min,
          *     30d → 2 h; every response is ≤ ~360 points).
@@ -1790,10 +1800,9 @@ export interface paths {
          *     (`divergence.threshold_pct`) — the band a chart shades;
          *     omitted when the deployment has none configured (draw no
          *     band). `?pair=` is `<asset_id>~<quote_id>` (the markets slug
-         *     convention); `?reference=` one of the board's reference
-         *     names; `?days=` ∈ {1, 7, 30} (default 7) — other values
+         *     convention); `?days=` ∈ {1, 7, 30} (default 7) — other values
          *     return 400, as does a leg that is not a valid asset id. 200 +
-         *     empty `points` when the reader isn't wired or the triple has no
+         *     empty `points` when the reader isn't wired or the pair has no
          *     observations in the window. 404 `price-withheld` when
          *     `/v1/price` withholds the pair's market (every point carries
          *     `our_price`).
@@ -14022,7 +14031,7 @@ export interface operations {
                  * @example fiat:USD
                  */
                 quote?: components["parameters"]["Quote"];
-                /** @description Restrict to one source's most-recent trade (0/1 row). */
+                /** @description Restrict to one on-chain source's most-recent trade (0/1 row). An off-chain source (CEX, FX provider, aggregator, Chainlink, Tiingo; `on_chain: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /**
                  * @description `latest` collapses to the single most-recent trade across
@@ -14103,7 +14112,7 @@ export interface operations {
                  * @example fiat:USD
                  */
                 quote?: components["parameters"]["Quote"];
-                /** @description Restrict to one source's most-recent trade. */
+                /** @description Restrict to one on-chain source's most-recent trade. An off-chain source (CEX, FX provider, aggregator, Chainlink, Tiingo; `on_chain: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /**
                  * @description `latest` collapses to the single most-recent trade across
@@ -14907,7 +14916,7 @@ export interface operations {
                  * @example native
                  */
                 asset: components["parameters"]["AssetQuery"];
-                /** @description Optional. Restrict to a single source name. */
+                /** @description Optional. Restrict to a single on-chain source (reflector-dex, reflector-cex, reflector-fx, redstone, band). An off-chain source (CEX, FX provider, aggregator, Chainlink, Tiingo; `on_chain: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /** @description Optional. Restrict to a single quote asset id (e.g. `fiat:USD`, `fiat:EUR`) — disambiguates a source that publishes the same base asset against more than one live quote. */
                 quote?: string;
@@ -15673,11 +15682,11 @@ export interface operations {
     getDivergenceBoard: {
         parameters: {
             query?: {
-                /** @description true → only rows whose latest status is firing. */
+                /** @description true → only pairs with at least one reference whose latest status is firing. */
                 firing?: boolean;
                 /** @description Trailing lookback in days for divergence rows (1-365, default 7). */
                 window_days?: number;
-                /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
+                /** @description Maximum pairs to return (1-500, default 100). Out-of-range values return 400. */
                 limit?: number;
             };
             header?: never;
@@ -15686,7 +15695,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Latest divergence per (pair, reference). */
+            /** @description Latest divergence per pair, every reference grouped beside our price. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -15695,30 +15704,31 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
-                     *         "observations": [
+                     *         "pairs": [
                      *           {
                      *             "asset_id": "crypto:BTC",
                      *             "quote_id": "fiat:USD",
-                     *             "reference": "chainlink",
+                     *             "our_price": "62543.07358731602",
                      *             "observed_at": "2026-07-03T22:37:08.896016Z",
                      *             "observed_at_ledger": 0,
-                     *             "our_price": "62543.07358731602",
-                     *             "ref_price": "62608.75585288",
-                     *             "delta_pct": "-0.10490907329051442",
-                     *             "status": "clear",
-                     *             "ref_observed_at": "2026-07-03T22:36:11Z"
-                     *           },
-                     *           {
-                     *             "asset_id": "crypto:ETH",
-                     *             "quote_id": "fiat:USD",
-                     *             "reference": "coingecko",
-                     *             "observed_at": "2026-07-03T22:37:08.90697Z",
-                     *             "observed_at_ledger": 0,
-                     *             "our_price": "1757.84660921192",
-                     *             "ref_price": "1756.21",
-                     *             "delta_pct": "0.09318983560735354",
-                     *             "status": "clear",
-                     *             "ref_observed_at": "2026-07-03T22:36:52Z"
+                     *             "references": [
+                     *               {
+                     *                 "reference": "chainlink",
+                     *                 "ref_price": "62608.75585288",
+                     *                 "delta_pct": "-0.10490907329051442",
+                     *                 "status": "clear",
+                     *                 "observed_at": "2026-07-03T22:37:08.896016Z",
+                     *                 "ref_observed_at": "2026-07-03T22:36:11Z"
+                     *               },
+                     *               {
+                     *                 "reference": "coingecko",
+                     *                 "ref_price": "62580.12",
+                     *                 "delta_pct": "-0.05920516244376781",
+                     *                 "status": "clear",
+                     *                 "observed_at": "2026-07-03T22:37:08.896016Z",
+                     *                 "ref_observed_at": "2026-07-03T22:36:52Z"
+                     *               }
+                     *             ]
                      *           }
                      *         ]
                      *       },
@@ -15734,25 +15744,36 @@ export interface operations {
                      */
                     "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
-                            observations?: {
-                                asset_id?: string;
-                                quote_id?: string;
-                                /** @enum {string} */
-                                reference?: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
-                                /** Format: date-time */
-                                observed_at?: string;
-                                /** Format: int64 */
-                                observed_at_ledger?: number;
-                                our_price?: string;
-                                ref_price?: string;
-                                delta_pct?: string;
-                                /** @enum {string} */
-                                status?: "clear" | "firing";
+                            pairs: {
+                                asset_id: string;
+                                quote_id: string;
+                                /** @description Our price at `observed_at` (decimal string). */
+                                our_price: string;
                                 /**
                                  * Format: date-time
-                                 * @description When the reference observed `ref_price` (oracle round time, CoinGecko last_updated_at, on-chain ledger close). `observed_at` is the comparison time, so their difference is the reference's age when compared, at most 1h (76h for fiat/fiat FX pairs, whose quotes pause over market closes). Null on rows recorded before the reference time was stored.
+                                 * @description The pair's newest comparison time across its references.
                                  */
-                                ref_observed_at?: string | null;
+                                observed_at: string;
+                                /** Format: int64 */
+                                observed_at_ledger: number;
+                                references: {
+                                    /** @enum {string} */
+                                    reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
+                                    ref_price: string;
+                                    delta_pct: string;
+                                    /** @enum {string} */
+                                    status: "clear" | "firing";
+                                    /**
+                                     * Format: date-time
+                                     * @description When this reference was last compared. Equal to the pair's `observed_at` unless the reference missed later ticks; `delta_pct` is against our price at this time.
+                                     */
+                                    observed_at: string;
+                                    /**
+                                     * Format: date-time
+                                     * @description When the reference observed `ref_price` (oracle round time, CoinGecko last_updated_at, on-chain ledger close). `observed_at` is the comparison time, so their difference is the reference's age when compared, at most 1h (76h for fiat/fiat FX pairs, whose quotes pause over market closes). Null on rows recorded before the reference time was stored.
+                                     */
+                                    ref_observed_at: string | null;
+                                }[];
                             }[];
                         };
                     };
@@ -15766,8 +15787,6 @@ export interface operations {
             query: {
                 /** @description `<asset_id>~<quote_id>`, e.g. `crypto:BTC~fiat:USD`. */
                 pair: string;
-                /** @description External reference to plot against. */
-                reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
                 /** @description Trailing window; whitelisted to 1, 7 or 30 (default 7). */
                 days?: 1 | 7 | 30;
             };
@@ -15777,7 +15796,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Bucketed divergence series for the triple. */
+            /** @description Bucketed divergence series for the pair, every reference per point. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -15788,23 +15807,42 @@ export interface operations {
                      *       "data": {
                      *         "asset_id": "crypto:BTC",
                      *         "quote_id": "fiat:USD",
-                     *         "reference": "coingecko",
                      *         "days": 7,
                      *         "bucket_seconds": 1800,
                      *         "threshold_pct": 5,
                      *         "points": [
                      *           {
                      *             "t": "2026-07-29T12:00:00Z",
-                     *             "delta_pct": "-0.104909",
                      *             "our_price": "62543.07358731602",
-                     *             "ref_price": "62608.75585288"
+                     *             "references": [
+                     *               {
+                     *                 "reference": "chainlink",
+                     *                 "ref_price": "62580.12",
+                     *                 "delta_pct": "-0.059205"
+                     *               },
+                     *               {
+                     *                 "reference": "coingecko",
+                     *                 "ref_price": "62608.75585288",
+                     *                 "delta_pct": "-0.104909"
+                     *               }
+                     *             ]
                      *           },
                      *           {
                      *             "t": "2026-07-29T12:30:00Z",
-                     *             "delta_pct": "6.412000",
                      *             "our_price": "66623.11",
-                     *             "ref_price": "62608.75",
-                     *             "firing": true
+                     *             "references": [
+                     *               {
+                     *                 "reference": "chainlink",
+                     *                 "ref_price": "66590.40",
+                     *                 "delta_pct": "0.049121"
+                     *               },
+                     *               {
+                     *                 "reference": "coingecko",
+                     *                 "ref_price": "62608.75",
+                     *                 "delta_pct": "6.412000",
+                     *                 "firing": true
+                     *               }
+                     *             ]
                      *           }
                      *         ]
                      *       },
@@ -15820,23 +15858,26 @@ export interface operations {
                      */
                     "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
-                            asset_id?: string;
-                            quote_id?: string;
-                            /** @enum {string} */
-                            reference?: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
-                            days?: number;
-                            /** @description Downsampling bucket width. Each point is the last observation inside its bucket; render the series at this resolution, not as raw ticks. */
-                            bucket_seconds?: number;
+                            asset_id: string;
+                            quote_id: string;
+                            days: number;
+                            /** @description Downsampling bucket width. Each reference's value is its last observation inside the bucket; render the series at this resolution, not as raw ticks. */
+                            bucket_seconds: number;
                             /** @description The operator's divergence alert threshold (percent) — the same number the worker fires on. Omitted when unconfigured; draw no band in that case. */
                             threshold_pct?: number;
-                            points?: {
+                            points: {
                                 /** Format: date-time */
-                                t?: string;
-                                delta_pct?: string;
-                                our_price?: string;
-                                ref_price?: string;
-                                /** @description True when ANY observation in the bucket breached its threshold at observation time. Omitted when false. */
-                                firing?: boolean;
+                                t: string;
+                                /** @description Our price at the bucket's newest observation. */
+                                our_price: string;
+                                references: {
+                                    /** @enum {string} */
+                                    reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
+                                    ref_price: string;
+                                    delta_pct: string;
+                                    /** @description True when ANY of this reference's observations in the bucket breached its threshold at observation time. Omitted when false. */
+                                    firing?: boolean;
+                                }[];
                             }[];
                         };
                     };
@@ -15938,12 +15979,16 @@ export interface operations {
                  */
                 order_by?: "pair" | "volume_24h_usd_desc";
                 /**
-                 * @description Restrict the listing to markets a single source
-                 *     observed in the recency window. Must match a
+                 * @description Restrict the listing to markets a single on-chain
+                 *     source observed in the recency window. Must match a
                  *     registered source name (see `/v1/sources`); an
                  *     unknown name returns 400 `unknown-source` rather
                  *     than an empty 200 (avoids the silent-empty-page
-                 *     anti-pattern). Mutually exclusive with `asset`.
+                 *     anti-pattern), and an off-chain venue (CEX, FX
+                 *     provider, aggregator; `on_chain: false`) returns 400
+                 *     `off-chain-source-filter` — its markets are served
+                 *     only alongside other sources'. Mutually exclusive
+                 *     with `asset`.
                  *     Each row's volume, trade count and last price are
                  *     that source's own; the pair-wide `sparkline` and
                  *     `inception` enrichments are omitted.

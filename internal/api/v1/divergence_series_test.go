@@ -16,17 +16,19 @@ import (
 // fakeDivergenceReader records the args the handler passed down so the
 // tests can pin the param plumbing (pair split, whitelisted days).
 type fakeDivergenceReader struct {
-	gotAsset, gotQuote, gotRef string
-	gotDays                    int
-	points                     []timescale.DivergenceSeriesPoint
+	gotAsset, gotQuote string
+	gotDays            int
+	seriesCalls        int
+	points             []timescale.DivergenceSeriesPoint
 }
 
 func (f *fakeDivergenceReader) ListDivergenceLatest(context.Context, int, bool, int) ([]timescale.DivergenceRow, error) {
 	return nil, nil
 }
 
-func (f *fakeDivergenceReader) ListDivergenceSeries(_ context.Context, assetID, quoteID, reference string, sinceDays int) ([]timescale.DivergenceSeriesPoint, error) {
-	f.gotAsset, f.gotQuote, f.gotRef, f.gotDays = assetID, quoteID, reference, sinceDays
+func (f *fakeDivergenceReader) ListDivergenceSeries(_ context.Context, assetID, quoteID string, sinceDays int) ([]timescale.DivergenceSeriesPoint, error) {
+	f.gotAsset, f.gotQuote, f.gotDays = assetID, quoteID, sinceDays
+	f.seriesCalls++
 	return f.points, nil
 }
 
@@ -38,22 +40,29 @@ func newSeriesServer(reader DivergenceReader, threshold float64) *Server {
 	}
 }
 
+// TestDivergenceSeries_HappyPath pins the grouped shape: one point per
+// bucket carrying our price beside every reference, with our_price from
+// the bucket's newest observation.
 func TestDivergenceSeries_HappyPath(t *testing.T) {
+	b0 := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	b1 := b0.Add(30 * time.Minute)
 	fake := &fakeDivergenceReader{points: []timescale.DivergenceSeriesPoint{
-		{Bucket: time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC), DeltaPct: "1.25", OurPrice: "100.5", RefPrice: "99.25", Firing: false},
-		{Bucket: time.Date(2026, 7, 30, 12, 30, 0, 0, time.UTC), DeltaPct: "6.4", OurPrice: "106", RefPrice: "99.6", Firing: true},
+		{Bucket: b0, Reference: "chainlink", LastAt: b0.Add(20 * time.Minute), DeltaPct: "1.1", OurPrice: "100.6", RefPrice: "99.5"},
+		{Bucket: b0, Reference: "coingecko", LastAt: b0.Add(25 * time.Minute), DeltaPct: "1.25", OurPrice: "100.5", RefPrice: "99.25"},
+		{Bucket: b1, Reference: "chainlink", LastAt: b1.Add(5 * time.Minute), DeltaPct: "0.2", OurPrice: "106", RefPrice: "105.8"},
+		{Bucket: b1, Reference: "coingecko", LastAt: b1.Add(5 * time.Minute), DeltaPct: "6.4", OurPrice: "106", RefPrice: "99.6", Firing: true},
 	}}
 	s := newSeriesServer(fake, 5.0)
 
 	rec := httptest.NewRecorder()
 	s.handleDivergenceSeries(rec, httptest.NewRequest(http.MethodGet,
-		"/v1/divergence/series?pair=crypto:BTC~fiat:USD&reference=coingecko&days=7", nil))
+		"/v1/divergence/series?pair=crypto:BTC~fiat:USD&days=7", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
 	}
-	if fake.gotAsset != "crypto:BTC" || fake.gotQuote != "fiat:USD" || fake.gotRef != "coingecko" || fake.gotDays != 7 {
-		t.Errorf("reader args = (%q, %q, %q, %d), want (crypto:BTC, fiat:USD, coingecko, 7)",
-			fake.gotAsset, fake.gotQuote, fake.gotRef, fake.gotDays)
+	if fake.gotAsset != "crypto:BTC" || fake.gotQuote != "fiat:USD" || fake.gotDays != 7 || fake.seriesCalls != 1 {
+		t.Errorf("reader args = (%q, %q, %d) ×%d, want one read of (crypto:BTC, fiat:USD, 7)",
+			fake.gotAsset, fake.gotQuote, fake.gotDays, fake.seriesCalls)
 	}
 
 	var got struct {
@@ -69,14 +78,35 @@ func TestDivergenceSeries_HappyPath(t *testing.T) {
 		t.Errorf("bucket_seconds = %d, want the 7d bucket width", got.Data.BucketSeconds)
 	}
 	if len(got.Data.Points) != 2 {
-		t.Fatalf("points = %d, want 2", len(got.Data.Points))
+		t.Fatalf("points = %d, want 2 (one per bucket)", len(got.Data.Points))
 	}
-	if got.Data.Points[1].DeltaPct != "6.4" || !got.Data.Points[1].Firing {
-		t.Errorf("point[1] = %+v, want delta 6.4 + firing", got.Data.Points[1])
+	p0, p1 := got.Data.Points[0], got.Data.Points[1]
+	if p0.OurPrice != "100.5" {
+		t.Errorf("point[0].our_price = %q, want 100.5 (the bucket's newest observation)", p0.OurPrice)
 	}
-	// ADR-0003: deltas/prices must arrive as JSON strings, not numbers.
-	if raw := rec.Body.String(); !json.Valid([]byte(raw)) {
-		t.Fatalf("invalid JSON: %s", raw)
+	if len(p0.References) != 2 || p0.References[0].Reference != "chainlink" || p0.References[1].Reference != "coingecko" {
+		t.Errorf("point[0].references = %+v, want chainlink + coingecko", p0.References)
+	}
+	if len(p1.References) != 2 || p1.References[1].DeltaPct != "6.4" || !p1.References[1].Firing || p1.References[0].Firing {
+		t.Errorf("point[1].references = %+v, want coingecko firing at 6.4 beside a clear chainlink", p1.References)
+	}
+}
+
+// TestDivergenceSeries_NoSingleReferenceMode — one reference cannot be
+// selected alone: ?reference= is refused, never silently honoured.
+func TestDivergenceSeries_NoSingleReferenceMode(t *testing.T) {
+	fake := &fakeDivergenceReader{}
+	s := newSeriesServer(fake, 5.0)
+	for _, ref := range []string{"coingecko", "chainlink", "band"} {
+		rec := httptest.NewRecorder()
+		s.handleDivergenceSeries(rec, httptest.NewRequest(http.MethodGet,
+			"/v1/divergence/series?pair=crypto:BTC~fiat:USD&reference="+ref, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("reference=%s: status = %d, want 400 (body %s)", ref, rec.Code, rec.Body.String())
+		}
+	}
+	if fake.seriesCalls != 0 {
+		t.Errorf("reader called %d times for refused requests", fake.seriesCalls)
 	}
 }
 
@@ -85,13 +115,11 @@ func TestDivergenceSeries_ParamValidation(t *testing.T) {
 	cases := []struct {
 		name, url string
 	}{
-		{"missing pair", "/v1/divergence/series?reference=coingecko"},
-		{"pair without separator", "/v1/divergence/series?pair=crypto:BTC&reference=coingecko"},
-		{"empty quote", "/v1/divergence/series?pair=crypto:BTC~&reference=coingecko"},
-		{"unknown reference", "/v1/divergence/series?pair=crypto:BTC~fiat:USD&reference=bloomberg"},
-		{"missing reference", "/v1/divergence/series?pair=crypto:BTC~fiat:USD"},
-		{"non-whitelisted days", "/v1/divergence/series?pair=crypto:BTC~fiat:USD&reference=coingecko&days=90"},
-		{"garbage days", "/v1/divergence/series?pair=crypto:BTC~fiat:USD&reference=coingecko&days=x"},
+		{"missing pair", "/v1/divergence/series"},
+		{"pair without separator", "/v1/divergence/series?pair=crypto:BTC"},
+		{"empty quote", "/v1/divergence/series?pair=crypto:BTC~"},
+		{"non-whitelisted days", "/v1/divergence/series?pair=crypto:BTC~fiat:USD&days=90"},
+		{"garbage days", "/v1/divergence/series?pair=crypto:BTC~fiat:USD&days=x"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -114,7 +142,7 @@ func TestDivergenceSeries_NilReaderAndZeroThreshold(t *testing.T) {
 	s := newSeriesServer(nil, 0)
 	rec := httptest.NewRecorder()
 	s.handleDivergenceSeries(rec, httptest.NewRequest(http.MethodGet,
-		"/v1/divergence/series?pair=crypto:BTC~fiat:USD&reference=band", nil))
+		"/v1/divergence/series?pair=crypto:BTC~fiat:USD", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
 	}

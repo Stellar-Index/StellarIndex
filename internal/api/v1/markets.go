@@ -39,22 +39,6 @@ func DexSourceNames() []string {
 	return out
 }
 
-// CexSourceNames returns every source registered with
-// Class=Exchange + Subclass=CEX, sorted for stable order. Same
-// shape and rationale as DexSourceNames — exported so the prewarm
-// goroutine in cmd/stellarindex-api can iterate the registered CEXes
-// to warm `/v1/markets?source=<name>` cache slots.
-func CexSourceNames() []string {
-	out := make([]string, 0, len(external.Registry))
-	for name, md := range external.Registry {
-		if md.Class == external.ClassExchange && md.Subclass == external.SubclassCEX {
-			out = append(out, name)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
 // MarketsReader is the storage-side interface for /v1/markets
 // and /v1/pairs lookups. Implementations: *timescale.Store
 // (DistinctPairsExt + PairMarket), in-memory stubs for tests.
@@ -427,8 +411,9 @@ type MarketVolumeBucket struct {
 //     The latter surfaces high-USD-volume pairs first so clients
 //     don't paginate alphabetically through ~5K dust pairs to find
 //     the ones with real activity.
-//   - source   (optional): single source name (DEX or CEX). Restricts
-//     the result to pairs that source observed in the recency window.
+//   - source   (optional): single on-chain source name. Restricts the
+//     result to pairs that source observed in the recency window; an
+//     off-chain venue is refused (sourceFilterOK).
 //   - asset    (optional): canonical asset_id. Restricts the result
 //     to pairs where the asset appears on either side (base OR
 //     quote). Mutually exclusive with `source` — combine the two
@@ -482,21 +467,8 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	}
 
 	source := r.URL.Query().Get("source")
-	if source != "" {
-		// Validate against the in-memory registry so an unknown
-		// source name returns 400 instead of an empty page (the
-		// silent-empty-page anti-pattern: a typo in `?source=`
-		// looks identical on the wire to "this source has no
-		// trades", which sends callers chasing nonexistent data).
-		// Mirrors the same guard pattern on /v1/coins,
-		// /v1/markets cursor (commit 813ccde44), and /v1/pools.
-		if _, ok := external.Registry[source]; !ok {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/unknown-source",
-				"Unknown source", http.StatusBadRequest,
-				"source must be a registered source name (see /v1/sources for the canonical list); got "+source)
-			return
-		}
+	if !sourceFilterOK(w, r, source) {
+		return
 	}
 
 	asset := r.URL.Query().Get("asset")

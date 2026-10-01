@@ -118,10 +118,13 @@ type DivergenceRow struct {
 }
 
 // ListDivergenceLatest returns the LATEST observation per (asset,
-// quote, reference) within the trailing `sinceDays` window — the
-// current cross-reference divergence board. firingOnly restricts to
-// rows whose latest status is 'firing'. Ordered by |delta_pct| desc so
-// the widest gaps surface first. limit ≤ 500.
+// quote, reference) within the trailing `sinceDays` window, for at most
+// `limit` (asset, quote) pairs — every reference of a returned pair is
+// included, so a pair is never served with part of its comparison set.
+// Pairs rank by their widest |delta_pct|; firingOnly keeps pairs with at
+// least one reference firing at its latest observation. Rows are ordered
+// pair by pair (widest first), then by |delta_pct| desc within a pair.
+// limit ≤ 500.
 //
 // DISTINCT ON (asset, quote, reference) with the matching ORDER prefix
 // uses the (asset, quote, reference, observed_at DESC) index to pick
@@ -133,23 +136,31 @@ func (s *Store) ListDivergenceLatest(ctx context.Context, sinceDays int, firingO
 	if sinceDays <= 0 {
 		sinceDays = 7
 	}
+	having := ""
+	if firingOnly {
+		having = ` HAVING bool_or(status = 'firing')`
+	}
 	q := `
 		WITH latest AS (
 			SELECT DISTINCT ON (asset_id, quote_id, reference)
 			       asset_id, quote_id, reference, observed_at, observed_at_ledger,
-			       our_price::text, ref_price::text, delta_pct::text, status,
-			       ref_observed_at
+			       our_price, ref_price, delta_pct, status, ref_observed_at
 			  FROM divergence_observations
 			 WHERE observed_at > now() - make_interval(days => $1)
 			 ORDER BY asset_id, quote_id, reference, observed_at DESC
+		), pairs AS (
+			SELECT asset_id, quote_id, max(abs(delta_pct)) AS widest
+			  FROM latest
+			 GROUP BY asset_id, quote_id` + having + `
+			 ORDER BY widest DESC, asset_id, quote_id
+			 LIMIT $2
 		)
-		SELECT asset_id, quote_id, reference, observed_at, observed_at_ledger,
-		       our_price, ref_price, delta_pct, status, ref_observed_at
-		  FROM latest`
-	if firingOnly {
-		q += ` WHERE status = 'firing'`
-	}
-	q += ` ORDER BY abs(delta_pct::numeric) DESC LIMIT $2`
+		SELECT l.asset_id, l.quote_id, l.reference, l.observed_at, l.observed_at_ledger,
+		       l.our_price::text, l.ref_price::text, l.delta_pct::text, l.status,
+		       l.ref_observed_at
+		  FROM latest l
+		  JOIN pairs p USING (asset_id, quote_id)
+		 ORDER BY p.widest DESC, l.asset_id, l.quote_id, abs(l.delta_pct) DESC, l.reference`
 	rows, err := s.db.QueryContext(ctx, q, sinceDays, limit)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: ListDivergenceLatest: %w", err)
@@ -175,19 +186,22 @@ func (s *Store) ListDivergenceLatest(ctx context.Context, sinceDays int, firingO
 	return out, nil
 }
 
-// DivergenceSeriesPoint is one downsampled bucket of a single
-// (asset, quote, reference) divergence history. Values are the
-// LAST observation inside the bucket (the board semantics, not an
-// average — averaging would smooth exactly the spikes the chart
-// exists to show); Firing is true when ANY observation in the
-// bucket breached threshold, so a brief breach can't disappear
-// into its bucket. Decimal strings (ADR-0003).
+// DivergenceSeriesPoint is one downsampled (bucket, reference) cell of
+// a pair's divergence history. Values are the LAST observation of that
+// reference inside the bucket (the board semantics, not an average —
+// averaging would smooth exactly the spikes the chart exists to show);
+// LastAt is that observation's time, so a caller can pick the bucket's
+// newest our_price across references. Firing is true when ANY of the
+// reference's observations in the bucket breached threshold, so a brief
+// breach can't disappear into its bucket. Decimal strings (ADR-0003).
 type DivergenceSeriesPoint struct {
-	Bucket   time.Time
-	DeltaPct string
-	OurPrice string
-	RefPrice string
-	Firing   bool
+	Bucket    time.Time
+	Reference string
+	LastAt    time.Time
+	DeltaPct  string
+	OurPrice  string
+	RefPrice  string
+	Firing    bool
 }
 
 // DivergenceSeriesBucket maps a whitelisted window to its bucket
@@ -206,36 +220,37 @@ func DivergenceSeriesBucket(days int) time.Duration {
 	}
 }
 
-// ListDivergenceSeries returns the bucketed Δ% history for ONE
-// (asset, quote, reference) triple over the trailing `sinceDays`
-// window, ascending by bucket. The sibling of ListDivergenceLatest:
-// same access path minus the DISTINCT ON.
+// ListDivergenceSeries returns the bucketed Δ% history of every
+// reference for ONE (asset, quote) pair over the trailing `sinceDays`
+// window, ascending by bucket then reference. The sibling of
+// ListDivergenceLatest: same access path minus the DISTINCT ON.
 //
 // Index reasoning: divergence_observations_pair_ref_idx
-// (asset_id, quote_id, reference, observed_at DESC) covers the
-// three equality predicates + the observed_at range, so this is a
-// single index range scan over one triple's window (hypertable
-// chunk exclusion applies via the bare observed_at bound — the
-// column is never wrapped in a function in WHERE; time_bucket
-// appears only in SELECT/GROUP BY). The GROUP BY then folds ≤
-// window rows into ≤ ~360 buckets.
-func (s *Store) ListDivergenceSeries(ctx context.Context, assetID, quoteID, reference string, sinceDays int) ([]DivergenceSeriesPoint, error) {
+// (asset_id, quote_id, reference, observed_at DESC) covers the two
+// equality predicates; each of the ≤ 8 references is a range scan over
+// its window (hypertable chunk exclusion applies via the bare
+// observed_at bound — the column is never wrapped in a function in
+// WHERE; time_bucket appears only in SELECT/GROUP BY). The GROUP BY
+// folds the window into ≤ ~360 buckets per reference.
+func (s *Store) ListDivergenceSeries(ctx context.Context, assetID, quoteID string, sinceDays int) ([]DivergenceSeriesPoint, error) {
 	if sinceDays <= 0 {
 		sinceDays = 7
 	}
 	bucket := DivergenceSeriesBucket(sinceDays)
 	const q = `
-		SELECT time_bucket(make_interval(secs => $4), observed_at) AS bucket,
+		SELECT time_bucket(make_interval(secs => $3), observed_at) AS bucket,
+		       reference,
+		       max(observed_at),
 		       last(delta_pct, observed_at)::text,
 		       last(our_price, observed_at)::text,
 		       last(ref_price, observed_at)::text,
 		       bool_or(status = 'firing')
 		  FROM divergence_observations
-		 WHERE asset_id = $1 AND quote_id = $2 AND reference = $3
-		   AND observed_at > now() - make_interval(days => $5)
-		 GROUP BY bucket
-		 ORDER BY bucket ASC`
-	rows, err := s.db.QueryContext(ctx, q, assetID, quoteID, reference, int64(bucket.Seconds()), sinceDays)
+		 WHERE asset_id = $1 AND quote_id = $2
+		   AND observed_at > now() - make_interval(days => $4)
+		 GROUP BY bucket, reference
+		 ORDER BY bucket ASC, reference ASC`
+	rows, err := s.db.QueryContext(ctx, q, assetID, quoteID, int64(bucket.Seconds()), sinceDays)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: ListDivergenceSeries: %w", err)
 	}
@@ -243,7 +258,7 @@ func (s *Store) ListDivergenceSeries(ctx context.Context, assetID, quoteID, refe
 	var out []DivergenceSeriesPoint
 	for rows.Next() {
 		var p DivergenceSeriesPoint
-		if err := rows.Scan(&p.Bucket, &p.DeltaPct, &p.OurPrice, &p.RefPrice, &p.Firing); err != nil {
+		if err := rows.Scan(&p.Bucket, &p.Reference, &p.LastAt, &p.DeltaPct, &p.OurPrice, &p.RefPrice, &p.Firing); err != nil {
 			return nil, fmt.Errorf("timescale: ListDivergenceSeries scan: %w", err)
 		}
 		out = append(out, p)

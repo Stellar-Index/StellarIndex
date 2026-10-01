@@ -59,7 +59,7 @@ severity: P2
 
 - **Cold start.** Right after a binary restart, the cache is empty for the first prewarm cycle. Both prewarm and user requests miss. The alert's `for: 10m` window covers this, but a long boot delay can trip it.
 - **TTL > prewarm cadence.** If someone bumps the cache TTL without bumping the prewarm cadence, the alert fires legitimately — but the fix is the cadence, not the prewarm code.
-- **Op the prewarm doesn't cover.** Only `asset_markets` remains un-prewarmed today. `source_markets` IS prewarmed per registered CEX (`v1.CexSourceNames()`, limit=200, volume-desc — the explorer's `/exchanges/{name}` shape), and `all_pools` is prewarmed per-limit `{5,25,100,200}` on the DEX-source filter PLUS one pass per DEX (`soroswap`/`phoenix`/`aquarius`/`sdex`/`comet`, limit=100). High miss rate on `asset_markets` is expected — it's cached on first user request and served from cache thereafter. Suppress with a per-op exception or extend the prewarm.
+- **Op the prewarm doesn't cover.** `asset_markets` and `source_markets` are un-prewarmed today (`/v1/markets?source=` accepts only on-chain sources, so the per-CEX `/exchanges/{name}` slots are gone); `all_pools` is prewarmed per-limit `{5,25,100,200}` on the DEX-source filter PLUS one pass per DEX (`soroswap`/`phoenix`/`aquarius`/`sdex`/`comet`, limit=100). High miss rate on `asset_markets` / `source_markets` is expected — it's cached on first user request and served from cache thereafter. Suppress with a per-op exception or extend the prewarm.
 
 ## Related
 
