@@ -155,11 +155,15 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	skipRecognition := fs.Bool("skip-recognition", false, "Trust the prior recognition audit (recognition_ok=true) instead of re-scanning all topic shapes — the global DistinctTopicShapes scan is the load-heaviest step; skip it for gentle projection-only iteration once recognition is verified")
 	fromLedger := fs.Uint("from", 0, "INCREMENTAL verify: only check [from, tip], trusting [genesis, from] as already verified (substrate + recognition + projection all scoped to [from, tip]); the watermark still extends to tip when the window is clean. 0 = full verify from each source's genesis. The completeness timer passes min(watermark) from the prior snapshots so each run re-checks only new ledgers — minutes, not hours. An incremental run can only CONFIRM or DOWNGRADE the served `complete` axis, never upgrade it: a range it did not reconcile is carried from the prior verdict, and a FAILING prior verdict is cleared only by a full run (INV-5 — see projectionClaim).")
 	pass := fs.Bool("pass", false, "WHOLE-PASS mode: prove recognition + substrate ONCE at full range for the ENTIRE source catalogue, then reconcile EACH source's projection incrementally from its own prior watermark (projectionFloor). One process replaces the per-source, per-chunk driver that re-ran the load-heaviest global recognition scan (DistinctTopicShapes, ~60s) on EVERY 25k chunk — the nightly timeout that froze the alphabetical tail's verdicts. Because substrate is proven at FULL tip, its write advances the tip and is never blocked by the CS-083 guard (the low-tip substrate flap). Every catalogue source gets a verdict — a never-seeded source, and a source whose prior projection verdict was FAILING, both reconcile from genesis (a red source has no verified ground to resume from, so the pass re-verifies it rather than carrying the failure forward forever). Requires -ch; incompatible with -source / -from / -skip-substrate / -skip-recognition (the per-chunk knobs it replaces).")
+	timeout := fs.Duration("timeout", 120*time.Minute, "Deadline for the whole run; sources not reached by it keep their prior verdict and are named in the error. Keep it below the systemd unit's TimeoutStartSec.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *cfgPath == "" {
 		return fmt.Errorf("-config is required")
+	}
+	if *timeout <= 0 {
+		return fmt.Errorf("-timeout must be > 0, got %s", *timeout)
 	}
 	// Fail CLOSED on -pass combined with the per-source / per-chunk knobs it
 	// replaces (validatePassFlags): a partial pass that publishes over a subset
@@ -173,7 +177,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
 	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
@@ -420,6 +424,41 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	dirtyWindows, err := store.ProjectionDirtyWindows(ctx)
 	if err != nil {
 		return fmt.Errorf("pending replay-rewind dirty windows (failing closed — carrying a projection claim over a rewound range is the invalidation this record exists to prevent): %w", err)
+	}
+
+	// ── System recognition snapshot (gaps on contracts no source owns) ──
+	//
+	// Refreshed on every run, whatever the -source filter, and BEFORE the
+	// per-source loop so a pass that runs out of time still publishes it. An
+	// upsert error does not stop the loop; it is joined into the run's error.
+	var recSnapErr error
+	if !*skipRecognition {
+		// The census is what /v1/coverage publishes as typed numbers on its
+		// `recognition` audit axis: the distinct-contract count says how
+		// concentrated the unattributed shapes are, not just how many.
+		census := completeness.RecognitionCensus{Shapes: len(unattributed)}
+		contracts := make(map[string]struct{}, len(unattributed))
+		for _, g := range unattributed {
+			if census.EarliestLedger == 0 || g.MinLedger < census.EarliestLedger {
+				census.EarliestLedger = g.MinLedger
+			}
+			contracts[g.ContractID] = struct{}{}
+		}
+		census.Contracts = len(contracts)
+		recW := completeness.ComputeWatermark(sorobanFloor, tip, nilOrOne(census.EarliestLedger))
+		detail := completeness.FormatRecognitionDetail(census)
+		if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{
+			Source: completeness.SystemRecognitionSource, Genesis: sorobanFloor, Tip: tip,
+			Watermark: recW.Ledger, CoveragePct: recW.CoveragePct, Complete: recW.Complete,
+			LakeComplete: recW.Complete, // no projection axis on this system snapshot
+			FirstProblem: recW.FirstProblem, SubstrateOK: true, RecognitionOK: census.Shapes == 0, ProjectionOK: true,
+			Detail: detail,
+		}); err != nil {
+			recSnapErr = fmt.Errorf("upsert recognition snapshot: %w", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "compute-completeness: recognition  unattributed=%d contracts=%d coverage=%.4f\n",
+				census.Shapes, census.Contracts, recW.CoveragePct)
+		}
 	}
 
 	// ── Per-source watermark ────────────────────────────────────────
@@ -737,49 +776,12 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			verdictNotStoredNote(pub, tip, hasDirty))
 		return nil
 	}
+	if *pass {
+		catalogue = orderForPass(catalogue, priorProj, priorWatermark)
+	}
 	srcErr := evaluateEachSource(ctx, catalogue, *only, evalSource)
-
-	// ── System recognition snapshot (gaps on contracts no source owns) ──
-	//
-	// W1-flowcompleteness-1: this used to be gated on `*only == ""`, so the
-	// DEPLOYED daily driver (run-compute-completeness.sh always passes
-	// -source $SRC) NEVER refreshed it — the global scan detected an
-	// unattributed gap and then discarded it, leaving /v1/coverage's recognition
-	// row stale. The scan is already global on every per-source pass (line ~163,
-	// the driver passes no -skip-recognition) and `unattributed` is already
-	// fully computed, so refreshing the system snapshot every pass is free and
-	// restores the system-level alarm for gaps on contracts no source owns. The
-	// `-source` filter still governs which PER-SOURCE rows are written; it must
-	// not silence the system-wide recognition verdict.
-	if !*skipRecognition {
-		// The census is what /v1/coverage publishes as typed numbers on
-		// its `recognition` audit axis. The DISTINCT-CONTRACT count was
-		// computed and discarded here until now, so the public surface
-		// could say how many shapes were unattributed but not how
-		// concentrated they were — 23,945 shapes across 12 contracts and
-		// across 12,000 are very different discovery backlogs.
-		census := completeness.RecognitionCensus{Shapes: len(unattributed)}
-		contracts := make(map[string]struct{}, len(unattributed))
-		for _, g := range unattributed {
-			if census.EarliestLedger == 0 || g.MinLedger < census.EarliestLedger {
-				census.EarliestLedger = g.MinLedger
-			}
-			contracts[g.ContractID] = struct{}{}
-		}
-		census.Contracts = len(contracts)
-		recW := completeness.ComputeWatermark(sorobanFloor, tip, nilOrOne(census.EarliestLedger))
-		detail := completeness.FormatRecognitionDetail(census)
-		if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{
-			Source: completeness.SystemRecognitionSource, Genesis: sorobanFloor, Tip: tip,
-			Watermark: recW.Ledger, CoveragePct: recW.CoveragePct, Complete: recW.Complete,
-			LakeComplete: recW.Complete, // no projection axis on this system snapshot
-			FirstProblem: recW.FirstProblem, SubstrateOK: true, RecognitionOK: census.Shapes == 0, ProjectionOK: true,
-			Detail: detail,
-		}); err != nil {
-			return errors.Join(srcErr, fmt.Errorf("upsert recognition snapshot: %w", err))
-		}
-		fmt.Fprintf(os.Stderr, "compute-completeness: recognition  unattributed=%d contracts=%d coverage=%.4f\n",
-			census.Shapes, census.Contracts, recW.CoveragePct)
+	if recSnapErr != nil {
+		return errors.Join(srcErr, recSnapErr)
 	}
 
 	// #483: on a non-pubnet network, rows written for pubnet-only sources
@@ -805,15 +807,21 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 // selects and joins the failures, so one source's error cannot withhold a
 // fresh verdict from every source after it. An errored source publishes
 // nothing and keeps its prior verdict. A done ctx stops the walk, since every
-// remaining eval would fail the same way.
+// remaining eval would fail the same way, and the error names each skipped source.
 func evaluateEachSource(ctx context.Context, catalogue []reconSource, only string, eval func(reconSource) error) error {
 	var errs []error
-	for _, src := range catalogue {
+	for i, src := range catalogue {
 		if only != "" && src.name != only {
 			continue
 		}
 		if cerr := ctx.Err(); cerr != nil {
-			errs = append(errs, fmt.Errorf("%s and every later source: not evaluated: %w", src.name, cerr))
+			var skipped []string
+			for _, s := range catalogue[i:] {
+				if only == "" || s.name == only {
+					skipped = append(skipped, s.name)
+				}
+			}
+			errs = append(errs, fmt.Errorf("not evaluated, prior verdicts stand (%s): %w", strings.Join(skipped, ", "), cerr))
 			break
 		}
 		if err := eval(src); err != nil {
@@ -822,6 +830,23 @@ func evaluateEachSource(ctx context.Context, catalogue []reconSource, only strin
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// orderForPass moves every source whose -pass projection floor is its genesis
+// (a full re-verify) after the sources that resume incrementally, keeping
+// catalogue order within each group, so one long re-verify that exhausts the
+// run's deadline cannot withhold a fresh verdict from the cheap ones.
+func orderForPass(catalogue []reconSource, prior map[string]priorProjection, priorWatermark map[string]uint32) []reconSource {
+	ordered := make([]reconSource, 0, len(catalogue))
+	var fromGenesis []reconSource
+	for _, src := range catalogue {
+		if projectionFloor(src.genesis, true, prior[src.name], priorWatermark[src.name], 0) > src.genesis {
+			ordered = append(ordered, src)
+		} else {
+			fromGenesis = append(fromGenesis, src)
+		}
+	}
+	return append(ordered, fromGenesis...)
 }
 
 // projectionFloor is the incremental projection reconcile floor for ONE source.
@@ -2324,19 +2349,26 @@ func decodeContractCall(op clickhouse.ContractCallOp, call dispatcher.ContractCa
 		if matched = dec.Matches(call.ContractID, call.FunctionName); !matched {
 			return
 		}
+		// The live dispatcher refuses these before Decode; mirror it so the census and
+		// ch-rebuild neither expect nor write a row the served tier never gets.
+		if dispatcher.RefusesUncorroborated(dec, call.ExecutionCorroborated) {
+			matched = false
+			return
+		}
 		evs, err = dec.Decode(dispatcher.ContractCallContext{
-			Ledger:            op.Ledger,
-			ClosedAt:          op.ClosedAt,
-			TxHash:            op.TxHash,
-			TxSource:          op.Source,
-			OpSource:          op.Source,
-			OpIndex:           int(op.OpIndex),
-			ContractID:        call.ContractID,
-			FunctionName:      call.FunctionName,
-			Args:              call.Args,
-			CallPath:          call.CallPath,
-			CallPathContracts: call.CallPathContracts,
-			AuthOccurrence:    call.AuthOccurrence,
+			Ledger:                op.Ledger,
+			ClosedAt:              op.ClosedAt,
+			TxHash:                op.TxHash,
+			TxSource:              op.Source,
+			OpSource:              op.Source,
+			OpIndex:               int(op.OpIndex),
+			ContractID:            call.ContractID,
+			FunctionName:          call.FunctionName,
+			Args:                  call.Args,
+			CallPath:              call.CallPath,
+			CallPathContracts:     call.CallPathContracts,
+			AuthOccurrence:        call.AuthOccurrence,
+			ExecutionCorroborated: call.ExecutionCorroborated,
 		})
 	}); perr != nil {
 		return nil, true, fmt.Errorf("decoder panicked: %w", perr)

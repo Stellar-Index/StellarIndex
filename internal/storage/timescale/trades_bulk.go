@@ -212,8 +212,7 @@ func (s *Store) BulkBackfillTrades(ctx context.Context, trades []canonical.Trade
 	}
 	// Copy before sorting: filterStorableTrades returns the caller's slice
 	// unchanged in the all-valid case, and the caller's buffer must not be
-	// reordered under it (BatchInsertTrades sorts in place because its input
-	// is a short-lived batch; this one is the whole drain buffer).
+	// reordered under it.
 	rows := make([]canonical.Trade, len(storable))
 	copy(rows, storable)
 	sortTradesByConflictKey(rows)

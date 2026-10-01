@@ -42,7 +42,7 @@ export async function generateMetadata({
   return {
     title: `${inc.title} — Stellar Index status`,
     description: `Postmortem for ${inc.severity} on ${inc.date}.`,
-    alternates: { canonical: `/status/incident/${slug}` },
+    alternates: { canonical: `/status/incident/${encodeURIComponent(slug)}` },
   };
 }
 

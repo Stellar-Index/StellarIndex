@@ -28,7 +28,7 @@ import (
 )
 
 // The webhook ceiling is tier-aware: platform.Tier.MaxWebhooks is
-// the default ladder (free 2 → enterprise 100), overridable per
+// the default ladder (free 10 → partner 100), overridable per
 // tier via Config.WebhookQuotas. This replaced the flat 10-webhook
 // MaxWebhooksPerAccount cap ("tier-aware quotas can replace this
 // once billing is wired — Phase 2").

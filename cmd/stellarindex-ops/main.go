@@ -35,7 +35,7 @@
 //     `compute-completeness`, `verify-served-values`, `verify-usd-volume`,
 //     `usd-volume-restamp`, `sdex-claim-audit`, `classic-movements-backfill`,
 //     `projected-rebuild`, `reconcile-balances`, `verify-contiguity`,
-//     `verify-hashchain`, `verify-lake`.
+//     `verify-hashchain`, `verify-lake`, `wasm-drift`.
 //   - Doc generation: `docs-config` (regenerates the config
 //     reference from struct tags; called by `make docs-config`).
 //   - Billing/usage recovery: `usage-rollup-backfill` (re-folds the
@@ -201,6 +201,7 @@ var subcommands = map[string]func(args []string) error{
 	"verify-contiguity":          chops.Run,
 	"verify-hashchain":           chops.Run,
 	"verify-lake":                chops.Run,
+	"wasm-drift":                 chops.Run,
 }
 
 // leaf adapts a flags-only handler to the dispatch table's full-argv
@@ -975,7 +976,7 @@ Subcommands:
                           non-zero on any divergence. soroswap is re-derived
                           without pair seeding, so a range holding pairs
                           created before -from diverges by construction.
-  ch-rebuild -config PATH -from N -to N [-ch-addr H:P] [-sources CSV] [-sdex] [-sep41] [-contract-calls] [-contracts CSV] [-bulk-trades]
+  ch-rebuild -config PATH -from N -to N [-write] [-ch-addr H:P] [-sources CSV] [-sdex] [-sep41] [-contract-calls] [-contracts CSV] [-bulk-trades]
                           Re-derive event-based served tables (Timescale)
                           from the ClickHouse lake for a range by re-running
                           the production decoders — the ADR-0034 lake-replay
@@ -1307,6 +1308,20 @@ Subcommands:
                           different shape; run it separately. Example:
                             stellarindex-ops verify-lake \
                               -ch-addr 127.0.0.1:9300
+  wasm-drift [-config PATH] [-ch-addr H:P] [-source NAME] [-textfile PATH]
+                          Every contract of a gated source that has an
+                          audit log (curated set + factories + children
+                          walked from the lake's creation events) must
+                          run a WASM hash in the embedded audited-hash
+                          manifest (internal/ops/chops/audited_wasm.json).
+                          A hash absent from it is drift; a SAC or a
+                          contract with no lake instance entry is
+                          reported, not drift; a gated source with no
+                          audit log is reported unaudited. -textfile
+                          writes wasm_drift.prom for node_exporter.
+                          Read-only; touches ClickHouse only. Exit code
+                          = drifting contracts (capped at 255). Runbook:
+                          docs/operations/runbooks/wasm-drift.md.
   ch-recognition -config PATH [-from N] [-to N] [-ch-addr H:P] [-include-firehose] [-top N]
                           ADR-0033 Claim 2a recognition audit: pull every
                           distinct (contract_id, topic_0_sym) shape from the

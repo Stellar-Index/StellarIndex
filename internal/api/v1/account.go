@@ -768,7 +768,7 @@ func (s *Server) appendKeyAudit(r *http.Request, entry platform.AuditEntry, surf
 // 25 is the repo's own pre-existing key cap — the flat
 // `MaxKeysPerAccount` the dashboard mint shipped with before F-1257
 // replaced it with the tier ladder ([platform.Tier.MaxActiveKeys], free
-// 5 → enterprise 250). Reusing that number rather than picking a new one
+// 25 → partner 250). Reusing that number rather than picking a new one
 // means the bound is provably above what any legitimate caller holds
 // (nobody rotates into 25 concurrent self-service credentials) while
 // still turning an unbounded mint loop into a 409 — the conservative

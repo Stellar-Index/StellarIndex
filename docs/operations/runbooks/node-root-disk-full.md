@@ -34,7 +34,7 @@ df -h /
 sudo du -xsh /var/log/* /tmp /var/cache 2>/dev/null | sort -rh | head -15
 
 # The two biggest known root consumers that du above will NOT explain:
-ls -lh /swap_f1209; swapon --show                    # 16 G swap file on the 49 G root
+ls -lh /swap_f1209; swapon --show                    # 4 G swap file on the 49 G root (16 G until 2026-09-29)
 zfs list -o name,mountpoint,mounted data/prometheus data/loki data/clickhouse data/postgres
 # an UNMOUNTED dataset silently lands that data (e.g. ~13 G prometheus TSDB) back on root
 
@@ -135,7 +135,7 @@ the units that failed behind it with `systemctl reset-failed`. Full account in
 
 ## Known false-positive patterns
 
-- None known. Headroom can be under 5 min in a log-flood (3.8 GB/min on 2026-06-11), and the 49 G root carries a 16 G swap file (`/swap_f1209`; dropping it is an open operator decision). Fire = act immediately.
+- None known. Headroom can be under 5 min in a log-flood (3.8 GB/min on 2026-06-11), and the 49 G root carries a 4 G swap file (`/swap_f1209`, resized from 16 G on 2026-09-29). Fire = act immediately.
 
 ## Related
 

@@ -20,14 +20,151 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.97.0] — 2026-09-30
+
+36 commits since v0.96.0. Operator-visible: `GET /v1/operations` rejects any
+`ledger` parameter with a 400 that names the new
+`GET /v1/ledgers/{seq}/operations` route (OpenAPI 1.31.0); two new off-chain
+feeds ship disabled — `[external.openexchangerates]` (`enabled = false`,
+`OPENEXCHANGERATES_APP_ID`) and `[external.tiingo]` (`enabled = false`,
+`TIINGO_API_KEY`), the latter valuing twelve WisdomTree fund shares at their
+daily NAV once enabled; the forex worker polls every
+`[external.massive] refresh_interval` (default 1h, floored at 10m); a new
+`stellarindex-ops wasm-drift` check with two ticket alerts, for which the
+repo ships no scheduling unit; `verify-lake`, `verify-contiguity` and
+`verify-hashchain` with `-to 0` fail closed when the lake trails the history
+archive tip by more than 100 ledgers; `compute-completeness` takes
+`-timeout` (default 120m, `PASS_TIMEOUT` in the driver); `sla-probe` paces
+at `-max-rps` (default 100); test nets stop serving pubnet reference
+listings; the next archival-node apply renders WAL archiving and restarts
+Postgres. After deploy, run `projector-replay -source phoenix -from
+63295145` to add the Map-schema pool's liquidity rows (#2002). No new
+migration.
+
+### Breaking
+
+- **api — `GET /v1/operations?ledger=` retired (#1992, #2007,
+  OPERATOR-VISIBLE):** the one-ledger read is now
+  `GET /v1/ledgers/{seq}/operations` (limit 1–2000, closed-ledger cache
+  band); any `ledger` parameter on `/v1/operations` returns a 400
+  `invalid-parameter` problem naming that route, so `/v1/operations` is the
+  tip-advancing directory only (ADR-0018).
+
+### Changed
+
+- **ops — lake verifiers' auto `-to` (#1974, OPERATOR-VISIBLE):** with
+  `-to 0`, `verify-lake`, `verify-contiguity` and `verify-hashchain` also
+  read the tip from `stellar.history_archive_url` and fail closed when the
+  lake trails it by more than 100 ledgers, so a Galexie stall no longer
+  certifies the lake complete; an unreachable tip warns and is skipped.
+- **ops — compute-completeness (#1879, OPERATOR-VISIBLE):** in `-pass` mode
+  sources that re-verify from genesis run after the incremental ones, the
+  recognition snapshot is written before the loop, a deadline stop names
+  every skipped source, and the deadline is a `-timeout` flag (default
+  120m) the driver passes through `PASS_TIMEOUT`.
+- **sla-probe — request pacing (#1905, OPERATOR-VISIBLE):** `-max-rps`
+  (default 100, 0 = unpaced) caps all workers through one limiter so a run
+  no longer trips the per-key rate limit and pages on its own 429s; stats
+  carry `failed_by_status` and the availability reason names the most
+  frequent cause.
+- **api — test-net listings (#1951, OPERATOR-VISIBLE):** on testnet and
+  futurenet `/v1/sources` and its health route keep only sources that apply
+  to the network, `/v1/assets/verified`, `/v1/external/assets` and
+  `/v1/aggregators` return an empty list, `/v1/external/assets/{slug}`
+  returns 404, and the pubnet warning stamps are skipped; pubnet and an
+  unset network are unchanged.
+- **ansible — archival-node WAL archiving (#1731, OPERATOR-VISIBLE):**
+  `postgresql.conf.j2` renders `archive_mode`, `archive_command` and
+  `archive_timeout`, gated on `pgbackrest_backup_enabled`, so a rebuilt host
+  keeps point-in-time recovery; the next apply restarts Postgres with the
+  values the reference host already runs.
+- **ansible — pg-logrotate (#1897, OPERATOR-VISIBLE):** the hourly
+  `pg-logrotate.service` reads a role-owned
+  `/etc/stellarindex-pg-logrotate.conf` (stock policy plus `maxsize 500M`)
+  instead of the uncapped distro file.
+- **ci — deprecations (#1969):** `check-deprecations.sh` fails a
+  `// Deprecated:` paragraph with no `vX.Y.Z` removal version in CI,
+  `verify.sh` and `lint-changed`; the legacy tier constants are scheduled
+  for v2.0.0.
+- **release — build provenance (#1945):** `release.yml` attests every
+  subject in `SHA256SUMS` (binaries and `migrations.tar.gz`) with
+  `actions/attest-build-provenance` after signing, and a failed attestation
+  stops the release; `release-process.md` documents
+  `gh attestation verify`.
+
+### Added
+
+- **forex — Open Exchange Rates (#2011, OPERATOR-VISIBLE):**
+  `[external.openexchangerates]` (`enabled` default false, `app_id` /
+  `OPENEXCHANGERATES_APP_ID`) builds a provider for the hourly USD-base
+  board, sending the app id only in the Authorization header and refusing a
+  malformed board whole; the worker stores it but never fetches it, so
+  serving stays massive then ECB. The worker cadence is
+  `[external.massive] refresh_interval` (default 1h; under 10m is raised to
+  10m and logged).
+- **rwa — WisdomTree fund NAV (#2012, OPERATOR-VISIBLE):** a Tiingo poller
+  in the indexer (`[external.tiingo]`, disabled by default,
+  `TIINGO_API_KEY`, hourly) stores daily NAVs for twelve WisdomTree
+  fund-share tokens bound on exact `(code, issuer)` as reference-only
+  `raw:<TICKER>` rows; the new `fund_nav` provenance ranks between the
+  oracle and listing arms with `decimals_published: 2` and no premium, a
+  NAV older than 5 days is `reference_expired`, and oracle rows gain
+  `nav_disagreement` past half a cent.
+- **ops — wasm-drift (#2004, #2013, OPERATOR-VISIBLE):**
+  `stellarindex-ops wasm-drift` resolves the current WASM hash of every
+  audited gated source's contracts from the lake and flags any hash not in
+  `internal/ops/chops/audited_wasm.json`, writing `wasm_drift.prom`;
+  `stellarindex_wasm_drift` and `stellarindex_wasm_drift_stale` (no run in
+  2 days) are ticket alerts with a runbook. sushiswap_v3 and upshift gain
+  audit logs and manifest hashes.
+- **web — legal pages (#2010):** `/terms` and `/privacy` are live, linked
+  from the sidebar rail, footer and sitemap; the sign-up form states that
+  creating an account accepts them, and `/pricing` describes usage as
+  per-account.
+
+### Fixed
+
+- **forex — held rates after restart (#1995):** on its first refresh the
+  worker seeds held tickers from the newest `fx_quotes` row within 7 days,
+  so a fiat the upstream has not yet republished no longer drops out of
+  `/v1/price` after a restart.
+- **openapi — envelope declared (#1972):** the 38 enveloped 2xx data
+  schemas declare `EnvelopeMeta` (`as_of`, `flags`) as `allOf`; the data
+  subtrees are unchanged, and the 18 session-cookie dashboard/auth
+  operations are named as the bare-on-the-wire exemption.
+- **phoenix (#2002, #2001):** the Map-schema pool's `provide_liquidity` and
+  `withdraw_liquidity` events decode into `phoenix_liquidity` rows (replay
+  above); a bond-instrument contract that only shares the `"bond"` topic
+  word leaves the curated stake set.
+- **oracle — raw rows (#1925):** the `oracle_prices_1d` read behind the
+  RWA history series drops `raw:` assets in both its keys and its SQL.
+- **deploy — cut-over DDL (#1961):** the evidence step no longer refutes a
+  ClickHouse DDL whose created objects are declared transient
+  (`si-cutover-object`); it leaves it to the operator's acknowledgement.
+- **markets (#1950):** empty commit; the SAC-spelling fold in
+  `/v1/markets` and `/v1/pools` shipped in v0.96.0 as #1966.
+- **docs:** the frozen-price flag docs state what a held value carries,
+  including its own `observed_at` and `/v1/price/batch` (#1847); the launch
+  plan's D1 freeze passage matches the measured state (#2009); the HA plan
+  gains a ClickHouse lake tier (#1767); the design system records the
+  Tailwind v4 browser baseline (#1930); the host-down runbook records the
+  Hetzner Robot server numbers (#2008); the DNS/email perimeter's
+  owner-side steps are closed (#2014); the metrics reference cross-links
+  the monthly-quota fail-closed alert (#2020); the coverage doc cites the
+  commit behind a reused PR number instead of the number (#1901).
+
 ## [v0.96.0] — 2026-09-30
 
-41 commits since v0.95.0. Operator-visible: SDEX fills with one zero leg are
+58 commits since v0.95.0. Operator-visible: SDEX fills with one zero leg are
 now stored as trades and serve `"price": null` (the field is nullable in
 OpenAPI and `*string` in `pkg/client`); catalogue listing cursors name the
 slugs already served, so an offset cursor from an older release returns 400;
-dashboard sessions idle for over 7 days are revoked; and `verify-lake`
-censuses all seven raw tables on a new daily timer. New migration: 0191 drops
+dashboard sessions idle for over 7 days are revoked; `POST /v1/account/keys`
+is limited to `apikey`/`operator` callers and self-service keys expire when
+idle; `verify-lake` censuses all seven raw tables on a new daily timer; a
+page inhibits only the ticket/info alerts of its own `alert_family`; and the
+unread `idx_lec_asset` skip index leaves the ClickHouse schema (a live host
+reports it as drift until the operator drops it). New migration: 0191 drops
 the two `trades` amount CHECKs — catalog-only DDL that runs with compressed
 chunks in place (no decompress) under the deploy's 5 s `lock_timeout`; its
 commit carries a `Replay-Plan:` trailer (SDEX step 3f re-derives the served
@@ -55,10 +192,38 @@ trades with `ch-rebuild -sdex`).
 - **dashboardauth — idle sessions (#1967, OPERATOR-VISIBLE):** a session
   unused for `SessionIdleTimeout` (default 7 days) is revoked; API-key auth
   is unchanged.
+- **auth — self-service API keys (#1849, OPERATOR-VISIBLE):**
+  `POST /v1/account/keys` returns 403 unless the caller's tier is `apikey`
+  or `operator`, and a self-service child key is stored with
+  `MirroredKeyIdleTTL`, refreshed on every use, so only an abandoned key
+  ages out; operator, admin and signup mints stay persistent.
 - **ops — verify-lake (#1980, OPERATOR-VISIBLE):** a raw-table census checks
   transactions, operations, contract_events, results and participants per
   1M-ledger partition, writes `lake_verify.prom`, and runs daily under
   `run-heavy-job` with stale/failed alerts and a runbook.
+- **alerting — page→ticket inhibition (#1973, OPERATOR-VISIBLE):** the 34
+  family alerts across 11 r1 rule files carry an `alert_family` label and
+  both Alertmanager configs inhibit a ticket/info alert only when it shares
+  the page's `component` *and* `alert_family`, so one page no longer mutes
+  every lower-severity alert on that component; `inhibit-rules-test.sh`
+  runs in CI, `verify.sh` and `lint-changed`.
+- **clickhouse — `idx_lec_asset` (#1990, OPERATOR-VISIBLE):** the bloom
+  index on `ledger_entry_changes.asset` had no reader and leaves the tier-1
+  schema and the retrofit script; a host that still carries it shows
+  live-only drift in `ch-schema-drift` until step 4 of
+  `tier1_skip_indexes.sql` (`DROP INDEX` under `run-heavy-job.sh`) runs.
+- **divergence — CoinGecko reference (#1712):** the divergence price
+  reference authenticates with `external.coingecko.api_key` /
+  `demo_api_key` (Pro key → `pro-api` host) instead of hitting the public
+  host anonymously; a failed batch logs status and path only.
+- **ops — projector-replay (#1891):** the command's help, its run note and
+  the replay decision rule state its generation limit: it writes at
+  `derive_generation` 0, so it cannot correct a row a re-derive already
+  stamped higher — use `projected-rebuild -write` after a decoder fix;
+  `backfill-router`'s comments match what it does.
+- **ci — package docs (#1769):** `lint-docs` fails on an `internal/` or
+  `pkg/` package with no package comment; the Definition of Done asks for a
+  `CAPABILITY-INVENTORY.md` check before new utility code.
 
 ### Added
 
@@ -86,10 +251,17 @@ trades with `ch-rebuild -sdex`).
   `completeness_pct` is emitted (#1944); `/v1/assets` resolves issuer home
   domains in one batched read and counts LCM fallbacks (#1940); SSE
   subscriptions past the topic-map ceiling get a 503 (#1942).
+- **auth:** the API-key index is marked ready only by the build generation
+  that walked it, and the API invalidates the index at start so records
+  written raw become listable and revocable (#1857).
+- **api:** `/v1/ledger/stream` connections share one cursors read per tick
+  instead of each polling the store (#1915).
 - **pricing / divergence:** the synthetic USD cross requires legs from
   independent publishers (#1929).
-- **clickhouse / chops:** the cap67 watermark refuses to advance over missing
-  contract events (#1931); hash-chain rows pair their hashes from one row
+- **clickhouse / chops:** compute-completeness floors its scans at the
+  network's Soroban genesis instead of the pubnet ledger, so the test-net
+  unit no longer scans an inverted range (#1706); the cap67 watermark
+  refuses to advance over missing contract events (#1931); hash-chain rows pair their hashes from one row
   (#1944); gated factory children preseed from the ClickHouse lake and an
   empty seed is an error (#1876); the chunk-restamp report counts clean
   chunks and config-assertions flags a paused `trades` compression policy
@@ -102,7 +274,10 @@ trades with `ch-rebuild -sdex`).
   sorocredit and defindex surfaces (#1984, #1981), the automated stale-deploy
   check (#1976), the monthly archive-trim timer (#1934), the withdrawn
   `drop_chunks` drill item (#1965), the phantom Aquarius router gap (#1971),
-  and the divergence webhook payload (#1908).
+  and the divergence webhook payload (#1908); the WASM audit logs record the
+  Soroswap factory `set_pair_wasm` rotation (#1991), the sorocredit
+  early-window walk (#1997) and the Phoenix WASM lineage captured from the
+  lake, including a 14th pool the registry did not know (#1996).
 
 ## [v0.95.0] — 2026-09-30
 
@@ -505,122 +680,3 @@ coverage-honesty pass over the history/rate/account-state read paths.
   `ops_batch` ClickHouse user granted `system` database access so
   `compute-completeness`'s event census can read `system.parts`
   (already hot-patched on r1; this codifies it).
-
-## [v0.92.1] — 2026-09-28
-
-One day, 20 commits since v0.92.0 — a deploy-safety release.
-**v0.92.0 must not be deployed.**
-
-### Fixed
-
-- **migrations — 0174 neutralised before any environment applied it:**
-  the 0174 shipped in v0.92.0 ran `decompress_chunk` over every
-  `sep41_transfers` chunk before adding `sep41_transfers_amount_check`,
-  in one implicit transaction — on r1, 32 chunks, 55 GB compressed /
-  780 GB decompressed. Deployed under the 5-minute `statement_timeout`
-  migrate runs under, it fails partway with 0164 and 0166 already
-  committed (cctp/rozo emptied, `prices_1m`/`twap_1h`/`twap_1d`
-  recreated `WITH NO DATA` under the v0.91.0 binaries), version dirty
-  at 174; out of band it is hours of chunk locks and ~725 GB of writes
-  through a `pg_wal` that, until this release's ZFS move lands, still
-  sits on a 15 GB root filesystem. golang-migrate runs 0174 before any
-  later number, so a corrective migration can't help: the UP body is
-  now `SELECT 1;`, under `migrations/README.md`'s narrow "neutralising
-  an unapplied migration" exception — nobody we operate had applied it
-  (measured 2026-09-28: `schema_migrations` = 162, dirty = false on r1,
-  testnet and futurenet, and v0.92.0's release assets show 0
-  downloads). The amount rule — any amount present is `>= 0`,
-  `transfer`/`approve` rows must carry one — is now enforced solely by
-  `validateSEP41TransferRows`, shared by both write paths (the COPY
-  writer validated nothing before; the per-row writer checked the sign
-  only on `transfer`/`approve`, missing a negative `set_admin`/
-  `set_authorized` amount). The database `CHECK` becomes a later,
-  offline step, tested against `pg_constraint` first. Anyone who built
-  from source since 2026-09-24 (`d65ddaae3`) and applied the old 0174
-  keeps the `CHECK` — a superset of the Go row contract, so it stays
-  satisfied, not violated — and the down migration (`DROP CONSTRAINT IF
-  EXISTS`) reverses either state.
-- **migrations — 0164's header corrected, its replay needs `-write`:**
-  the header claimed neither `cctp_events` nor `rozo_events` runs a
-  compression policy. Both do on r1 (measured 2026-09-28: `cctp_events`
-  148,660 rows across 21/23 compressed chunks, `rozo_events` 407 rows
-  across 31/32) — 148,660 is above
-  `max_tuples_decompressed_per_dml_transaction` (100,000), so a
-  decompressing DELETE would fail the cap. It doesn't: the unqualified
-  DELETE takes the direct compressed-batch path and never decompresses.
-  Body unchanged; the header now says so, and its replay commands gain
-  `-write` (they were dry runs as written) and `-refresh-caggs=false`
-  (cctp/rozo write neither trades nor oracle rows, so the default
-  refresh would burn a full-range price-cagg pass for nothing on top
-  of 0187's own re-materialisation walk). A new test seeds chunks past
-  the cap, compresses them, and proves the direct batch delete clears
-  both tables without hitting it.
-- **migrations — 0187 operator steps: archive `pools_per_source_1h`
-  first, refresh 14 days:** header-only. 0187 drops and recreates
-  `pools_per_source_1h` `WITH NO DATA` from `trades`, but the dropped
-  view was materialized when `trades` held history it no longer holds
-  (r1, 2026-09-28: the view's 2023-06 buckets sum 76,392,293 SDEX
-  trades against 35,624 `trades` rows now live for that month) — the
-  rebuild can't re-derive it. The header now tells an operator on such
-  a deployment to copy the materialization hypertable into a plain
-  archive table first (refresh job paused, one transaction per year,
-  exact count/sum check before migrating) and to keep reading the
-  archive for that lost history. It also corrects the
-  re-materialisation window itself: the recipe refreshed 7 days, but
-  `/v1/pools` and `/v1/markets?source=` read the view over
-  `MarketsRecencyWindow` (14 days), so a pool whose last trade was
-  7–14 days old would vanish from both until the walk reached it.
-- **ops — ZFS snapshots of `data/postgres` are recursive; ansible
-  codifies `data/postgres/wal` and tunes it for WAL:** r1's `pg_wal`
-  has been a symlink to `/pgwal` on the 49 GB root filesystem since the
-  2026-05-17 pool-full emergency; measured 2026-09-28, root had 15 GB
-  free against ~210 GiB/day of WAL, so an archive stall of ~1.7 h fills
-  it — the 2026-09-16 P1 shape, recurring. Ansible now codifies a
-  `data/postgres/wal` ZFS dataset (128K recordsize, lz4,
-  `logbias=latency`, `refreservation=256GiB` so no sibling dataset can
-  starve it) and renders `wal_init_zero`/`wal_recycle = off` only when
-  `pg_wal` sits on ZFS; `postgres_max_wal_size` moves to 16 GB (2 GB
-  forced 84% of checkpoints, and the guard previously refused 16 GB
-  while `pg_wal` was still on root, so it couldn't land before this
-  move). The symlink move itself stays a manual operator step inside a
-  Postgres stop window. `zfs-snapshot.sh` and `zfs-snapshot-now.sh` now
-  snapshot and destroy `-r`ecursively for every managed dataset, so the
-  new WAL child is captured atomically with its parent instead of
-  silently missed — a non-recursive snapshot of `data/postgres` alone
-  would lack the WAL of the same instant, unable to start without
-  `pg_resetwal`. The Postgres ZFS runbook is corrected to say `pg_wal`
-  has not shared a dataset with the cluster data since the 2026-05-17
-  move (so every snapshot since then needs pgBackRest for WAL, not the
-  ZFS snapshot alone), and gains rollback and clone procedures — the
-  rollback step now checks `pgbackrest info`'s next available timeline
-  before promoting, so a rehearsal or the offsite restore-drill can't
-  collide with a timeline number already taken. The root-disk alert now
-  tells a responder how to check whether `pg_wal` has moved yet.
-- **ops/clickhouse — the d3 MV-tip gate, the wasm code-history
-  instance-miss fix, and a dependabot Go-minor hold also landed since
-  v0.92.0:** `d3` cutover now refuses unless a reproject-progress mark
-  is strictly past the ledger the target MV was created at — the gap
-  it closes is real: production's v2 MV was created at tip 63683991
-  while the reproject that fed it used an exclusive `TO=63683991`, so
-  that ledger's 221 `contract_data` rows, 221 TTLs and 6 offers were
-  never reprojected, and the crossed SDEX order books that followed
-  traced back to it. `ContractCodeHistory` now trusts a
-  `contract_instance_changes` miss as authoritative instead of falling
-  back to a full `ledger_entry_changes` bloom-index scan (44 GiB,
-  30.6 s measured, past the API's 8 s deadline) — `/v1/contracts/{id}
-  /code-history` no longer 503s for a contract with no wasm instance
-  write; it serves `versions: []`. Dependabot now holds a Go minor bump
-  in a Dockerfile pin until the matching `go.mod` toolchain change
-  lands beside it (patch bumps still flow).
-
-Also since v0.92.0: `warnOpenCORS` now catches a wildcard origin mixed
-into a longer `allowed_origins` list instead of only a bare `["*"]`;
-`BlendPoolReserves` stops inventing `decimals=7` for a reserve outside
-the served config tier — a non-SAC token at a different exponent was
-mispriced by a power of ten — and instead resolves decimals from the
-reserve config, the SAC default, or the lake, withholding the USD
-valuation rather than mis-scaling it; the explorer's asset table sorts
-by the verified currency class instead of a constant field and gains a
-market-cap-mismatch verdict cell; and `idx_lec_key_xdr` is declared at
-the live `bloom_filter(0.01)` (the 0.0001 retune was reviewed and
-rejected — its only reader no longer probes it).

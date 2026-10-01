@@ -338,8 +338,10 @@ honest ceiling of "independent", and it is written here so it is not re-derived.
 > **6. Carried out of the tail-triage pass (owner: agent unless noted):**
 > C1-041 residual — `sep41_total_only` missing from the `supply_basis` spec
 > enum since v0.21.0; C6-081 — six Dockerfiles `FROM` by tag, not digest;
-> C2-038/C4-086 — the PG pipeline sink's undrained-on-exit is log-only
-> (counter + alert, like #368's CH half); C6-056 — ADR-0011 lacks the
+> ~~C2-038/C4-086 — the PG pipeline sink's undrained-on-exit is log-only
+> (counter + alert, like #368's CH half)~~ **fixed** for on-chain trades: once
+> the producer has stopped, shutdown rewinds the ledgerstream cursor below the
+> lowest abandoned trade; ledger-less rows stay counter + ERROR; C6-056 — ADR-0011 lacks the
 > amendment for the diagnostic-only over-mint leg; C2-049 — ~~the chainlink
 > source takes feed decimals from config and never reads `decimals()`~~
 > **FIXED `8bb7095a1` (v0.90.0): `decimals()` is read on-chain and a mismatch
@@ -880,12 +882,19 @@ outstanding set:
 
 - **D1 — ✅ RESOLVED BY ENGINEERING (better than the recommendation).** The
   2026-08-24 corroborated-release amendment + the synthetic USD-cross
-  reference (#142/#149, v0.41.x) give the thin fiat pairs a second source:
-  `success_count=2` medians verified live on XLM/EUR + XLM/GBP first tick,
-  auto-release works unattended, and `writer_wired` was fixed 2026-08-22 —
-  the pager now sits behind real automatic protection. The old
-  "stop paging when sources=1" recommendation is superseded. Unblocks
-  W6.7's gating logic.
+  reference (#142/#149, v0.41.x) give the thin fiat pairs a corroborating
+  reference for release — it never counts toward `SourceCount`
+  (`composite_reference.go`, `confidence.go`), so Phase 2 still engages on a
+  single-source pair, but `success_count=2` medians release it unattended
+  (verified live on XLM/EUR + XLM/GBP first tick) and `writer_wired` was
+  fixed 2026-08-22, so a freeze holds the served value. Measured 2026-09-30:
+  `stellarindex_anomaly_freeze_engaged_total` counts frozen TICKS, not
+  freezes — 575 ticks over 14 d were 10 freeze events (`freeze_events`:
+  9 XLM/GBP, 1 ETH/EUR, median hold 31 min, all self-released); the anomaly
+  alerts are ticket severity and only `freeze_escalated` pages. The old
+  "stop paging when sources=1" recommendation is superseded; the pair-level
+  fix is INV-2031 (derivation as the served base below a liquidity floor).
+  Unblocks W6.7's gating logic.
 - **W3.2 — ✅ MERGED** (#126, harness + first measurement; W3.3's
   account-family cost is root-caused further: the ops-by-account tip-walk,
   tracked with a designed fix in the session task list).
@@ -1530,12 +1539,12 @@ older `### D — Decisions only the maintainer can make` table further down, **t
 
 ### D — Decisions only the maintainer can make
 
-**D1 — [V] Anomaly-freeze pages on CORRECT prices.** Verified worsening:
-`stellarindex_anomaly_freeze_engaged_total{class="default"}` was 382 on
-2026-07-27 and is **1,700** now. Fires on thin FX crosses with `sources=1`;
-the served prices were independently verified correct (0.06% / 0.21% off).
-`writer_wired=false`, so the page has no automatic protection behind it.
-Recommendation: stop paging when `sources=1`. **Blocks W6.7.**
+**D1 — ✅ RESOLVED 2026-08-24 (see the verified-live list above).** The
+2026-07-27 reading (`engaged_total` 382 → 1,700, `writer_wired=false`,
+"stop paging when `sources=1`") is superseded: the counter counts frozen
+ticks, the writer is wired, the alerts are ticket severity, and the served
+value is held during a freeze. Nothing left for the maintainer to decide
+here; the thin-pair serving rule is INV-2031.
 
 **D2** HA at v1 vs fast-follow (single-box SPOF as accepted risk + tested
 restore; warm standby fast-follow).

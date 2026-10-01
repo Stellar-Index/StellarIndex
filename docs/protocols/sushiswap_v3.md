@@ -87,10 +87,16 @@ The pools have been upgraded twice, both times driven by the factory
 
 | Ledger | Event | Note |
 |---|---|---|
-| 61,594,963 | factory `wasm_approved` | first approved pool WASM |
-| 61,594,973 → 61,595,002 | `pool_upgraded` + `pool_migrated` | 3 pools migrated to `schema_version` 1 |
-| 62,898,168 | factory `wasm_approved` | second approved pool WASM |
-| 62,898,378 → 62,898,525 | `pool_upgraded` | 54 pools |
+| 61,594,963 | factory `wasm_approved` | first approved pool WASM — `48b28121…` by ledger order |
+| 61,594,973 → 61,595,002 | `pool_upgraded` + `pool_migrated` | 3 pools `41ae735d…` → `48b28121…`, migrated to `schema_version` 1 |
+| 62,898,168 | factory `wasm_approved` | second approved pool WASM — `003710b3…` by ledger order |
+| 62,898,378 → 62,898,525 | `pool_upgraded` | 54 pools `48b28121…` → `003710b3…` |
+
+`41ae735d…` is the factory's install-time pool template; the factory
+itself has run one build (`9f94c577…`), so neither approval is a
+factory upgrade. The approvals are tied to hashes by ledger order, not
+by decoding their bodies. Full hashes and per-pool lineage:
+[wasm-audits/sushiswap_v3.md](../operations/wasm-audits/sushiswap_v3.md).
 
 **The swap body is field-identical across both versions.** Verified
 over the whole history: all 97,349 `swap` events carry exactly the same

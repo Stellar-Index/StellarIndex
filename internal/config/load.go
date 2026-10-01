@@ -206,6 +206,10 @@ func (c *Config) ApplyEnvOverrides() []string {
 		c.External.ExchangeRatesApi.APIKey = v
 		overridden = append(overridden, "external.exchangeratesapi.api_key")
 	}
+	if v := os.Getenv("TIINGO_API_KEY"); v != "" {
+		c.External.Tiingo.APIKey = v
+		overridden = append(overridden, "external.tiingo.api_key")
+	}
 	if v := os.Getenv("COINMARKETCAP_API_KEY"); v != "" {
 		c.External.CoinMarketCap.APIKey = v
 		overridden = append(overridden, "external.coinmarketcap.api_key")
@@ -228,6 +232,10 @@ func (c *Config) ApplyEnvOverrides() []string {
 	if v := os.Getenv("MASSIVE_API_KEY"); v != "" {
 		c.External.Massive.APIKey = v
 		overridden = append(overridden, "external.massive.api_key")
+	}
+	if v := os.Getenv("OPENEXCHANGERATES_APP_ID"); v != "" {
+		c.External.OpenExchangeRates.AppID = v
+		overridden = append(overridden, "external.openexchangerates.app_id")
 	}
 	if v := os.Getenv("DUNE_API_KEY"); v != "" {
 		c.External.Dune.APIKey = v

@@ -68,6 +68,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/projector"
 	"github.com/Stellar-Index/StellarIndex/internal/redact"
+	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	externalbinance "github.com/Stellar-Index/StellarIndex/internal/sources/external/binance"
 	externalbitstamp "github.com/Stellar-Index/StellarIndex/internal/sources/external/bitstamp"
@@ -79,6 +80,7 @@ import (
 	externalecb "github.com/Stellar-Index/StellarIndex/internal/sources/external/ecb"
 	externalexchangerates "github.com/Stellar-Index/StellarIndex/internal/sources/external/exchangeratesapi"
 	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
+	externaltiingo "github.com/Stellar-Index/StellarIndex/internal/sources/external/tiingo"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -645,6 +647,7 @@ func run(cfgPath string, dryRun bool) error {
 	}
 	events := make(chan consumer.Event, 256)
 	sinkDone := make(chan struct{})
+	var sinkLoss pipeline.ShutdownLoss // read only after <-sinkDone
 	go func() {
 		// CRASH — deliberately unguarded (#368 M4). Two independent
 		// reasons, either one sufficient:
@@ -666,7 +669,7 @@ func run(cfgPath string, dryRun bool) error {
 		//     separate path, so systemd's restart re-reads from the last
 		//     cursor.
 		defer close(sinkDone)
-		pipeline.PersistEvents(rootCtx, logger, store, events, sinkMode)
+		sinkLoss = pipeline.PersistEvents(rootCtx, logger, store, events, sinkMode)
 	}()
 
 	// ─── Projector (ADR-0032) ──────────────────────────────────
@@ -988,6 +991,7 @@ func run(cfgPath string, dryRun bool) error {
 	if !streamExited {
 		select {
 		case <-streamErr:
+			streamExited = true
 			logger.Info("ledgerstream producer exited")
 		case <-shutdownCtx.Done():
 			// Producer still running at the deadline. Leaving `events`
@@ -1028,6 +1032,11 @@ func run(cfgPath string, dryRun bool) error {
 	select {
 	case <-sinkDone:
 		logger.Info("clean shutdown")
+		// Fresh bounded ctx: shutdownCtx may already be spent by a drain
+		// that ran to its deadline, and the rewind is the loss's only fix.
+		rctx, rcancel := context.WithTimeout(context.Background(), 10*time.Second)
+		rewindCursorForSinkLoss(rctx, store, sinkLoss, streamExited, logger) //nolint:contextcheck // deliberate fresh ctx, see above
+		rcancel()
 	case <-shutdownCtx.Done():
 		logger.Warn("drain timeout exceeded — hard exit")
 	}
@@ -1125,6 +1134,19 @@ func newECBPoller(cfg config.ExternalVenueConfig) *externalecb.Poller {
 		p.Interval = cfg.PollInterval
 	}
 	return p
+}
+
+// newTiingoPoller builds the fund-NAV poller over the curated fund
+// bindings' tickers, applying the operator's poll_interval override.
+func newTiingoPoller(cfg config.TiingoVenueConfig) (*externaltiingo.Poller, error) {
+	p, err := externaltiingo.NewPoller(cfg.APIKey, rwa.FundNAVTickers())
+	if err != nil {
+		return nil, err
+	}
+	if cfg.PollInterval > 0 {
+		p.Interval = cfg.PollInterval
+	}
+	return p, nil
 }
 
 func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitting would reduce linearity
@@ -1386,6 +1408,22 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 			"pairs", len(pairs),
 			"poll_interval", p.PollInterval())
 		enabled = append(enabled, externalecb.SourceName)
+	}
+
+	if cfg.Tiingo.Enabled {
+		// APIKey is resolved via env override at config load time
+		// (see config.ApplyEnvOverrides → TIINGO_API_KEY).
+		p, err := newTiingoPoller(cfg.Tiingo)
+		if err != nil {
+			return nil, nil, fmt.Errorf("tiingo: %w", err)
+		}
+		p.Logger = logger
+		pollers = append(pollers, external.PollerSpec{Poller: p})
+		logger.Info("external poller enabled",
+			"source", externaltiingo.SourceName,
+			"tickers", len(p.Tickers),
+			"poll_interval", p.PollInterval())
+		enabled = append(enabled, externaltiingo.SourceName)
 	}
 
 	if len(streamers) == 0 && len(pollers) == 0 {
@@ -2134,6 +2172,59 @@ func resolveStartLedger(ctx context.Context, store cursorReader, backfillFrom ui
 		return 0, fmt.Errorf("load cursor: %w", err)
 	}
 	return c.LastLedger + 1, nil
+}
+
+// cursorRewinder is what [rewindCursorForSinkLoss] needs from
+// [timescale.Store]; narrow so the rewind rules run without a database.
+type cursorRewinder interface {
+	cursorReader
+	RewindCursor(ctx context.Context, source, sub string, lastLedger uint32) (uint32, error)
+}
+
+// rewindCursorForSinkLoss moves the ledgerstream cursor below the lowest
+// on-chain trade the sink abandoned on exit, so the next start re-walks
+// it (served-tier writes are ON CONFLICT idempotent). Reports whether it
+// rewound. Only safe once the producer has stopped: a live producer's
+// next UpsertCursor would carry the cursor forward over the rewind.
+func rewindCursorForSinkLoss(ctx context.Context, store cursorRewinder, loss pipeline.ShutdownLoss, producerStopped bool, logger *slog.Logger) bool {
+	if loss.Rows == 0 {
+		return false
+	}
+	if loss.MinLedger == 0 {
+		// Only ledger-less rows (non-trade events, off-chain trades): no
+		// safe rewind target, so the undrained counter + ERROR stay the record.
+		logger.Error("sink abandoned rows on exit with no ledger to rewind to — re-derive manually",
+			"rows", loss.Rows)
+		return false
+	}
+	target := loss.MinLedger - 1
+	if !producerStopped {
+		logger.Error("sink abandoned trades on exit but the ledgerstream producer is still running — cursor NOT rewound, re-derive manually",
+			"rows", loss.Rows, "min_ledger", loss.MinLedger)
+		return false
+	}
+	c, err := store.GetCursor(ctx, cursorSource, "")
+	if err != nil {
+		logger.Error("sink abandoned trades on exit; reading the cursor to rewind it failed — re-derive manually",
+			"rows", loss.Rows, "min_ledger", loss.MinLedger, "err", err)
+		return false
+	}
+	if c.LastLedger <= target {
+		// The abandoned ledger was never checkpointed; the next start re-walks it anyway.
+		logger.Warn("sink abandoned trades on exit at or past the cursor — no rewind needed",
+			"rows", loss.Rows, "min_ledger", loss.MinLedger, "cursor", c.LastLedger)
+		return false
+	}
+	prior, err := store.RewindCursor(ctx, cursorSource, "", target)
+	if err != nil {
+		logger.Error("sink abandoned trades on exit; cursor rewind failed — re-derive manually",
+			"rows", loss.Rows, "min_ledger", loss.MinLedger, "err", err)
+		return false
+	}
+	logger.Warn("rewound ledgerstream cursor below trades the sink abandoned on exit",
+		"rows", loss.Rows, "prior_ledger", prior, "new_ledger", target,
+		"ledger_unknown", loss.LedgerUnknown)
+	return true
 }
 
 // processAndPersistCursor wraps pipeline.ProcessLedger with the
