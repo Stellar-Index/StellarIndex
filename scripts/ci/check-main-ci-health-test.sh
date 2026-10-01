@@ -120,6 +120,67 @@ run "$(runs_json "$(cancelled 150)" "$(one success 1 s1)" "$(one failure 30 f1)"
 expect 'green run behind a full page of cancelled runs → healthy' 0 'HEALTHY'
 expect 'report counts the dropped cancelled runs' 0 '150 dropped as cancelled'
 
+# ── Stale listing: on 2026-09-30 and 2026-10-01 the filtered run listing
+#    answered with nothing newer than 2026-09-04 while main was building
+#    green, and the walk read it as "red for 666h". The unfiltered listing
+#    (fixture key latest_runs) is the reference a listing is held to. ──
+
+# latest <branch> <created-at> <updated-at>
+latest() { printf '{"head_branch":"%s","status":"completed","conclusion":"success","created_at":"%s","updated_at":"%s"}' "$1" "$2" "$3"; }
+now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+t1="$(now_iso 1)"
+t2="$(now_iso 2)"
+month_old="$(runs_json "$(one failure 648 f1)" "$(one failure 649 f2)" "$(one success 652 s1)")"
+with_latest() { jq -c --argjson l "[$2]" '. + {latest_runs: $l}' <<<"$1"; }
+
+run "$(with_latest "$month_old" "$(latest main "$t2" "$t1")")"
+expect 'listing a month behind a completed run → UNKNOWN' 1 'run listing for .main. is stale'
+if grep -q 'RED —' <<<"$OUT"; then
+  echo "FAIL: a stale listing was judged RED" >&2
+  fail=$((fail + 1))
+fi
+
+run "$(with_latest '{"workflow_runs":[]}' "$(latest main "$t2" "$t1")")"
+expect 'empty listing while a run has completed → stale UNKNOWN' 1 'is stale'
+
+run "$(with_latest "$(runs_json "$(printf '{"conclusion":"success","created_at":"%s","html_url":"u","head_sha":"aaaaaaa"}' "$t2")")" "$(latest main "$t2" "$t1")")"
+expect 'listing holds the newest completed run → judged as usual' 0 'HEALTHY'
+
+run "$(with_latest "$month_old" "$(latest some-pr-branch "$t2" "$t1")")" 3 6
+expect 'a newer run on another branch is no evidence of staleness' 1 'RED —'
+
+run "$(with_latest "$(runs_json "$(one success 3 s1)")" "$(latest main "$t1" "$now")")"
+expect 'a run that only just finished may not be listed yet → not stale' 0 'HEALTHY'
+
+# Production path (gh, no fixture): a stale first answer is re-asked and
+# the current second answer is the one judged.
+STUB="$TMP/bin"
+mkdir -p "$STUB"
+cat > "$STUB/gh" <<'SH'
+#!/usr/bin/env bash
+case "$2" in
+  *status=completed*)
+    n=$(($(cat "$CALLS" 2>/dev/null || echo 0) + 1))
+    echo "$n" > "$CALLS"
+    if [ "$n" -eq 1 ]; then cat "$STALE_JSON"; else cat "$FRESH_JSON"; fi
+    ;;
+  *) cat "$LATEST_JSON" ;;
+esac
+SH
+printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/sleep"
+chmod +x "$STUB/gh" "$STUB/sleep"
+printf '%s' "$month_old" > "$TMP/stale.json"
+printf '{"workflow_runs":[{"conclusion":"success","created_at":"%s","html_url":"u","head_sha":"aaaaaaa"}]}' "$t2" > "$TMP/fresh.json"
+printf '{"workflow_runs":[%s]}' "$(latest main "$t2" "$t1")" > "$TMP/latest.json"
+OUT="$(PATH="$STUB:$PATH" GH_REPO=o/r CALLS="$TMP/calls" STALE_JSON="$TMP/stale.json" \
+  FRESH_JSON="$TMP/fresh.json" LATEST_JSON="$TMP/latest.json" bash "$CHECK" 2>&1)"
+RC=$?
+expect 'gh path: stale first answer re-asked, current answer judged' 0 'HEALTHY'
+if [ "$(cat "$TMP/calls" 2>/dev/null)" != "2" ]; then
+  echo "FAIL: gh path asked the listing $(cat "$TMP/calls" 2>/dev/null) time(s), want 2" >&2
+  fail=$((fail + 1))
+fi
+
 echo
 echo "check-main-ci-health-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ] || exit 1
