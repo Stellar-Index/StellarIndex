@@ -67,9 +67,9 @@ The last command names the flooding unit directly.
   showed it was NEVER live on r1, only codified in ansible role
   15-log-discipline.yml, which does not auto-run against r1 — the
   2026-06-11 postmortem recorded codified-as-applied).
-- Open margin item: 16G of the 49G root is a swap file
-  (`/swap_f1209`, ~1G used, with a separate 4G md0 swap partition) —
-  dropping it doubles root headroom. Operator decision.
+- Margin item closed 2026-09-29: the root swap file (`/swap_f1209`) was
+  resized 16G → 4G (a separate 4G md0 swap partition remains), returning
+  12G of the 49G root; root usage fell 70% → 40%.
 
 ## Related
 

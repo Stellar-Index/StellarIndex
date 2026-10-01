@@ -186,7 +186,8 @@ source_delete_sql() {
     rozo) echo "DELETE FROM rozo_events WHERE ledger BETWEEN $lo AND $hi;" ;;
     defindex)
       echo "DELETE FROM defindex_flows WHERE ledger BETWEEN $lo AND $hi;"
-      echo "DELETE FROM defindex_fees WHERE ledger BETWEEN $lo AND $hi;" ;;
+      echo "DELETE FROM defindex_fees WHERE ledger BETWEEN $lo AND $hi;"
+      echo "DELETE FROM defindex_admin_events WHERE ledger BETWEEN $lo AND $hi;" ;;
     blend)
       echo "DELETE FROM blend_auctions WHERE ledger BETWEEN $lo AND $hi;"
       echo "DELETE FROM blend_positions WHERE ledger BETWEEN $lo AND $hi;"

@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// ledgerOpsTotalReader feeds GET /v1/operations?ledger=N a fixed page of
+// ledgerOpsTotalReader feeds GET /v1/ledgers/{seq}/operations a fixed page of
 // rows and a controllable ledger header, to exercise the Total/Truncated
 // signal independently of the response-byte-budget test's row content.
 type ledgerOpsTotalReader struct {
@@ -55,7 +55,9 @@ func TestOperations_LedgerPath_SignalsTruncation(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	h.Operations(rec, httptest.NewRequest(http.MethodGet, "/v1/operations?ledger=64490439", nil))
+	req := httptest.NewRequest(http.MethodGet, "/v1/ledgers/64490439/operations", nil)
+	req.SetPathValue("seq", "64490439")
+	h.LedgerOperations(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -89,7 +91,9 @@ func TestOperations_LedgerPath_FullPageNotTruncated(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	h.Operations(rec, httptest.NewRequest(http.MethodGet, "/v1/operations?ledger=42", nil))
+	req := httptest.NewRequest(http.MethodGet, "/v1/ledgers/42/operations", nil)
+	req.SetPathValue("seq", "42")
+	h.LedgerOperations(rec, req)
 	if captured.Truncated {
 		t.Error("Truncated = true, want false: served operations equal the header's exact count")
 	}

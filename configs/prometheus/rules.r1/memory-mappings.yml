@@ -66,6 +66,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: infra
+          alert_family: "process_mappings/{{ $labels.process }}"
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
           summary: "{{ $labels.process }} holds {{ $value | humanizePercentage }} of vm.max_map_count — 5x its normal mapping count"
@@ -99,6 +100,7 @@ groups:
           severity: page
           team: stellarindex
           component: infra
+          alert_family: "process_mappings/{{ $labels.process }}"
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
           summary: "{{ $labels.process }} holds {{ $value | humanizePercentage }} of vm.max_map_count (SEV-1 risk)"

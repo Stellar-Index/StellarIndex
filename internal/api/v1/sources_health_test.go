@@ -62,6 +62,25 @@ func TestSourceHealth_OnChainSource(t *testing.T) {
 	}
 }
 
+// TestSourceHealth_NetworkScoped pins that the per-source page agrees with
+// /v1/sources: a pubnet-only venue 404s on a test net, sdex still resolves.
+func TestSourceHealth_NetworkScoped(t *testing.T) {
+	for _, network := range []string{"testnet", "futurenet"} {
+		ts := httpTestServer(t, v1.New(v1.Options{Network: network}))
+		for _, name := range []string{"soroswap", "binance"} {
+			resp := mustGet(t, ts.URL+"/v1/sources/"+name+"/health")
+			if resp.StatusCode != http.StatusNotFound {
+				t.Errorf("%s: %s status = %d, want 404", network, name, resp.StatusCode)
+			}
+			assertProblemNoStore(t, resp)
+		}
+		resp := mustGet(t, ts.URL+"/v1/sources/sdex/health")
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s: sdex status = %d, want 200", network, resp.StatusCode)
+		}
+	}
+}
+
 // TestSourceHealth_UnknownSourceIs404 — the registry is the 404
 // boundary; typos get a problem+json, not an empty row.
 func TestSourceHealth_UnknownSourceIs404(t *testing.T) {

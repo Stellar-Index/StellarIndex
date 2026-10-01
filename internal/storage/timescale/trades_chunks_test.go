@@ -399,6 +399,7 @@ func TestTradesCompressionPolicy(t *testing.T) {
 	for _, want := range []string{
 		"timescaledb_information.jobs",
 		"proc_name = 'policy_compression'",
+		"hypertable_schema = current_schema()",
 		"hypertable_name = 'trades'",
 		"config->>'compress_after'",
 	} {

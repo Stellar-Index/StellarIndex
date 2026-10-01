@@ -86,7 +86,7 @@ func brlCurrencies() *stubCurrenciesReader {
 // with no market of its own, priced through the USD anchor.
 func TestPriceDerivesAnyFiatThroughUSD(t *testing.T) {
 	reader := &usdLegReader{usdPriceFor: "native", price: xlmUSDPrice}
-	srv := v1.New(v1.Options{Prices: reader, Currencies: brlCurrencies()})
+	srv := v1.New(v1.Options{Prices: reader, Currencies: brlCurrencies(), FXFixings: brlFixings()})
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:BRL")
@@ -125,7 +125,7 @@ func TestPriceDerivesAnyFiatThroughUSD(t *testing.T) {
 // withheld market through a route nobody had gated.
 func TestPriceWithheldUSDLegIsNotLaunderedThroughFX(t *testing.T) {
 	reader := &usdLegReader{usdPriceFor: "native", price: xlmUSDPrice, withheld: true}
-	srv := v1.New(v1.Options{Prices: reader, Currencies: brlCurrencies()})
+	srv := v1.New(v1.Options{Prices: reader, Currencies: brlCurrencies(), FXFixings: brlFixings()})
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:BRL")
@@ -177,7 +177,7 @@ func TestPriceDerivedFiatDoesNotShadowARealMarket(t *testing.T) {
 // 404, not a fabricated number.
 func TestPriceUnknownFiatStillMisses(t *testing.T) {
 	reader := &usdLegReader{usdPriceFor: "native", price: xlmUSDPrice}
-	srv := v1.New(v1.Options{Prices: reader, Currencies: brlCurrencies()})
+	srv := v1.New(v1.Options{Prices: reader, Currencies: brlCurrencies(), FXFixings: brlFixings()})
 	ts := startHTTPTest(t, srv.Handler())
 
 	// KRW is a valid ADR-0010 fiat code but carries no rate in this
@@ -196,7 +196,7 @@ func TestPriceUnknownFiatStillMisses(t *testing.T) {
 // USD leg it does not have.
 func TestPriceNoUSDLegStillMisses(t *testing.T) {
 	reader := &usdLegReader{usdPriceFor: "crypto:BTC", price: "78812.87"}
-	srv := v1.New(v1.Options{Prices: reader, Currencies: brlCurrencies()})
+	srv := v1.New(v1.Options{Prices: reader, Currencies: brlCurrencies(), FXFixings: brlFixings()})
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:BRL")
@@ -213,7 +213,7 @@ func TestPriceNoUSDLegStillMisses(t *testing.T) {
 // portfolio in one round trip.
 func TestPriceBatchDerivesAnyFiatThroughUSD(t *testing.T) {
 	reader := &usdLegReader{usdPriceFor: "native", price: xlmUSDPrice}
-	srv := v1.New(v1.Options{Prices: reader, Currencies: brlCurrencies()})
+	srv := v1.New(v1.Options{Prices: reader, Currencies: brlCurrencies(), FXFixings: brlFixings()})
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=native&quote=fiat:BRL")

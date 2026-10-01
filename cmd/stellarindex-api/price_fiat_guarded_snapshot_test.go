@@ -119,14 +119,15 @@ func getBody(t *testing.T, url string) (int, string) {
 // end to end through everything this binary wires on the fiat path: the
 // real forex.Worker running its production Run loop against a fake
 // upstream, the forex.Cache it installs into, newForexAdapter, and the
-// production /v1/price handler.
+// production /v1/price/tip handler (the one surface that converts at the
+// live snapshot; closed surfaces bind vendor fixings instead).
 //
 // It replays the 2026-08-24 Massive UZS incident. After one healthy
 // refresh (UZS = 11,800) the live bar turns into 1820 and stays there,
 // while the ticker's dated bars keep saying ~11,790. The C2-030 band
 // refuses 1820 on every refresh (deviation, then the history-majority
 // confirm veto). Un-fixed, the worker installed the RAW snapshot before
-// the band ran, so /v1/price served XLM/UZS = 0.25 × 1820 = 455 — 6.5×
+// the band ran, so the tip served XLM/UZS = 0.25 × 1820 = 455 — 6.5×
 // too low — for as long as the upstream stayed broken, while fx_quotes
 // correctly refused the same bar.
 func TestPriceFiatCrossNeverServesABandRefusedRate(t *testing.T) {
@@ -160,7 +161,7 @@ func TestPriceFiatCrossNeverServesABandRefusedRate(t *testing.T) {
 	t.Cleanup(api.Close)
 
 	waitFor(t, "the first healthy snapshot", func() bool { return cache.Latest() != nil })
-	status, body := getBody(t, api.URL+"/v1/price?asset=native&quote=fiat:UZS")
+	status, body := getBody(t, api.URL+"/v1/price/tip?asset=native&quote=fiat:UZS")
 	if status != http.StatusOK || !strings.Contains(body, `"price":"2950"`) {
 		t.Fatalf("healthy: status %d, want XLM/UZS = 0.25 x 11800 = 2950. Body: %s", status, body)
 	}
@@ -172,9 +173,9 @@ func TestPriceFiatCrossNeverServesABandRefusedRate(t *testing.T) {
 	flippedAt := up.set(map[string]float64{"UZS": 1820, "EUR": 0.92})
 	waitFor(t, "three refreshes of the broken bar", func() bool { return up.hits() >= flippedAt+4 })
 
-	status, body = getBody(t, api.URL+"/v1/price?asset=native&quote=fiat:UZS")
+	status, body = getBody(t, api.URL+"/v1/price/tip?asset=native&quote=fiat:UZS")
 	if strings.Contains(body, `"price":"455"`) {
-		t.Fatalf("/v1/price served XLM/UZS = 455 = 0.25 x 1820: the rate the sanity "+
+		t.Fatalf("/v1/price/tip served XLM/UZS = 455 = 0.25 x 1820: the rate the sanity "+
 			"band REFUSED reached a customer through the in-memory snapshot. Body: %s", body)
 	}
 	if status != http.StatusOK || !strings.Contains(body, `"price":"2950"`) {
@@ -183,7 +184,7 @@ func TestPriceFiatCrossNeverServesABandRefusedRate(t *testing.T) {
 
 	// Same snapshot, the fiat-vs-fiat path: 1/11800 = 0.0000847…,
 	// against 1/1820 = 0.000549….
-	status, body = getBody(t, api.URL+"/v1/price?asset=fiat:UZS&quote=fiat:USD")
+	status, body = getBody(t, api.URL+"/v1/price/tip?asset=fiat:UZS&quote=fiat:USD")
 	if status != http.StatusOK || !strings.Contains(body, `"price":"0.0000847`) {
 		t.Fatalf("fiat cross: status %d, want UZS/USD = 1/11800 (0.0000847…), never "+
 			"1/1820 (0.000549…). Body: %s", status, body)

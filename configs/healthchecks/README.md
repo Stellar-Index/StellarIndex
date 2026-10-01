@@ -15,11 +15,19 @@ metrics endpoint responds:
 
 | Binary | Probe target | Failure semantics |
 |--------|--------------|-------------------|
-| indexer    | `localhost:9464/metrics` | curl exit ≠ 0 → `${URL}/fail` |
-| aggregator | `localhost:9465/metrics` | curl exit ≠ 0 → `${URL}/fail` |
-| api        | `localhost:3000/metrics` | curl exit ≠ 0 → `${URL}/fail` |
+| indexer    | `localhost:9464/metrics` | 3rd consecutive curl exit ≠ 0 → `${URL}/fail` |
+| aggregator | `localhost:9465/metrics` | 3rd consecutive curl exit ≠ 0 → `${URL}/fail` |
+| api        | `localhost:3000/metrics` | 3rd consecutive curl exit ≠ 0 → `${URL}/fail` |
 
 A successful probe POSTs `stellarindex-<svc> ok :<port>`.
+
+`/fail` marks a check down at once, bypassing its grace period, so
+every wrapper sends it only after `HC_FAIL_AFTER` consecutive failures
+(heartbeat 3, smoke and SLA probe 2); earlier failures send nothing and
+a deploy restart no longer costs a down + up email pair per service.
+The streak is `stellarindex_healthcheck_consecutive_failures{check}` in
+`hc_ping_<check>.prom`. A missing smoke script or probe binary still
+pings `/fail` at once.
 
 ### 2. API surface smoke test — 5 min cadence
 
@@ -29,7 +37,7 @@ and pings `HEALTHCHECKS_URL_SMOKE` with the full smoke output as
 the ping body. Catches schema regressions that the metrics-port
 probes can't see (e.g. `/v1/price` returning 200 with malformed
 JSON, an OpenAPI-spec change that breaks downstream clients).
-A failed run pings `${URL}/fail` instead.
+The second consecutive failed run pings `${URL}/fail` instead.
 
 The ping is the OPTIONAL leg. Every run also rewrites
 `/var/lib/node_exporter/textfile_collector/api_smoke.prom` with
@@ -46,7 +54,7 @@ from a timer that stopped firing.
 `stellarindex-sla-probe.timer` runs `stellarindex-sla-probe`
 against the local API for ~30 s and asserts the latency +
 freshness SLAs (p95 ≤ 200 ms, p99 ≤ 500 ms, freshness ≤ 30 s).
-Pass → ping `HEALTHCHECKS_URL_SLA_PROBE`; fail → ping `${URL}/fail`.
+Pass → ping `HEALTHCHECKS_URL_SLA_PROBE`; second consecutive fail → ping `${URL}/fail`.
 The full JSON report rides as the ping body so operators can
 read the per-endpoint percentile breakdown straight from the
 Healthchecks dashboard.
@@ -56,6 +64,10 @@ Default tuning (override via `/etc/default/stellarindex-healthchecks`):
 - `SLA_PROBE_DURATION=30s`
 - `SLA_PROBE_CONCURRENCY=1`
 - `SLA_PROBE_PAIR=native,fiat:USD`
+
+The binary paces itself at `-max-rps 100` (its default; the wrapper
+passes no rate flag) so a run stays under the API key's per-minute rate
+limit — see `docs/operations/sla-probe.md` §"Why an API key is required".
 
 ## Architecture
 

@@ -8,6 +8,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -74,8 +75,8 @@ func TestBatchInsertTrades_FailedSubBatchKeepsCommittedOutcome(t *testing.T) {
 	const source = "subbatch_partial"
 	deadlock := &pgconn.PgError{Code: "40P01", Message: "deadlock detected"}
 	store, conn := newScriptedStore(t,
-		scriptedResult{}, landedRows(source, 7, 4999), // sub-batch 1: cap, then 2 landed rows
-		scriptedResult{}, scriptedResult{err: deadlock}, // sub-batch 2: cap, then the fault
+		landedRows(source, 7, 4999),        // sub-batch 1: 2 landed rows
+		scriptedResult{err: deadlock},      // sub-batch 2: the fault
 		scriptedResult{}, scriptedResult{}, // registry: issuer, classic_assets
 	)
 	newBefore := testutil.ToFloat64(obs.TradeInsertOutcomeTotal.WithLabelValues(source, "new"))
@@ -117,8 +118,8 @@ func TestBatchInsertTrades_RegistryKeepsHighestLedgerAcrossSubBatches(t *testing
 	t.Parallel()
 	const source = "subbatch_merge"
 	store, conn := newScriptedStore(t,
-		scriptedResult{}, landedRows(source, 10),
-		scriptedResult{}, landedRows(source, 5500),
+		landedRows(source, 10),
+		landedRows(source, 5500),
 		scriptedResult{}, scriptedResult{},
 	)
 	if err := store.BatchInsertTrades(context.Background(), subBatchTrades(t, source, tradeInsertMaxRows+1000)); err != nil {
@@ -126,5 +127,30 @@ func TestBatchInsertTrades_RegistryKeepsHighestLedgerAcrossSubBatches(t *testing
 	}
 	if got := registeredUSDCLedger(t, conn); got != 5500 {
 		t.Errorf("registered USDC at ledger %d, want 5500 (highest across sub-batches)", got)
+	}
+}
+
+// Callers replay a failed batch in their own order (the external retry ring
+// trims its oldest rows by position), so the insert must not reorder it.
+func TestBatchInsertTrades_LeavesCallerOrderOnFailure(t *testing.T) {
+	t.Parallel()
+	const source = "subbatch_caller_order"
+	store, _ := newScriptedStore(t,
+		scriptedResult{err: &pgconn.PgError{Code: "40P01", Message: "deadlock detected"}},
+	)
+	trades := subBatchTrades(t, source, 5)
+	slices.Reverse(trades)
+	want := make([]uint32, len(trades))
+	for i := range trades {
+		want[i] = trades[i].Ledger
+	}
+
+	if err := store.BatchInsertTrades(context.Background(), trades); err == nil {
+		t.Fatal("BatchInsertTrades: want the scripted deadlock, got nil")
+	}
+	for i := range trades {
+		if trades[i].Ledger != want[i] {
+			t.Fatalf("caller slice reordered: ledger[%d] = %d, want %d", i, trades[i].Ledger, want[i])
+		}
 	}
 }

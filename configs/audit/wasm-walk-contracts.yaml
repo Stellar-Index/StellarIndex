@@ -390,7 +390,8 @@ redstone:
   provenance: |
     Hand-curated. Single Adapter contract.
   notes: |
-    2 unique WASMs (35-min hotfix b400f7a8... -> production 5e93d22c...).
+    2 archived WASMs (35-min hotfix b400f7a8... -> second deploy 5e93d22c...,
+    since superseded by an unarchived successor).
   contracts:  # 1 total
     - CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG
 

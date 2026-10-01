@@ -19,6 +19,9 @@ type AccountTransactionsView struct {
 	// activity (ADR-0038 Phase B — the participant index is wired). Incoming
 	// coverage tracks the participant-index capture + backfill.
 	Scope string `json:"scope"`
+	// AsOfLedger is the lake watermark read before the page's scan: a freshness
+	// marker, not a completeness claim. Omitted when unreadable.
+	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 }
 
 // AccountOperationsView is the wire response for
@@ -35,6 +38,8 @@ type AccountOperationsView struct {
 	// record), so this marker is what keeps a FAILED op from masquerading as a
 	// real interaction in public account history (opsOutcomeCoverageNote).
 	CoverageNote string `json:"coverage_note,omitempty"`
+	// AsOfLedger: see AccountTransactionsView.AsOfLedger.
+	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 }
 
 // accountScopeAll = sourced + incoming/participant activity (ADR-0038 Phase B;
@@ -89,6 +94,7 @@ func (h *Handler) AccountTransactions(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
+	asOf, stale, asOfOK := h.LakeWatermark(ctx)
 	rows, err := h.Reader.AccountTransactions(ctx, g, limit, cur)
 	if err != nil {
 		if h.ClientAborted(r, err) {
@@ -113,7 +119,9 @@ func (h *Handler) AccountTransactions(w http.ResponseWriter, r *http.Request) {
 		last := rows[n-1]
 		out.NextCursor = encodeCursor(last.Seq, last.TxIndex)
 	}
-	_, stale, _ := h.LakeWatermark(ctx)
+	if asOfOK {
+		out.AsOfLedger = asOf
+	}
 	h.WriteJSON(w, out, stale)
 }
 
@@ -141,6 +149,7 @@ func (h *Handler) AccountOperations(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
+	asOf, stale, asOfOK := h.LakeWatermark(ctx)
 	rows, err := h.Reader.AccountOperations(ctx, g, limit, cur)
 	if err != nil {
 		if h.ClientAborted(r, err) {
@@ -169,6 +178,8 @@ func (h *Handler) AccountOperations(w http.ResponseWriter, r *http.Request) {
 		last := rows[n-1]
 		out.NextCursor = encodeCursor(last.Seq, last.TxIndex, last.OpIndex)
 	}
-	_, stale, _ := h.LakeWatermark(ctx)
+	if asOfOK {
+		out.AsOfLedger = asOf
+	}
 	h.WriteJSON(w, out, stale)
 }

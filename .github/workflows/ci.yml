@@ -336,10 +336,19 @@ jobs:
               - 'internal/sources/external/binance/pairs.yaml'
               - 'internal/sources/external/forex/circulation_data.csv'
               - 'internal/currency/data/seed.yaml'
+              - 'internal/ops/chops/audited_wasm.json'
               - 'internal/incidents/data/**'
               # testdata/ is Go's fixture convention; the clickhouse
               # package also go:embeds its .tsv/.wasm fixtures from there.
               - '**/testdata/**'
+              # The trigger-class guard (test/controlwiring/
+              # integration_pkgs_trigger_evidence_test.go) runs only in the
+              # `test` job and reads these four, so a diff confined to one of
+              # them must still run it.
+              - 'Makefile'
+              - '.github/workflows/ci.yml'
+              - 'scripts/ci/check-change-class.sh'
+              - 'scripts/ci/prepush-integration-required.sh'
             web:
               - 'web/**'
               - 'openapi/**'
@@ -754,6 +763,12 @@ jobs:
       - name: lint-agents-file self-test
         # Proves each of those five assertions can still go red.
         run: ./scripts/ci/lint-agents-file-test.sh
+      - name: lint-remote-tmp-staging
+        # No workflow may scp to a fixed /tmp path on a remote host; a
+        # predictable name there can be pre-planted before a privileged run.
+        run: ./scripts/ci/lint-remote-tmp-staging.sh
+      - name: lint-remote-tmp-staging self-test
+        run: ./scripts/ci/lint-remote-tmp-staging-test.sh
       - name: lint-doc-links
         # Every relative markdown link must resolve. A broken link in a
         # runbook is an operational defect: the operator follows the
@@ -768,6 +783,8 @@ jobs:
         # verify.sh: a gate wired into one surface and not its mirror is the
         # defect this repository has shipped twice.
         run: ./scripts/dev/lint-changed-test.sh
+      - name: doctor self-test
+        run: ./scripts/dev/doctor-test.sh
       - name: lint-external-channels
         # A repository setting or DNS name that is switched off cannot be
         # seen from inside the tree, so three published channels shipped
@@ -931,6 +948,11 @@ jobs:
         # Postgres worker headroom pair and the ClickHouse drop-guard
         # ceiling, including its lockstep with the ansible role default.
         run: bash scripts/ops/config-assertions_test.sh
+      - name: pre-launch-check heartbeat-URL tests
+        # Every Healthchecks.io URL wire-paging.md has the operator create
+        # must FAIL pre-launch-check.sh when missing: "0 failures" is that
+        # runbook's acceptance test. Stubbed host tools; runs anywhere.
+        run: bash scripts/ops/pre-launch-check-test.sh
       - name: lint-migrations back-numbering self-test
         # GH-1164: a new migration numbered into a gap below the head is
         # invisible to `migrate up` on every deployment already past it.
@@ -1657,6 +1679,12 @@ jobs:
         # grandfathered `Coin*` vocabulary and non-canonical
         # constructor shapes. See docs/architecture/lexicon.md.
         run: ./scripts/ci/lint-lexicon.sh
+      - name: check-deprecations
+        # engineering-standards §2.4: every `// Deprecated:` names its
+        # scheduled removal version.
+        run: ./scripts/ci/check-deprecations.sh
+      - name: check-deprecations self-test
+        run: bash scripts/ci/check-deprecations-test.sh
       - name: lint-baseline-growth
         # CS-098: lint baselines/allowlists are shrink-only. Growing
         # scripts/ci/*.baseline or the KNOWN_INERT allowlist in the
@@ -1844,6 +1872,7 @@ jobs:
           python3 -m pip install --quiet 'Jinja2==3.1.6' 'PyYAML==6.0.2'
           ./scripts/ci/check-alertmanager-parity.sh
           ./scripts/ci/check-alertmanager-parity-test.sh
+          bash configs/alertmanager/inhibit-rules-test.sh
       - name: validate the rules-apply script (and that it still counts alerts)
         # apply-rules.sh verifies a deploy by asserting every alert it
         # extracted from the repo actually loaded on the host. That check
@@ -2374,6 +2403,12 @@ jobs:
         # Renders the shipped env template with hostile credentials.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-postgres-dsn-test.sh
+      - name: Postgres WAL archiving render test
+        # A rebuilt archival node must render archive_mode/archive_command,
+        # or pgBackRest silently loses point-in-time recovery; hosts without
+        # pgBackRest must not, or a failing archive_command fills pg_wal.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-postgres-archive-test.sh
       - name: nftables per-source SSH rate-limit test
         # Every role that renders /etc/nftables.conf must limit new SSH per
         # source address: a single shared bucket lets one scanner starve the
@@ -2399,6 +2434,16 @@ jobs:
         # it) and group-write must stay tied to its group writers.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-textfile-dir-mode-test.sh
+      - name: ZFS ARC cap render test
+        # A rebuilt ZFS host must get r1's ARC bounds, rendered byte for
+        # byte; renders the real template with a local ansible run.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-zfs-arc-cap-test.sh
+      - name: postgres log size-cap test
+        # The hourly pg-logrotate run must read a role-owned config that
+        # carries maxsize; the stock postgresql-common conffile has none.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-pg-logrotate-cap-test.sh
       - name: prometheus port var wiring test (SL19)
         # prometheus.yml.j2, prometheus.service.j2 and 06-firewall.yml
         # hardcoded literal 9090/9093 instead of referencing

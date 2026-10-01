@@ -229,7 +229,11 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 		}
 		defer releaseProducer()
 		lastEventID := streaming.LastEventIDFrom(r)
-		sub, cancelSub := s.hub.Subscribe([]string{topic}, lastEventID)
+		sub, cancelSub, err := s.hub.Subscribe([]string{topic}, lastEventID)
+		if err != nil {
+			streaming.WriteSubscribeRefused(w)
+			return
+		}
 		defer cancelSub()
 
 		ch := make(chan streaming.Event, tipStreamProducerQueueDepth)

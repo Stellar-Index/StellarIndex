@@ -3,7 +3,6 @@ package middleware
 import (
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -75,7 +74,7 @@ func CacheControl(next http.Handler) http.Handler {
 func CacheControlWithCDN(cdnEnabled bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Cache-Control", policyForRequest(r, cdnEnabled))
+			w.Header().Set("Cache-Control", policyForPath(r.URL.Path, cdnEnabled))
 			if r.Method == http.MethodGet || r.Method == http.MethodHead {
 				w = &perCallerHeaderStripper{ResponseWriter: w}
 			}
@@ -232,8 +231,7 @@ var (
 //     opsDirCache serves stale on expiry and only refreshes ON a request, so at
 //     a low arrival rate an entry's age is bounded by the inter-arrival gap
 //     rather than by the TTL (measured on r1: an `as_of` 93 s behind after a
-//     quiet window). A 300 s edge TTL would compound that real staleness. The
-//     `?ledger=<seq>` form is a different read; see policyForRequest.
+//     quiet window). A 300 s edge TTL would compound that real staleness.
 //
 //   - /v1/contracts joins them on the same evidence. #332 F3 named it and
 //     the F3 fix did not reach it: live on 2026-09-03 it still answered
@@ -413,20 +411,6 @@ func closedLedgerPolicy(cdnEnabled bool) string {
 	return "public, max-age=60"
 }
 
-// policyForRequest is policyForPath plus the one route whose band depends on
-// its mode: /v1/operations?ledger=<seq> reads one closed ledger, the same read
-// as /v1/ledgers/{seq}/transactions, while the bare route is the tip-advancing
-// directory. The test mirrors the handler's own mode switch: a non-zero uint32
-// selects the ledger; empty or 0 is the directory; anything else is a 400.
-func policyForRequest(r *http.Request, cdnEnabled bool) string {
-	if r.URL.Path == "/v1/operations" {
-		if seq, err := strconv.ParseUint(r.URL.Query().Get("ledger"), 10, 32); err == nil && seq != 0 {
-			return closedLedgerPolicy(cdnEnabled)
-		}
-	}
-	return policyForPath(r.URL.Path, cdnEnabled)
-}
-
 func policyForPath(path string, cdnEnabled bool) string {
 	// Closed-ledger detail + the two fast-moving explorer reads (#332 F3)
 	// live in their own helper so this switch stays under the gocyclo
@@ -533,7 +517,7 @@ func routePolicy(path string, cdnEnabled bool) (string, bool) {
 		return "private, no-cache, must-revalidate", true
 
 	// ─── Status — customer-facing health rollup ─────────────────
-	// /v1/status is what the explorer /status page polls every 10 s
+	// /v1/status is what the explorer /status page polls every 30 s
 	// and what monitoring dashboards (and the smoke timer) poll on a
 	// longer interval. A 10 s cache absorbs the polling fan-out
 	// without delaying alert-state propagation enough to matter —

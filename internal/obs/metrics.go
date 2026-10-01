@@ -62,6 +62,13 @@ func registerAppMetrics() {
 		ExternalFXLastQuoteUnix,
 		ExternalFXRateRejectedTotal,
 		ExternalFXBaselineHealedTotal,
+		FXFixingsLastRefreshUnix,
+		FXFixingsNewestBarEndUnix,
+		FXFixingsQuoteDisagrees,
+		FXFixingsWriteTxSeconds,
+		FXFixingsWriteErrorsTotal,
+		FXFixingsFetchErrorsTotal,
+		FXFixingsBarsRefusedTotal,
 		ExternalDustDroppedTotal,
 		ExternalPollerRefusedEntriesTotal,
 		CEXStreamDisconnectTotal, CEXStreamLastTradeUnix,
@@ -70,6 +77,7 @@ func registerAppMetrics() {
 		DiscoveryRecordFailuresTotal,
 		MetricsRegistryPresent,
 		SourceInsertErrorsTotal,
+		TradesZeroLegAdmittedTotal,
 		RateLimitFailOpenTotal,
 		MonthlyQuotaFailOpenTotal,
 		MonthlyQuotaFailClosedTotal,
@@ -134,6 +142,7 @@ func registerPricingMetrics() {
 		AggregatorBaselineRefreshTotal,
 		AggregatorSupplyLakeClampLedgers,
 		AggregatorSupplyRefreshTotal,
+		SupplyWriteBandBreachTotal,
 		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
 		AggregatorBaselineAgeSeconds,
@@ -174,6 +183,7 @@ func registerAPIServingMetrics() {
 		PricingGuardDegradedTotal,
 		APICacheOpsTotal,
 		APICoverageFloorProbesTotal,
+		APILCMHomeDomainFallbackTotal,
 		APISparkline7dRowsTotal,
 		APIStreamSubscribeTotal,
 		APICORSDecisionsTotal,
@@ -189,7 +199,7 @@ func registerAPIServingMetrics() {
 	for _, reason := range []string{"caller_quota", "global_ceiling"} {
 		APITipProducersRefusedTotal.WithLabelValues(reason)
 	}
-	for _, reason := range []string{"global_cap", "per_ip_cap"} {
+	for _, reason := range []string{"global_cap", "per_ip_cap", "topic_cap"} {
 		APISSEStreamsRejectedTotal.WithLabelValues(reason)
 	}
 }
@@ -484,6 +494,9 @@ func seedBoundedLabelSeries() {
 	AMMSelfPairSwapTotal.WithLabelValues("comet")
 	// Same dead-metric ambiguity as AMMSelfPairSwapTotal above, same fix.
 	AMMNonPositiveSwapTotal.WithLabelValues("comet")
+	// Zero-leg fills are rare (tens per day) and sdex is their only known
+	// producer; seeded so a fresh deploy shows "armed", not "absent".
+	TradesZeroLegAdmittedTotal.WithLabelValues("sdex")
 	AMMSwapReceivedDivergenceTotal.WithLabelValues("phoenix")
 	for _, outcome := range []string{"written", "buffered", "dropped", "errored"} {
 		ChLiveSinkLedgersTotal.WithLabelValues(outcome)
@@ -1054,13 +1067,14 @@ var ProjectorRunsTotal = prometheus.NewCounterVec(
 
 // ProjectorEventsDecoded counts events the projector emitted
 // through the sink (or that failed decode). `outcome` ∈ {ok,
-// decode_error}. Operators chart `rate(ok[5m])` against the
+// decode_error, reconstruct_error (a landing-zone row too malformed to
+// rebuild into an event), sink_*}. Operators chart `rate(ok[5m])` against the
 // equivalent dispatcher counter during Phase 3 parallel mode to
 // verify the projector keeps pace with live ingest.
 var ProjectorEventsDecoded = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_projector_events_decoded_total",
-		Help: "Per-source events the projector decoded + emitted (ok) or failed to decode (decode_error). Compare ok-rate against dispatcher equivalent to gauge parallel-mode parity.",
+		Help: "Per-source events the projector decoded + emitted (ok) or failed to decode (decode_error, reconstruct_error). Compare ok-rate against dispatcher equivalent to gauge parallel-mode parity.",
 	},
 	[]string{"source", "outcome"},
 )
@@ -1830,6 +1844,41 @@ var ExternalFXBaselineHealedTotal = prometheus.NewCounterVec(
 	[]string{"source"},
 )
 
+// FX fixings (fx_fixings, migration 0193): the vendor-time hourly series a
+// closed derived fiat price binds to. The forex worker appends it after each
+// refresh; these carry its liveness and the gate's verdicts.
+var (
+	FXFixingsLastRefreshUnix = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "stellarindex_fx_fixings_last_refresh_unix",
+		Help: "UNIX seconds of the forex worker's last completed fx_fixings append cycle, whether or not it wrote rows.",
+	})
+	FXFixingsNewestBarEndUnix = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "stellarindex_fx_fixings_newest_bar_end_unix",
+		Help: "UNIX seconds of the newest bar_end this process has committed to fx_fixings.",
+	})
+	FXFixingsQuoteDisagrees = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "stellarindex_fx_fixings_quote_disagrees",
+		Help: "1 when an accepted fx_fixings bar sits outside the sanity band of the worker's guarded daily rate for the same ticker and day, else 0.",
+	}, []string{"ticker"})
+	FXFixingsWriteTxSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "stellarindex_fx_fixings_write_tx_seconds",
+		Help:    "Duration of one fx_fixings batch insert transaction.",
+		Buckets: prometheus.DefBuckets,
+	})
+	FXFixingsWriteErrorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "stellarindex_fx_fixings_write_errors_total",
+		Help: "fx_fixings batch inserts that failed.",
+	})
+	FXFixingsFetchErrorsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "stellarindex_fx_fixings_fetch_errors_total",
+		Help: "Per-ticker hourly-bar fetches from the FX vendor that failed.",
+	}, []string{"ticker"})
+	FXFixingsBarsRefusedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "stellarindex_fx_fixings_bars_refused_total",
+		Help: "Vendor FX bars the fx_fixings gate refused: close outside [0.5, 1.5] of the median of the preceding 96h of raw bars.",
+	}, []string{"ticker"})
+)
+
 // SourceUnrepresentableSymbolsTotal — per-source counter of oracle
 // asset slots DROPPED because the published symbol / feed id cannot be
 // held even by the record layer's verbatim `raw:` namespace: empty,
@@ -2215,6 +2264,22 @@ const (
 	// InsertErrorKindTradeAbandoned: a trade whose infra-fault retry was
 	// abandoned on ctx cancellation; re-derivable from the CH lake.
 	InsertErrorKindTradeAbandoned = "trade_abandoned"
+)
+
+// TradesZeroLegAdmittedTotal — per-source counter of trades admitted to
+// the served tier with exactly one zero leg (an SDEX fill whose base or
+// quote rounded to zero stroops). Such a row is stored but unpriceable, so
+// every price path filters it out. SDEX is the only known producer; every
+// other decoder and CEX parser drops zero legs upstream, so a non-sdex
+// series is an upstream change worth a look, not an error. Incremented at
+// the Go write gates (InsertTrade, filterStorableTrades) once
+// canonical.Trade.Validate has passed the row. Detection only.
+var TradesZeroLegAdmittedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_trades_zero_leg_admitted_total",
+		Help: "Trades admitted to the served tier with exactly one zero leg (stored, unpriceable). By source.",
+	},
+	[]string{"source"},
 )
 
 // CursorLastLedger — per-source gauge, the last-committed cursor
@@ -2991,12 +3056,12 @@ var OracleStreamRowsUnparsedTotal = prometheus.NewCounterVec(
 // operator's classic asset_key doesn't match what the decoder
 // stamps — typically an issuer mismatch or a missing entry.
 //
-// Cardinality: one source × two outcomes per registered source
+// Cardinality: one source × three outcomes per registered source
 // (low-tens of series at maturity).
 var TradeInsertsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_trade_inserts_total",
-		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no). Counts attempts, not unique-row inserts — on-conflict dedupe AND generation-guarded corrective updates are both invisible to this counter.",
+		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no|unroutable; unroutable = unpriced trade whose two classic legs share one issuer, excluded from the coverage alerts). Counts attempts, not unique-row inserts — on-conflict dedupe AND generation-guarded corrective updates are both invisible to this counter.",
 	},
 	[]string{"source", "usd_volume_populated"},
 )
@@ -3456,11 +3521,12 @@ var APISSEStreamsActive = prometheus.NewGauge(prometheus.GaugeOpts{
 
 // APISSEStreamsRejectedTotal — SSE connections refused with a 503 by
 // the concurrency caps, by reason: global_cap (the process-wide
-// ceiling) or per_ip_cap (one client address at its own ceiling).
+// ceiling), per_ip_cap (one client address at its own ceiling) or
+// topic_cap (the Hub's topic map full of subscribed topics).
 var APISSEStreamsRejectedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_sse_streams_rejected_total",
-		Help: "SSE connections refused by the concurrency caps, labelled by reason (global_cap, per_ip_cap).",
+		Help: "SSE connections refused by the concurrency caps, labelled by reason (global_cap, per_ip_cap, topic_cap).",
 	},
 	[]string{"reason"},
 )
@@ -3634,7 +3700,8 @@ var APICORSDecisionsTotal = prometheus.NewCounterVec(
 // AggregatorDroppedTradesTotal — count of trades the orchestrator
 // removed from the VWAP input set, labelled by reason and by the
 // CONFIGURED target pair. "class" = removed by the ClassExchange-only
-// filter; "outlier" = removed by the σ-threshold filter. Operators
+// filter; "unpriceable" = a stored trade with a zero leg (no price);
+// "outlier" = removed by the σ-threshold filter. Operators
 // alert on a sudden spike in "class" (a new venue mis-registered) or
 // "outlier" (a market in distress flooding the window with anomalies).
 //
@@ -3664,7 +3731,7 @@ var APICORSDecisionsTotal = prometheus.NewCounterVec(
 var AggregatorDroppedTradesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_dropped_trades_total",
-		Help: "Trades removed from the VWAP input set, labelled by reason (class|outlier) and configured target pair.",
+		Help: "Trades removed from the VWAP input set, labelled by reason (class|unpriceable|outlier) and configured target pair.",
 	},
 	[]string{"reason", "pair"},
 )
@@ -4503,6 +4570,18 @@ var AggregatorSupplyRefreshTotal = prometheus.NewCounterVec(
 		Help: "Supply-snapshot refresh outcomes per (asset_key, outcome). Outcome ∈ {ok, dormant, static_reserve, no_ledger, no_observation, compute_error, stale_component, missing_freshness, missing_baseline, write_error}.",
 	},
 	[]string{"asset_key", "outcome"},
+)
+
+// SupplyWriteBandBreachTotal — supply snapshots written whose
+// total_supply moved more than supply.WriteBandFactor x up or down
+// against the previous one the same refresher wrote. The row is still
+// written; the counter is the prompt to check the asset's supply.
+var SupplyWriteBandBreachTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_supply_write_band_breach_total",
+		Help: "Supply snapshots written whose total_supply moved more than 10x against the previous snapshot, per (asset_key, direction). Direction ∈ {up, down}. The row is written regardless.",
+	},
+	[]string{"asset_key", "direction"},
 )
 
 // AggregatorSupplyRefreshDurationSeconds — latency histogram for
@@ -5752,4 +5831,14 @@ var APICoverageFloorProbesTotal = prometheus.NewCounterVec(
 		Help: "Coverage-floor lookups behind the API's outside-coverage signal, by outcome (hit|found|absent|error|evicted); only non-hit results reach the database.",
 	},
 	[]string{"result"},
+)
+
+// APILCMHomeDomainFallbackTotal — failed home-domain observation reads,
+// each served as "unobserved" so the next ADR-0021 layer answered instead.
+// A listing page is one read.
+var APILCMHomeDomainFallbackTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_api_lcm_home_domain_fallback_total",
+		Help: "Home-domain observation reads that failed (storage error or timeout) and were served as unobserved, falling through to the next home-domain layer.",
+	},
 )

@@ -99,8 +99,9 @@ if [ -d internal/api/v1 ] && [ -f openapi/stellar-index.v1.yaml ]; then
   # a route that was in the spec the whole time. Empty until a route is
   # actually kept undocumented on purpose.
   internal_routes_re='^$'
-  # handlePublic( and public.Handle(mux, mount credential-optional routes; tests register fixtures.
-  grep -rhoE --exclude='*_test.go' '(Handle(Func)?\(|handlePublic\(|\.Handle\(mux, )"[A-Z]+ /v1[^"]*"' internal/api/v1/ 2>/dev/null | \
+  # handlePublic( and public.Handle(mux, mount credential-optional routes, handleAdmin( the operator
+  # tier; tests register fixtures.
+  grep -rhoE --exclude='*_test.go' '(Handle(Func)?\(|handlePublic\(|handleAdmin\(|\.Handle\(mux, )"[A-Z]+ /v1[^"]*"' internal/api/v1/ 2>/dev/null | \
     sed -E 's|.*"[A-Z]+ /v1||; s|"$||' | \
     sed -E 's|^$|/|' | \
     sort -u | while IFS= read -r route; do
@@ -135,6 +136,7 @@ if [ -d internal/api/v1 ] && [ -f openapi/stellar-index.v1.yaml ]; then
         if grep -qrF --exclude='*_test.go' \
           -e "HandleFunc(\"${method} /v1${route}\"" -e "Handle(\"${method} /v1${route}\"" \
           -e "handlePublic(\"${method} /v1${route}\"" -e ".Handle(mux, \"${method} /v1${route}\"" \
+          -e "handleAdmin(\"${method} /v1${route}\"" \
           internal/api/v1/ 2>/dev/null; then
           found=1
           break
@@ -380,6 +382,17 @@ stale_patterns=(
                                   # ATH/day-VWAP fix. Bare pattern (not scoped
                                   # to "R-008") so it also catches a citation
                                   # reappearing in the header list alone
+  "#1270\b"                      # dangling ref (RSWP-143) — coverage-matrix.md's
+                                  # 2026-05-11 entry cited R-016's fix as
+                                  # "#1270" in the row and the header list;
+                                  # the number is pre-migration, so it now
+                                  # resolves to an unrelated item. Cite the
+                                  # commit (4ab6b818d) instead. Bare pattern
+                                  # for the same reason as #1263
+  "#1268\b"                      # coverage-matrix.md's 2026-05-11 entry cited
+                                  # the R-001/R-002 prewarm fix as #1268; that
+                                  # number now resolves to an unrelated item,
+                                  # so the entry cites commit 55b2a9fb3 instead
   "Deferred #1347\b"              # STATUS.md's go-stellar-sdk v0.6 bump cited
                                   # #1347 before it existed (RSWP-146). #1347
                                   # is now the real "retiring a data source"
@@ -638,6 +651,7 @@ for pattern in "${stale_patterns[@]}"; do
     CODE_OF_CONDUCT.md \
     CHANGELOG.md \
     docs/reference/ \
+    docs/audit/recipe.md \
     docs/architecture/ \
     docs/design/ \
     docs/operations/ \
@@ -1724,6 +1738,42 @@ PY
       [ -n "$line" ] && err "$line — link the template from the step that sends it, or correct the README"
     done <<< "$comms_out"
   fi
+fi
+
+# ─── Every internal/ and pkg/ package has a package comment ─────────────────
+#
+# engineering-standards.md §4.2/§14.10: the package comment is where an agent
+# reads "what is this package" first. Parsed here rather than via `go list`
+# because this job has no Go toolchain; untracked files count, as in `make fmt`.
+echo "Checking package doc comments..."
+if pkgdoc_out=$(git ls-files -z --cached --others --exclude-standard -- 'internal/*.go' 'pkg/*.go' | python3 -c '
+import os, re, sys
+pkgs = {}
+for f in sys.stdin.read().split("\0"):
+    parts = f.split("/")
+    if not f or f.endswith("_test.go") or not os.path.isfile(f) or any(
+            p == "testdata" or p[:1] in "._" for p in parts[:-1]):
+        continue
+    lines = open(f, encoding="utf-8").read().splitlines()
+    idx = next((i for i, l in enumerate(lines) if re.match(r"package\s+\w+", l)), None)
+    documented = False
+    if idx is not None and idx > 0 and lines[idx - 1].rstrip().endswith("*/"):
+        documented = True
+    j = (idx or 0) - 1
+    while idx is not None and j >= 0 and lines[j].startswith("//"):
+        if not re.match(r"//(go:|line |export |extern |\s*$)", lines[j]):
+            documented = True
+        j -= 1
+    d = os.path.dirname(f)
+    pkgs[d] = pkgs.get(d, False) or documented
+for d in sorted(k for k, v in pkgs.items() if not v):
+    print(d)
+'); then
+  while IFS= read -r pkgdir; do
+    [ -n "$pkgdir" ] && err "Package '$pkgdir' has no package doc comment — add a doc.go opening with '// Package <name> …' (engineering-standards.md §14.10)"
+  done <<< "$pkgdoc_out"
+else
+  err "package doc-comment check failed to run: $pkgdoc_out"
 fi
 
 # ─── Documented make targets exist ───────────────────────────────────────────

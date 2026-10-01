@@ -95,7 +95,7 @@ func assertRatEqual(t *testing.T, label, got, want string) {
 }
 
 func TestDerivedFiatPriceSingleVenueLegIsSingleSource(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: brlLegReader("soroswap"), Currencies: brlCurrencies()})
+	srv := v1.New(v1.Options{Prices: brlLegReader("soroswap"), Currencies: brlCurrencies(), FXFixings: brlFixings()})
 	ts := startHTTPTest(t, srv.Handler())
 
 	for _, path := range []string{
@@ -117,7 +117,7 @@ func TestDerivedFiatPriceSingleVenueLegIsSingleSource(t *testing.T) {
 }
 
 func TestDerivedFiatPriceMultiVenueLegIsNotSingleSource(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: brlLegReader("binance", "sdex"), Currencies: brlCurrencies()})
+	srv := v1.New(v1.Options{Prices: brlLegReader("binance", "sdex"), Currencies: brlCurrencies(), FXFixings: brlFixings()})
 	ts := startHTTPTest(t, srv.Handler())
 
 	for _, path := range []string{
@@ -146,6 +146,7 @@ func frozenLegServer(t *testing.T, key, assetID, held string) string {
 	srv := v1.New(v1.Options{
 		Prices:       brlLegReaderAt(key, assetID, "binance", "sdex"),
 		Currencies:   brlCurrencies(),
+		FXFixings:    brlFixings(),
 		Freeze:       frozenPairs{key: true},
 		Triangulated: lkg,
 	})
@@ -207,6 +208,7 @@ func TestDerivedFiatPriceUnfrozenLegReportsFreezeChecked(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Prices:       brlLegReader("soroswap"),
 		Currencies:   brlCurrencies(),
+		FXFixings:    brlFixings(),
 		Freeze:       frozenPairs{},
 		Triangulated: lkgPairs{},
 	})
