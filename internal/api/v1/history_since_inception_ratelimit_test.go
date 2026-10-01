@@ -44,7 +44,7 @@ func newSinceInceptionLimitedServer(t *testing.T, anonLimit int) (*testServerImp
 	srv := v1.New(v1.Options{
 		History: reader,
 		RateLimit: middleware.RateLimitBySubject(
-			ratelimit.New(rdb, anonLimit, time.Minute), nil, middleware.SkipHealthAndMetrics, nil),
+			ratelimit.New(rdb, anonLimit, time.Minute, pinnedWindow), nil, middleware.SkipHealthAndMetrics, nil),
 	})
 	return startHTTPTest(t, srv.Handler()), reader
 }
