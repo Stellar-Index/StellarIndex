@@ -310,6 +310,32 @@ func TestLatestTradesForPair_ServesAMarketRecordedTheOtherWayRound(t *testing.T)
 	}
 }
 
+// TestLatestTradesForPair_ClampsLimit: $3 is both arms' FETCH FIRST and
+// the outer LIMIT, so it alone sizes each time-unbounded walk.
+func TestLatestTradesForPair_ClampsLimit(t *testing.T) {
+	pair := dirAQUAUSDCPair(t)
+	for _, tc := range []struct {
+		name  string
+		limit int
+		want  int
+	}{
+		{"default", 0, 100},
+		{"in range", 5, 5},
+		{"at cap", maxLatestTradesForPair, maxLatestTradesForPair},
+		{"above cap", 1 << 30, maxLatestTradesForPair},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, conn := newScriptedStore(t, scriptedResult{cols: latestTradeCols})
+			if _, err := store.LatestTradesForPair(context.Background(), pair, tc.limit); err != nil {
+				t.Fatalf("LatestTradesForPair: %v", err)
+			}
+			if got := conn.only(t).arg(t, 3); got != tc.want {
+				t.Errorf("limit %d bound $3 = %v (%T), want %d", tc.limit, got, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestRawTradeReadsSpanBothStoredDirections is the query-shape half, and
 // the cross-surface statement: these two reads now span exactly what
 // /v1/history's page read spans, so the three surfaces agree about

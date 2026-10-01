@@ -62,6 +62,13 @@ func registerAppMetrics() {
 		ExternalFXLastQuoteUnix,
 		ExternalFXRateRejectedTotal,
 		ExternalFXBaselineHealedTotal,
+		FXFixingsLastRefreshUnix,
+		FXFixingsNewestBarEndUnix,
+		FXFixingsQuoteDisagrees,
+		FXFixingsWriteTxSeconds,
+		FXFixingsWriteErrorsTotal,
+		FXFixingsFetchErrorsTotal,
+		FXFixingsBarsRefusedTotal,
 		ExternalDustDroppedTotal,
 		ExternalPollerRefusedEntriesTotal,
 		CEXStreamDisconnectTotal, CEXStreamLastTradeUnix,
@@ -135,6 +142,7 @@ func registerPricingMetrics() {
 		AggregatorBaselineRefreshTotal,
 		AggregatorSupplyLakeClampLedgers,
 		AggregatorSupplyRefreshTotal,
+		SupplyWriteBandBreachTotal,
 		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
 		AggregatorBaselineAgeSeconds,
@@ -306,6 +314,7 @@ func registerAppMetricsTail() {
 		MEVDetectDurationSeconds,
 		MEVScanTruncatedTotal,
 		MEVLakeOrderLookupSkippedTotal,
+		TxIndexTagLookupSkippedTotal,
 
 		PostgresPingTotal,
 		PostgresPingFailureStreak,
@@ -1836,6 +1845,41 @@ var ExternalFXBaselineHealedTotal = prometheus.NewCounterVec(
 	[]string{"source"},
 )
 
+// FX fixings (fx_fixings, migration 0193): the vendor-time hourly series a
+// closed derived fiat price binds to. The forex worker appends it after each
+// refresh; these carry its liveness and the gate's verdicts.
+var (
+	FXFixingsLastRefreshUnix = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "stellarindex_fx_fixings_last_refresh_unix",
+		Help: "UNIX seconds of the forex worker's last completed fx_fixings append cycle, whether or not it wrote rows.",
+	})
+	FXFixingsNewestBarEndUnix = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "stellarindex_fx_fixings_newest_bar_end_unix",
+		Help: "UNIX seconds of the newest bar_end this process has committed to fx_fixings.",
+	})
+	FXFixingsQuoteDisagrees = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "stellarindex_fx_fixings_quote_disagrees",
+		Help: "1 when an accepted fx_fixings bar sits outside the sanity band of the worker's guarded daily rate for the same ticker and day, else 0.",
+	}, []string{"ticker"})
+	FXFixingsWriteTxSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "stellarindex_fx_fixings_write_tx_seconds",
+		Help:    "Duration of one fx_fixings batch insert transaction.",
+		Buckets: prometheus.DefBuckets,
+	})
+	FXFixingsWriteErrorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "stellarindex_fx_fixings_write_errors_total",
+		Help: "fx_fixings batch inserts that failed.",
+	})
+	FXFixingsFetchErrorsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "stellarindex_fx_fixings_fetch_errors_total",
+		Help: "Per-ticker hourly-bar fetches from the FX vendor that failed.",
+	}, []string{"ticker"})
+	FXFixingsBarsRefusedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "stellarindex_fx_fixings_bars_refused_total",
+		Help: "Vendor FX bars the fx_fixings gate refused: close outside [0.5, 1.5] of the median of the preceding 96h of raw bars.",
+	}, []string{"ticker"})
+)
+
 // SourceUnrepresentableSymbolsTotal — per-source counter of oracle
 // asset slots DROPPED because the published symbol / feed id cannot be
 // held even by the record layer's verbatim `raw:` namespace: empty,
@@ -2977,6 +3021,14 @@ var MEVLakeOrderLookupSkippedTotal = prometheus.NewCounter(
 	},
 )
 
+// TxIndexTagLookupSkippedTotal counts tx hashes the trades.tx_index tagger left untagged because a tx_hash_index chunk failed.
+var TxIndexTagLookupSkippedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_tx_index_tag_lookup_skipped_total",
+		Help: "tx hashes the trades.tx_index tagger (live sweep and tag-tx-index) left untagged because a ClickHouse tx_hash_index lookup chunk failed; the page's rows stay NULL until a later pass resolves them.",
+	},
+)
+
 // OracleStreamRowsUnparsedTotal counts oracle_updates rows dropped by
 // LatestOracleStreams because their stored asset or quote text would not
 // parse as a canonical asset.
@@ -3013,12 +3065,12 @@ var OracleStreamRowsUnparsedTotal = prometheus.NewCounterVec(
 // operator's classic asset_key doesn't match what the decoder
 // stamps — typically an issuer mismatch or a missing entry.
 //
-// Cardinality: one source × two outcomes per registered source
+// Cardinality: one source × three outcomes per registered source
 // (low-tens of series at maturity).
 var TradeInsertsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_trade_inserts_total",
-		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no). Counts attempts, not unique-row inserts — on-conflict dedupe AND generation-guarded corrective updates are both invisible to this counter.",
+		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no|unroutable; unroutable = unpriced trade whose two classic legs share one issuer, excluded from the coverage alerts). Counts attempts, not unique-row inserts — on-conflict dedupe AND generation-guarded corrective updates are both invisible to this counter.",
 	},
 	[]string{"source", "usd_volume_populated"},
 )
@@ -4527,6 +4579,18 @@ var AggregatorSupplyRefreshTotal = prometheus.NewCounterVec(
 		Help: "Supply-snapshot refresh outcomes per (asset_key, outcome). Outcome ∈ {ok, dormant, static_reserve, no_ledger, no_observation, compute_error, stale_component, missing_freshness, missing_baseline, write_error}.",
 	},
 	[]string{"asset_key", "outcome"},
+)
+
+// SupplyWriteBandBreachTotal — supply snapshots written whose
+// total_supply moved more than supply.WriteBandFactor x up or down
+// against the previous one the same refresher wrote. The row is still
+// written; the counter is the prompt to check the asset's supply.
+var SupplyWriteBandBreachTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_supply_write_band_breach_total",
+		Help: "Supply snapshots written whose total_supply moved more than 10x against the previous snapshot, per (asset_key, direction). Direction ∈ {up, down}. The row is written regardless.",
+	},
+	[]string{"asset_key", "direction"},
 )
 
 // AggregatorSupplyRefreshDurationSeconds — latency histogram for

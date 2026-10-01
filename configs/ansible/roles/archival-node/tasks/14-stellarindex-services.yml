@@ -1026,8 +1026,9 @@
     group: root
     mode: "0600"
   no_log: true
+  when: galexie_archive_trim_enabled | bool
 
-- name: Install verify-archive-tier-a / supply-snapshot / galexie-archive-trim units
+- name: Install verify-archive-tier-a / supply-snapshot units
   ansible.builtin.template:
     src: "systemd/{{ item }}.j2"
     dest: "/etc/systemd/system/{{ item }}"
@@ -1043,8 +1044,9 @@
     # (archive_completeness_enabled).
     - supply-snapshot.service
     - supply-snapshot.timer
-    - galexie-archive-trim.service
-    - galexie-archive-trim.timer
+    # galexie-archive-trim is NOT in this loop — its delete identity is
+    # pubnet-only; installed conditionally below
+    # (galexie_archive_trim_enabled).
     - sep1-refresh.service
     - sep1-refresh.timer
     - directory-sync.service
@@ -1267,6 +1269,47 @@
         cmd: systemctl reset-failed verify-served-values.service
       changed_when: false
       failed_when: false
+
+# ── galexie-archive-trim — pubnet only ────────────────────────────────
+# See galexie_archive_trim_enabled in defaults/main.yml. The timer is
+# never enabled by the role (ADR-0027 §Sequencing, above).
+- name: Install galexie-archive-trim units (pubnet)
+  tags: [ops-jobs]
+  when: galexie_archive_trim_enabled | bool
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - galexie-archive-trim.service
+    - galexie-archive-trim.timer
+  notify: Reload systemd
+
+# Tagged alongside the install so `--tags ops-jobs` also retires the units
+# from a test net that received them before the gate existed.
+- name: Remove galexie-archive-trim where no cold tier receives the deletes
+  tags: [ops-jobs]
+  when: not (galexie_archive_trim_enabled | bool)
+  block:
+    - name: Stop + disable galexie-archive-trim timer and service
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - galexie-archive-trim.timer
+        - galexie-archive-trim.service
+      failed_when: false
+
+    - name: Remove galexie-archive-trim units + env file
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/galexie-archive-trim.service
+        - /etc/systemd/system/galexie-archive-trim.timer
+        - /etc/default/galexie-archive-trim
+      notify: Reload systemd
 
 # ── listing-sync — pubnet only ────────────────────────────────────────
 # See listing_sync_enabled in defaults/main.yml: the directory it caches

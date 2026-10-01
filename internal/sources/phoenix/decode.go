@@ -235,7 +235,29 @@ const (
 	// its whole job is to admit the announced pool into the identity
 	// gate (dispatcher_adapter.go, ADR-0040 §1 mechanism 1).
 	actionCreatePool
+	// Single-event shapes, each fully specified by its topic pair (or
+	// single Symbol topic); see events.go EventActionCreateDistributionFlow.
+	actionCreateDistributionFlow
+	actionStakeMigration
+	actionFactoryConfig
+	actionBlendPoolAdmin
 )
+
+type topicPair struct{ t0, t1 string }
+
+// topicPairActions lists every accepted (topic[0], topic[1]) for the
+// single-event shapes; any other topic[1] under these topic[0]s stays
+// actionUnknown, a visible recognition gap rather than a guess.
+var topicPairActions = map[topicPair]action{
+	{TopicCreateDistributionFlow, TopicSymbolDRAsset}: actionCreateDistributionFlow,
+	{TopicStakeMigration, TopicMigrationStarted}:      actionStakeMigration,
+	{TopicStakeMigration, TopicMigrationQueried}:      actionStakeMigration,
+	{TopicStake, TopicMigrationCompleted}:             actionStakeMigration,
+	{TopicFactory, TopicFactoryUpdatedConfig}:         actionFactoryConfig,
+	{TopicBlendPool, TopicBlendSetDelegate}:           actionBlendPoolAdmin,
+	{TopicBlendPool, TopicBlendSetMinTradingA}:        actionBlendPoolAdmin,
+	{TopicBlendPool, TopicBlendSetMinTradingB}:        actionBlendPoolAdmin,
+}
 
 // classifyAny is the union of classify + liquidity / stake topic
 // matching. Returns (action, topic[1] blob) when the event is one
@@ -296,6 +318,9 @@ func classifyAny(e *events.Event) (action, string) {
 			return actionUnknown, ""
 		}
 		return actionCreatePool, e.Topic[1]
+	}
+	if a, ok := topicPairActions[topicPair{e.Topic[0], e.Topic[1]}]; ok {
+		return a, e.Topic[1]
 	}
 	return actionUnknown, ""
 }

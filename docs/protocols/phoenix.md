@@ -97,6 +97,9 @@ CAF3UJ45ZQJP6USFUIMVMGOUETUTXEC35R2247VJYIVQBGKTKBZKNBJ3   unbond ×21
 A third, `CBBUVHCEML7UE46XXZXLTMGKFMKX7KOC2XAKI3TW6WBQBKWMSARMU3YM` (`bond ×10`), was
 removed: its only WASM carries none of the stake literals and its events are
 `("bond", created|live|settconf|settled|expired)` — a bond instrument, not a Phoenix stake.
+A node that already warmed it keeps it in `protocol_contracts`; remove that row once:
+`DELETE FROM protocol_contracts WHERE source = 'phoenix' AND contract_id = 'CBBUVHCEML7UE46XXZXLTMGKFMKX7KOC2XAKI3TW6WBQBKWMSARMU3YM' AND factory_id = 'curated';`
+then restart the indexer.
 
 13 more added 2026-08-18 (completeness-gap; all VERIFIED genuine — see the
 update note at the top). The first 11 co-occur in their pool's
@@ -168,10 +171,24 @@ the topic shape.
 | Action (topic[0]) | Where it lands |
 |---|---|
 | `swap` | `trades` (source=phoenix) |
-| `provide_liquidity`, `withdraw_liquidity` | `phoenix_liquidity` |
+| `provide_liquidity`, `withdraw_liquidity` (String multi-event and Symbol Map-body) | `phoenix_liquidity` |
 | `bond`, `unbond`, `withdraw_rewards`, `distribute_rewards` | `phoenix_stake_events` |
+| `create_distribution_flow` (`asset`, no user) | `phoenix_stake_events` (migration 0195) |
+| `Stake: Migration: ` start / query, `Stake` migration-completed (user only) | `phoenix_stake_events` as `migration_started` / `_queried` / `_completed` (migration 0195) |
 | `initialize` (`XYK LP token_a` / `token_b`, once per pool deploy) | `phoenix_initialize` (migration 0131) |
 | admin-rotation topics (`XYK Pool: ` — replace_requested / replace_set / undo / accepted) | `phoenix_admin_events` (migration 0132) |
+| `("Factory","Updated Config")` (Void body, factory only) | `phoenix_admin_events` as `factory_config_updated` (migration 0195) |
+| `blend_pool` set_delegate / set_min_trading_a / _b | `phoenix_admin_events` (`admin_addr`, or the i128 in `value`; migration 0195) |
+
+The earliest stake WASMs publish an unbond's token and amount under the
+`"bond"` topic after the `("unbond","user")` event; the correlation
+buffer folds those into the open unbond rather than a new bond.
+
+**Rollout of 0195.** Existing ledgers need a replay, not just the deploy:
+`stellarindex-ops projector-replay -config PATH -source phoenix -from 51572016 -refresh-caggs=false`
+after decompressing the affected chunks, then `compute-completeness`.
+Expected deltas: `unbond` 6,574 → 7,188, `create_distribution_flow` 13,
+`migration_*` 1,068, `phoenix_admin_events` +5, `phoenix_liquidity` +28.
 
 ## Rewards topics — HANDLED (ROADMAP #89, 2026-07-10)
 

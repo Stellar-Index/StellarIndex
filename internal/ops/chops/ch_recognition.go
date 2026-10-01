@@ -170,11 +170,7 @@ func chRecognitionDispatcher(ctx context.Context, cfg config.Config) (*dispatche
 	if err != nil {
 		return nil, err
 	}
-	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gatedOpts, seedOpt)
-	if err != nil {
-		return nil, fmt.Errorf("build dispatcher: %w", err)
-	}
-	return disp, nil
+	return buildCensusDispatcher(cfg, gatedOpts, seedOpt)
 }
 
 func pctOf(n, d uint64) float64 {

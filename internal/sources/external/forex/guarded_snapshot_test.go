@@ -38,6 +38,8 @@ type fakeMassive struct {
 	// groupedStatus, when non-zero, is returned by the grouped-daily
 	// endpoint instead of rates (a quota-limited aggregates product).
 	groupedStatus int
+	// aggs, when set, answers the per-ticker aggregates endpoint.
+	aggs http.HandlerFunc
 }
 
 func (f *fakeMassive) setCurrent(rates map[string]float64) {
@@ -63,6 +65,8 @@ func (f *fakeMassive) serve(t *testing.T) *httptest.Server {
 				rates = f.current
 			}
 			writeGrouped(w, rates)
+		case f.aggs != nil && strings.HasPrefix(r.URL.Path, "/v2/aggs/ticker/"):
+			f.aggs(w, r)
 		case r.URL.Path == "/v3/reference/tickers":
 			writeTickers(w, f.names)
 		default:

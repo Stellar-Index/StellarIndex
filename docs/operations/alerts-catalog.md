@@ -29,7 +29,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 66 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 240 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 243 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -98,7 +98,7 @@ enforces it); any per-alert detail page follows it.
 | `stellarindex_served_value_persistently_skipped` | `stellarindex_served_value_skipped == 1` | sustained 26 h (two daily runs) | ticket | [served-value-drift](runbooks/served-value-drift.md) |
 | `stellarindex_sdf_reserve_list_drift` | `stellarindex_sdf_reserve_list_drift > 0` per `kind` (`missing` = SDF publishes it, we do not exclude it; `extra` = we exclude it, SDF no longer publishes it) | sustained 26 h (two daily runs). The gauge is absent — not zero — when the published source (stellar/dashboard `common/lumens.js`) was unreadable; that is `_persistently_skipped{check="sdf_reserve_list"}` | ticket | [served-value-drift](runbooks/served-value-drift.md) |
 | `stellarindex_cex_usd_volume_coverage_low` | per-source `increase(stellarindex_trade_inserts_total{usd_volume_populated="yes"}[1h])` / total, external venues | < 99.9% sustained 30 min | ticket | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |
-| `stellarindex_onchain_usd_volume_coverage_low` | same ratio over `[6h]`, aggregated across on-chain venues | < 99.5% sustained 1 h | ticket | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |
+| `stellarindex_onchain_usd_volume_coverage_low` | same ratio over `[6h]`, aggregated across on-chain venues, denominator excluding `usd_volume_populated="unroutable"` (same-issuer classic pairs) | < 99.5% sustained 1 h | ticket | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |
 | `stellarindex_ingestion_ch_live_sink_drops` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[10m])` | > 0 sustained 10 min | ticket | [ch-live-sink-drops](runbooks/ch-live-sink-drops.md) |
 | `stellarindex_ingestion_ch_live_sink_drops_sustained` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[1h])` | > 0 sustained 1 h | page | [ch-live-sink-drops](runbooks/ch-live-sink-drops.md) |
 | `stellarindex_ingestion_ch_live_sink_errors` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="errored"}[30m])` | > 0 sustained 15 min | ticket | [ch-live-sink-errors](runbooks/ch-live-sink-errors.md) |
@@ -139,6 +139,9 @@ enforces it); any per-alert detail page follows it.
 | `stellarindex_external_fx_feed_stale` | `time() - max(stellarindex_external_fx_last_quote_unix)` | > 21600 s (6h) for > 15 min | ticket | [fx-feed-stale](runbooks/fx-feed-stale.md) |
 | `stellarindex_external_fx_feed_absent` | `absent(stellarindex_external_fx_last_quote_unix)` | series missing for 30 min | ticket | [fx-feed-stale](runbooks/fx-feed-stale.md) |
 | `stellarindex_external_fx_rate_rejections` | `sum by (reason) (increase(stellarindex_external_fx_rate_rejected_total{reason!~"history_deviation_stuck\|deviation_history_conflict_stuck"}[3h]))` | > 2 rejections in 3h, for 30 min (a ticker is wedged on its last accepted rate) | ticket | [fx-rate-rejected](runbooks/fx-rate-rejected.md) |
+| `stellarindex_fx_fixings_refresh_stale` | `time() - max(stellarindex_fx_fixings_last_refresh_unix)` | > 10800 s (3h) for > 15 min (the fixings appender stopped completing cycles) | ticket | [fx-feed-stale](runbooks/fx-feed-stale.md) |
+| `stellarindex_fx_fixings_series_stale` | `time() - max(stellarindex_fx_fixings_newest_bar_end_unix)` | > 14400 s (4h) while the FX market trades (Mon 02:00 to Fri 22:00 UTC), for > 15 min | ticket | [fx-feed-stale](runbooks/fx-feed-stale.md) |
+| `stellarindex_fx_fixings_quote_disagreement` | `max by (ticker) (stellarindex_fx_fixings_quote_disagrees)` | == 1 for > 2h (a ticker's hourly bars sit outside [0.5, 1.5] of its guarded daily rate) | ticket | [fx-rate-rejected](runbooks/fx-rate-rejected.md) |
 
 Historical note: the former `stellarindex_ingestion_lag_high` alert was retired
 when the repo moved off the legacy orchestrator topology and the live indexer
