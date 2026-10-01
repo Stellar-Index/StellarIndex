@@ -1424,10 +1424,21 @@ const getAssetPriceHistory7dSQL = `
 // which fabricated an XLM "ATH" of \.78 on thin Jan-2025 days
 // (volume_usd=0 dust). USD proxies are the verified USDC issuer +
 // fiat:USD only; new proxies require a verified-catalogue entry.
+//
+// A day-bucket only counts if its pair cleared [athMinDayVolumeUSD] and
+// [athMinDayTrades], so a lone print on an empty book cannot set the high.
+// The floor is a display filter, not attack-resistant: a self-dealt day
+// above it still can.
 type AssetATH struct {
 	USD string // numeric, fixed-point string (preserves precision)
 	At  string // RFC-3339 day-bucket the high was set
 }
+
+// The per-(pair, day) substance floor a prices_1d row must clear to set an ATH.
+const (
+	athMinDayVolumeUSD = 100
+	athMinDayTrades    = 3
+)
 
 // GetAssetATH returns the asset's all-time-high USD price.
 //
@@ -1439,7 +1450,7 @@ type AssetATH struct {
 // For native XLM the asset is on the BASE side of every USD pair,
 // so the same query works without a special case. Returns
 // (nil, nil) cleanly when the asset has never had a USD-quoted
-// day with non-null vwap (very thin assets).
+// day with non-null vwap that cleared the substance floor.
 func (s *Store) GetAssetATH(ctx context.Context, assetID string) (*AssetATH, error) {
 	// Alias-complete: the ATH is the max USD day-VWAP across EVERY
 	// canonical form of the asset. Day-VWAP is volume-weighted so a thin
@@ -1455,11 +1466,14 @@ func (s *Store) GetAssetATH(ctx context.Context, assetID string) (*AssetATH, err
 		     'fiat:USD'
 		   )
 		   AND vwap IS NOT NULL
+		   AND volume_usd >= $2::numeric
+		   AND trade_count >= $3::bigint
 		 ORDER BY vwap DESC
 		 LIMIT 1
 	`
 	var ath AssetATH
-	switch err := s.db.QueryRowContext(ctx, q, assetAliasArray(assetID)).Scan(&ath.USD, &ath.At); {
+	row := s.db.QueryRowContext(ctx, q, assetAliasArray(assetID), athMinDayVolumeUSD, athMinDayTrades)
+	switch err := row.Scan(&ath.USD, &ath.At); {
 	case err == sql.ErrNoRows:
 		return nil, nil
 	case err != nil:
@@ -1496,9 +1510,11 @@ func (s *Store) GetAssetsATHBatch(ctx context.Context, assetIDs []string) (map[s
 		     'fiat:USD'
 		   )
 		   AND vwap IS NOT NULL
+		   AND volume_usd >= $2::numeric
+		   AND trade_count >= $3::bigint
 		 ORDER BY base_asset, vwap DESC
 	`
-	rows, err := s.db.QueryContext(ctx, q, assetIDs)
+	rows, err := s.db.QueryContext(ctx, q, assetIDs, athMinDayVolumeUSD, athMinDayTrades)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetsATHBatch: %w", err)
 	}

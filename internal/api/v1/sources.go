@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -147,9 +148,18 @@ func sourceClassList() string {
 	return strings.Join(names, ", ")
 }
 
+// servesPubnetReference reports whether the compiled-in reference registries
+// (verified-currency catalogue, routers, off-chain feeds) describe this
+// network. They name pubnet identities only; an unknown network reads as
+// pubnet, as in sourcenet.Applicable.
+func (s *Server) servesPubnetReference() bool {
+	return s.network != sourcenet.Testnet && s.network != sourcenet.Futurenet
+}
+
 // handleSources serves GET /v1/sources.
 //
-// Returns the static external.Registry projected onto the wire
+// Returns the static external.Registry, scoped to the sources that exist
+// on the configured network (sourcenet.Applicable), projected onto the wire
 // shape, sorted by name for deterministic responses + cache-
 // friendliness behind a CDN. The whole catalogue is small enough
 // (~25 entries today) that pagination would be over-engineering.
@@ -254,6 +264,11 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 	out := make([]Source, 0, len(external.Registry))
 	for name, md := range external.Registry {
 		if classFilter != "" && string(md.Class) != classFilter {
+			continue
+		}
+		// The registry is compiled in for every network; a test net must
+		// not list pubnet-only venues it never ingests.
+		if ok, _ := sourcenet.Applicable(name, s.network); !ok {
 			continue
 		}
 		st := statsBySource[name]

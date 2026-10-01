@@ -6,6 +6,7 @@ import (
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
@@ -173,7 +174,7 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 		Name:          "defindex",
 		Category:      "yield",
 		Description:   "DeFindex — yield vaults and strategies allocating deposits across Soroban DeFi.",
-		GenesisLedger: 57_056_338,
+		GenesisLedger: defindex.GenesisLedger,
 		EventKinds: []string{
 			"defindex.strategy.deposit", "defindex.strategy.withdraw",
 			// strategy.harvest — strategy yield realised into the vault
@@ -188,6 +189,9 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 			// decoded event per distributed_fees entry, persisted to
 			// defindex_fees (migration 0146).
 			"defindex.vault.dfees",
+			// vault.admin — rescue / pause toggles / role rotations,
+			// persisted to defindex_admin_events (migration 0192).
+			"defindex.vault.admin",
 		},
 	},
 	{

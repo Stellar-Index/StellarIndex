@@ -59,21 +59,7 @@ func TestEveryTier1SkipIndexHasAnAddIndexRetrofit(t *testing.T) {
 		t.Fatal("parsed zero INDEX declarations from tier1_schema.sql; the parser, not the schema, is broken")
 	}
 
-	files, err := filepath.Glob(filepath.Join(dir, "*.sql"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	retrofits := map[string][]string{}
-	for _, f := range files {
-		if filepath.Base(f) == "tier1_schema.sql" {
-			continue
-		}
-		raw, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatalf("read %s: %v", f, err)
-		}
-		skipIndexDefs(string(raw), alterTableRE, addIndexRE, retrofits)
-	}
+	retrofits, nFiles := operatorAddIndexDefs(t, dir)
 
 	for key, defs := range declared {
 		if len(defs) != 1 {
@@ -91,5 +77,53 @@ func TestEveryTier1SkipIndexHasAnAddIndexRetrofit(t *testing.T) {
 				key, defs[0], have)
 		}
 	}
-	t.Logf("checked %d tier1 skip indexes against %d operator artifacts", len(declared), len(files)-1)
+	t.Logf("checked %d tier1 skip indexes against %d operator artifacts", len(declared), nFiles)
+}
+
+// operatorAddIndexDefs collects every `ALTER TABLE … ADD INDEX` definition in
+// deploy/clickhouse outside tier1_schema.sql, and the number of files read.
+func operatorAddIndexDefs(t *testing.T, dir string) (map[string][]string, int) {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "*.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defs := map[string][]string{}
+	n := 0
+	for _, f := range files {
+		if filepath.Base(f) == "tier1_schema.sql" {
+			continue
+		}
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		skipIndexDefs(string(raw), alterTableRE, addIndexRE, defs)
+		n++
+	}
+	return defs, n
+}
+
+// An ADD INDEX on a tier1 table that tier1_schema.sql no longer declares
+// would re-create a dropped index the next time an operator re-runs the
+// idempotent retrofit, and leave fresh and existing hosts disagreeing.
+func TestEveryTier1AddIndexRetrofitIsDeclared(t *testing.T) {
+	root := lockstepRepoRoot(t)
+	schema := lockstepReadFile(t, root, filepath.Join("deploy", "clickhouse", "tier1_schema.sql"))
+
+	declared := map[string][]string{}
+	skipIndexDefs(schema, tier1CreateTableRE, tier1IndexRE, declared)
+	tier1Tables := map[string]bool{}
+	for _, stmt := range ddlStatements(schema) {
+		if m := tier1CreateTableRE.FindStringSubmatch(stmt); m != nil {
+			tier1Tables[m[1]] = true
+		}
+	}
+
+	retrofits, _ := operatorAddIndexDefs(t, filepath.Join(root, "deploy", "clickhouse"))
+	for key := range retrofits {
+		if tier1Tables[strings.SplitN(key, ".", 2)[0]] && len(declared[key]) == 0 {
+			t.Errorf("an operator artifact ADDs stellar.%s, which tier1_schema.sql does not declare", key)
+		}
+	}
 }

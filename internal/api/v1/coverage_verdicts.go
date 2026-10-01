@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -213,6 +214,40 @@ type CoverageVerdictsView struct {
 	// TotalSources, so a source whose first audit failed shrinks the
 	// numerator rather than vanishing from both sides of the headline.
 	UnverifiedSources []UnverifiedSourceView `json:"unverified_sources"`
+	// LaggingSources names the sources whose verdict tip is below the newest
+	// source verdict's tip: the latest audit run wrote no verdict for them, so
+	// the headline sums verdicts from more than one run. Empty when one run
+	// wrote every source's row.
+	LaggingSources []LaggingSourceView `json:"lagging_sources"`
+}
+
+// LaggingSourceView is one source still carrying an earlier run's verdict.
+type LaggingSourceView struct {
+	Source    string `json:"source"`
+	TipLedger uint32 `json:"tip_ledger"`
+	Reason    string `json:"reason"`
+}
+
+// laggingSources lists, in sources' order, every verdict whose tip is below
+// the newest tip among sources. Every source a run evaluates is stamped with
+// that run's one tip, so a lower tip is a row the newest run did not rewrite.
+func laggingSources(sources []CoverageVerdictView) []LaggingSourceView {
+	var newest uint32
+	for _, v := range sources {
+		newest = max(newest, v.TipLedger)
+	}
+	out := make([]LaggingSourceView, 0)
+	for _, v := range sources {
+		if v.TipLedger < newest {
+			out = append(out, LaggingSourceView{
+				Source:    v.Source,
+				TipLedger: v.TipLedger,
+				Reason: fmt.Sprintf("verdict computed at tip %d, below the newest source verdict's tip %d: "+
+					"the latest audit run did not refresh it, so it is counted at its earlier tip", v.TipLedger, newest),
+			})
+		}
+	}
+	return out
 }
 
 // UnverifiedSourceView is one audited source with no verdict row.
@@ -249,31 +284,19 @@ func unverifiedSources(audited []string, snaps []timescale.CompletenessSnapshot,
 // may run past a verdict's tip_ledger before the verdict stops being a
 // claim about the CURRENT chain.
 //
-// The completeness audit runs hourly
-// (deploy/systemd/stellarindex-completeness.timer: OnUnitActiveSec=1h
-// plus up to 5 min of jitter plus a multi-minute run), and pubnet
-// closes a ledger every ~5 s → ~720 ledgers/hour. 2160 ≈ 3 h of
-// ledgers: three audit periods, so one skipped or slow run can't flap
-// the flag, while an audit that has STOPPED surfaces within a few
-// hours instead of never.
-// CALIBRATED TO THE DEPLOYED CADENCE (2026-07-26): the original 2160
-// (~3h) assumed an hourly compute-completeness timer; r1's timer is
-// DAILY (07:32), so a 3h bound would read stale ~90% of every day —
-// noisy-honest at best. 34560 ≈ 2 audit periods at the daily cadence:
-// one whole missed run plus most of a second before the flag trips,
-// which is the "the audit stopped" signal this gate exists for rather
-// than "the audit hasn't run yet today".
+// The deployed audit is daily (compute-completeness.timer, 05:30 UTC
+// plus up to 5 min jitter, one multi-hour -pass run). 34560 ledgers is
+// ~2 audit periods at 5 s/ledger: a backstop that tolerates a slow run
+// and ledger-rate drift without flapping. The age gate below is the
+// primary "the audit stopped" signal and fires first.
 const coverageVerdictStaleLedgers uint32 = 34560
 
-// coverageVerdictStaleAge is the wall-clock twin of
-// [coverageVerdictStaleLedgers] — the same three-audit-period horizon
-// expressed in time, so the gate still has an opinion on a deployment
-// with no CursorsReader wired (or before the ledgerstream cursor
-// exists) and on the pathological case where the live tip itself is
-// frozen alongside a stalled audit.
-// 26h = the daily cadence plus a two-hour grace: catches a missed run
-// on the first morning it fails, without flagging the ordinary gap
-// between yesterday's run and today's. Same calibration note as above.
+// coverageVerdictStaleAge is the wall-clock gate, and deliberately
+// tighter than [coverageVerdictStaleLedgers]: one daily period plus a
+// two-hour grace flags a missed run the morning it fails, without
+// flagging the ordinary gap between yesterday's run and today's. It
+// also decides alone when no CursorsReader or ledgerstream cursor is
+// available, or when the live tip is frozen alongside a stalled audit.
 const coverageVerdictStaleAge = 26 * time.Hour
 
 // handleCoverageVerdicts serves GET /v1/coverage — every source's
@@ -358,6 +381,7 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 	}
 	view.UnverifiedSources = unverifiedSources(s.auditedSources, snaps, network)
 	view.TotalSources = len(view.Sources) + len(view.UnverifiedSources)
+	view.LaggingSources = laggingSources(view.Sources)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	writeJSON(w, view, Flags{Stale: verdictsStale})

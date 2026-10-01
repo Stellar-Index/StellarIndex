@@ -368,6 +368,66 @@ case "$out" in
   *) echo "  FAIL real tree did not report its atomicity file count"; indent "$out"; fail=$((fail + 1)) ;;
 esac
 
+echo "lint-migrations-test: priceable-division pass"
+
+d="$(mig pr-unguarded 0002_vwap.up.sql <<'SQL'
+CREATE MATERIALIZED VIEW p AS
+SELECT sum(quote_amount) / sum(base_amount) AS vwap
+  FROM trades GROUP BY 1;
+SQL
+)"
+mcatches "a division by a leg with no priceable filter is caught" "$d" \
+  "0002_vwap.up.sql:1: divides by base_amount/quote_amount without the priceable filter"
+
+d="$(mig pr-nullif 0002_twap.up.sql <<'SQL'
+SELECT avg(quote_amount / NULLIF(t.base_amount, 0)) FROM trades t;
+SQL
+)"
+mcatches "a NULLIF-wrapped, table-qualified leg divisor is still caught" "$d" \
+  "0002_twap.up.sql:1: divides by base_amount/quote_amount"
+
+d="$(mig pr-guarded 0002_vwap.up.sql <<'SQL'
+CREATE MATERIALIZED VIEW p AS
+SELECT sum(quote_amount) FILTER (WHERE base_amount > 0 AND quote_amount > 0)
+     / sum(base_amount) FILTER (WHERE base_amount > 0 AND quote_amount > 0) AS vwap
+  FROM trades GROUP BY 1;
+SQL
+)"
+clean_mig "a division under the priceable FILTER passes" "$d"
+
+d="$(mig pr-escaped 0002_vwap.up.sql <<'SQL'
+SELECT sum(quote_amount) / sum(base_amount) -- lint-priceable:ok source table has a CHECK
+  FROM pool_snapshots;
+SQL
+)"
+clean_mig "a division marked lint-priceable:ok passes" "$d"
+
+d="$(mig pr-stale-marker 0002_vol.up.sql <<'SQL'
+SELECT sum(base_amount) FROM trades; -- lint-priceable:ok nothing divides here
+SQL
+)"
+mcatches "a lint-priceable:ok marker on a statement with no leg division is stale" "$d" \
+  "stale lint-priceable:ok marker"
+
+d="$(mig pr-stale-baseline 0002_create_price_aggregates.up.sql <<'SQL'
+SELECT sum(base_amount) FROM trades;
+SQL
+)"
+mcatches "a baseline file with no unguarded division left is a stale entry" "$d" \
+  "stale priceable_baseline entry 0002_create_price_aggregates.up.sql"
+
+d="$(mig pr-baselined 0002_create_price_aggregates.up.sql <<'SQL'
+SELECT sum(quote_amount) / sum(base_amount) FROM trades;
+SQL
+)"
+clean_mig "a baselined file's unguarded division passes" "$d"
+
+out="$(run deploy/clickhouse)"
+case "$out" in
+  *"priceable-division pass inspected "[1-9]*) echo "  ok   real tree reports a non-zero priceable-division file count"; pass=$((pass + 1)) ;;
+  *) echo "  FAIL real tree did not report its priceable-division file count"; indent "$out"; fail=$((fail + 1)) ;;
+esac
+
 echo "lint-migrations-test: register row shape"
 
 # Fixture registers are the real one with a single row damaged, so the

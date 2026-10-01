@@ -80,3 +80,24 @@ func TestCandleTxHash_NoPrivateCandleSeeds(t *testing.T) {
 		t.Fatal("scanned no source files; glob is wrong")
 	}
 }
+
+func TestCandleClosed(t *testing.T) {
+	to := time.Unix(1_745_010_000, 0)
+	later := to.Add(time.Hour)
+	for _, c := range []struct {
+		name string
+		end  time.Time
+		now  time.Time
+		want bool
+	}{
+		{"ends before to and now", to.Add(-time.Hour), later, true},
+		{"ends exactly at to", to, later, true},
+		{"ends past to", to.Add(time.Second), later, false},
+		{"ends exactly at now", to.Add(-time.Minute), to.Add(-time.Minute), true},
+		{"still open at now", to.Add(-time.Minute), to.Add(-2 * time.Minute), false},
+	} {
+		if got := CandleClosed(c.end, to, c.now); got != c.want {
+			t.Errorf("%s: CandleClosed = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

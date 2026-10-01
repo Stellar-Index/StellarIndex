@@ -731,6 +731,90 @@ func TestStellarCollision_DoesNotFlagTheGenuineIssuer(t *testing.T) {
 	}
 }
 
+// TestStellarCollision_TickerOnlyVettedIssuanceRoute pins the documented way
+// to admit a genuine Stellar issuance of a ticker-only entry: a
+// `network: stellar` entry on the same catalogue entry exempts that issuer
+// alone.
+func TestStellarCollision_TickerOnlyVettedIssuanceRoute(t *testing.T) {
+	const (
+		anchor   = "GDUKMGUGDZQK6YHYA5Z6AY2G4XDSZPSZ3SW5UN3ARVMO6QSRDWP5YLEX"
+		attacker = "GBEO62ZYQXBGDQEHPTMBHRJVUEBNMXAWZFPBQBLPJXLJKMQTOEVEDGRA"
+		entry    = `verified_currencies:
+  - ticker: BTC
+    slug: bitcoin
+    name: Bitcoin
+    class: crypto
+    reference_only: true
+`
+	)
+	tickerOnly, err := LoadFromBytes([]byte(entry))
+	if err != nil {
+		t.Fatalf("LoadFromBytes(ticker-only): %v", err)
+	}
+	if _, coll := tickerOnly.StellarCollision("BTC", anchor); !coll {
+		t.Error("ticker-only BTC: an unvetted issuer must be flagged")
+	}
+
+	vetted, err := LoadFromBytes([]byte(entry + `    networks:
+      - network: stellar
+        code: BTC
+        issuer: ` + anchor + `
+        asset_id: BTC-` + anchor + `
+`))
+	if err != nil {
+		t.Fatalf("LoadFromBytes(vetted): %v", err)
+	}
+	if _, coll := vetted.StellarCollision("BTC", anchor); coll {
+		t.Error("vetted BTC issuance: its issuer must not be flagged")
+	}
+	if _, coll := vetted.StellarCollision("BTC", attacker); !coll {
+		t.Error("vetted BTC issuance: every other issuer must still be flagged")
+	}
+}
+
+// TestLoadFromBytes_RejectsKnownAnchorsOutsideFiatDenomination: known_anchors
+// is read only for an issuance-free fiat entry, so accepting it elsewhere
+// would silently look like an impersonation allowlist that does nothing.
+func TestLoadFromBytes_RejectsKnownAnchorsOutsideFiatDenomination(t *testing.T) {
+	const anchor = "GDUKMGUGDZQK6YHYA5Z6AY2G4XDSZPSZ3SW5UN3ARVMO6QSRDWP5YLEX"
+	cases := map[string]string{
+		"reference_only crypto": `
+  - ticker: BTC
+    slug: bitcoin
+    name: Bitcoin
+    class: crypto
+    reference_only: true
+    known_anchors: ["` + anchor + `"]
+`,
+		"fiat with a Stellar issuance": `
+  - ticker: EURX
+    slug: eurx
+    name: Euro token
+    class: fiat
+    networks:
+      - network: stellar
+        code: EURX
+        issuer: ` + anchor + `
+    known_anchors: ["` + anchor + `"]
+`,
+	}
+	for name, body := range cases {
+		if _, err := LoadFromBytes([]byte("verified_currencies:" + body)); err == nil {
+			t.Errorf("%s: known_anchors accepted where nothing reads it", name)
+		}
+	}
+	if _, err := LoadFromBytes([]byte(`verified_currencies:
+  - ticker: USD
+    slug: us-dollar
+    name: US Dollar
+    class: fiat
+    networks: []
+    known_anchors: ["` + anchor + `"]
+`)); err != nil {
+		t.Errorf("issuance-free fiat entry with known_anchors must load: %v", err)
+	}
+}
+
 // TestFiatDenomination_ExcludesFiatWithSorobanOnlyIssuance: a fiat entry
 // whose only Stellar issuance is a Soroban contract (no classic code) has
 // a Stellar identity, so StellarCollision owns its ticker and

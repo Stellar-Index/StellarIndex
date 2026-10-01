@@ -407,6 +407,42 @@ func TestPriceStream_FallsBackWhenPreferredSeriesGoesQuiet(t *testing.T) {
 	}
 }
 
+// TestPriceStream_WithheldMarkerFollowsTheSelectedSeries — a publisher's
+// price_withheld names one alias spelling. A crypto:XLM connection whose
+// own series is live must not see native's marker, which would read as
+// its own pair being withheld; with crypto:XLM quiet it falls back to it.
+func TestPriceStream_WithheldMarkerFollowsTheSelectedSeries(t *testing.T) {
+	bucket := time.Now().UTC().Truncate(time.Minute)
+	usd, _ := canonical.ParseAsset("fiat:USD")
+	cryptoXLM, _ := canonical.ParseAsset("crypto:XLM")
+	nativeTopic := v1.PriceStreamTopic(canonical.NativeAsset(), usd, 300)
+	cryptoTopic := v1.PriceStreamTopic(cryptoXLM, usd, 300)
+	nativeWithheld := []byte(`{"asset_id":"native","quote":"fiat:USD","reason":"substance","as_of":"` +
+		bucket.Add(time.Minute).Format(time.RFC3339) + `"}`)
+
+	t.Run("own series live", func(t *testing.T) {
+		hub := streaming.NewHub(0)
+		br := openClosedStream(t, hub, "crypto:XLM")
+		hub.Publish(cryptoTopic, "price_update", closedFrame("crypto:XLM", "0.10", bucket))
+		hub.Publish(nativeTopic, "price_withheld", nativeWithheld)
+		hub.Publish(cryptoTopic, "price_update", closedFrame("crypto:XLM", "0.11", bucket.Add(time.Minute)))
+
+		got := strings.Join(framesUntil(t, br, "0.11"), ",")
+		if want := "crypto:XLM@0.10,crypto:XLM@0.11"; got != want {
+			t.Fatalf("frames = %s, want %s — native's price_withheld leaked into the crypto:XLM series", got, want)
+		}
+	})
+	t.Run("own series quiet", func(t *testing.T) {
+		hub := streaming.NewHub(0)
+		br := openClosedStream(t, hub, "crypto:XLM")
+		hub.Publish(nativeTopic, "price_withheld", nativeWithheld)
+		frame := readPriceStreamFrame(t, br, 2*time.Second)
+		if !strings.Contains(frame, "event: price_withheld") || !strings.Contains(frame, `"asset_id":"native"`) {
+			t.Fatalf("frame = %q, want native's price_withheld once it is the served series", frame)
+		}
+	})
+}
+
 // TestPriceStream_WindowSeparation — the window-interleave regression
 // (cold audit 2026-08-03 finding 1, r1-confirmed): the aggregator
 // publishes one bucket per (pair, window) and pre-fix all three landed

@@ -34,6 +34,34 @@ func testConfigWithAllSources() config.Config {
 	return cfg
 }
 
+// TestSorobanEraFloor_NetworkAware pins the recognition/census floor to the
+// configured network: a test net (soroban_genesis_ledger = 1) must scan
+// [1, tip], not the inverted [pubnet-activation, tip] that reads nothing.
+func TestSorobanEraFloor_NetworkAware(t *testing.T) {
+	const testnetTip = 4_927_174
+	testnet := config.Default()
+	testnet.Stellar.SorobanGenesisLedger = 1
+	cases := []struct {
+		name string
+		cfg  config.Config
+		want uint32
+	}{
+		{"testnet", testnet, 1},
+		{"pubnet default", config.Default(), 50_457_424},
+		{"zero-valued config", config.Config{}, 50_457_424},
+	}
+	for _, tc := range cases {
+		if got := sorobanEraFloor(tc.cfg); got != tc.want {
+			t.Errorf("%s: sorobanEraFloor = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+	// An empty scan over the now-valid test-net range still fails closed.
+	err := recognitionScanEmptyErr(0, sorobanEraFloor(testnet), testnetTip)
+	if err == nil || !strings.Contains(err.Error(), "[1, 4927174]") {
+		t.Fatalf("empty test-net scan: err = %v, want a fail-closed error naming [1, 4927174]", err)
+	}
+}
+
 // TestRunRecognitionScan_ScanErrorFailsClosed pins C2-5 (RFC-8
 // detector-fail-open): a recognition scan ERROR — CH unreachable, a query
 // timeout, or the load-heaviest DistinctTopicShapes hitting the CH memory
