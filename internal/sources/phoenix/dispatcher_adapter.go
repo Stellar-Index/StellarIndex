@@ -107,7 +107,8 @@ func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 //     (actionSwap) and the newer single-event ScvSymbol("swap") +
 //     ScvMap body schema (actionSwapMap, Q5). classifyAny picks the
 //     shape from the topic; both reconstruct into the same TradeEvent.
-//   - provide_liquidity / withdraw_liquidity (String and Map schemas)
+//   - provide_liquidity / withdraw_liquidity — String schema (buffered)
+//     and Map schema (single event, like actionSwapMap)
 //   - bond / unbond and the other stake-contract events
 //   - the factory's create and config-update events, gated on IsFactory
 //
@@ -184,6 +185,10 @@ func (d *Decoder) decodeAction(a action, ev *events.Event, fieldTopic string, cl
 		return d.decodeProvideLiquidityEvent(ev, fieldTopic, closedAt)
 	case actionWithdrawLiquidity:
 		return d.decodeWithdrawLiquidityEvent(ev, fieldTopic, closedAt)
+	case actionProvideLiquidityMap:
+		return liquidityEventOf(decodeProvideLiquidityMap(ev, closedAt))
+	case actionWithdrawLiquidityMap:
+		return liquidityEventOf(decodeWithdrawLiquidityMap(ev, closedAt))
 	case actionBond:
 		return d.decodeStakeEvent(ev, fieldTopic, closedAt, true)
 	case actionUnbond:
@@ -204,10 +209,6 @@ func (d *Decoder) decodeAction(a action, ev *events.Event, fieldTopic string, cl
 		return decodeFactoryConfigEvent(ev, closedAt)
 	case actionBlendPoolAdmin:
 		return decodeBlendPoolAdminEvent(ev, fieldTopic, closedAt)
-	case actionProvideLiquidityMap:
-		return decodeProvideLiquidityMapEvent(ev, closedAt)
-	case actionWithdrawLiquidityMap:
-		return decodeWithdrawLiquidityMapEvent(ev, closedAt)
 	case actionCreatePool:
 		// Handled above, before the lock. Enumerated so `exhaustive`
 		// keeps covering the action enum.
@@ -318,6 +319,15 @@ func (d *Decoder) rescueEvicted(evicted []RawSwap) []consumer.Event {
 		}
 	}
 	return out
+}
+
+// liquidityEventOf wraps a single-event (Map schema) liquidity decode;
+// like the swap Map path it needs no correlation buffer.
+func liquidityEventOf(change LiquidityChange, err error) ([]consumer.Event, error) {
+	if err != nil {
+		return nil, err
+	}
+	return []consumer.Event{LiquidityEvent{Change: change}}, nil
 }
 
 func (d *Decoder) decodeProvideLiquidityEvent(ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {

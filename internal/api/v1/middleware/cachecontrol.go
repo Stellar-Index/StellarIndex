@@ -227,15 +227,11 @@ var (
 //     body that no client and no CDN could reuse for even one ledger. Nothing
 //     in it is per-user or auth-tied.
 //
-//     Note policyForPath sees only the path, so this one band also covers the
-//     `?ledger=<seq>` form of the same route. That form is IMMUTABLE (a closed
-//     ledger's operations), so 10 s/15 s under-caches it — the conservative
-//     direction, and the one to be wrong in. It is deliberately NOT given the
-//     longer 60 s/300 s catalogue band: opsDirCache serves stale on expiry and
-//     only refreshes ON a request, so at a low arrival rate an entry's age is
-//     bounded by the inter-arrival gap rather than by the TTL (measured on r1:
-//     an `as_of` 93 s behind after a quiet window). A 300 s edge TTL would
-//     compound that real staleness instead of absorbing a burst.
+//     The directory is deliberately NOT given the longer 60 s/300 s band:
+//     opsDirCache serves stale on expiry and only refreshes ON a request, so at
+//     a low arrival rate an entry's age is bounded by the inter-arrival gap
+//     rather than by the TTL (measured on r1: an `as_of` 93 s behind after a
+//     quiet window). A 300 s edge TTL would compound that real staleness.
 //
 //   - /v1/contracts joins them on the same evidence. #332 F3 named it and
 //     the F3 fix did not reach it: live on 2026-09-03 it still answered
@@ -261,10 +257,7 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 	case path == "/v1/healthz", path == "/v1/readyz", path == "/v1/version", path == "/metrics":
 		return "no-store", true
 	case ledgerDetailPath.MatchString(path), txDetailPath.MatchString(path):
-		if cdnEnabled {
-			return "public, max-age=60, s-maxage=300", true
-		}
-		return "public, max-age=60", true
+		return closedLedgerPolicy(cdnEnabled), true
 	case path == "/v1/ledgers", path == "/v1/network/throughput",
 		path == "/v1/operations", path == "/v1/contracts",
 		contractDetailPath.MatchString(path),
@@ -410,6 +403,14 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 	return "", false
 }
 
+// closedLedgerPolicy is the band for reads of one closed ledger.
+func closedLedgerPolicy(cdnEnabled bool) string {
+	if cdnEnabled {
+		return "public, max-age=60, s-maxage=300"
+	}
+	return "public, max-age=60"
+}
+
 func policyForPath(path string, cdnEnabled bool) string {
 	// Closed-ledger detail + the two fast-moving explorer reads (#332 F3)
 	// live in their own helper so this switch stays under the gocyclo
@@ -516,7 +517,7 @@ func routePolicy(path string, cdnEnabled bool) (string, bool) {
 		return "private, no-cache, must-revalidate", true
 
 	// ─── Status — customer-facing health rollup ─────────────────
-	// /v1/status is what the explorer /status page polls every 10 s
+	// /v1/status is what the explorer /status page polls every 30 s
 	// and what monitoring dashboards (and the smoke timer) poll on a
 	// longer interval. A 10 s cache absorbs the polling fan-out
 	// without delaying alert-state propagation enough to matter —

@@ -37,9 +37,8 @@
 # Usage: lint-apikey-scan.sh [ROOT]   (ROOT defaults to the repo root;
 # the self-test points it at fixture trees).
 #
-# Sibling: internal/auth/apikey_scan_lint_test.go runs this script and
-# its self-test under `go test`, so the ban is enforced wherever the Go
-# suite runs even before this file is named in verify.sh / ci.yml.
+# Run by verify.sh and CI's import-checks job; internal/auth/
+# apikey_scan_lint_test.go also runs it and its self-test under `go test`.
 #
 # Exit 0 clean, 1 on any violation or a vacuous run.
 set -uo pipefail

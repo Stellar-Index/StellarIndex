@@ -20,7 +20,8 @@
 set -u
 
 OUT="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}/config_assertions.prom"
-TMP="$(mktemp)"
+# Temp beside $OUT so the mv is a same-filesystem rename the collector never sees half-written.
+TMP="$(mktemp "$OUT.tmp.XXXXXX")" || exit 1
 fails=0
 
 emit() { # emit <assertion> <ok:0|1>
@@ -171,7 +172,8 @@ assert_cmd galexie_writer_creds_valid bash -c '
 # 0152 (#358) dropped aggregator_exposures / classic_asset_stats_5m /
 # tvl_observations as never-wired scaffolds, and a dropped table has no
 # policy job, so leaving it here would fail this assertion on r1 forever
-# for a table that is gone on purpose.
+# for a table that is gone on purpose. Tables the script excludes for a
+# near-unique segment-by are excluded here too, or this pages for them.
 # Reuses the SAME stellarindex_config_assertion_ok gauge +
 # the existing stellarindex_config_assertion_failed alert every other
 # assertion here uses — no new alert rule needed. Expected to page
@@ -183,12 +185,10 @@ compression_policies_applied() {
   PGPASSWORD="$(cat /etc/stellarindex/postgres-password.txt)" \
     psql -h 127.0.0.1 -U stellarindex -d stellarindex -tAc "
       SELECT count(*) FROM unnest(ARRAY[
-        'account_observations','blend_backstop_events',
-        'cctp_events','claimable_observations',
+        'account_observations','blend_backstop_events','cctp_events',
         'decoder_stats_5m','defindex_flows','divergence_observations',
         'freeze_events','lp_reserve_observations','price_source_contributions',
-        'rozo_events','sac_balance_observations','sdex_offer_events',
-        'sep41_supply_events','soroswap_router_swaps','trustline_observations'
+        'rozo_events','sdex_offer_events','sep41_supply_events'
       ]) AS want(tbl)
       WHERE NOT EXISTS (
         SELECT 1 FROM timescaledb_information.jobs j
@@ -268,6 +268,36 @@ caggs_have_refresh_policy() {
     "$CAGGS_WITHOUT_REFRESH_POLICY_SQL" 2>/dev/null | grep -qx 0
 }
 assert_cmd caggs_have_refresh_policy caggs_have_refresh_policy
+
+# ── The trades compression policy is scheduled ───────────────────────
+# `usd-volume-restamp -chunks -write` pauses this policy for its run and
+# re-enables it on exit; a SIGKILL skips the re-enable and trades stops
+# compressing with nothing else flagging it. A pause is honoured only
+# while the run's advisory lock (hashtext('usd-volume-restamp:trades'),
+# timescale.USDVolumeRestampLockName) is held: the server drops it with
+# the killed run's connection. A missing policy counts as a failure too.
+# Executed against migrated TimescaleDB by
+# TestTradesCompressionScheduledAssertionSQL; keep it free of double quotes.
+TRADES_COMPRESSION_SCHEDULED_SQL="
+SELECT count(*) FROM timescaledb_information.jobs j
+ WHERE j.proc_name = 'policy_compression'
+   AND j.hypertable_schema = current_schema()
+   AND j.hypertable_name = 'trades'
+   AND (j.scheduled OR EXISTS (
+     SELECT 1 FROM pg_locks l
+      WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 1
+        AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+        AND l.classid::bigint = (hashtext('usd-volume-restamp:trades')::bigint >> 32) & 4294967295
+        AND l.objid::bigint = hashtext('usd-volume-restamp:trades')::bigint & 4294967295));
+"
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
+trades_compression_policy_scheduled() {
+  [[ -r "$PG_PASSWORD_FILE" ]] || return 1
+  PGPASSWORD="$(cat "$PG_PASSWORD_FILE")" \
+    psql -h 127.0.0.1 -U stellarindex -d stellarindex -tAc \
+    "$TRADES_COMPRESSION_SCHEDULED_SQL" 2>/dev/null | grep -qx 1
+}
+assert_cmd trades_compression_policy_scheduled trades_compression_policy_scheduled
 
 # ── Postgres idle-in-transaction reaper ───────────────────────────────
 # Same codified-vs-applied pairing as max_worker_processes above, for
@@ -459,7 +489,7 @@ else
   skip minio_prometheus_token_present
 fi
 
+chmod 644 "$TMP"
 mv "$TMP" "$OUT"
-chmod 644 "$OUT"
 echo "config-assertions: $fails failure(s)" >&2
 exit "$fails"

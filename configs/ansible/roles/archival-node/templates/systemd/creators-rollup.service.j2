@@ -43,6 +43,10 @@ NoNewPrivileges=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
+# The rollup takes an exclusive flock under /var/lib/stellarindex before
+# it touches ClickHouse; ProtectSystem=strict leaves that directory
+# read-only unless it is listed here, and the run then fails at the open.
+ReadWritePaths=/var/lib/stellarindex
 
 # No single statement in the cycle runs unbounded: BOTH archive passes are
 # walked one 1M-ledger partition per statement, the classic arm below the

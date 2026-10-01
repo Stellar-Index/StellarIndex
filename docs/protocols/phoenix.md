@@ -28,7 +28,7 @@ status: current
 >   decoder admits the pool each one announces, gated on
 >   `reg.IsFactory(emitter)`. **Stake contracts stay mechanism 2**
 >   (curated set): the factory does not announce them, the POOL deploys
->   them. The **12 String-schema pools + 1 Map-schema pool + 16 stake
+>   them. The **12 String-schema pools + 1 Map-schema pool + 15 stake
 >   contracts** below remain the in-code seed `phoenix.MainnetGatedSet`,
 >   now as the cold-start warm root and the operator override rather than
 >   the sole trust root. Trust extended, stated in
@@ -94,11 +94,10 @@ CBRGNWGAC25CPLMOAMR7WBPOF5QTFA5RYXQH4DEJ4K65G2QFLTLMW7RO   bond ×24
 CAF3UJ45ZQJP6USFUIMVMGOUETUTXEC35R2247VJYIVQBGKTKBZKNBJ3   unbond ×21
 ```
 
-`CBBUVHCEML7UE46XXZXLTMGKFMKX7KOC2XAKI3TW6WBQBKWMSARMU3YM` was listed
-here too and is **not** Phoenix: every event it emits is a Symbol-topic
-`("bond", created|live|settconf|settled|expired)` under a WASM no Phoenix
-contract shares, so it is out of the curated set. A node that already
-warmed it keeps it in `protocol_contracts`; remove that row once:
+A third, `CBBUVHCEML7UE46XXZXLTMGKFMKX7KOC2XAKI3TW6WBQBKWMSARMU3YM` (`bond ×10`), was
+removed: its only WASM carries none of the stake literals and its events are
+`("bond", created|live|settconf|settled|expired)` — a bond instrument, not a Phoenix stake.
+A node that already warmed it keeps it in `protocol_contracts`; remove that row once:
 `DELETE FROM protocol_contracts WHERE source = 'phoenix' AND contract_id = 'CBBUVHCEML7UE46XXZXLTMGKFMKX7KOC2XAKI3TW6WBQBKWMSARMU3YM' AND factory_id = 'curated';`
 then restart the indexer.
 
@@ -160,7 +159,11 @@ Verified against `phoenix-contracts` `pool/src/contract.rs`. There are
 `(ledger, tx_hash, op_index)` into one trade. The **newer** pool WASM
 emits ONE `ScvSymbol("swap")` event whose `ScvMap` body carries the
 whole trade (underscore-spelled Symbol keys), decoded directly by
-`decodeSwapMap` with no correlation buffer. Because gating is by
+`decodeSwapMap` with no correlation buffer. The same WASM emits
+`provide_liquidity` / `withdraw_liquidity` in that single-event Map shape
+too (`decodeProvideLiquidityMap` / `decodeWithdrawLiquidityMap`, same
+`phoenix_liquidity` rows; the withdraw body's `auto_unstake_*` keys are
+unused). Because gating is by
 contract identity, a curated pool that upgrades from one shape to the
 other in place is already covered — only the decode dispatch depends on
 the topic shape.
@@ -170,18 +173,18 @@ the topic shape.
 | `swap` | `trades` (source=phoenix) |
 | `provide_liquidity`, `withdraw_liquidity` (String multi-event and Symbol Map-body) | `phoenix_liquidity` |
 | `bond`, `unbond`, `withdraw_rewards`, `distribute_rewards` | `phoenix_stake_events` |
-| `create_distribution_flow` (`asset`, no user) | `phoenix_stake_events` (migration 0191) |
-| `Stake: Migration: ` start / query, `Stake` migration-completed (user only) | `phoenix_stake_events` as `migration_started` / `_queried` / `_completed` (migration 0191) |
+| `create_distribution_flow` (`asset`, no user) | `phoenix_stake_events` (migration 0195) |
+| `Stake: Migration: ` start / query, `Stake` migration-completed (user only) | `phoenix_stake_events` as `migration_started` / `_queried` / `_completed` (migration 0195) |
 | `initialize` (`XYK LP token_a` / `token_b`, once per pool deploy) | `phoenix_initialize` (migration 0131) |
 | admin-rotation topics (`XYK Pool: ` — replace_requested / replace_set / undo / accepted) | `phoenix_admin_events` (migration 0132) |
-| `("Factory","Updated Config")` (Void body, factory only) | `phoenix_admin_events` as `factory_config_updated` (migration 0191) |
-| `blend_pool` set_delegate / set_min_trading_a / _b | `phoenix_admin_events` (`admin_addr`, or the i128 in `value`; migration 0191) |
+| `("Factory","Updated Config")` (Void body, factory only) | `phoenix_admin_events` as `factory_config_updated` (migration 0195) |
+| `blend_pool` set_delegate / set_min_trading_a / _b | `phoenix_admin_events` (`admin_addr`, or the i128 in `value`; migration 0195) |
 
 The earliest stake WASMs publish an unbond's token and amount under the
 `"bond"` topic after the `("unbond","user")` event; the correlation
 buffer folds those into the open unbond rather than a new bond.
 
-**Rollout of 0192.** Existing ledgers need a replay, not just the deploy:
+**Rollout of 0195.** Existing ledgers need a replay, not just the deploy:
 `stellarindex-ops projector-replay -config PATH -source phoenix -from 51572016 -refresh-caggs=false`
 after decompressing the affected chunks, then `compute-completeness`.
 Expected deltas: `unbond` 6,574 → 7,188, `create_distribution_flow` 13,

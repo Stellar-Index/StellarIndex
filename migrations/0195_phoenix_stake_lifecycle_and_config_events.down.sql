@@ -1,4 +1,4 @@
--- 0191 down — restore the 0098 / 0132 action sets, lp_token NOT NULL and
+-- 0195 down — restore the 0098 / 0132 action sets, lp_token NOT NULL and
 -- drop phoenix_admin_events.value. Rows using the new actions must be
 -- deleted first: down-migrating with data present is loud, not silent.
 BEGIN;
@@ -6,10 +6,10 @@ BEGIN;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM phoenix_stake_events WHERE action IN ('create_distribution_flow', 'migration_started', 'migration_queried', 'migration_completed')) THEN
-    RAISE EXCEPTION '0191_phoenix_stake_lifecycle_and_config_events.down.sql: phoenix_stake_events still holds create_distribution_flow / migration_* rows. Delete them explicitly first if that is really what you want.';
+    RAISE EXCEPTION '0195_phoenix_stake_lifecycle_and_config_events.down.sql: phoenix_stake_events still holds create_distribution_flow / migration_* rows. Delete them explicitly first if that is really what you want.';
   END IF;
   IF EXISTS (SELECT 1 FROM phoenix_admin_events WHERE admin_action IN ('factory_config_updated', 'blend_set_delegate', 'blend_set_min_trading_a', 'blend_set_min_trading_b')) THEN
-    RAISE EXCEPTION '0191_phoenix_stake_lifecycle_and_config_events.down.sql: phoenix_admin_events still holds factory_config_updated / blend_set_* rows. Delete them explicitly first if that is really what you want.';
+    RAISE EXCEPTION '0195_phoenix_stake_lifecycle_and_config_events.down.sql: phoenix_admin_events still holds factory_config_updated / blend_set_* rows. Delete them explicitly first if that is really what you want.';
   END IF;
 END $$;
 

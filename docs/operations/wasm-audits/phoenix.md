@@ -1,7 +1,7 @@
 ---
 title: Phoenix WASM-history audit
-last_verified: 2026-07-07
-status: ratified — v2 per-instance walk complete; 2026-07-07 Map-schema addendum
+last_verified: 2026-09-30
+status: ratified — v2 per-instance walk complete; 2026-07-07 Map-schema addendum; 2026-09-30 lake lineage (14th pool; all 64 hashes string-checked)
 source: phoenix
 backfill_safe: true
 ---
@@ -318,13 +318,14 @@ buffer) and gated via `MainnetMapPools`. Real fixture: ledger
 63307899, tx `3cb06db3…`, event_index 3 (golden test
 `internal/sources/phoenix/mapswap_test.go`).
 
-**WASM hashes** (from the contract instance's executable history):
-`f74d87d72381b4a5c787eb8b16a2b861aed6c3146583703ceb003d5befe9d338` from
-creation at 63,293,708, upgraded in place to
-`6fe099b64855bcba2b7fc6f4cd9b0d8e6cc98743eac6cd44042fc7ef0c22e3f7` at
-63,343,141. The first hash also emits the Map-body `provide_liquidity` /
-`withdraw_liquidity` and the `blend_pool` settings events (see the
-event-shapes addendum below).
+**WASM hash:** captured 2026-09-30 from
+`stellar.contract_instance_changes` — see the addendum below (two
+hashes; the pool was upgraded 49,433 ledgers after create). The decode
+is field-name driven (safe against the exact hash), but the
+BackfillSafe audit trail needs the bytes string-checked before this
+pool contributes to any historical backfill range.
+The first hash also emits the `blend_pool` settings events (see the
+event-shapes section below).
 
 ### QuoteAmount field-mapping correction (ALL pools)
 
@@ -546,9 +547,188 @@ publish an unbond as `("unbond","user")` followed by `("bond","token")` and
 `("bond","amount")`. The correlation buffer continues the open unbond with
 those two fields instead of opening a bond.
 
-`CBBUVHCE…` was dropped from the curated stake list: its only events are
-Symbol-topic `("bond", created|live|settconf|settled|expired)` under a WASM
-no Phoenix contract shares.
+## 2026-09-30 addendum — WASM lineage captured from the lake
+
+Every hash in this section comes from `stellar.contract_instance_changes`
+on r1 (ClickHouse, `--port 9300`), which records the executable each
+contract instance points at on every instance change. It answers the
+"PENDING operator capture" and "installed bytes were not hashed"
+residuals above without an RPC fetch, and it is complete where the
+2026-05-01 `wasm-history` walk was sampled: the walk's three "holes" in
+the factory range are not holes, each hash below runs contiguously from
+its install ledger to the next.
+
+```sql
+SELECT toString(contract_hash), wasm_hash, min(ledger_seq), max(ledger_seq), count()
+FROM stellar.contract_instance_changes
+WHERE contract_hash IN (<lower-hex of the 32-byte contract id>)
+GROUP BY 1, 2 ORDER BY 1, 3
+```
+
+(31 registry contracts + the factory's two newest children; 152 rows;
+every registry contract is present.)
+
+### Factory and multihop
+Factory (`CB4SVAWJ…`):
+
+| wasm_hash | installed at ledger | superseded at ledger |
+| --- | --- | --- |
+| `e1464afcf0c7c01e4306e3eb9d16f653500fbaa31c3cce0afd675449d58cea14` | 51,572,016 | 53,134,143 |
+| `96c6a73863de6e331d8103898f421bb7af719b87bbd4ac14d5a16f6b2662546b` | 53,134,143 | 54,517,225 |
+| `2bbb91c58cb8432fd40446e80188a25e7c07dc2edc853e885d65cafbbbf19581` | 54,517,225 | 54,517,364 |
+| `721badb85470a81d9d0a1c72dd0debb37f5f268419d4b94d125e546cc32d350e` | 54,517,364 | 57,406,830 |
+| `c54ba54bd9e37503a641fa661126cd858faf57738c1e903b84f72ac505016393` | 57,406,830 | 63,266,299 |
+| `56638944de087f45f3c9fd441204747ab91cc95331d4bde92811bec61bd12722` | 63,266,299 | 63,293,457 |
+| `b64fa5b9e3f0074a772d10743c1951bc6c1a716d0f7521f205eb0b516b15cfab` | 63,293,457 | 64,028,476 |
+| `8fbd78ede40e9d722259f85e0511b347397c0ffcca4c8fa580a73d9d079da7f1` | 64,028,476 | **current** |
+
+Multihop (`CCLZRD4E…`):
+
+| wasm_hash | installed at ledger | superseded at ledger |
+| --- | --- | --- |
+| `60332ba12801eda65874e9afdbfdf8d114f56011fe7d1f902103cd7767c547d4` | 51,572,024 | 53,134,204 |
+| `18336805466bbd05bc388610d36de73994f5b9061bb199c02418a073fcf4b281` | 53,134,204 | 57,406,861 |
+| `77bdc0a993960faa2b0dac7b43a5160d6ed745ee787573c2f0ad8d00d4806366` | 57,406,861 | 63,266,697 |
+| `b2ffbefaafad05d4a2bde16b8fcf8b3d71c22a422caf19fe6a3fb744fb52fa20` | 63,266,697 | 63,293,527 |
+| `67ba2a36d61df77053d628f4f6bea50d300caa972fe0d9c539ace9636369f484` | 63,293,527 | **current** |
+
+Map-schema pool (`CBENABXP…`):
+
+| wasm_hash | installed at ledger | superseded at ledger |
+| --- | --- | --- |
+| `f74d87d72381b4a5c787eb8b16a2b861aed6c3146583703ceb003d5befe9d338` | 63,293,708 | 63,343,141 |
+| `6fe099b64855bcba2b7fc6f4cd9b0d8e6cc98743eac6cd44042fc7ef0c22e3f7` | 63,343,141 | **current** |
+
+The factory has run **eight** builds, not five; `56638944…`, `b64fa5b9…`
+and `8fbd78ed…` post-date the walk. Each of the factory's two
+`("Factory","Updated Config")` events (63,293,663 and 64,028,582) follows
+a factory upgrade by a few hundred ledgers (63,293,457 and 64,028,476)
+and precedes a pool create (63,293,708 and 64,030,567).
+
+### The `create_liquidity_pool_v2` residual — closed
+
+The two builds that export `create_liquidity_pool_v2` were installed for
+ledgers 54,517,225 – 57,406,830. The factory's complete event history is
+17 events: `initialize` ×1, `("Factory","Updated Config")` ×2 and
+`("create","liquidity_pool")` ×14, at ledgers 51,572,026, 51,572,030,
+51,572,101, 51,927,948, 53,853,219, 53,853,220, 53,955,603,
+**54,517,368**, 54,953,243, 54,953,245, 54,953,247, 54,953,248,
+63,293,708 and 64,030,567. Exactly one create falls inside the `_v2`
+window — CD5XNKK3… at 54,517,368, four ledgers after `721badb8…` was
+installed — and it published the same `("create","liquidity_pool")`
+topic pair with a one-Address body, so whichever entry point produced
+it, the admission gate saw it, and the pool it announced runs the
+audited `13b158655e40…`. No `("create", …)` with any other second topic
+exists in the factory's history.
+
+### Pools and stakes
+
+- The 2026-04-29 `query_pools()` snapshot (10 × `167ab414…` + CD5XNKK3
+  on `13b15865…`) is still the current state of those 11 pools; the
+  last upgrade on any of them was at 57,406,699.
+- `CAZ6W4WH…` (the legacy pool added 2026-08-18) moved to
+  `df98000b665b7aac…` at 54,515,539 — the ledger its swap activity ends
+  at — and, together with its stake `CDP6DT2Y…`, to
+  `e5563daf8d18b213…` at 63,767,534/63,767,536. A pool and its stake
+  sharing one executable, and one event since (the upgrade ledger
+  itself), reads as a retirement stub, not a new schema. Ten other
+  stakes moved to `753c2154fb97b006…` at 63,770,079 – 63,770,103.
+- Stake contracts have run 25 distinct hashes between them (16 on
+  `CAIR3UPW…` alone). None of them has had its `bond`/`unbond` field
+  set string-verified — that is the standing INV-1381 gap, now with an
+  exact install ledger per hash to extract from.
+
+Map-schema pool (`CBENABXP…`):
+
+| wasm_hash | installed at ledger | superseded at ledger |
+| --- | --- | --- |
+| `f74d87d72381b4a5c787eb8b16a2b861aed6c3146583703ceb003d5befe9d338` | 63,293,708 | 63,343,141 |
+| `6fe099b64855bcba2b7fc6f4cd9b0d8e6cc98743eac6cd44042fc7ef0c22e3f7` | 63,343,141 | **current** |
+
+`f74d87d7…` was the template the factory deployed at create; the pool
+was upgraded 49,433 ledgers later. Both remain **unaudited bytes**: the
+decode is field-name driven (`decodeSwapMap`), and the golden fixture at
+ledger 63,307,899 is from the `f74d87d7…` era. Neither hash may anchor a
+historical backfill range until its strings are checked.
+
+### A 14th pool the registry does not know — `CCPPPTDW…`
+
+`CCPPPTDWJIWXQUQ2CN64S5JYQ7GYWVZIT7YWUUTH75HKIZX53Z2CE3XI`, factory-
+created at ledger 64,030,567 (tx `f802e60d…`), 105 ledgers after the
+factory moved to `8fbd78ed…` and 1,985 after its second `Updated
+Config`:
+
+| wasm_hash | installed at ledger | superseded at ledger |
+| --- | --- | --- |
+| `13b158655e40396957537bf1c528c6542b315930c1c9e0df640f57293c8af2ca` | 64,030,567 | 64,030,672 |
+| `d54d01e0d09005bd7d5267ce9e913a8c52163bfeb82252545351b76e86b41561` | 64,030,672 | **current** |
+
+Deployed from the audited CD5XNKK3 template, then upgraded 105 ledgers
+later to a hash nothing has read. Its 57 lake events to 64,607,591 are
+all `ScvString`-topic and use the audited field names exactly:
+`("initialize","XYK LP token_a"/"token_b")`, `("toggle_trading",
+"enabled")` at 64,030,690, `provide_liquidity` ×2 (5 fields each) and
+`withdraw_liquidity` ×11 (4 fields each). **No swap yet.** It is in
+neither `MainnetPools` nor `MainnetMapPools`, and r1's
+`protocol_contracts` holds only the 16 curated stakes for phoenix (no
+pool at all, curated or walked), so its events are a recognition gap:
+0 served `phoenix_liquidity` rows for it — and 0 for `CBENABXP…` too,
+whose liquidity schema this audit has not looked at.
+
+What this changes:
+
+1. `seed-protocol-contracts -source phoenix -write` on r1 is the owed
+   deploy precondition from "What shipped" above; the dry run walks the
+   Postgres landing zone, whose retained window holds both recent
+   creates as `topic_0_sym = 'create'`.
+2. `d54d01e0…` (and `6fe099b6…`, `f74d87d7…`) needed the same string
+   check as the two audited pool hashes before phoenix's next
+   `projected-rebuild -write` covers their ledgers — done in the next
+   section, all three pass.
+3. The durable form of item 1 in "Still owed" is now a lake query, not
+   an RPC fetch: a registry contract whose newest
+   `contract_instance_changes.wasm_hash` is not in its audit log is
+   drift, and that check can run on a timer.
+
+### Per-hash string check — all 64 hashes, 2026-09-30
+
+The bytes for every hash above (and every stake hash) came from the
+lake too: `stellar.ledger_entries_current` keeps every `contract_code`
+entry ever uploaded (the same query `GET /v1/contracts/{id}/wasm`
+serves), so `SELECT entry_xdr … WHERE entry_type = 'contract_code' AND
+key_xdr IN (<LedgerKey CONTRACT_CODE + hash, base64>)` returned all 64
+in one call, 2.2 MB. Each blob was byte-searched for the literals the
+decoder watches (`internal/sources/phoenix/events.go`), per role:
+
+| role | hashes | all literals present | exceptions |
+| --- | --- | --- | --- |
+| pool (String schema) | 15 | 12, incl. `18e40185…`, `167ab414…`, `13b15865…` and the unread `d54d01e0…` (CCPPPTDW…) | `ac63334c…` (51,572,026 – 53,134,1xx, every first-era pool) lacks `actual received amount` — the known 7-of-8 era; `df98000b…` (23 KB) and `e5563daf…` (17.7 KB) lack every swap and liquidity literal — retirement stubs (CAZ6W4WH…) |
+| pool (Map schema) | 2 | 2 — `f74d87d7…`, `6fe099b6…` carry all 8 underscore keys + `provide_liquidity`/`withdraw_liquidity` | — |
+| stake | 34 | 32 — `bond`, `unbond`, `user`, `token`, `amount`, `withdraw_rewards`, `distribute_rewards`, `reward_token`, `asset` | `753c2154…` is **364 bytes** (CABWEFVX…, CAIR3UPW…, CB2S5X4H… since 63,770,079 – 63,770,103; no event since) — tombstone; `78bee632…` (6.7 KB, CBBUVHCE…'s only hash) has `bond` and nothing else — see below |
+| factory | 8 | 8 — `create` + `liquidity_pool` in every build | `create_liquidity_pool_v2`/`remove_pool` exist only in `2bbb91c5…` and `721badb8…`; `update_config`/`Updated Config` from `c54ba54b…` on; `update_whitelisted_accounts` gone from `c54ba54b…` on — all three as the 2026-09-19 disassembly said |
+| multihop | 5 | n/a (no expected topics) | — |
+
+Consequences:
+
+- Every pool hash that has ever carried a swap decodes with the current
+  decoder, including the three that were unread this morning. The
+  BackfillSafe trail now covers `CBENABXP…` and `CCPPPTDW…` for their
+  whole lives.
+- **`CBBUVHCE…` is not a Phoenix stake contract.** It entered
+  `MainnetStakeContracts` from the 2026-05-01 lake-activity snapshot
+  ("bond ×10"), but its one and only WASM has none of the stake field
+  names and its lake events are `("bond","created"/"live"/"settconf"/
+  "settled"/"expired")` (10 events, 61,356,019 – 61,375,797) — a bond
+  instrument, not `("bond", user|token|amount)`. It fail-closes today
+  (0 served `phoenix_stake_events` rows for it, `actionUnknown`), so
+  the data is right, but the trust root is wrong: remove it from the
+  curated set and from `protocol_contracts` (the 2026-09-30 seed
+  upserted it from the curated list).
+- Three stakes are tombstoned at 63,770,079 – 63,770,103 and one pool +
+  stake at 63,767,534/536. They stay in the registry — history is
+  history — but a re-audit that finds a new hash on them should expect
+  a stub, not a schema.
+
 
 ## Decision
 

@@ -18,6 +18,13 @@ type FXQuoteWriter interface {
 	InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error
 }
 
+// FXQuoteReader is the read seam that restores held rates after a
+// restart. nil-able — without it a cold start holds nothing.
+type FXQuoteReader interface {
+	// LatestFXQuotes returns the newest row per ticker with Bucket >= since.
+	LatestFXQuotes(ctx context.Context, since time.Time) ([]FXQuote, error)
+}
+
 // FXQuote is the storage-layer record the worker writes per refresh.
 // Mirrors the timescale.FXQuote shape but lives in this package so
 // the forex worker doesn't import internal/storage/timescale (which
@@ -181,6 +188,7 @@ type Worker struct {
 	client      *Client
 	cache       *Cache
 	writer      FXQuoteWriter
+	reader      FXQuoteReader
 	logger      *slog.Logger
 	interval    time.Duration
 	circulation map[string]CirculationEntry // loaded once at startup
@@ -226,6 +234,10 @@ type Worker struct {
 	// as before.
 	fallbacks []RateProvider
 
+	// corroborator is held for the FX fixings plan and never consulted
+	// yet; see [Worker.WithCorroborator].
+	corroborator RateProvider
+
 	// activeSource is the feed that produced the CURRENT snapshot. It is
 	// stamped into fx_quotes.source and used as the `source` metric
 	// label, so `stellarindex_external_fx_last_quote_unix{source=...}`
@@ -233,6 +245,15 @@ type Worker struct {
 	// primary. Only touched from refreshOnce -> guardSnapshot
 	// (single-goroutine, as guards).
 	activeSource string
+
+	// fixingWriter, when set, receives the vendor-time hourly bars after
+	// every refresh (fx_fixings); fixingNewest is the newest bar_end it
+	// has committed. Only touched from refreshOnce.
+	fixingWriter FXFixingWriter
+	fixingNewest time.Time
+
+	// now pins the clock in tests; nil is time.Now.
+	now func() time.Time
 }
 
 // NewWorker constructs the worker. interval is the refresh
@@ -273,12 +294,31 @@ func (w *Worker) WithFallbacks(providers ...RateProvider) *Worker {
 	return w
 }
 
+// WithCorroborator registers a provider outside the serving chain. The
+// worker only stores it: it is never fetched, and never serves or stamps a
+// source, until the FX fixings plan wires it in.
+func (w *Worker) WithCorroborator(p RateProvider) *Worker {
+	w.corroborator = p
+	return w
+}
+
+// Corroborator returns the provider registered by [Worker.WithCorroborator],
+// or nil.
+func (w *Worker) Corroborator() RateProvider { return w.corroborator }
+
 // WithWriter attaches a persistent quote writer. When set, every
 // successful refreshOnce also persists the latest rates + history
 // to the fx_quotes hypertable. nil writer keeps the worker in
 // cache-only mode (the pre-fx_quotes behaviour).
 func (w *Worker) WithWriter(writer FXQuoteWriter) *Worker {
 	w.writer = writer
+	return w
+}
+
+// WithReader attaches the fx_quotes reader the first refresh seeds its
+// held rates from. nil keeps a cold start holding nothing.
+func (w *Worker) WithReader(reader FXQuoteReader) *Worker {
+	w.reader = reader
 	return w
 }
 
@@ -437,8 +477,15 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 	// behind persistSnapshot's nil-writer return, so a cache-only worker
 	// served every upstream bar unbanded.
 	raw := buildSnapshot(rates, names, publishedAt, time.Now().UTC(), w.rawHistory, w.circulation)
+	for i := range raw.Currencies {
+		raw.Currencies[i].Source = source
+	}
 	res := w.guardSnapshot(raw)
-	snap := servedSnapshot(raw, res, w.cache.Latest())
+	prev := w.cache.Latest()
+	if prev == nil {
+		prev = w.seedSnapshot(ctx, names, raw.FetchedAt)
+	}
+	snap := servedSnapshot(raw, res, prev)
 	w.cache.Set(snap)
 	w.logger.Info("forex: snapshot installed",
 		"currencies", len(snap.Currencies),
@@ -448,6 +495,7 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 	)
 
 	w.writeBatch(ctx, res)
+	w.appendFixings(ctx, massiveTickers(raw, source), snap)
 }
 
 // maxHeldRateAge bounds how long [servedSnapshot] keeps serving a rate
@@ -539,6 +587,48 @@ func servedSnapshot(raw *Snapshot, res guardResult, prev *Snapshot) *Snapshot {
 		History7d:   res.history,
 		Circulation: raw.Circulation,
 	}
+}
+
+// seedSnapshot rebuilds, from fx_quotes, the held rates a previous process
+// was serving. The upstream republishes tickers gradually through the day,
+// so without it a restart drops every one it has not re-sent yet. The seed
+// only stands in for prev: servedSnapshot still prefers this refresh's
+// accepted rate, skips refuted tickers and applies [maxHeldRateAge].
+func (w *Worker) seedSnapshot(ctx context.Context, names map[string]string, now time.Time) *Snapshot {
+	if w.reader == nil {
+		return nil
+	}
+	rows, err := w.reader.LatestFXQuotes(ctx, now.Add(-maxHeldRateAge))
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			w.logger.Warn("forex: fx_quotes seed read failed — holding nothing", "err", err)
+		}
+		return nil
+	}
+	byTicker := make(map[string]string, len(names))
+	for code, n := range lowerKeyed(names) {
+		byTicker[upper(code)] = n
+	}
+	seed := &Snapshot{Currencies: make([]Currency, 0, len(rows))}
+	for _, q := range rows {
+		if q.RateUSD <= 0 || !isFiniteFloat(q.RateUSD) {
+			continue
+		}
+		ticker := upper(q.Ticker)
+		name := ticker
+		if n := byTicker[ticker]; n != "" {
+			name = toTitle(n)
+		}
+		seed.Currencies = append(seed.Currencies, Currency{
+			Ticker:   ticker,
+			Name:     name,
+			RateUSD:  q.RateUSD,
+			UpdateAt: q.Bucket,
+			Source:   q.Source,
+		})
+	}
+	w.logger.Info("forex: seeded held rates from fx_quotes", "currencies", len(seed.Currencies))
+	return seed
 }
 
 // persistSnapshot writes the latest rates + history to fx_quotes if

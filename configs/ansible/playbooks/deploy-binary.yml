@@ -20,8 +20,9 @@
 #                          (fail closed). deploy.yml sets it per region.
 #
 # Per-binary sequence:
-#   1. Resolve the running version (from --help output or version pkg)
-#      so we can stamp the backup filename meaningfully.
+#   1. Resolve the previously-deployed version from the sidecar file
+#      /var/lib/stellarindex/deployed-versions/<binary> (falling back to
+#      untracked-<UTC timestamp> when absent) to stamp the backup filename.
 #   2. Copy the new binary to /usr/local/bin/<binary>.new (atomic stage).
 #   3. Move current binary to /usr/local/bin/<binary>.prev-<running-version>.
 #   4. Atomic rename .new → live path (a single rename(2) is atomic

@@ -468,6 +468,9 @@ var inlineDetachments = map[string]string{
 		"and must count an aborted request; bounded by throttleTakeTimeout",
 	"explorer/operations.go#stampTxOutcomes": "the tx-outcome stitch keeps request values " +
 		"without the request's cancellation; bounded by txOutcomeStitchBudget (1s)",
+	"explorer/account_state.go#usdPriceMap": "the wealth-ranking price walk runs in the " +
+		"singleflight DoChan goroutine, not the caller's; each caller's wait is bounded by its own " +
+		"ctx via the select, and the fill by usdPriceMapFillTimeout (60s)",
 }
 
 // TestDetachedContextsLeaveTheRequestGoroutine covers what the budget

@@ -100,6 +100,7 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	// Each candle's time is the OPEN time. We stamp the synthesised
 	// Trade with the close time — open + interval.
 	intervalSec := int64(granularity / time.Second)
+	now := time.Now()
 	var out []canonical.Trade
 	firstPage := true
 
@@ -139,7 +140,8 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 			if !ok {
 				continue
 			}
-			if openTs >= endSec {
+			// Kraken's last row is the still-open frame; candles are ascending.
+			if !scale.CandleClosed(time.Unix(openTs+intervalSec, 0), to, now) {
 				break
 			}
 			closeTs := openTs + intervalSec - 1

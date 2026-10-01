@@ -201,13 +201,13 @@ const (
 	EventActionBlendPool              = "blend_pool"
 
 	// StakeAction* are the phoenix_stake_events.action slugs for the
-	// stake-contract lifecycle events (migration 0191).
+	// stake-contract lifecycle events (migration 0195).
 	StakeActionMigrationStarted   = "migration_started"
 	StakeActionMigrationQueried   = "migration_queried"
 	StakeActionMigrationCompleted = "migration_completed"
 
 	// AdminAction* for the factory and blend-pool configuration events
-	// (phoenix_admin_events.admin_action, migration 0191).
+	// (phoenix_admin_events.admin_action, migration 0195).
 	AdminActionFactoryConfigUpdated = "factory_config_updated"
 	AdminActionBlendSetDelegate     = "blend_set_delegate"
 	AdminActionBlendSetMinTradingA  = "blend_set_min_trading_a"
@@ -284,8 +284,8 @@ var MainnetPools = []string{
 var MainnetStakeContracts = []string{
 	"CBRGNWGAC25CPLMOAMR7WBPOF5QTFA5RYXQH4DEJ4K65G2QFLTLMW7RO",
 	"CAF3UJ45ZQJP6USFUIMVMGOUETUTXEC35R2247VJYIVQBGKTKBZKNBJ3",
-	// CBBUVHCE… is deliberately absent: its only events are Symbol-topic
-	// ("bond", created|live|settconf|settled|expired) under a WASM no Phoenix contract shares.
+	// CBBUVHCE… is deliberately absent: a bond-instrument contract whose WASM
+	// has none of the stake literals; it only shares the "bond" topic word.
 	// Added 2026-08-18 (phoenix projection-completeness gap): 13 genuine
 	// per-pool stake contracts the 2026-05-01 lake-activity snapshot
 	// missed. Together they landed 2,513 rows in phoenix_stake_events
@@ -303,7 +303,7 @@ var MainnetStakeContracts = []string{
 	//     pool above;
 	//   • CDOXQONPND… shares 260 transactions with curated phoenix pools
 	//     and is driven by the phoenix reward keeper CBZ7M5B3Y4WW…, which
-	//     also drives the three seeded stakes above;
+	//     also drives the seeded stakes above;
 	//   • CDEQYRWFU… (created before the lake window, like the pools) is
 	//     driven by that same keeper and emits the phoenix stake v1.1
 	//     migration events (`Stake: Migration: `, `Start of migration for
@@ -384,8 +384,9 @@ var (
 // pools upgrade in place and can change event SHAPE, not just fields).
 var TopicSymbolSwapMap = scval.MustEncodeSymbol(EventActionSwap)
 
-// The same Map-body pool WASM emits liquidity changes as one event with a
-// single Symbol topic; Map keys are the underscored field names.
+// The Map-schema pool WASM publishes provide_liquidity / withdraw_liquidity
+// the same way: one ScvSymbol topic, ScvMap body. Decoded by
+// decode.go::decodeProvideLiquidityMap / decodeWithdrawLiquidityMap.
 var (
 	TopicSymbolProvideLiquidityMap  = scval.MustEncodeSymbol(EventActionProvideLiquidity)
 	TopicSymbolWithdrawLiquidityMap = scval.MustEncodeSymbol(EventActionWithdrawLiquidity)

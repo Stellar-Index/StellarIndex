@@ -20,7 +20,7 @@ related:
 | phoenix | 13 | 22 | 🟠 most-iterated (22 WASMs / 13 contracts) |
 | reflector | 3 | 2 | 🟡 v2→v3 migration completed |
 | comet | 1 | 1 | 🟢 stable |
-| redstone | 1 | 2 | 🟡 35-min hotfix → production |
+| redstone | 1 | 2 | 🟡 35-min hotfix → second deploy (superseded) |
 | band | 1 | 1 | 🟢 stable |
 | blend | 11 | 3 | 🟡 walk pending |
 
@@ -200,14 +200,14 @@ _Contracts sharing the same WASM history are grouped; rare singletons listed sep
 
 ## Redstone
 
-Two WASMs spanning a deliberate hotfix sequence: an initial deploy `b400f7a8…` lived for ledgers 58,758,722 → 58,759,141 (~35 minutes) before being replaced by the production hash `5e93d22c…`. Pre-backfill SQL guard reproduced in the synthesis report; required reading before any `stellarindex-ops backfill` overlapping the hotfix window.
+Two WASMs spanning a deliberate hotfix sequence: an initial deploy `b400f7a8…` lived for ledgers 58,758,722 → 58,759,141 (~35 minutes) before being replaced by the second-deploy hash `5e93d22c…`, itself superseded by an unarchived successor at a ledger the walk missed — its recorded range here is not accurate (see [redstone.md#caveats](redstone.md#caveats)). Pre-backfill SQL guard reproduced in the synthesis report; required reading before any `stellarindex-ops backfill` overlapping the hotfix window.
 
 ### WASM inventory (2 unique)
 
 | WASM (first 16) | Role | Contracts using it | Bytes path |
 |---|---|---|---|
 | `b400f7a8ac121022…` | redstone/hotfix (35-min lifetime) | 1 | `evidence/r1-walk-2026-05-01/wasm-bytes/b400f7a8ac121022955be1bd2468fcb99f126d2aa2fcc185a6abba36e83a3ef2.wasm` |
-| `5e93d22c9e19b254…` | redstone/production | 1 | `evidence/r1-walk-2026-05-01/wasm-bytes/5e93d22c9e19b254dae5474aebbb65a39f2f53b3b1d4371c58281987e1e29945.wasm` |
+| `5e93d22c9e19b254…` | redstone/second-deploy (superseded) | 1 | `evidence/r1-walk-2026-05-01/wasm-bytes/5e93d22c9e19b254dae5474aebbb65a39f2f53b3b1d4371c58281987e1e29945.wasm` |
 
 ### Contract timelines
 
@@ -215,7 +215,7 @@ _Contracts sharing the same WASM history are grouped; rare singletons listed sep
 
 | Group | Contracts | WASM sequence (epoch order) |
 |---|---|---|
-| 1 contracts | CA526Y2NQWGWVVQ7RFFP… | redstone/hotfix (35-min lifetime) → redstone/production |
+| 1 contracts | CA526Y2NQWGWVVQ7RFFP… | redstone/hotfix (35-min lifetime) → redstone/second-deploy (superseded) |
 
 ## Band
 
@@ -244,10 +244,12 @@ Re-run the audit pipeline:
 yq '.[] | (select(.contracts) | .contracts) | .[]' \
   configs/audit/wasm-walk-contracts.yaml | sort -u > /tmp/all-contracts.txt
 ssh r1 "set -a; . /etc/default/stellarindex-ops; set +a; \
+  mkdir -p /var/log/wasm-audit; \
   stellarindex-ops wasm-history -config /etc/stellarindex.toml \
     -from 50457424 -to <current-tip> -parallel 8 \
     -contracts \$(paste -sd, /tmp/all-contracts.txt) \
-    > /var/log/wasm-history-full.json"
+    > /var/log/wasm-audit/full-wasm-history.json \
+    2> /var/log/wasm-audit/full-wasm-history.stderr"
 
 # 2) Pull WASMs (live + TTL-evicted) via Soroban-RPC
 # 3) Re-run evidence/.../build-final.py + this renderer
