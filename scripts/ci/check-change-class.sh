@@ -83,9 +83,9 @@ class_go() {
   # handler_spec_fields_test.go and its spec-parity siblings read the spec
   # file directly), not just a web one — a diff confined to it must still
   # trigger the go-test job. Mirrored in ci.yml's preflight `go` filter.
-  # The four data paths are go:embed inputs and testdata/ is Go's test
+  # The five data paths are go:embed inputs and testdata/ is Go's test
   # fixture convention: not *.go files, but each is read by a Go test.
-  grep -E '(^|/)[^/]+\.go$|^go\.mod$|^go\.sum$|^openapi/|^internal/sources/external/binance/pairs\.yaml$|^internal/sources/external/forex/circulation_data\.csv$|^internal/currency/data/seed\.yaml$|^internal/incidents/data/|(^|/)testdata/'
+  grep -E '(^|/)[^/]+\.go$|^go\.mod$|^go\.sum$|^openapi/|^internal/sources/external/binance/pairs\.yaml$|^internal/sources/external/forex/circulation_data\.csv$|^internal/currency/data/seed\.yaml$|^internal/ops/chops/audited_wasm\.json$|^internal/incidents/data/|(^|/)testdata/'
 }
 
 class_web() {

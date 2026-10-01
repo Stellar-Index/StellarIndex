@@ -205,3 +205,83 @@ tests:
       - eval_time: 20m
         alertname: stellarindex_projector_replay_stalled
         exp_alerts: []
+
+  # ══ 5. decode-error ratio: a sparse source's total loss tickets ════
+  # 30 failed events/hour (0.008/s) sits far under the rate rule's 0.1/s, so
+  # only the ratio rule can see it. The failures arrive as decode_error on
+  # one source and reconstruct_error on another; both count.
+  - interval: 1m
+    name: a sparse source losing every event tickets on the ratio, not the rate
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="blend_emitter",outcome="ok"}'
+        values: '40+0x120'
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="blend_emitter",outcome="decode_error"}'
+        values: '0+0.5x120'
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="rozo",outcome="ok"}'
+        values: '7+0x120'
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="rozo",outcome="reconstruct_error"}'
+        values: '0+0.5x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_projector_decode_error_rate_high
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: stellarindex_projector_decode_error_ratio_high
+        exp_alerts:
+          - exp_labels:
+              source: blend_emitter
+              severity: ticket
+              team: stellarindex
+              component: projector
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-decode-error-rate.md
+              summary: "Projector source blend_emitter is dropping 100% of its events at decode"
+              description: |
+                Over the last hour the ADR-0032 projector for blend_emitter
+                failed to decode or reconstruct 100% of
+                the events it read (at least 10 events). Each failure SKIPS the row
+                and advances the cursor, so those events are missing from the served
+                tier. This fires below the absolute-rate rule's threshold, so it is
+                usually a quiet source whose decoder broke on a whole event class.
+                Fix the decoder, then re-drive with `stellarindex-ops
+                projector-replay -source blend_emitter`.
+
+                Runbook: docs/operations/runbooks/projector-decode-error-rate.md
+          - exp_labels:
+              source: rozo
+              severity: ticket
+              team: stellarindex
+              component: projector
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-decode-error-rate.md
+              summary: "Projector source rozo is dropping 100% of its events at decode"
+              description: |
+                Over the last hour the ADR-0032 projector for rozo
+                failed to decode or reconstruct 100% of
+                the events it read (at least 10 events). Each failure SKIPS the row
+                and advances the cursor, so those events are missing from the served
+                tier. This fires below the absolute-rate rule's threshold, so it is
+                usually a quiet source whose decoder broke on a whole event class.
+                Fix the decoder, then re-drive with `stellarindex-ops
+                projector-replay -source rozo`.
+
+                Runbook: docs/operations/runbooks/projector-decode-error-rate.md
+
+  # ══ 6. decode-error ratio: scattered poison rows stay quiet ════════
+  # A busy source dropping 6 rows/hour is 0.1% of its volume; a quiet source
+  # dropping 3 rows/hour is a high ratio but under the 10-event floor.
+  - interval: 1m
+    name: scattered poison rows do not trip the ratio rule
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="soroswap",outcome="ok"}'
+        values: '0+100x120'
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="soroswap",outcome="decode_error"}'
+        values: '0+0.1x120'
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="cctp",outcome="ok"}'
+        values: '0+0.1x120'
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="cctp",outcome="decode_error"}'
+        values: '0+0.05x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_projector_decode_error_ratio_high
+        exp_alerts: []

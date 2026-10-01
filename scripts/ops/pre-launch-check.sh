@@ -123,11 +123,12 @@ echo "  Healthchecks.io"
 if [ ! -f "$HC_ENV" ]; then
   fail "HC env file missing" "$HC_ENV"
 else
-  for v in HEALTHCHECKS_URL_INDEXER HEALTHCHECKS_URL_AGGREGATOR HEALTHCHECKS_URL_API HEALTHCHECKS_URL_SMOKE; do
-    if grep -q "^$v=https://" "$HC_ENV" 2>/dev/null; then
+  # Quote-tolerant like section 4: pre-launch-hardening.md writes these single-quoted.
+  for v in HEALTHCHECKS_URL_INDEXER HEALTHCHECKS_URL_AGGREGATOR HEALTHCHECKS_URL_API HEALTHCHECKS_URL_SMOKE HEALTHCHECKS_URL_SLA_PROBE; do
+    if grep -qE "^$v=('|\")?https://" "$HC_ENV" 2>/dev/null; then
       pass "$v" "set"
     else
-      fail "$v" "unset — see hardening doc step 6"
+      fail "$v" "unset — see hardening doc step 5"
     fi
   done
 fi

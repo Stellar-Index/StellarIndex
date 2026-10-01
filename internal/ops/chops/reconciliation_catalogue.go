@@ -55,15 +55,40 @@ type reconTarget struct {
 	kinds       []string // EventKind() values routing here; nil for census (sdex)
 }
 
+// sdexTradesFilter is the sdex target's whereFilter. It is also the persisted
+// completeness_target_floors key (timescale.TargetFloorKey), so it never changes.
+const sdexTradesFilter = "source = 'sdex'"
+
+// sdexPriceableFilter scopes the sdex served COUNT to the rows the census
+// counts: the census still excludes one-side-zero fills, because ledgers
+// written before they were admitted hold none. Once a full-history
+// ch-rebuild -sdex lands them, this filter goes with the census one.
+const sdexPriceableFilter = "base_amount > 0 AND quote_amount > 0"
+
+// countFilter is the predicate for the served-side row COUNT. It equals
+// whereFilter except for the sdex target, where it adds sdexPriceableFilter.
+// Use it only for CountRowsByLedger; floor identity (TargetFloorKey, MinLedger,
+// the floor upsert) stays on whereFilter.
+func (t reconTarget) countFilter() string {
+	if t.table == "trades" && t.whereFilter == sdexTradesFilter {
+		return t.whereFilter + " AND " + sdexPriceableFilter
+	}
+	return t.whereFilter
+}
+
 // reconSource is one source's reconciliation spec (ADR-0033 Claim 2b).
 type reconSource struct {
 	name        string
 	dec         completeness.Decoder // nil for census-only sources (sdex)
 	contractIDs []string             // SQL prefilter (oracles); empty = match-by-topic
-	topic0Syms  []string
-	targets     []reconTarget
-	census      bool   // sdex: expected = decoder re-derive over the lake's SDEX ops
-	genesis     uint32 // first-possible-data ledger; mirrors DefaultGapDetectorTargets (WASM-audit sourced)
+	// firehoseTopics marks a contract-scoped source whose decoder consumes a
+	// clickhouse.FirehoseExcludeSyms topic, so ch-rebuild must read it by
+	// contractIDs with no topic exclusion (as the projector does).
+	firehoseTopics bool
+	topic0Syms     []string
+	targets        []reconTarget
+	census         bool   // sdex: expected = decoder re-derive over the lake's SDEX ops
+	genesis        uint32 // first-possible-data ledger; mirrors DefaultGapDetectorTargets (WASM-audit sourced)
 
 	// Factory-anchored gating (ADR-0035): when factories is non-empty, dec
 	// gates Matches() on a registry of factory-deployed children, so the
@@ -389,10 +414,11 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// (custody / governance / allowance) decode to zero rows, which
 			// is what lets their ledgers count as expected-zero rather than
 			// blind.
-			name:        "upshift",
-			genesis:     upshift.GenesisLedger,
-			dec:         upshift.NewDecoder(),
-			contractIDs: upshift.MainnetGatedSet(),
+			name:           "upshift",
+			genesis:        upshift.GenesisLedger,
+			dec:            upshift.NewDecoder(),
+			contractIDs:    upshift.MainnetGatedSet(),
+			firehoseTopics: true, // share `transfer`
 			targets: []reconTarget{
 				{"upshift_vault_events", "", []string{upshift.EventKind}},
 			},
@@ -509,7 +535,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				{"blend_backstop_events", "", []string{"blend_backstop.event"}},
 			},
 		},
-		{name: "defindex", genesis: 57_056_338, dec: defindex.NewDecoder(), targets: []reconTarget{
+		{name: "defindex", genesis: defindex.GenesisLedger, dec: defindex.NewDecoder(), targets: []reconTarget{
 			// ADR-0035/0040 contract-gated (curated set): the bare
 			// NewDecoder() carries the in-code evidence-verified seed
 			// (defindex.MainnetGatedSet), which is the trust root — the
@@ -546,6 +572,9 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// empty distributed_fees Vec (real, observed) emits zero
 			// events and zero rows — count-consistent by construction.
 			{"defindex_fees", "", []string{"defindex.vault.dfees"}},
+			// Vault admin topics (rescue / pause toggles / role rotations):
+			// one AdminEvent per on-chain event, one row each.
+			{"defindex_admin_events", "", []string{"defindex.vault.admin"}},
 		}},
 		{
 			name: "blend", genesis: blend.FactoryGenesisLedger, dec: blend.NewDecoder(),
@@ -558,7 +587,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			},
 		},
 		{name: "sdex", genesis: 2, census: true, targets: []reconTarget{
-			{"trades", "source = 'sdex'", nil},
+			{"trades", sdexTradesFilter, nil},
 		}},
 	}
 
@@ -876,6 +905,7 @@ func validateSourceFilter(only string, cat []reconSource) error {
 // ever hitting this by checking non-emptiness itself first.
 func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	watched := cfg.Supply.WatchedSEP41Contracts
+	floor := sorobanEraFloor(cfg)
 	tdec, err := sep41transfers.NewDecoder(watched)
 	if err != nil {
 		return nil, fmt.Errorf("sep41_transfers decoder: %w", err)
@@ -911,7 +941,7 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	// ~35 of the full verify's ~37 minutes (measured 2026-07-27).
 	return []reconSource{
 		{
-			name: sep41transfers.SourceName, genesis: sorobanEraGenesis,
+			name: sep41transfers.SourceName, genesis: floor,
 			dec: tdec, contractIDs: watched,
 			topic0Syms: []string{
 				sep41transfers.SymbolTransfer,
@@ -922,7 +952,7 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 			targets: []reconTarget{{"sep41_transfers", filter, []string{sep41transfers.EventKind}}},
 		},
 		{
-			name: sep41supply.SourceName, genesis: sorobanEraGenesis,
+			name: sep41supply.SourceName, genesis: floor,
 			dec: sdec, contractIDs: watched,
 			topic0Syms: []string{
 				sep41supply.SymbolMint,

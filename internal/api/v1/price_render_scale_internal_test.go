@@ -52,7 +52,8 @@ func TestPriceRatioDecimal_extendsScaleForSubDigitPrices(t *testing.T) {
 		BaseAmount:  canonical.NewAmount(new(big.Int).Exp(big.NewInt(10), big.NewInt(15), nil)),
 		QuoteAmount: canonical.NewAmount(big.NewInt(3)), // 3e-15 quote per base
 	}
-	if got, want := priceRatioDecimal(tr, ohlcPriceDigits), "0.000000000000003000000000000"; got != want {
+	const want = "0.000000000000003000000000000"
+	if got, _ := priceRatioDecimal(tr, ohlcPriceDigits); got != want {
 		t.Fatalf("priceRatioDecimal = %q, want %q", got, want)
 	}
 }

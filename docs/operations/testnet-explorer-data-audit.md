@@ -97,9 +97,12 @@ assertion. KEEP verdicts below are annotated per-net where they diverge.
 | SDEX **trades** (per-pair via `/v1/pools`, per-account via `…/trades`) | present in PG | testnet only |
 
 Note: there is **no global trades-listing endpoint** — trades surface per-pair
-(`/v1/pools`) and per-account. `/v1/accounts/{g}/movements` is a **data gap**:
-it returns `[]` with a coverage note (classic XLM payment history after the
-2025-09-03 cutoff "not yet served"), even though `…/activity` shows payments.
+(`/v1/pools`) and per-account. `/v1/accounts/{g}/movements` was a **data gap**:
+it returned `[]` with a coverage note (classic XLM payment history after the
+2025-09-03 cutoff "not yet served"), even though `…/activity` showed payments.
+Root cause (2026-09-17): the movements archive floor was the cap-67 default of
+ledger 1 while the test-net lake starts at ledger 2, so the archive never
+seeded; a watermark row unblocked it and the archive has filled since.
 
 ## FIX — data exists but the surface is mis-plumbed / USD-biased
 

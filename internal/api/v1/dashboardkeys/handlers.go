@@ -28,7 +28,7 @@ import (
 )
 
 // The active-key ceiling is tier-aware: platform.Tier.MaxActiveKeys
-// is the default ladder (free 5 → enterprise 250), overridable per
+// is the default ladder (free 25 → partner 250), overridable per
 // tier via Config.KeyQuotas. This replaced the flat 25-key
 // MaxKeysPerAccount cap ("tier-aware quotas can replace this once
 // the billing pipeline is wired — Phase 2").

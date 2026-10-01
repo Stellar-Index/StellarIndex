@@ -105,6 +105,7 @@ during an incident. Census from `migrations/*.up.sql` on 2026-08-28:
 | `soroswap_router_swaps` | none | |
 | `defindex_flows` | none | |
 | `defindex_fees` | none | |
+| `defindex_admin_events` | none | |
 | `phoenix_liquidity` | none | |
 | `phoenix_initialize` | none | |
 | `phoenix_admin_events` | none | |

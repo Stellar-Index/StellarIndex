@@ -3,6 +3,7 @@ package phoenix
 import (
 	"encoding/base64"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
@@ -150,5 +151,140 @@ func TestDecoder_MapSwap_gatedAndDecoded(t *testing.T) {
 	foreign.ContractID = "CFOREIGNFAKEPOOL0000000000000000000000000000000000000000"
 	if d.Matches(foreign) {
 		t.Error("foreign contract emitting the Map swap shape must NOT match (CS-026 gating)")
+	}
+}
+
+// Real CBENABXP Map-schema liquidity events, same READ-ONLY lake capture
+// as the swap above:
+//
+//	provide_liquidity  ledger 63295145  tx d4a3c6f9…  op 0  event 4
+//	withdraw_liquidity ledger 63295946  tx 58225db8…  op 0  event 4
+//
+// provide body  = {actual_received_a, actual_received_b, sender, token_a, token_b}
+// withdraw body = {auto_unstake_amount: void, auto_unstake_timestamp: void,
+// return_amount_a, return_amount_b, sender, shares_amount}
+const (
+	mapProvideTopic0B64  = "AAAADwAAABFwcm92aWRlX2xpcXVpZGl0eQAAAA==" // ScvSymbol("provide_liquidity")
+	mapWithdrawTopic0B64 = "AAAADwAAABJ3aXRoZHJhd19saXF1aWRpdHkAAA==" // ScvSymbol("withdraw_liquidity")
+	mapLiquiditySender   = "GDXWIY7YU776ETADATRWVRBMXIIQQ2DAMSYE7BRVLXJE6CM55HXMRD6A"
+	mapProvideBodyB64    = "AAAAEQAAAAEAAAAFAAAADwAAABFhY3R1YWxfcmVjZWl2ZWRfYQAAAAAAAAoAAAAAAAAAAAAAAAZbNPEAAAAADwAAABFhY3R1YWxfcmVjZWl2ZWRfYgAAAAAAAAoAAAAAAAAAAAAAAAFEMbBdAAAADwAAAAZzZW5kZXIAAAAAABIAAAAAAAAAAO9kY/in/+JMAwTjasQsuhEIaGBksE+GNV3STwmd6e7IAAAADwAAAAd0b2tlbl9hAAAAABIAAAABJbT82FmuwvpjSEOMSJs8PBDJi20hvk/TyzDLaJU++XcAAAAPAAAAB3Rva2VuX2IAAAAAEgAAAAGt785ZruUpaPdgYdSUwlJbdWWfpClqZfSZ7ynlZHfklg=="
+	mapWithdrawBodyB64   = "AAAAEQAAAAEAAAAGAAAADwAAABNhdXRvX3Vuc3Rha2VfYW1vdW50AAAAAAEAAAAPAAAAFmF1dG9fdW5zdGFrZV90aW1lc3RhbXAAAAAAAAEAAAAPAAAAD3JldHVybl9hbW91bnRfYQAAAAAKAAAAAAAAAAAAAAAAQsShVwAAAA8AAAAPcmV0dXJuX2Ftb3VudF9iAAAAAAoAAAAAAAAAAAAAAAANTWyoAAAADwAAAAZzZW5kZXIAAAAAABIAAAAAAAAAAO9kY/in/+JMAwTjasQsuhEIaGBksE+GNV3STwmd6e7IAAAADwAAAA1zaGFyZXNfYW1vdW50AAAAAAAACgAAAAAAAAAAAAAAAB3NZQA="
+)
+
+func mapProvideEvent() events.Event {
+	return events.Event{
+		Ledger:         63295145,
+		TxHash:         "d4a3c6f9b4ca881bb3a99fec0efb0d8e7ba4c207d4b9b84de7406755826b3b1e",
+		EventIndex:     4,
+		ContractID:     cbenabxpPool,
+		LedgerClosedAt: "2026-07-02T12:44:22Z",
+		Topic:          []string{mapProvideTopic0B64},
+		Value:          mapProvideBodyB64,
+	}
+}
+
+func mapWithdrawEvent() events.Event {
+	return events.Event{
+		Ledger:         63295946,
+		TxHash:         "58225db889448f78adb5b3eb39e82d1ff4f1b5c4af88014f0e7bff2cec898511",
+		EventIndex:     4,
+		ContractID:     cbenabxpPool,
+		LedgerClosedAt: "2026-07-02T14:02:37Z",
+		Topic:          []string{mapWithdrawTopic0B64},
+		Value:          mapWithdrawBodyB64,
+	}
+}
+
+func TestTopicSymbolLiquidityMap_matchesWire(t *testing.T) {
+	if TopicSymbolProvideLiquidityMap != mapProvideTopic0B64 {
+		t.Errorf("TopicSymbolProvideLiquidityMap = %q, want on-wire %q", TopicSymbolProvideLiquidityMap, mapProvideTopic0B64)
+	}
+	if TopicSymbolWithdrawLiquidityMap != mapWithdrawTopic0B64 {
+		t.Errorf("TopicSymbolWithdrawLiquidityMap = %q, want on-wire %q", TopicSymbolWithdrawLiquidityMap, mapWithdrawTopic0B64)
+	}
+}
+
+// decodeLiquidityThroughDecoder runs ev through the production
+// Matches/Decode seam and returns the single LiquidityChange it emits.
+func decodeLiquidityThroughDecoder(t *testing.T, ev events.Event) LiquidityChange {
+	t.Helper()
+	d := NewDecoder()
+	if !d.Matches(ev) {
+		t.Fatal("gated Map-schema pool CBENABXP should Match")
+	}
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d events, want 1 (Map liquidity is a single event)", len(out))
+	}
+	le, ok := out[0].(LiquidityEvent)
+	if !ok {
+		t.Fatalf("got %T, want LiquidityEvent", out[0])
+	}
+	return le.Change
+}
+
+func TestDecoder_MapProvideLiquidity_realFixture(t *testing.T) {
+	c := decodeLiquidityThroughDecoder(t, mapProvideEvent())
+	if c.Action != EventActionProvideLiquidity || c.Pool != cbenabxpPool {
+		t.Errorf("action/pool = %q/%q", c.Action, c.Pool)
+	}
+	if c.Ledger != 63295145 || c.OpIndex != 0 || c.EventIndex != 4 {
+		t.Errorf("ledger/op/event = %d/%d/%d", c.Ledger, c.OpIndex, c.EventIndex)
+	}
+	if c.Sender != mapLiquiditySender {
+		t.Errorf("Sender = %q, want %q", c.Sender, mapLiquiditySender)
+	}
+	if c.TokenA != mapSwapBuyToken || c.TokenB != mapSwapSellToken {
+		t.Errorf("tokens = %s / %s, want %s / %s", c.TokenA, c.TokenB, mapSwapBuyToken, mapSwapSellToken)
+	}
+	if c.AmountA.String() != "27300000000" || c.AmountB.String() != "5439074397" {
+		t.Errorf("amounts = %s / %s, want 27300000000 / 5439074397", c.AmountA, c.AmountB)
+	}
+	if !c.SharesAmount.IsZero() {
+		t.Errorf("SharesAmount = %s, want zero on provide", c.SharesAmount)
+	}
+}
+
+func TestDecoder_MapWithdrawLiquidity_realFixture(t *testing.T) {
+	c := decodeLiquidityThroughDecoder(t, mapWithdrawEvent())
+	if c.Action != EventActionWithdrawLiquidity || c.Pool != cbenabxpPool {
+		t.Errorf("action/pool = %q/%q", c.Action, c.Pool)
+	}
+	if c.Ledger != 63295946 || c.OpIndex != 0 || c.EventIndex != 4 {
+		t.Errorf("ledger/op/event = %d/%d/%d", c.Ledger, c.OpIndex, c.EventIndex)
+	}
+	if c.Sender != mapLiquiditySender {
+		t.Errorf("Sender = %q, want %q", c.Sender, mapLiquiditySender)
+	}
+	if c.AmountA.String() != "1120182615" || c.AmountB.String() != "223177896" {
+		t.Errorf("amounts = %s / %s, want 1120182615 / 223177896", c.AmountA, c.AmountB)
+	}
+	if c.SharesAmount.String() != "500000000" {
+		t.Errorf("SharesAmount = %s, want 500000000", c.SharesAmount)
+	}
+	if c.TokenA != "" || c.TokenB != "" {
+		t.Errorf("tokens = %q / %q, want empty (withdraw carries no token addresses)", c.TokenA, c.TokenB)
+	}
+}
+
+// Only the three Map-schema action symbols classify as single-topic
+// events, and a Map liquidity body missing a required key is rejected.
+func TestClassifyAny_MapSchemaFailsClosed(t *testing.T) {
+	other := events.Event{Topic: []string{"AAAADwAAAARib25k"}} // ScvSymbol("bond")
+	if a, _ := classifyAny(&other); a != actionUnknown {
+		t.Errorf("1-topic Symbol(bond) classified %v, want actionUnknown", a)
+	}
+	legacy := events.Event{Topic: []string{TopicSymbolProvideLiquidity}}
+	if a, _ := classifyAny(&legacy); a != actionUnknown {
+		t.Errorf("1-topic String(provide_liquidity) classified %v, want actionUnknown", a)
+	}
+
+	ev := mapWithdrawEvent()
+	ev.Value = mapProvideBodyB64 // no shares_amount / return_amount_*
+	if _, err := decodeWithdrawLiquidityMap(&ev, time.Unix(0, 0)); err == nil {
+		t.Error("decodeWithdrawLiquidityMap accepted a body without shares_amount")
 	}
 }

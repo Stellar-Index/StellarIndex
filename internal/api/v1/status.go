@@ -71,6 +71,36 @@ type StatusResponse struct {
 	// Always present (no omitempty) so consumers never confuse an
 	// omitted field for a zero count.
 	IncidentsStatus string `json:"incidents_status"`
+
+	// FreshnessStatus is the trust signal for the Freshness block, for
+	// the same reason as IncidentsStatus: a failed count query must not
+	// read as a measured zero.
+	//   - "ok":       counts measured, every enabled source active.
+	//   - "degraded": counts measured, active_sources < total_sources.
+	//   - "unknown":  a freshness query FAILED, or no metrics backend is
+	//                 wired — the counts are omitted.
+	// Always present.
+	FreshnessStatus string `json:"freshness_status"`
+}
+
+// Freshness-block trust states for [StatusResponse.FreshnessStatus].
+const (
+	freshnessStatusOK       = "ok"
+	freshnessStatusDegraded = "degraded"
+	freshnessStatusUnknown  = "unknown"
+)
+
+// freshnessStatusFor classifies the freshness block the way
+// incidentsStatusFor classifies the incidents block.
+func freshnessStatusFor(f StatusFreshness, err error) string {
+	switch {
+	case err != nil, f.ActiveSources == nil, f.TotalSources == nil:
+		return freshnessStatusUnknown
+	case *f.ActiveSources < *f.TotalSources:
+		return freshnessStatusDegraded
+	default:
+		return freshnessStatusOK
+	}
 }
 
 // Incident-block trust states for [StatusResponse.IncidentsStatus].
@@ -568,6 +598,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		// incidents signal: with no Alertmanager query, zero counts
 		// are absence-of-signal, not an all-clear.
 		out.IncidentsStatus = incidentsStatusUnknown
+		out.FreshnessStatus = freshnessStatusUnknown
 		out.Services = append(out.Services, unknownServices(s.statusServices)...)
 		out.Overall = rollupOverall(out.Services, false, false, false)
 		writeJSON(w, out, Flags{Stale: out.Overall != "ok"})
@@ -657,6 +688,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if freErr == nil {
 		out.Freshness = freshness
 	}
+	out.FreshnessStatus = freshnessStatusFor(out.Freshness, freErr)
 	// Incidents block: publish the tri-state explicitly. On a failed
 	// Alertmanager query we leave the counts at their zero value but
 	// mark the block "unknown" so a downstream `?? 0` chain cannot
@@ -763,8 +795,9 @@ const statusHeartbeatStaleAfter = 60 * time.Second
 // An active-source SHORTFALL (freshness.active_sources < total_sources) is
 // likewise not an input: the count is over a 7-day window, so it describes
 // ingest coverage, not whether customers are served now, and a stalled source
-// already raises its own alert. A failed freshness QUERY does degrade, via
-// backendErr, like every other panel.
+// already raises its own alert. It surfaces as freshness_status "degraded"
+// only. A failed freshness QUERY does degrade, via backendErr, like every
+// other panel.
 //
 //   - "unknown": every service is unknown (or has a zero LastSeen).
 //     Distinct from "down" — we have no signal at all, rather than

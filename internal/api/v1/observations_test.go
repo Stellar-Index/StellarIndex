@@ -141,6 +141,36 @@ func TestObservations_HappyPath_AllSources(t *testing.T) {
 	}
 }
 
+// A stored one-side-zero SDEX fill is served with "price": null, never
+// "0": the key stays present and the priceable neighbour is unaffected.
+func TestObservations_ZeroLegRowRendersNullPrice(t *testing.T) {
+	now := time.Unix(1745000000, 0).UTC()
+	hist := &stubHistoryReader{
+		observations: []canonical.Trade{
+			mkObservationTrade("sdex", now.Add(-1*time.Second), 5_000_000_000, 0),
+			mkObservationTrade("soroswap", now.Add(-2*time.Second), 1, 100),
+		},
+	}
+	tsv := startHTTPTest(t, v1.New(v1.Options{History: hist}).Handler())
+
+	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	for _, want := range []string{
+		`"quote_amount":"0","price":null`,
+		`"price":"100.0000000000"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, `"price":"0"`) {
+		t.Errorf("zero-leg row rendered a zero price: %s", body)
+	}
+}
+
 // TestObservations_SourceFilter — ?source=phoenix returns only that
 // source's row. Reader receives the filter so the SQL-side narrowing
 // happens (tests that the handler forwards it).
