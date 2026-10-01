@@ -5763,6 +5763,11 @@ export interface components {
              * @enum {string}
              */
             scope: "all";
+            /**
+             * Format: int64
+             * @description Lake watermark (highest contiguously captured ledger) read before this page's scan; rows past it may still be arriving. A freshness marker, not a completeness claim: incoming (participant) activity is covered only where the participant index has been captured or backfilled. Absent when the watermark was unreadable.
+             */
+            as_of_ledger?: number;
         };
         /**
          * @description Operations involving an account, decoded (newest first), with an opaque
@@ -5790,6 +5795,11 @@ export interface components {
              *     every operation carries its true transaction outcome.
              */
             coverage_note?: string;
+            /**
+             * Format: int64
+             * @description Lake watermark (highest contiguously captured ledger) read before this page's scan; rows past it may still be arriving. A freshness marker, not a completeness claim: incoming (participant) activity is covered only where the participant index has been captured or backfilled. Absent when the watermark was unreadable.
+             */
+            as_of_ledger?: number;
         };
         /** @description One row in an account's movement feed (ADR-0048 D5). */
         AccountMovement: {
