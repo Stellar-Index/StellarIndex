@@ -1306,6 +1306,18 @@ export interface paths {
          *        see `internal/storage/timescale/ohlc_routes.go`'s
          *        `OHLCRoutes` table, the single declaration this list must
          *        track.
+         *
+         *     **Open and close inside one ledger (both modes).** On-chain
+         *     trades carry the whole-second ledger close time and the
+         *     network's apply order is not recorded, so when several
+         *     transactions in one ledger trade the pair inside one bar,
+         *     `open` and `close` are picked by a tie-break on
+         *     `(ts, ledger, tx_hash, op_index, source)` — `tx_hash` order
+         *     between transactions, which is NOT execution order; `op_index`
+         *     order within one transaction. The bar is stable, but `open` or
+         *     `close` can be another real trade from that ledger, off by at
+         *     most the price movement inside one ledger (~5 s); `high`,
+         *     `low`, VWAP and volume are unaffected.
          */
         get: operations["getOhlc"];
         put?: never;
