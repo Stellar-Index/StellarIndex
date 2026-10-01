@@ -50,10 +50,9 @@ func classify(e *events.Event) string {
 // Per the EVERY-event policy: classifies all 12 vault-layer topic[1]
 // symbols enumerated by the upstream contract (audit-2026-05-14 §
 // "Topic structure" + the n_wasm census). deposit + withdraw drive a
-// VaultFlow and dfees drives per-entry DFees (W5.2); the other 9 are
-// governance / admin / multiplexed-rebalance events with no decoder
-// (yet) but recognising them satisfies the closed-set completeness
-// requirement before flipping BackfillSafe.
+// VaultFlow, dfees drives per-entry DFees and the seven admin topics a
+// VaultAdmin; rebalance and n_wasm have no decoder but recognising them
+// satisfies the closed-set completeness requirement.
 func classifyVault(e *events.Event) string {
 	if len(e.Topic) < 2 {
 		return ""
@@ -371,6 +370,85 @@ func decodeDFees(e *events.Event) ([]DFee, error) {
 		})
 	}
 	return fees, nil
+}
+
+// vaultAdminFields names the body fields each admin topic carries, as
+// observed in the r1-lake samples; "" means the body has no such field.
+var vaultAdminFields = map[string]struct{ caller, strategy, newAddress, amount string }{
+	EventRescue:    {caller: "caller", strategy: "strategy_address", amount: "amount_withdrawn"},
+	EventPaused:    {caller: "caller", strategy: "strategy_address"},
+	EventUnpaused:  {caller: "caller", strategy: "strategy_address"},
+	EventNReceiver: {caller: "caller", newAddress: "new_fee_receiver"},
+	EventNManager:  {newAddress: "new_manager"},
+	EventNEManager: {newAddress: "new_emergency_manager"},
+	EventRBManager: {newAddress: "new_rebalance_manager"},
+}
+
+// decodeVaultAdmin converts one classified vault admin event into a
+// [VaultAdmin]. Every field [vaultAdminFields] names for the kind is
+// required; extra body fields are ignored (decode-by-name).
+func decodeVaultAdmin(e *events.Event, kind string) (VaultAdmin, error) {
+	spec, ok := vaultAdminFields[kind]
+	if !ok {
+		return VaultAdmin{}, fmt.Errorf("%w: %s", ErrUnknownEvent, kind)
+	}
+	closedAt, err := e.EventClosedAt()
+	if err != nil {
+		return VaultAdmin{}, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return VaultAdmin{}, fmt.Errorf("%w: parse %s body: %w", ErrMalformedPayload, kind, err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return VaultAdmin{}, fmt.Errorf("%w: %s body not a Map: %w", ErrMalformedPayload, kind, err)
+	}
+
+	out := VaultAdmin{
+		Vault:    e.ContractID,
+		Ledger:   e.Ledger,
+		ClosedAt: closedAt,
+		TxHash:   e.TxHash,
+		OpIndex:  e.OperationIndex,
+		Kind:     kind,
+	}
+	for _, f := range []struct {
+		name string
+		dst  *string
+	}{
+		{spec.caller, &out.Caller},
+		{spec.strategy, &out.Strategy},
+		{spec.newAddress, &out.NewAddress},
+	} {
+		if f.name == "" {
+			continue
+		}
+		sv, err := scval.MustMapField(entries, f.name)
+		if err != nil {
+			return VaultAdmin{}, fmt.Errorf("%w: vault.%s.%s: %w", ErrMalformedPayload, kind, f.name, err)
+		}
+		if *f.dst, err = scval.AsAddressStrkey(sv); err != nil {
+			return VaultAdmin{}, fmt.Errorf("%w: vault.%s.%s: %w", ErrMalformedPayload, kind, f.name, err)
+		}
+	}
+	if spec.amount != "" {
+		sv, err := scval.MustMapField(entries, spec.amount)
+		if err != nil {
+			return VaultAdmin{}, fmt.Errorf("%w: vault.%s.%s: %w", ErrMalformedPayload, kind, spec.amount, err)
+		}
+		amt, err := scval.AsAmountFromI128(sv)
+		if err != nil {
+			return VaultAdmin{}, fmt.Errorf("%w: vault.%s.%s: %w", ErrMalformedPayload, kind, spec.amount, err)
+		}
+		// A negative withdrawal would fail the table's CHECK and stall the
+		// projector on one row; reject it at decode instead.
+		if amt.Sign() < 0 {
+			return VaultAdmin{}, fmt.Errorf("%w: vault.%s.%s negative: %s", ErrMalformedPayload, kind, spec.amount, amt)
+		}
+		out.Amount = &amt
+	}
+	return out, nil
 }
 
 // DecodeRebalanceMethod extracts the `rebalance_method` discriminator

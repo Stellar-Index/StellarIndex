@@ -68,7 +68,7 @@ severity: P1
 |---|---|---|---|
 | 0.1 | **`main` must be green** | agent | **DONE** (`6ce95d191`). It had been red since `e68f8eaa0`: #331 F1 moved the listing's price derivation into a worker-maintained rollup and two integration tests still refreshed only the old continuous aggregate, so every asset came back unpriced. An all-unpriced board COLLAPSES rank tier 0 into tier 1, which is why the visible symptom was a wrong sort order rather than a missing price. `make verify` cannot see this class — it does not run integration tests. |
 | 0.2 | **`/terms` + `/privacy`** | **owner — legal read only** | **BLOCKED ON THE OWNER.** Both URLs 404 today. PR #237 has the code and the tests; it needs wording signed off, nothing else. |
-| 0.3 | ~~Stop the status page saying `degraded`~~ | — | **NOT A BLOCKER — the measurement was contaminated, and the contamination was ours.** The audit sampled `/v1/status` and a 1-hour Prometheus window while TEN subagents were running cold ClickHouse and Postgres scans against r1. Two 6-hour windows from r1's own Prometheus settle it: ending **2026-09-02T20:00Z, before that load, p99 = 48.6 ms and p95 = 20.5 ms**; ending 2026-09-03T07:00Z, during it, p99 = 566.2 ms and p95 = 82.1 ms. Targets are 500 ms and 200 ms, so the steady state sits inside both by an order of magnitude. With the agents drained, live `/v1/status` reads `overall: ok`, p50 1 / p95 21 / p99 34 ms, zero active incidents. The per-route figures the audit quoted (`/v1/pairs` 4,975 ms, `/v1/accounts/{g}/operations` 4,966 ms, `/v1/pools` 4,700 ms) are load artefacts. **Neither of the audit's two options — 2-4 days of optimisation, or renegotiating the published target — is needed.** Two of those three routes were independently fixed anyway (`dea56efec` for `/v1/accounts/{g}/operations`, `12590a65a` for `/v1/pools`); `/v1/pairs` is being re-measured cleanly for cold-variant cost, which is a different and much smaller question. |
+| 0.3 | ~~Stop the status page saying `degraded`~~ | — | **NOT A BLOCKER — the measurement was contaminated, and the contamination was ours.** The audit sampled `/v1/status` and a 1-hour Prometheus window while TEN subagents were running cold ClickHouse and Postgres scans against r1. Two 6-hour windows from r1's own Prometheus settle it: ending **2026-09-02T20:00Z, before that load, p99 = 48.6 ms and p95 = 20.5 ms**; ending 2026-09-03T07:00Z, during it, p99 = 566.2 ms and p95 = 82.1 ms. Targets are 500 ms and 200 ms, so the steady state sits inside both by an order of magnitude. With the agents drained, live `/v1/status` reads `overall: ok`, p50 1 / p95 21 / p99 34 ms, zero active incidents. The per-route figures the audit quoted (`/v1/pairs` 4,975 ms, `/v1/accounts/{g}/operations` 4,966 ms, `/v1/pools` 4,700 ms) are load artefacts. **Neither of the audit's two options — 2-4 days of optimisation, or renegotiating the published target — is needed.** Two of those three routes were independently fixed anyway (`dea56efec` for `/v1/accounts/{g}/operations`, `12590a65a` for `/v1/pools`); `/v1/pairs` was re-measured cleanly on 2026-09-30 03:20Z on r1 against the local API (`curl -w '%{time_total}'`, 3 samples per variant, load 9/20 cores, no heavy jobs, no agent load): hot XLM/USDC 38–82 ms (alias fan-out), cold first hit sUSD/XRP 22 ms and AFR/USDC 38 ms, repeats 4–9 ms — the audit's 4,975 ms was a load artefact; cold-variant cost is tens of ms and needs no fix (INV-0837). |
 | 0.4 | **Email/DNS perimeter (#334)** | agent + **2 clicks from the maintainer** | **RECORDS LIVE** (`7b914f351`). MX, SPF (`-all`), DMARC (`p=quarantine`), a second DKIM selector and CAA are published and verified against the authoritative nameservers, with a drift check (`scripts/ops/dns-perimeter-check.sh`) and a weekly workflow. Two steps need the maintainer: click Cloudflare's destination-verification link so `security@` can forward, and publish the DS record at the registrar. Both are on #334. |
 
 ### Tier 1 — do before announcing; cheap; does not strictly block
@@ -338,11 +338,14 @@ honest ceiling of "independent", and it is written here so it is not re-derived.
 > **6. Carried out of the tail-triage pass (owner: agent unless noted):**
 > C1-041 residual — `sep41_total_only` missing from the `supply_basis` spec
 > enum since v0.21.0; C6-081 — six Dockerfiles `FROM` by tag, not digest;
-> C2-038/C4-086 — the PG pipeline sink's undrained-on-exit is log-only
-> (counter + alert, like #368's CH half); C6-056 — ADR-0011 lacks the
-> amendment for the diagnostic-only over-mint leg; C2-049 — the chainlink
-> source takes feed decimals from config and never reads `decimals()` (r1
-> runs the EUR/USD feed enabled — LIVE, fix in flight); C4-069 —
+> ~~C2-038/C4-086 — the PG pipeline sink's undrained-on-exit is log-only
+> (counter + alert, like #368's CH half)~~ **fixed** for on-chain trades: once
+> the producer has stopped, shutdown rewinds the ledgerstream cursor below the
+> lowest abandoned trade; ledger-less rows stay counter + ERROR; C6-056 — ADR-0011 lacks the
+> amendment for the diagnostic-only over-mint leg; C2-049 — ~~the chainlink
+> source takes feed decimals from config and never reads `decimals()`~~
+> **FIXED `8bb7095a1` (v0.90.0): `decimals()` is read on-chain and a mismatch
+> is refused + alerted; r1 2026-09-30 shows 0 mismatches on 6 live feeds**; C4-069 —
 > `sdf_reserve_accounts` has no list-level diff against SDF's published
 > list (2% value cross-check only); C1-050 — aggregator and API resolve
 > token decimals independently, market-cap/FDV computed regardless; C1-022
@@ -879,12 +882,19 @@ outstanding set:
 
 - **D1 — ✅ RESOLVED BY ENGINEERING (better than the recommendation).** The
   2026-08-24 corroborated-release amendment + the synthetic USD-cross
-  reference (#142/#149, v0.41.x) give the thin fiat pairs a second source:
-  `success_count=2` medians verified live on XLM/EUR + XLM/GBP first tick,
-  auto-release works unattended, and `writer_wired` was fixed 2026-08-22 —
-  the pager now sits behind real automatic protection. The old
-  "stop paging when sources=1" recommendation is superseded. Unblocks
-  W6.7's gating logic.
+  reference (#142/#149, v0.41.x) give the thin fiat pairs a corroborating
+  reference for release — it never counts toward `SourceCount`
+  (`composite_reference.go`, `confidence.go`), so Phase 2 still engages on a
+  single-source pair, but `success_count=2` medians release it unattended
+  (verified live on XLM/EUR + XLM/GBP first tick) and `writer_wired` was
+  fixed 2026-08-22, so a freeze holds the served value. Measured 2026-09-30:
+  `stellarindex_anomaly_freeze_engaged_total` counts frozen TICKS, not
+  freezes — 575 ticks over 14 d were 10 freeze events (`freeze_events`:
+  9 XLM/GBP, 1 ETH/EUR, median hold 31 min, all self-released); the anomaly
+  alerts are ticket severity and only `freeze_escalated` pages. The old
+  "stop paging when sources=1" recommendation is superseded; the pair-level
+  fix is INV-2031 (derivation as the served base below a liquidity floor).
+  Unblocks W6.7's gating logic.
 - **W3.2 — ✅ MERGED** (#126, harness + first measurement; W3.3's
   account-family cost is root-caused further: the ops-by-account tip-walk,
   tracked with a designed fix in the session task list).
@@ -1529,12 +1539,12 @@ older `### D — Decisions only the maintainer can make` table further down, **t
 
 ### D — Decisions only the maintainer can make
 
-**D1 — [V] Anomaly-freeze pages on CORRECT prices.** Verified worsening:
-`stellarindex_anomaly_freeze_engaged_total{class="default"}` was 382 on
-2026-07-27 and is **1,700** now. Fires on thin FX crosses with `sources=1`;
-the served prices were independently verified correct (0.06% / 0.21% off).
-`writer_wired=false`, so the page has no automatic protection behind it.
-Recommendation: stop paging when `sources=1`. **Blocks W6.7.**
+**D1 — ✅ RESOLVED 2026-08-24 (see the verified-live list above).** The
+2026-07-27 reading (`engaged_total` 382 → 1,700, `writer_wired=false`,
+"stop paging when `sources=1`") is superseded: the counter counts frozen
+ticks, the writer is wired, the alerts are ticket severity, and the served
+value is held during a freeze. Nothing left for the maintainer to decide
+here; the thin-pair serving rule is INV-2031.
 
 **D2** HA at v1 vs fast-follow (single-box SPOF as accepted risk + tested
 restore; warm standby fast-follow).

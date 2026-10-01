@@ -599,9 +599,10 @@ func APIKey(keyHash string) APIKeyRecordKey {
 	return APIKeyRecordKey("apikey:" + keyHash)
 }
 
-// APIKeyTTL is the TTL for apikey: records. Zero — keys live until
-// explicitly deleted; expiry/revocation are encoded in the JSON
-// payload so the lookup can return the right error sentinel
+// APIKeyTTL is the TTL for operator-issued apikey: records (self-service
+// and register-mirror records carry auth.MirroredKeyIdleTTL instead).
+// Zero — keys live until explicitly deleted; expiry/revocation are
+// encoded in the JSON payload so the lookup can return the right error sentinel
 // (ErrTokenExpired vs ErrUnauthorized). Zero is also what keeps them
 // out of the instance's volatile-lru eviction pool: the plaintext is
 // unrecoverable, so an evicted record is a lost credential (GH-1317).

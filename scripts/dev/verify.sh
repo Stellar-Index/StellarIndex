@@ -245,6 +245,8 @@ echo "=== Vet (linux/arm64 cross) ===" && GOOS=linux GOARCH=arm64 go vet ./inter
 echo "=== golangci config schema ===" && go run ./scripts/ci/lint-golangci-config
 echo "=== Agents file ===" && ./scripts/ci/lint-agents-file.sh
 echo "=== Agents file self-test ===" && ./scripts/ci/lint-agents-file-test.sh
+echo "=== Remote /tmp staging ===" && ./scripts/ci/lint-remote-tmp-staging.sh
+echo "=== Remote /tmp staging self-test ===" && ./scripts/ci/lint-remote-tmp-staging-test.sh
 echo "=== Actions pinning ===" && ./scripts/ci/lint-actions-pinning.sh
 echo "=== Actions pinning self-test ===" && ./scripts/ci/lint-actions-pinning-test.sh
 echo "=== pnpm version pin ===" && ./scripts/ci/lint-pnpm-version-pin.sh
@@ -276,6 +278,8 @@ echo "=== Imports ==="       && ./scripts/ci/lint-imports.sh
 echo "=== Imports self-test ===" && ./scripts/ci/lint-imports-test.sh
 echo "=== Protocol registry sync ===" && ./scripts/ci/lint-protocol-registry-sync.sh
 echo "=== Lexicon ==="       && ./scripts/ci/lint-lexicon.sh
+echo "=== Deprecation removal versions ===" && ./scripts/ci/check-deprecations.sh
+echo "=== Deprecation removal versions self-test ===" && bash scripts/ci/check-deprecations-test.sh
 echo "=== i128/NUMERIC ===" && ./scripts/ci/lint-i128.sh
 # gofumpt's doc-comment reformatter rewrites a doubled apostrophe to U+201D,
 # so a comment quoting `entry_xdr != ''` stops saying what the filter is. The
@@ -354,6 +358,7 @@ echo "=== Ansible ClickHouse host-gate self-test ===" && ./scripts/ci/ansible-cl
 echo "=== Ansible listing-sync pubnet gate ===" && ./scripts/ci/ansible-listing-sync-gate-test.sh
 echo "=== Alertmanager apply-path parity ===" && ./scripts/ci/check-alertmanager-parity.sh
 echo "=== Alertmanager apply-path parity self-test ===" && ./scripts/ci/check-alertmanager-parity-test.sh
+echo "=== Alertmanager inhibit-rule families ===" && bash configs/alertmanager/inhibit-rules-test.sh
 echo "=== pgBackRest backup wrapper self-test ===" && ./scripts/ci/pgbackrest-backup-test.sh
 echo "=== API-smoke textfile self-test ===" && ./scripts/ci/smoke-textfile-test.sh
 echo "=== Served-value harness scheduling + cadence ===" && ./scripts/ci/lint-served-value-cadence.sh
@@ -596,10 +601,13 @@ lane_c() { # web typecheck/lint/test/build. Graceful-skip when pnpm isn't
 lane_d() { # everything else
     echo "=== Ansible galexie-restart self-test ===" && ./scripts/ci/ansible-galexie-restart-test.sh
     echo "=== Ansible Postgres DSN encoding self-test ===" && ./scripts/ci/ansible-postgres-dsn-test.sh
+    echo "=== Ansible Postgres WAL archiving render self-test ===" && ./scripts/ci/ansible-postgres-archive-test.sh
     echo "=== Ansible nftables per-source SSH rate-limit self-test ===" && ./scripts/ci/ansible-ssh-rate-limit-test.sh
     echo "=== Ansible prometheus archival-host guard self-test ===" && ./scripts/ci/ansible-prometheus-host-guard-test.sh
     echo "=== Ansible exporter listen-address self-test ===" && ./scripts/ci/ansible-exporter-listen-address-test.sh
     echo "=== Ansible textfile-collector dir mode self-test ===" && ./scripts/ci/ansible-textfile-dir-mode-test.sh
+    echo "=== Ansible ZFS ARC cap self-test ===" && ./scripts/ci/ansible-zfs-arc-cap-test.sh
+    echo "=== Ansible Postgres log size-cap self-test ===" && ./scripts/ci/ansible-pg-logrotate-cap-test.sh
     echo "=== Ansible prometheus port var self-test ===" && ./scripts/ci/ansible-prometheus-port-var-test.sh
     echo "=== Ansible node-exporter-collectors install self-test ===" && ./scripts/ci/ansible-node-exporter-collectors-install-test.sh
     echo "=== Ansible Caddy signing-key pipefail self-test ===" && ./scripts/ci/ansible-caddy-key-pipefail-test.sh

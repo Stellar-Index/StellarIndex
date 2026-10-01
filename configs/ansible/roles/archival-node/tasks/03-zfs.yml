@@ -34,6 +34,16 @@
       - gdisk
     state: present
 
+# Read only at module load: a running host needs
+# /sys/module/zfs/parameters/zfs_arc_{max,min} written by hand, or a reboot.
+- name: Cap the ZFS ARC (module options)
+  ansible.builtin.template:
+    src: zfs-modprobe.conf.j2
+    dest: /etc/modprobe.d/zfs.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # When the box's OS-mirror drives (drive 0 and drive 1 in the
 # standard layout) share disks with the data pool, installimage has
 # already created partitions 1-3 (ESP, swap, root) and left the

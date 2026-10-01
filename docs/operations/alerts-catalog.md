@@ -29,7 +29,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 66 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 234 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 240 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -51,8 +51,12 @@ enforces it); any per-alert detail page follows it.
   `severity: informational` but is routed by ALERTNAME to
   Healthchecks.io ahead of the severity matchers, with
   `continue: false`, so it never reaches `silent` — see its runbook.)
-  A `page` inhibits the `ticket`/`informational` alerts sharing its
-  `component` label. Routing:
+  A `page` inhibits only the `ticket`/`informational` alerts sharing
+  both its `component` and its `alert_family` label (the same signal at
+  a milder threshold); a page without a family inhibits nothing. The
+  family map is pinned by
+  [`configs/alertmanager/inhibit-rules-test.sh`](../../configs/alertmanager/inhibit-rules-test.sh).
+  Routing:
   [`configs/alertmanager/alertmanager.r1.yml`](../../configs/alertmanager/alertmanager.r1.yml).
 - **Runbook** — what the responder does (link).
 
@@ -120,7 +124,8 @@ enforces it); any per-alert detail page follows it.
 | `stellarindex_projector_row_quarantined` | `increase(stellarindex_projector_events_decoded_total{outcome="sink_quarantined"}[15m])` | > 0, `for: 0m` — ONE quarantined row tickets at once and stays up for the 15 min window; a child born non-zero counts (a poison row was skipped so the sole-writer projector could advance; was `for: 15m`, which a single quarantine could never satisfy) | ticket | [projector-row-quarantined](runbooks/projector-row-quarantined.md) |
 | `stellarindex_projector_row_dropped_permanent` | `increase(stellarindex_projector_events_decoded_total{outcome="sink_permanent"}[15m])` | > 0, `for: 0m` — the sink PERMANENTLY rejected one of a row's outputs (SQLSTATE class 22/23, or a canonical value-shape check before the statement ran), so it can never land in the served tier; a child born non-zero counts. The counter is the REJECTION, not the shed: it re-increments every cycle a held row is re-read, which is what makes a fault visible while the projector is still only stalling. Sister of `row_quarantined`, which had a rule while this arm had none. Read the RATE: a burst across one source is the GLOBAL form of the same SQLSTATE (a migration whose NOT NULL / CHECK the live rows violate) | ticket | [projector-row-quarantined](runbooks/projector-row-quarantined.md) |
 | `stellarindex_projector_i128_overflow` | `increase(stellarindex_projector_events_decoded_total{outcome="sink_i128_overflow"}[15m])` | > 0, `for: 0m` — ONE observation is the whole event; a child born non-zero counts. ADR-0003 §Operational impact fixes i128 as the width of every canonical amount, so this is never a property of the chain data: an `int64` has been introduced on one of our own amount paths and every amount that path touched is suspect, not just the dropped row. The ADR's SEV-1 promise, which had no implementation until this rule | page | [projector-row-quarantined](runbooks/projector-row-quarantined.md) |
-| `stellarindex_projector_decode_error_rate_high` | `sum by (source) (rate(stellarindex_projector_events_decoded_total{outcome="decode_error"}[10m]))` per source | > 0.1/s sustained 15 min (a decoder regression drained a whole class of events; cursor advanced past them) | ticket | [projector-decode-error-rate](runbooks/projector-decode-error-rate.md) |
+| `stellarindex_projector_decode_error_rate_high` | `sum by (source) (rate(stellarindex_projector_events_decoded_total{outcome=~"decode_error\|reconstruct_error"}[10m]))` per source | > 0.1/s sustained 15 min (a decoder regression drained a whole class of events; cursor advanced past them) | ticket | [projector-decode-error-rate](runbooks/projector-decode-error-rate.md) |
+| `stellarindex_projector_decode_error_ratio_high` | per source, `decode_error + reconstruct_error` over `ok + decode_error + reconstruct_error`, `rate[1h]` | > 10% with ≥ 10 failed events in the hour, sustained 15 min (a quiet source losing a whole event class stays under the rate rule's 0.1/s) | ticket | [projector-decode-error-rate](runbooks/projector-decode-error-rate.md) |
 | `stellarindex_projector_wedged` | `max by (source) (stellarindex_projector_wedged)` | > 0 for 5 min (the adaptive window floored at MinBatchLimit and the source has failed to advance for WedgeCycles+ cycles — a stuck cursor retrying the identical range forever; manual remediation) | ticket | [projector-wedged](runbooks/projector-wedged.md) |
 | `stellarindex_projector_replay_stalled` | `stellarindex_projector_replay_window_active == 1` AND `stellarindex_projector_lag_ledgers > 256` AND `max_over_time(stellarindex_projector_lag_ledgers[15m]) <= stellarindex_projector_lag_ledgers` | replay window open, lag still over the same 256-ledger bound `lag_high` uses, and lag has not fallen for 15 min, for 5 min (the operator's rewind has stopped advancing — the served-row deficit it was started to repair is still open). The lag floor is what stops a caught-up source with an open window ticketing as a stalled replay | ticket | [projector-replay](runbooks/projector-replay.md) |
 | `stellarindex_external_poller_stale` | `time() - stellarindex_external_poller_last_success_unix{source!="ecb"}` | > 1800 s for > 5 min | ticket | [external-poller-stale](runbooks/external-poller-stale.md) |
@@ -177,6 +182,10 @@ signal lands.
 | `stellarindex_ch_schema_snapshot_stale` | `time() - stellarindex_ch_schema_snapshot_last_success_unix` (or `absent_over_time(...[36h])` — never / every-run-failed) | > 36 h, or series absent 36 h, for ≥ 30 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_schema_snapshot_offsite_stale` | `time() - stellarindex_ch_schema_snapshot_offsite_last_success_unix` (or, per host, `stellarindex_ch_schema_snapshot_last_success_unix unless on (instance) max_over_time(…offsite_last_success_unix[72h])` — ungated: a never-configured off-site is as loud as a failing push, and the alert names the host) | > 72 h since the last push, or no push inside 72 h on a host that has a local snapshot (never pushed / no target ever configured there), for ≥ 30 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_lake_backup_stale` | `time() - stellarindex_ch_lake_backup_last_success_unix` (or, per host, `stellarindex_ch_schema_snapshot_last_success_unix unless on (instance) max_over_time(…lake_backup_last_success_unix[96h])` — a host with a lake and no data backup, including one with no backup disk configured) | > 96 h since the last successful lake backup, or none inside 96 h, for ≥ 1 h | ticket | [ch-lake-backup](runbooks/ch-lake-backup.md) |
+| `stellarindex_lake_verify_stale` | `time() - stellarindex_lake_verify_last_run_unix` (or, per host, `stellarindex_ch_schema_snapshot_last_success_unix unless on (instance) max_over_time(…lake_verify_last_run_unix[2d])` — a lake host whose timer never produced a verdict) | > 48 h since the last completed run, or none inside 48 h, for ≥ 1 h | ticket | [lake-verify](runbooks/lake-verify.md) |
+| `stellarindex_lake_verify_failed` | `max by (instance, check) (stellarindex_lake_verify_failures)` | > 0 on the last completed run (contiguity, entry_changes, hash_chain or raw_census) | ticket | [lake-verify](runbooks/lake-verify.md) |
+| `stellarindex_wasm_drift` | `max by (source, contract) (stellarindex_wasm_drift)` | > 0 for ≥ 1 h — a gated contract of an audited source runs a WASM hash absent from `audited_wasm.json` | ticket | [wasm-drift](runbooks/wasm-drift.md) |
+| `stellarindex_wasm_drift_stale` | `time() - stellarindex_wasm_drift_last_run_unix` | > 48 h since the last completed run, for ≥ 1 h | ticket | [wasm-drift](runbooks/wasm-drift.md) |
 | `stellarindex_galexie_archive_mirror_stale` | `time() - stellarindex_galexie_archive_mirror_last_success_timestamp` (or, per host, `stellarindex_galexie_archive_mirror_configured unless on (instance) max_over_time(…mirror_last_success_timestamp[48h])` — a host with no verified off-site mirror, including one with no target configured) | > 48 h since the last verified-clean mirror, or none inside 48 h, for ≥ 1 h | ticket | [galexie-archive-mirror](runbooks/galexie-archive-mirror.md) |
 | `stellarindex_ch_schema_snapshot_unit_failed` | `node_systemd_unit_state{name="ch-schema-snapshot.service",state="failed"}` | == 1 for 5 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_schema_drift_detected` | `stellarindex_ch_schema_drift_divergent` | > 0 for ≥ 30 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
@@ -267,9 +276,9 @@ documented 4xx that regressed into a silent 200. Until 2026-09-03 its
 only sink was `HEALTHCHECKS_URL_SMOKE`, empty on r1 since install, so
 the check ran into the journal and nowhere else: no textfile, no series,
 no rule. Both rows below are `ticket` rather than `page` deliberately —
-a `page` on component `api` inhibits every `ticket` sharing that
-component, so a smoke that paged while the API was healthy would mute
-the api-plane tickets it exists to complement.
+a smoke failure while the API is healthy is not SEV-1. A `page` inhibits
+only the tickets in its own `alert_family`; the smoke rows carry none, so
+they neither inhibit nor are inhibited by the api-plane alerts.
 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
@@ -392,7 +401,7 @@ without anyone maintaining a list.
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_binary_version_skew` | `stellarindex_binary_version_skew` | > 0 for 45 m | ticket | [binary-version-skew](runbooks/binary-version-skew.md) |
 | `stellarindex_binary_version_probe_degraded` | `stellarindex_binary_version_probe_success` | == 0 for 2 h | ticket | [binary-version-skew](runbooks/binary-version-skew.md) |
-| `stellarindex_binary_version_probe_stale` | `stellarindex_binary_version_probe_success` | absent for 90 m, for 10 m | ticket | [binary-version-skew](runbooks/binary-version-skew.md) |
+| `stellarindex_binary_version_probe_stale` | `node_textfile_mtime_seconds`, `stellarindex_binary_version_probe_success` | textfile mtime > 90 m old or probe_success absent for 90 m, for 10 m | ticket | [binary-version-skew](runbooks/binary-version-skew.md) |
 
 Impact is indirect but one-way: `stellarindex-ops` backs the
 data-integrity gates (`verify-archive` tier-a/b, `archive-completeness`,
@@ -476,7 +485,7 @@ coingecko rot 11 days and sep1 metadata never populate, both unnoticed.
 | `stellarindex_data_source_stale` | `stellarindex_data_freshness_stale{domain,source}` | == 1 for > 1h | ticket | [data-source-stale](runbooks/data-source-stale.md) |
 | `stellarindex_supply_assets_stale` | `stellarindex_supply_assets_stale` | > 0 for > 2h — per-asset frozen supply the domain-level `supply` check cannot see, because that one measures max(time) across the whole table | ticket | [supply-assets-stale](runbooks/supply-assets-stale.md) |
 | `stellarindex_completeness_incomplete` | `stellarindex_completeness_incomplete{source}` | == 1 for > 1h | ticket | [completeness-incomplete](runbooks/completeness-incomplete.md) |
-| `stellarindex_twap_history_missing` | `stellarindex_twap_history_missing{view}` | == 1 for > 2h — a TWAP CAGG recreated WITH NO DATA (0081/0115/0126) whose manual `refresh_continuous_aggregate` follow-up was never run; the refresh policy re-fills only a recent sliver so newest-bar freshness reads green while back-history serves empty. Not visible to the ADR-0033 verdict (twap_* are derived CAGGs, not reconcile targets) | ticket | [twap-history-missing](runbooks/twap-history-missing.md) |
+| `stellarindex_twap_history_missing` | `stellarindex_twap_history_missing{view}` or `stellarindex_cagg_history_missing{view}` | == 1 for > 2h — a TWAP CAGG recreated WITH NO DATA (0081/0115/0126) whose manual `refresh_continuous_aggregate` follow-up was never run; the refresh policy re-fills only a recent sliver so newest-bar freshness reads green while back-history serves empty. Not visible to the ADR-0033 verdict (twap_* are derived CAGGs, not reconcile targets) | ticket | [twap-history-missing](runbooks/twap-history-missing.md) |
 | `stellarindex_data_freshness_watchdog_silent` | `absent_over_time(stellarindex_data_freshness_stale[45m])` | for > 15m | ticket | [data-freshness-watchdog-silent](runbooks/data-freshness-watchdog-silent.md) |
 | `stellarindex_data_freshness_probe_frozen` | `time() - node_textfile_mtime_seconds{file="data_freshness.prom"}` | > 2700 s (45 min) for > 15m — series present but frozen, the case watchdog_silent's absent_over_time cannot see | ticket | [data-freshness-watchdog-silent](runbooks/data-freshness-watchdog-silent.md) |
 | `stellarindex_sep41_supply_freshness_absent` | `group by (instance) (stellarindex_data_freshness_stale) unless on (instance) stellarindex_data_freshness_stale{domain="sep41_supply"}` | for > 1h — the file is publishing but the ClickHouse-probed sep41_supply pair is missing, the per-series case watchdog_silent's family-wide absent_over_time cannot see | ticket | [data-freshness-watchdog-silent](runbooks/data-freshness-watchdog-silent.md) |
@@ -649,6 +658,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_supply_verify_rollup_never_initialized` | `absent_over_time(stellarindex_supply_verify_rollup_last_success_timestamp[36h])` | == 1 for ≥ 5 min | ticket | [supply-verify-rollup-stale](runbooks/supply-verify-rollup-stale.md) |
 | `stellarindex_aggregator_supply_refresh_stalled` | `time() - max(timestamp(stellarindex_aggregator_supply_refresh_total{outcome="ok"}))` | > 30 min for ≥ 5 min | page | [supply-refresh-stalled](runbooks/supply-refresh-stalled.md) |
 | `stellarindex_aggregator_supply_refresh_error_dominant` | error-outcome rate / total-rate | > 50% for ≥ 30 min | ticket | [supply-refresh-error-dominant](runbooks/supply-refresh-error-dominant.md) |
+| `stellarindex_aggregator_supply_refresh_dormant_fleet` | count of assets with a non-zero `outcome="dormant"` rate | > 1 for ≥ 30 min | ticket | [supply-refresh-error-dominant](runbooks/supply-refresh-error-dominant.md) |
 | `stellarindex_aggregator_supply_refresh_never_initialized` | `absent_over_time(stellarindex_aggregator_supply_refresh_total{outcome="ok"}[36h])` | == 1 for ≥ 5 min | ticket | [supply-snapshot-never-initialized](runbooks/supply-snapshot-never-initialized.md) + per-alert detail [aggregator-supply-refresh-never-initialized](runbooks/aggregator-supply-refresh-never-initialized.md) |
 | `stellarindex_sep41_supply_rollup_no_cursor` | `sum by (contract_id) (increase(stellarindex_sep41_supply_rollup_advances_total{outcome="no_cursor"}[15m]))` | > 0 for ≥ 30 min | ticket | [sep41-supply-rollup-no-cursor](runbooks/sep41-supply-rollup-no-cursor.md) |
 | `stellarindex_ch_supply_gapfill_failed` | `node_systemd_unit_state{name="ch-supply.service",state="failed"}` | == 1 for ≥ 10 min | ticket | [ch-supply-gapfill-failed](runbooks/ch-supply-gapfill-failed.md) |

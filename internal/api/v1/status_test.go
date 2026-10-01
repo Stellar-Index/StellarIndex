@@ -153,6 +153,91 @@ func TestStatus_WithBackend_HappyPath(t *testing.T) {
 	if st.Freshness.ActiveSources == nil || *st.Freshness.ActiveSources != 14 {
 		t.Errorf("Freshness.ActiveSources = %v, want 14", st.Freshness.ActiveSources)
 	}
+	// 14/18 is a shortfall: flagged on the freshness block, not in overall.
+	if st.FreshnessStatus != "degraded" {
+		t.Errorf("FreshnessStatus = %q, want degraded", st.FreshnessStatus)
+	}
+}
+
+// A served {0,17} is a real, alarming reading and must reach the wire as
+// active_sources:0; a failed freshness query must omit both counts and
+// report freshness_status "unknown" rather than a measured zero.
+func TestStatus_FreshnessCounts_ServedZeroVsFailedQuery(t *testing.T) {
+	cases := []struct {
+		name       string
+		backend    *fakeStatusBackend
+		wantStatus string
+		wantBody   []string
+		absentBody []string
+	}{
+		{
+			name: "served zero",
+			backend: &fakeStatusBackend{
+				freshness: StatusFreshness{ActiveSources: new(0), TotalSources: new(17)},
+			},
+			wantStatus: "degraded",
+			wantBody:   []string{`"active_sources":0`, `"total_sources":17`},
+		},
+		{
+			name: "failed query",
+			backend: &fakeStatusBackend{
+				freshness: StatusFreshness{ActiveSources: new(0), TotalSources: new(17)},
+				freErr:    errors.New("prometheus: connection refused"),
+			},
+			wantStatus: "unknown",
+			absentBody: []string{`"active_sources"`, `"total_sources"`},
+		},
+		{
+			name: "all active",
+			backend: &fakeStatusBackend{
+				freshness: StatusFreshness{ActiveSources: new(17), TotalSources: new(17)},
+			},
+			wantStatus: "ok",
+			wantBody:   []string{`"active_sources":17`},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := New(Options{RegionName: "r1", StatusBackend: tc.backend})
+			rr := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
+			body := rr.Body.String()
+
+			var env struct {
+				Data struct {
+					FreshnessStatus string `json:"freshness_status"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if env.Data.FreshnessStatus != tc.wantStatus {
+				t.Errorf("freshness_status = %q, want %q", env.Data.FreshnessStatus, tc.wantStatus)
+			}
+			for _, s := range tc.wantBody {
+				if !strings.Contains(body, s) {
+					t.Errorf("body missing %s:\n%s", s, body)
+				}
+			}
+			for _, s := range tc.absentBody {
+				if strings.Contains(body, s) {
+					t.Errorf("body carries %s on a failed query:\n%s", s, body)
+				}
+			}
+		})
+	}
+}
+
+func TestStatus_NoBackend_FreshnessStatusUnknown(t *testing.T) {
+	srv := New(Options{RegionName: "r1"})
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
+	if !strings.Contains(rr.Body.String(), `"freshness_status":"unknown"`) {
+		t.Errorf("no-backend body lacks freshness_status unknown:\n%s", rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), `"active_sources"`) {
+		t.Errorf("no-backend body carries active_sources:\n%s", rr.Body.String())
+	}
 }
 
 func TestStatus_WithBackend_StaleHeartbeatDown(t *testing.T) {

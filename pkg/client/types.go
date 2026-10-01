@@ -592,7 +592,8 @@ type FiatCodeAnchor struct {
 // are decimal strings (ADR-0003); `Price` is the pre-computed
 // quote/base ratio at 10 fractional digits for consumer
 // convenience (the storage layer never persists a derived price,
-// so the server computes it at response time).
+// so the server computes it at response time). Price is nil when one
+// leg is zero (an SDEX rounding fill): such a trade has no price.
 type TradeRow struct {
 	Source      string    `json:"source"`
 	Ledger      uint32    `json:"ledger"`
@@ -603,7 +604,7 @@ type TradeRow struct {
 	QuoteAsset  string    `json:"quote_asset"`
 	BaseAmount  string    `json:"base_amount"`
 	QuoteAmount string    `json:"quote_amount"`
-	Price       string    `json:"price"`
+	Price       *string   `json:"price"`
 	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each
 	// side: divide BaseAmount by 10^BaseDecimals (QuoteAmount by
 	// 10^QuoteDecimals) for whole-asset units.
@@ -1111,6 +1112,10 @@ type Status struct {
 	// "unknown" is how a status banner publishes "0 active alerts"
 	// while alerting is blind.
 	IncidentsStatus string `json:"incidents_status"`
+	// FreshnessStatus is the same trust signal for the Freshness block:
+	// "ok" (every enabled source active), "degraded" (active < total) or
+	// "unknown" (a count query failed; the counts are nil).
+	FreshnessStatus string `json:"freshness_status"`
 }
 
 // StatusRegion identifies which region produced the response.
@@ -1145,11 +1150,12 @@ type StatusLatency struct {
 	P99TargetMs float64 `json:"p99_target_ms"`
 }
 
-// StatusFreshness summarises the ingest layer.
+// StatusFreshness summarises the ingest layer. A nil count was not
+// measured (its query failed); a served 0 is a non-nil 0.
 type StatusFreshness struct {
 	LastAggregatorTick time.Time `json:"last_aggregator_tick,omitempty"`
-	ActiveSources      int       `json:"active_sources"`
-	TotalSources       int       `json:"total_sources"`
+	ActiveSources      *int      `json:"active_sources,omitempty"`
+	TotalSources       *int      `json:"total_sources,omitempty"`
 }
 
 // StatusIncidents counts currently-firing alerts grouped by
@@ -2131,10 +2137,16 @@ type RWAReference struct {
 	// Stale marks a reference older than 72h — labelled, not withheld.
 	Stale bool `json:"stale,omitempty"`
 	// Provenance names what kind of figure PriceUSD is:
-	// "oracle_instrument_nav", "listing_platform_price",
+	// "oracle_instrument_nav", "fund_nav", "listing_platform_price",
 	// "prospectus_constant_nav" or "curator_uploaded_price". Only the
 	// first is a statement about the backing instrument.
 	Provenance string `json:"provenance"`
+	// DecimalsPublished is the publisher's stated precision; 2 on a
+	// "fund_nav" reference.
+	DecimalsPublished *int `json:"decimals_published,omitempty"`
+	// NAVDisagreement marks an oracle reference that the fund's own
+	// fresh NAV differs from by more than half a cent.
+	NAVDisagreement bool `json:"nav_disagreement,omitempty"`
 }
 
 // RWAPremium is the token's market price measured against the oracle's

@@ -55,8 +55,47 @@ tests:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md
               summary: "Binary version-skew probe has not reported in 90m — the timer may be dead"
               description: |
-                No stellarindex_binary_version_probe_success sample for 90+
-                minutes despite a 30-minute timer. The probe crashed before
+                stellarindex_binary_version.prom has not been rewritten, or
+                carries no stellarindex_binary_version_probe_success sample,
+                for 90+ minutes despite a 30-minute timer. The probe crashed before
+                writing its textfile, or
+                stellarindex-binary-version-probe.timer stopped firing —
+                either way, _skew and _probe_degraded are now reading a
+                frozen file and cannot detect drift or their own absence.
+                `systemctl status stellarindex-binary-version-probe.timer`
+                on the host.
+
+  # ── timer dies, textfile stays: probe_success frozen at 1, mtime stops ──
+  # node_exporter keeps serving the last-written gauges, so the absent arm
+  # never trips; only the file's mtime shows the probe stopped. The mtime
+  # freezes at 3600 s, so it is > 5400 s old from 150m and fires 10m later.
+  - interval: 1m
+    name: a frozen-but-present textfile trips the stale alert
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/stellarindex_binary_version.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0+60x60 3600+0x300'
+      - series: 'stellarindex_binary_version_probe_success{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x360'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_binary_version_probe_stale
+        exp_alerts: []
+      - eval_time: 165m
+        alertname: stellarindex_binary_version_probe_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: deploy
+              instance: r1:9100
+              job: node_exporter
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md
+              summary: "Binary version-skew probe has not reported in 90m — the timer may be dead"
+              description: |
+                stellarindex_binary_version.prom has not been rewritten, or
+                carries no stellarindex_binary_version_probe_success sample,
+                for 90+ minutes despite a 30-minute timer. The probe crashed before
                 writing its textfile, or
                 stellarindex-binary-version-probe.timer stopped firing —
                 either way, _skew and _probe_degraded are now reading a
@@ -68,6 +107,8 @@ tests:
   - interval: 1m
     name: a live probe reporting every run never pages
     input_series:
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/stellarindex_binary_version.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0+60x200'
       - series: 'stellarindex_binary_version_probe_success{job="node_exporter",instance="r1:9100"}'
         values: '1+0x200'
     alert_rule_test:

@@ -18,6 +18,7 @@ import (
 // never enter the verified total.
 var rwaSummaryReachableProvenances = []string{
 	RWAReferenceOracleNAV,
+	RWAReferenceFundNAV,
 	RWAReferenceListingPrice,
 	RWAReferenceProspectusCNAV,
 }
@@ -71,9 +72,13 @@ func TestRWASummaryProvenance_ProseDescribesEveryReachableProvenance(t *testing.
 	if !strings.HasPrefix(mixed, "The total MIXES TWO KINDS OF CLAIM") {
 		t.Errorf("oracle+CNAV prose does not state the mixture: %q", mixed)
 	}
+	three := rwaReferenceProvenanceProse([]string{RWAReferenceOracleNAV, RWAReferenceListingPrice, RWAReferenceProspectusCNAV})
+	if !strings.HasPrefix(three, "The total MIXES THREE KINDS OF CLAIM") {
+		t.Errorf("three-provenance prose does not state the mixture: %q", three)
+	}
 	all := rwaReferenceProvenanceProse(rwaSummaryReachableProvenances)
-	if !strings.HasPrefix(all, "The total MIXES THREE KINDS OF CLAIM") {
-		t.Errorf("three-provenance prose does not state the mixture: %q", all)
+	if !strings.HasPrefix(all, "The total MIXES FOUR KINDS OF CLAIM") {
+		t.Errorf("four-provenance prose does not state the mixture: %q", all)
 	}
 }
 

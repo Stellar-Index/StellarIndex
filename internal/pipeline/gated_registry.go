@@ -207,7 +207,7 @@ var gatedSources = map[string]GatedMeta{
 		// stay declared — they gate the factory's own create/n_fee events.
 		Factories:   defindex.MainnetFactories,
 		CreationSym: "create",
-		Genesis:     55_484_403, // earliest factory create event (CAVP2QLP…)
+		Genesis:     defindex.GenesisLedger,
 		CuratedSet:  defindex.MainnetGatedSet(),
 		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return defindex.NewDecoder(opts...) },
 	},

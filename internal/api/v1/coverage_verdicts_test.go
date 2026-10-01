@@ -547,3 +547,45 @@ func TestHandleCoverageVerdicts_StaleGateIgnoresNotApplicableSource(t *testing.T
 			"the stale soroswap row is not applicable on testnet and must not qualify the gate")
 	}
 }
+
+// TestHandleCoverageVerdicts_NamesSourcesTheLatestRunDidNotRefresh pins that
+// a headline summed across verdicts from more than one audit run says so: a
+// run that stops part-way leaves the later sources on the previous run's
+// rows, and those must be named rather than read as the latest run's verdict.
+func TestHandleCoverageVerdicts_NamesSourcesTheLatestRunDidNotRefresh(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	row := func(source string, tip uint32) timescale.CompletenessSnapshot {
+		return timescale.CompletenessSnapshot{
+			Source: source, Genesis: 2, Tip: tip, Watermark: tip,
+			CoveragePct: 1, Complete: true, LakeComplete: true,
+			SubstrateOK: true, RecognitionOK: true, ProjectionOK: true, ComputedAt: now,
+		}
+	}
+	read := func(snaps []timescale.CompletenessSnapshot) v1.CoverageVerdictsView {
+		srv := v1.New(v1.Options{CompletenessReader: &stubCompletenessReader{snaps: snaps}})
+		resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/coverage")
+		var env struct {
+			Data v1.CoverageVerdictsView `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return env.Data
+	}
+
+	d := read([]timescale.CompletenessSnapshot{row("blend", 64_000_000), row("sdex", 63_980_000), row("soroswap", 64_000_000)})
+	if len(d.LaggingSources) != 1 {
+		t.Fatalf("lagging_sources = %+v, want exactly sdex", d.LaggingSources)
+	}
+	if l := d.LaggingSources[0]; l.Source != "sdex" || l.TipLedger != 63_980_000 || l.Reason == "" {
+		t.Errorf("lagging row = %+v, want sdex at its own tip 63980000 with a reason", l)
+	}
+	if d.CompleteSources != 3 || d.TotalSources != 3 {
+		t.Errorf("headline = %d of %d, want 3 of 3: a lagging verdict is still a verdict", d.CompleteSources, d.TotalSources)
+	}
+
+	d = read([]timescale.CompletenessSnapshot{row("blend", 64_000_000), row("sdex", 64_000_000)})
+	if d.LaggingSources == nil || len(d.LaggingSources) != 0 {
+		t.Errorf("lagging_sources = %#v, want a present, empty list when one run wrote every row", d.LaggingSources)
+	}
+}
