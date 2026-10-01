@@ -24,8 +24,8 @@ func TestAssetVolumeCharacterRollupSQL_Shape(t *testing.T) {
 		"LEFT JOIN alias_map bm ON bm.form = t.base_asset",
 		"LEFT JOIN alias_map qm ON qm.form = t.quote_asset",
 		"UNION ALL",
-		// Trailing window bound + interval param.
-		"t.ts >= now() - $1::interval",
+		// Trailing window as a literal so the planner excludes older chunks.
+		"t.ts >= now() - interval '{{WINDOW}}'",
 		// UNORDERED account pair so a round-trip folds to one pair.
 		"GROUP BY asset_id, LEAST(COALESCE(maker, taker), taker), GREATEST(COALESCE(maker, taker), taker)",
 		// Self-cross share.
@@ -47,6 +47,9 @@ func TestAssetVolumeCharacterRollupSQL_Shape(t *testing.T) {
 		if !strings.Contains(q, m) {
 			t.Errorf("assetVolumeCharacterRollupSQLTemplate missing %q", m)
 		}
+	}
+	if strings.Contains(q, "::interval") {
+		t.Errorf("template binds the window as a parameter; chunk exclusion needs a literal")
 	}
 	// The %-carrying LIKE patterns must survive templating untouched — the
 	// sentinel is replaced by strings.Replace, never fmt.Sprintf.
