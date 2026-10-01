@@ -695,7 +695,7 @@ week lands.
   config gap.
 
 - **2026-05-11** — **All five 2026-05-10 ❌ rows have landing
-  code fixes on `main`** (PR #1270 across the session).
+  code fixes on `main`** (commits 55b2a9fb3 and 4ab6b818d across the session).
   Headline resolutions:
   R-005 → batch shares full /v1/price fallback chain (no
   surviving PR number for this entry; the one previously cited
@@ -710,7 +710,8 @@ week lands.
   R-014 → markets default sort = volume_24h_usd_desc (no
   surviving PR number for this entry; the one previously cited
   here now resolves to an unrelated live issue),
-  R-016 → #1270 (asset SEP-1 backfill from known_issuers map),
+  R-016 → 4ab6b818d (asset SEP-1 backfill from known_issuers map; its
+  pre-migration PR number now resolves to an unrelated item),
   R-011 → observations triangulation hint on empty,
   R-021 → handler-timeout helper recognises pq cancel (no
   surviving PR number for this entry; the one previously cited

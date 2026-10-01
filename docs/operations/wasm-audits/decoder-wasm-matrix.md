@@ -1,7 +1,7 @@
 ---
 title: Decoder ↔ WASM verification matrix
 last_verified: 2026-05-01
-status: 51/52 WASMs verified; 1 false-negative due to known Soroban SymbolSmall packing
+status: 51/52 WASMs verified; the Redstone miss is a hash that emits no events (see redstone.md#caveats)
 related:
   - docs/operations/wasm-audits/r1-walk-2026-05-01.md
   - docs/operations/wasm-audits/protocol-epochs.md
@@ -58,14 +58,14 @@ single `u64` (`SymbolSmall` per `Stellar-contract.h`) rather than
 stored as a string in the data section. As a result, byte-search
 against the WASM data section can miss them.
 
-This explains the Redstone misses:
+The Redstone misses are moot rather than SymbolSmall artefacts:
 - Topic: `"REDSTONE"` (8 chars)
 - Search: byte-match for `b"REDSTONE"` — not found in either
-  Redstone WASM (`b400f7a8…` and `5e93d22c…`).
-- Reality: the topic IS emitted (verified by the production
-  decoder ingesting events from the live adapter every block).
-  The 8 ASCII bytes are packed into a single i64 constant in
-  the code section.
+  archived Redstone WASM (`b400f7a8…` and `5e93d22c…`).
+- Reality: neither archived hash imports `contract_event`, so
+  neither emits any event and there is no topic to find. The live
+  `REDSTONE` events come from a later, unarchived adapter WASM at
+  the same address — see [redstone.md#caveats](redstone.md#caveats).
 
 For longer topics (e.g. `apply_transfer_ownership` at 24 chars,
 `gulp_emissions` at 14, `fill_auction` at 12), the topic is
@@ -80,10 +80,13 @@ finds it. Hence the 50/52 result.
   watches for `trade` but the contract emits `Trade`" or similar
   case-sensitivity / typo bugs.
 - The 2 misses are constrained to a single source (Redstone), and
-  the SymbolSmall packing rule is well-understood — every
-  Soroban-built contract handles short symbols this way.
+  both are hashes that emit no events at all. The walk's range for
+  `5e93d22c…` is wrong, though: it contains real `REDSTONE` events
+  (L59,258,375), so the walk missed an upgrade to an event-emitting
+  WASM inside it.
 - Cross-validation: production ingest health metrics
-  (`stellarindex_redstone_events_total`) show events flowing.
+  (`stellarindex_redstone_events_total`) show events flowing — from
+  the unarchived successor WASM, not from either hash in this matrix.
 
 ## How to refresh
 
@@ -101,14 +104,18 @@ After every wasm-history walk that introduces new hashes:
 
 After this matrix, **for the 50 byte-match-positive WASMs we have
 strong evidence the decoder will correctly classify their
-events** during backfill replay. For the 2 SymbolSmall cases
-(Redstone), confidence rests on:
+events** during backfill replay. For the 2 Redstone misses:
 
-- Every Soroban contract uses the same SymbolSmall convention.
-- Production ingest is live and emitting events from the
-  current production hash (`5e93d22c…`); zero `ErrUnknownEvent`
-  rate in the metrics for redstone source.
-- The hotfix hash (`b400f7a8…`) has a 35-min lifetime; the
-  pre-backfill SQL guard documented in
-  [`r1-walk-2026-05-01.md`](r1-walk-2026-05-01.md) §Redstone
-  prevents accidental replay over its window.
+- Neither archived hash (`b400f7a8…`, `5e93d22c…`) emits events,
+  so the event-driven decoder yields no rows for `b400f7a8…`'s
+  window or for the part of `5e93d22c…`'s range before the real
+  upgrade, and the SymbolSmall miss there is moot. The walk's
+  recorded `5e93d22c…` range is not accurate: it contains real
+  `REDSTONE` events from L59,258,375, emitted by a later WASM.
+- Those events come from an unarchived successor WASM with no
+  per-hash entry or recorded upgrade ledger yet; decoder confidence
+  for it rests on the real-event fixtures — see
+  [redstone.md#caveats](redstone.md#caveats).
+- Before a replay over the `b400f7a8…` window, the sanity check in
+  [redstone.md](redstone.md) counts `oracle_updates` rows for
+  `source = 'redstone'` in L58,758,722 → L58,759,141 and expects `0`.

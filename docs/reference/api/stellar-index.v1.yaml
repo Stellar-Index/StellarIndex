@@ -13782,6 +13782,7 @@ components:
         transactions: { type: array, items: { $ref: "#/components/schemas/TxSummary" } }
         next_cursor: { type: string, description: "Opaque composite cursor (ledger.tx_index) for the next older page; absent on the last page." }
         scope: { type: string, enum: [all], description: "Activity scope. \"all\" = the account sourced the tx OR is a non-source participant in one of its operations." }
+        as_of_ledger: { type: integer, format: int64, description: "Lake watermark (highest contiguously captured ledger) read before this page's scan; rows past it may still be arriving. A freshness marker, not a completeness claim: incoming (participant) activity is covered only where the participant index has been captured or backfilled. Absent when the watermark was unreadable." }
       required: [account, transactions, scope]
     AccountOperations:
       type: object
@@ -13804,6 +13805,7 @@ components:
             here (on-chain, fee-charged records), so this marker is what keeps a
             failed operation from masquerading as a real interaction. Absent =
             every operation carries its true transaction outcome.
+        as_of_ledger: { type: integer, format: int64, description: "Lake watermark (highest contiguously captured ledger) read before this page's scan; rows past it may still be arriving. A freshness marker, not a completeness claim: incoming (participant) activity is covered only where the participant index has been captured or backfilled. Absent when the watermark was unreadable." }
       required: [account, operations, scope]
     AccountMovement:
       type: object

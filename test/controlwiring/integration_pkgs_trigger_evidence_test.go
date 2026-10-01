@@ -298,6 +298,21 @@ func TestT424TriggerCoversTransitiveIntegrationDeps(t *testing.T) {
 	}
 }
 
+// TestT424GuardInputsTriggerGoClass: the guards in this file run only in
+// CI's go-gated `test` job, so a diff confined to a file they read — an
+// INT_TEST_PKGS edit, or a narrowed classifier — must still run that job.
+func TestT424GuardInputsTriggerGoClass(t *testing.T) {
+	root := repoRoot(t)
+	for _, p := range []string{
+		"Makefile",
+		".github/workflows/ci.yml",
+		"scripts/ci/check-change-class.sh",
+		"scripts/ci/prepush-integration-required.sh",
+	} {
+		t.Run(p, func(t *testing.T) { assertClassFires(t, root, "go", p) })
+	}
+}
+
 // TestT424TriggerIsNotUniversal keeps the guard above honest in the other
 // direction: a classifier that fires for everything would satisfy it while
 // making every docs-only PR pay a 20-minute Docker round-trip, the cost the

@@ -560,8 +560,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// from the global rate-limit middleware. Default 5/hour/IP —
 	// tight enough to block bulk-mint, loose enough that an
 	// operator onboarding a small team through a single shared
-	// egress completes normally. Operators tune via
-	// `[api].signup_ip_max_per_window` if needed.
+	// egress completes normally. The cap is a compiled default
+	// (auth.SignupIPThrottleOptions), not a config key.
 	var signupIPThrottle v1.SignupIPThrottle
 	if rdb != nil {
 		signupIPThrottle = auth.NewRedisSignupIPThrottle(rdb, auth.SignupIPThrottleOptions{})
@@ -5160,41 +5160,18 @@ func (a *forexAdapter) Latest() *v1.CurrenciesSnapshot {
 	}
 	rows := make([]v1.CurrencyEntry, len(snap.Currencies))
 	for i, c := range snap.Currencies {
-		row := v1.CurrencyEntry{
+		rows[i] = v1.CurrencyEntry{
 			Ticker:    c.Ticker,
 			Name:      c.Name,
 			RateUSD:   c.RateUSD,
 			UpdatedAt: c.UpdateAt,
 			Source:    c.Source,
 		}
-		// Join curated monetary-base CSV (lower-case keyed). Market
-		// cap is computed in USD-equivalent: the local-units M2
-		// divided by "1 USD = N units" rate gives "M2 in USD".
-		if entry, ok := snap.Circulation[strings.ToLower(c.Ticker)]; ok && entry.AggregateLocalUnits > 0 {
-			supply := entry.AggregateLocalUnits
-			row.CirculatingSupply = &supply
-			if c.RateUSD > 0 {
-				mcap := supply / c.RateUSD
-				row.MarketCapUSD = &mcap
-			}
-			row.CirculationAsOf = entry.AsOf.Format("2006-01-02")
-			row.CirculationSource = entry.Source
-		}
-		rows[i] = row
-	}
-	history := make(map[string][]v1.CurrencyHistoryRaw, len(snap.History7d))
-	for ticker, points := range snap.History7d {
-		out := make([]v1.CurrencyHistoryRaw, len(points))
-		for i, p := range points {
-			out[i] = v1.CurrencyHistoryRaw{Date: p.Date, RateUSD: p.RateUSD}
-		}
-		history[ticker] = out
 	}
 	return &v1.CurrenciesSnapshot{
 		Currencies:  rows,
 		PublishedAt: snap.PublishedAt,
 		FetchedAt:   snap.FetchedAt,
-		History7d:   history,
 	}
 }
 
