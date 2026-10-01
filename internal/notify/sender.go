@@ -44,8 +44,8 @@ var ErrInvalidMessage = errors.New("notify: invalid message")
 // the caller can choose between "log + drop" and "retry".
 var ErrProviderRejected = errors.New("notify: provider rejected")
 
-// ErrTransient indicates a 5xx / network error from the
-// provider. Caller may retry.
+// ErrTransient indicates a 429 / 5xx / network error from the
+// provider. [ResendSender] has already spent its bounded retries.
 var ErrTransient = errors.New("notify: transient provider failure")
 
 // ErrNotConfigured is returned by a transport that holds no provider

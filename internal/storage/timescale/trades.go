@@ -945,25 +945,25 @@ func recordDexTradeUnitRatio(t canonical.Trade) {
 // usdPopulatedLabel maps the resolved-or-not decision to the stable
 // Prometheus label values the coverage dashboards and alerts filter on.
 //
-// The counter lives here, beside the tradeUSDVolume call, rather than
-// in the pipeline sink where it started. The sink's copy was blind to
-// most of what it claimed to measure: it sat in persistTrade, which
-// the dispatcher's PRIMARY on-chain path (flushTradeBatch ->
-// BatchInsertTrades) never touches, and which no external CEX/FX
-// connector goes through at all — so the metric reported only aquarius
-// while the largest coverage gaps were on binance/kraken/coinbase and
-// on batch-path SDEX. That is the same choke-point argument
-// [isDexUnitRatioTrade] already documents for the unit-ratio metric.
+// The counter lives here, beside the tradeUSDVolume call, because this
+// is the choke point every trade path funnels through exactly once (the
+// same argument [isDexUnitRatioTrade] documents for the unit-ratio
+// metric); a sink-level copy misses the batch path and every connector.
 //
-// Measuring at the choke point also drops a duplicated resolution:
-// the sink called WouldPopulateUSDVolume purely for this label, which
-// ran the whole waterfall a second time per trade (2 PG round-trips
-// per row on the re-derive path, as ch_rebuild.go notes).
-func usdPopulatedLabel(populated bool) string {
-	if populated {
+// An unpriced trade between two classic assets of ONE issuer is labelled
+// "unroutable": such a pair has no independent market to value it, so it
+// is excluded from the coverage ratio rather than counted as a pricing gap.
+// Its usd_volume stays NULL either way; only the label differs.
+func usdPopulatedLabel(p canonical.Pair, populated bool) string {
+	switch {
+	case populated:
 		return "yes"
+	case p.Base.Type == canonical.AssetClassic && p.Quote.Type == canonical.AssetClassic &&
+		p.Base.Issuer != "" && p.Base.Issuer == p.Quote.Issuer:
+		return "unroutable"
+	default:
+		return "no"
 	}
-	return "no"
 }
 
 // InsertTrade writes one trade. Returns nil for a successful insert
@@ -1076,7 +1076,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	if v != nil {
 		usdVolume = *v
 	}
-	obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(v != nil)).Inc()
+	obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(t.Pair, v != nil)).Inc()
 	var rowsInserted int64
 	if err := s.db.QueryRowContext(ctx, q,
 		t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
@@ -1171,7 +1171,7 @@ func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Tra
 		if v != nil {
 			usdVolume = *v
 		}
-		obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(v != nil)).Inc()
+		obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(t.Pair, v != nil)).Inc()
 		args = append(args,
 			t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
 			t.Pair.Base.String(), t.Pair.Quote.String(),
@@ -1735,6 +1735,10 @@ type registryObservation struct {
 // itself under a keyset cursor. It carries the sole entry in
 // [directionExempt].
 
+// maxLatestTradesForPair caps [Store.LatestTradesForPair]: each arm is a
+// time-unbounded walk, so an unclamped limit could materialise the market.
+const maxLatestTradesForPair = 1000
+
 // LatestTradesForPair returns up to `limit` most-recent trades for the
 // market the pair names — in EITHER stored direction, each returned in
 // the requested orientation. Returns an empty slice + nil error if the
@@ -1757,9 +1761,13 @@ type registryObservation struct {
 // /v1/price's last-trade arm, so a window here would stop serving a
 // price for a quiet market rather than merely slow it down. Zero-leg
 // (unpriceable) rows are excluded so the last trade is always a price.
+// `limit` is clamped to [maxLatestTradesForPair].
 func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit int) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 100
+	}
+	if limit > maxLatestTradesForPair {
+		limit = maxLatestTradesForPair
 	}
 	const q = `
         (SELECT source, ledger, tx_hash, op_index, ts,

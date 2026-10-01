@@ -135,6 +135,7 @@ func registerPricingMetrics() {
 		AggregatorBaselineRefreshTotal,
 		AggregatorSupplyLakeClampLedgers,
 		AggregatorSupplyRefreshTotal,
+		SupplyWriteBandBreachTotal,
 		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
 		AggregatorBaselineAgeSeconds,
@@ -3013,12 +3014,12 @@ var OracleStreamRowsUnparsedTotal = prometheus.NewCounterVec(
 // operator's classic asset_key doesn't match what the decoder
 // stamps — typically an issuer mismatch or a missing entry.
 //
-// Cardinality: one source × two outcomes per registered source
+// Cardinality: one source × three outcomes per registered source
 // (low-tens of series at maturity).
 var TradeInsertsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_trade_inserts_total",
-		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no). Counts attempts, not unique-row inserts — on-conflict dedupe AND generation-guarded corrective updates are both invisible to this counter.",
+		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no|unroutable; unroutable = unpriced trade whose two classic legs share one issuer, excluded from the coverage alerts). Counts attempts, not unique-row inserts — on-conflict dedupe AND generation-guarded corrective updates are both invisible to this counter.",
 	},
 	[]string{"source", "usd_volume_populated"},
 )
@@ -4527,6 +4528,18 @@ var AggregatorSupplyRefreshTotal = prometheus.NewCounterVec(
 		Help: "Supply-snapshot refresh outcomes per (asset_key, outcome). Outcome ∈ {ok, dormant, static_reserve, no_ledger, no_observation, compute_error, stale_component, missing_freshness, missing_baseline, write_error}.",
 	},
 	[]string{"asset_key", "outcome"},
+)
+
+// SupplyWriteBandBreachTotal — supply snapshots written whose
+// total_supply moved more than supply.WriteBandFactor x up or down
+// against the previous one the same refresher wrote. The row is still
+// written; the counter is the prompt to check the asset's supply.
+var SupplyWriteBandBreachTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_supply_write_band_breach_total",
+		Help: "Supply snapshots written whose total_supply moved more than 10x against the previous snapshot, per (asset_key, direction). Direction ∈ {up, down}. The row is written regardless.",
+	},
+	[]string{"asset_key", "direction"},
 )
 
 // AggregatorSupplyRefreshDurationSeconds — latency histogram for
