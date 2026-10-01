@@ -1295,6 +1295,18 @@ export interface paths {
          *        see `internal/storage/timescale/ohlc_routes.go`'s
          *        `OHLCRoutes` table, the single declaration this list must
          *        track.
+         *
+         *     **Open and close inside one ledger (both modes).** On-chain
+         *     trades carry the whole-second ledger close time and the
+         *     network's apply order is not recorded, so when several
+         *     transactions in one ledger trade the pair inside one bar,
+         *     `open` and `close` are picked by a tie-break on
+         *     `(ts, ledger, tx_hash, op_index, source)` — `tx_hash` order
+         *     between transactions, which is NOT execution order; `op_index`
+         *     order within one transaction. The bar is stable, but `open` or
+         *     `close` can be another real trade from that ledger, off by at
+         *     most the price movement inside one ledger (~5 s); `high`,
+         *     `low`, VWAP and volume are unaffected.
          */
         get: operations["getOhlc"];
         put?: never;
@@ -10034,6 +10046,10 @@ export interface components {
                 /** @description p99 latency SLO target in milliseconds. See p95_target_ms. */
                 p99_target_ms?: number;
             };
+            /**
+             * @description The counts are omitted when their query failed (see
+             *     `freshness_status`); a served `0` is present as `0`.
+             */
             freshness?: {
                 /** Format: date-time */
                 last_aggregator_tick?: string;
@@ -10092,6 +10108,19 @@ export interface components {
              * @enum {string}
              */
             incidents_status: "ok" | "degraded" | "unknown";
+            /**
+             * @description Trust signal for the `freshness` block, so a failed count
+             *     query cannot read as a measured zero:
+             *       - "ok":       counts measured, every enabled source active.
+             *       - "degraded": counts measured, `active_sources` <
+             *                     `total_sources`. Does not by itself move
+             *                     `overall`.
+             *       - "unknown":  a freshness query FAILED, or no metrics
+             *                     backend is wired — the counts are omitted.
+             *     Always present.
+             * @enum {string}
+             */
+            freshness_status: "ok" | "degraded" | "unknown";
         };
         ActiveIncident: {
             /** @description Alertmanager `alertname` label. */
@@ -12664,7 +12693,8 @@ export interface operations {
                      *           "ticket_count": 0,
                      *           "informational_count": 0
                      *         },
-                     *         "incidents_status": "ok"
+                     *         "incidents_status": "ok",
+                     *         "freshness_status": "degraded"
                      *       },
                      *       "as_of": "2026-05-05T15:09:00.119Z",
                      *       "flags": {

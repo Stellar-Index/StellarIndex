@@ -58,6 +58,28 @@ different time window. Returning 404 is the correct contract:
 "there are no trades in the window you asked about; if you
 want a longer lookback, ask for one."
 
+## Open and close inside one ledger
+
+The only on-chain timestamp is the ledger close time, in whole
+seconds, so every on-chain trade in one ledger carries the same
+`ts` (off-chain rows may carry milliseconds). We do not record the
+order in which the network applied a ledger's transactions. When
+two or more transactions in one ledger trade the same pair inside
+one bucket, `open` and `close` are chosen by a tie-break on
+`(ts, ledger, tx_hash, op_index, source)`: between transactions
+that is `tx_hash` order, which is **not** execution order; within
+one transaction `op_index` is the real order.
+
+This is a tie-break, not a chronology. It is stable — the same
+bar is served on every read — but when the first or last ledger
+of a bucket holds several transactions trading the pair, `open` or
+`close` can be a different real trade from that ledger than the
+one that executed first or last. The error is bounded by the price
+movement inside one ledger (~5 s). `high`, `low`, VWAP and volume
+do not depend on order and are unaffected. The single-bar read
+from raw trades and the series CAGGs break this tie with the same
+key.
+
 ## What customers should do under "no trades in window"
 
 1. **Widen the window.** The closed-bucket clamp (ADR-0015)
