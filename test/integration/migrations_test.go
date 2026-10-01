@@ -246,6 +246,9 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	assertPolicyAbsent(t, db, ctx, "fx_fixings", "policy_retention")
 	assertColumnType(t, db, ctx, "fx_fixings", "generation", "bigint")
 
+	// 0196 — trades.tx_index, the post-insert apply-order tag.
+	assertColumnType(t, db, ctx, "trades", "tx_index", "integer")
+
 	// ─── Down: roll everything back ─────────────────────────────
 	// 0191's down refuses (LOUD) while any trades row has a zero leg;
 	// the two probe rows accepted above must go first.

@@ -1025,6 +1025,8 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	// (registry hook, outcome metric, sentinels) exactly as before.
 	const q = `
         WITH ins AS (
+            -- routed_via, signer and tx_index are post-insert tagger
+            -- columns: never list them here (first-wins, see tx_index.go).
             INSERT INTO trades (
                 source, ledger, tx_hash, op_index, ts,
                 base_asset, quote_asset,
@@ -1346,6 +1348,8 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
 	//nolint:gosec // G201: VALUES placeholders constructed only from compile-time format string.
 	query := fmt.Sprintf(`
         WITH ins AS (
+            -- routed_via, signer and tx_index are post-insert tagger
+            -- columns: never list them here (first-wins, see tx_index.go).
             INSERT INTO trades (
                 source, ledger, tx_hash, op_index, ts,
                 base_asset, quote_asset,

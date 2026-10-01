@@ -141,6 +141,7 @@ var subcommands = map[string]func(args []string) error{
 	"census-backfill":         ingest.Run,
 	"tag-routed-via":          ingest.Run,
 	"tag-signer":              ingest.Run,
+	"tag-tx-index":            ingest.Run,
 	"seed-soroswap-pairs":     ingest.Run,
 	"seed-protocol-contracts": ingest.Run,
 	"seed-entry-counts":       ingest.Run,
@@ -928,6 +929,16 @@ Subcommands:
                           checkpointed per -from/-to pair, and -resume
                           (default true) resumes only a run of the same
                           range.
+  tag-tx-index -config PATH -from RFC3339 -to RFC3339 [-window DUR] [-ch-addr H:P] [-write]
+                          Back-tag trades.tx_index (intra-ledger apply
+                          order, migration 0196) for every on-chain trade
+                          in [-from, -to), read from the lake's
+                          stellar.tx_hash_index. The recovery half of the
+                          live pipeline.RunTxIndexTagger sweeper; run it
+                          over history the 30-min lookback never saw (e.g.
+                          after each SDEX history window). Windowed by ts
+                          (default 1h; lower it on SQLSTATE 53400);
+                          first-wins, so re-runs are no-ops.
   census-backfill -config PATH -from N -to N [-bucket NAME] [-resume] [-write]
                           Populate ledger_ingest_log (ADR-0033 substrate
                           record) for a historical range. Pure structural

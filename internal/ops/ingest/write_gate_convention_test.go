@@ -38,6 +38,7 @@ var mutatingIngestSubcommands = []string{
 	"backfill-router",
 	"tag-routed-via",
 	"tag-signer",
+	"tag-tx-index",
 	"seed-soroswap-pairs",
 	"seed-protocol-contracts",
 	// Already gated; listed so a regression in either direction is loud.
