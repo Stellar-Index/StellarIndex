@@ -10034,6 +10034,10 @@ export interface components {
                 /** @description p99 latency SLO target in milliseconds. See p95_target_ms. */
                 p99_target_ms?: number;
             };
+            /**
+             * @description The counts are omitted when their query failed (see
+             *     `freshness_status`); a served `0` is present as `0`.
+             */
             freshness?: {
                 /** Format: date-time */
                 last_aggregator_tick?: string;
@@ -10092,6 +10096,19 @@ export interface components {
              * @enum {string}
              */
             incidents_status: "ok" | "degraded" | "unknown";
+            /**
+             * @description Trust signal for the `freshness` block, so a failed count
+             *     query cannot read as a measured zero:
+             *       - "ok":       counts measured, every enabled source active.
+             *       - "degraded": counts measured, `active_sources` <
+             *                     `total_sources`. Does not by itself move
+             *                     `overall`.
+             *       - "unknown":  a freshness query FAILED, or no metrics
+             *                     backend is wired — the counts are omitted.
+             *     Always present.
+             * @enum {string}
+             */
+            freshness_status: "ok" | "degraded" | "unknown";
         };
         ActiveIncident: {
             /** @description Alertmanager `alertname` label. */
@@ -12664,7 +12681,8 @@ export interface operations {
                      *           "ticket_count": 0,
                      *           "informational_count": 0
                      *         },
-                     *         "incidents_status": "ok"
+                     *         "incidents_status": "ok",
+                     *         "freshness_status": "degraded"
                      *       },
                      *       "as_of": "2026-05-05T15:09:00.119Z",
                      *       "flags": {

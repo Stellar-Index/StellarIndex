@@ -1112,6 +1112,10 @@ type Status struct {
 	// "unknown" is how a status banner publishes "0 active alerts"
 	// while alerting is blind.
 	IncidentsStatus string `json:"incidents_status"`
+	// FreshnessStatus is the same trust signal for the Freshness block:
+	// "ok" (every enabled source active), "degraded" (active < total) or
+	// "unknown" (a count query failed; the counts are nil).
+	FreshnessStatus string `json:"freshness_status"`
 }
 
 // StatusRegion identifies which region produced the response.
@@ -1146,11 +1150,12 @@ type StatusLatency struct {
 	P99TargetMs float64 `json:"p99_target_ms"`
 }
 
-// StatusFreshness summarises the ingest layer.
+// StatusFreshness summarises the ingest layer. A nil count was not
+// measured (its query failed); a served 0 is a non-nil 0.
 type StatusFreshness struct {
 	LastAggregatorTick time.Time `json:"last_aggregator_tick,omitempty"`
-	ActiveSources      int       `json:"active_sources"`
-	TotalSources       int       `json:"total_sources"`
+	ActiveSources      *int      `json:"active_sources,omitempty"`
+	TotalSources       *int      `json:"total_sources,omitempty"`
 }
 
 // StatusIncidents counts currently-firing alerts grouped by
