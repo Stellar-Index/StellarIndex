@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -90,23 +91,28 @@ func (f *fakeTxIndexStore) TagTradesTxIndex(_ context.Context, from, to time.Tim
 }
 
 type fakeTxIndexLake struct {
-	order map[string]uint32
+	order map[string][]clickhouse.TxLedgerIndex
 	err   error
 	reads [][]string
 }
 
-func (f *fakeTxIndexLake) TxIndexes(_ context.Context, hashes []string) (map[string]uint32, error) {
+func (f *fakeTxIndexLake) TxLedgerIndexes(_ context.Context, hashes []string) (map[string][]clickhouse.TxLedgerIndex, error) {
 	f.reads = append(f.reads, append([]string(nil), hashes...))
 	if f.err != nil {
 		return nil, f.err
 	}
-	out := map[string]uint32{}
+	out := map[string][]clickhouse.TxLedgerIndex{}
 	for _, h := range hashes {
 		if v, ok := f.order[h]; ok {
 			out[h] = v
 		}
 	}
 	return out, nil
+}
+
+// at is one lake row: tx_index idx at ledger.
+func at(ledger, idx uint32) []clickhouse.TxLedgerIndex {
+	return []clickhouse.TxLedgerIndex{{Ledger: ledger, TxIndex: idx}}
 }
 
 func txIndexOf(t *testing.T, r *fakeTxIndexRow) (uint32, bool) {
@@ -127,7 +133,9 @@ func TestTagTxIndexWindow_TagsEveryOnChainSourceInApplyOrder(t *testing.T) {
 	offChain := &fakeTxIndexRow{source: "binance", ledger: 0, txHash: "cc", ts: t0}
 	outside := &fakeTxIndexRow{source: "sdex", ledger: 90, txHash: "dd", ts: t0.Add(-time.Hour)}
 	store := &fakeTxIndexStore{rows: []*fakeTxIndexRow{sdexA, sdexF, soroswap, offChain, outside}}
-	lake := &fakeTxIndexLake{order: map[string]uint32{"ff": 0, "aa": 1, "bb": 3, "cc": 7, "dd": 2}}
+	lake := &fakeTxIndexLake{order: map[string][]clickhouse.TxLedgerIndex{
+		"ff": at(100, 0), "aa": at(100, 1), "bb": at(101, 3), "cc": at(0, 7), "dd": at(90, 2),
+	}}
 
 	tagged, err := TagTxIndexWindow(context.Background(), lake, store, t0.Add(-time.Minute), t0.Add(time.Minute), TxIndexPageSize)
 	if err != nil {
@@ -176,7 +184,7 @@ func TestTagTxIndexWindow_WalksPastUnresolvedPages(t *testing.T) {
 	unknown2 := &fakeTxIndexRow{source: "sdex", ledger: 100, txHash: "a2", ts: t0}
 	known := &fakeTxIndexRow{source: "phoenix", ledger: 102, txHash: "b1", ts: t0.Add(10 * time.Second)}
 	store := &fakeTxIndexStore{rows: []*fakeTxIndexRow{unknown1, unknown2, known}}
-	lake := &fakeTxIndexLake{order: map[string]uint32{"b1": 4}}
+	lake := &fakeTxIndexLake{order: map[string][]clickhouse.TxLedgerIndex{"b1": at(102, 4)}}
 
 	tagged, err := TagTxIndexWindow(context.Background(), lake, store, t0.Add(-time.Minute), t0.Add(time.Minute), 2)
 	if err != nil {
@@ -187,6 +195,33 @@ func TestTagTxIndexWindow_WalksPastUnresolvedPages(t *testing.T) {
 	}
 	if store.pageCalls != 2 {
 		t.Errorf("page reads = %d, want 2 (a full page, then the short last page)", store.pageCalls)
+	}
+}
+
+// The lake row must sit on the trade's own ledger: a hash known only at another
+// ledger stays NULL, and one with rows at both ledgers takes the matching one.
+func TestTagTxIndexWindow_LedgerMismatchLeavesRowUntagged(t *testing.T) {
+	t0 := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	stale := &fakeTxIndexRow{source: "sdex", ledger: 100, txHash: "aa", ts: t0}
+	both := &fakeTxIndexRow{source: "sdex", ledger: 100, txHash: "bb", ts: t0}
+	store := &fakeTxIndexStore{rows: []*fakeTxIndexRow{stale, both}}
+	lake := &fakeTxIndexLake{order: map[string][]clickhouse.TxLedgerIndex{
+		"aa": at(99, 5),
+		"bb": {{Ledger: 99, TxIndex: 9}, {Ledger: 100, TxIndex: 2}},
+	}}
+
+	tagged, err := TagTxIndexWindow(context.Background(), lake, store, t0.Add(-time.Minute), t0.Add(time.Minute), TxIndexPageSize)
+	if err != nil {
+		t.Fatalf("TagTxIndexWindow: %v", err)
+	}
+	if got, ok := txIndexOf(t, stale); ok {
+		t.Errorf("aa tagged %d from a ledger-99 lake row, want NULL for a ledger-100 trade", got)
+	}
+	if got, ok := txIndexOf(t, both); !ok || got != 2 {
+		t.Errorf("bb = (%d, %v), want tx_index 2 from the ledger-100 row", got, ok)
+	}
+	if tagged != 1 {
+		t.Errorf("tagged = %d, want 1", tagged)
 	}
 }
 

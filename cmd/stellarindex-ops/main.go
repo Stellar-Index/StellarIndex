@@ -937,8 +937,9 @@ Subcommands:
                           live pipeline.RunTxIndexTagger sweeper; run it
                           over history the 30-min lookback never saw (e.g.
                           after each SDEX history window). Windowed by ts
-                          (default 1h; lower it on SQLSTATE 53400);
-                          first-wins, so re-runs are no-ops.
+                          (default 1h); first-wins, so re-runs are no-ops.
+                          -write refuses a range touching a compressed
+                          trades chunk: tag history before compression.
   census-backfill -config PATH -from N -to N [-bucket NAME] [-resume] [-write]
                           Populate ledger_ingest_log (ADR-0033 substrate
                           record) for a historical range. Pure structural
