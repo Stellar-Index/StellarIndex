@@ -324,6 +324,8 @@ hashes; the pool was upgraded 49,433 ledgers after create). The decode
 is field-name driven (safe against the exact hash), but the
 BackfillSafe audit trail needs the bytes string-checked before this
 pool contributes to any historical backfill range.
+The first hash also emits the `blend_pool` settings events (see the
+event-shapes section below).
 
 ### QuoteAmount field-mapping correction (ALL pools)
 
@@ -524,6 +526,26 @@ empty `topic_0_sym`, so they are a single shape. Whenever its exemplar
 is a create event, a decoder that matched it and dropped it would report
 the factory as recognised while admitting nothing — muting the one audit
 that can surface a new pool today, with the control still inert.
+
+## Event shapes beyond swap and liquidity
+
+A per-WASM census of every event the gated set emits found shapes the
+decoder did not classify; all are decoded now and pinned by real rows in
+`test/fixtures/phoenix/event-shapes/`:
+
+- stake `create_distribution_flow` → `asset` (Address, no user);
+- stake migration steps `("Stake: Migration: ", "Start of migration for user: " | "Query for user completed: ")`
+  and `("Stake", "Migration for user completed and stored: ")` → user Address;
+- factory `("Factory","Updated Config")` → Void, gated on the factory only;
+- pool `("blend_pool", set_delegate | set_min_trading_a | set_min_trading_b)`
+  → Address or i128;
+- Map-body `provide_liquidity` / `withdraw_liquidity` (Symbol topic, one event).
+
+The earliest stake WASMs (`9e398ab7ca651b4277df9ed390f4e012465c21447bad21ed6a0e9c6b975fd532`
+from 51,572,026, then `a757fd97e5a67f586c5aadf6ba8d17a9d3df872ccae093e564c2b3de143c05f3`)
+publish an unbond as `("unbond","user")` followed by `("bond","token")` and
+`("bond","amount")`. The correlation buffer continues the open unbond with
+those two fields instead of opening a bond.
 
 ## 2026-09-30 addendum — WASM lineage captured from the lake
 

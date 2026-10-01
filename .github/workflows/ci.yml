@@ -341,6 +341,14 @@ jobs:
               # testdata/ is Go's fixture convention; the clickhouse
               # package also go:embeds its .tsv/.wasm fixtures from there.
               - '**/testdata/**'
+              # The trigger-class guard (test/controlwiring/
+              # integration_pkgs_trigger_evidence_test.go) runs only in the
+              # `test` job and reads these four, so a diff confined to one of
+              # them must still run it.
+              - 'Makefile'
+              - '.github/workflows/ci.yml'
+              - 'scripts/ci/check-change-class.sh'
+              - 'scripts/ci/prepush-integration-required.sh'
             web:
               - 'web/**'
               - 'openapi/**'
@@ -890,6 +898,12 @@ jobs:
         run: |
           ./scripts/ci/check-verify-parity-test.sh
           ./scripts/ci/check-verify-parity.sh
+      - name: every scripts/ci self-test has a runner (+ self-test)
+        # A *-test.sh that no workflow or verify.sh executes stays green while
+        # the gate it covers regresses; pre-existing orphans are baselined.
+        run: |
+          ./scripts/ci/check-selftest-runners-test.sh
+          ./scripts/ci/check-selftest-runners.sh
       - name: verifier image pins (+ self-test)
         # GH-1257: check-verify-image-pins.sh only ran via scripts/dev/
         # verify.sh, so the Dockerfile ARG and docs-postman.sh's

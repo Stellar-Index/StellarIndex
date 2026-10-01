@@ -291,3 +291,23 @@ looks like either a `contract_events_daily` 2-topic-only census
 artifact or a genuinely wider topic arity (index > 2) this pass
 didn't decode — flagged as ambiguous rather than asserted as a new
 gap; a raw-table, multi-topic-index pull would resolve it.
+
+## Stake lifecycle, factory config and blend settings
+
+Every remaining shape the gated set emits is decoded; real rows are in
+`test/fixtures/phoenix/event-shapes/`, replayed by `event_shapes_test.go`.
+Single-event shapes are dispatched by `classifyAny` in `decode.go` (the
+one-topic `len(e.Topic) == 1` switch, then `topicPairActions`) and decoded
+in `decode_single.go`:
+
+| Shape | Lands as |
+|---|---|
+| `("create_distribution_flow","asset")` | `phoenix_stake_events` `create_distribution_flow` (asset in `lp_token`, no user) |
+| `("Stake: Migration: ", …)`, `("Stake", "Migration for user completed and stored: ")` | `phoenix_stake_events` `migration_started` / `_queried` / `_completed` (user only) |
+| `("Factory","Updated Config")`, Void body, factory only | `phoenix_admin_events` `factory_config_updated` |
+| `("blend_pool", set_delegate / set_min_trading_a / _b)` | `phoenix_admin_events` (`admin_addr` or `value`) |
+| Symbol `provide_liquidity` / `withdraw_liquidity`, Map body | `phoenix_liquidity` |
+
+The earliest stake WASMs emit an unbond's token and amount under the
+`"bond"` topic; `buffer.continuesEarlyUnbond` routes them into the open
+unbond of the same op. Storage for the new actions is migration 0195.

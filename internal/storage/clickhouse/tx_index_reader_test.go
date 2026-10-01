@@ -219,3 +219,61 @@ func TestTxIndexes_ContextCanceledDoesNotCountAsASkip(t *testing.T) {
 		t.Errorf("MEVLakeOrderLookupSkippedTotal = %v, want unchanged at %v on context cancellation", got, before)
 	}
 }
+
+// TestTxLedgerIndexes_KeepsEveryLedgerPerHash — the tagger confirms the ledger
+// before trusting an index, so a hash with rows at two ledgers must surface
+// both rather than collapse to one, and an unindexed hash must stay absent.
+func TestTxLedgerIndexes_KeepsEveryLedgerPerHash(t *testing.T) {
+	conn := &stubConn{respond: func(string) (driver.Rows, error) {
+		return &stubRows{data: [][]any{
+			{"aa", uint32(99), uint32(9)},
+			{"aa", uint32(100), uint32(2)},
+		}}, nil
+	}}
+	r := &TxIndexReader{conn: conn}
+
+	got, err := r.TxLedgerIndexes(t.Context(), []string{"aa", "bb"})
+	if err != nil {
+		t.Fatalf("TxLedgerIndexes: %v", err)
+	}
+	want := []TxLedgerIndex{{Ledger: 99, TxIndex: 9}, {Ledger: 100, TxIndex: 2}}
+	if !reflect.DeepEqual(got["aa"], want) {
+		t.Errorf("aa = %+v, want %+v", got["aa"], want)
+	}
+	if _, present := got["bb"]; present {
+		t.Errorf("unindexed hash bb is present as %+v", got["bb"])
+	}
+	q := conn.queries[0]
+	for _, s := range []string{"stellar.tx_hash_index", "WHERE tx_hash IN (?)", "ledger_seq", "GROUP BY tx_hash, ledger_seq"} {
+		if !strings.Contains(q, s) {
+			t.Errorf("TxLedgerIndexes query missing %q:\n%s", s, q)
+		}
+	}
+}
+
+// TestTxLedgerIndexes_FailureCountsAsATaggerSkip — a tagger lookup failure is
+// counted on its own series, not the MEV detector's, so neither caller's miss
+// rate is misattributed.
+func TestTxLedgerIndexes_FailureCountsAsATaggerSkip(t *testing.T) {
+	tagBefore := testutil.ToFloat64(obs.TxIndexTagLookupSkippedTotal)
+	mevBefore := testutil.ToFloat64(obs.MEVLakeOrderLookupSkippedTotal)
+
+	boom := errors.New("memory limit exceeded")
+	conn := &stubConn{respond: func(string) (driver.Rows, error) { return nil, boom }}
+	r := &TxIndexReader{conn: conn}
+
+	in := hashes(3)
+	got, err := r.TxLedgerIndexes(t.Context(), in)
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want it to wrap %v", err, boom)
+	}
+	if got != nil {
+		t.Errorf("map = %v, want nil on error", got)
+	}
+	if d := testutil.ToFloat64(obs.TxIndexTagLookupSkippedTotal) - tagBefore; d != float64(len(in)) {
+		t.Errorf("TxIndexTagLookupSkippedTotal += %v, want %d", d, len(in))
+	}
+	if d := testutil.ToFloat64(obs.MEVLakeOrderLookupSkippedTotal) - mevBefore; d != 0 {
+		t.Errorf("MEVLakeOrderLookupSkippedTotal += %v on a tagger miss, want 0", d)
+	}
+}

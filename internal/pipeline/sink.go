@@ -2474,6 +2474,12 @@ func persistPhoenixInitialize(ctx context.Context, logger *slog.Logger, store *t
 }
 
 func persistPhoenixAdmin(ctx context.Context, logger *slog.Logger, store *timescale.Store, e phoenix.AdminEvent) error {
+	// Only the min-trading settings carry a value; the zero Amount of every
+	// other action must stay NULL, not "0".
+	value := ""
+	if e.AdminAction == phoenix.AdminActionBlendSetMinTradingA || e.AdminAction == phoenix.AdminActionBlendSetMinTradingB {
+		value = e.Value.String()
+	}
 	if err := store.InsertPhoenixAdmin(ctx, timescale.PhoenixAdminEvent{
 		Pool:            e.Pool,
 		Ledger:          e.Ledger,
@@ -2483,6 +2489,7 @@ func persistPhoenixAdmin(ctx context.Context, logger *slog.Logger, store *timesc
 		EventIndex:      e.EventIndex,
 		AdminAction:     e.AdminAction,
 		Admin:           e.Admin,
+		Value:           value,
 	}); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(phoenix.SourceName, "phoenix_admin_events").Inc()
 		logger.Error("insert Phoenix admin failed",

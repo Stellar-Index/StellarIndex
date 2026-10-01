@@ -99,8 +99,9 @@ if [ -d internal/api/v1 ] && [ -f openapi/stellar-index.v1.yaml ]; then
   # a route that was in the spec the whole time. Empty until a route is
   # actually kept undocumented on purpose.
   internal_routes_re='^$'
-  # handlePublic( and public.Handle(mux, mount credential-optional routes; tests register fixtures.
-  grep -rhoE --exclude='*_test.go' '(Handle(Func)?\(|handlePublic\(|\.Handle\(mux, )"[A-Z]+ /v1[^"]*"' internal/api/v1/ 2>/dev/null | \
+  # handlePublic( and public.Handle(mux, mount credential-optional routes, handleAdmin( the operator
+  # tier; tests register fixtures.
+  grep -rhoE --exclude='*_test.go' '(Handle(Func)?\(|handlePublic\(|handleAdmin\(|\.Handle\(mux, )"[A-Z]+ /v1[^"]*"' internal/api/v1/ 2>/dev/null | \
     sed -E 's|.*"[A-Z]+ /v1||; s|"$||' | \
     sed -E 's|^$|/|' | \
     sort -u | while IFS= read -r route; do
@@ -135,6 +136,7 @@ if [ -d internal/api/v1 ] && [ -f openapi/stellar-index.v1.yaml ]; then
         if grep -qrF --exclude='*_test.go' \
           -e "HandleFunc(\"${method} /v1${route}\"" -e "Handle(\"${method} /v1${route}\"" \
           -e "handlePublic(\"${method} /v1${route}\"" -e ".Handle(mux, \"${method} /v1${route}\"" \
+          -e "handleAdmin(\"${method} /v1${route}\"" \
           internal/api/v1/ 2>/dev/null; then
           found=1
           break
@@ -380,6 +382,13 @@ stale_patterns=(
                                   # ATH/day-VWAP fix. Bare pattern (not scoped
                                   # to "R-008") so it also catches a citation
                                   # reappearing in the header list alone
+  "#1270\b"                      # dangling ref (RSWP-143) — coverage-matrix.md's
+                                  # 2026-05-11 entry cited R-016's fix as
+                                  # "#1270" in the row and the header list;
+                                  # the number is pre-migration, so it now
+                                  # resolves to an unrelated item. Cite the
+                                  # commit (4ab6b818d) instead. Bare pattern
+                                  # for the same reason as #1263
   "#1268\b"                      # coverage-matrix.md's 2026-05-11 entry cited
                                   # the R-001/R-002 prewarm fix as #1268; that
                                   # number now resolves to an unrelated item,

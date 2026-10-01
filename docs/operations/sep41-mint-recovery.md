@@ -147,23 +147,40 @@ re-folds from zero (documented on `AdvanceSEP41SupplyRollup` +
 migration 0085).
 
 **There is nothing to do here by hand.** The step-2 `ch-rebuild -sep41
--write -contracts …` run already reset the fold checkpoint for exactly
-those contracts, as its last act after the events were fully written
-(`chRebuild`'s `sep41RollupResetPlan` gate in `internal/ops/chops/ch_rebuild.go`). Confirm it happened:
+-write -contracts …` run already re-folded exactly those contracts, as
+its last act after the events were fully written (`chRebuild`'s
+`sep41RollupResetPlan` gate in `internal/ops/chops/ch_rebuild.go`).
+Confirm it happened:
 
 ```
-ch-rebuild: reset 3 sep41_supply_rollup fold row(s) [SCOPED — 3 contract(s)];
-the aggregator worker will re-fold from zero (genesis baseline preserved)
+ch-rebuild: reset 3 sep41_supply_rollup fold row(s) [SCOPED — 3 contract(s)],
+each re-folded from zero in place (genesis baseline preserved)
 ```
 
-If that line is absent from the step-2 output, step 2 ran **without**
-`-write` (dry run is the default) or without `-sources sep41_supply` —
-re-run it correctly. The reset is an `UPDATE … SET mint_total = 0,
-burn_total = 0, clawback_total = 0, last_ledger = 0`
-(`Store.ResetSEP41SupplyRollupFold` in `internal/storage/timescale/sep41_supply_events.go`); with
-`last_ledger` back at 0 the reader serves the exact full-sum fallback
-until the worker re-folds, so correctness is restored immediately and
-the fast path shortly after.
+If neither that line nor an error is in the step-2 output, step 2 ran
+**without** `-write` (dry run is the default) or without
+`-sources sep41_supply` — re-run it correctly. The reset
+(`Store.ResetSEP41SupplyRollupFold` in
+`internal/storage/timescale/sep41_supply_events.go`) zeroes each
+contract's fold columns and re-folds them up to the settled cursor in
+one transaction per contract, so the reader sees either the old row or
+the re-folded one and the served supply is on the fast path as soon as
+the run exits.
+
+If a contract's re-fold does not commit (it lost the row lock to a
+running aggregator pass, or the run was cancelled), that contract alone
+is zeroed to `last_ledger = 0` instead and step 2 exits non-zero with:
+
+```
+ch-rebuild: sep41 rollup reset: timescale: ResetSEP41SupplyRollupFold:
+N contract(s) zeroed instead of re-folded (served exactly via the full-sum
+read until the worker re-folds them): …
+```
+
+Those N contracts serve the exact full-sum fallback until the
+aggregator worker re-folds them (see the end of this step); the rest
+were re-folded. If the error instead says `the zeroing fallback failed`,
+those contracts may still serve a stale fold — re-run step 2.
 
 > ⚠️ **Never `DELETE` or `TRUNCATE` `sep41_supply_rollup` — scoped or
 > not.**
@@ -225,12 +242,14 @@ window bound from step 2 applies.
 `-contracts` must be a SUBSET of `[supply] watched_sep41_contracts`; a
 contract outside that set is read but decodes to nothing (the tool warns).
 
-The aggregator's `runSEP41SupplyRollup` worker re-folds on its next
-cadence (`[supply] aggregator_refresh_cadence`) — sequentially, one
-contract at a time, to avoid the concurrent full-scans that caused the
-2026-07-06 p95 incident. No restart is required; to force an immediate
-re-fold, restart `stellarindex-aggregator` (its first pass warms the
-checkpoint before the refresher reads it).
+Nothing waits on the aggregator after a clean reset: `ch-rebuild`
+re-folded every contract in place. Only contracts named in a
+`zeroed instead of re-folded` error wait for the aggregator's
+`runSEP41SupplyRollup` worker, which re-folds them on its next cadence
+(`[supply] aggregator_refresh_cadence`) — sequentially, one contract at
+a time, to avoid the concurrent full-scans that caused the 2026-07-06
+p95 incident. To re-fold them sooner, restart `stellarindex-aggregator`
+(its first pass warms the checkpoint before the refresher reads it).
 
 ## 4. Verify
 

@@ -467,9 +467,8 @@ export interface paths {
          *     balance, and `holder_count` is the exact number of funded accounts.
          *     `asset_id` is the canonical form (`CODE-ISSUER`, or `native`; the
          *     `crypto:XLM` alias serves the native board, echoed as
-         *     `asset: "native"`). Balances are strings (ADR-0003). Coverage grows
-         *     with the entry-change capture window; full once the Phase-C backfill
-         *     lands.
+         *     `asset: "native"`). Balances are strings (ADR-0003). Coverage tracks
+         *     the entry-change capture.
          *
          *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the read
          *     is fresh to; `flags.stale` fires when the watermark's close time
@@ -544,9 +543,10 @@ export interface paths {
          *        and the `/v1/observations` triangulation hint — except
          *        that the two SEP-40 point reads answer 404 instead of the
          *        declaration, since their shape has no `price_type` to mark it.
-         *     4. Fiat-vs-fiat cross-rate from the forex snapshot when both
-         *        sides are `fiat:` typed (e.g.
-         *        `?asset=fiat:EUR&quote=fiat:USD`). Computed as
+         *     4. Fiat-vs-fiat cross-rate when both sides are `fiat:` typed
+         *        (e.g. `?asset=fiat:EUR&quote=fiat:USD`), from the vendor FX
+         *        fixings bound to the current minute (`/v1/price/tip`: the
+         *        live forex snapshot). Computed as
          *        `rate_usd[Y] / rate_usd[X]`. Returned with
          *        `flags.triangulated=true` since the value is derived
          *        rather than a direct trade. Same fallback fires on
@@ -579,6 +579,16 @@ export interface paths {
          *     genuine miss — see that route's description),
          *     the SEP-40 oracle endpoints, and the `price_usd` enrichment on
          *     asset surfaces.
+         *
+         *     A fiat cross this route derives (fiat/fiat, or a non-fiat asset
+         *     in a fiat with no market of its own) converts at the vendor FX
+         *     fixing bound to the bucket's close, never at the live rate. When
+         *     no fixing binds within the 76 h lookback the price is withheld:
+         *     a `price-withheld` 404 titled "Price withheld — FX leg
+         *     unavailable", omitted and listed as withheld on
+         *     `/v1/price/batch`. A failed FX read is a 503
+         *     `price-unavailable`, and the batch row is omitted without being
+         *     listed. `/v1/price/tip` keeps the live rate.
          */
         get: operations["getPrice"];
         put?: never;
@@ -1295,6 +1305,18 @@ export interface paths {
          *        see `internal/storage/timescale/ohlc_routes.go`'s
          *        `OHLCRoutes` table, the single declaration this list must
          *        track.
+         *
+         *     **Open and close inside one ledger (both modes).** On-chain
+         *     trades carry the whole-second ledger close time and the
+         *     network's apply order is not recorded, so when several
+         *     transactions in one ledger trade the pair inside one bar,
+         *     `open` and `close` are picked by a tie-break on
+         *     `(ts, ledger, tx_hash, op_index, source)` — `tx_hash` order
+         *     between transactions, which is NOT execution order; `op_index`
+         *     order within one transaction. The bar is stable, but `open` or
+         *     `close` can be another real trade from that ledger, off by at
+         *     most the price movement inside one ledger (~5 s); `high`,
+         *     `low`, VWAP and volume are unaffected.
          */
         get: operations["getOhlc"];
         put?: never;
@@ -4794,7 +4816,7 @@ export interface paths {
          *     decimals). `usd_value` is a backward-compatible
          *     alias populated only on the `usd` basis. Computed in one pass over the
          *     current-state projection (latest `ledger_entry_changes` per key, ADR-0038
-         *     Phase C); coverage tracks the entry-change capture + Phase-C backfill.
+         *     Phase C); coverage tracks the entry-change capture.
          *
          *     Freshness (ADR-0041): the ranking is a background-computed snapshot
          *     (refreshed every few minutes, served for up to 15 minutes). The
@@ -5018,9 +5040,8 @@ export interface paths {
          *     limits) and open offers.
          *
          *     `exists:false` (with HTTP 200, not 404) when the account has no live
-         *     AccountEntry in the captured ledger window — never created, merged away,
-         *     or its create predates live capture (resolves once the Phase-C backfill
-         *     lands). Balances are strings (ADR-0003).
+         *     AccountEntry in the captured entry-change history — never created,
+         *     merged away, or not yet in the capture. Balances are strings (ADR-0003).
          *
          *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the served
          *     state was fresh to WHEN IT WAS CACHED (up to 30s old), not a serve-time
@@ -5751,6 +5772,11 @@ export interface components {
              * @enum {string}
              */
             scope: "all";
+            /**
+             * Format: int64
+             * @description Lake watermark (highest contiguously captured ledger) read before this page's scan; rows past it may still be arriving. A freshness marker, not a completeness claim: incoming (participant) activity is covered only where the participant index has been captured or backfilled. Absent when the watermark was unreadable.
+             */
+            as_of_ledger?: number;
         };
         /**
          * @description Operations involving an account, decoded (newest first), with an opaque
@@ -5778,6 +5804,11 @@ export interface components {
              *     every operation carries its true transaction outcome.
              */
             coverage_note?: string;
+            /**
+             * Format: int64
+             * @description Lake watermark (highest contiguously captured ledger) read before this page's scan; rows past it may still be arriving. A freshness marker, not a completeness claim: incoming (participant) activity is covered only where the participant index has been captured or backfilled. Absent when the watermark was unreadable.
+             */
+            as_of_ledger?: number;
         };
         /** @description One row in an account's movement feed (ADR-0048 D5). */
         AccountMovement: {
@@ -10034,6 +10065,10 @@ export interface components {
                 /** @description p99 latency SLO target in milliseconds. See p95_target_ms. */
                 p99_target_ms?: number;
             };
+            /**
+             * @description The counts are omitted when their query failed (see
+             *     `freshness_status`); a served `0` is present as `0`.
+             */
             freshness?: {
                 /** Format: date-time */
                 last_aggregator_tick?: string;
@@ -10092,6 +10127,19 @@ export interface components {
              * @enum {string}
              */
             incidents_status: "ok" | "degraded" | "unknown";
+            /**
+             * @description Trust signal for the `freshness` block, so a failed count
+             *     query cannot read as a measured zero:
+             *       - "ok":       counts measured, every enabled source active.
+             *       - "degraded": counts measured, `active_sources` <
+             *                     `total_sources`. Does not by itself move
+             *                     `overall`.
+             *       - "unknown":  a freshness query FAILED, or no metrics
+             *                     backend is wired — the counts are omitted.
+             *     Always present.
+             * @enum {string}
+             */
+            freshness_status: "ok" | "degraded" | "unknown";
         };
         ActiveIncident: {
             /** @description Alertmanager `alertname` label. */
@@ -10808,6 +10856,28 @@ export interface components {
             observed_at: string;
             /** @description Window size for vwap/twap; omitted for last_trade. */
             window_seconds?: number;
+            /** @description Decimal string, quote units per 1 USD. Present only on a closed-surface USD-anchored fiat cross (`/v1/price`, `/v1/price/batch`, SEP-40): the vendor FX fixing the USD leg was converted at, verbatim. The fixing is the bar with the greatest close at or before the USD bucket's end minus 3 h, within the 76 h lookback, so the answer is the same whenever and wherever it is read. `/v1/price/tip` converts at the live rate and omits it. */
+            fx_rate?: string;
+            /**
+             * Format: date-time
+             * @description Close of the bound FX fixing (a vendor time). On a fiat/fiat cross, the older of the two legs' closes. Present only on a closed-surface fiat cross.
+             */
+            fx_as_of?: string;
+            /** @description Feed that published the bound FX fixing. Present only on a closed-surface USD-anchored fiat cross. */
+            fx_source?: string;
+            /**
+             * @description Grain of the bound FX fixing. `daily` before the hourly series begins for the currency; a daily fixing reports no FX staleness of its own. Present only on a closed-surface fiat cross.
+             * @enum {string}
+             */
+            fx_resolution?: "hourly" | "daily";
+            /** @description The USD price a closed-surface USD-anchored fiat cross converted: `price` × `fx_rate` equals the served price up to its rendering (15 fractional digits, more for a very small rate, trailing zeros trimmed), and `observed_at` is the served `observed_at`. */
+            usd_leg?: {
+                /** @description Decimal string. Never JSON number. */
+                price: string;
+                /** Format: date-time */
+                observed_at: string;
+                sources: string[];
+            } | null;
             /** @description Trailing-24h percentage change vs the asset's USD price ~24h ago (signed, two fractional digits — "+1.27"). Present on /v1/price/batch rows when the quote is fiat:USD and a closed comparison bucket exists; omitted otherwise. Pairs current price with 24h change in ONE bulk call for wallet portfolio screens. */
             change_24h_pct?: string | null;
             /**
@@ -12664,7 +12734,8 @@ export interface operations {
                      *           "ticket_count": 0,
                      *           "informational_count": 0
                      *         },
-                     *         "incidents_status": "ok"
+                     *         "incidents_status": "ok",
+                     *         "freshness_status": "degraded"
                      *       },
                      *       "as_of": "2026-05-05T15:09:00.119Z",
                      *       "flags": {

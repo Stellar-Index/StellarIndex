@@ -51,6 +51,8 @@ func Run(args []string) error { //nolint:gocyclo // flat command-dispatch switch
 		return tagRoutedVia(args[1:])
 	case "tag-signer":
 		return tagSigner(args[1:])
+	case "tag-tx-index":
+		return tagTxIndex(args[1:])
 	case "seed-soroswap-pairs":
 		return seedSoroswapPairs(args[1:])
 	case "seed-protocol-contracts":
