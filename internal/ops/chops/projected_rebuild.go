@@ -280,8 +280,9 @@ type sep41RollupResetter interface {
 }
 
 // sep41RollupResetTimeout bounds the post-run reset, which runs on a context
-// detached from SIGINT so an interrupted run still resets what it wrote.
-const sep41RollupResetTimeout = 30 * time.Second
+// detached from SIGINT so an interrupted run still resets what it wrote. It
+// re-folds every watched contract's history, so it is sized for cold folds.
+const sep41RollupResetTimeout = 10 * time.Minute
 
 // resetSEP41RollupAfterRebuild resets the sep41_supply_rollup fold after a
 // -write rebuild of sep41_supply. The rebuild only writes history behind the
@@ -303,7 +304,7 @@ func resetSEP41RollupAfterRebuild(ctx context.Context, w io.Writer, store sep41R
 	if err != nil {
 		return fmt.Errorf("reset sep41_supply_rollup fold after rebuild (served SEP-41 supply misses every row this run wrote at or below the fold checkpoint until the fold is reset; re-run or call ResetSEP41SupplyRollupFold): %w", err)
 	}
-	_, _ = fmt.Fprintf(w, "projected-rebuild: reset %d sep41_supply_rollup fold row(s) [FULL]; the aggregator worker will re-fold from zero (genesis baseline preserved)\n", n)
+	_, _ = fmt.Fprintf(w, "projected-rebuild: reset %d sep41_supply_rollup fold row(s) [FULL], each re-folded from zero in place (genesis baseline preserved)\n", n)
 	return nil
 }
 
