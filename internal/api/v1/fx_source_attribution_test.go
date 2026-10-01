@@ -10,6 +10,7 @@ import (
 	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // standbyCurrencies is a forex snapshot served while the primary is down:
@@ -24,6 +25,22 @@ func standbyCurrencies() *stubCurrenciesReader {
 		},
 		PublishedAt: now,
 	}}
+}
+
+// standbyFixings is the closed surfaces' view of the same feeds.
+func standbyFixings() *stubFXFixings {
+	barEnd := time.Now().UTC().Add(-timescale.FXFixingLag).Truncate(time.Hour)
+	f := fixingsOf(
+		hourlyFixing("BRL", "5.1837", barEnd),
+		hourlyFixing("EUR", "0.92", barEnd),
+		hourlyFixing("NGN", "1500", barEnd),
+	)
+	for _, t := range []string{"BRL", "EUR"} {
+		b := f.bindings[t]
+		b.Source = "ecb"
+		f.bindings[t] = b
+	}
+	return f
 }
 
 // sources[] must name the feed that published each FX rate, not a fixed
@@ -68,6 +85,7 @@ func TestFiatCrossSourcesNameThePublishingFeed(t *testing.T) {
 	}
 	for _, tc := range cases {
 		tc.opts.Currencies = standbyCurrencies()
+		tc.opts.FXFixings = standbyFixings()
 		ts := startHTTPTest(t, v1.New(tc.opts).Handler())
 		status, env, body := getCross(t, ts.URL+tc.path)
 		if status != http.StatusOK {

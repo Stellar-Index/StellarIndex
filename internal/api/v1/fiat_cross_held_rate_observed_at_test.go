@@ -33,7 +33,9 @@ func TestPriceFiatCrossStampsTheOlderLeg(t *testing.T) {
 		},
 		PublishedAt: published,
 	}}
-	srv := v1.New(v1.Options{Prices: &usdLegReader{}, Currencies: currencies})
+	// The closed surface binds fixings: UZS's newest bar is the held one.
+	fixings := fixingsOf(hourlyFixing("EUR", "0.92", published), hourlyFixing("UZS", "11800", heldSince))
+	srv := v1.New(v1.Options{Prices: &usdLegReader{}, Currencies: currencies, FXFixings: fixings})
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/price?asset=fiat:UZS&quote=fiat:EUR")

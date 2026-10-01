@@ -1,0 +1,59 @@
+# scripts/ci/*-test.sh self-tests that no workflow and not scripts/dev/verify.sh
+# runs, read by scripts/ci/check-selftest-runners.sh.
+#
+# Format: one basename per line; `#` starts a comment.
+#
+# Each entry is debt, not an exemption: the gate fails on a self-test missing
+# from this list AND on an entry that has since been wired or deleted, so the
+# list only shrinks. To retire an entry, make the self-test pass, invoke it from
+# ci.yml's import-checks job and from verify.sh, and delete its line here.
+
+ansible-archival-datadirs-ownership-test.sh
+ansible-divergence-chainlink-secret-test.sh
+ansible-exporter-service-gating-test.sh
+ansible-fact-cache-path-test.sh
+ansible-galexie-admin-firewall-test.sh
+ansible-haproxy-firewall-ipv6-test.sh
+ansible-haproxy-vip-ipv6-test.sh
+ansible-hashdb-enable-var-test.sh
+ansible-ingestion-oracle-sources-gate-test.sh
+ansible-lint-tasks-path-test.sh
+ansible-loki-firewall-ipv6-test.sh
+ansible-minio-buckets-var-test.sh
+ansible-zfs-import-guard-test.sh
+audit-remediation-operator-actions-test.sh
+cache-r1-annotation-test.sh
+changelog-canonical-citation-test.sh
+check-commitlint-scope-parity-test.sh
+check-deploy-relax-test.sh
+check-redirects-cap-test.sh
+ci-doc-trigger-test.sh
+dependabot-config-test.sh
+deploy-rollback-test.sh
+explorer-file-budget-test.sh
+explorer-openapi-check-test.sh
+explorer-shell-fallback-check-test.sh
+ledger-meta-decode-probe-test.sh
+lint-api-restartsec-parity-test.sh
+lint-deploy-systemd-authority-test.sh
+lint-docs-test.sh
+lint-lexicon-test.sh
+lint-migrations-test.sh
+lint-orphans-truth-test.sh
+lint-patroni-basic-auth-quoting-test.sh
+lint-replay-plan-citation-test.sh
+lint-runbook-annotations-test.sh
+lint-systemd-envfile-order-test.sh
+lint-tripwire-window-test.sh
+node-healthcheck-galexie-mc-test.sh
+node-healthcheck-header-test.sh
+prometheus-basic-auth-wiring-test.sh
+prometheus-firewall-ipv6-test.sh
+redis-oom-reject-alert-test.sh
+redis-sentinel-acl-lockdown-test.sh
+redis-sentinel-firewall-ipv6-test.sh
+release-tag-validation-test.sh
+sep41-mint-recovery-runbook-test.sh
+site-crawl-check-test.sh
+site-crawl-escalation-test.sh
+supply-cross-check-divergence-runbook-test.sh

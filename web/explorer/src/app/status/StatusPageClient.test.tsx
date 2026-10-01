@@ -106,6 +106,21 @@ describe('StatusPageClient measurement tiles', () => {
     expect(screen.queryByText('/ 0')).not.toBeInTheDocument();
   });
 
+  it('renders — for active sources when freshness_status is unknown', async () => {
+    mockStatus(
+      statusPayload({
+        freshness: { active_sources: 0, total_sources: 17 },
+        freshness_status: 'unknown',
+      }),
+    );
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByText('Active sources')).toBeInTheDocument(),
+    );
+    expect(screen.queryByText('/ 17')).not.toBeInTheDocument();
+  });
+
   it('renders the served measurements when they are present', async () => {
     mockStatus(
       statusPayload({

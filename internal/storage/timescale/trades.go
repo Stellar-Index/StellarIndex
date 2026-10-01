@@ -100,6 +100,9 @@ type USDVolumeFXResolver interface {
 //     usd_volume = base_amount/1e7 × XLM/USD. See
 //     [tradeUSDVolumeViaXLMBaseAnchor].
 //
+// On a DEX trade with an XLM leg on EITHER side, that XLM anchor runs
+// ahead of tier 3 (base side first, then [tradeUSDVolumeViaXLMQuoteAnchorFor]).
+//
 // Tiers 1 + 2 trust their pegs at insert time — depeg events
 // are observed separately via the divergence + anomaly paths and
 // do NOT change the inserted usd_volume retroactively. Tiers 3 + 4
@@ -193,6 +196,13 @@ func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolume
 	// SubclassDEX-only, so CEX pricing is untouched.
 	if isXLMAsset(t.Pair.Base) {
 		if v := tradeUSDVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver); v != nil {
+			return v
+		}
+	}
+	// Same anchor when the pool stored XLM as the QUOTE leg: orientation is
+	// the pool's token order, so both sides of one economic swap must value alike.
+	if isXLMAsset(t.Pair.Quote) && !isXLMAsset(t.Pair.Base) {
+		if v := tradeUSDVolumeViaXLMQuoteAnchorFor(ctx, t, fxResolver); v != nil {
 			return v
 		}
 	}
@@ -388,14 +398,13 @@ func fxLegValue(ctx context.Context, r USDVolumeFXResolver, asset canonical.Asse
 	return v.Mul(v, rate)
 }
 
-// tradeUSDVolumeViaXLMBaseAnchor is L7.6 (ROADMAP #37): the
-// write-time counterpart of [Store.SorobanVolume24hUSDForAsset]'s
-// query-time `base_asset IN ('native', SAC)` CASE. It fires only
-// when [tradeUSDVolumeViaFX] declined the quote asset — i.e. the
-// trade's quote is a pure-Soroban SEP-41 token with no direct
-// USD-pegged market (or no market against XLM either) — AND the
-// trade's BASE asset is native XLM or its Stellar Asset Contract
-// wrapper.
+// tradeUSDVolumeViaXLMBaseAnchor is the write-time counterpart of
+// [Store.SorobanVolume24hUSDForAsset]'s query-time
+// `base_asset IN ('native', SAC)` CASE. It fires only when
+// [tradeUSDVolumeViaFX] declined the quote asset — i.e. the trade's
+// quote is a pure-Soroban SEP-41 token with no direct USD-pegged
+// market (or no market against XLM either) — AND the trade's BASE
+// asset passes [baseAnchorEligible].
 //
 // A pool that quotes a pure SEP-41 token in XLM (its primary
 // liquidity route) can store the trade either way round depending
@@ -420,20 +429,17 @@ func fxLegValue(ctx context.Context, r USDVolumeFXResolver, asset canonical.Asse
 // means a tier-4 hit here is picked up there too, with no
 // double-count.
 //
-// Widened 2026-07-22 from XLM-only to any base leg whose amounts are
-// known to sit at the Stellar classic 10^7 scale (see
-// [baseAnchorEligible]). The original guard was `isXLMAsset(base)`
-// because the XLM leg was the only base the resolver could price; now
-// that the resolver bridges arbitrary tokens through XLM (tier 3b), a
-// TOKEN_A/TOKEN_B trade whose QUOTE leg cannot be priced can still be
-// valued off its BASE leg. That matters because the largest remaining
-// unpriced class is exactly token/token — for a 6T/F8 trade where F8
-// has no usable market, 6T may well have one.
+// Any on-chain base leg is eligible, not just XLM: the resolver bridges
+// arbitrary tokens through XLM (tier 3b), so a TOKEN_A/TOKEN_B trade
+// whose QUOTE leg cannot be priced can still be valued off its BASE
+// leg. That matters because the largest remaining unpriced class is
+// exactly token/token — for a 6T/F8 trade where F8 has no usable
+// market, 6T may well have one.
 //
-// Pure SEP-41 bases stay excluded: their decimals are per-contract and
-// are not plumbed through the trade-insert path, so assuming 10^7
-// would silently mis-scale the value. That is the remaining documented
-// scope boundary (needs per-asset decimals or a per-token oracle).
+// Pure SEP-41 bases are eligible too, whatever their decimals: the
+// token's scale cancels in the raw-rate product (see
+// [baseAnchorEligible]). Only per-whole-unit price tiers need real
+// decimals, and those stay restricted to classic + SAC.
 func tradeUSDVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subclass external.Subclass, r USDVolumeFXResolver) *string {
 	if r == nil || subclass != external.SubclassDEX {
 		// Off-chain sources don't have this orientation problem —
@@ -659,8 +665,10 @@ func tradeUSDVolumeViaXLMBaseAnchorFor(ctx context.Context, t canonical.Trade, r
 // timestamp; mirroring the row is therefore the whole difference between
 // the two tiers, and a change to the anchor moves both at once.
 //
-// ONLY the XLM leg, deliberately. The live insert path reaches this
-// population through [tradeUSDVolumeViaFX], which additionally
+// The insert path ([tradeUSDVolume]) takes this branch ahead of
+// [tradeUSDVolumeViaFX], so a re-derive and a fresh insert agree.
+//
+// ONLY the XLM leg, deliberately. [tradeUSDVolumeViaFX] additionally
 // cross-checks the two legs and stores the SMALLER when they diverge by
 // more than [usdLegAgreementFactor]. That cross-check defends a value
 // resting on a token leg an attacker can author (the tier-3b bridge, the
@@ -937,25 +945,25 @@ func recordDexTradeUnitRatio(t canonical.Trade) {
 // usdPopulatedLabel maps the resolved-or-not decision to the stable
 // Prometheus label values the coverage dashboards and alerts filter on.
 //
-// The counter lives here, beside the tradeUSDVolume call, rather than
-// in the pipeline sink where it started. The sink's copy was blind to
-// most of what it claimed to measure: it sat in persistTrade, which
-// the dispatcher's PRIMARY on-chain path (flushTradeBatch ->
-// BatchInsertTrades) never touches, and which no external CEX/FX
-// connector goes through at all — so the metric reported only aquarius
-// while the largest coverage gaps were on binance/kraken/coinbase and
-// on batch-path SDEX. That is the same choke-point argument
-// [isDexUnitRatioTrade] already documents for the unit-ratio metric.
+// The counter lives here, beside the tradeUSDVolume call, because this
+// is the choke point every trade path funnels through exactly once (the
+// same argument [isDexUnitRatioTrade] documents for the unit-ratio
+// metric); a sink-level copy misses the batch path and every connector.
 //
-// Measuring at the choke point also drops a duplicated resolution:
-// the sink called WouldPopulateUSDVolume purely for this label, which
-// ran the whole waterfall a second time per trade (2 PG round-trips
-// per row on the re-derive path, as ch_rebuild.go notes).
-func usdPopulatedLabel(populated bool) string {
-	if populated {
+// An unpriced trade between two classic assets of ONE issuer is labelled
+// "unroutable": such a pair has no independent market to value it, so it
+// is excluded from the coverage ratio rather than counted as a pricing gap.
+// Its usd_volume stays NULL either way; only the label differs.
+func usdPopulatedLabel(p canonical.Pair, populated bool) string {
+	switch {
+	case populated:
 		return "yes"
+	case p.Base.Type == canonical.AssetClassic && p.Quote.Type == canonical.AssetClassic &&
+		p.Base.Issuer != "" && p.Base.Issuer == p.Quote.Issuer:
+		return "unroutable"
+	default:
+		return "no"
 	}
-	return "no"
 }
 
 // InsertTrade writes one trade. Returns nil for a successful insert
@@ -1017,6 +1025,8 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	// (registry hook, outcome metric, sentinels) exactly as before.
 	const q = `
         WITH ins AS (
+            -- routed_via, signer and tx_index are post-insert tagger
+            -- columns: never list them here (first-wins, see tx_index.go).
             INSERT INTO trades (
                 source, ledger, tx_hash, op_index, ts,
                 base_asset, quote_asset,
@@ -1068,7 +1078,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	if v != nil {
 		usdVolume = *v
 	}
-	obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(v != nil)).Inc()
+	obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(t.Pair, v != nil)).Inc()
 	var rowsInserted int64
 	if err := s.db.QueryRowContext(ctx, q,
 		t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
@@ -1163,7 +1173,7 @@ func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Tra
 		if v != nil {
 			usdVolume = *v
 		}
-		obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(v != nil)).Inc()
+		obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(t.Pair, v != nil)).Inc()
 		args = append(args,
 			t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
 			t.Pair.Base.String(), t.Pair.Quote.String(),
@@ -1338,6 +1348,8 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
 	//nolint:gosec // G201: VALUES placeholders constructed only from compile-time format string.
 	query := fmt.Sprintf(`
         WITH ins AS (
+            -- routed_via, signer and tx_index are post-insert tagger
+            -- columns: never list them here (first-wins, see tx_index.go).
             INSERT INTO trades (
                 source, ledger, tx_hash, op_index, ts,
                 base_asset, quote_asset,
@@ -1483,6 +1495,10 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	// isolate-on-non-infra-error fallback in
 	// internal/pipeline/trade_sink.go::flushTradeBatch stays as
 	// belt-and-braces for whatever this doesn't catch.
+	//
+	// Clone first: filterStorableTrades returns the caller's slice when every
+	// row is valid, and callers replay that slice in their own order on error.
+	storable = slices.Clone(storable)
 	sortTradesByConflictKey(storable)
 
 	// Collapse intra-batch PK duplicates BEFORE building the statement.
@@ -1723,6 +1739,10 @@ type registryObservation struct {
 // itself under a keyset cursor. It carries the sole entry in
 // [directionExempt].
 
+// maxLatestTradesForPair caps [Store.LatestTradesForPair]: each arm is a
+// time-unbounded walk, so an unclamped limit could materialise the market.
+const maxLatestTradesForPair = 1000
+
 // LatestTradesForPair returns up to `limit` most-recent trades for the
 // market the pair names — in EITHER stored direction, each returned in
 // the requested orientation. Returns an empty slice + nil error if the
@@ -1730,8 +1750,11 @@ type registryObservation struct {
 //
 // The union of each direction's newest `limit`, re-sorted and cut to
 // `limit`, is exactly the market's newest `limit`, so the arms may be
-// limited individually. Ties on (ts, ledger) are broken by the
-// database, as they were when this read spanned one direction.
+// limited individually. Each arm keeps every row tying its cut on
+// (ts, ledger) — the order the indexes and compressed batches serve
+// cheaply — so the outer sort can break ties on the full key
+// /v1/history orders on, and the answer is one fixed row rather than
+// whichever of a ledger's trades the plan happened to meet first.
 //
 // Unbounded in time on purpose, and for the same two reasons as
 // [Store.LatestTradePerSource] — read the "no time bound, deliberately"
@@ -1742,9 +1765,13 @@ type registryObservation struct {
 // /v1/price's last-trade arm, so a window here would stop serving a
 // price for a quiet market rather than merely slow it down. Zero-leg
 // (unpriceable) rows are excluded so the last trade is always a price.
+// `limit` is clamped to [maxLatestTradesForPair].
 func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit int) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 100
+	}
+	if limit > maxLatestTradesForPair {
+		limit = maxLatestTradesForPair
 	}
 	const q = `
         (SELECT source, ledger, tx_hash, op_index, ts,
@@ -1758,7 +1785,7 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
             AND quote_asset = $2
             AND base_amount > 0 AND quote_amount > 0
           ORDER BY ts DESC, ledger DESC
-          LIMIT $3)
+          FETCH FIRST $3 ROWS WITH TIES)
         UNION ALL
         (SELECT source, ledger, tx_hash, op_index, ts,
                 base_asset, quote_asset,
@@ -1771,8 +1798,8 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
             AND quote_asset = $1
             AND base_amount > 0 AND quote_amount > 0
           ORDER BY ts DESC, ledger DESC
-          LIMIT $3)
-        ORDER BY ts DESC, ledger DESC
+          FETCH FIRST $3 ROWS WITH TIES)
+        ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
         LIMIT $3
     `
 	rows, err := s.db.QueryContext(ctx, q,
@@ -1811,7 +1838,11 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 // (migration 0037) covers the (base_asset, quote_asset, source, ts
 // DESC, ledger DESC) order exactly, and each arm uses it as it always
 // did. The cost is ~O(num_sources) per direction rather than
-// O(rows_in_market).
+// O(rows_in_market). A ledger can hold several of one source's trades,
+// so the LATERAL then picks among that head's rows by (tx_hash,
+// op_index). Those keys must stay out of the DISTINCT ON's ORDER BY:
+// the index does not cover them, and the skip scan degrades to a sort
+// of the whole market.
 //
 // A source that traded the market BOTH ways round therefore arrives
 // twice, and one row per source is what this returns, so the two are
@@ -1871,31 +1902,49 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 // unbounded-latest-ok: see point 3 above; TestLatestTradeReadsTakeNoRecencyBound pins it.
 func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sourceFilter string) ([]canonical.Trade, error) {
 	const q = `
-        (SELECT DISTINCT ON (source)
-                source, ledger, tx_hash, op_index, ts,
-                base_asset, quote_asset,
-                base_amount, quote_amount,
-                COALESCE(maker, '')      AS maker,
-                COALESCE(taker, '')      AS taker,
-                COALESCE(routed_via, '') AS routed_via
-           FROM trades
-          WHERE base_asset  = $1
-            AND quote_asset = $2
-            AND ($3 = '' OR source = $3)
-          ORDER BY source, ts DESC, ledger DESC)
+        (SELECT t.source, t.ledger, t.tx_hash, t.op_index, t.ts,
+                t.base_asset, t.quote_asset,
+                t.base_amount, t.quote_amount,
+                COALESCE(t.maker, '')      AS maker,
+                COALESCE(t.taker, '')      AS taker,
+                COALESCE(t.routed_via, '') AS routed_via
+           FROM (SELECT DISTINCT ON (source) source, ts, ledger
+                   FROM trades
+                  WHERE base_asset  = $1
+                    AND quote_asset = $2
+                    AND ($3 = '' OR source = $3)
+                  ORDER BY source, ts DESC, ledger DESC) head
+          CROSS JOIN LATERAL
+                (SELECT * FROM trades
+                  WHERE base_asset  = $1
+                    AND quote_asset = $2
+                    AND source = head.source
+                    AND ts     = head.ts
+                    AND ledger = head.ledger
+                  ORDER BY tx_hash DESC, op_index DESC
+                  LIMIT 1) t)
         UNION ALL
-        (SELECT DISTINCT ON (source)
-                source, ledger, tx_hash, op_index, ts,
-                base_asset, quote_asset,
-                base_amount, quote_amount,
-                COALESCE(maker, '')      AS maker,
-                COALESCE(taker, '')      AS taker,
-                COALESCE(routed_via, '') AS routed_via
-           FROM trades
-          WHERE base_asset  = $2
-            AND quote_asset = $1
-            AND ($3 = '' OR source = $3)
-          ORDER BY source, ts DESC, ledger DESC)
+        (SELECT t.source, t.ledger, t.tx_hash, t.op_index, t.ts,
+                t.base_asset, t.quote_asset,
+                t.base_amount, t.quote_amount,
+                COALESCE(t.maker, '')      AS maker,
+                COALESCE(t.taker, '')      AS taker,
+                COALESCE(t.routed_via, '') AS routed_via
+           FROM (SELECT DISTINCT ON (source) source, ts, ledger
+                   FROM trades
+                  WHERE base_asset  = $2
+                    AND quote_asset = $1
+                    AND ($3 = '' OR source = $3)
+                  ORDER BY source, ts DESC, ledger DESC) head
+          CROSS JOIN LATERAL
+                (SELECT * FROM trades
+                  WHERE base_asset  = $2
+                    AND quote_asset = $1
+                    AND source = head.source
+                    AND ts     = head.ts
+                    AND ledger = head.ledger
+                  ORDER BY tx_hash DESC, op_index DESC
+                  LIMIT 1) t)
         ORDER BY source
     `
 	rows, err := s.db.QueryContext(ctx, q,
@@ -2260,6 +2309,8 @@ func (s *Store) TradesInRangeAfter(
 //     ticker within [fxQuotesSnapLookback] wins; USD legs are exact 1
 //     (rate_usd is USD-anchored). See [fxSnapFromRows] for the exact-
 //     Rat cross/inversion math.
+//     A leg set fully covered by fx_fixings (bar_end ≤ cutoff − [FXFixingLag],
+//     within [fxFixingStoreMaxAge]) is priced from those bars first.
 //  2. `trades` filtered by `fxSources` — structurally empty today: no
 //     FXSources() member writes trades (massive writes fx_quotes,
 //     exchangeratesapi writes oracle_updates), so re-enabling a
@@ -2298,6 +2349,13 @@ func (s *Store) FXQuoteAtOrBefore(
 	}
 
 	if slices.Contains(fxSources, fxQuotesSourceLabel) {
+		price, observedAt, source, err = s.fxFixingSnapAtOrBefore(ctx, pair, cutoff)
+		switch {
+		case err == nil:
+			return price, observedAt, source, nil
+		case !errors.Is(err, ErrNoFXQuote):
+			return nil, time.Time{}, "", err
+		}
 		price, observedAt, source, err = s.fxQuotesSnapAtOrBefore(ctx, pair, cutoff)
 		switch {
 		case err == nil:

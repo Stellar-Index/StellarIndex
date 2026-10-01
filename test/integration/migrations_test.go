@@ -235,6 +235,19 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	// the 0142 lesson applied at creation time. Asserted so a future
 	// re-add of the table can't reintroduce the 2038 int4 cliff.
 	assertColumnType(t, db, ctx, "defindex_fees", "derive_generation", "bigint")
+	assertColumnType(t, db, ctx, "defindex_admin_events", "derive_generation", "bigint")
+
+	// 0193 — fx_fixings, the vendor-time FX series: hypertable, the
+	// binding index, compression, and no retention policy.
+	assertHypertableExists(t, db, ctx, "fx_fixings")
+	assertIndexExists(t, db, ctx, "fx_fixings", "fx_fixings_ticker_bar_end_idx")
+	assertCompressionEnabled(t, db, ctx, "fx_fixings", true)
+	assertPolicyAttached(t, db, ctx, "fx_fixings", "policy_compression")
+	assertPolicyAbsent(t, db, ctx, "fx_fixings", "policy_retention")
+	assertColumnType(t, db, ctx, "fx_fixings", "generation", "bigint")
+
+	// 0196 — trades.tx_index, the post-insert apply-order tag.
+	assertColumnType(t, db, ctx, "trades", "tx_index", "integer")
 
 	// ─── Down: roll everything back ─────────────────────────────
 	// 0191's down refuses (LOUD) while any trades row has a zero leg;
@@ -257,6 +270,7 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	assertTableAbsent(t, db, ctx, "ingestion_cursors")
 	assertTableAbsent(t, db, ctx, "oracle_updates")
 	assertTableAbsent(t, db, ctx, "soroban_events")
+	assertTableAbsent(t, db, ctx, "fx_fixings")
 	for _, cagg := range []string{
 		"prices_1m", "prices_15m", "prices_1h",
 		"prices_4h", "prices_1d", "prices_1w", "prices_1mo",

@@ -141,6 +141,7 @@ var subcommands = map[string]func(args []string) error{
 	"census-backfill":         ingest.Run,
 	"tag-routed-via":          ingest.Run,
 	"tag-signer":              ingest.Run,
+	"tag-tx-index":            ingest.Run,
 	"seed-soroswap-pairs":     ingest.Run,
 	"seed-protocol-contracts": ingest.Run,
 	"seed-entry-counts":       ingest.Run,
@@ -928,6 +929,17 @@ Subcommands:
                           checkpointed per -from/-to pair, and -resume
                           (default true) resumes only a run of the same
                           range.
+  tag-tx-index -config PATH -from RFC3339 -to RFC3339 [-window DUR] [-ch-addr H:P] [-write]
+                          Back-tag trades.tx_index (intra-ledger apply
+                          order, migration 0196) for every on-chain trade
+                          in [-from, -to), read from the lake's
+                          stellar.tx_hash_index. The recovery half of the
+                          live pipeline.RunTxIndexTagger sweeper; run it
+                          over history the 30-min lookback never saw (e.g.
+                          after each SDEX history window). Windowed by ts
+                          (default 1h); first-wins, so re-runs are no-ops.
+                          -write refuses a range touching a compressed
+                          trades chunk: tag history before compression.
   census-backfill -config PATH -from N -to N [-bucket NAME] [-resume] [-write]
                           Populate ledger_ingest_log (ADR-0033 substrate
                           record) for a historical range. Pure structural
@@ -976,7 +988,7 @@ Subcommands:
                           non-zero on any divergence. soroswap is re-derived
                           without pair seeding, so a range holding pairs
                           created before -from diverges by construction.
-  ch-rebuild -config PATH -from N -to N [-ch-addr H:P] [-sources CSV] [-sdex] [-sep41] [-contract-calls] [-contracts CSV] [-bulk-trades]
+  ch-rebuild -config PATH -from N -to N [-write] [-ch-addr H:P] [-sources CSV] [-sdex] [-sep41] [-contract-calls] [-contracts CSV] [-bulk-trades]
                           Re-derive event-based served tables (Timescale)
                           from the ClickHouse lake for a range by re-running
                           the production decoders — the ADR-0034 lake-replay

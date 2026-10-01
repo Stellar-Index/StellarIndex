@@ -345,6 +345,16 @@ func (s *Store) fxQuotesSnapAtOrBefore(
 		return nil, time.Time{}, "", ErrNoFXQuote
 	}
 
+	got, err := s.fxQuotesRowsAtOrBefore(ctx, tickers, cutoff)
+	if err != nil {
+		return nil, time.Time{}, "", err
+	}
+	return fxSnapFromRows(pair, got)
+}
+
+// fxQuotesRowsAtOrBefore returns each ticker's newest fx_quotes row with
+// bucket ≤ cutoff within [fxQuotesSnapLookback]; a ticker with none is absent.
+func (s *Store) fxQuotesRowsAtOrBefore(ctx context.Context, tickers []string, cutoff time.Time) (map[string]fxSnapRow, error) {
 	const q = `
         SELECT DISTINCT ON (ticker)
                ticker, bucket, rate_usd::text, COALESCE(source, '')
@@ -358,7 +368,7 @@ func (s *Store) fxQuotesSnapAtOrBefore(
 		tickers, cutoff.UTC(), cutoff.UTC().Add(-fxQuotesSnapLookback),
 	)
 	if err != nil {
-		return nil, time.Time{}, "", fmt.Errorf("timescale: fxQuotesSnapAtOrBefore: %w", err)
+		return nil, fmt.Errorf("timescale: fxQuotesSnapAtOrBefore: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -369,14 +379,14 @@ func (s *Store) fxQuotesSnapAtOrBefore(
 			row    fxSnapRow
 		)
 		if err := rows.Scan(&ticker, &row.Bucket, &row.RateUSD, &row.Source); err != nil {
-			return nil, time.Time{}, "", fmt.Errorf("timescale: fxQuotesSnapAtOrBefore scan: %w", err)
+			return nil, fmt.Errorf("timescale: fxQuotesSnapAtOrBefore scan: %w", err)
 		}
 		got[ticker] = row
 	}
 	if err := rows.Err(); err != nil {
-		return nil, time.Time{}, "", fmt.Errorf("timescale: fxQuotesSnapAtOrBefore rows: %w", err)
+		return nil, fmt.Errorf("timescale: fxQuotesSnapAtOrBefore rows: %w", err)
 	}
-	return fxSnapFromRows(pair, got)
+	return got, nil
 }
 
 // fxQuoteBucketAtOrBeforeSelect finds the newest bucket for one ticker
@@ -401,9 +411,10 @@ const fxQuoteBucketAtOrBeforeSelect = `
 // [at-lookback, at] — the caller must then REFUSE to price rather than
 // reach forward to a later bucket or extrapolate from an older one.
 //
-// AT OR BEFORE, never after: a rate published after the trade is
-// information the trade did not have, and using it would make a
-// backfilled value depend on when the operator ran the tool.
+// AT OR BEFORE is day-bucket granularity, not publication time: the
+// bucket's date is <= at, but its rate is overwritten by every later
+// refresh that day and by the trailing-7d history bars, so it can carry
+// a rate published up to a day after `at`. Never a later bucket, though.
 func (s *Store) FXQuoteBucketAtOrBefore(ctx context.Context, ticker string, at time.Time, lookback time.Duration) (time.Time, bool, error) {
 	var bucket time.Time
 	err := s.db.QueryRowContext(ctx, fxQuoteBucketAtOrBeforeSelect,

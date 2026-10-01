@@ -351,8 +351,8 @@ type sep41RollupResetter interface {
 // A FULL reset (nil contractIDs), not scoped: a source-level replay
 // re-walks every watched contract's events over the rewound range, not
 // just the one row that triggered it, and a reset is always safe —
-// [Store.ResetSEP41SupplyRollupFold]'s doc guarantees served supply
-// stays correct (just off the fast path) until the worker re-folds.
+// [Store.ResetSEP41SupplyRollupFold] re-folds each row in place up to the
+// just-rewound cursor, and the worker folds the replayed range as it lands.
 //
 // Returns reset=false (and does nothing) for every source other than
 // sep41_supply — a replay of trades/blend/phoenix/etc. never touches
@@ -380,7 +380,7 @@ func reportSEP41RollupReset(ctx context.Context, w io.Writer, store sep41RollupR
 	}
 	if reset {
 		_, _ = fmt.Fprintf(w,
-			"reset %d sep41_supply_rollup fold row(s) — the aggregator worker will re-fold sep41_supply_events from zero as the replayed range lands (genesis baseline preserved)\n", n)
+			"reset %d sep41_supply_rollup fold row(s), re-folded in place up to the rewound cursor — the aggregator worker folds the replayed range as it lands (genesis baseline preserved)\n", n)
 	}
 	return nil
 }

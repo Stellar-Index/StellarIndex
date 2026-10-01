@@ -27,15 +27,39 @@ const (
 	// pool-wide and carries no user either.
 	PhoenixWithdrawRewards   PhoenixStakeAction = "withdraw_rewards"
 	PhoenixDistributeRewards PhoenixStakeAction = "distribute_rewards"
+	// Stake-contract lifecycle (migration 0195): a reward flow opened for
+	// an asset (no user), and the three steps of a per-user stake
+	// migration (no token).
+	PhoenixCreateDistributionFlow PhoenixStakeAction = "create_distribution_flow"
+	PhoenixMigrationStarted       PhoenixStakeAction = "migration_started"
+	PhoenixMigrationQueried       PhoenixStakeAction = "migration_queried"
+	PhoenixMigrationCompleted     PhoenixStakeAction = "migration_completed"
 )
 
 // IsValid reports whether a is one of the known actions.
 func (a PhoenixStakeAction) IsValid() bool {
 	switch a {
-	case PhoenixBond, PhoenixUnbond, PhoenixWithdrawRewards, PhoenixDistributeRewards:
+	case PhoenixBond, PhoenixUnbond, PhoenixWithdrawRewards, PhoenixDistributeRewards,
+		PhoenixCreateDistributionFlow, PhoenixMigrationStarted, PhoenixMigrationQueried, PhoenixMigrationCompleted:
 		return true
 	}
 	return false
+}
+
+// hasUser reports whether the action's event names a user.
+func (a PhoenixStakeAction) hasUser() bool {
+	return a != PhoenixDistributeRewards && a != PhoenixCreateDistributionFlow
+}
+
+// hasToken reports whether the action's event names a token.
+func (a PhoenixStakeAction) hasToken() bool {
+	switch a {
+	case PhoenixMigrationStarted, PhoenixMigrationQueried, PhoenixMigrationCompleted:
+		return false
+	case PhoenixBond, PhoenixUnbond, PhoenixWithdrawRewards, PhoenixDistributeRewards, PhoenixCreateDistributionFlow:
+		return true
+	}
+	return true
 }
 
 // PhoenixStakeEvent is one phoenix_stake_events row — a single
@@ -53,8 +77,8 @@ func (a PhoenixStakeAction) IsValid() bool {
 // REPURPOSED to the reward-token / distributed-asset address on
 // withdraw_rewards / distribute_rewards — same column, different
 // per-action meaning, per the "reuse existing columns" preference
-// (see phoenix/events.go doc). User is empty for distribute_rewards
-// (a pool-wide announcement with no per-user attribution).
+// (see phoenix/events.go doc). User is empty for distribute_rewards and
+// create_distribution_flow (pool-wide); LPToken is empty for migration_*.
 type PhoenixStakeEvent struct {
 	StakeContract string
 	Ledger        uint32
@@ -82,10 +106,10 @@ type PhoenixStakeEvent struct {
 // higher generation now lands its correction instead of being
 // discarded.
 //
-// Defensive: rejects empty StakeContract / TxHash / LPToken and an
-// invalid Action before touching the DB. User is required for every
-// action except distribute_rewards (pool-wide, no per-user
-// attribution on the wire). Amount is required only for bond/unbond
+// Defensive: rejects empty StakeContract / TxHash and an invalid Action
+// before touching the DB. User is required unless the action is
+// pool-wide (distribute_rewards, create_distribution_flow); LPToken
+// unless it is a migration_* step. Amount is required only for bond/unbond
 // — withdraw_rewards / distribute_rewards carry no amount on the
 // event itself (migration 0097 made the column nullable for exactly
 // this reason).
@@ -99,10 +123,10 @@ func (s *Store) InsertPhoenixStakeEvent(ctx context.Context, e PhoenixStakeEvent
 	if !e.Action.IsValid() {
 		return fmt.Errorf("timescale: InsertPhoenixStakeEvent: invalid Action %q", e.Action)
 	}
-	if e.User == "" && e.Action != PhoenixDistributeRewards {
+	if e.User == "" && e.Action.hasUser() {
 		return errors.New("timescale: InsertPhoenixStakeEvent: User is empty")
 	}
-	if e.LPToken == "" {
+	if e.LPToken == "" && e.Action.hasToken() {
 		return errors.New("timescale: InsertPhoenixStakeEvent: LPToken is empty")
 	}
 	if e.Amount == "" && (e.Action == PhoenixBond || e.Action == PhoenixUnbond) {
@@ -133,7 +157,7 @@ func (s *Store) InsertPhoenixStakeEvent(ctx context.Context, e PhoenixStakeEvent
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.StakeContract, int(e.Ledger), e.ObservedAt.UTC(), e.TxHash, int(e.OpIndex),
-		string(e.Action), int(e.EventIndex), nullString(e.User), e.LPToken, nullNumeric(e.Amount),
+		string(e.Action), int(e.EventIndex), nullString(e.User), nullString(e.LPToken), nullNumeric(e.Amount),
 		s.deriveGeneration,
 	)
 	if err != nil {

@@ -29,6 +29,12 @@
 #
 # See docs/operations/galexie-backfill.md "mc mirror gotcha" for the
 # failure mode this script works around.
+#
+# Identity: every read and the mirror go through ARCHIVE_DEST's alias, which
+# ansible sets to the bucket-scoped galexie-archive-writer (no delete), so the
+# hourly run holds no MinIO admin credential. Only the operator-run PARTIALS
+# delete uses ARCHIVE_DELETE_ALIAS, named separately because it must carry
+# delete authority the writer deliberately lacks.
 set -euo pipefail
 
 LOG=/var/log/galexie-mirror.log
@@ -60,7 +66,7 @@ trap 'rm -rf "$WORK"' EXIT
 # trim itself last used, which compute-trim-cutoff.sh persists to
 # ARCHIVE_HOT_FLOOR_FILE before every trim — so the floor rolls
 # forward with the trim instead of trailing it.
-# shellcheck source=/dev/null  # ansible-rendered ARCHIVE_HOT_FLOOR=<int>
+# shellcheck source=/dev/null  # ansible-rendered hot floor and mc aliases
 [ -f /etc/default/galexie-archive-fill ] && . /etc/default/galexie-archive-fill
 ARCHIVE_HOT_FLOOR="${ARCHIVE_HOT_FLOOR:-0}"
 ARCHIVE_HOT_FLOOR_FILE=/var/lib/galexie-archive/hot-floor
@@ -83,6 +89,12 @@ PARTIAL_CHECK_WINDOW="${PARTIAL_CHECK_WINDOW:-4}"
 ARCHIVE_DEST="${ARCHIVE_DEST:-local/galexie-archive}"
 if ! [[ "$ARCHIVE_DEST" =~ ^[A-Za-z0-9_-]+(/[A-Za-z0-9_.-]+)+$ ]] || [[ "/$ARCHIVE_DEST/" == */../* || "/$ARCHIVE_DEST/" == */./* ]]; then
   echo "galexie-archive-fill: FATAL — ARCHIVE_DEST='$ARCHIVE_DEST' is not <mc-alias>/<bucket>[/<prefix>]" >&2
+  exit 1
+fi
+# The PARTIALS delete reaches the same bucket path through this alias.
+ARCHIVE_DELETE_ALIAS="${ARCHIVE_DELETE_ALIAS:-${ARCHIVE_DEST%%/*}}"
+if ! [[ "$ARCHIVE_DELETE_ALIAS" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo "galexie-archive-fill: FATAL — ARCHIVE_DELETE_ALIAS='$ARCHIVE_DELETE_ALIAS' is not an mc alias name" >&2
   exit 1
 fi
 
@@ -148,14 +160,26 @@ report_rejected() {
   fi
 }
 
+# A broken writer alias must fail the run: Phase 1b discards listing
+# errors and would count every partition as empty.
+if ! mc ls "$ARCHIVE_DEST/" >/dev/null 2>&1; then
+  echo "galexie-archive-fill: FATAL — cannot list '$ARCHIVE_DEST' (alias unset, wrong secret, or no policy)" | tee -a "$LOG" >&2
+  exit 1
+fi
+
 if [ -n "$PARTIALS_INPUT" ]; then
   echo "=== $(date -Iseconds) Phase 1: delete known partials ===" | tee -a "$LOG"
   # Validate the whole list before deleting anything.
   printf '%s\n' "$PARTIALS_INPUT" | tr ' ' '\n' | valid_partitions > "$WORK/partials.txt"
   report_rejected
+  # The rm below swallows errors, so an unresolvable alias would look like success.
+  if ! mc alias list "$ARCHIVE_DELETE_ALIAS" >/dev/null 2>&1; then
+    echo "galexie-archive-fill: FATAL — delete alias '$ARCHIVE_DELETE_ALIAS' is not configured; nothing deleted" | tee -a "$LOG" >&2
+    exit 1
+  fi
   while read -r p; do
     echo "  rm: $p" | tee -a "$LOG"
-    mc rm --recursive --force "$ARCHIVE_DEST/$p/" >/dev/null 2>&1 || true
+    mc rm --recursive --force "$ARCHIVE_DELETE_ALIAS/${ARCHIVE_DEST#*/}/$p/" >/dev/null 2>&1 || true
   done < "$WORK/partials.txt"
 fi
 

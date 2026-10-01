@@ -458,6 +458,18 @@ func run(cfgPath string, dryRun bool) error {
 		logger.Info("AMM signer attribution sweeper started")
 	}
 
+	// Intra-ledger apply order — back-tags trades.tx_index from the lake
+	// (migration 0196) for every on-chain source. See internal/pipeline/txindex.go.
+	if chAddr := cfg.Storage.ClickHouseAddr; chAddr != "" {
+		txIndexStop, txIndexDone := startTxIndexTagger(rootCtx, chAddr, store,
+			logger.With("component", "tx-index-tagger"))
+		defer func() {
+			txIndexStop()
+			<-txIndexDone
+		}()
+		logger.Info("tx-index apply-order sweeper started")
+	}
+
 	// ─── Decoder-stats periodic flush ────────────────────────────
 	// Snapshots dispatcher.Stats() every 5 min and writes per-source
 	// deltas to the decoder_stats_5m hypertable. Powers
@@ -647,6 +659,7 @@ func run(cfgPath string, dryRun bool) error {
 	}
 	events := make(chan consumer.Event, 256)
 	sinkDone := make(chan struct{})
+	var sinkLoss pipeline.ShutdownLoss // read only after <-sinkDone
 	go func() {
 		// CRASH — deliberately unguarded (#368 M4). Two independent
 		// reasons, either one sufficient:
@@ -668,7 +681,7 @@ func run(cfgPath string, dryRun bool) error {
 		//     separate path, so systemd's restart re-reads from the last
 		//     cursor.
 		defer close(sinkDone)
-		pipeline.PersistEvents(rootCtx, logger, store, events, sinkMode)
+		sinkLoss = pipeline.PersistEvents(rootCtx, logger, store, events, sinkMode)
 	}()
 
 	// ─── Projector (ADR-0032) ──────────────────────────────────
@@ -990,6 +1003,7 @@ func run(cfgPath string, dryRun bool) error {
 	if !streamExited {
 		select {
 		case <-streamErr:
+			streamExited = true
 			logger.Info("ledgerstream producer exited")
 		case <-shutdownCtx.Done():
 			// Producer still running at the deadline. Leaving `events`
@@ -1030,6 +1044,11 @@ func run(cfgPath string, dryRun bool) error {
 	select {
 	case <-sinkDone:
 		logger.Info("clean shutdown")
+		// Fresh bounded ctx: shutdownCtx may already be spent by a drain
+		// that ran to its deadline, and the rewind is the loss's only fix.
+		rctx, rcancel := context.WithTimeout(context.Background(), 10*time.Second)
+		rewindCursorForSinkLoss(rctx, store, sinkLoss, streamExited, logger) //nolint:contextcheck // deliberate fresh ctx, see above
+		rcancel()
 	case <-shutdownCtx.Done():
 		logger.Warn("drain timeout exceeded — hard exit")
 	}
@@ -1525,6 +1544,35 @@ func startSignerTagger(parent context.Context, chAddr, chUser, chPass string, st
 		}
 		defer func() { _ = lake.Close() }()
 		pipeline.RunSignerTagger(ctx, logger, lake, store, 0, 0)
+	}()
+	return cancel, done
+}
+
+// startTxIndexTagger runs pipeline.RunTxIndexTagger in its own goroutine,
+// back-tagging trades.tx_index from the lake's stellar.tx_hash_index
+// (migration 0196). Non-fatal and dial-retried, like startSignerTagger.
+func startTxIndexTagger(parent context.Context, chAddr string, store *timescale.Store, logger *slog.Logger) (context.CancelFunc, <-chan struct{}) {
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer worker.Recover(logger, "tx-index-tagger")
+		var lake *clickhouse.TxIndexReader
+		ok := retryUntil(ctx, logger, "tx-index tagger: ClickHouse reader unavailable",
+			signerDialMinBackoff, signerDialMaxBackoff,
+			func(ctx context.Context) error {
+				l, err := clickhouse.NewTxIndexReader(ctx, chAddr)
+				if err != nil {
+					return err
+				}
+				lake = l
+				return nil
+			})
+		if !ok {
+			return
+		}
+		defer func() { _ = lake.Close() }()
+		pipeline.RunTxIndexTagger(ctx, logger, lake, store, 0, 0)
 	}()
 	return cancel, done
 }
@@ -2165,6 +2213,59 @@ func resolveStartLedger(ctx context.Context, store cursorReader, backfillFrom ui
 		return 0, fmt.Errorf("load cursor: %w", err)
 	}
 	return c.LastLedger + 1, nil
+}
+
+// cursorRewinder is what [rewindCursorForSinkLoss] needs from
+// [timescale.Store]; narrow so the rewind rules run without a database.
+type cursorRewinder interface {
+	cursorReader
+	RewindCursor(ctx context.Context, source, sub string, lastLedger uint32) (uint32, error)
+}
+
+// rewindCursorForSinkLoss moves the ledgerstream cursor below the lowest
+// on-chain trade the sink abandoned on exit, so the next start re-walks
+// it (served-tier writes are ON CONFLICT idempotent). Reports whether it
+// rewound. Only safe once the producer has stopped: a live producer's
+// next UpsertCursor would carry the cursor forward over the rewind.
+func rewindCursorForSinkLoss(ctx context.Context, store cursorRewinder, loss pipeline.ShutdownLoss, producerStopped bool, logger *slog.Logger) bool {
+	if loss.Rows == 0 {
+		return false
+	}
+	if loss.MinLedger == 0 {
+		// Only ledger-less rows (non-trade events, off-chain trades): no
+		// safe rewind target, so the undrained counter + ERROR stay the record.
+		logger.Error("sink abandoned rows on exit with no ledger to rewind to — re-derive manually",
+			"rows", loss.Rows)
+		return false
+	}
+	target := loss.MinLedger - 1
+	if !producerStopped {
+		logger.Error("sink abandoned trades on exit but the ledgerstream producer is still running — cursor NOT rewound, re-derive manually",
+			"rows", loss.Rows, "min_ledger", loss.MinLedger)
+		return false
+	}
+	c, err := store.GetCursor(ctx, cursorSource, "")
+	if err != nil {
+		logger.Error("sink abandoned trades on exit; reading the cursor to rewind it failed — re-derive manually",
+			"rows", loss.Rows, "min_ledger", loss.MinLedger, "err", err)
+		return false
+	}
+	if c.LastLedger <= target {
+		// The abandoned ledger was never checkpointed; the next start re-walks it anyway.
+		logger.Warn("sink abandoned trades on exit at or past the cursor — no rewind needed",
+			"rows", loss.Rows, "min_ledger", loss.MinLedger, "cursor", c.LastLedger)
+		return false
+	}
+	prior, err := store.RewindCursor(ctx, cursorSource, "", target)
+	if err != nil {
+		logger.Error("sink abandoned trades on exit; cursor rewind failed — re-derive manually",
+			"rows", loss.Rows, "min_ledger", loss.MinLedger, "err", err)
+		return false
+	}
+	logger.Warn("rewound ledgerstream cursor below trades the sink abandoned on exit",
+		"rows", loss.Rows, "prior_ledger", prior, "new_ledger", target,
+		"ledger_unknown", loss.LedgerUnknown)
+	return true
 }
 
 // processAndPersistCursor wraps pipeline.ProcessLedger with the

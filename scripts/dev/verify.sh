@@ -177,6 +177,8 @@ defer_check() {
 # The self-test runs first (the gate is only as trustworthy as its fixtures).
 echo "=== verify↔CI parity self-test ===" && ./scripts/ci/check-verify-parity-test.sh
 echo "=== verify.sh ↔ CI import-checks parity ===" && ./scripts/ci/check-verify-parity.sh
+echo "=== self-test runners self-test ===" && ./scripts/ci/check-selftest-runners-test.sh
+echo "=== every scripts/ci self-test has a runner ===" && ./scripts/ci/check-selftest-runners.sh
 echo "=== CI meta-gate coverage ===" && ./scripts/ci/ci-meta-gate-coverage-test.sh
 echo "=== deploy checkout ref ===" && ./scripts/ci/deploy-checkout-ref-test.sh
 echo "=== deploy migration gate coverage ===" && ./scripts/ci/deploy-migration-gate-coverage-test.sh
@@ -606,6 +608,7 @@ lane_d() { # everything else
     echo "=== Ansible prometheus archival-host guard self-test ===" && ./scripts/ci/ansible-prometheus-host-guard-test.sh
     echo "=== Ansible exporter listen-address self-test ===" && ./scripts/ci/ansible-exporter-listen-address-test.sh
     echo "=== Ansible textfile-collector dir mode self-test ===" && ./scripts/ci/ansible-textfile-dir-mode-test.sh
+    echo "=== Ansible ZFS ARC cap self-test ===" && ./scripts/ci/ansible-zfs-arc-cap-test.sh
     echo "=== Ansible Postgres log size-cap self-test ===" && ./scripts/ci/ansible-pg-logrotate-cap-test.sh
     echo "=== Ansible prometheus port var self-test ===" && ./scripts/ci/ansible-prometheus-port-var-test.sh
     echo "=== Ansible node-exporter-collectors install self-test ===" && ./scripts/ci/ansible-node-exporter-collectors-install-test.sh
