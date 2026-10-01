@@ -135,6 +135,7 @@ func registerPricingMetrics() {
 		AggregatorBaselineRefreshTotal,
 		AggregatorSupplyLakeClampLedgers,
 		AggregatorSupplyRefreshTotal,
+		SupplyWriteBandBreachTotal,
 		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
 		AggregatorBaselineAgeSeconds,
@@ -4527,6 +4528,18 @@ var AggregatorSupplyRefreshTotal = prometheus.NewCounterVec(
 		Help: "Supply-snapshot refresh outcomes per (asset_key, outcome). Outcome ∈ {ok, dormant, static_reserve, no_ledger, no_observation, compute_error, stale_component, missing_freshness, missing_baseline, write_error}.",
 	},
 	[]string{"asset_key", "outcome"},
+)
+
+// SupplyWriteBandBreachTotal — supply snapshots written whose
+// total_supply moved more than supply.WriteBandFactor x up or down
+// against the previous one the same refresher wrote. The row is still
+// written; the counter is the prompt to check the asset's supply.
+var SupplyWriteBandBreachTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_supply_write_band_breach_total",
+		Help: "Supply snapshots written whose total_supply moved more than 10x against the previous snapshot, per (asset_key, direction). Direction ∈ {up, down}. The row is written regardless.",
+	},
+	[]string{"asset_key", "direction"},
 )
 
 // AggregatorSupplyRefreshDurationSeconds — latency histogram for
