@@ -1084,9 +1084,8 @@ paths:
         balance, and `holder_count` is the exact number of funded accounts.
         `asset_id` is the canonical form (`CODE-ISSUER`, or `native`; the
         `crypto:XLM` alias serves the native board, echoed as
-        `asset: "native"`). Balances are strings (ADR-0003). Coverage grows
-        with the entry-change capture window; full once the Phase-C backfill
-        lands.
+        `asset: "native"`). Balances are strings (ADR-0003). Coverage tracks
+        the entry-change capture.
 
         Freshness (ADR-0041): `as_of_ledger` is the lake watermark the read
         is fresh to; `flags.stale` fires when the watermark's close time
@@ -11523,7 +11522,7 @@ paths:
         decimals). `usd_value` is a backward-compatible
         alias populated only on the `usd` basis. Computed in one pass over the
         current-state projection (latest `ledger_entry_changes` per key, ADR-0038
-        Phase C); coverage tracks the entry-change capture + Phase-C backfill.
+        Phase C); coverage tracks the entry-change capture.
 
         Freshness (ADR-0041): the ranking is a background-computed snapshot
         (refreshed every few minutes, served for up to 15 minutes). The
@@ -12054,9 +12053,8 @@ paths:
         limits) and open offers.
 
         `exists:false` (with HTTP 200, not 404) when the account has no live
-        AccountEntry in the captured ledger window — never created, merged away,
-        or its create predates live capture (resolves once the Phase-C backfill
-        lands). Balances are strings (ADR-0003).
+        AccountEntry in the captured entry-change history — never created,
+        merged away, or not yet in the capture. Balances are strings (ADR-0003).
 
         Freshness (ADR-0041): `as_of_ledger` is the lake watermark the served
         state was fresh to WHEN IT WAS CACHED (up to 30s old), not a serve-time
