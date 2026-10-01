@@ -398,14 +398,13 @@ func fxLegValue(ctx context.Context, r USDVolumeFXResolver, asset canonical.Asse
 	return v.Mul(v, rate)
 }
 
-// tradeUSDVolumeViaXLMBaseAnchor is L7.6 (ROADMAP #37): the
-// write-time counterpart of [Store.SorobanVolume24hUSDForAsset]'s
-// query-time `base_asset IN ('native', SAC)` CASE. It fires only
-// when [tradeUSDVolumeViaFX] declined the quote asset — i.e. the
-// trade's quote is a pure-Soroban SEP-41 token with no direct
-// USD-pegged market (or no market against XLM either) — AND the
-// trade's BASE asset is native XLM or its Stellar Asset Contract
-// wrapper.
+// tradeUSDVolumeViaXLMBaseAnchor is the write-time counterpart of
+// [Store.SorobanVolume24hUSDForAsset]'s query-time
+// `base_asset IN ('native', SAC)` CASE. It fires only when
+// [tradeUSDVolumeViaFX] declined the quote asset — i.e. the trade's
+// quote is a pure-Soroban SEP-41 token with no direct USD-pegged
+// market (or no market against XLM either) — AND the trade's BASE
+// asset passes [baseAnchorEligible].
 //
 // A pool that quotes a pure SEP-41 token in XLM (its primary
 // liquidity route) can store the trade either way round depending
@@ -430,20 +429,17 @@ func fxLegValue(ctx context.Context, r USDVolumeFXResolver, asset canonical.Asse
 // means a tier-4 hit here is picked up there too, with no
 // double-count.
 //
-// Widened 2026-07-22 from XLM-only to any base leg whose amounts are
-// known to sit at the Stellar classic 10^7 scale (see
-// [baseAnchorEligible]). The original guard was `isXLMAsset(base)`
-// because the XLM leg was the only base the resolver could price; now
-// that the resolver bridges arbitrary tokens through XLM (tier 3b), a
-// TOKEN_A/TOKEN_B trade whose QUOTE leg cannot be priced can still be
-// valued off its BASE leg. That matters because the largest remaining
-// unpriced class is exactly token/token — for a 6T/F8 trade where F8
-// has no usable market, 6T may well have one.
+// Any on-chain base leg is eligible, not just XLM: the resolver bridges
+// arbitrary tokens through XLM (tier 3b), so a TOKEN_A/TOKEN_B trade
+// whose QUOTE leg cannot be priced can still be valued off its BASE
+// leg. That matters because the largest remaining unpriced class is
+// exactly token/token — for a 6T/F8 trade where F8 has no usable
+// market, 6T may well have one.
 //
-// Pure SEP-41 bases stay excluded: their decimals are per-contract and
-// are not plumbed through the trade-insert path, so assuming 10^7
-// would silently mis-scale the value. That is the remaining documented
-// scope boundary (needs per-asset decimals or a per-token oracle).
+// Pure SEP-41 bases are eligible too, whatever their decimals: the
+// token's scale cancels in the raw-rate product (see
+// [baseAnchorEligible]). Only per-whole-unit price tiers need real
+// decimals, and those stay restricted to classic + SAC.
 func tradeUSDVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subclass external.Subclass, r USDVolumeFXResolver) *string {
 	if r == nil || subclass != external.SubclassDEX {
 		// Off-chain sources don't have this orientation problem —
