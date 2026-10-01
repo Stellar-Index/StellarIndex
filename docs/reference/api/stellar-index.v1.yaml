@@ -1194,9 +1194,10 @@ paths:
            and the `/v1/observations` triangulation hint — except
            that the two SEP-40 point reads answer 404 instead of the
            declaration, since their shape has no `price_type` to mark it.
-        4. Fiat-vs-fiat cross-rate from the forex snapshot when both
-           sides are `fiat:` typed (e.g.
-           `?asset=fiat:EUR&quote=fiat:USD`). Computed as
+        4. Fiat-vs-fiat cross-rate when both sides are `fiat:` typed
+           (e.g. `?asset=fiat:EUR&quote=fiat:USD`), from the vendor FX
+           fixings bound to the current minute (`/v1/price/tip`: the
+           live forex snapshot). Computed as
            `rate_usd[Y] / rate_usd[X]`. Returned with
            `flags.triangulated=true` since the value is derived
            rather than a direct trade. Same fallback fires on
@@ -1229,6 +1230,16 @@ paths:
         genuine miss — see that route's description),
         the SEP-40 oracle endpoints, and the `price_usd` enrichment on
         asset surfaces.
+
+        A fiat cross this route derives (fiat/fiat, or a non-fiat asset
+        in a fiat with no market of its own) converts at the vendor FX
+        fixing bound to the bucket's close, never at the live rate. When
+        no fixing binds within the 76 h lookback the price is withheld:
+        a `price-withheld` 404 titled "Price withheld — FX leg
+        unavailable", omitted and listed as withheld on
+        `/v1/price/batch`. A failed FX read is a 503
+        `price-unavailable`, and the batch row is omitted without being
+        listed. `/v1/price/tip` keeps the live rate.
       parameters:
         - { $ref: "#/components/parameters/AssetQuery" }
         - { $ref: "#/components/parameters/Quote" }
@@ -19398,6 +19409,46 @@ components:
             timestamps sit close again, and `price_type: peg` is the
             durable signal that nothing was observed.
         window_seconds:    { type: integer, description: "Window size for vwap/twap; omitted for last_trade." }
+        fx_rate:
+          type: string
+          description: >-
+            Decimal string, quote units per 1 USD. Present only on a
+            closed-surface USD-anchored fiat cross (`/v1/price`,
+            `/v1/price/batch`, SEP-40): the vendor FX fixing the USD leg
+            was converted at, verbatim. The fixing is the bar with the
+            greatest close at or before the USD bucket's end minus 3 h,
+            within the 76 h lookback, so the answer is the same whenever
+            and wherever it is read. `/v1/price/tip` converts at the live
+            rate and omits it.
+        fx_as_of:
+          type: string
+          format: date-time
+          description: >-
+            Close of the bound FX fixing (a vendor time). On a fiat/fiat
+            cross, the older of the two legs' closes. Present only on a
+            closed-surface fiat cross.
+        fx_source: { type: string, description: "Feed that published the bound FX fixing. Present only on a closed-surface USD-anchored fiat cross." }
+        fx_resolution:
+          type: string
+          enum: [hourly, daily]
+          description: >-
+            Grain of the bound FX fixing. `daily` before the hourly series
+            begins for the currency; a daily fixing reports no FX
+            staleness of its own. Present only on a closed-surface fiat
+            cross.
+        usd_leg:
+          type: [object, "null"]
+          description: >-
+            The USD price a closed-surface USD-anchored fiat cross
+            converted: `price` × `fx_rate` equals the served price up to
+            its rendering (15 fractional digits, more for a very small
+            rate, trailing zeros trimmed), and `observed_at` is the
+            served `observed_at`.
+          required: [price, observed_at, sources]
+          properties:
+            price:       { type: string, description: "Decimal string. Never JSON number." }
+            observed_at: { type: string, format: date-time }
+            sources:     { type: array, items: { type: string } }
         change_24h_pct:
           type: [string, "null"]
           description: >-

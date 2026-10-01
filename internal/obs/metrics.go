@@ -62,6 +62,13 @@ func registerAppMetrics() {
 		ExternalFXLastQuoteUnix,
 		ExternalFXRateRejectedTotal,
 		ExternalFXBaselineHealedTotal,
+		FXFixingsLastRefreshUnix,
+		FXFixingsNewestBarEndUnix,
+		FXFixingsQuoteDisagrees,
+		FXFixingsWriteTxSeconds,
+		FXFixingsWriteErrorsTotal,
+		FXFixingsFetchErrorsTotal,
+		FXFixingsBarsRefusedTotal,
 		ExternalDustDroppedTotal,
 		ExternalPollerRefusedEntriesTotal,
 		CEXStreamDisconnectTotal, CEXStreamLastTradeUnix,
@@ -1835,6 +1842,41 @@ var ExternalFXBaselineHealedTotal = prometheus.NewCounterVec(
 		Help: "FX sanity-band baselines re-pointed at an agreeing history majority that refuted them, per source. Each increment is one poisoned/stale baseline self-corrected.",
 	},
 	[]string{"source"},
+)
+
+// FX fixings (fx_fixings, migration 0193): the vendor-time hourly series a
+// closed derived fiat price binds to. The forex worker appends it after each
+// refresh; these carry its liveness and the gate's verdicts.
+var (
+	FXFixingsLastRefreshUnix = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "stellarindex_fx_fixings_last_refresh_unix",
+		Help: "UNIX seconds of the forex worker's last completed fx_fixings append cycle, whether or not it wrote rows.",
+	})
+	FXFixingsNewestBarEndUnix = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "stellarindex_fx_fixings_newest_bar_end_unix",
+		Help: "UNIX seconds of the newest bar_end this process has committed to fx_fixings.",
+	})
+	FXFixingsQuoteDisagrees = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "stellarindex_fx_fixings_quote_disagrees",
+		Help: "1 when an accepted fx_fixings bar sits outside the sanity band of the worker's guarded daily rate for the same ticker and day, else 0.",
+	}, []string{"ticker"})
+	FXFixingsWriteTxSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "stellarindex_fx_fixings_write_tx_seconds",
+		Help:    "Duration of one fx_fixings batch insert transaction.",
+		Buckets: prometheus.DefBuckets,
+	})
+	FXFixingsWriteErrorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "stellarindex_fx_fixings_write_errors_total",
+		Help: "fx_fixings batch inserts that failed.",
+	})
+	FXFixingsFetchErrorsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "stellarindex_fx_fixings_fetch_errors_total",
+		Help: "Per-ticker hourly-bar fetches from the FX vendor that failed.",
+	}, []string{"ticker"})
+	FXFixingsBarsRefusedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "stellarindex_fx_fixings_bars_refused_total",
+		Help: "Vendor FX bars the fx_fixings gate refused: close outside [0.5, 1.5] of the median of the preceding 96h of raw bars.",
+	}, []string{"ticker"})
 )
 
 // SourceUnrepresentableSymbolsTotal — per-source counter of oracle

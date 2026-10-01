@@ -134,6 +134,17 @@ type PriceSnapshot struct {
 	ObservedAt    time.Time `json:"observed_at"`
 	WindowSeconds int       `json:"window_seconds,omitempty"`
 
+	// FXRate, FXAsOf, FXSource and FXResolution describe the vendor FX
+	// fixing a closed-surface fiat cross converted at; FXRate is quote
+	// units per 1 USD. All omitted on a price that needed no conversion.
+	FXRate       string     `json:"fx_rate,omitempty"`
+	FXAsOf       *time.Time `json:"fx_as_of,omitempty"`
+	FXSource     string     `json:"fx_source,omitempty"`
+	FXResolution string     `json:"fx_resolution,omitempty"`
+	// USDLeg is the USD price a closed-surface USD-anchored fiat cross
+	// converted: USDLeg.Price × FXRate is Price.
+	USDLeg *USDLeg `json:"usd_leg,omitempty"`
+
 	// Change24hPct is the trailing-24h percentage change vs USD
 	// (signed, 2dp) on batch rows with a fiat:USD quote. Nil
 	// otherwise.
@@ -147,6 +158,13 @@ type PriceSnapshot struct {
 	// ConfidenceFactors is the per-factor decomposition that
 	// accompanies Confidence; nil with the same semantics.
 	ConfidenceFactors *ConfidenceFactors `json:"confidence_factors,omitempty"`
+}
+
+// USDLeg is the USD price a derived fiat [PriceSnapshot] was converted from.
+type USDLeg struct {
+	Price      string    `json:"price"`
+	ObservedAt time.Time `json:"observed_at"`
+	Sources    []string  `json:"sources"`
 }
 
 // ConfidenceFactors is the per-factor decomposition of a

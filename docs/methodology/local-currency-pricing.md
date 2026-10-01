@@ -61,15 +61,29 @@ price. If you are reconciling a number, those are the inputs.
 The two legs have different clocks, and this matters:
 
 - The **USD leg** is a closed-bucket aggregate, typically seconds old.
-- The **FX rate** is a **daily** fix, and it pauses over market
-  closes. It can be up to ~76 hours old (a business-day feed spans a
-  weekend close: Friday's fix is the freshest thing that exists until
-  Monday). Older than that and we refuse to serve it rather than
-  compose a price from a stale rate (`pricing_guard.fx_cross_max_age_hours`).
+- The **FX rate** on `/v1/price` is the vendor's **hourly** close
+  (daily before a currency's hourly series begins) bound to the USD
+  bucket's end: the newest bar that closed at least 3 hours before it.
+  The same bucket therefore converts at the same rate whenever and
+  wherever you ask. It pauses over market closes and can be up to ~76
+  hours old (Friday's close is the freshest thing that exists until
+  Monday). Older than that and the price is withheld
+  (`errors/price-withheld`, "FX leg unavailable") rather than composed
+  from a stale or a live rate (`pricing_guard.fx_cross_max_age_hours`).
+  `/v1/price/tip` converts at the live rate instead.
 
 `observed_at` on the response is the USD leg's timestamp — the market
-observation the price derives from. It is not a claim that the FX
-rate was refreshed at that instant.
+observation the price derives from. The FX side is on the row itself:
+
+```json
+"fx_rate": "5.1837", "fx_as_of": "2026-09-30T09:00:00Z",
+"fx_source": "massive", "fx_resolution": "hourly",
+"usd_leg": { "price": "0.2", "observed_at": "2026-09-30T12:01:00Z", "sources": ["sdex"] }
+```
+
+`usd_leg.price × fx_rate` is `price`. `flags.stale` is set when the USD
+leg is stale, or when an hourly FX close trails its bind point by more
+than 4 hours outside the weekend close.
 
 For displaying a balance in someone's local currency — the thing
 wallets do — a daily FX fix is normal and is what you would get
@@ -86,8 +100,9 @@ have to defend. For those, use an execution venue's own quote.
   fired. Only a too-thin market points you at the raw surfaces
   (`/v1/observations`, `/v1/ohlc`, `/v1/history`) to judge it
   yourself; a flagged issuer's trades are not a price signal.
-- **An invented rate.** A currency with no FX rate returns a plain
-  404 rather than a guess.
+- **An invented rate.** A currency with no FX close within the
+  lookback of the bucket gets a 404 (`errors/price-withheld`, "FX leg
+  unavailable") rather than a guess or today's live rate.
 - **A price for an asset we cannot value in USD.** The USD leg is the
   anchor; without it there is nothing to convert.
 

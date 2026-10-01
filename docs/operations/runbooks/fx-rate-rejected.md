@@ -118,6 +118,28 @@ Reasons (the `reason` label):
   is a documented constant with its rationale in the code. Changing it is
   a code change with a test, not a runtime toggle.
 
+### `fx_fixings` bars (`stellarindex_fx_fixings_quote_disagreement`)
+
+Hourly bars pass their own gate before insert: a close outside
+[0.5, 1.5] of the median of the ≤24 previous vendor bars in the prior
+96 h is refused (`stellarindex_fx_fixings_bars_refused_total`, log
+`fx_fixings gate refused bar`). The disagreement alert fires when an
+**accepted** bar sits outside [0.5, 1.5] of the guarded daily rate for
+its day, i.e. the hourly and daily series disagree about one currency.
+
+- [ ] Find the bar: grep the API logs for `fx_fixings bar disagrees`
+      (ticker, `bar_start`, close, guarded rate).
+- [ ] Decide which series is wrong against an independent source (ECB,
+      the OXR corroborator gauge). A wrong daily rate is this runbook's
+      sections above; a wrong hourly bar needs a correction.
+- [ ] Correct a bar by **inserting** the right close for the same
+      `(ticker, grain, bar_start)` at generation `max + 1`; readers take
+      the highest generation. **Never `UPDATE` or `DELETE`** an
+      `fx_fixings` row: it is the record of what every served closed
+      cross converted at. Record the bar, the window it affects, and the
+      evidence in the incident notes. For a range, use
+      `go run ./scripts/ops/fx-history-backfill --series=fixings --generation=N --from=YYYY-MM-DD --ticker=UZS`.
+
 ## Known upstream defects (check before deep-diving)
 
 - **ETB history bar = 44 (Massive, ongoing since ≥ 2026-08-21).** The

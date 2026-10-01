@@ -1,0 +1,117 @@
+---
+# promtool unit tests for the fx_fixings alerts.
+#
+#   promtool test rules deploy/monitoring/rule-tests/external-pollers_fx_fixings_test.yml
+#
+# Test time 0 is Thursday 1970-01-01 00:00 UTC, so the first days are
+# trading days and t=2880m is Saturday 00:00.
+
+rule_files:
+  - ../rules/external-pollers.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: appender that stops cycling tickets after 3h
+    input_series:
+      - series: 'stellarindex_fx_fixings_last_refresh_unix{job="stellarindex_api",instance="r1:3000"}'
+        values: '0x300'
+    alert_rule_test:
+      - eval_time: 170m
+        alertname: stellarindex_fx_fixings_refresh_stale
+        exp_alerts: []
+      - eval_time: 200m
+        alertname: stellarindex_fx_fixings_refresh_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
+              summary: "fx_fixings appender has not completed a cycle in 3+ h"
+              description: |
+                The forex worker has not finished an fx_fixings append cycle
+                for over 3 h. Closed fiat-cross buckets past the newest stored
+                bar will be withheld with fx_leg_unavailable.
+
+  - interval: 1m
+    name: a series 4h behind on a trading day tickets
+    input_series:
+      - series: 'stellarindex_fx_fixings_newest_bar_end_unix{job="stellarindex_api",instance="r1:3000"}'
+        values: '0x300'
+    alert_rule_test:
+      - eval_time: 250m
+        alertname: stellarindex_fx_fixings_series_stale
+        exp_alerts: []
+      - eval_time: 260m
+        alertname: stellarindex_fx_fixings_series_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
+              summary: "newest fx_fixings bar is 4+ h old on a trading day"
+              description: |
+                The appender runs but has stored no bar newer than 4 h on a
+                trading day. Closed fiat-cross buckets are being withheld or
+                reported fx_stale.
+
+  # Last bar ends Friday 22:00 (165600 s). Silent through the weekend and
+  # Monday 01:00; tickets once Monday 02:00 passes with no new bar.
+  - interval: 1m
+    name: the weekend close does not ticket
+    input_series:
+      - series: 'stellarindex_fx_fixings_newest_bar_end_unix{job="stellarindex_api",instance="r1:3000"}'
+        values: '165600x6000'
+    alert_rule_test:
+      - eval_time: 3600m
+        alertname: stellarindex_fx_fixings_series_stale
+        exp_alerts: []
+      - eval_time: 5820m
+        alertname: stellarindex_fx_fixings_series_stale
+        exp_alerts: []
+      - eval_time: 5940m
+        alertname: stellarindex_fx_fixings_series_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
+              summary: "newest fx_fixings bar is 4+ h old on a trading day"
+              description: |
+                The appender runs but has stored no bar newer than 4 h on a
+                trading day. Closed fiat-cross buckets are being withheld or
+                reported fx_stale.
+
+  - interval: 1m
+    name: a disagreement held for 2h tickets per ticker
+    input_series:
+      - series: 'stellarindex_fx_fixings_quote_disagrees{job="stellarindex_api",instance="r1:3000",ticker="UZS"}'
+        values: '1x200'
+      - series: 'stellarindex_fx_fixings_quote_disagrees{job="stellarindex_api",instance="r1:3000",ticker="EUR"}'
+        values: '0x200'
+    alert_rule_test:
+      - eval_time: 110m
+        alertname: stellarindex_fx_fixings_quote_disagreement
+        exp_alerts: []
+      - eval_time: 130m
+        alertname: stellarindex_fx_fixings_quote_disagreement
+        exp_alerts:
+          - exp_labels:
+              ticker: UZS
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-rate-rejected.md
+              summary: "fx_fixings bars for UZS disagree with the guarded daily rate"
+              description: |
+                An hourly fixing for UZS sits outside [0.5, 1.5]
+                of the guarded daily rate for its day. Grep the API logs for
+                "fx_fixings bar disagrees" to find the bar.
