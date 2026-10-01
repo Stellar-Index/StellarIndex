@@ -8,11 +8,8 @@ import { formatPairPrice } from '@/lib/format';
  * LastPriceCell — the shared last-price table cell: adaptive pair-price
  * formatting + flash-on-change.
  *
- * Extracted 2026-08-21 from four hand-copied locals (MarketsTable,
- * PairsTable, PoolsTable, DexesView) — the COR-14/AGT-05 class where the
- * formatting ladder had already forked once; the flash behaviour had
- * forked AGAIN (DexesView's copy silently lacked it). One component, one
- * behaviour.
+ * One component so the formatting ladder and the flash cannot fork
+ * between tables again.
  *
  * Flash on change (RT-2): each cell watches its own value across
  * refetches. Hook order stays stable because the hook runs before any

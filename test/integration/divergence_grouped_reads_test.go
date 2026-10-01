@@ -14,8 +14,9 @@ import (
 
 // TestDivergenceGroupedReads executes the pair-grouped board and the
 // per-reference series SQL: the board's limit counts pairs (a pair is never
-// cut between its references) and orders pairs by their widest gap; the
-// series returns one cell per (bucket, reference).
+// cut between its references) and orders pairs by their widest gap;
+// firing-only keeps a pair with any firing reference, with all of its
+// references; the series returns one cell per (bucket, reference).
 func TestDivergenceGroupedReads(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -40,7 +41,7 @@ func TestDivergenceGroupedReads(t *testing.T) {
 	at := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
 	for _, rec := range []domain.DivergenceObservationRecord{
 		{Pair: btc, Reference: "chainlink", OurPrice: "100", RefPrice: "99.5", DeltaPct: "0.5", ObservedAt: at},
-		{Pair: btc, Reference: "coingecko", OurPrice: "100", RefPrice: "99", DeltaPct: "1.0101", ObservedAt: at},
+		{Pair: btc, Reference: "coingecko", OurPrice: "100", RefPrice: "99", DeltaPct: "1.0101", Firing: true, ObservedAt: at},
 		{Pair: eth, Reference: "band", OurPrice: "10", RefPrice: "9", DeltaPct: "11.11", ObservedAt: at},
 		{Pair: eth, Reference: "coingecko", OurPrice: "10", RefPrice: "10", DeltaPct: "0", ObservedAt: at},
 	} {
@@ -66,6 +67,17 @@ func TestDivergenceGroupedReads(t *testing.T) {
 	}
 	if len(all) != 4 || all[2].AssetID != "crypto:BTC" {
 		t.Fatalf("rows = %+v, want ETH's two references then BTC's two", all)
+	}
+
+	firing, err := store.ListDivergenceLatest(ctx, 7, true, 100)
+	if err != nil {
+		t.Fatalf("ListDivergenceLatest firing: %v", err)
+	}
+	if len(firing) != 2 || firing[0].AssetID != "crypto:BTC" || firing[1].AssetID != "crypto:BTC" {
+		t.Fatalf("firing rows = %+v, want BTC's two references only (ETH has none firing)", firing)
+	}
+	if firing[0].Reference != "coingecko" || firing[0].Status != "firing" || firing[1].Status != "clear" {
+		t.Errorf("firing rows = %+v, want firing coingecko then clear chainlink", firing)
 	}
 
 	points, err := store.ListDivergenceSeries(ctx, "crypto:BTC", "fiat:USD", 7)

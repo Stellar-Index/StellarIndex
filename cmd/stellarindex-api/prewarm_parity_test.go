@@ -42,9 +42,6 @@ import (
 //     `PoolsFilter{Sources: DexSourceNames()}`, not `Sources: nil`. The
 //     prewarm passed the zero filter, whose key fragment is `[]` rather
 //     than `[aquarius comet phoenix sdex soroswap]`.
-//   - LIMIT. /v1/markets?source=… is fired by the explorer at
-//     limit=200; the prewarm covered only the unfiltered pair list, so
-//     every /exchanges/{name} visit paid the 8s ceiling (R-002).
 //
 // A test that re-states the prewarm's own constants cannot catch any of
 // these — it would agree with the prewarm and be wrong in the same

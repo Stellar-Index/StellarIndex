@@ -467,7 +467,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	}
 
 	source := r.URL.Query().Get("source")
-	if !sourceFilterOK(w, r, "source", source) {
+	if !sourceFilterOK(w, r, source) {
 		return
 	}
 

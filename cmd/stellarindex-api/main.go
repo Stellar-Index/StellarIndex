@@ -5347,12 +5347,10 @@ func prewarmLight(
 	// ORDER MATTERS: the /v1/assets listing keys are warmed FIRST,
 	// ahead of the markets/pools work below.
 	//
-	// They used to sit after ~20 cold reads (8 DistinctPairsExt, 4+5
-	// AllPools, the per-CEX SourceMarkets loop). At seconds each on a
-	// cold start that pushed them a long way into the cycle, so a
-	// browser arriving seconds after a restart still paid the fill
-	// itself. Measured on r1 with the API up at 06:14:37, AFTER the
-	// passes were made concurrent:
+	// Behind the ~20 cold markets/pools reads (DistinctPairsExt,
+	// AllPools) at seconds each, a browser arriving seconds after a
+	// restart would pay the fill itself. Measured on r1 with the API up
+	// at 06:14:37, with the passes concurrent but assets warmed last:
 	//
 	//	06:15:01  9903 ms  /v1/assets?include=sparkline&limit=10&order_by=…
 	//	06:15:01  9905 ms  /v1/assets?limit=50

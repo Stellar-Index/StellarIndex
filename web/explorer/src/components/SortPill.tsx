@@ -3,11 +3,7 @@
 import type { ReactNode } from 'react';
 
 /**
- * SortPill — the small order-by toggle above data tables. Was
- * byte-identical in DexesView / PoolsTable / PairsTable (FEC audit
- * A3-F6.1) — extracted verbatim, zero behavior change. The wider
- * aria-pressed toggle-family consolidation (F6.2, onto ui/Segmented)
- * is a recorded follow-up with a pending active-style design call.
+ * SortPill — the small order-by toggle above data tables.
  */
 export function SortPill({
   active,

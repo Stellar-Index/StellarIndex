@@ -67,7 +67,7 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	source := r.URL.Query().Get("source")
-	if !sourceFilterOK(w, r, "source", source) {
+	if !sourceFilterOK(w, r, source) {
 		return
 	}
 

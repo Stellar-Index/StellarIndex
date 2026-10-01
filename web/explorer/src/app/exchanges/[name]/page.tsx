@@ -27,7 +27,7 @@ export async function generateMetadata({
   if (!info) return { title: 'Exchange not found' };
   const canonical = `${CURRENT_NETWORK.explorerUrl}/exchanges/${encodeURIComponent(name)}`;
   const title = `${info.name} — venue activity`;
-  const description = `${info.name} as a Stellar Index price source: the pairs we subscribe to and our 24h ingest activity. Its prices are served blended with every other source, never as its feed alone.`;
+  const description = `${info.name} as a Stellar Index price source: our 24h ingest activity for this venue. Its prices are served only blended with other sources, never as its feed alone.`;
   return {
     title,
     description,

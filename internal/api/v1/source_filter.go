@@ -11,7 +11,7 @@ import (
 // provider (CEX, FX, aggregator, sovereign anchor, Chainlink, Tiingo) is
 // served only beside other sources, never selected on its own, so a route
 // cannot act as a proxy for one vendor's API. Writes the 400 on refusal.
-func sourceFilterOK(w http.ResponseWriter, r *http.Request, param, source string) bool {
+func sourceFilterOK(w http.ResponseWriter, r *http.Request, source string) bool {
 	if source == "" {
 		return true
 	}
@@ -21,14 +21,14 @@ func sourceFilterOK(w http.ResponseWriter, r *http.Request, param, source string
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/unknown-source",
 			"Unknown source", http.StatusBadRequest,
-			param+" must be a registered source name (see /v1/sources for the canonical list); got "+source)
+			"source must be a registered source name (see /v1/sources for the canonical list); got "+source)
 		return false
 	}
 	if !external.IsOnChain(source) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/off-chain-source-filter",
 			"Off-chain source cannot be selected alone", http.StatusBadRequest,
-			param+"="+source+" names an off-chain provider; its data is served only alongside other sources. Omit "+param+" for the multi-source response, or select an on-chain source (see /v1/sources, on_chain=true).")
+			"source="+source+" names an off-chain provider; its data is served only alongside other sources. Omit source for the multi-source response, or select an on-chain source (see /v1/sources, on_chain=true).")
 		return false
 	}
 	return true
