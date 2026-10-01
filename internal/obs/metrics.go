@@ -70,6 +70,7 @@ func registerAppMetrics() {
 		DiscoveryRecordFailuresTotal,
 		MetricsRegistryPresent,
 		SourceInsertErrorsTotal,
+		TradesZeroLegAdmittedTotal,
 		RateLimitFailOpenTotal,
 		MonthlyQuotaFailOpenTotal,
 		MonthlyQuotaFailClosedTotal,
@@ -174,6 +175,7 @@ func registerAPIServingMetrics() {
 		PricingGuardDegradedTotal,
 		APICacheOpsTotal,
 		APICoverageFloorProbesTotal,
+		APILCMHomeDomainFallbackTotal,
 		APISparkline7dRowsTotal,
 		APIStreamSubscribeTotal,
 		APICORSDecisionsTotal,
@@ -189,7 +191,7 @@ func registerAPIServingMetrics() {
 	for _, reason := range []string{"caller_quota", "global_ceiling"} {
 		APITipProducersRefusedTotal.WithLabelValues(reason)
 	}
-	for _, reason := range []string{"global_cap", "per_ip_cap"} {
+	for _, reason := range []string{"global_cap", "per_ip_cap", "topic_cap"} {
 		APISSEStreamsRejectedTotal.WithLabelValues(reason)
 	}
 }
@@ -484,6 +486,9 @@ func seedBoundedLabelSeries() {
 	AMMSelfPairSwapTotal.WithLabelValues("comet")
 	// Same dead-metric ambiguity as AMMSelfPairSwapTotal above, same fix.
 	AMMNonPositiveSwapTotal.WithLabelValues("comet")
+	// Zero-leg fills are rare (tens per day) and sdex is their only known
+	// producer; seeded so a fresh deploy shows "armed", not "absent".
+	TradesZeroLegAdmittedTotal.WithLabelValues("sdex")
 	AMMSwapReceivedDivergenceTotal.WithLabelValues("phoenix")
 	for _, outcome := range []string{"written", "buffered", "dropped", "errored"} {
 		ChLiveSinkLedgersTotal.WithLabelValues(outcome)
@@ -1054,13 +1059,14 @@ var ProjectorRunsTotal = prometheus.NewCounterVec(
 
 // ProjectorEventsDecoded counts events the projector emitted
 // through the sink (or that failed decode). `outcome` ∈ {ok,
-// decode_error}. Operators chart `rate(ok[5m])` against the
+// decode_error, reconstruct_error (a landing-zone row too malformed to
+// rebuild into an event), sink_*}. Operators chart `rate(ok[5m])` against the
 // equivalent dispatcher counter during Phase 3 parallel mode to
 // verify the projector keeps pace with live ingest.
 var ProjectorEventsDecoded = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_projector_events_decoded_total",
-		Help: "Per-source events the projector decoded + emitted (ok) or failed to decode (decode_error). Compare ok-rate against dispatcher equivalent to gauge parallel-mode parity.",
+		Help: "Per-source events the projector decoded + emitted (ok) or failed to decode (decode_error, reconstruct_error). Compare ok-rate against dispatcher equivalent to gauge parallel-mode parity.",
 	},
 	[]string{"source", "outcome"},
 )
@@ -2215,6 +2221,22 @@ const (
 	// InsertErrorKindTradeAbandoned: a trade whose infra-fault retry was
 	// abandoned on ctx cancellation; re-derivable from the CH lake.
 	InsertErrorKindTradeAbandoned = "trade_abandoned"
+)
+
+// TradesZeroLegAdmittedTotal — per-source counter of trades admitted to
+// the served tier with exactly one zero leg (an SDEX fill whose base or
+// quote rounded to zero stroops). Such a row is stored but unpriceable, so
+// every price path filters it out. SDEX is the only known producer; every
+// other decoder and CEX parser drops zero legs upstream, so a non-sdex
+// series is an upstream change worth a look, not an error. Incremented at
+// the Go write gates (InsertTrade, filterStorableTrades) once
+// canonical.Trade.Validate has passed the row. Detection only.
+var TradesZeroLegAdmittedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_trades_zero_leg_admitted_total",
+		Help: "Trades admitted to the served tier with exactly one zero leg (stored, unpriceable). By source.",
+	},
+	[]string{"source"},
 )
 
 // CursorLastLedger — per-source gauge, the last-committed cursor
@@ -3456,11 +3478,12 @@ var APISSEStreamsActive = prometheus.NewGauge(prometheus.GaugeOpts{
 
 // APISSEStreamsRejectedTotal — SSE connections refused with a 503 by
 // the concurrency caps, by reason: global_cap (the process-wide
-// ceiling) or per_ip_cap (one client address at its own ceiling).
+// ceiling), per_ip_cap (one client address at its own ceiling) or
+// topic_cap (the Hub's topic map full of subscribed topics).
 var APISSEStreamsRejectedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_sse_streams_rejected_total",
-		Help: "SSE connections refused by the concurrency caps, labelled by reason (global_cap, per_ip_cap).",
+		Help: "SSE connections refused by the concurrency caps, labelled by reason (global_cap, per_ip_cap, topic_cap).",
 	},
 	[]string{"reason"},
 )
@@ -3634,7 +3657,8 @@ var APICORSDecisionsTotal = prometheus.NewCounterVec(
 // AggregatorDroppedTradesTotal — count of trades the orchestrator
 // removed from the VWAP input set, labelled by reason and by the
 // CONFIGURED target pair. "class" = removed by the ClassExchange-only
-// filter; "outlier" = removed by the σ-threshold filter. Operators
+// filter; "unpriceable" = a stored trade with a zero leg (no price);
+// "outlier" = removed by the σ-threshold filter. Operators
 // alert on a sudden spike in "class" (a new venue mis-registered) or
 // "outlier" (a market in distress flooding the window with anomalies).
 //
@@ -3664,7 +3688,7 @@ var APICORSDecisionsTotal = prometheus.NewCounterVec(
 var AggregatorDroppedTradesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_dropped_trades_total",
-		Help: "Trades removed from the VWAP input set, labelled by reason (class|outlier) and configured target pair.",
+		Help: "Trades removed from the VWAP input set, labelled by reason (class|unpriceable|outlier) and configured target pair.",
 	},
 	[]string{"reason", "pair"},
 )
@@ -5752,4 +5776,14 @@ var APICoverageFloorProbesTotal = prometheus.NewCounterVec(
 		Help: "Coverage-floor lookups behind the API's outside-coverage signal, by outcome (hit|found|absent|error|evicted); only non-hit results reach the database.",
 	},
 	[]string{"result"},
+)
+
+// APILCMHomeDomainFallbackTotal — failed home-domain observation reads,
+// each served as "unobserved" so the next ADR-0021 layer answered instead.
+// A listing page is one read.
+var APILCMHomeDomainFallbackTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_api_lcm_home_domain_fallback_total",
+		Help: "Home-domain observation reads that failed (storage error or timeout) and were served as unobserved, falling through to the next home-domain layer.",
+	},
 )

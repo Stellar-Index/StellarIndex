@@ -270,6 +270,9 @@ export interface paths {
          *     Same wire shape as the catalogue rows on `/assets` (GlobalAssetView:
          *     `asset_id` = slug, `type` = "global", no issuer/contract_id).
          *     `market_cap_usd` is populated for fiat (fxHistory-backed).
+         *
+         *     Empty on testnet and futurenet, which run none of the off-chain
+         *     feeds these rows are priced from.
          */
         get: operations["listExternalAssets"];
         put?: never;
@@ -294,7 +297,8 @@ export interface paths {
          *     counterpart lives on `/assets/{asset_id}`; a Stellar-issued slug
          *     (usdc, aqua, …) returns **404** here, and a non-Stellar slug
          *     returns 404 on `/assets/{asset_id}` — each asset resolves on
-         *     exactly one path (LC-001, no redirect).
+         *     exactly one path (LC-001, no redirect). Every slug 404s on
+         *     testnet and futurenet, matching the empty `/external/assets`.
          */
         get: operations["getExternalAsset"];
         put?: never;
@@ -324,7 +328,8 @@ export interface paths {
          *     no price block — so it's a cheap directory call suitable for
          *     building a verified-currencies section on a listing page.
          *
-         *     Order matches the seed-file order (deterministic).
+         *     Order matches the seed-file order (deterministic). Empty on
+         *     testnet and futurenet: the catalogue names pubnet issuers.
          */
         get: operations["listVerifiedAssets"];
         put?: never;
@@ -936,10 +941,15 @@ export interface paths {
          *       connect time — the same verdict `/v1/price` would answer
          *       404 for. The gate is re-checked on every closed bucket
          *       too: a pair withheld PARTWAY through an open connection is
-         *       not disconnected — its buckets are silently dropped and
-         *       heartbeats continue, so a client must treat prolonged
-         *       silence with no error as "possibly withheld", not "still
-         *       healthy".
+         *       not disconnected — each bucket it would have received is
+         *       replaced by a `price_withheld` event (same `id`), with data
+         *       `{"asset_id","quote","reason","as_of"}` as on
+         *       `/v1/price/tip/stream`; `as_of` is the refused bucket's.
+         *       The 60-second series also publishes one `price_withheld`
+         *       when its pair becomes withheld (or the reason changes),
+         *       and republishes the current bucket as `price_update` once
+         *       the pair is served again. Heartbeats alone therefore never
+         *       mean the price is being withheld.
          */
         get: operations["streamPrices"];
         put?: never;
@@ -1285,6 +1295,18 @@ export interface paths {
          *        see `internal/storage/timescale/ohlc_routes.go`'s
          *        `OHLCRoutes` table, the single declaration this list must
          *        track.
+         *
+         *     **Open and close inside one ledger (both modes).** On-chain
+         *     trades carry the whole-second ledger close time and the
+         *     network's apply order is not recorded, so when several
+         *     transactions in one ledger trade the pair inside one bar,
+         *     `open` and `close` are picked by a tie-break on
+         *     `(ts, ledger, tx_hash, op_index, source)` — `tx_hash` order
+         *     between transactions, which is NOT execution order; `op_index`
+         *     order within one transaction. The bar is stable, but `open` or
+         *     `close` can be another real trade from that ledger, off by at
+         *     most the price movement inside one ledger (~5 s); `high`,
+         *     `low`, VWAP and volume are unaffected.
          */
         get: operations["getOhlc"];
         put?: never;
@@ -2715,6 +2737,11 @@ export interface paths {
          *     `source_classes`. Operators consult this endpoint to confirm a
          *     venue is recognised before debugging an absence in /v1/markets
          *     or /v1/vwap.
+         *
+         *     Scoped to the running network: on testnet and futurenet only
+         *     sources that exist there are listed (the pubnet-anchored
+         *     protocol decoders and the off-chain price feeds are omitted).
+         *     Pubnet lists the whole registry.
          */
         get: operations["listSources"];
         put?: never;
@@ -2756,8 +2783,9 @@ export interface paths {
          *
          *     Served from a 15-second background-refreshed snapshot;
          *     `Cache-Control` is `private, no-cache` accordingly. Unknown
-         *     source names 404 (the registry is static per deploy — see
-         *     `/v1/sources` for the catalogue).
+         *     source names, and sources `/v1/sources` omits on this network,
+         *     404 (the registry is static per deploy — see `/v1/sources` for
+         *     the catalogue).
          */
         get: operations["getSourceHealth"];
         put?: never;
@@ -2790,6 +2818,9 @@ export interface paths {
          *     `kind=router` entries only — vault entries always report
          *     zero routed trades (their capital state lives on the
          *     protocol surfaces, not per-tx flow).
+         *
+         *     Empty on testnet and futurenet: every registry entry is a
+         *     pubnet contract.
          *
          *     A router call observed as a SUB-INVOCATION (some other
          *     contract called the router as part of its own authorized
@@ -3145,9 +3176,13 @@ export interface paths {
          * SEP-40 lastprice-equivalent passthrough.
          * @description HTTP mirror of the SEP-40 oracle contract call
          *     `lastprice(asset) -> Option<PriceData>` — for integrators
-         *     that already speak Reflector's on-chain interface and want
-         *     the identical shape over REST. The response is
-         *     deliberately minimal (`price`, `timestamp`); the richer
+         *     that already speak Reflector's on-chain interface. It mirrors
+         *     the method name and semantics, not the wire types: on-chain
+         *     `PriceData` carries `price` as a fixed-point `i128` and
+         *     `timestamp` as `u64` seconds, while this response carries
+         *     `price` as an exact decimal string (already scaled, no
+         *     `decimals()` call needed) and `timestamp` as RFC 3339. The
+         *     response is deliberately minimal (`price`, `timestamp`); the richer
          *     source/confidence view lives on `/v1/oracle/latest` and
          *     `/v1/price`. Quote is fixed at USD, matching the on-chain
          *     contract's fixed-quote semantic — for other quotes use
@@ -3368,6 +3403,8 @@ export interface paths {
          *     Customer-tier callers need no header. A `/v1/signup` key's
          *     email-verification stamp carries over to the child, so rotated
          *     keys keep working under `signup_require_email_verification`.
+         *     Only `apikey` and `operator` callers may mint; a SEP-10 token
+         *     gets 403.
          */
         post: operations["createAccountKey"];
         delete?: never;
@@ -4490,9 +4527,33 @@ export interface paths {
          *     A valid but empty ledger returns an empty array. `total` is the
          *     ledger's exact transaction count from its header; `truncated` is
          *     true when `total` exceeds the returned page (raise `limit` or
-         *     fetch `/v1/operations?ledger=` for the rest).
+         *     fetch `/v1/ledgers/{seq}/operations` for the rest).
          */
         get: operations["getLedgerTransactions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ledgers/{seq}/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Operations in a ledger, decoded.
+         * @description Every operation applied in ledger `seq`, each decoded from XDR
+         *     (partition-pruned). Includes the decoded body (`fields` / `raw_xdr`).
+         *     `total` is the ledger's exact operation count from its header;
+         *     `truncated` is true when `total` exceeds the returned page (raise
+         *     `limit` for the rest).
+         */
+        get: operations["getLedgerOperations"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4530,22 +4591,19 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Operations — a ledger's ops, or the network-wide recent directory.
-         * @description Two shapes on one route:
+         * Operations — the network-wide recent directory.
+         * @description The network-wide recent-operations DIRECTORY: newest first,
+         *     keyset-paged via `?cursor=<opaque>` (echo back `next_cursor`;
+         *     composite `ledger.tx_index.op_index`), plus `op_type_stats` — the
+         *     per-op-type counts over the trailing ~24h of ledgers (first page
+         *     only). `?limit=` up to 200, default 50. This is a **summary** shape:
+         *     each op carries its identity + `type` but NOT the decoded body
+         *     (`fields` / `raw_xdr` are omitted) — decoding every op's body over the
+         *     multi-billion-row lake made the directory ~10× slower. Fetch the full
+         *     decoded op from `/v1/ledgers/{seq}/operations` or `/v1/tx/{hash}`.
          *
-         *     - **`?ledger=<seq>`** — that ledger's operations, each decoded from XDR
-         *       (partition-pruned; `?limit=` up to 2000, default 500). Includes the
-         *       decoded body (`fields` / `raw_xdr`).
-         *     - **no `?ledger`** — the network-wide recent-operations DIRECTORY:
-         *       newest first, keyset-paged via `?cursor=<opaque>` (echo back
-         *       `next_cursor`; composite `ledger.tx_index.op_index`), plus
-         *       `op_type_stats` — the per-op-type counts over the trailing ~24h of
-         *       ledgers (first page only). `?limit=` up to 200, default 50. This is a
-         *       **summary** shape: each op carries its identity + `type` but NOT the
-         *       decoded body (`fields` / `raw_xdr` are omitted) — decoding every op's
-         *       body over the multi-billion-row lake made the directory ~10× slower.
-         *       Fetch the full decoded op from the per-ledger form above or
-         *       `/v1/tx/{hash}`.
+         *     A `ledger` query parameter is refused with 400: one ledger's
+         *     operations are `GET /v1/ledgers/{seq}/operations` (ADR-0018).
          */
         get: operations["listOperations"];
         put?: never;
@@ -7215,12 +7273,25 @@ export interface components {
          *     - `divergence_warning` — anomaly check or cross-reference
          *       observed a meaningful divergence; treat with caution.
          *     - `frozen` — anomaly detection refused to publish the new
-         *       bucket; this response carries the previous bucket's
-         *       last-known-good value (ADR-0019). Only fires on `/v1/price`,
-         *       on `/v1/oracle/lastprice` + `/v1/oracle/x_last_price`, and on
-         *       the 60-second `/v1/price/stream` series' `price_frozen` event
-         *       (which carries no value); tip + observations surfaces ignore
-         *       freeze.
+         *       bucket; this response carries the value the freeze is
+         *       holding — the aggregator's last-known-good VWAP (ADR-0019),
+         *       never the refused bucket. A held value is served with its
+         *       own `observed_at` (when it was observed, not when it was
+         *       read, so it ages through the hold), the aggregator window
+         *       it was held at (`window_seconds` 300, 3600 or 86400, not
+         *       60), empty `sources` (on a fiat quote derived through the
+         *       USD leg per ADR-0051, the FX feed alone, and `observed_at`
+         *       is the older of the held value's and the FX rate's), and
+         *       `stale: true`, since it is below
+         *       the closed-1-minute-bucket baseline. When a pair is frozen
+         *       and no value is held, `/v1/price` and the SEP-40 point reads
+         *       answer 503 `price-unavailable` and `/v1/price/batch` omits
+         *       the row, rather than publish the refused bucket. Only fires
+         *       on `/v1/price`, `/v1/price/batch`, `/v1/oracle/lastprice` +
+         *       `/v1/oracle/x_last_price`, and on the 60-second
+         *       `/v1/price/stream` series' `price_frozen` event (which
+         *       carries no value); tip, observations and the `/v1/assets`
+         *       price columns ignore freeze.
          *     - `frozen_checked` — true only when the freeze marker was
          *       actually read (looker wired and the read succeeded). When
          *       false, `frozen` is NOT meaningful — the check never ran, so
@@ -7237,6 +7308,11 @@ export interface components {
          *       the composite SUBSTITUTED around a dry configured chain leg
          *       — the price came via an alternative path, not the documented
          *       direct chain. Omitted when false.
+         *     - `pivot_unverified` — set on a TRIANGULATED `/v1/price` response
+         *       when a leg of the composite was priced only from stablecoin
+         *       prints taken at par with USD, with no prints in the leg's own
+         *       quote asset to check a stablecoin de-peg against. Omitted when
+         *       false.
          *     - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
          *       when the asset's code matches a verified currency's
          *       Stellar ticker but the issuer doesn't. The matching
@@ -7292,6 +7368,11 @@ export interface components {
              * @default false
              */
             rerouted: boolean;
+            /**
+             * @description Set on a TRIANGULATED /v1/price response when a leg of the composite was priced only from stablecoin prints taken at par with USD, with no prints in the leg's own quote asset to check a stablecoin de-peg against. Omitted when false.
+             * @default false
+             */
+            pivot_unverified: boolean;
             /** @default false */
             unverified_ticker_collision: boolean;
             /** @description Names of the row-narrowing query parameters this response did NOT apply, spelled as the caller sent them (`type`, `code`, `issuer`, `q`). Absent when the response applied every filter it was given — an ignored filter and a matched one otherwise produce the same 200 over the same shape, so a client re-filtering the page has nothing else to key on. Set by `/v1/assets` on the listings whose rows come from a source that cannot narrow: the class-scoped catalogue listings (`asset_class=fiat|stablecoin|crypto`), and the lean asset-catalog fallback served when no listing store is configured. */
@@ -7318,7 +7399,7 @@ export interface components {
              */
             next?: string;
         };
-        /** @description Every 2xx response carries these. */
+        /** @description Every 2xx JSON response carries these, except the session-cookie customer-dashboard operations: magic-link and passkey sign-in under /auth, the /dashboard operations, and POST /account/admin/lookup. Those return the bare resource object documented on each operation. The API-key /account/* operations and SEP-10 are enveloped. */
         EnvelopeMeta: {
             /** Format: date-time */
             as_of: string;
@@ -8382,7 +8463,7 @@ export interface components {
              *       "oracle_instrument_nav"
              *     ]
              */
-            provenances?: ("oracle_instrument_nav" | "listing_platform_price" | "prospectus_constant_nav")[];
+            provenances?: ("oracle_instrument_nav" | "fund_nav" | "listing_platform_price" | "prospectus_constant_nav")[];
             /** @description Prose statement of what was measured and, as importantly, what it is not. */
             basis: string;
         };
@@ -8832,7 +8913,7 @@ export interface components {
              */
             as_of: string;
             /**
-             * @description WHAT KIND of figure this is. Four are published and they are
+             * @description WHAT KIND of figure this is. Five are published and they are
              *     not the same claim, so this is mandatory on every served
              *     reference rather than defaulted.
              *
@@ -8842,6 +8923,14 @@ export interface components {
              *     rests on the issuer's own domain-bound declaration that one
              *     token is one unit of it. The five rules above govern it, and
              *     a premium may be measured against it.
+             *     `fund_nav` — the fund's own SEC-reported daily NAV per share,
+             *     relayed by Tiingo, for a token bound on the exact
+             *     `(code, issuer)` as one share of that fund. Taken only when
+             *     no oracle binding exists for the row, ahead of any listing
+             *     price or prospectus NAV. Published to the cent
+             *     (`decimals_published: 2`); `as_of` is the business day the
+             *     NAV was struck. Carries no premium: half a cent of rounding
+             *     is a material premium on a one-dollar share.
              *     `listing_platform_price` — an independent listing platform's
              *     own USD price for the TOKEN, published in the same row of
              *     that platform's own map in which it NAMES the token's
@@ -8857,8 +8946,8 @@ export interface components {
              *     `prospectus_constant_nav` — the issuer's own prescribed NAV
              *     for a share class whose fund rules fix it, bound on the
              *     exact `(code, issuer)`. Weaker than the oracle arm — nobody
-             *     independent measured it — and taken only when neither an
-             *     oracle binding nor a listing price exists for the row.
+             *     independent measured it — and taken only when no oracle
+             *     binding, fund NAV or listing price exists for the row.
              *     Carries no premium, for the same reason a listing price
              *     does not.
              *     `curator_uploaded_price` — a curator's own uploaded price
@@ -8867,7 +8956,7 @@ export interface components {
              *     whatever the curator typed. Carries no premium.
              * @enum {string}
              */
-            provenance: "oracle_instrument_nav" | "listing_platform_price" | "curator_uploaded_price" | "prospectus_constant_nav";
+            provenance: "oracle_instrument_nav" | "fund_nav" | "listing_platform_price" | "curator_uploaded_price" | "prospectus_constant_nav";
             /**
              * @description True when the reference is older than 72h — the longest
              *     ordinary gap between two strikes of a real-world instrument's
@@ -8887,6 +8976,22 @@ export interface components {
              *     binding is due for re-verification. Labelled, not withheld.
              */
             stale?: boolean;
+            /**
+             * @description The precision the publisher states the value at, when it is
+             *     coarser than `price_usd` alone suggests. Present on a
+             *     `fund_nav` reference, where it is 2: a NAV published to the
+             *     cent cannot resolve a difference smaller than half a cent.
+             * @example 2
+             */
+            decimals_published?: number;
+            /**
+             * @description True on an `oracle_instrument_nav` reference when the fund's
+             *     own published NAV for the same share is also fresh (at most
+             *     five days old) and differs from the oracle figure by more
+             *     than half a cent. The oracle figure is still the one served;
+             *     the values are never swapped. Absent when false.
+             */
+            nav_disagreement?: boolean;
         };
         /**
          * @description The token's market price measured against the oracle's valuation
@@ -8956,7 +9061,8 @@ export interface components {
              *     `reference_expired` — the bound feed's most recent observation
              *     is older than the seven-day window an active stream is defined
              *     by. Reached only when a snapshot is carried across a sustained
-             *     read failure.
+             *     read failure. On a fund-NAV-bound row, the fund's latest NAV
+             *     is older than five calendar days.
              *     `reference_not_instrument_scoped` — an oracle feed of this
              *     code exists but prices an off-chain quantity in its own unit
              *     (a troy ounce of spot metal, one fund share) rather than one
@@ -8981,9 +9087,13 @@ export interface components {
              *     reference, and it is a curator's uploaded price rather than
              *     an oracle's valuation of the instrument, so no premium may
              *     be computed against it.
+             *     `reference_is_a_fund_nav` — the row carries a fund's
+             *     published NAV, rounded to the cent, so no premium may be
+             *     computed against it: the rounding alone can be half a
+             *     percent on a one-dollar share.
              * @enum {string}
              */
-            status: "published" | "withheld_issuer_flagged" | "reference_not_bound" | "reference_contract_not_bound" | "reference_isin_mismatch" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive" | "reference_is_a_listing_price" | "reference_is_a_prospectus_nav" | "reference_is_a_curator_price";
+            status: "published" | "withheld_issuer_flagged" | "reference_not_bound" | "reference_contract_not_bound" | "reference_isin_mismatch" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive" | "reference_is_a_listing_price" | "reference_is_a_prospectus_nav" | "reference_is_a_curator_price" | "reference_is_a_fund_nav";
             /**
              * @description (market − reference) ÷ reference × 100 as a decimal string:
              *     POSITIVE when the token trades above the instrument's
@@ -9936,6 +10046,10 @@ export interface components {
                 /** @description p99 latency SLO target in milliseconds. See p95_target_ms. */
                 p99_target_ms?: number;
             };
+            /**
+             * @description The counts are omitted when their query failed (see
+             *     `freshness_status`); a served `0` is present as `0`.
+             */
             freshness?: {
                 /** Format: date-time */
                 last_aggregator_tick?: string;
@@ -9994,6 +10108,19 @@ export interface components {
              * @enum {string}
              */
             incidents_status: "ok" | "degraded" | "unknown";
+            /**
+             * @description Trust signal for the `freshness` block, so a failed count
+             *     query cannot read as a measured zero:
+             *       - "ok":       counts measured, every enabled source active.
+             *       - "degraded": counts measured, `active_sources` <
+             *                     `total_sources`. Does not by itself move
+             *                     `overall`.
+             *       - "unknown":  a freshness query FAILED, or no metrics
+             *                     backend is wired — the counts are omitted.
+             *     Always present.
+             * @enum {string}
+             */
+            freshness_status: "ok" | "degraded" | "unknown";
         };
         ActiveIncident: {
             /** @description Alertmanager `alertname` label. */
@@ -10113,7 +10240,10 @@ export interface components {
              *     - unreachable:    a fetch WAS attempted and produced nothing
              *       storable — a 404, a dead name, a TLS failure, or a document
              *       that would not parse. THEIRS, and the one an issuer can act
-             *       on.
+             *       on. Also reported when a held payload is over 30 days old,
+             *       or of unrecorded age, and the issuer's domain is failing
+             *       now, so a dead domain's last document is not served as
+             *       `verified`.
              *
              *     The last two are the distinction worth reading carefully,
              *     because they were one value until 2026-09-16. An asset
@@ -10398,7 +10528,9 @@ export interface components {
              *
              *     Null for the verified asset itself, for non-classic
              *     assets (native / Soroban / fiat), and for any code that
-             *     no verified currency claims on Stellar. See R-018 /
+             *     no verified currency claims on Stellar. Always null on
+             *     testnet and futurenet, where the verified issuers (pubnet
+             *     accounts) do not exist. See R-018 /
              *     docs/architecture/multi-network-assets-migration.md
              *     Phase 1.1.
              */
@@ -10415,7 +10547,8 @@ export interface components {
              *     so only the real verified row (which carries this false)
              *     keeps the badge. The detail path stamps the richer
              *     `unverified_warning` body instead. Omitted (false) for the
-             *     verified asset and codes no verified currency claims.
+             *     verified asset, codes no verified currency claims, and every
+             *     row on testnet and futurenet.
              * @default false
              */
             unverified_ticker_collision: boolean;
@@ -10974,8 +11107,8 @@ export interface components {
             base_amount: string;
             /** @description Integer stroops, decimal string. */
             quote_amount: string;
-            /** @description quote/base, 10-digit decimal. */
-            price: string;
+            /** @description quote/base, 10-digit decimal; null (key always present) when one leg is zero, e.g. an SDEX rounding fill. */
+            price: string | null;
             /**
              * @description Smallest-unit scale for `base_amount`: divide by
              *     10^base_decimals for whole-asset units.
@@ -11372,14 +11505,14 @@ export interface components {
             trade_count_24h: number;
             /** @description Trailing-24h USD volume summed from prices_1m. Decimal string. Null when no USD-equivalent trades. */
             volume_24h_usd?: string | null;
-            /** @description Most recent quote-per-base price observed for this pair (cross-source) within the trailing 24h. Decimal string. Null when no recent prices_1m bucket has a non-null last_price. */
+            /** @description Most recent quote-per-base price observed for this pair within the trailing 24h: across every source, or that source's own when the request sets `?source=`. Decimal string. Null when none was observed. */
             last_price?: string | null;
             /**
              * Format: date-time
-             * @description The pair's first recorded daily bucket — "since inception = first recorded trade" (RFP), queryable per market. Present only with `?include=inception`; day precision.
+             * @description The pair's first recorded daily bucket — "since inception = first recorded trade" (RFP), queryable per market, across every source. Present only with `?include=inception` and absent when the request sets `?source=`; day precision.
              */
             first_trade_at?: string | null;
-            /** @description Per-hour USD-volume buckets for the trailing 24h, oldest → newest, zero-filled server-side (always 24 entries when present). Populated only when the request sets `?include=sparkline`; absent otherwise. */
+            /** @description Per-hour USD-volume buckets for the trailing 24h, oldest → newest, zero-filled server-side (always 24 entries when present). Summed across every source. Populated only when the request sets `?include=sparkline`; absent otherwise, and absent when the request sets `?source=`. */
             volume_history_24h?: {
                 /** Format: date-time */
                 hour: string;
@@ -12092,22 +12225,12 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
-        /** @description Server is degraded (dependency outage, startup, shutdown). */
+        /** @description Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown). */
         ServiceUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
             content: {
-                /**
-                 * @example {
-                 *       "type": "https://api.stellarindex.io/errors/account-store-unavailable",
-                 *       "title": "Account store not configured",
-                 *       "status": 503,
-                 *       "detail": "this deployment has no AccountStore wired — typically because Redis is unavailable",
-                 *       "instance": "/v1/account/keys",
-                 *       "request_id": "70c8017d79651070fd16c2c9f065d846"
-                 *     }
-                 */
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
@@ -12570,7 +12693,8 @@ export interface operations {
                      *           "ticket_count": 0,
                      *           "informational_count": 0
                      *         },
-                     *         "incidents_status": "ok"
+                     *         "incidents_status": "ok",
+                     *         "freshness_status": "degraded"
                      *       },
                      *       "as_of": "2026-05-05T15:09:00.119Z",
                      *       "flags": {
@@ -12872,7 +12996,7 @@ export interface operations {
                      *         "divergence_checked": false
                      *       },
                      *       "pagination": {
-                     *         "next": "catalogue:2"
+                     *         "next": "catalogue:WyJ4bG0iLCJ1c2RjIl0"
                      *       }
                      *     }
                      */
@@ -12965,7 +13089,7 @@ export interface operations {
                      *         "divergence_checked": false
                      *       },
                      *       "pagination": {
-                     *         "next": "2"
+                     *         "next": "WyJjaGluZXNlLXl1YW4iLCJ1cy1kb2xsYXIiXQ"
                      *       }
                      *     }
                      */
@@ -13326,7 +13450,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             asset?: string;
                             /** Format: int64 */
@@ -14012,7 +14136,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of price_update events. */
+            /** @description SSE stream of price_update (and price_frozen / price_withheld) events. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -15192,7 +15316,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             protocol?: string;
                             pool?: string;
@@ -15280,7 +15404,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             pool?: string;
                             /** @description Σ supplied_usd across priced reserves; null when none priced. A lower bound when `lower_bound` is true. */
@@ -15386,7 +15510,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             /** Format: uuid */
                             event_id?: string;
@@ -15455,7 +15579,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             firing_count?: number;
                             reason_tally?: {
@@ -15567,7 +15691,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             observations?: {
                                 asset_id?: string;
@@ -15653,7 +15777,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             asset_id?: string;
                             quote_id?: string;
@@ -15779,6 +15903,9 @@ export interface operations {
                  *     unknown name returns 400 `unknown-source` rather
                  *     than an empty 200 (avoids the silent-empty-page
                  *     anti-pattern). Mutually exclusive with `asset`.
+                 *     Each row's volume, trade count and last price are
+                 *     that source's own; the pair-wide `sparkline` and
+                 *     `inception` enrichments are omitted.
                  */
                 source?: string;
                 /**
@@ -17300,6 +17427,7 @@ export interface operations {
                      *         "lake_complete_sources": 15,
                      *         "network": "pubnet",
                      *         "not_applicable_sources": [],
+                     *         "lagging_sources": [],
                      *         "total_sources": 15
                      *       },
                      *       "as_of": "2026-07-03T22:38:20.564931481Z",
@@ -17453,6 +17581,13 @@ export interface operations {
                             /** @description Sources the audit is expected to cover on this network that have no verdict row: their first audit never completed, or the row was cleared. Counted in `total_sources`, never in `complete_sources` or `lake_complete_sources`. Empty when every expected source has a verdict. */
                             unverified_sources: {
                                 source: string;
+                                reason: string;
+                            }[];
+                            /** @description Sources whose verdict `tip_ledger` is below the newest source verdict's tip: the latest audit run wrote no verdict for them (it stopped before reaching them, or they errored), so the totals above combine verdicts from more than one run. They still count at their earlier verdict. Empty when one run wrote every source's row. */
+                            lagging_sources: {
+                                source: string;
+                                /** Format: int64 */
+                                tip_ledger: number;
                                 reason: string;
                             }[];
                         };
@@ -18219,7 +18354,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             window_days?: number;
                             buckets?: {
@@ -18578,7 +18713,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         /** @description SAC C-strkey → "CODE-ISSUER" or "native". */
                         data?: {
                             [key: string]: string;
@@ -19129,7 +19264,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data: components["schemas"]["RWAAssetsView"];
                     };
                 };
@@ -19220,7 +19355,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data: components["schemas"]["RWAHistoryView"];
                     };
                 };
@@ -19351,7 +19486,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data: components["schemas"]["RWAPremiumHistoryView"];
                     };
                 };
@@ -19859,8 +19994,9 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             /**
-             * @description The caller authenticated with a SEP-10 token; API keys are
-             *     not issued to SEP-10 subjects (`key-mint-not-available`).
+             * @description Caller is not an account tier (`apikey` or `operator`):
+             *     a SEP-10 wallet token gets `key-mint-not-available`, any
+             *     other non-account credential `account-tier-required`.
              */
             403: {
                 headers: {
@@ -22522,7 +22658,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             ledgers?: components["schemas"]["Ledger"][];
                             next_before?: number;
@@ -22577,7 +22713,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["Ledger"];
                     };
                 };
@@ -22646,7 +22782,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             ledger?: number;
                             transactions?: components["schemas"]["TxSummary"][];
@@ -22658,6 +22794,98 @@ export interface operations {
                     };
                 };
             };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLedgerOperations: {
+        parameters: {
+            query?: {
+                /** @description Maximum operations to return (1-2000, default 500). */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @example 63000000 */
+                seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The ledger's operations. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "ledger": 63316166,
+                     *         "operations": [
+                     *           {
+                     *             "ledger": 63316166,
+                     *             "close_time": "2026-07-03T22:37:01Z",
+                     *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                     *             "tx_index": 0,
+                     *             "op_index": 0,
+                     *             "type": "payment",
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
+                     *             "fields": {
+                     *               "amount": "26000000000000",
+                     *               "asset": "XLM26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
+                     *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
+                     *             }
+                     *           },
+                     *           {
+                     *             "ledger": 63316166,
+                     *             "close_time": "2026-07-03T22:37:01Z",
+                     *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                     *             "tx_index": 0,
+                     *             "op_index": 1,
+                     *             "type": "payment",
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
+                     *             "fields": {
+                     *               "amount": "2600000000000",
+                     *               "asset": "XRP26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
+                     *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
+                     *             }
+                     *           }
+                     *         ],
+                     *         "total": 2,
+                     *         "truncated": false
+                     *       },
+                     *       "as_of": "2026-07-03T22:40:10.560512468Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            ledger?: number;
+                            operations?: components["schemas"]["Operation"][];
+                            /**
+                             * @description Present ONLY when the parent-transaction outcome read
+                             *     failed: operations without `transaction_successful` are
+                             *     then of UNKNOWN outcome (possibly a FAILED transaction),
+                             *     not applied. Absent = every operation carries its true
+                             *     transaction outcome.
+                             */
+                            coverage_note?: string;
+                            /** @description Exact operation count for this ledger, from its header. */
+                            total?: number;
+                            /** @description True when total exceeds the returned page. */
+                            truncated?: boolean;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
@@ -22721,7 +22949,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["TxDetail"];
                     };
                 };
@@ -22740,11 +22968,9 @@ export interface operations {
     listOperations: {
         parameters: {
             query?: {
-                /** @description Ledger sequence. Omit for the network-wide recent directory. */
-                ledger?: number;
-                /** @description Opaque keyset cursor (directory mode only). */
+                /** @description Opaque keyset cursor for the next older page. */
                 cursor?: string;
-                /** @description Page size. Mode-dependent bounds — per-ledger mode: default 500, cap 2000; directory mode: default 50, cap 200. */
+                /** @description Page size: default 50, cap 200 (400 above). */
                 limit?: number;
             };
             header?: never;
@@ -22753,7 +22979,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Decoded operations (ledger-scoped or the recent directory). */
+            /** @description The recent-operations directory page. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -22762,22 +22988,8 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
-                     *         "ledger": 63316166,
+                     *         "ledger": 0,
                      *         "operations": [
-                     *           {
-                     *             "ledger": 63316166,
-                     *             "close_time": "2026-07-03T22:37:01Z",
-                     *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
-                     *             "tx_index": 0,
-                     *             "op_index": 0,
-                     *             "type": "payment",
-                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                     *             "fields": {
-                     *               "amount": "26000000000000",
-                     *               "asset": "XLM26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
-                     *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
-                     *             }
-                     *           },
                      *           {
                      *             "ledger": 63316166,
                      *             "close_time": "2026-07-03T22:37:01Z",
@@ -22785,14 +22997,19 @@ export interface operations {
                      *             "tx_index": 0,
                      *             "op_index": 1,
                      *             "type": "payment",
-                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                     *             "fields": {
-                     *               "amount": "2600000000000",
-                     *               "asset": "XRP26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
-                     *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
-                     *             }
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP"
+                     *           },
+                     *           {
+                     *             "ledger": 63316166,
+                     *             "close_time": "2026-07-03T22:37:01Z",
+                     *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                     *             "tx_index": 0,
+                     *             "op_index": 0,
+                     *             "type": "payment",
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP"
                      *           }
-                     *         ]
+                     *         ],
+                     *         "next_cursor": "63316166.0.0"
                      *       },
                      *       "as_of": "2026-07-03T22:40:10.560512468Z",
                      *       "flags": {
@@ -22804,14 +23021,14 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
-                            /** @description The ledger (ledger-scoped mode); 0 in directory mode. */
+                            /** @description Always 0: the directory spans ledgers. */
                             ledger?: number;
                             operations?: components["schemas"]["Operation"][];
-                            /** @description Directory mode: opaque cursor for the next older page; absent on the last page. */
+                            /** @description Opaque cursor for the next older page; absent on the last page. */
                             next_cursor?: string;
-                            /** @description Directory mode, first page only: per-op-type counts over the trailing ~24h. */
+                            /** @description First page only: per-op-type counts over the trailing ~24h. */
                             op_type_stats?: {
                                 type?: string;
                                 /** Format: int64 */
@@ -22825,10 +23042,6 @@ export interface operations {
                              *     transaction outcome.
                              */
                             coverage_note?: string;
-                            /** @description Ledger-scoped mode only: the ledger's exact operation count from its header. Absent in directory mode, which pages instead. */
-                            total?: number;
-                            /** @description Ledger-scoped mode only: true when total exceeds len(operations) — the page was cut at ?limit= with no cursor to continue. Absent in directory mode. */
-                            truncated?: boolean;
                         };
                     };
                 };
@@ -22890,7 +23103,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             window_days?: number;
                             /** Format: int64 */
@@ -22973,7 +23186,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             contract_id?: string;
                             /** @description Registry protocol this contract belongs to (blend, soroswap, …) when attribution is known; absent otherwise. */
@@ -23074,7 +23287,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             /** @description C-strkey contract id (echoed). */
                             contract_id: string;
@@ -23157,7 +23370,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             contract_id?: string;
                             window_days?: number;
@@ -23217,7 +23430,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             contract_id?: string;
                             versions?: {
@@ -23285,7 +23498,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             /** @description Number of assets that contributed a USD price. 0 on the native_xlm basis. */
                             priced_assets?: number;
@@ -23362,7 +23575,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             /** @description Address → label, present addresses only; always an object, never null. */
                             entries: {
@@ -23445,7 +23658,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             totals: {
                                 /** Format: int64 */
@@ -23578,7 +23791,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             creators: {
                                 /** @description 1-based position on the board, by accounts_created descending. */
@@ -23723,7 +23936,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             sponsors: {
                                 /** @description 1-based position, by sponsorships_started descending. */
@@ -23876,7 +24089,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             account_id?: string;
                             exists?: boolean;
@@ -24006,7 +24219,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountTransactions"];
                     };
                 };
@@ -24071,7 +24284,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountOperations"];
                     };
                 };
@@ -24140,7 +24353,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountMovements"];
                     };
                 };
@@ -24220,7 +24433,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountPositions"];
                     };
                 };
@@ -24284,7 +24497,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountTrades"];
                     };
                 };
@@ -24397,7 +24610,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountGraph"];
                     };
                 };
@@ -24516,7 +24729,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountGraphHistory"];
                     };
                 };
@@ -24662,12 +24875,16 @@ export interface operations {
                      *         "note": "Every figure is the cohort's own ledger footprint as of cycle.computed_at, never the root's. …"
                      *       },
                      *       "as_of": "2026-09-17T09:00:00Z",
-                     *       "stale": false,
-                     *       "divergence_warning": false,
-                     *       "divergence_checked": false
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountCohort"];
                     };
                 };
@@ -24739,7 +24956,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountActivity"];
                     };
                 };
@@ -24785,7 +25002,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             query?: string;
                             /** @enum {string} */

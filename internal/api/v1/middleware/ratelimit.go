@@ -406,6 +406,16 @@ func bucketKeyAndOverrideForRequest(r *http.Request, anonBucket, authBucket *rat
 	return anonBucket, anonymousRateLimitKey(r), 0
 }
 
+// RateLimitCallerKey is the caller identity the rate limiter charges:
+// the owner account for an authenticated subject, else the throttle IP.
+func RateLimitCallerKey(r *http.Request) string {
+	if subject, ok := auth.SubjectFrom(r.Context()); ok && subject.Identifier != "" &&
+		subject.Tier != auth.TierAnonymous && subject.Tier != "" {
+		return authenticatedRateLimitKey(subject)
+	}
+	return anonymousRateLimitKey(r)
+}
+
 // anonymousRateLimitKey derives the per-IP throttle key for an
 // anonymous caller. IP-ONLY by design (F-1335) — see
 // [bucketKeyAndOverrideForRequest]. Uses [remoteIPPrefixFor] (the

@@ -2,12 +2,10 @@
 # Build + runtime image for stellarindex-sla-probe.
 # See docker/README.md for the shared image-shape rationale.
 
-# Base image pinned by TAG, not digest. TODO(supply-chain, DEP-low): pin by
-# immutable digest — FROM golang:1.26-alpine@sha256:<digest> AS builder.
-# Digest NOT inlined: unresolvable offline in this worktree (no registry
-# access) and must not be fabricated. Resolve with
-# `docker buildx imagetools inspect golang:1.26-alpine` and pin in the same PR.
-FROM golang:1.26-alpine AS builder
+# Base image pinned by immutable digest (supply-chain, DEP-low). Resolved
+# 2026-09-30 with `docker buildx imagetools inspect golang:1.26-alpine`
+# (multi-platform index digest).
+FROM golang:1.26-alpine@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS builder
 RUN apk add --no-cache git ca-certificates tzdata
 WORKDIR /src
 # Cache modules separately so source-only edits don't invalidate

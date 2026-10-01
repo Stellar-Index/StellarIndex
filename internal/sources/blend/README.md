@@ -59,13 +59,10 @@ The auction-event surface — the primary directional price signal:
 
 ### Still deferred
 
-- Historical replay over `[Blend genesis, present)` — the live
-  ingest captures every event going forward; bulk-fill the
-  pre-rc.78 range via `INSERT INTO blend_positions /
-  blend_emissions / blend_admin SELECT … FROM soroban_events
-  WHERE contract_id IN (<pool contracts>) AND topic_0_sym IN
-  (…)` once the `soroban_events` walk lands (ADR-0029 — table
-  exists, walk job is in flight).
+- ~~Historical replay over `[Blend genesis, present)`~~ — done via
+  `projector-replay -source blend -from 51499546`; the daily ADR-0033
+  pass reports `blend` `complete=true`, substrate verified over
+  [51,499,546, 64,688,438] (r1, 2026-09-30).
 - Reflector cross-validation — monitor Blend's oracle price
   consumption via Reflector to cross-validate that our aggregated
   prices are consistent with what the protocol is using. Out of
@@ -216,11 +213,9 @@ Map shape is identical. Real-lake-bytes golden tests:
 
 Historical replay from the source genesis (`FactoryGenesisLedger`,
 51,499,546 — 369 ledgers before the V1 factory's first deploy at
-51,499,915) via `projector-replay -source blend -from 51499546` is a
-follow-up, not
-done this pass (778 events is 0.14% of this source's ~570k total lake
-volume — live ingest captures every new V1 event going forward
-regardless).
+51,499,915) via `projector-replay -source blend -from 51499546` has
+run; the daily ADR-0033 pass reports `blend` `complete=true` with
+substrate verified over [51,499,546, 64,688,438] (r1, 2026-09-30).
 
 Full per-topic real-lake counts (all 29 gated contracts, contiguous
 with the table above): every OTHER topic this census turned up

@@ -8,6 +8,7 @@ import { loadArchitectureDocs } from '@/lib/architecture';
 import { loadBlogPosts } from '@/lib/blog';
 import { loadOperationsDocs } from '@/lib/operations';
 import { loadIncidents } from '@/lib/incidents';
+import { hrefFor } from '@/lib/hrefFor';
 import { fiatSlugFor } from '@/lib/fiat-slugs';
 import { PROTOCOLS } from './protocols/registry';
 import { buildConvertParams } from '@/lib/convert-params';
@@ -117,6 +118,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // were crawl-dark as well as click-dark.
     '/research/architecture',
     '/research/operations',
+    '/terms',
+    '/privacy',
     // NOTE: auth/app routes (/signin, /signup, /account) are deliberately
     // NOT listed — they're robots:noindex (no SEO value / private), and a
     // noindex URL in the sitemap is a Search Console error
@@ -166,7 +169,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   }));
   // Incident postmortems — one permanent page each under /status.
   const incidentPages: MetadataRoute.Sitemap = loadIncidents().map((inc) => ({
-    url: siteURL(`/status/incident/${inc.slug}`),
+    url: siteURL(`/status/incident/${encodeURIComponent(inc.slug)}`),
     lastModified: now,
     changeFrequency: 'monthly',
     priority: 0.4,
@@ -179,7 +182,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const protocolPages: MetadataRoute.Sitemap = PROTOCOLS.filter(
     (p) => p.name !== 'sdex',
   ).map((p) => ({
-    url: siteURL(`/protocols/${p.name}`),
+    url: siteURL(hrefFor.protocol(p.name)),
     lastModified: now,
     changeFrequency: 'daily',
     priority: 0.7,
@@ -257,8 +260,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // CEX_INFO / DEX_INFO maps, so they are listed from the same maps: an API
   // source outside them has no page, and a mapped venue the API omits still has one.
   const sourcePages: MetadataRoute.Sitemap = [
-    ...sources.map((s) => `/sources/${s.name}`),
-    ...Object.keys(CEX_INFO).map((name) => `/exchanges/${name}`),
+    ...sources.map((s) => hrefFor.source(s.name)),
+    ...Object.keys(CEX_INFO).map((name) => hrefFor.exchange(name)),
     ...Object.keys(DEX_INFO).map((source) => `/dexes/${source}`),
   ]
     .filter((path) => routeAvailable(path))

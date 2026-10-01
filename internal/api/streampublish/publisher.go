@@ -14,7 +14,8 @@
 // Static pair list: the operator declares which pairs to broadcast
 // in the binary's `[api.streaming]` config section. Adding a pair
 // requires a config + restart. Pairs without observations stay
-// silent — no synthetic events.
+// silent — no synthetic events; a withheld pair publishes a
+// price_withheld event instead of its bucket.
 package streampublish
 
 import (
@@ -65,6 +66,8 @@ type Publisher struct {
 	// inspect it from elsewhere.
 	mu            sync.Mutex
 	lastPublished map[string]time.Time
+	// withheld is the reason last put on the wire for a withheld topic.
+	withheld map[string]v1.PriceWithheldReason
 }
 
 // Options holds Publisher's optional knobs, per the repo's trailing-struct
@@ -116,6 +119,7 @@ func New(hub *streaming.Hub, reader PriceReader, interval time.Duration, logger 
 		decimals:      opts.Decimals,
 		frozen:        opts.Frozen,
 		lastPublished: map[string]time.Time{},
+		withheld:      map[string]v1.PriceWithheldReason{},
 	}
 }
 
@@ -197,17 +201,19 @@ func (p *Publisher) pollLoop(ctx context.Context, pair canonical.Pair) {
 // Best-effort: a reader error logs at WARN and the loop continues —
 // a Postgres outage shouldn't take the publisher down across other
 // pairs. ErrPriceNotFound is silent (the pair has no closed bucket
-// yet, or has fallen outside the freshness window).
+// yet, or has fallen outside the freshness window); ErrPriceWithheld
+// publishes a price_withheld event (see [Publisher.publishWithheld]).
 func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic string) {
 	pollCtx, cancel := context.WithTimeout(ctx, p.interval)
 	defer cancel()
 
 	snap, sources, stale, err := p.reader.LatestPrice(pollCtx, pair.Base, pair.Quote)
 	if err != nil {
-		// Not-found and substance-withheld are both silent: the pair
-		// has nothing publishable this tick (no closed bucket, or the
-		// thin-market gate refused an aggregated claim for it).
-		if errors.Is(err, v1.ErrPriceNotFound) || errors.Is(err, v1.ErrPriceWithheld) {
+		if errors.Is(err, v1.ErrPriceWithheld) {
+			p.publishWithheld(pair, topic, v1.PriceWithheldReasonOf(err))
+			return
+		}
+		if errors.Is(err, v1.ErrPriceNotFound) {
 			return
 		}
 		// Suppress log noise on shutdown: the parent ctx itself is
@@ -347,13 +353,52 @@ func (p *Publisher) publishFrozen(pair canonical.Pair, topic string, snap v1.Pri
 	obs.StreamPublishTotal.WithLabelValues("price_stream").Inc()
 }
 
+// withheldPair is the data of a price_withheld event, the shape
+// /v1/price/tip/stream's event of the same name carries.
+type withheldPair struct {
+	AssetID string                 `json:"asset_id"`
+	Quote   string                 `json:"quote"`
+	Reason  v1.PriceWithheldReason `json:"reason"`
+	AsOf    v1.WireTime            `json:"as_of"`
+}
+
+// publishWithheld puts a withholding on the wire once per reason, so an
+// open stream reads it as withheld rather than as a pair with no trades.
+// Forgetting the last published bucket republishes it once the pair is
+// served again, even if no new bucket has closed since.
+func (p *Publisher) publishWithheld(pair canonical.Pair, topic string, reason v1.PriceWithheldReason) {
+	p.mu.Lock()
+	prev, seen := p.withheld[topic]
+	p.withheld[topic] = reason
+	delete(p.lastPublished, topic)
+	p.mu.Unlock()
+	if seen && prev == reason {
+		return
+	}
+	payload, err := json.Marshal(withheldPair{
+		AssetID: pair.Base.String(),
+		Quote:   pair.Quote.String(),
+		Reason:  reason,
+		AsOf:    v1.WireTime(time.Now().UTC()),
+	})
+	if err != nil {
+		p.logger.Error("streampublish: marshal failed",
+			"err", err, "pair", pair.String())
+		return
+	}
+	p.hub.Publish(topic, "price_withheld", payload)
+	obs.StreamPublishTotal.WithLabelValues("price_stream").Inc()
+}
+
 // shouldPublish records the latest observed timestamp for the
 // topic and returns true on advance. False (no advance) is the
 // common case between bucket closes — the reader returns the same
-// bucket for every poll until a new one materialises.
+// bucket for every poll until a new one materialises. A served read
+// also ends any withholding recorded for the topic.
 func (p *Publisher) shouldPublish(topic string, observedAt time.Time) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	delete(p.withheld, topic)
 	prev, seen := p.lastPublished[topic]
 	if seen && !observedAt.After(prev) {
 		return false

@@ -180,6 +180,11 @@ zfs_ashift:          12          # 4K NVMe sector alignment
 zfs_os_drives_needing_data_partition: []
 zfs_os_drives_data_partition_number: 4
 
+# ARC bounds in bytes (32 GiB / 8 GiB), matching r1's /etc/modprobe.d/zfs.conf
+# byte for byte so the first apply there reports no change.
+zfs_arc_max_bytes: 34359738368
+zfs_arc_min_bytes: 8589934592
+
 # Per-workload dataset tuning.
 #
 # recordsize is the PARSABLE byte value (131072, not "128K"): the
@@ -616,6 +621,25 @@ clickhouse_ops_batch_os_thread_priority: 5
 # into the users.d drop-in at render time, plaintext only ever lands in
 # /etc/default/stellarindex-ops, mode 0640 root:stellarindex).
 clickhouse_ops_batch_password: "{{ vault_clickhouse_ops_batch_password | default('') }}"
+
+# ───── ClickHouse live-daemon identity ─────────────────────────────────
+# A named user for the indexer / aggregator / API connections that still
+# reach CH as its unauthenticated `default` user, so `default` can later
+# be locked down without cutting them off. Same `default` settings
+# profile, so the switch is priority- and limit-neutral. Defaults FALSE
+# for the same ansible-drift reason as ops_batch above: enabling asserts
+# a vault password. Flip per inventory together with that inventory's
+# vault_clickhouse_live_daemon_password. Two halves move together —
+# the CH user (--tags clickhouse-live-daemon-profile) and the env pair in
+# /etc/default/stellarindex (--tags stellarindex); the pair is rendered
+# only when both the flag and the password are set, and while it is
+# absent internal/storage/clickhouse/ops_auth.go falls back to `default`.
+clickhouse_live_daemon_profile_enabled: false
+clickhouse_live_daemon_user: "live_daemon"
+# clickhouse_live_daemon_password ← ansible-vault, vault_clickhouse_live_daemon_password
+# (SHA-256-hashed into the users.d drop-in; plaintext only in
+# /etc/default/stellarindex, mode 0640 root:stellarindex).
+clickhouse_live_daemon_password: "{{ vault_clickhouse_live_daemon_password | default('') }}"
 
 # ───── ClickHouse destructive-DDL size guard (2026-08-29 r1 audit) ─────
 # ClickHouse refuses DROP TABLE / TRUNCATE / DROP|REPLACE PARTITION on
@@ -1144,8 +1168,8 @@ captive_peer_port_backfill:         11727
 #   r1: writes to local MinIO at 127.0.0.1:9000 (galexie-live +
 #       galexie-archive both local).
 #   r2: galexie-live still local (region-isolated tail); galexie-
-#       archive READS from s3://aws-public-blockchain (override
-#       galexie_archive_endpoint + galexie_archive_bucket below).
+#       archive READS from s3://aws-public-blockchain (set the
+#       stellarindex_s3_cold_* knobs; there is no archive endpoint here).
 #   r3: galexie-live local; galexie-archive on Vultr Object Storage
 #       (S3-compatible, region-local Singapore endpoint).
 # ]

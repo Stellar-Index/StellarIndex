@@ -275,14 +275,19 @@ func substrateProblemOn(ctx context.Context, conn driver.Conn, addr string, from
 			WHERE nxt > ledger_seq + 1
 		)), 0))`
 	// First hash-chain break: prev_hash != the immediately-prior ledger's hash.
+	// One tuple argMax, so on an ingested_at tie between duplicate rows both
+	// hashes still come from the same row rather than being mixed across rows.
 	const chainQ = `
 		SELECT toUInt64(ifNull((SELECT min(ledger_seq) FROM (
 			SELECT ledger_seq, prev_hash,
 			       lagInFrame(ledger_hash) OVER (ORDER BY ledger_seq) AS prior_hash
 			FROM (
-				SELECT ledger_seq, argMax(ledger_hash, ingested_at) AS ledger_hash, argMax(prev_hash, ingested_at) AS prev_hash
-				FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?
-				GROUP BY ledger_seq
+				SELECT ledger_seq, hp.1 AS ledger_hash, hp.2 AS prev_hash
+				FROM (
+					SELECT ledger_seq, argMax((ledger_hash, prev_hash), ingested_at) AS hp
+					FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?
+					GROUP BY ledger_seq
+				)
 			)
 		) WHERE ledger_seq > ? AND prior_hash != '' AND prev_hash != prior_hash), 0))`
 
@@ -558,26 +563,14 @@ func eventCensusExpected(ctx context.Context, conn driver.Conn, lo, hi uint32) (
 }
 
 func eventCensusPresent(ctx context.Context, conn driver.Conn) (map[uint32]uint64, error) {
-	const q = `
-		SELECT toUInt32(partition) AS p, toUInt64(sum(rows))
-		FROM system.parts
-		WHERE database = 'stellar' AND table = 'contract_events' AND active
-		GROUP BY p`
-	rows, err := conn.Query(ctx, q)
+	m, err := rawCensusPresent(ctx, conn, "contract_events")
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: event census present: %w", err)
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	out := make(map[uint32]uint64)
-	for rows.Next() {
-		var p uint32
-		var n uint64
-		if err := rows.Scan(&p, &n); err != nil {
-			return nil, fmt.Errorf("clickhouse: scan event census present: %w", err)
-		}
-		out[p] = n
+	if m["contract_events"] == nil {
+		return map[uint32]uint64{}, nil
 	}
-	return out, rows.Err()
+	return m["contract_events"], nil
 }
 
 // censusShortfalls keeps each expected partition whose present row count falls

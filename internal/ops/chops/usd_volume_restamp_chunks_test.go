@@ -578,6 +578,34 @@ func TestXLMBaseChunkRestamp_RerunSkipsChunksAlreadyAtGeneration(t *testing.T) {
 	}
 }
 
+// A chunk skipped as clean is still inside the window the closing report
+// names, so its rows must be counted there — as the day walk and the dry
+// run count them.
+func TestXLMBaseChunkRestamp_ReportCountsTheRowsOfASkippedChunk(t *testing.T) {
+	chunks, from, to := threeChunks()
+	clean := from.AddDate(0, 0, 4) // Jan 9, inside chunk 2
+	store := newFakeChunkStore(chunks, from.Add(3*time.Hour), clean)
+	store.done[clean] = true
+	opts, copts, out := chunkTestOptions(true)
+	run := newXLMBaseRestampRun(store, opts)
+	run.batch = copts.Batch
+	inChunk := func(ctx context.Context, c timescale.TradeChunk, plan *timescale.RestampPlan, generation int64, batch int) (int64, error) {
+		return store.ApplyXLMBaseUSDVolumeRestampInChunk(ctx, c, plan, generation, batch)
+	}
+	tier := &estimatedChunkTier{run: run, opts: opts, inChunk: inChunk}
+	if err := runChunkRestamp(context.Background(), store, "/etc/stellarindex.toml", from, to, copts, tier); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "chunk 2/3 _timescaledb_internal._hyper_1_2_chunk") ||
+		!strings.Contains(out.String(), "nothing to change — skipped") {
+		t.Fatalf("chunk 2 was not skipped as clean:\n%s", out.String())
+	}
+	if s := run.totals; s.Scanned != 2 || s.Changed != 1 || s.Unchanged != 1 || s.Residual() != 0 {
+		t.Errorf("report totals: scanned %d changed %d already-correct %d residual %d; want 2/1/1/0 (the skipped chunk's row counted)",
+			s.Scanned, s.Changed, s.Unchanged, s.Residual())
+	}
+}
+
 func TestXLMBaseChunkRestamp_FailureStopsAfterTheFailingChunk(t *testing.T) {
 	chunks, from, to := threeChunks()
 	store := newFakeChunkStore(chunks, from.Add(3*time.Hour), from.AddDate(0, 0, 5), to.Add(2*time.Hour))
@@ -1078,6 +1106,27 @@ func TestValidateRestampGeneration(t *testing.T) {
 	}
 	if err := validateRestampGeneration(now.Unix()+1, now); err == nil {
 		t.Error("one second in the future was accepted")
+	}
+}
+
+// ─── -max-generation cannot exceed the run's generation ─────────────────
+
+func TestResolveRestampMaxGeneration(t *testing.T) {
+	t.Parallel()
+	const gen = int64(1_758_000_000)
+	for _, tc := range []struct{ flag, want int64 }{
+		{-1, gen}, {0, 0}, {gen - 1, gen - 1}, {gen, gen},
+	} {
+		got, err := resolveRestampMaxGeneration(tc.flag, gen)
+		if err != nil || got != tc.want {
+			t.Errorf("-max-generation %d: got (%d, %v), want (%d, nil)", tc.flag, got, err, tc.want)
+		}
+	}
+	for _, bad := range []int64{gen + 1, 17_580_000_000} {
+		_, err := resolveRestampMaxGeneration(bad, gen)
+		if err == nil || !strings.Contains(err.Error(), "above the run's generation") {
+			t.Errorf("-max-generation %d: err = %v, want a refusal", bad, err)
+		}
 	}
 }
 

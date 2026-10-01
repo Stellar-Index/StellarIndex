@@ -122,6 +122,55 @@ func TestRefreshPairWindow_SinglePrintSpikeOnThinSeriesIsStillTrimmed(t *testing
 	}
 }
 
+// A stored zero-leg trade (an SDEX rounding fill) has no price: it is
+// counted as unpriceable, never as an outlier or as a class-stage
+// survivor the trim-fraction ratio would read as trimmed.
+func TestRefreshPairWindow_ZeroLegTradeIsUnpriceableNotOutlier(t *testing.T) {
+	now := time.Now()
+	trades := thinStepFixture(t, now, 300, 0)
+	trades = append(trades, buildTradeFrom(t, "kraken",
+		big.NewInt(100*100_000_000), big.NewInt(0), now.Add(-30*time.Second)))
+	store := &mockStore{trades: trades}
+	rdb, mr := newTestRedis(t)
+	pair := xlmUsdtPair(t)
+	window := 6 * time.Hour
+	orch := New(store, rdb, Config{
+		Pairs:                 []canonical.Pair{pair},
+		Windows:               []time.Duration{window},
+		OutlierSigmaThreshold: 4.0,
+	})
+	counter := func(reason string) float64 {
+		return testutil.ToFloat64(obs.AggregatorDroppedTradesTotal.WithLabelValues(reason, pair.String()))
+	}
+	beforeUnpriceable, beforeOutlier := counter("unpriceable"), counter("outlier")
+	if err := orch.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if got := counter("unpriceable") - beforeUnpriceable; got != 1 {
+		t.Errorf("dropped{unpriceable} delta = %v, want 1", got)
+	}
+	if got := counter("outlier") - beforeOutlier; got != 0 {
+		t.Errorf("dropped{outlier} delta = %v, want 0 — a zero-leg trade is not an outlier", got)
+	}
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usdt, _ := canonical.NewCryptoAsset("USDT")
+	val, err := mr.Get("vwap:" + xlm.String() + ":" + usdt.String() + ":" + strconv.Itoa(int(window.Seconds())))
+	if err != nil {
+		t.Fatalf("miniredis Get: %v", err)
+	}
+	if vwap, err := strconv.ParseFloat(val, 64); err != nil || vwap < 0.1335 || vwap > 0.1339 {
+		t.Errorf("published VWAP = %q (err %v), want ≈0.1337", val, err)
+	}
+	if venue := testutil.ToFloat64(obs.AggregatorVenueVWAP.WithLabelValues(pair.String(), "6h", "kraken")); venue < 0.1335 || venue > 0.1339 {
+		t.Errorf("venue_vwap{kraken} = %v, want ≈0.1337", venue)
+	}
+	for _, stage := range []string{"class", "outlier"} {
+		if got := testutil.ToFloat64(obs.AggregatorWindowTrades.WithLabelValues(pair.String(), "6h", stage)); got != 300 {
+			t.Errorf("window_trades{stage=%s} = %v, want 300", stage, got)
+		}
+	}
+}
+
 func TestRecordVenueVWAPs_DeletesAbsentSources(t *testing.T) {
 	// A venue that leaves the window must not keep a stale level in
 	// the max/min disagreement ratio.

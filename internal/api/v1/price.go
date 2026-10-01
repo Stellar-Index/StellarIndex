@@ -233,6 +233,10 @@ func priceWithheldReason(err error) PriceWithheldReason {
 	return PriceWithheldUnattributed
 }
 
+// PriceWithheldReasonOf is [priceWithheldReason] for producers outside
+// this package that put a withholding on a stream.
+func PriceWithheldReasonOf(err error) PriceWithheldReason { return priceWithheldReason(err) }
+
 // PriceSubstanceGate is the serving-side thin-market gate seam.
 // Production implementation: internal/pricingguard.SubstanceGate,
 // wired by the binaries. The v1 server consults it directly only on
@@ -2655,6 +2659,7 @@ func (s *Server) attachCompositeFlags(r *http.Request, flags *Flags, asset, quot
 	}
 	flags.Diverged = meta.Diverged
 	flags.Rerouted = meta.Rerouted
+	flags.PivotUnverified = meta.PivotUnverified
 }
 
 // lookupFrozen consults the FrozenLooker (when wired) for the
@@ -3401,14 +3406,19 @@ func batchEnvelope(ids []string, results []batchRowResult) Envelope {
 // Price = QuoteAmount / BaseAmount as a decimal string at
 // roundToDecimals precision. Callers responsible for supplying a
 // reasonable `decimals` argument per the quote asset's scale.
-func LastTradeToSnapshot(t canonical.Trade, decimals int) PriceSnapshot {
+// ok is false for a trade with a zero leg: it has no price.
+func LastTradeToSnapshot(t canonical.Trade, decimals int) (PriceSnapshot, bool) {
+	price, ok := priceRatioDecimal(t, decimals)
+	if !ok {
+		return PriceSnapshot{}, false
+	}
 	return PriceSnapshot{
 		AssetID:    t.Pair.Base.String(),
 		Quote:      t.Pair.Quote.String(),
-		Price:      priceRatioDecimal(t, decimals),
+		Price:      price,
 		PriceType:  "last_trade",
 		ObservedAt: WireTime(t.Timestamp),
-	}
+	}, true
 }
 
 // VWAP1mToSnapshot is the CAGG-served counterpart to
@@ -3442,7 +3452,7 @@ func VWAP1mToSnapshot(assetID, quote, vwap string, bucketStart time.Time) PriceS
 // computation via big.Rat — no float in the hot path (ADR-0003).
 //
 // Guarantees:
-//   - Never panics (guards against zero BaseAmount by returning "0").
+//   - Never panics; ok is false when either leg is not positive (no price).
 //   - At least `decimals` fractional digits; truncates (floors),
 //     doesn't round. A ratio too small for `decimals` is extended
 //     rather than served as zero — [ratToDecimal] renders it, so
@@ -3455,12 +3465,12 @@ func VWAP1mToSnapshot(assetID, quote, vwap string, bucketStart time.Time) PriceS
 // the human-meaningful result; typical: decimals=quote_decimals +
 // 7 (XLM stroops) for a display-ready figure. VWAP/OHLC paths
 // avoid this by storing pre-scaled prices.
-func priceRatioDecimal(t canonical.Trade, decimals int) string {
-	base := t.BaseAmount.BigInt()
-	if base.Sign() == 0 {
-		return "0"
+func priceRatioDecimal(t canonical.Trade, decimals int) (string, bool) {
+	base, quote := t.BaseAmount.BigInt(), t.QuoteAmount.BigInt()
+	if base.Sign() <= 0 || quote.Sign() <= 0 {
+		return "", false
 	}
-	return ratToDecimal(new(big.Rat).SetFrac(t.QuoteAmount.BigInt(), base), decimals)
+	return ratToDecimal(new(big.Rat).SetFrac(quote, base), decimals), true
 }
 
 func leftPad(s string, n int, c byte) string {

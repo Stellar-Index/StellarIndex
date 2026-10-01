@@ -314,7 +314,7 @@ Same as S7. No additional requirement.
 | # | Requirement | Spec ref | Week | Owner | Verified by | Status | Conf | Prod |
 | - | ----------- | -------- | ---- | ----- | ----------- | ------ | ---- | ---- |
 | F4.1 | Lookup classic + Soroban by contract address | §Asset Identification | 4 | `internal/canonical.ParseAsset` + `internal/api/v1/assets.go` | cross-cutting | `/v1/assets/{id}` accepts native, classic (code:issuer), fiat:CODE, soroban:C-strkey, raw C-strkey. | ✅ verified | 5 | ✅ 2026-05-10 — `GET /v1/assets/CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` (USDC SAC) → 200 with `type=soroban` |
-| F4.2 | Historical retention ≥ 1 year (ideally since inception) | §Historical Data | 2 (scaffold), post-launch (fill) | Timescale + Galexie backfill + `/v1/history/since-inception` | Source review | Migration 0002 sets retention; `/v1/history/since-inception` shipped against the prices_1mo CAGG. | ✅ verified | 4 | ✅ 2026-06-12 probe — history reaches **2021-02-01** (5+ years of daily data); the "≥ 1 year" requirement is met on this surface. ⚠ N-6 on the "ideally since inception" stretch (this surface starts 2021-02-01, not 2015 — see S6.1). |
+| F4.2 | Historical retention ≥ 1 year (ideally since inception) | §Historical Data | 2 (scaffold), post-launch (fill) | Timescale + Galexie backfill + `/v1/history/since-inception` | Source review | Retention is indefinite, not policy-bounded: migration 0031 removed the policies 0002 had set, and AGENTS.md invariant 8 keeps raw `trades` and every price CAGG (the one exception, 0156's 90-day `prices_1m` policy, ships disabled — see S6.5/S7.2); `/v1/history/since-inception` shipped against the prices_1mo CAGG. | ✅ verified | 4 | ✅ 2026-06-12 probe — history reaches **2021-02-01** (5+ years of daily data); the "≥ 1 year" requirement is met on this surface. ⚠ N-6 on the "ideally since inception" stretch (this surface starts 2021-02-01, not 2015 — see S6.1). |
 
 ## API characteristics
 
@@ -695,7 +695,7 @@ week lands.
   config gap.
 
 - **2026-05-11** — **All five 2026-05-10 ❌ rows have landing
-  code fixes on `main`** (#1268 and commit 4ab6b818d across the session).
+  code fixes on `main`** (commits 55b2a9fb3 and 4ab6b818d across the session).
   Headline resolutions:
   R-005 → batch shares full /v1/price fallback chain (no
   surviving PR number for this entry; the one previously cited
@@ -716,7 +716,9 @@ week lands.
   R-021 → handler-timeout helper recognises pq cancel (no
   surviving PR number for this entry; the one previously cited
   here now resolves to an unrelated live issue),
-  R-001/R-002 → #1268 (prewarm covers volume-desc + per-CEX).
+  R-001/R-002 → prewarm covers volume-desc + per-CEX (commit
+  `55b2a9fb3`; the PR number it carried now resolves to an
+  unrelated item).
   R-006 + R-009 remain operator config (#97, #119). The Prod
   cells in this matrix continue to read against rc.39; flip
   them after the next deploy + re-curl. Resolution log in the
