@@ -456,7 +456,7 @@
     group: root
     mode: "0755"
 
-- name: Template /etc/default/galexie-archive-fill (hot floor)
+- name: Template /etc/default/galexie-archive-fill (hot floor, mc aliases)
   # Sourced by the fill script at run time. The floor tells the mirror
   # which partitions are trimmed ON PURPOSE (cold tier serves them) so
   # it stops treating them as missing — without it, trim and fill are
@@ -472,6 +472,14 @@
     mode: "0644"
     content: |
       ARCHIVE_HOT_FLOOR={{ stellarindex_archive_hot_floor }}
+      # Sourced by the script, never by systemd. Reads and the mirror go
+      # through the no-delete writer; only an operator run with PARTIALS=...
+      # deletes, as root on the same bucket. An operator-set ARCHIVE_DEST
+      # (another store) keeps its own alias for both.
+      if [ -z "${ARCHIVE_DEST:-}" ]; then
+        ARCHIVE_DEST=archivewriter/galexie-archive
+        ARCHIVE_DELETE_ALIAS="${ARCHIVE_DELETE_ALIAS:-local}"
+      fi
   tags: [galexie, archive-fill]
   when: (stellar_network | default('pubnet')) == 'pubnet'
 

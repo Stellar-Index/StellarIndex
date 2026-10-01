@@ -18,7 +18,7 @@ import (
 )
 
 // The first page is a REAL frame captured from Kraken's /Trades for
-// XLMUSD at since=2018-07-01 (board #44 probe) — the fills that prove
+// XLMUSD at since=2018-07-01 — the fills that prove
 // the deep-history path reaches 2018 where /OHLC returns nothing.
 const krakenTradesPage1 = `{"error":[],"result":{"XXLMZUSD":[
 ["0.19329800","159.80957483",1530403225.7644963,"b","l","",460991],

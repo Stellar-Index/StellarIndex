@@ -245,6 +245,15 @@ type Worker struct {
 	// primary. Only touched from refreshOnce -> guardSnapshot
 	// (single-goroutine, as guards).
 	activeSource string
+
+	// fixingWriter, when set, receives the vendor-time hourly bars after
+	// every refresh (fx_fixings); fixingNewest is the newest bar_end it
+	// has committed. Only touched from refreshOnce.
+	fixingWriter FXFixingWriter
+	fixingNewest time.Time
+
+	// now pins the clock in tests; nil is time.Now.
+	now func() time.Time
 }
 
 // NewWorker constructs the worker. interval is the refresh
@@ -486,6 +495,7 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 	)
 
 	w.writeBatch(ctx, res)
+	w.appendFixings(ctx, massiveTickers(raw, source), snap)
 }
 
 // maxHeldRateAge bounds how long [servedSnapshot] keeps serving a rate

@@ -226,10 +226,11 @@ exactly that rather than looking like drift.
   `s3:DeleteObject`), and `mc ls archivewriter/galexie-archive/` lists.
 - [x] **Verify the `stellarindex-reader` live policy — DONE 2026-09-30.** The live
   policy grants no `s3:DeleteObject`, matching the codified one.
-- [ ] **Move `galexie-archive-fill` off the root (`local`) alias** — the hourly mirror,
-  including its `mc rm --recursive --force` sweep, authenticates as MinIO root. Needs
-  the archive-writer identity live first, and the delete sweep separated from the
-  mirror (the writer policy grants no delete). Confirm one full timer cycle after.
+- [ ] **Deploy `galexie-archive-fill` off the root (`local`) alias** — done in code: the
+  fill reads and mirrors through `ARCHIVE_DEST` (`archivewriter/galexie-archive`, the
+  identity repaired above) and fails fast if it cannot list it; only an operator run with
+  `PARTIALS=…` deletes, via `ARCHIVE_DELETE_ALIAS` (`local`). Remaining: apply
+  `--tags archive-fill` and confirm one full timer cycle succeeds.
 
 ## Supply cross-check P3 on BLND / EURC / KALE / PHO (E4/N-F3)
 - [x] **Run `supply seed-sac-balances -full-history` — DONE 2026-07-29 (38/38

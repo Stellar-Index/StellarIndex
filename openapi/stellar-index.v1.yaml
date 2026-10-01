@@ -374,6 +374,7 @@ paths:
                     ticket_count: 0
                     informational_count: 0
                   incidents_status: ok
+                  freshness_status: degraded
                 as_of: "2026-05-05T15:09:00.119Z"
                 flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
 
@@ -1193,9 +1194,10 @@ paths:
            and the `/v1/observations` triangulation hint — except
            that the two SEP-40 point reads answer 404 instead of the
            declaration, since their shape has no `price_type` to mark it.
-        4. Fiat-vs-fiat cross-rate from the forex snapshot when both
-           sides are `fiat:` typed (e.g.
-           `?asset=fiat:EUR&quote=fiat:USD`). Computed as
+        4. Fiat-vs-fiat cross-rate when both sides are `fiat:` typed
+           (e.g. `?asset=fiat:EUR&quote=fiat:USD`), from the vendor FX
+           fixings bound to the current minute (`/v1/price/tip`: the
+           live forex snapshot). Computed as
            `rate_usd[Y] / rate_usd[X]`. Returned with
            `flags.triangulated=true` since the value is derived
            rather than a direct trade. Same fallback fires on
@@ -1228,6 +1230,16 @@ paths:
         genuine miss — see that route's description),
         the SEP-40 oracle endpoints, and the `price_usd` enrichment on
         asset surfaces.
+
+        A fiat cross this route derives (fiat/fiat, or a non-fiat asset
+        in a fiat with no market of its own) converts at the vendor FX
+        fixing bound to the bucket's close, never at the live rate. When
+        no fixing binds within the 76 h lookback the price is withheld:
+        a `price-withheld` 404 titled "Price withheld — FX leg
+        unavailable", omitted and listed as withheld on
+        `/v1/price/batch`. A failed FX read is a 503
+        `price-unavailable`, and the batch row is omitted without being
+        listed. `/v1/price/tip` keeps the live rate.
       parameters:
         - { $ref: "#/components/parameters/AssetQuery" }
         - { $ref: "#/components/parameters/Quote" }
@@ -2409,6 +2421,18 @@ paths:
            see `internal/storage/timescale/ohlc_routes.go`'s
            `OHLCRoutes` table, the single declaration this list must
            track.
+
+        **Open and close inside one ledger (both modes).** On-chain
+        trades carry the whole-second ledger close time and the
+        network's apply order is not recorded, so when several
+        transactions in one ledger trade the pair inside one bar,
+        `open` and `close` are picked by a tie-break on
+        `(ts, ledger, tx_hash, op_index, source)` — `tx_hash` order
+        between transactions, which is NOT execution order; `op_index`
+        order within one transaction. The bar is stable, but `open` or
+        `close` can be another real trade from that ledger, off by at
+        most the price movement inside one ledger (~5 s); `high`,
+        `low`, VWAP and volume are unaffected.
       parameters:
         - { $ref: "#/components/parameters/Base" }
         - { $ref: "#/components/parameters/QuoteRequired" }
@@ -13758,6 +13782,7 @@ components:
         transactions: { type: array, items: { $ref: "#/components/schemas/TxSummary" } }
         next_cursor: { type: string, description: "Opaque composite cursor (ledger.tx_index) for the next older page; absent on the last page." }
         scope: { type: string, enum: [all], description: "Activity scope. \"all\" = the account sourced the tx OR is a non-source participant in one of its operations." }
+        as_of_ledger: { type: integer, format: int64, description: "Lake watermark (highest contiguously captured ledger) read before this page's scan; rows past it may still be arriving. A freshness marker, not a completeness claim: incoming (participant) activity is covered only where the participant index has been captured or backfilled. Absent when the watermark was unreadable." }
       required: [account, transactions, scope]
     AccountOperations:
       type: object
@@ -13780,6 +13805,7 @@ components:
             here (on-chain, fee-charged records), so this marker is what keeps a
             failed operation from masquerading as a real interaction. Absent =
             every operation carries its true transaction outcome.
+        as_of_ledger: { type: integer, format: int64, description: "Lake watermark (highest contiguously captured ledger) read before this page's scan; rows past it may still be arriving. A freshness marker, not a completeness claim: incoming (participant) activity is covered only where the participant index has been captured or backfilled. Absent when the watermark was unreadable." }
       required: [account, operations, scope]
     AccountMovement:
       type: object
@@ -18525,6 +18551,9 @@ components:
               description: p99 latency SLO target in milliseconds. See p95_target_ms.
         freshness:
           type: object
+          description: |
+            The counts are omitted when their query failed (see
+            `freshness_status`); a served `0` is present as `0`.
           properties:
             last_aggregator_tick: { type: string, format: date-time }
             active_sources:
@@ -18583,7 +18612,20 @@ components:
                             backend is wired — the counts are NOT
                             trustworthy; render "unknown", not "0 active".
             Always present.
-      required: [overall, region, services, incidents_status]
+        freshness_status:
+          type: string
+          enum: [ok, degraded, unknown]
+          description: |
+            Trust signal for the `freshness` block, so a failed count
+            query cannot read as a measured zero:
+              - "ok":       counts measured, every enabled source active.
+              - "degraded": counts measured, `active_sources` <
+                            `total_sources`. Does not by itself move
+                            `overall`.
+              - "unknown":  a freshness query FAILED, or no metrics
+                            backend is wired — the counts are omitted.
+            Always present.
+      required: [overall, region, services, incidents_status, freshness_status]
 
     ActiveIncident:
       type: object
@@ -19367,6 +19409,46 @@ components:
             timestamps sit close again, and `price_type: peg` is the
             durable signal that nothing was observed.
         window_seconds:    { type: integer, description: "Window size for vwap/twap; omitted for last_trade." }
+        fx_rate:
+          type: string
+          description: >-
+            Decimal string, quote units per 1 USD. Present only on a
+            closed-surface USD-anchored fiat cross (`/v1/price`,
+            `/v1/price/batch`, SEP-40): the vendor FX fixing the USD leg
+            was converted at, verbatim. The fixing is the bar with the
+            greatest close at or before the USD bucket's end minus 3 h,
+            within the 76 h lookback, so the answer is the same whenever
+            and wherever it is read. `/v1/price/tip` converts at the live
+            rate and omits it.
+        fx_as_of:
+          type: string
+          format: date-time
+          description: >-
+            Close of the bound FX fixing (a vendor time). On a fiat/fiat
+            cross, the older of the two legs' closes. Present only on a
+            closed-surface fiat cross.
+        fx_source: { type: string, description: "Feed that published the bound FX fixing. Present only on a closed-surface USD-anchored fiat cross." }
+        fx_resolution:
+          type: string
+          enum: [hourly, daily]
+          description: >-
+            Grain of the bound FX fixing. `daily` before the hourly series
+            begins for the currency; a daily fixing reports no FX
+            staleness of its own. Present only on a closed-surface fiat
+            cross.
+        usd_leg:
+          type: [object, "null"]
+          description: >-
+            The USD price a closed-surface USD-anchored fiat cross
+            converted: `price` × `fx_rate` equals the served price up to
+            its rendering (15 fractional digits, more for a very small
+            rate, trailing zeros trimmed), and `observed_at` is the
+            served `observed_at`.
+          required: [price, observed_at, sources]
+          properties:
+            price:       { type: string, description: "Decimal string. Never JSON number." }
+            observed_at: { type: string, format: date-time }
+            sources:     { type: array, items: { type: string } }
         change_24h_pct:
           type: [string, "null"]
           description: >-
