@@ -309,4 +309,4 @@ Single-event shapes are dispatched by `singleTopicActions` /
 
 The earliest stake WASMs emit an unbond's token and amount under the
 `"bond"` topic; `buffer.continuesEarlyUnbond` routes them into the open
-unbond of the same op. Storage for the new actions is migration 0191.
+unbond of the same op. Storage for the new actions is migration 0195.
