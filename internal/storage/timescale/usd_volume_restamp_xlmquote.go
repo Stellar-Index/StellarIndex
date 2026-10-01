@@ -60,7 +60,7 @@ func (s *Store) PlanXLMQuoteUSDVolumeRestamp(ctx context.Context, p RestampScanP
 		Assets:  xlmAssetForms(),
 		Gate:    xlmQuoteTierFor,
 		Value: func(t canonical.Trade) (*string, error) {
-			return tradeUSDVolumeViaXLMQuoteAnchorFor(ctx, t, s.usdVolumeFXResolver), nil
+			return tradeUSDVolumeViaXLMQuoteAnchorFor(ctx, t, s.usdVolumeFXResolver)
 		},
 	})
 }
