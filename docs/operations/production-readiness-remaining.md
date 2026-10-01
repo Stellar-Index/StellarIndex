@@ -38,7 +38,7 @@ rows) — accept + document, recover via op-census if ever needed.
 
 | Item | Status | Notes |
 |---|---|---|
-| F2 — auto `-to` resolves to max-in-lake, blind to lake-behind-tip | ⬜ | Needs a true network-tip source; partially mitigated because tools print their resolved range |
+| F2 — auto `-to` resolves to max-in-lake, blind to lake-behind-tip | ✅ | `verify-lake` / `verify-contiguity` / `verify-hashchain` with `-to 0` fail closed when the lake max trails either the ledgerstream cursor or the configured history archive's published tip (`stellar.history_archive_url`) by more than 100 ledgers; an unreachable tip source warns and is skipped |
 | F6 ≡ C2-16 — oracle-reconcile window netting | ⬜ | Deferred with rationale: needs a content-level per-update reconcile on a vintage-stable identity |
 | F8 / F9 / F10 | ⬜ | Lower-severity fail-opens from the sweep |
 | C2-11 / C2-18 — Soroban topics>4 schema + re-ingest; drop dead `classic_movements` | ⬜ | Structural, `[OP]`-coordinated. Re-ingest reads the topic-complete lake (cheap) |

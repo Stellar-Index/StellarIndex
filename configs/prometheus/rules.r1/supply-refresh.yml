@@ -29,6 +29,11 @@
 #     but consistently producing wrong results — operator config
 #     drift, observer not backfilled, or storage layer broken.
 #
+#   - `stellarindex_aggregator_supply_refresh_dormant_fleet` — two or
+#     more assets report `dormant` together for ≥ 30 min. The freshness
+#     anchor is a producer-wide watermark, so shared dormancy means a
+#     component observer stalled, not that the assets went quiet.
+#
 #   - `stellarindex_sep41_supply_rollup_no_cursor` — a watched
 #     SEP-41 contract's rollup has been pinned for ≥ 30 min because
 #     the projector's sep41_supply cursor is absent, so its supply
@@ -149,6 +154,35 @@ groups:
             Runbook: split by outcome, inspect the dominant kind; for
             sustained `stale_component` on one asset, see
             WithStaleComponentLedgersFor.
+
+      - alert: stellarindex_aggregator_supply_refresh_dormant_fleet
+        # MinComponentLedger is the producer's watermark (MAX(ledger) over the
+        # observer tables), not a per-asset age, so every asset fed by one
+        # producer freezes on the same tick. `dormant` is excluded from
+        # _error_dominant, which would otherwise stay silent until the 24h
+        # dormancy horizon flips these assets to stale_component.
+        expr: |
+          count(
+            sum by (asset_key) (rate(stellarindex_aggregator_supply_refresh_total{outcome="dormant"}[15m])) > 0
+          ) > 1
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: supply
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh-error-dominant.md
+          summary: "supply refresher: {{ $value }} assets reporting dormant together for ≥ 30m — a component observer has likely stalled"
+          description: |
+            {{ $value }} watched assets are reporting outcome `dormant`
+            at once. The supply freshness anchor is a producer-wide
+            watermark (classic: the slowest of the four component
+            observers; SEP-41: sep41_supply_events), so assets share a
+            frozen anchor only when that producer stops advancing. Each
+            tick still re-stamps the last observation as current, so
+            served supply goes stale silently until the 24h dormancy
+            horizon. Runbook: section "Several assets dormant at once" —
+            check each component observer is advancing.
 
       # GH-1153: the sep41 rollup fails closed when the projector's
       # sep41_supply cursor row is absent — the fold stays pinned and every

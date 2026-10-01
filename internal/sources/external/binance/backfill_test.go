@@ -275,6 +275,57 @@ func TestBackfill_ZeroVolumeCandlesSkipped(t *testing.T) {
 	}
 }
 
+// The venue's last row is the still-open candle; its volume is partial and
+// its close time is in the future, so it must not be written as a trade.
+func TestBackfill_SkipsCandleStillOpen(t *testing.T) {
+	const hourMs = int64(3_600_000)
+	startMs := time.Now().Truncate(time.Hour).UnixMilli() - 2*hourMs
+	srv := newTestREST(t, [][]kline{synthesiseKlines(3, startMs, hourMs), {}})
+	defer srv.Close()
+
+	s := NewStreamer(mustPairMapBF(t))
+	s.Endpoint = srv.URL
+	trades, err := s.Backfill(context.Background(), mustPair(t),
+		time.UnixMilli(startMs).UTC(), time.UnixMilli(startMs+24*hourMs).UTC(), time.Hour)
+	if err != nil {
+		t.Fatalf("Backfill: %v", err)
+	}
+	if len(trades) != 2 {
+		t.Fatalf("got %d trades, want 2 (open candle dropped)", len(trades))
+	}
+	if last := trades[1].Timestamp; last.After(time.Now()) {
+		t.Errorf("emitted a trade stamped in the future: %v", last)
+	}
+}
+
+// A candle that closes after -to would be stamped outside the requested
+// window, and endTime must exclude a candle opening exactly at -to.
+func TestBackfill_BoundsCandlesAndEndTimeByTo(t *testing.T) {
+	const startMs = int64(1_745_000_000_000)
+	const hourMs = int64(3_600_000)
+	toMs := startMs + 2*hourMs + hourMs/2
+	var endTimes []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		endTimes = append(endTimes, r.URL.Query().Get("endTime"))
+		_ = json.NewEncoder(w).Encode(synthesiseKlines(3, startMs, hourMs))
+	}))
+	defer srv.Close()
+
+	s := NewStreamer(mustPairMapBF(t))
+	s.Endpoint = srv.URL
+	trades, err := s.Backfill(context.Background(), mustPair(t),
+		time.UnixMilli(startMs).UTC(), time.UnixMilli(toMs).UTC(), time.Hour)
+	if err != nil {
+		t.Fatalf("Backfill: %v", err)
+	}
+	if len(trades) != 2 {
+		t.Fatalf("got %d trades, want 2 (candle straddling -to dropped)", len(trades))
+	}
+	if want := strconv.FormatInt(toMs-1, 10); len(endTimes) != 1 || endTimes[0] != want {
+		t.Errorf("endTime params = %v, want [%s]", endTimes, want)
+	}
+}
+
 func TestBackfill_HTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rate limited", http.StatusTooManyRequests)

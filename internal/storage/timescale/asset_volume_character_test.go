@@ -232,5 +232,10 @@ func TestVolumeCharacterSQL_PoolMakerIsNotAnAccount(t *testing.T) {
 		if strings.Contains(q, "LEAST(maker, taker)") {
 			t.Errorf("%s: still pairs the raw maker, so a pool reads as an account", name)
 		}
+		// A Soroban AMM swap stores no maker and is not a classic pool fill;
+		// it must still enter the pair numerator on its taker.
+		if !strings.Contains(q, "WHERE (maker IS NOT NULL OR taker IS NOT NULL)") {
+			t.Errorf("%s: pair filter drops rows with one known account (maker-less AMM swaps)", name)
+		}
 	}
 }
