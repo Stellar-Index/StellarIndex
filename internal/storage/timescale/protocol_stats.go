@@ -37,8 +37,8 @@ import (
 //   - upshift_vault_events (ledger_close_time) — 'upshift' (the vaults
 //     write no trades, so this leg is the source's whole census).
 //   - soroswap_skim_events (ledger_close_time) — added into 'soroswap'.
-//   - defindex_flows + defindex_fees (ledger_close_time) — summed as
-//     'defindex'.
+//   - defindex_flows + defindex_fees + defindex_admin_events
+//     (ledger_close_time) — summed as 'defindex'.
 //   - credit_positions + credit_statements + credit_settlements +
 //     credit_events (ledger_close_time) — summed as 'sorocredit'.
 //   - cctp_events / rozo_events (ts) — 'cctp' / 'rozo'.
@@ -92,6 +92,9 @@ const countRecentEventsQuery = `
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'defindex', count(*) FROM defindex_fees
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'defindex', count(*) FROM defindex_admin_events
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'sorocredit', count(*) FROM credit_positions

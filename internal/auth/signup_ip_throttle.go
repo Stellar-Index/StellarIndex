@@ -61,9 +61,10 @@ const signupThrottleIncrTimeout = 5 * time.Second
 // errors and the handler falls open as before. Once the window is
 // exceeded — i.e. Redis has been failing continuously for longer
 // than the dwell-time — CheckIP returns [ErrThrottleUnavailable]
-// and the handler returns 503 + Retry-After instead. A single
-// Redis success resets the clock so transient blips never trip the
-// threshold.
+// and the handler returns 503 + Retry-After instead. The clock
+// resets after a dwell-time of unbroken successes, or on a success
+// that follows a dwell-time with no failure; a single success amid
+// ongoing errors does not reset it.
 type RedisSignupIPThrottle struct {
 	counter   *ratelimit.FixedWindowCounter
 	max       int
@@ -82,6 +83,9 @@ type RedisSignupIPThrottle struct {
 	// a single stray success must NOT reopen the throttle (REL-06; identical fix
 	// to ratelimit.Bucket, which this deliberately mirrors).
 	healthySince time.Time
+	// lastFailure lets a success that follows a failure-free dwellTime clear
+	// the clock, so a long-ago outage cannot make the next blip fail closed.
+	lastFailure time.Time
 }
 
 // SignupIPThrottleOptions tunes a [RedisSignupIPThrottle].
@@ -225,6 +229,7 @@ func (t *RedisSignupIPThrottle) observeRedisFailure() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.healthySince = time.Time{} // any failure breaks the recovery streak (REL-06)
+	t.lastFailure = now
 	if t.redisErrorSince.IsZero() {
 		t.redisErrorSince = now
 		return false
@@ -237,7 +242,8 @@ func (t *RedisSignupIPThrottle) observeRedisFailure() bool {
 // Redis (occasional OK amid sustained errors) would keep the signup throttle
 // fail-open indefinitely. The "first OK after outage" recovery marker operators
 // want comes from the success-path metric, not from weakening the throttle.
-// Mirrors ratelimit.Bucket.observeRedisSuccess.
+// A success after dwellTime with no observed failure also clears it. Mirrors
+// ratelimit.Bucket.observeRedisSuccess.
 func (t *RedisSignupIPThrottle) observeRedisSuccess() {
 	now := t.nowFn()
 	t.mu.Lock()
@@ -248,7 +254,7 @@ func (t *RedisSignupIPThrottle) observeRedisSuccess() {
 	if t.healthySince.IsZero() {
 		t.healthySince = now
 	}
-	if now.Sub(t.healthySince) >= t.dwellTime {
+	if now.Sub(t.healthySince) >= t.dwellTime || now.Sub(t.lastFailure) > t.dwellTime {
 		t.redisErrorSince = time.Time{}
 		t.healthySince = time.Time{}
 	}

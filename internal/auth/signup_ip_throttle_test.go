@@ -282,6 +282,49 @@ func TestRedisSignupIPThrottle_DwellTime_FlapVsSustainedRecovery(t *testing.T) {
 	}
 }
 
+// TestRedisSignupIPThrottle_DwellTime_StaleFailureDoesNotFailClosed pins that an
+// outage long past cannot make the first error of a fresh blip fail closed: a
+// success after a failure-free dwellTime clears the clock.
+func TestRedisSignupIPThrottle_DwellTime_StaleFailureDoesNotFailClosed(t *testing.T) {
+	mr := miniredis.RunT(t)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	fakeNow := time.Unix(1_750_000_000, 0)
+	tt := auth.NewRedisSignupIPThrottle(rdb, auth.SignupIPThrottleOptions{
+		Max:       3,
+		Window:    time.Hour,
+		DwellTime: 30 * time.Second,
+		NowFn:     func() time.Time { return fakeNow },
+	})
+
+	// fakeNow sits 400s into its hour window, so the 40m1s advanced below keeps
+	// the poisoned key stable.
+	const ip = "203.0.113.42"
+	key := "signup-ip:" + ip + ":" + strconv.FormatInt(fakeNow.Unix()/3600, 10)
+	check := func() error { return tt.CheckIP(context.Background(), ip) }
+
+	mr.Set(key, "not-a-number")
+	if err := check(); err == nil {
+		t.Fatal("arm: want INCR err, got nil")
+	}
+	fakeNow = fakeNow.Add(40 * time.Minute)
+	mr.Del(key)
+	if err := check(); err != nil {
+		t.Fatalf("lone success: want nil, got %v", err)
+	}
+	fakeNow = fakeNow.Add(time.Second)
+	mr.Set(key, "not-a-number")
+	err := check()
+	if err == nil {
+		t.Fatal("new blip: want INCR err, got nil")
+	}
+	if errors.Is(err, auth.ErrThrottleUnavailable) {
+		t.Fatalf("new blip: a stale failure must not trip the dwell clock — want fail-OPEN, got ErrThrottleUnavailable")
+	}
+}
+
 // TestRedisSignupIPThrottle_DwellTime_Disabled pins that a negative
 // DwellTime preserves the pre-F-0049 fail-open-always behaviour —
 // operators who explicitly opt out never see ErrThrottleUnavailable.

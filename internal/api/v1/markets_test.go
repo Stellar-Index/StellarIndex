@@ -39,6 +39,9 @@ type stubMarketsReader struct {
 	hourVolumes map[string]map[int]string
 	sparkErr    error
 	sparkPairs  [][2]string
+
+	// firstPairs captures the pairs passed to FirstTradeBatch.
+	firstPairs [][2]string
 }
 
 func (r *stubMarketsReader) DistinctPairsExt(_ context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
@@ -717,8 +720,58 @@ func TestPools_ValidBaseQuote200(t *testing.T) {
 	}
 }
 
-func (r *stubMarketsReader) FirstTradeBatch(_ context.Context, _ [][2]string) (map[string]time.Time, error) {
-	return map[string]time.Time{}, nil
+func (r *stubMarketsReader) FirstTradeBatch(_ context.Context, pairs [][2]string) (map[string]time.Time, error) {
+	r.firstPairs = pairs
+	out := make(map[string]time.Time, len(pairs))
+	for _, p := range pairs {
+		out[p[0]+"|"+p[1]] = time.Unix(1_600_000_000, 0).UTC().Truncate(24 * time.Hour)
+	}
+	return out, nil
+}
+
+// TestMarkets_SourceFilterOmitsPairWideEnrichments: both enrichment
+// readers are cross-venue, so a ?source= row — whose headline figures
+// are that venue's own — must not carry them.
+func TestMarkets_SourceFilterOmitsPairWideEnrichments(t *testing.T) {
+	vol := "10"
+	reader := &stubMarketsReader{
+		pairs:       []v1.Market{{Base: "native", Quote: "fiat:USD", TradeCount24h: 2, Volume24hUSD: &vol}},
+		hourVolumes: map[string]map[int]string{"native|fiat:USD": {23: "610"}},
+	}
+	srv := v1.New(v1.Options{Markets: reader})
+	ts := httpTestServer(t, srv)
+
+	var env struct {
+		Data []v1.Market `json:"data"`
+	}
+	resp := mustGet(t, ts.URL+"/v1/markets?include=sparkline,inception")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 1 || env.Data[0].VolumeHistory24h == nil || env.Data[0].FirstTradeAt == nil {
+		t.Fatalf("unfiltered: rows=%+v; want sparkline and first_trade_at attached", env.Data)
+	}
+
+	// The stub hands out its own slice, which the first request enriched in place.
+	reader.pairs = []v1.Market{{Base: "native", Quote: "fiat:USD", TradeCount24h: 2, Volume24hUSD: &vol}}
+	reader.sparkPairs, reader.firstPairs = nil, nil
+	resp = mustGet(t, ts.URL+"/v1/markets?source=binance&include=sparkline,inception")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	env.Data = nil
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 1 {
+		t.Fatalf("got %d rows, want 1", len(env.Data))
+	}
+	if reader.sparkPairs != nil || reader.firstPairs != nil {
+		t.Errorf("source-filtered: sparkline batch=%v inception batch=%v; want neither pair-wide reader called",
+			reader.sparkPairs, reader.firstPairs)
+	}
+	if m := env.Data[0]; m.VolumeHistory24h != nil || m.FirstTradeAt != nil {
+		t.Errorf("source-filtered row carries pair-wide enrichments: history=%v first_trade_at=%v", m.VolumeHistory24h, m.FirstTradeAt)
+	}
 }
 
 // The ?asset= filter must reach SQL in its CANONICAL spelling. ParseAsset

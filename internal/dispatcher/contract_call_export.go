@@ -25,6 +25,9 @@ type ContractCall struct {
 	CallPathContracts []string
 	// AuthOccurrence — see ContractCallContext.AuthOccurrence.
 	AuthOccurrence int
+	// ExecutionCorroborated — see ContractCallContext.ExecutionCorroborated.
+	// Callers must gate on it via [RefusesUncorroborated].
+	ExecutionCorroborated bool
 }
 
 // ExtractContractCallTree returns every InvokeContract call reachable from a
@@ -33,7 +36,8 @@ type ContractCall struct {
 // This is byte-identical to what the live dispatcher feeds its
 // ContractCallDecoders (see extractInvokeContractCallTrees), so a census
 // re-derived through it reconciles against the served tier by the same
-// routing logic. Returns nil for non-InvokeContract ops.
+// routing logic, including the ExecutionCorroborated flag the live
+// dispatcher computes. Returns nil for non-InvokeContract ops.
 //
 // The top-level call used to be emitted only "as the fallback when the op
 // carries no auth array" (C2-060, audit-2026-07-23). An auth entry's
@@ -47,15 +51,17 @@ func ExtractContractCallTree(op xdr.Operation) []ContractCall {
 	if len(trees) == 0 || trees[0] == nil {
 		return nil
 	}
+	top := extractInvokeContractCalls([]xdr.Operation{op})[0]
 	out := make([]ContractCall, 0, len(trees[0]))
 	for _, c := range trees[0] {
 		out = append(out, ContractCall{
-			ContractID:        c.ContractID,
-			FunctionName:      c.FunctionName,
-			Args:              c.Args,
-			CallPath:          c.CallPath,
-			CallPathContracts: c.CallPathContracts,
-			AuthOccurrence:    c.AuthOccurrence,
+			ContractID:            c.ContractID,
+			FunctionName:          c.FunctionName,
+			Args:                  c.Args,
+			CallPath:              c.CallPath,
+			CallPathContracts:     c.CallPathContracts,
+			AuthOccurrence:        c.AuthOccurrence,
+			ExecutionCorroborated: executionCorroborated(top, c),
 		})
 	}
 	return out

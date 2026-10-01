@@ -52,7 +52,7 @@ func backfillExternal(args []string) error {
 	fromStr := fs.String("from", "", "Start time, RFC 3339 (required, e.g. 2024-01-01T00:00:00Z)")
 	toStr := fs.String("to", "", "End time, RFC 3339 (required, e.g. 2024-12-31T00:00:00Z)")
 	granStr := fs.String("granularity", "1h", "Candle granularity as a Go duration (1m / 15m / 1h / 4h / 1d / 1w)")
-	rawTrades := fs.Bool("raw-trades", false, "kraken only: walk the /Trades fills endpoint instead of /OHLC — the deep-history path (OHLC serves only the most recent 720 candles; board #44). Slower (rate-limited pagination) but reaches the pair's full history with exact per-fill prices.")
+	rawTrades := fs.Bool("raw-trades", false, "kraken only: walk the /Trades fills endpoint instead of /OHLC — the deep-history path (OHLC serves only the most recent 720 candles, so an older window returns none). Slower (rate-limited pagination) but reaches the pair's full history with exact per-fill prices.")
 	allowOverlap := fs.Bool("allow-overlap", false, "Write even though the trades table already holds rows for this source+pair inside [-from, -to). Rows from another path (live stream, candles vs fills) carry a different tx_hash and would be counted twice; use only to re-run or resume a window this command itself wrote. A candle run is still refused if the window holds a row it would not overwrite (e.g. one written at another -granularity).")
 	gate := opsutil.RegisterWriteGate(fs)
 	progressEvery := fs.Int("progress-every", 1000, "Print a progress line every N trades inserted")

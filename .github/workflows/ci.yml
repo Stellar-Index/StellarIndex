@@ -2420,6 +2420,11 @@ jobs:
         # it) and group-write must stay tied to its group writers.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-textfile-dir-mode-test.sh
+      - name: ZFS ARC cap render test
+        # A rebuilt ZFS host must get r1's ARC bounds, rendered byte for
+        # byte; renders the real template with a local ansible run.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-zfs-arc-cap-test.sh
       - name: postgres log size-cap test
         # The hourly pg-logrotate run must read a role-owned config that
         # carries maxsize; the stock postgresql-common conffile has none.

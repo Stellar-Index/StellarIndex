@@ -233,6 +233,7 @@ var projRoutes = []projRoute{
 	{typeName: "defindex.Event", table: "defindex_flows", disp: reconciledByKind},
 	{typeName: "defindex.VaultEvent", table: "defindex_flows", disp: reconciledByKind},
 	{typeName: "defindex.DFeesEvent", table: "defindex_fees", kind: "defindex.vault.dfees", disp: reconciledByKind},
+	{typeName: "defindex.AdminEvent", table: "defindex_admin_events", kind: "defindex.vault.admin", disp: reconciledByKind},
 
 	// ── oracles ──
 	{typeName: "reflector.UpdateEvent", table: "oracle_updates", kind: "reflector.update", disp: reconciledByKind},
@@ -533,6 +534,7 @@ func TestCatalogue_DeclaredKindsMatchDecoderOutput(t *testing.T) {
 		// table — pinned so the catalogue kind string stays welded to
 		// DFeesEvent.EventKind().
 		{defindex.DFeesEvent{}, "defindex.vault.dfees", "defindex_fees"},
+		{defindex.AdminEvent{}, "defindex.vault.admin", "defindex_admin_events"},
 		// sushiswap_v3: the source's only emitted kind.
 		{sushiswap_v3.TradeEvent{}, "sushiswap_v3.trade", "trades"},
 		// upshift: one kind covers deposit / withdraw / share transfer /
