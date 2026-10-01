@@ -296,8 +296,9 @@ gap; a raw-table, multi-topic-index pull would resolve it.
 
 Every remaining shape the gated set emits is decoded; real rows are in
 `test/fixtures/phoenix/event-shapes/`, replayed by `event_shapes_test.go`.
-Single-event shapes are dispatched by `singleTopicActions` /
-`topicPairActions` in `decode.go` and decoded in `decode_single.go`:
+Single-event shapes are dispatched by `classifyAny` in `decode.go` (the
+one-topic `len(e.Topic) == 1` switch, then `topicPairActions`) and decoded
+in `decode_single.go`:
 
 | Shape | Lands as |
 |---|---|
