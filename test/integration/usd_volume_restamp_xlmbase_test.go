@@ -103,9 +103,17 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 	if err := store.InsertTrade(ctx, thinBook); err != nil {
 		t.Fatalf("InsertTrade thin book: %v", err)
 	}
-	if _, err := store.DB().ExecContext(ctx,
-		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
-		t.Fatalf("refresh prices_1m: %v", err)
+	// $1000 at the same rate earlier that day, so the book clears the
+	// valuation substance floor and the quote side really can price.
+	depth := mkIntegrationTrade("sdex", 3, day.Add(6*time.Hour+30*time.Minute), tokenUSDC, 2_000_000, 10_000_000_000)
+	if err := store.InsertTrade(ctx, depth); err != nil {
+		t.Fatalf("InsertTrade depth: %v", err)
+	}
+	for _, view := range []string{"prices_1m", "prices_1h"} {
+		if _, err := store.DB().ExecContext(ctx,
+			`CALL refresh_continuous_aggregate('`+view+`', NULL, NULL)`); err != nil {
+			t.Fatalf("refresh %s: %v", view, err)
+		}
 	}
 
 	// ── the XLM-base population ─────────────────────────────────────
