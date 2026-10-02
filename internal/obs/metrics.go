@@ -307,6 +307,7 @@ func registerAppMetricsTail() {
 		DispatcherTxReadErrorsTotal,
 		DispatcherTxEventReadErrorsTotal,
 		DispatcherEntryMetaUnsupportedTotal,
+		DispatcherEvictedKeysUnreadableTotal,
 		SourceUncorroboratedCallsTotal,
 
 		MEVDetectRunsTotal,
@@ -1417,6 +1418,17 @@ var DispatcherEntryMetaUnsupportedTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_dispatcher_entry_meta_unsupported_total",
 		Help: "Transactions whose apply-phase entry changes were skipped for an unhandled TransactionMeta version.",
+	},
+)
+
+// DispatcherEvictedKeysUnreadableTotal — process-wide counter of ledgers
+// whose evicted-key list failed to read (dispatcher.Stats.EvictedKeysUnreadable),
+// so their state-archival evictions never reached the entry decoders.
+// Sibling of [DispatcherEntryMetaUnsupportedTotal].
+var DispatcherEvictedKeysUnreadableTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dispatcher_evicted_keys_unreadable_total",
+		Help: "Ledgers whose state-archival evicted keys failed to read; their evictions were skipped and the evicted entries stay served as live.",
 	},
 )
 
