@@ -558,15 +558,43 @@ type ThroughputBucketV struct {
 	// TotalCoins are XLM stroops as decimal strings — total_coins is
 	// ~117× past 2^53, so a JSON number would silently lose precision
 	// (ADR-0003). fee_pool is CUMULATIVE: daily fee burn is the delta
-	// between consecutive complete days.
+	// between consecutive complete days, minus FeePoolAdjustment.
 	FeePool         string `json:"fee_pool"`
 	TotalCoins      string `json:"total_coins"`
 	ProtocolVersion uint32 `json:"protocol_version"`
+	// FeePoolAdjustment is the stroops this day's fee_pool changed by
+	// outside any transaction fee (a protocol upgrade crediting the pool).
+	FeePoolAdjustment string `json:"fee_pool_adjustment,omitempty"`
 	// Partial is true for a bucket that does not cover a whole UTC day — in
 	// practice only today, still accumulating. Clients should render it
 	// distinctly and exclude it from window totals; every other bucket is a
 	// complete day (the window is day-aligned).
 	Partial bool `json:"partial,omitempty"`
+}
+
+// knownFeePoolAdjustments lists fee_pool credits that no transaction paid.
+// Each is keyed on its UTC day AND the protocol upgrade applied that day, so
+// a network whose upgrade fell on another day (testnet, futurenet) never
+// matches.
+var knownFeePoolAdjustments = []struct {
+	day                    string
+	fromProtocol, protocol uint32
+	stroops                int64
+}{
+	// Pubnet's P24 upgrade (ledger 59,501,299) credited the pool directly;
+	// total_coins did not change.
+	{day: "2025-10-22", fromProtocol: 23, protocol: 24, stroops: 31_879_035},
+}
+
+// feePoolAdjustment returns the non-fee fee_pool change for day as a stroop
+// string, or "" when there is none.
+func feePoolAdjustment(day string, prevProtocol, protocol uint32) string {
+	for _, a := range knownFeePoolAdjustments {
+		if a.day == day && a.fromProtocol == prevProtocol && a.protocol == protocol {
+			return strconv.FormatInt(a.stroops, 10)
+		}
+	}
+	return ""
 }
 
 // NetworkThroughput serves GET /v1/network/throughput — daily
@@ -628,6 +656,9 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 			TotalCoins:      strconv.FormatInt(b.TotalCoins, 10),
 			ProtocolVersion: b.ProtocolVersion,
 			Partial:         b.Partial,
+		}
+		if i > 0 {
+			out.Buckets[i].FeePoolAdjustment = feePoolAdjustment(out.Buckets[i].Day, buckets[i-1].ProtocolVersion, b.ProtocolVersion)
 		}
 	}
 	h.writeJSONAt(w, out, degraded, asOf)
