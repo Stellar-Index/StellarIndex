@@ -7077,12 +7077,13 @@ export interface components {
          * @description A customer-registered price-threshold alert backing the
          *     /v1/dashboard/price-alerts surface (BACKLOG #60). The
          *     aggregator's evaluator compares each enabled alert against the
-         *     latest closed 1m VWAP for its pair and, while the condition
-         *     holds, enqueues a `price.alert` webhook delivery to the
-         *     account's subscribed webhooks. The evaluator is level-triggered,
-         *     not edge-triggered: an alert whose condition keeps holding
-         *     re-fires once per `cooldown_seconds` until the price moves back
-         *     across the threshold or the alert is disabled.
+         *     latest closed 1m VWAP for its pair and, on a crossing, enqueues
+         *     a `price.alert` webhook delivery to the account's subscribed
+         *     webhooks. An alert fires once per crossing: after a fire it
+         *     stays quiet while the condition holds and re-arms once a fresh
+         *     price (closed within 15 minutes) no longer meets it. Changing
+         *     the pair, condition or threshold, or re-enabling a disabled
+         *     alert, also re-arms it.
          */
         DashboardPriceAlert: {
             /** Format: uuid */
@@ -7120,7 +7121,7 @@ export interface components {
             condition: "above" | "below";
             /** @description Positive decimal string (e.g. "0.15", "1200"). Fractions / scientific notation are rejected. */
             threshold: string;
-            /** @description Optional; defaults to 300 (5m), also the minimum. A lower value is a 400: the evaluator is level-triggered, so a shorter cooldown would re-notify every webhook on each tick the condition holds. */
+            /** @description Optional; defaults to 300 (5m), also the minimum. A lower value is a 400: it bounds re-notification when the price oscillates across the threshold, each move back re-arming the alert. */
             cooldown_seconds?: number;
             /** @description Defaults true when absent. */
             enabled?: boolean;
@@ -7240,13 +7241,12 @@ export interface components {
         /**
          * @description Body of a `price.alert` webhook delivery (BACKLOG #60). Fired by
          *     the aggregator's price-alert evaluator when one of the account's
-         *     registered alerts has its condition met by the latest closed
-         *     1-minute VWAP. The evaluator is level-triggered: while the
-         *     condition keeps holding the alert re-fires once per its
-         *     `cooldown_seconds` (minimum 300), so one excursion past the
-         *     threshold can produce several deliveries, each with its own
-         *     delivery id. Unlike the operational events, this is enqueued
-         *     ONLY to the owning account's subscribed webhooks.
+         *     registered alerts crosses its threshold against the latest closed
+         *     1-minute VWAP. Sent once per crossing: the alert re-arms only after
+         *     a fresh price no longer meets the condition, and two fires are
+         *     always at least `cooldown_seconds` apart. Unlike the operational
+         *     events, this is enqueued ONLY to the owning account's subscribed
+         *     webhooks.
          */
         PriceAlertWebhookPayload: {
             /** @enum {string} */
@@ -10404,17 +10404,28 @@ export interface components {
              *     from `admin_exclusion` so the wire never claims an
              *     exclusion that did not happen; `override` indicates an
              *     operator curated the locked-set or max_supply;
-             *     `sep1_declared_max` means max_supply (and fdv_usd) come
-             *     from the issuer's own stellar.toml `[[CURRENCIES]]`
-             *     max_number/fixed_number declaration — self-declared by
-             *     the issuer, not on-chain enforced; `sep41_lake_flows` is
-             *     the lake-derived Σmint−Σburn−Σclawback event-sum served
-             *     for SEP-41 tokens outside the operator watch-list
-             *     (total == circulating; no admin exclusion). Null when no
-             *     supply snapshot is available.
+             *     `sep41_lake_flows` is the lake-derived Σmint−Σburn−Σclawback
+             *     event-sum served for SEP-41 tokens outside the operator
+             *     watch-list (total == circulating; no admin exclusion).
+             *     `sep1_declared_max` stays in this vocabulary but names a
+             *     max_supply source, not a circulating policy: it is served on
+             *     `max_supply_basis`, and `supply_basis` keeps the policy behind
+             *     total/circulating even when the max comes from SEP-1. Null
+             *     when no supply snapshot is available.
              * @enum {string|null}
              */
             supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_sdf_reserve_exclusion_static" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "sep41_total_only" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances" | "no_metadata" | null;
+            /**
+             * @description Where `max_supply` (and `fdv_usd`) came from, when that is not
+             *     the policy `supply_basis` names. `sep1_declared_max`: the
+             *     issuer's own stellar.toml `[[CURRENCIES]]`
+             *     max_number/fixed_number declaration — self-declared by the
+             *     issuer, not on-chain enforced. Omitted when max_supply is null
+             *     or comes from the supply policy itself (an operator override,
+             *     `supply_basis: override`, or native XLM's fixed total).
+             * @enum {string}
+             */
+            max_supply_basis?: "sep1_declared_max";
             /**
              * Format: date-time
              * @description When the supply observation behind total_supply /

@@ -93,20 +93,24 @@ func TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric(t *testing.T) {
 		"tx_read_errors":         testutil.ToFloat64(obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_read_errors")),
 		"tx_event_read_errors":   testutil.ToFloat64(obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_event_read_errors")),
 		"entry_meta_unsupported": testutil.ToFloat64(obs.ChLiveSinkReadUndercountTotal.WithLabelValues("entry_meta_unsupported")),
+		"soroban_fee_meta_unsupported": testutil.ToFloat64(
+			obs.ChLiveSinkReadUndercountTotal.WithLabelValues("soroban_fee_meta_unsupported")),
 	}
 
 	ext := clickhouse.LedgerExtract{
-		Ledger:               clickhouse.LedgerRow{LedgerSeq: 999},
-		TxReadErrors:         2,
-		TxEventReadErrors:    3,
-		EntryMetaUnsupported: 1,
+		Ledger:                    clickhouse.LedgerRow{LedgerSeq: 999},
+		TxReadErrors:              2,
+		TxEventReadErrors:         3,
+		EntryMetaUnsupported:      1,
+		SorobanFeeMetaUnsupported: 4,
 	}
 	recordCHLiveSinkUndercount(ext, logger)
 
 	want := map[string]float64{
-		"tx_read_errors":         before["tx_read_errors"] + 2,
-		"tx_event_read_errors":   before["tx_event_read_errors"] + 3,
-		"entry_meta_unsupported": before["entry_meta_unsupported"] + 1,
+		"tx_read_errors":               before["tx_read_errors"] + 2,
+		"tx_event_read_errors":         before["tx_event_read_errors"] + 3,
+		"entry_meta_unsupported":       before["entry_meta_unsupported"] + 1,
+		"soroban_fee_meta_unsupported": before["soroban_fee_meta_unsupported"] + 4,
 	}
 	for kind, w := range want {
 		if got := testutil.ToFloat64(obs.ChLiveSinkReadUndercountTotal.WithLabelValues(kind)); got != w {
