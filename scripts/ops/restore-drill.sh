@@ -224,7 +224,7 @@ DATA_DIR="$DRILL_ROOT/pgdata-$(date +%Y%m%d-%H%M%S)"
 # that must not linger. Post-restore failures (recovery, verification)
 # are different: there the datadir IS the evidence, and is kept.
 restore_in_progress=0
-# shellcheck disable=SC2329  # invoked indirectly via the EXIT trap below
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via the EXIT trap below
 cleanup() {
   if [[ -f "$DATA_DIR/postmaster.pid" ]]; then
     sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA_DIR" stop -m immediate || true
