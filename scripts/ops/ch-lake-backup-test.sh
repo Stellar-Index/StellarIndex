@@ -3,7 +3,8 @@
 # backup (scripts/ops/ch-lake-backup.sh).
 #
 # The properties that matter:
-#   1. no configured disk is reported (configured 0), never stamped fresh;
+#   1. no configured disk is reported (configured 0), never stamped fresh,
+#      and exits 1 so the unit shows failed;
 #   2. the first run is a FULL and later runs are INCREMENTALS whose
 #      base_backup is the previous link of the same chain;
 #   3. a failed / empty backup does not stamp success or extend the chain;
@@ -80,7 +81,7 @@ age_chain() { # make the current chain's full look $1 days old
 echo "1. no backup disk configured"
 reset
 DISK="" run; rc=$?
-expect_rc 0 "exits 0"
+expect_rc 1 "exits 1 (the unit must not report success)"
 prom_has "stellarindex_ch_lake_backup_configured 0" "reports configured 0"
 prom_unstamped "never stamps success"
 file_empty "$TMP/queries" "issues no BACKUP"

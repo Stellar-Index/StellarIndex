@@ -12,7 +12,6 @@ Type=oneshot
 # 2 min covers the 34-GET run with margin while still guaranteeing the
 # unit is dead well before the next scheduled fire.
 TimeoutStartSec=2min
-RuntimeMaxSec=2min
 ExecStart=/opt/stellarindex/healthchecks/smoke.sh
 EnvironmentFile=-/etc/default/stellarindex-healthchecks
 DynamicUser=true

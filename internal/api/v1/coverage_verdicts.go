@@ -299,6 +299,12 @@ const coverageVerdictStaleLedgers uint32 = 34560
 // available, or when the live tip is frozen alongside a stalled audit.
 const coverageVerdictStaleAge = 26 * time.Hour
 
+// coverageIngestStallAge is the ledgerstream cursor age past which ingest
+// counts as stalled — the same 10 minutes after which
+// stellarindex_ingestion_ledger_stalled pages. The cursor is upserted once
+// per ~5 s ledger, so this cannot fire in healthy operation.
+const coverageIngestStallAge = 10 * time.Minute
+
 // handleCoverageVerdicts serves GET /v1/coverage — every source's
 // latest ADR-0033 completeness verdict. Verdicts change only when the
 // audit runs (manually or on its timer), so a 60s public cache is
@@ -464,6 +470,12 @@ func recognitionAxisView(sn timescale.CompletenessSnapshot) *RecognitionAxisView
 //     computed".
 //   - VERDICT AGE: computed_at older than [coverageVerdictStaleAge], or
 //     absent entirely (an unknown-age verdict cannot be claimed fresh).
+//   - INGEST STALL: the ledgerstream cursor itself has not been written
+//     for [coverageIngestStallAge]. The two signals above both measure
+//     against that cursor, so a frozen cursor plus a still-running audit
+//     keeps the gap at 0 and computed_at fresh while tip_ledger falls
+//     behind the network; the cursor's wall-clock age is the reference
+//     that does not move with it.
 //
 // A verdict list that is EMPTY is not flagged: there is no claim to
 // qualify, and the summary counts (0/0) already say so.
@@ -475,10 +487,13 @@ func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.Co
 	if len(snaps) == 0 {
 		return false
 	}
-	liveTip, haveTip := s.liveTipLedger(ctx)
+	live, haveTip := s.liveTip(ctx)
 	now := time.Now()
+	if haveTip && now.Sub(time.Time(live.IngestedAt)) > coverageIngestStallAge {
+		return true
+	}
 	for _, sn := range snaps {
-		if haveTip && liveTip > sn.Tip && liveTip-sn.Tip > coverageVerdictStaleLedgers {
+		if haveTip && live.LatestLedger > sn.Tip && live.LatestLedger-sn.Tip > coverageVerdictStaleLedgers {
 			return true
 		}
 		if sn.ComputedAt.IsZero() || now.Sub(sn.ComputedAt) > coverageVerdictStaleAge {
@@ -488,9 +503,9 @@ func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.Co
 	return false
 }
 
-// liveTipLedger returns the live ingest frontier — the ledgerstream
-// cursor's last ledger, the same value /v1/ledger/tip serves and the
-// same one compute-completeness resolves its tip from. ok=false when no
+// liveTip returns the live ingest frontier — the ledgerstream cursor's
+// last ledger and write time, the same values /v1/ledger/tip serves; the
+// ledger is the one compute-completeness resolves its tip from. ok=false when no
 // CursorsReader is wired, the cursor row doesn't exist yet, or the read
 // failed; callers must degrade rather than fail, since this is a
 // freshness annotation on someone else's response.
@@ -498,19 +513,16 @@ func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.Co
 // The read is bounded at 5s — matching /v1/diagnostics/cursors' own
 // ListCursors ceiling — so a slow Postgres can't hold a public GET open
 // past the point where the annotation is worth waiting for.
-func (s *Server) liveTipLedger(ctx context.Context) (uint32, bool) {
+func (s *Server) liveTip(ctx context.Context) (LedgerTipView, bool) {
 	if s.cursors == nil {
-		return 0, false
+		return LedgerTipView{}, false
 	}
 	tipCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	view, ok, err := s.ledgerTip(tipCtx)
 	if err != nil {
 		s.logger.Debug("live tip read failed — freshness gate falls back to verdict age", "err", err)
-		return 0, false
+		return LedgerTipView{}, false
 	}
-	if !ok {
-		return 0, false
-	}
-	return view.LatestLedger, true
+	return view, ok
 }
