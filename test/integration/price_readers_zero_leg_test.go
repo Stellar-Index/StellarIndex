@@ -209,6 +209,8 @@ func TestPriceReadersOnZeroLegBuckets(t *testing.T) {
 		resolver, err := timescale.NewVWAPUSDFXResolver(store, timescale.VWAPUSDFXResolverOptions{
 			USDPegs:   []string{usdcID},
 			Freshness: -1,
+			// Two buckets are no market; this pins the dust floor, not the gate.
+			DisableSubstanceGate: true,
 		})
 		if err != nil {
 			t.Fatalf("NewVWAPUSDFXResolver: %v", err)
