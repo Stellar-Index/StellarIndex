@@ -16930,6 +16930,7 @@ components:
         anchor_asset:
           type: string
           description: The off-chain instrument the issuer declared this token anchors to, verbatim.
+        isin_collision: { $ref: "#/components/schemas/RWAISINCollision" }
         valuation: { $ref: "#/components/schemas/RWAValuation" }
         reference_valuation: { $ref: "#/components/schemas/RWAReferenceValuation" }
         reference: { $ref: "#/components/schemas/RWAReference" }
@@ -17165,6 +17166,31 @@ components:
           type: string
           description: Canonical `rwa:<CODE>` id of the oracle feed, ready for `/oracle/latest`.
           example: rwa:USTRY
+
+    RWAISINCollision:
+      type: object
+      required: [isin, declared_by_issuers]
+      description: |
+        Present only when `anchor_asset` is an ISIN that more than one
+        issuer account declares in its issuer-bound SEP-1, counting
+        declarations this surface refused as well as admitted ones.
+
+        A declared ISIN is the issuer's claim, not proof that it holds
+        the security, so this states how many accounts make the same
+        claim and nothing more. It is informational: it never changes
+        membership, `valuation`, `reference` or `premium`. A reference
+        priced through an ISIN comes only from a binding verified on the
+        exact (code, issuer), never from the declaration alone.
+      properties:
+        isin:
+          type: string
+          description: The declared ISIN in canonical upper-case form.
+          example: LU2900381208
+        declared_by_issuers:
+          type: integer
+          minimum: 2
+          description: Distinct issuer accounts, this row's included, declaring `isin`.
+          example: 2
 
     RWAReference:
       type: object
