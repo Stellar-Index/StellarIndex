@@ -174,7 +174,7 @@ flock -n 9 || { note "another restore drill holds $DRILL_LOCK — refusing (one 
 
 # The scratch port, which the lock does NOT cover (2026-09-04). The lock
 # guards against a CONCURRENT drill; it says nothing about the wreckage of
-# a killed one. A run SIGKILLed after pg_start (RuntimeMaxSec, an OOM
+# a killed one. A run SIGKILLed after pg_start (TimeoutStartSec, an OOM
 # kill, a hand `kill -9`) leaves a DAEMONISED postgres listening on
 # DRILL_PG_PORT — the EXIT trap never ran — while its lock died with the
 # shell, so the next drill takes the lock cleanly, restores several
