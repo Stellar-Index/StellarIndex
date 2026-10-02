@@ -54,6 +54,13 @@ superseded_by: null
 > declared values. The decision below is preserved as the original
 > record.
 
+> **Amendment (2026-10-02).** The overlay's label moved to its own
+> field: an applied overlay now sets `max_supply_basis:
+> "sep1_declared_max"` and leaves `supply_basis` naming the policy
+> behind total/circulating (`issuer_exclusion`, `override`, …).
+> Overwriting `supply_basis` erased that policy, and with it the
+> circulating lower-bound flag derived from it.
+
 > **Amendment (2026-07-24, audit-2026-07-23 wave5 DOC-01/DAT-14).**
 > The "API + schema" section's hypertable note below —
 > "Append-only; latest row per `asset_key` is the queryable current
