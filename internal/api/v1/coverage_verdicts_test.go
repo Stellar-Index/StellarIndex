@@ -380,6 +380,41 @@ func TestHandleCoverageVerdicts_FreshVerdictNotStale(t *testing.T) {
 	}
 }
 
+// A stalled ingest freezes the ledgerstream cursor, and an audit that
+// keeps running stamps each new verdict with that same frozen tip: gap 0,
+// computed_at minutes old. The cursor's own write age is the only signal
+// left that the tip is no longer the network's, so it must carry the flag.
+func TestHandleCoverageVerdicts_StaleWhenIngestStalled(t *testing.T) {
+	snaps := []timescale.CompletenessSnapshot{{
+		Source: "blend", Genesis: 51_499_546, Tip: 63_000_000, Watermark: 63_000_000,
+		CoveragePct: 1, Complete: true, LakeComplete: true,
+		SubstrateOK: true, RecognitionOK: true, ProjectionOK: true,
+		ComputedAt: time.Now().UTC().Add(-5 * time.Minute),
+	}}
+	stalled := v1.New(v1.Options{
+		CompletenessReader: &stubCompletenessReader{snaps: snaps},
+		Cursors: &stubCursorsReader{rows: []timescale.Cursor{
+			mkCursor("ledgerstream", "", 63_000_000, 3*time.Hour),
+		}},
+	})
+	if !coverageStaleFlag(t, httpTestServer(t, stalled).URL) {
+		t.Error("flags.stale = false, want true: the ledgerstream cursor has not advanced " +
+			"for 3h, so tip_ledger 63000000 is not the network's tip however fresh the verdict is")
+	}
+
+	// Same verdict and tip with a cursor written seconds ago → not stale,
+	// so the cursor age is what is being measured.
+	live := v1.New(v1.Options{
+		CompletenessReader: &stubCompletenessReader{snaps: snaps},
+		Cursors: &stubCursorsReader{rows: []timescale.Cursor{
+			mkCursor("ledgerstream", "", 63_000_000, 4*time.Second),
+		}},
+	})
+	if coverageStaleFlag(t, httpTestServer(t, live).URL) {
+		t.Error("flags.stale = true for a fresh verdict at a cursor written 4s ago")
+	}
+}
+
 // With no CursorsReader wired the ledger-gap signal is unavailable, so
 // the verdict's own age has to carry the gate: a verdict computed 30h
 // ago is not a current claim. Proven red against the pre-fix handler

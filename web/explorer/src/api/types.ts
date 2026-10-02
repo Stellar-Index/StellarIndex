@@ -2331,10 +2331,12 @@ export interface paths {
          *
          *     **Two floors, too.** `genesis_ledger` is the LAKE axis's floor —
          *     the first ledger the source could have data at. The SERVED axis
-         *     has its own, `projection_verified_from`: the lowest ledger the
-         *     served tier actually holds a row at. They are frequently far
-         *     apart — sdex and the oracle sources publish `genesis_ledger: 2`
-         *     against a served tier that begins around ledger 61.6M — so
+         *     has its own, `projection_verified_from`: the bottom of the range
+         *     the served claim covers. It equals `genesis_ledger` unless the
+         *     source's served tier is a declared working-set window, where it is
+         *     the lowest ledger that tier holds a row at — sdex publishes
+         *     `genesis_ledger: 2` against a served tier that begins around
+         *     ledger 61.6M — so
          *     `complete: true` with `coverage_pct: 1` is a claim over
          *     `[projection_verified_from, watermark_ledger]`, NOT over
          *     `[genesis_ledger, watermark_ledger]`. Read the two together.
@@ -7077,12 +7079,13 @@ export interface components {
          * @description A customer-registered price-threshold alert backing the
          *     /v1/dashboard/price-alerts surface (BACKLOG #60). The
          *     aggregator's evaluator compares each enabled alert against the
-         *     latest closed 1m VWAP for its pair and, while the condition
-         *     holds, enqueues a `price.alert` webhook delivery to the
-         *     account's subscribed webhooks. The evaluator is level-triggered,
-         *     not edge-triggered: an alert whose condition keeps holding
-         *     re-fires once per `cooldown_seconds` until the price moves back
-         *     across the threshold or the alert is disabled.
+         *     latest closed 1m VWAP for its pair and, on a crossing, enqueues
+         *     a `price.alert` webhook delivery to the account's subscribed
+         *     webhooks. An alert fires once per crossing: after a fire it
+         *     stays quiet while the condition holds and re-arms once a fresh
+         *     price (closed within 15 minutes) no longer meets it. Changing
+         *     the pair, condition or threshold, or re-enabling a disabled
+         *     alert, also re-arms it.
          */
         DashboardPriceAlert: {
             /** Format: uuid */
@@ -7120,7 +7123,7 @@ export interface components {
             condition: "above" | "below";
             /** @description Positive decimal string (e.g. "0.15", "1200"). Fractions / scientific notation are rejected. */
             threshold: string;
-            /** @description Optional; defaults to 300 (5m), also the minimum. A lower value is a 400: the evaluator is level-triggered, so a shorter cooldown would re-notify every webhook on each tick the condition holds. */
+            /** @description Optional; defaults to 300 (5m), also the minimum. A lower value is a 400: it bounds re-notification when the price oscillates across the threshold, each move back re-arming the alert. */
             cooldown_seconds?: number;
             /** @description Defaults true when absent. */
             enabled?: boolean;
@@ -7240,13 +7243,12 @@ export interface components {
         /**
          * @description Body of a `price.alert` webhook delivery (BACKLOG #60). Fired by
          *     the aggregator's price-alert evaluator when one of the account's
-         *     registered alerts has its condition met by the latest closed
-         *     1-minute VWAP. The evaluator is level-triggered: while the
-         *     condition keeps holding the alert re-fires once per its
-         *     `cooldown_seconds` (minimum 300), so one excursion past the
-         *     threshold can produce several deliveries, each with its own
-         *     delivery id. Unlike the operational events, this is enqueued
-         *     ONLY to the owning account's subscribed webhooks.
+         *     registered alerts crosses its threshold against the latest closed
+         *     1-minute VWAP. Sent once per crossing: the alert re-arms only after
+         *     a fresh price no longer meets the condition, and two fires are
+         *     always at least `cooldown_seconds` apart. Unlike the operational
+         *     events, this is enqueued ONLY to the owning account's subscribed
+         *     webhooks.
          */
         PriceAlertWebhookPayload: {
             /** @enum {string} */
@@ -7538,11 +7540,11 @@ export interface components {
                 watermark_ledger: number;
                 /**
                  * Format: int64
-                 * @description Floor of the range `complete` is a claim about — the
-                 *     lowest ledger the SERVED tier holds any row at for this
-                 *     source. It is NOT `genesis_ledger` (the sibling field on
-                 *     this same row), which is the lake axis's floor and is
-                 *     routinely much lower: sdex publishes `genesis_ledger: 2`
+                 * @description Floor of the range `complete` is a claim about —
+                 *     `genesis_ledger` (the sibling field on this same row)
+                 *     unless the source's served tier is a declared working-set
+                 *     window, where it is the lowest ledger that tier holds a
+                 *     row at and can be much higher: sdex publishes `genesis_ledger: 2`
                  *     with a served tier that begins around ledger 61.6M.
                  *     Reading `complete` against `genesis_ledger` overstates
                  *     the claim by that whole span. Omitted when the audit
@@ -8657,6 +8659,7 @@ export interface components {
             anchor_class?: "stock" | "bond" | "commodity" | "realestate" | "fund";
             /** @description The off-chain instrument the issuer declared this token anchors to, verbatim. */
             anchor_asset?: string;
+            isin_collision?: components["schemas"]["RWAISINCollision"];
             valuation: components["schemas"]["RWAValuation"];
             reference_valuation: components["schemas"]["RWAReferenceValuation"];
             reference?: components["schemas"]["RWAReference"];
@@ -8873,6 +8876,30 @@ export interface components {
              * @example rwa:USTRY
              */
             feed: string;
+        };
+        /**
+         * @description Present only when `anchor_asset` is an ISIN that more than one
+         *     issuer account declares in its issuer-bound SEP-1, counting
+         *     declarations this surface refused as well as admitted ones.
+         *
+         *     A declared ISIN is the issuer's claim, not proof that it holds
+         *     the security, so this states how many accounts make the same
+         *     claim and nothing more. It is informational: it never changes
+         *     membership, `valuation`, `reference` or `premium`. A reference
+         *     priced through an ISIN comes only from a binding verified on the
+         *     exact (code, issuer), never from the declaration alone.
+         */
+        RWAISINCollision: {
+            /**
+             * @description The declared ISIN in canonical upper-case form.
+             * @example LU2900381208
+             */
+            isin: string;
+            /**
+             * @description Distinct issuer accounts, this row's included, declaring `isin`.
+             * @example 2
+             */
+            declared_by_issuers: number;
         };
         /**
          * @description An independent oracle's valuation of the real-world instrument an
@@ -10379,17 +10406,28 @@ export interface components {
              *     from `admin_exclusion` so the wire never claims an
              *     exclusion that did not happen; `override` indicates an
              *     operator curated the locked-set or max_supply;
-             *     `sep1_declared_max` means max_supply (and fdv_usd) come
-             *     from the issuer's own stellar.toml `[[CURRENCIES]]`
-             *     max_number/fixed_number declaration — self-declared by
-             *     the issuer, not on-chain enforced; `sep41_lake_flows` is
-             *     the lake-derived Σmint−Σburn−Σclawback event-sum served
-             *     for SEP-41 tokens outside the operator watch-list
-             *     (total == circulating; no admin exclusion). Null when no
-             *     supply snapshot is available.
+             *     `sep41_lake_flows` is the lake-derived Σmint−Σburn−Σclawback
+             *     event-sum served for SEP-41 tokens outside the operator
+             *     watch-list (total == circulating; no admin exclusion).
+             *     `sep1_declared_max` stays in this vocabulary but names a
+             *     max_supply source, not a circulating policy: it is served on
+             *     `max_supply_basis`, and `supply_basis` keeps the policy behind
+             *     total/circulating even when the max comes from SEP-1. Null
+             *     when no supply snapshot is available.
              * @enum {string|null}
              */
             supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_sdf_reserve_exclusion_static" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "sep41_total_only" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances" | "no_metadata" | null;
+            /**
+             * @description Where `max_supply` (and `fdv_usd`) came from, when that is not
+             *     the policy `supply_basis` names. `sep1_declared_max`: the
+             *     issuer's own stellar.toml `[[CURRENCIES]]`
+             *     max_number/fixed_number declaration — self-declared by the
+             *     issuer, not on-chain enforced. Omitted when max_supply is null
+             *     or comes from the supply policy itself (an operator override,
+             *     `supply_basis: override`, or native XLM's fixed total).
+             * @enum {string}
+             */
+            max_supply_basis?: "sep1_declared_max";
             /**
              * Format: date-time
              * @description When the supply observation behind total_supply /
@@ -17575,15 +17613,16 @@ export interface operations {
                                 tip_ledger: number;
                                 /**
                                  * Format: int64
-                                 * @description PROJECTION-axis floor: the lowest ledger the
-                                 *     SERVED tier holds any row at for this source.
-                                 *     It is the bottom of the range `projection_ok`
-                                 *     — and therefore `complete` — is a claim about;
-                                 *     below it the served tier holds nothing.
+                                 * @description PROJECTION-axis floor: the bottom of the range
+                                 *     `projection_ok` — and therefore `complete` — is
+                                 *     a claim about. It is `genesis_ledger` for every
+                                 *     source whose served tier claims full history, so
+                                 *     a never-projected prefix fails `projection_ok`.
                                  *
-                                 *     It is NOT `genesis_ledger`, which is the LAKE
-                                 *     axis's floor and is routinely ten years lower:
-                                 *     on pubnet, sdex and the oracle sources publish
+                                 *     For a source whose served tier is a declared
+                                 *     working-set window it is the lowest ledger that
+                                 *     tier holds a row at, and can sit far above
+                                 *     `genesis_ledger`: on pubnet sdex publishes
                                  *     `genesis_ledger: 2` with a served tier that
                                  *     begins around ledger 61.6M (March 2026). A
                                  *     consumer reading only

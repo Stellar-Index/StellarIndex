@@ -37,6 +37,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	neturl "net/url"
@@ -374,29 +375,14 @@ func (c *Client) get(ctx context.Context, url string) ([]byte, error) {
 		return nil, &StatusError{Code: resp.StatusCode}
 	}
 	const maxBody = 16 << 20 // 16 MiB — grouped FX is ~500 KB; tickers ref is ~1 MB
-	buf := make([]byte, 0, 64<<10)
-	tmp := make([]byte, 32<<10)
-	for {
-		n, rerr := resp.Body.Read(tmp)
-		if n > 0 {
-			if len(buf)+n > maxBody {
-				return nil, fmt.Errorf("response exceeds %d bytes", maxBody)
-			}
-			buf = append(buf, tmp[:n]...)
-		}
-		if rerr != nil {
-			if errIsEOF(rerr) {
-				break
-			}
-			return nil, rerr
-		}
+	// io.ReadAll ends cleanly only on io.EOF; a body cut short of its
+	// Content-Length surfaces as io.ErrUnexpectedEOF and must fail the fetch.
+	buf, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(buf) > maxBody {
+		return nil, fmt.Errorf("response exceeds %d bytes", maxBody)
 	}
 	return buf, nil
-}
-
-func errIsEOF(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "EOF")
 }
