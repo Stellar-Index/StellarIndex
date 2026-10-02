@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -52,13 +53,14 @@ func TestProjectionFloor_PassReVerifiesAnExpiredCarry(t *testing.T) {
 func TestExpireStaleCarries(t *testing.T) {
 	now := time.Date(2026, 10, 2, 5, 30, 0, 0, time.UTC)
 	const maxAge = 7 * 24 * time.Hour
+	cat := []reconSource{{name: "fresh"}, {name: "old"}, {name: "unknown"}, {name: "failing"}}
 	prior := map[string]priorProjection{
 		"fresh":   {known: true, ok: true, evidencedAt: now.Add(-time.Hour)},
 		"old":     {known: true, ok: true, evidencedAt: now.Add(-maxAge - time.Minute)},
 		"unknown": {known: true, ok: true},
 		"failing": {known: true, ok: false},
 	}
-	expireStaleCarries(prior, now, maxAge)
+	expireStaleCarries(prior, cat, now, maxAge, maxEvidenceRefloorsPerPass)
 	for name, want := range map[string]bool{"fresh": false, "old": true, "unknown": true, "failing": false} {
 		if got := prior[name].evidenceExpired; got != want {
 			t.Errorf("%s: evidenceExpired = %v, want %v", name, got, want)
@@ -66,9 +68,62 @@ func TestExpireStaleCarries(t *testing.T) {
 	}
 
 	disabled := map[string]priorProjection{"unknown": {known: true, ok: true}}
-	expireStaleCarries(disabled, now, 0)
+	expireStaleCarries(disabled, []reconSource{{name: "unknown"}}, now, 0, maxEvidenceRefloorsPerPass)
 	if disabled["unknown"].evidenceExpired {
 		t.Error("-max-carry-age 0 must carry without bound")
+	}
+}
+
+// TestExpireStaleCarries_NeverRefloorsTheCensus: a full SDEX re-derive outlasts
+// the pass's deadline and a deadline-cut source writes nothing, so a forced
+// re-floor would recur every night without ever refreshing the evidence.
+func TestExpireStaleCarries_NeverRefloorsTheCensus(t *testing.T) {
+	now := time.Date(2026, 10, 2, 5, 30, 0, 0, time.UTC)
+	cat := []reconSource{{name: "sdex", census: true}, {name: "aquarius"}}
+	prior := map[string]priorProjection{
+		"sdex":     {known: true, ok: true},
+		"aquarius": {known: true, ok: true},
+	}
+	got := expireStaleCarries(prior, cat, now, completeness.MaxProjectionCarryAge, maxEvidenceRefloorsPerPass)
+	if prior["sdex"].evidenceExpired {
+		t.Error("census source marked expired; it must keep carrying with its evidence ageing honestly")
+	}
+	if len(got) != 1 || got[0] != "aquarius" {
+		t.Errorf("refloored = %v, want [aquarius]", got)
+	}
+	if f := projectionFloor(100, true, prior["sdex"], 64_000_000, 0); f != 64_000_000 {
+		t.Errorf("census -pass floor = %d, want its prior watermark 64000000", f)
+	}
+}
+
+// TestExpireStaleCarries_CapsOldestFirst: at most maxEvidenceRefloorsPerPass
+// sources re-prove per pass, unknown evidence first, then the oldest; the rest
+// keep carrying, which staggers the next expiry instead of re-flooring all at once.
+func TestExpireStaleCarries_CapsOldestFirst(t *testing.T) {
+	if maxEvidenceRefloorsPerPass != 3 {
+		t.Fatalf("maxEvidenceRefloorsPerPass = %d, test assumes 3", maxEvidenceRefloorsPerPass)
+	}
+	now := time.Date(2026, 10, 2, 5, 30, 0, 0, time.UTC)
+	day := 24 * time.Hour
+	cat := []reconSource{{name: "a"}, {name: "b"}, {name: "c"}, {name: "d"}, {name: "e"}}
+	prior := map[string]priorProjection{
+		"a": {known: true, ok: true, evidencedAt: now.Add(-8 * day)},
+		"b": {known: true, ok: true, evidencedAt: now.Add(-20 * day)},
+		"c": {known: true, ok: true},
+		"d": {known: true, ok: true, evidencedAt: now.Add(-9 * day)},
+		"e": {known: true, ok: true, evidencedAt: now.Add(-day)},
+	}
+	got := expireStaleCarries(prior, cat, now, completeness.MaxProjectionCarryAge, maxEvidenceRefloorsPerPass)
+	if strings.Join(got, ",") != "c,b,d" {
+		t.Errorf("refloored = %v, want [c b d] (unknown first, then oldest)", got)
+	}
+	for name, want := range map[string]bool{"a": false, "b": true, "c": true, "d": true, "e": false} {
+		if prior[name].evidenceExpired != want {
+			t.Errorf("%s: evidenceExpired = %v, want %v", name, prior[name].evidenceExpired, want)
+		}
+	}
+	if !prior["a"].evidencedAt.Equal(now.Add(-8 * day)) {
+		t.Error("a source left over the cap must keep its old evidence time")
 	}
 }
 

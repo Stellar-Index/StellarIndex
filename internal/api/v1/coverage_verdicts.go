@@ -309,11 +309,12 @@ const coverageVerdictStaleLedgers uint32 = 34560
 const coverageVerdictStaleAge = 26 * time.Hour
 
 // coverageVerdictEvidenceStaleAge bounds the age of the evidence behind a
-// clean projection claim. The -pass audit re-proves a claim once its evidence
-// passes [completeness.MaxProjectionCarryAge], so a healthy one is never older
-// than that plus the run that re-proves it; two audit periods of grace absorb
-// one slow or missed re-verify before the flag fires.
-const coverageVerdictEvidenceStaleAge = completeness.MaxProjectionCarryAge + 2*coverageVerdictStaleAge
+// clean projection claim. The -pass audit judges expiry at run start against
+// the DB-stamped proof time, so it re-proves a claim up to one audit period
+// after [completeness.MaxProjectionCarryAge]; two more periods absorb two
+// missed re-proof nights before the flag fires. The SDEX census is never
+// re-proved by the pass, so its evidence reads stale until a manual re-run.
+const coverageVerdictEvidenceStaleAge = completeness.MaxProjectionCarryAge + 3*coverageVerdictStaleAge
 
 // handleCoverageVerdicts serves GET /v1/coverage — every source's
 // latest ADR-0033 completeness verdict. Verdicts change only when the

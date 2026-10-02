@@ -27,8 +27,16 @@
 -- Backfill: a row whose stored detail states that its run verified "the
 -- full range the served tier holds" (projectionClaim rule 2's exact text)
 -- with projection_ok still true was proven end to end at its computed_at,
--- so that IS its evidence time. Every other row stays NULL — unknown —
--- and the next -pass re-verifies it from genesis (-max-carry-age).
+-- so that IS its evidence time. Expect it to match ~0 rows on a deployed
+-- host: there the nightly -pass carries, and a carry writes the carried
+-- text, not rule 2's. It exists for a host whose latest verdicts came from
+-- a full run. Every other row stays NULL — unknown — so after deploy the
+-- -pass re-proves green sources from genesis, oldest/unknown evidence
+-- first and at most three per night (-max-carry-age); /v1/coverage reads
+-- stale until each has been re-proved. The sdex census is never re-proved
+-- by the pass (its full reconcile outlasts the pass's deadline): it stays
+-- NULL until an operator runs `compute-completeness -ch -source sdex`
+-- (runbook completeness-incomplete.md).
 --
 -- Additive with DEFAULT 0 / NULL so the currently-deployed binary, whose
 -- upsert does not list these columns, keeps working unmodified —

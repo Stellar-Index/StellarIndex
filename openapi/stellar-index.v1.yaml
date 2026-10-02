@@ -5395,12 +5395,14 @@ paths:
 
         **Proven vs carried.** The audit runs daily and re-reconciles only
         the ledgers since its last run, carrying the prior clean projection
-        claim over the rest; at least once a week it re-proves the whole
-        served range. `computed_at` is when a verdict was last restated;
-        `projection_evidenced_at` is when the claim was last proven end to
-        end, and `projection_reconciled_from` is where this run's own
-        reconcile began. `flags.stale` is raised when a clean claim's
-        evidence is older than about nine days, or unknown.
+        claim over the rest; once a claim's evidence is a week old it
+        re-proves that source's whole served range (a few sources per
+        night; `sdex`, whose full re-proof outlasts the nightly run, only
+        when an operator re-runs it). `computed_at` is when a verdict was
+        last restated; `projection_evidenced_at` is when the claim was last
+        proven end to end, and `projection_reconciled_from` is where this
+        run's own reconcile began. `flags.stale` is raised when a clean
+        claim's evidence is older than about ten days, or unknown.
 
         **`sources` holds sources only.** The ADR-0033 recognition audit
         also produces a SYSTEM-wide census — event shapes in the lake on

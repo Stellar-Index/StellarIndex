@@ -155,7 +155,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	skipRecognition := fs.Bool("skip-recognition", false, "Trust the prior recognition audit (recognition_ok=true) instead of re-scanning all topic shapes — the global DistinctTopicShapes scan is the load-heaviest step; skip it for gentle projection-only iteration once recognition is verified")
 	fromLedger := fs.Uint("from", 0, "INCREMENTAL verify: only check [from, tip], trusting [genesis, from] as already verified (substrate + recognition + projection all scoped to [from, tip]); the watermark still extends to tip when the window is clean. 0 = full verify from each source's genesis. The completeness timer passes min(watermark) from the prior snapshots so each run re-checks only new ledgers — minutes, not hours. An incremental run can only CONFIRM or DOWNGRADE the served `complete` axis, never upgrade it: a range it did not reconcile is carried from the prior verdict, and a FAILING prior verdict is cleared only by a full run (INV-5 — see projectionClaim).")
 	pass := fs.Bool("pass", false, "WHOLE-PASS mode: prove recognition + substrate ONCE at full range for the ENTIRE source catalogue, then reconcile EACH source's projection incrementally from its own prior watermark (projectionFloor). One process replaces the per-source, per-chunk driver that re-ran the load-heaviest global recognition scan (DistinctTopicShapes, ~60s) on EVERY 25k chunk — the nightly timeout that froze the alphabetical tail's verdicts. Because substrate is proven at FULL tip, its write advances the tip and is never blocked by the CS-083 guard (the low-tip substrate flap). Every catalogue source gets a verdict — a never-seeded source, and a source whose prior projection verdict was FAILING, both reconcile from genesis (a red source has no verified ground to resume from, so the pass re-verifies it rather than carrying the failure forward forever). Requires -ch; incompatible with -source / -from / -skip-substrate / -skip-recognition (the per-chunk knobs it replaces).")
-	maxCarryAge := fs.Duration("max-carry-age", completeness.MaxProjectionCarryAge, "With -pass: a source whose clean projection claim was last reconciled over its whole served range longer ago than this (or never, on record) re-verifies from genesis instead of carrying the claim forward again. 0 = carry without bound.")
+	maxCarryAge := fs.Duration("max-carry-age", completeness.MaxProjectionCarryAge, "With -pass: a source whose clean projection claim was last reconciled over its whole served range longer ago than this (or never, on record) re-verifies from genesis instead of carrying the claim forward again — oldest evidence first, at most 3 sources per pass, never the SDEX census (its full re-verify outlasts the pass; re-prove it with a manual -source run). 0 = carry without bound.")
 	timeout := fs.Duration("timeout", 120*time.Minute, "Deadline for the whole run; sources not reached by it keep their prior verdict and are named in the error. Keep it below the systemd unit's TimeoutStartSec.")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -400,7 +400,11 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		return fmt.Errorf("prior completeness verdicts (failing closed — an incremental run cannot gate its claim without them): %w", err)
 	}
 	priorProj, priorSub, priorRec, priorWatermark := buildPriorVerdicts(priorSnaps)
-	expireStaleCarries(priorProj, time.Now(), *maxCarryAge)
+	if *pass { // projectionFloor honours an expired carry only in -pass
+		if refloored := expireStaleCarries(priorProj, catalogue, time.Now(), *maxCarryAge, maxEvidenceRefloorsPerPass); len(refloored) > 0 {
+			fmt.Fprintf(os.Stderr, "compute-completeness: re-proving expired projection evidence from genesis this pass: %s\n", strings.Join(refloored, ", "))
+		}
+	}
 
 	// Durable per-target projection floors (migration 0116). Loaded once and
 	// FAILING CLOSED on error, exactly as the prior verdicts above do: these
@@ -915,8 +919,9 @@ func orderForPass(catalogue []reconSource, prior map[string]priorProjection, pri
 // operator was already required to do by hand.
 //
 // A clean prior whose full-range evidence is older than -max-carry-age (or
-// unknown) also resumes from genesis: each carry re-proves only the new suffix,
-// so without that bound the prefix would be restated nightly on evidence of any age.
+// unknown) also resumes from genesis when expireStaleCarries picks it (capped
+// per pass, census excluded): each carry re-proves only the new suffix, so
+// without that bound the prefix would be restated nightly on evidence of any age.
 //
 // Outside -pass it is the existing max(genesis, -from) incremental floor, so the
 // per-chunk driver's behaviour is unchanged: there the floor is OPERATOR-stated
@@ -1475,15 +1480,39 @@ type priorProjection struct {
 	evidenceExpired bool
 }
 
-// expireStaleCarries marks every clean prior projection claim whose full-range
-// evidence is older than maxAge (or unknown) as expired. maxAge <= 0 disables it.
-func expireStaleCarries(prior map[string]priorProjection, now time.Time, maxAge time.Duration) {
-	for name, p := range prior {
-		if p.known && p.ok && completeness.ProjectionEvidenceExpired(p.evidencedAt, now, maxAge) {
-			p.evidenceExpired = true
-			prior[name] = p
+// maxEvidenceRefloorsPerPass caps how many expired carries one -pass re-proves
+// from genesis. The rest keep carrying (and keep their old evidence time) until a
+// later night, which staggers expiry instead of re-flooring every source at once.
+const maxEvidenceRefloorsPerPass = 3
+
+// expireStaleCarries marks, oldest evidence first (unknown counts as oldest), at
+// most limit catalogue sources whose clean prior projection claim was last
+// reconciled in full longer than maxAge ago (or never) as expired, and returns
+// their names. Census sources are never marked: a full SDEX re-derive outlasts
+// the pass's deadline, and a deadline-cut source writes nothing, so a forced
+// re-floor would re-floor it every night and never refresh; its evidence ages
+// honestly until a manual -source run re-proves it. maxAge <= 0 disables it.
+func expireStaleCarries(prior map[string]priorProjection, catalogue []reconSource, now time.Time, maxAge time.Duration, limit int) []string {
+	var expired []string
+	for _, src := range catalogue {
+		p := prior[src.name]
+		if !src.census && p.known && p.ok && completeness.ProjectionEvidenceExpired(p.evidencedAt, now, maxAge) {
+			expired = append(expired, src.name)
 		}
 	}
+	// Zero (unknown) sorts before every real time; ties keep catalogue order.
+	sort.SliceStable(expired, func(i, j int) bool {
+		return prior[expired[i]].evidencedAt.Before(prior[expired[j]].evidencedAt)
+	})
+	if len(expired) > limit {
+		expired = expired[:limit]
+	}
+	for _, name := range expired {
+		p := prior[name]
+		p.evidenceExpired = true
+		prior[name] = p
+	}
+	return expired
 }
 
 // carriedEvidenceDetail names how old the evidence behind a carried claim is.

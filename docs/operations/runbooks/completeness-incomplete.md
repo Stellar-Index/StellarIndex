@@ -81,6 +81,42 @@ Re-derive the flagged source from the certified lake, then re-verify:
   `compute-completeness.service`, or systemd kills the pass first — or clear
   the source by hand with the chunked `-source` re-run above.
 
+## Stale: projection evidence older than 10 d 6 h, or unknown
+
+`/v1/coverage` sets `flags.stale` when a source claiming `projection_ok` has
+`projection_evidenced_at` older than `MaxProjectionCarryAge` (7 d) plus three
+26 h audit periods, or `null`. `computed_at` cannot show this: the nightly
+`-pass` restamps it while carrying the old claim. The carry detail names the
+proof time ("the carried prefix was last reconciled in full at …", or "has no
+full-range reconcile on record").
+
+```sh
+sudo -u postgres psql -d stellarindex -c \
+ "SELECT source, projection_evidenced_at, computed_at FROM (SELECT DISTINCT ON (source) * \
+  FROM completeness_snapshots ORDER BY source, computed_at DESC) s \
+  WHERE projection_ok ORDER BY projection_evidenced_at NULLS FIRST;"
+```
+
+- **Event sources** clear on their own. Each `-pass` re-proves from genesis
+  the expired (> 7 d, or `null`) sources, oldest first, at most three per night
+  (the pass logs `re-proving expired projection evidence from genesis this
+  pass: …`). Right after migration 0199 every green source is `null`, so the
+  flag holds for about `ceil(green sources / 3)` nights. If a source stays
+  expired past that, check the pass's error for a deadline cut.
+- **`sdex` (the census) never clears on its own.** Its full re-proof takes
+  ~4.8 h, longer than the pass's 120 min, so the pass never re-floors it and
+  its evidence ages honestly. Re-prove it with one uninterrupted run from the
+  served floor, off-peak and outside the 05:30 UTC pass window:
+
+  ```sh
+  stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch \
+    -source sdex -timeout 360m
+  ```
+
+  Omit `-from`: a run that starts above the served floor carries the range
+  below it and stamps no evidence, so chunked `-from` runs cannot clear this.
+  Repeat about weekly, or the flag returns 10 d 6 h after the last run.
+
 ## Root cause analysis
 
 A served<>lake divergence: dropped rows (a decoder bug fixed forward-only, e.g.
@@ -122,6 +158,9 @@ The `detail` column names the per-target Δ and window.
 
 ## Changelog
 
+- 2026-10-02 — added the projection-evidence stale reason (migration 0199):
+  the `-pass` re-proves up to three expired sources per night; `sdex` needs
+  the manual run.
 - 2026-09-30 — the nightly `-pass` orders from-genesis re-verifies last,
   writes the `recognition` row first, and takes `-timeout` / `PASS_TIMEOUT`.
 - 2026-09-09 — CS-095: the nightly `-pass` now re-verifies a source whose prior
