@@ -2,6 +2,7 @@ package timescale
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -65,5 +66,106 @@ func TestCanonLastPriceIsTieBroken(t *testing.T) {
 	}
 	if n := strings.Count(string(src), "canonLastPriceSQL(flipped)"); n != 3 {
 		t.Errorf("markets.go folds last_price through canonLastPriceSQL %d times, want 3", n)
+	}
+}
+
+// untiedBucketPickRE matches a newest-bucket pick with nothing after
+// `bucket DESC` but the LIMIT, on the same line or the next.
+var untiedBucketPickRE = regexp.MustCompile(`ORDER BY (?:p\.)?bucket DESC(?:[ \t]*\n\s*|[ \t]+)LIMIT 1`)
+
+// multiFormQuoteRE matches a quote set holding several forms of one
+// asset: USD's (literal or usdProxyQuotes) or XLM's (xlmQuotes).
+var multiFormQuoteRE = regexp.MustCompile(`'fiat:USD'|\busdProxyQuotes\b|\bxlmQuotes\b`)
+
+// TestUSDQuotePicksAreTieBroken pins GH-702 item 2 for the price readers:
+// USDC and fiat:USD (or two XLM or peg forms) can print in the same
+// minute, so every newest-bucket pick across forms needs a stable
+// second key. last(vwap, bucket) has none.
+func TestUSDQuotePicksAreTieBroken(t *testing.T) {
+	if !strings.Contains(getNativeAssetSQL, xlmUSDCTEs) {
+		t.Error("getNativeAssetSQL must reuse xlmUSDCTEs rather than carry its own XLM/USD picks")
+	}
+	if n := strings.Count(xlmUSDCTEs, xlmUSDNewest); n != 4 {
+		t.Errorf("xlmUSDCTEs orders %d XLM/USD picks by xlmUSDNewest, want 4", n)
+	}
+	for name, q := range map[string]string{
+		"xlmUSDCTEs":              xlmUSDCTEs,
+		"getNativeAssetSQL":       getNativeAssetSQL,
+		"xlmLegQuery":             xlmLegQuery("AND bucket >= $5"),
+		"directLegQuery":          directLegQuery(false),
+		"directLegQuery(bounded)": directLegQuery(true),
+	} {
+		if loc := untiedBucketPickRE.FindStringIndex(q); loc != nil {
+			t.Errorf("%s picks the newest bucket with no tie-break at byte %d", name, loc[0])
+		}
+	}
+	// Every hand-written pick across quote forms in the package, not just the
+	// catalogue's: the volume, MEV and transitive readers carry their own.
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, loc := range untiedBucketPickRE.FindAllIndex(src, -1) {
+			// The pick's own SELECT: a WHERE holds no nested SELECT here.
+			pick := string(src[max(0, loc[0]-700):loc[0]])
+			if i := strings.LastIndex(pick, "SELECT"); i >= 0 {
+				pick = pick[i:]
+			}
+			if multiFormQuoteRE.MatchString(pick) {
+				t.Errorf("%s:%d picks the newest bucket across quote forms with no tie-break",
+					f, strings.Count(string(src[:loc[0]]), "\n")+1)
+			}
+		}
+	}
+	if !strings.Contains(xlmLegQuery(""), "ORDER BY bucket DESC, inverted") {
+		t.Error("xlmLegQuery must break a cross-arm bucket tie on the stored direction")
+	}
+	for name, q := range map[string]string{
+		"history24h":      getAssetPriceHistory24hSQL,
+		"history7d":       getAssetPriceHistory7dSQL,
+		"history24hBatch": getAssetsPriceHistory24hBatchSQL,
+		"history7dBatch":  getAssetsPriceHistory7dBatchSQL,
+	} {
+		if strings.Contains(q, "last(vwap, bucket)") {
+			t.Errorf("%s still picks with last(vwap, bucket), which has no tie-break", name)
+		}
+		// The direct arm and the XLM/USD arm each rank the USD quote forms.
+		if n := strings.Count(q, usdQuotePref); n != 2 {
+			t.Errorf("%s ranks USD quote forms %d times, want 2 (direct + xlm_usd)", name, n)
+		}
+		if !strings.Contains(q, "bucket DESC, xlm_prio") {
+			t.Errorf("%s does not break an XLM-form tie in its XLM leg", name)
+		}
+	}
+}
+
+// TestAssetAliasRows pins the batch alias expansion: every form of every
+// requested id, owned by that id, in assetAliasArray's priority order.
+func TestAssetAliasRows(t *testing.T) {
+	const usdc = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	forms, owners, prios := assetAliasRows([]string{"native", usdc})
+	xlm := assetAliasArray("native")
+	if len(xlm) < 2 {
+		t.Fatalf("assetAliasArray(native) = %v, want XLM's alias forms", xlm)
+	}
+	want := len(xlm) + len(assetAliasArray(usdc))
+	if len(forms) != want || len(owners) != want || len(prios) != want {
+		t.Fatalf("lengths = %d/%d/%d, want %d", len(forms), len(owners), len(prios), want)
+	}
+	for i, f := range xlm {
+		if forms[i] != f || owners[i] != "native" || prios[i] != int64(i+1) {
+			t.Errorf("row %d = (%s, %s, %d), want (%s, native, %d)", i, forms[i], owners[i], prios[i], f, i+1)
+		}
+	}
+	if owners[len(xlm)] != usdc || prios[len(xlm)] != 1 {
+		t.Errorf("first USDC row = (%s, %d), want (%s, 1)", owners[len(xlm)], prios[len(xlm)], usdc)
 	}
 }

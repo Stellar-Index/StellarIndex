@@ -25,7 +25,7 @@ archive — both are hours-to-days recovery paths. Nothing covered the
 fast, common failure: a wrong `DROP`, an `ALTER … DELETE` with the
 wrong predicate, a migration that rewrote a table badly. A daily ZFS
 snapshot of `data/clickhouse` (3 d retention, ~250 GB/day of merged
-parts pinned per retained day) and `data/postgres` (7 d, small churn)
+parts pinned per retained day) and `data/postgres` (3 d, small churn; pgBackRest PITR covers older faults)
 turns that into a `zfs clone` + copy-a-table-back, or a `zfs rollback`.
 
 The pool had 5.0 TB free of 18.3 TB when this landed. Snapshots pin
@@ -42,7 +42,7 @@ safety property; the alerts here are its early warning.
 daily at 01:45 UTC (+ ≤ 5 min jitter), config in `/etc/default/zfs-snapshot`:
 
 1. **Retention** — destroy `auto-YYYYMMDD-HHMM` snapshots older than the
-   dataset's window (`data/clickhouse` 3 d, `data/postgres` 7 d).
+   dataset's window (`data/clickhouse` 3 d, `data/postgres` 3 d).
 2. **Min-free guard** — if `zpool list -o free data` < floor, destroy
    `auto-*` snapshots oldest-first across both datasets (by creation
    time, not size — predictable, and postgres snapshots are tiny), one

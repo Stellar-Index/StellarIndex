@@ -332,9 +332,24 @@ func assetPriceArmCTEs(asset string) string {
 // narrow to (same reason refreshAssetVolumeUpsert carries none).
 var assetPriceCTEs = assetPriceArmCTEs("") + "," + xlmUSDCTEs
 
+// usdQuotePref ranks the USD quote forms for a pick that two forms can tie
+// on the same bucket: a true USD quote, then classic USDC, then its SAC
+// (thinnest last). Without it the newest-bucket pick falls to scan order.
+const usdQuotePref = `array_position(ARRAY['fiat:USD',
+	'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+	'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75'], quote_asset)`
+
+// xlmFormPrefOpen ranks XLM's two on-chain forms the same way, classic
+// first; close it with the column holding the XLM form.
+const xlmFormPrefOpen = `array_position(ARRAY[` + xlmQuotes + `], `
+
+// xlmUSDNewest orders an XLM/USD scalar pick: newest bucket, then
+// [usdQuotePref] so a same-minute USDC and fiat:USD print resolve stably.
+const xlmUSDNewest = `ORDER BY bucket DESC, ` + usdQuotePref
+
 // xlmUSDCTEs is XLM's own USD price now and at each change lookback,
-// shared by the rollup and the detail query. `bucket` is the observation
-// minute [priceArmPickExpr] ages a triangulated price by.
+// shared by the rollup, the detail query and the native row. `bucket` is
+// the observation minute [priceArmPickExpr] ages a triangulated price by.
 const xlmUSDCTEs = `
 		xlm_usd AS (
 		  -- prices_1m doesn't carry (native, fiat:USD) rows — XLM's
@@ -349,7 +364,7 @@ const xlmUSDCTEs = `
 		  --
 		  -- The 24h floor on bucket is REQUIRED, not just an
 		  -- optimisation. With no time predicate TimescaleDB cannot
-		  -- chunk-prune, so ORDER BY bucket DESC LIMIT 1 across the
+		  -- chunk-prune, so the newest-bucket LIMIT 1 across the
 		  -- 3 quote_assets must consider EVERY prices_1m chunk
 		  -- (thousands post-backfill). Warm + idle that is ~13ms,
 		  -- but the all-chunks access pattern degrades badly under
@@ -373,7 +388,7 @@ const xlmUSDCTEs = `
 		     )
 		     AND vwap IS NOT NULL
 		     AND bucket >= now() - INTERVAL '24 hours'
-		   ORDER BY bucket DESC
+		   ` + xlmUSDNewest + `
 		   LIMIT 1
 		),
 		xlm_usd_1h AS (
@@ -388,7 +403,7 @@ const xlmUSDCTEs = `
 		     AND bucket BETWEEN now() - INTERVAL '65 minutes'
 		                   AND now() - INTERVAL '55 minutes'
 		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC
+		   ` + xlmUSDNewest + `
 		   LIMIT 1
 		),
 		xlm_usd_24h AS (
@@ -404,7 +419,7 @@ const xlmUSDCTEs = `
 		     AND bucket BETWEEN now() - INTERVAL '24 hours 30 minutes'
 		                   AND now() - INTERVAL '23 hours 30 minutes'
 		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC
+		   ` + xlmUSDNewest + `
 		   LIMIT 1
 		),
 		xlm_usd_7d AS (
@@ -419,7 +434,7 @@ const xlmUSDCTEs = `
 		     AND bucket BETWEEN now() - INTERVAL '7 days 2 hours'
 		                   AND now() - INTERVAL '6 days 22 hours'
 		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC
+		   ` + xlmUSDNewest + `
 		   LIMIT 1
 		)
 `

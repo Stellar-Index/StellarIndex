@@ -368,8 +368,9 @@
           - add
           - local
           - "{{ minio_root_user }}"
+          # mc reads --policy as a JSON file path, not a policy name.
           - --policy
-          - prometheus-read
+          - /etc/minio/policies/prometheus-read.json
           - --name
           - prometheus-metrics-scrape
           - --description

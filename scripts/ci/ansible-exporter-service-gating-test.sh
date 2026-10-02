@@ -59,5 +59,17 @@ else
   bad "Group C has no 'when: pgbackrest_backup_enabled | default(true) | bool' guard — installs/starts even with backups disabled"
 fi
 
+minio_body="$(block_body "$TASKS" "Group D — MinIO Prometheus bearer token (requires MinIO)")"
+# mc's `svcacct add --policy` takes a JSON policy FILE, not a policy name; a
+# bare name fails the mint on a fresh host.
+if [ -z "$minio_body" ]; then
+  bad "Group D (MinIO bearer token) task/block not found"
+elif policy_arg="$(grep -A1 -E '^\s*- --policy\s*$' <<<"$minio_body")" &&
+  grep -qE '^\s*- /etc/minio/policies/prometheus-read\.json\s*$' <<<"$policy_arg"; then
+  ok "Group D passes the policy file path to svcacct add --policy"
+else
+  bad "Group D's svcacct add --policy is not /etc/minio/policies/prometheus-read.json — mc reads --policy as a file path"
+fi
+
 echo "ansible-exporter-service-gating-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

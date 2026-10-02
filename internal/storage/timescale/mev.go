@@ -45,7 +45,7 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
              )
              AND vwap IS NOT NULL
              AND bucket >= NOW() - INTERVAL '24 hours'
-           ORDER BY bucket DESC
+           ` + xlmUSDNewest + `
            LIMIT 1
         )
         SELECT source, ledger, tx_hash, op_index, ts,
