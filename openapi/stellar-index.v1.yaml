@@ -16937,6 +16937,7 @@ components:
         anchor_asset:
           type: string
           description: The off-chain instrument the issuer declared this token anchors to, verbatim.
+        isin_collision: { $ref: "#/components/schemas/RWAISINCollision" }
         valuation: { $ref: "#/components/schemas/RWAValuation" }
         reference_valuation: { $ref: "#/components/schemas/RWAReferenceValuation" }
         reference: { $ref: "#/components/schemas/RWAReference" }
@@ -17172,6 +17173,31 @@ components:
           type: string
           description: Canonical `rwa:<CODE>` id of the oracle feed, ready for `/oracle/latest`.
           example: rwa:USTRY
+
+    RWAISINCollision:
+      type: object
+      required: [isin, declared_by_issuers]
+      description: |
+        Present only when `anchor_asset` is an ISIN that more than one
+        issuer account declares in its issuer-bound SEP-1, counting
+        declarations this surface refused as well as admitted ones.
+
+        A declared ISIN is the issuer's claim, not proof that it holds
+        the security, so this states how many accounts make the same
+        claim and nothing more. It is informational: it never changes
+        membership, `valuation`, `reference` or `premium`. A reference
+        priced through an ISIN comes only from a binding verified on the
+        exact (code, issuer), never from the declaration alone.
+      properties:
+        isin:
+          type: string
+          description: The declared ISIN in canonical upper-case form.
+          example: LU2900381208
+        declared_by_issuers:
+          type: integer
+          minimum: 2
+          description: Distinct issuer accounts, this row's included, declaring `isin`.
+          example: 2
 
     RWAReference:
       type: object
@@ -18972,14 +18998,25 @@ components:
             from `admin_exclusion` so the wire never claims an
             exclusion that did not happen; `override` indicates an
             operator curated the locked-set or max_supply;
-            `sep1_declared_max` means max_supply (and fdv_usd) come
-            from the issuer's own stellar.toml `[[CURRENCIES]]`
-            max_number/fixed_number declaration — self-declared by
-            the issuer, not on-chain enforced; `sep41_lake_flows` is
-            the lake-derived Σmint−Σburn−Σclawback event-sum served
-            for SEP-41 tokens outside the operator watch-list
-            (total == circulating; no admin exclusion). Null when no
-            supply snapshot is available.
+            `sep41_lake_flows` is the lake-derived Σmint−Σburn−Σclawback
+            event-sum served for SEP-41 tokens outside the operator
+            watch-list (total == circulating; no admin exclusion).
+            `sep1_declared_max` stays in this vocabulary but names a
+            max_supply source, not a circulating policy: it is served on
+            `max_supply_basis`, and `supply_basis` keeps the policy behind
+            total/circulating even when the max comes from SEP-1. Null
+            when no supply snapshot is available.
+        max_supply_basis:
+          type: string
+          enum: [sep1_declared_max]
+          description: |
+            Where `max_supply` (and `fdv_usd`) came from, when that is not
+            the policy `supply_basis` names. `sep1_declared_max`: the
+            issuer's own stellar.toml `[[CURRENCIES]]`
+            max_number/fixed_number declaration — self-declared by the
+            issuer, not on-chain enforced. Omitted when max_supply is null
+            or comes from the supply policy itself (an operator override,
+            `supply_basis: override`, or native XLM's fixed total).
         supply_as_of:
           type: string
           format: date-time
