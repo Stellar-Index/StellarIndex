@@ -154,12 +154,20 @@ backup, not seconds. On return, the indexer's idempotent upserts
 (`ON CONFLICT DO NOTHING`) re-fill the gap from the archive; check
 `stellarindex_ingestion_cursor_stuck` and `stellarindex_ingest_gap_detected`.
 
-<!-- TODO(maintainer): decide the operator-facing bar for "restore in place vs.
-     bring up the standby box" — there is no replica to promote today, and
-     ADR-0050 explicitly builds no cross-region Postgres replication
-     (R2/R3 re-ingest independently). Until the Phase-1 Patroni playbook
-     lands (patroni README F-1266), D above is the only unrecoverable-path
-     procedure; dr-activation.md still describes the undeployed design. -->
+### Restore in place vs. fail over
+
+There is no failover decision to make on r1 today: there is no standby
+or replica to promote, and ADR-0050 builds no cross-region Postgres
+replication (R2/R3 re-ingest independently). Recovery is always in place:
+
+1. Data directory intact → restart the cluster unit (B, then C).
+2. Data directory unrecoverable → pgBackRest restore (D) onto r1.
+3. r1 itself gone → host-loss path (E).
+
+Do not follow the promote/failover steps in `dr-activation.md` or the
+appendix below; they describe the undeployed design. Revisit this bar
+when the Phase-1 Patroni playbook lands (patroni README F-1266) and a
+replica exists to promote.
 
 ### E. Complete host loss
 
@@ -231,6 +239,10 @@ binaries, no `patroni`/`etcd` units, no `db-*.internal` hostnames.
   accepts ≤ 5 s RPO.
 
 ## Changelog
+
+- 2026-10-02 — set the restore-in-place vs. failover bar: no replica
+  exists, so recovery is always in place (restart, else pgBackRest
+  restore) until the Patroni playbook lands.
 
 - 2026-08-28 — rewritten for the single-node r1 reality (no Patroni/etcd/
   replicas; `postgresql@15-main.service` restart + pgBackRest restore paths);

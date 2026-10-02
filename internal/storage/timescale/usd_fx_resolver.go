@@ -718,37 +718,7 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 		            AND bucket     >= $5`
 		args = append(args, at.UTC().Add(-r.bridgeFreshness))
 	}
-	// Each UNION branch is parenthesised: Postgres rejects a bare
-	// ORDER BY/LIMIT inside an unparenthesised union arm. The per-arm
-	// LIMIT 1 is what keeps this cheap — each side is an index-ordered
-	// walk that stops at its first qualifying bucket.
-	q := fmt.Sprintf(`
-		SELECT bucket, vwap::text, inverted
-		  FROM (
-		        (SELECT bucket, vwap, false AS inverted
-		           FROM prices_1m
-		          WHERE base_asset  = $1
-		            AND quote_asset = ANY($2)
-		            AND bucket     <= $3
-		            AND volume_usd >= $4::numeric
-		            AND vwap        > 0%[1]s
-		          ORDER BY bucket DESC
-		          LIMIT 1)
-		        UNION ALL
-		        (SELECT bucket, vwap, true AS inverted
-		           FROM prices_1m
-		          WHERE base_asset  = ANY($2)
-		            AND quote_asset = $1
-		            AND bucket     <= $3
-		            AND volume_usd >= $4::numeric
-		            AND vwap        > 0%[1]s
-		          ORDER BY bucket DESC
-		          LIMIT 1)
-		       ) legs
-		 ORDER BY bucket DESC
-		 LIMIT 1
-	`, lowerBound)
-	row := r.store.db.QueryRowContext(ctx, q, args...)
+	row := r.store.db.QueryRowContext(ctx, xlmLegQuery(lowerBound), args...)
 	var (
 		bucket   time.Time
 		vwapText string
@@ -765,6 +735,41 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 		return nil, nil
 	}
 	return vwap, nil
+}
+
+// xlmLegQuery is queryXLMLeg's SQL. Each UNION branch is parenthesised:
+// Postgres rejects a bare ORDER BY/LIMIT inside an unparenthesised union
+// arm. The per-arm LIMIT 1 keeps it cheap, an index-ordered walk that
+// stops at its first qualifying bucket. Ties on a bucket (both XLM forms
+// in one arm, or both arms) resolve to the form listed first in $2, then
+// to the stored-as-(asset, XLM) arm, never to scan order.
+func xlmLegQuery(lowerBound string) string {
+	return fmt.Sprintf(`
+		SELECT bucket, vwap::text, inverted
+		  FROM (
+		        (SELECT bucket, vwap, false AS inverted
+		           FROM prices_1m
+		          WHERE base_asset  = $1
+		            AND quote_asset = ANY($2)
+		            AND bucket     <= $3
+		            AND volume_usd >= $4::numeric
+		            AND vwap        > 0%[1]s
+		          ORDER BY bucket DESC, array_position($2::text[], quote_asset)
+		          LIMIT 1)
+		        UNION ALL
+		        (SELECT bucket, vwap, true AS inverted
+		           FROM prices_1m
+		          WHERE base_asset  = ANY($2)
+		            AND quote_asset = $1
+		            AND bucket     <= $3
+		            AND volume_usd >= $4::numeric
+		            AND vwap        > 0%[1]s
+		          ORDER BY bucket DESC, array_position($2::text[], base_asset)
+		          LIMIT 1)
+		       ) legs
+		 ORDER BY bucket DESC, inverted
+		 LIMIT 1
+	`, lowerBound)
 }
 
 // ─── tier 3a: the direct <asset>/<peg> market ────────────────────────
@@ -907,14 +912,6 @@ func (r *VWAPUSDFXResolver) queryDB(ctx context.Context, asset canonical.Asset, 
 // lets TimescaleDB prune to the freshness window's chunks. When
 // freshness is disabled (0) we keep the unbounded scan.
 func (r *VWAPUSDFXResolver) queryDirectLeg(ctx context.Context, asset canonical.Asset, at time.Time) (string, time.Time, error) {
-	q := fmt.Sprintf(`
-		SELECT bucket, vwap::text
-		  FROM prices_1m
-		 WHERE base_asset  = $1
-		   AND quote_asset = ANY($2)
-		   AND bucket     <= $3
-		   AND vwap        > 0
-		   AND vwap * volume_priced / %d::numeric >= $4::numeric`, pegQuoteScaleDenominator)
 	args := []any{
 		asset.String(),
 		r.pegForms,
@@ -922,15 +919,9 @@ func (r *VWAPUSDFXResolver) queryDirectLeg(ctx context.Context, asset canonical.
 		directLegMinQuoteVolume,
 	}
 	if r.freshness > 0 {
-		q += `
-		   AND bucket     >= $5`
 		args = append(args, at.UTC().Add(-r.freshness))
 	}
-	q += `
-		 ORDER BY bucket DESC
-		 LIMIT 1
-	`
-	row := r.store.db.QueryRowContext(ctx, q, args...)
+	row := r.store.db.QueryRowContext(ctx, directLegQuery(r.freshness > 0), args...)
 	var (
 		bucket time.Time
 		vwap   string
@@ -942,6 +933,28 @@ func (r *VWAPUSDFXResolver) queryDirectLeg(ctx context.Context, asset canonical.
 		return "", time.Time{}, fmt.Errorf("timescale: VWAPUSDFXResolver query: %w", err)
 	}
 	return vwap, bucket, nil
+}
+
+// directLegQuery is queryDirectLeg's SQL; bounded adds the `$5` freshness
+// floor. Two peg forms printing in one bucket resolve to the form listed
+// first in $2 (classic before SAC), never to scan order.
+func directLegQuery(bounded bool) string {
+	q := fmt.Sprintf(`
+		SELECT bucket, vwap::text
+		  FROM prices_1m
+		 WHERE base_asset  = $1
+		   AND quote_asset = ANY($2)
+		   AND bucket     <= $3
+		   AND vwap        > 0
+		   AND vwap * volume_priced / %d::numeric >= $4::numeric`, pegQuoteScaleDenominator)
+	if bounded {
+		q += `
+		   AND bucket     >= $5`
+	}
+	return q + `
+		 ORDER BY bucket DESC, array_position($2::text[], quote_asset)
+		 LIMIT 1
+	`
 }
 
 // InstallUSDVolumeResolution wires BOTH `usd_volume` resolution tiers
