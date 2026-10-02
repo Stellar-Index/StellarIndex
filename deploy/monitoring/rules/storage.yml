@@ -1397,6 +1397,9 @@ groups:
       #   - `ops_job_backfill.prom`, `ops_job_usd_volume_restamp.prom`:
       #     both are one-off stellarindex-ops jobs with no timer/cron, so
       #     a long gap between runs is normal, not a dead cron.
+      #   - `ops_job_projected_rebuild_<source>.prom`: per-source one-shot
+      #     rebuilds; a finished run's file stays with running=0, and a live
+      #     one is watched by stellarindex_ops_job_heartbeat_stale instead.
       #   - `restore_drill*.prom`: monthly timer against a 24h threshold
       #     (see stellarindex_restore_drill_textfile_stale below, which
       #     carries the right threshold for this producer).
@@ -1408,7 +1411,7 @@ groups:
       - alert: stellarindex_textfile_producer_stale
         expr: |
           time() - node_textfile_mtime_seconds{
-            file!~".*/ops_job_.*\\.pid[0-9]+\\.prom$|.*/ops_job_(backfill|usd_volume_restamp)\\.prom$|.*/restore_drill.*\\.prom$|.*/verify_archive_tier_d\\.prom$|.*/alertmanager_receivers\\.prom$"
+            file!~".*/ops_job_.*\\.pid[0-9]+\\.prom$|.*/ops_job_(backfill|usd_volume_restamp|projected_rebuild_[a-z0-9_]+)\\.prom$|.*/restore_drill.*\\.prom$|.*/verify_archive_tier_d\\.prom$|.*/alertmanager_receivers\\.prom$"
           } > 86400
         for: 30m
         labels:

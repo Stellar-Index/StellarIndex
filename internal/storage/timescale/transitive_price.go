@@ -123,7 +123,7 @@ WITH xlm_usd AS (
        AND bucket <= now() - INTERVAL '1 minute'
        AND bucket >= now() - INTERVAL '24 hours'
        AND vwap IS NOT NULL
-     ORDER BY bucket DESC
+     ` + xlmUSDNewest + `
      LIMIT 1
 ),
 -- Every counterparty this asset traded against in the window, in BOTH
@@ -160,7 +160,7 @@ hop_usd AS (
                  AND p.bucket <= now() - INTERVAL '1 minute'
                  AND p.bucket >= now() - INTERVAL '24 hours'
                  AND p.vwap IS NOT NULL
-               ORDER BY p.bucket DESC LIMIT 1),
+               ORDER BY p.bucket DESC, ` + usdQuotePref + ` LIMIT 1),
              (SELECT e.v FROM (
                 (SELECT p.vwap AS v, p.bucket, 1 AS pref FROM prices_1m p
                   WHERE p.base_asset = h.hop
@@ -168,7 +168,7 @@ hop_usd AS (
                     AND p.bucket <= now() - INTERVAL '1 minute'
                     AND p.bucket >= now() - INTERVAL '24 hours'
                     AND p.vwap IS NOT NULL
-                  ORDER BY p.bucket DESC LIMIT 1)
+                  ORDER BY p.bucket DESC, ` + xlmFormPrefOpen + `p.quote_asset) LIMIT 1)
                 UNION ALL
                 (SELECT 1 / NULLIF(p.vwap, 0), p.bucket, 2 FROM prices_1m p
                   WHERE p.base_asset IN (` + xlmQuotes + `)
@@ -176,7 +176,7 @@ hop_usd AS (
                     AND p.bucket <= now() - INTERVAL '1 minute'
                     AND p.bucket >= now() - INTERVAL '24 hours'
                     AND p.vwap IS NOT NULL
-                  ORDER BY p.bucket DESC LIMIT 1)
+                  ORDER BY p.bucket DESC, ` + xlmFormPrefOpen + `p.base_asset) LIMIT 1)
               ) e
               WHERE e.v IS NOT NULL
               ORDER BY e.bucket DESC, e.pref LIMIT 1)

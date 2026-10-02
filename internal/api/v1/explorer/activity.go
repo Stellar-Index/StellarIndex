@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -157,52 +158,31 @@ func (h *Handler) AccountActivity(w http.ResponseWriter, r *http.Request) {
 // stores' real answers.
 func (h *Handler) computeAccountActivity(ctx context.Context, g string) (AccountActivityView, error) {
 	out := AccountActivityView{Account: g}
-	var failed []string
 
+	// The segments read independent tables (one ClickHouse, three Postgres),
+	// so they run concurrently: a cold compute costs the slowest segment, not
+	// the sum. Each goroutine writes only its own fields of out and its own
+	// failure slot; the slots keep coverage_note's segment order fixed.
+	failedBySegment := make([]string, 4)
+	var wg sync.WaitGroup
 	if h.Reader == nil {
-		failed = append(failed, "ops_by_type (no lake reader wired)")
-	} else if opCounts, err := h.Reader.AccountOperationTypeCounts(ctx, g); err != nil {
-		h.Logger.Error("activity: op-type counts read failed", "err", err, "account", g)
-		failed = append(failed, "ops_by_type")
+		failedBySegment[0] = "ops_by_type (no lake reader wired)"
 	} else {
-		out.OpsByType = make([]OpTypeCountView, len(opCounts))
-		for i, c := range opCounts {
-			out.OpsByType[i] = OpTypeCountView{OpType: c.OpType, Count: c.Count}
-		}
+		wg.Go(func() { failedBySegment[0] = h.readOpsByType(ctx, g, &out) })
 	}
-
 	if h.Activity == nil {
-		failed = append(failed, "trades_total, defi_actions, bridge_transfers (no Postgres activity reader wired)")
+		failedBySegment[1] = "trades_total, defi_actions, bridge_transfers (no Postgres activity reader wired)"
 	} else {
-		if n, horizon, err := h.Activity.CountAccountTrades(ctx, g); err != nil {
-			h.Logger.Error("activity: trades count read failed", "err", err, "account", g)
-			failed = append(failed, "trades_total")
-		} else {
-			out.TradesTotal = &n
-			if !horizon.IsZero() && horizon.Year() > 1971 {
-				out.TradesTotalSince = horizon.UTC().Format("2006-01-02")
-			}
-		}
-		if actions, err := h.Activity.DefiActionCountsByUser(ctx, g); err != nil {
-			h.Logger.Error("activity: defi action counts read failed", "err", err, "account", g)
-			failed = append(failed, "defi_actions")
-		} else {
-			out.DefiActions = make([]DefiActionView, len(actions))
-			for i, a := range actions {
-				out.DefiActions[i] = DefiActionView{Protocol: a.Protocol, Action: a.Action, Count: a.Count}
-			}
-		}
-		if bridge, err := h.Activity.BridgeActivityByAddress(ctx, g); err != nil {
-			h.Logger.Error("activity: bridge activity read failed", "err", err, "account", g)
-			failed = append(failed, "bridge_transfers")
-		} else {
-			out.BridgeTransfers = &BridgeTransfersView{
-				RozoOutboundPayments: bridge.RozoOutbound,
-				RozoInboundPayments:  bridge.RozoInbound,
-				CCTPOutboundBurns:    bridge.CCTPOutboundBurns,
-				CCTPInboundMints:     bridge.CCTPInboundMints,
-				Note:                 bridgeMatchingNote,
-			}
+		wg.Go(func() { failedBySegment[1] = h.readTradesTotal(ctx, g, &out) })
+		wg.Go(func() { failedBySegment[2] = h.readDefiActions(ctx, g, &out) })
+		wg.Go(func() { failedBySegment[3] = h.readBridgeTransfers(ctx, g, &out) })
+	}
+	wg.Wait()
+
+	var failed []string
+	for _, f := range failedBySegment {
+		if f != "" {
+			failed = append(failed, f)
 		}
 	}
 
@@ -215,4 +195,63 @@ func (h *Handler) computeAccountActivity(ctx context.Context, g string) (Account
 			". Retry before treating this breakdown as complete."
 	}
 	return out, nil
+}
+
+// readOpsByType fills out.OpsByType; returns the segment name on failure.
+func (h *Handler) readOpsByType(ctx context.Context, g string, out *AccountActivityView) string {
+	opCounts, err := h.Reader.AccountOperationTypeCounts(ctx, g)
+	if err != nil {
+		h.Logger.Error("activity: op-type counts read failed", "err", err, "account", g)
+		return "ops_by_type"
+	}
+	out.OpsByType = make([]OpTypeCountView, len(opCounts))
+	for i, c := range opCounts {
+		out.OpsByType[i] = OpTypeCountView{OpType: c.OpType, Count: c.Count}
+	}
+	return ""
+}
+
+// readTradesTotal fills out.TradesTotal and TradesTotalSince; returns the segment name on failure.
+func (h *Handler) readTradesTotal(ctx context.Context, g string, out *AccountActivityView) string {
+	n, horizon, err := h.Activity.CountAccountTrades(ctx, g)
+	if err != nil {
+		h.Logger.Error("activity: trades count read failed", "err", err, "account", g)
+		return "trades_total"
+	}
+	out.TradesTotal = &n
+	if !horizon.IsZero() && horizon.Year() > 1971 {
+		out.TradesTotalSince = horizon.UTC().Format("2006-01-02")
+	}
+	return ""
+}
+
+// readDefiActions fills out.DefiActions; returns the segment name on failure.
+func (h *Handler) readDefiActions(ctx context.Context, g string, out *AccountActivityView) string {
+	actions, err := h.Activity.DefiActionCountsByUser(ctx, g)
+	if err != nil {
+		h.Logger.Error("activity: defi action counts read failed", "err", err, "account", g)
+		return "defi_actions"
+	}
+	out.DefiActions = make([]DefiActionView, len(actions))
+	for i, a := range actions {
+		out.DefiActions[i] = DefiActionView{Protocol: a.Protocol, Action: a.Action, Count: a.Count}
+	}
+	return ""
+}
+
+// readBridgeTransfers fills out.BridgeTransfers; returns the segment name on failure.
+func (h *Handler) readBridgeTransfers(ctx context.Context, g string, out *AccountActivityView) string {
+	bridge, err := h.Activity.BridgeActivityByAddress(ctx, g)
+	if err != nil {
+		h.Logger.Error("activity: bridge activity read failed", "err", err, "account", g)
+		return "bridge_transfers"
+	}
+	out.BridgeTransfers = &BridgeTransfersView{
+		RozoOutboundPayments: bridge.RozoOutbound,
+		RozoInboundPayments:  bridge.RozoInbound,
+		CCTPOutboundBurns:    bridge.CCTPOutboundBurns,
+		CCTPInboundMints:     bridge.CCTPInboundMints,
+		Note:                 bridgeMatchingNote,
+	}
+	return ""
 }

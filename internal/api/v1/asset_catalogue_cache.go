@@ -196,17 +196,9 @@ func (c *CachedAssetsReader) GetAssetsPriceHistory7dBatch(ctx context.Context, a
 	})
 }
 
-// GetAssetsATHBatch — cached. ATH can change on every new high but
-// per-request cost is the same as the histories so 30s freshness
-// is plenty.
+// GetAssetsATHBatch passes through uncached: no handler serves it on a
+// hot path, so a cache would add a fetcher type for no measured win.
 func (c *CachedAssetsReader) GetAssetsATHBatch(ctx context.Context, assetIDs []string) (map[string]timescale.AssetATH, error) {
-	if c.ttl <= 0 {
-		return c.upstream.GetAssetsATHBatch(ctx, assetIDs)
-	}
-	// Pass-through for now — the upstream is fast enough that the
-	// cost / complexity tradeoff doesn't yet justify a third
-	// fetcher type. Plumbed here so an operator can flip it on
-	// without changing the interface.
 	return c.upstream.GetAssetsATHBatch(ctx, assetIDs)
 }
 
