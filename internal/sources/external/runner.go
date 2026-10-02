@@ -484,6 +484,13 @@ func runPoller(
 			obs.ExternalPollerLastSuccessUnix.WithLabelValues(name).Set(float64(time.Now().Unix()))
 			return
 		}
+		// Non-nil but empty: upstream answered and nothing usable came back
+		// (a renamed slug decodes to {}). Not success, and not fresh.
+		if len(trades) == 0 && len(updates) == 0 {
+			obs.ExternalPollerPollsTotal.WithLabelValues(name, "empty").Inc()
+			logger.Warn("poller reached upstream but produced no rows", "source", name)
+			return
+		}
 		obs.ExternalPollerPollsTotal.WithLabelValues(name, "success").Inc()
 		obs.ExternalPollerLastSuccessUnix.WithLabelValues(name).Set(float64(time.Now().Unix()))
 		for _, t := range trades {
