@@ -32,9 +32,9 @@ on:
   # never verified from inside the repo, and a live check found it
   # false — `GET /repos/<repo>/rules/branches/main` currently returns
   # `[]` (no active rules), confirmed both authenticated and via a
-  # plain unauthenticated `curl` (the repo is public). The
-  # `branch-protection-status` job below turns this from a one-time
-  # manual check into an ongoing, visible signal on every push, since
+  # plain unauthenticated `curl` (the repo is public). A ruleset has
+  # since been configured, and the `branch-protection-status` job below
+  # fails any push run that finds main with zero active rules, since
   # nothing in this repo can configure the ruleset itself. Regardless
   # of ruleset state, this push trigger is NOT redundant: it is what
   # keeps direct pushes honest even under an admin-bypass rule — a red
@@ -116,10 +116,9 @@ jobs:
   # required check, while `integration-test`'s comment reads the
   # opposite ("a skipped required check never turns green either") and
   # is why that job runs `if: always()` and actively fails rather than
-  # letting a skip stand in for a verdict. Main currently has ZERO
-  # active branch-protection rules (verified live 2026-09-07,
-  # `GET /repos/<repo>/rules/branches/main` -> `[]`; see
-  # `branch-protection-status` below), so neither reading is exercised
+  # letting a skip stand in for a verdict. Main's active rules block
+  # deletion and force-push only — no required status checks (see
+  # `branch-protection-status` below) — so neither reading is exercised
   # today and this cannot be resolved by observation before this PR.
   # Given that, every job gated below by path class does it with a
   # STEP-level `if: needs.preflight.outputs.<class> == 'true'` on the
@@ -2556,36 +2555,29 @@ jobs:
         run: python3 ./scripts/ci/lint-ansible-secret-diff.py
 
   branch-protection-status:
-    name: branch protection status (informational)
+    name: branch protection status
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Informational means informational: a flaked curl to the GitHub
-    # rules API must not take the whole push run red (it did on
-    # 2026-08-24, run 32751060492 — the only failed job on an
-    # otherwise-green squash).
-    continue-on-error: true
     # CID-01 (audit-2026-07-23): only meaningful on the branch itself —
     # a PR's merge-ref isn't "main", so this only runs on push-to-main.
     if: github.event_name == 'push'
     permissions: {}
     steps:
-      - name: Warn if main has no active branch-protection rules
+      - name: Fail if main has no active branch-protection rules
         # `GET /repos/<repo>/rules/branches/<branch>` is a PUBLIC,
         # unauthenticated GitHub API endpoint for a public repo — no
         # token or checkout needed, so this cannot be broken by a
-        # credential problem. Deliberately advisory (::warning::,
-        # never fails the build): ruleset configuration is a repo
-        # Setting nothing in this repo can change, and hard-failing
-        # every push to main over an org setting would just make main
-        # permanently red for everyone with merge rights rather than
-        # fix anything. See the CID-01 note on the `push:` trigger
-        # above for why the claim this replaces was wrong.
+        # credential problem. The retries absorb a transient API fault;
+        # a run that still cannot read the rules fails, because an
+        # unreadable ruleset is not evidence of a protected main.
+        env:
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          rules="$(curl -fsSL "https://api.github.com/repos/${{ github.repository }}/rules/branches/main")"
+          rules="$(curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 "https://api.github.com/repos/${REPO}/rules/branches/main")"
           count="$(printf '%s' "$rules" | jq 'length')"
           if [ "$count" -eq 0 ]; then
-            echo "::warning::main has ZERO active branch-protection rules right now (GET /repos/${{ github.repository }}/rules/branches/main returned []). Anyone with push access can force-push or delete main. Configure branch rulesets in repo Settings → Rules if this is unintentional."
-          else
-            echo "main has ${count} active branch-protection rule(s)."
+            echo "::error::main has ZERO active branch-protection rules (GET /repos/${REPO}/rules/branches/main returned []). Anyone with push access can force-push or delete main. Restore the ruleset in repo Settings → Rules."
+            exit 1
           fi
+          echo "main has ${count} active branch-protection rule(s)."

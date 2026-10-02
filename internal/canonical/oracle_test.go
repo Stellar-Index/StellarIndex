@@ -60,6 +60,31 @@ func TestOracle_Validate_decimalsBoundaryAccepted(t *testing.T) {
 	}
 }
 
+// The upper bound is exactly 10^15 quote units per base unit at every
+// scale a feed declares: the bound is accepted, one raw unit above is not.
+func TestOracle_Validate_priceMagnitudeBound(t *testing.T) {
+	for _, decimals := range []uint8{0, 6, 8, 9, 14, 18, 38} {
+		limit := new(big.Int).Exp(big.NewInt(10), big.NewInt(15+int64(decimals)), nil)
+		u := validOracle()
+		u.Decimals = decimals
+		u.Price = c.NewAmount(limit)
+		if err := u.Validate(); err != nil {
+			t.Errorf("decimals %d: price at the bound rejected: %v", decimals, err)
+		}
+		u.Price = c.NewAmount(new(big.Int).Add(limit, big.NewInt(1)))
+		if err := u.Validate(); !errors.Is(err, c.ErrInvalidOracle) {
+			t.Errorf("decimals %d: price one unit above the bound: err = %v, want ErrInvalidOracle", decimals, err)
+		}
+	}
+	// A u256-max sentinel decoded as a price is the overflow shape the bound exists for.
+	u := validOracle()
+	u.Decimals = 8
+	u.Price = c.NewAmount(new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1)))
+	if err := u.Validate(); !errors.Is(err, c.ErrInvalidOracle) {
+		t.Errorf("u256-max price: err = %v, want ErrInvalidOracle", err)
+	}
+}
+
 func TestOracle_Validate_errors(t *testing.T) {
 	cases := map[string]func(*c.OracleUpdate){
 		"empty source":      func(u *c.OracleUpdate) { u.Source = "" },
