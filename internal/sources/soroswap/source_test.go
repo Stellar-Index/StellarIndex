@@ -9,6 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 
+	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -460,5 +461,32 @@ func TestDecodeSwapTaker(t *testing.T) {
 	}
 	if got := decodeSwapTaker("not-xdr"); got != "" {
 		t.Fatalf("malformed body must yield empty taker, got %q", got)
+	}
+}
+
+// A contract recipient (e.g. a router) is stored verbatim as Taker, not
+// dropped for failing to be an account.
+func TestDecodeSwapTaker_contractRecipient(t *testing.T) {
+	var cid xdr.ContractId
+	for i := range cid {
+		cid[i] = byte(i + 1)
+	}
+	router, err := strkey.Encode(strkey.VersionByteContract, cid[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	toVal := xdr.ScVal{
+		Type:    xdr.ScValTypeScvAddress,
+		Address: &xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &cid},
+	}
+	to := xdr.ScSymbol("to")
+	m := xdr.ScMap{{Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &to}, Val: toVal}}
+	body := xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &[]*xdr.ScMap{&m}[0]}
+	b64, err := xdr.MarshalBase64(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decodeSwapTaker(b64); got != router {
+		t.Fatalf("taker = %q, want the contract recipient %q", got, router)
 	}
 }

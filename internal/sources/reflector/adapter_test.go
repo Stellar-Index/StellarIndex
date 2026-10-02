@@ -130,6 +130,26 @@ func TestDecoder_Decode_emitsUpdatesForKnownSymbol(t *testing.T) {
 	}
 }
 
+func TestDecoder_Decode_emptyUpdateDataIsNoOp(t *testing.T) {
+	// A decode error here would count the event undecodable and blind the
+	// ledger's completeness verdict; an empty batch has nothing to project.
+	d := NewDecoder(VariantCEX, adapterContract)
+	out, err := d.Decode(events.Event{
+		Topic:          []string{TopicSymbolReflector, TopicSymbolUpdate, encodeTimestampTopic(t, 1_745_000_000_000)},
+		Value:          encodeUpdateBody(t, nil, nil),
+		ContractID:     adapterContract,
+		Ledger:         52_000_000,
+		TxHash:         "abc",
+		LedgerClosedAt: "2026-04-23T12:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("Decode(empty update_data) = %v, want a nil-error no-op", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("got %d events, want 0", len(out))
+	}
+}
+
 func TestDecoder_Decode_malformedClosedAtFailsClosed(t *testing.T) {
 	// LedgerClosedAt empty — decoder FAILS CLOSED (returns the error)
 	// rather than substituting time.Now(). closedAt is the fallback
