@@ -3,9 +3,11 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
@@ -168,25 +170,61 @@ func (s *Server) computeObservations(
 	scanCtx, cancel := context.WithTimeout(ctx, observationsScanTimeout)
 	defer cancel()
 
-	var merged []canonical.Trade
-	bySource := map[string]int{}
+	var aliasPairs []canonical.Pair
 	for _, b := range assetAliases(pair.Base) {
 		for _, q := range assetAliases(pair.Quote) {
-			aliasPair, err := canonical.NewPair(b, q)
-			if err != nil {
-				continue
+			if aliasPair, err := canonical.NewPair(b, q); err == nil {
+				aliasPairs = append(aliasPairs, aliasPair)
 			}
-			trades, err := s.history.LatestTradePerSource(scanCtx, aliasPair, source)
-			if err != nil {
-				return nil, err
-			}
-			merged = mergeNewestPerSource(merged, bySource, trades)
 		}
+	}
+	// The alias scans are independent, so they run concurrently: an XLM
+	// pair's cold read costs its slowest spelling, not the sum of all of them.
+	results := make([][]canonical.Trade, len(aliasPairs))
+	errs := make([]error, len(aliasPairs))
+	var wg sync.WaitGroup
+	for i, ap := range aliasPairs {
+		wg.Go(func() {
+			results[i], errs[i] = s.history.LatestTradePerSource(scanCtx, ap, source)
+			if errs[i] != nil {
+				cancel()
+			}
+		})
+	}
+	wg.Wait()
+
+	// Merge in alias order so a same-timestamp tie resolves to the same
+	// spelling it did when the scans ran one after another.
+	var merged []canonical.Trade
+	bySource := map[string]int{}
+	for i := range aliasPairs {
+		if errs[i] != nil {
+			return nil, firstScanError(errs)
+		}
+		merged = mergeNewestPerSource(merged, bySource, results[i])
 	}
 	if aggregate == "latest" {
 		merged = collapseToLatest(merged)
 	}
 	return merged, nil
+}
+
+// firstScanError returns the root cause among concurrent alias scans: an
+// error that is not the cancellation a failing sibling triggered.
+func firstScanError(errs []error) error {
+	var first error
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, context.Canceled) {
+			return err
+		}
+		if first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 // mergeNewestPerSource folds `trades` into `merged`, keeping the most

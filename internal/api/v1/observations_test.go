@@ -510,6 +510,56 @@ func TestObservations_AliasFanIn(t *testing.T) {
 	}
 }
 
+// rendezvousHistoryReader releases its LatestTradePerSource callers only
+// once `n` of them are in flight, so alias scans issued one at a time fail.
+type rendezvousHistoryReader struct {
+	stubHistoryReader
+	n       int32
+	arrived atomic.Int32
+	all     chan struct{}
+}
+
+func (r *rendezvousHistoryReader) LatestTradePerSource(
+	ctx context.Context, pair canonical.Pair, _ string,
+) ([]canonical.Trade, error) {
+	if r.arrived.Add(1) == r.n {
+		close(r.all)
+	}
+	select {
+	case <-r.all:
+		t := mkObservationTrade("src:"+pair.String(), time.Unix(1745000000, 0).UTC(), 1, 100)
+		return []canonical.Trade{t}, nil
+	case <-time.After(2 * time.Second):
+		return nil, errors.New("alias scans ran one at a time")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// TestObservations_AliasScansRunConcurrently — an XLM pair fans out to one
+// LatestTradePerSource scan per alias spelling; run serially, a cold read
+// cost the sum of every spelling's scan (INV-0675).
+func TestObservations_AliasScansRunConcurrently(t *testing.T) {
+	native, _ := canonical.ParseAsset("native")
+	usdt, _ := canonical.ParseAsset("crypto:USDT")
+	n := len(canonical.AssetAliases(native)) * len(canonical.AssetAliases(usdt))
+	if n < 2 {
+		t.Fatalf("fixture needs an aliased pair; native/crypto:USDT has %d spellings", n)
+	}
+	hist := &rendezvousHistoryReader{n: int32(n), all: make(chan struct{})} //nolint:gosec // small alias count
+	srv := v1.New(v1.Options{History: hist})
+	tsv := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&quote=crypto:USDT")
+	body, _ := readAll(resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	if got := strings.Count(body, `"source":"src:`); got != n {
+		t.Errorf("want one observation per alias spelling (%d), got %d: %s", n, got, body)
+	}
+}
+
 // TestObservations_DivergenceCheckedStructurallyFalse — the raw
 // per-source surface carries no aggregated value for the base-level
 // cross-reference verdict to vouch for, so `divergence_checked` is false
