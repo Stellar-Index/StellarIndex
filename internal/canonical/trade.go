@@ -69,7 +69,9 @@ type Trade struct {
 	// part of trade identity.
 	Maker string `json:"maker,omitempty"`
 
-	// Taker is the account that consumed the offer. Optional.
+	// Taker is the account that consumed the offer (SDEX), or on a
+	// Soroban swap the on-chain recipient/caller address, which may be
+	// a contract (C...) such as a router. Optional.
 	Taker string `json:"taker,omitempty"`
 
 	// RoutedVia is READ-SIDE attribution: the router/aggregator

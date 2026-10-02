@@ -15,18 +15,20 @@ severity: P3
 | Severity | P3 (`severity: ticket`) |
 | Detected by | `deploy/monitoring/rules/ingestion.yml` and the R1 overlay `configs/prometheus/rules.r1/ingestion.yml` (group `stellarindex.ingestion`, `for: 0m`) |
 | Typical MTTR | 15–60 min |
-| Impact | The dispatcher (`internal/dispatcher/dispatcher.go`) skipped a whole transaction rather than decoding it. Downstream this reads as an empty ledger, not a failure — the completeness reconcile would still pass. |
+| Impact | The dispatcher (`internal/dispatcher/dispatcher.go`) skipped a whole transaction, or a whole ledger's state-archival evictions, rather than decoding it. Downstream this reads as an empty ledger, not a failure — the completeness reconcile would still pass. |
 
 ## What this fires on
 
-Three process-wide counters, each incremented when `ProcessLedger` gives up
-on a transaction instead of decoding it:
+Four process-wide counters, each incremented when `ProcessLedger` gives up
+on a transaction (or, for the last, a ledger's eviction list) instead of
+decoding it:
 
 | Metric | Where it's incremented | Meaning |
 | ------ | ----------------------- | ------- |
 | `stellarindex_dispatcher_tx_read_errors_total` | `internal/dispatcher/dispatcher.go` (tx read) | The transaction itself was malformed and was skipped. |
 | `stellarindex_dispatcher_tx_event_read_errors_total` | `internal/dispatcher/dispatcher.go` (`GetTransactionEvents`) | That transaction's Soroban events failed to read (G15-06) — every Soroban event in it is dropped. |
 | `stellarindex_dispatcher_entry_meta_unsupported_total` | `internal/dispatcher/dispatcher.go` (apply-phase entry-change walk) | An unhandled `TransactionMeta` version stopped the entry-change walk for that tx — every classic balance/trustline/offer/LP change in it is skipped. |
+| `stellarindex_dispatcher_evicted_keys_unreadable_total` | `internal/dispatcher/dispatcher.go` (`walkEvictedKeys`) | That ledger's evicted-key list failed to read — none of its state-archival evictions reached the entry decoders, so each evicted balance stays served as live. The dispatcher logs a WARN naming the ledger. |
 
 `internal/dispatcher/statsflush/flusher.go` mirrors each counter's delta as
 a WARN log on every 5-minute flush window (RLT-135); this alert is the
@@ -36,12 +38,12 @@ tailing logs.
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
-# Which of the three counters moved, and by how much?
-ssh root@136.243.90.96 'curl -s localhost:9464/metrics | grep -E "stellarindex_dispatcher_(tx_read_errors|tx_event_read_errors|entry_meta_unsupported)_total"'
+# Which of the four counters moved, and by how much?
+ssh root@136.243.90.96 'curl -s localhost:9464/metrics | grep -E "stellarindex_dispatcher_(tx_read_errors|tx_event_read_errors|entry_meta_unsupported|evicted_keys_unreadable)_total"'
 
 # The exact failing ledger/tx is in the indexer's logs — statsflush's WARN
 # fires the same window this alert does.
-journalctl -u stellarindex-indexer --since -2h | grep -E "dispatcher: (tx-read errors|tx-event read errors|unsupported TransactionMeta)"
+journalctl -u stellarindex-indexer --since -2h | grep -E "dispatcher: (tx-read errors|tx-event read errors|unsupported TransactionMeta|evicted ledger keys unreadable)"
 ```
 
 - `tx_read_errors` climbing → a malformed transaction is reaching the
@@ -54,6 +56,9 @@ journalctl -u stellarindex-indexer --since -2h | grep -E "dispatcher: (tx-read e
 - `entry_meta_unsupported` climbing → a `TransactionMeta` version the
   apply-phase walk doesn't handle, almost always a protocol upgrade that
   shipped a new meta version ahead of a stellar-go/dispatcher bump.
+- `evicted_keys_unreadable` climbing → `LedgerCloseMeta.EvictedLedgerKeys`
+  is erroring, almost always an SDK behind a `LedgerCloseMeta` version
+  bump. The per-ledger WARN (`ledger=`) names every affected ledger.
 
 ## Mitigation (≤ 15 min)
 
@@ -69,6 +74,9 @@ journalctl -u stellarindex-indexer --since -2h | grep -E "dispatcher: (tx-read e
       apply-phase entry changes require a replay from the affected ledger
       (`stellarindex-ops projector-replay` per ADR-0032, or a full
       re-ingest of the range if the classic-side tables need it too).
+      Skipped evictions need the live dispatcher re-run over the WARN's
+      ledgers: the lake walker has no eviction phase, so a lake-sourced
+      rebuild does not restore them.
 
 ## Root cause analysis
 
@@ -80,7 +88,7 @@ For the postmortem, gather:
 
 ## Known false-positive patterns
 
-- None yet. All three counters are zero in steady state; any nonzero
+- None yet. All four counters are zero in steady state; any nonzero
   increase is a dispatcher gap, not a rate to tolerate.
 
 ## Related
@@ -94,3 +102,4 @@ For the postmortem, gather:
 
 - 2026-09-23 — created (RLT-143 / #615: the counters were promoted to
   Prometheus by RLT-135 but had no alert or runbook).
+- 2026-10-02 — added `evicted_keys_unreadable`.

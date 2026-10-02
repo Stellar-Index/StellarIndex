@@ -307,6 +307,7 @@ func registerAppMetricsTail() {
 		DispatcherTxReadErrorsTotal,
 		DispatcherTxEventReadErrorsTotal,
 		DispatcherEntryMetaUnsupportedTotal,
+		DispatcherEvictedKeysUnreadableTotal,
 		SourceUncorroboratedCallsTotal,
 
 		MEVDetectRunsTotal,
@@ -733,7 +734,7 @@ func seedBoundedLabelSeriesTail() {
 	// distinguishable from "never wired".
 	for _, kind := range []string{
 		"tx_read_errors", "tx_event_read_errors", "entry_meta_unsupported",
-		"tx_read_errors_census", "tx_event_read_errors_census",
+		"soroban_fee_meta_unsupported", "tx_read_errors_census", "tx_event_read_errors_census",
 	} {
 		ChLiveSinkReadUndercountTotal.WithLabelValues(kind)
 	}
@@ -1417,6 +1418,17 @@ var DispatcherEntryMetaUnsupportedTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_dispatcher_entry_meta_unsupported_total",
 		Help: "Transactions whose apply-phase entry changes were skipped for an unhandled TransactionMeta version.",
+	},
+)
+
+// DispatcherEvictedKeysUnreadableTotal — process-wide counter of ledgers
+// whose evicted-key list failed to read (dispatcher.Stats.EvictedKeysUnreadable),
+// so their state-archival evictions never reached the entry decoders.
+// Sibling of [DispatcherEntryMetaUnsupportedTotal].
+var DispatcherEvictedKeysUnreadableTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dispatcher_evicted_keys_unreadable_total",
+		Help: "Ledgers whose state-archival evicted keys failed to read; their evictions were skipped and the evicted entries stay served as live.",
 	},
 )
 
@@ -2607,13 +2619,13 @@ var PriceAlertEvalTotal = prometheus.NewCounterVec(
 
 // PriceAlertEvaluatedTotal — one increment per alert per sweep, labelled
 // by that alert's outcome (pricealerts.AlertOutcomes): fired, not_crossed,
-// no_price, stale, cooling_down, no_subscriber, claim_lost, error, timeout.
+// already_fired, no_price, stale, cooling_down, no_subscriber, claim_lost, error, timeout.
 // PriceAlertEvalTotal's `partial_error` is one sample per sweep whether
 // one alert or all of them failed; this counter separates the two.
 var PriceAlertEvaluatedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_alert_evaluated_total",
-		Help: "Per-alert price-alert evaluation outcomes (fired|not_crossed|no_price|stale|cooling_down|no_subscriber|claim_lost|error|timeout).",
+		Help: "Per-alert price-alert evaluation outcomes (fired|not_crossed|already_fired|no_price|stale|cooling_down|no_subscriber|claim_lost|error|timeout).",
 	},
 	[]string{"outcome"},
 )
@@ -3272,8 +3284,9 @@ var StreamPublishStallTotal = prometheus.NewCounterVec(
 
 // ─── Pricing / oracle metrics ────────────────────────────────────
 
-// PriceStalenessSeconds — per-asset gauge showing how old our
-// latest aggregated-price observation is. Alert fires when >120s.
+// PriceStalenessSeconds — per-(asset, quote) gauge showing how old our
+// latest aggregated-price observation for that pair is. Alert fires
+// when >120s; the quote label names which quote stopped publishing.
 //
 // CARDINALITY WARNING: Stellar has tens of thousands of classic
 // assets. Writers MUST restrict emission to an allow-list (top-N
@@ -3285,9 +3298,9 @@ var StreamPublishStallTotal = prometheus.NewCounterVec(
 var PriceStalenessSeconds = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_price_staleness_seconds",
-		Help: "Age of the most recent aggregated price per asset (seconds). Writers MUST restrict to a top-N allow-list.",
+		Help: "Age of the most recent aggregated price per (asset, quote) pair (seconds). Writers MUST restrict to a top-N allow-list.",
 	},
-	[]string{"asset"},
+	[]string{"asset", "quote"},
 )
 
 // OracleLastUpdateUnix — per-(source, asset) gauge with the Unix
@@ -5034,13 +5047,14 @@ var ChLiveSinkLedgersTotal = prometheus.NewCounterVec(
 
 // ChLiveSinkReadUndercountTotal counts transactions the indexer's per-ledger
 // read paths could not fully decode, by kind: the lake extract
-// (tx_read_errors, tx_event_read_errors, entry_meta_unsupported) and the
+// (tx_read_errors, tx_event_read_errors, entry_meta_unsupported,
+// soroban_fee_meta_unsupported) and the
 // ledger_ingest_log census (the *_census kinds). Each add is the per-ledger
 // transaction count, not a per-ledger flag.
 var ChLiveSinkReadUndercountTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ch_live_sink_read_undercount_total",
-		Help: "Transactions/ledgers a read path could not fully decode, labelled by kind (tx_read_errors|tx_event_read_errors|entry_meta_unsupported|tx_read_errors_census|tx_event_read_errors_census).",
+		Help: "Transactions/ledgers a read path could not fully decode, labelled by kind (tx_read_errors|tx_event_read_errors|entry_meta_unsupported|soroban_fee_meta_unsupported|tx_read_errors_census|tx_event_read_errors_census).",
 	},
 	[]string{"kind"},
 )
