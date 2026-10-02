@@ -1374,7 +1374,9 @@ func (c ContractEventsCursor) IsSet() bool { return c.Ledger > 0 }
 func accountTransactionsQuery(hasCursor bool) string {
 	cursorClause := ""
 	if hasCursor {
-		cursorClause = ` AND (ledger_seq, tx_index) < (?, ?)`
+		// Redundant leading-key bound: KeyCondition does not prune on a tuple
+		// comparison, so without it a deep page reads every row above the cursor.
+		cursorClause = ` AND ledger_seq <= ? AND (ledger_seq, tx_index) < (?, ?)`
 	}
 	// TWO-PHASE (sub-second audit 2026-08-13): resolve the KEYSET in the
 	// union, then hydrate the wide columns ONCE over the surviving ≤limit
@@ -1465,7 +1467,7 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 	}
 	var cursorArgs []any
 	if cur.IsSet() {
-		cursorArgs = []any{cur.Ledger, cur.A}
+		cursorArgs = []any{cur.Ledger, cur.Ledger, cur.A}
 	}
 	q := accountTransactionsQuery(cur.IsSet())
 	args := []any{account}
@@ -1545,7 +1547,8 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 func accountOperationsQuery(hasCursor, hasBound bool) string {
 	cursorClause := ""
 	if hasCursor {
-		cursorClause = ` AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
+		// Redundant leading-key bound — see accountTransactionsQuery.
+		cursorClause = ` AND ledger_seq <= ? AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
 	}
 	boundClause := ""
 	if hasBound {
@@ -1626,7 +1629,7 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	}
 	var cursorArgs []any
 	if cur.IsSet() {
-		cursorArgs = []any{cur.Ledger, cur.A, cur.B}
+		cursorArgs = []any{cur.Ledger, cur.Ledger, cur.A, cur.B}
 	}
 	// The activity watermark bounds each arm's resolve (`ledger_seq <= ?`)
 	// so a long-idle account's page stops at its real last activity —
@@ -2375,6 +2378,12 @@ type ContractActivityRow struct {
 	DataDisplay   string
 }
 
+// contractEventsCursorClause is the keyset predicate both contract-events
+// shapes share. contract_events is ORDER BY (ledger_seq, …) and KeyCondition
+// does not prune on a tuple comparison, so the redundant `ledger_seq <= ?`
+// is what stops a deep page reading every granule above the cursor.
+const contractEventsCursorClause = ` AND ledger_seq <= ? AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)`
+
 // contractEventsRecentQuery builds ContractEventsRecent's fast-path SQL.
 //
 // It deliberately carries neither FINAL nor `LIMIT 1 BY`: FINAL defeats the
@@ -2400,7 +2409,7 @@ func contractEventsRecentQuery(hasCursor, hasLedgerSet bool) string {
 	if hasCursor {
 		// Full row-identity tuple — see ContractEventsCursor: the 3-part
 		// (ledger_seq, op_index, event_index) predicate skipped tied rows.
-		q += ` AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)`
+		q += contractEventsCursorClause
 	}
 	if hasLedgerSet {
 		// Active-ledger bound from contract_active_ledgers — prunes the
@@ -2422,7 +2431,7 @@ func contractEventsRecentDedupQuery(hasCursor, hasLedgerSet bool) string {
 			topics_xdr, data_xdr
 		FROM stellar.contract_events WHERE contract_id = ?`
 	if hasCursor {
-		q += ` AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)`
+		q += contractEventsCursorClause
 	}
 	if hasLedgerSet {
 		q += ` AND ledger_seq IN (?)`
@@ -2500,7 +2509,7 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 func (r *ExplorerReader) contractEventsScan(ctx context.Context, q, contractID string, keep, fetch int, cur ContractEventsCursor, ledgers []uint32) ([]ContractActivityRow, int, error) {
 	args := []any{contractID}
 	if cur.IsSet() {
-		args = append(args, cur.Ledger, cur.TxHash, cur.OpIndex, cur.EventIndex)
+		args = append(args, cur.Ledger, cur.Ledger, cur.TxHash, cur.OpIndex, cur.EventIndex)
 	}
 	if ledgers != nil {
 		args = append(args, ledgers)

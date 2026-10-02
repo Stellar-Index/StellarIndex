@@ -115,11 +115,25 @@ func (s *fakeStore) ClaimPriceAlertFire(_ context.Context, id uuid.UUID, firedAt
 	if !ok {
 		return false, nil
 	}
-	if !a.LastFiredAt.IsZero() &&
+	if a.Disarmed || !a.LastFiredAt.IsZero() &&
 		a.LastFiredAt.Add(time.Duration(a.CooldownSeconds)*time.Second).After(firedAt) {
 		return false, nil
 	}
-	a.LastFiredAt = firedAt
+	a.LastFiredAt, a.Disarmed = firedAt, true
+	s.alerts[id] = a
+	return true, nil
+}
+
+// RearmPriceAlert mirrors the store's compare-and-swap re-arm. Unused by
+// the dashboard handlers, like ClaimPriceAlertFire.
+func (s *fakeStore) RearmPriceAlert(_ context.Context, id uuid.UUID, lastFiredAt time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.alerts[id]
+	if !ok || !a.Disarmed || !a.LastFiredAt.Equal(lastFiredAt) {
+		return false, nil
+	}
+	a.Disarmed = false
 	s.alerts[id] = a
 	return true, nil
 }

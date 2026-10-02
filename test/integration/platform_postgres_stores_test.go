@@ -2032,9 +2032,11 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Errorf("LastFiredAt = %v, want %v — the winner's stamp must be durable", got.LastFiredAt, firedAt)
 		}
 
-		// A later crossing INSIDE the cooldown is still refused, and one
-		// past it claims again: the predicate is the cooldown, not a
-		// fire-once latch.
+		// Once the price has moved back (re-armed), a later crossing INSIDE
+		// the cooldown is still refused, and one past it claims again.
+		if rearmed, err := alerts.RearmPriceAlert(ctx, created.ID, firedAt); err != nil || !rearmed {
+			t.Fatalf("rearm after the winner's fire: rearmed=%v err=%v", rearmed, err)
+		}
 		if claimed, err := alerts.ClaimPriceAlertFire(ctx, created.ID, firedAt.Add(59*time.Minute)); err != nil {
 			t.Fatalf("claim inside cooldown: %v", err)
 		} else if claimed {
