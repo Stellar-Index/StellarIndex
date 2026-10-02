@@ -3,6 +3,8 @@ package xdrjson_test
 import (
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -185,6 +187,50 @@ func TestDecodeOperationBody_InvokeHostFunction_Args(t *testing.T) {
 	}
 	if args[2] != "[USDC]" {
 		t.Errorf("args[2] = %q, want [USDC]", args[2])
+	}
+}
+
+// TestDecodeOperationBody_InvokeHostFunction_ArgsXDRExact pins that an arg
+// whose display is bounded (a long vec) is still carried exactly in args_xdr,
+// at the top level and in the authorization tree.
+func TestDecodeOperationBody_InvokeHostFunction_ArgsXDRExact(t *testing.T) {
+	elems := make([]xdr.ScVal, 60)
+	for i := range elems {
+		sym := xdr.ScSymbol(fmt.Sprintf("SYM%02d", i))
+		elems[i] = xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym}
+	}
+	vec := xdr.ScVec(elems)
+	vecPtr := &vec
+	long := xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &vecPtr}
+	want, err := xdr.MarshalBase64(long)
+	if err != nil {
+		t.Fatalf("MarshalBase64: %v", err)
+	}
+
+	hf := invokeSwapHF(t)
+	hf.InvokeContract.Args = []xdr.ScVal{long}
+	root := authNode(0xB0, "transfer")
+	root.Function.ContractFn.Args = []xdr.ScVal{long}
+	b64 := mustBody(t, xdr.OperationTypeInvokeHostFunction, xdr.InvokeHostFunctionOp{
+		HostFunction: hf,
+		Auth:         []xdr.SorobanAuthorizationEntry{{RootInvocation: root}},
+	})
+
+	d, err := xdrjson.DecodeOperationBody(b64)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	args, _ := d.Fields["args"].([]string)
+	if len(args) != 1 || !strings.HasSuffix(args[0], "…]") {
+		t.Fatalf("args = %#v, want one truncated display string", d.Fields["args"])
+	}
+	raw, _ := d.Fields["args_xdr"].([]string)
+	if len(raw) != 1 || raw[0] != want {
+		t.Errorf("args_xdr = %#v, want [%q]", d.Fields["args_xdr"], want)
+	}
+	tree, _ := d.Fields["authorizations"].([]xdrjson.AuthInvocation)
+	if len(tree) != 1 || len(tree[0].ArgsXDR) != 1 || tree[0].ArgsXDR[0] != want {
+		t.Errorf("auth root args_xdr = %+v, want [%q]", tree, want)
 	}
 }
 
