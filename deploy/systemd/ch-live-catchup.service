@@ -18,7 +18,6 @@ IOSchedulingPriority=6
 # next tick instead of wedging catch-up indefinitely — safe to kill
 # mid-run since the script is idempotent (ReplacingMergeTree dedups).
 TimeoutStartSec=20min
-RuntimeMaxSec=20min
 
 # Runs as root: the script sources /etc/default/stellarindex-ops
 # (Postgres DSN + credentials) directly, which is root-readable only.

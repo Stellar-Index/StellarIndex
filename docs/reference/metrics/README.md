@@ -620,7 +620,7 @@ rate, absence is unambiguous, which is why this counter is deliberately
 NOT pre-seeded in `seedBoundedLabelSeries` the way the `increase()`- and
 `rate()`-based counters are.
 
-### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`
+### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`, `stellarindex_dispatcher_evicted_keys_unreadable_total`
 
 Counters, no labels (process-wide — the underlying dispatcher counters
 aren't attributable to a source).
@@ -638,8 +638,12 @@ flush window's delta on every tick alongside the existing WARN log:
   entry-change walk was skipped for an unhandled `TransactionMeta`
   version; every classic balance / trustline / offer / LP change in
   that tx becomes invisible.
+- `evicted_keys_unreadable` — ledgers whose evicted-key list failed to
+  read, so their state-archival evictions were skipped and each evicted
+  balance stays served as live. The dispatcher also logs a WARN with
+  the ledger number.
 
-**When to look at these:** any sustained non-zero rate. All three are
+**When to look at these:** any sustained non-zero rate. All four are
 process-lifetime cumulative counters — chart `increase(...[5m])`
 against the flush interval (5m), not the raw value.
 
@@ -1544,8 +1548,9 @@ the per-tick delta.
 ### `stellarindex_ch_live_sink_read_undercount_total`
 
 Counter, label `kind` (`tx_read_errors` | `tx_event_read_errors` |
-`entry_meta_unsupported` | `tx_read_errors_census` |
-`tx_event_read_errors_census`). Every kind is seeded at zero.
+`entry_meta_unsupported` | `soroban_fee_meta_unsupported` |
+`tx_read_errors_census` | `tx_event_read_errors_census`). Every kind is
+seeded at zero.
 
 Transactions the indexer's two per-ledger read paths could not fully
 decode. Each increment is the number of affected transactions in one
@@ -1557,6 +1562,11 @@ ledger, not a ledger count.
   `EntryMetaUnsupported`). The ledger is still written, so its
   `stellar.ledgers` row claims a ledger whose contract events or entry
   changes are short, and `ch-live-catchup` never revisits it.
+- `soroban_fee_meta_unsupported` — the same extract
+  (`LedgerExtract.SorobanFeeMetaUnsupported`): Soroban transactions whose
+  `TransactionMeta` version the charged-fee read does not handle, so their
+  `soroban_nonrefundable_fee` / `soroban_refundable_fee` /
+  `soroban_rent_fee` are written as 0.
 - `tx_read_errors_census`, `tx_event_read_errors_census` —
   `dispatcher.CensusLedger` for the `ledger_ingest_log` substrate row,
   which the indexer skips on any non-zero count: a substrate gap.
@@ -2446,7 +2456,7 @@ Per-sweep outcome of the aggregator's price-alert evaluator
 (`internal/pricealerts`, BACKLOG #60), which checks every enabled
 `price_alerts` row against the latest closed 1-minute VWAP each tick
 and enqueues account-scoped `price.alert` customer-webhook deliveries
-when a threshold is crossed (respecting cooldown + `last_fired_at`).
+once per threshold crossing (respecting cooldown + `last_fired_at`).
 Only emits when `[price_alerts] enabled = true`.
 
 When to look at it: customers report their price-threshold webhooks
@@ -2464,7 +2474,7 @@ configs/prometheus/rules.r1/price-alerts.yml).
 
 ### `stellarindex_price_alert_evaluated_total`
 
-Counter, label `outcome` (`fired` / `not_crossed` / `no_price` / `stale` /
+Counter, label `outcome` (`fired` / `not_crossed` / `already_fired` / `no_price` / `stale` /
 `cooling_down` / `no_subscriber` / `claim_lost` / `error` / `timeout`),
 every child seeded when the evaluator is built.
 
@@ -2473,6 +2483,8 @@ One increment per alert per sweep. `timeout` is the alert's own deadline
 `stale` is a closed VWAP bucket older than the evaluator's own freshness
 budget (`maxPriceStaleness`, 15 min) — rejected rather than notifying off
 a price that no longer describes a live crossing.
+`already_fired` is an alert whose condition still holds since it last
+fired; it re-arms when a fresh price shows the condition cleared.
 More than half of evaluations ending in `error` / `timeout` for 30 min
 fires `stellarindex_price_alert_evaluations_failing`.
 
