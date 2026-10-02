@@ -174,7 +174,7 @@ groups:
           component: api
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-stale.md
-          summary: "Price for {{ $labels.asset }} is {{ $value }}s stale"
+          summary: "Price for {{ $labels.asset }} in {{ $labels.quote }} is {{ $value }}s stale"
           description: |
             The most recent aggregated price observation is older than 2 min
             (Freighter SLA is 30 s freshness; we alarm at 4× SLA). Usually
