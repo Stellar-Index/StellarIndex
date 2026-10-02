@@ -7099,7 +7099,7 @@ export interface components {
             condition: "above" | "below";
             /** @description Price boundary as a decimal string (never a float — ADR-0003). */
             threshold: string;
-            /** @description Minimum seconds between two fires of this alert (at least 300). */
+            /** @description Minimum seconds between two fires of this alert (at least 300). While the condition holds the alert re-fires once per cooldown. */
             cooldown_seconds: number;
             enabled: boolean;
             /**
@@ -7136,6 +7136,7 @@ export interface components {
             /** @enum {string} */
             condition?: "above" | "below";
             threshold?: string;
+            /** @description Minimum seconds between two fires; the alert re-fires once per cooldown while its condition holds. */
             cooldown_seconds?: number;
             enabled?: boolean;
         };
@@ -7265,7 +7266,7 @@ export interface components {
             condition: "above" | "below";
             /** @description The configured threshold (decimal-as-string). */
             threshold: string;
-            /** @description The closed-bucket VWAP that crossed the threshold (decimal-as-string). */
+            /** @description The closed-bucket VWAP that met the condition (decimal-as-string). */
             observed_price: string;
             /**
              * Format: date-time

@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS stellar.operations
     op_index       UInt32,
     op_type        LowCardinality(String),
     source_account String,
-    body_xdr       String,
+    body_xdr       String CODEC(ZSTD(3)),
     ingested_at    DateTime DEFAULT now(),
     -- Per-account sourced-operation lookups (GET /v1/accounts/{g}/operations);
     -- sort key is (ledger_seq, tx_index, op_index) so a source_account
@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS stellar.operation_results
     tx_hash     String,
     op_index    UInt32,
     result_code Int32,
-    result_xdr  String,
+    result_xdr  String CODEC(ZSTD(3)),
     ingested_at DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(ingested_at)
@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS stellar.contract_events
     topic_count        UInt8,
     topic_0_sym        String,
     topics_xdr         Array(String) CODEC(ZSTD(3)),
-    data_xdr           String,
+    data_xdr           String CODEC(ZSTD(3)),
     op_args_xdr        Array(String) CODEC(ZSTD(3)),
     in_successful_call UInt8,
     ingested_at        DateTime DEFAULT now(),

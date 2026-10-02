@@ -146,7 +146,7 @@ const dexXLMUSDVwapCTE = `
 		     )
 		     AND vwap IS NOT NULL
 		     AND bucket >= NOW() - INTERVAL '24 hours'
-		   ORDER BY bucket DESC
+		   ` + xlmUSDNewest + `
 		   LIMIT 1
 		)`
 

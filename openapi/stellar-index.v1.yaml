@@ -15125,7 +15125,7 @@ components:
         quote_asset:      { type: string, description: "Canonical quote asset id." }
         condition:        { type: string, enum: [above, below], description: "`above` fires at observed >= threshold; `below` at observed <= threshold." }
         threshold:        { type: string, description: "Price boundary as a decimal string (never a float — ADR-0003)." }
-        cooldown_seconds: { type: integer, minimum: 300, description: "Minimum seconds between two fires of this alert (at least 300)." }
+        cooldown_seconds: { type: integer, minimum: 300, description: "Minimum seconds between two fires of this alert (at least 300). While the condition holds the alert re-fires once per cooldown." }
         enabled:          { type: boolean }
         last_fired_at:    { type: string, format: date-time, description: "When the alert last enqueued a delivery. Absent/zero = never fired." }
         created_at:       { type: string, format: date-time }
@@ -15153,7 +15153,7 @@ components:
         quote_asset:      { type: string }
         condition:        { type: string, enum: [above, below] }
         threshold:        { type: string }
-        cooldown_seconds: { type: integer, minimum: 300, maximum: 2147483647 }
+        cooldown_seconds: { type: integer, minimum: 300, maximum: 2147483647, description: "Minimum seconds between two fires; the alert re-fires once per cooldown while its condition holds." }
         enabled:          { type: boolean }
 
     # ──────────────────────────────────────────────────────────
@@ -15259,7 +15259,7 @@ components:
         quote_asset:    { type: string, description: "Canonical quote asset id." }
         condition:      { type: string, enum: [above, below] }
         threshold:      { type: string, description: "The configured threshold (decimal-as-string)." }
-        observed_price: { type: string, description: "The closed-bucket VWAP that crossed the threshold (decimal-as-string)." }
+        observed_price: { type: string, description: "The closed-bucket VWAP that met the condition (decimal-as-string)." }
         bucket:         { type: string, format: date-time, description: "Close time of the observed 1-minute VWAP bucket." }
         at:             { type: string, format: date-time, description: "When this delivery was generated (server time, RFC 3339 nanosecond)." }
       required: [event, alert_id, pair, base_asset, quote_asset, condition, threshold, observed_price, bucket, at]
