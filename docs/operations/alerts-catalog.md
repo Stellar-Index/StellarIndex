@@ -229,7 +229,7 @@ signal lands.
 | `stellarindex_api_price_stream_not_delivering` | `stellarindex_aggregator_stream_publish_total{outcome="ok"}` vs `stellarindex_api_stream_subscribe_total{outcome="ok"}` | aggregator publishing, API fanning out none, for 15 min (clock skew or a silently-retrying pubsub) | ticket | [price-stream-not-delivering](runbooks/price-stream-not-delivering.md) |
 | `stellarindex_api_error_rate_high` | `rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m])` | > 1 % for > 2 min | ticket | [api-5xx](runbooks/api-5xx.md) |
 | `stellarindex_api_error_rate_critical` | same | > 5 % for > 2 min | page | [api-5xx](runbooks/api-5xx.md) |
-| `stellarindex_api_price_stale` | `stellarindex_price_staleness_seconds` per asset | > 120 s sustained 5 min | ticket | [price-stale](runbooks/price-stale.md) |
+| `stellarindex_api_price_stale` | `stellarindex_price_staleness_seconds` per (asset, quote) | > 120 s sustained 5 min | ticket | [price-stale](runbooks/price-stale.md) |
 | `stellarindex_api_cache_miss_rate_high` | `rate(stellarindex_api_cache_ops_total{result="miss"}[5m]) / rate(stellarindex_api_cache_ops_total{result=~"hit\|miss\|stale"}[5m])` per (cache, op) | > 50 % sustained 10 min on a hot op (≥ 0.1 req/s) | ticket | [cache-miss-rate-high](runbooks/cache-miss-rate-high.md) |
 
 ## Notify (transactional-email) alerts

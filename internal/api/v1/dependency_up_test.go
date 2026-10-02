@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -87,5 +89,66 @@ func TestReadyzPublishesDependencyUp(t *testing.T) {
 	}
 	if v != 0 {
 		t.Errorf("dependency_up{clickhouse} = %v, want 0", v)
+	}
+}
+
+// toggleCheck fails while down is set, so a test can move a dependency
+// between states without touching the HTTP surface.
+type toggleCheck struct{ down *atomic.Bool }
+
+func (c toggleCheck) Name() string   { return "clickhouse" }
+func (c toggleCheck) Critical() bool { return false }
+func (c toggleCheck) Ping(_ context.Context) error {
+	if c.down.Load() {
+		return errors.New("connection refused")
+	}
+	return nil
+}
+
+// TestReadinessProbeRefreshesDependencyUpWithoutTraffic: the gauge must track
+// a dependency that goes down after the last /v1/readyz call — here there is
+// no call at all — or an outage with no probe polling never reads 0.
+func TestReadinessProbeRefreshesDependencyUpWithoutTraffic(t *testing.T) {
+	obs.DependencyUp.Reset()
+	var down atomic.Bool
+	srv := v1.New(v1.Options{ReadyChecks: []v1.ReadyChecker{toggleCheck{down: &down}}})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		srv.StartReadinessProbe(ctx, 10*time.Millisecond)
+	}()
+	t.Cleanup(func() { cancel(); <-stopped })
+
+	waitDependencyUp(t, "clickhouse", 1)
+	down.Store(true)
+	waitDependencyUp(t, "clickhouse", 0)
+}
+
+func waitDependencyUp(t *testing.T, dep string, want float64) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		families, err := obs.Registry.Gather()
+		if err != nil {
+			t.Fatalf("gather: %v", err)
+		}
+		for _, f := range families {
+			if f.GetName() != "stellarindex_dependency_up" {
+				continue
+			}
+			for _, m := range f.GetMetric() {
+				for _, l := range m.GetLabel() {
+					if l.GetName() == "dependency" && l.GetValue() == dep && m.GetGauge().GetValue() == want {
+						return
+					}
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dependency_up{%s} never reached %v without /v1/readyz traffic", dep, want)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

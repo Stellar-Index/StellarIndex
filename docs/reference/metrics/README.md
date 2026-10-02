@@ -1787,12 +1787,13 @@ signed delivery goes out. A dashboard summing the counter without a
 
 ### `stellarindex_price_staleness_seconds`
 
-Gauge, label `asset`.
+Gauge, labels `asset`, `quote`.
 
-Age of the most recent price served for `asset` via `/v1/price`, in
-seconds. Updated per request so a popular asset keeps a fresh
-reading; unqueried assets stop updating and the `price-stale` alert
-uses `change()` to distinguish "no-update" from "updated-but-stale".
+Age of the most recent aggregated VWAP write for each configured
+(`asset`, `quote`) pair, in seconds, set by the aggregator at the end
+of every tick. XLM is emitted under both `native` and `crypto:XLM`,
+merged per quote. The `price-stale` alert fires on any series above
+120 s and on the series being absent (a wedged aggregator).
 
 ### `stellarindex_ratelimit_fail_open_total`
 

@@ -20,7 +20,8 @@ import (
 // TestPriceAlertsDisarmed executes migration 0198 up and down and the SQL
 // that makes an alert fire once per crossing (GH #664): the claim disarms
 // and refuses a disarmed row, the re-arm is a compare-and-swap on
-// last_fired_at, and an edit to the rule or a re-enable re-arms it.
+// last_fired_at, an edit to the rule or a re-enable re-arms it, and a claim
+// made against a snapshot the owner has since edited or disabled is refused.
 func TestPriceAlertsDisarmed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -62,13 +63,27 @@ func TestPriceAlertsDisarmed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create alert: %v", err)
 	}
-	claim := func(at time.Time) bool {
+	get := func() platform.PriceAlert {
 		t.Helper()
-		ok, err := alerts.ClaimPriceAlertFire(ctx, a.ID, at)
+		got, err := alerts.GetPriceAlert(ctx, a.ID)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		return got
+	}
+	claimAs := func(snap platform.PriceAlert, at time.Time) bool {
+		t.Helper()
+		ok, err := alerts.ClaimPriceAlertFire(ctx, snap, at)
 		if err != nil {
 			t.Fatalf("claim at %s: %v", at, err)
 		}
 		return ok
+	}
+	// claim evaluates against the row as it stands, as a sweep with no
+	// concurrent edit does.
+	claim := func(at time.Time) bool {
+		t.Helper()
+		return claimAs(get(), at)
 	}
 	rearm := func(lastFired time.Time) bool {
 		t.Helper()
@@ -80,11 +95,7 @@ func TestPriceAlertsDisarmed(t *testing.T) {
 	}
 	disarmed := func() bool {
 		t.Helper()
-		got, err := alerts.GetPriceAlert(ctx, a.ID)
-		if err != nil {
-			t.Fatalf("get: %v", err)
-		}
-		return got.Disarmed
+		return get().Disarmed
 	}
 
 	fired := time.Now().UTC().Truncate(time.Microsecond)
@@ -116,10 +127,7 @@ func TestPriceAlertsDisarmed(t *testing.T) {
 
 	update := func(mut func(*platform.PriceAlert)) {
 		t.Helper()
-		cur, err := alerts.GetPriceAlert(ctx, a.ID)
-		if err != nil {
-			t.Fatalf("get: %v", err)
-		}
+		cur := get()
 		mut(&cur)
 		if err := alerts.UpdatePriceAlert(ctx, cur); err != nil {
 			t.Fatalf("update: %v", err)
@@ -143,6 +151,34 @@ func TestPriceAlertsDisarmed(t *testing.T) {
 	update(func(p *platform.PriceAlert) { p.Enabled = true })
 	if disarmed() {
 		t.Error("re-enabling left the alert disarmed")
+	}
+
+	// Each edit lands between the evaluator's snapshot and its claim; the
+	// claim must not fire the rule the owner just replaced. Each case starts
+	// armed and claims an hour later, so a wrong claim cannot mask the next.
+	third := second.Add(3 * time.Hour)
+	for name, edit := range map[string]func(*platform.PriceAlert){
+		"threshold": func(p *platform.PriceAlert) { p.Threshold = "0.3" },
+		"condition": func(p *platform.PriceAlert) { p.Condition = platform.AlertBelow },
+		"pair":      func(p *platform.PriceAlert) { p.QuoteAsset = "fiat:EUR" },
+		"disabled":  func(p *platform.PriceAlert) { p.Enabled = false },
+	} {
+		snap := get()
+		if snap.Disarmed {
+			rearm(snap.LastFiredAt)
+			snap = get()
+		}
+		update(edit)
+		if claimAs(snap, third) {
+			t.Errorf("claimed on a snapshot whose %s was edited before the claim", name)
+		}
+		update(func(p *platform.PriceAlert) { p.Enabled = true })
+		third = third.Add(time.Hour)
+	}
+	cur := get()
+	cur.Threshold += "00"
+	if !claimAs(cur, third) {
+		t.Fatalf("claim on the current rule (threshold %q, value-equal to the row) refused", cur.Threshold)
 	}
 
 	applyMigrationsUpTo(t, dsn, 197)

@@ -2948,6 +2948,41 @@ func (s *Server) fillReadyz(done chan struct{}) {
 	s.readyzMu.Unlock()
 }
 
+// ReadinessProbeCadence is how often [Server.StartReadinessProbe] runs a
+// readiness round: one Prometheus scrape interval.
+const ReadinessProbeCadence = 15 * time.Second
+
+// StartReadinessProbe runs a readiness round every `every` until ctx ends, so
+// stellarindex_dependency_up stays current when nothing calls /v1/readyz;
+// request-driven alone, the gauge freezes at its last value and an outage
+// that begins after the last probe never reads 0.
+func (s *Server) StartReadinessProbe(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		s.probeReadyz() //nolint:contextcheck // the round is shared with queued /v1/readyz callers and carries its own 2s budget; ctx bounds only the loop.
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// probeReadyz runs one round through the /v1/readyz single-flight and cache,
+// skipping the tick when a request-driven round is already in flight.
+func (s *Server) probeReadyz() {
+	s.readyzMu.Lock()
+	if s.readyzFlight != nil {
+		s.readyzMu.Unlock()
+		return
+	}
+	done := make(chan struct{})
+	s.readyzFlight = done
+	s.readyzMu.Unlock()
+	s.fillReadyz(done)
+}
+
 // computeReadyz runs one full check round and renders the response.
 // Detached from any caller's request context — one impatient caller's
 // disconnect must not cancel the round every queued caller shares.
