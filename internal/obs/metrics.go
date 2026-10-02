@@ -1478,7 +1478,9 @@ var SourceUnknownSymbolsTotal = prometheus.NewCounterVec(
 // ExternalPollerPollsTotal — per-source, per-outcome counter of
 // PollOnce invocations. Outcome is one of:
 //
-//   - success — venue returned 200 and the response decoded OK
+//   - success — venue returned 200 and the response decoded to ≥1 row
+//   - empty   — venue returned 200 but no usable row; does not refresh
+//     ExternalPollerLastSuccessUnix
 //   - error   — PollOnce returned a non-nil error (network, HTTP
 //     4xx/5xx, decode failure)
 //   - skipped — the poller's internal cooldown (after a previous
@@ -1495,7 +1497,7 @@ var SourceUnknownSymbolsTotal = prometheus.NewCounterVec(
 var ExternalPollerPollsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_external_poller_polls_total",
-		Help: "External poller invocations, labelled by source and outcome (success | error | skipped | idle).",
+		Help: "External poller invocations, labelled by source and outcome (success | empty | error | skipped | idle).",
 	},
 	[]string{"source", "outcome"},
 )

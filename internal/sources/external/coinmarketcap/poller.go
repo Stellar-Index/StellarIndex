@@ -408,7 +408,9 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	if len(plan.ids) == 0 && len(plan.symbols) == 0 {
 		return nil, nil, external.ErrNoApplicablePairs
 	}
-	var updates []canonical.OracleUpdate
+	// Non-nil from here: the runner reads nil as a skip, which would keep a
+	// reached-but-empty poll looking fresh.
+	updates := []canonical.OracleUpdate{}
 	undated := 0
 	if len(plan.ids) > 0 {
 		r, err := p.fetchQuotes(ctx, "id", strings.Join(plan.ids, ","), plan.currencies)
