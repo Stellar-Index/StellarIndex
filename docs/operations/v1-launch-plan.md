@@ -1582,7 +1582,10 @@ is a lightweight documentation sign-off, not open work.
 **Amended 2026-09-28 (#346):** PRV-1 is superseded. Account erasure and
 export were built in GH #809 (`internal/accounterasure`, migration 0188);
 the operator procedure and the backup/snapshot copies an erasure cannot
-reach are in `runbooks/account-erasure.md`.
+reach are in `runbooks/account-erasure.md`. Retention is keep-indefinitely
+with pseudonymisation on erasure; identity checks and the access,
+correction, restriction, objection and single-member erasure procedures
+are in `runbooks/privacy-rights-requests.md`.
 
 ---
 
