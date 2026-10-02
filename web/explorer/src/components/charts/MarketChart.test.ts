@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import type { components } from '@/api/types';
-import { toChartBar } from './MarketChart';
+import { coverageCaption, toChartBar } from './MarketChart';
 
 type OHLCBar = components['schemas']['OHLCSeriesBar'];
 
@@ -41,5 +41,30 @@ describe('MarketChart series volume scale', () => {
 
   it('plots no volume for a bar that states no scale', () => {
     expect(toChartBar(bar('2200000000')).volume).toBeUndefined();
+  });
+});
+
+describe('MarketChart coverage caption', () => {
+  const DAY = 86_400;
+  const start = Date.UTC(2026, 6, 1) / 1000;
+  const at = (time: number) => ({ time, open: 1, high: 1, low: 1, close: 1 });
+
+  it('states where a short series starts without claiming a backfill', () => {
+    // A pair first traded 10 days into a 30-day window is young, not
+    // necessarily still loading; the caption must not assert either cause.
+    const data = [at(start), at(start + 10 * DAY)];
+    const caption = coverageCaption(data, 30 * DAY);
+    expect(caption).toBe('History from 2026-07-01.');
+    expect(caption).not.toMatch(/backfill/i);
+  });
+
+  it('omits the caption when the series spans the window', () => {
+    expect(
+      coverageCaption([at(start), at(start + 29 * DAY)], 30 * DAY),
+    ).toBeNull();
+  });
+
+  it('omits the caption for an empty series', () => {
+    expect(coverageCaption([], 30 * DAY)).toBeNull();
   });
 });

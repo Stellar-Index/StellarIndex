@@ -15112,16 +15112,19 @@ components:
         A customer-registered price-threshold alert backing the
         /v1/dashboard/price-alerts surface (BACKLOG #60). The
         aggregator's evaluator compares each enabled alert against the
-        latest closed 1m VWAP for its pair and, on a crossing, enqueues
-        a `price.alert` webhook delivery to the account's subscribed
-        webhooks.
+        latest closed 1m VWAP for its pair and, while the condition
+        holds, enqueues a `price.alert` webhook delivery to the
+        account's subscribed webhooks. The evaluator is level-triggered,
+        not edge-triggered: an alert whose condition keeps holding
+        re-fires once per `cooldown_seconds` until the price moves back
+        across the threshold or the alert is disabled.
       properties:
         id:               { type: string, format: uuid }
         base_asset:       { type: string, description: "Canonical base asset id (`native`, `USDC-G…`, `C…`, `fiat:USD`)." }
         quote_asset:      { type: string, description: "Canonical quote asset id." }
         condition:        { type: string, enum: [above, below], description: "`above` fires at observed >= threshold; `below` at observed <= threshold." }
         threshold:        { type: string, description: "Price boundary as a decimal string (never a float — ADR-0003)." }
-        cooldown_seconds: { type: integer, minimum: 300, description: "Minimum seconds between two fires of this alert (at least 300)." }
+        cooldown_seconds: { type: integer, minimum: 300, description: "Minimum seconds between two fires of this alert (at least 300). While the condition holds the alert re-fires once per cooldown." }
         enabled:          { type: boolean }
         last_fired_at:    { type: string, format: date-time, description: "When the alert last enqueued a delivery. Absent/zero = never fired." }
         created_at:       { type: string, format: date-time }
@@ -15149,7 +15152,7 @@ components:
         quote_asset:      { type: string }
         condition:        { type: string, enum: [above, below] }
         threshold:        { type: string }
-        cooldown_seconds: { type: integer, minimum: 300, maximum: 2147483647 }
+        cooldown_seconds: { type: integer, minimum: 300, maximum: 2147483647, description: "Minimum seconds between two fires; the alert re-fires once per cooldown while its condition holds." }
         enabled:          { type: boolean }
 
     # ──────────────────────────────────────────────────────────
@@ -15241,8 +15244,12 @@ components:
       description: |
         Body of a `price.alert` webhook delivery (BACKLOG #60). Fired by
         the aggregator's price-alert evaluator when one of the account's
-        registered alerts crosses its threshold against the latest closed
-        1-minute VWAP. Unlike the operational events, this is enqueued
+        registered alerts has its condition met by the latest closed
+        1-minute VWAP. The evaluator is level-triggered: while the
+        condition keeps holding the alert re-fires once per its
+        `cooldown_seconds` (minimum 300), so one excursion past the
+        threshold can produce several deliveries, each with its own
+        delivery id. Unlike the operational events, this is enqueued
         ONLY to the owning account's subscribed webhooks.
       properties:
         event:          { type: string, enum: [price.alert] }
@@ -15252,7 +15259,7 @@ components:
         quote_asset:    { type: string, description: "Canonical quote asset id." }
         condition:      { type: string, enum: [above, below] }
         threshold:      { type: string, description: "The configured threshold (decimal-as-string)." }
-        observed_price: { type: string, description: "The closed-bucket VWAP that crossed the threshold (decimal-as-string)." }
+        observed_price: { type: string, description: "The closed-bucket VWAP that met the condition (decimal-as-string)." }
         bucket:         { type: string, format: date-time, description: "Close time of the observed 1-minute VWAP bucket." }
         at:             { type: string, format: date-time, description: "When this delivery was generated (server time, RFC 3339 nanosecond)." }
       required: [event, alert_id, pair, base_asset, quote_asset, condition, threshold, observed_price, bucket, at]
