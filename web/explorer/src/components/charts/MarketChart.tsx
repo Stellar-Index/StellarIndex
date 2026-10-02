@@ -199,7 +199,7 @@ function limitFor(spanSec: number, interval: string): number {
  * served by GET /v1/ohlc. Two controls: a lookback **window** and an adaptive
  * **granularity** that offers every candle size usable for that window (default
  * = the finest dense one). A coverage caption surfaces when history is shorter
- * than the requested window (backfill still filling in).
+ * than the requested window.
  */
 export function MarketChart({
   base,
@@ -288,9 +288,7 @@ export function MarketChart({
   const loading = query.isLoading;
   const error = query.error ? query.error.message : null;
 
-  // Coverage: if the earliest returned bar starts well inside the requested
-  // window, history is truncated (backfill in progress) — say so honestly.
-  const coverageNote = coverage(data, win.spanSec);
+  const coverageNote = coverageCaption(data, win.spanSec);
 
   // Live current-price line: subscribe to this pair's tip stream (same
   // multiplexed source as the headline LiveAssetPrice) so the right-axis
@@ -405,16 +403,18 @@ export function MarketChart({
   );
 }
 
-function coverage(data: Bar[], spanSec: number): string | null {
+// A short series has two indistinguishable causes — a young pair or history
+// not yet loaded — so the caption states the start date and claims neither.
+export function coverageCaption(data: Bar[], spanSec: number): string | null {
   if (data.length === 0) return null;
   const first = data[0].time;
   const last = data[data.length - 1].time;
   const covered = last - first;
-  // If we're missing more than ~15% of the requested span at the start, the
+  // Missing more than ~15% of the requested span at the start means the
   // series is coverage-limited rather than genuinely flat.
   if (covered < spanSec * 0.85) {
     const from = new Date(first * 1000).toISOString().slice(0, 10);
-    return `History begins ${from} — earlier data still backfilling.`;
+    return `History from ${from}.`;
   }
   return null;
 }
