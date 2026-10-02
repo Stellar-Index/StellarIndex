@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -43,6 +44,11 @@ func mustFiat(t *testing.T, code string) canonical.Asset {
 		t.Fatalf("NewFiatAsset(%s): %v", code, err)
 	}
 	return a
+}
+
+// pairStaleness is the staleness gauge series for p.
+func pairStaleness(p canonical.Pair) prometheus.Gauge {
+	return obs.PriceStalenessSeconds.WithLabelValues(p.Base.String(), p.Quote.String())
 }
 
 // liveTrades returns two exchange-class trades on `pair` stamped at
@@ -93,12 +99,16 @@ func TestTick_DeadQuoteIsNotMaskedByALiveSiblingQuote(t *testing.T) {
 	})
 	o.clock = clk.Now
 
-	obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC").Set(-1)
+	for _, p := range []canonical.Pair{live, dead} {
+		pairStaleness(p).Set(-1)
+	}
 	if err := o.Tick(context.Background()); err != nil {
 		t.Fatalf("first Tick: %v", err)
 	}
-	if got := testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC")); got != 0 {
-		t.Fatalf("after first Tick: staleness = %v, want 0 (first-sighting seed)", got)
+	for _, p := range []canonical.Pair{live, dead} {
+		if got := testutil.ToFloat64(pairStaleness(p)); got != 0 {
+			t.Fatalf("after first Tick: staleness for %s = %v, want 0 (first-sighting seed)", p, got)
+		}
 	}
 	if o.Stats().VWAPWrites == 0 {
 		t.Fatalf("precondition: the live quote %s never published — the test would prove nothing", live)
@@ -116,10 +126,13 @@ func TestTick_DeadQuoteIsNotMaskedByALiveSiblingQuote(t *testing.T) {
 		t.Fatalf("precondition: the live quote %s did not re-publish on the second Tick", live)
 	}
 
-	got := testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC"))
-	if got != 600 {
-		t.Errorf("staleness{asset=crypto:BTC} = %v, want 600 — %s has served nothing for 10 min; "+
+	if got := testutil.ToFloat64(pairStaleness(dead)); got != 600 {
+		t.Errorf("staleness{asset=crypto:BTC,quote=fiat:GBP} = %v, want 600 — %s has served nothing for 10 min; "+
 			"a fresh %s must not reset the clock the alert judges it by", got, dead, live)
+	}
+	if got := testutil.ToFloat64(pairStaleness(live)); got != 0 {
+		t.Errorf("staleness{asset=crypto:BTC,quote=crypto:USDT} = %v, want 0 — the quote label must name the dead quote, "+
+			"not page the live one", got)
 	}
 }
 
@@ -149,12 +162,16 @@ func TestTick_AllQuotesLiveReadsFresh(t *testing.T) {
 	clk.now = clk.now.Add(10 * time.Minute)
 	store.perPair[a.String()] = liveTrades(a, clk.now)
 	store.perPair[b.String()] = liveTrades(b, clk.now)
-	obs.PriceStalenessSeconds.WithLabelValues("crypto:ETH").Set(-1)
+	for _, p := range []canonical.Pair{a, b} {
+		pairStaleness(p).Set(-1)
+	}
 	if err := o.Tick(context.Background()); err != nil {
 		t.Fatalf("second Tick: %v", err)
 	}
-	if got := testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("crypto:ETH")); got != 0 {
-		t.Errorf("staleness{asset=crypto:ETH} = %v, want 0 — both quotes published this Tick", got)
+	for _, p := range []canonical.Pair{a, b} {
+		if got := testutil.ToFloat64(pairStaleness(p)); got != 0 {
+			t.Errorf("staleness for %s = %v, want 0 — both quotes published this Tick", p, got)
+		}
 	}
 }
 
@@ -178,15 +195,15 @@ func TestTick_XLMDualFormIsMergedPerQuote(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		pairs []canonical.Pair
-		live  []canonical.Pair // pairs that publish on every Tick
-		want  float64
+		live  []canonical.Pair   // pairs that publish on every Tick
+		want  map[string]float64 // by quote
 	}{
-		{"GBP dead on both forms, USD live on both", forward, []canonical.Pair{tickerUSD, nativeUSD}, 600},
-		{"GBP dead on both forms, USD live on both (reversed)", reversed, []canonical.Pair{tickerUSD, nativeUSD}, 600},
-		{"GBP live on native only, USD live on ticker only", forward, []canonical.Pair{nativeGBP, tickerUSD}, 0},
-		{"GBP live on native only, USD live on ticker only (reversed)", reversed, []canonical.Pair{nativeGBP, tickerUSD}, 0},
-		{"every quote live on every form", forward, forward, 0},
-		{"nothing publishes", forward, nil, 600},
+		{"GBP dead on both forms, USD live on both", forward, []canonical.Pair{tickerUSD, nativeUSD}, map[string]float64{"fiat:USD": 0, "fiat:GBP": 600}},
+		{"GBP dead on both forms, USD live on both (reversed)", reversed, []canonical.Pair{tickerUSD, nativeUSD}, map[string]float64{"fiat:USD": 0, "fiat:GBP": 600}},
+		{"GBP live on native only, USD live on ticker only", forward, []canonical.Pair{nativeGBP, tickerUSD}, map[string]float64{"fiat:USD": 0, "fiat:GBP": 0}},
+		{"GBP live on native only, USD live on ticker only (reversed)", reversed, []canonical.Pair{nativeGBP, tickerUSD}, map[string]float64{"fiat:USD": 0, "fiat:GBP": 0}},
+		{"every quote live on every form", forward, forward, map[string]float64{"fiat:USD": 0, "fiat:GBP": 0}},
+		{"nothing publishes", forward, nil, map[string]float64{"fiat:USD": 600, "fiat:GBP": 600}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			clk := &stalenessTestClock{now: time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)}
@@ -199,8 +216,9 @@ func TestTick_XLMDualFormIsMergedPerQuote(t *testing.T) {
 				for _, p := range tc.live {
 					store.perPair[p.String()] = liveTrades(p, clk.now)
 				}
-				obs.PriceStalenessSeconds.WithLabelValues("native").Set(-1)
-				obs.PriceStalenessSeconds.WithLabelValues("crypto:XLM").Set(-1)
+				for _, p := range forward {
+					pairStaleness(p).Set(-1)
+				}
 				before := o.Stats().VWAPWrites
 				if err := o.Tick(context.Background()); err != nil {
 					t.Fatalf("Tick %d: %v", tick, err)
@@ -213,9 +231,10 @@ func TestTick_XLMDualFormIsMergedPerQuote(t *testing.T) {
 				}
 			}
 
-			for _, label := range []string{"native", "crypto:XLM"} {
-				if got := testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues(label)); got != tc.want {
-					t.Errorf("staleness{asset=%s} = %v, want %v", label, got, tc.want)
+			for _, p := range forward {
+				want := tc.want[p.Quote.String()]
+				if got := testutil.ToFloat64(pairStaleness(p)); got != want {
+					t.Errorf("staleness for %s = %v, want %v", p, got, want)
 				}
 			}
 		})
@@ -293,14 +312,18 @@ func TestTick_CompositeServedPairReadsFresh(t *testing.T) {
 		t.Fatalf("precondition: first Tick published the composite %v times, want 1", ok)
 	}
 	h.clk.now = h.clk.now.Add(10 * time.Minute)
-	obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC").Set(-1)
+	pairStaleness(h.direct).Set(-1)
+	pairStaleness(h.target).Set(-1)
 	if ok := h.tick(t, "ok"); ok != 1 {
 		t.Fatalf("precondition: second Tick published the composite %v times, want 1", ok)
 	}
 
-	if got := testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC")); got != 0 {
-		t.Errorf("staleness{asset=crypto:BTC} = %v, want 0 — %s was published through its chain on this "+
+	if got := testutil.ToFloat64(pairStaleness(h.target)); got != 0 {
+		t.Errorf("staleness{asset=crypto:BTC,quote=fiat:EUR} = %v, want 0 — %s was published through its chain on this "+
 			"Tick; a pair served by the composite writer is not a dead feed", got, h.target)
+	}
+	if got := testutil.ToFloat64(pairStaleness(h.direct)); got != 0 {
+		t.Errorf("staleness{asset=crypto:BTC,quote=fiat:USD} = %v, want 0 — %s publishes directly every Tick", got, h.direct)
 	}
 	// The stamp is the Tick's injected clock, not a wall-clock read
 	// taken inside the triangulation pass.
@@ -336,7 +359,7 @@ func TestTick_CompositeThatDoesNotPublishStillClimbs(t *testing.T) {
 				t.Fatalf("precondition: first Tick ended in %s %v times, want 1", tc.outcome, n)
 			}
 			h.clk.now = h.clk.now.Add(10 * time.Minute)
-			obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC").Set(-1)
+			pairStaleness(h.target).Set(-1)
 			okBefore := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("ok"))
 			if n := h.tick(t, tc.outcome); n != 1 {
 				t.Fatalf("precondition: second Tick ended in %s %v times, want 1", tc.outcome, n)
@@ -345,8 +368,8 @@ func TestTick_CompositeThatDoesNotPublishStillClimbs(t *testing.T) {
 				t.Fatalf("precondition: the composite published (%v) — this case must not publish", d)
 			}
 
-			if got := testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC")); got != 600 {
-				t.Errorf("staleness{asset=crypto:BTC} = %v, want 600 — %s and %s has no direct trades, "+
+			if got := testutil.ToFloat64(pairStaleness(h.target)); got != 600 {
+				t.Errorf("staleness{asset=crypto:BTC,quote=fiat:EUR} = %v, want 600 — %s and %s has no direct trades, "+
 					"so nothing wrote its VWAP key for 10 min", got, tc.why, h.target)
 			}
 		})
