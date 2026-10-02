@@ -406,10 +406,11 @@ func ledgerEntryTypeName(t xdr.LedgerEntryType) string {
 
 // fillInvokeHostFunction decodes a Soroban host-function op: the kind, and for
 // InvokeContract the target contract + function name + the full argument list.
-// Args are rendered through scval.Display — the compact human-readable form the
+// `args` are rendered through scval.Display — the compact human-readable form the
 // explorer's contract-event rows already use — so i128 amounts stay decimal
-// strings (ADR-0003) and addresses render as strkeys. `arg_count` predates the
-// full decode and is kept for wire back-compat.
+// strings (ADR-0003) and addresses render as strkeys; `args_xdr` carries each
+// arg exactly (see renderArgs). `arg_count` predates the full decode and is
+// kept for wire back-compat.
 func fillInvokeHostFunction(op xdr.InvokeHostFunctionOp, f map[string]any) {
 	switch op.HostFunction.Type {
 	case xdr.HostFunctionTypeHostFunctionTypeInvokeContract:
@@ -420,11 +421,7 @@ func fillInvokeHostFunction(op xdr.InvokeHostFunctionOp, f map[string]any) {
 		}
 		f["function_name"] = string(ic.FunctionName)
 		f["arg_count"] = len(ic.Args)
-		args := make([]string, len(ic.Args))
-		for i, a := range ic.Args {
-			args[i] = scval.Display(a)
-		}
-		f["args"] = args
+		f["args"], f["args_xdr"] = renderArgs(ic.Args)
 	case xdr.HostFunctionTypeHostFunctionTypeCreateContract:
 		f["function"] = "create_contract"
 	case xdr.HostFunctionTypeHostFunctionTypeUploadContractWasm:
@@ -454,6 +451,7 @@ type AuthInvocation struct {
 	ContractID     string           `json:"contract_id,omitempty"`
 	FunctionName   string           `json:"function_name,omitempty"`
 	Args           []string         `json:"args,omitempty"`
+	ArgsXDR        []string         `json:"args_xdr,omitempty"`
 	Credentials    *AuthCredentials `json:"credentials,omitempty"`
 	SubInvocations []AuthInvocation `json:"sub_invocations,omitempty"`
 }
@@ -515,8 +513,23 @@ func addressCredentialsFields(a xdr.SorobanAddressCredentials) *AuthCredentials 
 	}
 }
 
+// renderArgs returns each contract-call arg as its scval.Display string and
+// as base64 XDR. Display bounds long and deeply nested values for reading, so
+// the XDR form is the one a consumer can recover the exact value from.
+func renderArgs(args []xdr.ScVal) (display, raw []string) {
+	display = make([]string, len(args))
+	raw = make([]string, len(args))
+	for i, a := range args {
+		display[i] = scval.Display(a)
+		// Re-encoding a value that was just decoded cannot fail; "" keeps the
+		// display path non-erroring like scval.DisplayB64.
+		raw[i], _ = xdr.MarshalBase64(a)
+	}
+	return display, raw
+}
+
 // buildAuthInvocation renders one SorobanAuthorizedInvocation node + its
-// sub-invocations recursively, reusing the same arg display (scval.Display) and
+// sub-invocations recursively, reusing the same arg rendering (renderArgs) and
 // contract-strkey rendering as the top-level InvokeContract decode.
 func buildAuthInvocation(node *xdr.SorobanAuthorizedInvocation) AuthInvocation {
 	n := AuthInvocation{Kind: "create_contract"}
@@ -527,10 +540,7 @@ func buildAuthInvocation(node *xdr.SorobanAuthorizedInvocation) AuthInvocation {
 			n.ContractID = cid
 		}
 		n.FunctionName = string(ic.FunctionName)
-		n.Args = make([]string, len(ic.Args))
-		for i, a := range ic.Args {
-			n.Args[i] = scval.Display(a)
-		}
+		n.Args, n.ArgsXDR = renderArgs(ic.Args)
 	}
 	for i := range node.SubInvocations {
 		n.SubInvocations = append(n.SubInvocations, buildAuthInvocation(&node.SubInvocations[i]))

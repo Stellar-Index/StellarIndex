@@ -195,6 +195,53 @@ func TestPollOnce_UnknownCurrencySkipped(t *testing.T) {
 	}
 }
 
+// TestPollOnce_RateParsedAsExactDecimal pins that a rate cube is read
+// as a plain base-10 decimal: float-only spellings are skipped, not priced.
+func TestPollOnce_RateParsedAsExactDecimal(t *testing.T) {
+	cases := []struct {
+		name, rate string
+		wantEmit   bool
+		wantPrice  string // 10^24 / rate*10^6, round-half-up, at InvertedDecimals
+	}{
+		{"plain", "1.0825", true, "923787528868"},
+		{"nan", "NaN", false, ""},
+		{"infinity", "Inf", false, ""},
+		{"exponent", "1.0825e0", false, ""},
+		{"hex float", "0x1p0", false, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := strings.Replace(fixtureXML, `rate="1.0825"`, `rate="`+c.rate+`"`, 1)
+			srv := newTestECBServer(t, body, http.StatusOK)
+			defer srv.Close()
+			p := NewPoller()
+			p.Endpoint = srv.URL
+			_, updates, err := p.PollOnce(context.Background(), buildPairs(t))
+			if err != nil {
+				t.Fatalf("PollOnce: %v", err)
+			}
+			var got *canonical.OracleUpdate
+			for i := range updates {
+				if updates[i].Asset.Code == "USD" {
+					got = &updates[i]
+				}
+			}
+			if !c.wantEmit {
+				if got != nil {
+					t.Fatalf("rate %q emitted price %s, want skipped", c.rate, got.Price.BigInt())
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("rate %q: no USD update", c.rate)
+			}
+			if s := got.Price.BigInt().String(); s != c.wantPrice {
+				t.Errorf("rate %q: price = %s want %s", c.rate, s, c.wantPrice)
+			}
+		})
+	}
+}
+
 func TestPollInterval_Default(t *testing.T) {
 	p := NewPoller()
 	if p.PollInterval() != 6*time.Hour {

@@ -64,7 +64,9 @@ func decodeRouterArgs(
 	if fnName != FnSwapExactTokensForTokens && fnName != FnSwapTokensForExactTokens {
 		return nil, ErrUnknownFunction
 	}
-	if len(args) < 5 {
+	// Exact arity: a call with extra args is a shape we have not audited,
+	// and decoding its first five positionally could misread every field.
+	if len(args) != 5 {
 		return nil, fmt.Errorf("%w: %s expects 5 args, got %d", ErrMalformedArgs, fnName, len(args))
 	}
 	// Destructure into named locals so each later access is on a

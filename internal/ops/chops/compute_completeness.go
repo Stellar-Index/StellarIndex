@@ -835,18 +835,23 @@ func evaluateEachSource(ctx context.Context, catalogue []reconSource, only strin
 // orderForPass moves every source whose -pass projection floor is its genesis
 // (a full re-verify) after the sources that resume incrementally, keeping
 // catalogue order within each group, so one long re-verify that exhausts the
-// run's deadline cannot withhold a fresh verdict from the cheap ones.
+// run's deadline cannot withhold a fresh verdict from the cheap ones. Within the
+// from-genesis group the census (SDEX) source runs last: its full-history
+// op re-derive can outlast the whole pass, while event sources take seconds.
 func orderForPass(catalogue []reconSource, prior map[string]priorProjection, priorWatermark map[string]uint32) []reconSource {
 	ordered := make([]reconSource, 0, len(catalogue))
-	var fromGenesis []reconSource
+	var fromGenesis, censusFromGenesis []reconSource
 	for _, src := range catalogue {
-		if projectionFloor(src.genesis, true, prior[src.name], priorWatermark[src.name], 0) > src.genesis {
+		switch {
+		case projectionFloor(src.genesis, true, prior[src.name], priorWatermark[src.name], 0) > src.genesis:
 			ordered = append(ordered, src)
-		} else {
+		case src.census:
+			censusFromGenesis = append(censusFromGenesis, src)
+		default:
 			fromGenesis = append(fromGenesis, src)
 		}
 	}
-	return append(ordered, fromGenesis...)
+	return append(append(ordered, fromGenesis...), censusFromGenesis...)
 }
 
 // projectionFloor is the incremental projection reconcile floor for ONE source.

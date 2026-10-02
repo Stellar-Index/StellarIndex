@@ -1845,7 +1845,8 @@ func logCHExtractErrSampled(logger *slog.Logger, ledger uint32, err error) {
 // read-undercount counts. The ledger is still written, so this counter is
 // the only alertable trace of its short events/changes.
 func recordCHLiveSinkUndercount(ext clickhouse.LedgerExtract, logger *slog.Logger) {
-	if ext.TxReadErrors == 0 && ext.TxEventReadErrors == 0 && ext.EntryMetaUnsupported == 0 {
+	if ext.TxReadErrors == 0 && ext.TxEventReadErrors == 0 && ext.EntryMetaUnsupported == 0 &&
+		ext.SorobanFeeMetaUnsupported == 0 {
 		return
 	}
 	if ext.TxReadErrors > 0 {
@@ -1857,11 +1858,15 @@ func recordCHLiveSinkUndercount(ext clickhouse.LedgerExtract, logger *slog.Logge
 	if ext.EntryMetaUnsupported > 0 {
 		obs.ChLiveSinkReadUndercountTotal.WithLabelValues("entry_meta_unsupported").Add(float64(ext.EntryMetaUnsupported))
 	}
+	if ext.SorobanFeeMetaUnsupported > 0 {
+		obs.ChLiveSinkReadUndercountTotal.WithLabelValues("soroban_fee_meta_unsupported").Add(float64(ext.SorobanFeeMetaUnsupported))
+	}
 	logger.Warn("ch live-sink: ledger extracted with read undercount",
 		"ledger", ext.Ledger.LedgerSeq,
 		"tx_read_errors", ext.TxReadErrors,
 		"tx_event_read_errors", ext.TxEventReadErrors,
-		"entry_meta_unsupported", ext.EntryMetaUnsupported)
+		"entry_meta_unsupported", ext.EntryMetaUnsupported,
+		"soroban_fee_meta_unsupported", ext.SorobanFeeMetaUnsupported)
 }
 
 // watchCHLiveSink samples the ClickHouse dual-sink's monotonic counters every
