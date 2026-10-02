@@ -3,11 +3,39 @@ package forex
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 )
+
+// TestGet_TruncatedBodyFails pins that a body cut short of its declared
+// Content-Length is an error, not a short success: only io.EOF ends a read cleanly.
+func TestGet_TruncatedBodyFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		_, _ = w.Write([]byte(`{"results":[`))
+	}))
+	defer srv.Close()
+
+	body, err := NewClient("test-key").get(context.Background(), srv.URL)
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("get(truncated) = %q, %v; want io.ErrUnexpectedEOF", body, err)
+	}
+}
+
+func TestGet_OversizeBodyFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(make([]byte, 16<<20+1))
+	}))
+	defer srv.Close()
+
+	if _, err := NewClient("test-key").get(context.Background(), srv.URL); err == nil {
+		t.Fatal("get(16 MiB + 1) succeeded; want size-cap error")
+	}
+}
 
 // TestCurrencyNames_RefusesPaginationOffHost pins T019: a next_url that
 // points off the configured Massive host must not be followed, because

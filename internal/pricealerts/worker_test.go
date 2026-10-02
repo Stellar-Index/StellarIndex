@@ -37,6 +37,10 @@ type fakeAlertStore struct {
 	// evaluator having claimed the same crossing in between (#368 M10).
 	// Empty entry = SQL NULL = never fired.
 	dbLastFired map[uuid.UUID]time.Time
+	// dbDisarmed is the authoritative disarmed column; rearms counts
+	// RearmPriceAlert calls that cleared it.
+	dbDisarmed map[uuid.UUID]bool
+	rearms     int
 }
 
 func (s *fakeAlertStore) ListEnabledPriceAlerts(context.Context) ([]platform.PriceAlert, error) {
@@ -71,6 +75,9 @@ func (s *fakeAlertStore) ClaimPriceAlertFire(_ context.Context, id uuid.UUID, fi
 			cooldown = a.CooldownSeconds
 		}
 	}
+	if s.dbDisarmed[id] {
+		return false, nil
+	}
 	// last_fired_at IS NULL OR last_fired_at + cooldown <= firedAt
 	if last, ok := s.dbLastFired[id]; ok && !last.IsZero() &&
 		last.Add(time.Duration(cooldown)*time.Second).After(firedAt) {
@@ -81,12 +88,35 @@ func (s *fakeAlertStore) ClaimPriceAlertFire(_ context.Context, id uuid.UUID, fi
 		s.dbLastFired = map[uuid.UUID]time.Time{}
 	}
 	s.dbLastFired[id] = firedAt
+	if s.dbDisarmed == nil {
+		s.dbDisarmed = map[uuid.UUID]bool{}
+	}
+	s.dbDisarmed[id] = true
 	// Reflect the postgres UPDATE so the next sweep's ListEnabled sees the
 	// advanced cooldown clock (last_fired_at) — without this the fake would
 	// never exercise coolingDown across sweeps.
 	for i := range s.enabled {
 		if s.enabled[i].ID == id {
 			s.enabled[i].LastFiredAt = firedAt
+			s.enabled[i].Disarmed = true
+		}
+	}
+	return true, nil
+}
+
+// RearmPriceAlert models the compare-and-swap UPDATE: it clears disarmed
+// only while the authoritative last_fired_at still equals the caller's.
+func (s *fakeAlertStore) RearmPriceAlert(_ context.Context, id uuid.UUID, lastFiredAt time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.dbDisarmed[id] || !s.dbLastFired[id].Equal(lastFiredAt) {
+		return false, nil
+	}
+	s.dbDisarmed[id] = false
+	s.rearms++
+	for i := range s.enabled {
+		if s.enabled[i].ID == id {
+			s.enabled[i].Disarmed = false
 		}
 	}
 	return true, nil
@@ -550,5 +580,211 @@ func TestSweep_CrossingAlreadyClaimedByAnotherEvaluator_NoFanOut(t *testing.T) {
 	// forward on every tick.
 	if got := alerts.dbLastFired[alert.ID]; !got.Equal(now.Add(-time.Second)) {
 		t.Errorf("last_fired_at = %v, want %v — a refused claim must not stamp the row", got, now.Add(-time.Second))
+	}
+}
+
+// stepPrices is a PriceReader a test moves between sweeps.
+type stepPrices struct {
+	price  string
+	bucket time.Time
+}
+
+func (p *stepPrices) LatestVWAP(context.Context, canonical.Asset, canonical.Asset) (string, time.Time, bool, error) {
+	return p.price, p.bucket, true, nil
+}
+
+// TestSweep_FiresOncePerCrossing pins the "crosses its threshold" contract:
+// a condition that keeps holding across sweeps, every one past the
+// cooldown, is one crossing and one delivery. Only a fresh price on the
+// other side re-arms the alert, and the next crossing fires again.
+func TestSweep_FiresOncePerCrossing(t *testing.T) {
+	acct := uuid.New()
+	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	alert := platform.PriceAlert{
+		ID: uuid.New(), AccountID: acct,
+		BaseAsset: "native", QuoteAsset: "fiat:USD",
+		Condition: platform.AlertAbove, Threshold: "0.15", Enabled: true,
+		CooldownSeconds: platform.MinAlertCooldownSeconds,
+	}
+	alerts := &fakeAlertStore{enabled: []platform.PriceAlert{alert}}
+	hooks := &fakeWebhooks{byAcct: map[uuid.UUID][]platform.CustomerWebhook{
+		acct: {priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))},
+	}}
+	prices := &stepPrices{price: "0.20"}
+	w := New(alerts, hooks, prices, Options{
+		Interval: time.Second,
+		Logger:   quietLogger(),
+		Clock:    func() time.Time { return now },
+	})
+	sweepAt := func(price string) {
+		now = now.Add(10 * time.Minute) // always past the 300 s cooldown
+		prices.price, prices.bucket = price, now.Add(-time.Minute)
+		w.Sweep(context.Background())
+	}
+
+	for range 3 {
+		sweepAt("0.20")
+	}
+	if len(hooks.enqueued) != 1 {
+		t.Fatalf("enqueued %d deliveries over 3 sweeps with the condition held, want 1 — one crossing is one notification", len(hooks.enqueued))
+	}
+
+	sweepAt("0.10")
+	if alerts.rearms != 1 {
+		t.Fatalf("re-arms = %d after a fresh price below the threshold, want 1", alerts.rearms)
+	}
+	sweepAt("0.20")
+	sweepAt("0.20")
+	if len(hooks.enqueued) != 2 {
+		t.Errorf("enqueued %d deliveries after a second crossing, want 2", len(hooks.enqueued))
+	}
+}
+
+// TestSweep_StalePriceDoesNotRearm: a disarmed alert re-arms only on a
+// FRESH price that clears the condition; a stale bucket says nothing about
+// the market now, so re-arming on it could re-fire a crossing never left.
+func TestSweep_StalePriceDoesNotRearm(t *testing.T) {
+	acct := uuid.New()
+	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	fired := now.Add(-time.Hour)
+	alert := platform.PriceAlert{
+		ID: uuid.New(), AccountID: acct,
+		BaseAsset: "native", QuoteAsset: "fiat:USD",
+		Condition: platform.AlertAbove, Threshold: "0.15", Enabled: true,
+		CooldownSeconds: platform.MinAlertCooldownSeconds,
+		LastFiredAt:     fired, Disarmed: true,
+	}
+	alerts := &fakeAlertStore{
+		enabled:     []platform.PriceAlert{alert},
+		dbLastFired: map[uuid.UUID]time.Time{alert.ID: fired},
+		dbDisarmed:  map[uuid.UUID]bool{alert.ID: true},
+	}
+	prices := fakePrices{price: "0.10", bucket: now.Add(-maxPriceStaleness - time.Minute), ok: true}
+	w := New(alerts, &fakeWebhooks{}, prices, Options{
+		Interval: time.Second,
+		Logger:   quietLogger(),
+		Clock:    func() time.Time { return now },
+	})
+	w.Sweep(context.Background())
+	if alerts.rearms != 0 || !alerts.dbDisarmed[alert.ID] {
+		t.Errorf("re-armed on a stale price (rearms=%d, disarmed=%v), want still disarmed", alerts.rearms, alerts.dbDisarmed[alert.ID])
+	}
+}
+
+// TestSweep_RearmRefusedForANewerFire: a sweep whose snapshot predates
+// another evaluator's fire must not re-arm that newer fire, or the next
+// tick would notify the same crossing again.
+func TestSweep_RearmRefusedForANewerFire(t *testing.T) {
+	acct := uuid.New()
+	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	alert := platform.PriceAlert{
+		ID: uuid.New(), AccountID: acct,
+		BaseAsset: "native", QuoteAsset: "fiat:USD",
+		Condition: platform.AlertAbove, Threshold: "0.15", Enabled: true,
+		CooldownSeconds: platform.MinAlertCooldownSeconds,
+		LastFiredAt:     now.Add(-time.Hour), Disarmed: true,
+	}
+	alerts := &fakeAlertStore{
+		enabled:     []platform.PriceAlert{alert},
+		dbLastFired: map[uuid.UUID]time.Time{alert.ID: now.Add(-time.Second)},
+		dbDisarmed:  map[uuid.UUID]bool{alert.ID: true},
+	}
+	prices := fakePrices{price: "0.10", bucket: now.Add(-time.Minute), ok: true}
+	w := New(alerts, &fakeWebhooks{}, prices, Options{
+		Interval: time.Second,
+		Logger:   quietLogger(),
+		Clock:    func() time.Time { return now },
+	})
+	w.Sweep(context.Background())
+	if alerts.rearms != 0 || !alerts.dbDisarmed[alert.ID] {
+		t.Errorf("re-armed a fire newer than the snapshot (rearms=%d), want refused", alerts.rearms)
+	}
+}
+
+// TestSweep_FanOutFailedCompletely_RearmsAndRetries: a claim whose fan-out
+// enqueued nothing hands the crossing back, so it is delivered on the first
+// tick past the cooldown instead of being lost while the condition holds.
+func TestSweep_FanOutFailedCompletely_RearmsAndRetries(t *testing.T) {
+	acct := uuid.New()
+	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	alert := platform.PriceAlert{
+		ID: uuid.New(), AccountID: acct,
+		BaseAsset: "native", QuoteAsset: "fiat:USD",
+		Condition: platform.AlertAbove, Threshold: "0.15", Enabled: true,
+		CooldownSeconds: platform.MinAlertCooldownSeconds,
+	}
+	alerts := &fakeAlertStore{enabled: []platform.PriceAlert{alert}}
+	hooks := &fakeWebhooks{
+		byAcct: map[uuid.UUID][]platform.CustomerWebhook{
+			acct: {priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))},
+		},
+		enqErr: errors.New("delivery queue down"),
+	}
+	prices := &stepPrices{price: "0.20"}
+	w := New(alerts, hooks, prices, Options{
+		Interval: time.Second,
+		Logger:   quietLogger(),
+		Clock:    func() time.Time { return now },
+	})
+	sweepAfter := func(d time.Duration) {
+		now = now.Add(d)
+		prices.bucket = now.Add(-time.Minute)
+		w.Sweep(context.Background())
+	}
+
+	sweepAfter(0)
+	if alerts.rearms != 1 || alerts.dbDisarmed[alert.ID] {
+		t.Fatalf("after a fully failed fan-out: rearms=%d disarmed=%v, want re-armed", alerts.rearms, alerts.dbDisarmed[alert.ID])
+	}
+	if got := alerts.dbLastFired[alert.ID]; !got.Equal(now) {
+		t.Errorf("last_fired_at = %v, want the claim's stamp %v kept for the cooldown", got, now)
+	}
+
+	hooks.enqErr = nil
+	sweepAfter(time.Minute) // inside the 300 s cooldown
+	if len(hooks.enqueued) != 0 {
+		t.Fatalf("enqueued %d inside the cooldown, want 0", len(hooks.enqueued))
+	}
+	sweepAfter(10 * time.Minute)
+	if len(hooks.enqueued) != 1 {
+		t.Fatalf("enqueued %d after the cooldown, want the retried crossing delivered once", len(hooks.enqueued))
+	}
+}
+
+// TestSweep_FanOutFailedPartially_StaysDisarmed: once any webhook received
+// the crossing it is spent; re-arming would re-notify that webhook.
+func TestSweep_FanOutFailedPartially_StaysDisarmed(t *testing.T) {
+	acct := uuid.New()
+	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	alert := platform.PriceAlert{
+		ID: uuid.New(), AccountID: acct,
+		BaseAsset: "native", QuoteAsset: "fiat:USD",
+		Condition: platform.AlertAbove, Threshold: "0.15", Enabled: true,
+		CooldownSeconds: platform.MinAlertCooldownSeconds,
+	}
+	good := priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))
+	bad := priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))
+	alerts := &fakeAlertStore{enabled: []platform.PriceAlert{alert}}
+	hooks := &fakeWebhooks{
+		byAcct:    map[uuid.UUID][]platform.CustomerWebhook{acct: {good, bad}},
+		enqErrFor: map[uuid.UUID]error{bad.ID: errors.New("delivery queue full")},
+	}
+	prices := &stepPrices{price: "0.20"}
+	w := New(alerts, hooks, prices, Options{
+		Interval: time.Second,
+		Logger:   quietLogger(),
+		Clock:    func() time.Time { return now },
+	})
+
+	for range 2 {
+		prices.bucket = now.Add(-time.Minute)
+		w.Sweep(context.Background())
+		now = now.Add(10 * time.Minute)
+	}
+	if alerts.rearms != 0 || !alerts.dbDisarmed[alert.ID] {
+		t.Errorf("after a partial fan-out: rearms=%d disarmed=%v, want still disarmed", alerts.rearms, alerts.dbDisarmed[alert.ID])
+	}
+	if len(hooks.enqueued) != 1 || hooks.enqueued[0].WebhookID != good.ID {
+		t.Errorf("enqueued %+v, want exactly one delivery to the healthy webhook", hooks.enqueued)
 	}
 }

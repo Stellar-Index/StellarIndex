@@ -98,7 +98,7 @@ func (c *PriceAlertStore) GetPriceAlert(ctx context.Context, id uuid.UUID) (plat
 		SELECT id, account_id, base_asset, quote_asset, condition, threshold,
 		       cooldown_seconds, enabled,
 		       COALESCE(last_fired_at, '0001-01-01 00:00:00+00'::timestamptz),
-		       created_at, updated_at
+		       disarmed, created_at, updated_at
 		  FROM price_alerts
 		 WHERE id = $1
 	`
@@ -117,7 +117,7 @@ func (c *PriceAlertStore) ListPriceAlertsForAccount(ctx context.Context, account
 		SELECT id, account_id, base_asset, quote_asset, condition, threshold,
 		       cooldown_seconds, enabled,
 		       COALESCE(last_fired_at, '0001-01-01 00:00:00+00'::timestamptz),
-		       created_at, updated_at
+		       disarmed, created_at, updated_at
 		  FROM price_alerts
 		 WHERE account_id = $1
 		 ORDER BY created_at DESC
@@ -133,7 +133,7 @@ func (c *PriceAlertStore) ListEnabledPriceAlerts(ctx context.Context) ([]platfor
 		SELECT id, account_id, base_asset, quote_asset, condition, threshold,
 		       cooldown_seconds, enabled,
 		       COALESCE(last_fired_at, '0001-01-01 00:00:00+00'::timestamptz),
-		       created_at, updated_at
+		       disarmed, created_at, updated_at
 		  FROM price_alerts
 		 WHERE enabled = TRUE
 		 ORDER BY account_id, created_at
@@ -143,6 +143,10 @@ func (c *PriceAlertStore) ListEnabledPriceAlerts(ctx context.Context) ([]platfor
 
 // UpdatePriceAlert persists the mutable fields. AccountID + ID are
 // immutable post-create. [platform.ErrNotFound] when the row is gone.
+//
+// The SET right-hand sides read the row as it was, so the CASE re-arms
+// against the old rule; threshold is compared as NUMERIC so "0.150" and
+// "0.15" are the same rule.
 func (c *PriceAlertStore) UpdatePriceAlert(ctx context.Context, a platform.PriceAlert) error {
 	if a.ID == uuid.Nil {
 		return errors.New("postgresstore: UpdatePriceAlert: ID is empty")
@@ -158,6 +162,12 @@ func (c *PriceAlertStore) UpdatePriceAlert(ctx context.Context, a platform.Price
 		       threshold        = $5,
 		       cooldown_seconds = $6,
 		       enabled          = $7,
+		       disarmed         = CASE
+		           WHEN (base_asset, quote_asset, condition, threshold)
+		                IS DISTINCT FROM ($2, $3, $4, $5::numeric)
+		             OR (NOT enabled AND $7) THEN false
+		           ELSE disarmed
+		       END,
 		       updated_at       = now()
 		 WHERE id = $1
 	`
@@ -187,12 +197,13 @@ func (c *PriceAlertStore) DeletePriceAlert(ctx context.Context, id uuid.UUID) er
 	return nil
 }
 
-// ClaimPriceAlertFire stamps last_fired_at (+ bumps updated_at) ONLY
-// when this alert's own cooldown window has elapsed, and reports whether
-// it won the claim. See [platform.PriceAlertStore] for why the gate has
-// to live in the UPDATE rather than in the evaluator (#368 M10).
+// ClaimPriceAlertFire stamps last_fired_at and sets disarmed (+ bumps
+// updated_at) ONLY when this alert is armed and its own cooldown window
+// has elapsed, and reports whether it won the claim. See
+// [platform.PriceAlertStore] for why the gate has to live in the UPDATE
+// rather than in the evaluator (#368 M10).
 //
-// The predicate is the exact SQL translation of the evaluator's
+// The cooldown half is the exact SQL translation of the evaluator's
 // coolingDown: never fired (NULL) OR last_fired_at + cooldown <= firedAt.
 // cooldown_seconds = 0 (the schema default, "re-fire every tick") reduces
 // it to last_fired_at <= firedAt, which is what that setting asks for.
@@ -205,8 +216,10 @@ func (c *PriceAlertStore) ClaimPriceAlertFire(ctx context.Context, id uuid.UUID,
 	const q = `
 		UPDATE price_alerts
 		   SET last_fired_at = $2,
+		       disarmed      = true,
 		       updated_at    = now()
 		 WHERE id = $1
+		   AND NOT disarmed
 		   AND (last_fired_at IS NULL
 		        OR last_fired_at + (cooldown_seconds * interval '1 second') <= $2)
 	`
@@ -217,6 +230,32 @@ func (c *PriceAlertStore) ClaimPriceAlertFire(ctx context.Context, id uuid.UUID,
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("postgresstore: ClaimPriceAlertFire %s rows affected: %w", id, err)
+	}
+	return n == 1, nil
+}
+
+// RearmPriceAlert clears disarmed, compare-and-swap on last_fired_at so
+// an evaluator acting on an older snapshot cannot re-arm a newer fire.
+// updated_at is left alone: re-arming is evaluator state, not an edit.
+func (c *PriceAlertStore) RearmPriceAlert(ctx context.Context, id uuid.UUID, lastFiredAt time.Time) (bool, error) {
+	var fired any
+	if !lastFiredAt.IsZero() {
+		fired = lastFiredAt.UTC()
+	}
+	const q = `
+		UPDATE price_alerts
+		   SET disarmed = false
+		 WHERE id = $1
+		   AND disarmed
+		   AND last_fired_at IS NOT DISTINCT FROM $2::timestamptz
+	`
+	res, err := c.s.db.ExecContext(ctx, q, id, fired)
+	if err != nil {
+		return false, fmt.Errorf("postgresstore: RearmPriceAlert %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("postgresstore: RearmPriceAlert %s rows affected: %w", id, err)
 	}
 	return n == 1, nil
 }
@@ -251,7 +290,7 @@ func scanPriceAlertRow(s rowScanner) (platform.PriceAlert, error) {
 	if err := s.Scan(
 		&a.ID, &a.AccountID, &a.BaseAsset, &a.QuoteAsset, &condition,
 		&a.Threshold, &a.CooldownSeconds, &a.Enabled,
-		&a.LastFiredAt, &a.CreatedAt, &a.UpdatedAt,
+		&a.LastFiredAt, &a.Disarmed, &a.CreatedAt, &a.UpdatedAt,
 	); err != nil {
 		return platform.PriceAlert{}, fmt.Errorf("postgresstore: scan price alert: %w", err)
 	}
