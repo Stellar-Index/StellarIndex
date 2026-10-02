@@ -108,6 +108,25 @@ func TestPollOnce_HappyPath(t *testing.T) {
 	}
 }
 
+// An empty 200 must come back as a non-nil empty slice: nil is the runner's
+// "skipped" convention and would refresh the staleness clock (#940).
+func TestPollOnce_EmptyDataIsNotASkip(t *testing.T) {
+	srv := newTestServer(t, `{"status": {"error_code": 0, "error_message": null}, "data": {}}`, http.StatusOK)
+	defer srv.Close()
+	p, err := NewPoller("TEST_KEY")
+	if err != nil {
+		t.Fatalf("NewPoller: %v", err)
+	}
+	p.Endpoint = srv.URL
+	_, updates, err := p.PollOnce(context.Background(), buildPairs(t))
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if updates == nil || len(updates) != 0 {
+		t.Fatalf("updates = %#v, want non-nil empty", updates)
+	}
+}
+
 func TestPollOnce_APIError(t *testing.T) {
 	srv := newTestServer(t, `{"status":{"error_code":401,"error_message":"Invalid API key"},"data":{}}`, http.StatusOK)
 	defer srv.Close()
