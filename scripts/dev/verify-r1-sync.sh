@@ -1,36 +1,50 @@
 #!/usr/bin/env bash
-# verify-r1-sync.sh — md5-compare every tracked config path against r1.
-# Wave-1 follow-up to the 2026-05-26 audit's drift cluster (F-0133..F-0142).
-# Fails noisily on any mismatch; operator runs BEFORE deploy.yml to catch
-# drift early.
+# verify-r1-sync.sh — md5-compare every verbatim-copied config path against
+# r1. Fails on any mismatch; operator runs BEFORE deploy.yml to catch drift
+# early.
 
 set -uo pipefail
 R1_HOST="${R1_HOST:-root@136.243.90.96}"
+# Copied to the host byte-for-byte, so any md5 mismatch is drift.
 PAIRS=(
-  "configs/caddy/Caddyfile.api:/etc/caddy/Caddyfile"
   "configs/prometheus/prometheus.r1.yml:/etc/prometheus/prometheus.yml"
-  "configs/alertmanager/alertmanager.r1.yml:/etc/prometheus/alertmanager.yml"
   "scripts/dev/r1-smoke.sh:/opt/stellarindex/healthchecks/r1-smoke.sh"
   "configs/healthchecks/smoke.sh:/opt/stellarindex/healthchecks/smoke.sh"
   "configs/healthchecks/heartbeat.sh:/opt/stellarindex/healthchecks/heartbeat.sh"
   "configs/healthchecks/sla-probe.sh:/opt/stellarindex/healthchecks/sla-probe.sh"
 )
+# Rendered on the host (ansible's Caddyfile.j2; apply.sh injects the webhook
+# URLs), so their bytes never equal the repo file: reported, never counted.
+TEMPLATED=(
+  "configs/caddy/Caddyfile.api:/etc/caddy/Caddyfile"
+  "configs/alertmanager/alertmanager.r1.yml:/etc/prometheus/alertmanager.yml"
+)
+file_md5() { md5 -q "$1" 2>/dev/null || md5sum "$1" 2>/dev/null | awk '{print $1}'; }
+remote_md5() { ssh -o ConnectTimeout=5 "$R1_HOST" "md5sum '$1' 2>/dev/null | awk '{print \$1}'"; }
 FAILS=0
 for pair in "${PAIRS[@]}"; do
   local_path="${pair%%:*}"
   remote_path="${pair##*:}"
-  local_md5=$(md5 -q "$local_path" 2>/dev/null || md5sum "$local_path" 2>/dev/null | awk '{print $1}')
-  remote_md5=$(ssh -o ConnectTimeout=5 "$R1_HOST" "md5sum '$remote_path' 2>/dev/null | awk '{print \$1}'")
+  local_md5=$(file_md5 "$local_path")
+  remote_md5=$(remote_md5 "$remote_path")
   if [ "$local_md5" != "$remote_md5" ]; then
     echo "DRIFT: $local_path ($local_md5) != $remote_path ($remote_md5)"
     FAILS=$((FAILS + 1))
   fi
 done
+for pair in "${TEMPLATED[@]}"; do
+  remote_path="${pair##*:}"
+  if [ -z "$(remote_md5 "$remote_path")" ]; then
+    echo "INFO: $remote_path is missing on r1 (rendered from ${pair%%:*}; not counted)"
+  else
+    echo "INFO: $remote_path is rendered from ${pair%%:*}; byte compare skipped"
+  fi
+done
 # Also compare every file in configs/prometheus/rules.r1/ → /etc/prometheus/rules.r1/
 for f in configs/prometheus/rules.r1/*.yml; do
   name=$(basename "$f")
-  local_md5=$(md5 -q "$f" 2>/dev/null || md5sum "$f" 2>/dev/null | awk '{print $1}')
-  remote_md5=$(ssh -o ConnectTimeout=5 "$R1_HOST" "md5sum '/etc/prometheus/rules.r1/$name' 2>/dev/null | awk '{print \$1}'")
+  local_md5=$(file_md5 "$f")
+  remote_md5=$(remote_md5 "/etc/prometheus/rules.r1/$name")
   if [ "$local_md5" != "$remote_md5" ]; then
     echo "DRIFT: rules.r1/$name"
     FAILS=$((FAILS + 1))
@@ -44,7 +58,7 @@ done
 # matching migration hasn't been applied. Compare local
 # migrations/NNNN_*.up.sql versus the schema_migrations table on r1.
 # Pending = local has it, r1 doesn't.
-LOCAL_LATEST_MIG=$(ls migrations/[0-9]*_*.up.sql 2>/dev/null | sed -E 's|migrations/0*([0-9]+)_.*|\1|' | sort -n | tail -1)
+LOCAL_LATEST_MIG=$(find migrations -maxdepth 1 -name '[0-9]*_*.up.sql' 2>/dev/null | sed -E 's|migrations/0*([0-9]+)_.*|\1|' | sort -n | tail -1)
 R1_LATEST_MIG=$(ssh -o ConnectTimeout=5 "$R1_HOST" "sudo -u postgres psql -tA -d stellarindex -c 'SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1;' 2>/dev/null" | tr -d '[:space:]')
 if [ -n "$LOCAL_LATEST_MIG" ] && [ -n "$R1_LATEST_MIG" ]; then
   if [ "$LOCAL_LATEST_MIG" -gt "$R1_LATEST_MIG" ]; then
