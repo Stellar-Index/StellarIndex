@@ -1702,7 +1702,9 @@ zfs_snapshots_enabled: true
 # renders this through zfs-snapshot.env.j2 and compares the two.
 #
 # ClickHouse merges churn ~250 GB/day of parts, so each retained day
-# pins ~250 GB; Postgres churn is small, so it keeps a week.
+# pins ~250 GB. Postgres keeps three days: its pinned churn measured
+# 0.15-0.2 TiB over a week, and pgBackRest PITR (repo1 + off-site repo2)
+# already covers a logical fault older than that.
 #
 # minio (NS03, 2026-09-19): the Galexie LCM archive — the CDP source of
 # truth the lake and the served tier are RE-DERIVED FROM, and until now
@@ -1720,7 +1722,7 @@ zfs_snapshot_datasets:
   - name: "clickhouse"
     retention_days: 3
   - name: "postgres"
-    retention_days: 7
+    retention_days: 3
   - name: "minio"
     retention_days: 7
 # Hard guardrail: below this much pool free space the job prunes the
