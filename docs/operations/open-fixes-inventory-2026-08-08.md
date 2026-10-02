@@ -139,8 +139,9 @@ observations alias fan-in (v0.30.0); /ledgers dead-Suspense fix
     flips 10× between requests; markets.last_price stale:false lies.**
 14. **[OWNER] SEP-41 genesis rollup resets on r1** — 13 contracts
     double-counted; EURC reset 2026-08-05, 12 remain (one psql each).
-15. **[ENG] LP reserves live-only from ledger 63.3M** — no
-    trustline/LP-reserve backfill path exists; design one.
+15. ~~**[ENG] LP reserves live-only from ledger 63.3M** — no
+    trustline/LP-reserve backfill path exists; design one.~~
+    **ACCEPTED 2026-10-02** — documented cutoff, no backfill (v1-launch-plan W8-12).
 16. **[ENG] manage_data G-address injection** — any account can inject
     an arbitrary G-address into another account's operation history for
     ~0.0001 XLM (proven live). Needs render-side provenance guard.
