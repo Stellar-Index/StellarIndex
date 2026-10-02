@@ -226,10 +226,11 @@ exactly that rather than looking like drift.
   `s3:DeleteObject`), and `mc ls archivewriter/galexie-archive/` lists.
 - [x] **Verify the `stellarindex-reader` live policy — DONE 2026-09-30.** The live
   policy grants no `s3:DeleteObject`, matching the codified one.
-- [ ] **Move `galexie-archive-fill` off the root (`local`) alias** — the hourly mirror,
-  including its `mc rm --recursive --force` sweep, authenticates as MinIO root. Needs
-  the archive-writer identity live first, and the delete sweep separated from the
-  mirror (the writer policy grants no delete). Confirm one full timer cycle after.
+- [ ] **Deploy `galexie-archive-fill` off the root (`local`) alias** — done in code: the
+  fill reads and mirrors through `ARCHIVE_DEST` (`archivewriter/galexie-archive`, the
+  identity repaired above) and fails fast if it cannot list it; only an operator run with
+  `PARTIALS=…` deletes, via `ARCHIVE_DELETE_ALIAS` (`local`). Remaining: apply
+  `--tags archive-fill` and confirm one full timer cycle succeeds.
 
 ## Supply cross-check P3 on BLND / EURC / KALE / PHO (E4/N-F3)
 - [x] **Run `supply seed-sac-balances -full-history` — DONE 2026-07-29 (38/38
@@ -307,10 +308,12 @@ small mechanical change (add to `gatedSources`, make the decoder
 contractid-aware, gate `Matches()` on `reg.Has(contractID)`).
 
 ## Legal / vendor (before commercial launch — CS-115/116)
-- [ ] **Vendor-ToS review of raw CEX data redistribution** — `/v1/history` + `/v1/observations?
-  source=binance` re-serve raw per-trade source-attributed records; Binance/Kraken/Coinbase
-  terms generally prohibit this. Blended outputs (`/v1/price|vwap|…`) are defensible. Decide
-  whether to gate raw source-attributed endpoints for restricted venues.
+- [ ] **Vendor-ToS review of raw CEX data redistribution** — `/v1/history` and
+  `/v1/observations?source=<cex>` serve per-trade source-attributed records (data-vendor
+  `source=` filters return 400; exchange venues stay selectable by owner decision);
+  Binance/Kraken/Coinbase terms generally prohibit this. Blended outputs
+  (`/v1/price|vwap|…`) are defensible. Decide whether those source-attributed
+  surfaces stay for restricted venues.
 - [ ] **External security review** booking (P2-3).
 - [ ] Confirm CoinGecko Pro redistribution terms at purchase. (`github.com/xdrpp/goxdr`, pulled in
   via `txnbuild`, is dual GPL-3/Apache-2.0; we take it under Apache-2.0.)

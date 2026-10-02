@@ -106,6 +106,10 @@ type Source struct {
 	// feeds (CEX / FX / aggregators / Chainlink) don't appear as
 	// Stellar on-chain activity.
 	OnChain bool `json:"on_chain"`
+	// Selectable is true when `source=` accepts this name on the
+	// single-source routes: on-chain sources and CEX venues. False for
+	// data vendors, which those routes refuse with 400.
+	Selectable bool `json:"selectable"`
 	// Stats columns — populated only when `?include=stats` is set.
 	// 0 / "" when the source had no trades in 24h.
 	TradeCount24h   int64  `json:"trade_count_24h,omitempty"`
@@ -282,6 +286,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 			BackfillSafe:      md.BackfillSafe,
 			DefaultWeight:     md.DefaultWeight,
 			OnChain:           external.IsOnChain(name),
+			Selectable:        sourceSelectable(name),
 			TradeCount24h:     st.trades,
 			VolumeUSD24h:      st.volume,
 			MarketsCount24h:   st.markets,

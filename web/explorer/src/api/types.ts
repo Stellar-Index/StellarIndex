@@ -467,9 +467,8 @@ export interface paths {
          *     balance, and `holder_count` is the exact number of funded accounts.
          *     `asset_id` is the canonical form (`CODE-ISSUER`, or `native`; the
          *     `crypto:XLM` alias serves the native board, echoed as
-         *     `asset: "native"`). Balances are strings (ADR-0003). Coverage grows
-         *     with the entry-change capture window; full once the Phase-C backfill
-         *     lands.
+         *     `asset: "native"`). Balances are strings (ADR-0003). Coverage tracks
+         *     the entry-change capture.
          *
          *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the read
          *     is fresh to; `flags.stale` fires when the watermark's close time
@@ -544,9 +543,10 @@ export interface paths {
          *        and the `/v1/observations` triangulation hint — except
          *        that the two SEP-40 point reads answer 404 instead of the
          *        declaration, since their shape has no `price_type` to mark it.
-         *     4. Fiat-vs-fiat cross-rate from the forex snapshot when both
-         *        sides are `fiat:` typed (e.g.
-         *        `?asset=fiat:EUR&quote=fiat:USD`). Computed as
+         *     4. Fiat-vs-fiat cross-rate when both sides are `fiat:` typed
+         *        (e.g. `?asset=fiat:EUR&quote=fiat:USD`), from the vendor FX
+         *        fixings bound to the current minute (`/v1/price/tip`: the
+         *        live forex snapshot). Computed as
          *        `rate_usd[Y] / rate_usd[X]`. Returned with
          *        `flags.triangulated=true` since the value is derived
          *        rather than a direct trade. Same fallback fires on
@@ -579,6 +579,16 @@ export interface paths {
          *     genuine miss — see that route's description),
          *     the SEP-40 oracle endpoints, and the `price_usd` enrichment on
          *     asset surfaces.
+         *
+         *     A fiat cross this route derives (fiat/fiat, or a non-fiat asset
+         *     in a fiat with no market of its own) converts at the vendor FX
+         *     fixing bound to the bucket's close, never at the live rate. When
+         *     no fixing binds within the 76 h lookback the price is withheld:
+         *     a `price-withheld` 404 titled "Price withheld — FX leg
+         *     unavailable", omitted and listed as withheld on
+         *     `/v1/price/batch`. A failed FX read is a 503
+         *     `price-unavailable`, and the batch row is omitted without being
+         *     listed. `/v1/price/tip` keeps the live rate.
          */
         get: operations["getPrice"];
         put?: never;
@@ -1396,7 +1406,8 @@ export interface paths {
          *     return MORE than one row when it publishes the asset against
          *     more than one live quote (e.g. Redstone's EUROC/EUR and
          *     EUROC/USD are two independent feeds, not the same reading
-         *     twice). Optional source filter restricts to a single source;
+         *     twice). Optional source filter restricts to a single on-chain
+         *     source (an off-chain one such as coingecko returns 400);
          *     optional quote filter restricts to a single quote.
          *
          *     Asset translation: classic Stellar identifiers map to the
@@ -1733,20 +1744,25 @@ export interface paths {
         };
         /**
          * Cross-reference divergence board (ADR-0019).
-         * @description The current divergence board: the latest comparison per
-         *     (asset, quote, reference) over the trailing window, from
-         *     `divergence_observations`. Each row is our VWAP vs one external
+         * @description The current divergence board, one entry per (asset, quote) pair:
+         *     our VWAP beside the latest comparison against each external
          *     reference (CoinGecko / Chainlink / Reflector DEX·CEX·FX /
-         *     Redstone / Band) with `delta_pct = (our − ref) / ref × 100`.
-         *     Ordered widest |delta_pct| first.
+         *     Redstone / Band) over the trailing window, from
+         *     `divergence_observations`, with
+         *     `delta_pct = (our − ref) / ref × 100` per reference. A
+         *     reference's price is served only inside its pair, beside our
+         *     price and the other references; there is no per-reference
+         *     selector. Pairs are ordered widest |delta_pct| first, and each
+         *     pair's references likewise.
          *
-         *     A row with `status: firing` breached its per-(reference, pair)
-         *     threshold at its latest observation — the signal behind
-         *     `flags.divergence_warning`. `?firing=true` restricts to those;
-         *     `?window_days=` (default 7); `?limit=` (default 100, max 500).
-         *     200 + empty payload when the reader isn't wired. A row whose
-         *     market `/v1/price` withholds is omitted: `our_price` is that
-         *     market's price.
+         *     A reference with `status: firing` breached its per-(reference,
+         *     pair) threshold at its latest observation — the signal behind
+         *     `flags.divergence_warning`. `?firing=true` keeps pairs with at
+         *     least one firing reference; `?window_days=` (default 7);
+         *     `?limit=` counts pairs (default 100, max 500). 200 + empty
+         *     payload when the reader isn't wired. A pair whose market
+         *     `/v1/price` withholds is omitted: `our_price` is that market's
+         *     price.
          */
         get: operations["getDivergenceBoard"];
         put?: never;
@@ -1765,13 +1781,17 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Δ% time-series for one (pair, reference).
+         * Δ% time-series for one pair against every reference.
          * @description The history companion to the `/v1/divergence` board: the
-         *     bucketed Δ% series for ONE (asset, quote, reference) triple
-         *     from `divergence_observations`. Each point is the LAST
-         *     observation inside its bucket (last-value downsampling — the
-         *     board semantics, not an average); `firing` is true when ANY
-         *     observation in the bucket breached its threshold, so a brief
+         *     bucketed Δ% series for ONE (asset, quote) pair against every
+         *     reference, from `divergence_observations`. Each point carries
+         *     our price beside each reference's comparison; a reference is
+         *     never served alone, so there is no `reference` selector
+         *     (passing one returns 400). Each reference's values are its LAST
+         *     observation inside the bucket (last-value downsampling — the
+         *     board semantics, not an average) and `our_price` is the
+         *     bucket's newest; a reference's `firing` is true when ANY of its
+         *     observations in the bucket breached its threshold, so a brief
          *     breach never disappears into a bucket. `bucket_seconds`
          *     reports the effective resolution (1d → 5 min, 7d → 30 min,
          *     30d → 2 h; every response is ≤ ~360 points).
@@ -1780,10 +1800,9 @@ export interface paths {
          *     (`divergence.threshold_pct`) — the band a chart shades;
          *     omitted when the deployment has none configured (draw no
          *     band). `?pair=` is `<asset_id>~<quote_id>` (the markets slug
-         *     convention); `?reference=` one of the board's reference
-         *     names; `?days=` ∈ {1, 7, 30} (default 7) — other values
+         *     convention); `?days=` ∈ {1, 7, 30} (default 7) — other values
          *     return 400, as does a leg that is not a valid asset id. 200 +
-         *     empty `points` when the reader isn't wired or the triple has no
+         *     empty `points` when the reader isn't wired or the pair has no
          *     observations in the window. 404 `price-withheld` when
          *     `/v1/price` withholds the pair's market (every point carries
          *     `our_price`).
@@ -4806,7 +4825,7 @@ export interface paths {
          *     decimals). `usd_value` is a backward-compatible
          *     alias populated only on the `usd` basis. Computed in one pass over the
          *     current-state projection (latest `ledger_entry_changes` per key, ADR-0038
-         *     Phase C); coverage tracks the entry-change capture + Phase-C backfill.
+         *     Phase C); coverage tracks the entry-change capture.
          *
          *     Freshness (ADR-0041): the ranking is a background-computed snapshot
          *     (refreshed every few minutes, served for up to 15 minutes). The
@@ -5030,9 +5049,8 @@ export interface paths {
          *     limits) and open offers.
          *
          *     `exists:false` (with HTTP 200, not 404) when the account has no live
-         *     AccountEntry in the captured ledger window — never created, merged away,
-         *     or its create predates live capture (resolves once the Phase-C backfill
-         *     lands). Balances are strings (ADR-0003).
+         *     AccountEntry in the captured entry-change history — never created,
+         *     merged away, or not yet in the capture. Balances are strings (ADR-0003).
          *
          *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the served
          *     state was fresh to WHEN IT WAS CACHED (up to 30s old), not a serve-time
@@ -5763,6 +5781,11 @@ export interface components {
              * @enum {string}
              */
             scope: "all";
+            /**
+             * Format: int64
+             * @description Lake watermark (highest contiguously captured ledger) read before this page's scan; rows past it may still be arriving. A freshness marker, not a completeness claim: incoming (participant) activity is covered only where the participant index has been captured or backfilled. Absent when the watermark was unreadable.
+             */
+            as_of_ledger?: number;
         };
         /**
          * @description Operations involving an account, decoded (newest first), with an opaque
@@ -5790,6 +5813,11 @@ export interface components {
              *     every operation carries its true transaction outcome.
              */
             coverage_note?: string;
+            /**
+             * Format: int64
+             * @description Lake watermark (highest contiguously captured ledger) read before this page's scan; rows past it may still be arriving. A freshness marker, not a completeness claim: incoming (participant) activity is covered only where the participant index has been captured or backfilled. Absent when the watermark was unreadable.
+             */
+            as_of_ledger?: number;
         };
         /** @description One row in an account's movement feed (ADR-0048 D5). */
         AccountMovement: {
@@ -7051,7 +7079,11 @@ export interface components {
          *     aggregator's evaluator compares each enabled alert against the
          *     latest closed 1m VWAP for its pair and, on a crossing, enqueues
          *     a `price.alert` webhook delivery to the account's subscribed
-         *     webhooks.
+         *     webhooks. An alert fires once per crossing: after a fire it
+         *     stays quiet while the condition holds and re-arms once a fresh
+         *     price (closed within 15 minutes) no longer meets it. Changing
+         *     the pair, condition or threshold, or re-enabling a disabled
+         *     alert, also re-arms it.
          */
         DashboardPriceAlert: {
             /** Format: uuid */
@@ -7067,7 +7099,7 @@ export interface components {
             condition: "above" | "below";
             /** @description Price boundary as a decimal string (never a float — ADR-0003). */
             threshold: string;
-            /** @description Minimum seconds between two fires of this alert (at least 300). */
+            /** @description Minimum seconds between two fires of this alert (at least 300). While the condition holds the alert re-fires once per cooldown. */
             cooldown_seconds: number;
             enabled: boolean;
             /**
@@ -7089,7 +7121,7 @@ export interface components {
             condition: "above" | "below";
             /** @description Positive decimal string (e.g. "0.15", "1200"). Fractions / scientific notation are rejected. */
             threshold: string;
-            /** @description Optional; defaults to 300 (5m), also the minimum. A lower value is a 400: the evaluator is level-triggered, so a shorter cooldown would re-notify every webhook on each tick the condition holds. */
+            /** @description Optional; defaults to 300 (5m), also the minimum. A lower value is a 400: it bounds re-notification when the price oscillates across the threshold, each move back re-arming the alert. */
             cooldown_seconds?: number;
             /** @description Defaults true when absent. */
             enabled?: boolean;
@@ -7104,6 +7136,7 @@ export interface components {
             /** @enum {string} */
             condition?: "above" | "below";
             threshold?: string;
+            /** @description Minimum seconds between two fires; the alert re-fires once per cooldown while its condition holds. */
             cooldown_seconds?: number;
             enabled?: boolean;
         };
@@ -7209,8 +7242,11 @@ export interface components {
          * @description Body of a `price.alert` webhook delivery (BACKLOG #60). Fired by
          *     the aggregator's price-alert evaluator when one of the account's
          *     registered alerts crosses its threshold against the latest closed
-         *     1-minute VWAP. Unlike the operational events, this is enqueued
-         *     ONLY to the owning account's subscribed webhooks.
+         *     1-minute VWAP. Sent once per crossing: the alert re-arms only after
+         *     a fresh price no longer meets the condition, and two fires are
+         *     always at least `cooldown_seconds` apart. Unlike the operational
+         *     events, this is enqueued ONLY to the owning account's subscribed
+         *     webhooks.
          */
         PriceAlertWebhookPayload: {
             /** @enum {string} */
@@ -7230,7 +7266,7 @@ export interface components {
             condition: "above" | "below";
             /** @description The configured threshold (decimal-as-string). */
             threshold: string;
-            /** @description The closed-bucket VWAP that crossed the threshold (decimal-as-string). */
+            /** @description The closed-bucket VWAP that met the condition (decimal-as-string). */
             observed_price: string;
             /**
              * Format: date-time
@@ -10343,17 +10379,28 @@ export interface components {
              *     from `admin_exclusion` so the wire never claims an
              *     exclusion that did not happen; `override` indicates an
              *     operator curated the locked-set or max_supply;
-             *     `sep1_declared_max` means max_supply (and fdv_usd) come
-             *     from the issuer's own stellar.toml `[[CURRENCIES]]`
-             *     max_number/fixed_number declaration — self-declared by
-             *     the issuer, not on-chain enforced; `sep41_lake_flows` is
-             *     the lake-derived Σmint−Σburn−Σclawback event-sum served
-             *     for SEP-41 tokens outside the operator watch-list
-             *     (total == circulating; no admin exclusion). Null when no
-             *     supply snapshot is available.
+             *     `sep41_lake_flows` is the lake-derived Σmint−Σburn−Σclawback
+             *     event-sum served for SEP-41 tokens outside the operator
+             *     watch-list (total == circulating; no admin exclusion).
+             *     `sep1_declared_max` stays in this vocabulary but names a
+             *     max_supply source, not a circulating policy: it is served on
+             *     `max_supply_basis`, and `supply_basis` keeps the policy behind
+             *     total/circulating even when the max comes from SEP-1. Null
+             *     when no supply snapshot is available.
              * @enum {string|null}
              */
             supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_sdf_reserve_exclusion_static" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "sep41_total_only" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances" | "no_metadata" | null;
+            /**
+             * @description Where `max_supply` (and `fdv_usd`) came from, when that is not
+             *     the policy `supply_basis` names. `sep1_declared_max`: the
+             *     issuer's own stellar.toml `[[CURRENCIES]]`
+             *     max_number/fixed_number declaration — self-declared by the
+             *     issuer, not on-chain enforced. Omitted when max_supply is null
+             *     or comes from the supply policy itself (an operator override,
+             *     `supply_basis: override`, or native XLM's fixed total).
+             * @enum {string}
+             */
+            max_supply_basis?: "sep1_declared_max";
             /**
              * Format: date-time
              * @description When the supply observation behind total_supply /
@@ -10837,6 +10884,28 @@ export interface components {
             observed_at: string;
             /** @description Window size for vwap/twap; omitted for last_trade. */
             window_seconds?: number;
+            /** @description Decimal string, quote units per 1 USD. Present only on a closed-surface USD-anchored fiat cross (`/v1/price`, `/v1/price/batch`, SEP-40): the vendor FX fixing the USD leg was converted at, verbatim. The fixing is the bar with the greatest close at or before the USD bucket's end minus 3 h, within the 76 h lookback, so the answer is the same whenever and wherever it is read. `/v1/price/tip` converts at the live rate and omits it. */
+            fx_rate?: string;
+            /**
+             * Format: date-time
+             * @description Close of the bound FX fixing (a vendor time). On a fiat/fiat cross, the older of the two legs' closes. Present only on a closed-surface fiat cross.
+             */
+            fx_as_of?: string;
+            /** @description Feed that published the bound FX fixing. Present only on a closed-surface USD-anchored fiat cross. */
+            fx_source?: string;
+            /**
+             * @description Grain of the bound FX fixing. `daily` before the hourly series begins for the currency; a daily fixing reports no FX staleness of its own. Present only on a closed-surface fiat cross.
+             * @enum {string}
+             */
+            fx_resolution?: "hourly" | "daily";
+            /** @description The USD price a closed-surface USD-anchored fiat cross converted: `price` × `fx_rate` equals the served price up to its rendering (15 fractional digits, more for a very small rate, trailing zeros trimmed), and `observed_at` is the served `observed_at`. */
+            usd_leg?: {
+                /** @description Decimal string. Never JSON number. */
+                price: string;
+                /** Format: date-time */
+                observed_at: string;
+                sources: string[];
+            } | null;
             /** @description Trailing-24h percentage change vs the asset's USD price ~24h ago (signed, two fractional digits — "+1.27"). Present on /v1/price/batch rows when the quote is fiat:USD and a closed comparison bucket exists; omitted otherwise. Pairs current price with 24h change in ONE bulk call for wallet portfolio screens. */
             change_24h_pct?: string | null;
             /**
@@ -10868,9 +10937,9 @@ export interface components {
                 triangulation_agreement?: number;
                 /** @description True only when a fresh composite existed to compare against. False means no chain is configured or the composite was stale - NOT "the composite agrees". The factor carries zero weight in the confidence score when unchecked, so unchecked pairs score exactly as they did before this factor existed. */
                 triangulation_checked?: boolean;
-                /** @description Density of the pair's 30-day volatility baseline in days-equivalent of 1-minute buckets (buckets / 1440), at most 30; negative when no usable 30-day baseline exists. This is sample density, NOT calendar age - a pair that trades in 200 minutes a day reads about 4.2 however long it has existed. The bootstrap cap releases at 28.5 (ADR-0019 amendment 2026-09-28). */
+                /** @description Density of the pair's 30-day volatility baseline in days-equivalent of 1-minute buckets (buckets / 1440), at most 30; negative when no usable 30-day baseline exists. This is sample density, NOT calendar age - a pair that trades in 200 minutes a day reads about 4.2 however long it has existed. The bootstrap cap releases at 28.5 and, once released, re-engages below 27 (ADR-0019 amendment 2026-09-28). */
                 baseline_age_days?: number;
-                /** @description True when the ADR-0019 bootstrap ceiling (0.5) bounded confidence because baseline_age_days is below 28.5 (or no baseline exists), so a confidence of 0.5 may be the cap rather than the evidence. False means the multi-factor score was served without the ceiling. */
+                /** @description True when the ADR-0019 bootstrap ceiling (0.5) bounded confidence because baseline_age_days is below 28.5 (below 27 for a pair already released, or no baseline exists), so a confidence of 0.5 may be the cap rather than the evidence. False means the multi-factor score was served without the ceiling. */
                 bootstrap_capped?: boolean;
             } | null;
         };
@@ -11643,6 +11712,8 @@ export interface components {
             default_weight: number;
             /** @description Whether the source observes the Stellar network directly (dispatcher-path ingest) rather than reading an off-chain vendor API. `false` for CEX / FX / aggregators / Chainlink (an Ethereum oracle). The explorer's Stellar-network surfaces filter on this. */
             on_chain: boolean;
+            /** @description Whether `source=` accepts this name on the single-source routes (/v1/markets, /v1/oracle/latest, /v1/observations): on-chain sources and CEX venues. `false` for data vendors (aggregators, FX providers, Chainlink, Tiingo, sovereign anchors), which those routes refuse with 400 `off-chain-source-filter`. */
+            selectable: boolean;
             /** @description Trailing-24h trade count for this source. Populated only when the request used `?include=stats`; absent (omitted) otherwise. */
             trade_count_24h?: number;
             /** @description Trailing-24h USD volume for this source. Decimal string. Populated only with `?include=stats`; absent otherwise (empty when the source had no priced trades). */
@@ -13981,7 +14052,7 @@ export interface operations {
                  * @example fiat:USD
                  */
                 quote?: components["parameters"]["Quote"];
-                /** @description Restrict to one source's most-recent trade (0/1 row). */
+                /** @description Restrict to one on-chain source's or CEX venue's most-recent trade (0/1 row). A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /**
                  * @description `latest` collapses to the single most-recent trade across
@@ -14062,7 +14133,7 @@ export interface operations {
                  * @example fiat:USD
                  */
                 quote?: components["parameters"]["Quote"];
-                /** @description Restrict to one source's most-recent trade. */
+                /** @description Restrict to one on-chain source's or CEX venue's most-recent trade. A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /**
                  * @description `latest` collapses to the single most-recent trade across
@@ -14866,7 +14937,7 @@ export interface operations {
                  * @example native
                  */
                 asset: components["parameters"]["AssetQuery"];
-                /** @description Optional. Restrict to a single source name. */
+                /** @description Optional. Restrict to a single on-chain source (reflector-dex, reflector-cex, reflector-fx, redstone, band). A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /** @description Optional. Restrict to a single quote asset id (e.g. `fiat:USD`, `fiat:EUR`) — disambiguates a source that publishes the same base asset against more than one live quote. */
                 quote?: string;
@@ -15632,11 +15703,11 @@ export interface operations {
     getDivergenceBoard: {
         parameters: {
             query?: {
-                /** @description true → only rows whose latest status is firing. */
+                /** @description true → only pairs with at least one reference whose latest status is firing. */
                 firing?: boolean;
                 /** @description Trailing lookback in days for divergence rows (1-365, default 7). */
                 window_days?: number;
-                /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
+                /** @description Maximum pairs to return (1-500, default 100). Out-of-range values return 400. */
                 limit?: number;
             };
             header?: never;
@@ -15645,7 +15716,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Latest divergence per (pair, reference). */
+            /** @description Latest divergence per pair, every reference grouped beside our price. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -15654,30 +15725,31 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
-                     *         "observations": [
+                     *         "pairs": [
                      *           {
                      *             "asset_id": "crypto:BTC",
                      *             "quote_id": "fiat:USD",
-                     *             "reference": "chainlink",
+                     *             "our_price": "62543.07358731602",
                      *             "observed_at": "2026-07-03T22:37:08.896016Z",
                      *             "observed_at_ledger": 0,
-                     *             "our_price": "62543.07358731602",
-                     *             "ref_price": "62608.75585288",
-                     *             "delta_pct": "-0.10490907329051442",
-                     *             "status": "clear",
-                     *             "ref_observed_at": "2026-07-03T22:36:11Z"
-                     *           },
-                     *           {
-                     *             "asset_id": "crypto:ETH",
-                     *             "quote_id": "fiat:USD",
-                     *             "reference": "coingecko",
-                     *             "observed_at": "2026-07-03T22:37:08.90697Z",
-                     *             "observed_at_ledger": 0,
-                     *             "our_price": "1757.84660921192",
-                     *             "ref_price": "1756.21",
-                     *             "delta_pct": "0.09318983560735354",
-                     *             "status": "clear",
-                     *             "ref_observed_at": "2026-07-03T22:36:52Z"
+                     *             "references": [
+                     *               {
+                     *                 "reference": "chainlink",
+                     *                 "ref_price": "62608.75585288",
+                     *                 "delta_pct": "-0.10490907329051442",
+                     *                 "status": "clear",
+                     *                 "observed_at": "2026-07-03T22:37:08.896016Z",
+                     *                 "ref_observed_at": "2026-07-03T22:36:11Z"
+                     *               },
+                     *               {
+                     *                 "reference": "coingecko",
+                     *                 "ref_price": "62580.12",
+                     *                 "delta_pct": "-0.05920516244376781",
+                     *                 "status": "clear",
+                     *                 "observed_at": "2026-07-03T22:37:08.896016Z",
+                     *                 "ref_observed_at": "2026-07-03T22:36:52Z"
+                     *               }
+                     *             ]
                      *           }
                      *         ]
                      *       },
@@ -15693,25 +15765,36 @@ export interface operations {
                      */
                     "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
-                            observations?: {
-                                asset_id?: string;
-                                quote_id?: string;
-                                /** @enum {string} */
-                                reference?: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
-                                /** Format: date-time */
-                                observed_at?: string;
-                                /** Format: int64 */
-                                observed_at_ledger?: number;
-                                our_price?: string;
-                                ref_price?: string;
-                                delta_pct?: string;
-                                /** @enum {string} */
-                                status?: "clear" | "firing";
+                            pairs: {
+                                asset_id: string;
+                                quote_id: string;
+                                /** @description Our price at `observed_at` (decimal string). */
+                                our_price: string;
                                 /**
                                  * Format: date-time
-                                 * @description When the reference observed `ref_price` (oracle round time, CoinGecko last_updated_at, on-chain ledger close). `observed_at` is the comparison time, so their difference is the reference's age when compared, at most 1h (76h for fiat/fiat FX pairs, whose quotes pause over market closes). Null on rows recorded before the reference time was stored.
+                                 * @description The pair's newest comparison time across its references.
                                  */
-                                ref_observed_at?: string | null;
+                                observed_at: string;
+                                /** Format: int64 */
+                                observed_at_ledger: number;
+                                references: {
+                                    /** @enum {string} */
+                                    reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
+                                    ref_price: string;
+                                    delta_pct: string;
+                                    /** @enum {string} */
+                                    status: "clear" | "firing";
+                                    /**
+                                     * Format: date-time
+                                     * @description When this reference was last compared. Equal to the pair's `observed_at` unless the reference missed later ticks; `delta_pct` is against our price at this time.
+                                     */
+                                    observed_at: string;
+                                    /**
+                                     * Format: date-time
+                                     * @description When the reference observed `ref_price` (oracle round time, CoinGecko last_updated_at, on-chain ledger close). `observed_at` is the comparison time, so their difference is the reference's age when compared, at most 1h (76h for fiat/fiat FX pairs, whose quotes pause over market closes). Null on rows recorded before the reference time was stored.
+                                     */
+                                    ref_observed_at: string | null;
+                                }[];
                             }[];
                         };
                     };
@@ -15725,8 +15808,6 @@ export interface operations {
             query: {
                 /** @description `<asset_id>~<quote_id>`, e.g. `crypto:BTC~fiat:USD`. */
                 pair: string;
-                /** @description External reference to plot against. */
-                reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
                 /** @description Trailing window; whitelisted to 1, 7 or 30 (default 7). */
                 days?: 1 | 7 | 30;
             };
@@ -15736,7 +15817,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Bucketed divergence series for the triple. */
+            /** @description Bucketed divergence series for the pair, every reference per point. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -15747,23 +15828,42 @@ export interface operations {
                      *       "data": {
                      *         "asset_id": "crypto:BTC",
                      *         "quote_id": "fiat:USD",
-                     *         "reference": "coingecko",
                      *         "days": 7,
                      *         "bucket_seconds": 1800,
                      *         "threshold_pct": 5,
                      *         "points": [
                      *           {
                      *             "t": "2026-07-29T12:00:00Z",
-                     *             "delta_pct": "-0.104909",
                      *             "our_price": "62543.07358731602",
-                     *             "ref_price": "62608.75585288"
+                     *             "references": [
+                     *               {
+                     *                 "reference": "chainlink",
+                     *                 "ref_price": "62580.12",
+                     *                 "delta_pct": "-0.059205"
+                     *               },
+                     *               {
+                     *                 "reference": "coingecko",
+                     *                 "ref_price": "62608.75585288",
+                     *                 "delta_pct": "-0.104909"
+                     *               }
+                     *             ]
                      *           },
                      *           {
                      *             "t": "2026-07-29T12:30:00Z",
-                     *             "delta_pct": "6.412000",
                      *             "our_price": "66623.11",
-                     *             "ref_price": "62608.75",
-                     *             "firing": true
+                     *             "references": [
+                     *               {
+                     *                 "reference": "chainlink",
+                     *                 "ref_price": "66590.40",
+                     *                 "delta_pct": "0.049121"
+                     *               },
+                     *               {
+                     *                 "reference": "coingecko",
+                     *                 "ref_price": "62608.75",
+                     *                 "delta_pct": "6.412000",
+                     *                 "firing": true
+                     *               }
+                     *             ]
                      *           }
                      *         ]
                      *       },
@@ -15779,23 +15879,26 @@ export interface operations {
                      */
                     "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
-                            asset_id?: string;
-                            quote_id?: string;
-                            /** @enum {string} */
-                            reference?: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
-                            days?: number;
-                            /** @description Downsampling bucket width. Each point is the last observation inside its bucket; render the series at this resolution, not as raw ticks. */
-                            bucket_seconds?: number;
+                            asset_id: string;
+                            quote_id: string;
+                            days: number;
+                            /** @description Downsampling bucket width. Each reference's value is its last observation inside the bucket; render the series at this resolution, not as raw ticks. */
+                            bucket_seconds: number;
                             /** @description The operator's divergence alert threshold (percent) — the same number the worker fires on. Omitted when unconfigured; draw no band in that case. */
                             threshold_pct?: number;
-                            points?: {
+                            points: {
                                 /** Format: date-time */
-                                t?: string;
-                                delta_pct?: string;
-                                our_price?: string;
-                                ref_price?: string;
-                                /** @description True when ANY observation in the bucket breached its threshold at observation time. Omitted when false. */
-                                firing?: boolean;
+                                t: string;
+                                /** @description Our price at the bucket's newest observation. */
+                                our_price: string;
+                                references: {
+                                    /** @enum {string} */
+                                    reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
+                                    ref_price: string;
+                                    delta_pct: string;
+                                    /** @description True when ANY of this reference's observations in the bucket breached its threshold at observation time. Omitted when false. */
+                                    firing?: boolean;
+                                }[];
                             }[];
                         };
                     };
@@ -15897,12 +16000,17 @@ export interface operations {
                  */
                 order_by?: "pair" | "volume_24h_usd_desc";
                 /**
-                 * @description Restrict the listing to markets a single source
-                 *     observed in the recency window. Must match a
-                 *     registered source name (see `/v1/sources`); an
-                 *     unknown name returns 400 `unknown-source` rather
-                 *     than an empty 200 (avoids the silent-empty-page
-                 *     anti-pattern). Mutually exclusive with `asset`.
+                 * @description Restrict the listing to markets a single on-chain
+                 *     source or CEX venue observed in the recency window.
+                 *     Must match a registered source name (see
+                 *     `/v1/sources`); an unknown name returns 400
+                 *     `unknown-source` rather than an empty 200 (avoids
+                 *     the silent-empty-page anti-pattern), and a
+                 *     data-vendor source (aggregator, FX provider,
+                 *     oracle vendor; `selectable: false`) returns 400
+                 *     `off-chain-source-filter` — its markets are served
+                 *     only alongside other sources. Mutually exclusive
+                 *     with `asset`.
                  *     Each row's volume, trade count and last price are
                  *     that source's own; the pair-wide `sparkline` and
                  *     `inception` enrichments are omitted.

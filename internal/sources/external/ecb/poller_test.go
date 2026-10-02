@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
@@ -141,10 +143,9 @@ func TestPollOnce_EmptyCube(t *testing.T) {
 	}
 }
 
-func TestPollOnce_CryptoOnlyPairs_NoOp(t *testing.T) {
-	// No fiat in the pair list → poller no-ops (still hits HTTP,
-	// decodes the response, then returns empty). This mirrors the
-	// FX pollers' behaviour.
+func TestPollOnce_CryptoOnlyPairs_NoApplicablePairs(t *testing.T) {
+	// No fiat in the pair list: nothing this poller can ever emit, which the
+	// runner must not score as a fresh poll.
 	xlm, _ := canonical.NewCryptoAsset("XLM")
 	usdt, _ := canonical.NewCryptoAsset("USDT")
 	xlmUsdt, _ := canonical.NewPair(xlm, usdt)
@@ -154,8 +155,8 @@ func TestPollOnce_CryptoOnlyPairs_NoOp(t *testing.T) {
 	p := NewPoller()
 	p.Endpoint = srv.URL
 	_, updates, err := p.PollOnce(context.Background(), []canonical.Pair{xlmUsdt})
-	if err != nil {
-		t.Fatalf("PollOnce: %v", err)
+	if !errors.Is(err, external.ErrNoApplicablePairs) {
+		t.Fatalf("err = %v, want ErrNoApplicablePairs", err)
 	}
 	if len(updates) != 0 {
 		t.Errorf("expected 0 updates (no fiat in pairs), got %d", len(updates))
@@ -191,6 +192,53 @@ func TestPollOnce_UnknownCurrencySkipped(t *testing.T) {
 		if strings.EqualFold(u.Asset.Code, "BOGUS") {
 			t.Error("BOGUS currency (rate=-1) should have been skipped")
 		}
+	}
+}
+
+// TestPollOnce_RateParsedAsExactDecimal pins that a rate cube is read
+// as a plain base-10 decimal: float-only spellings are skipped, not priced.
+func TestPollOnce_RateParsedAsExactDecimal(t *testing.T) {
+	cases := []struct {
+		name, rate string
+		wantEmit   bool
+		wantPrice  string // 10^24 / rate*10^6, round-half-up, at InvertedDecimals
+	}{
+		{"plain", "1.0825", true, "923787528868"},
+		{"nan", "NaN", false, ""},
+		{"infinity", "Inf", false, ""},
+		{"exponent", "1.0825e0", false, ""},
+		{"hex float", "0x1p0", false, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := strings.Replace(fixtureXML, `rate="1.0825"`, `rate="`+c.rate+`"`, 1)
+			srv := newTestECBServer(t, body, http.StatusOK)
+			defer srv.Close()
+			p := NewPoller()
+			p.Endpoint = srv.URL
+			_, updates, err := p.PollOnce(context.Background(), buildPairs(t))
+			if err != nil {
+				t.Fatalf("PollOnce: %v", err)
+			}
+			var got *canonical.OracleUpdate
+			for i := range updates {
+				if updates[i].Asset.Code == "USD" {
+					got = &updates[i]
+				}
+			}
+			if !c.wantEmit {
+				if got != nil {
+					t.Fatalf("rate %q emitted price %s, want skipped", c.rate, got.Price.BigInt())
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("rate %q: no USD update", c.rate)
+			}
+			if s := got.Price.BigInt().String(); s != c.wantPrice {
+				t.Errorf("rate %q: price = %s want %s", c.rate, s, c.wantPrice)
+			}
+		})
 	}
 }
 

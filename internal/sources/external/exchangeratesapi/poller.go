@@ -117,8 +117,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	}
 	symbols := p.resolveSymbols(base, pairs)
 	if len(symbols) == 0 {
-		// No fiat cross-rates needed — silent no-op.
-		return nil, nil, nil
+		return nil, nil, external.ErrNoApplicablePairs
 	}
 
 	q := url.Values{}

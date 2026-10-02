@@ -134,6 +134,17 @@ type PriceSnapshot struct {
 	ObservedAt    time.Time `json:"observed_at"`
 	WindowSeconds int       `json:"window_seconds,omitempty"`
 
+	// FXRate, FXAsOf, FXSource and FXResolution describe the vendor FX
+	// fixing a closed-surface fiat cross converted at; FXRate is quote
+	// units per 1 USD. All omitted on a price that needed no conversion.
+	FXRate       string     `json:"fx_rate,omitempty"`
+	FXAsOf       *time.Time `json:"fx_as_of,omitempty"`
+	FXSource     string     `json:"fx_source,omitempty"`
+	FXResolution string     `json:"fx_resolution,omitempty"`
+	// USDLeg is the USD price a closed-surface USD-anchored fiat cross
+	// converted: USDLeg.Price × FXRate is Price.
+	USDLeg *USDLeg `json:"usd_leg,omitempty"`
+
 	// Change24hPct is the trailing-24h percentage change vs USD
 	// (signed, 2dp) on batch rows with a fiat:USD quote. Nil
 	// otherwise.
@@ -147,6 +158,13 @@ type PriceSnapshot struct {
 	// ConfidenceFactors is the per-factor decomposition that
 	// accompanies Confidence; nil with the same semantics.
 	ConfidenceFactors *ConfidenceFactors `json:"confidence_factors,omitempty"`
+}
+
+// USDLeg is the USD price a derived fiat [PriceSnapshot] was converted from.
+type USDLeg struct {
+	Price      string    `json:"price"`
+	ObservedAt time.Time `json:"observed_at"`
+	Sources    []string  `json:"sources"`
 }
 
 // ConfidenceFactors is the per-factor decomposition of a
@@ -406,9 +424,13 @@ type AssetDetail struct {
 	ListingValuation *AssetListingValuation `json:"listing_valuation,omitempty"`
 
 	// SupplyBasis identifies which ADR-0011 policy produced the
-	// supply numbers (e.g. "issuer_exclusion", "admin_exclusion",
-	// "override"); null when no snapshot exists.
+	// total/circulating numbers (e.g. "issuer_exclusion",
+	// "admin_exclusion", "override"); null when no snapshot exists. It
+	// never carries "sep1_declared_max" — see MaxSupplyBasis.
 	SupplyBasis *string `json:"supply_basis,omitempty"`
+
+	// MaxSupplyBasis names where MaxSupply (and FDVUSD) came from when not the SupplyBasis policy, e.g. "sep1_declared_max".
+	MaxSupplyBasis *string `json:"max_supply_basis,omitempty"`
 
 	// SupplyAsOf / SupplyAsOfLedger date the supply observation; nil when
 	// the reading carries no vintage.
@@ -771,6 +793,9 @@ type Source struct {
 	// directly (dispatcher-path ingest) rather than an off-chain
 	// vendor API. False for CEX / FX / aggregators / Chainlink.
 	OnChain bool `json:"on_chain"`
+	// Selectable is true when `source=` accepts this name: on-chain
+	// sources and CEX venues. False for data vendors, which 400.
+	Selectable bool `json:"selectable"`
 	// Stats columns — populated only when the request used
 	// `?include=stats`; zero values otherwise.
 	TradeCount24h   int64  `json:"trade_count_24h,omitempty"`

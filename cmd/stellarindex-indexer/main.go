@@ -458,6 +458,18 @@ func run(cfgPath string, dryRun bool) error {
 		logger.Info("AMM signer attribution sweeper started")
 	}
 
+	// Intra-ledger apply order — back-tags trades.tx_index from the lake
+	// (migration 0196) for every on-chain source. See internal/pipeline/txindex.go.
+	if chAddr := cfg.Storage.ClickHouseAddr; chAddr != "" {
+		txIndexStop, txIndexDone := startTxIndexTagger(rootCtx, chAddr, store,
+			logger.With("component", "tx-index-tagger"))
+		defer func() {
+			txIndexStop()
+			<-txIndexDone
+		}()
+		logger.Info("tx-index apply-order sweeper started")
+	}
+
 	// ─── Decoder-stats periodic flush ────────────────────────────
 	// Snapshots dispatcher.Stats() every 5 min and writes per-source
 	// deltas to the decoder_stats_5m hypertable. Powers
@@ -1536,6 +1548,35 @@ func startSignerTagger(parent context.Context, chAddr, chUser, chPass string, st
 	return cancel, done
 }
 
+// startTxIndexTagger runs pipeline.RunTxIndexTagger in its own goroutine,
+// back-tagging trades.tx_index from the lake's stellar.tx_hash_index
+// (migration 0196). Non-fatal and dial-retried, like startSignerTagger.
+func startTxIndexTagger(parent context.Context, chAddr string, store *timescale.Store, logger *slog.Logger) (context.CancelFunc, <-chan struct{}) {
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer worker.Recover(logger, "tx-index-tagger")
+		var lake *clickhouse.TxIndexReader
+		ok := retryUntil(ctx, logger, "tx-index tagger: ClickHouse reader unavailable",
+			signerDialMinBackoff, signerDialMaxBackoff,
+			func(ctx context.Context) error {
+				l, err := clickhouse.NewTxIndexReader(ctx, chAddr)
+				if err != nil {
+					return err
+				}
+				lake = l
+				return nil
+			})
+		if !ok {
+			return
+		}
+		defer func() { _ = lake.Close() }()
+		pipeline.RunTxIndexTagger(ctx, logger, lake, store, 0, 0)
+	}()
+	return cancel, done
+}
+
 // Backoff bounds for the signer tagger's ClickHouse dial. The ceiling is
 // a minute because the thing being waited on is an operator action or a
 // service restart, not a transient packet loss — retrying faster would
@@ -1804,7 +1845,8 @@ func logCHExtractErrSampled(logger *slog.Logger, ledger uint32, err error) {
 // read-undercount counts. The ledger is still written, so this counter is
 // the only alertable trace of its short events/changes.
 func recordCHLiveSinkUndercount(ext clickhouse.LedgerExtract, logger *slog.Logger) {
-	if ext.TxReadErrors == 0 && ext.TxEventReadErrors == 0 && ext.EntryMetaUnsupported == 0 {
+	if ext.TxReadErrors == 0 && ext.TxEventReadErrors == 0 && ext.EntryMetaUnsupported == 0 &&
+		ext.SorobanFeeMetaUnsupported == 0 {
 		return
 	}
 	if ext.TxReadErrors > 0 {
@@ -1816,11 +1858,15 @@ func recordCHLiveSinkUndercount(ext clickhouse.LedgerExtract, logger *slog.Logge
 	if ext.EntryMetaUnsupported > 0 {
 		obs.ChLiveSinkReadUndercountTotal.WithLabelValues("entry_meta_unsupported").Add(float64(ext.EntryMetaUnsupported))
 	}
+	if ext.SorobanFeeMetaUnsupported > 0 {
+		obs.ChLiveSinkReadUndercountTotal.WithLabelValues("soroban_fee_meta_unsupported").Add(float64(ext.SorobanFeeMetaUnsupported))
+	}
 	logger.Warn("ch live-sink: ledger extracted with read undercount",
 		"ledger", ext.Ledger.LedgerSeq,
 		"tx_read_errors", ext.TxReadErrors,
 		"tx_event_read_errors", ext.TxEventReadErrors,
-		"entry_meta_unsupported", ext.EntryMetaUnsupported)
+		"entry_meta_unsupported", ext.EntryMetaUnsupported,
+		"soroban_fee_meta_unsupported", ext.SorobanFeeMetaUnsupported)
 }
 
 // watchCHLiveSink samples the ClickHouse dual-sink's monotonic counters every

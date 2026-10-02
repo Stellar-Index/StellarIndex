@@ -84,7 +84,7 @@ func sourceStatsQuery() string {
 		     )
 		     AND vwap IS NOT NULL
 		     AND bucket >= NOW() - INTERVAL '24 hours'
-		   ORDER BY bucket DESC
+		   ` + xlmUSDNewest + `
 		   LIMIT 1
 		)
 		-- Two-level aggregate (site-audit S38). The natural form of this
@@ -255,7 +255,7 @@ const (
 		     )
 		     AND vwap IS NOT NULL
 		     AND bucket >= NOW() - INTERVAL '24 hours'
-		   ORDER BY bucket DESC
+		   ` + xlmUSDNewest + `
 		   LIMIT 1
 		),
 		per_source AS (
@@ -301,7 +301,7 @@ const (
 		     )
 		     AND vwap IS NOT NULL
 		     AND bucket >= NOW() - INTERVAL '24 hours'
-		   ORDER BY bucket DESC
+		   ` + xlmUSDNewest + `
 		   LIMIT 1
 		),
 		per_source AS (

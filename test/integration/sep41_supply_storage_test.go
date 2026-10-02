@@ -600,19 +600,21 @@ func TestSEP41GenesisBaseline_BoundaryPartitionDisjoint(t *testing.T) {
 
 // TestSEP41SupplyRollupFoldReset proves the incident-2026-07-06 re-derive
 // footgun fix: ResetSEP41SupplyRollupFold (which `ch-rebuild -sep41 -write`
-// calls automatically) clears the worker-owned fold columns so the aggregator
-// re-folds a re-derived history correctly, WITHOUT wiping the migration-0088
-// genesis baseline. It exercises both variants the ch-rebuild wiring drives:
+// calls automatically) rebuilds the worker-owned fold columns from zero over
+// a re-derived history, in place, WITHOUT wiping the migration-0088 genesis
+// baseline. It exercises both variants the ch-rebuild wiring drives:
 //
-//   - SCOPED reset (-contracts) zeroes ONLY the listed contract's fold row,
+//   - SCOPED reset (-contracts) re-folds ONLY the listed contract's fold row,
 //     leaving other watched contracts' checkpoints intact;
-//   - FULL reset (nil scope) zeroes EVERY contract's fold row (the whole-table
-//     TRUNCATE-equivalent);
+//   - FULL reset (nil scope) re-folds EVERY contract's fold row (the
+//     whole-table TRUNCATE-equivalent);
+//   - neither leaves a row at last_ledger = 0 (the reader's unbounded
+//     full-sum path) — the row goes straight from the old fold to the new;
 //   - both PRESERVE the seeded genesis columns (genesis_mint_total +
 //     genesis_baseline_ledger), asserted directly against the row;
-//   - and after a reset + re-advance the worker re-folds a below-checkpoint
-//     recovery it would otherwise never see (the served-undercount half of the
-//     bug that a bare re-derive leaves behind).
+//   - and the reset folds a below-checkpoint recovery the incremental worker
+//     would otherwise never see (the served-undercount half of the bug that a
+//     bare re-derive leaves behind), which a later advance keeps.
 func TestSEP41SupplyRollupFoldReset(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -721,6 +723,7 @@ func TestSEP41SupplyRollupFoldReset(t *testing.T) {
 	// Lifetime mint = genesis(4M) + 1M + 0.5M + tip(1) [+ recovered 0.7M when folded].
 	const wantUndercount = 5_500_001 // recovered row invisible to the incremental worker
 	const wantFixed = 6_200_001      // recovered row folded after a reset
+	const wantRefoldMint = "2200000" // settled 1M + 0.5M + recovered 0.7M; tip still deferred
 	for _, c := range []string{contractA, contractB} {
 		if _, err := store.AdvanceSEP41SupplyRollup(ctx, c); err != nil {
 			t.Fatalf("advance-no-reset %s: %v", c, err)
@@ -738,9 +741,14 @@ func TestSEP41SupplyRollupFoldReset(t *testing.T) {
 	if n != 1 {
 		t.Errorf("scoped reset touched %d rows; want 1 (only contractA)", n)
 	}
+	// The reset re-folds in place: the row is never left at last_ledger = 0,
+	// and the recovered row is served before any aggregator pass.
 	ra := readRow(contractA)
-	if ra.mint != "0" || ra.lastLedger != 0 {
-		t.Errorf("A post-scoped-reset fold = mint %s last_ledger %d; want 0 / 0", ra.mint, ra.lastLedger)
+	if ra.mint != wantRefoldMint || ra.lastLedger != int64(lSettled2) {
+		t.Errorf("A post-scoped-reset fold = mint %s last_ledger %d; want %s / %d (re-folded in place)", ra.mint, ra.lastLedger, wantRefoldMint, lSettled2)
+	}
+	if got := mintAt(contractA, readAt); got != wantFixed {
+		t.Errorf("A right after scoped reset = %d; want %d (recovered row folded by the reset itself)", got, wantFixed)
 	}
 	if ra.genesisMint != "4000000" || !ra.genesisSeeded {
 		t.Errorf("A post-scoped-reset genesis = %s seeded %v; want 4000000 / true (baseline must survive the reset)", ra.genesisMint, ra.genesisSeeded)
@@ -769,8 +777,11 @@ func TestSEP41SupplyRollupFoldReset(t *testing.T) {
 	}
 	for _, c := range []string{contractA, contractB} {
 		r := readRow(c)
-		if r.mint != "0" || r.lastLedger != 0 {
-			t.Errorf("%s post-full-reset fold = mint %s last_ledger %d; want 0 / 0", c, r.mint, r.lastLedger)
+		if r.mint != wantRefoldMint || r.lastLedger != int64(lSettled2) {
+			t.Errorf("%s post-full-reset fold = mint %s last_ledger %d; want %s / %d (re-folded in place)", c, r.mint, r.lastLedger, wantRefoldMint, lSettled2)
+		}
+		if got := mintAt(c, readAt); got != wantFixed {
+			t.Errorf("%s right after full reset = %d; want %d", c, got, wantFixed)
 		}
 		if r.genesisMint != "4000000" || !r.genesisSeeded {
 			t.Errorf("%s post-full-reset genesis = %s seeded %v; want 4000000 / true (baseline preserved)", c, r.genesisMint, r.genesisSeeded)

@@ -913,9 +913,14 @@ automatically.
 > bounded the score). Operators read the per-pair gauges
 > `stellarindex_aggregator_bootstrap_capped` and
 > `stellarindex_aggregator_baseline_density_days`. The release is a
-> step, not a ramp: a pair whose density hovers at 28.5 can move
-> between the capped and the scored value from one refresh to the
-> next, and the gauge shows that. No hysteresis band is applied.
+> step, not a ramp, with a hysteresis band below it: a released pair is
+> capped again only once its density falls under
+> `BootstrapReengageDensityDays` = 27 (90% of the window), so a shared
+> ingestion gap of up to about three days does not re-cap a fully-dense
+> pair, and a re-capped pair releases only back at 28.5. The band can
+> only hold a pair that already cleared 28.5. The prior gate state is
+> held per pair in the aggregator's memory, so a restart applies the
+> stricter 28.5 gate until each pair clears it again.
 
 ## Consequences
 

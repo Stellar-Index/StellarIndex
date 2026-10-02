@@ -281,6 +281,12 @@ expect_status 400 "assets bad limit"     "/v1/assets?limit=999999" \
 expect_status 404 "asset not found"      "/v1/assets/AAAA-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" \
   --timeout 30 \
   -- '.type | endswith("/asset-not-found")'
+# Exchange venues and on-chain sources are selectable; a data vendor
+# (aggregator, FX, oracle) is served only beside other sources.
+check "markets cex source" "/v1/markets?source=binance&limit=1"
+check "markets on-chain source" "/v1/markets?source=sdex&limit=1"
+expect_status 400 "markets data-vendor source" "/v1/markets?source=coingecko&limit=1" \
+  -- '.type | endswith("/off-chain-source-filter")'
 
 # Pins queued for promotion once rc.38 deploys. Each verifies a
 # documented behaviour shipped in this session that's currently

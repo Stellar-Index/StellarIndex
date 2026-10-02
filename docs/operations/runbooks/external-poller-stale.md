@@ -77,7 +77,7 @@ Two more scope facts worth knowing before you start digging:
    ```sh
    ssh root@136.243.90.96 \
      'journalctl -u stellarindex-indexer --since "1 hour ago" \
-       --no-pager | grep -E "poller error|poller stopping" | grep <source>'
+       --no-pager | grep -E "poller error|poller stopping|produced no rows|no applicable pairs" | grep <source>'
    ```
 
 3. **Decode the most recent error string.** Common patterns:
@@ -90,6 +90,8 @@ Two more scope facts worth knowing before you start digging:
    | `http: timeout`             | network slowness                 | check r1 → public network egress    |
    | `dial tcp: ... no route`    | DNS / IP-allowlist / firewall    | check r1 networking + ufw + DNS     |
    | `decode` / `unmarshal`      | venue API changed shape          | bug — patch the decoder, file PR    |
+   | `produced no rows`          | 200 with nothing usable (`outcome="empty"`): renamed slug/symbol or delisted pair | fix the id in the source's seed/config |
+   | `no applicable pairs` (`outcome="idle"`) | no configured pair maps to this source | fix the pair list in the indexer TOML, or remove the source |
 
 ## Mitigation
 

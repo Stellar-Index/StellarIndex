@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -109,15 +111,15 @@ func TestPollOnce_HTTP5xx(t *testing.T) {
 	}
 }
 
-func TestPollOnce_CryptoOnlyPairsNoOp(t *testing.T) {
+func TestPollOnce_CryptoOnlyPairsNoApplicablePairs(t *testing.T) {
 	xlm, _ := canonical.NewCryptoAsset("XLM")
 	usdt, _ := canonical.NewCryptoAsset("USDT")
 	p1, _ := canonical.NewPair(xlm, usdt)
 	p, _ := NewPoller("TEST")
 	p.Endpoint = "http://localhost:1" // would fail if reached
 	_, updates, err := p.PollOnce(context.Background(), []canonical.Pair{p1})
-	if err != nil {
-		t.Fatalf("should no-op, got: %v", err)
+	if !errors.Is(err, external.ErrNoApplicablePairs) {
+		t.Fatalf("err = %v, want ErrNoApplicablePairs", err)
 	}
 	if len(updates) != 0 {
 		t.Errorf("expected 0 updates, got %d", len(updates))

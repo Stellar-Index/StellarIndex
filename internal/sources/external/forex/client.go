@@ -32,11 +32,16 @@
 package forex
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"math/big"
 	"net/http"
 	neturl "net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -228,6 +233,115 @@ func (c *Client) CurrencyNames(ctx context.Context) (map[string]string, error) {
 	return out, nil
 }
 
+// Bar grains the fx_fixings series carries.
+const (
+	GrainHour = "1h"
+	GrainDay  = "1d"
+)
+
+// FXBar is one closed-or-open vendor aggregate bar for C:USD<Ticker>: the
+// close is units of Ticker per 1 USD, the [Currency.RateUSD] orientation.
+// CloseText is the vendor's decimal text verbatim; no float holds it.
+type FXBar struct {
+	Ticker    string // upper-case ISO-4217
+	Grain     string // [GrainHour] or [GrainDay]
+	BarStart  time.Time
+	BarEnd    time.Time
+	CloseText string
+	Source    string
+}
+
+// maxAggPages caps next_url pagination; the vendor's page size is not
+// documented to count bars, so the cap is far above any real series.
+const maxAggPages = 5000
+
+// ListAggBars returns C:USD<ticker>'s bars of grain in [from, to],
+// ascending, following same-host next_url pages. Bars whose close is not a
+// positive decimal are dropped: they cannot be a rate.
+func (c *Client) ListAggBars(ctx context.Context, ticker, grain string, from, to time.Time) ([]FXBar, error) {
+	var span string
+	var width time.Duration
+	switch grain {
+	case GrainHour:
+		span, width = "hour", time.Hour
+	case GrainDay:
+		span, width = "day", 24*time.Hour
+	default:
+		return nil, fmt.Errorf("massive: unknown bar grain %q", grain)
+	}
+	ticker = strings.ToUpper(ticker)
+	url := fmt.Sprintf("%s/v2/aggs/ticker/C:USD%s/range/1/%s/%d/%d?adjusted=true&sort=asc&limit=50000",
+		c.base, neturl.PathEscape(ticker), span, from.UnixMilli(), to.UnixMilli())
+	var out []FXBar
+	for page := 0; page < maxAggPages && url != ""; page++ {
+		body, err := c.get(ctx, url)
+		if err != nil {
+			return nil, fmt.Errorf("fetch %s: %w", url, err)
+		}
+		bars, next, err := decodeAggBars(body, ticker, grain, width)
+		if err != nil {
+			return nil, fmt.Errorf("decode %s: %w", url, err)
+		}
+		out = append(out, bars...)
+		if next != "" && !sameHost(c.base, next) {
+			// Same rule as CurrencyNames: c.get attaches the bearer token.
+			return nil, fmt.Errorf("massive: refusing off-host next_url for %s", ticker)
+		}
+		url = next
+	}
+	return out, nil
+}
+
+// decodeAggBars decodes one aggregates page with UseNumber so `c` keeps the
+// vendor's decimal text.
+func decodeAggBars(body []byte, ticker, grain string, width time.Duration) ([]FXBar, string, error) {
+	var raw struct {
+		Results []struct {
+			Ticker string      `json:"T"` // claimed so a stray "T" cannot land on `t`
+			T      json.Number `json:"t"`
+			C      json.Number `json:"c"`
+		} `json:"results"`
+		NextURL string `json:"next_url"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&raw); err != nil {
+		return nil, "", err
+	}
+	out := make([]FXBar, 0, len(raw.Results))
+	for _, r := range raw.Results {
+		ms, err := strconv.ParseInt(r.T.String(), 10, 64)
+		if err != nil {
+			continue
+		}
+		closeText := r.C.String()
+		if v, ok := new(big.Rat).SetString(closeText); !ok || v.Sign() <= 0 {
+			continue
+		}
+		start := time.UnixMilli(ms).UTC()
+		out = append(out, FXBar{
+			Ticker:    ticker,
+			Grain:     grain,
+			BarStart:  start,
+			BarEnd:    start.Add(width),
+			CloseText: closeText,
+			Source:    fxSource,
+		})
+	}
+	return out, raw.NextURL, nil
+}
+
+// StatusError is a non-200 answer from the vendor.
+type StatusError struct{ Code int }
+
+func (e *StatusError) Error() string { return fmt.Sprintf("status %d", e.Code) }
+
+// IsRateLimited reports whether err carries a vendor 429.
+func IsRateLimited(err error) bool {
+	var se *StatusError
+	return errors.As(err, &se) && se.Code == http.StatusTooManyRequests
+}
+
 // sameHost reports whether next shares scheme and host with base, so
 // [CurrencyNames] can refuse to follow a paginated next_url off the
 // configured Massive host (which would send our bearer token there).
@@ -258,32 +372,17 @@ func (c *Client) get(ctx context.Context, url string) ([]byte, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
+		return nil, &StatusError{Code: resp.StatusCode}
 	}
 	const maxBody = 16 << 20 // 16 MiB — grouped FX is ~500 KB; tickers ref is ~1 MB
-	buf := make([]byte, 0, 64<<10)
-	tmp := make([]byte, 32<<10)
-	for {
-		n, rerr := resp.Body.Read(tmp)
-		if n > 0 {
-			if len(buf)+n > maxBody {
-				return nil, fmt.Errorf("response exceeds %d bytes", maxBody)
-			}
-			buf = append(buf, tmp[:n]...)
-		}
-		if rerr != nil {
-			if errIsEOF(rerr) {
-				break
-			}
-			return nil, rerr
-		}
+	// io.ReadAll ends cleanly only on io.EOF; a body cut short of its
+	// Content-Length surfaces as io.ErrUnexpectedEOF and must fail the fetch.
+	buf, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(buf) > maxBody {
+		return nil, fmt.Errorf("response exceeds %d bytes", maxBody)
 	}
 	return buf, nil
-}
-
-func errIsEOF(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "EOF")
 }

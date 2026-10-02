@@ -2,6 +2,7 @@ package external
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -83,6 +84,42 @@ func TestRunPoller_MetricLabels(t *testing.T) {
 	}
 }
 
+// A 200 that decodes to zero rows (non-nil empty slices) reached upstream but
+// delivered nothing: it must not count as success or refresh the staleness
+// clock, or a bad slug reads green forever (#940).
+func TestRunPoller_EmptyResultIsNotSuccess(t *testing.T) {
+	source := "metric-test-empty-200"
+	p := &scriptedPoller{
+		name:     source,
+		interval: 50 * time.Millisecond,
+		returns:  []scriptedReturn{{updates: []canonical.OracleUpdate{}}},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	sink := make(chan consumer.Event, 4)
+	wait, err := Run(ctx, nil, []PollerSpec{{Poller: p, Pairs: []canonical.Pair{newTestPair(t)}}}, sink, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+	wait()
+
+	if got := readPollsCounter(t, source, "empty"); got == 0 {
+		t.Errorf("outcome=empty not counted")
+	}
+	if got := readPollsCounter(t, source, "success"); got != 0 {
+		t.Errorf("outcome=success = %v, want 0 for a zero-row poll", got)
+	}
+	var pb dto.Metric
+	if err := obs.ExternalPollerLastSuccessUnix.WithLabelValues(source).Write(&pb); err != nil {
+		t.Fatalf("write gauge: %v", err)
+	}
+	if v := pb.GetGauge().GetValue(); v != 0 {
+		t.Errorf("last_success_unix = %v, want 0 (a zero-row poll is not fresh)", v)
+	}
+}
+
 // scriptedReturn is one PollOnce return value; scriptedPoller cycles
 // through a slice of these and repeats the last forever.
 type scriptedReturn struct {
@@ -131,4 +168,42 @@ func readPollsCounter(t *testing.T, source, outcome string) float64 {
 		t.Fatalf("write metric: %v", err)
 	}
 	return pb.GetCounter().GetValue()
+}
+
+// A poller with no applicable pairs can never produce a row, so it must not
+// look fresh (that would hide it from the staleness alert) nor page as an
+// upstream error.
+func TestRunPoller_NoApplicablePairsIsIdle(t *testing.T) {
+	source := "metric-test-idle"
+	p := &scriptedPoller{
+		name:     source,
+		interval: 50 * time.Millisecond,
+		returns:  []scriptedReturn{{err: fmt.Errorf("wrapped: %w", ErrNoApplicablePairs)}},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	sink := make(chan consumer.Event, 4)
+	wait, err := Run(ctx, nil, []PollerSpec{{Poller: p, Pairs: []canonical.Pair{newTestPair(t)}}}, sink, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+	wait()
+
+	if got := readPollsCounter(t, source, "idle"); got == 0 {
+		t.Error(`outcome="idle" not counted`)
+	}
+	for _, o := range []string{"success", "skipped", "error"} {
+		if got := readPollsCounter(t, source, o); got != 0 {
+			t.Errorf("outcome=%q = %v, want 0", o, got)
+		}
+	}
+	var pb dto.Metric
+	if err := obs.ExternalPollerLastSuccessUnix.WithLabelValues(source).Write(&pb); err != nil {
+		t.Fatalf("write gauge: %v", err)
+	}
+	if v := pb.GetGauge().GetValue(); v != 0 {
+		t.Errorf("last_success = %v, want unset", v)
+	}
 }

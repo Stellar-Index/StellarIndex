@@ -620,7 +620,7 @@ rate, absence is unambiguous, which is why this counter is deliberately
 NOT pre-seeded in `seedBoundedLabelSeries` the way the `increase()`- and
 `rate()`-based counters are.
 
-### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`
+### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`, `stellarindex_dispatcher_evicted_keys_unreadable_total`
 
 Counters, no labels (process-wide — the underlying dispatcher counters
 aren't attributable to a source).
@@ -638,8 +638,12 @@ flush window's delta on every tick alongside the existing WARN log:
   entry-change walk was skipped for an unhandled `TransactionMeta`
   version; every classic balance / trustline / offer / LP change in
   that tx becomes invisible.
+- `evicted_keys_unreadable` — ledgers whose evicted-key list failed to
+  read, so their state-archival evictions were skipped and each evicted
+  balance stays served as live. The dispatcher also logs a WARN with
+  the ledger number.
 
-**When to look at these:** any sustained non-zero rate. All three are
+**When to look at these:** any sustained non-zero rate. All four are
 process-lifetime cumulative counters — chart `increase(...[5m])`
 against the flush interval (5m), not the raw value.
 
@@ -969,6 +973,59 @@ a ticker is wedged on its last accepted rate while the upstream keeps
 disagreeing; that is what `stellarindex_external_fx_rate_rejections`
 alerts on.
 
+### `stellarindex_fx_fixings_last_refresh_unix`
+
+Gauge, no labels.
+
+UNIX seconds of the forex worker's last completed `fx_fixings` append
+cycle, stamped even when the cycle wrote nothing. Stale means the
+appender stopped; `stellarindex_fx_fixings_refresh_stale` fires at 3 h.
+
+### `stellarindex_fx_fixings_newest_bar_end_unix`
+
+Gauge, no labels.
+
+UNIX seconds of the newest `bar_end` this process committed to
+`fx_fixings`. Closed fiat crosses bind a bar at bucket end minus 3 h, so
+while the market trades a gap here becomes `fx_leg_unavailable`
+withholds; `stellarindex_fx_fixings_series_stale` fires at 4 h outside
+the weekend close.
+
+### `stellarindex_fx_fixings_quote_disagrees`
+
+Gauge, label `ticker`.
+
+1 when an accepted hourly bar sits outside [0.5, 1.5] of the worker's
+guarded daily rate for the same ticker and day. The two series should
+agree; `stellarindex_fx_fixings_quote_disagreement` fires after 2 h.
+
+### `stellarindex_fx_fixings_bars_refused_total`
+
+Counter, label `ticker`.
+
+Vendor hourly bars the `fx_fixings` gate refused because the close sat
+outside [0.5, 1.5] of the median of the preceding 96 h of raw bars.
+
+### `stellarindex_fx_fixings_fetch_errors_total`
+
+Counter, label `ticker`.
+
+Per-ticker hourly-bar fetches from the FX vendor that failed. Every
+cycle refetches the trailing 48 h, so an isolated increment loses nothing.
+
+### `stellarindex_fx_fixings_write_errors_total`
+
+Counter, no labels.
+
+`fx_fixings` batch inserts that failed. The next cycle re-offers the
+same bars from its trailing 48 h fetch.
+
+### `stellarindex_fx_fixings_write_tx_seconds`
+
+Histogram, no labels.
+
+Duration of one `fx_fixings` batch insert transaction.
+
 ### `stellarindex_amm_self_pair_swap_total`
 
 Counter, label `source`.
@@ -1294,7 +1351,9 @@ Two alerts read it, and only one of them can fire for that series:
 
 ### `stellarindex_trade_inserts_total`
 
-Counter, labels `source`, `usd_volume_populated` (`yes` | `no`).
+Counter, labels `source`, `usd_volume_populated` (`yes` | `no` |
+`unroutable`). `unroutable` is an unpriced trade whose two classic legs
+share one issuer; the on-chain coverage alert excludes it from the ratio.
 
 Per-source attempt counter for `Store.InsertTrade`, broken out by
 whether `usd_volume` was populated at insert time (per L2.2 phase 1
@@ -1489,8 +1548,9 @@ the per-tick delta.
 ### `stellarindex_ch_live_sink_read_undercount_total`
 
 Counter, label `kind` (`tx_read_errors` | `tx_event_read_errors` |
-`entry_meta_unsupported` | `tx_read_errors_census` |
-`tx_event_read_errors_census`). Every kind is seeded at zero.
+`entry_meta_unsupported` | `soroban_fee_meta_unsupported` |
+`tx_read_errors_census` | `tx_event_read_errors_census`). Every kind is
+seeded at zero.
 
 Transactions the indexer's two per-ledger read paths could not fully
 decode. Each increment is the number of affected transactions in one
@@ -1502,6 +1562,11 @@ ledger, not a ledger count.
   `EntryMetaUnsupported`). The ledger is still written, so its
   `stellar.ledgers` row claims a ledger whose contract events or entry
   changes are short, and `ch-live-catchup` never revisits it.
+- `soroban_fee_meta_unsupported` — the same extract
+  (`LedgerExtract.SorobanFeeMetaUnsupported`): Soroban transactions whose
+  `TransactionMeta` version the charged-fee read does not handle, so their
+  `soroban_nonrefundable_fee` / `soroban_refundable_fee` /
+  `soroban_rent_fee` are written as 0.
 - `tx_read_errors_census`, `tx_event_read_errors_census` —
   `dispatcher.CensusLedger` for the `ledger_ingest_log` substrate row,
   which the indexer skips on any non-zero count: a substrate gap.
@@ -2390,7 +2455,7 @@ Per-sweep outcome of the aggregator's price-alert evaluator
 (`internal/pricealerts`, BACKLOG #60), which checks every enabled
 `price_alerts` row against the latest closed 1-minute VWAP each tick
 and enqueues account-scoped `price.alert` customer-webhook deliveries
-when a threshold is crossed (respecting cooldown + `last_fired_at`).
+once per threshold crossing (respecting cooldown + `last_fired_at`).
 Only emits when `[price_alerts] enabled = true`.
 
 When to look at it: customers report their price-threshold webhooks
@@ -2408,7 +2473,7 @@ configs/prometheus/rules.r1/price-alerts.yml).
 
 ### `stellarindex_price_alert_evaluated_total`
 
-Counter, label `outcome` (`fired` / `not_crossed` / `no_price` / `stale` /
+Counter, label `outcome` (`fired` / `not_crossed` / `already_fired` / `no_price` / `stale` /
 `cooling_down` / `no_subscriber` / `claim_lost` / `error` / `timeout`),
 every child seeded when the evaluator is built.
 
@@ -2417,6 +2482,8 @@ One increment per alert per sweep. `timeout` is the alert's own deadline
 `stale` is a closed VWAP bucket older than the evaluator's own freshness
 budget (`maxPriceStaleness`, 15 min) — rejected rather than notifying off
 a price that no longer describes a live crossing.
+`already_fired` is an alert whose condition still holds since it last
+fired; it re-arms when a fresh price shows the condition cleared.
 More than half of evaluations ending in `error` / `timeout` for 30 min
 fires `stellarindex_price_alert_evaluations_failing`.
 
@@ -3088,6 +3155,18 @@ alert when > 1. The alert expression is unchanged (`> 1`, no
 `wrap_class` filter needed) — the false positives are fixed in what
 the value MEANS, not in the alert condition.
 
+### `stellarindex_supply_write_band_breach_total`
+
+Counter, labels `asset_key` + `direction` (`up` / `down`). One increment
+per supply snapshot written whose `total_supply` is more than 10x above
+(`up`) or below (`down`) the previous snapshot the same aggregator
+process wrote for that asset. The row is written regardless: a genuine
+mint can grow a young token tenfold, so a breach is a prompt to check
+the asset's supply against its issuer or contract, not a refusal. The
+comparison is against the refresher's in-memory last write, so the first
+snapshot after a restart and any snapshot following a zero total never
+count. Both directions are seeded to zero per watched asset.
+
 ### `stellarindex_supply_cross_check_total`
 
 Counter, labels `outcome` (`within` / `over` / `missing_snapshot` /
@@ -3495,15 +3574,15 @@ Gauge, label `pair`. 1 when the pair's last computed confidence was
 bounded by the ADR-0019 bootstrap ceiling (0.5), 0 when it was served
 uncapped. Mirrors `confidence_factors.bootstrap_capped` on `/v1/price`.
 Set only when a confidence is computed, so a pair on `baseline_missing`
-or `baseline_stale` keeps its last value. A pair alternating between 0
-and 1 is one whose baseline density sits at the gate.
+or `baseline_stale` keeps its last value. A released pair returns to 1
+only once its density falls below 27 (the gate's hysteresis edge).
 
 ### `stellarindex_aggregator_baseline_density_days`
 
 Gauge, label `pair`. The 30-day baseline density the bootstrap cap
 gates on: 1-minute buckets behind the window divided by 1440, at most
 30, negative when the pair has no 30-day baseline. The cap releases at
-28.5. This is sample density, not calendar age — a pair trading in 200
+28.5 and, once released, re-engages below 27. This is sample density, not calendar age — a pair trading in 200
 minutes a day reads about 4.2 however long it has existed. Mirrors
 `confidence_factors.baseline_age_days`.
 
@@ -4107,6 +4186,18 @@ order.
 
 **When to look:** any sustained rate means sandwich detection is being
 skipped; lower `txIndexChunk` in `internal/storage/clickhouse/tx_index_reader.go`.
+
+### `stellarindex_tx_index_tag_lookup_skipped_total`
+
+Counter, no labels.
+
+The `trades.tx_index` tagger's twin of the MEV counter above: tx hashes
+left untagged because a chunk of its `stellar.tx_hash_index` lookup failed.
+Covers the indexer's live sweep and `stellarindex-ops tag-tx-index`. The
+rows stay NULL until a later pass resolves them.
+
+**When to look:** a sustained rate means the live sweep is not keeping
+`tx_index` current; same remedy as above (`txIndexChunk`).
 
 ### `stellarindex_mev_detect_duration_seconds`
 

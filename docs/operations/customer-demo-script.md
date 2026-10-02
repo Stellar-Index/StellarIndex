@@ -103,8 +103,10 @@ curl -sH "Authorization: Bearer $KEY" \
 Talking points:
 - The raw inputs the aggregator sees. Useful for consumers
   who want to apply their own aggregation policy.
-- `?source=binance` filters to one venue; `?aggregate=latest`
-  collapses to one row per source.
+- `?source=binance` or `?source=sdex` filters to one venue (an exchange
+  or an on-chain source); a data vendor such as `?source=coingecko`
+  returns 400, because its rows are served only beside other sources.
+  `?aggregate=latest` collapses to one row per source.
 
 ### Stage 5 — Historical data (3 min)
 

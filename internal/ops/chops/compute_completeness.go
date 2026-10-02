@@ -835,18 +835,23 @@ func evaluateEachSource(ctx context.Context, catalogue []reconSource, only strin
 // orderForPass moves every source whose -pass projection floor is its genesis
 // (a full re-verify) after the sources that resume incrementally, keeping
 // catalogue order within each group, so one long re-verify that exhausts the
-// run's deadline cannot withhold a fresh verdict from the cheap ones.
+// run's deadline cannot withhold a fresh verdict from the cheap ones. Within the
+// from-genesis group the census (SDEX) source runs last: its full-history
+// op re-derive can outlast the whole pass, while event sources take seconds.
 func orderForPass(catalogue []reconSource, prior map[string]priorProjection, priorWatermark map[string]uint32) []reconSource {
 	ordered := make([]reconSource, 0, len(catalogue))
-	var fromGenesis []reconSource
+	var fromGenesis, censusFromGenesis []reconSource
 	for _, src := range catalogue {
-		if projectionFloor(src.genesis, true, prior[src.name], priorWatermark[src.name], 0) > src.genesis {
+		switch {
+		case projectionFloor(src.genesis, true, prior[src.name], priorWatermark[src.name], 0) > src.genesis:
 			ordered = append(ordered, src)
-		} else {
+		case src.census:
+			censusFromGenesis = append(censusFromGenesis, src)
+		default:
 			fromGenesis = append(fromGenesis, src)
 		}
 	}
-	return append(ordered, fromGenesis...)
+	return append(append(ordered, fromGenesis...), censusFromGenesis...)
 }
 
 // projectionFloor is the incremental projection reconcile floor for ONE source.
@@ -2529,11 +2534,12 @@ var recognitionGlobalExcludeSyms = clickhouse.FirehoseExcludeSyms
 // surfaces the Blend/Comet pool-level set_admin collision on the shared
 // "POOL" topic. watchedSep41RecognitionShapes re-adds exactly those excluded
 // topics, scoped to the watched contract set, so both stay auditable without
-// the firehose cost.
+// the firehose cost. Those watched shapes are recognised only because
+// buildCensusDispatcher also registers the sep41 event decoders.
 func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr string, gated map[string][]contractid.Option, from, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
-	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated, soroswapOpts...)
+	disp, err := buildCensusDispatcher(cfg, gated, soroswapOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("build dispatcher: %w", err)
+		return nil, err
 	}
 	shapes, err := clickhouse.DistinctTopicShapes(ctx, chAddr, from, tip, recognitionGlobalExcludeSyms)
 	if err != nil {
@@ -2565,6 +2571,20 @@ func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr str
 	return gaps, nil
 }
 
+// buildCensusDispatcher builds the recognition census's decoder chain the
+// way the indexer does: the enabled sources plus the watched-set-gated
+// sep41 event decoders, which BuildDispatcher alone does not register.
+func buildCensusDispatcher(cfg config.Config, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (*dispatcher.Dispatcher, error) {
+	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated, soroswapOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("build dispatcher: %w", err)
+	}
+	if _, err := pipeline.RegisterSupplyEventDecoders(disp, cfg.Supply); err != nil {
+		return nil, fmt.Errorf("register supply event decoders: %w", err)
+	}
+	return disp, nil
+}
+
 // watchedSep41RecognitionShapes is the watched-set-scoped half of the
 // recognition census (GH-1295): the CAP-67 topics FirehoseExcludeSyms drops
 // from the global scan, restricted to the operator-curated
@@ -2581,9 +2601,9 @@ func watchedSep41RecognitionShapes(ctx context.Context, cfg config.Config, chAdd
 // computeRecognitionGaps runs the global recognition audit over [from, tip]
 // and returns every unrecognized event shape.
 func computeRecognitionGaps(ctx context.Context, store *timescale.Store, cfg config.Config, gated map[string][]contractid.Option, from, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
-	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated, soroswapOpts...)
+	disp, err := buildCensusDispatcher(cfg, gated, soroswapOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("build dispatcher: %w", err)
+		return nil, err
 	}
 	samples, err := store.DistinctSorobanTopicSamples(ctx, from, tip)
 	if err != nil {

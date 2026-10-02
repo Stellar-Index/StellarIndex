@@ -255,6 +255,96 @@ func TestResendSender_5xxIsTransient(t *testing.T) {
 	}
 }
 
+func TestResendSender_429IsTransient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"name":"rate_limit_exceeded","message":"too many requests","statusCode":429}`))
+	}))
+	defer srv.Close()
+
+	s, _ := notify.NewResendSender("re_test")
+	s.BaseURL = srv.URL
+
+	err := s.Send(context.Background(), notify.Message{
+		From: "x@y.com", To: []string{"a@b.com"}, Subject: "s", Text: "t",
+	})
+	if !errors.Is(err, notify.ErrTransient) {
+		t.Errorf("expected ErrTransient, got %v", err)
+	}
+	if errors.Is(err, notify.ErrProviderRejected) {
+		t.Errorf("429 must not be ErrProviderRejected: %v", err)
+	}
+}
+
+// statusSequenceServer answers each POST with the next status in seq
+// (repeating the last) and counts the attempts.
+func statusSequenceServer(t *testing.T, seq ...int) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := int(hits.Add(1))
+		w.WriteHeader(seq[min(n, len(seq))-1])
+		_, _ = w.Write([]byte(`{"message":"m"}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &hits
+}
+
+func sendTo(ctx context.Context, t *testing.T, url string) error {
+	t.Helper()
+	s, err := notify.NewResendSender("re_test")
+	if err != nil {
+		t.Fatalf("constructor: %v", err)
+	}
+	s.BaseURL = url
+	return s.Send(ctx, notify.Message{
+		From: "x@y.com", To: []string{"a@b.com"}, Subject: "s", Text: "t",
+	})
+}
+
+func TestResendSender_RetriesRateLimitThenDelivers(t *testing.T) {
+	srv, hits := statusSequenceServer(t, http.StatusTooManyRequests, http.StatusOK)
+	if err := sendTo(context.Background(), t, srv.URL); err != nil {
+		t.Fatalf("Send = %v, want nil after one 429 then 200", err)
+	}
+	if got := hits.Load(); got != 2 {
+		t.Errorf("attempts = %d, want 2 (one retry, one delivery)", got)
+	}
+}
+
+func TestResendSender_ProviderRejectedIsNotRetried(t *testing.T) {
+	srv, hits := statusSequenceServer(t, http.StatusUnprocessableEntity, http.StatusOK)
+	err := sendTo(context.Background(), t, srv.URL)
+	if !errors.Is(err, notify.ErrProviderRejected) {
+		t.Fatalf("Send = %v, want ErrProviderRejected", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("attempts = %d, want 1 (a rejection is final)", got)
+	}
+}
+
+func TestResendSender_TransientRetriesAreBounded(t *testing.T) {
+	srv, hits := statusSequenceServer(t, http.StatusServiceUnavailable)
+	if err := sendTo(context.Background(), t, srv.URL); !errors.Is(err, notify.ErrTransient) {
+		t.Fatalf("Send = %v, want ErrTransient", err)
+	}
+	if got := hits.Load(); got != 3 {
+		t.Errorf("attempts = %d, want 3", got)
+	}
+}
+
+func TestResendSender_CancelledCallerStopsRetries(t *testing.T) {
+	srv, hits := statusSequenceServer(t, http.StatusServiceUnavailable)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := sendTo(ctx, t, srv.URL); !errors.Is(err, notify.ErrTransient) {
+		t.Fatalf("Send = %v, want ErrTransient", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("attempts = %d, want 1 (no retry after caller cancel)", got)
+	}
+}
+
 // A caller whose request context is cancelled while the provider POST
 // is in flight (the client hung up after the token row was written)
 // must not abort the delivery: the send completes and reports success.

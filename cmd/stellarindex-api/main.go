@@ -560,8 +560,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// from the global rate-limit middleware. Default 5/hour/IP —
 	// tight enough to block bulk-mint, loose enough that an
 	// operator onboarding a small team through a single shared
-	// egress completes normally. Operators tune via
-	// `[api].signup_ip_max_per_window` if needed.
+	// egress completes normally. The cap is a compiled default
+	// (auth.SignupIPThrottleOptions), not a config key.
 	var signupIPThrottle v1.SignupIPThrottle
 	if rdb != nil {
 		signupIPThrottle = auth.NewRedisSignupIPThrottle(rdb, auth.SignupIPThrottleOptions{})
@@ -814,7 +814,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// latest rates + 7d history to the hypertable so /v1/currencies
 	// can serve historical charts beyond the in-memory window.
 	forexWorker = forexWorker.WithWriter(&forexQuoteWriter{store: store}).
-		WithReader(&forexQuoteWriter{store: store})
+		WithReader(&forexQuoteWriter{store: store}).
+		WithFixingWriter(&forexQuoteWriter{store: store})
 	// Standby FX source. `massive` is a PAID feed and was the ONLY series
 	// in stellarindex_external_fx_last_quote_unix (measured 2026-08-27),
 	// so a 401/429/subscription lapse silently broke every fiat-quoted
@@ -1486,6 +1487,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// fallbacks (T650) — the in-memory forex cache never expires on
 		// its own.
 		FXCrossMaxAgeHours: cfg.PricingGuard.FXCrossMaxAgeHours,
+		FXFixings:          store,
 		FXHistory:          &fxHistoryReader{store: store},
 		SEP10:              sep10Validator,
 		Hub:                hub,
@@ -5158,41 +5160,18 @@ func (a *forexAdapter) Latest() *v1.CurrenciesSnapshot {
 	}
 	rows := make([]v1.CurrencyEntry, len(snap.Currencies))
 	for i, c := range snap.Currencies {
-		row := v1.CurrencyEntry{
+		rows[i] = v1.CurrencyEntry{
 			Ticker:    c.Ticker,
 			Name:      c.Name,
 			RateUSD:   c.RateUSD,
 			UpdatedAt: c.UpdateAt,
 			Source:    c.Source,
 		}
-		// Join curated monetary-base CSV (lower-case keyed). Market
-		// cap is computed in USD-equivalent: the local-units M2
-		// divided by "1 USD = N units" rate gives "M2 in USD".
-		if entry, ok := snap.Circulation[strings.ToLower(c.Ticker)]; ok && entry.AggregateLocalUnits > 0 {
-			supply := entry.AggregateLocalUnits
-			row.CirculatingSupply = &supply
-			if c.RateUSD > 0 {
-				mcap := supply / c.RateUSD
-				row.MarketCapUSD = &mcap
-			}
-			row.CirculationAsOf = entry.AsOf.Format("2006-01-02")
-			row.CirculationSource = entry.Source
-		}
-		rows[i] = row
-	}
-	history := make(map[string][]v1.CurrencyHistoryRaw, len(snap.History7d))
-	for ticker, points := range snap.History7d {
-		out := make([]v1.CurrencyHistoryRaw, len(points))
-		for i, p := range points {
-			out[i] = v1.CurrencyHistoryRaw{Date: p.Date, RateUSD: p.RateUSD}
-		}
-		history[ticker] = out
 	}
 	return &v1.CurrenciesSnapshot{
 		Currencies:  rows,
 		PublishedAt: snap.PublishedAt,
 		FetchedAt:   snap.FetchedAt,
-		History7d:   history,
 	}
 }
 
@@ -5368,12 +5347,10 @@ func prewarmLight(
 	// ORDER MATTERS: the /v1/assets listing keys are warmed FIRST,
 	// ahead of the markets/pools work below.
 	//
-	// They used to sit after ~20 cold reads (8 DistinctPairsExt, 4+5
-	// AllPools, the per-CEX SourceMarkets loop). At seconds each on a
-	// cold start that pushed them a long way into the cycle, so a
-	// browser arriving seconds after a restart still paid the fill
-	// itself. Measured on r1 with the API up at 06:14:37, AFTER the
-	// passes were made concurrent:
+	// Behind the ~20 cold markets/pools reads (DistinctPairsExt,
+	// AllPools) at seconds each, a browser arriving seconds after a
+	// restart would pay the fill itself. Measured on r1 with the API up
+	// at 06:14:37, with the passes concurrent but assets warmed last:
 	//
 	//	06:15:01  9903 ms  /v1/assets?include=sparkline&limit=10&order_by=…
 	//	06:15:01  9905 ms  /v1/assets?limit=50
@@ -5534,14 +5511,9 @@ func prewarmLight(
 		}
 	}
 
-	// Per-CEX/source markets prewarm — the explorer's /exchanges/{name}
-	// PairsTable.tsx fires `/v1/markets?source=<src>&limit=200`
-	// (volume-desc default). Each maps to a SourceMarkets cache slot
-	// distinct from the unfiltered DistinctPairsExt warmed above, so
-	// every cold visit to /exchanges/binance, /exchanges/coinbase, etc.
-	// previously paid the full 8s ceiling (R-002). One pass per
-	// registered source on each cycle keeps the typical pageload at
-	// sub-100ms.
+	// Per-CEX markets prewarm: the explorer's /exchanges/{name} pairs table
+	// fires `/v1/markets?source=<src>&limit=200` (volume-desc default), a
+	// SourceMarkets slot distinct from the unfiltered DistinctPairsExt above.
 	for _, src := range v1.CexSourceNames() {
 		if _, _, err := markets.SourceMarkets(mkCtx, src, "", 200, timescale.MarketsOrderVolume24hDesc); err != nil {
 			logger.Debug("prewarm per-source markets failed", "source", src, "err", err)
@@ -6088,6 +6060,20 @@ func (w *forexQuoteWriter) InsertFXQuoteBatch(ctx context.Context, quotes []fore
 		}
 	}
 	return w.store.InsertFXQuoteBatch(ctx, out)
+}
+
+// InsertFXFixingBatch adapts the store's fx_fixings append to
+// forex.FXFixingWriter; the close stays the vendor's decimal text.
+func (w *forexQuoteWriter) InsertFXFixingBatch(ctx context.Context, bars []forex.FXBar) error {
+	out := make([]timescale.FXFixing, len(bars))
+	for i, b := range bars {
+		out[i] = timescale.FXFixing{
+			Ticker: b.Ticker, Grain: b.Grain, BarStart: b.BarStart, BarEnd: b.BarEnd,
+			RateUSD: b.CloseText, Source: b.Source,
+		}
+	}
+	_, err := w.store.InsertFXFixingBatch(ctx, out)
+	return err
 }
 
 // LatestFXQuotes adapts the store's NUMERIC-text read to forex.FXQuoteReader;

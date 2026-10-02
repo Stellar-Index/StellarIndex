@@ -18,6 +18,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 func buildPairs(t *testing.T) []canonical.Pair {
@@ -105,6 +106,40 @@ func TestPollOnce_HappyPath(t *testing.T) {
 	wantTs, _ := time.Parse(time.RFC3339Nano, "2026-04-24T00:00:00.000Z")
 	if !xlmU.Timestamp.Equal(wantTs) {
 		t.Errorf("Timestamp = %v want %v", xlmU.Timestamp, wantTs)
+	}
+}
+
+// An empty 200 must come back as a non-nil empty slice: nil is the runner's
+// "skipped" convention and would refresh the staleness clock (#940).
+func TestPollOnce_EmptyDataIsNotASkip(t *testing.T) {
+	srv := newTestServer(t, `{"status": {"error_code": 0, "error_message": null}, "data": {}}`, http.StatusOK)
+	defer srv.Close()
+	p, err := NewPoller("TEST_KEY")
+	if err != nil {
+		t.Fatalf("NewPoller: %v", err)
+	}
+	p.Endpoint = srv.URL
+	_, updates, err := p.PollOnce(context.Background(), buildPairs(t))
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if updates == nil || len(updates) != 0 {
+		t.Fatalf("updates = %#v, want non-nil empty", updates)
+	}
+}
+
+func TestPollOnce_NoApplicablePairs(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usdt, _ := canonical.NewCryptoAsset("USDT")
+	pair, _ := canonical.NewPair(xlm, usdt)
+	p, err := NewPoller("TEST_KEY")
+	if err != nil {
+		t.Fatalf("NewPoller: %v", err)
+	}
+	p.Endpoint = "http://localhost:1" // would fail if reached
+	_, _, err = p.PollOnce(context.Background(), []canonical.Pair{pair})
+	if !errors.Is(err, external.ErrNoApplicablePairs) {
+		t.Fatalf("err = %v, want ErrNoApplicablePairs", err)
 	}
 }
 

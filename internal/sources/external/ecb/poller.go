@@ -58,7 +58,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -207,8 +206,8 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	wanted := external.FiatCodesFromPairs(pairs, "EUR")
 	if len(wanted) == 0 {
 		// No fiat cross-rates to cover — e.g. the pair list is all
-		// crypto-crypto. Silent no-op.
-		return nil, nil, nil
+		// crypto-crypto.
+		return nil, nil, external.ErrNoApplicablePairs
 	}
 
 	updates := make([]canonical.OracleUpdate, 0, len(wanted))
@@ -219,13 +218,10 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		if !ok {
 			continue
 		}
-		// Parse the rate (ECB publishes "1 EUR = X currency").
-		rate, err := strconv.ParseFloat(row.Rate, 64)
-		if err != nil || rate <= 0 {
-			continue
-		}
-		// Invert + scale: price of currency in EUR = 1 / rate.
-		rateScaled, err := scale.FloatToScaledInt(rate, int(DefaultDecimals))
+		// Parse the rate (ECB publishes "1 EUR = X currency") exactly:
+		// a float64 detour admits "NaN"/hex/exponent forms ECB never
+		// publishes and rounds digits beyond float precision.
+		rateScaled, err := scale.DecimalStringToScaledInt(row.Rate, int(DefaultDecimals))
 		if err != nil || rateScaled.Sign() <= 0 {
 			continue
 		}

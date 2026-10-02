@@ -18,7 +18,9 @@
 #   FAIL_HOURS        hours since last green → RED    (default: 6)
 #   CI_HEALTH_FIXTURE optional path to a JSON file shaped like the
 #                     GitHub API's {"workflow_runs":[...]} — used for
-#                     offline tests instead of calling gh.
+#                     offline tests instead of calling gh. An optional
+#                     "latest_runs" array stands in for the unfiltered
+#                     listing the staleness check reads.
 #
 # Exit code: 0 = healthy (main green, or completed runs exist but none
 #            carry a health signal yet — e.g. cancelled-only),
@@ -26,8 +28,8 @@
 #            runs at all for the configured workflow/branch — treated as
 #            a fault rather than silently read as healthy, since it is
 #            the same shape a wrong CI_WORKFLOW_FILE/CI_HEALTH_BRANCH
-#            produces). A human-readable report is printed to stdout in
-#            all cases.
+#            produces — or the run listing is stale, see latest_runs).
+#            A human-readable report is printed to stdout in all cases.
 set -euo pipefail
 
 CI_WORKFLOW_FILE="${CI_WORKFLOW_FILE:-ci.yml}"
@@ -62,28 +64,71 @@ fetch_page() {
   fi
 }
 
+# latest_runs — the workflow's newest runs, unfiltered. fetch_page's
+# filtered listing is served from a search index that has answered a month
+# stale while main was building; this listing is the reference for it.
+latest_runs() {
+  if [ -n "${CI_HEALTH_FIXTURE:-}" ]; then
+    jq '{workflow_runs: (.latest_runs // [])}' "$CI_HEALTH_FIXTURE"
+  else
+    gh api "repos/${GH_REPO}/actions/workflows/${CI_WORKFLOW_FILE}/runs?per_page=${PER_PAGE}"
+  fi
+}
+
 # Rapid merges cancel most runs on main (cancel-in-progress), so one page
 # can hold little or no signal. Page on until the tip streak is settled:
 # a green run is seen, or more reds than FAIL_RUNS, or history runs out.
-raw_count=0
-runs=""
-page=1
-while [ "$page" -le "$MAX_PAGES" ]; do
-  api_json="$(fetch_page "$page")"
-  page_count="$(jq -r '.workflow_runs | length' <<<"$api_json")"
-  raw_count=$((raw_count + page_count))
-  page_runs="$(jq -r "$JQ_FILTER" <<<"$api_json")"
-  if [ -n "$page_runs" ]; then
-    runs="${runs:+${runs}${NL}}${page_runs}"
-  fi
-  signal_count="$(grep -c . <<<"$runs" || true)"
-  if grep -q '^success' <<<"$runs" || [ "$signal_count" -gt "$FAIL_RUNS" ] \
-      || [ "$page_count" -lt "$PER_PAGE" ]; then
+collect_runs() {
+  raw_count=0
+  runs=""
+  newest_listed=""
+  page=1
+  while [ "$page" -le "$MAX_PAGES" ]; do
+    api_json="$(fetch_page "$page")"
+    page_count="$(jq -r '.workflow_runs | length' <<<"$api_json")"
+    raw_count=$((raw_count + page_count))
+    page_newest="$(jq -r '[.workflow_runs[].created_at] | max // ""' <<<"$api_json")"
+    if [[ "$page_newest" > "$newest_listed" ]]; then
+      newest_listed="$page_newest"
+    fi
+    page_runs="$(jq -r "$JQ_FILTER" <<<"$api_json")"
+    if [ -n "$page_runs" ]; then
+      runs="${runs:+${runs}${NL}}${page_runs}"
+    fi
+    signal_count="$(grep -c . <<<"$runs" || true)"
+    if grep -q '^success' <<<"$runs" || [ "$signal_count" -gt "$FAIL_RUNS" ] \
+        || [ "$page_count" -lt "$PER_PAGE" ]; then
+      break
+    fi
+    page=$((page + 1))
+  done
+  dropped=$((raw_count - signal_count))
+}
+
+# A run on the branch that finished over LISTING_LAG_MIN minutes ago and is
+# newer than everything listed proves the listing stale. A stale listing is
+# re-asked and, if it stays stale, reported UNKNOWN — never judged.
+LISTING_LAG_MIN=15
+STALE_RETRIES=3
+lag_cutoff="$(date -u -d "-${LISTING_LAG_MIN} minutes" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+  || date -u -v-"${LISTING_LAG_MIN}"M +%Y-%m-%dT%H:%M:%SZ)"
+attempt=1
+while :; do
+  collect_runs
+  newest_known="$(latest_runs | jq -r --arg b "$CI_HEALTH_BRANCH" --arg c "$lag_cutoff" \
+    '[.workflow_runs[]
+      | select(.head_branch == $b and .status == "completed" and .updated_at <= $c)
+      | .created_at] | max // ""')"
+  if [ -z "$newest_known" ] || [[ ! "$newest_listed" < "$newest_known" ]]; then
     break
   fi
-  page=$((page + 1))
+  if [ "$attempt" -ge "$STALE_RETRIES" ]; then
+    echo "ci-health: UNKNOWN — the '${CI_WORKFLOW_FILE}' run listing for '${CI_HEALTH_BRANCH}' is stale: its newest run was created ${newest_listed:-never (it is empty)}, but a run created ${newest_known} has completed. Asked ${STALE_RETRIES} times; no verdict is read from a stale listing."
+    exit 1
+  fi
+  attempt=$((attempt + 1))
+  [ -n "${CI_HEALTH_FIXTURE:-}" ] || sleep 20
 done
-dropped=$((raw_count - signal_count))
 
 # Raw count BEFORE the health-signal filter. A 200 response with a
 # genuinely empty `workflow_runs` array is indistinguishable, from the

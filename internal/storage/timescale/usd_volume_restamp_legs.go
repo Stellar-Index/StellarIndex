@@ -276,6 +276,7 @@ func restampDecide(
 		Source: row.Source, Ledger: row.Ledger, TxHash: row.TxHash,
 		OpIndex: row.OpIndex, TS: row.TS,
 		BaseAsset: row.BaseAsset, QuoteAsset: row.QuoteAsset,
+		BaseAmount: row.BaseAmount, QuoteAmount: row.QuoteAmount, Generation: row.Generation,
 		Stored: row.Stored,
 	}
 	trade, disp, inTier := restampScope(row, spec, gate)

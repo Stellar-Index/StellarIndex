@@ -281,6 +281,41 @@ groups:
             massive worker in the API binary, then the chain config.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-triangulation-chains-dry.md
 
+      # A released pair re-caps only once its 30-day bucket density falls
+      # under the ADR-0019 hysteresis edge (27 days-equivalent). Several
+      # re-capping inside the same hour share a cause: a gap in ingestion,
+      # the aggregator, or prices_1m materialisation, and they stay at 0.5
+      # until the gap is repaired or rolls out of the window. last_over_time
+      # reaches back over an outage (up to 2d) to the pair's pre-gap state,
+      # which is the restart case. Covered by rule-tests/aggregator_test.yml.
+      - alert: stellarindex_aggregator_bootstrap_cap_reengaged
+        expr: |
+          count(
+            (stellarindex_aggregator_bootstrap_capped == 1)
+            and
+            (last_over_time(stellarindex_aggregator_bootstrap_capped[2d] offset 1h) == 0)
+          ) >= 3
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+          summary: "{{ $value }} pairs re-entered the bootstrap confidence cap within 1h (P3)"
+          description: |
+            {{ $value }} pairs whose last state before the past hour was
+            released from the ADR-0019 bootstrap cap are capped at 0.5 again
+            (stellarindex_aggregator_bootstrap_capped 0 -> 1): their 30-day
+            1-minute bucket density fell below the density gate (27
+            days-equivalent for a pair released since the aggregator started,
+            28.5 after a restart). A
+            simultaneous drop across pairs means a shared gap in the
+            baseline window, not one thin pair. Served confidence stays at
+            0.5 for them until the gap is repaired or rolls out of the
+            30-day window.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+
       - alert: stellarindex_aggregator_class_drop_spike
         expr: |
           sum(rate(stellarindex_aggregator_dropped_trades_total{reason="class"}[10m]))

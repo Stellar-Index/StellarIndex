@@ -81,6 +81,20 @@ truncated at the page boundary) are dropped.
 + `RawSwap.assign()` + `decodeSwap()` — the same code path the
 runtime consumer uses.
 
+## event-shapes/
+
+`lake_events.jsonl` holds real rows of r1's `stellar.contract_events`
+(the `factory-create/` columns, one object per line) for every Phoenix
+shape beyond the String-schema swap and liquidity events:
+`create_distribution_flow`, the three stake-migration steps, the
+factory's `("Factory","Updated Config")`, the blend-pool settings, the
+Map-body `provide_liquidity` / `withdraw_liquidity`, both unbond
+generations (the earliest stake WASMs publish unbond's token and amount
+under the `"bond"` topic), and the Symbol-topic `bond` events of
+`CBBUVHCE…`, which is not a Phoenix contract. `close_time` is empty
+where it was not captured; those rows are used for recognition only.
+Replayed by `internal/sources/phoenix/event_shapes_test.go`.
+
 ## Known gaps
 
 - **WASM hash not yet resolved.** Fixtures currently land under

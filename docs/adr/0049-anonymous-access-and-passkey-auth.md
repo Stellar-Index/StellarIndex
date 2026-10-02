@@ -1,7 +1,7 @@
 ---
 adr: 0049
 title: Anonymous access, open self-service registration, and passkey auth (no payment surface)
-status: Proposed
+status: Accepted
 date: 2026-08-14
 supersedes: []
 superseded_by: null
@@ -19,6 +19,20 @@ superseded_by: null
 > the operator should ratify (or correct) the threat model below and then
 > move it to `Accepted`. The code, not this doc, is authoritative on what
 > ships today.
+
+> **Amendment (2026-10-02, ratification).** Moved to `Accepted`. The
+> maintainer accepted this access model as the documented basis for
+> dropping the Stripe reconcile (v1 launch plan, decision D9). The text
+> below is kept as written. Two "known open edges" in Consequences no
+> longer match the code, so the ratified risk envelope is:
+> - the signup IP throttle fails open only for the first
+>   `DefaultSignupThrottleDwellTime` (30 s) of continuous Redis errors.
+>   After that, `CheckIP` returns `ErrThrottleUnavailable` and signup
+>   returns 503 (`internal/auth/signup_ip_throttle.go`,
+>   `internal/api/v1/signup.go`);
+> - expired `magic_link_tokens` rows are deleted by
+>   `internal/magiclinkreaper` (48 h past expiry), which is wired in
+>   `cmd/stellarindex-api/main.go`.
 
 ## Context
 

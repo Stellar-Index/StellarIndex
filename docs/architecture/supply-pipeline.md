@@ -72,9 +72,9 @@ snapshot-compute time: when the stored snapshot has no max, the
 `/v1/assets/{id}` handler scales the issuer's stellar.toml
 `max_number` / `fixed_number` (display units → raw units by asset
 decimals; blocked by `is_unlimited = true`) and labels the result
-`supply_basis: "sep1_declared_max"` so consumers can see the cap is
-issuer-self-declared. `asset_supply_history` rows never carry
-declared values.
+`max_supply_basis: "sep1_declared_max"` so consumers can see the cap is
+issuer-self-declared; `supply_basis` keeps naming the circulating
+policy. `asset_supply_history` rows never carry declared values.
 
 ## The six observers
 
@@ -462,6 +462,30 @@ stellarindex-ops supply audit BLND-GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E
 stellarindex_supply_cross_check_divergence_stroops{classic_key=~"BLND.*|EURC.*|KALE.*|PHO.*"}
 ```
 
+### LP reserve history cutoff
+
+`lp_reserve_observations` starts at ledger 63,300,828, when the observer
+was deployed. It was never seeded from history, and that is an accepted
+limit, not a pending fix. Two consequences follow:
+
+- Algorithm 2's LP component is absent for any supply computed `as_of` a
+  ledger below 63,300,828.
+- A pool whose reserves have not changed since before that ledger is
+  missing from the current total.
+
+The second is small because every swap or deposit re-observes its pool.
+On 2026-07-27, AQUA's latest-per-pool LP total was 516,524,268 across
+1,072 pools, against Horizon's 517,261,343 across 1,303 pools: −0.14%,
+and the 231 missing pools were dust. Claimable balances differ: a
+balance is written once and then never changes, so the live window
+missed most of them. They therefore have a seed
+(`supply seed-claimable-balances`). Trustlines are seeded from ledger
+31.8M and are unaffected.
+
+If a dormant-pool audit ever shows a material gap, build an LP seed on
+the same shape: read the lake's `liquidity_pool` entries and upsert
+through the live observer's SQL.
+
 ## Per-class storage tables (live-data side)
 
 | Table | Migration | Identity | Holders columns |
@@ -518,7 +542,7 @@ serving-time refinements sit on top of it:
   (`supply_basis: "sep41_lake_flows"`, total == circulating).
 - **SEP-1 max_supply overlay** — a snapshot with no max picks up
   the issuer's stellar.toml declaration
-  (`supply_basis: "sep1_declared_max"`, see "Max supply" above).
+  (`max_supply_basis: "sep1_declared_max"`, see "Max supply" above).
 
 ## Failure modes (per outcome label)
 

@@ -62,6 +62,13 @@ func registerAppMetrics() {
 		ExternalFXLastQuoteUnix,
 		ExternalFXRateRejectedTotal,
 		ExternalFXBaselineHealedTotal,
+		FXFixingsLastRefreshUnix,
+		FXFixingsNewestBarEndUnix,
+		FXFixingsQuoteDisagrees,
+		FXFixingsWriteTxSeconds,
+		FXFixingsWriteErrorsTotal,
+		FXFixingsFetchErrorsTotal,
+		FXFixingsBarsRefusedTotal,
 		ExternalDustDroppedTotal,
 		ExternalPollerRefusedEntriesTotal,
 		CEXStreamDisconnectTotal, CEXStreamLastTradeUnix,
@@ -135,6 +142,7 @@ func registerPricingMetrics() {
 		AggregatorBaselineRefreshTotal,
 		AggregatorSupplyLakeClampLedgers,
 		AggregatorSupplyRefreshTotal,
+		SupplyWriteBandBreachTotal,
 		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
 		AggregatorBaselineAgeSeconds,
@@ -299,6 +307,7 @@ func registerAppMetricsTail() {
 		DispatcherTxReadErrorsTotal,
 		DispatcherTxEventReadErrorsTotal,
 		DispatcherEntryMetaUnsupportedTotal,
+		DispatcherEvictedKeysUnreadableTotal,
 		SourceUncorroboratedCallsTotal,
 
 		MEVDetectRunsTotal,
@@ -306,6 +315,7 @@ func registerAppMetricsTail() {
 		MEVDetectDurationSeconds,
 		MEVScanTruncatedTotal,
 		MEVLakeOrderLookupSkippedTotal,
+		TxIndexTagLookupSkippedTotal,
 
 		PostgresPingTotal,
 		PostgresPingFailureStreak,
@@ -724,7 +734,7 @@ func seedBoundedLabelSeriesTail() {
 	// distinguishable from "never wired".
 	for _, kind := range []string{
 		"tx_read_errors", "tx_event_read_errors", "entry_meta_unsupported",
-		"tx_read_errors_census", "tx_event_read_errors_census",
+		"soroban_fee_meta_unsupported", "tx_read_errors_census", "tx_event_read_errors_census",
 	} {
 		ChLiveSinkReadUndercountTotal.WithLabelValues(kind)
 	}
@@ -1411,6 +1421,17 @@ var DispatcherEntryMetaUnsupportedTotal = prometheus.NewCounter(
 	},
 )
 
+// DispatcherEvictedKeysUnreadableTotal — process-wide counter of ledgers
+// whose evicted-key list failed to read (dispatcher.Stats.EvictedKeysUnreadable),
+// so their state-archival evictions never reached the entry decoders.
+// Sibling of [DispatcherEntryMetaUnsupportedTotal].
+var DispatcherEvictedKeysUnreadableTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dispatcher_evicted_keys_unreadable_total",
+		Help: "Ledgers whose state-archival evicted keys failed to read; their evictions were skipped and the evicted entries stay served as live.",
+	},
+)
+
 // SourceUncorroboratedCallsTotal — per-source counter of oracle-class
 // ContractCall invocations dropped before Decode because they were only
 // DECLARED in the auth tree, never executed (W8.4a,
@@ -1469,11 +1490,15 @@ var SourceUnknownSymbolsTotal = prometheus.NewCounterVec(
 // ExternalPollerPollsTotal — per-source, per-outcome counter of
 // PollOnce invocations. Outcome is one of:
 //
-//   - success — venue returned 200 and the response decoded OK
+//   - success — venue returned 200 and the response decoded to ≥1 row
+//   - empty   — venue returned 200 but no usable row; does not refresh
+//     ExternalPollerLastSuccessUnix
 //   - error   — PollOnce returned a non-nil error (network, HTTP
 //     4xx/5xx, decode failure)
 //   - skipped — the poller's internal cooldown (after a previous
 //     throttle) suppressed the HTTP call
+//   - idle    — no configured pair applies to the poller; does not
+//     refresh ExternalPollerLastSuccessUnix
 //
 // Pre-2026-05-09 there was no signal at all when an external poller
 // was sustained-failing — CoinGecko throttling went undetected for
@@ -1484,7 +1509,7 @@ var SourceUnknownSymbolsTotal = prometheus.NewCounterVec(
 var ExternalPollerPollsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_external_poller_polls_total",
-		Help: "External poller invocations, labelled by source and outcome (success | error | skipped).",
+		Help: "External poller invocations, labelled by source and outcome (success | empty | error | skipped | idle).",
 	},
 	[]string{"source", "outcome"},
 )
@@ -1834,6 +1859,41 @@ var ExternalFXBaselineHealedTotal = prometheus.NewCounterVec(
 		Help: "FX sanity-band baselines re-pointed at an agreeing history majority that refuted them, per source. Each increment is one poisoned/stale baseline self-corrected.",
 	},
 	[]string{"source"},
+)
+
+// FX fixings (fx_fixings, migration 0193): the vendor-time hourly series a
+// closed derived fiat price binds to. The forex worker appends it after each
+// refresh; these carry its liveness and the gate's verdicts.
+var (
+	FXFixingsLastRefreshUnix = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "stellarindex_fx_fixings_last_refresh_unix",
+		Help: "UNIX seconds of the forex worker's last completed fx_fixings append cycle, whether or not it wrote rows.",
+	})
+	FXFixingsNewestBarEndUnix = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "stellarindex_fx_fixings_newest_bar_end_unix",
+		Help: "UNIX seconds of the newest bar_end this process has committed to fx_fixings.",
+	})
+	FXFixingsQuoteDisagrees = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "stellarindex_fx_fixings_quote_disagrees",
+		Help: "1 when an accepted fx_fixings bar sits outside the sanity band of the worker's guarded daily rate for the same ticker and day, else 0.",
+	}, []string{"ticker"})
+	FXFixingsWriteTxSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "stellarindex_fx_fixings_write_tx_seconds",
+		Help:    "Duration of one fx_fixings batch insert transaction.",
+		Buckets: prometheus.DefBuckets,
+	})
+	FXFixingsWriteErrorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "stellarindex_fx_fixings_write_errors_total",
+		Help: "fx_fixings batch inserts that failed.",
+	})
+	FXFixingsFetchErrorsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "stellarindex_fx_fixings_fetch_errors_total",
+		Help: "Per-ticker hourly-bar fetches from the FX vendor that failed.",
+	}, []string{"ticker"})
+	FXFixingsBarsRefusedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "stellarindex_fx_fixings_bars_refused_total",
+		Help: "Vendor FX bars the fx_fixings gate refused: close outside [0.5, 1.5] of the median of the preceding 96h of raw bars.",
+	}, []string{"ticker"})
 )
 
 // SourceUnrepresentableSymbolsTotal — per-source counter of oracle
@@ -2559,13 +2619,13 @@ var PriceAlertEvalTotal = prometheus.NewCounterVec(
 
 // PriceAlertEvaluatedTotal — one increment per alert per sweep, labelled
 // by that alert's outcome (pricealerts.AlertOutcomes): fired, not_crossed,
-// no_price, stale, cooling_down, no_subscriber, claim_lost, error, timeout.
+// already_fired, no_price, stale, cooling_down, no_subscriber, claim_lost, error, timeout.
 // PriceAlertEvalTotal's `partial_error` is one sample per sweep whether
 // one alert or all of them failed; this counter separates the two.
 var PriceAlertEvaluatedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_alert_evaluated_total",
-		Help: "Per-alert price-alert evaluation outcomes (fired|not_crossed|no_price|stale|cooling_down|no_subscriber|claim_lost|error|timeout).",
+		Help: "Per-alert price-alert evaluation outcomes (fired|not_crossed|already_fired|no_price|stale|cooling_down|no_subscriber|claim_lost|error|timeout).",
 	},
 	[]string{"outcome"},
 )
@@ -2977,6 +3037,14 @@ var MEVLakeOrderLookupSkippedTotal = prometheus.NewCounter(
 	},
 )
 
+// TxIndexTagLookupSkippedTotal counts tx hashes the trades.tx_index tagger left untagged because a tx_hash_index chunk failed.
+var TxIndexTagLookupSkippedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_tx_index_tag_lookup_skipped_total",
+		Help: "tx hashes the trades.tx_index tagger (live sweep and tag-tx-index) left untagged because a ClickHouse tx_hash_index lookup chunk failed; the page's rows stay NULL until a later pass resolves them.",
+	},
+)
+
 // OracleStreamRowsUnparsedTotal counts oracle_updates rows dropped by
 // LatestOracleStreams because their stored asset or quote text would not
 // parse as a canonical asset.
@@ -3013,12 +3081,12 @@ var OracleStreamRowsUnparsedTotal = prometheus.NewCounterVec(
 // operator's classic asset_key doesn't match what the decoder
 // stamps — typically an issuer mismatch or a missing entry.
 //
-// Cardinality: one source × two outcomes per registered source
+// Cardinality: one source × three outcomes per registered source
 // (low-tens of series at maturity).
 var TradeInsertsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_trade_inserts_total",
-		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no). Counts attempts, not unique-row inserts — on-conflict dedupe AND generation-guarded corrective updates are both invisible to this counter.",
+		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no|unroutable; unroutable = unpriced trade whose two classic legs share one issuer, excluded from the coverage alerts). Counts attempts, not unique-row inserts — on-conflict dedupe AND generation-guarded corrective updates are both invisible to this counter.",
 	},
 	[]string{"source", "usd_volume_populated"},
 )
@@ -4529,6 +4597,18 @@ var AggregatorSupplyRefreshTotal = prometheus.NewCounterVec(
 	[]string{"asset_key", "outcome"},
 )
 
+// SupplyWriteBandBreachTotal — supply snapshots written whose
+// total_supply moved more than supply.WriteBandFactor x up or down
+// against the previous one the same refresher wrote. The row is still
+// written; the counter is the prompt to check the asset's supply.
+var SupplyWriteBandBreachTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_supply_write_band_breach_total",
+		Help: "Supply snapshots written whose total_supply moved more than 10x against the previous snapshot, per (asset_key, direction). Direction ∈ {up, down}. The row is written regardless.",
+	},
+	[]string{"asset_key", "direction"},
+)
+
 // AggregatorSupplyRefreshDurationSeconds — latency histogram for
 // the supply.Refresher.Tick call per supply-refresh cycle. Pairs
 // with the per-asset_key counter above; this metric labels by
@@ -4966,13 +5046,14 @@ var ChLiveSinkLedgersTotal = prometheus.NewCounterVec(
 
 // ChLiveSinkReadUndercountTotal counts transactions the indexer's per-ledger
 // read paths could not fully decode, by kind: the lake extract
-// (tx_read_errors, tx_event_read_errors, entry_meta_unsupported) and the
+// (tx_read_errors, tx_event_read_errors, entry_meta_unsupported,
+// soroban_fee_meta_unsupported) and the
 // ledger_ingest_log census (the *_census kinds). Each add is the per-ledger
 // transaction count, not a per-ledger flag.
 var ChLiveSinkReadUndercountTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ch_live_sink_read_undercount_total",
-		Help: "Transactions/ledgers a read path could not fully decode, labelled by kind (tx_read_errors|tx_event_read_errors|entry_meta_unsupported|tx_read_errors_census|tx_event_read_errors_census).",
+		Help: "Transactions/ledgers a read path could not fully decode, labelled by kind (tx_read_errors|tx_event_read_errors|entry_meta_unsupported|soroban_fee_meta_unsupported|tx_read_errors_census|tx_event_read_errors_census).",
 	},
 	[]string{"kind"},
 )

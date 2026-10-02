@@ -83,11 +83,9 @@ describe('no hand-rolled price-ladder forks exist outside lib/format.ts', () => 
 // See SourceStatsPanel.test.tsx for a sibling case (the local
 // `formatCompact` fork) where the duplication *had* already drifted.
 
-// 2026-08-24 (FEC audit A3-F8): PoolsTable + PairsTable folded into the
-// shared VenueMarketsTable — the price-table set is now the two remaining
-// route tables + the shared component. (Their thin wrappers are pinned by
-// fec-consolidation-guards.test.ts; the repo-wide formatPairPrice importer
-// allowlist there is the fixed-list-proof version of this guard.)
+// The price-table set: two route tables + the shared VenueMarketsTable
+// (PoolsTable's thin wrapper is pinned by fec-consolidation-guards.test.ts,
+// whose repo-wide formatPairPrice allowlist is the fixed-list-proof guard).
 const files = [
   '../app/dexes/DexesView.tsx',
   '../app/markets/MarketsTable.tsx',

@@ -561,15 +561,18 @@ tests:
               component: ingestion
             exp_annotations:
               runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dispatcher-tx-skips.md"
-              summary: "Dispatcher skipped a transaction during ProcessLedger — silent data loss"
+              summary: "Dispatcher skipped a transaction or a ledger's evictions during ProcessLedger — silent data loss"
               description: |
                 One of stellarindex_dispatcher_tx_read_errors_total (malformed
                 tx skipped), stellarindex_dispatcher_tx_event_read_errors_total
                 (GetTransactionEvents failed — that tx's Soroban events
-                dropped), or stellarindex_dispatcher_entry_meta_unsupported_total
+                dropped), stellarindex_dispatcher_entry_meta_unsupported_total
                 (unhandled TransactionMeta version — that tx's apply-phase
                 entry changes, e.g. classic balance/trustline/offer/LP
-                updates, skipped) rose. Downstream this reads as an empty
+                updates, skipped), or
+                stellarindex_dispatcher_evicted_keys_unreadable_total (a
+                ledger's evicted keys failed to read — its state-archival
+                evictions skipped) rose. Downstream this reads as an empty
                 ledger, not a failure, so any nonzero increase needs eyes.
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dispatcher-tx-skips.md
       - eval_time: 15m
@@ -583,15 +586,18 @@ tests:
               component: ingestion
             exp_annotations:
               runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dispatcher-tx-skips.md"
-              summary: "Dispatcher skipped a transaction during ProcessLedger — silent data loss"
+              summary: "Dispatcher skipped a transaction or a ledger's evictions during ProcessLedger — silent data loss"
               description: |
                 One of stellarindex_dispatcher_tx_read_errors_total (malformed
                 tx skipped), stellarindex_dispatcher_tx_event_read_errors_total
                 (GetTransactionEvents failed — that tx's Soroban events
-                dropped), or stellarindex_dispatcher_entry_meta_unsupported_total
+                dropped), stellarindex_dispatcher_entry_meta_unsupported_total
                 (unhandled TransactionMeta version — that tx's apply-phase
                 entry changes, e.g. classic balance/trustline/offer/LP
-                updates, skipped) rose. Downstream this reads as an empty
+                updates, skipped), or
+                stellarindex_dispatcher_evicted_keys_unreadable_total (a
+                ledger's evicted keys failed to read — its state-archival
+                evictions skipped) rose. Downstream this reads as an empty
                 ledger, not a failure, so any nonzero increase needs eyes.
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dispatcher-tx-skips.md
       # The increment has left the 15m window: a tripwire reports an
@@ -617,15 +623,50 @@ tests:
               component: ingestion
             exp_annotations:
               runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dispatcher-tx-skips.md"
-              summary: "Dispatcher skipped a transaction during ProcessLedger — silent data loss"
+              summary: "Dispatcher skipped a transaction or a ledger's evictions during ProcessLedger — silent data loss"
               description: |
                 One of stellarindex_dispatcher_tx_read_errors_total (malformed
                 tx skipped), stellarindex_dispatcher_tx_event_read_errors_total
                 (GetTransactionEvents failed — that tx's Soroban events
-                dropped), or stellarindex_dispatcher_entry_meta_unsupported_total
+                dropped), stellarindex_dispatcher_entry_meta_unsupported_total
                 (unhandled TransactionMeta version — that tx's apply-phase
                 entry changes, e.g. classic balance/trustline/offer/LP
-                updates, skipped) rose. Downstream this reads as an empty
+                updates, skipped), or
+                stellarindex_dispatcher_evicted_keys_unreadable_total (a
+                ledger's evicted keys failed to read — its state-archival
+                evictions skipped) rose. Downstream this reads as an empty
+                ledger, not a failure, so any nonzero increase needs eyes.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dispatcher-tx-skips.md
+
+  - interval: 1m
+    name: dispatcher_tx_skips — an isolated evicted_keys_unreadable increment (fourth arm) also tickets
+    input_series:
+      - series: 'stellarindex_dispatcher_evicted_keys_unreadable_total{job="stellarindex_indexer",instance="r1:9100"}'
+        values: '0x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_ingestion_dispatcher_tx_skips
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dispatcher-tx-skips.md"
+              summary: "Dispatcher skipped a transaction or a ledger's evictions during ProcessLedger — silent data loss"
+              description: |
+                One of stellarindex_dispatcher_tx_read_errors_total (malformed
+                tx skipped), stellarindex_dispatcher_tx_event_read_errors_total
+                (GetTransactionEvents failed — that tx's Soroban events
+                dropped), stellarindex_dispatcher_entry_meta_unsupported_total
+                (unhandled TransactionMeta version — that tx's apply-phase
+                entry changes, e.g. classic balance/trustline/offer/LP
+                updates, skipped), or
+                stellarindex_dispatcher_evicted_keys_unreadable_total (a
+                ledger's evicted keys failed to read — its state-archival
+                evictions skipped) rose. Downstream this reads as an empty
                 ledger, not a failure, so any nonzero increase needs eyes.
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dispatcher-tx-skips.md
 

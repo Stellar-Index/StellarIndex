@@ -3,11 +3,8 @@
 import { useState } from 'react';
 
 /**
- * useCursorPager — the cursor-stack pagination state machine (FEC audit
- * A3-F3): next pushes the current cursor, prev pops, changing any
- * order/filter resets. This existed byte-identically in DexesView,
- * PoolsTable, and PairsTable; extracted in the pre-drift window so the
- * fourth table can't fork it.
+ * useCursorPager — the cursor-stack pagination state machine: next
+ * pushes the current cursor, prev pops, changing any order/filter resets.
  */
 export function useCursorPager() {
   const [cursor, setCursor] = useState<string>('');

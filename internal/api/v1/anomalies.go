@@ -31,7 +31,7 @@ type AnomalyReader interface {
 // implements it.
 type DivergenceReader interface {
 	ListDivergenceLatest(ctx context.Context, sinceDays int, firingOnly bool, limit int) ([]timescale.DivergenceRow, error)
-	ListDivergenceSeries(ctx context.Context, assetID, quoteID, reference string, sinceDays int) ([]timescale.DivergenceSeriesPoint, error)
+	ListDivergenceSeries(ctx context.Context, assetID, quoteID string, sinceDays int) ([]timescale.DivergenceSeriesPoint, error)
 }
 
 // ── /v1/anomalies ────────────────────────────────────────────────
@@ -233,37 +233,50 @@ func freezeEventView(e timescale.FreezeEventRow) FreezeEventView {
 
 // DivergenceView is the wire response for GET /v1/divergence.
 type DivergenceView struct {
-	Observations []DivergenceObsV `json:"observations"`
+	Pairs []DivergencePairV `json:"pairs"`
 }
 
-// DivergenceObsV mirrors the latest divergence_observations row per
-// (asset, quote, reference). Prices + delta are decimal strings.
-type DivergenceObsV struct {
-	AssetID          string `json:"asset_id"`
-	QuoteID          string `json:"quote_id"`
-	Reference        string `json:"reference"`
-	ObservedAt       string `json:"observed_at"`
-	ObservedAtLedger int64  `json:"observed_at_ledger"`
-	OurPrice         string `json:"our_price"`
-	RefPrice         string `json:"ref_price"`
-	DeltaPct         string `json:"delta_pct"`
-	Status           string `json:"status"`
+// DivergencePairV is one market's latest comparison against every
+// external reference. References are served only grouped beside our
+// price, never as a per-provider row on their own. Prices + deltas are
+// decimal strings.
+type DivergencePairV struct {
+	AssetID string `json:"asset_id"`
+	QuoteID string `json:"quote_id"`
+	// OurPrice, ObservedAt and ObservedAtLedger are the pair's newest
+	// comparison across its references.
+	OurPrice         string           `json:"our_price"`
+	ObservedAt       string           `json:"observed_at"`
+	ObservedAtLedger int64            `json:"observed_at_ledger"`
+	References       []DivergenceRefV `json:"references"`
+}
+
+// DivergenceRefV is one reference's latest comparison for a pair.
+type DivergenceRefV struct {
+	Reference string `json:"reference"`
+	RefPrice  string `json:"ref_price"`
+	DeltaPct  string `json:"delta_pct"`
+	Status    string `json:"status"`
+	// ObservedAt is when this reference was last compared: the pair's
+	// observed_at unless the reference missed later ticks, in which case
+	// delta_pct is against our price at this earlier time.
+	ObservedAt string `json:"observed_at"`
 	// RefObservedAt is when the reference observed RefPrice; null on rows
 	// recorded before the reference time was stored.
 	RefObservedAt *string `json:"ref_observed_at"`
 }
 
 // handleDivergence serves GET /v1/divergence — the current
-// cross-reference divergence board: the latest observation per
-// (asset, quote, reference) within `?window_days=` (default 7),
-// widest |delta_pct| first. `?firing=true` restricts to references
-// whose latest comparison breached threshold; `?limit=` (default 100,
-// max 500).
+// cross-reference divergence board: per (asset, quote) pair, our price
+// beside the latest comparison against each reference within
+// `?window_days=` (default 7), pairs with the widest |delta_pct| first.
+// `?firing=true` keeps pairs with at least one firing reference;
+// `?limit=` counts pairs (default 100, max 500).
 //
 // 200 + empty payload when no reader is wired.
 func (s *Server) handleDivergence(w http.ResponseWriter, r *http.Request) {
 	if s.divergences == nil {
-		writeJSON(w, DivergenceView{Observations: []DivergenceObsV{}}, Flags{})
+		writeJSON(w, DivergenceView{Pairs: []DivergencePairV{}}, Flags{})
 		return
 	}
 	limit, ok := parseExplorerLimit(w, r, 100, 500)
@@ -285,28 +298,50 @@ func (s *Server) handleDivergence(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	// our_price is the market's aggregated price, and ref_price with
-	// delta_pct restates it: a row for a market /v1/price withholds is omitted.
+	writeJSON(w, s.groupDivergenceRows(r.Context(), rows), Flags{})
+}
+
+// groupDivergenceRows folds per-reference rows into one entry per pair,
+// keeping the reader's pair order. A pair /v1/price withholds is omitted:
+// our_price is that market's price, and each ref_price with its delta_pct
+// restates it.
+func (s *Server) groupDivergenceRows(ctx context.Context, rows []timescale.DivergenceRow) DivergenceView {
 	withheld := s.storedMarketGate(divergenceGateSurface)
-	out := DivergenceView{Observations: make([]DivergenceObsV, 0, len(rows))}
+	out := DivergenceView{Pairs: []DivergencePairV{}}
+	idx := make(map[[2]string]int)
+	newest := make(map[[2]string]time.Time)
 	for _, d := range rows {
-		if w, _ := withheld(r.Context(), d.AssetID, d.QuoteID); w {
+		if w, _ := withheld(ctx, d.AssetID, d.QuoteID); w {
 			continue
 		}
-		out.Observations = append(out.Observations, DivergenceObsV{
-			AssetID:          d.AssetID,
-			QuoteID:          d.QuoteID,
-			Reference:        d.Reference,
-			ObservedAt:       d.ObservedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
-			ObservedAtLedger: d.ObservedAtLedger,
-			OurPrice:         d.OurPrice,
-			RefPrice:         d.RefPrice,
-			DeltaPct:         d.DeltaPct,
-			Status:           d.Status,
-			RefObservedAt:    divergenceRefObservedAt(d.RefObservedAt),
+		key := [2]string{d.AssetID, d.QuoteID}
+		i, seen := idx[key]
+		if !seen {
+			i = len(out.Pairs)
+			idx[key] = i
+			out.Pairs = append(out.Pairs, DivergencePairV{AssetID: d.AssetID, QuoteID: d.QuoteID})
+		}
+		p := &out.Pairs[i]
+		if !seen || d.ObservedAt.After(newest[key]) {
+			newest[key] = d.ObservedAt
+			p.OurPrice = d.OurPrice
+			p.ObservedAt = formatDivergenceTime(d.ObservedAt)
+			p.ObservedAtLedger = d.ObservedAtLedger
+		}
+		p.References = append(p.References, DivergenceRefV{
+			Reference:     d.Reference,
+			RefPrice:      d.RefPrice,
+			DeltaPct:      d.DeltaPct,
+			Status:        d.Status,
+			ObservedAt:    formatDivergenceTime(d.ObservedAt),
+			RefObservedAt: divergenceRefObservedAt(d.RefObservedAt),
 		})
 	}
-	writeJSON(w, out, Flags{})
+	return out
+}
+
+func formatDivergenceTime(t time.Time) string {
+	return t.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
 }
 
 // divergenceRefObservedAt renders a row's reference time in observed_at's
@@ -360,16 +395,15 @@ func (s *Server) storedMarketGate(surface string) func(ctx context.Context, asse
 // ── /v1/divergence/series ────────────────────────────────────────
 
 // DivergenceSeriesView is the wire response for GET
-// /v1/divergence/series — one (pair, reference) Δ% history.
+// /v1/divergence/series — one pair's Δ% history against every reference.
 type DivergenceSeriesView struct {
-	AssetID   string `json:"asset_id"`
-	QuoteID   string `json:"quote_id"`
-	Reference string `json:"reference"`
-	Days      int    `json:"days"`
-	// BucketSeconds is the downsampling width: each point is the
-	// LAST observation inside its bucket (firing is bucket-wide
-	// any-breach). Surfaced so clients render the series at its
-	// honest resolution rather than assuming raw ticks.
+	AssetID string `json:"asset_id"`
+	QuoteID string `json:"quote_id"`
+	Days    int    `json:"days"`
+	// BucketSeconds is the downsampling width: each reference's value is
+	// its LAST observation inside the bucket (firing is bucket-wide
+	// any-breach). Surfaced so clients render the series at its honest
+	// resolution rather than assuming raw ticks.
 	BucketSeconds int `json:"bucket_seconds"`
 	// ThresholdPct is the operator's divergence alert threshold
 	// (percent, config `divergence.threshold_pct`) — the band a
@@ -379,14 +413,21 @@ type DivergenceSeriesView struct {
 	Points       []DivergenceSeriesPointV `json:"points"`
 }
 
-// DivergenceSeriesPointV is one bucket. Prices + delta are decimal
-// strings (ADR-0003).
+// DivergenceSeriesPointV is one bucket: our price beside each
+// reference's comparison. Prices + deltas are decimal strings (ADR-0003).
 type DivergenceSeriesPointV struct {
-	T        string `json:"t"`
-	DeltaPct string `json:"delta_pct"`
-	OurPrice string `json:"our_price"`
-	RefPrice string `json:"ref_price"`
-	Firing   bool   `json:"firing,omitempty"`
+	T string `json:"t"`
+	// OurPrice is from the bucket's newest observation across references.
+	OurPrice   string                 `json:"our_price"`
+	References []DivergenceSeriesRefV `json:"references"`
+}
+
+// DivergenceSeriesRefV is one reference's last comparison in a bucket.
+type DivergenceSeriesRefV struct {
+	Reference string `json:"reference"`
+	RefPrice  string `json:"ref_price"`
+	DeltaPct  string `json:"delta_pct"`
+	Firing    bool   `json:"firing,omitempty"`
 }
 
 // divergenceSeriesDays whitelists the `?days=` windows the series
@@ -396,29 +437,17 @@ type DivergenceSeriesPointV struct {
 // unbounded history slice.
 var divergenceSeriesDays = map[int]bool{1: true, 7: true, 30: true}
 
-// divergenceReferences mirrors the divergence_observations.reference
-// CHECK constraint (migration 0019, widened by 0148) — the only values
-// that can exist. Rejecting everything else up front keeps garbage
-// params from ever reaching the index scan. Keep in lockstep with the
-// CHECK: a source admitted to the table but missing here is invisible
-// to /v1/divergence/series (the 0148 panel's finding).
-var divergenceReferences = map[string]bool{
-	"chainlink": true, "coingecko": true,
-	"reflector-cex": true, "reflector-fx": true, "reflector-dex": true,
-	"redstone": true, "band": true,
-	"synthetic-usd-cross": true,
-}
-
 // handleDivergenceSeries serves GET /v1/divergence/series — the Δ%
-// time-series for ONE (pair, reference): `?pair=<asset_id>~<quote_id>`
-// (the markets slug convention), `?reference=` (one of the board's
-// reference names), `?days=` ∈ {1, 7, 30} (default 7). The history
+// time-series for ONE pair against every reference:
+// `?pair=<asset_id>~<quote_id>` (the markets slug convention), `?days=`
+// ∈ {1, 7, 30} (default 7). There is no per-reference selector: a
+// reference's prices are served only beside the others. The history
 // companion to the /v1/divergence board.
 //
 // Cache policy: private, no-store, set by an explicit policyForPath arm
 // it shares with its sibling /v1/divergence and with /v1/anomalies.
 //
-// 200 + empty points when no reader is wired or the triple has no
+// 200 + empty points when no reader is wired or the pair has no
 // observations in the window.
 func (s *Server) handleDivergenceSeries(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -430,11 +459,10 @@ func (s *Server) handleDivergenceSeries(w http.ResponseWriter, r *http.Request) 
 			"pair must be <asset_id>~<quote_id>, e.g. crypto:BTC~fiat:USD")
 		return
 	}
-	reference := q.Get("reference")
-	if !divergenceReferences[reference] {
+	if q.Has("reference") {
 		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-parameter",
-			"Invalid reference", http.StatusBadRequest,
-			"reference must be one of: chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band, synthetic-usd-cross")
+			"Unsupported reference parameter", http.StatusBadRequest,
+			"the series carries every reference beside our price; one reference cannot be selected alone. Omit reference.")
 		return
 	}
 	days := 7
@@ -449,7 +477,7 @@ func (s *Server) handleDivergenceSeries(w http.ResponseWriter, r *http.Request) 
 	}
 
 	out := DivergenceSeriesView{
-		AssetID: base, QuoteID: quote, Reference: reference, Days: days,
+		AssetID: base, QuoteID: quote, Days: days,
 		BucketSeconds: int(timescale.DivergenceSeriesBucket(days).Seconds()),
 		ThresholdPct:  s.divergenceThresholdPct,
 		Points:        []DivergenceSeriesPointV{},
@@ -461,7 +489,7 @@ func (s *Server) handleDivergenceSeries(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, out, Flags{})
 		return
 	}
-	points, err := s.divergences.ListDivergenceSeries(r.Context(), base, quote, reference, days)
+	points, err := s.divergences.ListDivergenceSeries(r.Context(), base, quote, days)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -470,17 +498,36 @@ func (s *Server) handleDivergenceSeries(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	out.Points = make([]DivergenceSeriesPointV, len(points))
-	for i, p := range points {
-		out.Points[i] = DivergenceSeriesPointV{
-			T:        p.Bucket.UTC().Format("2006-01-02T15:04:05Z07:00"),
-			DeltaPct: p.DeltaPct,
-			OurPrice: p.OurPrice,
-			RefPrice: p.RefPrice,
-			Firing:   p.Firing,
-		}
-	}
+	out.Points = groupDivergenceSeries(points)
 	writeJSON(w, out, Flags{})
+}
+
+// groupDivergenceSeries folds (bucket, reference) cells into one point
+// per bucket in the reader's ascending order.
+func groupDivergenceSeries(points []timescale.DivergenceSeriesPoint) []DivergenceSeriesPointV {
+	out := []DivergenceSeriesPointV{}
+	idx := make(map[time.Time]int)
+	newest := make(map[time.Time]time.Time)
+	for _, p := range points {
+		b := p.Bucket.UTC()
+		i, seen := idx[b]
+		if !seen {
+			i = len(out)
+			idx[b] = i
+			out = append(out, DivergenceSeriesPointV{T: b.Format("2006-01-02T15:04:05Z07:00")})
+		}
+		if !seen || p.LastAt.After(newest[b]) {
+			newest[b] = p.LastAt
+			out[i].OurPrice = p.OurPrice
+		}
+		out[i].References = append(out[i].References, DivergenceSeriesRefV{
+			Reference: p.Reference,
+			RefPrice:  p.RefPrice,
+			DeltaPct:  p.DeltaPct,
+			Firing:    p.Firing,
+		})
+	}
+	return out
 }
 
 // divergenceSeriesWithheld writes the response and reports true when the

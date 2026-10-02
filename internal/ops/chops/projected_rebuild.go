@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"sort"
@@ -26,6 +27,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/projector"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -263,7 +265,47 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		Heartbeat: hb,
 	})
 	printProjectedRebuildSummary(*sourceName, fromLedger, toLedger, *write, result)
-	return finishProjectedRebuild(hb, result, runErr, ctx.Err() != nil)
+	interrupted := ctx.Err() != nil
+	// After the run, even a failed or interrupted one: any window it wrote is
+	// below the fold checkpoint. A failed reset fails the job, interrupted or not.
+	if rerr := resetSEP41RollupAfterRebuild(ctx, os.Stderr, store, *sourceName, *write); rerr != nil {
+		runErr, interrupted = errors.Join(runErr, rerr), false
+	}
+	return finishProjectedRebuild(hb, result, runErr, interrupted)
+}
+
+// sep41RollupResetter is the one store method resetSEP41RollupAfterRebuild needs.
+type sep41RollupResetter interface {
+	ResetSEP41SupplyRollupFold(ctx context.Context, contractIDs []string) (int64, error)
+}
+
+// sep41RollupResetTimeout bounds the post-run reset, which runs on a context
+// detached from SIGINT so an interrupted run still resets what it wrote. It
+// re-folds every watched contract's history, so it is sized for cold folds.
+const sep41RollupResetTimeout = 10 * time.Minute
+
+// resetSEP41RollupAfterRebuild resets the sep41_supply_rollup fold after a
+// -write rebuild of sep41_supply. The rebuild only writes history behind the
+// live tail, i.e. at or below the fold checkpoint, and the rollup worker only
+// folds `ledger > last_ledger`, so without a reset the rewritten rows never
+// reach served supply. FULL reset: a source-level rebuild covers every
+// watched contract. Other sources and dry-run never touch the fold.
+func resetSEP41RollupAfterRebuild(ctx context.Context, w io.Writer, store sep41RollupResetter, source string, write bool) error {
+	if source != sep41supply.SourceName {
+		return nil
+	}
+	if !write {
+		_, _ = fmt.Fprintf(w, "projected-rebuild: dry-run: a -write run would then ResetSEP41SupplyRollupFold(nil) — the rebuilt range sits behind the sep41_supply_rollup fold checkpoint, and the fold only ever looks ABOVE it\n")
+		return nil
+	}
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sep41RollupResetTimeout)
+	defer cancel()
+	n, err := store.ResetSEP41SupplyRollupFold(rctx, nil)
+	if err != nil {
+		return fmt.Errorf("reset sep41_supply_rollup fold after rebuild (served SEP-41 supply misses every row this run wrote at or below the fold checkpoint until the fold is reset; re-run or call ResetSEP41SupplyRollupFold): %w", err)
+	}
+	_, _ = fmt.Fprintf(w, "projected-rebuild: reset %d sep41_supply_rollup fold row(s) [FULL], each re-folded from zero in place (genesis baseline preserved)\n", n)
+	return nil
 }
 
 // finishProjectedRebuild records the verdict on the job heartbeat as well as

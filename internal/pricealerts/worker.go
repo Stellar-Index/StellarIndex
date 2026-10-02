@@ -40,6 +40,7 @@ const maxPriceStaleness = 15 * time.Minute
 const (
 	outcomeFired        = "fired"
 	outcomeNotCrossed   = "not_crossed"
+	outcomeAlreadyFired = "already_fired"
 	outcomeNoPrice      = "no_price"
 	outcomeStale        = "stale"
 	outcomeCoolingDown  = "cooling_down"
@@ -51,8 +52,8 @@ const (
 
 // AlertOutcomes is the complete per-alert outcome vocabulary.
 var AlertOutcomes = []string{
-	outcomeFired, outcomeNotCrossed, outcomeNoPrice, outcomeStale, outcomeCoolingDown,
-	outcomeNoSubscriber, outcomeClaimLost, outcomeError, outcomeTimeout,
+	outcomeFired, outcomeNotCrossed, outcomeAlreadyFired, outcomeNoPrice, outcomeStale,
+	outcomeCoolingDown, outcomeNoSubscriber, outcomeClaimLost, outcomeError, outcomeTimeout,
 }
 
 // AlertStore is the read/mark seam the evaluator needs from the
@@ -61,6 +62,7 @@ var AlertOutcomes = []string{
 type AlertStore interface {
 	ListEnabledPriceAlerts(ctx context.Context) ([]platform.PriceAlert, error)
 	ClaimPriceAlertFire(ctx context.Context, id uuid.UUID, firedAt time.Time) (bool, error)
+	RearmPriceAlert(ctx context.Context, id uuid.UUID, lastFiredAt time.Time) (bool, error)
 }
 
 // WebhookEnqueuer is the account-scoped delivery seam. The evaluator
@@ -92,7 +94,7 @@ type Options struct {
 }
 
 // Worker sweeps enabled price alerts on a ticker and enqueues
-// `price.alert` webhook deliveries when a threshold is crossed.
+// `price.alert` webhook deliveries once per threshold crossing.
 type Worker struct {
 	alerts       AlertStore
 	webhooks     WebhookEnqueuer
@@ -203,8 +205,8 @@ func (w *Worker) sweepOnce(ctx context.Context) string {
 // evaluateOne evaluates a single alert against the latest closed VWAP and
 // returns its per-alert outcome. The error is non-nil only for a genuine
 // failure (bad row, price-read, claim or enqueue error, or the alert's
-// deadline) — a benign no-price / not-crossed / cooling-down /
-// no-subscriber / claim-lost outcome returns nil.
+// deadline) — a benign no-price / not-crossed / already-fired /
+// cooling-down / no-subscriber / claim-lost outcome returns nil.
 //
 // The reads and the fan-out each get their own alertTimeout budget from
 // the sweep context. A crossing is claimed before it is enqueued, so a
@@ -240,8 +242,8 @@ func (w *Worker) failureOutcome(stageCtx context.Context, err error) (string, er
 	return outcomeError, err
 }
 
-// crossing is an alert whose condition holds, outside cooldown, with at
-// least one subscribed webhook to deliver it to.
+// crossing is an armed alert whose condition holds, outside cooldown, with
+// at least one subscribed webhook to deliver it to.
 type crossing struct {
 	base, quote canonical.Asset
 	priceStr    string
@@ -307,11 +309,8 @@ func (w *Worker) checkCrossing(ctx context.Context, a platform.PriceAlert, now t
 	if err != nil {
 		return nil, "", err
 	}
-	if !crossed {
-		return nil, outcomeNotCrossed, nil
-	}
-	if w.coolingDown(a, now) {
-		return nil, outcomeCoolingDown, nil
+	if outcome, err := w.edgeGate(ctx, a, crossed, now); outcome != "" || err != nil {
+		return nil, outcome, err
 	}
 
 	hooks, err := w.subscribedHooks(ctx, a.AccountID)
@@ -335,18 +334,9 @@ func (w *Worker) fire(ctx context.Context, a platform.PriceAlert, now time.Time,
 	if err != nil {
 		return "", fmt.Errorf("build payload: %w", err)
 	}
-	// Claim the crossing BEFORE enqueuing (NTF-PA-01). The persisted
-	// LastFiredAt is this crossing's idempotency key: when the mark only
-	// landed AFTER every EnqueueDelivery was durable, a transient mark
-	// failure left LastFiredAt unchanged and the next tick re-delivered
-	// the whole crossing — brand-new delivery ids the customer can't dedup
-	// on the X-StellarIndex-Delivery-Id header, silently breaking the
-	// once-per-cooldown-window guarantee. Claiming first means a failure
-	// mid-fan-out cannot re-notify the webhooks that already received the
-	// crossing: the cooldown gate reads the durable mark on the next tick.
-	// A claim failure here aborts before any EnqueueDelivery, so nothing is
-	// sent twice; the residual trade is at-most-once on the narrow
-	// claim-ok/enqueue-fail window, which we accept over duplicate fan-out.
+	// Claim the crossing BEFORE enqueuing (NTF-PA-01): the claim disarms the
+	// alert, so a mid-fan-out failure never re-notifies a webhook (once per
+	// crossing). A fan-out that enqueued nothing re-arms below, so it retries.
 	//
 	// The claim is CONDITIONAL in SQL, and that is what makes coolingDown
 	// above an optimisation rather than the guarantee: coolingDown reads
@@ -367,12 +357,42 @@ func (w *Worker) fire(ctx context.Context, a platform.PriceAlert, now time.Time,
 		return outcomeClaimLost, nil
 	}
 	enqueued, err := w.enqueueAll(ctx, c.hooks, payload)
+	if enqueued == 0 && err != nil {
+		// CAS on the stamp the claim just wrote, on a fresh budget: the usual
+		// cause is the fan-out exhausting ctx, which would sink the re-arm too.
+		rearmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.alertTimeout)
+		defer cancel()
+		if _, rerr := w.alerts.RearmPriceAlert(rearmCtx, a.ID, now); rerr != nil {
+			err = errors.Join(err, fmt.Errorf("re-arm after failed fan-out: %w", rerr))
+		}
+	}
 	w.logger.Info("price alert fired",
 		"alert_id", a.ID, "account_id", a.AccountID,
 		"pair", c.base.String()+"/"+c.quote.String(),
 		"condition", string(a.Condition), "threshold", a.Threshold,
 		"observed", c.priceStr, "deliveries", enqueued, "targets", len(c.hooks))
 	return outcomeFired, err
+}
+
+// edgeGate makes the alert edge-triggered: it fires on the first fresh
+// price where the condition holds, then stays disarmed until a fresh price
+// shows the condition cleared. Only fresh prices reach here, so a stale or
+// missing bucket neither fires nor re-arms. An empty outcome means "fire".
+func (w *Worker) edgeGate(ctx context.Context, a platform.PriceAlert, crossed bool, now time.Time) (string, error) {
+	switch {
+	case !crossed && a.Disarmed:
+		if _, err := w.alerts.RearmPriceAlert(ctx, a.ID, a.LastFiredAt); err != nil {
+			return "", fmt.Errorf("re-arm: %w", err)
+		}
+		return outcomeNotCrossed, nil
+	case !crossed:
+		return outcomeNotCrossed, nil
+	case a.Disarmed:
+		return outcomeAlreadyFired, nil
+	case w.coolingDown(a, now):
+		return outcomeCoolingDown, nil
+	}
+	return "", nil
 }
 
 // coolingDown reports whether the alert fired recently enough that its

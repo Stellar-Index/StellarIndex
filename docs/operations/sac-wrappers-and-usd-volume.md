@@ -95,7 +95,7 @@ stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
   -tier exact -fill-null -sources aquarius,soroswap,phoenix,comet \
   -from <first-day> -to <last-day>
 # apply on r1 under the heavy wrapper; add -chunks for any window older
-# than the trades compression policy's 7 days
+# than the trades compression policy's 15 days
 set -a; . /etc/default/stellarindex; set +a
 /usr/local/sbin/run-heavy-job.sh usd-sac-fill \
   /usr/local/bin/stellarindex-ops usd-volume-restamp \

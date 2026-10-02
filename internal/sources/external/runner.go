@@ -438,6 +438,28 @@ func forwardTrades(
 	}
 }
 
+// pollOutcome scores one PollOnce result for the polls_total metric. Only
+// "success" and "skipped" refresh the staleness clock: (nil, nil, nil) is a
+// poller that reached upstream and found nothing new (chainlink between hourly
+// rounds, a cooldown after a throttle), while non-nil but empty is an answer
+// with nothing usable in it (a renamed slug decodes to {}). "idle" is a poller
+// none of whose configured pairs it can request: config, not an upstream
+// failure, and never fresh.
+func pollOutcome(trades []canonical.Trade, updates []canonical.OracleUpdate, err error) string {
+	switch {
+	case errors.Is(err, ErrNoApplicablePairs):
+		return "idle"
+	case err != nil:
+		return "error"
+	case trades == nil && updates == nil:
+		return "skipped"
+	case len(trades) == 0 && len(updates) == 0:
+		return "empty"
+	default:
+		return "success"
+	}
+}
+
 // runPoller drives a single Poller at its declared cadence. On each
 // tick, PollOnce is called; returned trades land as TradeEvents and
 // updates as UpdateEvents on the shared sink. An error from PollOnce
@@ -457,34 +479,26 @@ func runPoller(
 ) {
 	name := spec.Poller.Name()
 	interval := spec.Poller.PollInterval()
+	warnedIdle := false
 
 	doPoll := func() {
 		trades, updates, err := spec.Poller.PollOnce(ctx, spec.Pairs)
-		if err != nil {
-			obs.ExternalPollerPollsTotal.WithLabelValues(name, "error").Inc()
-			logger.Warn("poller error",
-				"source", name, "err", err)
+		outcome := pollOutcome(trades, updates, err)
+		obs.ExternalPollerPollsTotal.WithLabelValues(name, outcome).Inc()
+		switch outcome {
+		case "error":
+			logger.Warn("poller error", "source", name, "err", err)
+			return
+		case "empty":
+			logger.Warn("poller reached upstream but produced no rows", "source", name)
+			return
+		case "idle":
+			if !warnedIdle {
+				logger.Warn("poller has no applicable pairs; it will never produce rows", "source", name)
+				warnedIdle = true
+			}
 			return
 		}
-		// (nil trades, nil updates, nil err) is the convention for
-		// "poller skipped this tick" — used by per-poller cooldown
-		// after rate-limit (e.g. coingecko backoff) AND by sources
-		// like chainlink that frequently see "no new round" between
-		// 1-hour feed updates. Pre-2026-06-01 this branch returned
-		// without updating LastSuccessUnix, so a healthy chainlink
-		// poller (polling every 30s, but feeds updating hourly)
-		// looked stale to `stellarindex_external_poller_stale`
-		// within ~10-15 min. The outcome counter still bumps
-		// "skipped" so operators can tell skip from success; but
-		// the timestamp bumps too because the poller is alive +
-		// reaching upstream — a skip means "we polled and there
-		// was nothing new", not "we couldn't poll."
-		if trades == nil && updates == nil {
-			obs.ExternalPollerPollsTotal.WithLabelValues(name, "skipped").Inc()
-			obs.ExternalPollerLastSuccessUnix.WithLabelValues(name).Set(float64(time.Now().Unix()))
-			return
-		}
-		obs.ExternalPollerPollsTotal.WithLabelValues(name, "success").Inc()
 		obs.ExternalPollerLastSuccessUnix.WithLabelValues(name).Set(float64(time.Now().Unix()))
 		for _, t := range trades {
 			select {
