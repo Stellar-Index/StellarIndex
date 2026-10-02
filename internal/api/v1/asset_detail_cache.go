@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
 // assetDetailEntry holds a fully-rendered /v1/assets/{id} response
@@ -17,6 +19,9 @@ import (
 type assetDetailEntry struct {
 	body     []byte
 	cachedAt time.Time
+	// degraded: the body was built over a failed or slow read, so a replay
+	// must not carry the route's shared-cache band.
+	degraded bool
 }
 
 // assetDetailResponseCache is the response-level cache for
@@ -102,7 +107,7 @@ const assetDetailCacheMaxEntries = 4096
 // Callers should pass an already-marshalled body (flags already
 // encoded into it by renderAssetDetailEnvelope); this avoids holding
 // the lock during JSON encoding.
-func (c *assetDetailResponseCache) put(assetID string, body []byte) {
+func (c *assetDetailResponseCache) put(assetID string, body []byte, degraded bool) {
 	if c == nil || c.ttl <= 0 {
 		return
 	}
@@ -114,6 +119,7 @@ func (c *assetDetailResponseCache) put(assetID string, body []byte) {
 	c.entries[assetID] = &assetDetailEntry{
 		body:     body,
 		cachedAt: time.Now(),
+		degraded: degraded,
 	}
 }
 
@@ -182,6 +188,9 @@ func renderAssetDetailEnvelope(detail AssetDetail, flags Flags) ([]byte, error) 
 // `ttl` ago. Per ADR-0015's closed-bucket-only contract that's
 // well within the allowed staleness envelope.
 func writeCachedAssetDetail(w http.ResponseWriter, entry *assetDetailEntry) {
+	if entry.degraded {
+		middleware.MarkDegraded(w)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Stellarindex-Cache", "HIT")
 	_, _ = w.Write(entry.body)

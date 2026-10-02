@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -711,7 +712,14 @@ func (s *Server) handleDiagnosticsBackups(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=60")
+	if snap.SourceStatus != "ok" {
+		middleware.MarkDegraded(w)
+	}
 	// flags.stale mirrors the roll-up so polling clients can spot a
 	// non-green document without parsing every verdict.
-	writeJSON(w, snap, Flags{Stale: snap.Freshness.Overall != freshnessOK})
+	writeEnvelope(w, Envelope{
+		Data:          snap,
+		Flags:         Flags{Stale: snap.Freshness.Overall != freshnessOK},
+		staleIsReport: true,
+	})
 }

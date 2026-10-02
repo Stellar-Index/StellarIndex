@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
@@ -156,6 +157,9 @@ func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 	}
 
 	displays, displaysOK := s.poolReservesDisplays(ctx, states)
+	if !displaysOK {
+		middleware.MarkDegraded(w)
+	}
 
 	out := make([]PoolReservesRow, 0, len(states))
 	for _, pair := range pairs {

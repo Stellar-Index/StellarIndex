@@ -192,7 +192,7 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 		if clientAborted(r, err) {
 			return
 		}
-		s.logger.Warn("BlendReserveConfigs failed", "err", err, "pool", pool)
+		s.warnDegradedRead(w, "BlendReserveConfigs failed", "err", err, "pool", pool)
 		configs = nil
 	}
 	states, err := s.explorer.BlendPoolReserves(ctx, pool, version, assets, configs)

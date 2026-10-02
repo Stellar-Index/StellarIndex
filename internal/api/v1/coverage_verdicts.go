@@ -384,7 +384,9 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 	view.LaggingSources = laggingSources(view.Sources)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
-	writeJSON(w, view, Flags{Stale: verdictsStale})
+	// An overdue verdict is the published state until the next run, not a
+	// failed read, so the body keeps its band.
+	writeEnvelope(w, Envelope{Data: view, Flags: Flags{Stale: verdictsStale}, staleIsReport: true})
 }
 
 // completenessVerdicts is the one read of the completeness verdict rows

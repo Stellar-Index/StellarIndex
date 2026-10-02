@@ -1647,6 +1647,9 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	m := s.cachedRWAMembership(r.Context())
+	if m.readFailed {
+		middleware.MarkDegraded(w)
+	}
 	view.Refused = rwaRefusalRows(m.refusals)
 	view.UnreachedEntities = rwaUnreachedRows(m.unreached)
 	// Dated BEFORE the unavailable branch below, because a response

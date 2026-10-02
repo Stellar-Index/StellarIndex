@@ -181,5 +181,6 @@ func (h *Handler) AccountOperations(w http.ResponseWriter, r *http.Request) {
 	if asOfOK {
 		out.AsOfLedger = asOf
 	}
+	markDegradedIf(w, out.CoverageNote != "")
 	h.WriteJSON(w, out, stale)
 }

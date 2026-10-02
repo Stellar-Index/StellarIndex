@@ -116,6 +116,7 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 		eventsPartial = true
 	}
 
+	markDegradedIf(w, resultsPartial || eventsPartial)
 	h.WriteJSON(w, TxDetailView{
 		TxSummaryView: txSummaryView(tx),
 		Operations:    buildTxOpViews(ops, results, tx.Successful, tx.ResultCode),

@@ -642,7 +642,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		// Best-effort like the sparkline path: a failure ships the
 		// page without inception rather than 5xx-ing a listing.
 		if firsts, fErr := reader.FirstTradeBatch(mCtx, pairs); fErr != nil {
-			s.logger.Warn("markets inception batch failed", "err", fErr)
+			s.warnDegradedRead(w, "markets inception batch failed", "err", fErr)
 		} else {
 			for i, m := range rows {
 				if t, ok := firsts[m.Base+"|"+m.Quote]; ok {
@@ -666,7 +666,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		// failure here logs at WARN and the response ships without
 		// sparkline data).
 		if hist, hErr := reader.GetPairsVolumeHistory24hBatch(mCtx, pairs); hErr != nil {
-			s.logger.Warn("markets sparkline batch failed", "err", hErr)
+			s.warnDegradedRead(w, "markets sparkline batch failed", "err", hErr)
 		} else {
 			for i, m := range rows {
 				key := m.Base + "|" + m.Quote

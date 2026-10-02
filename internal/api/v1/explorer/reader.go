@@ -517,6 +517,14 @@ func (h *Handler) writeJSONAt(w http.ResponseWriter, data any, stale bool, asOf 
 	h.WriteJSON(w, data, stale)
 }
 
+// markDegradedIf drops the route's cache band when a best-effort read behind
+// the body failed: the body says so, and a shared cache must not replay it.
+func markDegradedIf(w http.ResponseWriter, degraded bool) {
+	if degraded {
+		middleware.MarkDegraded(w)
+	}
+}
+
 // lakeTip is LakeWatermark with an unwired func reading as no lake to judge
 // (not stale, no ledger), the same verdict the server gives an unwired reader.
 func (h *Handler) lakeTip(ctx context.Context) (ledger uint32, stale, ok bool) {

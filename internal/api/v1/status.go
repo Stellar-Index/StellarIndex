@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -601,7 +602,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		out.FreshnessStatus = freshnessStatusUnknown
 		out.Services = append(out.Services, unknownServices(s.statusServices)...)
 		out.Overall = rollupOverall(out.Services, false, false, false)
-		writeJSON(w, out, Flags{Stale: out.Overall != "ok"})
+		writeStatusReport(w, out)
 		return
 	}
 
@@ -716,7 +717,16 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// clients (status page, dashboards) can distinguish a healthy
 	// snapshot from a degraded/unknown/down one without parsing
 	// every per-service entry.
-	writeJSON(w, out, Flags{Stale: out.Overall != "ok"})
+	if backendErr {
+		middleware.MarkDegraded(w)
+	}
+	writeStatusReport(w, out)
+}
+
+// writeStatusReport keeps /v1/status's cache band on a non-"ok" roll-up:
+// the flag reports the services' state, not a degraded read.
+func writeStatusReport(w http.ResponseWriter, out StatusResponse) {
+	writeEnvelope(w, Envelope{Data: out, Flags: Flags{Stale: out.Overall != "ok"}, staleIsReport: true})
 }
 
 // unknownServices projects the deployment's declared background-service

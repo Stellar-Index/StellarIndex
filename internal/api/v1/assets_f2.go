@@ -126,8 +126,8 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// AssetDetail fields (volume/change/price each write one field;
 	// the snapshot writes none), so they run concurrently here and
 	// the cold cost collapses to the slowest single read. Every
-	// populate* helper is individually best-effort — a failure logs
-	// and leaves its field null — so no error plumbing is needed.
+	// populate* helper is individually best-effort — a failure logs,
+	// leaves its field null and is folded into detail.f2ReadFailed.
 	//
 	// IMPORTANT: pass asset.String() to populateVolume24h — the
 	// canonical wire form trades.base_asset stores — NOT
@@ -139,6 +139,9 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 		snap             supply.Supply
 		haveSnap         bool
 		priceSourceCount int
+		volFailed        bool
+		changeFailed     bool
+		supplyFailed     bool
 		wg               sync.WaitGroup
 	)
 	run := func(fn func()) {
@@ -163,8 +166,8 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 			fn()
 		}()
 	}
-	run(func() { s.populateVolume24h(ctx, detail, asset) })
-	run(func() { s.populateChange24h(ctx, detail, asset) })
+	run(func() { volFailed = s.populateVolume24h(ctx, detail, asset) })
+	run(func() { changeFailed = s.populateChange24h(ctx, detail, asset) })
 	// F-1271: inline price_usd independent of supply availability so
 	// wallet UIs that just want the price don't pay a second /v1/price
 	// RT. populateMarketCap (phase 2) re-uses detail.PriceUSD, plus the
@@ -174,7 +177,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// asset has a supply key — off-chain assets (fiat / crypto-pure)
 	// have no snapshot, matching the pre-parallelisation early-return.
 	if s.supply != nil && keyErr == nil {
-		run(func() { snap, haveSnap = s.fetchSupplySnapshot(ctx, key) })
+		run(func() { snap, haveSnap, supplyFailed = s.fetchSupplySnapshot(ctx, key) })
 	}
 	wg.Wait()
 
@@ -219,8 +222,10 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 				Basis:             supply.BasisSEP41LakeFlows,
 			}
 			haveSnap = true
+			supplyFailed = false
 		}
 	}
+	detail.f2ReadFailed = volFailed || changeFailed || supplyFailed
 
 	// ADR-0011 max_supply precedence, step 2 — the SEP-1 declared
 	// max. Step 1 (operator override) surfaces as snap.MaxSupply
@@ -265,10 +270,10 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 // trades through the on-chain XLM/USD VWAP on top of any USD-pegged legs
 // (#37). A Soroban lookup ERROR falls back to the plain reader so a
 // transient failure of the richer path can't zero out a figure the plain
-// path could still supply.
-func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
+// path could still supply. Reports whether the plain read failed.
+func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
 	if s.volume == nil {
-		return
+		return false
 	}
 	assetKey := asset.String()
 	if asset.Type == canonical.AssetSoroban {
@@ -276,7 +281,7 @@ func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, ass
 			v, err := sv.SorobanVolume24hUSDForAsset(ctx, assetKey)
 			if err == nil {
 				detail.VolumeUSD24h = &v
-				return
+				return false
 			}
 			if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				s.logger.Warn("soroban volume_24h_usd lookup failed; falling back to plain reader",
@@ -290,26 +295,28 @@ func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, ass
 		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.logger.Warn("volume_24h_usd lookup failed", "err", err, "asset_key", assetKey)
 		}
-		return
+		return true
 	}
 	detail.VolumeUSD24h = &v
+	return false
 }
 
 // fetchSupplySnapshot wraps the SupplyLooker call with the
 // best-effort error policy: ErrSupplyNotFound is silent, real
-// errors are logged at WARN, client-cancel doesn't log.
-func (s *Server) fetchSupplySnapshot(ctx context.Context, key string) (supply.Supply, bool) {
+// errors are logged at WARN and reported as failed, client-cancel
+// doesn't log.
+func (s *Server) fetchSupplySnapshot(ctx context.Context, key string) (snap supply.Supply, ok, failed bool) {
 	snap, err := s.supply.LatestSupply(ctx, key)
 	if errors.Is(err, ErrSupplyNotFound) {
-		return supply.Supply{}, false
+		return supply.Supply{}, false, false
 	}
 	if err != nil {
 		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.logger.Warn("supply lookup failed", "err", err, "asset_key", key)
 		}
-		return supply.Supply{}, false
+		return supply.Supply{}, false, true
 	}
-	return snap, true
+	return snap, true, false
 }
 
 // populateSupplyFields sets the raw supply integers + basis on
@@ -614,33 +621,35 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 // market_cap uses — pricing USD-against-USD over time is
 // meaningless, lookupUSDPrice already returns ("", false) for
 // that case, and the early-return below kicks in without logging.
-func (s *Server) populateChange24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
+// Reports whether the 24h-ago read failed.
+func (s *Server) populateChange24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
 	if s.change24h == nil {
-		return
+		return false
 	}
 	currStr, ok := s.lookupUSDPrice(ctx, asset)
 	if !ok {
-		return
+		return false
 	}
 	thenStr, err := s.change24h.USDPrice24hAgo(ctx, asset)
 	if errors.Is(err, ErrChange24hUnavailable) {
 		// Asset first traded < 24h ago, or retention pruned the row.
 		// Silent — feature unavailable for this asset.
-		return
+		return false
 	}
 	if err != nil {
 		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.logger.Warn("change_24h_pct lookup failed", "err", err, "asset", asset.String())
 		}
-		return
+		return true
 	}
 	pct, err := pctChange(currStr, thenStr)
 	if err != nil {
 		s.logger.Warn("change_24h_pct compute failed",
 			"err", err, "asset", asset.String(), "now", currStr, "then", thenStr)
-		return
+		return false
 	}
 	detail.Change24hPct = &pct
+	return false
 }
 
 // pctChange returns `(now - then) / then * 100` as a signed decimal

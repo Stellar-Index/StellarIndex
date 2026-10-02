@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -316,6 +317,7 @@ func (h *Handler) movementsWatermark(ctx context.Context, w http.ResponseWriter,
 	liveWM, err := h.Reader.Cap67MovementsWatermark(ctx)
 	if err != nil {
 		h.Logger.Warn("cap67 movements watermark read failed — failing closed to the static P23 boundary", "err", err)
+		middleware.MarkDegraded(w)
 		return 0, true
 	}
 	if !cur.HasPinnedWatermark {

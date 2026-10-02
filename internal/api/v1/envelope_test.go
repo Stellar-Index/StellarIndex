@@ -347,6 +347,50 @@ func TestHandlerTimedOut(t *testing.T) {
 	})
 }
 
+// A stale envelope is a degraded read: it must drop a cache band the route
+// or handler set, unless the flag reports on standing state.
+func TestWriteEnvelope_StaleDropsCacheBand(t *testing.T) {
+	const band = "public, max-age=60, s-maxage=300"
+	for _, tc := range []struct {
+		name string
+		env  Envelope
+		want string
+	}{
+		{"fresh keeps the band", Envelope{Data: "x"}, band},
+		{"stale drops the band", Envelope{Data: "x", Flags: Flags{Stale: true}}, "no-store"},
+		{"stale report keeps the band", Envelope{Data: "x", Flags: Flags{Stale: true}, staleIsReport: true}, band},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			rec.Header().Set("Cache-Control", band)
+			writeEnvelope(rec, tc.env)
+			if got := rec.Header().Get("Cache-Control"); got != tc.want {
+				t.Errorf("Cache-Control = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A degraded asset-detail body keeps its no-store on every in-process
+// cache replay, not only on the request that built it.
+func TestAssetDetailCache_DegradedReplayDropsCacheBand(t *testing.T) {
+	c := newAssetDetailResponseCache(time.Minute)
+	c.put("degraded", []byte("{}"), true)
+	c.put("healthy", []byte("{}"), false)
+	for key, want := range map[string]string{"degraded": "no-store", "healthy": "public, max-age=30"} {
+		entry, ok := c.get(key)
+		if !ok {
+			t.Fatalf("%s: not cached", key)
+		}
+		rec := httptest.NewRecorder()
+		rec.Header().Set("Cache-Control", "public, max-age=30")
+		writeCachedAssetDetail(rec, entry)
+		if got := rec.Header().Get("Cache-Control"); got != want {
+			t.Errorf("%s replay Cache-Control = %q, want %q", key, got, want)
+		}
+	}
+}
+
 func contains(haystack, needle []byte) bool {
 	for i := 0; i+len(needle) <= len(haystack); i++ {
 		if string(haystack[i:i+len(needle)]) == string(needle) {

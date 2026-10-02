@@ -146,6 +146,7 @@ func (h *Handler) AccountActivity(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
+	markDegradedIf(w, out.CoverageNote != "")
 	h.writeJSONAt(w, out, degraded, asOf)
 }
 

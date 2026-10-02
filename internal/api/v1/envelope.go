@@ -38,6 +38,10 @@ type Envelope struct {
 	Sources    []string    `json:"sources,omitempty"`
 	Flags      Flags       `json:"flags"`
 	Pagination *Pagination `json:"pagination,omitempty"`
+	// staleIsReport marks a body whose flags.stale mirrors the state it
+	// reports on (a not-green roll-up) rather than a degraded read, so the
+	// body keeps its cache band.
+	staleIsReport bool
 }
 
 // Flags are the advisory quality markers per HA plan §9.
@@ -235,12 +239,22 @@ func writeEnvelope(w http.ResponseWriter, env Envelope) {
 	writeEnvelopeStatus(w, http.StatusOK, env)
 }
 
+// warnDegradedRead logs a failed best-effort read and drops the response's
+// cache band, since the 200 still served is missing that read's data.
+func (s *Server) warnDegradedRead(w http.ResponseWriter, msg string, args ...any) {
+	s.logger.Warn(msg, args...)
+	middleware.MarkDegraded(w)
+}
+
 // writeEnvelopeStatus writes a pre-constructed Envelope with an
 // explicit 2xx status code. Used by handlers whose public contract
 // is not plain 200 OK.
 func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 	if env.AsOf.IsZero() {
 		env.AsOf = WireTime(time.Now().UTC())
+	}
+	if env.Flags.Stale && !env.staleIsReport {
+		middleware.MarkDegraded(w)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

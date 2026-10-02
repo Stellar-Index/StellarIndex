@@ -227,7 +227,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		got, err := s.sourcesStats.GetSourceStats(statsCtx)
 		cancel()
 		if err != nil {
-			s.logger.Warn("source stats", "err", err)
+			s.warnDegradedRead(w, "source stats", "err", err)
 			// Soft-fail: serve the registry without stats.
 		} else {
 			for _, ss := range got {
@@ -249,7 +249,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		buckets, err := s.sourcesStats.GetSourceVolumeHistory24h(sparkCtx)
 		cancel()
 		if err != nil {
-			s.logger.Warn("source volume history", "err", err)
+			s.warnDegradedRead(w, "source volume history", "err", err)
 		} else {
 			historyBySource = buildSourceVolumeHistory(buckets, 24)
 		}
@@ -259,7 +259,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		buckets, err := s.sourcesStats.GetSourceVolumeHistory7d(sparkCtx)
 		cancel()
 		if err != nil {
-			s.logger.Warn("source volume history 7d", "err", err)
+			s.warnDegradedRead(w, "source volume history 7d", "err", err)
 		} else {
 			history7dBySource = buildSourceVolumeHistory(buckets, 24*7)
 		}

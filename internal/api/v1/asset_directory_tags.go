@@ -2,7 +2,9 @@ package v1
 
 import (
 	"context"
+	"net/http"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -113,6 +115,17 @@ func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail
 		if e, ok := found[*iss]; ok {
 			stampIssuerDirectory(&rows[i], e)
 			suppressScamIssuerPricing(&rows[i])
+		}
+	}
+}
+
+// markDegradedIfDirectoryUnchecked drops the cache band when any row's
+// pricing was withheld because its directory read failed, not on a verdict.
+func markDegradedIfDirectoryUnchecked(w http.ResponseWriter, rows []AssetDetail) {
+	for i := range rows {
+		if rows[i].issuerDirectoryUnchecked {
+			middleware.MarkDegraded(w)
+			return
 		}
 	}
 }

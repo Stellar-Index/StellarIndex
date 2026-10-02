@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -131,6 +132,7 @@ func (s *Server) handleLiquidityPools(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	lapsed := s.nativeLPListingLapsed()
 	rows, err := s.nativeLPListing(ctx)
 	if err != nil {
 		if clientAborted(r, err) {
@@ -143,6 +145,9 @@ func (s *Server) handleLiquidityPools(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(rows) > limit {
 		rows = rows[:limit]
+	}
+	if lapsed {
+		middleware.MarkDegraded(w)
 	}
 	_, stale, _ := s.lakeWatermark(ctx)
 	writeJSON(w, rows, Flags{Stale: stale})
@@ -212,6 +217,14 @@ func (s *Server) nativeLPListing(ctx context.Context) ([]LiquidityPoolReservesRo
 		return rows, nil
 	}
 	return s.fillNativeLPListing(ctx)
+}
+
+// nativeLPListingLapsed reports whether the cached ranking is past its TTL,
+// so a request is served the last-good entry while a refresh runs or fails.
+func (s *Server) nativeLPListingLapsed() bool {
+	s.nativeLPMu.Lock()
+	defer s.nativeLPMu.Unlock()
+	return !s.nativeLPFetched.IsZero() && time.Since(s.nativeLPFetched) >= nativeLPListingTTL
 }
 
 // fillNativeLPListing runs the ranked scan and stores the result. The fill

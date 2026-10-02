@@ -165,6 +165,14 @@ func sharedCacheReusable(values []string) bool {
 	return true
 }
 
+// MarkDegraded drops the route's cache band from a 2xx whose body a failed
+// or slow read cut short, as the problem writers do for errors: a shared
+// cache would otherwise replay it for the band's whole s-maxage after the
+// dependency recovered. Call it after any handler-set Cache-Control.
+func MarkDegraded(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+}
+
 // policyForPath classifies a request path into a Cache-Control
 // directive. Exposed at package scope so tests can pin the policy
 // table without spinning up a full handler.

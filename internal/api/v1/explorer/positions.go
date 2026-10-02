@@ -164,7 +164,12 @@ type AccountPositionsView struct {
 // positionsCoverage collects the per-protocol read failures behind one
 // request so the response can say which folds are missing rather than
 // pass their absence off as an empty position set.
-type positionsCoverage struct{ degraded []string }
+type positionsCoverage struct {
+	degraded []string
+	// labelsUnresolved: a pool-token read failed, so some rows lack their
+	// venue/asset labels — the positions are complete, the display is not.
+	labelsUnresolved bool
+}
 
 // fail records that `protocol`'s fold could not be read. Safe on a nil
 // receiver so a builder called outside AccountPositions (tests, future
@@ -277,6 +282,7 @@ func (h *Handler) collectPositions(ctx context.Context, g string, resolve positi
 	for i := range slots {
 		positions = append(positions, slots[i]...)
 		cov.degraded = append(cov.degraded, covs[i].degraded...)
+		cov.labelsUnresolved = cov.labelsUnresolved || covs[i].labelsUnresolved
 	}
 	return positions
 }
@@ -292,8 +298,9 @@ func (h *Handler) collectPositions(ctx context.Context, g string, resolve positi
 // request during an outage pay the full six-fold latency AND still be
 // degraded. Old-but-real-and-labelled beats slow-and-degraded.
 type accountPositionsSnapshot struct {
-	positions    []PositionEntry
-	coverageNote string
+	positions        []PositionEntry
+	coverageNote     string
+	labelsUnresolved bool
 }
 
 // AccountPositions is SWR-cached (#332 F1, 2026-09-02). The six folds ran
@@ -324,7 +331,7 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 		// detached rebuild silently produces a half-resolved payload.
 		var cov positionsCoverage
 		positions := h.collectPositions(rctx, g, h.newPositionAssetResolver(rctx), &cov)
-		return accountPositionsSnapshot{positions: positions, coverageNote: cov.note()}, nil
+		return accountPositionsSnapshot{positions: positions, coverageNote: cov.note(), labelsUnresolved: cov.labelsUnresolved}, nil
 	})
 	if err != nil {
 		if h.ClientAborted(r, err) {
@@ -357,6 +364,7 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 		out = append(out, p)
 	}
 
+	markDegradedIf(w, snap.coverageNote != "" || snap.labelsUnresolved)
 	h.writeJSONAt(w, AccountPositionsView{
 		Account:       g,
 		Positions:     out,
@@ -458,15 +466,19 @@ func truncPositionsContract(c string) string {
 
 // poolTokensFor best-effort loads source's pool -> token-contract map
 // (empty map on a nil reader / read error — every caller already
-// treats a missing key as "no label available"). Production wiring is
-// TTL-cached per source in package v1, so repeat calls are map reads.
-func (h *Handler) poolTokensFor(ctx context.Context, source string) map[string][]string {
+// treats a missing key as "no label available"; a read error is also
+// recorded on cov). Production wiring is TTL-cached per source in
+// package v1, so repeat calls are map reads.
+func (h *Handler) poolTokensFor(ctx context.Context, source string, cov *positionsCoverage) map[string][]string {
 	if h.PoolTokens == nil {
 		return nil
 	}
 	m, err := h.PoolTokens.PoolTokens(ctx, source)
 	if err != nil {
 		h.Logger.Warn("positions pool-tokens read failed", "source", source, "err", err)
+		if cov != nil {
+			cov.labelsUnresolved = true
+		}
 		return nil
 	}
 	return m
@@ -513,7 +525,7 @@ func (h *Handler) buildBlendPositions(ctx context.Context, address string, resol
 		cov.fail("blend")
 		return nil
 	}
-	poolTokens := h.poolTokensFor(ctx, "blend")
+	poolTokens := h.poolTokensFor(ctx, "blend", cov)
 
 	out := make([]PositionEntry, 0, len(rows)*2)
 	for _, row := range rows {
@@ -581,7 +593,7 @@ func (h *Handler) buildBlendBackstopPositions(ctx context.Context, address strin
 		cov.fail("blend_backstop")
 		return nil
 	}
-	poolTokens := h.poolTokensFor(ctx, "blend")
+	poolTokens := h.poolTokensFor(ctx, "blend", cov)
 
 	out := make([]PositionEntry, 0, len(rows))
 	for _, row := range rows {
@@ -728,7 +740,7 @@ func (h *Handler) buildAquariusGaugePositions(ctx context.Context, address strin
 		cov.fail("aquarius_rewards")
 		return nil
 	}
-	poolTokens := h.poolTokensFor(ctx, "aquarius")
+	poolTokens := h.poolTokensFor(ctx, "aquarius", cov)
 
 	out := make([]PositionEntry, 0, len(rows))
 	for _, row := range rows {

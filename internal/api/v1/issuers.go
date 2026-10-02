@@ -263,7 +263,7 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 		// renders without it, but the coverage_note distinguishes
 		// this from a genuine zero-asset issuer (CA2-A04-harden-9).
 		// Includes deadline exceeded.
-		s.logger.Warn("issuer assets", "g_strkey", gStrkey, "err", err)
+		s.warnDegradedRead(w, "issuer assets", "g_strkey", gStrkey, "err", err)
 		assets = nil
 		assetsCoverageNote = "the asset list for this issuer could not be read " +
 			"(storage error or timeout); assets is omitted (not shown as empty) " +

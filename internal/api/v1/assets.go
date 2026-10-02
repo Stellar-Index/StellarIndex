@@ -446,6 +446,9 @@ type AssetDetail struct {
 	// issuerDirectoryUnchecked: the directory read for this issuer failed,
 	// so the absence of a scam tag proves nothing and pricing is withheld.
 	issuerDirectoryUnchecked bool
+	// f2ReadFailed: a volume, 24h-change or supply read errored, so the
+	// fields it feeds (incl. market_cap_usd / fdv_usd) are missing, not absent.
+	f2ReadFailed bool
 
 	// VolumeCharacter classifies the asset's trailing-window trade
 	// volume by account structure (wash-and-scam-signals design §2):
@@ -1336,6 +1339,7 @@ func (s *Server) handleAssetListFromAssets(
 	// past the TTL, `flags.stale` — never now() over a boot-seeded or
 	// refresh-starved page-set. An uncached read leaves observedAt zero
 	// and writeEnvelope defaults as_of to now.
+	markDegradedIfDirectoryUnchecked(w, out)
 	env := Envelope{Data: out, Flags: Flags{Stale: stale || unmeasured}}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())
@@ -2759,6 +2763,7 @@ func (s *Server) writeCataloguePage(
 	end := min(limit, len(rows))
 	page := rows[:end]
 	s.attachSparkline7dIfRequested(r, page)
+	markDegradedIfDirectoryUnchecked(w, page)
 	env := Envelope{Data: page, Flags: flags}
 	if end < len(rows) {
 		for _, row := range page {
@@ -3107,6 +3112,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 	end := min(limit, len(rows))
 	page := rows[:end]
 	s.attachSparkline7dIfRequested(r, page)
+	markDegradedIfDirectoryUnchecked(w, page)
 	env := Envelope{Data: page, Flags: Flags{Stale: unmeasured}}
 	if end < len(rows) {
 		for _, row := range page {
@@ -3162,6 +3168,7 @@ func (s *Server) serveClassicUnifiedPage(
 	if out == nil {
 		out = []AssetDetail{}
 	}
+	markDegradedIfDirectoryUnchecked(w, out)
 	env := Envelope{Data: out, Flags: Flags{Stale: stale}}
 	if nextInner != "" {
 		env.Pagination = &Pagination{Next: "classic:" + nextInner}
@@ -3625,7 +3632,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// a slow read. Stamp it stale and skip the cache write; the request
 	// itself still gets an honest (if degraded) answer.
 	ctxDead := r.Context().Err() != nil
-	if homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || ctxDead {
+	if homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.f2ReadFailed || ctxDead {
 		flags.Stale = true
 	}
 
@@ -3638,19 +3645,27 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 		// struct tags); fall back to writeJSON so client still gets a
 		// (potentially less-optimal) response rather than a 500.
 		s.logger.Debug("asset detail envelope render failed; falling back to direct write", "asset_id", cacheKey, "err", err)
+		markDegradedIfDirectoryUnchecked(w, []AssetDetail{detail})
 		writeJSON(w, detail, flags)
 		return
 	}
-	// A failed decimals read is a transient outage, and a dead context
+	// A failed decimals, issuer-directory or F2 read is a transient outage, and a dead context
 	// means this body was assembled from whatever best-effort reads
 	// happened to land before cancellation: either way, replaying it for
 	// the whole TTL would outlive the outage. Skip the cache write, not
 	// the response — the caller who is still listening gets the (stale-
 	// flagged) body they asked for.
-	if !detail.DecimalsUnresolved && !ctxDead {
-		s.assetDetailCache.put(cacheKey, body)
+	if !transientlyDegraded(&detail, ctxDead) {
+		s.assetDetailCache.put(cacheKey, body, flags.Stale)
 	}
-	writeCachedAssetDetail(w, &assetDetailEntry{body: body, cachedAt: time.Now()})
+	degraded := flags.Stale || detail.issuerDirectoryUnchecked
+	writeCachedAssetDetail(w, &assetDetailEntry{body: body, cachedAt: time.Now(), degraded: degraded})
+}
+
+// transientlyDegraded reports whether detail rests on a read that failed or
+// was cut short, so the body must not outlive the request in the detail cache.
+func transientlyDegraded(detail *AssetDetail, ctxDead bool) bool {
+	return detail.DecimalsUnresolved || ctxDead || detail.issuerDirectoryUnchecked || detail.f2ReadFailed
 }
 
 // resolveAssetDetail fetches the AssetDetail for parsed: from the

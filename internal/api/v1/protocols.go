@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -718,8 +719,8 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	// The list's dynamic joins degrade to zeros/absent silently (doc
 	// comment above) — the directory has no per-row analytics.status to
 	// carry a health signal, unlike the detail path.
-	events, _ := s.protocolEvents24h(ctx)
-	verdicts, _, verdictsStale := s.protocolVerdicts(ctx)
+	events, eventsOK := s.protocolEvents24h(ctx)
+	verdicts, verdictsOK, verdictsStale := s.protocolVerdicts(ctx)
 	tvls, tvlTotal := s.protocolTVLsAndTotal()
 
 	view := ProtocolsView{Protocols: make([]ProtocolView, 0, len(protocolRegistry))}
@@ -741,9 +742,12 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	view.CoverageNote = protocolsCoverageNote(degraded)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
+	if !eventsOK || !verdictsOK || len(degraded) > 0 {
+		middleware.MarkDegraded(w)
+	}
 	// Every row's completeness summary republishes a /v1/coverage verdict,
 	// so the envelope carries that surface's freshness gate too.
-	writeJSON(w, view, Flags{Stale: verdictsStale})
+	writeEnvelope(w, Envelope{Data: view, Flags: Flags{Stale: verdictsStale}, staleIsReport: true})
 }
 
 // protocolsCoverageNote is the directory's honest-degrade statement
@@ -841,7 +845,12 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 		(view.Analytics != nil && view.Analytics.Status == protocolAnalyticsStale)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
-	writeJSON(w, view, Flags{Stale: staleFlag})
+	// An overdue verdict alone is published state; a stale-served entry or
+	// an analytics build that did not complete is a degraded read.
+	if stale || (view.Analytics != nil && view.Analytics.Status != protocolAnalyticsOK) {
+		middleware.MarkDegraded(w)
+	}
+	writeEnvelope(w, Envelope{Data: view, Flags: Flags{Stale: staleFlag}, staleIsReport: true})
 }
 
 // protocolDetailBuilder returns the one build closure both the request
@@ -857,8 +866,8 @@ func (s *Server) protocolDetailBuilder(meta ProtocolMeta, windowDays int) func(c
 
 // buildProtocolDetail assembles the full detail view and stamps its
 // analytics status: "ok" only when EVERY analytics-adjacent component —
-// the lake analytics, the bespoke block, the contract count, and the 24h
-// event count — built healthy under a live context; "stale" when
+// the lake analytics, the bespoke block, the roster's pool-token pairs, the
+// contract count, and the 24h event count — built healthy under a live context; "stale" when
 // everything is present but the bespoke block came from the last-good
 // cache past its staleness horizon; otherwise "unavailable" — so a
 // degraded build is explicit on the wire instead of masquerading as
@@ -872,7 +881,7 @@ func (s *Server) protocolDetailBuilder(meta ProtocolMeta, windowDays int) func(c
 func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, windowDays int) ProtocolDetailView {
 	contracts, rosterOK := s.protocolRoster(ctx, meta)
 	classifyContractKinds(contracts, meta.Factories)
-	s.enrichContractTokens(ctx, meta, contracts)
+	tokensOK := s.enrichContractTokens(ctx, meta, contracts)
 	contractCount, contractCountOK := s.detailContractCount(ctx, meta, contracts)
 	events, eventsOK := s.protocolEvents24h(ctx)
 	verdicts, verdictsOK, verdictsStale := s.protocolVerdicts(ctx)
@@ -888,7 +897,7 @@ func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, win
 	bespokeOK, bespokeStale := s.enrichBespoke(ctx, meta, &v, windowDays)
 	status := protocolAnalyticsOK
 	switch {
-	case !rosterOK || !lakeOK || !bespokeOK || !contractCountOK || !eventsOK || !verdictsOK || ctx.Err() != nil:
+	case !rosterOK || !tokensOK || !lakeOK || !bespokeOK || !contractCountOK || !eventsOK || !verdictsOK || ctx.Err() != nil:
 		status = protocolAnalyticsUnavailable
 	case bespokeStale:
 		status = protocolAnalyticsStale
