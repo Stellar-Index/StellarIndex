@@ -147,7 +147,8 @@ func substrateForGenesis(ctx context.Context, scan substrateScanner, cache map[u
 func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo // linear computor; one block per claim.
 	fs := flag.NewFlagSet("compute-completeness", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
-	toFlag := fs.Uint("to", 0, "Tip ledger (inclusive); 0 = resolve from the live ledgerstream cursor")
+	toFlag := fs.Uint("to", 0, "Tip ledger (inclusive); 0 = resolve from the live ledgerstream cursor. A frozen cursor is refused either way unless -allow-frozen-cursor is set")
+	allowFrozenCursor := fs.Bool("allow-frozen-cursor", false, "Stamp a verdict even though the ledgerstream cursor is provably behind the network (operator override; requires -to)")
 	only := fs.String("source", "", "Limit to one source (e.g. soroswap|blend|reflector-dex|sdex)")
 	useCH := fs.Bool("ch", false, "Read all three claims from the certified ClickHouse lake (substrate + recognition + projection re-derive) instead of Postgres soroban_events — fast, off the serving DB (ADR-0033 + ADR-0034)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (with -ch; without it, SDEX's projection still re-derives from the lake)")
@@ -186,13 +187,10 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 	defer func() { _ = store.Close() }()
 
-	tip := uint32(*toFlag)
-	if tip == 0 {
-		cur, gerr := store.GetCursor(ctx, "ledgerstream", "")
-		if gerr != nil {
-			return fmt.Errorf("resolve tip from ledgerstream cursor: %w (pass -to to override)", gerr)
-		}
-		tip = cur.LastLedger
+	cur, gerr := store.GetCursor(ctx, "ledgerstream", "")
+	tip, err := verdictTipFromCursorRead(uint32(*toFlag), cur, gerr, time.Now(), *allowFrozenCursor) //nolint:gosec // ledger seq fits uint32
+	if err != nil {
+		return fmt.Errorf("compute-completeness: %w", err)
 	}
 	if tip == 0 {
 		return fmt.Errorf("tip resolved to 0 — pass -to")
@@ -915,6 +913,53 @@ func projectionFloor(genesis uint32, pass bool, prior priorProjection, priorWate
 		return uint32(fromLedger) //nolint:gosec // ledger seq fits uint32
 	}
 	return genesis
+}
+
+// maxTipCursorLagLedgers is how far the network may provably have run past the
+// ledgerstream cursor before the cursor stops being usable as the verdict tip:
+// ~1h at [completeness.SlowestLedgerClose], far above a live indexer's lag.
+const maxTipCursorLagLedgers uint32 = 600
+
+// tipFromLiveCursor resolves the verdict tip from the live ledgerstream cursor,
+// refusing a cursor the network has provably left behind (ADR-0033: no cursor
+// trust). A frozen ingest would otherwise stamp a fresh computed_at onto a
+// verdict "complete to tip" for a tip the network passed long ago; refusing
+// writes no snapshot, so the stored verdicts age into the API's stale gate.
+func tipFromLiveCursor(cur timescale.Cursor, now time.Time) (uint32, error) {
+	floor := completeness.NetworkTipLowerBound(cur.LastLedger, cur.UpdatedAt, now)
+	if lag := floor - cur.LastLedger; lag > maxTipCursorLagLedgers {
+		return 0, fmt.Errorf("ledgerstream cursor is frozen at ledger %d (last advanced %s ago; the network has closed at least %d ledgers since) — it is not the network tip, so no verdict is stamped against it (-allow-frozen-cursor with -to overrides)",
+			cur.LastLedger, now.Sub(cur.UpdatedAt).Round(time.Second), lag)
+	}
+	return cur.LastLedger, nil
+}
+
+// verdictTipFromCursorRead applies the cursor read result: with an explicit -to,
+// a missing cursor row means there is no live ingest to guard (a host that never
+// ingested); any other read error, or a missing row without -to, fails closed.
+func verdictTipFromCursorRead(to uint32, cur timescale.Cursor, readErr error, now time.Time, allowFrozen bool) (uint32, error) {
+	if readErr != nil {
+		if to != 0 && errors.Is(readErr, timescale.ErrNotFound) {
+			return to, nil
+		}
+		return 0, fmt.Errorf("read ledgerstream cursor: %w", readErr)
+	}
+	return resolveVerdictTip(to, cur, now, allowFrozen)
+}
+
+// resolveVerdictTip picks the verdict tip. The frozen-cursor guard applies to an
+// explicit -to as well, since the nightly wrapper passes -to (cursor minus a
+// margin) and would otherwise keep refreshing computed_at against a stalled
+// ingest. Only an explicit override skips it.
+func resolveVerdictTip(to uint32, cur timescale.Cursor, now time.Time, allowFrozen bool) (uint32, error) {
+	live, err := tipFromLiveCursor(cur, now)
+	switch {
+	case err != nil && (!allowFrozen || to == 0):
+		return 0, err
+	case to != 0:
+		return to, nil
+	}
+	return live, nil
 }
 
 // validatePassFlags fails CLOSED when -pass is combined with the per-source /

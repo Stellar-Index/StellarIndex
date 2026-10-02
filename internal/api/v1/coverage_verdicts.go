@@ -280,8 +280,8 @@ func unverifiedSources(audited []string, snaps []timescale.CompletenessSnapshot,
 	return out
 }
 
-// coverageVerdictStaleLedgers bounds how far the LIVE ingest frontier
-// may run past a verdict's tip_ledger before the verdict stops being a
+// coverageVerdictStaleLedgers bounds how far the network tip may run
+// past a verdict's tip_ledger before the verdict stops being a
 // claim about the CURRENT chain.
 //
 // The deployed audit is daily (compute-completeness.timer, 05:30 UTC
@@ -296,7 +296,7 @@ const coverageVerdictStaleLedgers uint32 = 34560
 // two-hour grace flags a missed run the morning it fails, without
 // flagging the ordinary gap between yesterday's run and today's. It
 // also decides alone when no CursorsReader or ledgerstream cursor is
-// available, or when the live tip is frozen alongside a stalled audit.
+// available.
 const coverageVerdictStaleAge = 26 * time.Hour
 
 // handleCoverageVerdicts serves GET /v1/coverage — every source's
@@ -455,13 +455,13 @@ func recognitionAxisView(sn timescale.CompletenessSnapshot) *RecognitionAxisView
 // to say the response is below the surface's baseline contract, which
 // is what `flags.stale` means per ADR-0018):
 //
-//   - LEDGER GAP: the live ingest frontier has advanced more than
-//     [coverageVerdictStaleLedgers] past the verdict's own tip. This is
-//     an apples-to-apples comparison: compute-completeness resolves its
-//     `tip` from the SAME ledgerstream cursor
-//     (internal/ops/chops/compute_completeness.go), so the difference
-//     is exactly "how many ledgers have closed since this verdict was
-//     computed".
+//   - LEDGER GAP: the network tip has provably run more than
+//     [coverageVerdictStaleLedgers] past the verdict's own tip. The
+//     network tip is the ledgerstream cursor extrapolated by wall-clock
+//     time since it last advanced ([completeness.NetworkTipLowerBound]),
+//     not the bare cursor: compute-completeness resolves its `tip` from
+//     that cursor, so a frozen cursor would otherwise always agree with
+//     the verdict it produced.
 //   - VERDICT AGE: computed_at older than [coverageVerdictStaleAge], or
 //     absent entirely (an unknown-age verdict cannot be claimed fresh).
 //
@@ -475,10 +475,10 @@ func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.Co
 	if len(snaps) == 0 {
 		return false
 	}
-	liveTip, haveTip := s.liveTipLedger(ctx)
 	now := time.Now()
+	netTip, haveTip := s.networkTipLowerBound(ctx, now)
 	for _, sn := range snaps {
-		if haveTip && liveTip > sn.Tip && liveTip-sn.Tip > coverageVerdictStaleLedgers {
+		if haveTip && netTip > sn.Tip && netTip-sn.Tip > coverageVerdictStaleLedgers {
 			return true
 		}
 		if sn.ComputedAt.IsZero() || now.Sub(sn.ComputedAt) > coverageVerdictStaleAge {
@@ -488,17 +488,17 @@ func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.Co
 	return false
 }
 
-// liveTipLedger returns the live ingest frontier — the ledgerstream
-// cursor's last ledger, the same value /v1/ledger/tip serves and the
-// same one compute-completeness resolves its tip from. ok=false when no
-// CursorsReader is wired, the cursor row doesn't exist yet, or the read
-// failed; callers must degrade rather than fail, since this is a
-// freshness annotation on someone else's response.
+// networkTipLowerBound returns the least ledger the network can have
+// closed by now: the ledgerstream cursor (the value /v1/ledger/tip
+// serves) extrapolated by the wall-clock time since it last advanced.
+// ok=false when no CursorsReader is wired, the cursor row doesn't exist
+// yet, or the read failed; callers must degrade rather than fail, since
+// this is a freshness annotation on someone else's response.
 //
 // The read is bounded at 5s — matching /v1/diagnostics/cursors' own
 // ListCursors ceiling — so a slow Postgres can't hold a public GET open
 // past the point where the annotation is worth waiting for.
-func (s *Server) liveTipLedger(ctx context.Context) (uint32, bool) {
+func (s *Server) networkTipLowerBound(ctx context.Context, now time.Time) (uint32, bool) {
 	if s.cursors == nil {
 		return 0, false
 	}
@@ -512,5 +512,5 @@ func (s *Server) liveTipLedger(ctx context.Context) (uint32, bool) {
 	if !ok {
 		return 0, false
 	}
-	return view.LatestLedger, true
+	return completeness.NetworkTipLowerBound(view.LatestLedger, time.Time(view.IngestedAt), now), true
 }
