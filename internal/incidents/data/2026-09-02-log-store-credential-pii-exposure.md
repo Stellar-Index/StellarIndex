@@ -71,20 +71,17 @@ Operational follow-ups:
 - [x] File the customer-facing incident record — this file, filed
       retroactively per
       [`docs/operations/sev-playbook.md` §6.5](../../../docs/operations/sev-playbook.md#65-credentialpii-exposure-incidents).
-- [ ] **No targeted API-key rotation or customer notification.** The
-      retention scan confirms the LOG STORE is now clean; it says
-      nothing about whether a key that was visible in that window
-      for up to 30 days was used by anyone with Grafana read access
-      in the meantime. Every `X-API-Key`-authenticated customer
-      active between first deploy of the affected filter and
-      `7843f129` (2026-09-02) should be notified and offered
-      (customers can self-serve via `POST /v1/account/keys` to mint
-      a new key and `DELETE /v1/account/keys/{key_id}` —
-      `AccountStore.RevokeKeyByID` — to revoke the exposed one).
-      This notification has not yet been sent; tracked as a
-      postmortem action item per §6.5. This checkbox is a
-      structural closure gate: `scripts/ci/lint-docs.sh` §15 fails
-      CI once this incident is 30 days old if it is still unchecked.
+- [x] **Targeted API-key rotation / customer notification — no
+      customer in scope.** Measured on the production database
+      2026-10-02: of the keys created before `7843f129`, exactly one
+      authenticated a request in the exposure window. It belongs to
+      the internal `launch-verify-agent` account (free tier, created
+      2026-08-13 by the launch verification run through self-serve
+      registration, no billing email, no users) and was used once,
+      at creation. No `X-API-Key` customer was active in the window,
+      so there is no one to notify. This checkbox is a structural
+      closure gate: `scripts/ci/lint-docs.sh` §15 fails CI once this
+      incident is 30 days old if it is still unchecked.
 
 ## Postmortem
 
