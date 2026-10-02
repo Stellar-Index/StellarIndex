@@ -148,6 +148,8 @@ const REFUSAL_PROSE: Record<string, string> = {
   issuer_scam_flagged: 'Issuer flagged by the independent directory',
   issuer_not_independently_recognised: 'Issuer recognised by nobody but itself',
   no_real_world_instrument_basis: 'Declares no real-world instrument',
+  isin_declared_by_another_issuer:
+    'Declares an ISIN another recognised issuer also claims',
 };
 
 /**

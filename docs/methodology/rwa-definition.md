@@ -242,6 +242,18 @@ until this arm existed. Prose anchors such as `FOBXX`, `AU` or
 `US Treasury Notes` stay refused. Measured against the live SEP-1 corpus
 when it shipped, the arm admitted exactly those three assets.
 
+An ISIN names one security, so one rule runs over the admitted **set**
+after R1–R4: when two or more admitted *issuers* declare the same ISIN
+as `anchor_asset`, every claimant is refused as
+`isin_declared_by_another_issuer`. Each has passed R2 and R3 and nothing
+in the evidence says which holds the security, so admitting either
+would publish a claim the surface cannot stand behind. The one
+exception is an ISIN the constant-NAV table binds: that binding was read
+against the security's own page, so its pair is kept and only the rival
+is refused. Several codes under one issuer declaring the same ISIN are
+not a contest, and a claimant refused by R1–R4 is not counted — an
+issuer that could not pass R3 cannot evict one that did.
+
 R4 does not care *how* R3 was satisfied. The
 [sibling route](#the-sibling-route-and-the-assumption-it-rests-on)
 supplies recognition and nothing else — no instrument claim comes with

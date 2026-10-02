@@ -17693,6 +17693,14 @@ components:
         evaluated for them — the one bucket here that is not strictly in
         R1→R4 order, which is why `funnel` keeps it as its own stage.
 
+        `isin_declared_by_another_issuer` is decided over the admitted
+        set rather than one candidate: the asset passed R1–R4, but its
+        declared ISIN is also declared by another admitted issuer. An
+        ISIN names one security and nothing in the evidence says which
+        claimant holds it, so every claimant is refused — except the
+        pair a constant-NAV binding names for that ISIN. Several codes
+        under ONE issuer declaring the same ISIN are not refused.
+
         Both arms report into one tally. The reason vocabularies are
         disjoint, so a reader can still tell which rule turned a
         candidate away, and one tally keeps this a statement about the
@@ -17709,6 +17717,7 @@ components:
             - issuer_scam_flagged
             - issuer_not_independently_recognised
             - no_real_world_instrument_basis
+            - isin_declared_by_another_issuer
             - not_a_contract_address
             - contract_not_named_in_directory
             - contract_scam_flagged
@@ -18064,6 +18073,9 @@ components:
             Expected to be the largest bucket by far.
             `no_real_world_instrument_basis` — requirement 4's pre-filter,
             applied to the bound entries before the directory is read.
+            `isin_declared_by_another_issuer` — the asset met every
+            requirement, but another admitted issuer declares the same
+            ISIN; see `RWARefusal`. `definition`.
             `duplicate_declaration_of_the_same_asset` — a second
             declaration of a `(code, issuer)` already admitted. Identity
             is the pair, so it is the same asset.
@@ -18172,6 +18184,7 @@ components:
             - issuer_scam_flagged
             - issuer_not_independently_recognised
             - no_real_world_instrument_basis
+            - isin_declared_by_another_issuer
             - duplicate_declaration_of_the_same_asset
             - over_issuer_cap
             - admitted_but_never_observed_on_chain

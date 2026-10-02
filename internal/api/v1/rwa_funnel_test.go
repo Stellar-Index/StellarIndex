@@ -643,3 +643,44 @@ func TestRWAAssets_RefusalTallyStaysConsistentWithTheFunnel(t *testing.T) {
 			refused["no_real_world_instrument_basis"])
 	}
 }
+
+// TestRWAAssets_ContestedISINIsRefusedAndAccounted — two recognised
+// issuers declaring one ISIN are both refused, the refusal is published
+// under its own reason in refused[] and the funnel, and the funnel closes.
+func TestRWAAssets_ContestedISINIsRefusedAndAccounted(t *testing.T) {
+	const isin = "US0378331005"
+	a := rwaBound("AAPL", rwaGoodIssuer, "etherfuse.com", "other")
+	a.AnchorAsset = isin
+	b := rwaBound("APPLE", rwaUnknownIssuer, "other.example", "stock")
+	b.AnchorAsset = isin
+	bound := []timescale.Sep1BoundCurrency{a, b, rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")}
+	dir := map[string]timescale.DirectoryEntry{
+		rwaGoodIssuer:    recognisedIssuer(rwaGoodIssuer, "Etherfuse"),
+		rwaUnknownIssuer: recognisedIssuer(rwaUnknownIssuer, "Other"),
+	}
+	rows := map[string][]timescale.AssetRow{
+		rwaGoodIssuer: {
+			rwaRow("AAPL", rwaGoodIssuer, sptr("1.0"), 10),
+			rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312),
+		},
+		rwaUnknownIssuer: {rwaRow("APPLE", rwaUnknownIssuer, sptr("1.0"), 10)},
+	}
+	v := getRWA(t, rwaServer(t, bound, dir, rows))
+	checkFunnelArithmetic(t, v)
+
+	if ids := rwaAssetIDs(v); len(ids) != 1 || ids[0] != "USTRY-"+rwaGoodIssuer {
+		t.Errorf("served %v, want only USTRY: both claimants of %s must be refused", ids, isin)
+	}
+	refused := map[string]int{}
+	for _, r := range v.Refused {
+		refused[r.Reason] = r.Assets
+	}
+	if refused["isin_declared_by_another_issuer"] != 2 {
+		t.Errorf("refused[isin_declared_by_another_issuer] = %d, want 2 (%v)",
+			refused["isin_declared_by_another_issuer"], v.Refused)
+	}
+	st := rwaFunnelStages(t, v)
+	if got := rwaDropCount(st, "candidate_assets_evaluated", "isin_declared_by_another_issuer"); got != 2 {
+		t.Errorf("funnel drop = %d, want 2", got)
+	}
+}

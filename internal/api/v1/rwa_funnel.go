@@ -786,8 +786,9 @@ func rwaContractCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 }
 
 // rwaCandidateDrops is what happened to the candidates that reached the
-// full ordered evaluation: the requirement refusals in R1→R4 order,
-// then the two structural drops that are not refusals at all.
+// full ordered evaluation: the requirement refusals in R1→R4 order, the
+// set-level ISIN contest, then the two structural drops that are not
+// refusals at all.
 func rwaCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 	ordered := []string{
 		rwa.RejectNotClassic,
@@ -795,6 +796,7 @@ func rwaCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 		rwa.RejectScamFlagged,
 		rwa.RejectNoRecognition,
 		rwa.RejectNoInstrumentClaim,
+		rwa.RejectContestedISIN,
 	}
 	out := make([]RWAFunnelDrop, 0, len(ordered)+2)
 	for _, reason := range ordered {

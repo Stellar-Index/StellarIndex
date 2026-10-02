@@ -129,6 +129,9 @@ const (
 	RejectScamFlagged       = "issuer_scam_flagged"
 	RejectNoRecognition     = "issuer_not_independently_recognised"
 	RejectNoInstrumentClaim = "no_real_world_instrument_basis"
+	// RejectContestedISIN is decided over the admitted SET, not one
+	// candidate: see [ContestedISINClaims].
+	RejectContestedISIN = "isin_declared_by_another_issuer"
 )
 
 // anchorClasses is the closed vocabulary of anchor_asset_type values

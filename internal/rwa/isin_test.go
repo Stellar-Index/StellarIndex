@@ -157,3 +157,36 @@ func TestProseAnchorAssetIsStillRefused(t *testing.T) {
 		t.Errorf("reject = %q, want %q", v.Reject, RejectNoInstrumentClaim)
 	}
 }
+
+func TestContestedISINClaims(t *testing.T) {
+	const (
+		issuerA = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
+		issuerB = "GAXSPCTVGFIVYGHT7JLJZV57HCN5KUYDJ6DMPLNWUKL7A5A3HKCNW7JW"
+	)
+	claims := []ISINClaim{
+		// One unbound ISIN, two issuers: nothing says which is entitled.
+		{Code: "AAPL", Issuer: issuerA, DeclaredAnchorAsset: "US0378331005"},
+		{Code: "APPL", Issuer: issuerB, DeclaredAnchorAsset: " us0378331005 "},
+		// One issuer, the same ISIN on two codes: not a contest.
+		{Code: "GB1", Issuer: issuerA, DeclaredAnchorAsset: "GB0002634946"},
+		{Code: "GB2", Issuer: issuerA, DeclaredAnchorAsset: "GB0002634946"},
+		// A bound ISIN: the constant-NAV pair holds it, the rival does not.
+		{Code: "gBENJI", Issuer: franklinLuxIBIssuer, DeclaredAnchorAsset: "LU2900381208"},
+		{Code: "gBENJI", Issuer: issuerB, DeclaredAnchorAsset: "LU2900381208"},
+		// Prose and the zero claim name no security.
+		{Code: "PROSE", Issuer: issuerB, DeclaredAnchorAsset: "US Treasury Notes"},
+		{Code: "PROSE", Issuer: issuerA, DeclaredAnchorAsset: "US Treasury Notes"},
+		{},
+	}
+	want := []bool{true, true, false, false, false, true, false, false, false}
+	got := ContestedISINClaims(claims)
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("claim %d (%s-%s %q): contested = %v, want %v",
+				i, claims[i].Code, claims[i].Issuer, claims[i].DeclaredAnchorAsset, got[i], want[i])
+		}
+	}
+}

@@ -75,6 +75,52 @@ func IsISIN(s string) bool {
 	return (10-sum%10)%10 == digits[len(digits)-1]
 }
 
+// ISINClaim is one admitted (code, issuer) and the anchor_asset its
+// issuer-bound SEP-1 entry declares, verbatim.
+type ISINClaim struct {
+	Code                string
+	Issuer              string
+	DeclaredAnchorAsset string
+}
+
+// ContestedISINClaims reports, index for index, which claims name an
+// ISIN that another ISSUER among claims also declares.
+//
+// An ISIN identifies one registered security, so two issuers declaring
+// it are two tokens wearing one identity, and both have passed R2 and
+// R3 — nothing in the evidence says which is entitled to it. Every
+// claimant is refused, except the pair the constant-NAV table binds to
+// that ISIN: the table was read against the security's own page, so it
+// names the holder. One issuer declaring the same ISIN on several codes
+// is not contested here. Pass only admitted candidates: a claimant that
+// could not pass R3 itself must not be able to evict one that did.
+func ContestedISINClaims(claims []ISINClaim) []bool {
+	isins := make([]string, len(claims))
+	issuers := map[string]map[string]struct{}{}
+	for i, c := range claims {
+		isin, ok := upperASCII12(c.DeclaredAnchorAsset)
+		if !ok || !IsISIN(isin) {
+			continue
+		}
+		isins[i] = isin
+		if issuers[isin] == nil {
+			issuers[isin] = map[string]struct{}{}
+		}
+		issuers[isin][strings.TrimSpace(c.Issuer)] = struct{}{}
+	}
+	out := make([]bool, len(claims))
+	for i, c := range claims {
+		isin := isins[i]
+		if isin == "" || len(issuers[isin]) < 2 {
+			continue
+		}
+		b, bound := constantNAVIndex.byISIN[isin]
+		holder := bound && b.Code == strings.TrimSpace(c.Code) && b.Issuer == strings.TrimSpace(c.Issuer)
+		out[i] = !holder
+	}
+	return out
+}
+
 // upperASCII12 trims s and upper-cases ASCII letters only, reporting
 // whether 12 bytes remain. strings.ToUpper would fold U+017F and U+0131
 // onto 'S' and 'I', accepting a string no ISIN lookup resolves.

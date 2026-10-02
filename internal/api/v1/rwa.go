@@ -1262,36 +1262,23 @@ func (s *Server) admitClassicCandidates(
 ) {
 	issuers := map[string]struct{}{}
 	admitted := make(map[string]struct{}, len(bound))
-	// Domains with a directory-recognised, unflagged account among the
-	// issuers bound on them: an account the same SEP-1 names beside one
-	// of those is recognised by its sibling (rwa.RecognitionDomainSibling).
-	recognisedDomains := map[string]struct{}{}
-	for _, c := range bound {
-		if c.HomeDomain == "" {
-			continue
-		}
-		tags := entries[c.Issuer].Tags
-		if rwa.HasRecognitionTag(tags) && !rwa.ScamFlagged(tags) {
-			recognisedDomains[strings.ToLower(c.HomeDomain)] = struct{}{}
+	verdicts := classicVerdicts(bound, entries)
+	claims := make([]rwa.ISINClaim, len(bound))
+	for i, c := range bound {
+		if verdicts[i].InSet {
+			claims[i] = rwa.ISINClaim{Code: c.Code, Issuer: c.Issuer, DeclaredAnchorAsset: c.AnchorAsset}
 		}
 	}
-	for _, c := range bound {
+	contested := rwa.ContestedISINClaims(claims)
+	for i, c := range bound {
 		e := entries[c.Issuer]
-		_, sibling := recognisedDomains[strings.ToLower(c.HomeDomain)]
-		v := rwa.Qualify(rwa.Candidate{
-			Code:               c.Code,
-			Issuer:             c.Issuer,
-			BoundSep1:          true,
-			DeclaredAnchorType: c.AnchorAssetType,
-			// The declaration's two halves answer different questions
-			// and an issuer may give a usable answer to only one. Both
-			// are passed; the definition decides which it can use.
-			DeclaredAnchorAsset: c.AnchorAsset,
-			DirectoryTags:       e.Tags,
-			SiblingRecognised:   sibling && c.HomeDomain != "",
-		})
+		v := verdicts[i]
 		if !v.InSet {
 			out.refusals[v.Reject]++
+			continue
+		}
+		if contested[i] {
+			out.refusals[rwa.RejectContestedISIN]++
 			continue
 		}
 		// Identity is (code, issuer), so a second declaration of the
@@ -1324,6 +1311,41 @@ func (s *Server) admitClassicCandidates(
 			dirTags:     e.Tags,
 		})
 	}
+}
+
+// classicVerdicts applies the per-candidate R1→R4 definition to every
+// bound declaration, index for index.
+func classicVerdicts(bound []timescale.Sep1BoundCurrency, entries map[string]timescale.DirectoryEntry) []rwa.Verdict {
+	// Domains with a directory-recognised, unflagged account among the
+	// issuers bound on them: an account the same SEP-1 names beside one
+	// of those is recognised by its sibling (rwa.RecognitionDomainSibling).
+	recognisedDomains := map[string]struct{}{}
+	for _, c := range bound {
+		if c.HomeDomain == "" {
+			continue
+		}
+		tags := entries[c.Issuer].Tags
+		if rwa.HasRecognitionTag(tags) && !rwa.ScamFlagged(tags) {
+			recognisedDomains[strings.ToLower(c.HomeDomain)] = struct{}{}
+		}
+	}
+	out := make([]rwa.Verdict, len(bound))
+	for i, c := range bound {
+		_, sibling := recognisedDomains[strings.ToLower(c.HomeDomain)]
+		out[i] = rwa.Qualify(rwa.Candidate{
+			Code:               c.Code,
+			Issuer:             c.Issuer,
+			BoundSep1:          true,
+			DeclaredAnchorType: c.AnchorAssetType,
+			// The declaration's two halves answer different questions
+			// and an issuer may give a usable answer to only one. Both
+			// are passed; the definition decides which it can use.
+			DeclaredAnchorAsset: c.AnchorAsset,
+			DirectoryTags:       entries[c.Issuer].Tags,
+			SiblingRecognised:   sibling && c.HomeDomain != "",
+		})
+	}
+	return out
 }
 
 // rwaMembershipRetryGap rate-limits rebuild ATTEMPTS, not rebuilds. A
