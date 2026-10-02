@@ -1,5 +1,5 @@
 // Package pricealerts is the aggregator-side evaluator for
-// customer-registered price-threshold alerts (BACKLOG #60, RFP §6).
+// customer-registered price-threshold alerts (RFP §6).
 //
 // The CRUD half (register / list / update / delete an alert) lives on
 // the API binary's dashboard surface

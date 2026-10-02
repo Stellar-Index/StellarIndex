@@ -149,11 +149,11 @@ shared pool — sequenced as a separate pass (see
 - **Live dual-sink latency** → deferred to after backfill proof; the live
   pricing path is untouched until then.
 
-## 8. Done definition for Phase 2 (#19)
+## 8. Done definition for Phase 2 (task #19)
 
 CH structural sink + `ch-backfill` implemented, verify.sh green, and **both
 §6 gates passed on the 100k sample with the numbers recorded here.** Full
-historic backfill is Phase 3 (#20), gated on this.
+historic backfill is Phase 3 (task #20), gated on this.
 
 **Phase 3 status (2026-06-05): LAUNCHED.** `scripts/ops/ch-full-backfill.sh`
 drives [2, 62,894,000] in resumable 1M-ledger windows, `ch-backfill -parallel

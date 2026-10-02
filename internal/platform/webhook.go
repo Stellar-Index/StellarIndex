@@ -39,8 +39,8 @@ const (
 	WebhookEventDivergenceFiring WebhookEventType = "divergence.firing"
 
 	// WebhookEventPriceAlert fires when one of the account's
-	// registered price-threshold alerts crosses its condition
-	// (BACKLOG #60). Unlike the operational events above, this is a
+	// registered price-threshold alerts crosses its condition.
+	// Unlike the operational events above, this is a
 	// PER-ACCOUNT event: the aggregator's price-alert evaluator
 	// enqueues it only to the owning account's subscribed webhooks
 	// (via ListWebhooksForAccount, not the global fan-out), so one

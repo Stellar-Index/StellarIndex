@@ -691,7 +691,7 @@ type Server struct {
 	// computed every ~15s by a background goroutine launched via
 	// [Server.StartIngestionSnapshotRefresh]. Powers
 	// /v1/diagnostics/ingestion sub-millisecond when populated
-	// (#16). Nil before the first refresh fires; handler falls back
+	// (4d6e7ac4f). Nil before the first refresh fires; handler falls back
 	// to inline-build (the legacy 200-500ms path) in that case.
 	ingestionSnapshot atomic.Pointer[ingestionSnapshotEntry]
 	mux               *http.ServeMux
@@ -1365,7 +1365,7 @@ type Options struct {
 	// (blend money-market, blend backstop, phoenix stake, defindex
 	// vault shares, sorocredit, aquarius gauge). timescale.Store
 	// satisfies it. Nil 503s the endpoint. Venue human labels reuse
-	// ProtocolPoolTokens (below) — the same reader the #91 protocol-
+	// ProtocolPoolTokens (below) — the same reader the a9f2e301c protocol-
 	// roster pair-label work already wired.
 	Positions explorerpkg.PositionsReader
 
@@ -1608,7 +1608,6 @@ type Options struct {
 	// 0080); the evaluator that checks the alerts and enqueues
 	// `price.alert` webhook deliveries runs in the aggregator
 	// (`internal/pricealerts`) and is orthogonal to these handlers.
-	// BACKLOG #60.
 	DashboardPriceAlerts DashboardAuthMounter
 
 	// SACWrappers is the operator-config map of SAC C-strkey →
@@ -2757,7 +2756,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	if s.dashboardWebhooks != nil {
 		s.dashboardWebhooks.Mount(s.mux, s.publicRoutes)
 	}
-	// Dashboard price-alert-management routes (BACKLOG #60). Same
+	// Dashboard price-alert-management routes. Same
 	// session-cookie + Postgres-wiring gate as dashboardKeys above.
 	if s.dashboardPriceAlerts != nil {
 		s.dashboardPriceAlerts.Mount(s.mux, s.publicRoutes)

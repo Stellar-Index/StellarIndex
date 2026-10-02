@@ -689,7 +689,7 @@ func TestAccountKeysList_Empty(t *testing.T) {
 	}
 }
 
-// ─── /v1/account/usage rollup path (#32 / #37b) ────────────────────
+// ─── /v1/account/usage rollup path ────────────────────────────────
 
 // fakeUsageRollupReader is the handler-level double for
 // [v1.UsageRollupReader].

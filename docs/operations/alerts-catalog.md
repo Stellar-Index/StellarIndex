@@ -446,8 +446,8 @@ chain-link locally. See [archive-completeness.md](archive-completeness.md).
 | `stellarindex_galexie_archive_contiguity_silent` | `absent_over_time(galexie_archive_unexpected_gaps[3h])` | for 15 m (hourly scan dark) | ticket | [galexie-archive-contiguity](runbooks/galexie-archive-contiguity.md) |
 | `stellarindex_galexie_archive_scan_degraded` | `galexie_archive_scan_ok` / `_scan_last_run_unix` | the bucket listing errored, the scan stopped rewriting its file (> 3 h), or it was never written — for > 15 min. A failed read no longer publishes a partition verdict at all, so this is what speaks for it | ticket | [galexie-archive-contiguity](runbooks/galexie-archive-contiguity.md) |
 
-Defense-in-depth for `#26` — the original 23-day silent stall of
-`galexie-archive`. The post-`#26` fix is the hourly
+Defense-in-depth for the original 23-day silent stall of
+`galexie-archive`. The standing fix (f12289f6d) is the hourly
 `galexie-archive-fill.timer`; these alerts page within hours if
 that timer (or its `mc` aliases / aws-public IAM / MinIO
 mtime-poison failure mode) silently breaks. Metric source:

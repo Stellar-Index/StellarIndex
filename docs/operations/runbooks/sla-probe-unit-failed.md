@@ -104,4 +104,4 @@ companion, that's a signal to add the per-breach rule.
   Freshness example corrected: `price` is measured against the 150 s
   closed-bucket target (`defaultClosedBucketFreshTarget`); 30 s
   belongs to `price-tip`. Rule citation → `rules.r1/sla-probe.yml`.
-- 2026-04-30 — initial draft alongside #294 (alert rules).
+- 2026-04-30 — initial draft alongside 4778c79b4 (alert rules).

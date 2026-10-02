@@ -44,7 +44,7 @@ type TrustlineObservation struct {
 
 // InsertTrustlineObservation appends one [TrustlineObservation]
 // row, last-writer-wins on conflict. Same shape as
-// [Store.InsertAccountObservation] from #299 — the AccountEntry
+// [Store.InsertAccountObservation] from 9f172d619 — the AccountEntry
 // post-state is monotonic within a ledger so the latest write is
 // the authoritative final state.
 //

@@ -53,7 +53,7 @@ import (
 // SQL) — it is READ-HEAVY and MUST run under run-heavy-job.sh on r1.
 //
 // -full-history (incident 2026-07-06 PHO/BLND VERDICT follow-up, ROADMAP
-// #14). The default source, stellar.ledger_entries_current, is fed by a
+// ROADMAP #14). The default source, stellar.ledger_entries_current, is fed by a
 // ClickHouse materialized view that only processes rows inserted AFTER
 // the MV was created (~ledger 62,000,000) — a Balance entry dormant
 // since before that floor is invisible to it even though it has always
