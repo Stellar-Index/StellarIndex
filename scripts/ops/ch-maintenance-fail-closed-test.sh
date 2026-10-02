@@ -68,6 +68,7 @@ case "$sql" in
     printf '%b' "${PARTS:-40\n41\n}"
     ;;
   *"FROM system.merges"*) echo 0 ;;
+  *"FROM system.columns"*) echo "${ZSTD_COLS:-1}" ;;
   *"sum(bytes_on_disk)"*) echo 2147483648 ;;
   *"max(ledger_seq)"*) echo 63000000 ;;
 esac
@@ -175,6 +176,12 @@ expect_rc_zero "healthy run over tables with an explicit ceiling"
 expect_count "$STMT" "max_bytes_to_merge_at_max_space_in_pool = 107374182400" 3 "explicit ceiling: each table restored to the 100 GiB it had"
 expect_absent "$STMT" "161061273600" "explicit ceiling: no hardcoded 150 GiB written"
 expect_count "$LOG" "OTHERS_COMPLETE" 1 "explicit ceiling: OTHERS_COMPLETE logged"
+
+run oth_lz4 recompress-others.sh ZSTD_COLS=0 --
+expect_rc_nonzero "an XDR column still on the default LZ4 codec"
+expect_absent "$STMT" "OPTIMIZE TABLE" "LZ4 column: no partition rewritten"
+expect_absent "$STMT" "MODIFY SETTING" "LZ4 column: no merge ceiling raised"
+expect_absent "$LOG" "OTHERS_COMPLETE" "LZ4 column: OTHERS_COMPLETE never logged"
 
 run oth_happy recompress-others.sh --
 expect_rc_zero "healthy run over tables inheriting the server default"
