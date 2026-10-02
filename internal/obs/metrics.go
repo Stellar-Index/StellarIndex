@@ -734,7 +734,7 @@ func seedBoundedLabelSeriesTail() {
 	// distinguishable from "never wired".
 	for _, kind := range []string{
 		"tx_read_errors", "tx_event_read_errors", "entry_meta_unsupported",
-		"tx_read_errors_census", "tx_event_read_errors_census",
+		"soroban_fee_meta_unsupported", "tx_read_errors_census", "tx_event_read_errors_census",
 	} {
 		ChLiveSinkReadUndercountTotal.WithLabelValues(kind)
 	}
@@ -5046,13 +5046,14 @@ var ChLiveSinkLedgersTotal = prometheus.NewCounterVec(
 
 // ChLiveSinkReadUndercountTotal counts transactions the indexer's per-ledger
 // read paths could not fully decode, by kind: the lake extract
-// (tx_read_errors, tx_event_read_errors, entry_meta_unsupported) and the
+// (tx_read_errors, tx_event_read_errors, entry_meta_unsupported,
+// soroban_fee_meta_unsupported) and the
 // ledger_ingest_log census (the *_census kinds). Each add is the per-ledger
 // transaction count, not a per-ledger flag.
 var ChLiveSinkReadUndercountTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ch_live_sink_read_undercount_total",
-		Help: "Transactions/ledgers a read path could not fully decode, labelled by kind (tx_read_errors|tx_event_read_errors|entry_meta_unsupported|tx_read_errors_census|tx_event_read_errors_census).",
+		Help: "Transactions/ledgers a read path could not fully decode, labelled by kind (tx_read_errors|tx_event_read_errors|entry_meta_unsupported|soroban_fee_meta_unsupported|tx_read_errors_census|tx_event_read_errors_census).",
 	},
 	[]string{"kind"},
 )
