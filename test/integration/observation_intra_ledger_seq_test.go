@@ -308,6 +308,7 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 		const legacyID = "GWALKVERSIONLEGACYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 		for _, tc := range []struct {
 			table, legacySQL, readSQL string
+			id                        string // overrides legacyID when a table has two writer paths
 			write                     func() error
 		}{
 			{
@@ -344,6 +345,18 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 				},
 			},
 			{
+				table: "claimable_observations",
+				id:    legacyID + "SINGLE",
+				legacySQL: `INSERT INTO claimable_observations (claimable_id, asset_key, ledger, observed_at, balance_stroops, is_removal, intra_ledger_seq)
+				            VALUES ($1, '` + assetKey + `', $2, $3, 700, false, 6)`,
+				readSQL: `SELECT balance_stroops::text FROM claimable_observations WHERE claimable_id = $1 AND ledger = $2`,
+				write: func() error {
+					return store.InsertClaimableObservation(ctx, timescale.ClaimableObservation{
+						ClaimableID: legacyID + "SINGLE", AssetKey: assetKey, Ledger: ledger, ObservedAt: observedAt, Balance: big.NewInt(250), IntraLedgerSeq: 3,
+					})
+				},
+			},
+			{
 				table: "lp_reserve_observations",
 				legacySQL: `INSERT INTO lp_reserve_observations (pool_id, asset_key, ledger, observed_at, balance_stroops, is_removal, intra_ledger_seq)
 				            VALUES ($1, '` + assetKey + `', $2, $3, 700, false, 6)`,
@@ -356,14 +369,18 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 			},
 		} {
 			t.Run(tc.table, func(t *testing.T) {
-				if _, err := store.DB().ExecContext(ctx, tc.legacySQL, legacyID, int(ledger), observedAt); err != nil {
+				id := legacyID
+				if tc.id != "" {
+					id = tc.id
+				}
+				if _, err := store.DB().ExecContext(ctx, tc.legacySQL, id, int(ledger), observedAt); err != nil {
 					t.Fatalf("legacy insert: %v", err)
 				}
 				if err := tc.write(); err != nil {
 					t.Fatalf("writer: %v", err)
 				}
 				var bal string
-				if err := store.DB().QueryRowContext(ctx, tc.readSQL, legacyID, int(ledger)).Scan(&bal); err != nil {
+				if err := store.DB().QueryRowContext(ctx, tc.readSQL, id, int(ledger)).Scan(&bal); err != nil {
 					t.Fatalf("read: %v", err)
 				}
 				if bal != "250" {
@@ -393,6 +410,36 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 		writeSAC(t, contractID, holder, 999, 9)
 		if bal, _ := readSAC(t, contractID, holder); bal != "400" {
 			t.Fatalf("balance = %s, want the newer walk's 400 to survive an older walk's write", bal)
+		}
+	})
+
+	// Readers order by ledger, walk_version, then position: within one
+	// ledger the higher walk_version row wins even when it is older by
+	// observed_at and lower by intra_ledger_seq.
+	t.Run("reader_prefers_higher_walk_version_in_same_ledger", func(t *testing.T) {
+		const (
+			contractID = "CBWALKVERSIONREADER0000000000000000000000000000000000000"
+			holder     = "GHOLDERWALKVERSIONREADERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		)
+		const q = `
+            INSERT INTO sac_balance_observations (
+                contract_id, asset_key, holder, ledger, observed_at,
+                balance_stroops, is_removal, intra_ledger_seq, walk_version
+            ) VALUES ($1,$2,$3,$4,$5,$6,false,$7,$8)`
+		if _, err := store.DB().ExecContext(ctx, q, contractID, assetKey, holder, int(ledger),
+			observedAt.Add(time.Second), "111", 9, 1); err != nil {
+			t.Fatalf("lower-version insert: %v", err)
+		}
+		if _, err := store.DB().ExecContext(ctx, q, contractID, assetKey, holder, int(ledger),
+			observedAt, "222", 1, 2); err != nil {
+			t.Fatalf("higher-version insert: %v", err)
+		}
+		got, err := store.SACBalanceForContractAtOrBefore(ctx, holder, assetKey, ledger)
+		if err != nil {
+			t.Fatalf("reader: %v", err)
+		}
+		if got.String() != "222" {
+			t.Fatalf("balance = %s, want the higher walk_version row 222", got)
 		}
 	})
 

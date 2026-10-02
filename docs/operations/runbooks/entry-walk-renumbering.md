@@ -15,7 +15,7 @@ severity: P2
 | Trigger | A release changes the order in which `dispatcher.walkLedgerEntryChanges` / `clickhouse.extractLedgerEntryChanges` emit changes, i.e. `EntryWalkVersion` is incremented. Current value: **2** (C2-032 / C2-023 / C2-040 / R-A01-1, audit-2026-07-23). |
 | Typical MTTR | Not an incident. Budget the re-derive time for the affected range. |
 | Impact if skipped | `ledger_entries_current_v2` rows written by the OLD walk keep a position from a numbering that no longer exists, and a corrective reproject is **silently discarded** by its RMT version — no error, no metric, no retry that helps. Balance observations record `walk_version` (migration 0199), so there a re-derive under the bumped binary does land; only a renumbering shipped WITHOUT a bump strands them. |
-| Impact if done WRONG | Worse than skipping. The seed writes at `MaxUint32`, which nothing can outrank; seeding from an un-repaired source makes a stale balance **permanently unfixable**. Read the repair path in order. |
+| Impact if done WRONG | Worse than skipping. The seed writes at `MaxUint32`, which is unbeatable within its `walk_version` (a stamped re-derive under a higher version replaces it); seeding from an un-repaired source makes a stale balance **permanently unfixable**. Read the repair path in order. |
 
 ## What this is
 
@@ -57,9 +57,10 @@ The ClickHouse side fails the same way — a version built from a *lower*
 
 > **The single most dangerous mistake on this page is doing step 2 before
 > step 1 has genuinely finished.** The seed writes at `MaxUint32`, which by
-> construction nothing can outrank. Seeding a *stale* balance there makes it
-> permanently unbeatable — strictly worse than the corruption you started
-> with, and not fixable by any later re-derive. Do not start step 2 until
+> construction is unbeatable within its `walk_version` (a stamped re-derive
+> under a higher version replaces it). Seeding a *stale* balance there makes
+> it unbeatable by any replay at the same version — strictly worse than the
+> corruption you started with. Do not start step 2 until
 > step 1 verifies.
 
 ### Why the obvious moves do not work
@@ -272,3 +273,5 @@ at its latest change's ledger. There is no tool today that emits a per-ledger
 historical final state for a range, so a historical observation repair over a
 window is specified here but not yet executable end to end. The served-supply
 surface (what the money path reads) IS covered by the current-state seeds.
+
+**Binary rollback across an `EntryWalkVersion` bump.** Rows stamped with the newer version cannot be displaced by a replay or seed running under the older version. Before replaying, `DELETE` those rows for the affected range, or `UPDATE` them to `walk_version = 0`.
