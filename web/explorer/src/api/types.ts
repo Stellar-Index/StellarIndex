@@ -2684,7 +2684,9 @@ export interface paths {
          *     cumulative fee pool and total XLM (stroop strings — the
          *     values exceed 2^53) and the protocol version in force.
          *     `fee_pool` is cumulative; daily fee burn is the delta between
-         *     consecutive COMPLETE days. Aggregated from the certified
+         *     consecutive COMPLETE days minus that day's `fee_pool_adjustment`
+         *     (present only on a day the pool was credited outside any
+         *     transaction fee, e.g. by a protocol upgrade). Aggregated from the certified
          *     `stellar.ledgers` lake (which carries the per-ledger counts),
          *     bounded to the tip so it stays partition-pruned. The
          *     time-series companion to the snapshot at `/v1/network/stats`;
@@ -18504,8 +18506,10 @@ export interface operations {
                                 ops?: number;
                                 /** Format: int64 */
                                 events?: number;
-                                /** @description Cumulative network fee pool at the day's last ledger, in stroops (decimal string — exceeds 2^53). Daily fee burn = the delta between consecutive COMPLETE days. */
+                                /** @description Cumulative network fee pool at the day's last ledger, in stroops (decimal string — exceeds 2^53). Daily fee burn = the delta between consecutive COMPLETE days minus `fee_pool_adjustment`. */
                                 fee_pool?: string;
+                                /** @description Stroops (decimal string) the fee pool changed by this day outside any transaction fee — e.g. pubnet's Protocol 24 upgrade crediting it 31879035 stroops on 2025-10-22. Subtract it from the day's fee_pool delta to get the fees burned. Omitted when the day had no such change. */
+                                fee_pool_adjustment?: string;
                                 /** @description Total XLM in existence at the day's last ledger, in stroops (decimal string — exceeds 2^53). */
                                 total_coins?: string;
                                 /** @description Protocol version in force at the day's last ledger. */
