@@ -927,6 +927,9 @@
     owner: root
     group: root
     mode: "0755"
+  # Tagged with the units that call it: a `--tags ops-jobs` apply that ships
+  # the sdex unit without this driver would run a plain -pass instead.
+  tags: [ops-jobs]
 
 - name: Install data-freshness.sh watchdog (the "never get behind" textfile emit)
   # data-freshness.service runs this every 15 min: emits per-domain ingest
