@@ -86,7 +86,7 @@ Three branches:
   on. Do NOT raise `-max-runtime` — the uncapped setting is
   intentional (the Task #13 mid-pass-cap incident), and runtime isn't
   the limiter.
-- [ ] **Communicate degradation**: while this alert is firing, R2/R3 trust in R1's verification anchor is degrading. Today the degradation call is a comms action (status page / on-call channel), not a config flip — no `reduced_redundancy` config value exists; `ReducedRedundancy` is a wire-envelope field with zero producers (the L4.10 per-region trust wiring is unbuilt). `TODO(maintainer): wire L4.10 or drop this step.`
+- [ ] **Communicate degradation**: while this alert is firing, R2/R3 trust in R1's verification anchor is degrading. Post it on the status page and the on-call channel; that is the whole action, there is no config to flip. The API's `flags.reduced_redundancy` (`internal/api/v1/envelope.go`) has no producer: per ADR-0017 the R2/R3 regions set it when R1's last successful run is stale, and they are not provisioned yet ([L4.14 / L4.15](../../architecture/launch-readiness-backlog.md)). Until they are, the flag stays `false` during this alert.
 - [ ] **Verification**: a clean run completes within 24h; the alert clears.
 
 ## Root cause analysis
@@ -161,6 +161,10 @@ its stdout goes to the systemd journal and is rotated by
 
 ## Changelog
 
+- 2026-10-02 — "Communicate degradation" states the comms action as
+  the complete step and names why `flags.reduced_redundancy` stays
+  `false`: its producers are the unprovisioned R2/R3 regions (L4.14 /
+  L4.15), not L4.10, which shipped per-region tier selection.
 - 2026-08-30 — the expr no longer keys on the timer's last trigger. It
   reads `stellarindex_verify_archive_last_success_unix`, written by the
   verify-archive binary and advanced only on a clean exit, so a job that
@@ -179,8 +183,8 @@ its stdout goes to the systemd journal and is rotated by
   (Type=notify + WatchdogSec=1h, VERIFY_ARCHIVE_MAX_RUNTIME=0
   uncapped, incremental `-from-last-verified` state-file walk under
   run-heavy-job.sh) — "increase -max-runtime" advice removed.
-  `reduced_redundancy` config flip replaced with the comms action +
-  TODO(maintainer) (L4.10 unwired). Hygiene examples: `--from 0` → `--from 2`
+  `reduced_redundancy` config flip replaced with the comms action
+  (the flag has no producer). Hygiene examples: `--from 0` → `--from 2`
   (flag floor) and wrapped in run-heavy-job.sh. Rule citation →
   `rules.r1/verify-archive.yml`; commands use r1 shapes; Tier B
   siblings added to Related.

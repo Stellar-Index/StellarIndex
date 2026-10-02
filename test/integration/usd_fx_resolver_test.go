@@ -63,6 +63,8 @@ func TestVWAPUSDFXResolver_QueriesPrices1m(t *testing.T) {
 		// to pass for this test (1m gap < 1h) but would fail any
 		// historical-replay test where the trade was older than 1h.
 		Freshness: -1,
+		// One trade is no market; this pins the lookup, not the gate.
+		DisableSubstanceGate: true,
 	})
 	if err != nil {
 		t.Fatalf("NewVWAPUSDFXResolver: %v", err)
@@ -168,6 +170,8 @@ func TestVWAPUSDFXResolver_DustBucketDoesNotOutrankRealBucket(t *testing.T) {
 		// -1 disables the freshness bound so BOTH buckets are eligible;
 		// the choice between them is the floor's job, not staleness'.
 		Freshness: -1,
+		// Two buckets are no market; this pins the dust floor, not the gate.
+		DisableSubstanceGate: true,
 	})
 	if err != nil {
 		t.Fatalf("NewVWAPUSDFXResolver: %v", err)
@@ -255,6 +259,9 @@ func TestVWAPUSDFXResolver_BootstrapsWithoutUSDVolume(t *testing.T) {
 	resolver, err := timescale.NewVWAPUSDFXResolver(store, timescale.VWAPUSDFXResolverOptions{
 		USDPegs:   []string{"USDC-" + usdcIssuer},
 		Freshness: -1,
+		// The gate reads volume_usd, which the exact tiers stamp on a peg
+		// market in production; this pins the dust floor's own bootstrap.
+		DisableSubstanceGate: true,
 	})
 	if err != nil {
 		t.Fatalf("NewVWAPUSDFXResolver: %v", err)

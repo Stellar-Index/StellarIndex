@@ -160,6 +160,31 @@ func TestDecodeRouterArgs_shortArgs(t *testing.T) {
 	}
 }
 
+// TestDecodeRouterArgs_extraArgs pins exact arity: a well-formed swap
+// with a trailing sixth arg is an unaudited shape and must be refused.
+func TestDecodeRouterArgs_extraArgs(t *testing.T) {
+	t.Parallel()
+	a := makeContractAddress(t, byte(0x50))
+	b := makeContractAddress(t, byte(0x51))
+	to := makeAccountAddress(t, byte(0x52))
+
+	args := []string{
+		mustB64(t, i128SCVal(big.NewInt(10))),
+		mustB64(t, i128SCVal(big.NewInt(20))),
+		mustB64(t, vecSCVal(addrSCVal(a), addrSCVal(b))),
+		mustB64(t, addrSCVal(to)),
+		mustB64(t, u64SCVal(0)),
+		mustB64(t, u64SCVal(7)),
+	}
+	_, err := decodeRouterArgs(
+		FnSwapExactTokensForTokens, args,
+		MainnetRouter, 0, "", 0, "", "", time.Time{}, nil,
+	)
+	if !errors.Is(err, ErrMalformedArgs) {
+		t.Errorf("err = %v, want ErrMalformedArgs (6 args)", err)
+	}
+}
+
 // TestDecodeRouterArgs_pathTooShort covers the path-length
 // invariant. Router itself rejects len < 2 at the contract level;
 // our decoder mirrors that so a malformed call gets dropped via

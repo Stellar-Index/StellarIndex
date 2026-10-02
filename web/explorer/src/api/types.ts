@@ -7079,12 +7079,13 @@ export interface components {
          * @description A customer-registered price-threshold alert backing the
          *     /v1/dashboard/price-alerts surface (BACKLOG #60). The
          *     aggregator's evaluator compares each enabled alert against the
-         *     latest closed 1m VWAP for its pair and, while the condition
-         *     holds, enqueues a `price.alert` webhook delivery to the
-         *     account's subscribed webhooks. The evaluator is level-triggered,
-         *     not edge-triggered: an alert whose condition keeps holding
-         *     re-fires once per `cooldown_seconds` until the price moves back
-         *     across the threshold or the alert is disabled.
+         *     latest closed 1m VWAP for its pair and, on a crossing, enqueues
+         *     a `price.alert` webhook delivery to the account's subscribed
+         *     webhooks. An alert fires once per crossing: after a fire it
+         *     stays quiet while the condition holds and re-arms once a fresh
+         *     price (closed within 15 minutes) no longer meets it. Changing
+         *     the pair, condition or threshold, or re-enabling a disabled
+         *     alert, also re-arms it.
          */
         DashboardPriceAlert: {
             /** Format: uuid */
@@ -7122,7 +7123,7 @@ export interface components {
             condition: "above" | "below";
             /** @description Positive decimal string (e.g. "0.15", "1200"). Fractions / scientific notation are rejected. */
             threshold: string;
-            /** @description Optional; defaults to 300 (5m), also the minimum. A lower value is a 400: the evaluator is level-triggered, so a shorter cooldown would re-notify every webhook on each tick the condition holds. */
+            /** @description Optional; defaults to 300 (5m), also the minimum. A lower value is a 400: it bounds re-notification when the price oscillates across the threshold, each move back re-arming the alert. */
             cooldown_seconds?: number;
             /** @description Defaults true when absent. */
             enabled?: boolean;
@@ -7242,13 +7243,12 @@ export interface components {
         /**
          * @description Body of a `price.alert` webhook delivery (BACKLOG #60). Fired by
          *     the aggregator's price-alert evaluator when one of the account's
-         *     registered alerts has its condition met by the latest closed
-         *     1-minute VWAP. The evaluator is level-triggered: while the
-         *     condition keeps holding the alert re-fires once per its
-         *     `cooldown_seconds` (minimum 300), so one excursion past the
-         *     threshold can produce several deliveries, each with its own
-         *     delivery id. Unlike the operational events, this is enqueued
-         *     ONLY to the owning account's subscribed webhooks.
+         *     registered alerts crosses its threshold against the latest closed
+         *     1-minute VWAP. Sent once per crossing: the alert re-arms only after
+         *     a fresh price no longer meets the condition, and two fires are
+         *     always at least `cooldown_seconds` apart. Unlike the operational
+         *     events, this is enqueued ONLY to the owning account's subscribed
+         *     webhooks.
          */
         PriceAlertWebhookPayload: {
             /** @enum {string} */
