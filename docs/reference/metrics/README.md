@@ -2455,7 +2455,7 @@ Per-sweep outcome of the aggregator's price-alert evaluator
 (`internal/pricealerts`, BACKLOG #60), which checks every enabled
 `price_alerts` row against the latest closed 1-minute VWAP each tick
 and enqueues account-scoped `price.alert` customer-webhook deliveries
-when a threshold is crossed (respecting cooldown + `last_fired_at`).
+once per threshold crossing (respecting cooldown + `last_fired_at`).
 Only emits when `[price_alerts] enabled = true`.
 
 When to look at it: customers report their price-threshold webhooks
@@ -2473,7 +2473,7 @@ configs/prometheus/rules.r1/price-alerts.yml).
 
 ### `stellarindex_price_alert_evaluated_total`
 
-Counter, label `outcome` (`fired` / `not_crossed` / `no_price` / `stale` /
+Counter, label `outcome` (`fired` / `not_crossed` / `already_fired` / `no_price` / `stale` /
 `cooling_down` / `no_subscriber` / `claim_lost` / `error` / `timeout`),
 every child seeded when the evaluator is built.
 
@@ -2482,6 +2482,8 @@ One increment per alert per sweep. `timeout` is the alert's own deadline
 `stale` is a closed VWAP bucket older than the evaluator's own freshness
 budget (`maxPriceStaleness`, 15 min) — rejected rather than notifying off
 a price that no longer describes a live crossing.
+`already_fired` is an alert whose condition still holds since it last
+fired; it re-arms when a fresh price shows the condition cleared.
 More than half of evaluations ending in `error` / `timeout` for 30 min
 fires `stellarindex_price_alert_evaluations_failing`.
 
