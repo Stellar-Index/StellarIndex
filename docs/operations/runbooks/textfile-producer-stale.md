@@ -54,6 +54,11 @@ Prometheus review found, none a dead producer:
 `stellarindex-ops` job with no timer/cron, so a long gap between runs
 is expected, not a dead cron.
 
+**2026-10-02: `ops_job_projected_rebuild_<source>.prom` added** — the
+`projected-rebuild` job names its heartbeat per source, so every source
+ever rebuilt leaves a file behind with `stellarindex_ops_job_running 0`.
+A run in progress is covered by `stellarindex_ops_job_heartbeat_stale`.
+
 ## Diagnosis
 
 ```sh
@@ -91,3 +96,5 @@ API, ClickHouse, S3/MinIO) it queries being unreachable.
 - **2026-09-28** — excluded `ops_job_usd_volume_restamp.prom`, another
   one-off `stellarindex-ops` job with no timer/cron, same class as
   `ops_job_backfill.prom`.
+- **2026-10-02** — excluded `ops_job_projected_rebuild_<source>.prom`,
+  the per-source one-shot rebuild heartbeats.

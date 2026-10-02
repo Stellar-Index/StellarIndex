@@ -30,6 +30,21 @@ func assetAliasArray(assetKey string) []string {
 	return canonical.AssetAliasStrings(a)
 }
 
+// assetAliasRows is [assetAliasArray] for a batch read: every requested id
+// expanded to its alias forms as parallel arrays (form, owning id, the
+// form's priority), so the SQL can stay alias-complete per id while the
+// result stays keyed on the id the caller passed.
+func assetAliasRows(assetIDs []string) (forms, owners []string, prios []int64) {
+	for _, id := range assetIDs {
+		for i, form := range assetAliasArray(id) {
+			forms = append(forms, form)
+			owners = append(owners, id)
+			prios = append(prios, int64(i+1))
+		}
+	}
+	return forms, owners, prios
+}
+
 // AssetRow is the read-side projection of one row from the
 // asset-discovery view: classic_assets joined with whatever supply +
 // activity counters we have today. Pure-string fields keep the
@@ -515,9 +530,8 @@ func mustSQLTextArrayLiteral(vals []string) string {
 // predicates agree tag for tag (an asset that shows the explorer's
 // "⚠ Flagged" pill is exactly an asset this demotes).
 //
-// dir.tags is NULL for the overwhelming majority of rows (issuer absent
-// from the ~18.5k-row curated directory) and for every Soroban-native row
-// (a contract asset has no issuer account); unnest(NULL) yields zero rows
+// dir.tags is NULL for the overwhelming majority of rows (issuer or
+// contract absent from the ~18.5k-row curated directory); unnest(NULL) yields zero rows
 // so EXISTS is false and the row ranks normally — fail-OPEN, matching the
 // directory overlay and the scam pricing gate.
 var directoryScamFlaggedExpr = `EXISTS (SELECT 1 FROM unnest(dir.tags) t ` +
@@ -751,13 +765,12 @@ const listAssetsBaseSelect = `
 		  -- 0136). Read ONLY by listingRankTierExpr's scam-flag demotion —
 		  -- the payload's issuer_directory_* fields are still stamped by the
 		  -- API layer's batch lookup, so this join changes ranking, never
-		  -- served data. Keyed on the issuer G-address exactly like
-		  -- v1.Server.fillIssuerDirectoryTags, so "demoted" and "shows the
-		  -- ⚠ Flagged pill" are the same set of rows. account_directory.address
-		  -- is the PRIMARY KEY, so this join can never fan a listing row out
-		  -- into duplicates; a NULL issuer (every Soroban-native row) simply
-		  -- misses and ranks normally.
-		  LEFT JOIN account_directory      dir    ON dir.address         = ca.issuer_g_strkey
+		  -- served data. Keyed exactly like v1.Server.fillIssuerDirectoryTags
+		  -- (the issuer G-address, or a Soroban-native row's own contract
+		  -- address), so "demoted" and "shows the ⚠ Flagged pill" are the
+		  -- same set of rows. account_directory.address is the PRIMARY KEY,
+		  -- so this join can never fan a listing row out into duplicates.
+		  LEFT JOIN account_directory      dir    ON dir.address         = COALESCE(ca.issuer_g_strkey, ca.asset_id)
 `
 
 // listAssetsBaseSelectSQL renders [listAssetsBaseSelect] for the active
@@ -1123,8 +1136,8 @@ const (
 	catalogueRoundPlacesForAliases = catalogueRoundPlacesHead + `ANY($1)` + catalogueRoundPlacesTail
 	// `ca` is the chosen catalogue row (GetAssetBySlug).
 	catalogueRoundPlacesForRow = catalogueRoundPlacesHead + `ca.asset_id` + catalogueRoundPlacesTail
-	// `w` is the wanted-ids row (batch history reads).
-	catalogueRoundPlacesForWanted = catalogueRoundPlacesHead + `w.asset_id` + catalogueRoundPlacesTail
+	// `w` is the wanted-ids row of a batch history read; forms are its aliases.
+	catalogueRoundPlacesForWanted = catalogueRoundPlacesHead + `ANY(w.forms)` + catalogueRoundPlacesTail
 )
 
 // GetAssetPriceHistory24h returns up to 24 hourly USD price samples
@@ -1184,7 +1197,8 @@ const getAssetPriceHistory24hSQL = `
 		    SELECT date_trunc('hour', bucket) AS h, vwap::numeric AS vwap,
 		           row_number() OVER (
 		             PARTITION BY date_trunc('hour', bucket)
-		             ORDER BY array_position($1::text[], base_asset), bucket DESC
+		             ORDER BY array_position($1::text[], base_asset), bucket DESC,
+		                      ` + usdQuotePref + `
 		           ) AS rn
 		      FROM prices_1m
 		     WHERE base_asset = ANY($1)
@@ -1213,12 +1227,12 @@ const getAssetPriceHistory24hSQL = `
 		    SELECT h, vwap,
 		           row_number() OVER (
 		             PARTITION BY h
-		             ORDER BY inverted, prio, bucket DESC
+		             ORDER BY inverted, prio, bucket DESC, xlm_prio
 		           ) AS rn
 		      FROM (
 		        SELECT date_trunc('hour', bucket) AS h, vwap::numeric AS vwap,
 		               array_position($1::text[], base_asset) AS prio,
-		               bucket, 0 AS inverted
+		               bucket, 0 AS inverted, ` + xlmFormPrefOpen + `quote_asset) AS xlm_prio
 		          FROM prices_1m
 		         WHERE base_asset = ANY($1)
 		           AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
@@ -1227,7 +1241,7 @@ const getAssetPriceHistory24hSQL = `
 		        UNION ALL
 		        SELECT date_trunc('hour', bucket), 1::numeric / vwap,
 		               array_position($1::text[], quote_asset),
-		               bucket, 1
+		               bucket, 1, ` + xlmFormPrefOpen + `base_asset)
 		          FROM prices_1m
 		         WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		           AND quote_asset = ANY($1)
@@ -1239,7 +1253,7 @@ const getAssetPriceHistory24hSQL = `
 		xlm_usd_per_hour AS (
 		  -- Same stablecoin-proxy fallback as the listing query —
 		  -- prices_1m doesn't carry (native, fiat:USD) rows.
-		  SELECT date_trunc('hour', bucket) AS h, last(vwap, bucket)::numeric AS vwap
+		  SELECT DISTINCT ON (h) date_trunc('hour', bucket) AS h, vwap::numeric AS vwap
 		    FROM prices_1m
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
@@ -1248,7 +1262,7 @@ const getAssetPriceHistory24hSQL = `
 		     )
 		     AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
 		     AND vwap IS NOT NULL
-		   GROUP BY h
+		   ORDER BY h, bucket DESC, ` + usdQuotePref + `
 		)
 		SELECT
 		    to_char(hours.bucket, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS t,
@@ -1321,7 +1335,8 @@ const getAssetPriceHistory7dSQL = `
 		    SELECT date_trunc('day', bucket) AS d, vwap::numeric AS vwap,
 		           row_number() OVER (
 		             PARTITION BY date_trunc('day', bucket)
-		             ORDER BY array_position($1::text[], base_asset), bucket DESC
+		             ORDER BY array_position($1::text[], base_asset), bucket DESC,
+		                      ` + usdQuotePref + `
 		           ) AS rn
 		      FROM prices_1m
 		     WHERE base_asset = ANY($1)
@@ -1350,12 +1365,12 @@ const getAssetPriceHistory7dSQL = `
 		    SELECT d, vwap,
 		           row_number() OVER (
 		             PARTITION BY d
-		             ORDER BY inverted, prio, bucket DESC
+		             ORDER BY inverted, prio, bucket DESC, xlm_prio
 		           ) AS rn
 		      FROM (
 		        SELECT date_trunc('day', bucket) AS d, vwap::numeric AS vwap,
 		               array_position($1::text[], base_asset) AS prio,
-		               bucket, 0 AS inverted
+		               bucket, 0 AS inverted, ` + xlmFormPrefOpen + `quote_asset) AS xlm_prio
 		          FROM prices_1m
 		         WHERE base_asset = ANY($1)
 		           AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
@@ -1364,7 +1379,7 @@ const getAssetPriceHistory7dSQL = `
 		        UNION ALL
 		        SELECT date_trunc('day', bucket), 1::numeric / vwap,
 		               array_position($1::text[], quote_asset),
-		               bucket, 1
+		               bucket, 1, ` + xlmFormPrefOpen + `base_asset)
 		          FROM prices_1m
 		         WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		           AND quote_asset = ANY($1)
@@ -1374,7 +1389,7 @@ const getAssetPriceHistory7dSQL = `
 		  ) z WHERE rn = 1
 		),
 		xlm_usd_per_day AS (
-		  SELECT date_trunc('day', bucket) AS d, last(vwap, bucket)::numeric AS vwap
+		  SELECT DISTINCT ON (d) date_trunc('day', bucket) AS d, vwap::numeric AS vwap
 		    FROM prices_1m
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
@@ -1383,7 +1398,7 @@ const getAssetPriceHistory7dSQL = `
 		     )
 		     AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
 		     AND vwap IS NOT NULL
-		   GROUP BY d
+		   ORDER BY d, bucket DESC, ` + usdQuotePref + `
 		)
 		SELECT
 		    to_char(days.bucket, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS t,
@@ -1468,7 +1483,7 @@ func (s *Store) GetAssetATH(ctx context.Context, assetID string) (*AssetATH, err
 		   AND vwap IS NOT NULL
 		   AND volume_usd >= $2::numeric
 		   AND trade_count >= $3::bigint
-		 ORDER BY vwap DESC
+		 ORDER BY vwap DESC, bucket
 		 LIMIT 1
 	`
 	var ath AssetATH
@@ -1483,38 +1498,40 @@ func (s *Store) GetAssetATH(ctx context.Context, assetID string) (*AssetATH, err
 }
 
 // GetAssetsATHBatch returns ATH USD price + day for each asset_id
-// in a single round trip. DISTINCT ON picks the (vwap-max,
-// bucket) tuple per base_asset; the same USD-quote allowlist as
-// the per-asset GetAssetATH and the same dust-resistance rationale
-// (see AssetATH docs).
+// in a single round trip, with GetAssetATH's semantics per id: the
+// max day-VWAP across every alias form of the asset, over the same
+// USD-quote allowlist and substance floor (see AssetATH docs), the
+// earliest day on a tie.
 //
 // Empty input returns an empty map cleanly. Asset_ids with no
 // USD-quoted history are simply absent from the result map.
-//
-// Powers `?include=ath` on /v1/coins so /assets can show "% from
-// ATH" without N+1 round trips.
 func (s *Store) GetAssetsATHBatch(ctx context.Context, assetIDs []string) (map[string]AssetATH, error) {
 	out := make(map[string]AssetATH, len(assetIDs))
 	if len(assetIDs) == 0 {
 		return out, nil
 	}
 	const q = `
-		SELECT DISTINCT ON (base_asset)
-		    base_asset,
-		    vwap::text,
-		    to_char(bucket, 'YYYY-MM-DD"T"00:00:00"Z"')
-		  FROM prices_1d
-		 WHERE base_asset = ANY($1)
-		   AND quote_asset IN (
+		WITH want AS (
+		  SELECT * FROM unnest($1::text[], $2::text[]) AS w(form, asset_id)
+		)
+		SELECT DISTINCT ON (w.asset_id)
+		    w.asset_id,
+		    p.vwap::text,
+		    to_char(p.bucket, 'YYYY-MM-DD"T"00:00:00"Z"')
+		  FROM prices_1d p
+		  JOIN want w ON w.form = p.base_asset
+		 WHERE p.base_asset = ANY($1)
+		   AND p.quote_asset IN (
 		     'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
 		     'fiat:USD'
 		   )
-		   AND vwap IS NOT NULL
-		   AND volume_usd >= $2::numeric
-		   AND trade_count >= $3::bigint
-		 ORDER BY base_asset, vwap DESC
+		   AND p.vwap IS NOT NULL
+		   AND p.volume_usd >= $3::numeric
+		   AND p.trade_count >= $4::bigint
+		 ORDER BY w.asset_id, p.vwap DESC, p.bucket
 	`
-	rows, err := s.db.QueryContext(ctx, q, assetIDs, athMinDayVolumeUSD, athMinDayTrades)
+	forms, owners, _ := assetAliasRows(assetIDs)
+	rows, err := s.db.QueryContext(ctx, q, forms, owners, athMinDayVolumeUSD, athMinDayTrades)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetsATHBatch: %w", err)
 	}
@@ -1881,53 +1898,7 @@ const getNativeAssetSQL = `
 		         AND volume_usd IS NOT NULL
 		    ) t
 		),
-		xlm_usd AS (
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND vwap IS NOT NULL
-		     AND bucket >= now() - INTERVAL '24 hours'
-		   ORDER BY bucket DESC LIMIT 1
-		),
-		xlm_usd_1h AS (
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket BETWEEN now() - INTERVAL '65 minutes'
-		                   AND now() - INTERVAL '55 minutes'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC LIMIT 1
-		),
-		xlm_usd_24h AS (
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket BETWEEN now() - INTERVAL '24 hours 30 minutes'
-		                   AND now() - INTERVAL '23 hours 30 minutes'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC LIMIT 1
-		),
-		xlm_usd_7d AS (
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket BETWEEN now() - INTERVAL '7 days 2 hours'
-		                   AND now() - INTERVAL '6 days 22 hours'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC LIMIT 1
-		),
+		` + xlmUSDCTEs + `,
 		ledger_bounds AS (
 		  -- Always return one row with placeholder zeros — the
 		  -- previous version scanned the trades hypertable for
@@ -2187,14 +2158,15 @@ func EncodeAssetsCursor(row AssetRow, order AssetsOrder) string {
 // Assets with no trade history in the window get an empty slice
 // (callers can render that as "no chart").
 //
-// Same direct-then-XLM-triangulated path as the single-asset
-// GetAssetPriceHistory24h; just a single CTE pass over all
-// requested assets at once.
+// Same alias-complete direct-then-XLM-triangulated pick as the
+// single-asset GetAssetPriceHistory24h, in one pass over all requested
+// assets, so a listing sparkline and its detail chart agree.
 func (s *Store) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []string) (map[string][]AssetPricePoint, error) {
 	if len(assetIDs) == 0 {
 		return map[string][]AssetPricePoint{}, nil
 	}
-	rows, err := s.db.QueryContext(ctx, getAssetsPriceHistory24hBatchSQL, assetIDs)
+	forms, owners, prios := assetAliasRows(assetIDs)
+	rows, err := s.db.QueryContext(ctx, getAssetsPriceHistory24hBatchSQL, forms, owners, prios)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory24hBatch: %w", err)
 	}
@@ -2229,53 +2201,64 @@ const getAssetsPriceHistory24hBatchSQL = `
 		    INTERVAL '1 hour'
 		  ) AS bucket
 		),
+		want AS (
+		  -- One row per (alias form, requested id); see assetAliasRows.
+		  SELECT * FROM unnest($1::text[], $2::text[], $3::int8[]) AS w(form, asset_id, prio)
+		),
+		want_ids AS (
+		  SELECT asset_id, array_agg(form) AS forms, bool_or(form = 'native') AS is_xlm
+		    FROM want GROUP BY asset_id
+		),
 		direct_per_hour AS (
-		  -- Quote set = fiat:USD OR USDC (classic or its SAC form)
-		  -- per the stablecoin-proxy policy (see the listing
-		  -- query's direct_usd CTE).
-		  SELECT base_asset AS asset_id,
-		         date_trunc('hour', bucket) AS h,
-		         last(vwap, bucket)::numeric AS vwap
-		    FROM prices_1m
-		   WHERE base_asset = ANY($1)
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
-		       'fiat:USD'
-		     )
-		     AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
-		     AND vwap IS NOT NULL
-		   GROUP BY base_asset, h
+		  -- The single-asset pick per requested id: highest-priority alias
+		  -- form, then the latest bucket, then usdQuotePref. Quote set =
+		  -- fiat:USD OR USDC (classic or its SAC form) per the
+		  -- stablecoin-proxy policy (see the listing query's direct_usd CTE).
+		  SELECT DISTINCT ON (asset_id, h) asset_id, h, vwap
+		    FROM (
+		      SELECT w.asset_id, date_trunc('hour', p.bucket) AS h, p.vwap::numeric AS vwap,
+		             w.prio, p.bucket, ` + usdQuotePref + ` AS quote_prio
+		        FROM prices_1m p
+		        JOIN want w ON w.form = p.base_asset
+		       WHERE base_asset = ANY($1)
+		         AND quote_asset IN (
+		           'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		           'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+		           'fiat:USD'
+		         )
+		         AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
+		         AND vwap IS NOT NULL
+		    ) z
+		   ORDER BY asset_id, h, prio, bucket DESC, quote_prio
 		),
 		asset_xlm_per_hour AS (
 		  -- XLM leg in BOTH identity forms ('native' + SAC) and BOTH
 		  -- stored directions, base-side preferred per (asset, hour);
-		  -- see GetAssetPriceHistory24h's asset_xlm_per_hour. The
-		  -- latest-bucket pick per arm is what last(vwap, bucket) was.
+		  -- see GetAssetPriceHistory24h's asset_xlm_per_hour.
 		  SELECT DISTINCT ON (asset_id, h) asset_id, h, vwap
 		    FROM (
-		      SELECT base_asset AS asset_id,
-		             date_trunc('hour', bucket) AS h,
-		             vwap::numeric AS vwap, bucket, 0 AS inverted
-		        FROM prices_1m
+		      SELECT w.asset_id, date_trunc('hour', p.bucket) AS h, p.vwap::numeric AS vwap,
+		             w.prio, p.bucket, 0 AS inverted, ` + xlmFormPrefOpen + `quote_asset) AS xlm_prio
+		        FROM prices_1m p
+		        JOIN want w ON w.form = p.base_asset
 		       WHERE base_asset = ANY($1)
 		         AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		         AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
 		         AND vwap IS NOT NULL
 		      UNION ALL
-		      SELECT quote_asset,
-		             date_trunc('hour', bucket),
-		             1::numeric / vwap, bucket, 1
-		        FROM prices_1m
+		      SELECT w.asset_id, date_trunc('hour', p.bucket), 1::numeric / p.vwap,
+		             w.prio, p.bucket, 1, ` + xlmFormPrefOpen + `base_asset)
+		        FROM prices_1m p
+		        JOIN want w ON w.form = p.quote_asset
 		       WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		         AND quote_asset = ANY($1)
 		         AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
 		         AND vwap > 0
 		    ) u
-		   ORDER BY asset_id, h, inverted, bucket DESC
+		   ORDER BY asset_id, h, inverted, prio, bucket DESC, xlm_prio
 		),
 		xlm_usd_per_hour AS (
-		  SELECT date_trunc('hour', bucket) AS h, last(vwap, bucket)::numeric AS vwap
+		  SELECT DISTINCT ON (h) date_trunc('hour', bucket) AS h, vwap::numeric AS vwap
 		    FROM prices_1m
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
@@ -2284,20 +2267,17 @@ const getAssetsPriceHistory24hBatchSQL = `
 		     )
 		     AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
 		     AND vwap IS NOT NULL
-		   GROUP BY h
-		),
-		want AS (
-		  SELECT unnest($1::text[]) AS asset_id
+		   ORDER BY h, bucket DESC, ` + usdQuotePref + `
 		)
 		SELECT
 		    w.asset_id,
 		    to_char(hours.bucket, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS t,
 		    ROUND(COALESCE(
-		      CASE WHEN w.asset_id = 'native' THEN xu.vwap ELSE NULL END,
+		      CASE WHEN w.is_xlm THEN xu.vwap ELSE NULL END,
 		      d.vwap,
 		      x.vwap * xu.vwap
 		    ), ` + catalogueRoundPlacesForWanted + `)::text AS p
-		  FROM want w
+		  FROM want_ids w
 		  CROSS JOIN hours
 		  LEFT JOIN direct_per_hour     d  ON d.h  = hours.bucket AND d.asset_id  = w.asset_id
 		  LEFT JOIN asset_xlm_per_hour  x  ON x.h  = hours.bucket AND x.asset_id  = w.asset_id
@@ -2307,13 +2287,14 @@ const getAssetsPriceHistory24hBatchSQL = `
 
 // GetAssetsPriceHistory7dBatch returns 7d daily USD-price series for
 // many assets in one query. 7-bucket-deep daily grain, mirroring
-// the per-asset GetAssetPriceHistory7d. Same direct-then-XLM-
-// triangulated path; one query for many asset_ids.
+// the per-asset GetAssetPriceHistory7d. Same alias-complete
+// direct-then-XLM-triangulated pick; one query for many asset_ids.
 func (s *Store) GetAssetsPriceHistory7dBatch(ctx context.Context, assetIDs []string) (map[string][]AssetPricePoint, error) {
 	if len(assetIDs) == 0 {
 		return map[string][]AssetPricePoint{}, nil
 	}
-	rows, err := s.db.QueryContext(ctx, getAssetsPriceHistory7dBatchSQL, assetIDs)
+	forms, owners, prios := assetAliasRows(assetIDs)
+	rows, err := s.db.QueryContext(ctx, getAssetsPriceHistory7dBatchSQL, forms, owners, prios)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory7dBatch: %w", err)
 	}
@@ -2348,53 +2329,64 @@ const getAssetsPriceHistory7dBatchSQL = `
 		    INTERVAL '1 day'
 		  ) AS bucket
 		),
+		want AS (
+		  -- One row per (alias form, requested id); see assetAliasRows.
+		  SELECT * FROM unnest($1::text[], $2::text[], $3::int8[]) AS w(form, asset_id, prio)
+		),
+		want_ids AS (
+		  SELECT asset_id, array_agg(form) AS forms, bool_or(form = 'native') AS is_xlm
+		    FROM want GROUP BY asset_id
+		),
 		direct_per_day AS (
-		  -- Quote set = fiat:USD OR USDC (classic or its SAC form)
-		  -- per the stablecoin-proxy policy (see the listing
-		  -- query's direct_usd CTE).
-		  SELECT base_asset AS asset_id,
-		         date_trunc('day', bucket) AS d,
-		         last(vwap, bucket)::numeric AS vwap
-		    FROM prices_1m
-		   WHERE base_asset = ANY($1)
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
-		       'fiat:USD'
-		     )
-		     AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
-		     AND vwap IS NOT NULL
-		   GROUP BY base_asset, d
+		  -- The single-asset pick per requested id: highest-priority alias
+		  -- form, then the latest bucket, then usdQuotePref. Quote set =
+		  -- fiat:USD OR USDC (classic or its SAC form) per the
+		  -- stablecoin-proxy policy (see the listing query's direct_usd CTE).
+		  SELECT DISTINCT ON (asset_id, d) asset_id, d, vwap
+		    FROM (
+		      SELECT w.asset_id, date_trunc('day', p.bucket) AS d, p.vwap::numeric AS vwap,
+		             w.prio, p.bucket, ` + usdQuotePref + ` AS quote_prio
+		        FROM prices_1m p
+		        JOIN want w ON w.form = p.base_asset
+		       WHERE base_asset = ANY($1)
+		         AND quote_asset IN (
+		           'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		           'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+		           'fiat:USD'
+		         )
+		         AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
+		         AND vwap IS NOT NULL
+		    ) z
+		   ORDER BY asset_id, d, prio, bucket DESC, quote_prio
 		),
 		asset_xlm_per_day AS (
 		  -- XLM leg in BOTH identity forms ('native' + SAC) and BOTH
 		  -- stored directions, base-side preferred per (asset, day);
-		  -- see GetAssetPriceHistory24h's asset_xlm_per_hour. The
-		  -- latest-bucket pick per arm is what last(vwap, bucket) was.
+		  -- see GetAssetPriceHistory24h's asset_xlm_per_hour.
 		  SELECT DISTINCT ON (asset_id, d) asset_id, d, vwap
 		    FROM (
-		      SELECT base_asset AS asset_id,
-		             date_trunc('day', bucket) AS d,
-		             vwap::numeric AS vwap, bucket, 0 AS inverted
-		        FROM prices_1m
+		      SELECT w.asset_id, date_trunc('day', p.bucket) AS d, p.vwap::numeric AS vwap,
+		             w.prio, p.bucket, 0 AS inverted, ` + xlmFormPrefOpen + `quote_asset) AS xlm_prio
+		        FROM prices_1m p
+		        JOIN want w ON w.form = p.base_asset
 		       WHERE base_asset = ANY($1)
 		         AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		         AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
 		         AND vwap IS NOT NULL
 		      UNION ALL
-		      SELECT quote_asset,
-		             date_trunc('day', bucket),
-		             1::numeric / vwap, bucket, 1
-		        FROM prices_1m
+		      SELECT w.asset_id, date_trunc('day', p.bucket), 1::numeric / p.vwap,
+		             w.prio, p.bucket, 1, ` + xlmFormPrefOpen + `base_asset)
+		        FROM prices_1m p
+		        JOIN want w ON w.form = p.quote_asset
 		       WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
 		         AND quote_asset = ANY($1)
 		         AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
 		         AND vwap > 0
 		    ) u
-		   ORDER BY asset_id, d, inverted, bucket DESC
+		   ORDER BY asset_id, d, inverted, prio, bucket DESC, xlm_prio
 		),
 		xlm_usd_per_day AS (
-		  SELECT date_trunc('day', bucket) AS d, last(vwap, bucket)::numeric AS vwap
+		  SELECT DISTINCT ON (d) date_trunc('day', bucket) AS d, vwap::numeric AS vwap
 		    FROM prices_1m
 		   WHERE base_asset = 'native'
 		     AND quote_asset IN (
@@ -2403,20 +2395,17 @@ const getAssetsPriceHistory7dBatchSQL = `
 		     )
 		     AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
 		     AND vwap IS NOT NULL
-		   GROUP BY d
-		),
-		want AS (
-		  SELECT unnest($1::text[]) AS asset_id
+		   ORDER BY d, bucket DESC, ` + usdQuotePref + `
 		)
 		SELECT
 		    w.asset_id,
 		    to_char(days.bucket, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS t,
 		    ROUND(COALESCE(
-		      CASE WHEN w.asset_id = 'native' THEN xu.vwap ELSE NULL END,
+		      CASE WHEN w.is_xlm THEN xu.vwap ELSE NULL END,
 		      d.vwap,
 		      x.vwap * xu.vwap
 		    ), ` + catalogueRoundPlacesForWanted + `)::text AS p
-		  FROM want w
+		  FROM want_ids w
 		  CROSS JOIN days
 		  LEFT JOIN direct_per_day     d  ON d.d  = days.bucket AND d.asset_id  = w.asset_id
 		  LEFT JOIN asset_xlm_per_day  x  ON x.d  = days.bucket AND x.asset_id  = w.asset_id
