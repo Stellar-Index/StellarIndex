@@ -123,3 +123,38 @@ func TestOrderForPass(t *testing.T) {
 		t.Errorf("orderForPass mutated its input: %v", got)
 	}
 }
+
+// TestOrderForPassCensusLastFromGenesis: when SDEX re-verifies from genesis
+// alongside the SEP-41 sources, its census runs after them so a census that
+// overruns the pass cannot leave sep41_transfers/sep41_supply without a verdict.
+func TestOrderForPassCensusLastFromGenesis(t *testing.T) {
+	cat := []reconSource{
+		{name: "soroswap", genesis: 10},
+		{name: "sdex", genesis: 2, census: true},
+		{name: "sep41_transfers", genesis: 10},
+		{name: "sep41_supply", genesis: 10},
+	}
+	prior := map[string]priorProjection{
+		"soroswap": {known: true, ok: true},
+		"sdex":     {known: true, ok: false},
+	}
+	wm := map[string]uint32{"soroswap": 500, "sdex": 500}
+	got := make([]string, 0, len(cat))
+	for _, s := range orderForPass(cat, prior, wm) {
+		got = append(got, s.name)
+	}
+	if want := []string{"soroswap", "sep41_transfers", "sep41_supply", "sdex"}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+
+	// An incrementally-resuming census stays in catalogue order: only its
+	// full-history re-derive is the long one.
+	prior["sdex"] = priorProjection{known: true, ok: true}
+	got = got[:0]
+	for _, s := range orderForPass(cat, prior, wm) {
+		got = append(got, s.name)
+	}
+	if want := []string{"soroswap", "sdex", "sep41_transfers", "sep41_supply"}; !slices.Equal(got, want) {
+		t.Errorf("incremental census: got %v, want %v", got, want)
+	}
+}

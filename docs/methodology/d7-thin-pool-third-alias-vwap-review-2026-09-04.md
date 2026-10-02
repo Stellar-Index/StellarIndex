@@ -50,8 +50,9 @@ walk is safe by construction and by gate, and that construction is now pinned.**
   established combination has **nothing** in the caller's window or lookback —
   they fill a hole, they do not out-rank a usable answer.
 - Four served-surface residuals remain (R1–R4), all bounded and recorded in
-  §7; R1 (the alias-union substance verdict on SAC-keyed reads) is a
-  served-surface policy choice for the maintainer. Two follow-ups are recorded
+  §7; R1 (the alias-union substance verdict on SAC-keyed reads) is accepted
+  for v1 as-is, bounded by the existing guards, and the literal-pair measure
+  that would remove it is a post-v1 option (§7 R1). Two follow-ups are recorded
   there as well, outside the residual count: R5 (coverage) and R6 (a
   decoder-level pin).
 
@@ -197,13 +198,19 @@ all, and there it serves the same pool value it always did.**
   ≥ 6 h span, over the trailing 24 h — (a blackout of Soroban wallets'
   natural spelling), and a
   canonical-first quote walk breaks the literal-first contract
-  (`alias.go:291-295`). **Maintainer decision.** If taken, the least-invasive
+  (`alias.go:291-295`). **Verdict: accepted for v1 as-is.** The guards above
+  bound what the pool can serve, and both fixes trade that bounded exposure
+  for a blackout or a contract break. **Post-v1 option:** the least-invasive
   shape is one additional method on `SubstanceGate` that measures the literal
   pair, called from `storePriceReader.LatestPrice` only (the pre-read callers —
   tip, listing, TVL — must keep the union, or `native/fiat:USD` withholds XLM).
+  Taking it accepts the blackout above, so it is a served-policy change for
+  the maintainer, not a residual fix.
 - **R2 — `/v1/price/at` after 24 h of classic silence** reaches the pool under
   the same union verdict. `observed_at` exposes the bucket's age; the
-  alternative is 404. Same decision as R1.
+  alternative is 404. Same verdict as R1: accepted for v1 as-is. The R1
+  literal-pair method would not reach it: `/v1/price/at` gates before it
+  reads, so it would need its own post-v1 change.
 - **R3 — valuation tier 3 through the pool after 1 h of classic silence**
   (`usd_fx_resolver.go:857-938`) is bounded by the $0.01 quote-notional floor
   and the 1 h freshness, and affects only the `usd_volume` of trades quoted in
@@ -278,7 +285,9 @@ does not close it.
 > differently.** `crossDeclaredPegThroughXLM`'s peg leg
 > (`internal/api/v1/price.go`, `readDeclaredPegXLMLeg`) walks the peg's
 > spellings CANONICAL-first — classic id, then the SAC wrapper, one
-> spelling at a time — leaning on the R1 decision above. Its own godoc
+> spelling at a time — a recorded departure from the literal-first
+> order that, with R1 accepted as-is, governs for v1; the departure stays
+> unchanged for v1. Its own godoc
 > calls `fiatSeriesThroughXLM` (`internal/api/v1/chart.go:793`) the
 > "point-surface twin" and the chart's godoc says the same back, but that
 > series cross reads its asset leg through `chartPointsWithAliases`,
@@ -327,10 +336,10 @@ does not close it.
 > `USDC-G…/fiat:USD` bucket at `1.0000000000` and a fresh
 > `USDC-SAC/fiat:USD` bucket at `2.4000000000`, `/v1/price` serves each
 > spelling its own — 2.4× apart — while had both missed, the cross one
-> tier below would have served both spellings one value from one book. R1
-> is the decision that settles which claim governs; the incoherence is
-> recorded so that decision is taken once, for both tiers, rather than
-> per surface.
+> tier below would have served both spellings one value from one book.
+> With R1 accepted as-is, literal-first governs for v1 and this
+> incoherence stays an accepted, bounded residual; reconciling the order
+> is post-v1 work, done once for both tiers rather than per surface.
 
 ## 8. Evidence — what was run
 

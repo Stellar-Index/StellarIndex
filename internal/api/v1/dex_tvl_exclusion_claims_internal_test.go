@@ -107,6 +107,33 @@ func TestDEXTVLExclusions_LendingPointsAtTheServedFigure(t *testing.T) {
 	}
 }
 
+// exclusionDeferral matches wording that leaves the exclusion unexplained.
+var exclusionDeferral = regexp.MustCompile(`(?i)\b(open (product )?(decision|question)|undecided|tbd|to be decided)\b`)
+
+// TestDEXTVLExclusions_ReasonsAreSettled: a reader of the money headline
+// needs the reason a surface is omitted, not a note that nobody has
+// decided; and classic pools must say they attach to no protocol row.
+func TestDEXTVLExclusions_ReasonsAreSettled(t *testing.T) {
+	t.Parallel()
+	var classic string
+	for _, ex := range dexTVLScopeExclusions {
+		if exclusionDeferral.MatchString(ex.Reason) {
+			t.Errorf("exclusion %q defers to an unmade decision instead of giving one: %q", ex.Subject, ex.Reason)
+		}
+		if ex.Subject == "classic liquidity pools" {
+			classic = ex.Reason
+		}
+	}
+	if classic == "" {
+		t.Fatal("no classic liquidity pools scope exclusion")
+	}
+	for _, want := range []string{"/v1/liquidity-pools", "no protocol row"} {
+		if !strings.Contains(classic, want) {
+			t.Errorf("classic liquidity pools exclusion = %q; must contain %q", classic, want)
+		}
+	}
+}
+
 // registeredV1Routes reads the route patterns server.go hands to the
 // mux. Source-level rather than behavioural because registerRoutes runs
 // inside a Server whose construction needs live backends; the property

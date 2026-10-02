@@ -90,6 +90,54 @@ func getAccount(h *Handler, call func(*Handler, http.ResponseWriter, *http.Reque
 	return w
 }
 
+// rendezvous releases its callers only once n of them are in flight, so a
+// compute that issues the reads one at a time fails instead.
+type rendezvous struct {
+	n       int32
+	arrived atomic.Int32
+	all     chan struct{}
+}
+
+func (r *rendezvous) wait(ctx context.Context) error {
+	if r.arrived.Add(1) == r.n {
+		close(r.all)
+	}
+	select {
+	case <-r.all:
+		return nil
+	case <-time.After(2 * time.Second):
+		return errors.New("segment reads ran one at a time")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+type rendezvousOpCountReader struct {
+	*capReader
+	rv *rendezvous
+}
+
+func (r *rendezvousOpCountReader) AccountOperationTypeCounts(ctx context.Context, _ string) ([]clickhouse.OpTypeCount, error) {
+	if err := r.rv.wait(ctx); err != nil {
+		return nil, err
+	}
+	return []clickhouse.OpTypeCount{{OpType: "payment", Count: 1}}, nil
+}
+
+type rendezvousActivityReader struct{ rv *rendezvous }
+
+func (s *rendezvousActivityReader) CountAccountTrades(ctx context.Context, _ string) (int64, time.Time, error) {
+	return 3, time.Time{}, s.rv.wait(ctx)
+}
+
+func (s *rendezvousActivityReader) DefiActionCountsByUser(ctx context.Context, _ string) ([]timescale.DefiActionCount, error) {
+	return nil, s.rv.wait(ctx)
+}
+
+func (s *rendezvousActivityReader) BridgeActivityByAddress(ctx context.Context, _ string) (timescale.BridgeActivity, error) {
+	return timescale.BridgeActivity{}, s.rv.wait(ctx)
+}
+
 // ─── /trades ─────────────────────────────────────────────────────────
 
 func TestAccountTrades_HappyPathAndCursor(t *testing.T) {
@@ -247,6 +295,26 @@ func TestAccountActivity_ComposesSegments(t *testing.T) {
 	}
 	if activity.calls.Load() != before {
 		t.Error("second request within the TTL recomputed instead of serving the cache")
+	}
+}
+
+// TestAccountActivity_SegmentsReadConcurrently — the four segment reads hit
+// independent stores; run serially, a cold compute cost their sum (INV-0675).
+func TestAccountActivity_SegmentsReadConcurrently(t *testing.T) {
+	rv := &rendezvous{n: 4, all: make(chan struct{})}
+	reader := &rendezvousOpCountReader{capReader: &capReader{probe: &deadlineProbe{}}, rv: rv}
+	h, captured := newActivityHandler(reader, &rendezvousActivityReader{rv: rv}, nil)
+
+	w := getAccount(h, (*Handler).AccountActivity, "/v1/accounts/"+validTestAccount+"/activity")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	view := (*captured).(AccountActivityView)
+	if view.CoverageNote != "" {
+		t.Fatalf("every segment must have been read concurrently: %q", view.CoverageNote)
+	}
+	if view.TradesTotal == nil || *view.TradesTotal != 3 || len(view.OpsByType) != 1 || view.BridgeTransfers == nil {
+		t.Errorf("segments not composed: %+v", view)
 	}
 }
 
