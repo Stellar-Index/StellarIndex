@@ -334,11 +334,11 @@ type ExplorerReader struct {
 	// "no asset has holders".
 	holdersRollupProbe schemaProbe
 
-	// cap67 movements watermark cache (see Cap67MovementsWatermark in
+	// cap67 movements coverage cache (see Cap67MovementsWatermark in
 	// cap67_movements.go). cap67WMErr/At negatively cache a failed read;
 	// cap67WMFlight is non-nil while one read is in flight.
 	cap67WMMu     sync.Mutex
-	cap67WM       uint32
+	cap67Cov      Cap67Coverage
 	cap67WMAt     time.Time
 	cap67WMErr    error
 	cap67WMErrAt  time.Time
