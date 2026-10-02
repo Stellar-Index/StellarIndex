@@ -334,18 +334,9 @@ func (w *Worker) fire(ctx context.Context, a platform.PriceAlert, now time.Time,
 	if err != nil {
 		return "", fmt.Errorf("build payload: %w", err)
 	}
-	// Claim the crossing BEFORE enqueuing (NTF-PA-01). The persisted
-	// LastFiredAt is this crossing's idempotency key: when the mark only
-	// landed AFTER every EnqueueDelivery was durable, a transient mark
-	// failure left LastFiredAt unchanged and the next tick re-delivered
-	// the whole crossing — brand-new delivery ids the customer can't dedup
-	// on the X-StellarIndex-Delivery-Id header, silently breaking the
-	// once-per-cooldown-window guarantee. Claiming first means a failure
-	// mid-fan-out cannot re-notify the webhooks that already received the
-	// crossing: the cooldown gate reads the durable mark on the next tick.
-	// A claim failure here aborts before any EnqueueDelivery, so nothing is
-	// sent twice; the residual trade is at-most-once on the narrow
-	// claim-ok/enqueue-fail window, which we accept over duplicate fan-out.
+	// Claim the crossing BEFORE enqueuing (NTF-PA-01): the claim disarms the
+	// alert, so a mid-fan-out failure never re-notifies a webhook (once per
+	// crossing). A fan-out that enqueued nothing re-arms below, so it retries.
 	//
 	// The claim is CONDITIONAL in SQL, and that is what makes coolingDown
 	// above an optimisation rather than the guarantee: coolingDown reads
@@ -366,6 +357,15 @@ func (w *Worker) fire(ctx context.Context, a platform.PriceAlert, now time.Time,
 		return outcomeClaimLost, nil
 	}
 	enqueued, err := w.enqueueAll(ctx, c.hooks, payload)
+	if enqueued == 0 && err != nil {
+		// CAS on the stamp the claim just wrote, on a fresh budget: the usual
+		// cause is the fan-out exhausting ctx, which would sink the re-arm too.
+		rearmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.alertTimeout)
+		defer cancel()
+		if _, rerr := w.alerts.RearmPriceAlert(rearmCtx, a.ID, now); rerr != nil {
+			err = errors.Join(err, fmt.Errorf("re-arm after failed fan-out: %w", rerr))
+		}
+	}
 	w.logger.Info("price alert fired",
 		"alert_id", a.ID, "account_id", a.AccountID,
 		"pair", c.base.String()+"/"+c.quote.String(),
