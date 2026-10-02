@@ -48,15 +48,18 @@ the placeholder host alias `local` with whatever
 ```sh
 ssh root@136.243.90.96
 mc admin user svcacct add local "<MINIO_ROOT_USER>" \
-  --policy prometheus-read \
+  --policy /etc/minio/policies/prometheus-read.json \
   --name "prometheus-metrics-scrape" \
   --description "Bearer-token scrape for /minio/v2/metrics/cluster"
 ```
 
-If the `prometheus-read` policy doesn't yet exist, create it:
+`--policy` takes a JSON policy file, not a policy name. The
+archival-node role renders that file; on a host without it, create it
+(and the named policy) first:
 
 ```sh
-cat > /tmp/prometheus-policy.json <<'EOF'
+mkdir -p /etc/minio/policies
+cat > /etc/minio/policies/prometheus-read.json <<'EOF'
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -68,8 +71,7 @@ cat > /tmp/prometheus-policy.json <<'EOF'
   ]
 }
 EOF
-mc admin policy create local prometheus-read /tmp/prometheus-policy.json
-rm /tmp/prometheus-policy.json
+mc admin policy create local prometheus-read /etc/minio/policies/prometheus-read.json
 ```
 
 The `svcacct add` command prints a `Secret Key` — that's the

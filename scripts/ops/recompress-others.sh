@@ -1,6 +1,7 @@
 #!/bin/bash
-# Phase A margin: recompress operations/operation_results/contract_events to ZSTD
-# (codecs already set). One table at a time, one partition at a time, biggest-first,
+# Phase A margin: recompress operations/operation_results/contract_events to ZSTD.
+# Refuses to start until each table's XDR column carries the ZSTD codec from
+# deploy/clickhouse/tier1_schema.sql. One table at a time, one partition at a time, biggest-first,
 # disk-guarded. Pool has ~2.8 TiB free so this is low-risk; still bounded + reversible.
 # The raised merge ceiling is put back to the value each table had before the run
 # on every exit a shell can trap (success, failure, TERM/INT/HUP). A SIGKILL cannot
@@ -71,6 +72,16 @@ trap on_exit EXIT
 trap 'log "TERM received — stopping"; exit 143' TERM
 trap 'log "INT received — stopping"; exit 130' INT
 trap 'log "HUP received — stopping"; exit 129' HUP
+
+# A rewrite under the default LZ4 codec is a multi-day merge that frees nothing.
+for tc in operations:body_xdr operation_results:result_xdr contract_events:data_xdr; do
+  t=${tc%%:*}; c=${tc#*:}
+  n=$(num "codec_$t" "SELECT count() FROM system.columns WHERE database='stellar' AND table='$t' AND name='$c' AND compression_codec LIKE '%ZSTD%'") || exit 1
+  if [ "$n" != 1 ]; then
+    log "ABORT stellar.$t.$c has no ZSTD codec; first run: ALTER TABLE stellar.$t MODIFY COLUMN $c String CODEC(ZSTD(3))"
+    exit 1
+  fi
+done
 
 log "OTHERS_START pre-run $SETTING: operations=${orig_operations:-default} operation_results=${orig_operation_results:-default} contract_events=${orig_contract_events:-default}"
 for t in $TABLES; do
