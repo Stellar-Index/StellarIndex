@@ -14,7 +14,7 @@ severity: P2
 | Alert | None — this is a **deploy-time procedure**, not a paging condition. It runs once per `dispatcher.EntryWalkVersion` bump. |
 | Trigger | A release changes the order in which `dispatcher.walkLedgerEntryChanges` / `clickhouse.extractLedgerEntryChanges` emit changes, i.e. `EntryWalkVersion` is incremented. Current value: **2** (C2-032 / C2-023 / C2-040 / R-A01-1, audit-2026-07-23). |
 | Typical MTTR | Not an incident. Budget the re-derive time for the affected range. |
-| Impact if skipped | Balance observations and `ledger_entries_current_v2` rows written by the OLD walk keep a position from a numbering that no longer exists. A corrective re-derive is **silently discarded** by the `intra_ledger_seq` guard — no error, no metric, no retry that helps. |
+| Impact if skipped | `ledger_entries_current_v2` rows written by the OLD walk keep a position from a numbering that no longer exists, and a corrective reproject is **silently discarded** by its RMT version — no error, no metric, no retry that helps. Balance observations record `walk_version` (migration 0199), so there a re-derive under the bumped binary does land; only a renumbering shipped WITHOUT a bump strands them. |
 | Impact if done WRONG | Worse than skipping. The seed writes at `MaxUint32`, which nothing can outrank; seeding from an un-repaired source makes a stale balance **permanently unfixable**. Read the repair path in order. |
 
 ## What this is
@@ -23,8 +23,12 @@ severity: P2
 guards compare it **across binary versions**:
 
 - Postgres — `account_observations` and its four siblings:
-  `... ON CONFLICT (...) DO UPDATE SET ... WHERE <t>.intra_ledger_seq <= EXCLUDED.intra_ledger_seq`
-  (migration 0111);
+  `... ON CONFLICT (...) DO UPDATE SET ... WHERE (<t>.walk_version, <t>.intra_ledger_seq) <= (EXCLUDED.walk_version, EXCLUDED.intra_ledger_seq)`
+  (migrations 0111, 0199). The writers stamp `walk_version =
+  dispatcher.EntryWalkVersion`; rows written before 0199 carry 0. A row from
+  an older walk is therefore replaced by a re-derive under the new one, at
+  any position. The trap below applies to these tables only when both rows
+  carry the same `walk_version`, i.e. a renumbering shipped without a bump;
 - ClickHouse — `ledger_entries_current_v2`'s ReplacingMergeTree version
   `(ledger_seq << 32) | intra_ledger_seq`.
 
@@ -225,7 +229,8 @@ GROUP BY key_xdr;
   stale intra-ledger balance) — a strictly worse bug, and one that fires
   continuously rather than once per walk-version bump.
 - **Do not re-run the change-replay re-derive "harder".** It is deterministic;
-  the second run computes the same position the guard already rejected.
+  under the same `walk_version` the second run computes the same position the
+  guard already rejected. Bump `EntryWalkVersion` with the renumbering instead.
 - **Do not run `supply seed-observations` (accounts) before the projection
   rebuild has verified**, and **do not run `supply seed-sac-balances` without
   `-full-history`**
