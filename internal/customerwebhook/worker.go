@@ -471,32 +471,41 @@ func (w *Worker) attemptTimeout() time.Duration {
 	return defaultHTTPTimeout
 }
 
-// deliverOne processes a single delivery. POSTs the payload, signs
-// it, and marks delivered/failed based on the response.
-func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
+// lookupWebhook loads the delivery's webhook. False means DO NOT POST:
+// the row has already been marked terminal or left for lease expiry.
+func (w *Worker) lookupWebhook(ctx context.Context, d platform.WebhookDelivery) (platform.CustomerWebhook, bool) {
 	wh, err := w.store.GetWebhook(ctx, d.WebhookID)
-	if err != nil {
-		if !errors.Is(err, platform.ErrNotFound) {
-			// NTF-13 (audit-2026-07-23): a TRANSIENT store failure — a
-			// connection reset, a fail-over, a statement timeout — is not
-			// evidence the webhook is gone. Terminally failing the row on
-			// it (as this path used to, for every error alike) silently and
-			// PERMANENTLY dropped a customer's delivery on a blip: the row
-			// leaves the pending predicate and nothing ever revisits it.
-			// Return WITHOUT marking, so the store's 5-minute claim lease
-			// expires and the row is picked up again — the same recovery
-			// path a worker crash uses.
-			w.opts.Logger.Warn("customer-webhook: GetWebhook failed (transient); leaving delivery for lease expiry",
-				"err", err, "delivery_id", d.ID, "webhook_id", d.WebhookID)
-			obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("lookup_error").Inc()
-			return
-		}
-		// Genuine not-found: the webhook was deleted between enqueue +
-		// delivery. Mark the delivery terminally failed so it drops out
-		// of the pending listing — retrying can never succeed.
+	switch {
+	case err == nil:
+		return wh, true
+	case errors.Is(err, platform.ErrNotFound):
+		// Deleted between enqueue and delivery; retrying can never succeed.
 		w.opts.Logger.Warn("customer-webhook: webhook not found; permanently failing delivery",
 			"err", err, "delivery_id", d.ID, "webhook_id", d.WebhookID)
 		w.markTerminal(ctx, d, fmt.Sprintf("webhook lookup: %v", err), "webhook_missing")
+	case errors.Is(err, platform.ErrWebhookKeyUnsealable) && !errors.Is(err, platform.ErrWebhookSealKeyMissing):
+		// The key fails authentication under the configured seal key, so
+		// no retry can sign this row. A missing seal key is the transient
+		// case below: setting it repairs the row.
+		w.opts.Logger.Warn("customer-webhook: signing key cannot be unsealed; permanently failing delivery",
+			"err", err, "delivery_id", d.ID, "webhook_id", d.WebhookID)
+		w.markTerminal(ctx, d, fmt.Sprintf("webhook lookup: %v", err), "no_secret")
+	default:
+		// A store blip or an unset seal key is not evidence the webhook is
+		// gone: leave the row unmarked so its claim lease expires and it is
+		// retried, the same recovery a worker crash takes.
+		w.opts.Logger.Warn("customer-webhook: GetWebhook failed (transient); leaving delivery for lease expiry",
+			"err", err, "delivery_id", d.ID, "webhook_id", d.WebhookID)
+		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("lookup_error").Inc()
+	}
+	return platform.CustomerWebhook{}, false
+}
+
+// deliverOne processes a single delivery. POSTs the payload, signs
+// it, and marks delivered/failed based on the response.
+func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
+	wh, ok := w.lookupWebhook(ctx, d)
+	if !ok {
 		return
 	}
 	if !wh.Enabled {
@@ -512,7 +521,7 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 		// one. accountGateOpen has already recorded or parked the row.
 		return
 	}
-	if len(wh.SecretHash) == 0 {
+	if len(wh.SigningKey) == 0 {
 		// Defence-in-depth: a zero-length signing key yields a FORGEABLE
 		// HMAC (anyone can compute HMAC("", body) for any payload). This is
 		// unreachable via the API today (generateSecret always writes 32
@@ -526,8 +535,8 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 	}
 
 	sigTS := w.opts.Clock().Unix()
-	signature := w.signFn(wh.SecretHash, sigTS, d.Payload)
-	deliverySig := signDeliveryHMACSHA256(wh.SecretHash, sigTS, d.ID.String(), d.EventType, d.Payload)
+	signature := w.signFn(wh.SigningKey, sigTS, d.Payload)
+	deliverySig := signDeliveryHMACSHA256(wh.SigningKey, sigTS, d.ID.String(), d.EventType, d.Payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, wh.URL, bytes.NewReader(d.Payload))
 	if err != nil {
 		// URL malformed at request-build time. This is

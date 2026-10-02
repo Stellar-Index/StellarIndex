@@ -48,7 +48,7 @@ func TestWorker_EveryDeliveryHeaderIsInSpec(t *testing.T) {
 
 	store := newFakeStore()
 	webhookID, secret := makeWebhook(t, ts.URL, true)
-	store.addWebhook(platform.CustomerWebhook{ID: webhookID, URL: ts.URL, SecretHash: secret, Enabled: true})
+	store.addWebhook(platform.CustomerWebhook{ID: webhookID, URL: ts.URL, SigningKey: secret, Enabled: true})
 	store.enqueue(platform.WebhookDelivery{
 		ID:            uuid.New(),
 		WebhookID:     webhookID,

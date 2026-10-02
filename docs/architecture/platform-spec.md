@@ -543,7 +543,8 @@ CREATE TABLE customer_webhooks (
     account_id    uuid NOT NULL REFERENCES accounts(id),
     name          text NOT NULL,
     url           text NOT NULL,
-    secret_hash   bytea NOT NULL,    -- HMAC-SHA-256 signing key
+    secret_hash   bytea,             -- legacy RAW signing key; NULL once sealed
+    signing_key_sealed bytea,        -- sealed signing key (migration 0199)
     events        text[] NOT NULL,   -- ['key.minted', 'invoice.paid', ...]
     enabled       bool NOT NULL DEFAULT true,
     created_at    timestamptz NOT NULL DEFAULT now()
@@ -769,27 +770,25 @@ audit-2026-07-23); the audit row carries `keys_clamped` /
     supplied master key, persisted as `users.mfa_secret_enc`
     (planned; the sealed-box path lands when the dashboard MFA
     UI ships).
-  - **Customer webhook signing keys** — F-1244 (codex audit-
-    2026-05-13): the field name `customer_webhooks.secret_hash`
-    is a historical misnomer. The bytes are persisted as
-    plain `bytea` (no application-layer envelope encryption);
-    the delivery worker reads them back to compute
-    `hmac.New(sha256.New, secret_hash)` per delivery. A
-    hash-only design isn't possible without changing the
-    receiver's verification protocol. Defence in depth comes
-    from Postgres at-rest disk encryption + the F-1254 Redis
-    ACL lockdown, not from per-row envelope encryption.
+  - **Customer webhook signing keys** — the key is a shared
+    HMAC secret (the receiver verifies with it), so it cannot be
+    hashed. With `api.dashboard.webhook_seal_key_env` set, the
+    API seals it with AES-256-GCM (row id as associated data)
+    into `customer_webhooks.signing_key_sealed` and seals any
+    raw legacy key at startup (migration 0199). The misnamed
+    `secret_hash` column holds a raw key only for rows written
+    without a seal key.
 - Postgres at-rest encryption: trust the disk subsystem (LUKS on
   R1) for v1; future: per-table TDE if Enterprise customers
   demand
 
 ### 8.2 Audit retention
 
-- `audit_log`: 12 months online, 7 years archived to S3 — **NOT BUILT.**
-  No archiver exists and nothing deletes a row: migrations 0179/0188 make
-  the table append-only apart from an erasure's scrub, and
-  `internal/retentionreaper` deliberately does not reap it. Rows are kept
-  indefinitely until a retention period is decided (#346 F1).
+- `audit_log`: kept indefinitely (the retention decision recorded in
+  [`privacy-rights-requests.md`](../operations/runbooks/privacy-rights-requests.md)).
+  Migrations 0179/0188 make the table append-only apart from an erasure's
+  scrub, and `internal/retentionreaper` does not reap it. A shorter period
+  would need an archiver and a migration granting its delete.
 - `api_usage_events`: 12 months hot, then dropped (customers can
   export their own data anytime)
 

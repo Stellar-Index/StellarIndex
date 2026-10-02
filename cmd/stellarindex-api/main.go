@@ -2243,8 +2243,8 @@ type dashboardBundle struct {
 // (F-1270) atop a fresh WebhookStore over the same Postgres the
 // delivery worker (a goroutine in main()) drains. Returns the store so
 // the bundle can thread it to the worker.
-func buildWebhookHandlers(db *sql.DB, logger *slog.Logger) (*postgresstore.WebhookStore, *dashboardwebhooks.Handlers, error) {
-	store := postgresstore.NewWebhookStore(postgresstore.New(db))
+func buildWebhookHandlers(db *sql.DB, sealer *platform.WebhookKeySealer, logger *slog.Logger) (*postgresstore.WebhookStore, *dashboardwebhooks.Handlers, error) {
+	store := postgresstore.NewSealingWebhookStore(postgresstore.New(db), sealer)
 	h, err := dashboardwebhooks.NewHandlers(dashboardwebhooks.Config{
 		Webhooks: store,
 		Logger:   logger.With("component", "dashboard-webhooks"),
@@ -2253,6 +2253,57 @@ func buildWebhookHandlers(db *sql.DB, logger *slog.Logger) (*postgresstore.Webho
 		return nil, nil, fmt.Errorf("dashboard webhooks handlers: %w", err)
 	}
 	return store, h, nil
+}
+
+// buildSealingWebhookHandlers is [buildWebhookHandlers] with the store
+// sealing signing keys when the seal secret is set, after sealing any
+// key a previous start stored raw.
+func buildSealingWebhookHandlers(cfg config.DashboardConfig, db *sql.DB, logger *slog.Logger) (*postgresstore.WebhookStore, *dashboardwebhooks.Handlers, error) {
+	sealer, err := buildWebhookKeySealer(cfg, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	store, h, err := buildWebhookHandlers(db, sealer, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	if sealer != nil {
+		sealLegacyWebhookKeys(store, logger)
+	}
+	return store, h, nil
+}
+
+// buildWebhookKeySealer reads the webhook seal secret from the env var
+// cfg names. Unset returns nil (keys stored raw); a too-short value is a
+// startup error rather than a weak key.
+func buildWebhookKeySealer(cfg config.DashboardConfig, logger *slog.Logger) (*platform.WebhookKeySealer, error) {
+	secret := os.Getenv(cfg.WebhookSealKeyEnv)
+	if secret == "" {
+		logger.Warn("webhook seal key env unset — new customer-webhook signing keys are stored unsealed, "+
+			"and deliveries to webhooks whose key is already sealed wait until it is set",
+			"env", cfg.WebhookSealKeyEnv)
+		return nil, nil
+	}
+	sealer, err := platform.NewWebhookKeySealer([]byte(secret))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", cfg.WebhookSealKeyEnv, err)
+	}
+	return sealer, nil
+}
+
+// sealLegacyWebhookKeys seals signing keys written before a seal key was
+// configured. A failure only leaves those keys raw until the next start.
+func sealLegacyWebhookKeys(store *postgresstore.WebhookStore, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	n, err := store.SealLegacySigningKeys(ctx)
+	if err != nil {
+		logger.Error("seal legacy customer-webhook signing keys", "err", err, "sealed", n)
+		return
+	}
+	if n > 0 {
+		logger.Info("sealed legacy customer-webhook signing keys", "count", n)
+	}
 }
 
 // buildPriceAlertHandlers constructs the dashboard price-alert CRUD
@@ -2589,7 +2640,7 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 
 	// F-1270: dashboard webhook handlers atop the same Postgres store
 	// the delivery worker (a goroutine in main()) drains.
-	webhookStore, webhooksH, err := buildWebhookHandlers(db, logger)
+	webhookStore, webhooksH, err := buildSealingWebhookHandlers(cfg, db, logger)
 	if err != nil {
 		return dashboardBundle{}, err
 	}

@@ -17,9 +17,8 @@
 // has none: retention here is a PII bound, and a knob that disables it
 // re-opens the unbounded table.
 //
-// `audit_log` is intentionally NOT reaped. The platform spec (§8.2) sets
-// it at 12 months online plus 7 years archived; no archive exists, so
-// deleting rows would destroy compliance records rather than move them.
+// `audit_log` is intentionally NOT reaped: its retention is indefinite
+// (platform spec §8.2), and migration 0179's trigger refuses a delete.
 package retentionreaper
 
 import (

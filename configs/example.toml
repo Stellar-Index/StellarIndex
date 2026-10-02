@@ -656,6 +656,7 @@ jwt_ttl         = "1h"
 email_from             = "Stellar Index <hello@stellarindex.io>"
 resend_api_key_env     = "STELLARINDEX_RESEND_API_KEY"
 code_secret_env        = "STELLARINDEX_DASHBOARD_CODE_SECRET"
+webhook_seal_key_env   = "STELLARINDEX_WEBHOOK_SEAL_KEY"
 magic_link_ttl_minutes = 15
 session_ttl_days       = 30
 cookie_secure           = true

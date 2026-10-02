@@ -2219,6 +2219,9 @@ Per-attempt outcome of the customer-webhook delivery worker
 `exhausted` = retry budget hit; `network_error` = TCP/TLS/timeout
 (retry); `webhook_missing` = registry row deleted mid-flight
 (terminal); `disabled` = `webhook.Enabled=false` (terminal);
+`no_secret` = signing key empty or not openable under the configured
+seal key (terminal); `lookup_error` = webhook read failed, including a
+sealed key with no seal key configured (retried);
 `build_error` = malformed URL (terminal); `list_error` /
 `mark_error` = db transport failure on the queue surface
 (transient).

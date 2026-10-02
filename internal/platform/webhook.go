@@ -79,24 +79,12 @@ func IsWebhookEventType(s string) bool {
 // signed deliveries (HMAC-SHA-256 of payload), exponential
 // retry over ~8h (15 attempts, 30s doubling to a 1h cap).
 //
-// F-1244 (codex audit-2026-05-12): the persisted signing-key
-// field is misnamed `SecretHash` for historical reasons. Despite
-// the name, the value is the LITERAL HMAC key — the delivery
-// worker calls `hmac.New(sha256.New, wh.SecretHash)` directly.
-// A hash-only design isn't possible without changing the wire
-// protocol (the receiver needs the same shared secret to verify).
-//
-// At-rest protection: the bytes are persisted as `bytea` in the
-// `customer_webhooks.secret_hash` column WITHOUT application-
-// layer encryption. Operators rely on the database's own at-rest
-// encryption (Postgres TDE / cloud-provider disk encryption) +
-// the Redis ACL lockdown (F-1254) for defence in depth. The
-// audit (F-1244 codex 2026-05-13) explicitly called out an
-// earlier docstring that claimed a "standard column-encryption
-// posture"; that prose was misleading because no per-row
-// envelope-encryption layer ships in this repo. The current
-// posture is honest: the row IS recoverable by anyone with
-// SELECT on `customer_webhooks`.
+// The signing key is the LITERAL HMAC key, not a hash: the receiver
+// verifies with the same shared secret, so it cannot be one-way hashed.
+// At rest it is sealed with [WebhookKeySealer] into
+// `customer_webhooks.signing_key_sealed` whenever the API has a seal
+// key; the legacy `secret_hash` column holds the raw key only for rows
+// written without one, and the API seals those at startup.
 //
 // Customer surface: the plaintext key is returned exactly once
 // from `POST /v1/dashboard/webhooks` at creation time and never
@@ -111,11 +99,9 @@ type CustomerWebhook struct {
 	AccountID uuid.UUID
 	Name      string
 	URL       string
-	// SecretHash carries the HMAC signing key bytes (NOT a hash —
-	// see struct doc above). Renamed-but-not-yet-migrated; kept
-	// as `SecretHash` to avoid a Postgres column rename in the
-	// same change-set that introduces the truthful comment.
-	SecretHash []byte
+	// SigningKey is the plaintext HMAC key: set on create and by
+	// GetWebhook, nil from the list reads.
+	SigningKey []byte
 	Events     []string
 	Enabled    bool
 	CreatedAt  time.Time
@@ -163,17 +149,20 @@ type WebhookStore interface {
 	// [ErrConflict] when the account already registered w.URL.
 	CreateWebhook(ctx context.Context, w CustomerWebhook, maxPerAccount int) (CustomerWebhook, error)
 
-	// GetWebhook by ID.
+	// GetWebhook by ID, with SigningKey unsealed. A key that cannot
+	// be unsealed is an error wrapping [ErrWebhookKeyUnsealable]
+	// returned beside the row's other fields, so key-free callers
+	// (ownership checks, edits, deletes) can still use them.
 	GetWebhook(ctx context.Context, id uuid.UUID) (CustomerWebhook, error)
 
 	// ListWebhooksForAccount returns every webhook (enabled +
-	// disabled) for the account.
+	// disabled) for the account, without SigningKey.
 	ListWebhooksForAccount(ctx context.Context, accountID uuid.UUID) ([]CustomerWebhook, error)
 
 	// ListWebhooksSubscribedTo returns every enabled webhook
-	// (across all accounts) subscribed to `eventType`. Used by
-	// the fan-out service to enqueue one delivery per subscriber
-	// when a product event fires. F-1249 (codex audit-2026-05-12).
+	// (across all accounts) subscribed to `eventType`, without
+	// SigningKey. Used by the fan-out service to enqueue one
+	// delivery per subscriber when a product event fires.
 	ListWebhooksSubscribedTo(ctx context.Context, eventType WebhookEventType) ([]CustomerWebhook, error)
 
 	// UpdateWebhook writes mutable fields (name, url, events,
@@ -185,15 +174,9 @@ type WebhookStore interface {
 	// RotateWebhookSecret replaces the signing secret. Returns
 	// the new plaintext.
 	//
-	// F-1244 (codex audit-2026-05-13): the prior docstring said
-	// "shown once, not stored". That was misleading — like create,
-	// the new secret IS persisted as the canonical
-	// `customer_webhooks.secret_hash` bytea so the delivery
-	// worker can sign future requests. "Shown once" is the
-	// customer-facing visibility property: the plaintext is
-	// returned by the API call exactly once and never served
-	// back through any subsequent read. The recoverability
-	// posture is identical to Create — see the
+	// Like create, the new key is persisted (sealed when a seal key
+	// is configured) so the delivery worker can sign future
+	// requests; "shown once" is API visibility only. See the
 	// [CustomerWebhook] struct doc for the at-rest model.
 	//
 	// Note: as of 2026-05-13 the Postgres implementation of
