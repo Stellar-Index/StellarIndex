@@ -160,7 +160,7 @@ claim by omission:
 
 | Excluded | Why |
 |---|---|
-| Classic (CAP-38) liquidity pools | Indexed and served per-pool at `/v1/liquidity-pools` with two-sided reserves and an `as_of_ledger`, but not yet valued into a protocol row. Which protocol they attach to is an open product decision |
+| Classic (CAP-38) liquidity pools | Indexed and served per-pool at `/v1/liquidity-pools` with two-sided reserves and an `as_of_ledger`. They belong to no protocol row: a CAP-38 pool is a ledger primitive, not a deployed contract or venue, and filing them under `sdex` would mix pooled reserves with order-book depth. If they are ever valued into the headline it is as their own class, never folded into another protocol's figure |
 | SushiSwap V3 (concentrated liquidity) | Not constant product. A V3 pool spreads its depth across per-position tick ranges, so its token balances are not a two-sided reserve and their sum is not the pool's value — that needs the live sqrt price read against every open position's bounds, which is not captured as current state. Running the reserve path over the balances anyway would produce a number with no meaning, so **no figure is derived at all** rather than a wrong one (#350) |
 | Soroswap router | Holds no liquidity of its own. Its rows are multi-hop swap intents routed through the same Soroswap pairs already summed under `soroswap`; adding it would double-count those pools |
 | SDEX order book | Holds offers, not pooled reserves. Resting depth is a different quantity from locked value and is served separately at `/v1/sdex/orderbook` |
