@@ -14,6 +14,10 @@ tmp="$(mktemp -d "${TMPDIR:-/tmp}/prepush-policy-test.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 
 git -C "$tmp" init -q
+# Each commit may spawn a detached `git maintenance run --auto` that writes
+# into .git/objects while the EXIT trap's rm -rf is walking it.
+git -C "$tmp" config gc.auto 0
+git -C "$tmp" config maintenance.auto false
 git -C "$tmp" config user.name test
 git -C "$tmp" config user.email test@localhost.invalid
 mkdir -p "$tmp/docs" "$tmp/internal/storage" "$tmp/internal/api/v1" "$tmp/migrations"
