@@ -281,7 +281,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	}
 
 	if len(idSet) == 0 || len(currencySet) == 0 {
-		return nil, nil, nil
+		return nil, nil, external.ErrNoApplicablePairs
 	}
 
 	ids := make([]string, 0, len(idSet))

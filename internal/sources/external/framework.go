@@ -34,6 +34,7 @@ package external
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -317,6 +318,10 @@ func (UpdateEvent) EventKind() string { return "external.update" }
 
 // Source implements [consumer.Event].
 func (e UpdateEvent) Source() string { return e.Update.Source }
+
+// ErrNoApplicablePairs is returned by a poller whose configured pairs map to
+// nothing it can request. The runner scores it "idle", never success.
+var ErrNoApplicablePairs = errors.New("external: no configured pair applies to this poller")
 
 // Compile-time checks.
 var (

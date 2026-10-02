@@ -405,6 +405,9 @@ func decodeQuotes(ticker string, coin cmcCoin, plan requestPlan) ([]canonical.Or
 // poll or silently drops the symbol-only tickers.
 func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canonical.Trade, []canonical.OracleUpdate, error) {
 	plan := p.planRequest(pairs)
+	if len(plan.ids) == 0 && len(plan.symbols) == 0 {
+		return nil, nil, external.ErrNoApplicablePairs
+	}
 	var updates []canonical.OracleUpdate
 	undated := 0
 	if len(plan.ids) > 0 {

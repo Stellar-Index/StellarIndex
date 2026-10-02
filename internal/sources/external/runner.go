@@ -457,9 +457,20 @@ func runPoller(
 ) {
 	name := spec.Poller.Name()
 	interval := spec.Poller.PollInterval()
+	warnedIdle := false
 
 	doPoll := func() {
 		trades, updates, err := spec.Poller.PollOnce(ctx, spec.Pairs)
+		// Configured but with nothing to ask for: neither an upstream error nor
+		// evidence the source is alive, so the staleness clock must not move.
+		if errors.Is(err, ErrNoApplicablePairs) {
+			obs.ExternalPollerPollsTotal.WithLabelValues(name, "idle").Inc()
+			if !warnedIdle {
+				logger.Warn("poller has no applicable pairs; it will never produce rows", "source", name)
+				warnedIdle = true
+			}
+			return
+		}
 		if err != nil {
 			obs.ExternalPollerPollsTotal.WithLabelValues(name, "error").Inc()
 			logger.Warn("poller error",

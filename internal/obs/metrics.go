@@ -1483,6 +1483,8 @@ var SourceUnknownSymbolsTotal = prometheus.NewCounterVec(
 //     4xx/5xx, decode failure)
 //   - skipped — the poller's internal cooldown (after a previous
 //     throttle) suppressed the HTTP call
+//   - idle    — no configured pair applies to the poller; does not
+//     refresh ExternalPollerLastSuccessUnix
 //
 // Pre-2026-05-09 there was no signal at all when an external poller
 // was sustained-failing — CoinGecko throttling went undetected for
@@ -1493,7 +1495,7 @@ var SourceUnknownSymbolsTotal = prometheus.NewCounterVec(
 var ExternalPollerPollsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_external_poller_polls_total",
-		Help: "External poller invocations, labelled by source and outcome (success | error | skipped).",
+		Help: "External poller invocations, labelled by source and outcome (success | error | skipped | idle).",
 	},
 	[]string{"source", "outcome"},
 )
