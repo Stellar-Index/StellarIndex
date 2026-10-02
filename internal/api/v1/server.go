@@ -658,6 +658,9 @@ type Server struct {
 	// Nil-safe: a nil cache short-circuits every method to no-op +
 	// miss. ttl=0 has the same effect at config layer.
 	assetDetailCache *assetDetailResponseCache
+	// assetListCache is the response-level cache for the default
+	// /v1/assets listing; see [assetListResponseCache].
+	assetListCache *assetListResponseCache
 	// usdPeggedClassics is the operator's allow-list of classic
 	// credit assets they declare as USD-pegged stablecoins.
 	// Mirrors trades.usd_pegged_classic_assets from config. Used
@@ -1881,6 +1884,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		// by construction — the cached entry IS what the handler
 		// produces (see assetDetailResponseCache doc comment).
 		assetDetailCache: newAssetDetailResponseCache(120 * time.Second),
+		assetListCache:   newAssetListResponseCache(assetListCacheTTL, assetListCacheMaxAge),
 		mux:              http.NewServeMux(),
 		publicRoutes:     middleware.NewPublicRoutes(),
 		started:          time.Now().UTC(),

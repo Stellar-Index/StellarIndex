@@ -1256,6 +1256,45 @@ func (s *Server) handleAssetListFromAssets(
 		writeEnvelope(w, Envelope{Data: []AssetDetail{}, Flags: Flags{}})
 		return
 	}
+	key := assetListCacheKey(r)
+	if body, refresh, ok := s.assetListCache.lookup(key); ok {
+		if refresh {
+			s.refreshAssetListPage(r, key, filters, cursor, limit, order) //nolint:contextcheck // the refresh outlives this request on purpose; see its doc.
+		}
+		writeCachedAssetList(w, body)
+		return
+	}
+	env, rows, err := s.buildAssetListPage(r, filters, cursor, limit, order)
+	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		s.logger.Error("ListAssetsExt (assets listing) failed", "err", err)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
+	// A page built on a dead context holds whatever best-effort reads
+	// landed before cancellation; it is answered, never replayed.
+	if r.Context().Err() == nil && assetListPageCacheable(env, rows) {
+		if err := s.assetListCache.put(key, env); err != nil {
+			s.logger.Debug("assets listing render for cache failed", "err", err)
+		}
+	}
+	writeEnvelope(w, env)
+}
+
+// buildAssetListPage assembles one default-listing page: the cached row
+// set plus every per-request overlay, in their load-bearing order. It
+// returns the served rows so the caller can judge cacheability.
+func (s *Server) buildAssetListPage(
+	r *http.Request,
+	filters assetListFilters,
+	cursor string,
+	limit int,
+	order timescale.AssetsOrder,
+) (Envelope, []AssetDetail, error) {
 	// Overfetch-by-one: request limit+1 so the (limit+1)th row signals
 	// a next page. `limit` is validated to [1,500] by the caller, so the
 	// store sees at most 501 (F-1326: previously this passed `limit`
@@ -1279,14 +1318,7 @@ func (s *Server) handleAssetListFromAssets(
 	// the envelope below.
 	rows, observedAt, stale, err := s.listAssetsExtAt(r.Context(), opts)
 	if err != nil {
-		if clientAborted(r, err) {
-			return
-		}
-		s.logger.Error("ListAssetsExt (assets listing) failed", "err", err)
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/internal",
-			"Internal error", http.StatusInternalServerError, "")
-		return
+		return Envelope{}, nil, err
 	}
 	// Overfetch-by-one for cursor pagination — same shape the
 	// retired /v1/coins handler used. The +1th row determines
@@ -1339,8 +1371,9 @@ func (s *Server) handleAssetListFromAssets(
 	// came from the cache we stamp their ACTUAL observation time and,
 	// past the TTL, `flags.stale` — never now() over a boot-seeded or
 	// refresh-starved page-set. An uncached read leaves observedAt zero
-	// and writeEnvelope defaults as_of to now.
-	env := Envelope{Data: out, Flags: Flags{Stale: stale || unmeasured}}
+	// and as_of is the build time, stamped once so a cached replay
+	// carries the same as_of as the response that built it.
+	env := Envelope{Data: out, Flags: Flags{Stale: stale || unmeasured}, AsOf: WireTime(time.Now().UTC())}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())
 	}
@@ -1353,7 +1386,7 @@ func (s *Server) handleAssetListFromAssets(
 			Next: timescale.EncodeAssetsCursor(rows[len(rows)-1], order),
 		}
 	}
-	writeEnvelope(w, env)
+	return env, out, nil
 }
 
 // fillMarketCapsFromSupply fills market_cap (and circulating_supply) on
