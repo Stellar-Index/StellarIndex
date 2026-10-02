@@ -12,7 +12,6 @@ Type=oneshot
 # 5 min covers the ~30s SLA_PROBE_DURATION with margin while still
 # guaranteeing the unit is dead well before the next scheduled fire.
 TimeoutStartSec=5min
-RuntimeMaxSec=5min
 ExecStart=/opt/stellarindex/healthchecks/sla-probe.sh
 EnvironmentFile=-/etc/default/stellarindex-healthchecks
 DynamicUser=true
