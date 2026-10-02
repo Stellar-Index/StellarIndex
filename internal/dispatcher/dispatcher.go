@@ -471,11 +471,12 @@ type Dispatcher struct {
 	// there. See [Dispatcher.SetRawEventSink].
 	rawEventSink RawEventSink
 
-	// logger is used by exactly one code path: the decoder-panic guard
-	// (#371 F1, see recordDecoderPanic). The dispatcher is otherwise
-	// silent by design — every other signal it produces is a counter
-	// the caller mirrors into obs — but a recovered panic has to carry
-	// its stack and ledger coordinate somewhere an operator can read.
+	// logger is used by two code paths: the decoder-panic guard
+	// (#371 F1, see recordDecoderPanic) and an unreadable evicted-key
+	// list (see walkEvictedKeys). The dispatcher is otherwise silent by
+	// design — every other signal it produces is a counter the caller
+	// mirrors into obs — but those two have to carry their ledger
+	// coordinate somewhere an operator can read.
 	// Nil is fine: [Dispatcher.log] falls back to slog.Default(). See
 	// [Dispatcher.SetLogger].
 	logger *slog.Logger
@@ -539,6 +540,11 @@ type Dispatcher struct {
 	// transactions is invisible, and without this counter that is
 	// indistinguishable from a ledger in which nothing happened.
 	entryMetaUnsupported int
+
+	// evictedKeysUnreadable counts ledgers whose evicted-key list could
+	// not be read, so none of their state-archival evictions reached the
+	// entry decoders — each evicted balance then stays served as live.
+	evictedKeysUnreadable int
 
 	// uncorroboratedCalls is the per-source count of ContractCall
 	// invocations an [ExecutionCorroborationRequirer] decoder MATCHED
@@ -675,8 +681,8 @@ func (d *Dispatcher) SetRawEventSink(sink RawEventSink) {
 	d.rawEventSink = sink
 }
 
-// SetLogger installs the logger the decoder-panic guard writes to
-// (#371 F1). Nil leaves the fallback in place (slog.Default()), so a
+// SetLogger installs the logger the decoder-panic guard and the
+// eviction-read failure write to (#371 F1). Nil leaves the fallback in place (slog.Default()), so a
 // dispatcher built without one still reports a recovered panic — just
 // without the binary/format the operator configured. Not safe
 // concurrent with ProcessLedger; called once at startup.
@@ -729,6 +735,9 @@ type Stats struct {
 	// A sustained climb means the LedgerEntry supply observers are
 	// blind while every component table simply stops advancing.
 	EntryMetaUnsupported int
+	// EvictedKeysUnreadable counts ledgers whose evicted-key list failed
+	// to read; every eviction in them is missing from the served state.
+	EvictedKeysUnreadable int
 	// UncorroboratedCalls is the per-source count of oracle-class
 	// ContractCall invocations dropped before Decode because they were
 	// only DECLARED in the auth tree, never executed (W8.4a). Non-zero on
@@ -763,6 +772,7 @@ func (d *Dispatcher) Stats() Stats {
 	txReadErrs := d.txReadErrors
 	txEventReadErrs := d.txEventReadErrors
 	entryMetaUnsup := d.entryMetaUnsupported
+	evictedUnreadable := d.evictedKeysUnreadable
 	d.statsMu.Unlock()
 
 	orphanCopied := map[string]int{}
@@ -786,16 +796,17 @@ func (d *Dispatcher) Stats() Stats {
 		}
 	}
 	return Stats{
-		EventsSeen:           seenCopied,
-		DecodeErrors:         decodeCopied,
-		OrphanEvents:         orphanCopied,
-		UnknownContractDrops: unknownContractCopied,
-		NonDirectionalSwaps:  nonDirectionalCopied,
-		UnmatchedHits:        unmatched,
-		TxReadErrors:         txReadErrs,
-		TxEventReadErrors:    txEventReadErrs,
-		EntryMetaUnsupported: entryMetaUnsup,
-		UncorroboratedCalls:  uncorrCopied,
+		EventsSeen:            seenCopied,
+		DecodeErrors:          decodeCopied,
+		OrphanEvents:          orphanCopied,
+		UnknownContractDrops:  unknownContractCopied,
+		NonDirectionalSwaps:   nonDirectionalCopied,
+		UnmatchedHits:         unmatched,
+		TxReadErrors:          txReadErrs,
+		TxEventReadErrors:     txEventReadErrs,
+		EntryMetaUnsupported:  entryMetaUnsup,
+		EvictedKeysUnreadable: evictedUnreadable,
+		UncorroboratedCalls:   uncorrCopied,
 	}
 }
 
@@ -1249,7 +1260,7 @@ func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []inges
 	// transaction-scoped, so empty TxHash and OpIndex -1 like the fee
 	// blocks, and last in the walk because core evicts at ledger close,
 	// after every transaction has applied. See [walkEvictedKeys].
-	outputs = append(outputs, walkEvictedKeys(lcm, dispatchFor(""))...)
+	outputs = append(outputs, d.walkEvictedKeys(lcm, ledgerSeq, dispatchFor(""))...)
 	return outputs
 }
 
@@ -1292,14 +1303,21 @@ func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []inges
 // last-write ledger, BELOW the eviction ledger, so it cannot displace a live
 // eviction row on read either way.
 //
-// An LCM version that cannot report evictions yields none. The SDK panics
+// An LCM whose evicted keys cannot be read yields none. The SDK panics
 // rather than erroring on an unknown version, and ProcessLedger has already
 // reached that panic via lcm.LedgerSequence() long before this point, so the
-// error arm here is unreachable in practice — treating it as "no evictions"
-// keeps a future SDK that starts returning it from dropping the ledger.
-func walkEvictedKeys(lcm xdr.LedgerCloseMeta, dispatch func(int, xdr.LedgerEntryChange) []consumer.Event) []consumer.Event {
+// error arm is unreachable today. If a future SDK starts returning it, the
+// rest of the ledger still lands, but the arm is COUNTED and logged with the
+// ledger: every eviction it drops leaves a served balance above the truth,
+// and the ledger number is what a replay needs.
+func (d *Dispatcher) walkEvictedKeys(lcm evictedKeysSource, ledgerSeq uint32, dispatch func(int, xdr.LedgerEntryChange) []consumer.Event) []consumer.Event {
 	keys, err := lcm.EvictedLedgerKeys()
 	if err != nil {
+		d.statsMu.Lock()
+		d.evictedKeysUnreadable++
+		d.statsMu.Unlock()
+		d.log().Warn("dispatcher: evicted ledger keys unreadable — this ledger's state-archival evictions skipped",
+			"ledger", ledgerSeq, "err", err)
 		return nil
 	}
 	var outs []consumer.Event
@@ -1310,6 +1328,12 @@ func walkEvictedKeys(lcm xdr.LedgerCloseMeta, dispatch func(int, xdr.LedgerEntry
 		})...)
 	}
 	return outs
+}
+
+// evictedKeysSource is the slice of xdr.LedgerCloseMeta the eviction phase
+// reads; a test can stand in a source whose read fails.
+type evictedKeysSource interface {
+	EvictedLedgerKeys() ([]xdr.LedgerKey, error)
 }
 
 // entryChangeTxHash is the hex tx hash used to stamp entry-change contexts.
