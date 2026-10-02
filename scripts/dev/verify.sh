@@ -424,6 +424,7 @@ echo "=== ClickHouse ops-user contract self-test ===" && ./scripts/ops/ch-ops-us
 # caught this. Run it here explicitly.
 echo "=== Changed-file dispatcher self-test ===" && ./scripts/dev/lint-changed-test.sh
 echo "=== Doctor self-test ===" && ./scripts/dev/doctor-test.sh
+echo "=== verify-r1-sync self-test ===" && ./scripts/dev/verify-r1-sync-test.sh
 # GH-775: pins commit-identity-range.sh's new-branch/tag fallback (a
 # detached-HEAD checkout with the branch's own commit also present as a
 # remote-tracking ref) against the exact regression that made the range
