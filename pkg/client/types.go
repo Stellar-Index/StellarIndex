@@ -424,9 +424,13 @@ type AssetDetail struct {
 	ListingValuation *AssetListingValuation `json:"listing_valuation,omitempty"`
 
 	// SupplyBasis identifies which ADR-0011 policy produced the
-	// supply numbers (e.g. "issuer_exclusion", "admin_exclusion",
-	// "override"); null when no snapshot exists.
+	// total/circulating numbers (e.g. "issuer_exclusion",
+	// "admin_exclusion", "override"); null when no snapshot exists. It
+	// never carries "sep1_declared_max" — see MaxSupplyBasis.
 	SupplyBasis *string `json:"supply_basis,omitempty"`
+
+	// MaxSupplyBasis names where MaxSupply (and FDVUSD) came from when not the SupplyBasis policy, e.g. "sep1_declared_max".
+	MaxSupplyBasis *string `json:"max_supply_basis,omitempty"`
 
 	// SupplyAsOf / SupplyAsOfLedger date the supply observation; nil when
 	// the reading carries no vintage.
