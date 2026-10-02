@@ -20,6 +20,192 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.98.0] — 2026-10-02
+
+67 commits since v0.97.0. Operator-visible: `/v1/divergence` is regrouped by
+pair and `/v1/divergence/series` rejects `reference=` (OpenAPI change, see
+Breaking); single-provider `source=` selectors for data vendors return 400
+`off-chain-source-filter`, while exchange venues stay selectable; closed fiat
+crosses on `/v1/price`, batch and SEP-40 convert at a stored vendor FX fixing
+and carry `fx_rate` / `fx_as_of` / `fx_source` / `fx_resolution`; `/v1/status`
+freshness counts are nullable beside a new `freshness_status`; `/v1/admin`
+routes enforce operator tier and `X-Reason` at the mount; `/v1/price/stream`
+emits `price_withheld`; the CoinGecko Pro, Tiingo, OpenExchangeRates and
+ExchangeRatesAPI keys render onto r1 from vault variables; the ZFS ARC cap is
+codified in the archival-node role; the archive trimmer is gated on
+`galexie_archive_trim_enabled`; compression of `trades` chunks now waits 15
+days (about 50 GB more uncompressed on r1). Six new migrations, 0192–0197,
+all additive; none carries a REQUIRED follow-up, but four need a follow-up
+run after deploy:
+
+- 0192 `defindex_admin_events`: `stellarindex-ops projector-replay -source
+  defindex` fills history.
+- 0195 Phoenix stake-lifecycle, factory-config and blend events: `stellarindex-ops
+  projector-replay -source phoenix -from 51572016 -refresh-caggs=false`
+  (decompress the affected chunks first), then `compute-completeness`.
+- 0196 `trades.tx_index`: `stellarindex-ops tag-tx-index` tags history; run
+  it before the chunks pass `compress_after` (`-write` refuses compressed
+  chunks).
+- 0193 `fx_fixings` fills from `scripts/ops/fx-history-backfill` and the
+  forex worker; closed fiat crosses withhold with `fx_leg_unavailable` until
+  a fixing exists.
+
+### Breaking
+
+- **api — `/v1/divergence` and `/v1/divergence/series` (#2075,
+  OPERATOR-VISIBLE):** `/v1/divergence` returns `data.pairs[]`, one entry per
+  pair with our price once and every reference nested under it (the limit
+  counts pairs, so a pair is never split across pages). `/v1/divergence/series`
+  drops `reference=`, which now returns 400; each bucket carries our price plus
+  a per-reference list. Neither route serves one provider's data alone.
+- **api — off-chain `source=` selectors (#2075, #2076, OPERATOR-VISIBLE):**
+  on `/v1/oracle/latest`, `/v1/observations`, `/v1/observations/stream` and
+  `/v1/markets`, a data-vendor name (aggregators, FX providers, Tiingo,
+  Chainlink, sovereign anchors) returns 400 `off-chain-source-filter` and an
+  unknown name 400 `unknown-source`. Exchange venues (registry
+  `Class=Exchange`, `Subclass=CEX`) and on-chain sources stay selectable.
+
+### Changed
+
+- **price — closed fiat crosses (#2025, OPERATOR-VISIBLE):** a closed fiat
+  cross on `/v1/price`, batch and SEP-40 binds to the newest hourly vendor
+  bar at bucket end minus 3h from the new `fx_fixings` table (migration
+  0193), in exact rationals, so an answer no longer drifts with the live FX
+  snapshot or differs by region. Responses carry `fx_rate`, `fx_as_of`,
+  `fx_source`, `fx_resolution` and `usd_leg`; a missing fixing withholds with
+  `fx_leg_unavailable` and a store error is a 503. `/v1/price/tip` keeps the
+  live rate.
+- **api — `/v1/status` freshness (#1917, OPERATOR-VISIBLE):** a failed
+  freshness query is returned, not skipped; `active_sources` and
+  `total_sources` are nullable and set only when measured, and
+  `freshness_status` (`ok` / `degraded` / `unknown`) reports the block's trust
+  state. An active-below-total shortfall reads `degraded` and does not move
+  `overall`. OpenAPI and `pkg/client` follow.
+- **api — `/v1/admin` mount (#1844, OPERATOR-VISIBLE):** all seven admin
+  routes mount through `Server.handleAdmin`, which applies the operator tier
+  and, for non-GET methods, `X-Reason` before the handler; a syntax-tree test
+  fails any admin route registered another way.
+- **api — `/v1/price/stream` (#1752, OPERATOR-VISIBLE):** a pair withheld
+  mid-connection emits a `price_withheld` event keeping the bucket's id and
+  `as_of` instead of dropping buckets silently; the publisher emits one when a
+  pair becomes withheld or its reason changes and republishes once served.
+- **api — source-filtered `/v1/markets` (#1831, OPERATOR-VISIBLE):**
+  `?include=sparkline` and `?include=inception` are omitted under `?source=`,
+  since neither reader has a per-source grain.
+- **api — account trades (#2038, OPERATOR-VISIBLE):** `GET
+  /v1/accounts/{g}/trades` admits one in-flight scan per caller; a second
+  concurrent request is shed at once with the existing retryable 503, so one
+  caller no longer holds all four slots. The global cap is unchanged.
+- **api — asset ATH (#2033, OPERATOR-VISIBLE):** a day counts toward
+  `/v1/assets/{id}` all-time high only if its pair cleared $100 volume and 3
+  trades; a display filter, not a manipulation defence.
+- **api — latest-trade reads (#2056, #2035):** the limit `LatestTradesForPair`
+  binds is capped, and same-ledger ties break on a stable order.
+- **supply — band breach (#1938, OPERATOR-VISIBLE):** the refresher keeps the
+  last written `total_supply` per asset and counts a move over 10x in either
+  direction in `stellarindex_supply_write_band_breach_total{asset_key,direction}`.
+- **projector — dropped decode rows (#1697, OPERATOR-VISIBLE):** a row
+  `sorobanevents.Reconstruct` rejects is logged (ledger, tx, index, contract,
+  error; first and every 20th per cycle) and counted as `reconstruct_error`,
+  with an alert for sparse sources the 0.1/s decode-error rate cannot catch.
+- **aggregator — bootstrap cap (#1842):** a released pair is re-capped only
+  below 27.0 days-equivalent of 1-minute density (`BootstrapReengageDensityDays`),
+  so a dense pair no longer snaps back to 0.5 after about 30 hours of gaps.
+- **indexer — shutdown loss (#1947):** after the sink stops, the cursor
+  rewinds to the lowest abandoned trade's ledger minus one, so the next start
+  re-walks it (served-tier writes are `ON CONFLICT` idempotent).
+- **ratelimit — dwell clock (#2030):** the Redis-backed fail-closed gates
+  clear their clock after a failure-free dwell, so one old failure no longer
+  arms an unrelated blip.
+- **notify — Resend (#1845):** 429 and 5xx responses retry with bounded
+  backoff.
+- **ops — ch-rebuild (#2042, #2039, #2049, #1887, #2036):** flags build
+  through the shared write gate; projected-rebuild selects its source by
+  name; upshift share transfers are re-derived; `-ch` reconciles seed
+  factory-child gates from the lake; the lake decode path applies the
+  execution-corroboration gate.
+- **ops — tag-tx-index (#2072):** `-write` refuses compressed trades chunks
+  (naming them) and checks again before each window, and the tagger verifies
+  the lake row's ledger before trusting a `tx_hash_index` hit.
+- **ops — recognition census (#1883):** `compute-completeness`,
+  `verify-recognition` and `ch-recognition` register the SEP-41 decoders, so
+  watched-contract transfers stop reading as unhandled topics.
+- **timescale — usd_volume restamps (#2045, #2055, #2044, #2060):** a
+  restamp aborts on an FX read error and skips a row another writer moved
+  between plan and apply; an XLM quote leg anchors like an XLM base;
+  maker-less AMM swaps key into the volume-character pair; same-issuer
+  unpriced classic trades are labelled `usd_volume_populated="unroutable"`
+  and leave the coverage alert's denominator.
+- **storage — sep41 supply fold (#2069, #2053):** the fold reset re-folds
+  each contract to the settled cursor in one transaction, naming any that
+  fails, and `projected-rebuild` resets it.
+- **ansible (#2034, #1728, #1958, #1860):** vendor keys render into
+  `/etc/default/stellarindex` from `vault_*` variables with empty defaults;
+  the ZFS ARC cap is codified; the archive trimmer file renders only when
+  `galexie_archive_trim_enabled`; `galexie-archive-fill` runs as the archive
+  writer, not root.
+- **ci (#1921, #1744, #2078, #2083):** a `scripts/ci` self-test that no
+  workflow or `verify.sh` runs fails CI; the go test job runs when a
+  trigger-guard input changes; the main-CI health listing uses the unfiltered
+  run list; the fleet-drift catch-up prints each region's full binary set.
+- **monitoring (#1734):** `probe_stale` catches a frozen binary-version
+  textfile.
+
+### Added
+
+- **defindex — admin events (#2021, OPERATOR-VISIBLE):** vault `rescue`,
+  `paused`, `unpaused` and the fee-receiver and manager rotations persist to
+  `defindex_admin_events` (migration 0192, no retention); historical fill
+  above.
+- **trades — `tx_index` (#2071, OPERATOR-VISIBLE):** migration 0196 adds a
+  nullable `trades.tx_index` (catalog-only, even on compressed chunks); the
+  indexer's `pipeline.RunTxIndexTagger` (trailing 30 minutes) and
+  `stellarindex-ops tag-tx-index` fill it from the lake. No reader keys on it
+  yet.
+- **migrations:** 0192 `defindex_admin_events`; 0193 `fx_fixings`
+  (append-only, keyed on vendor bar time, no retention); 0194 re-issues
+  `sep41_supply_rollup`'s stored comments (metadata only); 0195 admits the
+  Phoenix stake-lifecycle, factory-config and blend events and adds nullable
+  `phoenix_admin_events.value`; 0196 `trades.tx_index`; 0197 moves the
+  `trades` compression policy to 15 days (`alter_job`, no table lock). The
+  deploy applies them; each takes a brief catalog lock.
+
+### Fixed
+
+- **phoenix (#1865):** stake-lifecycle, factory `Updated Config`, blend-pool
+  settings and Map-body liquidity events decode, and the early stake WASMs'
+  unbond reassembles, which had stopped completeness at ledger 53,329,393;
+  a non-Phoenix contract leaves the curated stake set (replay above).
+- **defindex (#1889):** genesis floors at the earliest routed factory,
+  55,484,403, restoring 1.57M ledgers to every completeness check.
+- **external (#1863, #2040, #2084, #2085):** backfills drop unsettled and
+  unclosed candles; a 200 with zero rows is not a successful poll, and a
+  poller with no applicable pairs reads idle, not fresh.
+- **storage (#2080, migration 0197):** `trades` compression waits until a
+  chunk is past the asset-character roll's 14-day window, so the roll no
+  longer starves the compression policy of its lock.
+- **timescale (#2031):** transit reads pick the latest bucket across both
+  directions.
+- **explorer (#1742):** the wealth price walk runs once under singleflight
+  with a 60s fill timeout, and an empty result is cached for 30s.
+- **api (#2041):** the RWA premium day reads bind pubnet genesis instead of
+  an open-ended range; served output is unchanged.
+- **deps (#2081):** `otel` bumps to v1.45.0 (GO-2026-6505).
+- **docs:** the `supply-assets-stale` runbook covers the unseeded SAC wrapper
+  (#2079); the ADR-0038 Phase B/C data jobs, the r1 follow-ups that closed,
+  the redstone archived-WASM comparison, R-016's fix commit, the same-ledger
+  OHLC tie-break, the FX as-of day-bucket rule, the SEP-41 base-anchor scope,
+  the Kraken `/OHLC` depth limit and the SEP-40 method-name mirroring are
+  recorded (#2018, #1874, #2052, #1953, #2051, #2029, #2057, #2046, #1776).
+
+### Internal
+
+- **refactor — FX snapshot (#1982):** the write-only float circulation and
+  `History7d` fields leave `CurrencyEntry` and `CurrenciesSnapshot`; the
+  struct is in-process, so no wire or OpenAPI shape changes.
+- **test (#2065, #2070):** the since-inception limiter clock is pinned, and
+  the sep41 rollup comment integration test pins version 193.
+
 ## [v0.97.0] — 2026-09-30
 
 36 commits since v0.96.0. Operator-visible: `GET /v1/operations` rejects any
@@ -519,164 +705,3 @@ aborts are fixed, and three pilot waves of inventory fixes land.
 - **ci:** the nightly chaos job gets the dev stack's Postgres DSN (#1625).
 - Band relay trailing-arg tolerance pinned by a test; stale runbook
   citations and an overdue retirement corrected (#1626, #1633).
-
-## [v0.93.0] — 2026-09-29
-
-166 commits since v0.92.1 — self-service account erasure/export, a
-dashboard-secret boot check (OPERATOR ACTION REQUIRED, see below), and a
-coverage-honesty pass over the history/rate/account-state read paths.
-
-### Added
-
-- **api/platform — self-service account erasure and data export (GH #809):**
-  `DELETE /v1/dashboard/account` and `GET /v1/dashboard/account/export`,
-  backed by one `accounterasure.Eraser` writer shared with the new
-  `stellarindex-ops account-erase` CLI. Erasure runs as one transaction
-  (close, scrub `audit_log` subject-identifying fields, delete invites,
-  alerts, webhooks, keys, usage events, magic links, users, rename
-  `usage_daily` rows to an `erased:<uuid>` subject, tombstone the slug so
-  a reused email can't inherit a prior member's Redis/usage state) and
-  reports a committed erasure as done even when only its cleanup step
-  fails. Export covers Redis-held self-service key/usage rows. Erasure
-  and account creation are serialised per slug behind an advisory lock;
-  billing-address login state is preserved when only a member address is
-  erased. Migration 0188 adds `audit_log_erase_metadata()` and the slug
-  tombstone table.
-- **supply — provenance stamping for reserve-account seed observations
-  (migration 0189):** `supply seed-observations` now stamps a checkpoint
-  row on a full pass, matching the SAC-balance and claimable-balance
-  seeders; a partial, failed or `-dry-run` pass stamps nothing.
-- **ops — `supply verify-rollup` on a timer with alerts:** new
-  `supply-verify-rollup.{service,timer}` on archival-node hosts (daily
-  06:53 UTC, read-only), gated on `watched_sep41_contracts` being
-  non-empty; unit-failed/stale/never-initialized Prometheus rules and a
-  `-textfile-output` scrape target replace the pasted-transcript verdict.
-  `supply audit -cross-check` now prints both cross-check legs instead of
-  only the pass/fail verdict.
-- **metadata — SEP-1 identity-change history (migration 0190):**
-  `issuer_identity_history` records one row per changed field
-  (`OrgName`, `ORG_URL`, `ORG_LOGO`, currency `Image`, …) whenever a
-  refresh overwrites an established issuer's SEP-1 payload; the
-  data-freshness watchdog now keys off the last *successful* fetch
-  instead of the last attempt, so a domain failing every refresh no
-  longer reads fresh.
-- **streaming:** a resume past the replay ring's eviction floor now
-  emits an explicit `stream_gap` event naming the requested and oldest
-  available cursor, instead of silently truncating; SSE connections open
-  with a retry hint in the prelude.
-
-### Fixed
-
-- **auth — dashboard MAC keys derived per purpose, secret now required
-  (OPERATOR ACTION REQUIRED, #1615):** the login-code HMAC,
-  passkey-ceremony cookie, magic-link tag and login-device marker each
-  MACed under one shared root secret; each now derives its own
-  HKDF-SHA256 key. The API refuses to boot when passkeys are wired (every
-  host that mounts the dashboard) and `STELLARINDEX_DASHBOARD_CODE_SECRET`
-  is empty. In-flight codes/links/ceremonies/device markers invalidate
-  once on deploy; hashed sessions are unaffected. The ansible env
-  template (#1618) now refuses to render on a dashboard-mounting host
-  with no `vault_dashboard_code_secret`, rather than deploying green and
-  crashlooping the API.
-- **ops — archival-node Redis requires auth (T641):** `requirepass` +
-  loopback bind, wired into api/indexer/aggregator and the Prometheus
-  redis exporter via a new vault `redis_password` (empty by default, so
-  a fresh checkout fails ansible's preflight assert instead of shipping
-  an open cache).
-- **security — redirect/origin leakage:** the API's CORS lists trust
-  only served origins; the dashboard client and vendor HTTP sources (CEX
-  connectors) keep their API key on the origin instead of forwarding it
-  to a redirect target; the Chainlink Ethereum RPC client refuses to
-  follow any redirect.
-- **chainlink:** rounds older than a per-feed `MaxAge` (heartbeat-derived;
-  `[external.chainlink.feed_map]` gains `max_age_hours`) or with an
-  undecoded carried-forward `answeredInRound` are refused instead of
-  projected as a fresh publication; per-feed poll outcome and
-  last-success metrics replace the single tick-level WARN.
-- **api — coverage-honesty gaps on history/rate/account-state responses:**
-  `/v1/history/since-inception` flags row-cap truncation
-  (`row_cap_truncated` + `data_ends_at`) instead of silently stopping
-  mid-series; `/v1/vwap`, `/v1/twap` and `/v1/ohlc` clamp an explicit
-  `to` inside the still-filling bucket the same way a defaulted `to`
-  already was, and surface it as `clamped`; `/v1/accounts/{g}` stamps
-  `as_of_ledger` from its own 30s cache vintage instead of a
-  serve-time watermark read that could outrun the cached body; the SDEX
-  orderbook handler now flags `stale` when the source has stopped
-  advancing instead of always reporting fresh.
-- **streaming:** a multi-topic SSE resume (up to 9 alias topics) merged
-  each topic's buffered replay sequentially instead of by id, so
-  resuming after a Hub-wide id gap walked backwards at topic boundaries;
-  replay is now merge-sorted by id across topics before sending.
-- **api — spec/handler drift:** reconciled OpenAPI vs. handler on
-  methodology, diagnostics and required/nullable fields; monthly-quota
-  429 now sends `Retry-After`; SSE streams are re-billed periodically
-  instead of once at open; refused mint-scope escalations are counted,
-  not just logged; the `/v1/rwa/assets` rate-limit charge is weighted by
-  its listing reads.
-- **storage:** unbounded latest-row hypertable reads are bounded, and new
-  ones are lint-gated from being added unbounded; the trades floor is
-  derived from the newest *compressed* chunk; a baseline minute only
-  counts past the notional floor; explorer sums/ratios and source
-  contributions are computed as exact decimals rather than float
-  aggregation; `contract-code-history` ClickHouse reads fall back to the
-  legacy scan on an empty index; the aggregator's baseline-bar VWAP
-  narrowing is marked explicitly non-monetary.
-- **ops — monitoring/gate gaps closed:** cursor-hold, trustline-error and
-  cap67-heartbeat detection; `archive-completeness fix`/`verify` gated
-  behind `-write`; `detect-gaps` catches reaped catalogue sources and
-  stale RPC tips; `curated-rwa-sync` asks Dune for a valid execution tier
-  (it asked for a tier Dune doesn't name, so every keyed run 400'd);
-  `sdex-claim-audit` fails on a silent reader/tx read drop; two more
-  vacuous-pass shell-gate holes closed (#1097, #1093).
-  `prometheus-rules-drift`'s live-check compares recording rules, not
-  only alert rules, closing a weekly false-positive; the MinIO
-  Prometheus scrape token is now a dedicated service-account secret
-  (rotation-safe — rotating MinIO root no longer invalidates it)
-  instead of a root-signed JWT.
-- **ops — MinIO repinned to a pullable source:** MinIO Inc closed
-  anonymous registry/binary pulls in 2025; images and binaries now come
-  from `cgr.dev/chainguard/minio`, pinned by digest. An apply keeps an
-  existing host's binaries unless `-e minio_allow_binary_upgrade=true` is
-  passed, so this does not touch r1's running MinIO by default.
-- **dashboardauth:** credential cookies are host-only and the
-  login-intent witness is keyed to match; magic links are bound to a
-  per-browser id so a throttled login can't evict another session; the
-  durable code budget is only charged when a code is actually live;
-  passkey add/remove notifies the account holder; dashboard-minted keys
-  are mirrored into the Redis validator store; the login-client
-  description is drawn from a closed vocabulary.
-- **auth — scam-gate the aggregator tier of the asset headline;**
-  `RateLimitBySubject`'s skip predicate is now exercised by test; admin
-  key minting inherits the caller's rate limit when unset (GH-1147).
-- **a batch of Intel-track fixes** across pricing, storage, ops and
-  explorer surfaces (two batches, 22 issues: #1331, #1332, #530, #594,
-  #600, #1346, #948, #834, #799, #767, #1261, #1148, #645, #711, #605,
-  #1055, #1235, #1337, #724, plus a macOS lexicon fix; #1541, #1540).
-- **W3 slice 78:** usage bookkeeping now runs on panic as well as the
-  success path, with a usage-write alert; explorer price-freshness
-  fixes.
-- **release process:** `cut-release.sh` refuses to tag on a missing,
-  stale or failing weekly SLA proof.
-- **ci:** textfile discovery, budget floor, lexicon regex and a SIGPIPE
-  gap fixed in the served-value gates; `lint-doc-links` no longer
-  silently skips an unreadable file; `lint-migration-commands` no longer
-  crashes under bash 3.2; migration-compat lint gains a `dml` class;
-  gosec SSRF/nilerr false positives silenced on HEAD; Served-path smoke
-  now guarded by the same `if:` as fleet-parity.
-- **deps:** routine npm/Go/GitHub Actions bumps; the golang 1.27
-  Dockerfile bump was reverted until `go.mod` moves with it.
-- Various: `funlen`/`gocognit` cleanups, SDEX `op_index` fanout guarded
-  against claim-index overflow, three cache-control mis-bands corrected,
-  `LatestOracleStreams`' dropped-row counter increment fixed,
-  `defaultRequestTimeout` exercised on a route with no handler-level
-  wrap, the response cache write skipped when a dead context assembled
-  the body, a `NULL`-start TWAP-view refresh refused outside migration
-  headers, `window_seconds` omitted on tip fallbacks with concurrent tip
-  ticks capped, the pricingguard call kept inside `LatestVWAP`,
-  `Worker.Run` made one-shot for its lifetime (Q143), `Counter.Read`
-  guarded against a nil receiver, the heavy-job scope's memory cap moved
-  onto the unit wrapper, the ledger-read undercount metered and alerted
-  (T399), the verify sweep alerted when permanently idle (T132), and the
-  `ops_batch` ClickHouse user granted `system` database access so
-  `compute-completeness`'s event census can read `system.parts`
-  (already hot-patched on r1; this codifies it).
