@@ -1070,6 +1070,8 @@
     - census-rollup.timer
     - compute-completeness.service
     - compute-completeness.timer
+    - compute-completeness-sdex.service
+    - compute-completeness-sdex.timer
     - verify-lake.service
     - verify-lake.timer
     - data-freshness.service
@@ -1121,6 +1123,7 @@
     - cohort-rollup.timer
     - census-rollup.timer
     - compute-completeness.timer
+    - compute-completeness-sdex.timer
     - verify-lake.timer
     - data-freshness.timer
     - ch-supply.timer

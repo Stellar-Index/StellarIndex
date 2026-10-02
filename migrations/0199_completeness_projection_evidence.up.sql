@@ -35,7 +35,8 @@
 -- first and at most three per night (-max-carry-age); /v1/coverage reads
 -- stale until each has been re-proved. The sdex census is never re-proved
 -- by the pass (its full reconcile outlasts the pass's deadline): it stays
--- NULL until an operator runs `compute-completeness -ch -source sdex`
+-- NULL until the weekly compute-completeness-sdex.timer run, or a manual
+-- `systemctl start compute-completeness-sdex.service`
 -- (runbook completeness-incomplete.md).
 --
 -- Additive with DEFAULT 0 / NULL so the currently-deployed binary, whose

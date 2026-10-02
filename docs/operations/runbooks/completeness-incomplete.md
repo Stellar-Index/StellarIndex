@@ -77,7 +77,7 @@ Re-derive the flagged source from the certified lake, then re-verify:
   publishes the `recognition` row before the per-source loop, so only the
   re-verifying tail is left unevaluated (named in the pass's error). To grant a
   one-off larger budget, set `PASS_TIMEOUT` (e.g. `PASS_TIMEOUT=300m`) in the
-  `/etc/default/compute-completeness` AND raise `TimeoutStartSec` (180min) above it in
+  `/etc/default/compute-completeness` AND raise `TimeoutStartSec` (34200 s: a 23400 s lock wait + 180 min) by as much in
   `compute-completeness.service`, or systemd kills the pass first — or clear
   the source by hand with the chunked `-source` re-run above.
 
@@ -103,19 +103,24 @@ sudo -u postgres psql -d stellarindex -c \
   pass: …`). Right after migration 0199 every green source is `null`, so the
   flag holds for about `ceil(green sources / 3)` nights. If a source stays
   expired past that, check the pass's error for a deadline cut.
-- **`sdex` (the census) never clears on its own.** Its full re-proof takes
-  ~4.8 h, longer than the pass's 120 min, so the pass never re-floors it and
-  its evidence ages honestly. Re-prove it with one uninterrupted run from the
-  served floor, off-peak and outside the 05:30 UTC pass window:
+- **`sdex` (the census) is re-proved weekly by its own timer.** Its full
+  re-proof takes ~4.8 h, longer than the pass's 120 min, so the pass never
+  re-floors it. `compute-completeness-sdex.timer` (Sunday 18:47 UTC) runs the
+  nightly driver as `-source sdex -timeout 360m` under the same
+  `run-heavy-job.sh` job name, so it never overlaps the nightly pass. Right
+  after migration 0199, sdex stays `null` until that first Sunday run. If the
+  timer failed or missed a week (`systemctl status compute-completeness-sdex`,
+  `journalctl -u compute-completeness-sdex`), re-run it off-peak and outside
+  the 05:30 UTC pass window:
 
   ```sh
-  stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch \
-    -source sdex -timeout 360m
+  sudo systemctl start --no-block compute-completeness-sdex.service
   ```
 
-  Omit `-from`: a run that starts above the served floor carries the range
-  below it and stamps no evidence, so chunked `-from` runs cannot clear this.
-  Repeat about weekly, or the flag returns 10 d 6 h after the last run.
+  The unit is the fallback to prefer: it applies the driver's tip−100 margin,
+  without which undrained ledgers read as sdex mismatches. Do not add
+  `-from`: a run that starts above the served floor carries the range below it
+  and stamps no evidence, so chunked `-from` runs cannot clear this.
 
 ## Root cause analysis
 
@@ -159,8 +164,8 @@ The `detail` column names the per-target Δ and window.
 ## Changelog
 
 - 2026-10-02 — added the projection-evidence stale reason (migration 0199):
-  the `-pass` re-proves up to three expired sources per night; `sdex` needs
-  the manual run.
+  the `-pass` re-proves up to three expired sources per night;
+  `compute-completeness-sdex.timer` re-proves `sdex` weekly.
 - 2026-09-30 — the nightly `-pass` orders from-genesis re-verifies last,
   writes the `recognition` row first, and takes `-timeout` / `PASS_TIMEOUT`.
 - 2026-09-09 — CS-095: the nightly `-pass` now re-verifies a source whose prior
