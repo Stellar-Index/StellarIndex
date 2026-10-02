@@ -47,7 +47,7 @@ const sorobanVolume24hUSDQuery = `
              )
              AND vwap IS NOT NULL
              AND bucket >= now() - INTERVAL '24 hours'
-           ORDER BY bucket DESC
+           ` + xlmUSDNewest + `
            LIMIT 1
         ),
         asset_trades AS (
