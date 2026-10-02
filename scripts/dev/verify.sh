@@ -311,8 +311,8 @@ echo "=== API-key keyspace walk ===" && ./scripts/ci/lint-apikey-scan.sh
 echo "=== API-key keyspace walk self-test ===" && ./scripts/ci/lint-apikey-scan-test.sh
 echo "=== Unbounded latest-row reads ===" && python3 ./scripts/ci/lint-unbounded-latest-row.py
 echo "=== Unbounded latest-row reads self-test ===" && ./scripts/ci/lint-unbounded-latest-row-test.sh
-echo "=== Healthcheck oneshot start/runtime bound ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout.sh
-echo "=== Healthcheck oneshot start/runtime bound self-test ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout-test.sh
+echo "=== Oneshot unit start bound (no ignored RuntimeMaxSec) ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout.sh
+echo "=== Oneshot unit start bound self-test ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout-test.sh
 echo "=== Deploy-baseline self-test ===" && ./scripts/ci/deploy-baseline-test.sh
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
 echo "=== Production credentials behind an environment gate ===" && python3 ./scripts/ci/lint-deploy-credentials.py

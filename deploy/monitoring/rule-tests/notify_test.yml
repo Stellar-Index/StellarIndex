@@ -5,9 +5,11 @@
 # Q268/RLT-324: stellarindex_notify_send_failure_ratio_high is 0/0 = NaN
 # whenever a template has zero send attempts, so a mailer that stops being
 # invoked entirely reads identically to a legitimately quiet window. Case 1
-# proves the new stellarindex_notify_no_send_activity dead-man's-switch
-# catches sustained total silence; case 2 proves it stays silent once any
-# send (success or failure) has happened recently.
+# proves the stellarindex_notify_no_send_activity dead-man's-switch catches
+# 6h of zero send attempts while sign-in/signup requests keep succeeding;
+# case 1b proves an idle deployment (no such requests) stays silent; case 2
+# proves it stays silent once any send (success or failure) has happened
+# recently.
 #
 # Case 3 proves the new stellarindex_notify_send_failures_sustained
 # companion pages on a persistent low-ratio failure trickle (well under the
@@ -24,10 +26,16 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
-  # ── Case 1: total silence for 6h — the dead-man's switch ───────────
+  # ── Case 1: sign-in demand with zero sends for 6h — dead-man fires ─
+  # One successful POST /v1/auth/login per minute, a non-2xx signup that
+  # must not count as demand, and not a single send attempt.
   - interval: 1m
-    name: zero send attempts of either result for 6h fires the dead-man alert
+    name: sign-in demand with zero send attempts for 6h fires the dead-man alert
     input_series:
+      - series: 'http_requests_total{job="stellarindex_api",method="POST",route="/v1/auth/login",status="200"}'
+        values: '0+1x400'
+      - series: 'http_requests_total{job="stellarindex_api",method="POST",route="/v1/signup",status="429"}'
+        values: '0+5x400'
       - series: 'stellarindex_notify_sends_total{template="magic-link",result="sent"}'
         values: '0+0x400'
       - series: 'stellarindex_notify_sends_total{template="magic-link",result="failed"}'
@@ -37,7 +45,7 @@ tests:
       - series: 'stellarindex_notify_sends_total{template="signup-verify",result="failed"}'
         values: '0+0x400'
     alert_rule_test:
-      - eval_time: 360m
+      - eval_time: 400m
         alertname: stellarindex_notify_no_send_activity
         exp_alerts:
           - exp_labels:
@@ -46,24 +54,52 @@ tests:
               component: notify
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
-              summary: "No transactional email send attempts (any result) in 6h"
+              summary: "360 sign-in/signup requests in 6h, but no transactional email send attempts"
               description: |
-                stellarindex_notify_sends_total has not incremented, for either
-                template or either result, in the last 6 hours. On a live
-                deployment this means the mailer has stopped being invoked
+                POST /v1/auth/login and POST /v1/signup answered 2xx
+                360 times in the last 6 hours, yet
+                stellarindex_notify_sends_total has not incremented for any
+                template or result. The mailer has stopped being invoked
                 entirely — not merely failing — which the failure-ratio alert
                 cannot see (0 failed / 0 sent is NaN, not "> 0.5"). Check that
                 the dashboard-login and signup-verify handlers are still calling
-                internal/notify.Sender.Send, and that this is not a known-quiet
-                non-production deployment (silence this alert there instead of
-                widening the window).
+                internal/notify.Sender.Send, and that the signup verification
+                emailer is configured.
 
                 Runbook: docs/operations/runbooks/notify-send-failure.md
+
+  # ── Case 1b: idle deployment — no demand, no sends, no alert ───────
+  # Zero sends is the expected reading when nobody signs in or signs up;
+  # unrelated API traffic and refused (non-2xx) auth requests are not
+  # demand.
+  - interval: 1m
+    name: zero send attempts with no sign-in or signup demand stays silent
+    input_series:
+      - series: 'http_requests_total{job="stellarindex_api",method="GET",route="/v1/ledger/latest",status="200"}'
+        values: '0+50x400'
+      - series: 'http_requests_total{job="stellarindex_api",method="POST",route="/v1/auth/login",status="400"}'
+        values: '0+1x400'
+      - series: 'http_requests_total{job="stellarindex_api",method="POST",route="/v1/auth/login",status="200"}'
+        values: '0+0x400'
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="sent"}'
+        values: '0+0x400'
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="failed"}'
+        values: '0+0x400'
+      - series: 'stellarindex_notify_sends_total{template="signup-verify",result="sent"}'
+        values: '0+0x400'
+      - series: 'stellarindex_notify_sends_total{template="signup-verify",result="failed"}'
+        values: '0+0x400'
+    alert_rule_test:
+      - eval_time: 400m
+        alertname: stellarindex_notify_no_send_activity
+        exp_alerts: []
 
   # ── Case 2: a single recent send anywhere keeps it silent ──────────
   - interval: 1m
     name: any recent send activity silences the dead-man alert
     input_series:
+      - series: 'http_requests_total{job="stellarindex_api",method="POST",route="/v1/auth/login",status="200"}'
+        values: '0+1x400'
       - series: 'stellarindex_notify_sends_total{template="magic-link",result="sent"}'
         values: '0x300 1+0x100'
       - series: 'stellarindex_notify_sends_total{template="magic-link",result="failed"}'
