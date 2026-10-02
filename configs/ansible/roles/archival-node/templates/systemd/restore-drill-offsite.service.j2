@@ -76,7 +76,6 @@ IOSchedulingPriority=7
 # drain come on top, as for repo1. Same 4h ceiling so a wedged S3 pull
 # still fails and frees the next tick instead of running forever.
 TimeoutStartSec=4h
-RuntimeMaxSec=4h
 
 # Hardening — identical to restore-drill.service.j2, for the same reasons
 # recorded there (BDR-04): ProtectSystem=full leaves /var, /srv and /run

@@ -5,13 +5,16 @@ package integration_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
+	"github.com/Stellar-Index/StellarIndex/internal/pricealerts"
 )
 
 // TestPriceAlertsDisarmed executes migration 0198 up and down and the SQL
@@ -189,4 +192,104 @@ func TestPriceAlertsDisarmed(t *testing.T) {
 		t.Errorf("0198 down left price_alerts.disarmed in place")
 	}
 	applyMigrations(t, dsn)
+}
+
+// TestPriceAlertRearmAfterFailedFanOut drives the evaluator against the real
+// store with a nanosecond clock: the claim and the re-arm CAS both bind the
+// worker's untruncated now, and timestamptz keeps microseconds, so the CAS
+// matches only if both writes reduce the instant identically.
+func TestPriceAlertRearmAfterFailedFanOut(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	acct := insertRawAccount(t, ctx, db, "rearm-fanout")
+
+	alerts := postgresstore.NewPriceAlertStore(postgresstore.New(db))
+	a, err := alerts.CreatePriceAlert(ctx, platform.PriceAlert{
+		AccountID: acct, BaseAsset: "native", QuoteAsset: "fiat:USD",
+		Condition: platform.AlertAbove, Threshold: "0.15", Enabled: true,
+		CooldownSeconds: 300,
+	}, 25)
+	if err != nil {
+		t.Fatalf("create alert: %v", err)
+	}
+
+	// 789 ns past the microsecond: rounding and truncation disagree here.
+	now := time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.UTC)
+	hooks := &failingWebhooks{
+		hooks: []platform.CustomerWebhook{{
+			ID: uuid.New(), AccountID: acct, URL: "https://hooks.example.com/x",
+			Events: []string{string(platform.WebhookEventPriceAlert)}, Enabled: true,
+		}},
+		fail: true,
+	}
+	prices := staticVWAP{price: "0.20", bucketClose: func() time.Time { return now.Add(-30 * time.Second) }}
+	w := pricealerts.New(alerts, hooks, prices, pricealerts.Options{
+		Interval: time.Minute,
+		Clock:    func() time.Time { return now },
+	})
+
+	w.Sweep(ctx)
+	if hooks.attempts != 1 {
+		t.Fatalf("fan-out attempts = %d, want 1", hooks.attempts)
+	}
+	got, err := alerts.GetPriceAlert(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.LastFiredAt.IsZero() || got.LastFiredAt.Sub(now).Abs() >= time.Microsecond {
+		t.Fatalf("last_fired_at = %s, want the claim's stamp %s at microsecond precision", got.LastFiredAt, now)
+	}
+	if got.Disarmed {
+		t.Fatal("alert still disarmed after a fan-out that enqueued nothing — the re-arm CAS missed the claim's stamp")
+	}
+
+	hooks.fail = false
+	now = now.Add(301 * time.Second)
+	w.Sweep(ctx)
+	if hooks.enqueued != 1 {
+		t.Fatalf("deliveries enqueued after the cooldown = %d, want 1 (the re-armed crossing retries)", hooks.enqueued)
+	}
+	got, err = alerts.GetPriceAlert(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !got.Disarmed {
+		t.Error("a delivered crossing left the alert armed")
+	}
+}
+
+type failingWebhooks struct {
+	hooks              []platform.CustomerWebhook
+	fail               bool
+	attempts, enqueued int
+}
+
+func (f *failingWebhooks) ListWebhooksForAccount(context.Context, uuid.UUID) ([]platform.CustomerWebhook, error) {
+	return f.hooks, nil
+}
+
+func (f *failingWebhooks) EnqueueDelivery(context.Context, platform.WebhookDelivery) error {
+	f.attempts++
+	if f.fail {
+		return errors.New("enqueue refused")
+	}
+	f.enqueued++
+	return nil
+}
+
+type staticVWAP struct {
+	price       string
+	bucketClose func() time.Time
+}
+
+func (s staticVWAP) LatestVWAP(context.Context, canonical.Asset, canonical.Asset) (string, time.Time, bool, error) {
+	return s.price, s.bucketClose(), true, nil
 }
