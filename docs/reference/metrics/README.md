@@ -3021,6 +3021,24 @@ When to look at it: expected zero. A sustained non-zero rate means the
 substance store is too slow or down for the request path; correlate
 with the timescale readyz probe. Dashboard-only, no alert rule.
 
+### `stellarindex_price_serve_thin_admitted_total`
+
+Counter, labels `surface` and `floor` (both as on
+`stellarindex_price_serve_substance_withheld_total`).
+
+Fires once per thin-market verdict served flagged because the request
+opted in with `?include_thin=true`: the market failed the substance
+floor, and the response carries the price as `thin_market` with its
+`substance` evidence instead of withholding it. Price surfaces count per
+read, so an opted-in thin serve counts its default pass under
+`…_substance_withheld_total` and its second pass here.
+`surface="listing"` counts once per served row, after the declared-peg
+fill and the scam-issuer suppression, and never as withheld;
+`surface="detail"` counts at the read.
+
+When to look at it: the opt-in's adoption, by surface. It never counts a
+default response. Dashboard-only, no alert rule.
+
 ### `stellarindex_pricingguard_trailing_fetch_failed_total`
 
 Counter, label `path` (`latest` | `at`).

@@ -129,6 +129,7 @@ func registerPricingMetrics() {
 		AggregatorMinUSDVolumeUnvaluableTotal,
 		PriceServeSubstanceWithheldTotal,
 		PriceServeSubstanceUnmeasuredTotal,
+		PriceServeThinAdmittedTotal,
 		PriceServeScamWithheldTotal,
 		PricingGuardTrailingFetchFailedTotal,
 
@@ -3904,6 +3905,25 @@ var PriceServeSubstanceUnmeasuredTotal = prometheus.NewCounterVec(
 		Help: "Substance-gate verdicts that could not be measured (store error or deadline), labelled by serving surface.",
 	},
 	[]string{"surface"},
+)
+
+// PriceServeThinAdmittedTotal — count of thin-market verdicts SERVED
+// because the request opted in with `?include_thin=true`: the market
+// failed the substance floor, and the response carries the price flagged
+// `thin_market` with its substance evidence instead of withholding it.
+// Same `surface` and `floor` labels as PriceServeSubstanceWithheldTotal.
+// The price surfaces count per read (a coalesced read once): an opted-in
+// thin serve counts its default pass as withheld and its second pass
+// here. surface=listing counts once per served row, after the
+// declared-peg fill and the scam-issuer suppression, and never as
+// withheld; surface=detail counts at the read and can include a price the
+// issuer-directory suppression later nulls. Dashboard-only, no alert rule.
+var PriceServeThinAdmittedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_price_serve_thin_admitted_total",
+		Help: "Thin-market substance verdicts served flagged under the include_thin opt-in, labelled by serving surface and the floor that failed.",
+	},
+	[]string{"surface", "floor"},
 )
 
 // PriceServeScamWithheldTotal — count of aggregated-price serves withheld

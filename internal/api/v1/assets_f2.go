@@ -384,6 +384,56 @@ func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asse
 	return l.sources
 }
 
+// assetDetailCacheKey keys the opt-in apart: its body can carry a thin
+// price the default body must never replay.
+func assetDetailCacheKey(asset canonical.Asset, includeThin bool) string {
+	if includeThin {
+		return asset.String() + "|thin"
+	}
+	return asset.String()
+}
+
+// clearThinWhenUnpriced drops the thin markers from a detail a later
+// suppressor unpriced, so no response is flagged thin without a price.
+func clearThinWhenUnpriced(d *AssetDetail) {
+	if d.PriceUSD == nil {
+		d.ThinMarket = false
+		d.Substance = nil
+	}
+}
+
+// thinDetailPricePass is the detail's opted-in second pass: re-read the
+// price with the request's thin legs released, after pass 1 left it
+// withheld on measured evidence. It runs only the price producers, never
+// applyF2Fields, so no market cap, FDV or change derives from a thin
+// price. "unattributed" is excluded because on detail it labels the
+// issuer suppression, which no thin release may override.
+func (s *Server) thinDetailPricePass(ctx context.Context, detail *AssetDetail, asset canonical.Asset, off *ThinAdmission) {
+	if detail.PriceUSD != nil || off.Evidence() == nil {
+		return
+	}
+	switch detail.PriceWithheldReason {
+	case "", PriceWithheldSubstance, PriceWithheldUpstreamLeg:
+	default:
+		return
+	}
+	onCtx, on := WithThinAdmission(ctx, asset, defaultPriceQuote, true)
+	trial := *detail
+	trial.PriceWithheldReason = ""
+	s.populatePriceUSD(onCtx, &trial, asset)
+	s.fillTransitivePrice(onCtx, &trial, asset, asset.String())
+	if trial.PriceUSD == nil {
+		return
+	}
+	detail.PriceUSD = trial.PriceUSD
+	detail.PriceBasis = trial.PriceBasis
+	detail.PriceWithheldReason = ""
+	if on.Admitted() {
+		detail.ThinMarket = true
+		detail.Substance = substanceEvidenceWire(on.Evidence())
+	}
+}
+
 // marketCapRefused is the pre-figure half of the valuation guards shared by
 // the detail cap and the market-cap chart, so the two cannot disagree on
 // whether an asset has a market valuation at all.

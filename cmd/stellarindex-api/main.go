@@ -3912,11 +3912,15 @@ func priceWithheld(
 	for _, opt := range opts {
 		opt(&q)
 	}
+	adm := v1.ThinAdmissionFrom(ctx)
 	gate := pricingguard.Gate{Substance: substance, Scam: scam}
-	if q.pointInTime {
-		return gate.PriceWithholdingAt(ctx, base, quote, q.at, surface)
-	}
-	return gate.PriceWithholding(ctx, base, quote, surface)
+	v := gate.Judge(ctx, base, quote, surface, pricingguard.Query{
+		PointInTime: q.pointInTime,
+		At:          q.at,
+		AdmitThin:   adm.Requested() && adm.Covers(base, quote),
+	})
+	adm.Record(base, quote, v)
+	return v.Withholding
 }
 
 // withholdingQuery is what a seam may tell the chokepoint about the
@@ -5996,32 +6000,39 @@ func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenA
 	// landing). Then every verified currency.
 	targets := append([]string{"native"}, verifiedAssetIDs...)
 
+	// The explorer opts into include_thin, which is its own cache entry.
+	queries := []string{"", "?include_thin=true"}
+	warm := func(id, query string) {
+		start := time.Now()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+id+query, nil)
+		if err != nil {
+			logger.Debug("self-prewarm request build failed", "asset_id", id, "err", err)
+			return
+		}
+		// Mark as synthetic so obs.HTTPMetrics keeps these
+		// deliberately-cold warming requests out of the
+		// customer-facing latency histogram + SLO. Without this
+		// the prewarmer's own ~570ms cold misses dominate p95/p99.
+		req.Header.Set("User-Agent", "stellarindex-prewarm/1")
+		resp, err := client.Do(req)
+		elapsed := time.Since(start)
+		if err != nil {
+			if ctx.Err() == nil {
+				logger.Debug("self-prewarm GET failed", "asset_id", id, "query", query, "err", err, "elapsed", elapsed.String())
+			}
+			return
+		}
+		_ = resp.Body.Close()
+		logger.Debug("self-prewarm /v1/assets", "asset_id", id, "query", query, "status", resp.StatusCode, "elapsed", elapsed.String())
+	}
 	runPass := func() {
 		for _, id := range targets {
-			if ctx.Err() != nil {
-				return
-			}
-			start := time.Now()
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+id, nil)
-			if err != nil {
-				logger.Debug("self-prewarm request build failed", "asset_id", id, "err", err)
-				continue
-			}
-			// Mark as synthetic so obs.HTTPMetrics keeps these
-			// deliberately-cold warming requests out of the
-			// customer-facing latency histogram + SLO. Without this
-			// the prewarmer's own ~570ms cold misses dominate p95/p99.
-			req.Header.Set("User-Agent", "stellarindex-prewarm/1")
-			resp, err := client.Do(req)
-			elapsed := time.Since(start)
-			if err != nil {
-				if ctx.Err() == nil {
-					logger.Debug("self-prewarm GET failed", "asset_id", id, "err", err, "elapsed", elapsed.String())
+			for _, query := range queries {
+				if ctx.Err() != nil {
+					return
 				}
-				continue
+				warm(id, query)
 			}
-			_ = resp.Body.Close()
-			logger.Debug("self-prewarm /v1/assets", "asset_id", id, "status", resp.StatusCode, "elapsed", elapsed.String())
 		}
 	}
 

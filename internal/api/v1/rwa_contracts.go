@@ -502,7 +502,7 @@ func (s *Server) rwaContractListingRows(
 	// 7 when that read misses; fillContractMarketCaps below discards any
 	// such cap.
 	s.stampListingCollisions(details)
-	s.applySubstanceGateToListing(ctx, details)
+	s.applySubstanceGateToListing(ctx, details, false)
 	s.fillMarketCapsFromSupply(ctx, details, map[string]int{})
 	s.fillDeclaredPegPricesInListing(ctx, details)
 	s.fillIssuerDirectoryTags(ctx, details)

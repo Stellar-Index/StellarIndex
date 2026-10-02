@@ -1908,7 +1908,7 @@ func (s *Server) rwaListingRows(
 		// and each omission would show up as this page publishing a
 		// figure that page withholds, or withholding one it publishes.
 		s.stampListingCollisions(details)
-		s.applySubstanceGateToListing(ctx, details)
+		s.applySubstanceGateToListing(ctx, details, false)
 		s.fillMarketCapsFromSupply(ctx, details, assetRowSourceCounts(keep))
 		// ADDITIVE, and additive only to a raw chain fact. The step
 		// above reads a supply only when it is about to multiply it by
