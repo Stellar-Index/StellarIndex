@@ -410,7 +410,7 @@ type ProtocolCompletenessView struct {
 	Complete bool `json:"complete"`
 	// WatermarkLedger is the highest ledger the verdict covers.
 	WatermarkLedger uint32 `json:"watermark_ledger"`
-	// ProjectionVerifiedFrom is the served tier's own floor — the bottom
+	// ProjectionVerifiedFrom is the projection axis's floor — the bottom
 	// of the range Complete is a claim about. Carried here because this
 	// summary republishes Complete, and Complete without its floor reads
 	// as a claim back to the protocol's genesis_ledger (the row directly

@@ -279,9 +279,13 @@ type AssetDetail struct {
 	// SupplyBasis identifies which ADR-0011 policy produced the
 	// supply numbers; null when no snapshot exists. Lets consumers
 	// decide how much to trust the absolute value (e.g. `override`
-	// indicates an operator curated the locked-set or SEP-1
-	// declared a max_supply).
+	// indicates an operator curated the locked-set or max_supply).
 	SupplyBasis *string `json:"supply_basis,omitempty"`
+
+	// MaxSupplyBasis names where max_supply came from when that is not
+	// the policy SupplyBasis names: `sep1_declared_max` for an issuer's
+	// stellar.toml declaration. Omitted otherwise.
+	MaxSupplyBasis *string `json:"max_supply_basis,omitempty"`
 
 	// SupplyAsOf / SupplyAsOfLedger are when, and at which ledger, the
 	// supply observation behind the supply fields was taken. Omitted when
