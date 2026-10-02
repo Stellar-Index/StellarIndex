@@ -369,7 +369,8 @@ releases_between() {
 lag_anchor() {
   local i best_tag="" best_date=""
   for ((i = 0; i < rel_n; i++)); do
-    [ "${rel_keys[$i]}" -gt "$1" ] && [ "${rel_keys[$i]}" -le "$2" ] || continue
+    [ "${rel_keys[$i]}" -gt "$1" ] || continue
+    [ "${rel_keys[$i]}" -le "$2" ] || continue
     [ -n "${rel_dates[$i]}" ] || continue
     if [ -z "$best_date" ] || [ "${rel_dates[$i]}" -lt "$best_date" ]; then
       best_tag="${rel_tags[$i]}"; best_date="${rel_dates[$i]}"
