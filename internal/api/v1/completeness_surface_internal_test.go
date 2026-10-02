@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -60,5 +61,16 @@ func TestCoverageVerdictStaleAgeTighterThanLedgerHorizon(t *testing.T) {
 	}
 	if coverageVerdictStaleAge >= ledgerHorizon {
 		t.Errorf("coverageVerdictStaleAge = %s, must be tighter than the ledger horizon (%s)", coverageVerdictStaleAge, ledgerHorizon)
+	}
+}
+
+// TestCoverageVerdictEvidenceStaleAgeOutlastsTheCarryBound pins the evidence
+// gate against the audit's own re-verify cadence: -pass re-proves a claim once
+// its evidence passes MaxProjectionCarryAge, at the next daily run, inside the
+// unit's 180-minute budget. A healthy claim must never read stale.
+func TestCoverageVerdictEvidenceStaleAgeOutlastsTheCarryBound(t *testing.T) {
+	const auditPeriod, passBudget = 24 * time.Hour, 180 * time.Minute
+	if floor := completeness.MaxProjectionCarryAge + auditPeriod + passBudget; coverageVerdictEvidenceStaleAge <= floor {
+		t.Errorf("coverageVerdictEvidenceStaleAge = %s, must exceed carry bound + one audit period + pass budget (%s)", coverageVerdictEvidenceStaleAge, floor)
 	}
 }
