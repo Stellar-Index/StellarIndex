@@ -236,6 +236,12 @@ type LedgerExtract struct {
 	// a non-zero value means an archive re-derived by an old core binary
 	// or a protocol that bumped meta past V4 (cold audit 2026-08-04).
 	EntryMetaUnsupported int
+
+	// SorobanFeeMetaUnsupported counts Soroban transactions whose
+	// TransactionMeta version the charged-fee read does not handle: their
+	// soroban_*_fee columns are written as 0, indistinguishable from a
+	// zero charge. Same in-memory-only treatment as the counts above.
+	SorobanFeeMetaUnsupported int
 }
 
 // ErrBufferFull is returned by [Sink.Add] when the in-memory buffer is already
