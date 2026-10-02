@@ -6464,7 +6464,9 @@ paths:
         cumulative fee pool and total XLM (stroop strings — the
         values exceed 2^53) and the protocol version in force.
         `fee_pool` is cumulative; daily fee burn is the delta between
-        consecutive COMPLETE days. Aggregated from the certified
+        consecutive COMPLETE days minus that day's `fee_pool_adjustment`
+        (present only on a day the pool was credited outside any
+        transaction fee, e.g. by a protocol upgrade). Aggregated from the certified
         `stellar.ledgers` lake (which carries the per-ledger counts),
         bounded to the tip so it stays partition-pruned. The
         time-series companion to the snapshot at `/v1/network/stats`;
@@ -6537,7 +6539,17 @@ paths:
                                     Cumulative network fee pool at the day's last
                                     ledger, in stroops (decimal string — exceeds
                                     2^53). Daily fee burn = the delta between
-                                    consecutive COMPLETE days.
+                                    consecutive COMPLETE days minus
+                                    `fee_pool_adjustment`.
+                                fee_pool_adjustment:
+                                  type: string
+                                  description: >-
+                                    Stroops (decimal string) the fee pool changed by
+                                    this day outside any transaction fee — e.g.
+                                    pubnet's Protocol 24 upgrade crediting it
+                                    31879035 stroops on 2025-10-22. Subtract it from
+                                    the day's fee_pool delta to get the fees burned.
+                                    Omitted when the day had no such change.
                                 total_coins:
                                   type: string
                                   description: >-
