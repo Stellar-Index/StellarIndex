@@ -9630,8 +9630,8 @@ paths:
         - SessionCookie: []
       description: |
         Session-gated. Patches name / url / events / enabled.
-        SecretHash is immutable; rotation lives behind a separate
-        endpoint when it ships.
+        The signing secret is not patchable; rotate it with
+        POST /v1/dashboard/webhooks/{id}/rotate-secret.
       parameters:
         - name: id
           in: path
@@ -9690,7 +9690,10 @@ paths:
         - SessionCookie: []
       description: |
         Session-gated. Hard-deletes the registry row and cascades
-        to webhook_deliveries. An absent or cross-account id returns
+        to webhook_deliveries: queued and retrying deliveries are
+        dropped and the delivery log is gone. To change the signing
+        secret, use rotate-secret instead, which keeps both. An absent
+        or cross-account id returns
         404 (the same shape, so presence never leaks); a client
         retrying a delete whose response it lost should treat 404 as
         already deleted.
@@ -9719,6 +9722,71 @@ paths:
               schema: { $ref: "#/components/schemas/Problem" }
         "404":
           description: No webhook with this id on this account (absent, already deleted, or another account's).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /dashboard/webhooks/{id}/rotate-secret:
+    post:
+      operationId: rotateDashboardWebhookSecret
+      tags: [dashboard]
+      summary: Customer dashboard — rotate a webhook's signing secret.
+      security:
+        - SessionCookie: []
+      description: |
+        Session-gated. Replaces the signing secret in place and returns
+        the new one ONCE. The webhook keeps its id, its queued and
+        retrying deliveries and its delivery log. For 24 hours
+        (`previous_secret_expires_at`) every delivery is signed with
+        both secrets: the new one in `X-StellarIndex-Signature` /
+        `X-StellarIndex-Signature-V2`, the old one in
+        `X-StellarIndex-Signature-Previous` /
+        `X-StellarIndex-Signature-V2-Previous` (see
+        `CreateWebhookResponse.secret`). Rotating again inside that
+        window ends the old secret's signing at once. Owner / admin /
+        member only. Send an `Idempotency-Key` so a retried request
+        replays the first response instead of rotating twice.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Rotated.
+          content:
+            application/json:
+              example:
+                webhook_id: 0b6a3f2e-9c1d-4e7a-8f5b-6d2c4a1e9b0f
+                secret: wsec_9d2e4f7a1c6b3e8d5a2f9c4b7e1d6a3f8c5b2e9d4a7f1c6e3b8d5a2f9c4b7e1d
+                previous_secret_expires_at: '2026-07-04T22:45:47Z'
+              schema: { $ref: "#/components/schemas/RotateWebhookSecretResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "403":
+          description: |
+            Role can't manage webhooks, OR the write was blocked as
+            cross-site: state-changing dashboard + auth requests must
+            carry an `Origin` (or `Referer`) matching this API or an
+            operator-allow-listed site (`cross-site-request-blocked`).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404":
+          description: No webhook with this id on this account (absent, already deleted, or another account's).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "409":
+          description: |
+            A request whose `Idempotency-Key` matches one still being
+            processed (`idempotency-key-in-flight`, retryable per
+            `Retry-After`).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -14969,8 +15037,8 @@ components:
       description: |
         Customer-registered webhook endpoint backing the
         /v1/dashboard/webhooks surface. SecretHash is intentionally
-        omitted — the plaintext signing secret is returned ONCE at
-        create time + never again.
+        omitted — each plaintext signing secret is returned ONCE, at
+        create or rotate-secret time, and never again.
       properties:
         id:         { type: string, format: uuid }
         name:       { type: string, description: "Operator-friendly label, 1–200 chars." }
@@ -15072,7 +15140,34 @@ components:
             of the same delivery. It is NOT stable across a re-emit of
             the same logical event, so it dedupes retries, not re-sends.
             Trust it only after `X-StellarIndex-Signature-V2` verifies.
+
+            ROTATION: for 24 hours after a rotate-secret call, every
+            delivery also carries `X-StellarIndex-Signature-Previous` and
+            `X-StellarIndex-Signature-V2-Previous`, built exactly as above
+            but with the previous secret. A receiver still holding the old
+            secret verifies those; once it holds the new one it verifies
+            the unsuffixed headers. Outside a rotation window neither
+            header is sent.
       required: [webhook, secret]
+
+    RotateWebhookSecretResponse:
+      type: object
+      properties:
+        webhook_id: { type: string, format: uuid }
+        secret:
+          type: string
+          description: |
+            The new signing secret, returned exactly once; it signs
+            `X-StellarIndex-Signature` and `-V2` from now on. Format:
+            `wsec_<64 hex chars>`.
+        previous_secret_expires_at:
+          type: string
+          format: date-time
+          description: |
+            Until this instant deliveries also carry the
+            `X-StellarIndex-Signature-Previous` headers signed with the
+            secret this call replaced.
+      required: [webhook_id, secret, previous_secret_expires_at]
 
     UpdateWebhookRequest:
       type: object
