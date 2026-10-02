@@ -1544,8 +1544,9 @@ the per-tick delta.
 ### `stellarindex_ch_live_sink_read_undercount_total`
 
 Counter, label `kind` (`tx_read_errors` | `tx_event_read_errors` |
-`entry_meta_unsupported` | `tx_read_errors_census` |
-`tx_event_read_errors_census`). Every kind is seeded at zero.
+`entry_meta_unsupported` | `soroban_fee_meta_unsupported` |
+`tx_read_errors_census` | `tx_event_read_errors_census`). Every kind is
+seeded at zero.
 
 Transactions the indexer's two per-ledger read paths could not fully
 decode. Each increment is the number of affected transactions in one
@@ -1557,6 +1558,11 @@ ledger, not a ledger count.
   `EntryMetaUnsupported`). The ledger is still written, so its
   `stellar.ledgers` row claims a ledger whose contract events or entry
   changes are short, and `ch-live-catchup` never revisits it.
+- `soroban_fee_meta_unsupported` — the same extract
+  (`LedgerExtract.SorobanFeeMetaUnsupported`): Soroban transactions whose
+  `TransactionMeta` version the charged-fee read does not handle, so their
+  `soroban_nonrefundable_fee` / `soroban_refundable_fee` /
+  `soroban_rent_fee` are written as 0.
 - `tx_read_errors_census`, `tx_event_read_errors_census` —
   `dispatcher.CensusLedger` for the `ledger_ingest_log` substrate row,
   which the indexer skips on any non-zero count: a substrate gap.
