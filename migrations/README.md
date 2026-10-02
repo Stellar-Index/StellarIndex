@@ -162,6 +162,24 @@ migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
     `lint-migrations.sh` enforces that every recreated view is named;
     the data-freshness gauge `stellarindex_cagg_history_missing{view}`
     is what shows the refresh was skipped.
+12. **An up-migration that blanks data a deployment must rebuild —
+    an unqualified `DELETE` or a `TRUNCATE`, or a continuous aggregate
+    recreated `WITH NO DATA` — declares each rebuild command on its own
+    header line:**
+
+    ```sql
+    -- REQUIRED-FOLLOWUP: stellarindex-ops projector-replay -config /etc/stellarindex.toml -source cctp -from 62146641 -write
+    -- REQUIRED-FOLLOWUP: CALL refresh_continuous_aggregate('prices_1m', NULL, NULL);
+    ```
+
+    `deploy.yml`'s migration follow-up gate
+    (`scripts/ci/migration-followup-gate.sh`) lists these lines from
+    every migration a deploy adds and refuses to start until the
+    operator passes `followups_acknowledged=true`. Use the marker on
+    any other up-migration whose data needs a follow-up too (a
+    targeted `DELETE … WHERE`). Pass 10 of `lint-migrations.sh`
+    enforces it; the seven shipped files that predate it are listed
+    there.
 
 ## Amending a shipped migration
 
