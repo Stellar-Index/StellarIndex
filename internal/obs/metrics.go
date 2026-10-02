@@ -307,6 +307,7 @@ func registerAppMetricsTail() {
 		DispatcherTxReadErrorsTotal,
 		DispatcherTxEventReadErrorsTotal,
 		DispatcherEntryMetaUnsupportedTotal,
+		DispatcherEvictedKeysUnreadableTotal,
 		SourceUncorroboratedCallsTotal,
 
 		MEVDetectRunsTotal,
@@ -1417,6 +1418,17 @@ var DispatcherEntryMetaUnsupportedTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_dispatcher_entry_meta_unsupported_total",
 		Help: "Transactions whose apply-phase entry changes were skipped for an unhandled TransactionMeta version.",
+	},
+)
+
+// DispatcherEvictedKeysUnreadableTotal — process-wide counter of ledgers
+// whose evicted-key list failed to read (dispatcher.Stats.EvictedKeysUnreadable),
+// so their state-archival evictions never reached the entry decoders.
+// Sibling of [DispatcherEntryMetaUnsupportedTotal].
+var DispatcherEvictedKeysUnreadableTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dispatcher_evicted_keys_unreadable_total",
+		Help: "Ledgers whose state-archival evicted keys failed to read; their evictions were skipped and the evicted entries stay served as live.",
 	},
 )
 
@@ -2607,13 +2619,13 @@ var PriceAlertEvalTotal = prometheus.NewCounterVec(
 
 // PriceAlertEvaluatedTotal — one increment per alert per sweep, labelled
 // by that alert's outcome (pricealerts.AlertOutcomes): fired, not_crossed,
-// no_price, stale, cooling_down, no_subscriber, claim_lost, error, timeout.
+// already_fired, no_price, stale, cooling_down, no_subscriber, claim_lost, error, timeout.
 // PriceAlertEvalTotal's `partial_error` is one sample per sweep whether
 // one alert or all of them failed; this counter separates the two.
 var PriceAlertEvaluatedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_alert_evaluated_total",
-		Help: "Per-alert price-alert evaluation outcomes (fired|not_crossed|no_price|stale|cooling_down|no_subscriber|claim_lost|error|timeout).",
+		Help: "Per-alert price-alert evaluation outcomes (fired|not_crossed|already_fired|no_price|stale|cooling_down|no_subscriber|claim_lost|error|timeout).",
 	},
 	[]string{"outcome"},
 )
