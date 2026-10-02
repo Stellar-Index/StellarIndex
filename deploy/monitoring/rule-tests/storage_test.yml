@@ -1548,7 +1548,8 @@ tests:
   # ── 14d-review (2026-09-27, extended 2026-09-28): the
   # textfile_producer_stale catch-all false-fires on producer shapes with
   # no dedicated staleness alert: ops_job's pid-orphan siblings, the
-  # one-off backfill and usd-volume-restamp jobs, the monthly
+  # one-off backfill, usd-volume-restamp and per-source projected-rebuild
+  # jobs, the monthly
   # restore-drill files and the weekly Tier D verify-archive file. This pins the exclusion — and that it does NOT
   # over-exclude other ops_job primaries, which should still trip the
   # catch-all like any other producer.
@@ -1562,6 +1563,10 @@ tests:
       - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_backfill.prom",instance="r1:9100",job="node_exporter"}'
         values: '0x50600'
       - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_usd_volume_restamp.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_projected_rebuild_cctp.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_projected_rebuild_soroswap_router.prom",instance="r1:9100",job="node_exporter"}'
         values: '0x50600'
       - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_projector_replay.prom",instance="r1:9100",job="node_exporter"}'
         values: '0x50600'

@@ -1,6 +1,6 @@
 ---
 title: Data-licensing register — every third-party feed and the clause that governs it
-last_verified: 2026-09-30
+last_verified: 2026-10-02
 status: living doc
 ---
 
@@ -37,7 +37,36 @@ or unread terms; **Low** = public/open data or internal use only. "Prod" = the r
 | Stellar history archives | `internal/archivecompleteness/cross_anchor_fill.go`; `internal/ops/archive/verify_archive.go` | ledger checkpoints (SDF, LOBSTR, publicnode, Franklin Templeton, others) | not served; `/v1/diagnostics/archive` reports state only | `stellar.history_archive_url`; keyless | n/a — public network data | not applicable | n/a | n/a | **Low** — public ledger | None |
 | AWS Public Blockchain Data | `internal/pipeline/coldstore.go` (cold tier) | Stellar ledger meta, when cold tiering is on | not served directly | `storage.s3_cold_*` (off by default) | registry.opendata.aws/aws-public-blockchain (2026-09-30) | "AWS Public Blockchain Data was accessed on `DATE` from https://registry.opendata.aws/aws-public-blockchain." | not stated | citation requested | **Low** — open data, off by default | Cite if enabled |
 
+## Code dependencies
+
+The feeds above are data. This section lists the licences of the code we link and ship. It was
+scanned 2026-10-02 at `a69750313` with `go-licenses report ./...` (production import graph, tests
+excluded) and `pnpm licenses list --prod` in `web/explorer` (darwin-arm64 install, dev deps not
+shipped). Strong copyleft (GPL, AGPL): **none** on either side.
+
+| Side | Permissive | Weak copyleft | Data licence | Unknown after manual check |
+|---|---|---|---|---|
+| Go (168 package rows) | 167 (Apache-2.0 70, BSD-3 39, MIT 36, others 22) | 1 MPL-2.0 | — | 0 |
+| npm (93 packages) | 89 (MIT 74, ISC 7, Apache-2.0 6, others 2) | 3 (2 MPL-2.0, 1 LGPL-3.0+) | 1 CC-BY-4.0 | 0 |
+
+| Package | Licence | Path in | Obligation for an Apache-2.0 binary |
+|---|---|---|---|
+| `github.com/hashicorp/golang-lru` v1.0.2 | MPL-2.0 | go-stellar-sdk `historyarchive`; direct in `internal/ops/chops` | File-level copyleft. Unmodified: ship its licence text and point to its source |
+| `@resvg/resvg-wasm` 2.4.0, `satori` 0.15.2 | MPL-2.0 | `workers-og` (OG images) | As above |
+| `@img/sharp-libvips-*` 1.3.3 | LGPL-3.0-or-later | optional native binary of `sharp`, via `next` image optimisation | Only matters if shipped; dynamically linked, so licence text plus replaceability |
+| `caniuse-lite` | CC-BY-4.0 | `next` / browserslist | Attribution (data, not code) |
+| `workers-og` 0.0.27 (direct) | MIT | `web/explorer/package.json` | Tool reported unknown (no `license` field); upstream `kvnang/workers-og` is MIT |
+| `github.com/segmentio/go-loggly` | MIT | go-stellar-sdk `support/log` | Tool reported unknown (no LICENSE file); its Readme's License section declares MIT |
+| `github.com/jmespath/go-jmespath`, `github.com/segmentio/asm` | Apache-2.0, MIT-0 | aws-sdk-go; indirect | Tool reported unknown; the module LICENSE files settle it |
+
+The repo has no `NOTICE` or third-party licence file, and no build step collects one. Permissive
+licences (MIT, BSD) and MPL both require their notices to travel with a binary we distribute.
+
 ## Open questions for the owner
+
+- **Third-party notices in releases.** Release binaries and the explorer bundle ship without the
+  dependency notices listed under Code dependencies. Generate a `THIRD_PARTY_NOTICES` file at the
+  release cut (`go-licenses save` plus the pnpm list), or accept the gap until v1?
 
 - **CEX raw rows (Binance, Coinbase, Kraken, Bitstamp).** INV-1198 kept the raw source-attributed
   rows as an accepted risk, and the owner decided exchange venues stay selectable with `source=`
@@ -70,6 +99,7 @@ or unread terms; **Low** = public/open data or internal use only. "Prod" = the r
 - Terms of service §4, third-party feeds: `web/explorer/src/app/terms/page.tsx` ("A venue's own
   terms may limit your reuse of raw per-venue observations").
 - INV-0933 — legal/vendor review (CEX redistribution, CoinGecko terms, SBOM licensing).
+- INV-2126 — the code-dependency licence scan above.
 - INV-1198 — gating raw source-attributed CEX endpoints; decided 2026-09-30: keep, accepted risk.
 - [history-completeness-plan §9.5–9.6](history-completeness-plan.md#95-free-and-open-sources--every-one-fails-on-terms)
   — vendor terms for historical XLM data, quoted in full.

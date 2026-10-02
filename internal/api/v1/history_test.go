@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -69,6 +70,9 @@ type stubHistoryReader struct {
 		sourceFilter string
 		ohlcInterval string
 	}
+	// lpsMu guards lastCall.sourceFilter: computeObservations scans the
+	// alias spellings concurrently.
+	lpsMu sync.Mutex
 	// pointsErr is set by tests that want to drive the
 	// since-inception handler to a specific error code (e.g.
 	// ErrUnknownGranularity).
@@ -239,7 +243,9 @@ func (r *stubHistoryReader) LastLimit() int       { return r.lastCall.limit }
 // tests can drive the handler without polluting other history-test
 // fixtures. Honors sourceFilter — restricts to the matching entry.
 func (r *stubHistoryReader) LatestTradePerSource(_ context.Context, _ canonical.Pair, sourceFilter string) ([]canonical.Trade, error) {
+	r.lpsMu.Lock()
 	r.lastCall.sourceFilter = sourceFilter
+	r.lpsMu.Unlock()
 	if r.err != nil {
 		return nil, r.err
 	}
