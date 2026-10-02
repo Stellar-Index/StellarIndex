@@ -202,7 +202,8 @@ with the authoritative re-sum (0 drift, tolerance 0)"; no reset is needed and
 the item is closed on that evidence, **W5.6**
 (`contract_events_daily` v2 — the branch is not even on origin), **W5.7 /
 W5.8** (CEX dust delete, galexie trim, `soroban_events` decommission #803 —
-destructive, should be last), **W8-9b**, **W8-10a**, **W8-12**, **#340**
+destructive, should be last), **W8-9b**, **W8-10a**, ~~**W8-12**~~ (ACCEPTED
+2026-10-02, see W8 item 12), **#340**
 items 6-9, **#349-#352** (correctly labelled post-v1), **#372**, the decks,
 the CoinGecko Pro purchase, enabling hashdb, and IP rotation. **HA / R2+R3
 is superseded by D2** (single box with tested restore for v1); the
@@ -1630,8 +1631,9 @@ reach are in `runbooks/account-erasure.md`.
 > 6. **10a convert-page build-frozen residue** (low-med honesty) —
 >    `convert/[from]/[to]/page.tsx` static header/table labeled "current
 >    rate"; only ConvertPair re-fetches live.
-> 7. **12 LP/trustline history gap** (low) — no pre-63.3M entry-delta
->    backfill; operator decision (accept documented cutoff vs build it).
+> 7. ~~**12 LP/trustline history gap** (low) — no pre-63.3M entry-delta
+>    backfill; operator decision (accept documented cutoff vs build it).~~
+>    **ACCEPTED 2026-10-02** — documented cutoff, no backfill; see W8 item 12.
 > **Item 2** (SDEX sub-$100M base-unresolvable volume) reproduces but is the
 > DISCLOSED, accepted residual with a documented path (both-legs-corroborate
 > / bridge-quote gating), not a hidden gap.
@@ -1701,7 +1703,20 @@ were all found to be done or half-done once checked).
 11. Observations `as_of` lie; three VWAP windows on one SSE topic;
     `?asset=native` matches nothing; SSE payload schema mismatch; tip stream
     6 qps/conn.
-12. LP reserves live-only from ledger 63.3M — no trustline/LP backfill.
+12. ~~LP reserves live-only from ledger 63.3M — no trustline/LP backfill.~~
+    **ACCEPTED 2026-10-02 — documented cutoff, no backfill.**
+    `lp_reserve_observations` starts at ledger 63,300,828 (observer
+    deploy). Trustlines are not part of the gap: they were seeded deep
+    (34.96M rows from ledger 31.8M). The LP component self-heals
+    because every swap re-observes the pool, so the measured cost was
+    −0.14% of AQUA's LP component (516.5M vs Horizon's 517.3M; the 231
+    missing pools are dust; see §2.4's claimable-balance entry). The
+    cost of not building it: an `as_of` supply
+    below 63.3M has no LP component, and a pool dormant since before
+    the cutoff stays unobserved. The cutoff is published in
+    [supply-pipeline.md](../architecture/supply-pipeline.md#lp-reserve-history-cutoff).
+    Reopen only if a dormant-pool audit shows a material gap. The seed
+    would then copy `supply seed-claimable-balances`.
 13. `accounts/{g}/trades` windowing; movements 11-month gap; wasm full-scan.
 14. ADR-0017 contract 4 never runs; archive `chmod o+rx` one-off.
 15. CI/test gaps: `lint-metric-refs` accepts comments; TWAP CAGG 5-month
@@ -4738,7 +4753,7 @@ are obsolete — repo has been public since 2026-07-03):
     two days later (`f75ab4b2`, `ef278218`). Still-open threads carry here:
     **#7 → W8-13** (needs the decision), **#12 residual (r1
     `[supply].sac_wrappers`) → W2 + an r1 config confirm**, **#14 → W5.4**,
-    **#15 → W8-12**, **#18 residual (MinBatchLimit wedge) → W8-9**, **#22
+    **#15 → W8-12** (ACCEPTED 2026-10-02), **#18 residual (MinBatchLimit wedge) → W8-9**, **#22
     residual → W6.5**, **#31/#34 → `audit-remediation-operator-actions.md`**,
     **#33 → §3 [OP] 2**, **#35 → D10**. Row **#32** (the two pending
     `--tags caddy` config changes) is presumed applied but has no apply
