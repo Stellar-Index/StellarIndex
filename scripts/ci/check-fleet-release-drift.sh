@@ -139,8 +139,9 @@
 #                              release before that counts as drift, measured
 #                              from the OLDEST release it lacks (default 24)
 #   FLEET_RELEASE_BINARIES     the binaries= value printed in the catch-up
-#                              command (default the test-net set: no
-#                              aggregator off pubnet)
+#                              command (default each region's deploy_set from
+#                              scripts/dev/region-binaries.tsv, the set
+#                              deploy.yml enforces)
 #   FLEET_FIXTURE_DIR          tests: read <dir>/<name>.json instead of the
 #                              network; a missing file is an unreachable host
 #   FLEET_GIT_DIR              tests: the repo whose tags answer the counts
@@ -166,7 +167,8 @@ set -euo pipefail
 REFERENCE="${FLEET_REFERENCE:-r1=https://api.stellarindex.io}"
 FOLLOWERS="${FLEET_FOLLOWERS:-testnet=https://api.testnet.stellarindex.io futurenet=https://api.futurenet.stellarindex.io}"
 GRACE_HOURS="${FLEET_GRACE_HOURS:-24}"
-RELEASE_BINARIES="${FLEET_RELEASE_BINARIES:-stellarindex-indexer,stellarindex-api,stellarindex-ops}"
+RELEASE_BINARIES="${FLEET_RELEASE_BINARIES:-}"
+REGION_MANIFEST="$(dirname "$0")/../dev/region-binaries.tsv"
 FIXTURE_DIR="${FLEET_FIXTURE_DIR:-}"
 GIT_DIR_OPT="${FLEET_GIT_DIR:-.}"
 NOW="${FLEET_NOW:-$(date -u +%s)}"
@@ -542,7 +544,13 @@ rc=0
 if [ "$drift_count" -gt 0 ]; then
   echo "fleet-release-drift: catch up with:"
   for n in "${behind_names[@]}"; do
-    echo "  gh workflow run deploy.yml -f region=$n -f version=$ref_version -f binaries=$RELEASE_BINARIES"
+    bins="$RELEASE_BINARIES"
+    [ -n "$bins" ] || bins="$(awk -F'\t' -v r="$n" '$1 == r { print $5 }' "$REGION_MANIFEST" 2>/dev/null)"
+    if [ -n "$bins" ]; then
+      echo "  gh workflow run deploy.yml -f region=$n -f version=$ref_version -f binaries=$bins"
+    else
+      echo "  $n: no row in scripts/dev/region-binaries.tsv; add one, then scripts/dev/preflight-deploy.sh --region $n --version $ref_version --refresh-manifest"
+    fi
   done
 fi
 
