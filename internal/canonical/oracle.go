@@ -146,6 +146,9 @@ func (u OracleUpdate) Validate() error {
 	if u.Decimals > 38 {
 		return fmt.Errorf("%w: decimals %d exceeds NUMERIC precision limit (38)", ErrInvalidOracle, u.Decimals)
 	}
+	if limit := maxOraclePriceRaw(u.Decimals); u.Price.BigInt().Cmp(limit) > 0 {
+		return fmt.Errorf("%w: price %s at %d decimals exceeds 10^%d quote units per base unit", ErrInvalidOracle, u.Price, u.Decimals, maxOraclePriceWholeExp)
+	}
 	// NaN slips past the range comparison (every NaN comparison is
 	// false), so reject it explicitly — a NaN confidence would
 	// propagate into divergence_warning float math downstream.
@@ -168,6 +171,17 @@ func (u OracleUpdate) Validate() error {
 		}
 	}
 	return nil
+}
+
+// maxOraclePriceWholeExp bounds a price at 10^15 quote units per base
+// unit: every feed quotes in USD/EUR/USDC/BTC-class units, where the
+// largest real price is orders of magnitude lower, so anything above is a
+// scale mismatch or an overflow sentinel, never a market value.
+const maxOraclePriceWholeExp = 15
+
+// maxOraclePriceRaw is the largest raw Price accepted at decimals scale.
+func maxOraclePriceRaw(decimals uint8) *big.Int {
+	return new(big.Int).Exp(big.NewInt(10), big.NewInt(maxOraclePriceWholeExp+int64(decimals)), nil)
 }
 
 // PriceFloat returns Price / 10^Decimals as a *big.Float. Convenience
