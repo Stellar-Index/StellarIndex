@@ -8,7 +8,7 @@
 // never reaches them. Only a test that reads BOTH sides of the seam can
 // see that.
 //
-// The tests are build-tagged (k023evidence) until every leg's owning fix
-// has landed; see deployed_controls_test.go for the per-leg status and
-// the command that prints it.
+// A leg whose owning fix has not landed is build-tagged (k023evidence)
+// and graduates to the default suite when it does; list the tagged legs
+// with `grep -l '^//go:build k023evidence' test/controlwiring/*.go`.
 package controlwiring
