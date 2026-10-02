@@ -525,13 +525,34 @@ groups:
         # the interval with the counter's exact label set, so the product
         # is a one-to-one match; a job whose interval did not parse drops
         # out of this arm only, and reports query_ok 0 (probe_degraded).
+        #
+        # Every arm discounts failures that were a concurrent CAGG refresh
+        # rejecting the policy (an operator replay refreshing the same
+        # window): the job body is fine and the next tick retries, yet one
+        # such collision held the 3-day arm for three days. The probe counts
+        # them per job over each arm's own window; where that gauge is
+        # absent the `or 0 *` term falls back to the raw count, so a missing
+        # gauge can only make the alert louder. A collision that never ends
+        # stops the refreshes, which is cagg_stale's to report.
         expr: |
-          increase(stellarindex_timescale_job_failures_total[6h]) > 10
-            or
-          increase(stellarindex_timescale_job_failures_total[3d]) >= 3
+          (
+            increase(stellarindex_timescale_job_failures_total[6h])
+              - (stellarindex_timescale_job_concurrent_refresh_failures_6h
+                  or 0 * increase(stellarindex_timescale_job_failures_total[6h]))
+          ) > 10
             or
           (
             increase(stellarindex_timescale_job_failures_total[3d])
+              - (stellarindex_timescale_job_concurrent_refresh_failures_3d
+                  or 0 * increase(stellarindex_timescale_job_failures_total[3d]))
+          ) >= 3
+            or
+          (
+            (
+              increase(stellarindex_timescale_job_failures_total[3d])
+                - (stellarindex_timescale_job_concurrent_refresh_failures_3d
+                    or 0 * increase(stellarindex_timescale_job_failures_total[3d]))
+            )
               * stellarindex_timescale_job_schedule_interval_seconds
           ) >= 129600
         for: 30m
