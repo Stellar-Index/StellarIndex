@@ -100,8 +100,8 @@ func (d *Dispatcher) recordDecoderPanic(name string, seenCounted bool, r any, si
 
 // log returns the dispatcher's logger, falling back to slog.Default()
 // when the caller never wired one (the ops diagnostics build a bare
-// Dispatcher). Never nil, because the only caller is the panic path and
-// a nil-deref there would turn a recovered panic back into a fatal one.
+// Dispatcher). Never nil: a nil-deref on the panic path would turn a
+// recovered panic back into a fatal one.
 func (d *Dispatcher) log() *slog.Logger {
 	if d.logger != nil {
 		return d.logger
