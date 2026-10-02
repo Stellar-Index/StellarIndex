@@ -291,8 +291,10 @@ expect 'v0.57.0 test nets vs v0.59.1 r1, 48h old → DRIFT' 1 'DRIFT — 2 host(
 expect 'names the release count' 1 'testnet   v0.57.0  BEHIND by 3 release(s)'
 expect 'names the migration count and heads' 1 '4 migration(s) (head 0150, r1 0154)'
 expect 'names the oldest release lacked and for how long' 1 'lacking v0.58.0 for 72h'
-expect 'prints the catch-up dispatch for testnet' 1 'gh workflow run deploy.yml -f region=testnet -f version=v0.59.1 -f binaries=stellarindex-indexer,stellarindex-api,stellarindex-ops'
-expect 'prints the catch-up dispatch for futurenet' 1 'gh workflow run deploy.yml -f region=futurenet -f version=v0.59.1'
+# The catch-up set is the region's whole deployable set from region-binaries.tsv:
+# deploy.yml refuses a dispatch that leaves sla-probe/migrate on an older release.
+expect 'prints the catch-up dispatch for testnet' 1 'gh workflow run deploy.yml -f region=testnet -f version=v0.59.1 -f binaries=stellarindex-indexer,stellarindex-api,stellarindex-sla-probe,stellarindex-ops,stellarindex-migrate'
+expect 'prints the catch-up dispatch for futurenet' 1 'gh workflow run deploy.yml -f region=futurenet -f version=v0.59.1 -f binaries=stellarindex-indexer,stellarindex-api,stellarindex-sla-probe,stellarindex-ops,stellarindex-migrate'
 expect_output 'GITHUB_OUTPUT verdict=drift' 'verdict=drift'
 expect_output 'GITHUB_OUTPUT reference_version' 'reference_version=v0.59.1'
 expect_output 'GITHUB_OUTPUT testnet_version' 'testnet_version=v0.57.0'

@@ -37,8 +37,10 @@ import (
 // The {{ALIAS_VALUES}} token is replaced (strings.Replace, not Sprintf —
 // the LIKE patterns carry literal % that a format verb would mangle) by the
 // alias-fold VALUES rows built from the process AliasRegistry (see
-// buildAliasMapValues). $1 is the trailing window as an interval string;
-// the alias-pair params follow from $2.
+// buildAliasMapValues); the alias-pair params start at $1. {{WINDOW}} is the
+// trailing window as an interval LITERAL: against a bind parameter the planner
+// cannot exclude chunks, so this ~23-minute roll held ACCESS SHARE on every
+// trades chunk and starved the trades compression policy.
 //
 // Every per-asset signal is reproduced exactly:
 //   - total_vol / *_vol are SUM(usd_volume::double precision) — the SAME
@@ -69,7 +71,7 @@ legs AS (
     t.usd_volume                       AS v_num
   FROM trades t
   LEFT JOIN alias_map bm ON bm.form = t.base_asset
-  WHERE t.ts >= now() - $1::interval
+  WHERE t.ts >= now() - interval '{{WINDOW}}'
     AND t.usd_volume IS NOT NULL
   UNION ALL
   SELECT
@@ -80,7 +82,7 @@ legs AS (
     t.usd_volume                       AS v_num
   FROM trades t
   LEFT JOIN alias_map qm ON qm.form = t.quote_asset
-  WHERE t.ts >= now() - $1::interval
+  WHERE t.ts >= now() - interval '{{WINDOW}}'
     AND t.usd_volume IS NOT NULL
 ),
 legs_i AS (
@@ -248,9 +250,9 @@ func (s *Store) RefreshAssetVolumeCharacter(ctx context.Context) error {
 // pool-level default to protect, so it keeps a bare RESET.
 func (s *Store) rollAssetVolumeCharacter(ctx context.Context) (out []assetVolumeCharacterRow, err error) {
 	window := fmt.Sprintf("%d hours", int(volumeCharacterWindow.Hours()))
-	aliasValues, aliasArgs := buildAliasMapValues(2)
+	aliasValues, args := buildAliasMapValues(1)
 	query := strings.Replace(assetVolumeCharacterRollupSQLTemplate, "{{ALIAS_VALUES}}", aliasValues, 1)
-	args := append([]any{window}, aliasArgs...)
+	query = strings.ReplaceAll(query, "{{WINDOW}}", window)
 
 	// This all-asset roll scans ~145M trades and shares the primary with the
 	// customer-facing API. Run it on a DEDICATED connection whose footprint is

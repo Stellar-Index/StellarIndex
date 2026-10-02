@@ -282,11 +282,11 @@ end the workflow's output value early and silence a `DEGRADED` run; the
 self-test pins that fixture.
 
 Catch up = the dispatches the report prints, one per region, test-net binary
-set (no aggregator):
+set from `scripts/dev/region-binaries.tsv` (no aggregator; sla-probe and migrate included, or deploy.yml refuses the split release):
 
 ```sh
-gh workflow run deploy.yml -f region=testnet   -f version=vX.Y.Z -f binaries=stellarindex-indexer,stellarindex-api,stellarindex-ops
-gh workflow run deploy.yml -f region=futurenet -f version=vX.Y.Z -f binaries=stellarindex-indexer,stellarindex-api,stellarindex-ops
+gh workflow run deploy.yml -f region=testnet   -f version=vX.Y.Z -f binaries=stellarindex-indexer,stellarindex-api,stellarindex-sla-probe,stellarindex-ops,stellarindex-migrate
+gh workflow run deploy.yml -f region=futurenet -f version=vX.Y.Z -f binaries=stellarindex-indexer,stellarindex-api,stellarindex-sla-probe,stellarindex-ops,stellarindex-migrate
 ```
 
 Verify: `curl -sf https://api.testnet.stellarindex.io/v1/version | jq -r .data.version`

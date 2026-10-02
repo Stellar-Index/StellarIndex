@@ -273,7 +273,7 @@ finish. Check, in order:
    `pg_terminate_backend(pid)` it. A terminated `compress_chunk` rolls
    back and leaves its chunk decompressed — the next check.
 2. **Chunks left decompressed:**
-   `sudo -u postgres psql -d stellarindex -c "SELECT chunk_schema, chunk_name, range_start, range_end FROM timescaledb_information.chunks WHERE hypertable_name = 'trades' AND NOT is_compressed AND range_end < now() - interval '7 days';"`
+   `sudo -u postgres psql -d stellarindex -c "SELECT chunk_schema, chunk_name, range_start, range_end FROM timescaledb_information.chunks WHERE hypertable_name = 'trades' AND NOT is_compressed AND range_end < now() - interval '15 days';"`
 3. **A policy left paused** — a job that paused compression for its run
    is killed before it re-enables it:
    `sudo -u postgres psql -d stellarindex -c "SELECT job_id, scheduled FROM timescaledb_information.jobs WHERE proc_name = 'policy_compression' AND hypertable_name = 'trades';"`
