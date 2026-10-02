@@ -142,8 +142,9 @@ Full evidence for each: [docs/architecture/domain-traps.md](docs/architecture/do
   you then read the pipe's status, not the gate's.
 - **ALWAYS check an instrument against a known case before trusting its verdict**, and when two
   measurements disagree suspect your own first. `stellar.operations` and `stellar.transactions`
-  carry 2× duplicates; a oneshot's `Result` is the PREVIOUS run's and `is-active` is non-zero while
-  it runs (use `wait_for_oneshot` in `scripts/ops/ops-verdict.sh`); this shell is zsh, so `$VAR`
+  are `ReplacingMergeTree`, so an unmerged recent partition can hold a row twice: count with
+  `FINAL` or `uniqExact` on the sort key; a oneshot's `Result` is the PREVIOUS run's and
+  `is-active` is non-zero while it runs (use `wait_for_oneshot` in `scripts/ops/ops-verdict.sh`); this shell is zsh, so `$VAR`
   does not word-split.
 - ALWAYS check for prior art before starting on a symptom: `gh pr list --state all --search`,
   `git branch -r | grep`, the runbook, and the backlog. Record the result in the PR body.

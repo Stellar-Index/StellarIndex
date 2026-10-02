@@ -2340,15 +2340,12 @@ func (s *Server) crossDeclaredPegThroughXLM(
 // asset. The requested spelling is echoed by the caller, not by this
 // leg.
 //
-// That canonical-first order DEPARTS from what
-// [canonical.AssetAliases] documents — the literal input comes first
-// even when it IS the SAC form. Departing from it is an open MAINTAINER
-// decision, recorded as residual R1 of
-// docs/methodology/d7-thin-pool-third-alias-vwap-review-2026-09-04.md §7,
-// which raises it for the quote walk. This leg leans on that decision
-// for the base walk and does not settle it: if R1 is decided the other
-// way, this walk becomes literal-first and the two spellings read
-// different books in a different order.
+// That canonical-first order departs from the literal-first contract
+// [canonical.AssetAliases] documents, which still governs every other
+// read. The departure is an accepted, bounded residual (§7 of
+// docs/methodology/d7-thin-pool-third-alias-vwap-review-2026-09-04.md):
+// it keeps one asset's two spellings reading one book, and it stays as is
+// until the two orders are reconciled after v1.
 //
 // Each combination runs behind the [proxyPairGate] probe first, exactly
 // as the peg walk does and for the same reason: a `native`- or
