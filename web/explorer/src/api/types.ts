@@ -2331,10 +2331,12 @@ export interface paths {
          *
          *     **Two floors, too.** `genesis_ledger` is the LAKE axis's floor —
          *     the first ledger the source could have data at. The SERVED axis
-         *     has its own, `projection_verified_from`: the lowest ledger the
-         *     served tier actually holds a row at. They are frequently far
-         *     apart — sdex and the oracle sources publish `genesis_ledger: 2`
-         *     against a served tier that begins around ledger 61.6M — so
+         *     has its own, `projection_verified_from`: the bottom of the range
+         *     the served claim covers. It equals `genesis_ledger` unless the
+         *     source's served tier is a declared working-set window, where it is
+         *     the lowest ledger that tier holds a row at — sdex publishes
+         *     `genesis_ledger: 2` against a served tier that begins around
+         *     ledger 61.6M — so
          *     `complete: true` with `coverage_pct: 1` is a claim over
          *     `[projection_verified_from, watermark_ledger]`, NOT over
          *     `[genesis_ledger, watermark_ledger]`. Read the two together.
@@ -7538,11 +7540,11 @@ export interface components {
                 watermark_ledger: number;
                 /**
                  * Format: int64
-                 * @description Floor of the range `complete` is a claim about — the
-                 *     lowest ledger the SERVED tier holds any row at for this
-                 *     source. It is NOT `genesis_ledger` (the sibling field on
-                 *     this same row), which is the lake axis's floor and is
-                 *     routinely much lower: sdex publishes `genesis_ledger: 2`
+                 * @description Floor of the range `complete` is a claim about —
+                 *     `genesis_ledger` (the sibling field on this same row)
+                 *     unless the source's served tier is a declared working-set
+                 *     window, where it is the lowest ledger that tier holds a
+                 *     row at and can be much higher: sdex publishes `genesis_ledger: 2`
                  *     with a served tier that begins around ledger 61.6M.
                  *     Reading `complete` against `genesis_ledger` overstates
                  *     the claim by that whole span. Omitted when the audit
@@ -17575,15 +17577,16 @@ export interface operations {
                                 tip_ledger: number;
                                 /**
                                  * Format: int64
-                                 * @description PROJECTION-axis floor: the lowest ledger the
-                                 *     SERVED tier holds any row at for this source.
-                                 *     It is the bottom of the range `projection_ok`
-                                 *     — and therefore `complete` — is a claim about;
-                                 *     below it the served tier holds nothing.
+                                 * @description PROJECTION-axis floor: the bottom of the range
+                                 *     `projection_ok` — and therefore `complete` — is
+                                 *     a claim about. It is `genesis_ledger` for every
+                                 *     source whose served tier claims full history, so
+                                 *     a never-projected prefix fails `projection_ok`.
                                  *
-                                 *     It is NOT `genesis_ledger`, which is the LAKE
-                                 *     axis's floor and is routinely ten years lower:
-                                 *     on pubnet, sdex and the oracle sources publish
+                                 *     For a source whose served tier is a declared
+                                 *     working-set window it is the lowest ledger that
+                                 *     tier holds a row at, and can sit far above
+                                 *     `genesis_ledger`: on pubnet sdex publishes
                                  *     `genesis_ledger: 2` with a served tier that
                                  *     begins around ledger 61.6M (March 2026). A
                                  *     consumer reading only

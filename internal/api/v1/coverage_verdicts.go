@@ -65,14 +65,11 @@ type CoverageVerdictView struct {
 	GenesisLedger   uint32 `json:"genesis_ledger"`
 	WatermarkLedger uint32 `json:"watermark_ledger"`
 	TipLedger       uint32 `json:"tip_ledger"`
-	// ProjectionVerifiedFrom is the PROJECTION axis's floor: the lowest
-	// ledger the served tier holds any row at for this source. It is the
-	// bottom of the range ProjectionOK — and therefore Complete — is a
-	// claim about; below it the served tier holds nothing at all.
-	//
-	// It is NOT GenesisLedger, which is the lake axis's floor and is
-	// routinely ten years lower: on pubnet, sdex and the oracle sources
-	// publish genesis_ledger 2 with a served tier that begins ~61.6M.
+	// ProjectionVerifiedFrom is the PROJECTION axis's floor: the bottom of
+	// the range ProjectionOK — and therefore Complete — is a claim about.
+	// It is GenesisLedger unless the source's served tier is a declared
+	// working-set window, where it is the lowest served row: on pubnet,
+	// sdex publishes genesis_ledger 2 with a served tier that begins ~61.6M.
 	// Reading complete/coverage_pct/genesis_ledger without this field
 	// overstates the served claim by that whole span. The audit's own
 	// `detail` string has always named the range in prose; this is the
