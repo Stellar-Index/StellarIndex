@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
@@ -141,10 +143,9 @@ func TestPollOnce_EmptyCube(t *testing.T) {
 	}
 }
 
-func TestPollOnce_CryptoOnlyPairs_NoOp(t *testing.T) {
-	// No fiat in the pair list → poller no-ops (still hits HTTP,
-	// decodes the response, then returns empty). This mirrors the
-	// FX pollers' behaviour.
+func TestPollOnce_CryptoOnlyPairs_NoApplicablePairs(t *testing.T) {
+	// No fiat in the pair list: nothing this poller can ever emit, which the
+	// runner must not score as a fresh poll.
 	xlm, _ := canonical.NewCryptoAsset("XLM")
 	usdt, _ := canonical.NewCryptoAsset("USDT")
 	xlmUsdt, _ := canonical.NewPair(xlm, usdt)
@@ -154,8 +155,8 @@ func TestPollOnce_CryptoOnlyPairs_NoOp(t *testing.T) {
 	p := NewPoller()
 	p.Endpoint = srv.URL
 	_, updates, err := p.PollOnce(context.Background(), []canonical.Pair{xlmUsdt})
-	if err != nil {
-		t.Fatalf("PollOnce: %v", err)
+	if !errors.Is(err, external.ErrNoApplicablePairs) {
+		t.Fatalf("err = %v, want ErrNoApplicablePairs", err)
 	}
 	if len(updates) != 0 {
 		t.Errorf("expected 0 updates (no fiat in pairs), got %d", len(updates))

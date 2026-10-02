@@ -406,7 +406,7 @@ func decodeQuotes(ticker string, coin cmcCoin, plan requestPlan) ([]canonical.Or
 func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canonical.Trade, []canonical.OracleUpdate, error) {
 	plan := p.planRequest(pairs)
 	if len(plan.ids) == 0 && len(plan.symbols) == 0 {
-		return nil, nil, nil
+		return nil, nil, external.ErrNoApplicablePairs
 	}
 	// Non-nil from here: the runner reads nil as a skip, which would keep a
 	// reached-but-empty poll looking fresh.

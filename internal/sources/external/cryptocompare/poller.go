@@ -136,7 +136,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		wantedCombos[sym+"/"+code] = struct{}{}
 	}
 	if len(symbolSet) == 0 || len(currencySet) == 0 {
-		return nil, nil, nil
+		return nil, nil, external.ErrNoApplicablePairs
 	}
 
 	symbols := make([]string, 0, len(symbolSet))

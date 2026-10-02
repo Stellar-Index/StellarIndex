@@ -442,9 +442,13 @@ func forwardTrades(
 // "success" and "skipped" refresh the staleness clock: (nil, nil, nil) is a
 // poller that reached upstream and found nothing new (chainlink between hourly
 // rounds, a cooldown after a throttle), while non-nil but empty is an answer
-// with nothing usable in it (a renamed slug decodes to {}).
+// with nothing usable in it (a renamed slug decodes to {}). "idle" is a poller
+// none of whose configured pairs it can request: config, not an upstream
+// failure, and never fresh.
 func pollOutcome(trades []canonical.Trade, updates []canonical.OracleUpdate, err error) string {
 	switch {
+	case errors.Is(err, ErrNoApplicablePairs):
+		return "idle"
 	case err != nil:
 		return "error"
 	case trades == nil && updates == nil:
@@ -475,6 +479,7 @@ func runPoller(
 ) {
 	name := spec.Poller.Name()
 	interval := spec.Poller.PollInterval()
+	warnedIdle := false
 
 	doPoll := func() {
 		trades, updates, err := spec.Poller.PollOnce(ctx, spec.Pairs)
@@ -486,6 +491,12 @@ func runPoller(
 			return
 		case "empty":
 			logger.Warn("poller reached upstream but produced no rows", "source", name)
+			return
+		case "idle":
+			if !warnedIdle {
+				logger.Warn("poller has no applicable pairs; it will never produce rows", "source", name)
+				warnedIdle = true
+			}
 			return
 		}
 		obs.ExternalPollerLastSuccessUnix.WithLabelValues(name).Set(float64(time.Now().Unix()))

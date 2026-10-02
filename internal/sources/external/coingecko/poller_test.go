@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
@@ -127,9 +129,9 @@ func TestPollOnce_UnknownTickerSkipped(t *testing.T) {
 	}
 }
 
-func TestPollOnce_CryptoOnlyPairs_NoOp(t *testing.T) {
-	// Both sides of the pair are crypto — no fiat quote to request.
-	// Poller should no-op silently (no HTTP call).
+func TestPollOnce_CryptoOnlyPairs_NoApplicablePairs(t *testing.T) {
+	// Both sides of the pair are crypto — no fiat quote to request. No HTTP
+	// call, and the runner must not read it as a fresh poll.
 	xlm, _ := canonical.NewCryptoAsset("XLM")
 	usdt, _ := canonical.NewCryptoAsset("USDT")
 	xlmUsdt, _ := canonical.NewPair(xlm, usdt)
@@ -137,8 +139,8 @@ func TestPollOnce_CryptoOnlyPairs_NoOp(t *testing.T) {
 	p := NewPoller()
 	p.Endpoint = "http://localhost:1" // would fail if reached
 	_, updates, err := p.PollOnce(context.Background(), []canonical.Pair{xlmUsdt})
-	if err != nil {
-		t.Fatalf("should no-op, got err: %v", err)
+	if !errors.Is(err, external.ErrNoApplicablePairs) {
+		t.Fatalf("err = %v, want ErrNoApplicablePairs", err)
 	}
 	if len(updates) != 0 {
 		t.Errorf("expected 0 updates, got %d", len(updates))

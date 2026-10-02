@@ -18,6 +18,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 func buildPairs(t *testing.T) []canonical.Pair {
@@ -124,6 +125,21 @@ func TestPollOnce_EmptyDataIsNotASkip(t *testing.T) {
 	}
 	if updates == nil || len(updates) != 0 {
 		t.Fatalf("updates = %#v, want non-nil empty", updates)
+	}
+}
+
+func TestPollOnce_NoApplicablePairs(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usdt, _ := canonical.NewCryptoAsset("USDT")
+	pair, _ := canonical.NewPair(xlm, usdt)
+	p, err := NewPoller("TEST_KEY")
+	if err != nil {
+		t.Fatalf("NewPoller: %v", err)
+	}
+	p.Endpoint = "http://localhost:1" // would fail if reached
+	_, _, err = p.PollOnce(context.Background(), []canonical.Pair{pair})
+	if !errors.Is(err, external.ErrNoApplicablePairs) {
+		t.Fatalf("err = %v, want ErrNoApplicablePairs", err)
 	}
 }
 

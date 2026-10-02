@@ -207,8 +207,8 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	wanted := external.FiatCodesFromPairs(pairs, "EUR")
 	if len(wanted) == 0 {
 		// No fiat cross-rates to cover — e.g. the pair list is all
-		// crypto-crypto. Silent no-op.
-		return nil, nil, nil
+		// crypto-crypto.
+		return nil, nil, external.ErrNoApplicablePairs
 	}
 
 	updates := make([]canonical.OracleUpdate, 0, len(wanted))
