@@ -422,6 +422,8 @@ resend_api_key_env = "STELLARINDEX_RESEND_API_KEY"
 # Keys the 6-digit email-code derivation (HMAC over the stored token
 # hash). Unset env → random per-process secret (codes die on restart).
 code_secret_env    = "STELLARINDEX_DASHBOARD_CODE_SECRET"
+# Seals customer-webhook signing keys at rest; unset env stores them raw.
+webhook_seal_key_env = "STELLARINDEX_WEBHOOK_SEAL_KEY"
 cookie_secure      = true
 cookie_domain      = "{{ stellarindex_dashboard_cookie_domain | default('') }}"
 

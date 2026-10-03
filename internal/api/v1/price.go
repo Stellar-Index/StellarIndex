@@ -369,9 +369,12 @@ func writePriceWithheldProblem(w http.ResponseWriter, r *http.Request, asset, qu
 // never carries the numbers; the `substance` member does.
 func writePriceWithheldProblemEvidence(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset, reason PriceWithheldReason, ev *SubstanceEvidence) {
 	title, detail := priceWithheldWording(asset.String()+" / "+quote.String(), reason)
+	if reason == "" {
+		reason = PriceWithheldUnattributed
+	}
 	writeProblemCoverage(w, r,
 		"https://api.stellarindex.io/errors/price-withheld",
-		title, http.StatusNotFound, detail, nil, false, ev)
+		title, http.StatusNotFound, detail, nil, false, ev, reason)
 }
 
 func priceWithheldWording(pair string, reason PriceWithheldReason) (title, detail string) {
@@ -1696,7 +1699,7 @@ func (s *Server) closedUSDAnchoredFiatCross(ctx context.Context, asset, quote ca
 	if withheld {
 		return fallbackResult{withheld: PriceWithheldUnattributed}
 	}
-	if !ok || s.fxFixings == nil {
+	if !ok || s.fxFixings == nil || isDeclaredPeg(usdSnap) {
 		return fallbackResult{}
 	}
 	e := time.Time(usdSnap.ObservedAt)
@@ -1880,7 +1883,9 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	if withheld {
 		return PriceSnapshot{}, nil, false, true
 	}
-	if !ok {
+	// A declared peg is 1:1 against USD only; multiplying it by a rate is
+	// neither the declaration nor an observation, so no cross is served.
+	if !ok || isDeclaredPeg(usdSnap) {
 		return PriceSnapshot{}, nil, false, false
 	}
 

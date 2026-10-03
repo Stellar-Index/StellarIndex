@@ -182,6 +182,104 @@ func sdkDecodePoolCreated(valueB64 string) (PoolCreatedFields, error) {
 	return out, nil
 }
 
+// PositionFields is the decoded body of a pool `mint`, `burn` or `collect`.
+// Liquidity is the `amount` entry of a mint / burn and stays zero (and
+// HasLiquidity false) for a collect, which carries no liquidity delta.
+type PositionFields struct {
+	Owner        string
+	Sender       string // mint only
+	Recipient    string // collect only, when present
+	TickLower    int32
+	TickUpper    int32
+	Liquidity    canonical.Amount
+	HasLiquidity bool
+	Amount0      canonical.Amount
+	Amount1      canonical.Amount
+}
+
+var decodePositionFields = sdkDecodePositionFields
+
+// sdkDecodePositionFields decodes a mint / burn / collect body by field
+// NAME. owner, both ticks and both token amounts are required for every
+// action (a missing one is ErrMalformedPayload, never a zero-filled row);
+// `amount` is required for mint / burn only, `sender` is read on a mint and
+// `recipient` on a collect when present.
+func sdkDecodePositionFields(kind, valueB64 string) (PositionFields, error) {
+	body, err := scval.Parse(valueB64)
+	if err != nil {
+		return PositionFields{}, fmt.Errorf("%w: parse body: %w", ErrMalformedPayload, err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return PositionFields{}, fmt.Errorf("%w: body not a Map: %w", ErrMalformedPayload, err)
+	}
+
+	var out PositionFields
+	fail := func(field string, err error) (PositionFields, error) {
+		return PositionFields{}, fmt.Errorf("%w: %s.%s: %w", ErrMalformedPayload, kind, field, err)
+	}
+	for _, f := range []struct {
+		name string
+		dst  *canonical.Amount
+	}{{"amount0", &out.Amount0}, {"amount1", &out.Amount1}} {
+		sv, err := scval.MustMapField(entries, f.name)
+		if err != nil {
+			return fail(f.name, err)
+		}
+		if *f.dst, err = scval.AsAmountFromU128(sv); err != nil {
+			return fail(f.name, err)
+		}
+	}
+	for _, f := range []struct {
+		name string
+		dst  *int32
+	}{{"tick_lower", &out.TickLower}, {"tick_upper", &out.TickUpper}} {
+		sv, err := scval.MustMapField(entries, f.name)
+		if err != nil {
+			return fail(f.name, err)
+		}
+		if *f.dst, err = scval.AsI32(sv); err != nil {
+			return fail(f.name, err)
+		}
+	}
+	ownerSv, err := scval.MustMapField(entries, "owner")
+	if err != nil {
+		return fail("owner", err)
+	}
+	if out.Owner, err = scval.AsAddressStrkey(ownerSv); err != nil {
+		return fail("owner", err)
+	}
+
+	if kind != EventCollect {
+		sv, err := scval.MustMapField(entries, "amount")
+		if err != nil {
+			return fail("amount", err)
+		}
+		if out.Liquidity, err = scval.AsAmountFromU128(sv); err != nil {
+			return fail("amount", err)
+		}
+		out.HasLiquidity = true
+	}
+	switch kind {
+	case EventMint:
+		out.Sender = optionalAddress(entries, "sender")
+	case EventCollect:
+		out.Recipient = optionalAddress(entries, "recipient")
+	}
+	return out, nil
+}
+
+// optionalAddress reads an informational address entry: a body that omits or
+// reshapes it is still a complete, correct position event.
+func optionalAddress(entries []scval.ScMapEntry, name string) string {
+	sv, err := scval.MustMapField(entries, name)
+	if err != nil {
+		return ""
+	}
+	addr, _ := scval.AsAddressStrkey(sv)
+	return addr
+}
+
 // negate returns -a as a new Amount. canonical.Amount wraps a *big.Int and
 // callers must never mutate the underlying value, so this allocates.
 func negate(a canonical.Amount) canonical.Amount {

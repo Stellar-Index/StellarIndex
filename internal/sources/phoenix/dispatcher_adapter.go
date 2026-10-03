@@ -209,6 +209,8 @@ func (d *Decoder) decodeAction(a action, ev *events.Event, fieldTopic string, cl
 		return decodeFactoryConfigEvent(ev, closedAt)
 	case actionBlendPoolAdmin:
 		return decodeBlendPoolAdminEvent(ev, fieldTopic, closedAt)
+	case actionToggleTrading:
+		return nil, checkToggleTradingBody(ev)
 	case actionCreatePool:
 		// Handled above, before the lock. Enumerated so `exhaustive`
 		// keeps covering the action enum.

@@ -2365,7 +2365,7 @@ func (s *Store) TradesInRangeAfter(
 // loss — every input is a NUMERIC column read as text; floats never
 // touch the money path per ADR-0003). On the trades path that is the
 // per-trade ratio QuoteAmount/BaseAmount — FX-source trades use a
-// uniform 1e8 scale on each side so the ratio is dimensionally clean
+// uniform 1e6 scale on each side so the ratio is dimensionally clean
 // (the scale cancels). On the fx_quotes path it is the rate_usd ratio,
 // which is already scale-free. Empty `fxSources` returns ErrNoFXQuote
 // without touching the DB.

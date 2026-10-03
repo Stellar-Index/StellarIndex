@@ -196,7 +196,7 @@ func TestExplorer_AccountPositions_Fold(t *testing.T) {
 	}
 
 	credit, ok := byKindVenue["sorocredit/credit/CCOLLAT1"]
-	if !ok || credit.Amount != "900000" || credit.AmountSemantics != "stateful_current" || credit.Basis != "stateful" {
+	if !ok || credit.Amount != "900000" || credit.AmountSemantics != "stateful_current_unconfirmed_unit" || credit.Basis != "stateful" {
 		t.Errorf("sorocredit open position = %+v (ok=%v)", credit, ok)
 	}
 	if len(credit.Assets) != 1 || credit.Assets[0] != "USDC" {

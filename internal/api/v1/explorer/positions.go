@@ -75,8 +75,10 @@ const (
 	// vault shares.
 	AmountSemanticsShares = "shares"
 	// AmountSemanticsStatefulCurrent — the protocol's own most-recently
-	// PUBLISHED figure, not a delta sum this fold computed. sorocredit.
-	AmountSemanticsStatefulCurrent = "stateful_current"
+	// PUBLISHED figure, not a delta sum this fold computed. Its unit/scale
+	// is not contract-source-confirmed (sorocredit's statement amount), so
+	// it is served raw, never rescaled or valued.
+	AmountSemanticsStatefulCurrent = "stateful_current_unconfirmed_unit"
 	// AmountSemanticsSignedDeltaSum — a sum of signed per-event deltas
 	// whose UNIT is not contract-source-confirmed (best-effort field
 	// mapping — see internal/sources/aquarius/decode_rewards.go's

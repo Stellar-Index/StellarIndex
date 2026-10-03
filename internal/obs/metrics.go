@@ -260,6 +260,8 @@ func registerAppMetricsTail() {
 		// DivergenceRefreshTotal in [registerAppMetrics] for funlen.
 		DivergenceReferenceTotal,
 		DivergencePairQuorumMet,
+		DivergenceMaxAbsFraction,
+		DivergencePairsOver,
 		// Readiness-check gauge (#371 F2) — the only alertable signal
 		// ClickHouse has, since it is the one dependency on r1 with no
 		// Prometheus exporter of its own.
@@ -2417,6 +2419,28 @@ var DivergencePairQuorumMet = prometheus.NewGaugeVec(
 	[]string{"pair"},
 )
 
+// DivergenceMaxAbsFraction is the largest |ours − reference| / reference
+// across every pair a reference currently prices, as a fraction (0.05 = 5 %).
+// Labelled by reference only, so cardinality stays bounded by the configured
+// reference set however many pairs are checked.
+var DivergenceMaxAbsFraction = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_divergence_max_abs_fraction",
+		Help: "Largest absolute fractional gap between our price and the reference's, over the pairs the reference currently prices (0.05 = 5%).",
+	},
+	[]string{"reference"},
+)
+
+// DivergencePairsOver counts the pairs whose worst reference gap exceeds a
+// fixed fraction. threshold ∈ {5pct, 10pct}.
+var DivergencePairsOver = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_divergence_pairs_over",
+		Help: "Pairs whose largest reference gap exceeds the threshold (5pct|10pct).",
+	},
+	[]string{"threshold"},
+)
+
 // UsageRollupSweepsTotal — per-outcome counter for the API binary's
 // usage-rollup worker (internal/usage.Rollup), which folds the Redis
 // per-endpoint request counters into the `usage_daily` Timescale
@@ -3595,10 +3619,12 @@ var APIStreamHubTopicsReapedTotal = prometheus.NewCounter(prometheus.CounterOpts
 //   - network_error  — TCP/TLS/timeout error, scheduled for retry
 //   - webhook_missing — GetWebhook returned ErrNotFound mid-flight
 //   - disabled       — webhook.Enabled=false, silently terminated
-//   - no_secret      — the webhook's signing secret is empty (terminal)
+//   - no_secret      — the signing secret is empty, or fails to unseal
+//     under the configured seal key (terminal)
 //   - build_error    — http.NewRequestWithContext failed (malformed URL)
 //   - list_error     — ListPendingDeliveries failed (db transport)
-//   - lookup_error   — GetWebhook failed for a non-NotFound reason
+//   - lookup_error   — GetWebhook failed for a non-NotFound reason,
+//     including a sealed key with no seal key configured (retried)
 //   - mark_error     — Mark{Delivered,AttemptFailed} failed
 //
 // All twelve are pre-seeded in [seedBoundedLabelSeries] (#368 M6):

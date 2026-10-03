@@ -247,12 +247,15 @@ func (s *FreezeEventSink) SaveLadder(ctx context.Context, asset, quote canonical
 	// from inheriting the ended freeze's windows. An active pair-level
 	// write leaves them alone: it comes from a caller with no window to
 	// name, which by construction knows nothing about them.
+	// A retire nulls hold_until only: extensions_used / escalated /
+	// corroborated stay on the row as the freeze's history, which the
+	// anomalies timeline reads after the recovery worker closes it.
 	const q = `
 		UPDATE freeze_events
 		   SET hold_until      = $3::timestamptz,
-		       extensions_used = $4,
-		       escalated       = $5,
-		       corroborated    = $6,
+		       extensions_used = CASE WHEN $3::timestamptz IS NULL THEN extensions_used ELSE $4 END,
+		       escalated       = CASE WHEN $3::timestamptz IS NULL THEN escalated ELSE $5 END,
+		       corroborated    = CASE WHEN $3::timestamptz IS NULL THEN corroborated ELSE $6 END,
 		       window_ladders  = CASE WHEN $3::timestamptz IS NULL THEN NULL
 		                              ELSE window_ladders END
 		 WHERE asset_id = $1 AND quote_id = $2 AND recovered_at IS NULL
@@ -630,9 +633,9 @@ func writeWindowLadders(
 		UPDATE freeze_events
 		   SET window_ladders  = $3::jsonb,
 		       hold_until      = $4::timestamptz,
-		       extensions_used = $5,
-		       escalated       = $6,
-		       corroborated    = $7
+		       extensions_used = CASE WHEN $4::timestamptz IS NULL THEN extensions_used ELSE $5 END,
+		       escalated       = CASE WHEN $4::timestamptz IS NULL THEN escalated ELSE $6 END,
+		       corroborated    = CASE WHEN $4::timestamptz IS NULL THEN corroborated ELSE $7 END
 		 WHERE asset_id = $1 AND quote_id = $2 AND recovered_at IS NULL
 	`
 	if _, err := tx.ExecContext(ctx, q,
