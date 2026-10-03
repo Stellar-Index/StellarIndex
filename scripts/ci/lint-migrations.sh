@@ -4,7 +4,7 @@
 # + hypertable index builds + CAGG re-materialization + atomicity
 # + priceable leg division.
 #
-# Nine passes, all gating (exit non-zero on any violation):
+# Ten passes, all gating (exit non-zero on any violation):
 #   1. money-column — monetary columns must be NUMERIC (ADR-0003).
 #   2. file integrity — every NNNN_*.up.sql has a matching NON-EMPTY
 #      *.down.sql (and no orphan downs), no duplicate NNNN prefixes, and
@@ -32,6 +32,8 @@
 #   9. priceable division — an up.sql statement that divides by
 #      base_amount or quote_amount carries the priceable filter (see the
 #      pass).
+#  10. follow-up marker — an up.sql that blanks data names each rebuild
+#      in a `-- REQUIRED-FOLLOWUP:` header line (see the pass).
 #
 # ── register-completeness detail ──
 #
@@ -646,7 +648,71 @@ if [ "$pr_files" -eq 0 ]; then
 fi
 echo "lint-migrations: priceable-division pass inspected ${pr_files} file(s) under ${MIG_DIR}."
 
+# ── pass 10: required follow-up marker ──────────────────────────────
+# An up.sql that blanks data — an unqualified DELETE, a TRUNCATE, or a
+# continuous aggregate dropped and recreated WITH NO DATA — serves empty
+# until an operator runs the rebuild the migration cannot run itself.
+# deploy.yml's scripts/ci/migration-followup-gate.sh lists every
+# `-- REQUIRED-FOLLOWUP: <command>` line in the migrations a deploy adds
+# and refuses to start until they are acknowledged, so such a file must
+# carry at least one. A marker line in any other spelling, or with no
+# command, is invisible to that gate and fails here. Shipped files that
+# predate the marker are listed below; the list only shrinks.
+followup_baseline='0115_ohlc_extremes_notional_floor.up.sql
+0126_twap_sample_count.up.sql
+0137_disarm_comet_replay_doublecount.up.sql
+0147_ohlc_deterministic_tiebreak.up.sql
+0164_disarm_cctp_rozo_replay_doublecount.up.sql
+0166_twap_notional_floor.up.sql
+0187_price_caggs_priceable_filter.up.sql'
+
+# blanking_stmts <file>: the statements that blank data, one per line.
+# A DO block's first statement follows its BEGIN, hence the second form.
+blanking_stmts() {
+  sql_stmts "$1" | awk '
+    { s = tolower($0) }
+    s ~ /^truncate / || s ~ / begin truncate / { print; next }
+    (s ~ /^delete from / || s ~ / begin delete from /) && s !~ / where / { print; next }
+    s ~ /^drop materialized view / { dropped = 1 }
+    s ~ /with no data/ { nodata = 1 }
+    END { if (dropped && nodata) print "DROP MATERIALIZED VIEW … WITH NO DATA" }'
+}
+
+fu_seen=""
+fu_blanking=0
+for f in "$MIG_DIR"/*.up.sql; do
+  [ -e "$f" ] || continue
+  b="$(basename "$f")"
+  bad_marker="$(grep -niE '^--[[:space:]]*required[-_ ]?follow[-_ ]?up[[:space:]]*:' "$f" \
+    | grep -vE '^[0-9]+:-- REQUIRED-FOLLOWUP: [^[:space:]]' || true)"
+  if [ -n "$bad_marker" ]; then
+    echo "lint-migrations ❌ ${f}: malformed follow-up marker — write exactly \`-- REQUIRED-FOLLOWUP: <command>\` or the deploy gate never sees it:" >&2
+    indent "$bad_marker" >&2
+    fail=1
+  fi
+  blanks="$(blanking_stmts "$f")"
+  [ -n "$blanks" ] || continue
+  fu_blanking=$((fu_blanking + 1))
+  grep -qE '^-- REQUIRED-FOLLOWUP: [^[:space:]]' "$f" && continue
+  if grep -qx "$b" <<<"$followup_baseline"; then
+    fu_seen="${fu_seen}${b}"$'\n'
+    continue
+  fi
+  echo "lint-migrations ❌ ${f}: blanks data and declares no \`-- REQUIRED-FOLLOWUP: <command>\` header line — the data serves empty until someone rebuilds it, and the deploy gate only asks for the rebuilds a migration names. Add one line per replay / refresh command (migrations/README.md rule 12). Blanking statement(s):" >&2
+  indent "$(cut -c1-120 <<<"$blanks")" >&2
+  fail=1
+done
+while IFS= read -r entry; do
+  [ -n "$entry" ] || continue
+  [ -e "${MIG_DIR}/${entry}" ] || continue
+  if ! grep -qx "$entry" <<<"$fu_seen"; then
+    echo "lint-migrations ❌ stale followup_baseline entry ${entry} — it no longer blanks data without a marker; remove it (the list only shrinks)" >&2
+    fail=1
+  fi
+done <<<"$followup_baseline"
+echo "lint-migrations: follow-up marker pass found ${fu_blanking} data-blanking file(s) under ${MIG_DIR}."
+
 if [ "$fail" -eq 0 ]; then
-  echo "✅ migration lint passed (money-column + pairing/numbering/non-empty + register + ClickHouse money + down-delete, ${down_files} downs + hypertable index + CAGG re-materialization + atomicity + priceable division)."
+  echo "✅ migration lint passed (money-column + pairing/numbering/non-empty + register + ClickHouse money + down-delete, ${down_files} downs + hypertable index + CAGG re-materialization + atomicity + priceable division + follow-up marker)."
 fi
 exit "$fail"
