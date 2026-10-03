@@ -41,6 +41,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -839,7 +840,7 @@ func (p *Projector) runOneSource(ctx context.Context, src Source) {
 // lakeReader is the ClickHouse read surface a CH-mode cycle needs;
 // *clickhouse.WatermarkReader satisfies it.
 type lakeReader interface {
-	ContiguousWatermark(ctx context.Context, from uint32) (uint32, error)
+	ContiguousWatermark(ctx context.Context, from, to uint32) (uint32, error)
 	LakeMinLedger(ctx context.Context) (uint32, error)
 	Close() error
 }
@@ -1096,7 +1097,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	// never gets ahead of "what we promise is durable." In CH
 	// feed-switch mode the bound is additionally clamped to the
 	// lake's provably-complete watermark (see resolveTip).
-	tip, durableTip, err := p.resolveTip(cycleCtx, lake, fromLedger)
+	tip, durableTip, err := p.resolveTip(cycleCtx, lake, fromLedger, saturatingAdd(fromLedger, *window))
 	if err != nil {
 		p.logger.Warn("projector: tip resolve failed", "source", src.Name, "err", err)
 		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
@@ -1682,7 +1683,7 @@ func (p *Projector) findSeed(ctx context.Context, src Source, lake *sourceLake) 
 	if err != nil {
 		return 0, false, err
 	}
-	tip, _, err := p.resolveTip(ctx, lake, floor)
+	tip, _, err := p.resolveTip(ctx, lake, floor, math.MaxUint32)
 	if err != nil {
 		return 0, false, err
 	}
@@ -1739,11 +1740,15 @@ func (p *Projector) holdForWidenedGate(source string, from, to uint32, added []s
 // barrier ([Projector.SetRawEventBarrier]) has seen every row pushed before
 // the cursor read commit; a barrier that cannot settle fails the cycle.
 //
+// scanLimit bounds the CH watermark query: a cycle reads at most one batch
+// window past from, so scanning the lake to its tip every cycle is wasted work
+// for a lagging source.
+//
 // It also returns the unclamped ledgerstream tip: lag is always measured
 // against that, so a stalled watermark shows as rising lag rather than as
 // a caught-up source. A watermark error still returns durableTip, so the
 // failed cycle can publish lag.
-func (p *Projector) resolveTip(ctx context.Context, lake *sourceLake, from uint32) (scanTip, durableTip uint32, err error) {
+func (p *Projector) resolveTip(ctx context.Context, lake *sourceLake, from, scanLimit uint32) (scanTip, durableTip uint32, err error) {
 	c, err := p.store.GetCursor(ctx, "ledgerstream", "")
 	if err != nil {
 		if errors.Is(err, timescale.ErrNotFound) {
@@ -1758,7 +1763,7 @@ func (p *Projector) resolveTip(ctx context.Context, lake *sourceLake, from uint3
 		if rerr != nil {
 			return 0, durableTip, fmt.Errorf("ch watermark conn: %w", rerr)
 		}
-		wm, werr := reader.ContiguousWatermark(ctx, from)
+		wm, werr := reader.ContiguousWatermark(ctx, from, scanLimit)
 		if werr != nil {
 			return 0, durableTip, fmt.Errorf("ch watermark: %w", werr)
 		}
@@ -1771,6 +1776,13 @@ func (p *Projector) resolveTip(ctx context.Context, lake *sourceLake, from uint3
 		}
 	}
 	return scanTip, durableTip, nil
+}
+
+func saturatingAdd(a, b uint32) uint32 {
+	if a > math.MaxUint32-b {
+		return math.MaxUint32
+	}
+	return a + b
 }
 
 // freshSourceStart is the first ledger a source with no cursor row scans:
