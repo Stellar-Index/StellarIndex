@@ -11363,7 +11363,8 @@ export interface components {
                  * @description True when the requested timeframe extends before
                  *     the earliest available data on this deployment
                  *     (e.g. asking `?timeframe=1y` when retention is
-                 *     only 7 days). Always false for `timeframe=all`.
+                 *     only 7 days). Always false for `timeframe=all`;
+                 *     see `row_cap_truncated` for that case.
                  */
                 truncated: boolean;
                 /**
@@ -11409,6 +11410,22 @@ export interface components {
                  *     present when `discontinuous=true`.
                  */
                 gap_ends_at?: string;
+                /**
+                 * @description True when a source read hit the 50 000-bucket response
+                 *     cap (readers keep the OLDEST buckets; `timeframe=all`
+                 *     has no window to coarsen against). The series is then
+                 *     complete only up to `data_ends_at`; later buckets may
+                 *     come from other sources or be missing. Omitted when
+                 *     false.
+                 */
+                row_cap_truncated?: boolean;
+                /**
+                 * Format: date-time
+                 * @description The series is complete up to this bucket. Only present
+                 *     when `row_cap_truncated=true`; it can precede the last
+                 *     bucket in `points`.
+                 */
+                data_ends_at?: string;
                 /**
                  * @description `price_type=market_cap` only. True when the series is
                  *     withheld (`points` empty) because the asset's current

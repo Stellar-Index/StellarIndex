@@ -833,6 +833,45 @@ func TestChart_TimeframeAllNeverTruncated(t *testing.T) {
 	}
 }
 
+// TestChart_TimeframeAllRowCapTruncated: a timeframe=all read that fills
+// the 50k cap holds the oldest buckets, so the response must say so.
+func TestChart_TimeframeAllRowCapTruncated(t *testing.T) {
+	const historyMaxPoints = 50_000 // internal/api/v1/history.go
+	t0 := time.Unix(1_000_000_000, 0).UTC()
+	points := make([]v1.HistoryPoint, historyMaxPoints)
+	for i := range points {
+		points[i] = v1.HistoryPoint{Bucket: t0.Add(time.Duration(i) * time.Minute), VWAP: "1.0"}
+	}
+	srv := v1.New(v1.Options{History: &stubHistoryReader{points: points}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&timeframe=all&granularity=1m")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.ChartSeries `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if !env.Data.RowCapTruncated {
+		t.Error("row_cap_truncated = false, want true (read returned historyMaxPoints rows)")
+	}
+	if env.Data.DataEndsAt == nil || !time.Time(*env.Data.DataEndsAt).Equal(points[len(points)-1].Bucket) {
+		t.Errorf("data_ends_at = %v, want %v", env.Data.DataEndsAt, points[len(points)-1].Bucket)
+	}
+
+	short := &stubHistoryReader{points: points[:10]}
+	ts2 := httpTestServer(t, v1.New(v1.Options{History: short}))
+	resp = mustGet(t, ts2.URL+"/v1/chart?asset=native&quote=fiat:USD&timeframe=all&granularity=1m")
+	var env2 struct {
+		Data v1.ChartSeries `json:"data"`
+	}
+	mustDecode(t, resp, &env2)
+	if env2.Data.RowCapTruncated || env2.Data.DataEndsAt != nil {
+		t.Error("row_cap_truncated set on a short series")
+	}
+}
+
 func TestChart_MarketCap_FiatCNY_ComputesFromM2(t *testing.T) {
 	d1 := time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)
 	d2 := time.Date(2025, 1, 3, 0, 0, 0, 0, time.UTC)

@@ -1347,6 +1347,11 @@ type ChartSeries struct {
 	Discontinuous bool           `json:"discontinuous"`
 	GapStartsAt   *time.Time     `json:"gap_starts_at,omitempty"`
 	GapEndsAt     *time.Time     `json:"gap_ends_at,omitempty"`
+	// RowCapTruncated: a source read hit the server's response cap, so
+	// Points is complete only up to DataEndsAt; later buckets may come
+	// from other sources or be missing.
+	RowCapTruncated bool       `json:"row_cap_truncated,omitempty"`
+	DataEndsAt      *time.Time `json:"data_ends_at,omitempty"`
 	// MarketCapLowLiquidity (price_type=market_cap only) reports that
 	// Points was withheld because the asset's current market cannot
 	// support a valuation, as on Asset.MarketCapLowLiquidity.

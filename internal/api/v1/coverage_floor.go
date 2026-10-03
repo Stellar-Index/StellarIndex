@@ -624,6 +624,7 @@ func (s *Server) writeChartSeries(
 	pair canonical.Pair, series ChartSeries, walk chartWalkResult,
 ) {
 	series.markDiscontinuity()
+	series.applyRowCap(walk)
 	coverageFrom, outside := s.coverageAnnotationIfEmpty(
 		r.Context(), s.chartCoverageSet(pair), time.Now().UTC(), len(series.Points) == 0)
 	writeJSONCoverage(w, series, Flags{

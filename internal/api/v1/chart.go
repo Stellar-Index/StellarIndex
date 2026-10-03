@@ -39,6 +39,11 @@ type ChartSeries struct {
 	Discontinuous bool               `json:"discontinuous"`            // true when points skip at least one whole bucket between two served buckets
 	GapStartsAt   *WireTime          `json:"gap_starts_at,omitempty"`  // last bucket before the WIDEST interior gap; only populated when Discontinuous
 	GapEndsAt     *WireTime          `json:"gap_ends_at,omitempty"`    // first bucket after it; only populated when Discontinuous
+	// RowCapTruncated: a source read hit the response cap (readers keep the
+	// OLDEST buckets), so the series is complete only up to DataEndsAt;
+	// later buckets may come from other sources or be missing.
+	RowCapTruncated bool      `json:"row_cap_truncated,omitempty"`
+	DataEndsAt      *WireTime `json:"data_ends_at,omitempty"`
 	// MarketCapLowLiquidity: price_type=market_cap only. The series is
 	// withheld (empty points) for the reason /v1/assets/{id} withholds
 	// market_cap_usd and raises the same-named flag.
@@ -133,6 +138,20 @@ func chartBucketStep(t time.Time, gran string) time.Time {
 	default:
 		return time.Time{}
 	}
+}
+
+// applyRowCap flags a series built from a read that the response cap cut:
+// the reader keeps the OLDEST buckets, so the series stops short of the
+// present (`timeframe=all` has no window to coarsen against). It follows
+// the walk's reads, not the output length — a merge of uncapped sources can
+// exceed the cap and still be complete.
+func (c *ChartSeries) applyRowCap(walk chartWalkResult) {
+	if walk.capEnd.IsZero() || len(c.Points) == 0 {
+		return
+	}
+	end := walk.capEnd
+	c.RowCapTruncated = true
+	c.DataEndsAt = wireTimePtr(&end)
 }
 
 // writeChartJSON is the single write seam for every /v1/chart response
@@ -616,6 +635,7 @@ func (s *Server) handleChartTWAP(
 			series.RequestedFrom = wireTimePtr(&requested)
 		}
 	}
+	series.applyRowCap(walk)
 	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded})
 }
 
@@ -1115,6 +1135,24 @@ type chartWalkResult struct {
 	// flags.stale, which is exactly that flag's documented meaning
 	// ("below this surface's documented baseline contract").
 	degraded bool
+	// capEnd is the earliest last bucket among the reads that returned
+	// [historyMaxPoints] rows (zero when none did): each such read holds
+	// only the OLDEST buckets of its range, so the series is complete
+	// only up to here.
+	capEnd time.Time
+}
+
+// noteCap records a read that filled the response cap.
+func (r *chartWalkResult) noteCap(points []HistoryPoint) {
+	if len(points) == historyMaxPoints {
+		r.noteCapEnd(points[len(points)-1].Bucket)
+	}
+}
+
+func (r *chartWalkResult) noteCapEnd(end time.Time) {
+	if !end.IsZero() && (r.capEnd.IsZero() || end.Before(r.capEnd)) {
+		r.capEnd = end
+	}
 }
 
 // chartRead fetches up to `limit` of one source pair's closed buckets in
@@ -1270,6 +1308,7 @@ func (w *chartWalk) step(ctx context.Context, sp canonical.Pair, class chartSour
 			w.res.degraded = true
 			return true, nil //nolint:nilerr // a proxy failure is never the answer — see above
 		}
+		w.res.noteCap(points)
 		w.claim(sp, points)
 		return true, nil
 	}
@@ -1301,6 +1340,7 @@ func (w *chartWalk) fill(ctx context.Context, sp canonical.Pair, spans []chartSp
 		if !ok {
 			return cont
 		}
+		w.res.noteCap(points)
 		w.claim(sp, points)
 	}
 	return true
@@ -1403,6 +1443,7 @@ func (s *Server) chartSeriesPoints(
 		return derived, crossRes, nil
 	}
 	res.degraded = res.degraded || crossRes.degraded
+	res.noteCapEnd(crossRes.capEnd)
 	return nil, res, nil
 }
 
@@ -1735,6 +1776,7 @@ func (s *Server) fiatSeriesThroughXLM(
 	// cross emits only buckets present on both, so carry each leg's
 	// degradation out even when the cross comes back empty.
 	res := chartWalkResult{degraded: assetRes.degraded}
+	res.noteCapEnd(assetRes.capEnd)
 	if len(assetPts) == 0 {
 		return nil, res, nil
 	}
@@ -1743,6 +1785,7 @@ func (s *Server) fiatSeriesThroughXLM(
 		return nil, chartWalkResult{}, err
 	}
 	res.degraded = res.degraded || xlmRes.degraded
+	res.noteCapEnd(xlmRes.capEnd)
 	if len(xlmPts) == 0 {
 		return nil, res, nil
 	}
@@ -2271,6 +2314,7 @@ func (s *Server) handleChartMarketCapCrypto(
 			series.RequestedFrom = wireTimePtr(&requested)
 		}
 	}
+	series.applyRowCap(walk)
 	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded || supplyStale})
 }
 
