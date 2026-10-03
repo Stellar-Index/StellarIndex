@@ -19,6 +19,7 @@ var bareResponseOperations = map[string]string{
 	"listDashboardWebhooks":         "session-cookie dashboard flow; handler writes the bare DTO via httpx.WriteJSON",
 	"createDashboardWebhook":        "session-cookie dashboard flow; handler writes the bare DTO via httpx.WriteJSON",
 	"updateDashboardWebhook":        "session-cookie dashboard flow; handler writes the bare DTO via httpx.WriteJSON",
+	"rotateDashboardWebhookSecret":  "session-cookie dashboard flow; handler writes the bare DTO via httpx.WriteJSON",
 	"getDashboardWebhookDeliveries": "session-cookie dashboard flow; handler writes the bare DTO via httpx.WriteJSON",
 	"listDashboardPriceAlerts":      "session-cookie dashboard flow; handler writes the bare DTO via httpx.WriteJSON",
 	"createDashboardPriceAlert":     "session-cookie dashboard flow; handler writes the bare DTO via httpx.WriteJSON",

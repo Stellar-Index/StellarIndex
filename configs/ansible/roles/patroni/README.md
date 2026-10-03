@@ -40,6 +40,18 @@ role lands as a complete PR).
   - (optional) `patroni_rest_basic_auth` — Patroni REST API
     Basic Auth, defaults disabled if vault entry absent.
 
+- **etcd TLS is on by default** (`etcd_tls_enabled: true`): client and
+  peer ports use HTTPS with mutual client-cert auth, and Patroni
+  connects with `protocol: https` plus a client cert. Supply PEM
+  contents from vault: `etcd_tls_ca_pem`, per-host `etcd_tls_cert_pem` /
+  `etcd_tls_key_pem` (serverAuth + clientAuth EKUs, SANs for the host's
+  `ansible_host` and `127.0.0.1`), and `patroni_etcd_client_cert_pem` /
+  `patroni_etcd_client_key_pem`. The role fails if any is missing and
+  never generates or stores key material. `etcd_tls_enabled: false`
+  restores plaintext for throwaway lab clusters only. Enabling TLS on
+  an already-running plaintext cluster needs a rolling re-bootstrap of
+  etcd (peer URLs change), not a plain re-apply.
+
 - **Inventory must set `etcd_release_sha256`** (F-1280, codex
   audit-2026-05-13). The role pins etcd to `{{ etcd_release_sha256 }}`
   on download and the 02-etcd-install task asserts at role-start

@@ -318,7 +318,7 @@ below is the generic path.
 ### Generic path
 
 - [ ] **Identify which side is wrong** with the audit subcommand
-      (#233). Pass the classic asset; supply the SAC counterpart
+      (2ae729c61). Pass the classic asset; supply the SAC counterpart
       via `-cross-check`; optionally include `-history-hours 24`
       to spot whether divergence is fresh or chronic:
       ```sh

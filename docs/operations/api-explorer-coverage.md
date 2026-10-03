@@ -41,8 +41,8 @@ level 3. The chain to `/` is what matters, not the hop count.
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **134** |
-| Level 3 — reachable | **108** |
+| Paths in the OpenAPI contract | **135** |
+| Level 3 — reachable | **109** |
 | Level 2 — consumed but unreachable | **0** |
 | Level 1 — not consumed | **22** |
 | Deliberately excluded (operational) | **4** |
@@ -211,6 +211,7 @@ page carries.
 | `/dashboard/webhooks` | GET, POST | 3 | account.ts:createDashboardWebhook, account.ts:listDashboardWebhooks | /dashboard/webhooks |
 | `/dashboard/webhooks/{id}` | PATCH, DELETE | 3 | account.ts:deleteDashboardWebhook, account.ts:updateDashboardWebhook | /dashboard/webhooks |
 | `/dashboard/webhooks/{id}/deliveries` | GET | 1 | account.ts:listWebhookDeliveries | /dashboard/webhooks |
+| `/dashboard/webhooks/{id}/rotate-secret` | POST | 3 | account.ts:rotateDashboardWebhookSecret | /dashboard/webhooks |
 | `/dashboard/price-alerts` | GET, POST | 3 | account.ts:createPriceAlert, account.ts:listPriceAlerts | /dashboard/price-alerts |
 | `/dashboard/price-alerts/{id}` | PATCH, DELETE | 3 | account.ts:deletePriceAlert, account.ts:updatePriceAlert | /dashboard/price-alerts |
 | `/auth/login` | POST | 3 | app/signin/SignInForm.tsx, app/status/StatusPageClient.tsx | /signin, /signup, /status |

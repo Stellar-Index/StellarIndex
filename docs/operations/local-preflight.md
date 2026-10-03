@@ -108,11 +108,17 @@ pointer to [rollback.md](rollback.md) — migrations do not roll back with it
 (CS-099). Migrations in the range are listed with that same caveat, checked
 with `scripts/ci/lint-migration-compat.sh --staged` over the deploying tag's
 own `migrations/`, and block the run until `--migrations-ack` records that
-they have been read for old-binary compatibility.
+they have been read for old-binary compatibility. A migration that declares
+`-- REQUIRED-FOLLOWUP:` commands ([`migrations/README.md`](../../migrations/README.md)
+rule 12) runs deploy.yml's follow-up gate here too: the commands are listed and
+the run blocks until `--followups-ack` records that you will run them straight
+after the deploy, which also adds `-f followups_acknowledged=true` to the
+printed dispatch.
 
 Flags: `--no-host` makes no SSH connection at all and falls back to the
 ancestry baseline, saying so; `--refresh-manifest` rewrites the region row;
-`--migrations-ack` records the CS-099 read.
+`--migrations-ack` records the CS-099 read; `--followups-ack` the promise to
+run the follow-ups.
 
 Everything read from a host is read-only: `cat` of the deploy sidecars,
 `systemctl is-enabled` / `is-active`, a `test -x`, and a

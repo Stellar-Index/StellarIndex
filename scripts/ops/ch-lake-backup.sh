@@ -30,8 +30,8 @@
 # Alert: stellarindex_ch_lake_backup_stale (storage.yml, both trees).
 # Restore: docs/operations/runbooks/ch-lake-backup.md.
 #
-# Exit code: 0 clean (or not configured); 1 the backup failed; 2 the backup
-# succeeded but pruning an old chain failed.
+# Exit code: 0 clean; 1 the backup failed or no BACKUP_DISK is configured;
+# 2 the backup succeeded but pruning an old chain failed.
 set -uo pipefail
 
 CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
@@ -162,9 +162,11 @@ prune_chains() {
 main() {
   local plan base path chain_id rc=0
   if [[ -z "$BACKUP_DISK" ]]; then
+    # A run that copied nothing must not read as a successful unit in
+    # systemctl / journalctl; the gap shows as a failed unit, not a green one.
     note "no BACKUP_DISK configured — the lake has NO data backup on this host (stellarindex_ch_lake_backup_stale tickets it)"
     write_metrics
-    return 0
+    return 1
   fi
   mkdir -p "$STATE_DIR" || { note "cannot create $STATE_DIR"; write_metrics; return 1; }
   if [[ -n "$(ch "SELECT id FROM system.backups WHERE status = 'CREATING_BACKUP' AND startsWith(name, 'Disk(\\'$BACKUP_DISK\\'') FORMAT TabSeparated")" ]]; then
