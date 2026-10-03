@@ -520,42 +520,41 @@ GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 -- caution in docs/operations/perf-todo.md §4):
 --
 --   stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 \
---     -from 2 -to <lake tip> -window 5000000 -write
+--     -full -window 5000000 -write
 --
--- CORRECTNESS, not just speed, depends on the backfill (2026-09
--- reverification, F106 — this comment previously said the opposite and was
--- wrong): the reader (ExplorerReader.TransactionByHash) treats a miss
--- against a NON-EMPTY index as AUTHORITATIVE absence — it does NOT fall
--- back to the bloom scan on a plain miss (2026-07-30 account-filter class
--- audit: falling back on every miss turned unknown/garbage hashes into an
--- unauthenticated multi-second scan over the full transactions table, a
--- free DoS lever). The bloom-scan fallback only ever fires on an index-path
--- ERROR, an index/base inconsistency, or an EMPTY index.
+-- CORRECTNESS, not just speed: the reader (ExplorerReader.TransactionByHash)
+-- treats an index miss as authoritative absence only when the index is
+-- non-empty AND stellar.tx_hash_index_coverage holds a marker; a plain miss
+-- never falls back to the bloom scan (that would let garbage hashes trigger
+-- a multi-second scan of the full transactions table). Without the marker,
+-- or on an index-path error or empty index, the bloom scan answers.
 --
--- A freshly (re)created tx_hash_index on a lake that already has history
--- goes non-empty after the FIRST live transaction — the MV above writes
--- synchronously — while every row for the EXISTING history is still
--- missing. Until the one-time backfill below has run to completion, a
--- lookup for any not-yet-indexed historical hash is a WRONG 404, not a
--- slow-but-correct answer. Treat the backfill as a PREREQUISITE for
--- correctness on any lake that has prior history, not as a performance
--- optimisation you can defer:
+-- A freshly (re)created index on a lake with history goes non-empty after
+-- the first live transaction while all prior history is missing; the marker
+-- keeps the reader on the bloom scan until the full backfill has completed:
 --
 --   stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 \
---     -from 2 -to <lake tip> -window 5000000 -write
+--     -full -window 5000000 -write
 --
--- KNOWN GAP (NEEDS-COORDINATION, tracked under F106): the reader's
--- availability probe only proves the index is non-empty, not that the
--- backfill above has finished — it cannot cheaply prove coverage from the
--- lake data alone (a naive row-count comparison over-counts asymmetrically:
--- stellar.transactions is duplicate-bearing under live-sink retries, while
--- a backfill run inserts FINAL-deduped rows). Closing this needs a
--- backfill-completion signal from ch-txindex-backfill itself
--- (internal/ops/chops/ch_txindex_backfill.go) that the reader can check
--- before granting a miss authority. Until that lands, a freshly
--- (re)created index on a lake with prior history MUST be backfilled to
--- completion BEFORE it is allowed to serve live traffic — do not treat
--- "the table exists and has a few rows" as sufficient.
+-- COVERAGE: the reader cannot prove coverage from the lake data (a row-count
+-- comparison over-counts: stellar.transactions is duplicate-bearing while a
+-- backfill inserts FINAL-deduped rows). It therefore requires a row in
+-- stellar.tx_hash_index_coverage, written by ch-txindex-backfill when a run
+-- over the whole history (-full: ledger 2 to the contiguous tip) completes;
+-- a partial or explicit -to run writes none. Without it the bloom scan answers.
+-- A fresh lake with no history still needs one (trivial) backfill run.
+-- Whenever tx_hash_index is dropped and recreated, TRUNCATE
+-- stellar.tx_hash_index_coverage too: a stale marker over an emptied index
+-- makes every historical hash lookup answer not-found.
+CREATE TABLE IF NOT EXISTS stellar.tx_hash_index_coverage
+(
+    covered_from UInt32,
+    covered_to   UInt32,
+    completed_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY (covered_from, covered_to);
+
 CREATE TABLE IF NOT EXISTS stellar.tx_hash_index
 (
     tx_hash     String,
