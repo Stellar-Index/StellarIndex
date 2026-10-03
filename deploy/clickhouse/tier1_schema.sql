@@ -835,6 +835,29 @@ ORDER BY asset;
 CREATE TABLE IF NOT EXISTS stellar.asset_holders_counts_staging
 AS stellar.asset_holders_counts;
 
+-- Per-asset daily concentration snapshot, written by the same cycle after
+-- its swap; the day is recomputed whole and swapped in by REPLACE PARTITION.
+-- Balance sums are Int128: a classic asset's per-trustline Int64 balances
+-- can sum past 2^63. gini is over positive-balance holders, NULL when none.
+CREATE TABLE IF NOT EXISTS stellar.asset_stats_daily
+(
+    day            Date,
+    asset          String,
+    holders        Int64,
+    trustlines     Int64,
+    balance_total  Int128,
+    top10_balance  Int128,
+    top100_balance Int128,
+    gini           Nullable(Float64),
+    computed_at    DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+PARTITION BY day
+ORDER BY (asset, day);
+
+CREATE TABLE IF NOT EXISTS stellar.asset_stats_daily_staging
+AS stellar.asset_stats_daily;
+
 -- ── accounts_stats rollup — see deploy/clickhouse/accounts_stats_rollup.sql ──
 CREATE TABLE IF NOT EXISTS stellar.accounts_stats
 (

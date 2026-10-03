@@ -29,6 +29,7 @@ func TestHoldersRollupFreshness_ExecutesAgainstServer(t *testing.T) {
 		for _, table := range []string{
 			"asset_holders_rollup", "asset_holders_counts", "accounts_stats",
 			"accounts_wealth_histogram", "accounts_trustline_histogram",
+			"asset_stats_daily", "asset_stats_daily_staging",
 		} {
 			_ = conn.Exec(context.Background(), "TRUNCATE TABLE stellar."+table)
 		}
