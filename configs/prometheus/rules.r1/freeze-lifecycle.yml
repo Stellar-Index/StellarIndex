@@ -96,6 +96,42 @@ groups:
             string that would have fired.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
 
+      # ─── P3: the corroboration mechanism is dead for a pair ────
+      #
+      # The rule above catches over-suppression; this one catches the
+      # opposite failure, which is silent: a thin crypto leg, a stale
+      # FX fixing, or a no_chain target with no triangulations pins the
+      # verdict at `unavailable`, so every phase-2 fire freezes as it
+      # did before the mechanism existed and suppressed_total never
+      # moves. The gauge is one-hot per evaluated bucket, so 1 on
+      # `unavailable` for the whole window means no bucket in 6h
+      # could be corroborated or refuted.
+      - alert: stellarindex_aggregator_composite_corroboration_unavailable
+        expr: |
+          stellarindex_aggregator_composite_corroboration{verdict="unavailable"} == 1
+        for: 6h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+          summary: "Composite corroboration unavailable for {{ $labels.pair }} / {{ $labels.window }} for 6h (P3)"
+          description: |
+            Every evaluated bucket of `{{ $labels.pair }}`
+            (`{{ $labels.window }}`) for 6 hours returned
+            `stellarindex_aggregator_composite_corroboration{verdict="unavailable"}`:
+            the composite reference could neither corroborate nor
+            refute, so a phase-2 fire on this pair freezes with no
+            suppression path. Check
+            `stellarindex_aggregator_composite_reference_leg_sources`
+            against `[aggregate.composite_reference] min_leg_sources`
+            (thin leg), the FX leg's freshness (stale fixing), and
+            whether a no_chain target has any triangulations. The
+            aggregator log reason string
+            (`composite_unavailable: ...`) names the failing leg.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+
   - name: stellarindex.freeze_lifecycle
     interval: 30s
     rules:

@@ -264,6 +264,10 @@ type AssetDetail struct {
 	ListingReference *AssetListingReference `json:"listing_reference,omitempty"`
 	ListingValuation *AssetListingValuation `json:"listing_valuation,omitempty"`
 
+	// Trust is the banded trust score and its factor breakdown
+	// (asset_trust.go). Detail endpoint only; never an input to pricing.
+	Trust *AssetTrust `json:"trust,omitempty"`
+
 	// DecimalsUnresolved is true when this row's `decimals` is the
 	// hardcoded default rather than a value read from the token's own
 	// on-chain metadata. INTERNAL — never serialised — because it
@@ -3733,6 +3737,8 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// issuer doesn't. No-op when no catalogue is wired or the asset
 	// isn't a classic Stellar asset.
 	flags := s.verifiedCurrencyFlags(&detail, parsed)
+	// Output-only summary of the finished payload; nothing upstream reads it.
+	detail.Trust = buildAssetTrust(&detail, flags.UnverifiedTickerCollision)
 	// GH-708: every enrichment above is best-effort on r.Context() — a
 	// failure just leaves its field null, with no error plumbing back to
 	// here. So a context that died anywhere in that chain (client gone,
