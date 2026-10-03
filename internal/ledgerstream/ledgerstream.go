@@ -246,20 +246,7 @@ func Stream(
 		return fmt.Errorf("ledgerstream: DataStore.Type is empty — config missing")
 	}
 
-	var buffered ledgerbackend.BufferedStorageBackendConfig
-	if cfg.Buffered != nil {
-		buffered = *cfg.Buffered
-	} else {
-		lpf := cfg.DataStore.Schema.LedgersPerFile
-		if lpf == 0 {
-			// Galexie's default at the time of writing is 1 ledger per
-			// file; the SDK's schema discovery will override this if
-			// the datastore's manifest says otherwise, but we still
-			// need a value to seed the default config.
-			lpf = 1
-		}
-		buffered = ingest.DefaultBufferedStorageBackendConfig(lpf)
-	}
+	buffered := bufferedConfig(cfg)
 
 	// Live-tail retry policy — see Config.LiveRetryWait /
 	// Config.LiveRetryBudget. Only an unbounded range (to == 0) waits
@@ -793,6 +780,39 @@ func streamHot(
 		return fmt.Errorf("ledgerstream: hot datastore: %w", err)
 	}
 	return walkDataStore(ctx, cfg, hot, ledgerRange, buffered, callback)
+}
+
+// StreamStore walks the bounded range [from, to] over a datastore the
+// caller opened itself, for a store whose client the SDK must not build —
+// the cold tier (see pipeline.NewColdDataStore). cfg.DataStore supplies
+// the schema-discovery params; store is closed on return.
+func StreamStore(
+	ctx context.Context,
+	cfg Config,
+	store datastore.DataStore,
+	from, to uint32,
+	callback func(xdr.LedgerCloseMeta) error,
+) error {
+	if callback == nil {
+		_ = store.Close()
+		return fmt.Errorf("ledgerstream: callback is nil")
+	}
+	return walkDataStore(ctx, cfg, store, ledgerbackend.BoundedRange(from, to), bufferedConfig(cfg), callback)
+}
+
+func bufferedConfig(cfg Config) ledgerbackend.BufferedStorageBackendConfig {
+	if cfg.Buffered != nil {
+		return *cfg.Buffered
+	}
+	lpf := cfg.DataStore.Schema.LedgersPerFile
+	if lpf == 0 {
+		// Galexie's default at the time of writing is 1 ledger per
+		// file; the SDK's schema discovery will override this if
+		// the datastore's manifest says otherwise, but we still
+		// need a value to seed the default config.
+		lpf = 1
+	}
+	return ingest.DefaultBufferedStorageBackendConfig(lpf)
 }
 
 // walkDataStore builds the buffered storage backend over `store`

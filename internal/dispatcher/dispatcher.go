@@ -61,6 +61,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical/discovery"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/entrywalk"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
@@ -351,6 +352,9 @@ type LedgerEntryChangeDecoder interface {
 //	2  ledger-wide three-phase walk (all fees, all apply-phase, all
 //	   post-apply fees), failed txs included — C2-023/C2-040/C2-032/R-A01-1,
 //	   audit-2026-07-23.
+//	3  each LedgerEntryChanges block walked in entrywalk.Canonical (ledger
+//	   key) order instead of export order, which stellar-core leaves to
+//	   hash-map iteration and so differs between exports of one ledger.
 //
 // The state-archival eviction phase (Q119, 2026-09-19) did NOT bump this.
 // It APPENDS its changes after every phase-1..3 change in the ledger, so
@@ -389,7 +393,7 @@ type LedgerEntryChangeDecoder interface {
 // delete-then-replay per range (the master plan's re-derive procedure): a
 // lower RMT version cannot displace a higher one either, so the partition
 // must be dropped before re-ingest.
-const EntryWalkVersion = 2
+const EntryWalkVersion = 3
 
 type LedgerEntryChangeContext struct {
 	Ledger   uint32
@@ -1216,9 +1220,7 @@ func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []inges
 	// OpIndex is -1 to distinguish from per-op changes.
 	for i := range txs {
 		dispatch := dispatchFor(entryChangeTxHash(&txs[i]))
-		for j := range txs[i].FeeChanges {
-			outputs = append(outputs, dispatch(-1, txs[i].FeeChanges[j])...)
-		}
+		outputs = append(outputs, walkChangeSet(txs[i].FeeChanges, -1, dispatch)...)
 	}
 	// ── Phase 2: the apply phase for every tx, in the same order.
 	for i := range txs {
@@ -1252,9 +1254,7 @@ func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []inges
 	// tx-level change, like the fee phase it mirrors.
 	for i := range txs {
 		dispatch := dispatchFor(entryChangeTxHash(&txs[i]))
-		for j := range txs[i].PostTxApplyFeeChanges {
-			outputs = append(outputs, dispatch(-1, txs[i].PostTxApplyFeeChanges[j])...)
-		}
+		outputs = append(outputs, walkChangeSet(txs[i].PostTxApplyFeeChanges, -1, dispatch)...)
 	}
 	// ── Phase 4: the ledger's STATE-ARCHIVAL EVICTIONS. Not
 	// transaction-scoped, so empty TxHash and OpIndex -1 like the fee
@@ -1344,9 +1344,12 @@ func entryChangeTxHash(tx *ingest.LedgerTransaction) string {
 }
 
 // walkChangeSet dispatches each LedgerEntryChange in the slice
-// at the given opIndex (-1 for tx-level / fee-meta blocks).
+// at the given opIndex (-1 for tx-level / fee-meta blocks), in
+// entrywalk.Canonical order so IntraLedgerSeq does not depend on which
+// export the ledger was read from.
 func walkChangeSet(changes []xdr.LedgerEntryChange, opIdx int, dispatch func(int, xdr.LedgerEntryChange) []consumer.Event) []consumer.Event {
 	var outs []consumer.Event
+	changes = entrywalk.Canonical(changes)
 	for i := range changes {
 		outs = append(outs, dispatch(opIdx, changes[i])...)
 	}

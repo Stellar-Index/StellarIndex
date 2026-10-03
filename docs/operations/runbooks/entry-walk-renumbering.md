@@ -12,7 +12,7 @@ severity: P2
 | Field | Value |
 | ----- | ----- |
 | Alert | None — this is a **deploy-time procedure**, not a paging condition. It runs once per `dispatcher.EntryWalkVersion` bump. |
-| Trigger | A release changes the order in which `dispatcher.walkLedgerEntryChanges` / `clickhouse.extractLedgerEntryChanges` emit changes, i.e. `EntryWalkVersion` is incremented. Current value: **2** (C2-032 / C2-023 / C2-040 / R-A01-1, audit-2026-07-23). |
+| Trigger | A release changes the order in which `dispatcher.walkLedgerEntryChanges` / `clickhouse.extractLedgerEntryChanges` emit changes, i.e. `EntryWalkVersion` is incremented. Current value: **3**: each `LedgerEntryChanges` block is walked in ledger-key order (`internal/entrywalk.Canonical`), because stellar-core leaves the order within a block to hash-map iteration and two exports of one ledger disagree. |
 | Typical MTTR | Not an incident. Budget the re-derive time for the affected range. |
 | Impact if skipped | Balance observations and `ledger_entries_current_v2` rows written by the OLD walk keep a position from a numbering that no longer exists. A corrective re-derive is **silently discarded** by the `intra_ledger_seq` guard — no error, no metric, no retry that helps. |
 | Impact if done WRONG | Worse than skipping. The seed writes at `MaxUint32`, which nothing can outrank; seeding from an un-repaired source makes a stale balance **permanently unfixable**. Read the repair path in order. |
@@ -217,6 +217,14 @@ GROUP BY key_xdr;
    should equal the number of `(key, ledger)` pairs you seeded — not more.
 5. Run `stellarindex-ops compute-completeness` for the range; a residual
    substrate/projection mismatch means step 1 did not fully replay.
+6. Run `stellarindex-ops compare-entry-changes -config /etc/stellarindex.toml
+   -from N -to M`. It extracts the range from our export and from the cold-tier
+   (AWS) export and must print `"differences":0`; a non-zero count names the
+   first differing `(ledger, intra_ledger_seq)` positions.
+7. CAP-0038 revocation legs (`account_movements.leg_index`) are numbered in
+   balance-id order from walk version 3. A row derived under an earlier
+   version can carry a different `leg_index`, so re-derive classic movements
+   for the range before trusting per-leg counts.
 
 ## Do NOT
 
