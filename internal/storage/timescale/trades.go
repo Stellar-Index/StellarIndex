@@ -985,16 +985,40 @@ func recordDexTradeUnitRatio(t canonical.Trade) {
 // "unroutable": such a pair has no independent market to value it, so it
 // is excluded from the coverage ratio rather than counted as a pricing gap.
 // Its usd_volume stays NULL either way; only the label differs.
-func usdPopulatedLabel(p canonical.Pair, populated bool) string {
+//
+// "thin" marks an unpriced trade whose only candidate rate was refused by the
+// resolver's substance gate: a market exists but is too small to value
+// against, so it is excluded from the coverage ratio like "unroutable".
+func usdPopulatedLabel(p canonical.Pair, populated, thin bool) string {
 	switch {
 	case populated:
 		return "yes"
 	case p.Base.Type == canonical.AssetClassic && p.Quote.Type == canonical.AssetClassic &&
 		p.Base.Issuer != "" && p.Base.Issuer == p.Quote.Issuer:
 		return "unroutable"
+	case thin:
+		return "thin"
 	default:
 		return "no"
 	}
+}
+
+// thinMarketReporter is implemented by a resolver that can say its substance
+// gate refused a leg's rate ([VWAPUSDFXResolver.ThinMarketRefused]).
+type thinMarketReporter interface {
+	ThinMarketRefused(asset canonical.Asset, at time.Time) bool
+}
+
+// usdLabel is the trade_inserts_total usd_volume_populated value for t given
+// its resolved usd_volume v.
+func (s *Store) usdLabel(t canonical.Trade, v *string) string {
+	thin := false
+	if v == nil {
+		if rep, ok := s.usdVolumeFXResolver.(thinMarketReporter); ok {
+			thin = rep.ThinMarketRefused(t.Pair.Quote, t.Timestamp) || rep.ThinMarketRefused(t.Pair.Base, t.Timestamp)
+		}
+	}
+	return usdPopulatedLabel(t.Pair, v != nil, thin)
 }
 
 // InsertTrade writes one trade. Returns nil for a successful insert
@@ -1109,7 +1133,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	if v != nil {
 		usdVolume = *v
 	}
-	obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(t.Pair, v != nil)).Inc()
+	obs.TradeInsertsTotal.WithLabelValues(t.Source, s.usdLabel(t, v)).Inc()
 	var rowsInserted int64
 	if err := s.db.QueryRowContext(ctx, q,
 		t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
@@ -1204,7 +1228,7 @@ func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Tra
 		if v != nil {
 			usdVolume = *v
 		}
-		obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(t.Pair, v != nil)).Inc()
+		obs.TradeInsertsTotal.WithLabelValues(t.Source, s.usdLabel(t, v)).Inc()
 		args = append(args,
 			t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
 			t.Pair.Base.String(), t.Pair.Quote.String(),
