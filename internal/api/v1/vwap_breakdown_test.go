@@ -193,3 +193,22 @@ func TestVWAPBreakdown_ParamValidation400(t *testing.T) {
 		}
 	}
 }
+
+func TestVWAPBreakdown_MixedDecimalsRankedByWeight(t *testing.T) {
+	usdc, err := canonical.ParseAsset(w2t2USDC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xlm, _ := canonical.ParseAsset("native")
+	pair, _ := canonical.NewPair(xlm, usdc)
+	// 300 at 7 decimals outweighs 1000 at 8 decimals (== 100 at 7), so a
+	// raw-volume sort would put binance first.
+	on := bdTrade("soroswap", time.Unix(1_772_000_000, 0).UTC(), 30, 300)
+	cex := bdTrade("binance", time.Unix(1_772_000_001, 0).UTC(), 100, 1000)
+	on.Pair, cex.Pair = pair, pair
+	res := bdGet(t, &stubHistoryReader{trades: []canonical.Trade{on, cex}},
+		"/v1/vwap?base=native&quote="+w2t2USDC+"&breakdown=source")
+	if got := res.Breakdown.Buckets[0].Sources[0].Source; got != "soroswap" {
+		t.Errorf("top source = %s, want soroswap (weight 0.75)", got)
+	}
+}

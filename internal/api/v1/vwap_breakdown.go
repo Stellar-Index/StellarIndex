@@ -193,13 +193,19 @@ func vwapBucket(b *vwapBucketTrades, needsScaling bool, adjust func(*big.Rat) *b
 		bySrc[src] = s
 	}
 	sources := make([]VWAPSourceBreakdown, 0, len(bySrc))
-	quoteOf := make(map[string]*big.Int, len(bySrc))
-	for k, s := range bySrc {
+	for _, s := range bySrc {
 		sources = append(sources, s)
-		quoteOf[k], _ = new(big.Int).SetString(s.QuoteVolume, 10)
+	}
+	// Rank by weight, not raw quote volume: raw volumes are per-source
+	// scale on a non-fiat fetch and would misorder an 8- vs 7-decimal venue.
+	weightOf := func(src string) *big.Rat {
+		if w := weights[src]; w != nil {
+			return w
+		}
+		return new(big.Rat)
 	}
 	sort.Slice(sources, func(i, j int) bool {
-		if c := quoteOf[sources[i].Source].Cmp(quoteOf[sources[j].Source]); c != 0 {
+		if c := weightOf(sources[i].Source).Cmp(weightOf(sources[j].Source)); c != 0 {
 			return c > 0
 		}
 		return sources[i].Source < sources[j].Source
