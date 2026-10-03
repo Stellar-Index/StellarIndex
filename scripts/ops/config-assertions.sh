@@ -276,13 +276,13 @@ assert_cmd caggs_have_refresh_policy caggs_have_refresh_policy
 # while the run's advisory lock (hashtext('usd-volume-restamp:trades'),
 # timescale.USDVolumeRestampLockName) is held: the server drops it with
 # the killed run's connection. A missing policy counts as a failure too.
+# The policy is the custom job trades_compression_policy (migration 0199).
 # Executed against migrated TimescaleDB by
 # TestTradesCompressionScheduledAssertionSQL; keep it free of double quotes.
 TRADES_COMPRESSION_SCHEDULED_SQL="
 SELECT count(*) FROM timescaledb_information.jobs j
- WHERE j.proc_name = 'policy_compression'
-   AND j.hypertable_schema = current_schema()
-   AND j.hypertable_name = 'trades'
+ WHERE j.proc_schema = current_schema()
+   AND j.proc_name = 'trades_compression_policy'
    AND (j.scheduled OR EXISTS (
      SELECT 1 FROM pg_locks l
       WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 1
