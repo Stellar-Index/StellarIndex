@@ -54,6 +54,42 @@ func TestRefreshPair_ExportsReferenceOutcomesAndQuorumLoss(t *testing.T) {
 	}
 }
 
+// The served verdict and the median gap are the only Prometheus view of a
+// divergence; the gap series must disappear when a refresh cannot evaluate.
+func TestRefreshPair_ExportsVerdictAndDeltaPct(t *testing.T) {
+	refs := []divergence.Reference{
+		&stubReference{name: "verdict-a", price: 1.20},
+		&stubReference{name: "verdict-b", price: 1.20},
+	}
+	svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{
+		MinSourcesForWarning: 2,
+		WarningPersistence:   -1,
+	})
+	pair := xlmUSD(t)
+	p := pair.String()
+
+	if err := svc.RefreshPair(context.Background(), pair, 1.00, time.Now()); err != nil {
+		t.Fatalf("RefreshPair: %v", err)
+	}
+	if got := testutil.ToFloat64(obs.DivergenceWarningFired.WithLabelValues(p)); got != 1 {
+		t.Errorf("warning_fired = %v, want 1 for a 20%% gap on two references", got)
+	}
+	if got := testutil.ToFloat64(obs.DivergenceDeltaPct.WithLabelValues(p)); got < 16.6 || got > 16.7 {
+		t.Errorf("delta_pct = %v, want ~16.67 (|1.00-1.20|/1.20*100)", got)
+	}
+
+	refs[1].(*stubReference).err = divergence.ErrPriceUnavailable
+	if err := svc.RefreshPair(context.Background(), pair, 1.00, time.Now()); err != nil {
+		t.Fatalf("RefreshPair: %v", err)
+	}
+	if obs.DivergenceDeltaPct.DeleteLabelValues(p) {
+		t.Error("delta_pct series still present after a below-quorum refresh, want it deleted")
+	}
+	if got := testutil.ToFloat64(obs.DivergenceWarningFired.WithLabelValues(p)); got != 1 {
+		t.Errorf("warning_fired = %v, want the verdict carried forward (1)", got)
+	}
+}
+
 // The per-reference outcome is a metric label, so it must be a bounded
 // class even where Failures carries verbatim error text.
 func TestCompare_OutcomesAreBoundedClasses(t *testing.T) {

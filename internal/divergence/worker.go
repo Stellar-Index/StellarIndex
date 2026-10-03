@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -433,6 +434,22 @@ func recordReferenceHealth(pair canonical.Pair, res Result, quorumMet bool) {
 	obs.DivergencePairQuorumMet.WithLabelValues(pair.String()).Set(met)
 }
 
+// recordVerdict exports the served verdict and, for an evaluated refresh,
+// the median-vs-ours gap; an unevaluable refresh drops the gap series.
+func recordVerdict(pair canonical.Pair, warning, evaluated bool, deltaPct float64) {
+	p := pair.String()
+	fired := 0.0
+	if warning {
+		fired = 1
+	}
+	obs.DivergenceWarningFired.WithLabelValues(p).Set(fired)
+	if evaluated {
+		obs.DivergenceDeltaPct.WithLabelValues(p).Set(math.Abs(deltaPct))
+		return
+	}
+	obs.DivergenceDeltaPct.DeleteLabelValues(p)
+}
+
 // RefreshPair runs one divergence check for the supplied pair +
 // our-price, then writes the cached result to Redis at
 // div:<base>/<quote> and records the quote in the per-base index
@@ -542,6 +559,8 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 		rawFiring := medianLegFiring || agreeing == 0
 		warningFired, firingSince = s.warningPersists(pair.String(), rawFiring, gateAt)
 	}
+
+	recordVerdict(pair, warningFired, evaluated, res.DivergencePct)
 
 	cached := CachedResult{
 		PairID:         pair.String(),

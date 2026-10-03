@@ -4,12 +4,8 @@
 #
 #   promtool test rules deploy/monitoring/rule-tests/divergence_test.yml
 #
-# The two price-divergence alerts are INERT in production (F-1329:
-# stellarindex_our_price / stellarindex_reference_price have no
-# Prometheus producer — divergence values live in PG + Redis). That is
-# precisely why they are tested here: promtool proves the EXPR fires on
-# synthetic series, so the rules' logic is known-good the day a producer
-# lands, and any threshold edit to a dormant rule is still caught.
+# The price-divergence alerts read the per-pair verdict gauges the divergence
+# worker exports (stellarindex_divergence_warning_fired / _delta_pct).
 #
 # Deliberately lives OUTSIDE `deploy/monitoring/rules/` — everything in
 # that directory is globbed by `promtool check rules`,
@@ -22,15 +18,14 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
-  # ══ stellarindex_price_divergence_warning (INERT, F-1329) ═════════
-  # ── firing: 6% off reference crosses the 5% warning line only ─────
+  # ══ stellarindex_price_divergence_warning ═════════════════════════
   - interval: 1m
-    name: a six percent divergence warns but is not critical
+    name: a raised warning verdict warns but a 6 percent gap is not critical
     input_series:
-      - series: 'stellarindex_our_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
-        values: '106+0x10'
-      - series: 'stellarindex_reference_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
-        values: '100+0x10'
+      - series: 'stellarindex_divergence_warning_fired{job="stellarindex_aggregator",instance="r1:9102",pair="crypto:XLM/fiat:USD"}'
+        values: '1+0x10'
+      - series: 'stellarindex_divergence_delta_pct{job="stellarindex_aggregator",instance="r1:9102",pair="crypto:XLM/fiat:USD"}'
+        values: '6+0x10'
     alert_rule_test:
       - eval_time: 5m
         alertname: stellarindex_price_divergence_warning
@@ -38,30 +33,30 @@ tests:
           - exp_labels:
               job: stellarindex_aggregator
               instance: r1:9102
-              asset: XLM
-              reference_source: coingecko
+              pair: crypto:XLM/fiat:USD
               severity: informational
               team: stellarindex
               component: divergence
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
-              summary: "XLM 6% off reference"
+              summary: "crypto:XLM/fiat:USD divergence warning raised"
               description: |
-                Our aggregated price for XLM differs from reference
-                (coingecko) by > 5 % sustained 2 min.
-                Normal during rapid market moves; investigate if sustained.
+                The served divergence warning (flags.divergence_warning) for
+                crypto:XLM/fiat:USD has been raised for 2 min: the references
+                disagree with our price past the threshold, after the worker's
+                persistence debounce. Normal during rapid market moves;
+                investigate if sustained.
       - eval_time: 5m
         alertname: stellarindex_price_divergence_critical
         exp_alerts: []
 
-  # ── near-threshold: 4% off stays silent ───────────────────────────
   - interval: 1m
-    name: a four percent divergence raises nothing
+    name: a cleared verdict raises nothing
     input_series:
-      - series: 'stellarindex_our_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
-        values: '104+0x10'
-      - series: 'stellarindex_reference_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
-        values: '100+0x10'
+      - series: 'stellarindex_divergence_warning_fired{job="stellarindex_aggregator",instance="r1:9102",pair="crypto:XLM/fiat:USD"}'
+        values: '0+0x10'
+      - series: 'stellarindex_divergence_delta_pct{job="stellarindex_aggregator",instance="r1:9102",pair="crypto:XLM/fiat:USD"}'
+        values: '4+0x10'
     alert_rule_test:
       - eval_time: 5m
         alertname: stellarindex_price_divergence_warning
@@ -70,17 +65,12 @@ tests:
         alertname: stellarindex_price_divergence_critical
         exp_alerts: []
 
-  # ══ stellarindex_price_divergence_critical (INERT, F-1329) ════════
-  # ── firing: 15% off trips both tiers; abs() catches the low side ──
-  # The price is BELOW reference here, so this also pins the abs()
-  # in the expr — a one-sided comparator would miss an undershoot.
+  # ══ stellarindex_price_divergence_critical ════════════════════════
   - interval: 1m
-    name: a fifteen percent undershoot is critical
+    name: a fifteen percent gap is critical
     input_series:
-      - series: 'stellarindex_our_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
-        values: '85+0x10'
-      - series: 'stellarindex_reference_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
-        values: '100+0x10'
+      - series: 'stellarindex_divergence_delta_pct{job="stellarindex_aggregator",instance="r1:9102",pair="crypto:XLM/fiat:USD"}'
+        values: '15+0x10'
     alert_rule_test:
       - eval_time: 5m
         alertname: stellarindex_price_divergence_critical
@@ -88,18 +78,18 @@ tests:
           - exp_labels:
               job: stellarindex_aggregator
               instance: r1:9102
-              asset: XLM
-              reference_source: coingecko
+              pair: crypto:XLM/fiat:USD
               severity: ticket
               team: stellarindex
               component: divergence
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
-              summary: "XLM 15% off reference (critical)"
+              summary: "crypto:XLM/fiat:USD 15.0% off reference median (critical)"
               description: |
-                Divergence > 10 % from reference sustained 2 min. This is usually
-                a bad ingest (wrong decimals, stale source contributing) rather
-                than a real market move.
+                Our price for crypto:XLM/fiat:USD is > 10 % from the median
+                reference price, sustained 2 min. This is usually a bad ingest
+                (wrong decimals, stale source contributing) rather than a real
+                market move.
 
   # ══ stellarindex_oracle_stale ═════════════════════════════════════
   # Every case below carries a

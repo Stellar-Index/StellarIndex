@@ -260,6 +260,8 @@ func registerAppMetricsTail() {
 		// DivergenceRefreshTotal in [registerAppMetrics] for funlen.
 		DivergenceReferenceTotal,
 		DivergencePairQuorumMet,
+		DivergenceWarningFired,
+		DivergenceDeltaPct,
 		// Readiness-check gauge (#371 F2) — the only alertable signal
 		// ClickHouse has, since it is the one dependency on r1 with no
 		// Prometheus exporter of its own.
@@ -2413,6 +2415,29 @@ var DivergencePairQuorumMet = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_divergence_pair_quorum_met",
 		Help: "1 when the pair's latest divergence refresh met the reference quorum (min_sources_for_warning), 0 when detection was disarmed.",
+	},
+	[]string{"pair"},
+)
+
+// DivergenceWarningFired is the per-pair divergence warning verdict the
+// API serves as flags.divergence_warning: 1 while it is raised, 0 when
+// clear. A below-quorum or pinned refresh carries the last verdict forward.
+var DivergenceWarningFired = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_divergence_warning_fired",
+		Help: "1 while the pair's served divergence warning is raised (flags.divergence_warning), 0 when clear.",
+	},
+	[]string{"pair"},
+)
+
+// DivergenceDeltaPct is |our price - median reference price| as a percent
+// of the median for the pair's latest EVALUATED refresh. The series is
+// deleted on a below-quorum or pinned refresh, which reaches no verdict, so
+// a stale reading cannot keep an alert firing.
+var DivergenceDeltaPct = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_divergence_delta_pct",
+		Help: "Percent gap between our price and the median reference price (of the median) at the pair's latest evaluated refresh; absent when the refresh was unevaluable.",
 	},
 	[]string{"pair"},
 )

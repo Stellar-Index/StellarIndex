@@ -1,7 +1,7 @@
 ---
 title: Runbook — price-divergence
 last_verified: 2026-08-29
-status: current (the two `stellarindex_price_divergence_*` alerts are INERT)
+status: current
 severity: P2
 ---
 
@@ -11,17 +11,15 @@ severity: P2
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_price_divergence_warning` (> 5 %, `for: 2m`, informational) / `_critical` (> 10 %, `for: 2m`, ticket) — **both INERT, see below** |
+| Alerts | `stellarindex_price_divergence_warning` (served warning verdict raised, `for: 2m`, informational) / `_critical` (> 10 %, `for: 2m`, ticket) |
 | Severity | P2 (ticket at 10 %) / P3 (informational at 5 %) |
-| Detected by | **Not by those two rules.** They select `stellarindex_our_price` / `stellarindex_reference_price`, which nothing exports; they are kept in `deploy/monitoring/rules/divergence.yml` for intent and tracked in `scripts/ci/lint-metric-refs.sh`'s `KNOWN_INERT` list. Real detection is (a) `flags.divergence_warning` on `/v1/price` + the `divergence_observations` rows behind it, and (b) the LIVE refresh alerts `stellarindex_divergence_refresh_error_dominant` and `stellarindex_divergence_no_reference` (both ticket, `for: 30m`). |
+| Detected by | `stellarindex_divergence_warning_fired` (the served `flags.divergence_warning`) and `stellarindex_divergence_delta_pct` (our price vs the median reference, per pair), exported by the divergence worker; plus `flags.divergence_warning` on `/v1/price`, the `divergence_observations` rows behind it, and the refresh-health alerts `stellarindex_divergence_refresh_error_dominant` and `stellarindex_divergence_no_reference` (both ticket, `for: 30m`). |
 | Typical MTTR | 30 min – hours (depends on cause) |
 | Impact | Our aggregated price disagrees with a trusted reference. If we're wrong, every API consumer gets a wrong price — downstream wallets may display misleading USD values, and cross-reference sanity is one of our correctness guarantees. |
 
-> **How you actually learn about a divergence.** Nothing pages on the Δ%
-> itself. You find out from `flags.divergence_warning` in an API response, from
-> the `/v1/divergence` board and `/v1/divergence/series`, or from the two
-> refresh alerts above firing because the checker went blind. Treat this page
-> as the investigation guide, not as the trigger's documentation.
+> **How you learn about a divergence.** The warning alert tracks the served
+> verdict (after the worker's persistence debounce); the critical alert tracks
+> the raw median gap. The refresh alerts fire when the checker goes blind.
 
 ### The reference set, as shipped
 
@@ -63,10 +61,8 @@ reference". Do not go looking for a CMC feed to pull out of rotation.
   no quorum, no median, no debounce. Firing rows with the flag off are
   normal (fewer than `min_sources_for_warning` answered, or the
   condition is still inside the debounce); never infer the flag from
-  the rows — read the Redis blob. There is one threshold; the 10 % tier belongs to the INERT
-  Prometheus rule above, not the worker.
-  There are no `stellarindex_our_price` / `stellarindex_reference_price`
-  Prometheus gauges.
+  the rows — read the Redis blob. The worker has one threshold; the 10 % tier is the
+  critical Prometheus rule on `stellarindex_divergence_delta_pct`.
 - Dashboard *Divergence → per-asset* panel shows the spread.
 - Often *doesn't* fire alone: bad decimal handling produces 100×
   or 1e6× divergence, not 5–10 %.
@@ -194,9 +190,7 @@ psql -d stellarindex -c \
 - ADR-0003 (i128 precision) — decoder discipline that prevents
   decimal-related divergence.
 - `divergence.yml` alert rules — if you retune thresholds, update
-  this runbook too. If a producer for `stellarindex_our_price` /
-  `stellarindex_reference_price` ever ships, drop the KNOWN_INERT entry
-  and this whole banner with it.
+  this runbook too.
 
 ## Changelog
 

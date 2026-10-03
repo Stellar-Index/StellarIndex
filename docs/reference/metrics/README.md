@@ -3469,6 +3469,20 @@ re-evaluated, so a 0 means divergence detection is disarmed for the pair
 even though the pass counts `ok`. A pair at 0 across every refresh for
 an hour fires `stellarindex_divergence_pair_below_quorum`.
 
+### `stellarindex_divergence_warning_fired`
+
+Gauge, label `pair`. 1 while the pair's served divergence warning
+(`flags.divergence_warning`) is raised, 0 when clear; a below-quorum or
+pinned refresh carries the last verdict forward. Raised for 2 min fires
+`stellarindex_price_divergence_warning`.
+
+### `stellarindex_divergence_delta_pct`
+
+Gauge, label `pair`. Percent gap between our price and the median
+reference price (of the median) at the pair's latest evaluated refresh.
+The series is deleted when a refresh is below quorum or pinned. Above 10
+for 2 min fires `stellarindex_price_divergence_critical`.
+
 ### `stellarindex_aggregator_baseline_refresh_total`
 
 Counter, label `outcome` (`ok` / `ok_unvalued` / `not_enough_samples` /
