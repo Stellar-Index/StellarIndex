@@ -8,7 +8,7 @@ import (
 // TestListAssets_readsAssetVolumeRollup asserts the listing's
 // per_asset_24h_vol CTE reads the asset_volume_24h rollup and no longer
 // inlines the trailing-24h SUM(volume_usd) that the 2026-07-06 latency
-// fix (#43) moved to the aggregator worker. If this regresses (someone
+// fix (e0fbbbc3b) moved to the aggregator worker. If this regresses (someone
 // re-inlines the per-asset SUM) the ~4.8s cold /v1/assets scan returns.
 func TestListAssets_readsAssetVolumeRollup(t *testing.T) {
 	if !strings.Contains(listAssetsBaseSelect, "FROM asset_volume_24h") {

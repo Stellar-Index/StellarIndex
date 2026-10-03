@@ -25,7 +25,7 @@ mapping from C-strkey to "CODE-ISSUER", three things go wrong:
    USD-pegged classic, so it skips the column.
 
 The fix is two-part: a one-line config addition for the contract
-mapping (lights up #1 + #2 + #3 for new trades), plus a
+mapping (lights up all three for new trades), plus a
 backfill SQL that retroactively prices the historical rows.
 
 ## Adding a single SAC mapping

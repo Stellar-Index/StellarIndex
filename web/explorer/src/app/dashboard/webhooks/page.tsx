@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronDown,
   ChevronUp,
+  KeyRound,
   Loader2,
   Plus,
   Trash2,
@@ -17,10 +18,12 @@ import {
   deleteDashboardWebhook,
   listDashboardWebhooks,
   listWebhookDeliveries,
+  rotateDashboardWebhookSecret,
   updateDashboardWebhook,
   type CreateWebhookResponse,
   type CreateWebhookRequest,
   type DashboardWebhook,
+  type RotateWebhookSecretResponse,
   type WebhookDelivery,
 } from '@/api/account';
 import {
@@ -86,6 +89,10 @@ function WebhooksBody() {
   const [newWebhook, setNewWebhook] = useState<CreateWebhookResponse | null>(
     null,
   );
+  const [rotated, setRotated] = useState<{
+    name: string;
+    resp: RotateWebhookSecretResponse;
+  } | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [creating, setCreating] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -115,6 +122,29 @@ function WebhooksBody() {
     } catch (err) {
       setActionError(
         err instanceof ApiError ? (err.detail ?? err.message) : 'Update failed',
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleRotate(webhook: DashboardWebhook) {
+    if (
+      !confirm(
+        `Rotate the signing secret for "${webhook.name}"? The current secret keeps signing for 24 hours alongside the new one.`,
+      )
+    ) {
+      return;
+    }
+    setBusyId(webhook.id);
+    setActionError(null);
+    try {
+      const resp = await rotateDashboardWebhookSecret(webhook.id);
+      setRotated({ name: webhook.name, resp });
+      setNotice(null);
+    } catch (err) {
+      setActionError(
+        err instanceof ApiError ? (err.detail ?? err.message) : 'Rotate failed',
       );
     } finally {
       setBusyId(null);
@@ -175,6 +205,18 @@ function WebhooksBody() {
           />
         )}
 
+        {rotated && (
+          <SecretReveal
+            eyebrow={`Secret rotated for ${rotated.name}`}
+            secret={rotated.resp.secret}
+            onDismiss={() => setRotated(null)}
+          >
+            The previous secret keeps signing deliveries (in the
+            X-StellarIndex-Signature-Previous headers) until{' '}
+            {fmtDate(rotated.resp.previous_secret_expires_at)}.
+          </SecretReveal>
+        )}
+
         {showForm && (
           <CreateWebhookForm
             creating={creating}
@@ -222,6 +264,7 @@ function WebhooksBody() {
             busyId={busyId}
             viewingId={viewingId}
             onToggle={handleToggle}
+            onRotate={handleRotate}
             onDelete={handleDelete}
             onToggleDeliveries={(id) =>
               setViewingId((cur) => (cur === id ? null : id))
@@ -243,26 +286,46 @@ function NewWebhookReveal({
   onDismiss: () => void;
 }) {
   return (
+    <SecretReveal
+      eyebrow="New webhook created"
+      secret={created.secret}
+      onDismiss={onDismiss}
+    >
+      Registered at{' '}
+      <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono break-all">
+        {created.webhook.url}
+      </code>
+    </SecretReveal>
+  );
+}
+
+function SecretReveal({
+  eyebrow,
+  secret,
+  onDismiss,
+  children,
+}: {
+  eyebrow: string;
+  secret: string;
+  onDismiss: () => void;
+  children: React.ReactNode;
+}) {
+  return (
     <Card className="border-brand-200 bg-brand-50/60">
       <CardHeader
         className="border-brand-100"
-        eyebrow="New webhook created"
+        eyebrow={eyebrow}
         title="Save this signing secret now — you won't see it again"
         description="Use it to verify the X-StellarIndex-Signature header on inbound deliveries."
       />
       <CardBody className="space-y-3">
         <div className="border-line bg-surface flex items-center gap-2 rounded-lg border px-3 py-2.5">
           <code className="text-ink min-w-0 flex-1 font-mono text-[13px] break-all">
-            {created.secret}
+            {secret}
           </code>
-          <CopyButton value={created.secret} className="h-7 w-7" />
+          <CopyButton value={secret} className="h-7 w-7" />
         </div>
-        <p className="text-ink-muted text-xs">
-          Registered at{' '}
-          <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono break-all">
-            {created.webhook.url}
-          </code>
-        </p>
+        <p className="text-ink-muted text-xs">{children}</p>
       </CardBody>
       <CardFooter className="justify-end">
         <Button variant="primary" size="sm" onClick={onDismiss}>
@@ -431,6 +494,7 @@ function WebhooksTable({
   busyId,
   viewingId,
   onToggle,
+  onRotate,
   onDelete,
   onToggleDeliveries,
 }: {
@@ -438,6 +502,7 @@ function WebhooksTable({
   busyId: string | null;
   viewingId: string | null;
   onToggle: (w: DashboardWebhook) => void;
+  onRotate: (w: DashboardWebhook) => void;
   onDelete: (w: DashboardWebhook) => void;
   onToggleDeliveries: (id: string) => void;
 }) {
@@ -525,6 +590,16 @@ function WebhooksTable({
                         ) : (
                           'Enable'
                         )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-ink-muted"
+                        onClick={() => onRotate(w)}
+                        disabled={busy}
+                      >
+                        <KeyRound className="h-3.5 w-3.5" />
+                        Rotate secret
                       </Button>
                       <Button
                         variant="ghost"

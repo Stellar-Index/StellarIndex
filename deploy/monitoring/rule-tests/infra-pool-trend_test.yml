@@ -1,0 +1,188 @@
+---
+# promtool unit tests for the ZFS pool-fill trend alerts in infra.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/infra-pool-trend_test.yml
+#
+# Separate from infra_test.yml for its 1h evaluation_interval: the cases
+# need 15 days of history, which at 1m would take minutes per run.
+
+rule_files:
+  - ../rules/infra.yml
+
+evaluation_interval: 1h
+
+tests:
+  # Every case below is a 20e12 B pool: /tank/clickhouse is where data
+  # lands (constant size, used grows as avail falls), /tank/minio holds a
+  # fixed 1e12 B (its size tracks the shared avail). Hourly samples, judged
+  # at 15 days so the 14-day regression window is full.
+  #
+  # Steady fill: 18.4 % free now, losing 48e9 B/day. 30 days out that is
+  # 11.2 % free (ticket); 7 days out 16.7 % (no page). The current-state
+  # floors stay silent — this is exactly the gap the trend tier covers.
+  - interval: 1h
+    name: a steady fill toward 85 percent tickets a month ahead without paging
+    input_series:
+      - series: 'node_filesystem_avail_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/clickhouse"}'
+        values: '4.4e12-2e9x400'
+      - series: 'node_filesystem_size_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/clickhouse"}'
+        values: '19e12+0x400'
+      - series: 'node_filesystem_avail_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/minio"}'
+        values: '4.4e12-2e9x400'
+      - series: 'node_filesystem_size_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/minio"}'
+        values: '5.4e12-2e9x400'
+
+    alert_rule_test:
+      - eval_time: 360h
+        alertname: stellarindex_zfs_pool_fill_85pct_within_30d
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: infra
+              alert_family: zfs_pool_fill_trend
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
+              summary: "ZFS data pool on course to pass 85 % full within 30 days (11.2% of capacity free projected)"
+              description: |
+                A linear fit over the last 14 days of daily free-space troughs
+                leaves under 15 % of the ZFS data pool free 30 days from now
+                (or the troughs are already there). Past ~85-90 % full ZFS
+                copy-on-write allocation slows and fragments. Plan reclamation
+                now (stale snapshots, pgBackRest off-box, retention) while it
+                is still a ticket.
+      - eval_time: 360h
+        alertname: stellarindex_zfs_pool_fill_90pct_within_7d
+        exp_alerts: []
+      - eval_time: 360h
+        alertname: stellarindex_zfs_pool_low_space
+        exp_alerts: []
+
+  # Fast fill: 14 % free now, losing 120e9 B/day — 9.8 % free in 7 days.
+  # Pages a week before the 3.5 % critical floor would.
+  - interval: 1h
+    name: a fast fill toward 90 percent pages a week ahead
+    input_series:
+      - series: 'node_filesystem_avail_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/clickhouse"}'
+        values: '4.6e12-5e9x400'
+      - series: 'node_filesystem_size_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/clickhouse"}'
+        values: '19e12+0x400'
+      - series: 'node_filesystem_avail_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/minio"}'
+        values: '4.6e12-5e9x400'
+      - series: 'node_filesystem_size_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/minio"}'
+        values: '5.6e12-5e9x400'
+
+    alert_rule_test:
+      - eval_time: 360h
+        alertname: stellarindex_zfs_pool_fill_90pct_within_7d
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9100
+              severity: page
+              team: stellarindex
+              component: infra
+              alert_family: zfs_pool_fill_trend
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
+              summary: "ZFS data pool on course to pass 90 % full within 7 days (9.8% of capacity free projected)"
+              description: |
+                A linear fit over the last 14 days of daily free-space troughs
+                leaves under 10 % of the ZFS data pool free within a week. At
+                this fill rate the 3.5 % critical floor (write stalls across
+                ClickHouse, MinIO and Postgres) follows within days. Find what
+                is filling the pool and reclaim before the floors fire.
+      - eval_time: 360h
+        alertname: stellarindex_zfs_pool_low_space
+        exp_alerts: []
+
+  # A flat pool whose free space dips from 20 % to 14 % for 4 h every day
+  # (a backup or merge cycle). The mean sits near 19 %, but the pool really
+  # does reach 86 % full daily: the trough decides, so it tickets.
+  - interval: 1h
+    name: a daily dip past 85 percent tickets on its trough not its mean
+    input_series:
+      - series: 'node_filesystem_avail_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/clickhouse"}'
+        values: >-
+          4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3
+          4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3
+          4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3
+          4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3
+          4e12+0x19 2.8e12+0x3
+      - series: 'node_filesystem_size_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/clickhouse"}'
+        values: '19e12+0x407'
+      - series: 'node_filesystem_avail_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/minio"}'
+        values: >-
+          4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3
+          4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3
+          4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3
+          4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3 4e12+0x19 2.8e12+0x3
+          4e12+0x19 2.8e12+0x3
+      - series: 'node_filesystem_size_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/minio"}'
+        values: >-
+          5e12+0x19 3.8e12+0x3 5e12+0x19 3.8e12+0x3 5e12+0x19 3.8e12+0x3 5e12+0x19 3.8e12+0x3
+          5e12+0x19 3.8e12+0x3 5e12+0x19 3.8e12+0x3 5e12+0x19 3.8e12+0x3 5e12+0x19 3.8e12+0x3
+          5e12+0x19 3.8e12+0x3 5e12+0x19 3.8e12+0x3 5e12+0x19 3.8e12+0x3 5e12+0x19 3.8e12+0x3
+          5e12+0x19 3.8e12+0x3 5e12+0x19 3.8e12+0x3 5e12+0x19 3.8e12+0x3 5e12+0x19 3.8e12+0x3
+          5e12+0x19 3.8e12+0x3
+
+    alert_rule_test:
+      - eval_time: 360h
+        alertname: stellarindex_zfs_pool_fill_85pct_within_30d
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: infra
+              alert_family: zfs_pool_fill_trend
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
+              summary: "ZFS data pool on course to pass 85 % full within 30 days (14% of capacity free projected)"
+              description: |
+                A linear fit over the last 14 days of daily free-space troughs
+                leaves under 15 % of the ZFS data pool free 30 days from now
+                (or the troughs are already there). Past ~85-90 % full ZFS
+                copy-on-write allocation slows and fragments. Plan reclamation
+                now (stale snapshots, pgBackRest off-box, retention) while it
+                is still a ticket.
+      - eval_time: 360h
+        alertname: stellarindex_zfs_pool_fill_90pct_within_7d
+        exp_alerts: []
+
+  # The same daily cycle with headroom (30 % free, dipping to 20 %): the
+  # dips are flat day over day, so neither trend alert fires.
+  - interval: 1h
+    name: a flat daily cycle with headroom raises no trend alert
+    input_series:
+      - series: 'node_filesystem_avail_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/clickhouse"}'
+        values: >-
+          6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3
+          6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3
+          6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3
+          6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3
+          6e12+0x19 4e12+0x3
+      - series: 'node_filesystem_size_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/clickhouse"}'
+        values: '19e12+0x407'
+      - series: 'node_filesystem_avail_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/minio"}'
+        values: >-
+          6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3
+          6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3
+          6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3
+          6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3 6e12+0x19 4e12+0x3
+          6e12+0x19 4e12+0x3
+      - series: 'node_filesystem_size_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/minio"}'
+        values: >-
+          7e12+0x19 5e12+0x3 7e12+0x19 5e12+0x3 7e12+0x19 5e12+0x3 7e12+0x19 5e12+0x3
+          7e12+0x19 5e12+0x3 7e12+0x19 5e12+0x3 7e12+0x19 5e12+0x3 7e12+0x19 5e12+0x3
+          7e12+0x19 5e12+0x3 7e12+0x19 5e12+0x3 7e12+0x19 5e12+0x3 7e12+0x19 5e12+0x3
+          7e12+0x19 5e12+0x3 7e12+0x19 5e12+0x3 7e12+0x19 5e12+0x3 7e12+0x19 5e12+0x3
+          7e12+0x19 5e12+0x3
+
+    alert_rule_test:
+      - eval_time: 360h
+        alertname: stellarindex_zfs_pool_fill_85pct_within_30d
+        exp_alerts: []
+      - eval_time: 360h
+        alertname: stellarindex_zfs_pool_fill_90pct_within_7d
+        exp_alerts: []

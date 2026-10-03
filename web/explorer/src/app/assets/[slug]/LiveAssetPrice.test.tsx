@@ -139,6 +139,37 @@ describe('LiveAssetPrice', () => {
     expect(screen.queryByText(/price withheld/i)).not.toBeInTheDocument();
   });
 
+  it('a price-withheld poll verdict does NOT blank a global-market price', async () => {
+    // A global-market fill exists only because the Stellar market was
+    // refused, so /v1/price withholding that market is expected.
+    useTipStream.mockReturnValue(null);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status: 404,
+        ok: false,
+        json: async () => ({
+          type: 'https://api.stellarindex.io/errors/price-withheld',
+        }),
+      }),
+    );
+    renderPrice(
+      <LiveAssetPrice
+        assetID="USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+        initialPrice={0.97}
+        initialProvenance="global_market"
+      />,
+    );
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalled();
+    });
+    expect(await screen.findByText(/\$0\.97/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/global market · cross-venue aggregator price/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/as baked at deploy/i)).not.toBeInTheDocument();
+  });
+
   it('a price-withheld poll verdict still replaces a market-provenance baked price', async () => {
     useTipStream.mockReturnValue(null);
     vi.stubGlobal(
@@ -167,7 +198,9 @@ describe('LiveAssetPrice', () => {
     expect(
       await screen.findByText(/directory-flagged issuer/i),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/market too thin to aggregate/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/market too thin to aggregate/i),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/\$0\.17/)).not.toBeInTheDocument();
   });
 

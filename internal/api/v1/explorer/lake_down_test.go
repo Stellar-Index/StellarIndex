@@ -171,6 +171,10 @@ func (downReader) Cap67MovementsWatermark(context.Context) (uint32, error) {
 	return 0, errLakeDown
 }
 
+func (downReader) Cap67SupplyCoverage(context.Context) (uint32, uint32, bool, error) {
+	return 0, 0, false, errLakeDown
+}
+
 func (downReader) AccountsStats(context.Context) (clickhouse.AccountsStats, bool, error) {
 	return clickhouse.AccountsStats{}, false, errLakeDown
 }

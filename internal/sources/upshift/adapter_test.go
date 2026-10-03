@@ -167,7 +167,7 @@ func TestMatches_RejectsUnknownSymbolFromACuratedVault(t *testing.T) {
 }
 
 // TestDecode_RecognizedCustodyEventsProjectZeroRows pins the ADR-0033
-// contract for the eight events that are gated and classified but
+// contract for the ten events that are gated and classified but
 // deliberately unserved: ZERO consumer.Events and NO error, so the
 // re-derive counts their ledgers as expected-zero instead of marking
 // them blind. Returning an error here is the INV-3 trap that held
@@ -185,6 +185,8 @@ func TestDecode_RecognizedCustodyEventsProjectZeroRows(t *testing.T) {
 		EventSubaccountAdded,
 		EventAdminSet,
 		EventOperatorSet,
+		EventVaultPaused,
+		EventVaultUnpaused,
 	} {
 		ev := realDeposit(MainnetVaultEarnUSDC)
 		ev.Topic = slices.Clone(ev.Topic)

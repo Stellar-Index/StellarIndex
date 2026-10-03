@@ -3,6 +3,7 @@ package v1
 import (
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -43,34 +44,45 @@ import (
 //
 // schema is a components.schemas name, or "METHOD /path" for a route whose
 // response schema is written inline (see specSchemaNode).
+//
+// omit names wire fields of typ the pair's schema deliberately lacks, for a
+// struct shared by several schemas.
 var handlerSpecFieldPairs = []struct {
 	schema string
 	typ    reflect.Type
+	omit   []string
 }{
-	{"Asset", reflect.TypeOf(AssetDetail{})},
-	{"AssetSupply", reflect.TypeOf(AssetSupply{})},
-	{"TradeRow", reflect.TypeOf(TradeRow{})},
-	{"OHLCBar", reflect.TypeOf(OHLCBar{})},
-	{"Price", reflect.TypeOf(PriceSnapshot{})},
-	{"AccountActivity", reflect.TypeOf(explorerpkg.AccountActivityView{})},
-	{"AccountTrade", reflect.TypeOf(explorerpkg.AccountTradeEntry{})},
-	{"TxSummary", reflect.TypeOf(explorerpkg.TxSummaryView{})},
-	{"ContractEvent", reflect.TypeOf(explorerpkg.TxEventView{})},
-	{"ContractActivityEvent", reflect.TypeOf(explorerpkg.ContractEventView{})},
-	{"KeyCreated", reflect.TypeOf(KeyCreated{})},
-	{"AccountUser", reflect.TypeOf(AccountUser{})},
-	{"AccountInfo", reflect.TypeOf(AccountInfo{})},
-	{"LakeHealth", reflect.TypeOf(lakeHealth{})},
-	{"ProtocolBespoke", reflect.TypeOf(ProtocolBespoke{})},
-	{"BespokeKPI", reflect.TypeOf(BespokeKPI{})},
-	{"BespokeSeries", reflect.TypeOf(BespokeSeries{})},
-	{"BespokeSeriesPoint", reflect.TypeOf(BespokeSeriesPt{})},
-	{"BespokeBreakdown", reflect.TypeOf(BespokeBreakdown{})},
-	{"BespokeBreakdownRow", reflect.TypeOf(BespokeBreakdownRow{})},
-	{"BespokeTable", reflect.TypeOf(BespokeTable{})},
-	{"RWAAsset", reflect.TypeOf(RWAAsset{})},
-	{"GET /diagnostics/ingestion", reflect.TypeOf(IngestionDiagnostics{})},
-	{"GET /sources/{name}/health", reflect.TypeOf(SourceHealthRow{})},
+	{"Asset", reflect.TypeOf(AssetDetail{}), nil},
+	{"AssetMetadata", reflect.TypeOf(AssetMetadata{}), nil},
+	{"AssetSupply", reflect.TypeOf(AssetSupply{}), nil},
+	{"TradeRow", reflect.TypeOf(TradeRow{}), nil},
+	{"OHLCBar", reflect.TypeOf(OHLCBar{}), nil},
+	{"Price", reflect.TypeOf(PriceSnapshot{}), nil},
+	{"AccountActivity", reflect.TypeOf(explorerpkg.AccountActivityView{}), nil},
+	{"AccountTrade", reflect.TypeOf(explorerpkg.AccountTradeEntry{}), nil},
+	{"TxSummary", reflect.TypeOf(explorerpkg.TxSummaryView{}), nil},
+	{"ContractEvent", reflect.TypeOf(explorerpkg.TxEventView{}), nil},
+	{"ContractActivityEvent", reflect.TypeOf(explorerpkg.ContractEventView{}), nil},
+	{"KeyCreated", reflect.TypeOf(KeyCreated{}), nil},
+	{"AccountUser", reflect.TypeOf(AccountUser{}), nil},
+	{"AccountInfo", reflect.TypeOf(AccountInfo{}), nil},
+	{"LakeHealth", reflect.TypeOf(lakeHealth{}), nil},
+	{"ProtocolBespoke", reflect.TypeOf(ProtocolBespoke{}), nil},
+	{"BespokeKPI", reflect.TypeOf(BespokeKPI{}), nil},
+	{"BespokeSeries", reflect.TypeOf(BespokeSeries{}), nil},
+	{"BespokeSeriesPoint", reflect.TypeOf(BespokeSeriesPt{}), nil},
+	{"BespokeBreakdown", reflect.TypeOf(BespokeBreakdown{}), nil},
+	{"BespokeBreakdownRow", reflect.TypeOf(BespokeBreakdownRow{}), nil},
+	{"BespokeTable", reflect.TypeOf(BespokeTable{}), nil},
+	{"RWAAsset", reflect.TypeOf(RWAAsset{}), nil},
+	{"GET /diagnostics/ingestion", reflect.TypeOf(IngestionDiagnostics{}), nil},
+	{"GET /sources/{name}/health", reflect.TypeOf(SourceHealthRow{}), nil},
+	{"Flags", reflect.TypeOf(Flags{}), nil},
+	{"Problem", reflect.TypeOf(Problem{}), nil},
+	{"PriceChanges", reflect.TypeOf(PriceChanges{}), nil},
+	{"PriceChangeHorizon", reflect.TypeOf(PriceChangeHorizon{}), nil},
+	{"SubstanceEvidence", reflect.TypeOf(SubstanceEvidence{}), nil},
+	{"PriceBatchEnvelope", reflect.TypeOf(Envelope{}), []string{"pagination"}},
 }
 
 // TestHandlerRequiredFieldsAreAlwaysServed is the other direction: a
@@ -174,7 +186,7 @@ func TestHandlerResponseFieldsAreDocumented(t *testing.T) {
 			// what it has never been told exists.
 			var undocumented []string
 			for f := range got {
-				if !props[f] && handlerFieldSpecExceptions[f] == "" {
+				if !props[f] && handlerFieldSpecExceptions[f] == "" && !slices.Contains(pair.omit, f) {
 					undocumented = append(undocumented, f)
 				}
 			}

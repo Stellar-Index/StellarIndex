@@ -149,10 +149,8 @@ func parseTrade(env eventEnvelope, pairMap map[string]canonical.Pair) (canonical
 	// price_float < 1e-8 USD), the canonical validator rejects the
 	// row with "quote_amount must be positive, got 0". These are
 	// real bitstamp trades, just below our integer-scale precision
-	// floor. Drop silently — the streamer's error handler treats
-	// every parse error as a "skip this frame and stay subscribed",
-	// so returning a typed sentinel here keeps the wire log quiet
-	// without changing the streamer.
+	// floor. Return a typed sentinel; the streamer's handleFrame drops
+	// it instead of counting it as a decode error.
 	if quote.Sign() == 0 {
 		return canonical.Trade{}, ErrDustTrade
 	}

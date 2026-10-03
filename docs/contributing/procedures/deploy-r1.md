@@ -15,12 +15,19 @@ deploying anything he hasn't asked to ship.
 gh workflow run deploy.yml \
   -f region=r1 \
   -f version=vX.Y.Z \
-  -f binaries=stellarindex-indexer,stellarindex-aggregator,stellarindex-api
+  -f config_acknowledged=true
 ```
 
-Include `stellarindex-ops`/`stellarindex-migrate`/`stellarindex-sla-probe`
-when the release changed them — r1's ops binary has drifted
-out-of-band before; deploying it keeps timer units honest.
+Omit `binaries`: the default is the full set, filtered through
+`scripts/dev/region-binaries.tsv`, and r1 runs all six (indexer, aggregator,
+api, sla-probe, ops, migrate). Naming fewer is refused unless the omitted
+ones are already on that version. This also keeps r1's ops binary, which has
+drifted out-of-band before, current.
+
+`config_acknowledged=true` asserts you have applied (or will apply) any
+config the release changed; without it the config-apply gate fails the job
+for a release that touched config. See
+[deploy-workflow.md](../../operations/deploy-workflow.md).
 
 ## What the workflow does (know before you press)
 
@@ -36,6 +43,10 @@ binary on probe failure**. Two sharp edges:
   old-binary compatibility (additive = fine; renames/drops = not).
 - `migrations_skip` is a string→bool footgun with history — leave it
   alone unless you know why you're setting it.
+- A release whose migrations declare `-- REQUIRED-FOLLOWUP:` commands
+  (a replay or CAGG refresh) is refused until you pass
+  `followups_acknowledged=true`; run those commands straight after the
+  deploy — the data they name serves empty until you do.
 
 ## Post-deploy verification (ALWAYS, in order)
 

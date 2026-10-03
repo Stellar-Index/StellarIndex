@@ -15,8 +15,12 @@ name: reconciliation-health
 # unit-testable offline via CI_HEALTH_FIXTURE; see
 # scripts/ci/check-main-ci-health-test.sh) pointed at ansible-drift.yml
 # instead of ci.yml, with thresholds sized for a WEEKLY schedule rather
-# than a per-push one: 2 consecutive red/absent runs (~2 weeks) or 9
-# days since the last green run, whichever trips first.
+# than a per-push one: a red streak at the tip of 2 runs, or a streak whose
+# oldest run is 9 days old, whichever trips first. Missed runs do not extend
+# a streak, but no readable run history at all (zero runs, or a stale
+# listing) is reported UNKNOWN and faults too. A green tip, a red streak
+# still under both thresholds, or a history of only cancelled/skipped runs
+# all pass (exit 0).
 #
 # WHAT THIS DOES NOT SEE, measured 2026-09-07 (#496). The core reads
 # the LATEST runs whatever triggered them, and ansible-drift.yml is
@@ -110,7 +114,7 @@ jobs:
           gh label create "$ISSUE_LABEL" --color B60205 \
             --description "ansible-drift.yml has produced no valid drift verdict past threshold" 2>/dev/null || true
 
-          body="$(printf '%s\n\n---\n_Auto-managed by the reconciliation-health workflow (run %s). Closes automatically once ansible-drift.yml produces a green run again._\n' \
+          body="$(printf '%s\n\n---\n_Auto-managed by the reconciliation-health workflow (run %s). Closes automatically once the verdict is non-faulting._\n' \
             "$REPORT" "${GITHUB_RUN_ID:-?}")"
 
           existing="$(gh issue list --label "$ISSUE_LABEL" --state open \
@@ -139,5 +143,5 @@ jobs:
       - name: Fail the run if ansible-drift has no valid verdict
         if: steps.assess.outputs.verdict_rc != '0'
         run: |
-          echo "::error::ansible-drift.yml has produced no valid drift verdict past threshold (2 consecutive red/absent runs or 9 days since the last green run) — see the reconciliation-health tracking issue."
+          echo "::error::ansible-drift.yml has no valid drift verdict: red past threshold (a red streak of 2 runs, or one 9 days old) or no readable run history (UNKNOWN) — see the tracking issue and the report above."
           exit 1

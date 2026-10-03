@@ -28,4 +28,3 @@ ProtectControlGroups=true
 # copytruncate is seconds. Bound it so a wedged run cannot hold the
 # logrotate state lock against the stock daily timer.
 TimeoutStartSec=10min
-RuntimeMaxSec=10min

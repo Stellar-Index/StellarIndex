@@ -35,12 +35,11 @@ func ValidAlertCondition(s string) bool {
 	}
 }
 
-// MinAlertCooldownSeconds floors the re-fire interval. The evaluator is
-// level-triggered, so a shorter cooldown re-enqueues every subscribed
-// webhook each tick the condition holds: at the free tier's 25 alerts x 10
-// webhooks a 0 cooldown enqueues 250 deliveries per 30 s tick, above the
-// delivery worker's ~5/s drain. At 300 s one such account is ~0.8/s.
-// Migration 0181 raised stored values below it.
+// MinAlertCooldownSeconds floors the re-fire interval. An alert re-arms each
+// time the price moves back across its threshold, so without a floor a price
+// oscillating around it re-enqueues every subscribed webhook on alternate
+// 30 s ticks: at the free tier's 25 alerts x 10 webhooks that outruns the
+// delivery worker's ~5/s drain. Migration 0181 raised stored values below it.
 const MinAlertCooldownSeconds = 300
 
 // MaxAlertCooldownSeconds is the largest cooldown the int4
@@ -60,10 +59,10 @@ func ValidAlertCooldown(n int) bool {
 //
 // The aggregator's evaluator (internal/pricealerts) reads enabled rows
 // every tick, compares each against the latest closed 1-minute VWAP for
-// the pair, and — respecting Cooldown + LastFiredAt — enqueues a
-// `price.alert` delivery into the customer-webhook queue for the owning
-// account's subscribed webhooks. Owner-scoped by AccountID so one
-// account's alerts never reach another's webhooks.
+// the pair, and — when the condition holds on an armed alert whose cooldown
+// has elapsed — enqueues one `price.alert` delivery per subscribed webhook
+// of the owning account. Owner-scoped by AccountID so one account's alerts
+// never reach another's webhooks.
 type PriceAlert struct {
 	ID        uuid.UUID
 	AccountID uuid.UUID
@@ -93,6 +92,11 @@ type PriceAlert struct {
 	// it has never fired. The evaluator gates re-fires on
 	// now - LastFiredAt >= CooldownSeconds.
 	LastFiredAt time.Time
+
+	// Disarmed is set by a claimed fire and cleared once a fresh price shows
+	// the condition no longer holds, so an alert fires once per crossing
+	// rather than every cooldown while the condition holds.
+	Disarmed bool
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -126,16 +130,18 @@ type PriceAlertStore interface {
 
 	// UpdatePriceAlert persists the mutable fields (base/quote asset,
 	// condition, threshold, cooldown, enabled). AccountID + ID are
-	// immutable. [ErrNotFound] when the row is gone.
+	// immutable. It re-arms the alert when the pair, condition or threshold
+	// changes or a disabled alert is enabled: either is a new rule to watch.
+	// [ErrNotFound] when the row is gone.
 	UpdatePriceAlert(ctx context.Context, a PriceAlert) error
 
 	// DeletePriceAlert removes the row. Idempotent (deleting an absent
 	// id is not an error).
 	DeletePriceAlert(ctx context.Context, id uuid.UUID) error
 
-	// ClaimPriceAlertFire atomically claims this crossing's cooldown
-	// window for the caller: it stamps last_fired_at (and bumps
-	// updated_at) ONLY when the row's own cooldown has elapsed, and
+	// ClaimPriceAlertFire atomically claims this crossing for the caller:
+	// it stamps last_fired_at, disarms the alert (and bumps updated_at)
+	// ONLY when the row is armed and its own cooldown has elapsed, and
 	// reports whether it won.
 	//
 	// The claim has to be conditional in the UPDATE itself because the
@@ -150,9 +156,18 @@ type PriceAlertStore interface {
 	// UPDATEs on the row lock, so the loser re-evaluates the predicate
 	// against the winner's committed row and matches nothing.
 	//
-	// claimed=false means "not yours to deliver": either another
-	// evaluator claimed this window, or the alert was deleted mid-sweep.
-	// Both call for the same thing — skip the fan-out — so they are
-	// deliberately not distinguished.
-	ClaimPriceAlertFire(ctx context.Context, id uuid.UUID, firedAt time.Time) (claimed bool, err error)
+	// a is the snapshot the caller evaluated: the claim also requires the
+	// row to still be enabled with the same pair, condition and threshold.
+	//
+	// claimed=false means "not yours to deliver": another evaluator
+	// claimed this window, or the alert was edited, disabled or deleted
+	// mid-sweep. All call for the same thing — skip the fan-out — so they
+	// are deliberately not distinguished.
+	ClaimPriceAlertFire(ctx context.Context, a PriceAlert, firedAt time.Time) (claimed bool, err error)
+
+	// RearmPriceAlert clears Disarmed after the evaluator saw the condition
+	// stop holding, but only while last_fired_at still equals lastFiredAt,
+	// the fire the caller observed: a newer fire claimed by another evaluator
+	// stays disarmed. rearmed=false is not an error.
+	RearmPriceAlert(ctx context.Context, id uuid.UUID, lastFiredAt time.Time) (rearmed bool, err error)
 }

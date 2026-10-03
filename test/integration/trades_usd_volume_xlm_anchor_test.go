@@ -13,7 +13,7 @@ import (
 )
 
 // TestInsertTrade_L76XLMBaseAnchorPopulatesUSDVolume proves ROADMAP
-// #37 / L7.6 end-to-end: with the FX resolver wired (the r1
+// fce3e2eef / L7.6 end-to-end: with the FX resolver wired (the r1
 // production shape whenever `[trades].usd_pegged_classic_assets` is
 // non-empty), a pure-Soroban SEP-41 trade stored as base=XLM,
 // quote=TOKEN — the orientation [timescale.Store.Volume24hUSDForAsset]'s

@@ -1,5 +1,5 @@
 // Package pricealerts is the aggregator-side evaluator for
-// customer-registered price-threshold alerts (BACKLOG #60, RFP §6).
+// customer-registered price-threshold alerts (RFP §6).
 //
 // The CRUD half (register / list / update / delete an alert) lives on
 // the API binary's dashboard surface
@@ -16,10 +16,12 @@
 // (the closed-bucket read the API price surface uses, which combines
 // both stored orientations, walked across every canonical.AssetAliases
 // spelling of both legs; it has no last-trade or triangulation
-// fallback), and — for alerts whose condition holds and
+// fallback), and — for armed alerts whose condition holds and
 // whose cooldown has elapsed since last_fired_at — enqueues a
 // `price.alert` delivery into the existing customer-webhook queue
 // (`webhook_deliveries`) for the OWNING account's subscribed webhooks.
+// A fire disarms the alert until a fresh price shows the condition
+// cleared, so one crossing notifies once however long the price stays.
 // Delivery (HMAC-sign + POST + retry) is done by the orthogonal
 // internal/customerwebhook worker in the API binary; no change was
 // needed there — the queue is event-type agnostic.
