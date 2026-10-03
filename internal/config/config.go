@@ -30,7 +30,7 @@ type Config struct {
 	Oracle        OracleConfig        `toml:"oracle" doc:"On-chain oracle contract addresses (Reflector, Redstone, Band)."`
 	External      ExternalConfig      `toml:"external" doc:"Off-chain connectors — CEX/FX/aggregator sources that run parallel to the on-chain dispatcher."`
 	Aggregate     AggregateConfig     `toml:"aggregate" doc:"VWAP/TWAP windows + outlier thresholds."`
-	Anomaly       AnomalyConfig       `toml:"anomaly" doc:"Per-asset-class anomaly detection thresholds (Phase 1) + Phase-2 freeze thresholds (per-asset MAD-baseline + multi-factor confidence + source count). Both layers run; the orchestrator AND-of-three-signals rule fires ActionFreeze only when both agree (ADR-0019)."`
+	Anomaly       AnomalyConfig       `toml:"anomaly" doc:"Per-asset-class anomaly detection thresholds (Phase 1) + Phase-2 freeze thresholds (per-asset MAD-baseline + multi-factor confidence + source count). Both layers run; either freezes on its own (Phase 1: class freeze_pct AND source_count<=1; Phase 2: the 3-signal AND) and both share one freeze lifecycle (ADR-0019)."`
 	API           APIConfig           `toml:"api" doc:"Public API serving plane — port, auth mode, rate limits, CDN."`
 	Metadata      MetadataConfig      `toml:"metadata" doc:"Asset metadata overlay — SEP-1 issuer→home-domain map, operator overrides."`
 	Supply        SupplyConfig        `toml:"supply" doc:"Supply pipeline config — SDF reserve list, operator-managed reserve balances (fallback when the LCM AccountEntry observer hasn't yet covered the watched set), watched classic + SEP-41 asset lists, SAC wrappers, and aggregator-refresh cadence. ADR-0011 (XLM) + ADR-0022 (classic) + ADR-0023 (SEP-41)."`
@@ -1301,12 +1301,10 @@ type ProjectorConfig struct {
 // thresholds — coarse safety net for assets without an established
 // baseline) and `internal/aggregate/baseline/` +
 // `internal/aggregate/confidence/` for Phase 2 (per-asset MAD
-// baseline + multi-factor confidence). Both layers run in parallel;
-// the orchestrator's AND-of-three-signals rule (configured below
-// in [Phase2FreezeConfig]) only fires ActionFreeze when Phase 1
-// flags a class-level breach AND Phase 2 confirms the bucket is
-// statistically anomalous AND under-confident AND
-// under-corroborated.
+// baseline + multi-factor confidence). Both layers run in parallel
+// and either can freeze on its own: Phase 1 on a class freeze_pct
+// breach with source_count<=1, Phase 2 on its 3-signal AND
+// ([Phase2FreezeConfig]). Both share one freeze lifecycle.
 type AnomalyConfig struct {
 	// Enabled gates whether anomaly checks run at all. When false,
 	// every bucket is published as-is (no warn / no freeze). Off by
