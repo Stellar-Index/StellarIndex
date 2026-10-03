@@ -311,8 +311,8 @@ echo "=== API-key keyspace walk ===" && ./scripts/ci/lint-apikey-scan.sh
 echo "=== API-key keyspace walk self-test ===" && ./scripts/ci/lint-apikey-scan-test.sh
 echo "=== Unbounded latest-row reads ===" && python3 ./scripts/ci/lint-unbounded-latest-row.py
 echo "=== Unbounded latest-row reads self-test ===" && ./scripts/ci/lint-unbounded-latest-row-test.sh
-echo "=== Healthcheck oneshot start/runtime bound ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout.sh
-echo "=== Healthcheck oneshot start/runtime bound self-test ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout-test.sh
+echo "=== Oneshot unit start bound (no ignored RuntimeMaxSec) ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout.sh
+echo "=== Oneshot unit start bound self-test ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout-test.sh
 echo "=== Deploy-baseline self-test ===" && ./scripts/ci/deploy-baseline-test.sh
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
 echo "=== Production credentials behind an environment gate ===" && python3 ./scripts/ci/lint-deploy-credentials.py
@@ -424,6 +424,7 @@ echo "=== ClickHouse ops-user contract self-test ===" && ./scripts/ops/ch-ops-us
 # caught this. Run it here explicitly.
 echo "=== Changed-file dispatcher self-test ===" && ./scripts/dev/lint-changed-test.sh
 echo "=== Doctor self-test ===" && ./scripts/dev/doctor-test.sh
+echo "=== verify-r1-sync self-test ===" && ./scripts/dev/verify-r1-sync-test.sh
 # GH-775: pins commit-identity-range.sh's new-branch/tag fallback (a
 # detached-HEAD checkout with the branch's own commit also present as a
 # remote-tracking ref) against the exact regression that made the range
@@ -611,6 +612,7 @@ lane_d() { # everything else
     echo "=== Ansible ZFS ARC cap self-test ===" && ./scripts/ci/ansible-zfs-arc-cap-test.sh
     echo "=== Ansible Postgres log size-cap self-test ===" && ./scripts/ci/ansible-pg-logrotate-cap-test.sh
     echo "=== Ansible prometheus port var self-test ===" && ./scripts/ci/ansible-prometheus-port-var-test.sh
+    echo "=== Ansible patroni etcd TLS self-test ===" && ./scripts/ci/ansible-patroni-etcd-tls-test.sh
     echo "=== Ansible node-exporter-collectors install self-test ===" && ./scripts/ci/ansible-node-exporter-collectors-install-test.sh
     echo "=== Ansible Caddy signing-key pipefail self-test ===" && ./scripts/ci/ansible-caddy-key-pipefail-test.sh
     echo "=== Promtail server listen-address self-test ===" && ./scripts/ci/promtail-listen-address-test.sh

@@ -291,6 +291,31 @@ export function NetworkView() {
   );
 }
 
+const isStroops = (s: string | undefined): s is string =>
+  !!s && /^\d+$/.test(s);
+
+// dailyFeeBurn — XLM burned in fees per day: the fee_pool delta from the
+// previous day, less any credit the pool got outside a transaction fee
+// (fee_pool_adjustment, e.g. a protocol upgrade).
+export function dailyFeeBurn(
+  rows: NonNullable<ThroughputResp['buckets']>,
+): { day: string; xlm: number }[] {
+  const out: { day: string; xlm: number }[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const prev = rows[i - 1].fee_pool;
+    const cur = rows[i].fee_pool;
+    if (!isStroops(prev) || !isStroops(cur)) continue;
+    const adj = rows[i].fee_pool_adjustment;
+    const delta =
+      BigInt(cur) -
+      BigInt(prev) -
+      (adj && /^-?\d+$/.test(adj) ? BigInt(adj) : 0n);
+    // Delta in stroops is small (daily fees) — exact in a JS number.
+    out.push({ day: rows[i].day ?? '', xlm: Number(delta) / 1e7 });
+  }
+  return out;
+}
+
 // ChainEconomics — the chain-state series that ride the same
 // /v1/network/throughput scan: daily fee burn (the delta of the
 // cumulative fee_pool between consecutive COMPLETE days — fee_pool
@@ -308,8 +333,6 @@ function ChainEconomics({
   windowDays: number;
 }) {
   const rows = buckets ?? [];
-  const isStroops = (s: string | undefined): s is string =>
-    !!s && /^\d+$/.test(s);
   const dayEpoch = (day: string | undefined) =>
     Math.floor(Date.parse(`${day ?? ''}T00:00:00Z`) / 1000);
 
@@ -317,17 +340,10 @@ function ChainEconomics({
     (b) => isStroops(b.fee_pool) || isStroops(b.total_coins),
   );
 
-  const feeBurn: { time: number; value: number }[] = [];
-  for (let i = 1; i < rows.length; i++) {
-    const prev = rows[i - 1].fee_pool;
-    const cur = rows[i].fee_pool;
-    if (!isStroops(prev) || !isStroops(cur)) continue;
-    // Delta in stroops is small (daily fees) — exact in a JS number.
-    feeBurn.push({
-      time: dayEpoch(rows[i].day),
-      value: Number(BigInt(cur) - BigInt(prev)) / 1e7,
-    });
-  }
+  const feeBurn = dailyFeeBurn(rows).map((b) => ({
+    time: dayEpoch(b.day),
+    value: b.xlm,
+  }));
 
   const totalCoins = rows
     .filter((b) => isStroops(b.total_coins))
@@ -343,7 +359,7 @@ function ChainEconomics({
       <Panel
         headingLevel={2}
         title="Daily fee burn"
-        hint="XLM paid in transaction fees per complete UTC day — the day-over-day delta of the cumulative network fee pool, off each day's last ledger."
+        hint="XLM paid in transaction fees per complete UTC day — the day-over-day delta of the cumulative network fee pool, off each day's last ledger, less any non-fee credit to the pool (a protocol upgrade)."
         source={asExample('/v1/network/throughput', {
           window_days: windowDays,
         })}

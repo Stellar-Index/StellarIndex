@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { Segmented } from '@/components/ui';
-import { API_BASE_URL, asExample } from '@/api/client';
+import { API_BASE_URL, asExample, timeoutSignal } from '@/api/client';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 const LineChart = dynamic(
@@ -44,7 +44,7 @@ export function ConvertChart({ from, to }: { from: string; to: string }) {
     enabled: CURRENT_NETWORK.pricing,
     queryFn: async ({ signal }) => {
       const url = `${API_BASE_URL}/v1/chart?asset=fiat:${encodeURIComponent(from)}&quote=fiat:${encodeURIComponent(to)}&timeframe=${tf}&granularity=${spec.granularity}`;
-      const r = await fetch(url, { signal });
+      const r = await fetch(url, { signal: timeoutSignal(undefined, signal) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const env = (await r.json()) as { data?: { points?: ChartPoint[] } };
       return (env.data?.points ?? [])

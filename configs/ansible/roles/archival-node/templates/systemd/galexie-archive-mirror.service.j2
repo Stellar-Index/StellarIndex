@@ -3,8 +3,9 @@
 # Rendered by Ansible. Runs scripts/ops/galexie-archive-mirror.sh — `mc
 # mirror` of the local galexie-archive bucket to the `{{ galexie_archive_mirror_dest_alias | default('r2-archive') }}`
 # alias, verified with a post-mirror `mc mirror --dry-run`. With no
-# DEST_ENDPOINT configured the run only reports configured=0, which
-# stellarindex_galexie_archive_mirror_stale tickets by host.
+# DEST_ENDPOINT configured the run reports configured=0 and exits 1, so the
+# unit shows failed and stellarindex_galexie_archive_mirror_stale tickets
+# the host.
 
 [Unit]
 Description=Stellar Index — Galexie archive off-site mirror (off-site-backup-plan.md §1)

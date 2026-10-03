@@ -191,7 +191,7 @@ stellarindex-ops supply snapshot -config /etc/stellarindex.toml -dry-run
   live); absent-gauge blind spot rerouted to
   `_never_initialized`. Rule citation →
   `rules.r1/supply-snapshot.yml`; commands use r1 shapes.
-- 2026-04-30 — initial draft alongside #295 (textfile + alerts).
+- 2026-04-30 — initial draft alongside 1f63b0d56 (textfile + alerts).
 - 2026-04-30 — coverage caveat added: this alert is timer-path-
   only and silently doesn't fire on aggregator-resident-only
   deployments. Cross-references supply-pipeline.md for the

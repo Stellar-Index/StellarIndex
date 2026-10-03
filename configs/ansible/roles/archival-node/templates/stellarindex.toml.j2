@@ -147,7 +147,7 @@ reason         = "DAI is a peg asset: Reflector's CEX feed republishes it only w
 # &quote=fiat:USD returned 404 because the aggregator was querying
 # XLM/fiat:USD verbatim (no abstract trades) and the dominant XLM/USD
 # volume on Stellar is quoted in classic Circle USDC, which is
-# intentionally not in the abstract stablecoin map. Per PR #629 the
+# intentionally not in the abstract stablecoin map. Per commit a5cb70575 the
 # aggregator now reads usd_pegged_classic_assets from this config
 # and appends classic source pairs to USD-target expansions.
 # ──────────────────────────────────────────────────────────────────
