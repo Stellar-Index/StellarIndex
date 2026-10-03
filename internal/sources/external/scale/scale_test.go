@@ -201,7 +201,7 @@ func TestInvertScaled(t *testing.T) {
 //
 // Why this matters enough to test at all, given the error is ≤1 ulp: a
 // truncation bias is one-signed. Every inverted rate, on every poll, on all
-// three FX venues that call this, lands at or below the true value and never
+// three venues that call this (ECB, exchangeratesapi, Chainlink), lands at or below the true value and never
 // above it — so it does not average out the way symmetric rounding error
 // does. The cases below are chosen so truncation and half-up give provably
 // different answers, in exact integer arithmetic with no float anywhere.
