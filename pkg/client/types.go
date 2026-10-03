@@ -1351,6 +1351,10 @@ type ChartSeries struct {
 	// Points was withheld because the asset's current market cannot
 	// support a valuation, as on Asset.MarketCapLowLiquidity.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
+	// RowCapTruncated: a Timeframe "all" read hit the 50,000-bucket cap, so
+	// Points is the OLDEST slice and ends at DataEndsAt, short of the present.
+	RowCapTruncated bool       `json:"row_cap_truncated,omitempty"`
+	DataEndsAt      *time.Time `json:"data_ends_at,omitempty"`
 }
 
 // ChangeSummary is the data shape returned by [Client.ChangeSummary]
