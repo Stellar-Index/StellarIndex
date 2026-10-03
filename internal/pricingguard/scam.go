@@ -235,6 +235,69 @@ func (g Gate) PriceWithheld(ctx context.Context, base, quote canonical.Asset, su
 	return g.PriceWithholding(ctx, base, quote, surface) != NotWithheld
 }
 
+// Query names what a [Gate.Judge] call is asked about. The zero Query is
+// a live read that withholds a thin market.
+type Query struct {
+	// PointInTime asks the substance half about At instead of now.
+	PointInTime bool
+	At          time.Time
+	// AdmitThin serves a measured-thin pair instead of withholding it
+	// (the include_thin opt-in). It never releases a flagged issuer.
+	AdmitThin bool
+}
+
+// Verdict is [Gate.Judge]'s answer. Substance is the evidence the
+// substance half measured, nil when nothing was measured.
+type Verdict struct {
+	Withholding
+	Substance *SubstanceEvidence
+	// ThinAdmitted: the pair measured thin and was served under AdmitThin.
+	ThinAdmitted bool
+}
+
+// Fold is the one fold of both halves. It counts the substance verdict
+// once (unmeasured, withheld or thin-admitted) unless the issuer is
+// flagged: a flag wins, carries no evidence and is never admitted. An
+// unmeasured pair fails open.
+func Fold(scamFlagged bool, v SubstanceVerdict, admitThin bool, surface string) Verdict {
+	if scamFlagged {
+		return Verdict{Withholding: WithheldFlaggedIssuer}
+	}
+	switch {
+	case !v.Measured:
+		obs.PriceServeSubstanceUnmeasuredTotal.WithLabelValues(surface).Inc()
+	case !v.Allowed && admitThin:
+		obs.PriceServeThinAdmittedTotal.WithLabelValues(surface, string(v.Floor)).Inc()
+	case !v.Allowed:
+		obs.PriceServeSubstanceWithheldTotal.WithLabelValues(surface, string(v.Floor)).Inc()
+	}
+	out := Verdict{Substance: v.Evidence}
+	switch {
+	case v.Measured && !v.Allowed && admitThin:
+		out.ThinAdmitted = true
+	case v.Measured && !v.Allowed:
+		out.Withholding = WithheldThinMarket
+	}
+	return out
+}
+
+// Judge is the gate's full answer for one pair: which half withheld it,
+// the substance evidence, and whether a thin market was admitted.
+// PriceWithheld, PriceWithholding and PriceWithholdingAt are projections.
+// A flagged pair is not measured, so it never carries evidence.
+func (g Gate) Judge(ctx context.Context, base, quote canonical.Asset, surface string, q Query) Verdict {
+	if g.Scam.WithheldPair(ctx, base, quote, surface) {
+		return Fold(true, SubstanceVerdict{}, false, surface)
+	}
+	var v SubstanceVerdict
+	if q.PointInTime {
+		v = g.Substance.MeasureAt(ctx, base, quote, q.At)
+	} else {
+		v = g.Substance.Measure(ctx, base, quote)
+	}
+	return Fold(false, v, q.AdmitThin, surface)
+}
+
 // Withholding names which gate withheld a pair's price, so a surface
 // can tell its reader the true cause. The zero value is [NotWithheld].
 type Withholding string
@@ -254,7 +317,7 @@ const (
 // true reason, and reporting the pair as merely thin would hand the
 // client the recompute-it-yourself advice the flag exists to refuse.
 func (g Gate) PriceWithholding(ctx context.Context, base, quote canonical.Asset, surface string) Withholding {
-	return WithholdingFor(g.Scam.WithheldPair(ctx, base, quote, surface), g.Substance.Allowed(ctx, base, quote, surface))
+	return g.Judge(ctx, base, quote, surface, Query{}).Withholding
 }
 
 // PriceWithholdingAt is [Gate.PriceWithholding] for a point-in-time read:
@@ -263,7 +326,7 @@ func (g Gate) PriceWithholding(ctx context.Context, base, quote canonical.Asset,
 // directory flag is an owner-level trust decision about the issuer, and
 // it withholds that issuer's history along with its present.
 func (g Gate) PriceWithholdingAt(ctx context.Context, base, quote canonical.Asset, at time.Time, surface string) Withholding {
-	return WithholdingFor(g.Scam.WithheldPair(ctx, base, quote, surface), g.Substance.AllowedAt(ctx, base, quote, at, surface))
+	return g.Judge(ctx, base, quote, surface, Query{PointInTime: true, At: at}).Withholding
 }
 
 // AssetValueWithholding is the gate's answer for an ASSET's USD value
