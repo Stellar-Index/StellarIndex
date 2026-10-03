@@ -34,8 +34,9 @@ const SRC = join(__dirname, '..');
  * good enough to keep a doc comment from reading as code, and a guard
  * that needs a real parser is a guard aimed at the wrong thing.
  */
+// (?<!:) keeps the // in https:// from reading as a line comment.
 function stripComments(body: string): string {
-  return body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  return body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(?<!:)\/\/[^\n]*/g, '');
 }
 
 /**
@@ -50,6 +51,19 @@ function isUnguardedImg(body: string): boolean {
   const imgs = code.match(/<img[\s>]/g)?.length ?? 0;
   const guards = code.match(/\bisSafePublicImageUrl\(/g)?.length ?? 0;
   return imgs > guards;
+}
+
+/**
+ * True if `body` builds more `https://${...}` URLs (a host taken from a
+ * variable, e.g. an on-chain home_domain) than it makes real
+ * isSafeHomeDomain calls. Counted per site, comments stripped, like
+ * isUnguardedImg.
+ */
+function isUnguardedHostHref(body: string): boolean {
+  const code = stripComments(body);
+  const hrefs = code.match(/https?:\/\/\$\{/g)?.length ?? 0;
+  const guards = code.match(/\bisSafeHomeDomain\(/g)?.length ?? 0;
+  return hrefs > guards;
 }
 
 /** Index of the bracket closing the `{` or `(` at `open`, or -1 if unbalanced. */
@@ -188,6 +202,40 @@ describe('trust-surface guards', () => {
       }
     `;
     expect(isUnguardedImg(bothGuarded)).toBe(false);
+  });
+
+  it('every https://${host} link validates the host first via isSafeHomeDomain', () => {
+    // home_domain is attacker-authorable on-chain; a bare https://${domain}
+    // href is a phishing surface. Derived from source so a new site fails
+    // the day it is written.
+    const offenders = sourceFiles()
+      .filter(([, body]) => isUnguardedHostHref(body))
+      .map(([path]) => path)
+      .sort();
+    expect(offenders).toEqual([]);
+  });
+
+  it('the home_domain guard judges each link, not the file', () => {
+    const unguarded = 'const a = <a href={`https://${d}`} />;';
+    expect(isUnguardedHostHref(unguarded)).toBe(true);
+
+    const decoy = `
+      // isSafeHomeDomain(d) is checked upstream
+      const a = <a href={\`https://\${d}\`} />;
+    `;
+    expect(isUnguardedHostHref(decoy)).toBe(true);
+
+    const mixed = `
+      {isSafeHomeDomain(a) && <a href={\`https://\${a}\`} />}
+      <a href={\`https://\${b}/x\`} />
+    `;
+    expect(isUnguardedHostHref(mixed)).toBe(true);
+
+    const guarded = `
+      {isSafeHomeDomain(a) && <a href={\`https://\${a}\`} />}
+      {isSafeHomeDomain(b) && <a href={\`https://\${b}/x\`} />}
+    `;
+    expect(isUnguardedHostHref(guarded)).toBe(false);
   });
 
   it('every JSON-LD dangerouslySetInnerHTML sink escapes via serializeJsonLd (T195)', () => {
