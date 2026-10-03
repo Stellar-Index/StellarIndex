@@ -2559,6 +2559,25 @@ new coverage gap would go unseen even while the count gauge sits at a
 stale 0. Alert: `stellarindex_priceless_coverage_check_stale` (> 30 min,
 three sweep intervals).
 
+### `stellarindex_change_summary_passes_total`
+
+Counter, label `outcome` (`ok` / `partial` / `failed`).
+
+Per-pass outcome of the explorer delta-strip worker
+(`internal/aggregate/changesummary`). `ok` = every entity upserted;
+`partial` = some failed (a pair with no recent trades fails every pass);
+`failed` = no entity upserted, so `change_summary_5m` is going stale.
+
+### `stellarindex_change_summary_last_success_unix`
+
+Gauge, no labels.
+
+Unix seconds of the last change-summary pass that upserted at least one
+entity. Seeded with the worker's start time, so a worker that never
+succeeds goes stale; 0 on binaries that do not run the worker. Alert:
+`stellarindex_change_summary_stale` (> 30 min, `for: 15m`), scoped to the
+aggregator job.
+
 ### `stellarindex_signup_reaper_runs_total`
 
 Counter, label `outcome` (`ok` / `error`).
@@ -4790,6 +4809,13 @@ them absent; this is the only series that can see that.
 
 ## Changelog
 
+- 2026-10-03 — added `stellarindex_change_summary_passes_total` (counter,
+  label `outcome`) and `stellarindex_change_summary_last_success_unix`
+  (gauge), emitted by `internal/aggregate/changesummary`. New
+  `stellarindex_change_summary_stale` alert in
+  `deploy/monitoring/rules/aggregator.yml` +
+  `configs/prometheus/rules.r1/aggregator.yml`, with a runbook and an
+  alerts-catalog row.
 - 2026-09-27 — added `stellarindex_ch_live_sink_read_undercount_total`
   (counter, label `kind`), emitted by `cmd/stellarindex-indexer` from
   both per-ledger read paths. The undercounts it carries were WARN-only
