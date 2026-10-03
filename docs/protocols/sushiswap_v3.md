@@ -115,7 +115,7 @@ decoder identifies nothing — see "Gating" below.
 | factory | `pool_created` | `{fee, pool_address, sender, tick_spacing, token0, token1}` | registry seed (gate + token mapping); emits no row |
 | factory | `wasm_approved`, `pool_upgraded`, `pool_migrated`, `set_protocol_fee` | admin | not claimed |
 | pool | `swap` | `{amount0 i128, amount1 i128, liquidity u128, recipient, sender, sqrt_price_x96 u256, tick i32}` | **`trades`** |
-| pool | `mint`, `burn`, `collect` | position lifecycle | recognized, projects zero rows |
+| pool | `mint`, `burn`, `collect` | position lifecycle | projected to `sushiswap_v3_position_events` |
 | pool | `init`, `upgraded`, `migrated` | pool lifecycle | recognized, projects zero rows |
 
 Whole-history counts (ledgers 61,487,379 → 64,276,390, swept
@@ -229,13 +229,14 @@ Whole-history totals are in the events table above.
 
 ## Scope of the current decoder
 
-`swap` → `trades` is the whole projected surface today. `mint`, `burn`
-and `collect` are the concentrated-liquidity **position** lifecycle:
-they are gated and recognized, and deliberately project zero rows,
-because a V3 position is `(owner, tick_lower, tick_upper)` and wants a
-table of its own rather than being forced into a reserve-shaped
-liquidity row. That table — in the shape of `soroswap_liquidity`, plus
-per-position tick ranges — is the natural next increment.
+`swap` → `trades` and `mint` / `burn` / `collect` →
+`sushiswap_v3_position_events` (migration 0203) are the projected
+surface. A V3 position is `(owner, tick_lower, tick_upper)`, so the
+table carries the tick range, owner and the u128 liquidity and token
+amounts as `NUMERIC`; `collect` has no liquidity delta (NULL). Token
+identities come from the pool registry, and an unmapped pool fails
+closed like a swap. `init`, `upgraded` and `migrated` stay recognized
+and project zero rows.
 
 ## References
 

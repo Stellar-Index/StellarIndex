@@ -151,6 +151,31 @@ func TestGolden_DistributeRewards(t *testing.T) {
 	}
 }
 
+// TestClassifyAny_DistributeRewardsTopic1 pins that only topic[1]=="asset"
+// classifies as distribute_rewards (INV-2280).
+func TestClassifyAny_DistributeRewardsTopic1(t *testing.T) {
+	t.Parallel()
+	const distribute = "AAAADgAAABJkaXN0cmlidXRlX3Jld2FyZHMAAA=="
+	cases := []struct {
+		name   string
+		topic1 string
+		want   action
+	}{
+		{"asset", "AAAADgAAAAVhc3NldAAAAA==", actionDistributeRewards},
+		{"user", "AAAADgAAAAR1c2Vy", actionUnknown},
+		{"other symbol", "AAAADgAAAAdlbmFibGVkAA==", actionUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ev := &events.Event{Topic: []string{distribute, tc.topic1}}
+			if got, _ := classifyAny(ev); got != tc.want {
+				t.Errorf("classifyAny = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestDecoder_WithdrawRewards_EndToEnd feeds the two real field-events
 // through the production Decoder (Matches + Decode), confirming the
 // gated stake contract set is honored and a StakeEvent is emitted only
