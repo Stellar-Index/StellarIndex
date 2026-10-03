@@ -193,6 +193,35 @@ the headline should be measured by location or by ownership decides whether
 $4B is the right target at all. Publishing both, with a holder-concentration
 column, is the option that needs no one to choose in the dark.
 
+**DECIDED — measurement basis and the two policy calls.**
+
+- **Basis: publish both.** The headline is ownership-basis on the classic arm
+  only (issuer/treasury excluded where we can identify it); the contract arm is
+  still total-only (`BasisSEP41TotalOnly`) until the gaps below are closed. A
+  location-basis figure will be shown beside the headline so a reader can
+  reconcile to any third party; it is not yet served. Neither replaces the
+  other. $4B is therefore not a target: the comparable location figure is what
+  we reconcile against, and the gap lines above are explained, not chased.
+- **TPT30 bond line (~$559M): declined.** It is a bond contract with no on-chain
+  tie to its claimed issuer (see the VuMe row); of the real-estate class proper,
+  13 of 15 are scam-flagged and the other 2 are in no directory. Re-open only
+  with a primary-source binding.
+- **Private credit (~$548M): supply served, price withheld.** No price exists;
+  a supply without a price adds $0 and is not valued at par.
+- **Remaining engineering (not a decision):**
+  - Compute and serve a location-basis total (every holder balance, no
+    issuer/treasury exclusion) next to the ownership headline, on the API and
+    the RWA page.
+  - Contract arm (`BasisSEP41TotalOnly`, `internal/supply/sep41.go`): the
+    per-contract exclusion list already exists as `[supply].per_asset_locked_sets`.
+    What is missing: (1) track the SEP-41 admin balance (`set_admin`);
+    `StorageSEP41SupplyReader` returns `AdminBalance=0`
+    (`storage_sep41_reader.go`), which is why the basis is total-only;
+    (2) configure `per_asset_locked_sets` entries for the RWA contracts'
+    issuer/treasury holders, after the `sac_wrappers` observability
+    prerequisite noted at `internal/config/config.go`; or (3) add a
+    holder-concentration column.
+
 ### Tier 2 — real work that does NOT gate the announcement
 
 Named explicitly, because all of them are carried below as if they did:
