@@ -85,6 +85,7 @@ export function ChartPanel({ assetID }: { assetID: string }) {
         height={420}
         liveTip
         volatilityBand
+        sourceOverlay
       />
     </Panel>
   );

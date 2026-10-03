@@ -1487,6 +1487,7 @@ func runCHRebuildEventPass(ctx context.Context, reads chRebuildEventReads, lo, h
 		if err := reads.firehose(ctx, lo, hi, clickhouse.FirehoseExcludeSyms, decodeCHRebuildEvents(firehoseSrcs, contractsOverride, &buf)); err != nil {
 			return nil, fmt.Errorf("ch-rebuild: event stream: %w", err)
 		}
+		buf = append(buf, drainCHRebuildSources(firehoseSrcs)...)
 	}
 	if len(scopedSrcs) > 0 {
 		var ids []string
@@ -1498,8 +1499,19 @@ func runCHRebuildEventPass(ctx context.Context, reads chRebuildEventReads, lo, h
 		if err := reads.scoped(ctx, lo, hi, ids, withOpArgs, decodeCHRebuildEvents(scopedSrcs, contractsOverride, &buf)); err != nil {
 			return nil, fmt.Errorf("ch-rebuild: contract-scoped event stream: %w", err)
 		}
+		buf = append(buf, drainCHRebuildSources(scopedSrcs)...)
 	}
 	return buf, nil
+}
+
+// drainCHRebuildSources flushes correlation groups still open once a stream
+// has ended; no later event exists to emit them.
+func drainCHRebuildSources(srcs []reconSource) []consumer.Event {
+	var out []consumer.Event
+	for _, src := range srcs {
+		out = append(out, dispatcher.Drain(src.dec)...)
+	}
+	return out
 }
 
 // splitCHRebuildEventSources partitions the enabled event-decoder sources into

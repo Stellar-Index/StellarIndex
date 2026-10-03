@@ -100,45 +100,9 @@ account's free-tier limits (1,000 req/min, 1M req/month). Optional
 `name` / `email` fields personalise the account; the email is
 contact-only and never verified.
 
-### Self-service signup — the email-keyed path
-
-No Stellar wallet required. `POST /v1/signup` takes an email and
-returns a usable key immediately (idempotent per email — prefer
-`/v1/register` for machine onboarding):
-
-```sh
-curl -fsSL -X POST https://api.stellarindex.io/v1/signup \
-     -H "Content-Type: application/json" \
-     -d '{"email":"you@example.com","label":"my first key"}'
-```
-
-```json
-{
-  "data": {
-    "plaintext": "sip_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    "key_id": "kid_…",
-    "key_prefix": "sip_xxxxxxxx",
-    "identifier": "signup-3d4f9a2c1e8b7f6d",
-    "tier": "apikey",
-    "rate_limit_per_min": 1000,
-    "email_verification_sent": false
-  },
-  "as_of": "…", "flags": { "...": "..." }
-}
-```
-
-Store `data.plaintext` — it is shown exactly once. Use it on any
-request via `X-API-Key` (or `Authorization: Bearer <key>`):
-
-```sh
-curl -fsSL https://api.stellarindex.io/v1/account/me \
-     -H "X-API-Key: sip_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-```
-
-> If the deployment runs with email-ownership verification enabled
-> (`signup_require_email_verification`), the key is issued pending and
-> must complete the link emailed at signup before it authenticates;
-> the `email_verification_sent` field tells you which mode you're in.
+`POST /v1/signup` (the old email-keyed path) is retired and answers
+`410 Gone`; use `POST /v1/register` above. Keys it minted earlier keep
+working.
 
 ### Account-bound keys (SEP-10) — not available on the hosted API
 

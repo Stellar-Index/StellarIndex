@@ -56,6 +56,7 @@ BASH_CONSUMERS=(
   "$OPS_DIR/completeness-incremental.sh"
   "$OPS_DIR/phaseD-backfill.sh"
   "$OPS_DIR/phaseD-range.sh"
+  "$OPS_DIR/rederive-from.sh"
 )
 ALL_CONSUMERS=("${BASH_CONSUMERS[@]}" "$OPS_DIR/config-assertions.sh" "$TASKS" "$PLAYBOOK")
 

@@ -52,7 +52,7 @@ func TestAccountMovements_StaleWhenArchiveTrailsLake(t *testing.T) {
 // prose half of #1299: account_movements has no completeness verdict, so
 // the note may name the archive boundary but must not call it complete.
 func TestMovementsCoverageNote_DoesNotAssertUnverifiedCompleteness(t *testing.T) {
-	note := movementsCoverageNote(64_400_000, "")
+	note := movementsCoverageNote(64_400_000, "", supplyRange{})
 	if strings.Contains(note, "complete for") {
 		t.Errorf("note %q asserts completeness for an archive no reconcile verifies", note)
 	}

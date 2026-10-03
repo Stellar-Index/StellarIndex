@@ -191,7 +191,7 @@ func TestXLMBaseRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	if !chunkCompressed(t) {
 		t.Fatal("fixture: the day's chunk did not compress")
 	}
-	const policySQL = `SELECT scheduled FROM timescaledb_information.jobs WHERE proc_name = 'policy_compression' AND hypertable_name = 'trades'`
+	const policySQL = `SELECT scheduled FROM timescaledb_information.jobs WHERE proc_name = 'trades_compression_policy'`
 	policyScheduled := func(t *testing.T) bool {
 		t.Helper()
 		var scheduled bool
@@ -369,7 +369,7 @@ func TestXLMBaseRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	_ = holder.Close()
 
 	// ── 5. a policy already unscheduled: refused without the flag ─────
-	exec(t, `SELECT alter_job(job_id, scheduled => false) FROM timescaledb_information.jobs WHERE proc_name = 'policy_compression' AND hypertable_name = 'trades'`)
+	exec(t, `SELECT alter_job(job_id, scheduled => false) FROM timescaledb_information.jobs WHERE proc_name = 'trades_compression_policy'`)
 	if policyScheduled(t) {
 		t.Fatal("fixture: the policy did not unschedule")
 	}
@@ -407,7 +407,11 @@ func TestXLMBaseRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	exec(t, `UPDATE trades SET usd_volume = 0.00372265, derive_generation = 0 WHERE source='sdex' AND ledger=$1`, ledger["quote-side wrong"])
 	exec(t, `SELECT compress_chunk(c, true) FROM show_chunks('trades') c`)
 	before = snapshot(t)
-	exec(t, `SELECT remove_compression_policy('trades')`)
+	var jobSchedule, jobConfig string
+	if err := store.DB().QueryRowContext(ctx, `SELECT schedule_interval::text, config::text FROM timescaledb_information.jobs WHERE proc_name = 'trades_compression_policy'`).Scan(&jobSchedule, &jobConfig); err != nil {
+		t.Fatalf("read the trades compression job: %v", err)
+	}
+	exec(t, `SELECT delete_job(job_id) FROM timescaledb_information.jobs WHERE proc_name = 'trades_compression_policy'`)
 	out, err = captureStdout(t, func() error { return chops.Run(append(args, "-write")) })
 	if err == nil || !strings.Contains(err.Error(), "no compression policy job on trades") || !strings.Contains(err.Error(), "refuses to start") {
 		t.Fatalf("without a compression policy: err = %v, want a refusal naming it\n%s", err, out)
@@ -416,7 +420,7 @@ func TestXLMBaseRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	if !chunkCompressed(t) {
 		t.Fatal("the refused run decompressed the chunk")
 	}
-	exec(t, `SELECT add_compression_policy('trades', INTERVAL '7 days')`)
+	exec(t, `SELECT add_job('trades_compression_policy', $1::interval, config => $2::jsonb)`, jobSchedule, jobConfig)
 	if !policyScheduled(t) {
 		t.Fatal("fixture: the re-added compression policy is not scheduled")
 	}
@@ -592,7 +596,7 @@ func TestExactTierRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 		t.Helper()
 		var scheduled bool
 		if err := store.DB().QueryRowContext(ctx,
-			`SELECT scheduled FROM timescaledb_information.jobs WHERE proc_name = 'policy_compression' AND hypertable_name = 'trades'`,
+			`SELECT scheduled FROM timescaledb_information.jobs WHERE proc_name = 'trades_compression_policy'`,
 		).Scan(&scheduled); err != nil {
 			t.Fatalf("read the trades compression policy: %v", err)
 		}

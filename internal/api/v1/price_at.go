@@ -115,7 +115,24 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	snap, flags, found, withheld, err := s.resolvePriceAt(ctx, asset, quote, ts)
+	offCtx, off := WithThinAdmission(ctx, asset, quote, false)
+	snap, flags, found, withheld, err := s.resolvePriceAt(offCtx, asset, quote, ts)
+	if err == nil && !found && withheld != nil && includeThinRequested(r) && off.ThinWithheld(priceWithheldReason(withheld)) {
+		onCtx, on := WithThinAdmission(ctx, asset, quote, true)
+		thinSnap, thinFlags, thinFound, _, thinErr := s.resolvePriceAt(onCtx, asset, quote, ts)
+		switch {
+		case thinErr != nil:
+			s.logger.Warn("include_thin second pass failed; serving the withheld verdict",
+				"err", thinErr, "asset", asset.String(), "quote", quote.String())
+		case thinFound:
+			if on.Admitted() && thinSnap.Price != "" {
+				thinFlags.ThinMarket = true
+				thinSnap.Substance = substanceEvidenceWire(on.Evidence())
+			}
+			writeJSON(w, thinSnap, thinFlags)
+			return
+		}
+	}
 	if err != nil {
 		s.writePriceAtReadFailure(ctx, w, r, "/v1/price/at", err)
 		return
@@ -130,7 +147,8 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 		// type so integrators can branch, same contract as /v1/price and
 		// /v1/price/changes (see ErrPriceWithheld), worded for the gate
 		// that fired.
-		writePriceWithheldProblem(w, r, asset, quote, priceWithheldReason(withheld))
+		reason := priceWithheldReason(withheld)
+		writePriceWithheldProblemEvidence(w, r, asset, quote, reason, thinEvidenceFor(off, reason))
 		return
 	}
 	// The 404 below carries the same ambiguity the series surfaces have
@@ -153,7 +171,7 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 		"https://api.stellarindex.io/errors/price-not-found",
 		"No price at requested time", http.StatusNotFound,
 		"no closed bucket within "+priceAtMaxLookback.String()+" before "+ts.Format(time.RFC3339)+" for "+asset.String()+" / "+quote.String(),
-		coverageFrom, outside)
+		coverageFrom, outside, nil, "")
 }
 
 // resolvePriceAt is the direct alias walk, then the stablecoin
@@ -168,7 +186,7 @@ func (s *Server) resolvePriceAt(
 	}
 	fbSnap, fbFound, fbWithheld, err := s.lookupPriceAtStablecoinFallback(ctx, asset, quote, ts)
 	if err != nil || fbFound {
-		return fbSnap, Flags{Triangulated: true}, fbFound, nil, err
+		return fbSnap, Flags{Triangulated: true, ProxyDeviation: fbFound && s.proxyDeviation(ctx, ts)}, fbFound, nil, err
 	}
 	if withheld == nil {
 		withheld = fbWithheld
@@ -232,7 +250,7 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 // lookupPriceAtStablecoinFallback is the CAGG sibling of the
 // raw-trades stablecoin fallback (vwap.go's
 // tradesInRangeWithStablecoinFallback / chart.go's
-// chartStablecoinFallback) — the deferred half of the #1217 family.
+// chartStablecoinFallback) — the deferred half of the 6505934b5 family.
 // The 1m VWAP CAGG keys buckets by the REAL stored quote asset, so a
 // historical X/fiat:USD lookup misses unless something traded
 // directly in fiat:USD at that instant. When the literal + alias

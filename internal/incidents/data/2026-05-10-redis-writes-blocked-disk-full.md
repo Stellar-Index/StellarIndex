@@ -64,7 +64,7 @@ were unaffected once the cache was rebuilt; the flagship
 `?asset=native&quote=fiat:USD` query that depends on the stablecoin
 proxy fallback would have stayed degraded until a future binary
 rebuild deploys (rc.38 ships the proxy fix that was implemented
-during the incident, fixed in #1217).
+during the incident, fixed in 6505934b5).
 
 ## Root cause + remediation
 

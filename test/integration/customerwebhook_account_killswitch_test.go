@@ -387,7 +387,7 @@ func freshKillSwitchWebhook(
 		AccountID:  acct.ID,
 		Name:       "hook-" + suffix,
 		URL:        url,
-		SecretHash: secret[:],
+		SigningKey: secret[:],
 		Events:     []string{string(killSwitchEvent)},
 		Enabled:    true,
 	}, 10)

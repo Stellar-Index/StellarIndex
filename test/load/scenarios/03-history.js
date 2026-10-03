@@ -2,7 +2,7 @@
 //
 // What it stresses: the windowed history endpoint (CAGG-served,
 // expected p95 < 200 ms) and the heavier since-inception query
-// (CAGG-served per PR #195, expected p95 < 1 s).
+// (CAGG-served per commit 2ecc50fbd, expected p95 < 1 s).
 //
 // 80 % of iterations hit the windowed path (real wallet usage);
 // 20 % hit since-inception (analytics dashboards). Pass criteria

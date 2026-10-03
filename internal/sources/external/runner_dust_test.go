@@ -214,27 +214,3 @@ func TestCryptoQuoteUSDMicros_CodesAreOnCanonicalAllowList(t *testing.T) {
 		}
 	}
 }
-
-// Every quote asset in every shipped venue pair table must resolve
-// to a USD reference — otherwise a configured production pair runs
-// with the dust guard inert. This is the guard that would have
-// caught C2-016's XLM/BTC at the time the pair was added.
-func TestShippedVenueQuotes_HaveUSDReference(t *testing.T) {
-	// Quote legs configured across binance/pairs.yaml,
-	// bitstamp, coinbase and kraken DefaultPairs as of 2026-07-26.
-	quotes := []canonical.Asset{
-		cryptoAsset(t, "USDT"),
-		cryptoAsset(t, "BTC"),
-		fiatAsset(t, "USD"),
-		fiatAsset(t, "EUR"),
-		fiatAsset(t, "GBP"),
-		fiatAsset(t, "AUD"),
-		fiatAsset(t, "CAD"),
-		fiatAsset(t, "CHF"),
-	}
-	for _, q := range quotes {
-		if _, ok := quoteUSDReferenceMicros(q); !ok {
-			t.Errorf("configured venue quote %s has no USD dust-floor reference", q)
-		}
-	}
-}

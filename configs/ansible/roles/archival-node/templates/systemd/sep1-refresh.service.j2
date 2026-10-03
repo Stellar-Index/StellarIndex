@@ -2,7 +2,7 @@
 #
 # Rendered by Ansible. Resolves each issuer's home_domain stellar.toml and
 # writes org_name + org_verified back to issuers.sep1_payload (bidirectional
-# verification, #46 / rc.147). Failed fetches bump sep1_resolved_at so the
+# verification, rc.147). Failed fetches bump sep1_resolved_at so the
 # dead-domain issuers don't clog the front of the refresh queue, and advance
 # the per-issuer retry ladder (migration 0159) so they stop consuming the
 # budget every single day.

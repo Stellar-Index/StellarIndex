@@ -42,7 +42,7 @@ func newPositionsCacheHandler(reader PositionsReader) (*Handler, *writeCapture) 
 		captured.asOf = time.Time{}
 		w.WriteHeader(http.StatusOK)
 	}
-	h.WriteJSONAt = func(w http.ResponseWriter, _ any, stale bool, asOf time.Time) {
+	h.WriteJSONAt = func(w http.ResponseWriter, _ any, stale, _ bool, asOf time.Time) {
 		captured.calls++
 		captured.stale = stale
 		captured.asOf = asOf

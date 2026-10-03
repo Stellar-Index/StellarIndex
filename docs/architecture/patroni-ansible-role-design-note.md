@@ -52,7 +52,7 @@ and on-call has to walk Mitigation §B (manual replica
 promotion). Time difference: ~60 s vs ~15 min, with the manual
 path being error-prone under pressure.
 
-Closing #72's Patroni piece is the highest-leverage single
+Closing Task #72's Patroni piece is the highest-leverage single
 delivery in the launch-readiness set.
 
 ## What's already decided in ha-plan §3.3
@@ -91,7 +91,7 @@ shape; the choices above are inputs, not outputs.
 - Add a one-shot `patroni-bootstrap-restore` task for the
   initial-from-pgBackRest bring-up on a fresh cluster.
 
-**Out of scope** (separate sub-roles of #72 or future tasks):
+**Out of scope** (separate sub-roles of Task #72 or future tasks):
 - PgBouncer pair + keepalived VIP — separate `pgbouncer` role.
 - pgBackRest setup (already partially in `archival-node` role).
 - Postgres tuning beyond what Patroni's bootstrap uses (handled
@@ -415,7 +415,7 @@ Coverage matrix #11 (Patroni) flips ✅.
 The matrix's "~1 week" estimate for Task #72 was for *all five*
 roles. Patroni alone is ~3-4 days. The other four (Redis
 Sentinel, HAProxy, Prometheus stack, Loki) are each smaller
-(~1-1.5 days) so the full #72 lands in ~1.5 weeks total —
+(~1-1.5 days) so the full Task #72 lands in ~1.5 weeks total —
 slightly over the original 1-week estimate.
 
 ## Implementation PR shape (suggested)
@@ -431,7 +431,7 @@ templates + docs. Sub-commits:
 6. `feat(ansible): firewall + node_exporter wiring`
 7. `docs: timescale-primary-down runbook updates for Patroni`
 8. `docs: sev1 drill scenario updates + ha-plan status flip`
-9. `chore: CHANGELOG + Coverage matrix #72 row partial close`
+9. `chore: CHANGELOG + Coverage matrix Task #72 row partial close`
 
 CI runs once. Adds a Vagrant-based smoke test under
 `test/ansible/patroni/` so the role's bootstrap sequence is
@@ -454,7 +454,7 @@ verifiable without a real cluster.
    capacity for 2 more etcd-only VMs.
 
 4. **PgBouncer-side health checks and routing**: should the
-   PgBouncer role (separate sub-role of #72) consume Patroni's
+   PgBouncer role (separate sub-role of Task #72) consume Patroni's
    `/leader` REST endpoint to route writes to the current
    primary, or rely on the keepalived VIP? Patroni-aware
    routing is more robust; keepalived is simpler. Recommend

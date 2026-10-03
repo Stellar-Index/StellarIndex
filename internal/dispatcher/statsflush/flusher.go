@@ -93,6 +93,7 @@ type dispatcherObsCounters struct {
 	TxEventReadErrors     int
 	EntryMetaUnsupported  int
 	EvictedKeysUnreadable int
+	LedgerUpgradeEntries  int
 	// UncorroboratedCalls is per-source (W8.4a oracle-forgery rejections
 	// can hit any oracle-class ContractCallDecoder), unlike its scalar
 	// siblings above. Same obsLast-not-f.last reasoning applies.
@@ -271,6 +272,11 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 		obs.DispatcherEvictedKeysUnreadableTotal.Add(float64(delta))
 	}
 	f.obsLast.EvictedKeysUnreadable = current.EvictedKeysUnreadable
+
+	if delta := current.LedgerUpgradeEntries - f.obsLast.LedgerUpgradeEntries; delta > 0 {
+		obs.DispatcherLedgerUpgradeEntriesTotal.Add(float64(delta))
+	}
+	f.obsLast.LedgerUpgradeEntries = current.LedgerUpgradeEntries
 
 	// UncorroboratedCalls (W8.4a): a call an oracle decoder refused to
 	// corroborate is a security signal (rejected forgery, or a

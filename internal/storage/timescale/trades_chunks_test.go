@@ -398,9 +398,8 @@ func TestTradesCompressionPolicy(t *testing.T) {
 	stmt := conn.only(t)
 	for _, want := range []string{
 		"timescaledb_information.jobs",
-		"proc_name = 'policy_compression'",
-		"hypertable_schema = current_schema()",
-		"hypertable_name = 'trades'",
+		"proc_schema = current_schema()",
+		"proc_name = 'trades_compression_policy'",
 		"config->>'compress_after'",
 	} {
 		if !strings.Contains(stmt.sql, want) {

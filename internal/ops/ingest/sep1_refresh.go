@@ -550,6 +550,13 @@ func marshalSep1Payload(sep *metadata.SEP1, orgVerified bool) ([]byte, error) {
 			"AnchorAsset":     c.AnchorAsset,
 			"AnchorAssetType": c.AnchorAssetType,
 			"Status":          c.Status,
+			// nil marshals to null, which reads back as "not declared".
+			"IsAssetAnchored":        c.IsAssetAnchored,
+			"AttestationOfReserve":   c.AttestationOfReserve,
+			"RedemptionInstructions": c.RedemptionInstructions,
+			"Regulated":              c.Regulated,
+			"ApprovalServer":         c.ApprovalServer,
+			"ApprovalCriteria":       c.ApprovalCriteria,
 		})
 	}
 	out := map[string]any{
