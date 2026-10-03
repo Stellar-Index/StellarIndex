@@ -626,7 +626,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// resume from and the source re-verifies from genesis (CS-095). Outside
 		// -pass it is the existing global max(genesis, -from) incremental floor
 		// — byte-for-byte unchanged.
-		projFrom := projectionFloor(genesis, *pass, priorProj[src.name], priorWatermark[src.name], *fromLedger)
+		projFrom := sourceProjectionFloor(src, *pass, priorProj[src.name], priorWatermark[src.name], *fromLedger)
 		// A pending replay-rewind window overrides the incremental floor:
 		// the replay rewrote served rows below the watermark, so the range
 		// MUST be re-reconciled before any claim — carried or fresh — may
@@ -843,7 +843,7 @@ func orderForPass(catalogue []reconSource, prior map[string]priorProjection, pri
 	var fromGenesis, censusFromGenesis []reconSource
 	for _, src := range catalogue {
 		switch {
-		case projectionFloor(src.genesis, true, prior[src.name], priorWatermark[src.name], 0) > src.genesis:
+		case sourceProjectionFloor(src, true, prior[src.name], priorWatermark[src.name], 0) > src.genesis:
 			ordered = append(ordered, src)
 		case src.census:
 			censusFromGenesis = append(censusFromGenesis, src)
@@ -915,6 +915,17 @@ func projectionFloor(genesis uint32, pass bool, prior priorProjection, priorWate
 		return uint32(fromLedger) //nolint:gosec // ledger seq fits uint32
 	}
 	return genesis
+}
+
+// sourceProjectionFloor is projectionFloor for one catalogue source. In -pass
+// mode a genesis-claimed source whose clean prior verdict only covered from
+// above genesis re-verifies from genesis now: projectionClaim would refuse to
+// carry that prior anyway, so resuming at the watermark only buys a false.
+func sourceProjectionFloor(src reconSource, pass bool, prior priorProjection, priorWatermark uint32, fromLedger uint) uint32 {
+	if pass && src.servedWindowReason == "" && prior.verifiedFrom > src.genesis {
+		return src.genesis
+	}
+	return projectionFloor(src.genesis, pass, prior, priorWatermark, fromLedger)
 }
 
 // validatePassFlags fails CLOSED when -pass is combined with the per-source /
@@ -1245,10 +1256,10 @@ func targetScope(servedMin uint32, haveServedRows bool, genesis, runFrom, hi uin
 	return projectionScope{From: lo, To: hi}
 }
 
-// projectionScopes resolves every target's reconcile scope against the served
-// tier, and returns (a) the scopes, parallel to src.targets, (b) servedFrom —
-// the lowest ledger the served tier holds for ANY of this source's targets,
-// i.e. the full range the served axis claims to be faithful over — and (c)
+// projectionScopes resolves every target's reconcile scope (scopesFromServed)
+// and returns (a) the scopes, parallel to src.targets, (b) servedFrom —
+// the bottom of the full range the served axis claims to be faithful over
+// (genesis, or the lowest served row of a windowed source) — and (c)
 // runFrom, where THIS run's reconcile actually starts. servedFrom < runFrom is
 // exactly the "-from skipped a range" case projectionClaim gates.
 //
@@ -1258,24 +1269,38 @@ func projectionScopes(ctx context.Context, store *timescale.Store, src reconSour
 	if len(src.targets) == 0 {
 		return nil, nil, genesis, genesis, nil
 	}
-	scopes = make([]projectionScope, len(src.targets))
 	servedMins = make([]servedFloor, len(src.targets))
-	servedFrom, runLo := hi, hi
 	for i, tgt := range src.targets {
 		minL, ok, err := store.MinLedger(ctx, tgt.table, "ledger", tgt.whereFilter, genesis, hi)
 		if err != nil {
 			return nil, nil, 0, 0, fmt.Errorf("%s min served ledger: %w", tgt.table, err)
 		}
 		servedMins[i] = servedFloor{min: minL, present: ok}
-		if served := targetScope(minL, ok, genesis, 0, hi).From; served < servedFrom {
+	}
+	scopes, servedFrom, runLo := scopesFromServed(src, servedMins, genesis, runFrom, hi)
+	return scopes, servedMins, servedFrom, runLo, nil
+}
+
+// scopesFromServed is the pure half of projectionScopes. A source without a
+// servedWindowReason scopes every target from genesis: its served tier claims
+// genesis-to-tip, so a prefix that was never projected must reconcile as
+// expected>0 vs served=0 instead of moving the floor up past it.
+func scopesFromServed(src reconSource, servedMins []servedFloor, genesis, runFrom, hi uint32) (scopes []projectionScope, servedFrom, runFromOut uint32) {
+	scopes = make([]projectionScope, len(servedMins))
+	servedFrom, runLo := hi, hi
+	for i, sm := range servedMins {
+		if src.servedWindowReason == "" {
+			sm = servedFloor{min: genesis, present: true}
+		}
+		if served := targetScope(sm.min, sm.present, genesis, 0, hi).From; served < servedFrom {
 			servedFrom = served
 		}
-		scopes[i] = targetScope(minL, ok, genesis, runFrom, hi)
+		scopes[i] = targetScope(sm.min, sm.present, genesis, runFrom, hi)
 		if scopes[i].From < runLo {
 			runLo = scopes[i].From
 		}
 	}
-	return scopes, servedMins, servedFrom, runLo, nil
+	return scopes, servedFrom, runLo
 }
 
 // servedFloor is one target's live bottom edge: `MIN(ledger)` over the
@@ -1309,15 +1334,15 @@ type servedFloor struct {
 // row below the floor is gone — and is reported as such rather than skipped.
 func detectFloorLoss(src reconSource, servedMins []servedFloor, floors map[string]timescale.CompletenessTargetFloor) []string {
 	var out []string
-	for i, tgt := range src.targets {
-		if i >= len(servedMins) {
+	for i, sm := range servedMins {
+		if i >= len(src.targets) {
 			break
 		}
+		tgt := src.targets[i]
 		prior, ok := floors[timescale.TargetFloorKey(src.name, tgt.table, tgt.whereFilter)]
 		if !ok {
 			continue // no floor recorded yet — nothing to compare against
 		}
-		sm := servedMins[i]
 		if !sm.present {
 			out = append(out, fmt.Sprintf(
 				"projection: %s holds NO rows but was previously verified from ledger %d — "+
@@ -1339,9 +1364,8 @@ func detectFloorLoss(src reconSource, servedMins []servedFloor, floors map[strin
 // floorsToRecord is what a clean run has EVIDENCE for, per target — the pure
 // half of recordFloors.
 //
-// It records scopes[i].From — the ledger the reconcile genuinely started at —
-// NOT the target's raw MIN(ledger), and ONLY when that scope actually reached
-// the target's true bottom edge (scopes[i].From <= servedMins[i].min). A
+// It records the target's live MIN(ledger), and ONLY when the reconcile scope
+// actually reached that bottom edge (scopes[i].From <= servedMins[i].min). A
 // narrowed `-from`/incremental run (projectionFloor resuming from a prior
 // watermark) clips the scope ABOVE the served tier's real minimum, so this
 // run has no evidence about the range below the clip: recording
@@ -1383,11 +1407,13 @@ func floorsToRecord(src reconSource, scopes []projectionScope, servedMins []serv
 			// it cannot bank a floor there.
 			continue
 		}
+		// The floor is the target's live bottom edge, not a genesis-floored
+		// scope start: detectFloorLoss reads MIN(ledger) > floor as loss.
 		out = append(out, timescale.CompletenessTargetFloor{
 			Source:       src.name,
 			Table:        tgt.table,
 			Filter:       tgt.whereFilter,
-			VerifiedFrom: from,
+			VerifiedFrom: sm.min,
 		})
 	}
 	return out
@@ -1445,6 +1471,9 @@ type priorProjection struct {
 	known bool
 	ok    bool
 	tip   uint32
+	// verifiedFrom is the prior verdict's projection_verified_from; 0 = not
+	// recorded. A carry may only cover ground at or above it.
+	verifiedFrom uint32
 }
 
 // buildPriorVerdicts turns the last published snapshots into the per-axis
@@ -1475,7 +1504,7 @@ func buildPriorVerdicts(snaps []timescale.CompletenessSnapshot) (priorProj, prio
 	// the same value the per-source wrapper read as its -from.
 	priorWatermark = make(map[string]uint32, len(snaps))
 	for _, s := range snaps {
-		priorProj[s.Source] = priorProjection{known: true, ok: s.ProjectionOK, tip: s.Watermark}
+		priorProj[s.Source] = priorProjection{known: true, ok: s.ProjectionOK, tip: s.Watermark, verifiedFrom: s.ProjectionVerifiedFrom}
 		priorWatermark[s.Source] = s.Watermark
 		// C4-057: the SUBSTRATE axis needs the same prior-verdict input the
 		// projection axis has had since INV-5, for exactly the same reason —
@@ -1511,7 +1540,8 @@ func buildPriorVerdicts(snaps []timescale.CompletenessSnapshot) (priorProj, prio
 //     failing verdict is ever cleared — deliberately, by a full re-verify.
 //  3. A partial (incremental) run may CARRY FORWARD a prior clean verdict for
 //     the prefix it skipped, but only if that prior verdict is contiguous with
-//     this run's window (prior.tip+1 >= runFrom). Confirm, never upgrade.
+//     this run's window (prior.tip+1 >= runFrom) and reached down to this
+//     run's servedFrom (prior.verifiedFrom <= servedFrom). Confirm, never upgrade.
 //  4. Anything else — no prior verdict, a FAILING prior verdict, or a stale
 //     prior that leaves an unverified band — publishes false.
 //
@@ -1535,6 +1565,8 @@ func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail st
 		return false, fmt.Sprintf("projection: verified only [%d,%d]; %s was NOT reconciled by this run and the prior verdict's projection was FAILING — refusing to upgrade without evidence (re-run without -from)", runFrom, hi, skipped)
 	case runFrom > prior.tip+1:
 		return false, fmt.Sprintf("projection: verified only [%d,%d]; the prior clean verdict only reached tip=%d, leaving [%d,%d] verified by nobody — not claiming it (re-run without -from)", runFrom, hi, prior.tip, prior.tip+1, runFrom-1)
+	case prior.verifiedFrom > servedFrom:
+		return false, fmt.Sprintf("projection: verified only [%d,%d]; the prior clean verdict only covered from ledger %d, leaving [%d,%d] verified by nobody — not claiming it (re-run without -from)", runFrom, hi, prior.verifiedFrom, servedFrom, prior.verifiedFrom-1)
 	default:
 		return true, fmt.Sprintf("projection: verified [%d,%d]; %s carried from the prior clean verdict (tip=%d), not re-verified this run", runFrom, hi, skipped, prior.tip)
 	}

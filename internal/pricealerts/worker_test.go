@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math/big"
 	"sync"
 	"testing"
 	"time"
@@ -41,6 +42,9 @@ type fakeAlertStore struct {
 	// RearmPriceAlert calls that cleared it.
 	dbDisarmed map[uuid.UUID]bool
 	rearms     int
+	// dbRule is the authoritative rule when an edit committed after the
+	// sweep's snapshot; absent = the snapshot is current.
+	dbRule map[uuid.UUID]platform.PriceAlert
 }
 
 func (s *fakeAlertStore) ListEnabledPriceAlerts(context.Context) ([]platform.PriceAlert, error) {
@@ -60,14 +64,19 @@ func (s *fakeAlertStore) ListEnabledPriceAlerts(context.Context) ([]platform.Pri
 }
 
 // ClaimPriceAlertFire models the conditional UPDATE, predicate and all:
-// it claims only when the AUTHORITATIVE row (dbLastFired) says the
-// cooldown has elapsed, never when the caller's snapshot does.
-func (s *fakeAlertStore) ClaimPriceAlertFire(_ context.Context, id uuid.UUID, firedAt time.Time) (bool, error) {
+// it claims only when the AUTHORITATIVE row (dbLastFired, dbRule) says the
+// cooldown has elapsed and the rule is unchanged, never when the caller's
+// snapshot does.
+func (s *fakeAlertStore) ClaimPriceAlertFire(_ context.Context, snap platform.PriceAlert, firedAt time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.claimErrN > 0 {
 		s.claimErrN--
 		return false, s.claimErr
+	}
+	id := snap.ID
+	if cur, ok := s.dbRule[id]; ok && !sameRule(cur, snap) {
+		return false, nil
 	}
 	cooldown := 0
 	for _, a := range s.enabled {
@@ -120,6 +129,15 @@ func (s *fakeAlertStore) RearmPriceAlert(_ context.Context, id uuid.UUID, lastFi
 		}
 	}
 	return true, nil
+}
+
+// sameRule mirrors the claim's rule predicate; thresholds compare as
+// NUMERIC values, so "0.15" equals "0.150".
+func sameRule(a, b platform.PriceAlert) bool {
+	ta, okA := new(big.Rat).SetString(a.Threshold)
+	tb, okB := new(big.Rat).SetString(b.Threshold)
+	return a.Enabled && okA && okB && ta.Cmp(tb) == 0 &&
+		a.BaseAsset == b.BaseAsset && a.QuoteAsset == b.QuoteAsset && a.Condition == b.Condition
 }
 
 type fakeWebhooks struct {
@@ -580,6 +598,43 @@ func TestSweep_CrossingAlreadyClaimedByAnotherEvaluator_NoFanOut(t *testing.T) {
 	// forward on every tick.
 	if got := alerts.dbLastFired[alert.ID]; !got.Equal(now.Add(-time.Second)) {
 		t.Errorf("last_fired_at = %v, want %v — a refused claim must not stamp the row", got, now.Add(-time.Second))
+	}
+}
+
+// TestSweep_RuleEditedMidSweep_NoFanOut pins the claim to the rule the
+// evaluator compared: the owner raised the threshold to 0.30 after the
+// sweep's snapshot (0.15) was read, so a 0.20 price must not notify.
+func TestSweep_RuleEditedMidSweep_NoFanOut(t *testing.T) {
+	acct := uuid.New()
+	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	alert := platform.PriceAlert{
+		ID: uuid.New(), AccountID: acct,
+		BaseAsset: "native", QuoteAsset: "fiat:USD",
+		Condition: platform.AlertAbove, Threshold: "0.15", Enabled: true,
+	}
+	edited := alert
+	edited.Threshold = "0.30"
+	disabled := alert
+	disabled.Enabled = false
+	for name, cur := range map[string]platform.PriceAlert{"threshold raised": edited, "disabled": disabled} {
+		t.Run(name, func(t *testing.T) {
+			alerts := &fakeAlertStore{
+				enabled: []platform.PriceAlert{alert},
+				dbRule:  map[uuid.UUID]platform.PriceAlert{alert.ID: cur},
+			}
+			hooks := &fakeWebhooks{byAcct: map[uuid.UUID][]platform.CustomerWebhook{
+				acct: {priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))},
+			}}
+			prices := fakePrices{price: "0.20", bucket: now, ok: true}
+			New(alerts, hooks, prices, Options{
+				Interval: time.Second, Logger: quietLogger(), Clock: func() time.Time { return now },
+			}).Sweep(context.Background())
+
+			if len(hooks.enqueued) != 0 || len(alerts.firedIDs) != 0 {
+				t.Errorf("enqueued %d, claimed %d; want 0 and 0 — the row no longer holds the rule this sweep compared",
+					len(hooks.enqueued), len(alerts.firedIDs))
+			}
+		})
 	}
 }
 

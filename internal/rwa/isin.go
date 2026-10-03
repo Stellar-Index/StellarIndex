@@ -75,14 +75,14 @@ func IsISIN(s string) bool {
 	return (10-sum%10)%10 == digits[len(digits)-1]
 }
 
-// NormalizeISIN returns the upper-case form of a well-formed ISIN, or ""
-// when s is not one.
-func NormalizeISIN(s string) string {
-	n, ok := upperASCII12(s)
-	if !ok || !IsISIN(n) {
-		return ""
+// CanonicalISIN returns s in the trimmed, upper-case form every ISIN
+// comparison keys on, and whether it is a well-formed ISIN at all.
+func CanonicalISIN(s string) (string, bool) {
+	u, ok := upperASCII12(s)
+	if !ok || !IsISIN(u) {
+		return "", false
 	}
-	return n
+	return u, true
 }
 
 // upperASCII12 trims s and upper-cases ASCII letters only, reporting
