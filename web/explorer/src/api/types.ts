@@ -6128,9 +6128,12 @@ export interface components {
              *       - shares: an exact current count of a protocol's own
              *         share/LP token, minted/burned 1:1 with the summed events
              *         (Blend Backstop, Phoenix stake, DeFindex vault shares).
-             *       - stateful_current: the protocol's own most-recently
-             *         PUBLISHED figure (sorocredit's latest statement amount),
-             *         not a delta sum this endpoint computed.
+             *       - stateful_current_unconfirmed_unit: the protocol's own
+             *         most-recently PUBLISHED figure (sorocredit's latest
+             *         statement amount), not a delta sum this endpoint computed.
+             *         The statement's unit/scale is not contract-source-confirmed:
+             *         the raw on-chain integer is served unscaled, so do not
+             *         assume 7-decimal USDC base units.
              *       - signed_delta_sum_unconfirmed_unit: a sum of signed
              *         per-event deltas whose unit is not contract-source-
              *         confirmed (Aquarius gauge position_update — see
@@ -6149,7 +6152,7 @@ export interface components {
              *         position); amount is "".
              * @enum {string}
              */
-            amount_semantics: "net_underlying_at_event_time" | "shares" | "stateful_current" | "signed_delta_sum_unconfirmed_unit" | "superseded_by_auction" | "not_yet_published";
+            amount_semantics: "net_underlying_at_event_time" | "shares" | "stateful_current_unconfirmed_unit" | "signed_delta_sum_unconfirmed_unit" | "superseded_by_auction" | "not_yet_published";
             /** @description The most recent contributing event's ledger + close time. */
             last_activity: {
                 ledger: number;
@@ -25016,7 +25019,7 @@ export interface operations {
                      *               "USDC"
                      *             ],
                      *             "amount": "480000000",
-                     *             "amount_semantics": "stateful_current",
+                     *             "amount_semantics": "stateful_current_unconfirmed_unit",
                      *             "last_activity": {
                      *               "ledger": 63316350,
                      *               "time": "2026-07-10T21:40:11Z"
