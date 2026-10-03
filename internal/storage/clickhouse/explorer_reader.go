@@ -256,6 +256,11 @@ type ExplorerReader struct {
 	// bloom-skip-index scan, exactly as before the index existed.
 	txIndexProbe schemaProbe
 
+	// txCoverageProbe probes stellar.tx_hash_index_coverage, the marker
+	// ch-txindex-backfill writes once a genesis→tip run finishes. Without a
+	// row the index is not proof of coverage, so a miss must not be a 404.
+	txCoverageProbe schemaProbe
+
 	// contractLedgersProbe probes stellar.contract_active_ledgers (the
 	// per-(contract, ledger) activity index,
 	// deploy/clickhouse/contract_active_ledgers.sql). Present + non-empty
@@ -495,6 +500,7 @@ func newExplorerReader(conn driver.Conn) *ExplorerReader {
 	return &ExplorerReader{
 		conn:                     conn,
 		txIndexProbe:             schemaProbe{name: "tx_hash_index"},
+		txCoverageProbe:          schemaProbe{name: "tx_hash_index_coverage"},
 		contractLedgersProbe:     schemaProbe{name: "contract_active_ledgers"},
 		instanceChangesProbe:     schemaProbe{name: "contract_instance_changes"},
 		instanceKeyProbe:         schemaProbe{name: "contract_instance_changes_tx_key"},
@@ -1748,41 +1754,25 @@ func (r *ExplorerReader) AccountOperationTypeCounts(ctx context.Context, account
 // bloom prunes granules but cannot seek). found=false only after the scan
 // also comes up empty.
 //
-// KNOWN RESIDUAL GAP (F106, 2026-09 reverification, NEEDS-COORDINATION):
-// non-emptiness rules out TOTAL index loss but not PARTIAL coverage — a
-// freshly (re)created tx_hash_index on a lake that already has history
-// goes non-empty after the very first live transaction (the MV writes
-// synchronously) while every row for that lake's EXISTING history is
-// still missing, so a miss against it is wrongly authoritative until the
-// one-time backfill catches up. Closing this needs either a genuine
-// coverage signal — ruled out here: a naive count(tx_hash_index) vs
-// count(stellar.transactions) comparison over-counts asymmetrically,
-// because stellar.transactions is a duplicate-bearing ReplacingMergeTree
-// (live-sink retries) while the one-time backfill inserts FINAL-deduped
-// rows into tx_hash_index (see [txHashIndexBackfillQuery]), so a healthy
-// fully-backfilled deployment would never reach parity and the fast path
-// would degrade to the scan forever — or a backfill-completion marker
-// written by stellarindex-ops ch-txindex-backfill
-// (internal/ops/chops/ch_txindex_backfill.go) once a run finishes, which
-// this package cannot land alone. tier1_schema.sql's comment above
-// CREATE TABLE stellar.tx_hash_index is corrected to state this file's
-// actual contract; it no longer claims a scan fallback on every miss.
+// Non-emptiness alone is not coverage: a freshly (re)created index goes
+// non-empty on the first live transaction while its history is still
+// missing. The fast path therefore also requires the completion marker
+// (stellar.tx_hash_index_coverage) written by ch-txindex-backfill; a count
+// comparison cannot stand in for it because stellar.transactions is
+// duplicate-bearing while the backfill inserts FINAL-deduped rows (see
+// [txHashIndexBackfillQuery]).
 func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (TxSummary, bool, error) {
-	if r.txHashIndexAvailable(ctx) {
+	if r.txHashIndexAvailable(ctx) && r.txHashIndexCovered(ctx) {
 		tx, found, indexHit, err := r.txByHashIndexed(ctx, hash)
 		switch {
 		case err == nil && found:
 			return tx, true, nil
 		case err == nil && !indexHit:
-			// The INDEX had no row — authoritative absence (2026-07-30
-			// account-filter class audit): tx_hash_index covers
-			// genesis→tip (20.78B rows from ledger 3, verified on r1 —
-			// the old "pre-backfill history" caveat is stale; that
-			// backfill completed). Falling through to the scan here
-			// turned every unknown/garbage hash into an unauthenticated
-			// bloom probe over the full 10.5B-row transactions table —
-			// the same non-sort-key filter disease as the account-
-			// history arms, plus a free DoS lever.
+			// The INDEX had no row — authoritative absence, because the
+			// coverage marker above vouches that the index spans
+			// genesis→tip. Falling through to the scan here would turn
+			// every unknown/garbage hash into an unauthenticated bloom
+			// probe over the full transactions table (a free DoS lever).
 			return TxSummary{}, false, nil
 		}
 		// Index-path error, or an index/base INCONSISTENCY (index row
@@ -1816,6 +1806,14 @@ func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (Tx
 func (r *ExplorerReader) txHashIndexAvailable(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.txIndexProbe,
 		`SELECT ledger_seq FROM stellar.tx_hash_index LIMIT 1`, true)
+}
+
+// txHashIndexCovered reports whether ch-txindex-backfill has recorded a
+// completed genesis→tip run. A non-empty index without it would turn every
+// historical hash into a wrong 404, so the scan path answers until it exists.
+func (r *ExplorerReader) txHashIndexCovered(ctx context.Context) bool {
+	return r.probeSchema(ctx, &r.txCoverageProbe,
+		`SELECT covered_to FROM stellar.tx_hash_index_coverage LIMIT 1`, true)
 }
 
 // contractLedgersIndexAvailable reports whether

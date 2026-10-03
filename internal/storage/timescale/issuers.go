@@ -338,6 +338,13 @@ type IssuerSep1Currency struct {
 	AnchorAsset     string `json:"AnchorAsset,omitempty"`
 	AnchorAssetType string `json:"AnchorAssetType,omitempty"`
 	Status          string `json:"Status,omitempty"`
+	// Nil when the issuer omitted the key, or the payload predates it.
+	IsAssetAnchored        *bool  `json:"IsAssetAnchored,omitempty"`
+	AttestationOfReserve   string `json:"AttestationOfReserve,omitempty"`
+	RedemptionInstructions string `json:"RedemptionInstructions,omitempty"`
+	Regulated              *bool  `json:"Regulated,omitempty"`
+	ApprovalServer         string `json:"ApprovalServer,omitempty"`
+	ApprovalCriteria       string `json:"ApprovalCriteria,omitempty"`
 }
 
 // GetIssuerSep1Cached returns the cached SEP-1 payload for an issuer

@@ -182,6 +182,7 @@ var subcommands = map[string]func(args []string) error{
 	"ch-instance-backfill":         chops.Run,
 	"ch-census-rollup":             chops.Run,
 	"ch-cap67-movements":           chops.Run,
+	"ch-entry-history":             chops.Run,
 	"ch-holders-rollup":            chops.Run,
 	"ch-creators-rollup":           chops.Run,
 	"ch-sponsors-rollup":           chops.Run,
@@ -330,6 +331,13 @@ Subcommands:
                           A one-shot run exits non-zero when more transfer
                           events failed to decode than -max-decode-errors
                           (default 0); -follow logs them per window.
+  ch-entry-history -ch-addr ADDR [-from N] [-to N] [-window N] [-floor-ledger N] [-max-decode-errors N] [-write]
+                          One decode pass of stellar.ledger_entry_changes
+                          (classic entries) into the account-keyed
+                          stellar.account_entry_changes and asset-keyed
+                          stellar.asset_entry_changes. Resumes from
+                          stellar.entry_history_watermark. Without -write it
+                          reports rows and field bytes per entry type.
   ch-holders-rollup -ch-addr ADDR [-write]
                           Recompute every asset's top-500 holders board +
                           holder count into staging and atomically exchange
@@ -1496,7 +1504,7 @@ Subcommands:
                           QUOTE leg is not USD-pegged, recomputes
                           usd_volume = base_amount/1e7 x XLM/USD-at-ts by
                           calling the store's own
-                          tradeUSDVolumeViaXLMBaseAnchor with the installed
+                          usdVolumeViaXLMBaseAnchor with the installed
                           VWAPUSDFXResolver — the same function InsertTrade
                           calls. Repairs the pre-fd1860bd class (#372):
                           XLM-base trades valued QUOTE-side through the

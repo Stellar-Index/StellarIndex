@@ -19,7 +19,6 @@ API_BASE_URL=http://localhost:3000 bash examples/curl/01-healthz.sh
 | # | Script | Endpoint |
 |---|--------|----------|
 | 01 | [`01-healthz.sh`](01-healthz.sh) | `GET /v1/healthz` — liveness probe |
-| 02 | [`02-signup.sh`](02-signup.sh) | `POST /v1/signup` — get a free-tier key |
 | 03 | [`03-account-me.sh`](03-account-me.sh) | `GET /v1/account/me` — your tier + rate limit |
 | 04 | [`04-assets.sh`](04-assets.sh) | `GET /v1/assets?limit=N&order=volume_24h_usd:desc` — top assets by volume |
 | 05 | [`05-price.sh`](05-price.sh) | `GET /v1/price?asset=…&quote=fiat:USD` — VWAP price |

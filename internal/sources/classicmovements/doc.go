@@ -126,14 +126,13 @@
 // decode layer this package provides (everything above this section)
 // is unaffected: only the write target moved.
 //
-// # Serving — write-path only
+// # Serving
 //
-// No read endpoint serves stellar.account_movements yet. ADR-0048
-// D5's account-activity read surface (a future merged read across
+// GET /v1/accounts/{g_strkey}/movements (internal/api/v1/explorer/movements.go,
+// AccountMovements) serves ADR-0048 D5's merged read across
 // stellar.account_movements and sep41_transfers' post-P23 'transfer'
-// rows, e.g. /v1/accounts/{g}/movements) is deliberately deferred to
-// a later unit, once more phases exist to make a merged feed
-// worthwhile. Neither table knows about the other at write time.
+// rows. Neither table knows about the other at write time; the merge
+// happens at read time.
 //
 // # Retention — deferred
 //

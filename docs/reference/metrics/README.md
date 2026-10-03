@@ -620,7 +620,7 @@ rate, absence is unambiguous, which is why this counter is deliberately
 NOT pre-seeded in `seedBoundedLabelSeries` the way the `increase()`- and
 `rate()`-based counters are.
 
-### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`, `stellarindex_dispatcher_evicted_keys_unreadable_total`
+### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`, `stellarindex_dispatcher_evicted_keys_unreadable_total`, `stellarindex_dispatcher_ledger_upgrade_entries_total`
 
 Counters, no labels (process-wide — the underlying dispatcher counters
 aren't attributable to a source).
@@ -642,8 +642,12 @@ flush window's delta on every tick alongside the existing WARN log:
   read, so their state-archival evictions were skipped and each evicted
   balance stays served as live. The dispatcher also logs a WARN with
   the ledger number.
+- `ledger_upgrade_entries` — ledger-upgrade entries (protocol version,
+  base reserve, fee and similar network parameter changes) seen in
+  processed ledgers. Informational: no decoder consumes them, and a
+  non-zero value is expected on an upgrade ledger.
 
-**When to look at these:** any sustained non-zero rate. All four are
+**When to look at these:** any sustained non-zero rate of the first four. All are
 process-lifetime cumulative counters — chart `increase(...[5m])`
 against the flush interval (5m), not the raw value.
 
@@ -1549,7 +1553,7 @@ the per-tick delta.
 
 Counter, label `kind` (`tx_read_errors` | `tx_event_read_errors` |
 `entry_meta_unsupported` | `soroban_fee_meta_unsupported` |
-`tx_read_errors_census` | `tx_event_read_errors_census`). Every kind is
+`evicted_keys_unreadable` | `tx_read_errors_census` | `tx_event_read_errors_census`). Every kind is
 seeded at zero.
 
 Transactions the indexer's two per-ledger read paths could not fully
@@ -1567,6 +1571,11 @@ ledger, not a ledger count.
   `TransactionMeta` version the charged-fee read does not handle, so their
   `soroban_nonrefundable_fee` / `soroban_refundable_fee` /
   `soroban_rent_fee` are written as 0.
+- `evicted_keys_unreadable` — the same extract
+  (`LedgerExtract.EvictedKeysUnreadable`): the ledger's evicted-keys list
+  could not be read, so its eviction `removed` rows are missing and each
+  evicted entry's last write stays current in `ledger_entries_current`.
+  Counts ledgers, not transactions.
 - `tx_read_errors_census`, `tx_event_read_errors_census` —
   `dispatcher.CensusLedger` for the `ledger_ingest_log` substrate row,
   which the indexer skips on any non-zero count: a substrate gap.
@@ -2220,6 +2229,9 @@ Per-attempt outcome of the customer-webhook delivery worker
 `exhausted` = retry budget hit; `network_error` = TCP/TLS/timeout
 (retry); `webhook_missing` = registry row deleted mid-flight
 (terminal); `disabled` = `webhook.Enabled=false` (terminal);
+`no_secret` = signing key empty or not openable under the configured
+seal key (terminal); `lookup_error` = webhook read failed, including a
+sealed key with no seal key configured (retried);
 `build_error` = malformed URL (terminal); `list_error` /
 `mark_error` = db transport failure on the queue surface
 (transient).
@@ -3460,6 +3472,19 @@ re-evaluated, so a 0 means divergence detection is disarmed for the pair
 even though the pass counts `ok`. A pair at 0 across every refresh for
 an hour fires `stellarindex_divergence_pair_below_quorum`.
 
+### `stellarindex_divergence_max_abs_fraction`
+
+Gauge, label `reference`. Largest `|ours − reference| / reference` over the
+pairs that reference currently prices (0.05 = 5 %); 0 when it prices none.
+Pinned (frozen) refreshes carry no verdict and are excluded. Drives
+`stellarindex_price_divergence_warning` (> 0.05) and `_critical` (> 0.10).
+
+### `stellarindex_divergence_pairs_over`
+
+Gauge, label `threshold` (`5pct` / `10pct`). Pairs whose worst reference gap
+exceeds that fraction. No per-pair label; the pairs are in
+`divergence_observations`.
+
 ### `stellarindex_aggregator_baseline_refresh_total`
 
 Counter, label `outcome` (`ok` / `ok_unvalued` / `not_enough_samples` /
@@ -3793,6 +3818,15 @@ correlation — a burst immediately after a Redis restart is the
 expected shape, whereas a slow trickle with Redis healthy means
 markers are being evicted (`maxmemory-policy`) or expiring early,
 which is a real configuration fault worth chasing.
+
+### `stellarindex_api_freeze_lookup_failures_total`
+
+Counter, no labels.
+
+API-side freeze-marker reads that returned an error (Redis outage or
+timeout); client aborts are excluded. Each failure serves the price
+with `frozen_checked=false`. Alerted by
+`stellarindex_api_freeze_lookup_failing`.
 
 ### `stellarindex_anomaly_freeze_ladder_write_failures_total`
 

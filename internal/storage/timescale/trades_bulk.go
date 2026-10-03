@@ -418,8 +418,8 @@ const (
 func (s *Store) resolveRowUSDVolume(
 	ctx context.Context, rows []canonical.Trade, out []sql.NullString, errAt []error, i int,
 ) {
-	v := tradeUSDVolume(ctx, rows[i], s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
-	if err := s.reDeriveNullVolumeGuard(rows[i], v); err != nil {
+	v, err := s.resolveUSDVolume(ctx, rows[i])
+	if err != nil {
 		errAt[i] = err
 		return
 	}

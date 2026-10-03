@@ -1055,3 +1055,47 @@ tests:
       - eval_time: 35m
         alertname: stellarindex_usage_write_failing
         exp_alerts: []
+
+  # ── cache refresh failures ───────────────────────────────────────
+  # One failed background refresh per minute for an hour: callers are
+  # being served an ever-older row with flags.stale set.
+  - interval: 1m
+    name: a persistently failing cache refresh tickets
+    input_series:
+      - series: 'stellarindex_api_cache_ops_total{job="stellarindex_api",instance="r1:8080",cache="markets",op="all_pools",result="refresh_error"}'
+        values: '0+1x60'
+      - series: 'stellarindex_api_cache_ops_total{job="stellarindex_api",instance="r1:8080",cache="markets",op="all_pools",result="hit"}'
+        values: '0+100x60'
+
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: stellarindex_api_cache_refresh_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              cache: markets
+              op: all_pools
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache-miss-rate-high.md
+              summary: "API cache markets/all_pools background refresh failing"
+              description: |
+                The background refresh for markets/all_pools
+                has failed in every 15 min window for 30 min. Callers are being
+                served the last good value with flags.stale set, and it keeps
+                ageing. Check the API logs for the refresh error and the
+                upstream store (Postgres / ClickHouse) for that op.
+                See the cache-miss-rate-high runbook, "Refresh failures".
+
+  # A single transient refresh failure must not ticket.
+  - interval: 1m
+    name: a single cache refresh failure is absorbed
+    input_series:
+      - series: 'stellarindex_api_cache_ops_total{job="stellarindex_api",instance="r1:8080",cache="markets",op="all_pools",result="refresh_error"}'
+        values: '0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: stellarindex_api_cache_refresh_failing
+        exp_alerts: []

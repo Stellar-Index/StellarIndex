@@ -1520,10 +1520,8 @@ type APIConfig struct {
 	// the F-1218 wave 45 gate: API-key Subjects whose
 	// EmailVerifiedAt is zero AND whose identifier indicates
 	// /v1/signup origin get 403 with a Problem-JSON pointing
-	// at the verify endpoint. Default false to preserve the
-	// pre-F-1218 wire contract — operators flip this on after
-	// they've given existing customers a grace window to click
-	// their verification link.
+	// at the verify endpoint. Default true; operators set it false
+	// to allow unverified signup keys.
 	SignupRequireEmailVerification bool            `toml:"signup_require_email_verification" doc:"F-1218: when true, /v1/signup-minted API keys must complete email-ownership-proof (clicking the link emailed at signup) before they can authenticate. Default true (2026-05-13): we are still pre-launch with no consumer traffic, so the safe default is to require verification — operators who want to allow unverified signup must opt in explicitly. Pre-launch default-flip narrows the launch-blocker surface; F-1218 closure required this." default:"true"`
 	CDNEnabled                     bool            `toml:"cdn_enabled" doc:"Emit CDN-friendly Cache-Control headers on long-immutable endpoints." default:"true"`
 	AllowedOrigins                 []string        `toml:"allowed_origins" doc:"CORS allow-list for browser clients. Empty (default) is same-origin only — no cross-origin browser client can read responses. SEC-14 (audit-2026-07-23): a wildcard here is fully cross-origin readable by every website out of the box; operators opt into cross-origin explicitly by listing their own hostnames." default:"[]"`
@@ -1573,6 +1571,8 @@ type DashboardConfig struct {
 	ResendAPIKeyEnv string `toml:"resend_api_key_env" doc:"Environment variable holding the Resend transactional-email API key (re_…). An unset or empty value wires an unconfigured mail sender: POST /v1/auth/login answers 503 and counts a failed send, and signup reports email_verification_sent:false. Production sets this." default:"STELLARINDEX_RESEND_API_KEY"`
 
 	CodeSecretEnv string `toml:"code_secret_env" doc:"Environment variable holding the server secret that keys the 6-digit email-code derivation (HMAC over the stored token hash — without it a Postgres read would reveal every in-flight sign-in code) AND the WebAuthn passkey-ceremony, magic-link login-intent and login-device cookie MACs. Each consumer MACs under its own HKDF-derived key. Any long random string (32+ bytes). Required while passkeys are wired (the API refuses to start without it); otherwise an unset/empty env falls back to a random per-process secret: still keyed, but in-flight codes, magic links and browsers' login-device markers stop verifying across a restart or another instance." default:"STELLARINDEX_DASHBOARD_CODE_SECRET"`
+
+	WebhookSealKeyEnv string `toml:"webhook_seal_key_env" doc:"Environment variable holding the secret that seals customer-webhook signing keys at rest (AES-256-GCM under an HKDF-derived key; column customer_webhooks.signing_key_sealed). At least 32 bytes; a shorter value refuses to start. Separate from code_secret_env so either can be rotated alone. Unset/empty stores new signing keys raw (logged at startup) and cannot read a sealed one, so deliveries to sealed webhooks wait until it is set. Changing the value makes every sealed key unreadable: their deliveries fail terminally, and the webhooks must be recreated (dashboard edit and delete still work without the key)." default:"STELLARINDEX_WEBHOOK_SEAL_KEY"`
 
 	MagicLinkTTLMinutes int `toml:"magic_link_ttl_minutes" doc:"Magic-link validity in minutes. Default 15 — long enough for an email to arrive + the user to switch contexts; short enough to limit replay-window if a phone is briefly unattended." default:"15"`
 
@@ -2286,6 +2286,7 @@ func defaultAPIConfig() APIConfig {
 			EmailFrom:           "Stellar Index <hello@stellarindex.io>",
 			ResendAPIKeyEnv:     "STELLARINDEX_RESEND_API_KEY",
 			CodeSecretEnv:       "STELLARINDEX_DASHBOARD_CODE_SECRET",
+			WebhookSealKeyEnv:   "STELLARINDEX_WEBHOOK_SEAL_KEY",
 			MagicLinkTTLMinutes: 15,
 			SessionTTLDays:      30,
 			CookieSecure:        true, // dev (http://localhost) overrides to false

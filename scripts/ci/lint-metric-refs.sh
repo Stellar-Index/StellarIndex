@@ -108,10 +108,6 @@ KNOWN_INERT=(
   stellarindex_stellar_core_last_ledger_time_unix
   stellarindex_stellar_core_peer_count
   stellarindex_stellar_rpc_latest_ledger_age_seconds
-  # divergence.yml — per-asset prices live in Postgres + Redis, not the
-  # Prometheus registry; a gauge would be high-cardinality (out of scope).
-  stellarindex_our_price
-  stellarindex_reference_price
 )
 
 # Third-party exporter metrics intentionally referenced by exprs. Listed

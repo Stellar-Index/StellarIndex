@@ -18,8 +18,8 @@ in three formats so you can pick what fits your workflow.
 
 The free tier (`Tier=anonymous`, 60 req/min) needs no header.
 Paid tiers need `Authorization: Bearer <plaintext-key>` — get a
-key by POSTing to `/v1/signup` (see
-[`curl/02-signup.sh`](curl/02-signup.sh)).
+key by POSTing to `/v1/register` (see
+[`curl/16-register.sh`](curl/16-register.sh)).
 
 ## Conventions
 

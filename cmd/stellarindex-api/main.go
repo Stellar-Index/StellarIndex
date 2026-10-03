@@ -48,7 +48,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"html/template"
 	"log/slog"
 	"math"
 	"math/big"
@@ -546,16 +545,6 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		accountStore = auth.NewRedisAPIKeyStore(rdb)
 	}
 
-	// Signup tracker — keyed off email-hash → key-id so a
-	// duplicate POST /v1/signup with the same email returns 409
-	// instead of minting a second key. Redis-backed; nil leaves
-	// duplicate detection disabled (signup still works, just isn't
-	// idempotent on the email).
-	var signupTracker v1.SignupTracker
-	if rdb != nil {
-		signupTracker = auth.NewRedisSignupTracker(rdb)
-	}
-
 	// F-1232 (audit-2026-05-12): per-IP signup throttle, separate
 	// from the global rate-limit middleware. Default 5/hour/IP —
 	// tight enough to block bulk-mint, loose enough that an
@@ -567,28 +556,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		signupIPThrottle = auth.NewRedisSignupIPThrottle(rdb, auth.SignupIPThrottleOptions{})
 	} else {
 		// NTF-08 (audit-2026-07-23): Redis-less deployments used to
-		// leave signupIPThrottle nil entirely — /v1/signup can trigger
-		// an outbound verification email per accepted request (when
-		// api.dashboard is wired, which only needs Postgres, not
-		// Redis), bounded ONLY by the global anonymous rate limit
-		// (60/min). That's up to 3,600 signup/verification emails per
-		// hour from one IP with no per-IP signup cap at all. Same
+		// leave signupIPThrottle nil entirely — /v1/register would then be
+		// bounded ONLY by the global anonymous rate limit (60/min), up
+		// to 3,600 accounts per hour from one IP. Same
 		// in-process single-instance fallback posture as the
 		// magic-link throttle just below.
 		signupIPThrottle = newInProcessSignupIPThrottle()
 		logger.Warn("signup IP throttle is in-process (single-instance fallback — no Redis); " +
 			"the per-IP signup cap is NOT shared across instances")
-	}
-
-	// F-1218 wave 42 + 43 (codex audit-2026-05-12): the email-
-	// ownership-proof verifier. Wired only when Redis is reachable;
-	// the signup handler issues a token in a future wave and the
-	// /v1/signup/verify endpoint consumes it via SignupVerifier.
-	// Redis-less deployments leave this nil and the verify endpoint
-	// returns 503 with a clear "not configured" message.
-	var signupVerifier v1.SignupVerifier
-	if rdb != nil {
-		signupVerifier = auth.NewRedisSignupVerifier(rdb)
 	}
 
 	// Divergence lookup adapter. Only wired when Redis is reachable
@@ -1370,25 +1345,17 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// The hour-bucket CAGG read behind /v1/rwa/premium's market
 		// leg. Uncached here for OracleHistory's reason — the handler
 		// caches the assembled series, not the read.
-		MarketHistory:       store,
-		RWAPremiumSubstance: substanceGate.Policy(),
-		Sep1Cache:           store,
-		Accounts:            accountStore,
-		PlatformAccounts:    platformAccountStore,
-		PlatformUsers:       platformUserStore,
-		RegisterAccounts:    registerAccountStore,
-		APIKeyBudgets:       apiKeyBudgets,
-		StatusNotices:       statusNoticeStore,
-		Audit:               adminAudit,
-		Signups:             signupTracker,
-		SignupIPThrottle:    signupIPThrottle,
-		SignupVerifier:      signupVerifier,
-		SignupVerifyEmailer: signupVerifyEmailerOrNil(dashboardBundle.sender, dashboardBundle.emailFrom, cfg.API.SignupRequireEmailVerification),
-		SignupVerifyBaseURL: cfg.API.ExternalBaseURL,
-		// F-1218 wave 45 (codex audit-2026-05-12): the verify
-		// handler flips the EmailVerifiedAt flag on the
-		// underlying Redis-stored API key record after Consume.
-		APIKeyEmailVerifier:  apiKeyEmailVerifierOrNil(rdb),
+		MarketHistory:        store,
+		RWAPremiumSubstance:  substanceGate.Policy(),
+		Sep1Cache:            store,
+		Accounts:             accountStore,
+		PlatformAccounts:     platformAccountStore,
+		PlatformUsers:        platformUserStore,
+		RegisterAccounts:     registerAccountStore,
+		APIKeyBudgets:        apiKeyBudgets,
+		StatusNotices:        statusNoticeStore,
+		Audit:                adminAudit,
+		SignupIPThrottle:     signupIPThrottle,
 		RequireEmailVerified: requireEmailVerifiedOrNil(cfg.API.SignupRequireEmailVerification),
 		Divergence:           divergenceLooker,
 		Substance:            substanceGate,
@@ -2253,8 +2220,8 @@ type dashboardBundle struct {
 // (F-1270) atop a fresh WebhookStore over the same Postgres the
 // delivery worker (a goroutine in main()) drains. Returns the store so
 // the bundle can thread it to the worker.
-func buildWebhookHandlers(db *sql.DB, logger *slog.Logger) (*postgresstore.WebhookStore, *dashboardwebhooks.Handlers, error) {
-	store := postgresstore.NewWebhookStore(postgresstore.New(db))
+func buildWebhookHandlers(db *sql.DB, sealer *platform.WebhookKeySealer, logger *slog.Logger) (*postgresstore.WebhookStore, *dashboardwebhooks.Handlers, error) {
+	store := postgresstore.NewSealingWebhookStore(postgresstore.New(db), sealer)
 	h, err := dashboardwebhooks.NewHandlers(dashboardwebhooks.Config{
 		Webhooks: store,
 		Logger:   logger.With("component", "dashboard-webhooks"),
@@ -2263,6 +2230,57 @@ func buildWebhookHandlers(db *sql.DB, logger *slog.Logger) (*postgresstore.Webho
 		return nil, nil, fmt.Errorf("dashboard webhooks handlers: %w", err)
 	}
 	return store, h, nil
+}
+
+// buildSealingWebhookHandlers is [buildWebhookHandlers] with the store
+// sealing signing keys when the seal secret is set, after sealing any
+// key a previous start stored raw.
+func buildSealingWebhookHandlers(cfg config.DashboardConfig, db *sql.DB, logger *slog.Logger) (*postgresstore.WebhookStore, *dashboardwebhooks.Handlers, error) {
+	sealer, err := buildWebhookKeySealer(cfg, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	store, h, err := buildWebhookHandlers(db, sealer, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	if sealer != nil {
+		sealLegacyWebhookKeys(store, logger)
+	}
+	return store, h, nil
+}
+
+// buildWebhookKeySealer reads the webhook seal secret from the env var
+// cfg names. Unset returns nil (keys stored raw); a too-short value is a
+// startup error rather than a weak key.
+func buildWebhookKeySealer(cfg config.DashboardConfig, logger *slog.Logger) (*platform.WebhookKeySealer, error) {
+	secret := os.Getenv(cfg.WebhookSealKeyEnv)
+	if secret == "" {
+		logger.Warn("webhook seal key env unset — new customer-webhook signing keys are stored unsealed, "+
+			"and deliveries to webhooks whose key is already sealed wait until it is set",
+			"env", cfg.WebhookSealKeyEnv)
+		return nil, nil
+	}
+	sealer, err := platform.NewWebhookKeySealer([]byte(secret))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", cfg.WebhookSealKeyEnv, err)
+	}
+	return sealer, nil
+}
+
+// sealLegacyWebhookKeys seals signing keys written before a seal key was
+// configured. A failure only leaves those keys raw until the next start.
+func sealLegacyWebhookKeys(store *postgresstore.WebhookStore, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	n, err := store.SealLegacySigningKeys(ctx)
+	if err != nil {
+		logger.Error("seal legacy customer-webhook signing keys", "err", err, "sealed", n)
+		return
+	}
+	if n > 0 {
+		logger.Info("sealed legacy customer-webhook signing keys", "count", n)
+	}
 }
 
 // buildPriceAlertHandlers constructs the dashboard price-alert CRUD
@@ -2599,7 +2617,7 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 
 	// F-1270: dashboard webhook handlers atop the same Postgres store
 	// the delivery worker (a goroutine in main()) drains.
-	webhookStore, webhooksH, err := buildWebhookHandlers(db, logger)
+	webhookStore, webhooksH, err := buildSealingWebhookHandlers(cfg, db, logger)
 	if err != nil {
 		return dashboardBundle{}, err
 	}
@@ -3720,6 +3738,10 @@ func (r storeHistoryReader) TradesInRange(ctx context.Context, pair canonical.Pa
 
 func (r storeHistoryReader) TradesInRangeAfter(ctx context.Context, pair canonical.Pair, from, to, afterTs time.Time, afterLedger uint32, afterTxHash, afterSource string, afterOpIndex uint32, limit int) ([]canonical.Trade, error) {
 	return r.s.TradesInRangeAfter(ctx, pair, from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
+}
+
+func (r storeHistoryReader) TradesInRangeAfterFromSource(ctx context.Context, pair canonical.Pair, source string, from, to, afterTs time.Time, afterLedger uint32, afterTxHash, afterSource string, afterOpIndex uint32, limit int) ([]canonical.Trade, error) {
+	return r.s.TradesInRangeAfterFromSource(ctx, pair, source, from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
 }
 
 // LatestTradePerSource adapts [timescale.Store.LatestTradePerSource]
@@ -4871,119 +4893,6 @@ func warnOpenCORS(logger *slog.Logger, allowedOrigins []string, authMode string)
 	}
 }
 
-// signupVerifyEmailerAdapter bridges the v1.SignupVerifyEmailer
-// interface to the underlying notify.Sender + an EmailFrom
-// address. F-1218 wave 44 (codex audit-2026-05-12).
-//
-// requireVerification mirrors cfg.API.SignupRequireEmailVerification:
-// the mail must not promise a working key when RequireEmailVerified
-// 403s it until the link is clicked.
-type signupVerifyEmailerAdapter struct {
-	sender              notify.Sender
-	from                string
-	requireVerification bool
-}
-
-// signupVerifyMailData is the HTML template input; VerifyURL embeds the
-// client-supplied Host header, so it is escaped contextually.
-type signupVerifyMailData struct {
-	VerifyURL           string
-	RequireVerification bool
-}
-
-var signupVerifyHTMLTemplate = template.Must(template.New("signup_verify.html").Parse(
-	"<p>Welcome to the Stellar Index API.</p>" +
-		"<p>Click the link below to confirm your email address. " +
-		"The link is single-use and expires in 24 hours.</p>" +
-		`<p><a href="{{.VerifyURL}}">{{.VerifyURL}}</a></p>` +
-		"{{if .RequireVerification}}" +
-		"<p>The API key returned in the signup response is inactive until you " +
-		"confirm: every request made with it is rejected (HTTP 403, " +
-		"<code>signup-verify-required</code>) until you click the link above.</p>" +
-		"{{else}}" +
-		"<p>You can use the API key returned in the signup response " +
-		"immediately. Confirmation flips an <code>email_verified=true</code> " +
-		"flag on the key so the dashboard can surface it as a verified account.</p>" +
-		"{{end}}" +
-		"<p>If you didn't sign up, you can safely ignore this email.</p>"))
-
-// signupVerifyTextBody renders the plaintext body, the authoritative
-// content for screen readers and plaintext clients.
-func signupVerifyTextBody(verifyURL string, requireVerification bool) string {
-	keyStatus := "You can use the API key returned in the signup response\n" +
-		"immediately. Confirmation flips a `email_verified=true`\n" +
-		"flag on the key so the dashboard can surface it as a\n" +
-		"verified account.\n\n"
-	if requireVerification {
-		keyStatus = "The API key returned in the signup response is inactive\n" +
-			"until you confirm: every request made with it is rejected\n" +
-			"(HTTP 403, signup-verify-required) until you click the\n" +
-			"link above.\n\n"
-	}
-	return "Welcome to the Stellar Index API.\n\n" +
-		"Click the link below to confirm your email address. The\n" +
-		"link is single-use and expires in 24 hours.\n\n" +
-		verifyURL + "\n\n" +
-		keyStatus +
-		"If you didn't sign up, you can safely ignore this email.\n"
-}
-
-func (a *signupVerifyEmailerAdapter) SendSignupVerification(ctx context.Context, toEmail, verifyURL string) error {
-	if a == nil || a.sender == nil {
-		return errors.New("signupVerifyEmailer: not configured")
-	}
-	subject := "Confirm your Stellar Index signup"
-	textBody := signupVerifyTextBody(verifyURL, a.requireVerification)
-	var hb strings.Builder
-	data := signupVerifyMailData{VerifyURL: verifyURL, RequireVerification: a.requireVerification}
-	if err := signupVerifyHTMLTemplate.Execute(&hb, data); err != nil {
-		return fmt.Errorf("signupVerifyEmailer: render html body: %w", err)
-	}
-	htmlBody := hb.String()
-	msg := notify.Message{
-		From:    a.from,
-		To:      []string{toEmail},
-		Subject: subject,
-		HTML:    htmlBody,
-		Text:    textBody,
-		Tags: map[string]string{
-			"flow":   "signup-verify",
-			"source": "stellarindex-api",
-		},
-	}
-	// Instrument the mail send (task #33 / W8 recon 9c): internal/notify had
-	// zero prometheus visibility, so a Resend outage that stops signup
-	// confirmations from delivering was silent. Count sent vs failed here.
-	if err := a.sender.Send(ctx, msg); err != nil {
-		obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplateSignupVerify, obs.NotifySendResultFailed).Inc()
-		return err
-	}
-	obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplateSignupVerify, obs.NotifySendResultSent).Inc()
-	return nil
-}
-
-// apiKeyEmailVerifierOrNil returns the v1.APIKeyEmailVerifier
-// adapter when Redis is reachable; otherwise nil so the verify
-// handler skips the marker step. F-1218 wave 45 (codex audit-
-// 2026-05-12).
-func apiKeyEmailVerifierOrNil(rdb redis.UniversalClient) v1.APIKeyEmailVerifier {
-	if rdb == nil {
-		return nil
-	}
-	return &apiKeyEmailVerifierAdapter{store: auth.NewRedisAPIKeyStore(rdb)}
-}
-
-// apiKeyEmailVerifierAdapter bridges the v1.APIKeyEmailVerifier
-// interface to auth.RedisAPIKeyStore.MarkEmailVerified.
-type apiKeyEmailVerifierAdapter struct {
-	store *auth.RedisAPIKeyStore
-}
-
-func (a *apiKeyEmailVerifierAdapter) MarkEmailVerified(ctx context.Context, keyID string, at time.Time) error {
-	_, err := a.store.MarkEmailVerified(ctx, keyID, at)
-	return err
-}
-
 // requireEmailVerifiedOrNil returns the F-1218 wave 45 gate
 // middleware when the operator has opted in via
 // `cfg.API.SignupRequireEmailVerification`; nil keeps the gate
@@ -4993,32 +4902,6 @@ func requireEmailVerifiedOrNil(enabled bool) middleware.Middleware {
 		return nil
 	}
 	return middleware.RequireEmailVerified()
-}
-
-// signupVerifyEmailerOrNil returns the v1.SignupVerifyEmailer
-// when both a real sender and a non-empty EmailFrom are wired;
-// otherwise nil so the signup handler skips the email send and
-// reports `email_verification_sent: false` on the wire.
-// requireVerification selects the mail copy describing the key's state.
-func signupVerifyEmailerOrNil(sender notify.Sender, from string, requireVerification bool) v1.SignupVerifyEmailer {
-	if sender == nil || from == "" {
-		return nil
-	}
-	if notify.IsUnconfigured(sender) {
-		// No provider credential (what an empty Resend key wires since
-		// RLT-321): every Send would fail. Skip the attempt so the wire
-		// shape says `email_verification_sent: false`, as it always has
-		// for this deployment state.
-		return nil
-	}
-	if _, isNoop := sender.(*notify.NoopSender); isNoop {
-		// NoopSender accepts everything but drops the message —
-		// surfacing it as "wired" would falsely promise the
-		// customer an email. Treat as nil so the wire shape
-		// honestly says `email_verification_sent: false`.
-		return nil
-	}
-	return &signupVerifyEmailerAdapter{sender: sender, from: from, requireVerification: requireVerification}
 }
 
 // touchUsageMiddlewareOrNil returns the wired TouchUsage

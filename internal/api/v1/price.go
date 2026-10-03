@@ -17,6 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
@@ -369,9 +370,12 @@ func writePriceWithheldProblem(w http.ResponseWriter, r *http.Request, asset, qu
 // never carries the numbers; the `substance` member does.
 func writePriceWithheldProblemEvidence(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset, reason PriceWithheldReason, ev *SubstanceEvidence) {
 	title, detail := priceWithheldWording(asset.String()+" / "+quote.String(), reason)
+	if reason == "" {
+		reason = PriceWithheldUnattributed
+	}
 	writeProblemCoverage(w, r,
 		"https://api.stellarindex.io/errors/price-withheld",
-		title, http.StatusNotFound, detail, nil, false, ev)
+		title, http.StatusNotFound, detail, nil, false, ev, reason)
 }
 
 func priceWithheldWording(pair string, reason PriceWithheldReason) (title, detail string) {
@@ -935,6 +939,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		held.snapshot.displacedBook = snapshot.displacedBook
 		snapshot, sources, triangulated = held.snapshot, held.sources, held.triangulated
 		stale, viaFallback = true, true
+		served = held.pairBase
 	}
 
 	s.handlePriceTail(w, r, asset, quote, served, snapshot, sources, stale, triangulated, viaFallback, frozen, frozenChecked, adm)
@@ -1064,7 +1069,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	// and on a displaced book, whose pair keys describe the replaced value.
 	pairKeyed := !snapshot.Substituted && !snapshot.displacedBook
 	if pairKeyed {
-		s.attachConfidence(r, &snapshot, asset, quote)
+		s.attachConfidence(r, &snapshot, asset, quote, heldWindow(frozen, snapshot, confidenceLookupWindow))
 	}
 
 	// Every per-pair marker below is asked for the spelling the price was
@@ -1084,7 +1089,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	// Best-effort. Skipped on a substituted snapshot — see
 	// [Server.attachCompositeFlags] (RNC27).
 	if pairKeyed {
-		s.attachCompositeFlags(r, &flags, governing, quote, triangulationLookupWindow, false)
+		s.attachCompositeFlags(r, &flags, governing, quote, heldWindow(frozen, snapshot, triangulationLookupWindow), false)
 	}
 	flags.Frozen = frozen
 	flags.FrozenChecked = frozenChecked
@@ -1710,7 +1715,7 @@ func (s *Server) closedUSDAnchoredFiatCross(ctx context.Context, asset, quote ca
 	if withheld {
 		return fallbackResult{withheld: PriceWithheldUnattributed}
 	}
-	if !ok || s.fxFixings == nil {
+	if !ok || s.fxFixings == nil || isDeclaredPeg(usdSnap) {
 		return fallbackResult{}
 	}
 	e := time.Time(usdSnap.ObservedAt)
@@ -1914,7 +1919,9 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	if withheld {
 		return PriceSnapshot{}, nil, false, true
 	}
-	if !ok {
+	// A declared peg is 1:1 against USD only; multiplying it by a rate is
+	// neither the declaration nor an observation, so no cross is served.
+	if !ok || isDeclaredPeg(usdSnap) {
 		return PriceSnapshot{}, nil, false, false
 	}
 
@@ -2851,11 +2858,20 @@ func formatCrossRate(r *big.Rat) string {
 	return s
 }
 
+// heldWindow is the window a per-pair enrichment lookup must ask for: a held
+// (frozen) value was priced by its own window, not the default one.
+func heldWindow(frozen bool, snap PriceSnapshot, def time.Duration) time.Duration {
+	if frozen && snap.WindowSeconds > 0 {
+		return time.Duration(snap.WindowSeconds) * time.Second
+	}
+	return def
+}
+
 // attachConfidence consults the wired ConfidenceLooker (when set)
 // and populates snap.Confidence + snap.ConfidenceFactors. Best-
 // effort: cache misses + read errors leave the fields nil so the
 // response still ships cleanly without confidence enrichment.
-func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, quote canonical.Asset) {
+func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, quote canonical.Asset, window time.Duration) {
 	if s.confidence == nil {
 		return
 	}
@@ -2870,7 +2886,7 @@ func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, q
 	// confidence as "unknown", so every client using Stellar's own
 	// canonical form got a permanent "unknown" (cold audit 2026-08-04).
 	for _, a := range assetAliases(asset) {
-		got, ok, err := s.confidence.LookupConfidence(r.Context(), a, quote, confidenceLookupWindow)
+		got, ok, err := s.confidence.LookupConfidence(r.Context(), a, quote, window)
 		if err != nil {
 			if !clientAborted(r, err) {
 				s.logger.Warn("confidence lookup failed",
@@ -3010,6 +3026,7 @@ func (s *Server) lookupFrozen(r *http.Request, asset, quote canonical.Asset) (fr
 	frozen, err := s.freeze.FrozenForPair(r.Context(), asset, quote)
 	if err != nil {
 		if !clientAborted(r, err) {
+			obs.APIFreezeLookupFailuresTotal.Inc()
 			s.logger.Warn("freeze lookup failed",
 				"err", err,
 				"asset", asset.String(),
@@ -3051,6 +3068,9 @@ type frozenResolution struct {
 	snapshot     PriceSnapshot
 	sources      []string
 	triangulated bool
+	// pairBase is the spelling whose marker fired and whose held value was
+	// read; the composite-meta lookup must ask for the same pair.
+	pairBase canonical.Asset
 }
 
 // frozenHeldWindows are the aggregator windows a freeze can be holding
@@ -3122,6 +3142,7 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 			checked:      true,
 			sources:      []string{},
 			triangulated: v.Triangulated,
+			pairBase:     pairBase,
 			snapshot: PriceSnapshot{
 				AssetID:   requested.String(),
 				Quote:     quote.String(),
