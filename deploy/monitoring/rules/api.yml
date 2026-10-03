@@ -227,6 +227,30 @@ groups:
             (Order, Sources, Limit, …) means a phantom warmed slot.
             Follow the cache-miss-rate-high runbook.
 
+      # Background refresh failures. The SWR wrappers keep serving the
+      # last good row while a refresh fails, so clients only see
+      # `flags.stale`; this is the operator-side signal. increase()>0
+      # held for 30m means every 15m window contained a failure, i.e.
+      # the refresh is failing persistently, not a one-off blip.
+      - alert: stellarindex_api_cache_refresh_failing
+        expr: |
+          sum by (cache, op) (increase(stellarindex_api_cache_ops_total{result="refresh_error"}[15m])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache-miss-rate-high.md
+          summary: "API cache {{ $labels.cache }}/{{ $labels.op }} background refresh failing"
+          description: |
+            The background refresh for {{ $labels.cache }}/{{ $labels.op }}
+            has failed in every 15 min window for 30 min. Callers are being
+            served the last good value with flags.stale set, and it keeps
+            ageing. Check the API logs for the refresh error and the
+            upstream store (Postgres / ClickHouse) for that op.
+            See the cache-miss-rate-high runbook, "Refresh failures".
+
       # Customer-webhook delivery health (F-1270 audit-2026-05-12).
       # The worker emits one outcome label per attempt; sustained
       # 5xx + network_error means one customer's endpoint is broken.
