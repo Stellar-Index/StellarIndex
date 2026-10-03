@@ -438,10 +438,22 @@ func forwardTrades(
 	}
 }
 
+// throttled is implemented by pollers that skip upstream calls while backing
+// off a rate limit. A skip inside that window is not proof the upstream is
+// reachable, so it must not refresh the staleness clock.
+type throttled interface {
+	CooldownRemaining() time.Duration
+}
+
+func inCooldown(p Poller) bool {
+	t, ok := p.(throttled)
+	return ok && t.CooldownRemaining() > 0
+}
+
 // pollOutcome scores one PollOnce result for the polls_total metric. Only
 // "success" and "skipped" refresh the staleness clock: (nil, nil, nil) is a
 // poller that reached upstream and found nothing new (chainlink between hourly
-// rounds, a cooldown after a throttle), while non-nil but empty is an answer
+// rounds; a throttle cooldown is excluded in runPoller), while non-nil but empty is an answer
 // with nothing usable in it (a renamed slug decodes to {}). "idle" is a poller
 // none of whose configured pairs it can request: config, not an upstream
 // failure, and never fresh.
@@ -457,6 +469,23 @@ func pollOutcome(trades []canonical.Trade, updates []canonical.OracleUpdate, err
 		return "empty"
 	default:
 		return "success"
+	}
+}
+
+func emitPollResults(ctx context.Context, sink chan<- consumer.Event, trades []canonical.Trade, updates []canonical.OracleUpdate) {
+	for _, t := range trades {
+		select {
+		case <-ctx.Done():
+			return
+		case sink <- TradeEvent{Trade: t}:
+		}
+	}
+	for _, u := range updates {
+		select {
+		case <-ctx.Done():
+			return
+		case sink <- UpdateEvent{Update: u}:
+		}
 	}
 }
 
@@ -499,21 +528,11 @@ func runPoller(
 			}
 			return
 		}
+		if outcome == "skipped" && inCooldown(spec.Poller) {
+			return
+		}
 		obs.ExternalPollerLastSuccessUnix.WithLabelValues(name).Set(float64(time.Now().Unix()))
-		for _, t := range trades {
-			select {
-			case <-ctx.Done():
-				return
-			case sink <- TradeEvent{Trade: t}:
-			}
-		}
-		for _, u := range updates {
-			select {
-			case <-ctx.Done():
-				return
-			case sink <- UpdateEvent{Update: u}:
-			}
-		}
+		emitPollResults(ctx, sink, trades, updates)
 	}
 
 	// Fire once on start, then on the ticker cadence.
