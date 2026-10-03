@@ -211,8 +211,8 @@ func ConstantNAV(code, issuer string) (ConstantNAVBinding, bool) {
 // valued as another. A declaration that is not a well-formed ISIN names
 // no security and so contradicts nothing.
 func ConstantNAVISINConflict(code, issuer, declaredAnchorAsset string) bool {
-	isin, ok := upperASCII12(declaredAnchorAsset)
-	if !ok || !IsISIN(isin) {
+	isin, ok := CanonicalISIN(declaredAnchorAsset)
+	if !ok {
 		return false
 	}
 	key := instrumentKey{code: strings.TrimSpace(code), issuer: strings.TrimSpace(issuer)}

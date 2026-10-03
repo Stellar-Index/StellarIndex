@@ -61,7 +61,7 @@ var AlertOutcomes = []string{
 // postgresstore.PriceAlertStore.
 type AlertStore interface {
 	ListEnabledPriceAlerts(ctx context.Context) ([]platform.PriceAlert, error)
-	ClaimPriceAlertFire(ctx context.Context, id uuid.UUID, firedAt time.Time) (bool, error)
+	ClaimPriceAlertFire(ctx context.Context, a platform.PriceAlert, firedAt time.Time) (bool, error)
 	RearmPriceAlert(ctx context.Context, id uuid.UUID, lastFiredAt time.Time) (bool, error)
 }
 
@@ -344,14 +344,14 @@ func (w *Worker) fire(ctx context.Context, a platform.PriceAlert, now time.Time,
 	// this sweep, so two evaluators (a second aggregator, an R2/R3
 	// standby, an overlapping deploy) both pass it on the same crossing.
 	// Only one of them can win the row-locked UPDATE (#368 M10).
-	claimed, err := w.alerts.ClaimPriceAlertFire(ctx, a.ID, now)
+	claimed, err := w.alerts.ClaimPriceAlertFire(ctx, a, now)
 	if err != nil {
 		return "", fmt.Errorf("claim fire: %w", err)
 	}
 	if !claimed {
 		// Someone else owns this crossing's cooldown window, or the alert
-		// was deleted mid-sweep. Either way the fan-out is not ours: this
-		// is the guard working, not a failure.
+		// was edited, disabled or deleted mid-sweep. Either way the fan-out
+		// is not ours: this is the guard working, not a failure.
 		w.logger.Info("price alert crossing already claimed — skipping fan-out",
 			"alert_id", a.ID, "account_id", a.AccountID)
 		return outcomeClaimLost, nil

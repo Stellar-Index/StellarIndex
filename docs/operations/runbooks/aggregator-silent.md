@@ -139,4 +139,4 @@ Capture for the postmortem:
   venue-dispersion redesign. Rule citation → `rules.r1/aggregator.yml`;
   commands use r1 shapes.
 - 2026-04-25 — initial draft alongside the aggregator metrics
-  PR #26 wire-up.
+  commit 5f64f5e7b wire-up.

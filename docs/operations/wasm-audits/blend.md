@@ -174,7 +174,7 @@ contracts as part of its 539-contract watch list. Walk parameters:
 - **Workers**: 8 parallel chunks (`-parallel 8`).
 - **Checkpointing**: `-checkpoint-dir /tmp/walk-checkpoint` —
   per-worker JSONL transition logs for crash recovery (the merge
-  tool from PR #370 wasn't needed; the walk completed cleanly).
+  tool from commit 18db4123d wasn't needed; the walk completed cleanly).
 - **Runtime**: 5h4m39s total.
 
 **Per-contract findings:**

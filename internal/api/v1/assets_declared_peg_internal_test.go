@@ -68,7 +68,7 @@ func TestFillDeclaredPegPrices_AfterSubstanceGate(t *testing.T) {
 		{AssetID: other, Code: "SCAM", PriceUSD: &dust},
 	}
 	ctx := context.Background()
-	s.applySubstanceGateToListing(ctx, rows)
+	s.applySubstanceGateToListing(ctx, rows, false)
 	s.fillDeclaredPegPricesInListing(ctx, rows)
 
 	if rows[0].PriceUSD == nil || *rows[0].PriceUSD != "0.655" {
@@ -109,7 +109,7 @@ func TestFillDeclaredPegPrices_NeverOverwritesMarketPrice(t *testing.T) {
 	market := "0.652"
 	rows := []AssetDetail{{AssetID: pegTestAUDD, Code: "AUDD", PriceUSD: &market}}
 	ctx := context.Background()
-	s.applySubstanceGateToListing(ctx, rows)
+	s.applySubstanceGateToListing(ctx, rows, false)
 	s.fillDeclaredPegPricesInListing(ctx, rows)
 
 	if rows[0].PriceUSD == nil || *rows[0].PriceUSD != "0.652" {

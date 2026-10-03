@@ -146,3 +146,33 @@ describe('NetworkView hero strip — XLM supply', () => {
     );
   });
 });
+
+// Pubnet's P24 upgrade (ledger 59,501,299) credited the fee pool with
+// 31,879,035 stroops no transaction paid; the API flags it on that day.
+describe('dailyFeeBurn', () => {
+  it('subtracts the served fee_pool_adjustment across the P24 upgrade day', async () => {
+    const { dailyFeeBurn } = await import('./NetworkView');
+    const base = 48_000_000_000_000_000n;
+    const burned = 5_000_000_000n;
+    const bucket = (day: string, pool: bigint, adj?: string) => ({
+      day,
+      ledgers: 1,
+      txs: 1,
+      ops: 1,
+      events: 1,
+      fee_pool: pool.toString(),
+      total_coins: '1054439020873472922',
+      protocol_version: 24,
+      fee_pool_adjustment: adj,
+    });
+    const rows = [
+      bucket('2025-10-21', base),
+      bucket('2025-10-22', base + burned + 31_879_035n, '31879035'),
+      bucket('2025-10-23', base + 2n * burned + 31_879_035n),
+    ];
+    expect(dailyFeeBurn(rows)).toEqual([
+      { day: '2025-10-22', xlm: 500 },
+      { day: '2025-10-23', xlm: 500 },
+    ]);
+  });
+});

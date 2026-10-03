@@ -39,7 +39,7 @@ func TestEmitStalenessGauges_growsAcrossTicks(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	orch.emitStalenessGauges(t0)
 
-	got := testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC"))
+	got := testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC", "fiat:USD"))
 	if got != 0 {
 		t.Fatalf("after first emit: want stale=0 (first-sighting seed), got %v", got)
 	}
@@ -48,14 +48,14 @@ func TestEmitStalenessGauges_growsAcrossTicks(t *testing.T) {
 	// and compute stale=60, not re-seed.
 	orch.emitStalenessGauges(t0.Add(60 * time.Second))
 
-	got = testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC"))
+	got = testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC", "fiat:USD"))
 	if got != 60 {
 		t.Errorf("after second emit (60s later): want stale=60, got %v", got)
 	}
 
 	// 5 minutes after t0 — staleness should keep growing.
 	orch.emitStalenessGauges(t0.Add(5 * time.Minute))
-	got = testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC"))
+	got = testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC", "fiat:USD"))
 	if got != 300 {
 		t.Errorf("after third emit (300s later): want stale=300, got %v", got)
 	}
@@ -99,8 +99,8 @@ func TestEmitStalenessGauges_xlmNativeMirrorOrderIndependent(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// Reset gauge to avoid cross-test leakage.
-			obs.PriceStalenessSeconds.WithLabelValues("native").Set(-1)
-			obs.PriceStalenessSeconds.WithLabelValues("crypto:XLM").Set(-1)
+			obs.PriceStalenessSeconds.WithLabelValues("native", "fiat:USD").Set(-1)
+			obs.PriceStalenessSeconds.WithLabelValues("crypto:XLM", "fiat:USD").Set(-1)
 
 			orch := New(nil, nil, Config{Pairs: tc.pairs})
 
@@ -115,8 +115,8 @@ func TestEmitStalenessGauges_xlmNativeMirrorOrderIndependent(t *testing.T) {
 			emitAt := t0.Add(10 * time.Minute)
 			orch.emitStalenessGauges(emitAt)
 
-			gotNative := testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("native"))
-			gotTicker := testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("crypto:XLM"))
+			gotNative := testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("native", "fiat:USD"))
+			gotTicker := testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("crypto:XLM", "fiat:USD"))
 			if gotNative != 0 {
 				t.Errorf("native stale = %v, want 0 (just written)", gotNative)
 			}

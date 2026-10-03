@@ -1737,9 +1737,16 @@ func TestPlatformPostgresStores(t *testing.T) {
 
 		// ClaimPriceAlertFire stamps last_fired_at (cooldown clock). The
 		// alert above carries cooldown_seconds = 0, so a never-fired row
-		// claims immediately.
+		// claims immediately once enabled; a disabled one claims nothing.
 		firedAt := time.Now().UTC().Truncate(time.Microsecond)
-		claimed, err := alerts.ClaimPriceAlertFire(ctx, created.ID, firedAt)
+		if claimed, err := alerts.ClaimPriceAlertFire(ctx, got, firedAt); err != nil || claimed {
+			t.Fatalf("claim fire on a disabled alert: claimed=%v err=%v, want false, nil", claimed, err)
+		}
+		upd.Enabled = true
+		if err := alerts.UpdatePriceAlert(ctx, upd); err != nil {
+			t.Fatalf("re-enable: %v", err)
+		}
+		claimed, err := alerts.ClaimPriceAlertFire(ctx, upd, firedAt)
 		if err != nil {
 			t.Fatalf("claim fire: %v", err)
 		}
@@ -1999,7 +2006,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				claimed, err := alerts.ClaimPriceAlertFire(ctx, created.ID, firedAt)
+				claimed, err := alerts.ClaimPriceAlertFire(ctx, created, firedAt)
 				switch {
 				case err != nil:
 					atomic.AddInt64(&claimErrs, 1)
@@ -2037,13 +2044,13 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if rearmed, err := alerts.RearmPriceAlert(ctx, created.ID, firedAt); err != nil || !rearmed {
 			t.Fatalf("rearm after the winner's fire: rearmed=%v err=%v", rearmed, err)
 		}
-		if claimed, err := alerts.ClaimPriceAlertFire(ctx, created.ID, firedAt.Add(59*time.Minute)); err != nil {
+		if claimed, err := alerts.ClaimPriceAlertFire(ctx, created, firedAt.Add(59*time.Minute)); err != nil {
 			t.Fatalf("claim inside cooldown: %v", err)
 		} else if claimed {
 			t.Error("claimed 59 minutes into a 3600s cooldown; want refused")
 		}
 		after := firedAt.Add(3600 * time.Second)
-		if claimed, err := alerts.ClaimPriceAlertFire(ctx, created.ID, after); err != nil {
+		if claimed, err := alerts.ClaimPriceAlertFire(ctx, created, after); err != nil {
 			t.Fatalf("claim after cooldown: %v", err)
 		} else if !claimed {
 			t.Error("refused a claim exactly at the cooldown boundary; want claimed")
@@ -2054,7 +2061,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if err := alerts.DeletePriceAlert(ctx, created.ID); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
-		if claimed, err := alerts.ClaimPriceAlertFire(ctx, created.ID, after.Add(time.Hour)); err != nil {
+		if claimed, err := alerts.ClaimPriceAlertFire(ctx, created, after.Add(time.Hour)); err != nil {
 			t.Errorf("claim on a deleted alert returned an error: %v", err)
 		} else if claimed {
 			t.Error("claimed a fire on a deleted alert")

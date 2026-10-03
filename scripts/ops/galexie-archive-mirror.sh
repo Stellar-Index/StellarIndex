@@ -31,7 +31,8 @@
 #   stellarindex_galexie_archive_mirror_last_success_timestamp  (clean, verified runs only)
 # Alert: stellarindex_galexie_archive_mirror_stale (storage.yml, both trees).
 #
-# Exit code: 0 clean (or not configured); 1 the mirror or its verification failed.
+# Exit code: 0 clean; 1 the mirror or its verification failed, or no
+# DEST_ENDPOINT is configured.
 set -uo pipefail
 
 SOURCE_ALIAS="${SOURCE_ALIAS:-local/galexie-archive}"
@@ -74,9 +75,11 @@ write_metrics() {
 
 main() {
   if [[ -z "$DEST_ENDPOINT" ]]; then
+    # A run that copied nothing must not read as a successful unit in
+    # systemctl / journalctl; the gap shows as a failed unit, not a green one.
     note "no DEST_ENDPOINT configured — the archive has no off-site mirror on this host (stellarindex_galexie_archive_mirror_stale tickets it)"
     write_metrics
-    return 0
+    return 1
   fi
 
   local dest="$DEST_ALIAS/$DEST_BUCKET"

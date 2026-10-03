@@ -27,8 +27,8 @@ related:
 > a hand-install. Task #72 has not closed. Everything below is the
 > pre-implementation design record.
 >
-> Closes Task #72's five-sub-role sweep (Patroni #344, Redis
-> Sentinel #350, HAProxy #362, Prometheus #363, Loki this PR).
+> Closes Task #72's five-sub-role sweep (Patroni 965eed22e, Redis
+> Sentinel bb2f4d29e, HAProxy 1836fced9, Prometheus d770270b3, Loki this PR).
 > Per ha-plan §7 the metrics + logs + tracing trio is "Prometheus
 > + AlertManager + Grafana + Loki + Tempo" — this role lands the
 > Loki + Promtail piece. Grafana + Tempo are separate roles

@@ -120,7 +120,7 @@ func TestCachedHistoryReader_ColdThenFreshHit(t *testing.T) {
 // deadline expires first, and nothing asserts on this number.
 const coldCallerDeadline = 30 * time.Millisecond
 
-// TestCachedHistoryReader_DetachedColdFillWarms is the #29 core: a
+// TestCachedHistoryReader_DetachedColdFillWarms is the c5a1a0e67 core: a
 // cold caller whose ctx deadline is shorter than the upstream query
 // gets ctx.Err() (the handler 503s) while the fill it started keeps
 // running on its OWN budget, so the next poll is served from the entry

@@ -89,3 +89,29 @@ func TestDecoder_Decode_MalformedArgsReturnsError(t *testing.T) {
 		t.Error("expected decode error on malformed args, got nil")
 	}
 }
+
+func TestDecoder_Decode_EmptyRatesIsNoOp(t *testing.T) {
+	// A decode error here would count the call undecodable and blind the
+	// ledger's completeness verdict; an empty batch has nothing to project.
+	d := NewDecoder(adapterC)
+	ctx := dispatcher.ContractCallContext{
+		Ledger:       52_000_000,
+		ClosedAt:     time.Unix(1_745_000_000, 0).UTC(),
+		TxHash:       "abcd",
+		ContractID:   adapterC,
+		FunctionName: FnRelay,
+		Args: []string{
+			encodeAddressArg(t, relayerG),
+			encodeSymbolRatesArg(t, nil),
+			encodeU64Arg(t, 1_745_000_000),
+			encodeU64Arg(t, 1),
+		},
+	}
+	out, err := d.Decode(ctx)
+	if err != nil {
+		t.Fatalf("Decode(empty symbol_rates) = %v, want a nil-error no-op", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("got %d events, want 0", len(out))
+	}
+}
