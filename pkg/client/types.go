@@ -507,6 +507,15 @@ type AssetDetail struct {
 	// should render "—" on null rather than fabricating "0%".
 	Change24hPct *string `json:"change_24h_pct,omitempty"`
 
+	// SEP-1 standing and backing declarations; issuer-declared, nil unless Sep1Status == "verified".
+	CurrencyStatus         *string `json:"currency_status,omitempty"`
+	IsAssetAnchored        *bool   `json:"is_asset_anchored,omitempty"`
+	AttestationOfReserve   *string `json:"attestation_of_reserve,omitempty"`
+	RedemptionInstructions *string `json:"redemption_instructions,omitempty"`
+	Regulated              *bool   `json:"regulated,omitempty"`
+	ApprovalServer         *string `json:"approval_server,omitempty"`
+	ApprovalCriteria       *string `json:"approval_criteria,omitempty"`
+
 	// ─── SEP-1 issuance declarations ─────────────────────────────
 	//
 	// The issuer's own commitments from their stellar.toml
@@ -998,6 +1007,15 @@ type AssetMetadata struct {
 	OrgName         *string `json:"org_name,omitempty"`
 	AnchorAsset     *string `json:"anchor_asset,omitempty"`
 	AnchorAssetType *string `json:"anchor_asset_type,omitempty"`
+
+	// SEP-1 standing and backing declarations; issuer-declared, nil unless Sep1Status == "verified".
+	CurrencyStatus         *string `json:"currency_status,omitempty"`
+	IsAssetAnchored        *bool   `json:"is_asset_anchored,omitempty"`
+	AttestationOfReserve   *string `json:"attestation_of_reserve,omitempty"`
+	RedemptionInstructions *string `json:"redemption_instructions,omitempty"`
+	Regulated              *bool   `json:"regulated,omitempty"`
+	ApprovalServer         *string `json:"approval_server,omitempty"`
+	ApprovalCriteria       *string `json:"approval_criteria,omitempty"`
 
 	// SEP-1 issuance declarations — issuer-declared, distinct from
 	// the F2 fields on AssetDetail which observe live ledger state.

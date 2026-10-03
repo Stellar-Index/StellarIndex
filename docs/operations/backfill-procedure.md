@@ -252,12 +252,14 @@ to the trades-hypertable primary-key dedupe).
 stellarindex-ops backfill -write \
   -config /etc/stellarindex.toml \
   -from 50000000 -to 50100000 \
-  -source soroswap,phoenix
+  -source sdex,band
 ```
 
 By default the run uses `cfg.Ingestion.EnabledSources`. Override
 with `-source <csv>` for a subset — useful when only one source
-is missing data.
+is missing data. A projected source (soroswap, phoenix, aquarius, …)
+is refused here; re-derive it with `stellarindex-ops projector-replay
+-config PATH -source <name> -from <ledger>`.
 
 ### 6. Verify
 

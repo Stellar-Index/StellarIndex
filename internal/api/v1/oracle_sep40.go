@@ -211,6 +211,7 @@ func (s *Server) sep40Serve(asset, quote canonical.Asset, rd sep40Read, held fro
 		Stale:         rd.stale,
 		Triangulated:  rd.triangulated,
 		Frozen:        frozen,
+		Degraded:      frozen,
 		FrozenChecked: held.checked,
 		SingleSource:  frozen,
 	}
