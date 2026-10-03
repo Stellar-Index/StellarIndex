@@ -90,6 +90,14 @@ type Currency struct {
 	AnchorAsset     string
 	AnchorAssetType string
 	Status          string
+	// IsAssetAnchored and Regulated are nil when the entry omits the key,
+	// so an absent declaration never reads as an explicit false.
+	IsAssetAnchored        *bool
+	AttestationOfReserve   string
+	RedemptionInstructions string
+	Regulated              *bool
+	ApprovalServer         string
+	ApprovalCriteria       string
 }
 
 // Resolver fetches + parses stellar.toml for a home-domain. Safe
@@ -861,6 +869,12 @@ func parseCurrency(m map[string]any) Currency {
 		}
 		return false
 	}
+	getOptBool := func(k string) *bool {
+		if v, ok := m[k].(bool); ok {
+			return &v
+		}
+		return nil
+	}
 
 	c.Code = getString("code", maxShortFieldRunes)
 	c.Issuer = getString("issuer", maxShortFieldRunes)
@@ -879,6 +893,12 @@ func parseCurrency(m map[string]any) Currency {
 	c.AnchorAsset = getString("anchor_asset", maxShortFieldRunes)
 	c.AnchorAssetType = getString("anchor_asset_type", maxShortFieldRunes)
 	c.Status = getString("status", maxShortFieldRunes)
+	c.IsAssetAnchored = getOptBool("is_asset_anchored")
+	c.AttestationOfReserve = getString("attestation_of_reserve", maxShortFieldRunes)
+	c.RedemptionInstructions = getString("redemption_instructions", maxLongFieldRunes)
+	c.Regulated = getOptBool("regulated")
+	c.ApprovalServer = getString("approval_server", maxShortFieldRunes)
+	c.ApprovalCriteria = getString("approval_criteria", maxLongFieldRunes)
 	return c
 }
 

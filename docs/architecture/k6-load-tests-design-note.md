@@ -175,7 +175,7 @@ so future tunings know what to update.
 | 06-mixed-realistic | the canonical proof scenario | p95 < 200 ms across the weighted mix; error rate < 0.1 %; sustained 10 min |
 | 99-spike | brief 10× burst absorption | recovery to baseline p95 within 2 min of spike end |
 
-## How the proof report (#77) is generated
+## How the proof report (Task #77) is generated
 
 After running `06-mixed-realistic.js`, the artefact is:
 
@@ -291,7 +291,7 @@ self-hosted territory).
 | Grafana dashboard skeleton for k6's prom output | 3 h |
 | First end-to-end run + flake-fix iteration | 4 h |
 | `docs/operations/sla-proof-<YYYY-MM-DD>.md` template + first proof run | 2 h |
-| CHANGELOG + coverage matrix #74/#77 close | 1 h |
+| CHANGELOG + coverage matrix Task #74/#77 close | 1 h |
 | **Total** | **~34 h, ~4 days** |
 
 The matrix's "~1 week" estimate matches if you round up for
@@ -304,7 +304,7 @@ flake-tail. **Wave-able**:
 - Wave 3 (~half-day): spike + alertmanager-silence integration.
 - Wave 4 (~half-day): GitHub Actions weekly schedule.
 
-Wave 2 lands the SLA proof scenario; #77 closes after the first
+Wave 2 lands the SLA proof scenario; Task #77 closes after the first
 green mixed-realistic run.
 
 ## Implementation PR shape (suggested)

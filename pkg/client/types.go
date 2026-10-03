@@ -24,8 +24,11 @@ type Envelope[T any] struct {
 	// market, flagged issuer, withheld upstream leg). An id in neither
 	// Data nor Withheld has no price data. Only the batch surface sets it.
 	Withheld []string `json:"withheld,omitempty"`
-	Sources  []string `json:"sources,omitempty"`
-	Flags    Flags    `json:"flags"`
+	// Thin names the ids in Data served from a market below the
+	// substance floor under the include_thin opt-in (batch only).
+	Thin    []string `json:"thin,omitempty"`
+	Sources []string `json:"sources,omitempty"`
+	Flags   Flags    `json:"flags"`
 	// Pagination is a POINTER so it matches the server's wire shape
 	// (internal/api/v1/envelope.go uses *Pagination): nil ⇒ the field
 	// is absent. A value type here made `omitempty` a no-op (omitempty
@@ -99,6 +102,8 @@ type Flags struct {
 	Rerouted bool `json:"rerouted,omitempty"`
 	// PivotUnverified: a composite leg was all stablecoin prints at par, so a de-peg in it went unchecked.
 	PivotUnverified bool `json:"pivot_unverified,omitempty"`
+	// ThinMarket: a served price comes from a market below the substance floor (include_thin opt-in).
+	ThinMarket bool `json:"thin_market,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.
@@ -158,6 +163,32 @@ type PriceSnapshot struct {
 	// ConfidenceFactors is the per-factor decomposition that
 	// accompanies Confidence; nil with the same semantics.
 	ConfidenceFactors *ConfidenceFactors `json:"confidence_factors,omitempty"`
+	// Substance is the measurement behind a Flags.ThinMarket price.
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
+}
+
+// SubstanceEvidence is the trailing substance measurement behind a
+// thin-market verdict. Volumes are decimal strings.
+type SubstanceEvidence struct {
+	Base          string         `json:"base"`
+	Quote         string         `json:"quote"`
+	WindowSeconds int64          `json:"window_seconds"`
+	MeasuredAt    time.Time      `json:"measured_at"`
+	WindowEnd     *time.Time     `json:"window_end,omitempty"`
+	VolumeUSD     string         `json:"volume_usd"`
+	Buckets       int64          `json:"buckets"`
+	ValuedBuckets int64          `json:"valued_buckets"`
+	SpanSeconds   int64          `json:"span_seconds"`
+	Floor         SubstanceFloor `json:"floor"`
+	// Failed is the first floor failed: "buckets", "span", "volume" or "volume_unvalued".
+	Failed string `json:"failed"`
+}
+
+// SubstanceFloor is the substance policy a measurement was held to.
+type SubstanceFloor struct {
+	MinVolumeUSD   string `json:"min_volume_usd"`
+	MinBuckets     int64  `json:"min_buckets"`
+	MinSpanSeconds int64  `json:"min_span_seconds"`
 }
 
 // USDLeg is the USD price a derived fiat [PriceSnapshot] was converted from.
@@ -227,6 +258,8 @@ type PriceChangeHorizon struct {
 	// Withheld is true when the reference bucket exists but a serving
 	// gate refused to publish it; always false when Available is true.
 	Withheld bool `json:"withheld"`
+	// ThinMarket: the reference price comes from a market below the substance floor (include_thin opt-in).
+	ThinMarket bool `json:"thin_market,omitempty"`
 }
 
 // PriceChanges is the data shape returned by [Client.PriceChanges]:
@@ -245,6 +278,9 @@ type PriceChanges struct {
 	H24 PriceChangeHorizon `json:"24h"`
 	D7  PriceChangeHorizon `json:"7d"`
 	D30 PriceChangeHorizon `json:"30d"`
+
+	// Substance is the measurement behind a thin current price.
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
 // HistorySeries is the data shape returned by
@@ -380,6 +416,12 @@ type AssetDetail struct {
 	// "scam_issuer", "upstream_leg" or "unattributed".
 	PriceWithheldReason string `json:"price_withheld_reason,omitempty"`
 
+	// ThinMarket: PriceUSD comes from a market below the substance floor
+	// (include_thin opt-in); no valuation or series derives from it.
+	ThinMarket bool `json:"thin_market,omitempty"`
+	// Substance is the measurement behind a thin price (detail only).
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
+
 	// MarketCapUSD = circulating × USD price / 10^Decimals,
 	// formatted to two fractional digits. Null when supply or USD
 	// price is unavailable.
@@ -424,13 +466,17 @@ type AssetDetail struct {
 	ListingValuation *AssetListingValuation `json:"listing_valuation,omitempty"`
 
 	// SupplyBasis identifies which ADR-0011 policy produced the
-	// supply numbers (e.g. "issuer_exclusion", "admin_exclusion",
-	// "override"); null when no snapshot exists.
+	// total/circulating numbers (e.g. "issuer_exclusion",
+	// "admin_exclusion", "override"); null when no snapshot exists. It
+	// never carries "sep1_declared_max" — see MaxSupplyBasis.
 	SupplyBasis *string `json:"supply_basis,omitempty"`
 
 	// Trust is the banded trust score with its factor breakdown; set on
 	// the detail lookup only, nil on listing rows.
 	Trust *AssetTrust `json:"trust,omitempty"`
+
+	// MaxSupplyBasis names where MaxSupply (and FDVUSD) came from when not the SupplyBasis policy, e.g. "sep1_declared_max".
+	MaxSupplyBasis *string `json:"max_supply_basis,omitempty"`
 
 	// SupplyAsOf / SupplyAsOfLedger date the supply observation; nil when
 	// the reading carries no vintage.
@@ -462,6 +508,15 @@ type AssetDetail struct {
 	// first traded < 24h ago). Clients
 	// should render "—" on null rather than fabricating "0%".
 	Change24hPct *string `json:"change_24h_pct,omitempty"`
+
+	// SEP-1 standing and backing declarations; issuer-declared, nil unless Sep1Status == "verified".
+	CurrencyStatus         *string `json:"currency_status,omitempty"`
+	IsAssetAnchored        *bool   `json:"is_asset_anchored,omitempty"`
+	AttestationOfReserve   *string `json:"attestation_of_reserve,omitempty"`
+	RedemptionInstructions *string `json:"redemption_instructions,omitempty"`
+	Regulated              *bool   `json:"regulated,omitempty"`
+	ApprovalServer         *string `json:"approval_server,omitempty"`
+	ApprovalCriteria       *string `json:"approval_criteria,omitempty"`
 
 	// ─── SEP-1 issuance declarations ─────────────────────────────
 	//
@@ -954,6 +1009,15 @@ type AssetMetadata struct {
 	OrgName         *string `json:"org_name,omitempty"`
 	AnchorAsset     *string `json:"anchor_asset,omitempty"`
 	AnchorAssetType *string `json:"anchor_asset_type,omitempty"`
+
+	// SEP-1 standing and backing declarations; issuer-declared, nil unless Sep1Status == "verified".
+	CurrencyStatus         *string `json:"currency_status,omitempty"`
+	IsAssetAnchored        *bool   `json:"is_asset_anchored,omitempty"`
+	AttestationOfReserve   *string `json:"attestation_of_reserve,omitempty"`
+	RedemptionInstructions *string `json:"redemption_instructions,omitempty"`
+	Regulated              *bool   `json:"regulated,omitempty"`
+	ApprovalServer         *string `json:"approval_server,omitempty"`
+	ApprovalCriteria       *string `json:"approval_criteria,omitempty"`
 
 	// SEP-1 issuance declarations — issuer-declared, distinct from
 	// the F2 fields on AssetDetail which observe live ledger state.
@@ -2205,6 +2269,16 @@ type RWAPremium struct {
 	Pct    *string `json:"pct,omitempty"`
 }
 
+// RWAISINCollision reports one ISIN declared in anchor_asset by several
+// issuer accounts. A declared ISIN is a claim, not proof of holding it.
+type RWAISINCollision struct {
+	// ISIN is the declared identifier in canonical upper-case form.
+	ISIN string `json:"isin"`
+	// DeclaredByIssuers counts the distinct issuer accounts, this row's
+	// included, declaring ISIN.
+	DeclaredByIssuers int `json:"declared_by_issuers"`
+}
+
 // RWAAsset is one member of the set, with the evidence that admitted
 // it. Identity is (Code, Issuer); Code alone identifies nothing.
 type RWAAsset struct {
@@ -2237,6 +2311,9 @@ type RWAAsset struct {
 	Recognition string `json:"recognition"`
 	AnchorClass string `json:"anchor_class,omitempty"`
 	AnchorAsset string `json:"anchor_asset,omitempty"`
+	// ISINCollision is set when AnchorAsset is an ISIN more than one
+	// issuer account declares. Informational: it never changes the row.
+	ISINCollision *RWAISINCollision `json:"isin_collision,omitempty"`
 	// Valuation is the observed-market-price money, or the reason there
 	// is none; ReferenceValuation is the same float at the reference
 	// price. The two are separate bases and are never summed.

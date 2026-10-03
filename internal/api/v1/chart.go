@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
@@ -252,6 +253,10 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 	var from time.Time
 	if tf.Duration > 0 {
 		from = time.Now().Add(-tf.Duration).UTC()
+	} else if !middleware.ChargeRateLimit(w, r, sinceInceptionCost(gran)) {
+		// timeframe=all has no window to coarsen against, so its read is
+		// priced by grain like /v1/history/since-inception.
+		return
 	}
 
 	// Dispatch to specialised handlers when the request shape calls

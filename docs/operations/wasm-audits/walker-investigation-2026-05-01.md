@@ -160,7 +160,7 @@ require additional ingest infrastructure.
 | **Contract code uploads** | `ContractCode` entries | Catches `UploadContractWasm` events independent of contract-instance transitions. Lets us preserve WASM bytes for hashes that are referenced but whose instance entry hasn't been observed yet (currently we use Soroban-RPC for this; an archive walk is a fallback for TTL-evicted hashes) |
 | **Contract removals** | `LedgerEntryRemoved` of `ContractData` | Tells us when a contract's instance entry is destroyed (rare but possible — e.g. proxy contract migration). Currently invisible |
 | **Events emitted** | Soroban `txMeta.SorobanMeta.Events` | Captures ALL contract events in the walked range, not just decoder-relevant ones. Useful for retroactive event coverage when we add new sources / event types (liquidations, governance, reward emissions) |
-| **Account changes** | `Account`, `Trustline`, `LiquidityPool` | Already covered separately by the LCM-AccountEntry observer (#298) and classic-supply observers (#303-#312). Not in scope for the wasm walker |
+| **Account changes** | `Account`, `Trustline`, `LiquidityPool` | Already covered separately by the LCM-AccountEntry observer (5e94ba76e) and classic-supply observers (3e215c2e2..029849a62). Not in scope for the wasm walker |
 
 The first three (Storage rotations, Contract code uploads,
 Contract removals) are within-scope additions to a wider

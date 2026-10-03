@@ -42,8 +42,8 @@
 // that fans out into many reads per request prices the request by that
 // work before reading. Its call sites carry the weights:
 // GET/POST /v1/price/batch (one token per de-duplicated asset id),
-// GET /v1/assets (by query plan), GET /v1/history/since-inception (by
-// granularity) and GET /v1/rwa/assets (one per listing read). Nothing enforces
+// GET /v1/assets (by query plan), GET /v1/history/since-inception and
+// GET /v1/chart?timeframe=all (by granularity), and GET /v1/rwa/assets (one per listing read). Nothing enforces
 // the rule across routes yet, so a new route of that shape has to be
 // enrolled by hand. Cost is clamped into [1, limit]; see
 // [Bucket.Charge] for why neither end is an error.

@@ -3,7 +3,6 @@ package dashboardwebhooks
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -102,6 +101,7 @@ func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	mux.Handle("POST /v1/dashboard/webhooks", session(sameSite(idem(http.HandlerFunc(h.HandleCreate)))))
 	mux.Handle("PATCH /v1/dashboard/webhooks/{id}", session(sameSite(http.HandlerFunc(h.HandleUpdate))))
 	mux.Handle("DELETE /v1/dashboard/webhooks/{id}", session(sameSite(http.HandlerFunc(h.HandleDelete))))
+	mux.Handle("POST /v1/dashboard/webhooks/{id}/rotate-secret", session(sameSite(idem(http.HandlerFunc(h.HandleRotateSecret)))))
 	mux.Handle("GET /v1/dashboard/webhooks/{id}/deliveries", session(http.HandlerFunc(h.HandleListDeliveries)))
 }
 
@@ -117,8 +117,9 @@ func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 // returned by `POST /v1/dashboard/webhooks` exactly once and
 // never served back through any subsequent read. SecretHash
 // stays out of this DTO so the dashboard can't accidentally
-// re-expose the bytes; rotation happens by delete + recreate.
-// See [platform.CustomerWebhook] for the at-rest model.
+// re-expose the bytes; rotation returns the new key once from
+// HandleRotateSecret. See [platform.CustomerWebhook] for the
+// at-rest model.
 type webhookDTO struct {
 	ID        string        `json:"id"`
 	Name      string        `json:"name"`
@@ -269,7 +270,7 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		// historical artefact tracked by F-1244 (codex
 		// audit-2026-05-12). The customer receives the plaintext
 		// `secret` exactly once in the response below and never
-		// again; rotation = delete + recreate.
+		// again; HandleRotateSecret replaces it in place.
 		SecretHash: []byte(secret),
 		Events:     req.Events,
 		Enabled:    enabled,
@@ -309,8 +310,7 @@ type updateRequest struct {
 }
 
 // HandleUpdate patches mutable fields. SecretHash + AccountID are
-// immutable; rotation lives behind a separate endpoint when it
-// lands.
+// immutable here; HandleRotateSecret replaces the key.
 func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
 	if !ok {
@@ -412,6 +412,63 @@ func (h *Handlers) HandleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// previousSecretOverlap is how long a rotated-out key keeps signing
+// deliveries alongside the new one: time for the receiver to deploy the
+// new key without rejecting anything in between.
+const previousSecretOverlap = 24 * time.Hour
+
+type rotateSecretResponse struct {
+	WebhookID string `json:"webhook_id"`
+	// Secret is the new signing key plaintext, returned once.
+	Secret string `json:"secret"`
+	// PreviousSecretExpiresAt ends the overlap: until then deliveries
+	// also carry X-StellarIndex-Signature[-V2]-Previous from the old key.
+	PreviousSecretExpiresAt wiretime.Time `json:"previous_secret_expires_at"`
+}
+
+// HandleRotateSecret replaces the webhook's signing key in place. Unlike
+// delete + recreate, the webhook keeps its id, its queued and retrying
+// deliveries and its delivery log, and the old key keeps signing for
+// previousSecretOverlap. Wrapped in the Idempotency-Key middleware: a
+// retried rotate would otherwise push the key the receiver still holds
+// out of the overlap.
+func (h *Handlers) HandleRotateSecret(w http.ResponseWriter, r *http.Request) {
+	sc, ok := dashboardauth.SessionFromContext(r.Context())
+	if !ok {
+		writeProblem(w, http.StatusUnauthorized, "authentication required", r.URL.Path)
+		return
+	}
+	if !canManage(sc.User.Role) {
+		writeProblem(w, http.StatusForbidden, "your role can't manage webhooks", r.URL.Path)
+		return
+	}
+	id, ok := parseAndAuthorise(w, r, h, sc.Account.ID)
+	if !ok {
+		return
+	}
+	secret, err := generateSecret()
+	if err != nil {
+		h.cfg.Logger.Error("generate webhook secret", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
+		return
+	}
+	expiresAt := h.cfg.Now().Add(previousSecretOverlap)
+	if err := h.cfg.Webhooks.RotateWebhookSecret(r.Context(), id, []byte(secret), expiresAt); err != nil {
+		if errors.Is(err, platform.ErrNotFound) {
+			writeProblem(w, http.StatusNotFound, "webhook not found", r.URL.Path)
+			return
+		}
+		h.cfg.Logger.Error("rotate webhook secret", "err", err, "id", id)
+		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, rotateSecretResponse{
+		WebhookID:               id.String(),
+		Secret:                  secret,
+		PreviousSecretExpiresAt: wiretime.Time(expiresAt),
+	})
 }
 
 type deliveriesResponse struct {
@@ -683,8 +740,3 @@ func generateSecret() (string, error) {
 func writeProblem(w http.ResponseWriter, status int, detail, instance string) {
 	httpx.WriteProblem(w, "https://api.stellarindex.io/errors/dashboard", status, detail, instance)
 }
-
-// shaPlaceholder keeps crypto/sha256 import live in case future
-// rotation logic lands here. (Rotation today is a stub on the
-// store side per WebhookStore.RotateWebhookSecret.)
-var _ = sha256.New

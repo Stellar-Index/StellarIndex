@@ -15,6 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
+	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	sep41 "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -22,7 +23,7 @@ import (
 
 // ch-cap67-movements — inventory item #1 (open-fixes-inventory-2026-08-08):
 // derive post-P23 account movements for EVERY asset (native XLM included)
-// from the lake's own CAP-67 transfer events into
+// from the lake's own CAP-67 transfer, mint, burn and clawback events into
 // stellar.account_movements, provenance 'cap67_derived'.
 //
 // WHY: the Postgres sep41_transfers tail projects only WATCHED token
@@ -40,8 +41,11 @@ import (
 // catch-up that exits at the tip (manual -from/-to backfills). Idempotent:
 // account_movements is a ReplacingMergeTree keyed
 // (address, ledger, tx_hash, op_index, leg_index, direction), so re-derives
-// collapse. Scope is event_kind 'transfer' only — exact parity with the
-// Postgres tail this replaces (mint/burn are supply events, served elsewhere).
+// collapse. From P23 on CAP-67 reports a payment from an asset's issuer as
+// `mint` and one to it as `burn` (never as `transfer`), so those kinds and
+// `clawback` are derived too: without them an issuer's payments vanish.
+// The ledgers derived with those kinds are their own range (see
+// cap67SupplyFill), backfilled down to the floor by the watermark-driven runs.
 //
 // The API's movements handler floors its Postgres arm at this job's
 // watermark, so at ANY backfill progress the two arms are gap-free and
@@ -108,6 +112,14 @@ func chCap67Movements(args []string) error {
 	res, err := cap67CatchUpOnce(ctx, *chAddr, uint32(*from), uint32(*to), uint32(*window), dryRun, uint32(*floorLedger), prog.record) //nolint:gosec // ledger sequences fit uint32
 	if err != nil {
 		return err
+	}
+	if *from == 0 && *to == 0 && !dryRun {
+		fill := &cap67SupplyFill{chAddr: *chAddr, window: uint32(*window), floorLedger: uint32(*floorLedger), progress: prog.record} //nolint:gosec // window/floor fit uint32
+		skipped, err := fill.drain(ctx)
+		res.skipped += skipped
+		if err != nil {
+			return fmt.Errorf("supply fill: %w", err)
+		}
 	}
 	err = enforceDecodeBudget("ch-cap67-movements", res.skipped, *maxDecodeErrs)
 	ok = err == nil
@@ -234,6 +246,11 @@ func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32
 			if err := clickhouse.SetCap67MovementsWatermark(ctx, chAddr, lo, hi); err != nil {
 				return res, fmt.Errorf("advance watermark to %d: %w", hi, err)
 			}
+			// A failure here leaves the window outside the supply range;
+			// cap67SupplyFill re-derives it from the range's top.
+			if err := extendCap67SupplyCoverage(ctx, chAddr, lo, hi); err != nil {
+				return res, fmt.Errorf("extend supply coverage over [%d,%d]: %w", lo, hi, err)
+			}
 		}
 		if progress != nil {
 			progress(n, hi)
@@ -294,12 +311,13 @@ func followTick(base time.Duration, idle int) time.Duration {
 // restart it resumes from the persisted watermark.
 func runCap67Follow(ctx context.Context, chAddr string, window uint32, dryRun bool, interval time.Duration, floorLedger uint32, progress func(rows int64, cursor uint32)) error {
 	fmt.Fprintf(os.Stderr, "ch-cap67-movements: FOLLOW mode — catch-up every %s, gated on the contiguous watermark, on %s\n", interval, chAddr)
+	fill := &cap67SupplyFill{chAddr: chAddr, window: window, floorLedger: floorLedger, progress: progress}
 	return followLoop(ctx, interval, func(ctx context.Context, idle int) (bool, error) {
 		res, err := runCap67CatchUp(ctx, chAddr, 0, 0, window, dryRun, floorLedger, progress)
 		if err != nil {
 			return false, err
 		}
-		if !res.idle() {
+		if filled := fill.tick(ctx); !res.idle() || filled {
 			if res.rows > 0 {
 				fmt.Fprintf(os.Stderr, "ch-cap67-movements: follow tick derived %d movement rows\n", res.rows)
 			}
@@ -474,11 +492,18 @@ const cap67InsertBatch = 50_000
 // and writes the fanned-out movement rows, returning rows written and events
 // skipped as undecodable.
 func deriveCap67MovementsWindow(ctx context.Context, addr string, lo, hi uint32, dryRun bool) (int64, uint64, error) {
-	// Decoder with an empty watched set: Decode() classifies by topic
+	return deriveCap67Window(ctx, addr, lo, hi, cap67MovementTopics, dryRun)
+}
+
+// deriveCap67Window is deriveCap67MovementsWindow over the given topic[0]
+// symbols only.
+func deriveCap67Window(ctx context.Context, addr string, lo, hi uint32, topics []string, dryRun bool) (int64, uint64, error) {
+	// Decoders with an empty watched set: Decode() classifies by topic
 	// alone; Matches() (the watched-set gate) is deliberately NOT
 	// consulted — this job's whole point is covering the unwatched
 	// contracts (native XLM above all).
 	dec := sep41.NewUngatedDecoder()
+	sup := sep41supply.NewUngatedDecoder()
 
 	var (
 		batch   []clickhouse.AccountMovement
@@ -501,12 +526,12 @@ func deriveCap67MovementsWindow(ctx context.Context, addr string, lo, hi uint32,
 	}
 
 	err := streamCap67TransferEvents(ctx, addr, lo, hi,
-		nil, []string{"transfer"}, nil,
+		nil, topics, nil,
 		false, // no FINAL — RMT dups collapse in the idempotent target
 		false, // no OpArgs
 		false, // no state-write keys
 		func(ev events.Event) error {
-			m, ok := cap67MovementFromEvent(dec, &ev)
+			m, ok := cap67EventMovement(dec, sup, &ev)
 			if !ok {
 				decErrs++
 				return nil
@@ -548,6 +573,26 @@ func cap67FannedOutRows(batch []clickhouse.AccountMovement) int64 {
 	return n
 }
 
+// cap67MovementTopics are the topic[0] symbols the derive streams: every
+// CAP-67 event that moves a balance between an account and something else.
+var cap67MovementTopics = append([]string{sep41.SymbolTransfer}, cap67SupplyTopics...)
+
+// cap67SupplyTopics are the CAP-67 supply events: what cap67SupplyFill
+// re-derives over ledgers whose transfers are already in the archive.
+var cap67SupplyTopics = []string{sep41supply.SymbolMint, sep41supply.SymbolBurn, sep41supply.SymbolClawback}
+
+// cap67EventMovement routes one streamed event to the decoder for its
+// topic[0]; ok=false skips it as cap67MovementFromEvent does.
+func cap67EventMovement(dec *sep41.Decoder, sup *sep41supply.Decoder, ev *events.Event) (clickhouse.AccountMovement, bool) {
+	if len(ev.Topic) > 0 {
+		switch ev.Topic[0] {
+		case sep41supply.TopicSymbolMint, sep41supply.TopicSymbolBurn, sep41supply.TopicSymbolClawback:
+			return cap67SupplyMovementFromEvent(sup, ev)
+		}
+	}
+	return cap67MovementFromEvent(dec, ev)
+}
+
 // cap67MovementFromEvent decodes one transfer event to its movement.
 // ok=false skips (non-transfer classification, decode failure, or an
 // unusable close time).
@@ -579,6 +624,50 @@ func cap67MovementFromEvent(dec *sep41.Decoder, ev *events.Event) (clickhouse.Ac
 	}, true
 }
 
+// cap67SupplyMovementFromEvent decodes one mint / burn / clawback event to
+// its movement, kind named after the event. The holder is the decoded
+// counterparty; the other side is the asset's issuer when the emitter is a
+// verified classic-asset SAC (mint: issuer → holder; burn and clawback:
+// holder → issuer, the pre-P23 classic clawback framing), and unknown
+// otherwise — a custom token's admin is not the counterparty of record.
+func cap67SupplyMovementFromEvent(dec *sep41supply.Decoder, ev *events.Event) (clickhouse.AccountMovement, bool) {
+	outs, err := dec.Decode(*ev)
+	if err != nil || len(outs) == 0 {
+		return clickhouse.AccountMovement{}, false
+	}
+	se, ok := outs[0].(sep41supply.Event)
+	if !ok {
+		return clickhouse.AccountMovement{}, false
+	}
+	closedAt, err := ev.EventClosedAt()
+	if err != nil {
+		return clickhouse.AccountMovement{}, false
+	}
+	asset, sac := cap67SACAsset(ev)
+	m := clickhouse.AccountMovement{
+		MovementKind:    se.Kind,
+		Provenance:      clickhouse.ProvenanceCAP67Derived,
+		Ledger:          ev.Ledger,
+		LedgerCloseTime: closedAt.UTC(),
+		TxHash:          ev.TxHash,
+		OpIndex:         uint32(ev.OperationIndex), //nolint:gosec // non-negative by spec
+		LegIndex:        uint32(ev.EventIndex),     //nolint:gosec // non-negative by spec
+		Asset:           ev.ContractID,
+		Amount:          se.Amount,
+	}
+	var issuer string
+	if sac {
+		m.Asset = asset.String()
+		issuer = asset.Issuer
+	}
+	if se.Kind == sep41supply.SymbolMint {
+		m.FromAddress, m.ToAddress = issuer, se.Counterparty
+	} else {
+		m.FromAddress, m.ToAddress = se.Counterparty, issuer
+	}
+	return m, true
+}
+
 // scvalText extracts the text of an ScvString or ScvSymbol — the two
 // encodings the CAP-67 sep0011 topic appears with on the wire.
 func scvalText(sv xdr.ScVal) (string, bool) {
@@ -602,17 +691,29 @@ func cap67AssetName(ev *events.Event) string {
 	if len(ev.Topic) != 4 {
 		return ev.ContractID
 	}
-	sv, err := scval.Parse(ev.Topic[3])
-	if err != nil {
-		return ev.ContractID
-	}
-	s, ok := scvalText(sv)
-	if !ok {
-		return ev.ContractID
-	}
-	asset, ok := canonical.SEP11SACAsset(s, ev.ContractID)
+	asset, ok := cap67SACAsset(ev)
 	if !ok {
 		return ev.ContractID
 	}
 	return asset.String()
+}
+
+// cap67SACAsset resolves the event's trailing sep0011 topic to its asset,
+// ok only when the emitter is that asset's SAC on this network. The name is
+// always the LAST topic: topic[3] on a transfer and on a legacy admin-
+// prefixed mint/clawback, topic[2] on a CAP-67 mint/burn/clawback. An
+// address there (a 3-topic transfer, a bare 2-topic mint) is not a name.
+func cap67SACAsset(ev *events.Event) (canonical.Asset, bool) {
+	if len(ev.Topic) < 3 {
+		return canonical.Asset{}, false
+	}
+	sv, err := scval.Parse(ev.Topic[len(ev.Topic)-1])
+	if err != nil {
+		return canonical.Asset{}, false
+	}
+	s, ok := scvalText(sv)
+	if !ok {
+		return canonical.Asset{}, false
+	}
+	return canonical.SEP11SACAsset(s, ev.ContractID)
 }

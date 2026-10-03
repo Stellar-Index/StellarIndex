@@ -100,6 +100,8 @@ func TestRunHoldersRollupPublishesAHealthyBoard(t *testing.T) {
 		"stellar.asset_holders_rollup":         500_000,
 		"stellar.asset_holders_counts_staging": 505,
 		"stellar.asset_holders_counts":         500,
+		"stellar.asset_stats_daily_staging":    905,
+		assetStatsDailyLatestDay:               900,
 	}}
 
 	if err := runHoldersRollupSteps(context.Background(), conn, func(string, ...any) {}); err != nil {

@@ -1,0 +1,53 @@
+# systemd unit: weekly full re-proof of the SDEX completeness verdict.
+#
+# Rendered by Ansible. The nightly -pass never re-floors the sdex census: its
+# full reconcile (~4.8 h on r1) outlasts the pass's 120 min deadline, and a
+# deadline-cut source writes nothing. Without this unit sdex's
+# projection_evidenced_at ages past the /v1/coverage evidence gate and holds
+# flags.stale on. Same driver as compute-completeness.service, so it keeps the
+# tip-100 margin that stops undrained ledgers reading as an sdex mismatch.
+#
+# Job name "compute-completeness" is shared with the nightly unit on purpose:
+# run-heavy-job.sh's per-name lock keeps the two writers of completeness_snapshots
+# from overlapping. HEAVY_JOB_LOCK_WAIT queues this unit behind a running
+# nightly pass (180 min) instead of skipping the week; the nightly unit queues
+# behind this one the same way.
+
+[Unit]
+Description=Stellar Index — weekly full SDEX completeness re-proof
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/completeness-incomplete.md
+After=network-online.target postgresql.service clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/compute-completeness
+EnvironmentFile=-/etc/default/stellarindex
+
+Environment=CONFIG_PATH=/etc/stellarindex.toml
+Environment=CH_ADDR=127.0.0.1:9300
+
+# 75 = run-heavy-job.sh skipped this fire (per-job lock held): not a
+# failure, but ExecMainStatus=75 keeps it distinct from a run.
+SuccessExitStatus=75
+# Timer-fired: shares run-heavy-job.sh's host-wide lock, never refused by it.
+Environment=HEAVY_JOB_CLASS=scheduled
+Environment=HEAVY_JOB_LOCK_WAIT=10800
+ExecStart=/usr/local/sbin/run-heavy-job.sh compute-completeness /usr/local/sbin/run-compute-completeness.sh -source sdex -timeout 360m
+
+User=stellarindex
+Group=stellarindex
+
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Whole seconds: up to 180 min queued behind the nightly lock + the tool's
+# 360 min -timeout + 15 min margin.
+TimeoutStartSec=33300
+
+[Install]
+WantedBy=multi-user.target

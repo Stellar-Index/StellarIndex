@@ -138,4 +138,4 @@ cat /var/lib/node_exporter/textfile_collector/sla_probe.prom
   the textfile / runs the binary one-off (the wrapper swallows the
   JSON). Rule citation → `rules.r1/sla-probe.yml`; commands use r1
   shapes; retired GO-stack `sla-probe.timer` disambiguation noted.
-- 2026-04-30 — initial draft alongside #294 (alert rules).
+- 2026-04-30 — initial draft alongside 4778c79b4 (alert rules).
