@@ -249,7 +249,13 @@ function StatusDot() {
 }
 
 /** The console nav body — shared by the desktop rail + the mobile drawer. */
-export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
+export function SidebarNav({
+  onNavigate,
+  searchShortcut = true,
+}: {
+  onNavigate?: () => void;
+  searchShortcut?: boolean;
+}) {
   const me = useMe();
   const signedIn = !!(me.data && (me.data.user?.email || me.data.key_id));
   const isStaff = !!me.data?.user?.is_staff;
@@ -287,7 +293,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 
       {/* Search — directly below the logo */}
       <div className="px-3 pb-3">
-        <SearchModal />
+        <SearchModal shortcut={searchShortcut} />
       </div>
 
       {/* Nav */}
