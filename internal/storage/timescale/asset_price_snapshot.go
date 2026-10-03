@@ -347,6 +347,29 @@ const xlmFormPrefOpen = `array_position(ARRAY[` + xlmQuotes + `], `
 // [usdQuotePref] so a same-minute USDC and fiat:USD print resolve stably.
 const xlmUSDNewest = `ORDER BY bucket DESC, ` + usdQuotePref
 
+// xlmUSDVolumeSelect is the XLM/USD scalar that converts XLM-legged volume to
+// USD: the median vwap of the minutes within 15 min of the newest print, so a
+// single thin or off-market minute cannot rescale every venue's figure. It
+// is volume-display only; price paths keep [xlmUSDNewest].
+const xlmUSDVolumeSelect = `SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY vwap) AS vwap
+		    FROM prices_1m
+		   WHERE base_asset = 'native'
+		     AND quote_asset IN (
+		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		       'fiat:USD'
+		     )
+		     AND vwap IS NOT NULL
+		     AND bucket >= now() - INTERVAL '24 hours'
+		     AND bucket > (SELECT max(bucket)
+		                     FROM prices_1m
+		                    WHERE base_asset = 'native'
+		                      AND quote_asset IN (
+		                        'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		                        'fiat:USD'
+		                      )
+		                      AND vwap IS NOT NULL
+		                      AND bucket >= now() - INTERVAL '24 hours') - INTERVAL '15 minutes'`
+
 // xlmUSDCTEs is XLM's own USD price now and at each change lookback,
 // shared by the rollup, the detail query and the native row. `bucket` is
 // the observation minute [priceArmPickExpr] ages a triangulated price by.

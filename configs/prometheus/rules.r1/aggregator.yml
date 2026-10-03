@@ -89,8 +89,7 @@ groups:
             `stellarindex_aggregator_venue_vwap{pair="{{ $labels.pair }}",window="5m"}`
             — the odd one out is the venue to investigate. Check the pair's
             div:<pair> Redis flag / API flags.divergence_warning for actual
-            price impact. NOTE: the stellarindex_price_divergence_* alerts
-            are INERT (F-1329, no Prometheus producer) — do not wait on them.
+            price impact.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
 
       # Successor to the counter-based storm gate for what venue
