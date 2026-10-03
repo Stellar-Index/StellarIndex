@@ -788,8 +788,9 @@ func run(cfgPath string, dryRun bool) error {
 	// the alias registry is installed (above), so its canonical fold
 	// matches the per-asset read.
 	assetCharRollup := assetcharacterrollup.New(store, assetcharacterrollup.Options{
-		Interval: assetcharacterrollup.DefaultInterval,
-		Logger:   logger.With("component", "asset-character-rollup"),
+		Interval:     assetcharacterrollup.DefaultInterval,
+		StartupDelay: assetcharacterrollup.DefaultStartupDelay,
+		Logger:       logger.With("component", "asset-character-rollup"),
 	})
 	refresherWG.Add(1)
 	go func() {
