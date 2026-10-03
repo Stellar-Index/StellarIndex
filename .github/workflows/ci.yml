@@ -2512,6 +2512,11 @@ jobs:
         # Text only, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-readme-parity-test.sh
+      - name: ansible env-file secret guard self-test
+        # Every secret rendered unquoted into an /etc/default file that a
+        # shell may source must be in the preflight metacharacter guard.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-envfile-secret-guard-test.sh
       - name: ansible pubnet example checksum parity test (Q255)
         # r1/r2/r3.example.yml silently omitted minio_release_sha256 /
         # mc_release_sha256 / pgbackrest_exporter_release_sha256, unlike
