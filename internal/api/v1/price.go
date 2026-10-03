@@ -1699,7 +1699,7 @@ func (s *Server) closedUSDAnchoredFiatCross(ctx context.Context, asset, quote ca
 	if withheld {
 		return fallbackResult{withheld: PriceWithheldUnattributed}
 	}
-	if !ok || s.fxFixings == nil {
+	if !ok || s.fxFixings == nil || isDeclaredPeg(usdSnap) {
 		return fallbackResult{}
 	}
 	e := time.Time(usdSnap.ObservedAt)
@@ -1883,7 +1883,9 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	if withheld {
 		return PriceSnapshot{}, nil, false, true
 	}
-	if !ok {
+	// A declared peg is 1:1 against USD only; multiplying it by a rate is
+	// neither the declaration nor an observation, so no cross is served.
+	if !ok || isDeclaredPeg(usdSnap) {
 		return PriceSnapshot{}, nil, false, false
 	}
 

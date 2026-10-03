@@ -287,7 +287,7 @@ const SEARCH_SCOPES: {
  * the top-100 default page. Falls back to client-side filter
  * across protocols + static pages.
  */
-export function SearchModal() {
+export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   // Debounced query for the server-side /v1/coins?q=… call — 200ms
@@ -351,16 +351,18 @@ export function SearchModal() {
 
   // Cmd-K / Ctrl-K toggles — the one dialog behavior useDialog deliberately
   // does not cover (an OPEN shortcut). Escape lives in useDialog (A6-2).
+  // Only one mounted instance owns the toggle; the others just close their own
+  // modal, so Cmd-K never leaves two search dialogs stacked.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
-        setOpen((v) => !v);
+        setOpen((v) => (shortcut ? !v : false));
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [shortcut]);
 
   // Reset query each time the modal opens — the search cursor
   // should always start fresh, and stale state on re-open is
