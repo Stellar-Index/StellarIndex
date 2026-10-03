@@ -52,6 +52,10 @@ func classify(e *events.Event) string {
 		return EventAdminSet
 	case TopicSymbolOperatorSet:
 		return EventOperatorSet
+	case TopicSymbolVaultPaused:
+		return EventVaultPaused
+	case TopicSymbolVaultUnpaused:
+		return EventVaultUnpaused
 	}
 	return ""
 }
