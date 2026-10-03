@@ -1151,16 +1151,21 @@ func (w *Worker) shouldRefreshHistory(prevHistory map[string][]HistoryPoint, pub
 	if len(prevHistory) == 0 {
 		return true
 	}
-	// Sample any one ticker's most-recent date — they all share the
-	// same upstream date roll.
+	// Tickers can end on different days (a 404 day is skipped per ticker), so
+	// decide from the newest bar across all of them, not one map entry.
+	var newest time.Time
 	for _, points := range prevHistory {
 		if len(points) == 0 {
 			continue
 		}
-		newest := points[len(points)-1].Date
-		return newest.Before(publishedAt.Truncate(24 * time.Hour))
+		if d := points[len(points)-1].Date; d.After(newest) {
+			newest = d
+		}
 	}
-	return true
+	if newest.IsZero() {
+		return true
+	}
+	return newest.Before(publishedAt.Truncate(24 * time.Hour))
 }
 
 // fetchHistory pulls the trailing-7d daily snapshots from the
