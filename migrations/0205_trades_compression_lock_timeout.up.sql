@@ -1,4 +1,4 @@
--- 0199 up — run the trades compression policy under a 5 s lock_timeout.
+-- 0205 up — run the trades compression policy under a 5 s lock_timeout.
 --
 -- WHY: compress_chunk ends by asking for ACCESS EXCLUSIVE on the chunk and
 -- its indexes. Behind any long reader of that chunk (a historical CAGG
@@ -65,7 +65,7 @@ BEGIN
         RETURN;
     END IF;
     IF n_builtin <> 1 OR n_bounded <> 0 THEN
-        RAISE EXCEPTION '0199: expected one built-in trades compression policy and no trades_compression_policy job, found % and %',
+        RAISE EXCEPTION '0205: expected one built-in trades compression policy and no trades_compression_policy job, found % and %',
             n_builtin, n_bounded;
     END IF;
 
@@ -78,7 +78,7 @@ BEGIN
                   AND ((l.classid::bigint << 32) | l.objid::bigint)
                       = hashtext('usd-volume-restamp:trades')::bigint
                   AND l.pid <> pg_backend_pid()) THEN
-        RAISE EXCEPTION '0199: a usd-volume-restamp -write run holds advisory lock hashtext(''usd-volume-restamp:trades''); it will re-enable the built-in compression job by id on exit. Let it finish (or stop it), then re-run the migration';
+        RAISE EXCEPTION '0205: a usd-volume-restamp -write run holds advisory lock hashtext(''usd-volume-restamp:trades''); it will re-enable the built-in compression job by id on exit. Let it finish (or stop it), then re-run the migration';
     END IF;
 
     SELECT j.job_id, j.schedule_interval, j.max_runtime, j.max_retries,

@@ -1,4 +1,4 @@
--- 0199 down — back to the built-in trades compression policy, carrying the
+-- 0205 down — back to the built-in trades compression policy, carrying the
 -- job's schedule, retries, scheduled flag and config over.
 
 BEGIN;
@@ -24,7 +24,7 @@ BEGIN
         RETURN;
     END IF;
     IF n_builtin <> 0 OR n_bounded <> 1 THEN
-        RAISE EXCEPTION '0199 down: expected one trades_compression_policy job and no built-in trades compression policy, found % and %',
+        RAISE EXCEPTION '0205 down: expected one trades_compression_policy job and no built-in trades compression policy, found % and %',
             n_bounded, n_builtin;
     END IF;
 
