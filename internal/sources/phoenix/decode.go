@@ -771,6 +771,22 @@ func (r *RawProvideLiquidity) fieldsPresent() int {
 	return n
 }
 
+func (r *RawProvideLiquidity) slot(fieldTopic string) *events.Event {
+	switch fieldTopic {
+	case TopicSymbolPLSender:
+		return r.Sender
+	case TopicSymbolPLTokenA:
+		return r.TokenA
+	case TopicSymbolPLTokenAAmt:
+		return r.TokenAAmount
+	case TopicSymbolPLTokenB:
+		return r.TokenB
+	case TopicSymbolPLTokenBAmt:
+		return r.TokenBAmount
+	}
+	return nil
+}
+
 func (r *RawProvideLiquidity) assign(e *events.Event, fieldTopic string) error {
 	switch fieldTopic {
 	case TopicSymbolPLSender:
@@ -826,6 +842,20 @@ func (r *RawWithdrawLiquidity) fieldsPresent() int {
 		}
 	}
 	return n
+}
+
+func (r *RawWithdrawLiquidity) slot(fieldTopic string) *events.Event {
+	switch fieldTopic {
+	case TopicSymbolWLSender:
+		return r.Sender
+	case TopicSymbolWLSharesAmount:
+		return r.SharesAmount
+	case TopicSymbolWLReturnAmountA:
+		return r.ReturnAmountA
+	case TopicSymbolWLReturnAmountB:
+		return r.ReturnAmountB
+	}
+	return nil
 }
 
 func (r *RawWithdrawLiquidity) assign(e *events.Event, fieldTopic string) error {
@@ -884,6 +914,18 @@ func (r *RawStake) fieldsPresent() int {
 	return n
 }
 
+func (r *RawStake) slot(fieldTopic string) *events.Event {
+	switch fieldTopic {
+	case TopicSymbolStakeUser:
+		return r.User
+	case TopicSymbolStakeToken:
+		return r.Token
+	case TopicSymbolStakeAmount:
+		return r.Amount
+	}
+	return nil
+}
+
 func (r *RawStake) assign(e *events.Event, fieldTopic string) error {
 	switch fieldTopic {
 	case TopicSymbolStakeUser:
@@ -931,6 +973,16 @@ func (r *RawWithdrawRewards) fieldsPresent() int {
 		}
 	}
 	return n
+}
+
+func (r *RawWithdrawRewards) slot(fieldTopic string) *events.Event {
+	switch fieldTopic {
+	case TopicSymbolWRUser:
+		return r.User
+	case TopicSymbolWRRewardToken:
+		return r.RewardToken
+	}
+	return nil
 }
 
 func (r *RawWithdrawRewards) assign(e *events.Event, fieldTopic string) error {

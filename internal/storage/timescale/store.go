@@ -95,6 +95,10 @@ type Store struct {
 	// over-engineering.
 	assetRegistryDedupe sync.Map // key: asset_id (string) → time.Time (last upsert)
 
+	// assetRegistryMinLedger is the lowest first ledger upserted per asset
+	// (asset_id → uint32); a lower one bypasses the TTL above.
+	assetRegistryMinLedger sync.Map
+
 	// issuerRegistryDedupe is this Store's sentinel cache of issuer
 	// G-strkeys already INSERTed into `issuers`. No TTL: the issuers
 	// table has no `last_seen` columns so there's nothing to advance

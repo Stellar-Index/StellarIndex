@@ -132,7 +132,7 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 // RPC-shape ID/tx-index. If a future decoder needs tx_index, add it to the
 // contract_events schema + extractor first.
 // StreamContractEventsFiltered is the projector's forward-read source (ADR-0034
-// #10 feed-switch): it streams contract_events for [from,to] narrowed by a
+// ADR-0034 #10 feed-switch): it streams contract_events for [from,to] narrowed by a
 // per-source prefilter (contract_id IN / topic_0_sym IN — mirrors the Postgres
 // soroban_events path's prefilter), reconstructing each as an events.Event for
 // the source's decoder. NO FINAL: the projector reads small forward windows and

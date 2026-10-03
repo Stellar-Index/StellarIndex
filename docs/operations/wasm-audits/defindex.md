@@ -277,7 +277,7 @@ contracts, and the strategy layer only sees half of them.
 
 | ledger window | RPC events | indexer journal | coverage |
 | --- | --- | --- | --- |
-| pre-rc.63 (before walker fix #48 deployed 10:45 CEST 2026-05-21) | 78 | 11 | 14% |
+| pre-rc.63 (before walker fix 1b1e46a09 deployed 10:45 CEST 2026-05-21) | 78 | 11 | 14% |
 | post-rc.63 (walker active) | 15 | 15 | 100% (strategy-layer events only) |
 | total in 12-hour audit window | 93 | 26 | 27% |
 

@@ -3,8 +3,8 @@
 # off-site mirror (scripts/ops/galexie-archive-mirror.sh).
 #
 # The properties that matter:
-#   1. no DEST_ENDPOINT configured is reported (configured 0), exit 0, no
-#      success stamp.
+#   1. no DEST_ENDPOINT configured is reported (configured 0), exits 1 so
+#      the unit shows failed, no success stamp.
 #   2. a clean mirror + clean dry-run verification stamps success.
 #   3. the real `mc mirror` failing does not stamp success.
 #   4. the post-mirror `mc mirror --dry-run` verification is judged on its
@@ -58,7 +58,7 @@ run() {
 
 echo "== not configured =="
 DEST_ENDPOINT="" run
-expect_rc 0 "not-configured run exits 0"
+expect_rc 1 "not-configured run exits 1 (the unit must not report success)"
 prom_has 'stellarindex_galexie_archive_mirror_configured 0' "reports configured=0"
 prom_unstamped "does not stamp success when unconfigured"
 
