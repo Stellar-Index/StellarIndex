@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -161,9 +162,11 @@ func TestSupplyDoesNotConsultStorageWhenFlowsExist(t *testing.T) {
 	}
 }
 
-// TestSupplyKeepsEventReadingWhenStorageDeclines pins that the fallback is a
-// fallback: its refusals must not turn a 200 into an error.
-func TestSupplyKeepsEventReadingWhenStorageDeclines(t *testing.T) {
+// TestSupplyIsNotFoundWhenNoFlowsAndStorageDeclines pins that a flowless token
+// whose storage fallback declines gets a 404, never the unfounded zero
+// supply_flows scans to: a refusal of the optional source must not turn into a
+// "fully burned" claim.
+func TestSupplyIsNotFoundWhenNoFlowsAndStorageDeclines(t *testing.T) {
 	cases := []struct {
 		name string
 		st   ContractStorageSupplyReader
@@ -178,16 +181,12 @@ func TestSupplyKeepsEventReadingWhenStorageDeclines(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := serveSupplyWithStorage(t, zeroFlows(), tc.st, storageDealContractID)
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d, want 200 — a declining optional source must not fail the "+
-					"request (body=%s)", rec.Code, rec.Body)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404 — no flows and no storage reading is the absence of "+
+					"a figure, not a supply of zero (body=%s)", rec.Code, rec.Body)
 			}
-			got := decodeSupply(t, rec.Body.Bytes())
-			if got.Source != "mint_burn_flows" {
-				t.Errorf("source = %q, want mint_burn_flows", got.Source)
-			}
-			if got.CirculatingSupplyLowerBound || got.BalanceEntries != 0 || got.SupplyConsistent != nil {
-				t.Error("storage-only fields leaked onto a response the storage reader did not fill")
+			if strings.Contains(rec.Body.String(), `"total_supply"`) {
+				t.Errorf("404 body carries a total_supply: %s", rec.Body)
 			}
 		})
 	}

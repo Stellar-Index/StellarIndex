@@ -186,7 +186,7 @@ func (s *Server) resolvePriceAt(
 	}
 	fbSnap, fbFound, fbWithheld, err := s.lookupPriceAtStablecoinFallback(ctx, asset, quote, ts)
 	if err != nil || fbFound {
-		return fbSnap, Flags{Triangulated: true}, fbFound, nil, err
+		return fbSnap, Flags{Triangulated: true, ProxyDeviation: fbFound && s.proxyDeviation(ctx, ts)}, fbFound, nil, err
 	}
 	if withheld == nil {
 		withheld = fbWithheld

@@ -196,8 +196,8 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 	}
 	// A token with NO flows at all is the one case the event log cannot speak
 	// to: supply_flows scans a contract it has never seen to zeros, and zero is
-	// a claim ("fully burned") rather than an absence of one. Before publishing
-	// that claim, ask the contract's own storage.
+	// a claim ("fully burned") rather than an absence of one. Ask the contract's
+	// own storage; if it declines too, there is no reading to publish.
 	//
 	// Gated on FlowCount == 0 rather than on a magnitude comparison, so the two
 	// readings can never both contribute to one figure — they measure the same
@@ -208,6 +208,10 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, resp, Flags{Stale: storageStale})
 			return
 		}
+		writeProblem(w, r, "https://api.stellarindex.io/errors/supply-incomplete",
+			"Supply not available", http.StatusNotFound,
+			"No supply flows are recorded for this contract and its storage offers no balance reading, so a total supply isn't available for it.")
+		return
 	}
 
 	mint, burn, clawback := sup.Mint.String(), sup.Burn.String(), sup.Clawback.String()
@@ -235,8 +239,8 @@ type ContractStorageSupplyReader interface {
 
 // storageSupplyResponse builds the storage-derived answer for a token the event
 // log has nothing to say about. ok=false means "no defensible answer" and the
-// caller falls back to the event reading (which, for a token with no flows, is
-// the zero it has always published).
+// caller answers 404, since a flowless token's event reading is an unfounded
+// zero.
 //
 // Every refusal below is silent to the client by design: this path is a
 // fallback, and a fallback that turns a 200 into a 502 because its own optional
