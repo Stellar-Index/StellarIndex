@@ -424,6 +424,12 @@ func resolveStart(wm, floor, lakeMin uint32) uint32 {
 // resolveStart); the upper bound is the CONTIGUOUS lake tip from `start`,
 // with a non-zero `to` min()'d against it (see the contiguity gate below).
 func Cap67Range(ctx context.Context, chAddr string, from, to, floorLedger uint32) (uint32, uint32, error) {
+	return resolveDeriveRange(ctx, chAddr, "ch-cap67-movements", from, to, floorLedger, clickhouse.Cap67MovementsWatermark)
+}
+
+// resolveDeriveRange is Cap67Range for any watermark-resumed lake derive:
+// readWM is the derive's own watermark and verb names it in the log.
+func resolveDeriveRange(ctx context.Context, chAddr, verb string, from, to, floorLedger uint32, readWM func(context.Context, string) (uint32, error)) (uint32, uint32, error) {
 	if floorLedger == 0 {
 		// Defensive: a first run starts AT the floor, and genesis is ledger
 		// 1 — a floor of 0 is not a ledger. The CLI already rejects
@@ -432,7 +438,7 @@ func Cap67Range(ctx context.Context, chAddr string, from, to, floorLedger uint32
 	}
 	start := from
 	if start == 0 {
-		wm, err := clickhouse.Cap67MovementsWatermark(ctx, chAddr)
+		wm, err := readWM(ctx, chAddr)
 		if err != nil {
 			return 0, 0, fmt.Errorf("read watermark: %w", err)
 		}
@@ -479,8 +485,8 @@ func Cap67Range(ctx context.Context, chAddr string, from, to, floorLedger uint32
 		// Two reasons land here and the operator cannot tell them apart from
 		// the bound alone: an unhealed hole below -to, or a lake that simply
 		// has not reached it yet. Either way the derive is delayed, not short.
-		fmt.Fprintf(os.Stderr, "ch-cap67-movements: -to %d is above the contiguous lake tip %d — deriving through %d only; re-run once the lake is contiguous through %d (an unhealed hole below it, or ingest has yet to reach it)\n",
-			to, tip, last, to)
+		fmt.Fprintf(os.Stderr, "%s: -to %d is above the contiguous lake tip %d — deriving through %d only; re-run once the lake is contiguous through %d (an unhealed hole below it, or ingest has yet to reach it)\n",
+			verb, to, tip, last, to)
 	}
 	return start, last, nil
 }
