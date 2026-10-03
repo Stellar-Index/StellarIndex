@@ -85,6 +85,19 @@ func decodeFactoryConfigEvent(ev *events.Event, closedAt time.Time) ([]consumer.
 	return []consumer.Event{newAdminEvent(ev, closedAt, AdminActionFactoryConfigUpdated)}, nil
 }
 
+// checkToggleTradingBody fails closed on a non-Bool body so a shape change
+// surfaces as an error instead of a silent zero-row recognition.
+func checkToggleTradingBody(ev *events.Event) error {
+	sv, err := scval.Parse(ev.Value)
+	if err != nil {
+		return fmt.Errorf("%w: toggle_trading body: %w", ErrMalformedPayload, err)
+	}
+	if _, err := scval.AsBool(sv); err != nil {
+		return fmt.Errorf("%w: toggle_trading body: %w", ErrMalformedPayload, err)
+	}
+	return nil
+}
+
 // decodeBlendPoolAdminEvent records a blend-pool setting change: the new
 // delegate address, or the new i128 minimum trading amount for a token.
 func decodeBlendPoolAdminEvent(ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {

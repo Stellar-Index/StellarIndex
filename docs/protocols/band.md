@@ -64,8 +64,10 @@ Provenance details:
   relayer never pushes USD updates, so a `USD` symbol in `symbol_rates`
   is skipped as expected (not a decode error).
 - **`resolve_time` is `u64` UNIX seconds** (`time.Unix(…, 0)` →
-  `OracleUpdate.Timestamp`); out-of-range values fall back to ledger
-  close time.
+  `OracleUpdate.Timestamp`). A `relay` call whose `resolve_time` is
+  below the 2001 floor or at/after ledger close + 1h is dropped whole
+  (the contract would no-op it); only `force_relay` falls back to the
+  ledger close time.
 - **Synthetic op-index fan-out:** one `relay` call → N updates, each
   sharing `(ledger, tx_hash, op_source)` with a unique
   `OpIndex = base*1024 + i`.

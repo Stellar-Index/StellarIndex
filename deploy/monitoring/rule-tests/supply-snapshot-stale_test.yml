@@ -1,0 +1,41 @@
+---
+# promtool firing test for supply_snapshot_critical_stale (72h age gate).
+# Hourly series and evaluation keep the 3-day window cheap for the test engine;
+# 74h is the second evaluation past the threshold, after the 5m `for`.
+#
+#   promtool test rules deploy/monitoring/rule-tests/supply-snapshot-stale_test.yml
+
+rule_files:
+  - ../rules/supply-snapshot.yml
+
+evaluation_interval: 1h
+
+tests:
+  - interval: 1h
+    name: supply_snapshot_critical_stale fires
+    input_series:
+      - series: 'stellarindex_supply_snapshot_last_success_timestamp'
+        values: '0+0x80'
+    alert_rule_test:
+      - eval_time: 74h
+        alertname: stellarindex_supply_snapshot_critical_stale
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: supply
+              alert_family: supply_snapshot_stale
+            exp_annotations:
+              description: "Three days without a successful supply snapshot is enough\nthat the F2 fields on /v1/assets/{id} are visibly old to\ncustomers. Escalate per the SEV-3 playbook.\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot-stale.md"
+              summary: "supply snapshot for  stale > 72h \u2014 escalate"
+
+  - interval: 1h
+    name: supply_snapshot_critical_stale stays silent when healthy
+    input_series:
+      - series: 'stellarindex_supply_snapshot_last_success_timestamp'
+        values: '266400+0x80'
+    alert_rule_test:
+      - eval_time: 74h
+        alertname: stellarindex_supply_snapshot_critical_stale
+        exp_alerts: []

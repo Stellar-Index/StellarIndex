@@ -29,7 +29,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 67 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 246 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 248 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -189,7 +189,7 @@ signal lands.
 | `stellarindex_lake_verify_failed` | `max by (instance, check) (stellarindex_lake_verify_failures)` | > 0 on the last completed run (contiguity, entry_changes, hash_chain or raw_census) | ticket | [lake-verify](runbooks/lake-verify.md) |
 | `stellarindex_wasm_drift` | `max by (source, contract) (stellarindex_wasm_drift)` | > 0 for ≥ 1 h — a gated contract of an audited source runs a WASM hash absent from `audited_wasm.json` | ticket | [wasm-drift](runbooks/wasm-drift.md) |
 | `stellarindex_wasm_drift_stale` | `time() - stellarindex_wasm_drift_last_run_unix` | > 48 h since the last completed run, for ≥ 1 h | ticket | [wasm-drift](runbooks/wasm-drift.md) |
-| `stellarindex_galexie_archive_mirror_stale` | `time() - stellarindex_galexie_archive_mirror_last_success_timestamp` (or, per host, `stellarindex_galexie_archive_mirror_configured unless on (instance) max_over_time(…mirror_last_success_timestamp[48h])` — a host with no verified off-site mirror, including one with no target configured) | > 48 h since the last verified-clean mirror, or none inside 48 h, for ≥ 1 h | ticket | [galexie-archive-mirror](runbooks/galexie-archive-mirror.md) |
+| `stellarindex_galexie_archive_mirror_stale` | `time() - stellarindex_galexie_archive_mirror_last_success_timestamp` (or, per host, `stellarindex_galexie_archive_mirror_configured unless on (instance) max_over_time(…mirror_last_success_timestamp[48h])` — a host with no verified off-site mirror, including one with no target configured). **Retired 2026-10-02** on hosts with `galexie_archive_mirror_enabled: false` (the default): the mirror is removed and the metric is absent, so it cannot fire | > 48 h since the last verified-clean mirror, or none inside 48 h, for ≥ 1 h | ticket | [galexie-archive-mirror](runbooks/galexie-archive-mirror.md) |
 | `stellarindex_ch_schema_snapshot_unit_failed` | `node_systemd_unit_state{name="ch-schema-snapshot.service",state="failed"}` | == 1 for 5 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_schema_drift_detected` | `stellarindex_ch_schema_drift_divergent` | > 0 for ≥ 30 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_schema_drift_not_converged` | `stellarindex_ch_schema_drift_intent_converged` | == 0 for ≥ 30 min (intent vs. host release could not be compared) | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
@@ -231,6 +231,7 @@ signal lands.
 | `stellarindex_api_error_rate_critical` | same | > 5 % for > 2 min | page | [api-5xx](runbooks/api-5xx.md) |
 | `stellarindex_api_price_stale` | `stellarindex_price_staleness_seconds` per (asset, quote) | > 120 s sustained 5 min | ticket | [price-stale](runbooks/price-stale.md) |
 | `stellarindex_api_cache_miss_rate_high` | `rate(stellarindex_api_cache_ops_total{result="miss"}[5m]) / rate(stellarindex_api_cache_ops_total{result=~"hit\|miss\|stale"}[5m])` per (cache, op) | > 50 % sustained 10 min on a hot op (≥ 0.1 req/s) | ticket | [cache-miss-rate-high](runbooks/cache-miss-rate-high.md) |
+| `stellarindex_api_cache_refresh_failing` | `increase(stellarindex_api_cache_ops_total{result="refresh_error"}[15m])` per (cache, op) | > 0 for 30 min (every window has a failed background refresh; callers get `flags.stale`) | ticket | [cache-miss-rate-high](runbooks/cache-miss-rate-high.md) |
 
 ## Notify (transactional-email) alerts
 
@@ -567,6 +568,7 @@ auto-unfreeze at all. Rules in
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_aggregator_composite_freeze_suppression_dominant` | `stellarindex_aggregator_composite_freeze_suppressed_total` vs `stellarindex_anomaly_freeze_engaged_total` | suppression rate > 2x engaged rate over 1h, sustained 30m — composite-reference corroboration is disarming more phase-2 fires than are getting through | ticket | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) |
+| `stellarindex_aggregator_composite_corroboration_unavailable` | `stellarindex_aggregator_composite_corroboration{verdict="unavailable"}` | == 1 for 6h on a (pair, window) — thin leg, stale FX or empty triangulations leave the corroboration mechanism unable to suppress anything | ticket | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) |
 | `stellarindex_anomaly_freeze_escalated` | `stellarindex_anomaly_freeze_escalated_total` | increase > 0 over 15m — a freeze exhausted the 4-extension ladder and will NOT auto-unfreeze | page | [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
 | `stellarindex_anomaly_freeze_extension_rate` | `stellarindex_anomaly_freeze_extensions_total` | increase >= 3 over 1h, sustained 10m — freezes are climbing toward escalation | ticket | [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
 | `stellarindex_anomaly_freeze_ladder_write_failures` | `stellarindex_anomaly_freeze_ladder_write_failures_total` per op | increase > 0 over 15m — a durable ladder write (migration 0119) did not land | ticket | [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
