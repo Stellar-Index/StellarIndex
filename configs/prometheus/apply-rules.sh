@@ -129,16 +129,19 @@ for g in d.get("data",{}).get("groups",[]):
 # leaves "unknown" is exactly as broken as one that never loaded — it is
 # not evaluating — so the caller polls this for "unknown" the same way it
 # polls parse_loaded_rule_names for the name, instead of accepting
-# "unknown" as healthy on a single immediate sample.
+# "unknown" as healthy on a single immediate sample. An optional $2 skips
+# groups whose interval exceeds it: they cannot evaluate inside the window.
 rules_with_health() {
   python3 -c 'import sys,json
 want=sys.argv[1]
+cap=float(sys.argv[2]) if len(sys.argv)>2 else None
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(0)
 for g in d.get("data",{}).get("groups",[]):
+    if cap is not None and float(g.get("interval",0))>cap: continue
     for r in g.get("rules",[]):
         if r.get("health")==want:
-            print(r.get("name")+": "+str(r.get("health")))' "$1" 2>/dev/null | sort -u
+            print(r.get("name")+": "+str(r.get("health")))' "$@" 2>/dev/null | sort -u
 }
 
 # ─── 1. Validate BEFORE touching anything ─────────────────────────
@@ -267,9 +270,10 @@ while :; do
     die "verification failed — rules restored from backup"
   fi
 
-  pending="$(printf '%s' "$rules_json" | rules_with_health unknown)"
+  pending="$(printf '%s' "$rules_json" | rules_with_health unknown "$VERIFY_TIMEOUT_S")"
   if [ -z "$missing" ] && [ -z "$pending" ]; then
-    echo "apply-rules: verified — all $expected_count alert(s) loaded and healthy"
+    slow="$(printf '%s' "$rules_json" | rules_with_health unknown | wc -l | tr -d ' ')"
+    echo "apply-rules: verified — all $expected_count alert(s) loaded and healthy ($slow in groups slower than ${VERIFY_TIMEOUT_S}s not yet evaluated)"
     break
   fi
   if [ "$(date +%s)" -ge "$deadline" ]; then
