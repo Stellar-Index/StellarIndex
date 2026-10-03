@@ -79,8 +79,7 @@ hard-coding either number.
 
 ## Rules of the road
 
-- **Registration is per-IP throttled** (shared with `/v1/signup`,
-  ~5/hour). Register once and keep the key — don't mint a fresh
+- **Registration is per-IP throttled** (~5/hour per IP). Register once and keep the key — don't mint a fresh
   account per session; you'll hit 429 and gain nothing, since one
   free key already carries the full free-tier budget.
 - The plaintext key is returned exactly once and stored only as a

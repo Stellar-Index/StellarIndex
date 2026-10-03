@@ -3437,9 +3437,10 @@ export interface paths {
          *     held to the admin-write contract: the `X-Reason` header is
          *     required (400 without it) and the mint is recorded as a
          *     `key.mint` audit row, exactly as `POST /v1/admin/keys`.
-         *     Customer-tier callers need no header. A `/v1/signup` key's
-         *     email-verification stamp carries over to the child, so rotated
-         *     keys keep working under `signup_require_email_verification`.
+         *     Customer-tier callers need no header. A key minted by the retired
+         *     `/v1/signup` carries its email-verification stamp over to the
+         *     child, so rotated keys keep working under
+         *     `signup_require_email_verification`.
          *     Only `apikey` and `operator` callers may mint; a SEP-10 token
          *     gets 403.
          */
@@ -3750,8 +3751,8 @@ export interface paths {
          *     can later raise a specific account's limits (the partner
          *     path) via the operator override endpoints.
          *
-         *     Abuse posture: rides the same per-IP signup throttle as
-         *     `POST /v1/signup` (shared budget, default 5/hour/IP → 429),
+         *     Abuse posture: rides the per-IP signup throttle
+         *     (default 5/hour/IP → 429),
          *     underneath the global anonymous rate limit. The
          *     `Content-Type: application/json` header is REQUIRED — not
          *     merely validated when present — because a header-less POST is
@@ -3777,18 +3778,13 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Self-service signup — mint a first API key by email.
-         * @description Public, anonymous-tier endpoint. Hit it once with an email
-         *     + optional label and get back a freshly-minted API key for
-         *     the free tier (1000 req/min). Prefer `POST /v1/register` for
-         *     machine onboarding — it creates a real platform account and
-         *     doesn't require an email. Idempotent on the email:
-         *     a second call for the same email returns 409 with a pointer
-         *     to the existing key (recover access via support, or rotate
-         *     via /v1/account/keys once authenticated).
-         *
-         *     Already-authenticated callers receive 400 — they should
-         *     rotate keys via POST /v1/account/keys instead.
+         * Retired - use POST /v1/register.
+         * @deprecated
+         * @description Retired. Always answers `410 Gone` with the same body for every
+         *     request: the body is never read, so the response cannot reveal
+         *     whether an email address already has a key. Use
+         *     `POST /v1/register` to obtain an API key; keys minted here
+         *     earlier keep working.
          */
         post: operations["signup"];
         delete?: never;
@@ -3805,36 +3801,24 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Confirmation page for the emailed signup-verification link.
-         * @description The link in the verification email. Renders an HTML page
-         *     with a single "Confirm email" button that submits the token
-         *     to `POST /v1/signup/verify`; it changes nothing on its own.
-         *
-         *     Mail-security scanners (Safe Links, Mimecast, Proofpoint)
-         *     fetch every emailed link, so a link that consumed the token
-         *     would let the scanner prove ownership of the mailbox on
-         *     behalf of whoever signed up with the address. Only the
-         *     deliberate POST verifies. The page is served `no-store`,
-         *     `Referrer-Policy: no-referrer`, and with a CSP that only
-         *     lets its form submit back to this origin.
+         * Retired - signup email verification.
+         * @deprecated
+         * @description Retired. Always answers `410 Gone` with the same body for every
+         *     request: the body is never read, so the response cannot reveal
+         *     whether an email address already has a key. Use
+         *     `POST /v1/register` to obtain an API key; keys minted here
+         *     earlier keep working.
          */
         get: operations["verifySignupPage"];
         put?: never;
         /**
-         * Confirm email ownership for a signup-issued API key.
-         * @description F-1218 (codex audit-2026-05-12): closes the email-
-         *     ownership-proof loop on `POST /v1/signup`. The signup
-         *     handler issues a single-use token and emails a link to
-         *     `GET /v1/signup/verify`; that page's button submits the
-         *     token here, which consumes it and flags the key minted at
-         *     signup as email-verified (what the default-on
-         *     `signup_require_email_verification` gate checks).
-         *
-         *     The token is read from the form body only, never the query
-         *     string. Single-use semantics via Redis GETDEL — a second
-         *     submit returns 404, the same shape as a forged or expired
-         *     token. Token TTL defaults to 24h to match the dashboard
-         *     magic-link convention.
+         * Retired - signup email verification.
+         * @deprecated
+         * @description Retired. Always answers `410 Gone` with the same body for every
+         *     request: the body is never read, so the response cannot reveal
+         *     whether an email address already has a key. Use
+         *     `POST /v1/register` to obtain an API key; keys minted here
+         *     earlier keep working.
          */
         post: operations["verifySignup"];
         delete?: never;
@@ -21217,7 +21201,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Per-IP registration throttle exhausted (shared with /v1/signup). */
+            /** @description Per-IP registration throttle exhausted. */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -21244,87 +21228,10 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "email": "alice@example.com",
-                 *       "label": "production-api-1"
-                 *     }
-                 */
-                "application/json": {
-                    /** Format: email */
-                    email: string;
-                    label?: string;
-                };
-            };
-        };
+        requestBody?: never;
         responses: {
-            /** @description Account created — plaintext key shown **once**. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "data": {
-                     *         "plaintext": "re_live_4f9c1d8b3a7e2f1c9d4b8a6e3f2c1d9b8a7e6f5d4c3b2a1f",
-                     *         "key_id": "k_8f3a2c1b9e7d4f6a",
-                     *         "key_prefix": "re_live_4f9c1d8b",
-                     *         "identifier": "signup-3d4f9a2c1e8b7f6d",
-                     *         "label": "production-api-1",
-                     *         "tier": "apikey",
-                     *         "rate_limit_per_min": 1000,
-                     *         "email_verification_sent": false
-                     *       },
-                     *       "as_of": "2026-05-05T14:35:42.881Z",
-                     *       "flags": {
-                     *         "stale": false,
-                     *         "reduced_redundancy": false,
-                     *         "triangulated": false,
-                     *         "divergence_warning": false
-                     *       }
-                     *     }
-                     */
-                    "application/json": components["schemas"]["EnvelopeMeta"] & {
-                        data?: {
-                            /** @description Bearer token. Show ONCE; unrecoverable. */
-                            plaintext: string;
-                            key_id: string;
-                            /** @description Non-secret leading fragment of the key, safe to display/log for correlation. Omitted when the store does not record one. */
-                            key_prefix?: string;
-                            identifier: string;
-                            label?: string;
-                            /** @enum {string} */
-                            tier: "apikey";
-                            rate_limit_per_min: number;
-                            /** @description True when the deployment is wired for email-ownership verification and a verification link was sent. False on deployments without a verifier/emailer — the key authenticates immediately. */
-                            email_verification_sent: boolean;
-                        };
-                    };
-                };
-            };
-            /** @description Missing or invalid email, body too large, or already authenticated. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Email already has an account. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description AccountStore not configured (Redis unavailable). */
-            503: {
+            /** @description Endpoint retired; the detail points at `POST /v1/register`. */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21336,36 +21243,15 @@ export interface operations {
     };
     verifySignupPage: {
         parameters: {
-            query: {
-                /** @description The plaintext token from the verification email. */
-                token: string;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Confirmation page (does not consume the token). */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
-                };
-            };
-            /** @description Missing `?token=` query parameter. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description SignupVerifier not configured (Redis unavailable). */
-            503: {
+            /** @description Endpoint retired; the detail points at `POST /v1/register`. */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21382,76 +21268,10 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": {
-                    /** @description The plaintext token from the verification email. */
-                    token: string;
-                };
-            };
-        };
+        requestBody?: never;
         responses: {
-            /** @description Token consumed; email ownership confirmed. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "data": {
-                     *         "verified": true,
-                     *         "key_id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
-                     *         "detail": "email ownership confirmed; the API key minted at signup is now flagged as verified"
-                     *       },
-                     *       "as_of": "2026-07-03T09:00:00Z",
-                     *       "flags": {
-                     *         "stale": false,
-                     *         "reduced_redundancy": false,
-                     *         "triangulated": false,
-                     *         "divergence_warning": false,
-                     *         "divergence_checked": false
-                     *       }
-                     *     }
-                     */
-                    "application/json": components["schemas"]["EnvelopeMeta"] & {
-                        data?: {
-                            verified: boolean;
-                            key_id?: string;
-                            detail?: string;
-                        };
-                    };
-                };
-            };
-            /** @description Missing `token` form field, or an unreadable / oversized body. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Unknown / consumed / expired token. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Verification store error. */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description SignupVerifier not configured (Redis unavailable). */
-            503: {
+            /** @description Endpoint retired; the detail points at `POST /v1/register`. */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
