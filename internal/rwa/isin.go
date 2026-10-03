@@ -75,6 +75,16 @@ func IsISIN(s string) bool {
 	return (10-sum%10)%10 == digits[len(digits)-1]
 }
 
+// NormalizeISIN returns the upper-case form of a well-formed ISIN, or ""
+// when s is not one.
+func NormalizeISIN(s string) string {
+	n, ok := upperASCII12(s)
+	if !ok || !IsISIN(n) {
+		return ""
+	}
+	return n
+}
+
 // upperASCII12 trims s and upper-cases ASCII letters only, reporting
 // whether 12 bytes remain. strings.ToUpper would fold U+017F and U+0131
 // onto 'S' and 'I', accepting a string no ISIN lookup resolves.

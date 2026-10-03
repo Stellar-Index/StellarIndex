@@ -894,6 +894,10 @@ type RWAAsset struct {
 	// AnchorAsset is the off-chain instrument the issuer declared this
 	// token anchors to, verbatim.
 	AnchorAsset string `json:"anchor_asset,omitempty"`
+	// ISINShared is set when another admitted (code, issuer) declares
+	// the same ISIN. Informational only: two accounts or wrappers of
+	// one security are legitimate, so membership is unchanged.
+	ISINShared bool `json:"isin_shared,omitempty"`
 	// Valuation is the OBSERVED-MARKET-PRICE money, or the reason there
 	// is none. Unchanged by anything on the reference basis below.
 	Valuation RWAValuation `json:"valuation"`
@@ -1023,6 +1027,7 @@ type rwaMember struct {
 	recognition string
 	dirName     string
 	dirTags     []string
+	isinShared  bool
 }
 
 // rwaMembership is one rebuild: the admitted set, the refusal tally
@@ -1323,6 +1328,25 @@ func (s *Server) admitClassicCandidates(
 			dirName:     e.Name,
 			dirTags:     e.Tags,
 		})
+	}
+	rwaMarkSharedISINs(out.members)
+}
+
+// rwaMarkSharedISINs flags members whose declared ISIN is also declared
+// by another member. It never removes one: a shared ISIN can be a
+// legitimate multi-account issuer or a dual wrapper, so the signal is
+// left to the reader.
+func rwaMarkSharedISINs(members []rwaMember) {
+	count := make(map[string]int, len(members))
+	for _, m := range members {
+		if isin := rwa.NormalizeISIN(m.anchorAsset); isin != "" {
+			count[isin]++
+		}
+	}
+	for i := range members {
+		if isin := rwa.NormalizeISIN(members[i].anchorAsset); isin != "" && count[isin] > 1 {
+			members[i].isinShared = true
+		}
 	}
 }
 
@@ -2039,6 +2063,7 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 			AnchorClass:         mem.anchorClass,
 			Recognition:         mem.recognition,
 			AnchorAsset:         strings.TrimSpace(mem.anchorAsset),
+			ISINShared:          mem.isinShared,
 			Valuation:           rwaValuationOf(d),
 			CirculatingSupply:   d.CirculatingSupply,
 			// The asset's OWN scale, carried from the listing row. The

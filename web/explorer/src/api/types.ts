@@ -8657,6 +8657,8 @@ export interface components {
             anchor_class?: "stock" | "bond" | "commodity" | "realestate" | "fund";
             /** @description The off-chain instrument the issuer declared this token anchors to, verbatim. */
             anchor_asset?: string;
+            /** @description Present and true when another admitted (code, issuer) declares the same ISIN. Informational: membership is unchanged, since multi-account issuers and dual wrappers of one security are legitimate. */
+            isin_shared?: boolean;
             valuation: components["schemas"]["RWAValuation"];
             reference_valuation: components["schemas"]["RWAReferenceValuation"];
             reference?: components["schemas"]["RWAReference"];

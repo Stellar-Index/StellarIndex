@@ -16927,6 +16927,12 @@ components:
         anchor_asset:
           type: string
           description: The off-chain instrument the issuer declared this token anchors to, verbatim.
+        isin_shared:
+          type: boolean
+          description: >-
+            Present and true when another admitted (code, issuer) declares the
+            same ISIN. Informational: membership is unchanged, since multi-account
+            issuers and dual wrappers of one security are legitimate.
         valuation: { $ref: "#/components/schemas/RWAValuation" }
         reference_valuation: { $ref: "#/components/schemas/RWAReferenceValuation" }
         reference: { $ref: "#/components/schemas/RWAReference" }
