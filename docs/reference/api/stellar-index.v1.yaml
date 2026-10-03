@@ -15389,6 +15389,13 @@ components:
           prints taken at par with USD, with no prints in the leg's own
           quote asset to check a stablecoin de-peg against. Omitted when
           false.
+        - `proxy_deviation` — set on a TRIANGULATED `/v1/price/at`,
+          `/v1/price/changes` or `/v1/vwap` response served through a
+          declared USD peg when any declared USD peg's observed
+          `crypto:<STABLE>/fiat:USD` price is more than 2% from $1, so the
+          peg-as-dollar assumption
+          behind the value does not hold. Omitted when false, including
+          when no such observation was available.
         - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
           when the asset's code matches a verified currency's
           Stellar ticker but the issuer doesn't. The matching
@@ -15489,6 +15496,14 @@ components:
             composite was priced only from stablecoin prints taken at par with
             USD, with no prints in the leg's own quote asset to check a
             stablecoin de-peg against. Omitted when false.
+        proxy_deviation:
+          type: boolean
+          default: false
+          description: >
+            Set on a TRIANGULATED /v1/price/at, /v1/price/changes or /v1/vwap
+            response served through a declared USD peg when any declared USD
+            peg's observed crypto:<STABLE>/fiat:USD price is more than 2% from $1.
+            Omitted when false, including when no observation was available.
         unverified_ticker_collision: { type: boolean, default: false }
         filters_ignored:
           type: array

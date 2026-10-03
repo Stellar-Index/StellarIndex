@@ -156,6 +156,10 @@ type Flags struct {
 	// ThinMarket: the price was served under `include_thin=true` from a
 	// market below the substance floor that would otherwise be withheld.
 	ThinMarket bool `json:"thin_market,omitempty"`
+	// ProxyDeviation: a TRIANGULATED fiat:USD price rests on the assumption
+	// that a declared USD peg is $1, and any declared peg's observed dollar
+	// price is more than 2% from $1.
+	ProxyDeviation bool `json:"proxy_deviation,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.

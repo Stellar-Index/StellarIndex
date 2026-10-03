@@ -230,7 +230,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		OutliersFiltered:    outliersFiltered,
 		Truncated:           pre == maxTrades,
 		Clamped:             clamped,
-	}, Flags{Triangulated: triangulated})
+	}, Flags{Triangulated: triangulated, ProxyDeviation: triangulated && s.proxyDeviation(ctx, to)})
 }
 
 // parseVWAPOutlierSigma parses ?outlier_sigma=, defaulting to 0 (no
