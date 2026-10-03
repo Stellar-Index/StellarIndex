@@ -617,3 +617,33 @@ groups:
             so the customer-visible gap can be closed by re-emitting
             once the store is healthy.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-fanout-failing.md
+
+      # The explorer delta-strip worker (internal/aggregate/changesummary)
+      # has stopped upserting change_summary_5m: every list view and detail
+      # page serves frozen deltas with no error. The gauge is seeded at
+      # worker start and advances on any pass that upserts at least one
+      # entity, so a worker that never succeeds goes stale too; the `> 0`
+      # arm keeps a process that never ran the worker silent. Scoped to
+      # job="stellarindex_aggregator" because other binaries register the
+      # gauge at 0.
+      - alert: stellarindex_change_summary_stale
+        expr: |
+          (time() - stellarindex_change_summary_last_success_unix{job="stellarindex_aggregator"}) > 1800
+            and stellarindex_change_summary_last_success_unix{job="stellarindex_aggregator"} > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/change-summary-stale.md
+          summary: "change_summary_5m has not been refreshed in over 30 min — explorer deltas are frozen"
+          description: |
+            No change-summary pass has upserted a single entity in over
+            30 minutes (six 5-minute intervals) plus a 15-minute
+            for-duration. The explorer delta strips (h1/h24/d7/d30,
+            ATH/ATL, streak) are serving the last written rows. Look at
+            the aggregator's `change-summary pass had failures` warns for
+            `first_err`, and
+            stellarindex_change_summary_passes_total{outcome="failed"}.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/change-summary-stale.md
