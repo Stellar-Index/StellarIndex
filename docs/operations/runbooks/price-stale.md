@@ -19,8 +19,9 @@ severity: P2
 
 ## Symptoms
 
-- `stellarindex_price_staleness_seconds{asset=...} > 120` sustained
-  5 min. `asset` is one of the aggregator's *configured pair bases*
+- `stellarindex_price_staleness_seconds{asset=...,quote=...} > 120`
+  sustained 5 min. `quote` names the configured quote that stopped
+  publishing. `asset` is one of the aggregator's *configured pair bases*
   (`native`, `crypto:XLM`, `crypto:BTC`, `crypto:ETH` — the
   `defaultPairs` list in `cmd/stellarindex-aggregator/main.go`), not
   the `CODE-ISSUER` form a customer passes to `/v1/price`.
@@ -39,7 +40,7 @@ severity: P2
 curl -s http://localhost:9090/api/v1/alerts |
   jq '.data.alerts[] | select(.labels.alertname=="stellarindex_api_price_stale") | {labels, value, activeAt}'
 
-# Which asset is stale? (aggregator metrics endpoint, 127.0.0.1:9465)
+# Which asset and quote are stale? (aggregator metrics endpoint, 127.0.0.1:9465)
 curl -s http://127.0.0.1:9465/metrics |
   awk '/^stellarindex_price_staleness_seconds/ && $2 > 120 {print}'
 
@@ -132,7 +133,7 @@ ssh root@<host> "journalctl -u stellarindex-aggregator -n 200 --output=cat | gre
 - [ ] Step 4 — if there's genuinely no on-chain activity: decide
       with product whether to de-list or keep the stale number
       with `stale=true`.
-- [ ] Verification: `stellarindex_price_staleness_seconds{asset=<X>}`
+- [ ] Verification: `stellarindex_price_staleness_seconds{asset=<X>,quote=<Q>}`
       drops back under 120 s and the alert clears (`for: 5m` gives
       you time to verify it's not a flap).
 

@@ -160,3 +160,26 @@ describe('MarketChart volatility band', () => {
     expect(lw.createPriceLine).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('MarketChart fetch bound', () => {
+  it('aborts a hung OHLC request instead of loading forever', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let seen: AbortSignal | undefined;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((_u: string, init?: RequestInit) => {
+          seen = init?.signal ?? undefined;
+          return new Promise(() => {});
+        }),
+      );
+      renderChart(false);
+      await vi.waitFor(() => expect(seen).toBeDefined());
+      expect(seen?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(seen?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

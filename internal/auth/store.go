@@ -95,8 +95,8 @@ type CreateAPIKeyRequest struct {
 	MintedBy *Subject
 
 	// SelfService writes the record with the sliding [MirroredKeyIdleTTL]
-	// instead of no expiry: a caller-minted child must age out once
-	// abandoned, while operator-issued keys stay persistent.
+	// instead of no expiry: a caller-minted child or signup key must age
+	// out once abandoned, while operator-issued keys stay persistent.
 	SelfService bool
 }
 

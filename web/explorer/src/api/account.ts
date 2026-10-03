@@ -76,7 +76,10 @@ async function accountFetch<T>(
   }
 
   if (res.status === 204) return undefined as unknown as T;
-  return (await res.json()) as T;
+  // A 200 with no body (e.g. logout) is success; res.json() would throw on it.
+  const text = await res.text();
+  if (text === '') return undefined as unknown as T;
+  return JSON.parse(text) as T;
 }
 
 // ─── Idempotent creates ───────────────────────────────────────────
@@ -114,18 +117,13 @@ async function idempotentCreate<T>(path: string, body: unknown): Promise<T> {
 
 /** POST /v1/auth/logout — clears the magic-link session cookie. */
 export async function logout(): Promise<void> {
-  try {
-    await accountFetch<void>('/auth/logout', { method: 'POST' });
-  } finally {
-    // The API clears the session hint in the same response, but that
-    // only changes the cookie jar — nothing re-reads it until something
-    // happens to re-render. Drop it here too so every `useMe()` observer
-    // is notified and the signed-out surfaces appear at once, even when
-    // the caller stays in the SPA instead of doing a full navigation.
-    // Also covers a failed logout: local sign-out state should not
-    // depend on the request that just failed.
-    clearSessionHint();
-  }
+  await accountFetch<void>('/auth/logout', { method: 'POST' });
+  // The API clears the session hint in the same response, but that
+  // only changes the cookie jar — nothing re-reads it until something
+  // re-renders. Drop it here so every `useMe()` observer is notified.
+  // Skipped on failure: the visitor is still signed in, so the caller
+  // must keep the UI up and surface the error.
+  clearSessionHint();
 }
 
 /**

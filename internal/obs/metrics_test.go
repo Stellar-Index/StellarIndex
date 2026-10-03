@@ -64,7 +64,7 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 	obs.SourceInsertErrorsTotal.WithLabelValues("_warmup", "trade").Inc()
 	obs.RateLimitFailOpenTotal.Inc()
 	obs.CursorLastLedger.WithLabelValues("_warmup").Set(0)
-	obs.PriceStalenessSeconds.WithLabelValues("_warmup").Set(0)
+	obs.PriceStalenessSeconds.WithLabelValues("_warmup", "_warmup").Set(0)
 	// Through RecordOracleUpdate, not the vec directly: it is the only
 	// supported writer for last_update_unix (it emits the paired
 	// staleness budget on the same label set), and warming it here also

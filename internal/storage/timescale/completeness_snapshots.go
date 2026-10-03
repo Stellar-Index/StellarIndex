@@ -30,9 +30,9 @@ type CompletenessSnapshot struct {
 	// evaluated. See [CompletenessSnapshot.foundProblem].
 	FoundProblem bool
 	// ProjectionVerifiedFrom is the PROJECTION axis's floor (migration
-	// 0155): the lowest ledger the served tier holds any row at for this
-	// source, computed by chops.projectionScopes as the minimum over the
-	// source's targets. ProjectionOK is a claim about
+	// 0155), computed by chops.projectionScopes: the source's genesis, or
+	// for a declared served window the minimum served row over its
+	// targets. ProjectionOK is a claim about
 	// [ProjectionVerifiedFrom, Watermark] and about nothing below it —
 	// Genesis is the LAKE axis's floor and is routinely ten years lower.
 	// 0 = not recorded (pre-0155 snapshot, or projection not evaluated);
