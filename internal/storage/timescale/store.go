@@ -43,7 +43,7 @@ type Store struct {
 	// multiplies through base_amount instead — the L7.6 XLM-base
 	// anchor, for pools that store TOKEN-in-XLM as base=XLM,
 	// quote=TOKEN. See [tradeUSDVolumeViaFX] /
-	// [tradeUSDVolumeViaXLMBaseAnchor].
+	// [usdVolumeViaXLMBaseAnchor].
 	//
 	// Nil keeps the L2.2 Phase 1 behaviour exactly: only off-chain
 	// CEX/FX + operator-allow-listed on-chain DEX trades get a
@@ -191,6 +191,27 @@ func (s *Store) reDeriveNullVolumeGuard(t canonical.Trade, computed *string) err
 			t.Pair.Base, t.Pair.Quote, t.Source, t.Ledger, s.deriveGeneration)
 	}
 	return nil
+}
+
+// resolveUSDVolume is the one place a trade write computes its usd_volume. A
+// resolver read error stores NULL on the live path (generation 0, where a
+// later re-derive can repair it) but fails the write in re-derive mode, where
+// the row would win the generation guard and overwrite a correct stored value
+// with NULL beyond live replay's reach.
+func (s *Store) resolveUSDVolume(ctx context.Context, t canonical.Trade) (*string, error) {
+	v, err := tradeUSDVolumeChecked(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
+	if err != nil {
+		if s.deriveGeneration > 0 {
+			return nil, fmt.Errorf("timescale: refusing to write trade %s/%s (source=%s ledger=%d) "+
+				"in re-derive mode (generation=%d): USD-volume resolver read failed: %w",
+				t.Pair.Base, t.Pair.Quote, t.Source, t.Ledger, s.deriveGeneration, err)
+		}
+		return nil, nil
+	}
+	if err := s.reDeriveNullVolumeGuard(t, v); err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // Pool-tuning constants. Exposed so [store_test.go] can assert

@@ -76,7 +76,7 @@ import (
 //     run under run-heavy-job.sh trips the ops_job stall alerts;
 //   - the tier decision and the value both come from the SAME functions
 //     the insert path uses (timescale.ClassifyUSDVolumeTier for the exact
-//     tiers, tradeUSDVolumeViaXLMBaseAnchor for the two XLM anchors,
+//     tiers, usdVolumeViaXLMBaseAnchor for the two XLM anchors,
 //     tradeUSDVolumeViaFX for the fiat quotes) — never re-spelled here;
 //   - a row the anchor or the FX feed cannot price is REPORTED and left
 //     exactly as it is: a stored NULL stays NULL, a stored value is never
