@@ -2331,10 +2331,12 @@ export interface paths {
          *
          *     **Two floors, too.** `genesis_ledger` is the LAKE axis's floor —
          *     the first ledger the source could have data at. The SERVED axis
-         *     has its own, `projection_verified_from`: the lowest ledger the
-         *     served tier actually holds a row at. They are frequently far
-         *     apart — sdex and the oracle sources publish `genesis_ledger: 2`
-         *     against a served tier that begins around ledger 61.6M — so
+         *     has its own, `projection_verified_from`: the bottom of the range
+         *     the served claim covers. It equals `genesis_ledger` unless the
+         *     source's served tier is a declared working-set window, where it is
+         *     the lowest ledger that tier holds a row at — sdex publishes
+         *     `genesis_ledger: 2` against a served tier that begins around
+         *     ledger 61.6M — so
          *     `complete: true` with `coverage_pct: 1` is a claim over
          *     `[projection_verified_from, watermark_ledger]`, NOT over
          *     `[genesis_ledger, watermark_ledger]`. Read the two together.
@@ -2682,7 +2684,9 @@ export interface paths {
          *     cumulative fee pool and total XLM (stroop strings — the
          *     values exceed 2^53) and the protocol version in force.
          *     `fee_pool` is cumulative; daily fee burn is the delta between
-         *     consecutive COMPLETE days. Aggregated from the certified
+         *     consecutive COMPLETE days minus that day's `fee_pool_adjustment`
+         *     (present only on a day the pool was credited outside any
+         *     transaction fee, e.g. by a protocol upgrade). Aggregated from the certified
          *     `stellar.ledgers` lake (which carries the per-ledger counts),
          *     bounded to the tip so it stays partition-pruned. The
          *     time-series companion to the snapshot at `/v1/network/stats`;
@@ -5170,8 +5174,8 @@ export interface paths {
          * @description ADR-0048 D5: the ClickHouse `stellar.account_movements` movement
          *     archive (ADR-0047/0048 D2) merged, at read time, with the Postgres
          *     `sep41_transfers` "recent tail": an address's classic-asset
-         *     movements before P23 and its `transfer` movements from P23 on
-         *     (see KIND SCOPE below). Newest first, keyset-paged with
+         *     movements before P23 and its CAP-67 `transfer`, `mint`, `burn` and
+         *     `clawback` movements from P23 on (see KIND SCOPE below). Newest first, keyset-paged with
          *     `?cursor=<opaque>` (echo back `next_cursor`); the cursor is the
          *     composite `(ledger, tx_hash, op_index, leg_index)` plus the
          *     archive watermark the scroll was pinned to.
@@ -5181,7 +5185,7 @@ export interface paths {
          *     boundary (ledger 58,762,517, Whisk/CAP-67, 2025-09-03) and stamps
          *     `provenance: classic_derived`. `ch-cap67-movements` derives
          *     movements at and above P23 for EVERY asset, native XLM included,
-         *     from the lake's CAP-67 transfer events, stamps
+         *     from the lake's CAP-67 transfer, mint, burn and clawback events, stamps
          *     `provenance: cap67_derived`, and records the ledger it has
          *     completed through as its watermark. Postgres-tail rows carry
          *     `provenance: cap67_event`.
@@ -5201,12 +5205,22 @@ export interface paths {
          *     pinned above the current watermark is rejected with 400
          *     `invalid-cursor`; restart the scroll without a cursor.
          *
-         *     KIND SCOPE: from P23 on, both arms carry `transfer` movements
-         *     only. CAP-67 `mint`, `burn` and `clawback` events — every payment
-         *     to or from an asset's issuer among them — are not served after
-         *     P23, and fees and order-book fills are not served at any ledger.
-         *     A `?kind=` other than `transfer` therefore returns pre-P23 rows
-         *     only, and `coverage_note` says so.
+         *     KIND SCOPE: from P23 on, the archive arm carries CAP-67
+         *     `transfer` movements through its watermark, and `mint`, `burn` and
+         *     `clawback` over its recorded supply range only: the ledgers the
+         *     derive has covered with those kinds, which on a deployment derived
+         *     before they joined starts above P23 and moves down to it as the
+         *     derive backfills them. `coverage_note` names that range and any
+         *     post-P23 stretch still being backfilled. The Postgres tail above
+         *     the watermark carries `transfer` only.
+         *     CAP-67 reports a payment from an asset's issuer as `mint` and one
+         *     to it as `burn`; for a classic asset's SAC the issuer is the
+         *     counterparty (`mint`: issuer → holder; `burn`, `clawback`: holder
+         *     → issuer), while a custom token's supply event yields only the
+         *     holder's row. Fees and order-book fills are not served at any
+         *     ledger. A `?kind=` of `mint` or `burn` returns post-P23 archive
+         *     rows only, `clawback` both epochs, and any other kind except
+         *     `transfer` pre-P23 rows only; `coverage_note` says which.
          *
          *     SCOPE GAP (documented, not a bug): the Postgres tail only surfaces
          *     `sep41_transfers` rows with `event_kind = 'transfer'` — a pure
@@ -5872,10 +5886,10 @@ export interface components {
              *     claimable_balance_create, claimable_balance_claim,
              *     claimable_balance_clawback, liquidity_pool_deposit, or
              *     liquidity_pool_withdraw on ClickHouse pre-P23 archive rows
-             *     (`provenance: classic_derived`); transfer on ClickHouse post-P23
-             *     rows derived from the lake's CAP-67 events (`provenance:
-             *     cap67_derived`) and on Postgres post-P23 tail rows
-             *     (`provenance: cap67_event`).
+             *     (`provenance: classic_derived`); transfer, mint, burn or
+             *     clawback on ClickHouse post-P23 rows derived from the lake's
+             *     CAP-67 events (`provenance: cap67_derived`); transfer on
+             *     Postgres post-P23 tail rows (`provenance: cap67_event`).
              */
             movement_kind: string;
             /** @enum {string} */
@@ -7597,11 +7611,11 @@ export interface components {
                 watermark_ledger: number;
                 /**
                  * Format: int64
-                 * @description Floor of the range `complete` is a claim about — the
-                 *     lowest ledger the SERVED tier holds any row at for this
-                 *     source. It is NOT `genesis_ledger` (the sibling field on
-                 *     this same row), which is the lake axis's floor and is
-                 *     routinely much lower: sdex publishes `genesis_ledger: 2`
+                 * @description Floor of the range `complete` is a claim about —
+                 *     `genesis_ledger` (the sibling field on this same row)
+                 *     unless the source's served tier is a declared working-set
+                 *     window, where it is the lowest ledger that tier holds a
+                 *     row at and can be much higher: sdex publishes `genesis_ledger: 2`
                  *     with a served tier that begins around ledger 61.6M.
                  *     Reading `complete` against `genesis_ledger` overstates
                  *     the claim by that whole span. Omitted when the audit
@@ -8716,6 +8730,7 @@ export interface components {
             anchor_class?: "stock" | "bond" | "commodity" | "realestate" | "fund";
             /** @description The off-chain instrument the issuer declared this token anchors to, verbatim. */
             anchor_asset?: string;
+            isin_collision?: components["schemas"]["RWAISINCollision"];
             valuation: components["schemas"]["RWAValuation"];
             reference_valuation: components["schemas"]["RWAReferenceValuation"];
             reference?: components["schemas"]["RWAReference"];
@@ -8932,6 +8947,30 @@ export interface components {
              * @example rwa:USTRY
              */
             feed: string;
+        };
+        /**
+         * @description Present only when `anchor_asset` is an ISIN that more than one
+         *     issuer account declares in its issuer-bound SEP-1, counting
+         *     declarations this surface refused as well as admitted ones.
+         *
+         *     A declared ISIN is the issuer's claim, not proof that it holds
+         *     the security, so this states how many accounts make the same
+         *     claim and nothing more. It is informational: it never changes
+         *     membership, `valuation`, `reference` or `premium`. A reference
+         *     priced through an ISIN comes only from a binding verified on the
+         *     exact (code, issuer), never from the declaration alone.
+         */
+        RWAISINCollision: {
+            /**
+             * @description The declared ISIN in canonical upper-case form.
+             * @example LU2900381208
+             */
+            isin: string;
+            /**
+             * @description Distinct issuer accounts, this row's included, declaring `isin`.
+             * @example 2
+             */
+            declared_by_issuers: number;
         };
         /**
          * @description An independent oracle's valuation of the real-world instrument an
@@ -10438,17 +10477,28 @@ export interface components {
              *     from `admin_exclusion` so the wire never claims an
              *     exclusion that did not happen; `override` indicates an
              *     operator curated the locked-set or max_supply;
-             *     `sep1_declared_max` means max_supply (and fdv_usd) come
-             *     from the issuer's own stellar.toml `[[CURRENCIES]]`
-             *     max_number/fixed_number declaration — self-declared by
-             *     the issuer, not on-chain enforced; `sep41_lake_flows` is
-             *     the lake-derived Σmint−Σburn−Σclawback event-sum served
-             *     for SEP-41 tokens outside the operator watch-list
-             *     (total == circulating; no admin exclusion). Null when no
-             *     supply snapshot is available.
+             *     `sep41_lake_flows` is the lake-derived Σmint−Σburn−Σclawback
+             *     event-sum served for SEP-41 tokens outside the operator
+             *     watch-list (total == circulating; no admin exclusion).
+             *     `sep1_declared_max` stays in this vocabulary but names a
+             *     max_supply source, not a circulating policy: it is served on
+             *     `max_supply_basis`, and `supply_basis` keeps the policy behind
+             *     total/circulating even when the max comes from SEP-1. Null
+             *     when no supply snapshot is available.
              * @enum {string|null}
              */
             supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_sdf_reserve_exclusion_static" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "sep41_total_only" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances" | "no_metadata" | null;
+            /**
+             * @description Where `max_supply` (and `fdv_usd`) came from, when that is not
+             *     the policy `supply_basis` names. `sep1_declared_max`: the
+             *     issuer's own stellar.toml `[[CURRENCIES]]`
+             *     max_number/fixed_number declaration — self-declared by the
+             *     issuer, not on-chain enforced. Omitted when max_supply is null
+             *     or comes from the supply policy itself (an operator override,
+             *     `supply_basis: override`, or native XLM's fixed total).
+             * @enum {string}
+             */
+            max_supply_basis?: "sep1_declared_max";
             /**
              * Format: date-time
              * @description When the supply observation behind total_supply /
@@ -17634,15 +17684,16 @@ export interface operations {
                                 tip_ledger: number;
                                 /**
                                  * Format: int64
-                                 * @description PROJECTION-axis floor: the lowest ledger the
-                                 *     SERVED tier holds any row at for this source.
-                                 *     It is the bottom of the range `projection_ok`
-                                 *     — and therefore `complete` — is a claim about;
-                                 *     below it the served tier holds nothing.
+                                 * @description PROJECTION-axis floor: the bottom of the range
+                                 *     `projection_ok` — and therefore `complete` — is
+                                 *     a claim about. It is `genesis_ledger` for every
+                                 *     source whose served tier claims full history, so
+                                 *     a never-projected prefix fails `projection_ok`.
                                  *
-                                 *     It is NOT `genesis_ledger`, which is the LAKE
-                                 *     axis's floor and is routinely ten years lower:
-                                 *     on pubnet, sdex and the oracle sources publish
+                                 *     For a source whose served tier is a declared
+                                 *     working-set window it is the lowest ledger that
+                                 *     tier holds a row at, and can sit far above
+                                 *     `genesis_ledger`: on pubnet sdex publishes
                                  *     `genesis_ledger: 2` with a served tier that
                                  *     begins around ledger 61.6M (March 2026). A
                                  *     consumer reading only
@@ -18524,8 +18575,10 @@ export interface operations {
                                 ops?: number;
                                 /** Format: int64 */
                                 events?: number;
-                                /** @description Cumulative network fee pool at the day's last ledger, in stroops (decimal string — exceeds 2^53). Daily fee burn = the delta between consecutive COMPLETE days. */
+                                /** @description Cumulative network fee pool at the day's last ledger, in stroops (decimal string — exceeds 2^53). Daily fee burn = the delta between consecutive COMPLETE days minus `fee_pool_adjustment`. */
                                 fee_pool?: string;
+                                /** @description Stroops (decimal string) the fee pool changed by this day outside any transaction fee — e.g. pubnet's Protocol 24 upgrade crediting it 31879035 stroops on 2025-10-22. Subtract it from the day's fee_pool delta to get the fees burned. Omitted when the day had no such change. */
+                                fee_pool_adjustment?: string;
                                 /** @description Total XLM in existence at the day's last ledger, in stroops (decimal string — exceeds 2^53). */
                                 total_coins?: string;
                                 /** @description Protocol version in force at the day's last ledger. */
@@ -24548,7 +24601,7 @@ export interface operations {
                 limit?: number;
                 /** @description Opaque keyset cursor from a prior response's next_cursor. */
                 cursor?: string;
-                /** @description Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind. Only `transfer` is served at and after P23 (ledger 58,762,517); any other kind returns pre-P23 rows only. */
+                /** @description Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind. At and after P23 (ledger 58,762,517) only `transfer`, `mint`, `burn` and `clawback` are served — the last three over the archive's recorded supply range only, which `coverage_note` names (from ledger N through ledger M, plus any post-P23 stretch still being backfilled); any other kind returns pre-P23 rows only. */
                 kind?: string;
                 /** @description Filter by direction. */
                 direction?: "sent" | "received" | "self";

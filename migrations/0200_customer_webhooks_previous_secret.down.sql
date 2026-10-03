@@ -1,4 +1,4 @@
--- 0199 down — drop the rotation overlap columns. Webhooks keep their
+-- 0200 down — drop the rotation overlap columns. Webhooks keep their
 -- current key (secret_hash); any outgoing key still in its overlap window
 -- stops signing immediately.
 

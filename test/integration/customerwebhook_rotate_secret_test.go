@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
-// TestCustomerWebhookRotateSecretKeepsQueue executes migration 0199 up and
+// TestCustomerWebhookRotateSecretKeepsQueue executes migration 0200 up and
 // down and the in-place rotation it backs (GH #665): the key changes on the
 // SAME row, the outgoing key is kept until its expiry, and the webhook's
 // queued deliveries survive — the delete + recreate it replaces cascaded
@@ -25,7 +25,7 @@ func TestCustomerWebhookRotateSecretKeepsQueue(t *testing.T) {
 	defer cancel()
 
 	dsn := startTimescale(t, ctx)
-	applyMigrationsUpTo(t, dsn, 198)
+	applyMigrationsUpTo(t, dsn, 199)
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
@@ -38,10 +38,10 @@ func TestCustomerWebhookRotateSecretKeepsQueue(t *testing.T) {
 	webhooks := postgresstore.NewWebhookStore(postgresstore.New(db))
 	before, err := webhooks.GetWebhook(ctx, hookID)
 	if err != nil {
-		t.Fatalf("get pre-0199 webhook: %v", err)
+		t.Fatalf("get pre-0200 webhook: %v", err)
 	}
 	if before.PreviousSecret != nil || !before.PreviousSecretExpiresAt.IsZero() {
-		t.Fatalf("pre-0199 webhook reads previous = (%x, %v), want none", before.PreviousSecret, before.PreviousSecretExpiresAt)
+		t.Fatalf("pre-0200 webhook reads previous = (%x, %v), want none", before.PreviousSecret, before.PreviousSecretExpiresAt)
 	}
 	oldKey := before.SecretHash
 
@@ -91,7 +91,7 @@ func TestCustomerWebhookRotateSecretKeepsQueue(t *testing.T) {
 		t.Error("previous_secret without an expiry was accepted, want the pair CHECK to refuse it")
 	}
 
-	applyMigrationsUpTo(t, dsn, 198)
+	applyMigrationsUpTo(t, dsn, 199)
 	var cols int
 	if err := db.QueryRowContext(ctx, `
 		SELECT count(*) FROM information_schema.columns
@@ -100,7 +100,7 @@ func TestCustomerWebhookRotateSecretKeepsQueue(t *testing.T) {
 		t.Fatalf("read columns: %v", err)
 	}
 	if cols != 0 {
-		t.Errorf("0199 down left %d previous_secret columns in place", cols)
+		t.Errorf("0200 down left %d previous_secret columns in place", cols)
 	}
 	applyMigrations(t, dsn)
 }

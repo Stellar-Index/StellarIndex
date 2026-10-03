@@ -39,7 +39,7 @@ func (c *wmConn) QueryRow(_ context.Context, _ string, _ ...any) driver.Row {
 	if err != nil {
 		return &stubRow{err: err}
 	}
-	return &stubRow{data: []any{c.wm}}
+	return &stubRow{data: []any{c.wm, uint32(0), uint32(0)}}
 }
 
 func (c *wmConn) callCount() int {

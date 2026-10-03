@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
 // SeedIntraLedgerSeq is the intra_ledger_seq an ops seed writer
@@ -23,6 +25,12 @@ import (
 // reach this value (it would require 4.3e9 entry-changes in one ledger), so
 // there is no live/seed ambiguity. See migration 0111 (audit-2026-07-16 C2-6).
 const SeedIntraLedgerSeq = uint32(math.MaxUint32)
+
+// observationWalkVersion is stamped as walk_version on every observation row
+// (migration 0199). It is the numbering intra_ledger_seq was drawn from, so
+// the upsert guard compares positions only within one walk and lets a
+// re-derive under a newer walk replace an older one's row.
+const observationWalkVersion = int64(dispatcher.EntryWalkVersion)
 
 // TrustlineObservation is the wire shape for a single
 // trustline-delta row. Mirrors trustline_observations columns.
@@ -65,20 +73,22 @@ func (s *Store) InsertTrustlineObservation(ctx context.Context, o TrustlineObser
 	const q = `
         INSERT INTO trustline_observations (
             account_id, asset_key, ledger, observed_at,
-            balance_stroops, is_removal, intra_ledger_seq
+            balance_stroops, is_removal, intra_ledger_seq, walk_version
         ) VALUES (
             $1, $2, $3, $4,
-            $5, $6, $7
+            $5, $6, $7, $8
         )
         ON CONFLICT (account_id, asset_key, ledger, observed_at) DO UPDATE SET
             balance_stroops  = EXCLUDED.balance_stroops,
             is_removal       = EXCLUDED.is_removal,
-            intra_ledger_seq = EXCLUDED.intra_ledger_seq
-        WHERE trustline_observations.intra_ledger_seq <= EXCLUDED.intra_ledger_seq
+            intra_ledger_seq = EXCLUDED.intra_ledger_seq,
+            walk_version     = EXCLUDED.walk_version
+        WHERE (trustline_observations.walk_version, trustline_observations.intra_ledger_seq)
+           <= (EXCLUDED.walk_version, EXCLUDED.intra_ledger_seq)
     `
 	_, err := s.db.ExecContext(ctx, q,
 		o.AccountID, o.AssetKey, int(o.Ledger), o.ObservedAt.UTC(),
-		o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq),
+		o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq), observationWalkVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertTrustlineObservation %s/%s@%d: %w", o.AccountID, o.AssetKey, o.Ledger, err)
@@ -104,7 +114,7 @@ func (s *Store) SumTrustlineBalancesAtOrBefore(ctx context.Context, assetKey str
               FROM trustline_observations
              WHERE asset_key = $1
                AND ledger    <= $2
-             ORDER BY account_id, ledger DESC, intra_ledger_seq DESC
+             ORDER BY account_id, ledger DESC, walk_version DESC, intra_ledger_seq DESC
           ) latest
          WHERE NOT is_removal
     `
@@ -143,13 +153,13 @@ func (s *Store) InsertClaimableObservation(ctx context.Context, o ClaimableObser
 	const q = `
         INSERT INTO claimable_observations (
             claimable_id, asset_key, ledger, observed_at,
-            balance_stroops, is_removal, intra_ledger_seq
+            balance_stroops, is_removal, intra_ledger_seq, walk_version
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7
+            $1, $2, $3, $4, $5, $6, $7, $8
         )` + claimableObservationUpsert
 	_, err := s.db.ExecContext(ctx, q,
 		o.ClaimableID, o.AssetKey, int(o.Ledger), o.ObservedAt.UTC(),
-		o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq),
+		o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq), observationWalkVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertClaimableObservation %s@%d: %w", o.ClaimableID, o.Ledger, err)
@@ -164,8 +174,10 @@ func (s *Store) InsertClaimableObservation(ctx context.Context, o ClaimableObser
 const claimableObservationUpsert = ` ON CONFLICT (claimable_id, ledger, observed_at) DO UPDATE SET
             balance_stroops  = EXCLUDED.balance_stroops,
             is_removal       = EXCLUDED.is_removal,
-            intra_ledger_seq = EXCLUDED.intra_ledger_seq
-        WHERE claimable_observations.intra_ledger_seq <= EXCLUDED.intra_ledger_seq`
+            intra_ledger_seq = EXCLUDED.intra_ledger_seq,
+            walk_version     = EXCLUDED.walk_version
+        WHERE (claimable_observations.walk_version, claimable_observations.intra_ledger_seq)
+           <= (EXCLUDED.walk_version, EXCLUDED.intra_ledger_seq)`
 
 // InsertClaimableObservationBatch persists rows via a single multi-row INSERT
 // with the same intra_ledger_seq-guarded upsert [Store.InsertClaimableObservation]
@@ -200,12 +212,12 @@ func (s *Store) InsertClaimableObservationBatch(ctx context.Context, rows []Clai
 	}
 	insertRows := dedupeClaimableObservations(rows)
 
-	const ncols = 7
+	const ncols = 8
 	var sb strings.Builder
 	sb.WriteString(`
         INSERT INTO claimable_observations (
             claimable_id, asset_key, ledger, observed_at,
-            balance_stroops, is_removal, intra_ledger_seq
+            balance_stroops, is_removal, intra_ledger_seq, walk_version
         ) VALUES `)
 	args := make([]any, 0, ncols*len(insertRows))
 	for i := range insertRows {
@@ -213,12 +225,12 @@ func (s *Store) InsertClaimableObservationBatch(ctx context.Context, rows []Clai
 			sb.WriteString(", ")
 		}
 		base := i * ncols
-		fmt.Fprintf(&sb, "($%d,$%d,$%d,$%d,$%d,$%d,$%d)",
-			base+1, base+2, base+3, base+4, base+5, base+6, base+7)
+		fmt.Fprintf(&sb, "($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8)
 		o := &insertRows[i]
 		args = append(args,
 			o.ClaimableID, o.AssetKey, int(o.Ledger), o.ObservedAt.UTC(),
-			o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq),
+			o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq), observationWalkVersion,
 		)
 	}
 	sb.WriteString(claimableObservationUpsert)
@@ -261,15 +273,16 @@ func dedupeClaimableObservations(rows []ClaimableObservation) []ClaimableObserva
 }
 
 // ─── Read-path tie-break (2026-07-28) ───────────────────────────────
-// Every DISTINCT ON reader below orders by `ledger DESC,
-// intra_ledger_seq DESC`, NOT ledger alone. Two rows can share a
+// Every DISTINCT ON reader below orders by `ledger DESC, walk_version
+// DESC, intra_ledger_seq DESC`, NOT ledger alone. Two rows can share a
 // (key, ledger): an ops seed stamps [SeedIntraLedgerSeq] (MaxUint32,
 // "authoritative reconstructed FINAL state for this ledger") while the
 // live observer writes the real per-ledger ordinal. Ordering on ledger
 // alone leaves that pick to the planner.
 //
 // The WRITE path already guards this — `claimableObservationUpsert` and
-// its siblings only overwrite when `intra_ledger_seq <= EXCLUDED` — so
+// its siblings only overwrite when `(walk_version, intra_ledger_seq) <=
+// EXCLUDED` — so
 // the read path was the asymmetric half. That asymmetry is exactly the
 // shape of audit C2-4c, where `ReplacingMergeTree(ledger_seq)` ties
 // between a `state` before-image and its `updated` after-image and
@@ -299,7 +312,7 @@ func (s *Store) LiveClaimableObservations(ctx context.Context) (map[string]LiveC
             SELECT DISTINCT ON (asset_key, claimable_id)
                    claimable_id, asset_key, ledger, is_removal
               FROM claimable_observations
-             ORDER BY asset_key, claimable_id, ledger DESC, intra_ledger_seq DESC
+             ORDER BY asset_key, claimable_id, ledger DESC, walk_version DESC, intra_ledger_seq DESC
           ) latest
          WHERE NOT is_removal
     `
@@ -342,7 +355,7 @@ func (s *Store) SumClaimableBalancesAtOrBefore(ctx context.Context, assetKey str
               FROM claimable_observations
              WHERE asset_key = $1
                AND ledger    <= $2
-             ORDER BY claimable_id, ledger DESC, intra_ledger_seq DESC
+             ORDER BY claimable_id, ledger DESC, walk_version DESC, intra_ledger_seq DESC
           ) latest
          WHERE NOT is_removal
     `
@@ -380,19 +393,21 @@ func (s *Store) InsertLPReserveObservation(ctx context.Context, o LPReserveObser
 	const q = `
         INSERT INTO lp_reserve_observations (
             pool_id, asset_key, ledger, observed_at,
-            balance_stroops, is_removal, intra_ledger_seq
+            balance_stroops, is_removal, intra_ledger_seq, walk_version
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7
+            $1, $2, $3, $4, $5, $6, $7, $8
         )
         ON CONFLICT (pool_id, asset_key, ledger, observed_at) DO UPDATE SET
             balance_stroops  = EXCLUDED.balance_stroops,
             is_removal       = EXCLUDED.is_removal,
-            intra_ledger_seq = EXCLUDED.intra_ledger_seq
-        WHERE lp_reserve_observations.intra_ledger_seq <= EXCLUDED.intra_ledger_seq
+            intra_ledger_seq = EXCLUDED.intra_ledger_seq,
+            walk_version     = EXCLUDED.walk_version
+        WHERE (lp_reserve_observations.walk_version, lp_reserve_observations.intra_ledger_seq)
+           <= (EXCLUDED.walk_version, EXCLUDED.intra_ledger_seq)
     `
 	_, err := s.db.ExecContext(ctx, q,
 		o.PoolID, o.AssetKey, int(o.Ledger), o.ObservedAt.UTC(),
-		o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq),
+		o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq), observationWalkVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertLPReserveObservation %s/%s@%d: %w", o.PoolID, o.AssetKey, o.Ledger, err)
@@ -412,7 +427,7 @@ func (s *Store) SumLPReservesAtOrBefore(ctx context.Context, assetKey string, as
               FROM lp_reserve_observations
              WHERE asset_key = $1
                AND ledger    <= $2
-             ORDER BY pool_id, ledger DESC, intra_ledger_seq DESC
+             ORDER BY pool_id, ledger DESC, walk_version DESC, intra_ledger_seq DESC
           ) latest
          WHERE NOT is_removal
     `
@@ -459,20 +474,22 @@ func (s *Store) InsertSACBalanceObservation(ctx context.Context, o SACBalanceObs
 	const q = `
         INSERT INTO sac_balance_observations (
             contract_id, asset_key, holder, ledger, observed_at,
-            balance_stroops, is_removal, intra_ledger_seq
+            balance_stroops, is_removal, intra_ledger_seq, walk_version
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8
+            $1, $2, $3, $4, $5, $6, $7, $8, $9
         )
         ON CONFLICT (contract_id, holder, ledger, observed_at) DO UPDATE SET
             asset_key        = EXCLUDED.asset_key,
             balance_stroops  = EXCLUDED.balance_stroops,
             is_removal       = EXCLUDED.is_removal,
-            intra_ledger_seq = EXCLUDED.intra_ledger_seq
-        WHERE sac_balance_observations.intra_ledger_seq <= EXCLUDED.intra_ledger_seq
+            intra_ledger_seq = EXCLUDED.intra_ledger_seq,
+            walk_version     = EXCLUDED.walk_version
+        WHERE (sac_balance_observations.walk_version, sac_balance_observations.intra_ledger_seq)
+           <= (EXCLUDED.walk_version, EXCLUDED.intra_ledger_seq)
     `
 	_, err := s.db.ExecContext(ctx, q,
 		o.ContractID, o.AssetKey, o.Holder, int(o.Ledger), o.ObservedAt.UTC(),
-		o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq),
+		o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq), observationWalkVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertSACBalanceObservation %s/%s@%d: %w", o.ContractID, o.Holder, o.Ledger, err)
@@ -494,7 +511,7 @@ func (s *Store) SumSACBalancesAtOrBefore(ctx context.Context, assetKey string, a
               FROM sac_balance_observations
              WHERE asset_key = $1
                AND ledger    <= $2
-             ORDER BY contract_id, holder, ledger DESC, intra_ledger_seq DESC
+             ORDER BY contract_id, holder, ledger DESC, walk_version DESC, intra_ledger_seq DESC
           ) latest
          WHERE NOT is_removal
     `
@@ -542,7 +559,7 @@ func (s *Store) TrustlineBalanceForAccountAtOrBefore(ctx context.Context, accoun
          WHERE account_id = $1
            AND asset_key  = $2
            AND ledger    <= $3
-         ORDER BY ledger DESC, intra_ledger_seq DESC
+         ORDER BY ledger DESC, walk_version DESC, intra_ledger_seq DESC
          LIMIT 1
     `
 	return scanLatestBalance(ctx, s.db, q, accountID, assetKey, int(asOfLedger))
@@ -563,7 +580,7 @@ func (s *Store) SACBalanceForContractAtOrBefore(ctx context.Context, contractHol
          WHERE holder    = $1
            AND asset_key = $2
            AND ledger   <= $3
-         ORDER BY ledger DESC, intra_ledger_seq DESC
+         ORDER BY ledger DESC, walk_version DESC, intra_ledger_seq DESC
          LIMIT 1
     `
 	return scanLatestBalance(ctx, s.db, q, contractHolder, assetKey, int(asOfLedger))

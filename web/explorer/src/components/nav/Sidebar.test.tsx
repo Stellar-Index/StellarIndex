@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Hermetic by default: the Status pill's shared useStatus query fetches
@@ -164,5 +164,43 @@ describe('Sidebar AccountMenu', () => {
     // Focus must return to the trigger, not fall back to <body> (which is
     // where an unmounted focused element's focus goes by default).
     expect(document.activeElement).toBe(trigger);
+  });
+
+  function openMenu() {
+    renderNav();
+    fireEvent.click(
+      screen.getByRole('button', { name: /signed-in@example.com/ }),
+    );
+  }
+
+  it('signs out on an empty-body 200 and navigates home', async () => {
+    const loc = { ...window.location, href: '/dashboard' };
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: loc,
+    });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () => new Response(null, { status: 200 }),
+    );
+    openMenu();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await waitFor(() => expect(loc.href).toBe('/'));
+    vi.unstubAllGlobals();
+  });
+
+  it('stays put and shows an error when logout fails', async () => {
+    const loc = { ...window.location, href: '/dashboard' };
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: loc,
+    });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () => new Response(null, { status: 500 }),
+    );
+    openMenu();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/failed/i);
+    expect(loc.href).toBe('/dashboard');
+    vi.unstubAllGlobals();
   });
 });
