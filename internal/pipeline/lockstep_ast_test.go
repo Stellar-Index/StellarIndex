@@ -451,6 +451,6 @@ func TestLockstep_EveryConsumerEventHasSinkArm(t *testing.T) {
 		if _, allowed := notSunkEvents[full]; allowed {
 			continue
 		}
-		t.Errorf("%s implements consumer.Event but sink.go HandleEvent has no persist arm — it falls to the 'unhandled event kind' default and is dropped (pipeline sink type-switch trap, #56). Add a case in HandleEvent (and the tradeFromEvent fast-path if it is trade-shaped), or register it in notSunkEvents with a reason", full)
+		t.Errorf("%s implements consumer.Event but sink.go HandleEvent has no persist arm — it falls to the 'unhandled event kind' default and is dropped (pipeline sink type-switch trap). Add a case in HandleEvent (and the tradeFromEvent fast-path if it is trade-shaped), or register it in notSunkEvents with a reason", full)
 	}
 }

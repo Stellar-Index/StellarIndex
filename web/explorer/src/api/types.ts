@@ -2331,10 +2331,12 @@ export interface paths {
          *
          *     **Two floors, too.** `genesis_ledger` is the LAKE axis's floor —
          *     the first ledger the source could have data at. The SERVED axis
-         *     has its own, `projection_verified_from`: the lowest ledger the
-         *     served tier actually holds a row at. They are frequently far
-         *     apart — sdex and the oracle sources publish `genesis_ledger: 2`
-         *     against a served tier that begins around ledger 61.6M — so
+         *     has its own, `projection_verified_from`: the bottom of the range
+         *     the served claim covers. It equals `genesis_ledger` unless the
+         *     source's served tier is a declared working-set window, where it is
+         *     the lowest ledger that tier holds a row at — sdex publishes
+         *     `genesis_ledger: 2` against a served tier that begins around
+         *     ledger 61.6M — so
          *     `complete: true` with `coverage_pct: 1` is a claim over
          *     `[projection_verified_from, watermark_ledger]`, NOT over
          *     `[genesis_ledger, watermark_ledger]`. Read the two together.
@@ -2682,7 +2684,9 @@ export interface paths {
          *     cumulative fee pool and total XLM (stroop strings — the
          *     values exceed 2^53) and the protocol version in force.
          *     `fee_pool` is cumulative; daily fee burn is the delta between
-         *     consecutive COMPLETE days. Aggregated from the certified
+         *     consecutive COMPLETE days minus that day's `fee_pool_adjustment`
+         *     (present only on a day the pool was credited outside any
+         *     transaction fee, e.g. by a protocol upgrade). Aggregated from the certified
          *     `stellar.ledgers` lake (which carries the per-ledger counts),
          *     bounded to the tip so it stays partition-pruned. The
          *     time-series companion to the snapshot at `/v1/network/stats`;
@@ -3214,6 +3218,9 @@ export interface paths {
          *     XLM cross, a triangulated chain, a fiat cross-rate. 404 when
          *     the chain serves nothing, or only a declared peg (SEP-40's
          *     `None`: a declaration is not a price record).
+         *
+         *     Does not accept `include_thin`: a SEP-40 consumer never receives a
+         *     thin-market price.
          */
         get: operations["getOracleLastPrice"];
         put?: never;
@@ -3994,7 +4001,10 @@ export interface paths {
         /**
          * Customer dashboard — delete a webhook.
          * @description Session-gated. Hard-deletes the registry row and cascades
-         *     to webhook_deliveries. An absent or cross-account id returns
+         *     to webhook_deliveries: queued and retrying deliveries are
+         *     dropped and the delivery log is gone. To change the signing
+         *     secret, use rotate-secret instead, which keeps both. An absent
+         *     or cross-account id returns
          *     404 (the same shape, so presence never leaks); a client
          *     retrying a delete whose response it lost should treat 404 as
          *     already deleted.
@@ -4005,10 +4015,41 @@ export interface paths {
         /**
          * Customer dashboard — update a webhook.
          * @description Session-gated. Patches name / url / events / enabled.
-         *     SecretHash is immutable; rotation lives behind a separate
-         *     endpoint when it ships.
+         *     The signing secret is not patchable; rotate it with
+         *     POST /v1/dashboard/webhooks/{id}/rotate-secret.
          */
         patch: operations["updateDashboardWebhook"];
+        trace?: never;
+    };
+    "/dashboard/webhooks/{id}/rotate-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — rotate a webhook's signing secret.
+         * @description Session-gated. Replaces the signing secret in place and returns
+         *     the new one ONCE. The webhook keeps its id, its queued and
+         *     retrying deliveries and its delivery log. For 24 hours
+         *     (`previous_secret_expires_at`) every delivery is signed with
+         *     both secrets: the new one in `X-StellarIndex-Signature` /
+         *     `X-StellarIndex-Signature-V2`, the old one in
+         *     `X-StellarIndex-Signature-Previous` /
+         *     `X-StellarIndex-Signature-V2-Previous` (see
+         *     `CreateWebhookResponse.secret`). Rotating again inside that
+         *     window ends the old secret's signing at once. Owner / admin /
+         *     member only. Send an `Idempotency-Key` so a retried request
+         *     replays the first response instead of rotating twice.
+         */
+        post: operations["rotateDashboardWebhookSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/dashboard/webhooks/{id}/deliveries": {
@@ -4043,7 +4084,7 @@ export interface paths {
         /**
          * Customer dashboard — list this account's price alerts.
          * @description Session-gated. Returns every price-threshold alert this
-         *     account has registered, newest first. BACKLOG #60.
+         *     account has registered, newest first.
          */
         get: operations["listDashboardPriceAlerts"];
         put?: never;
@@ -5136,8 +5177,8 @@ export interface paths {
          * @description ADR-0048 D5: the ClickHouse `stellar.account_movements` movement
          *     archive (ADR-0047/0048 D2) merged, at read time, with the Postgres
          *     `sep41_transfers` "recent tail": an address's classic-asset
-         *     movements before P23 and its `transfer` movements from P23 on
-         *     (see KIND SCOPE below). Newest first, keyset-paged with
+         *     movements before P23 and its CAP-67 `transfer`, `mint`, `burn` and
+         *     `clawback` movements from P23 on (see KIND SCOPE below). Newest first, keyset-paged with
          *     `?cursor=<opaque>` (echo back `next_cursor`); the cursor is the
          *     composite `(ledger, tx_hash, op_index, leg_index)` plus the
          *     archive watermark the scroll was pinned to.
@@ -5147,7 +5188,7 @@ export interface paths {
          *     boundary (ledger 58,762,517, Whisk/CAP-67, 2025-09-03) and stamps
          *     `provenance: classic_derived`. `ch-cap67-movements` derives
          *     movements at and above P23 for EVERY asset, native XLM included,
-         *     from the lake's CAP-67 transfer events, stamps
+         *     from the lake's CAP-67 transfer, mint, burn and clawback events, stamps
          *     `provenance: cap67_derived`, and records the ledger it has
          *     completed through as its watermark. Postgres-tail rows carry
          *     `provenance: cap67_event`.
@@ -5167,12 +5208,22 @@ export interface paths {
          *     pinned above the current watermark is rejected with 400
          *     `invalid-cursor`; restart the scroll without a cursor.
          *
-         *     KIND SCOPE: from P23 on, both arms carry `transfer` movements
-         *     only. CAP-67 `mint`, `burn` and `clawback` events — every payment
-         *     to or from an asset's issuer among them — are not served after
-         *     P23, and fees and order-book fills are not served at any ledger.
-         *     A `?kind=` other than `transfer` therefore returns pre-P23 rows
-         *     only, and `coverage_note` says so.
+         *     KIND SCOPE: from P23 on, the archive arm carries CAP-67
+         *     `transfer` movements through its watermark, and `mint`, `burn` and
+         *     `clawback` over its recorded supply range only: the ledgers the
+         *     derive has covered with those kinds, which on a deployment derived
+         *     before they joined starts above P23 and moves down to it as the
+         *     derive backfills them. `coverage_note` names that range and any
+         *     post-P23 stretch still being backfilled. The Postgres tail above
+         *     the watermark carries `transfer` only.
+         *     CAP-67 reports a payment from an asset's issuer as `mint` and one
+         *     to it as `burn`; for a classic asset's SAC the issuer is the
+         *     counterparty (`mint`: issuer → holder; `burn`, `clawback`: holder
+         *     → issuer), while a custom token's supply event yields only the
+         *     holder's row. Fees and order-book fills are not served at any
+         *     ledger. A `?kind=` of `mint` or `burn` returns post-P23 archive
+         *     rows only, `clawback` both epochs, and any other kind except
+         *     `transfer` pre-P23 rows only; `coverage_note` says which.
          *
          *     SCOPE GAP (documented, not a bug): the Postgres tail only surfaces
          *     `sep41_transfers` rows with `event_kind = 'transfer'` — a pure
@@ -5838,10 +5889,10 @@ export interface components {
              *     claimable_balance_create, claimable_balance_claim,
              *     claimable_balance_clawback, liquidity_pool_deposit, or
              *     liquidity_pool_withdraw on ClickHouse pre-P23 archive rows
-             *     (`provenance: classic_derived`); transfer on ClickHouse post-P23
-             *     rows derived from the lake's CAP-67 events (`provenance:
-             *     cap67_derived`) and on Postgres post-P23 tail rows
-             *     (`provenance: cap67_event`).
+             *     (`provenance: classic_derived`); transfer, mint, burn or
+             *     clawback on ClickHouse post-P23 rows derived from the lake's
+             *     CAP-67 events (`provenance: cap67_derived`); transfer on
+             *     Postgres post-P23 tail rows (`provenance: cap67_event`).
              */
             movement_kind: string;
             /** @enum {string} */
@@ -6947,8 +6998,8 @@ export interface components {
         /**
          * @description Customer-registered webhook endpoint backing the
          *     /v1/dashboard/webhooks surface. SecretHash is intentionally
-         *     omitted — the plaintext signing secret is returned ONCE at
-         *     create time + never again.
+         *     omitted — each plaintext signing secret is returned ONCE, at
+         *     create or rotate-secret time, and never again.
          */
         DashboardWebhook: {
             /** Format: uuid */
@@ -7035,8 +7086,33 @@ export interface components {
              *     of the same delivery. It is NOT stable across a re-emit of
              *     the same logical event, so it dedupes retries, not re-sends.
              *     Trust it only after `X-StellarIndex-Signature-V2` verifies.
+             *
+             *     ROTATION: for 24 hours after a rotate-secret call, every
+             *     delivery also carries `X-StellarIndex-Signature-Previous` and
+             *     `X-StellarIndex-Signature-V2-Previous`, built exactly as above
+             *     but with the previous secret. A receiver still holding the old
+             *     secret verifies those; once it holds the new one it verifies
+             *     the unsuffixed headers. Outside a rotation window neither
+             *     header is sent.
              */
             secret: string;
+        };
+        RotateWebhookSecretResponse: {
+            /** Format: uuid */
+            webhook_id: string;
+            /**
+             * @description The new signing secret, returned exactly once; it signs
+             *     `X-StellarIndex-Signature` and `-V2` from now on. Format:
+             *     `wsec_<64 hex chars>`.
+             */
+            secret: string;
+            /**
+             * Format: date-time
+             * @description Until this instant deliveries also carry the
+             *     `X-StellarIndex-Signature-Previous` headers signed with the
+             *     secret this call replaced.
+             */
+            previous_secret_expires_at: string;
         };
         /**
          * @description PATCH body — any subset of fields. Omitted fields keep
@@ -7075,7 +7151,7 @@ export interface components {
         };
         /**
          * @description A customer-registered price-threshold alert backing the
-         *     /v1/dashboard/price-alerts surface (BACKLOG #60). The
+         *     /v1/dashboard/price-alerts surface. The
          *     aggregator's evaluator compares each enabled alert against the
          *     latest closed 1m VWAP for its pair and, on a crossing, enqueues
          *     a `price.alert` webhook delivery to the account's subscribed
@@ -7239,7 +7315,7 @@ export interface components {
             at: string;
         };
         /**
-         * @description Body of a `price.alert` webhook delivery (BACKLOG #60). Fired by
+         * @description Body of a `price.alert` webhook delivery. Fired by
          *     the aggregator's price-alert evaluator when one of the account's
          *     registered alerts crosses its threshold against the latest closed
          *     1-minute VWAP. Sent once per crossing: the alert re-arms only after
@@ -7395,6 +7471,11 @@ export interface components {
             /** @default false */
             single_source: boolean;
             /**
+             * @description True when the request opted in with `include_thin=true` and a served price comes from a market below the substance floor. Key any low-confidence marker on this flag, never on `confidence`.
+             * @default false
+             */
+            thin_market: boolean;
+            /**
              * @description Set on a TRIANGULATED /v1/price response when the composite came from routes that disagreed (the aggregator's router divergence signal). Omitted when false.
              * @default false
              */
@@ -7538,11 +7619,11 @@ export interface components {
                 watermark_ledger: number;
                 /**
                  * Format: int64
-                 * @description Floor of the range `complete` is a claim about — the
-                 *     lowest ledger the SERVED tier holds any row at for this
-                 *     source. It is NOT `genesis_ledger` (the sibling field on
-                 *     this same row), which is the lake axis's floor and is
-                 *     routinely much lower: sdex publishes `genesis_ledger: 2`
+                 * @description Floor of the range `complete` is a claim about —
+                 *     `genesis_ledger` (the sibling field on this same row)
+                 *     unless the source's served tier is a declared working-set
+                 *     window, where it is the lowest ledger that tier holds a
+                 *     row at and can be much higher: sdex publishes `genesis_ledger: 2`
                  *     with a served tier that begins around ledger 61.6M.
                  *     Reading `complete` against `genesis_ledger` overstates
                  *     the claim by that whole span. Omitted when the audit
@@ -8657,6 +8738,7 @@ export interface components {
             anchor_class?: "stock" | "bond" | "commodity" | "realestate" | "fund";
             /** @description The off-chain instrument the issuer declared this token anchors to, verbatim. */
             anchor_asset?: string;
+            isin_collision?: components["schemas"]["RWAISINCollision"];
             valuation: components["schemas"]["RWAValuation"];
             reference_valuation: components["schemas"]["RWAReferenceValuation"];
             reference?: components["schemas"]["RWAReference"];
@@ -8875,6 +8957,30 @@ export interface components {
              * @example rwa:USTRY
              */
             feed: string;
+        };
+        /**
+         * @description Present only when `anchor_asset` is an ISIN that more than one
+         *     issuer account declares in its issuer-bound SEP-1, counting
+         *     declarations this surface refused as well as admitted ones.
+         *
+         *     A declared ISIN is the issuer's claim, not proof that it holds
+         *     the security, so this states how many accounts make the same
+         *     claim and nothing more. It is informational: it never changes
+         *     membership, `valuation`, `reference` or `premium`. A reference
+         *     priced through an ISIN comes only from a binding verified on the
+         *     exact (code, issuer), never from the declaration alone.
+         */
+        RWAISINCollision: {
+            /**
+             * @description The declared ISIN in canonical upper-case form.
+             * @example LU2900381208
+             */
+            isin: string;
+            /**
+             * @description Distinct issuer accounts, this row's included, declaring `isin`.
+             * @example 2
+             */
+            declared_by_issuers: number;
         };
         /**
          * @description An independent oracle's valuation of the real-world instrument an
@@ -10356,6 +10462,20 @@ export interface components {
             max_number?: string | null;
             /** @description Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all; false when they declared a bounded supply. */
             is_unlimited?: boolean | null;
+            /** @description SEP-1 `status` of the currency as the issuer declares it: live, dead, test or private. */
+            currency_status?: string | null;
+            /** @description SEP-1 `is_asset_anchored`. Null when the issuer did not declare it; false only when they declared false. */
+            is_asset_anchored?: boolean | null;
+            /** @description SEP-1 `attestation_of_reserve` URL. http(s) only — any other value is dropped at overlay time. */
+            attestation_of_reserve?: string | null;
+            /** @description SEP-1 `redemption_instructions`: how the issuer says the token is redeemed for its underlying. */
+            redemption_instructions?: string | null;
+            /** @description SEP-1 `regulated` (SEP-8 approval required to transact). Null when the issuer did not declare it. */
+            regulated?: boolean | null;
+            /** @description SEP-1 `approval_server` URL for a regulated asset. http(s) only — any other value is dropped at overlay time. */
+            approval_server?: string | null;
+            /** @description SEP-1 `approval_criteria`: the issuer's stated rules for approving a transaction in a regulated asset. */
+            approval_criteria?: string | null;
             /** @description Raw integer in asset's smallest unit (per ADR-0011 supply derivation). Issuer and locked-set balances are netted out only under an exclusion basis; under `classic_lake_flows`, `classic_trustline_sum` and `sep41_lake_flows` it is the un-excluded total (see supply_basis). Null when no snapshot exists. */
             circulating_supply?: string | null;
             /** @description Raw integer in asset's smallest unit. Null when no snapshot exists. */
@@ -10374,6 +10494,10 @@ export interface components {
              * @enum {string}
              */
             price_withheld_reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed";
+            /** @description True when `price_usd` was served under `include_thin=true` from a market below the substance floor. No market cap, FDV, change pill, price history or ATH derives from it. */
+            thin_market?: boolean;
+            /** @description The substance measurement behind a thin price (detail only). `substance` without `thin_market`: a declared peg or the global price won; see `price_basis`. */
+            substance?: components["schemas"]["SubstanceEvidence"];
             /** @description Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. "+1.27", "-0.05", "0.00"). Null when the asset has no current USD price or no comparison bucket ~24h ago. */
             change_24h_pct?: string | null;
             /** @description circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale. */
@@ -10430,17 +10554,28 @@ export interface components {
              *     from `admin_exclusion` so the wire never claims an
              *     exclusion that did not happen; `override` indicates an
              *     operator curated the locked-set or max_supply;
-             *     `sep1_declared_max` means max_supply (and fdv_usd) come
-             *     from the issuer's own stellar.toml `[[CURRENCIES]]`
-             *     max_number/fixed_number declaration — self-declared by
-             *     the issuer, not on-chain enforced; `sep41_lake_flows` is
-             *     the lake-derived Σmint−Σburn−Σclawback event-sum served
-             *     for SEP-41 tokens outside the operator watch-list
-             *     (total == circulating; no admin exclusion). Null when no
-             *     supply snapshot is available.
+             *     `sep41_lake_flows` is the lake-derived Σmint−Σburn−Σclawback
+             *     event-sum served for SEP-41 tokens outside the operator
+             *     watch-list (total == circulating; no admin exclusion).
+             *     `sep1_declared_max` stays in this vocabulary but names a
+             *     max_supply source, not a circulating policy: it is served on
+             *     `max_supply_basis`, and `supply_basis` keeps the policy behind
+             *     total/circulating even when the max comes from SEP-1. Null
+             *     when no supply snapshot is available.
              * @enum {string|null}
              */
             supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_sdf_reserve_exclusion_static" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "sep41_total_only" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances" | "no_metadata" | null;
+            /**
+             * @description Where `max_supply` (and `fdv_usd`) came from, when that is not
+             *     the policy `supply_basis` names. `sep1_declared_max`: the
+             *     issuer's own stellar.toml `[[CURRENCIES]]`
+             *     max_number/fixed_number declaration — self-declared by the
+             *     issuer, not on-chain enforced. Omitted when max_supply is null
+             *     or comes from the supply policy itself (an operator override,
+             *     `supply_basis: override`, or native XLM's fixed total).
+             * @enum {string}
+             */
+            max_supply_basis?: "sep1_declared_max";
             /**
              * Format: date-time
              * @description When the supply observation behind total_supply /
@@ -10519,19 +10654,19 @@ export interface components {
             markets_count?: number | null;
             /** @description Trades the asset participated in over the trailing 24h. */
             trade_count_24h?: number | null;
-            /** @description 24 hourly USD-price samples (oldest first) for sparkline rendering. */
+            /** @description 24 hourly USD-price samples (oldest first) for sparkline rendering. Null on a `thin_market` row; raw series on /v1/ohlc, /v1/observations. */
             price_history_24h?: {
                 /** Format: date-time */
                 t: string;
                 p?: string | null;
             }[] | null;
-            /** @description 7 daily USD-price samples (oldest first). */
+            /** @description 7 daily USD-price samples (oldest first); also the listing `include=sparkline7d` series. Null on a `thin_market` row; raw series on /v1/ohlc, /v1/observations. */
             price_history_7d?: {
                 /** Format: date-time */
                 t: string;
                 p?: string | null;
             }[] | null;
-            /** @description All-time-high USD price + when it was set. Null when no USD-quoted history. */
+            /** @description All-time-high USD price + when it was set. Null when no USD-quoted history, and on a `thin_market` row; raw series on /v1/ohlc, /v1/observations. */
             ath?: {
                 usd: string;
                 /** Format: date-time */
@@ -10836,6 +10971,20 @@ export interface components {
             max_number?: string | null;
             /** @description Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all (no fixed_number / max_number / is_unlimited declaration); false when they did and committed to a bounded supply. */
             is_unlimited?: boolean | null;
+            /** @description SEP-1 `status` of the currency as the issuer declares it: live, dead, test or private. */
+            currency_status?: string | null;
+            /** @description SEP-1 `is_asset_anchored`. Null when the issuer did not declare it; false only when they declared false. */
+            is_asset_anchored?: boolean | null;
+            /** @description SEP-1 `attestation_of_reserve` URL. http(s) only — any other value is dropped at overlay time. */
+            attestation_of_reserve?: string | null;
+            /** @description SEP-1 `redemption_instructions`: how the issuer says the token is redeemed for its underlying. */
+            redemption_instructions?: string | null;
+            /** @description SEP-1 `regulated` (SEP-8 approval required to transact). Null when the issuer did not declare it. */
+            regulated?: boolean | null;
+            /** @description SEP-1 `approval_server` URL for a regulated asset. http(s) only — any other value is dropped at overlay time. */
+            approval_server?: string | null;
+            /** @description SEP-1 `approval_criteria`: the issuer's stated rules for approving a transaction in a regulated asset. */
+            approval_criteria?: string | null;
         };
         AssetMetadataEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["AssetMetadata"];
@@ -10950,7 +11099,7 @@ export interface components {
             change_24h_pct?: string | null;
             /**
              * Format: float
-             * @description Multi-factor confidence score in [0, 1] (ADR-0019).
+             * @description Multi-factor confidence score in [0, 1] (ADR-0019). Under `flags.thin_market` it is capped at a declared ceiling of 0.10, not a measurement; only on /v1/price.
              */
             confidence?: number | null;
             /** @description Per-factor decomposition of confidence (ADR-0019). */
@@ -10982,6 +11131,8 @@ export interface components {
                 /** @description True when the ADR-0019 bootstrap ceiling (0.5) bounded confidence because baseline_age_days is below 28.5 (below 27 for a pair already released, or no baseline exists), so a confidence of 0.5 may be the cap rather than the evidence. False means the multi-factor score was served without the ceiling. */
                 bootstrap_capped?: boolean;
             } | null;
+            /** @description The substance measurement behind a `flags.thin_market` price. */
+            substance?: components["schemas"]["SubstanceEvidence"];
         };
         PriceEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["Price"];
@@ -10998,6 +11149,64 @@ export interface components {
              *     nothing was withheld.
              */
             withheld?: string[];
+            /**
+             * @description Requested ids in `data` whose price comes from a market
+             *     below the substance floor, served because the request opted
+             *     in with `include_thin=true`. Input order; absent otherwise.
+             *     No `change_24h_pct` is derived for these rows.
+             */
+            thin?: string[];
+        };
+        SubstanceEvidence: {
+            /** @description The request's base asset; the market measured is the alias union of base and quote. */
+            base: string;
+            quote: string;
+            /**
+             * Format: int64
+             * @description Length of the trailing window measured.
+             */
+            window_seconds: number;
+            /**
+             * Format: date-time
+             * @description When the measurement was taken; a cached verdict can be up to a minute old.
+             */
+            measured_at: string;
+            /**
+             * Format: date-time
+             * @description Where the measured window ends, on point-in-time reads only (the requested instant, grain-truncated).
+             */
+            window_end?: string;
+            /** @description USD volume in the window (decimal string; never a JSON number). */
+            volume_usd: string;
+            /**
+             * Format: int64
+             * @description Active price buckets in the window.
+             */
+            buckets: number;
+            /**
+             * Format: int64
+             * @description Active buckets carrying a USD valuation.
+             */
+            valued_buckets: number;
+            /**
+             * Format: int64
+             * @description First-to-last active bucket span.
+             */
+            span_seconds: number;
+            /** @description The substance policy the measurement was held to. */
+            floor: {
+                /** @description Decimal string. */
+                min_volume_usd: string;
+                /** Format: int64 */
+                min_buckets: number;
+                /** Format: int64 */
+                min_span_seconds: number;
+            };
+            /**
+             * @description The first floor the measurement fails.
+             * @enum {string}
+             */
+            failed: "buckets" | "span" | "volume" | "volume_unvalued";
         };
         PriceChangeHorizon: {
             /** @description Signed percentage move of the current price vs the reference price, two fractional digits with an explicit leading "+" on gains (e.g. "+3.62", "-1.04", "0.00"). Null when unavailable. */
@@ -11015,6 +11224,8 @@ export interface components {
             available: boolean;
             /** @description True when the reference bucket exists but a serving gate refused to publish it (thin-market or scam-issuer gate, or the serving-sanity guard). Always false when available is true. */
             withheld: boolean;
+            /** @description True when this horizon's reference price comes from a market below the substance floor, served under `include_thin=true`. */
+            thin_market?: boolean;
         };
         PriceChanges: {
             asset_id: string;
@@ -11040,6 +11251,8 @@ export interface components {
             "24h": components["schemas"]["PriceChangeHorizon"];
             "7d": components["schemas"]["PriceChangeHorizon"];
             "30d": components["schemas"]["PriceChangeHorizon"];
+            /** @description The substance measurement behind a thin current price (current bucket only; a horizon carries only its flag). */
+            substance?: components["schemas"]["SubstanceEvidence"];
         };
         PriceChangesEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["PriceChanges"];
@@ -12187,6 +12400,8 @@ export interface components {
              * @description Extension member on `monthly-quota-exceeded` 429s only. Month-to-date request count that triggered the cap. Omitted on `monthly-quota-unavailable` — the counter read failed, so there is no honest value to report.
              */
             month_to_date?: number;
+            /** @description Extension member on a `price-withheld` 404 from `/v1/price`, `/v1/price/at` and `/v1/price/changes`, for a thin-market reason (`substance`, `upstream_leg`, `unattributed`) only: the measurement the price was withheld on. Absent otherwise. */
+            substance?: components["schemas"]["SubstanceEvidence"];
         };
     };
     responses: {
@@ -12382,6 +12597,18 @@ export interface components {
          * @example native
          */
         AssetQuery: string;
+        /**
+         * @description Opt in to a thin-market price. When the only market behind the
+         *     price fails the trailing substance floor, the price is served
+         *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+         *     with the `substance` measurement instead of being withheld. Only
+         *     a substance verdict is released: a flagged issuer, an FX leg or
+         *     the manipulation guard still withholds. A cleared route always
+         *     wins over a thin one. Only the literal `true` opts in; any other
+         *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+         *     a catalogue slug in this version.
+         */
+        IncludeThin: boolean;
         /**
          * @description Quote-side asset. Either a canonical asset identifier (`native`,
          *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
@@ -12844,6 +13071,18 @@ export interface operations {
     listAssets: {
         parameters: {
             query?: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
                 /** @description Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page). */
                 include?: string;
                 /**
@@ -13315,7 +13554,20 @@ export interface operations {
     };
     getAsset: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
+            };
             header?: never;
             path: {
                 /**
@@ -13587,6 +13839,18 @@ export interface operations {
         parameters: {
             query: {
                 /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
+                /**
                  * @description Canonical asset identifier — matches the `asset_id` on
                  *     response bodies. Query-parameter form is the shorter `asset`
                  *     per the handler implementations (/v1/price, /v1/oracle/latest).
@@ -13649,6 +13913,18 @@ export interface operations {
     getPriceAt: {
         parameters: {
             query: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
                 /** @description Canonical asset id (native | CODE-G... | C... | fiat:XXX). */
                 asset: string;
                 /** @description Quote asset id; default fiat:USD. */
@@ -13700,6 +13976,18 @@ export interface operations {
     getPriceChanges: {
         parameters: {
             query: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
                 /**
                  * @description Canonical asset identifier — matches the `asset_id` on
                  *     response bodies. Query-parameter form is the shorter `asset`
@@ -13927,6 +14215,18 @@ export interface operations {
         parameters: {
             query?: {
                 /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
+                /**
                  * @description Comma-separated canonical asset ids, max 100. Same strict
                  *     form as `/v1/price?asset=` — short symbols are rejected.
                  *     Required unless `pairs` is supplied instead.
@@ -14007,7 +14307,20 @@ export interface operations {
     };
     getPriceBatchBulk: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -17626,15 +17939,16 @@ export interface operations {
                                 tip_ledger: number;
                                 /**
                                  * Format: int64
-                                 * @description PROJECTION-axis floor: the lowest ledger the
-                                 *     SERVED tier holds any row at for this source.
-                                 *     It is the bottom of the range `projection_ok`
-                                 *     — and therefore `complete` — is a claim about;
-                                 *     below it the served tier holds nothing.
+                                 * @description PROJECTION-axis floor: the bottom of the range
+                                 *     `projection_ok` — and therefore `complete` — is
+                                 *     a claim about. It is `genesis_ledger` for every
+                                 *     source whose served tier claims full history, so
+                                 *     a never-projected prefix fails `projection_ok`.
                                  *
-                                 *     It is NOT `genesis_ledger`, which is the LAKE
-                                 *     axis's floor and is routinely ten years lower:
-                                 *     on pubnet, sdex and the oracle sources publish
+                                 *     For a source whose served tier is a declared
+                                 *     working-set window it is the lowest ledger that
+                                 *     tier holds a row at, and can sit far above
+                                 *     `genesis_ledger`: on pubnet sdex publishes
                                  *     `genesis_ledger: 2` with a served tier that
                                  *     begins around ledger 61.6M (March 2026). A
                                  *     consumer reading only
@@ -18516,8 +18830,10 @@ export interface operations {
                                 ops?: number;
                                 /** Format: int64 */
                                 events?: number;
-                                /** @description Cumulative network fee pool at the day's last ledger, in stroops (decimal string — exceeds 2^53). Daily fee burn = the delta between consecutive COMPLETE days. */
+                                /** @description Cumulative network fee pool at the day's last ledger, in stroops (decimal string — exceeds 2^53). Daily fee burn = the delta between consecutive COMPLETE days minus `fee_pool_adjustment`. */
                                 fee_pool?: string;
+                                /** @description Stroops (decimal string) the fee pool changed by this day outside any transaction fee — e.g. pubnet's Protocol 24 upgrade crediting it 31879035 stroops on 2025-10-22. Subtract it from the day's fee_pool delta to get the fees burned. Omitted when the day had no such change. */
+                                fee_pool_adjustment?: string;
                                 /** @description Total XLM in existence at the day's last ledger, in stroops (decimal string — exceeds 2^53). */
                                 total_coins?: string;
                                 /** @description Protocol version in force at the day's last ledger. */
@@ -21707,6 +22023,98 @@ export interface operations {
             };
         };
     };
+    rotateDashboardWebhookSecret: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Optional client-chosen key (a UUID is ideal) that makes this
+                 *     create safe to retry. Send the SAME value when retrying a request
+                 *     whose outcome you never saw, such as a client timeout: within ten
+                 *     minutes of a successful original, the retry receives the original
+                 *     response verbatim (marked by an `Idempotency-Replayed: true`
+                 *     response header) instead of creating a second resource. A retry
+                 *     that arrives while the original is still running gets 409
+                 *     `idempotency-key-in-flight` with `Retry-After`. Only 2xx
+                 *     responses are replayed; a failed original may be retried with the
+                 *     same key. Keys are scoped to the caller, and dedup is held per API
+                 *     process, so it covers the retry window rather than surviving a
+                 *     restart. Longer than 256 bytes returns 400
+                 *     `idempotency-key-too-long`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rotated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "webhook_id": "0b6a3f2e-9c1d-4e7a-8f5b-6d2c4a1e9b0f",
+                     *       "secret": "wsec_9d2e4f7a1c6b3e8d5a2f9c4b7e1d6a3f8c5b2e9d4a7f1c6e3b8d5a2f9c4b7e1d",
+                     *       "previous_secret_expires_at": "2026-07-04T22:45:47Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["RotateWebhookSecretResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Role can't manage webhooks, OR the write was blocked as
+             *     cross-site: state-changing dashboard + auth requests must
+             *     carry an `Origin` (or `Referer`) matching this API or an
+             *     operator-allow-listed site (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No webhook with this id on this account (absent, already deleted, or another account's). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description A request whose `Idempotency-Key` matches one still being
+             *     processed (`idempotency-key-in-flight`, retryable per
+             *     `Retry-After`).
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     getDashboardWebhookDeliveries: {
         parameters: {
             query?: never;
@@ -24448,7 +24856,7 @@ export interface operations {
                 limit?: number;
                 /** @description Opaque keyset cursor from a prior response's next_cursor. */
                 cursor?: string;
-                /** @description Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind. Only `transfer` is served at and after P23 (ledger 58,762,517); any other kind returns pre-P23 rows only. */
+                /** @description Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind. At and after P23 (ledger 58,762,517) only `transfer`, `mint`, `burn` and `clawback` are served — the last three over the archive's recorded supply range only, which `coverage_note` names (from ledger N through ledger M, plus any post-P23 stretch still being backfilled); any other kind returns pre-P23 rows only. */
                 kind?: string;
                 /** @description Filter by direction. */
                 direction?: "sent" | "received" | "self";

@@ -51,7 +51,8 @@ type MetadataResolver interface {
 // junk through their own monitoring (separate alert path).
 //
 // Returns:
-//   - the (possibly-modified) Supply
+//   - the (possibly-modified) Supply; when applied, MaxSupply and
+//     MaxSupplyBasis (= BasisSEP1DeclaredMax) change and Basis does not
 //   - applied=true iff the SEP-1 overlay set MaxSupply
 //   - error only on resolver returns that are unambiguous bugs (e.g.
 //     a non-nil error from SEP1MaxSupply with ok=true — contract
@@ -109,13 +110,8 @@ func Overlay(ctx context.Context, snap Supply, asset canonical.Asset, resolver M
 	}
 
 	snap.MaxSupply = val
-	// Basis becomes BasisSEP1DeclaredMax whenever the overlay fires:
-	// the max (and any FDV derived from it) now rests on the
-	// issuer's self-declared stellar.toml value, and consumers must
-	// be able to see that from supply_basis alone — ADR-0011's
-	// "respected as a display value, flagged self-declared" framing.
-	// (Pre-wiring, this upgraded to BasisOverride, which conflated
-	// the SEP-1 declaration with an operator-blessed override.)
-	snap.Basis = BasisSEP1DeclaredMax
+	// The max's provenance gets its own carrier: Basis still names the
+	// policy behind total/circulating, and LowerBound is derived from it.
+	snap.MaxSupplyBasis = BasisSEP1DeclaredMax
 	return snap, true, nil
 }

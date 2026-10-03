@@ -72,9 +72,9 @@ snapshot-compute time: when the stored snapshot has no max, the
 `/v1/assets/{id}` handler scales the issuer's stellar.toml
 `max_number` / `fixed_number` (display units → raw units by asset
 decimals; blocked by `is_unlimited = true`) and labels the result
-`supply_basis: "sep1_declared_max"` so consumers can see the cap is
-issuer-self-declared. `asset_supply_history` rows never carry
-declared values.
+`max_supply_basis: "sep1_declared_max"` so consumers can see the cap is
+issuer-self-declared; `supply_basis` keeps naming the circulating
+policy. `asset_supply_history` rows never carry declared values.
 
 ## The six observers
 
@@ -542,7 +542,7 @@ serving-time refinements sit on top of it:
   (`supply_basis: "sep41_lake_flows"`, total == circulating).
 - **SEP-1 max_supply overlay** — a snapshot with no max picks up
   the issuer's stellar.toml declaration
-  (`supply_basis: "sep1_declared_max"`, see "Max supply" above).
+  (`max_supply_basis: "sep1_declared_max"`, see "Max supply" above).
 
 ## Failure modes (per outcome label)
 

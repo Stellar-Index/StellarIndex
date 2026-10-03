@@ -30,6 +30,7 @@ import { AssetScamCallout } from './AssetScamCallout';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
 import { AssetSidebar } from './AssetSidebar';
+import { AssetTrustFacts } from './AssetTrustFacts';
 import { headlinePriceProvenance } from './priceProvenance';
 import { SourceBreakdown } from '../../markets/[pair]/SourceBreakdown';
 import { AssetTabs, ActiveTabSlot } from './AssetTabs';
@@ -873,6 +874,11 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   // they were: since 2026-08-25 the server also withholds price + market
   // cap for a flagged issuer (pricingguard.ScamGate) and ranks the asset
   // last (#356). lib/directory-tags.ts documents both exceptions.
+  const assetIDParts = coin.asset_id.split('-');
+  const issuerStrkey =
+    assetIDParts.length === 2 && assetIDParts[1].startsWith('G')
+      ? assetIDParts[1]
+      : null;
   return (
     <Container className="space-y-8 py-8 sm:py-10">
       <script
@@ -1007,16 +1013,21 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
         </aside>
 
         <div className="min-w-0 space-y-4">
-          {(() => {
-            const parts = coin.asset_id.split('-');
-            const issuer =
-              parts.length === 2 && parts[1].startsWith('G') ? parts[1] : null;
-            return issuer ? (
-              <Suspense fallback={null}>
-                <IssuerPanel gStrkey={issuer} />
-              </Suspense>
-            ) : null;
-          })()}
+          {issuerStrkey ? (
+            <Suspense fallback={null}>
+              <IssuerPanel gStrkey={issuerStrkey} />
+            </Suspense>
+          ) : null}
+
+          <AssetTrustFacts
+            assetID={coin.asset_id}
+            issuer={issuerStrkey}
+            directoryTags={coin.issuer_directory_tags}
+            scamReason={coin.issuer_scam_reason}
+            directoryDomain={coin.issuer_directory_domain}
+            volumeCharacter={coin.volume_character}
+            volumeCharacterSignals={coin.volume_character_signals}
+          />
 
           <Suspense fallback={null}>
             <AssetTabs slug={coin.slug} hasIssuer={false} />
@@ -1371,6 +1382,9 @@ function OverviewBody({
             )}
             {detail?.supply_basis && (
               <Stat label="Supply basis" value={detail.supply_basis} />
+            )}
+            {detail?.max_supply_basis && (
+              <Stat label="Max basis" value={detail.max_supply_basis} />
             )}
           </dl>
         </Panel>

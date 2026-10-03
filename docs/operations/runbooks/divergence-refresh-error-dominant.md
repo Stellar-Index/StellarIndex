@@ -213,4 +213,4 @@ Capture for the postmortem:
   INERT (KNOWN_INERT, no producer); `divergence-no-reference.md`
   added (no_reference outcome invisible to this alert).
 - 2026-05-02 — initial draft alongside the divergence-refresh
-  wiring (#429).
+  wiring (774df6284).

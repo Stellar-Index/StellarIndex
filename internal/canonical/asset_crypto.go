@@ -52,7 +52,7 @@ var knownCryptoCodes = map[string]struct{}{
 	// Mexican Peso stablecoin (Bitso MXNe). Aggregator maps to fiat:MXN.
 	"MXNe": {},
 	// Tokenized-BTC variants published by RedStone's Stellar feeds
-	// (2026-05-22, #53). SolvBTC is a BTC-backed crypto token — crypto,
+	// (2026-05-22, ecc289c6b). SolvBTC is a BTC-backed crypto token — crypto,
 	// not RWA (ADR-0028 reserves `rwa` for tokenized tradfi assets).
 	// `_FUNDAMENTAL` feeds publish NAV; each feed_id is its own code so
 	// market and NAV observations never collide on one asset. Those

@@ -16,10 +16,16 @@ import (
 // schedule_interval take TimescaleDB's derived default (12h for compression
 // on r1, per runbooks/compression-lag.md), which is inside that bound.
 const (
-	jobFailureSlowArm     = "increase(stellarindex_timescale_job_failures_total[3d]) >= 3"
 	jobFailureSlowWindow  = 72 * time.Hour
 	jobFailureMinFailures = 3
 )
+
+// jobFailureSlowArmRe matches the 3d >= 3 arm, bare or net of the probe's
+// concurrent-refresh discount; the discount may only subtract that one gauge.
+var jobFailureSlowArmRe = regexp.MustCompile(`(?s)increase\(stellarindex_timescale_job_failures_total\[3d\]\)` +
+	`(?:\s*-\s*\(stellarindex_timescale_job_concurrent_refresh_failures_3d\s+or\s+0\s*\*\s*` +
+	`increase\(stellarindex_timescale_job_failures_total\[3d\]\)\)\s*\))?` +
+	`\s*>=\s*3\s*\n`)
 
 var (
 	scheduleArgRe     = regexp.MustCompile(`(?i)schedule_interval\s*=>`)
@@ -42,10 +48,10 @@ func TestJobScheduleIntervalsFitJobFailureAlert(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", rules, err)
 		}
-		if !strings.Contains(string(raw), jobFailureSlowArm) {
+		if !jobFailureSlowArmRe.Match(raw) {
 			t.Errorf("%s: stellarindex_timescale_job_failures_climbing lacks the arm %q; "+
 				"without it any job scheduled less often than every 36m can fail forever unalerted (#888)",
-				rules, jobFailureSlowArm)
+				rules, jobFailureSlowArmRe)
 		}
 	}
 

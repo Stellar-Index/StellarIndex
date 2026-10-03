@@ -88,6 +88,45 @@ func (s *Store) registerClassicAssetSeen(
 	ledger uint32,
 	observedAt time.Time,
 ) error {
+	return s.registerClassicAssetRange(ctx, asset, newRegistryObservation(ledger, observedAt))
+}
+
+// upsertClassicAssetSQL binds ($1..$3) identity, ($4,$5) first ts/ledger and
+// ($6,$7) last ts/ledger.
+const upsertClassicAssetSQL = `
+		INSERT INTO classic_assets (
+			asset_id, code, issuer_g_strkey, slug,
+			first_seen_at, first_seen_ledger,
+			last_seen_at,  last_seen_ledger,
+			first_trade_at, first_trade_ledger,
+			last_trade_at,  last_trade_ledger,
+			observation_count
+		) VALUES (
+			$1, $2, $3, $1,
+			$4, $5, $6, $7,
+			$4, $5, $6, $7, 1
+		)
+		ON CONFLICT (asset_id) DO UPDATE SET
+			first_seen_at      = LEAST(classic_assets.first_seen_at, EXCLUDED.first_seen_at),
+			first_seen_ledger  = LEAST(classic_assets.first_seen_ledger, EXCLUDED.first_seen_ledger),
+			last_seen_at       = GREATEST(classic_assets.last_seen_at, EXCLUDED.last_seen_at),
+			last_seen_ledger   = GREATEST(classic_assets.last_seen_ledger, EXCLUDED.last_seen_ledger),
+			first_trade_at     = LEAST(classic_assets.first_trade_at, EXCLUDED.first_trade_at),
+			first_trade_ledger = LEAST(classic_assets.first_trade_ledger, EXCLUDED.first_trade_ledger),
+			last_trade_at      = GREATEST(classic_assets.last_trade_at, EXCLUDED.last_trade_at),
+			last_trade_ledger  = GREATEST(classic_assets.last_trade_ledger, EXCLUDED.last_trade_ledger),
+			observation_count  = classic_assets.observation_count + 1
+	`
+
+// registerClassicAssetRange is [Store.registerClassicAssetSeen] for a
+// lowest..highest observation: the LEAST arms take the minimum, the GREATEST
+// arms the maximum. A lower minimum than the last one this Store upserted
+// bypasses the dedupe TTL so backward backfill still reaches first_seen_*.
+func (s *Store) registerClassicAssetRange(
+	ctx context.Context,
+	asset canonical.Asset,
+	o registryObservation,
+) error {
 	if asset.Type != canonical.AssetClassic {
 		return nil
 	}
@@ -98,7 +137,7 @@ func (s *Store) registerClassicAssetSeen(
 	// successful one was within `assetRegistryDedupeTTL`. Out-of-
 	// window trades fire the upsert again so `last_seen_*` and
 	// `observation_count` advance.
-	if s.shouldSkipAssetRegistryUpsert(assetID, time.Now()) {
+	if s.shouldSkipAssetRegistryUpsert(assetID, time.Now()) && !s.lowersCachedMinLedger(assetID, o.minLedger) {
 		return nil
 	}
 
@@ -133,38 +172,29 @@ func (s *Store) registerClassicAssetSeen(
 	// column that means exactly that. LEAST/GREATEST ignore NULL operands
 	// in Postgres, so an asset the holdings path registered first gets its
 	// trade columns filled correctly by its very first trade.
-	const q = `
-		INSERT INTO classic_assets (
-			asset_id, code, issuer_g_strkey, slug,
-			first_seen_at, first_seen_ledger,
-			last_seen_at,  last_seen_ledger,
-			first_trade_at, first_trade_ledger,
-			last_trade_at,  last_trade_ledger,
-			observation_count
-		) VALUES (
-			$1, $2, $3, $1,
-			$4, $5, $4, $5,
-			$4, $5, $4, $5, 1
-		)
-		ON CONFLICT (asset_id) DO UPDATE SET
-			first_seen_at      = LEAST(classic_assets.first_seen_at, EXCLUDED.first_seen_at),
-			first_seen_ledger  = LEAST(classic_assets.first_seen_ledger, EXCLUDED.first_seen_ledger),
-			last_seen_at       = GREATEST(classic_assets.last_seen_at, EXCLUDED.last_seen_at),
-			last_seen_ledger   = GREATEST(classic_assets.last_seen_ledger, EXCLUDED.last_seen_ledger),
-			first_trade_at     = LEAST(classic_assets.first_trade_at, EXCLUDED.first_trade_at),
-			first_trade_ledger = LEAST(classic_assets.first_trade_ledger, EXCLUDED.first_trade_ledger),
-			last_trade_at      = GREATEST(classic_assets.last_trade_at, EXCLUDED.last_trade_at),
-			last_trade_ledger  = GREATEST(classic_assets.last_trade_ledger, EXCLUDED.last_trade_ledger),
-			observation_count  = classic_assets.observation_count + 1
-	`
-	if _, err := s.db.ExecContext(ctx, q,
+	if _, err := s.db.ExecContext(ctx, upsertClassicAssetSQL,
 		assetID, asset.Code, asset.Issuer,
-		observedAt.UTC(), int(ledger),
+		o.minTs.UTC(), int(o.minLedger), o.maxTs.UTC(), int(o.maxLedger),
 	); err != nil {
 		return fmt.Errorf("timescale: registerClassicAssetSeen %s: %w", assetID, err)
 	}
 	s.assetRegistryDedupe.Store(assetID, time.Now())
+	if _, cached := s.assetRegistryMinLedger.Load(assetID); !cached || s.lowersCachedMinLedger(assetID, o.minLedger) {
+		s.assetRegistryMinLedger.Store(assetID, o.minLedger)
+	}
 	return nil
+}
+
+// lowersCachedMinLedger reports whether minLedger is below the lowest first
+// ledger this Store has upserted for assetID. False when nothing is cached:
+// the TTL gate alone decides then.
+func (s *Store) lowersCachedMinLedger(assetID string, minLedger uint32) bool {
+	cached, ok := s.assetRegistryMinLedger.Load(assetID)
+	if !ok {
+		return false
+	}
+	prev, ok := cached.(uint32)
+	return ok && minLedger < prev
 }
 
 // ResetAssetRegistryDedupeForTest clears this Store's
@@ -182,6 +212,10 @@ func (s *Store) registerClassicAssetSeen(
 func (s *Store) ResetAssetRegistryDedupeForTest() {
 	s.assetRegistryDedupe.Range(func(k, _ any) bool {
 		s.assetRegistryDedupe.Delete(k)
+		return true
+	})
+	s.assetRegistryMinLedger.Range(func(k, _ any) bool {
+		s.assetRegistryMinLedger.Delete(k)
 		return true
 	})
 	s.issuerRegistryDedupe.Range(func(k, _ any) bool {
