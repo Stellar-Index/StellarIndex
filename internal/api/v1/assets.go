@@ -477,6 +477,9 @@ type AssetDetail struct {
 	// issuerDirectoryUnchecked: the directory read for this issuer failed,
 	// so the absence of a scam tag proves nothing and pricing is withheld.
 	issuerDirectoryUnchecked bool
+	// f2ReadFailed: a volume, 24h-change or supply read errored, so the
+	// fields it feeds (incl. market_cap_usd / fdv_usd) are missing, not absent.
+	f2ReadFailed bool
 
 	// VolumeCharacter classifies the asset's trailing-window trade
 	// volume by account structure (wash-and-scam-signals design §2):
@@ -1403,7 +1406,7 @@ func (s *Server) buildAssetListPage(
 	// refresh-starved page-set. An uncached read leaves observedAt zero
 	// and as_of is the build time, stamped once so a cached replay
 	// carries the same as_of as the response that built it.
-	env := Envelope{Data: out, Flags: Flags{Stale: stale || unmeasured}, AsOf: WireTime(time.Now().UTC())}
+	env := Envelope{Data: out, Flags: Flags{Stale: stale || unmeasured, Degraded: stale || unmeasured || anyDirectoryUnchecked(out)}, AsOf: WireTime(time.Now().UTC())}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())
 	}
@@ -2866,10 +2869,12 @@ func (s *Server) writeCataloguePage(
 	// cross-arm total is the only figure a row here can honestly carry.
 	if s.fillAndRankCatalogueRows(r.Context(), rows, assetListFilters{}) {
 		flags.Stale = true
+		flags.Degraded = true
 	}
 	end := min(limit, len(rows))
 	page := rows[:end]
 	s.attachSparkline7dIfRequested(r, page)
+	flags.Degraded = flags.Degraded || anyDirectoryUnchecked(page)
 	env := Envelope{Data: page, Flags: flags}
 	if end < len(rows) {
 		for _, row := range page {
@@ -3218,7 +3223,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 	end := min(limit, len(rows))
 	page := rows[:end]
 	s.attachSparkline7dIfRequested(r, page)
-	env := Envelope{Data: page, Flags: Flags{Stale: unmeasured}}
+	env := Envelope{Data: page, Flags: Flags{Stale: unmeasured, Degraded: unmeasured || anyDirectoryUnchecked(page)}}
 	if end < len(rows) {
 		for _, row := range page {
 			served = append(served, row.Slug)
@@ -3273,7 +3278,7 @@ func (s *Server) serveClassicUnifiedPage(
 	if out == nil {
 		out = []AssetDetail{}
 	}
-	env := Envelope{Data: out, Flags: Flags{Stale: stale}}
+	env := Envelope{Data: out, Flags: Flags{Stale: stale, Degraded: stale || anyDirectoryUnchecked(out)}}
 	if nextInner != "" {
 		env.Pagination = &Pagination{Next: "classic:" + nextInner}
 	}
@@ -3749,9 +3754,8 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// a slow read. Stamp it stale and skip the cache write; the request
 	// itself still gets an honest (if degraded) answer.
 	ctxDead := ctx.Err() != nil
-	if homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || ctxDead {
-		flags.Stale = true
-	}
+	flags.Stale = flags.Stale || assetDetailStale(&detail, homeDomainDegraded, ctxDead)
+	flags.Degraded = flags.Stale || detail.issuerDirectoryUnchecked
 
 	// Render to bytes once, cache them, write them. The cache check at
 	// the top of this function short-circuits subsequent requests for
@@ -3765,16 +3769,28 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, detail, flags)
 		return
 	}
-	// A failed decimals read is a transient outage, and a dead context
+	// A failed decimals, issuer-directory or F2 read is a transient outage, and a dead context
 	// means this body was assembled from whatever best-effort reads
 	// happened to land before cancellation: either way, replaying it for
 	// the whole TTL would outlive the outage. Skip the cache write, not
 	// the response — the caller who is still listening gets the (stale-
 	// flagged) body they asked for.
-	if !detail.DecimalsUnresolved && !ctxDead {
-		s.assetDetailCache.put(cacheKey, body)
+	if !transientlyDegraded(&detail, ctxDead) {
+		s.assetDetailCache.put(cacheKey, body, flags.Degraded)
 	}
-	writeCachedAssetDetail(w, &assetDetailEntry{body: body, cachedAt: time.Now()})
+	writeCachedAssetDetail(w, &assetDetailEntry{body: body, cachedAt: time.Now(), degraded: flags.Degraded})
+}
+
+// assetDetailStale reports whether detail rests on a failed, cut-short or
+// carried-forward read.
+func assetDetailStale(detail *AssetDetail, homeDomainDegraded, ctxDead bool) bool {
+	return homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.f2ReadFailed || ctxDead
+}
+
+// transientlyDegraded reports whether detail rests on a read that failed or
+// was cut short, so the body must not outlive the request in the detail cache.
+func transientlyDegraded(detail *AssetDetail, ctxDead bool) bool {
+	return detail.DecimalsUnresolved || ctxDead || detail.issuerDirectoryUnchecked || detail.f2ReadFailed
 }
 
 // resolveAssetDetail fetches the AssetDetail for parsed: from the

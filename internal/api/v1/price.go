@@ -3505,7 +3505,10 @@ type batchRowResult struct {
 	// thin: served under include_thin from a market below the substance
 	// floor; such a row carries no change_24h_pct.
 	thin bool
-	fail *batchRowFailure
+	// readFailed qualifies a skip: the row was dropped because a read
+	// failed, not because the asset has no price.
+	readFailed bool
+	fail       *batchRowFailure
 }
 
 // batchRowFailure means the whole batch must abort with a
@@ -3610,11 +3613,12 @@ func (s *Server) readBatchRow(ctx context.Context, r *http.Request, asset, quote
 				asset: asset, ok: true,
 			}, fserved, quote)
 		}
-		if fb.err != nil && !clientAborted(r, fb.err) {
+		readFailed := fb.err != nil && !clientAborted(r, fb.err)
+		if readFailed {
 			s.logger.Warn("batch: fx fixing read failed", "err", fb.err, "asset", asset.String())
 		}
 		// A failed FX read omits the row without listing it as withheld.
-		return batchRowResult{skip: true, withheld: fb.withheld != "", withheldReason: fb.withheld} // omit, do not 404 the batch
+		return batchRowResult{skip: true, withheld: fb.withheld != "", withheldReason: fb.withheld, readFailed: readFailed} // omit, do not 404 the batch
 	}
 	if err != nil {
 		if clientAborted(r, err) {
@@ -3727,7 +3731,21 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 		}
 	}
 
-	writeEnvelope(w, batchEnvelope(ids, results))
+	env := batchEnvelope(ids, results)
+	env.Flags.Degraded = env.Flags.Degraded || batchDegraded(results)
+	writeEnvelope(w, env)
+}
+
+// batchDegraded reports a row dropped by a failed read or a recovered
+// worker panic (a zero result) rather than by a genuine miss.
+func batchDegraded(results []batchRowResult) bool {
+	for i := range results {
+		r := &results[i]
+		if r.readFailed || (!r.ok && !r.skip && r.fail == nil) {
+			return true
+		}
+	}
+	return false
 }
 
 // batchEnvelope folds the per-id results (index-aligned with ids) into

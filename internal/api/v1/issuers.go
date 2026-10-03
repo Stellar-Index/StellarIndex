@@ -258,12 +258,14 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 
 	assets, err := s.issuers.ListIssuerAssets(iCtx, gStrkey)
 	var assetsCoverageNote string
+	var assetsReadFailed bool
 	if err != nil {
 		// Soft-fail on the asset list — the issuer card still
 		// renders without it, but the coverage_note distinguishes
 		// this from a genuine zero-asset issuer (CA2-A04-harden-9).
 		// Includes deadline exceeded.
 		s.logger.Warn("issuer assets", "g_strkey", gStrkey, "err", err)
+		assetsReadFailed = true
 		assets = nil
 		assetsCoverageNote = "the asset list for this issuer could not be read " +
 			"(storage error or timeout); assets is omitted (not shown as empty) " +
@@ -321,7 +323,7 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 			ObservationCount: a.ObservationCount,
 		})
 	}
-	writeJSON(w, out, Flags{})
+	writeJSON(w, out, Flags{Degraded: assetsReadFailed})
 }
 
 // writeIssuerReadProblem maps a GetIssuer error to the right problem+json

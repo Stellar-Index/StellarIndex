@@ -463,7 +463,7 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 	// snapStale: the served state came from an expired cache entry while a
 	// detached refresh runs (whale-account stale-serve, route-sweep
 	// 2026-07-30) — surfaced on the same flags.stale the watermark uses.
-	h.WriteJSON(w, out, stale || snapStale)
+	h.writeJSONAt(w, out, stale || snapStale, out.DirectoryUnavailable, time.Time{})
 }
 
 // fillAccountStateView renders a live account's state onto the wire view.
