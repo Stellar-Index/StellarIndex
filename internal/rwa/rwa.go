@@ -92,7 +92,8 @@ const (
 	// the CODE alone, which is exactly why this basis is admissible
 	// only after R3 has bound the issuer to a recognised entity: on its
 	// own it would readmit the code-only identity the whole definition
-	// refuses.
+	// refuses. A hand-vetted fund-NAV binding ([FundNAVTicker]) also
+	// admits here, keyed on the exact (code, issuer).
 	BasisOracleFeed = "oracle_rwa_feed"
 	// BasisSep1ISIN — the issuer-bound [[CURRENCIES]] entry declares an
 	// anchor_asset whose value is a well-formed ISIN, check digit and
@@ -400,6 +401,11 @@ func Qualify(c Candidate) Verdict {
 	// already bound the issuer and a case variant of the ticker of a
 	// recognised entity is that same instrument.
 	if isOracleRWACode(c.Code) {
+		return Verdict{InSet: true, Basis: BasisOracleFeed, Recognition: recognition}
+	}
+	// A hand-vetted fund-NAV binding is the same evidence keyed tighter:
+	// an independent NAV feed for exactly this (code, issuer).
+	if _, ok := FundNAVTicker(c.Code, c.Issuer); ok {
 		return Verdict{InSet: true, Basis: BasisOracleFeed, Recognition: recognition}
 	}
 	// The ISIN arm, last because it is the weakest of the three in what
