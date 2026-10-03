@@ -241,6 +241,7 @@ const (
 	actionStakeMigration
 	actionFactoryConfig
 	actionBlendPoolAdmin
+	actionToggleTrading
 )
 
 type topicPair struct{ t0, t1 string }
@@ -257,6 +258,7 @@ var topicPairActions = map[topicPair]action{
 	{TopicBlendPool, TopicBlendSetDelegate}:           actionBlendPoolAdmin,
 	{TopicBlendPool, TopicBlendSetMinTradingA}:        actionBlendPoolAdmin,
 	{TopicBlendPool, TopicBlendSetMinTradingB}:        actionBlendPoolAdmin,
+	{TopicToggleTrading, TopicToggleTradingEnabled}:   actionToggleTrading,
 }
 
 // classifyAny is the union of classify + liquidity / stake topic
