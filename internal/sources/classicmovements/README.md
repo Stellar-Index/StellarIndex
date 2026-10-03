@@ -177,8 +177,8 @@ SINGLE batched ClickHouse query (`IN (?)`, not one query per ref —
 era's thousands of refs per window made the drain crawl) against
 previously-written `claimable_balance_create` rows in
 `stellar.account_movements` (matches on
-`JSONExtractString(attributes, 'balance_id')`, backed by the
-`idx_cb_balance_id` bloom skip-index); (3) if neither
+`JSONExtractString(attributes, 'balance_id')`, via an external-table
+semijoin); (3) if neither
 resolves it, the op is counted as **unresolved** and logged — never a
 guessed amount. This is the "in-window index with a lookup fallback"
 design named in ADR-0047's Phase 3 scope, not a full second pass over

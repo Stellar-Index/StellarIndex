@@ -656,9 +656,9 @@ WHERE inner_tx_hash != '';
 -- migration 0105's `attributes jsonb` remainder 1:1 (balance_id, claimants,
 -- send_asset/send_amount, dest_asset/dest_amount, pool_id, revocation, …) — read via
 -- JSONExtractString/JSONExtract at query time, never a SQL predicate target
--- in the hot path here (FindClaimableBalanceCreates' balance_id lookup is the
--- one exception, backed by idx_cb_balance_id below — see that function's doc
--- comment for the 2026-07-12 full-scan finding that motivated it).
+-- in the hot path here. FindClaimableBalanceCreates' balance_id lookup is an
+-- external-table semijoin run with use_skip_indexes=0, so idx_cb_balance_id
+-- below does not back it (no current reader uses it).
 CREATE TABLE IF NOT EXISTS stellar.account_movements
 (
     address           String,
@@ -675,12 +675,9 @@ CREATE TABLE IF NOT EXISTS stellar.account_movements
     amount            Int128,
     attributes        String DEFAULT '{}',
     ingested_at       DateTime DEFAULT now(),
-    -- 2026-07-12 finding: classic-movements-backfill's Phase-3 claimable-balance
-    -- fallback (clickhouse.FindClaimableBalanceCreates) was a 6.5s full scan of
-    -- 973M rows PER lookup during the claimable-balance-bot era (ledgers
-    -- ~34M-40M, thousands of refs per window) before this index existed; the
-    -- bloom skip-index brought a single lookup to ~84ms (~77x). Only prunes when
-    -- the WHERE predicate is textually IDENTICAL to this expression.
+    -- Added for the removed single-ref balance_id lookup; the current batched
+    -- lookup runs with use_skip_indexes=0. Only prunes when the WHERE predicate
+    -- is textually IDENTICAL to this expression.
     INDEX idx_cb_balance_id JSONExtractString(attributes, 'balance_id') TYPE bloom_filter(0.01) GRANULARITY 4
 )
 ENGINE = ReplacingMergeTree(ingested_at)
