@@ -317,7 +317,7 @@ export async function fetchUsage(signal?: AbortSignal): Promise<UsageRow[]> {
 // rather than silently rendering `—`. The dashboard price-alert surface
 // (`/v1/dashboard/price-alerts`) is session-cookie authed like the keys
 // surface above; a firing alert enqueues a `price.alert` webhook to the
-// account's subscribed webhooks (BACKLOG #60).
+// account's subscribed webhooks.
 export type DashboardPriceAlert = components['schemas']['DashboardPriceAlert'];
 export type CreatePriceAlertRequest =
   components['schemas']['CreatePriceAlertRequest'];
@@ -426,6 +426,24 @@ export async function updateDashboardWebhook(
   return accountFetch<DashboardWebhook>(
     `/dashboard/webhooks/${encodeURIComponent(id)}`,
     { method: 'PATCH', body },
+  );
+}
+
+export type RotateWebhookSecretResponse =
+  components['schemas']['RotateWebhookSecretResponse'];
+
+/**
+ * POST /v1/dashboard/webhooks/{id}/rotate-secret — replace the signing
+ * secret in place (shown once); the old one keeps signing until
+ * `previous_secret_expires_at`. Idempotency-keyed so a retry never
+ * rotates twice.
+ */
+export async function rotateDashboardWebhookSecret(
+  id: string,
+): Promise<RotateWebhookSecretResponse> {
+  return idempotentCreate<RotateWebhookSecretResponse>(
+    `/dashboard/webhooks/${encodeURIComponent(id)}/rotate-secret`,
+    {},
   );
 }
 

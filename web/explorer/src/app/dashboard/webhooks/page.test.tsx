@@ -24,6 +24,7 @@ const createDashboardWebhook = vi.hoisted(() => vi.fn());
 const deleteDashboardWebhook = vi.hoisted(() => vi.fn());
 const updateDashboardWebhook = vi.hoisted(() => vi.fn());
 const listWebhookDeliveries = vi.hoisted(() => vi.fn());
+const rotateDashboardWebhookSecret = vi.hoisted(() => vi.fn());
 vi.mock('@/api/account', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/account')>()),
   listDashboardWebhooks,
@@ -31,6 +32,7 @@ vi.mock('@/api/account', async (importOriginal) => ({
   deleteDashboardWebhook,
   updateDashboardWebhook,
   listWebhookDeliveries,
+  rotateDashboardWebhookSecret,
 }));
 
 import { useMe } from '@/api/hooks';
@@ -42,6 +44,7 @@ afterEach(() => {
   deleteDashboardWebhook.mockReset();
   updateDashboardWebhook.mockReset();
   listWebhookDeliveries.mockReset();
+  rotateDashboardWebhookSecret.mockReset();
 });
 
 function webhook(overrides: Partial<DashboardWebhook> = {}): DashboardWebhook {
@@ -145,6 +148,30 @@ describe('/dashboard/webhooks self-service management', () => {
     await waitFor(() =>
       expect(listDashboardWebhooks.mock.calls.length).toBeGreaterThan(1),
     );
+  });
+
+  it('rotates the signing secret in place and reveals the new one without deleting the webhook', async () => {
+    listDashboardWebhooks.mockResolvedValue([webhook()]);
+    rotateDashboardWebhookSecret.mockResolvedValue({
+      webhook_id: 'a1b2c3d4-0000-4000-8000-000000000001',
+      secret:
+        'wsec_cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe', // gitleaks:allow
+      previous_secret_expires_at: '2026-08-02T12:00:00Z',
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderWebhooksPage();
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Rotate secret' }),
+    );
+
+    await waitFor(() =>
+      expect(rotateDashboardWebhookSecret).toHaveBeenCalledWith(
+        'a1b2c3d4-0000-4000-8000-000000000001',
+      ),
+    );
+    expect(await screen.findByText(/wsec_cafebabe/)).toBeInTheDocument();
+    expect(deleteDashboardWebhook).not.toHaveBeenCalled();
   });
 
   it('shows the delivery log with attempt status and failure reason', async () => {

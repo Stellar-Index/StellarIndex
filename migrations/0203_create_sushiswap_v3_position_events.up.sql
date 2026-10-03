@@ -1,4 +1,4 @@
--- 0200 up — `sushiswap_v3_position_events` hypertable.
+-- 0203 up — `sushiswap_v3_position_events` hypertable.
 --
 -- One row per observed SushiSwap V3 pool `mint` | `burn` | `collect` event:
 -- the concentrated-liquidity position lifecycle. Until now these were
@@ -50,6 +50,8 @@
 -- Historical fill: `stellarindex-ops projector-replay -source
 -- sushiswap_v3 -from <FactoryGenesisLedger>` re-derives the events from
 -- the ClickHouse lake (ADR-0034).
+--
+-- REQUIRED-FOLLOWUP: decompress trades chunks, then projector-replay -source sushiswap_v3 -from 61487379
 
 BEGIN;
 

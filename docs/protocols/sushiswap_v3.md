@@ -192,14 +192,18 @@ Per ADR-0035, `Matches()` therefore keys on contract identity only:
   own swaps recorded as real trades.
 - Every other event is accepted **only** from a registered pool.
 
-The registry is seeded three ways, all rooted at the factory:
+The registry is seeded four ways, all rooted at the factory:
 
 1. **In-code curated table** (`MainnetPools`, all 58 pools) — the
    cold-start trust root, and the only place token identities live.
 2. **`protocol_contracts` DB warm** — the operator seam, so a pool
    admitted after the table was frozen survives a restart.
 3. **Live `pool_created` events** — seeds both the gate and the token
-   map, and fires the persistence hook.
+   map, and fires the persistence hooks (`protocol_contracts` and
+   `sushiswap_v3_pools`).
+4. **`sushiswap_v3_pools` warm** — pool, token0, token1, fee, tick spacing
+   and creation ledger, written from each observed `pool_created`; restores
+   the token map at boot.
 
 **Coverage note.** An un-seeded real pool has its events dropped, so
 registry completeness is load-bearing. It is held by the factory's own
@@ -208,14 +212,14 @@ registry completeness is load-bearing. It is held by the factory's own
 misses fails **closed** into a visible recognition gap; it is never
 silently mis-attributed.
 
-**One known drift, deliberately visible.** `protocol_contracts` stores a
-contract *set*, not token identities. A pool admitted purely through the
-DB warm is therefore gated IN but has no token mapping until its
-creation event is replayed — its swaps are dropped and counted
-(`Decoder.SkippedUnknownPool`) rather than written with invented assets.
-The fix is a `projector-replay` from that pool's creation ledger. A
-richer per-pool table (in the shape of `soroswap_pairs`) would close it
-permanently and is the natural follow-up.
+**Residual drift, deliberately visible.** `protocol_contracts` stores a
+contract *set*, not token identities. A pool admitted purely through that
+warm, with no `sushiswap_v3_pools` row (an operator-admitted pool, or one
+created before the table existed and absent from `MainnetPools`), is gated
+IN but has no token mapping until its creation event is replayed — its
+swaps are dropped and counted (`Decoder.SkippedUnknownPool`) rather than
+written with invented assets. The fix is a `projector-replay` from that
+pool's creation ledger, which also writes the row.
 
 ## Volume
 
@@ -226,7 +230,7 @@ Whole-history totals are in the events table above.
 ## Scope of the current decoder
 
 `swap` → `trades` and `mint` / `burn` / `collect` →
-`sushiswap_v3_position_events` (migration 0200) are the projected
+`sushiswap_v3_position_events` (migration 0203) are the projected
 surface. A V3 position is `(owner, tick_lower, tick_upper)`, so the
 table carries the tick range, owner and the u128 liquidity and token
 amounts as `NUMERIC`; `collect` has no liquidity delta (NULL). Token

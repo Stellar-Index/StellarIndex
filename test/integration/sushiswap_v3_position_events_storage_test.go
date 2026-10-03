@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestSushiswapV3PositionEvents_RoundTrip executes the 0200 schema through
+// TestSushiswapV3PositionEvents_RoundTrip executes the 0203 schema through
 // real TimescaleDB: one row per action, a collect with NULL liquidity, the
 // CHECK that refuses a mint without liquidity, u128 amounts above 2^64
 // surviving NUMERIC, and the idempotent re-insert.
@@ -103,5 +103,65 @@ func TestSushiswapV3PositionEvents_RoundTrip(t *testing.T) {
 		t0, pool, txHash, owner, token0, token1)
 	if err == nil {
 		t.Error("mint with NULL liquidity was accepted; CHECK constraint missing")
+	}
+}
+
+// TestSushiswapV3PositionEvents_GenerationGuard: a corrected gen-1 re-derive
+// replaces the live gen-0 row, and a later gen-0 replay of the same event
+// cannot revert it.
+func TestSushiswapV3PositionEvents_GenerationGuard(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	txHash, _ := hex.DecodeString(strings.Repeat("cd", 32))
+	e := timescale.SushiswapV3PositionEvent{
+		Pool:   "CDVBYETOFG7UYJAD6CMOAQZXBHEK3PD5ZDZKWMWIY5OXIWATPX4VGMY3",
+		Ledger: 61_487_400, LedgerCloseTime: time.Date(2026, 3, 3, 21, 0, 0, 0, time.UTC),
+		TxHash: txHash, EventIndex: 1, Action: "mint", Liquidity: "10",
+		Owner:  "CARTUL5AWDZYBSN7HUUJZSKCAKCIAKM7M54Z76G6KRYCK4XPR3OHUQZ4",
+		Sender: "GCFB64LD5OX6XXUQW44LXAE7RAHORF2FJTSQ3DXEAV6DXVOML433X6HF",
+		Token0: "native", Token1: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+		TickLower: -10, TickUpper: 10, Amount0: "111", Amount1: "222",
+	}
+	read := func() (string, int64) {
+		var a string
+		var g int64
+		if err := store.DB().QueryRowContext(ctx, `
+			SELECT amount_0::text, derive_generation FROM sushiswap_v3_position_events
+			WHERE pool = $1 AND ledger = $2`, e.Pool, e.Ledger).Scan(&a, &g); err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return a, g
+	}
+
+	if err := store.InsertSushiswapV3PositionEvent(ctx, e); err != nil {
+		t.Fatalf("gen0 insert: %v", err)
+	}
+
+	store.SetDeriveGeneration(1)
+	corrected := e
+	corrected.Amount0 = "999"
+	if err := store.InsertSushiswapV3PositionEvent(ctx, corrected); err != nil {
+		t.Fatalf("gen1 insert: %v", err)
+	}
+	if a, g := read(); a != "999" || g != 1 {
+		t.Fatalf("after gen1 write amount_0/gen = %s/%d, want 999/1", a, g)
+	}
+
+	store.SetDeriveGeneration(0)
+	if err := store.InsertSushiswapV3PositionEvent(ctx, e); err != nil {
+		t.Fatalf("gen0 replay: %v", err)
+	}
+	if a, g := read(); a != "999" || g != 1 {
+		t.Errorf("after gen0 replay amount_0/gen = %s/%d, want 999/1 — gen0 reverted the corrected row", a, g)
 	}
 }

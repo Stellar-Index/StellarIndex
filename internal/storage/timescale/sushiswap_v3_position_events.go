@@ -9,7 +9,7 @@ import (
 )
 
 // SushiswapV3PositionEvent is one sushiswap_v3_position_events row — a
-// single observed pool `mint`, `burn` or `collect` (migration 0200).
+// single observed pool `mint`, `burn` or `collect` (migration 0203).
 //
 // Amounts are decimal-string u128 values per ADR-0003, stored verbatim into
 // the NUMERIC columns. Liquidity is "" for a collect (→ SQL NULL); Sender

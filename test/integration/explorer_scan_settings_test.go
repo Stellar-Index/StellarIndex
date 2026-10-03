@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"testing"
 	"time"
 
@@ -361,6 +362,52 @@ func TestContractCodeHistory_ServesTheSeededTimeline(t *testing.T) {
 		t.Fatalf("keeper contract has %d index rows, want 1 (the index must stay non-empty)", n)
 	}
 	assertCodeHistory(t, ctx, addr, contract, "index miss falls back to legacy scan", want)
+}
+
+// TestContractCodeHistory_KeepsOldExecutableBeyondRawWriteCap seeds more raw
+// instance writes than contractCodeHistoryMaxRows, all after the contract's
+// first executable (and a return to it): a raw-row cap would drop the oldest
+// executable; collapsing before the cap must keep the whole A->B->A timeline.
+func TestContractCodeHistory_KeepsOldExecutableBeyondRawWriteCap(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	var cidRaw xdr.Hash
+	copy(cidRaw[:], "inv1752-code-history-cap-cid")
+	cid := xdr.ContractId(cidRaw)
+	contract, err := strkey.Encode(strkey.VersionByteContract, cidRaw[:])
+	if err != nil {
+		t.Fatalf("encode contract strkey: %v", err)
+	}
+	hA, hB := t356Hash(0x80), t356Hash(0x81)
+	instKey, entryA := t356InstanceKeyAndEntry(t, cid, hA)
+	_, entryB := t356InstanceKeyAndEntry(t, cid, hB)
+
+	const base, rewrites = uint32(73_752_000), 10_050
+	t0 := time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC)
+	row := func(seq uint32, entry string) chstore.LedgerEntryChangeRow {
+		return chstore.LedgerEntryChangeRow{
+			LedgerSeq: seq, CloseTime: t0.Add(time.Duration(seq-base) * time.Second),
+			TxHash: fmt.Sprintf("inv1752-%d", seq), IntraLedgerSeq: 1,
+			ChangeType: "updated", EntryType: "contract_data", KeyXDR: instKey, EntryXDR: entry,
+		}
+	}
+	rows := []chstore.LedgerEntryChangeRow{row(base, entryA)}
+	for i := uint32(1); i <= rewrites; i++ {
+		rows = append(rows, row(base+i, entryB))
+	}
+	rows = append(rows, row(base+rewrites+1, entryA))
+	if _, err := chstore.InsertEntryChanges(ctx, addr, rows, 0); err != nil {
+		t.Fatalf("InsertEntryChanges: %v", err)
+	}
+
+	want := []chstore.ContractCodeVersion{
+		{Ledger: base, CloseTime: t0, WasmHash: hex.EncodeToString(hA[:])},
+		{Ledger: base + 1, CloseTime: t0.Add(time.Second), WasmHash: hex.EncodeToString(hB[:])},
+		{Ledger: base + rewrites + 1, CloseTime: t0.Add((rewrites + 1) * time.Second), WasmHash: hex.EncodeToString(hA[:])},
+	}
+	assertCodeHistory(t, ctx, addr, contract, "index-served beyond the raw-write cap", want)
 }
 
 func countInstanceIndexRows(t *testing.T, ctx context.Context, conn driver.Conn, contractHash string) uint64 {

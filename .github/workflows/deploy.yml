@@ -30,7 +30,7 @@ name: deploy
 # on tag push — the release workflow produces the artefacts; a human
 # decides when each region picks them up.
 #
-# Stack: depends on PRs #645 (release.yml + Dockerfiles + SemVer
+# Stack: depends on commits 44e48e1f4 (release.yml + Dockerfiles + SemVer
 # policy) which produces the v* tagged release artefacts this
 # workflow downloads.
 
@@ -121,6 +121,13 @@ on:
         # config per docs/operations/deploy-config-apply.md. A config-free
         # release passes the gate regardless.
         description: 'Acknowledge you have applied (or will apply) any config/schema this release changed — binary deploy does NOT apply it. See docs/operations/deploy-config-apply.md.'
+        required: false
+        type: boolean
+        default: false
+      followups_acknowledged:
+        # Separate from config_acknowledged: that one asserts a surface is
+        # ALREADY applied, this one that a rebuild WILL run after the deploy.
+        description: 'Acknowledge you will run every `-- REQUIRED-FOLLOWUP:` command the new migrations declare (replay / CAGG refresh) straight after this deploy. See migrations/README.md rule 12.'
         required: false
         type: boolean
         default: false
@@ -1159,6 +1166,26 @@ jobs:
             echo "::warning::the host has no deployed-versions sidecar (first deploy to this host, or the directory was wiped); the config-apply gate falls back to the previous release tag by ancestry, which is only correct if the fleet is exactly one release behind."
             echo "live=" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Migration follow-up gate
+        # Before the playbook, so no migration that blanks data (and names
+        # its rebuild with `-- REQUIRED-FOLLOWUP:`) applies until the
+        # operator has acknowledged the rebuild. Same baseline as the
+        # config-apply gate, so a skip-ahead deploy lists every skipped
+        # release's follow-ups. The script is read from the dispatching
+        # commit, not the checked-out tag: a rollback to a tag that predates
+        # the gate must still run it.
+        env:
+          VERSION: ${{ inputs.version }}
+          FOLLOWUPS_ACK: ${{ inputs.followups_acknowledged }}
+          BASELINE: ${{ steps.baseline.outputs.live }}
+        run: |
+          gate="$RUNNER_TEMP/migration-followup-gate.sh"
+          if ! git show "${GITHUB_SHA}:scripts/ci/migration-followup-gate.sh" > "$gate"; then
+            echo "::error::migration follow-up gate: cannot read the gate script at the dispatching commit ${GITHUB_SHA}; refusing to deploy (fail-closed). Dispatch from main."
+            exit 1
+          fi
+          bash "$gate" "$VERSION" "$FOLLOWUPS_ACK" "$BASELINE"
 
       - name: Run deploy playbook
         id: playbook

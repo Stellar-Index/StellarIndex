@@ -2341,6 +2341,17 @@ export interface paths {
          *     `[projection_verified_from, watermark_ledger]`, NOT over
          *     `[genesis_ledger, watermark_ledger]`. Read the two together.
          *
+         *     **Proven vs carried.** The audit runs daily and re-reconciles only
+         *     the ledgers since its last run, carrying the prior clean projection
+         *     claim over the rest; once a claim's evidence is a week old it
+         *     re-proves that source's whole served range (a few sources per
+         *     night; `sdex`, whose full re-proof outlasts the nightly run, by a
+         *     separate weekly run). `computed_at` is when a verdict was
+         *     last restated; `projection_evidenced_at` is when the claim was last
+         *     proven end to end, and `projection_reconciled_from` is where this
+         *     run's own reconcile began. `flags.stale` is raised when a clean
+         *     claim's evidence is older than about ten days, or unknown.
+         *
          *     **`sources` holds sources only.** The ADR-0033 recognition audit
          *     also produces a SYSTEM-wide census — event shapes in the lake on
          *     contracts no indexed source owns, i.e. Soroban protocols we have
@@ -4001,7 +4012,10 @@ export interface paths {
         /**
          * Customer dashboard — delete a webhook.
          * @description Session-gated. Hard-deletes the registry row and cascades
-         *     to webhook_deliveries. An absent or cross-account id returns
+         *     to webhook_deliveries: queued and retrying deliveries are
+         *     dropped and the delivery log is gone. To change the signing
+         *     secret, use rotate-secret instead, which keeps both. An absent
+         *     or cross-account id returns
          *     404 (the same shape, so presence never leaks); a client
          *     retrying a delete whose response it lost should treat 404 as
          *     already deleted.
@@ -4012,10 +4026,41 @@ export interface paths {
         /**
          * Customer dashboard — update a webhook.
          * @description Session-gated. Patches name / url / events / enabled.
-         *     SecretHash is immutable; rotation lives behind a separate
-         *     endpoint when it ships.
+         *     The signing secret is not patchable; rotate it with
+         *     POST /v1/dashboard/webhooks/{id}/rotate-secret.
          */
         patch: operations["updateDashboardWebhook"];
+        trace?: never;
+    };
+    "/dashboard/webhooks/{id}/rotate-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — rotate a webhook's signing secret.
+         * @description Session-gated. Replaces the signing secret in place and returns
+         *     the new one ONCE. The webhook keeps its id, its queued and
+         *     retrying deliveries and its delivery log. For 24 hours
+         *     (`previous_secret_expires_at`) every delivery is signed with
+         *     both secrets: the new one in `X-StellarIndex-Signature` /
+         *     `X-StellarIndex-Signature-V2`, the old one in
+         *     `X-StellarIndex-Signature-Previous` /
+         *     `X-StellarIndex-Signature-V2-Previous` (see
+         *     `CreateWebhookResponse.secret`). Rotating again inside that
+         *     window ends the old secret's signing at once. Owner / admin /
+         *     member only. Send an `Idempotency-Key` so a retried request
+         *     replays the first response instead of rotating twice.
+         */
+        post: operations["rotateDashboardWebhookSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/dashboard/webhooks/{id}/deliveries": {
@@ -4050,7 +4095,7 @@ export interface paths {
         /**
          * Customer dashboard — list this account's price alerts.
          * @description Session-gated. Returns every price-threshold alert this
-         *     account has registered, newest first. BACKLOG #60.
+         *     account has registered, newest first.
          */
         get: operations["listDashboardPriceAlerts"];
         put?: never;
@@ -6964,8 +7009,8 @@ export interface components {
         /**
          * @description Customer-registered webhook endpoint backing the
          *     /v1/dashboard/webhooks surface. SecretHash is intentionally
-         *     omitted — the plaintext signing secret is returned ONCE at
-         *     create time + never again.
+         *     omitted — each plaintext signing secret is returned ONCE, at
+         *     create or rotate-secret time, and never again.
          */
         DashboardWebhook: {
             /** Format: uuid */
@@ -7052,8 +7097,33 @@ export interface components {
              *     of the same delivery. It is NOT stable across a re-emit of
              *     the same logical event, so it dedupes retries, not re-sends.
              *     Trust it only after `X-StellarIndex-Signature-V2` verifies.
+             *
+             *     ROTATION: for 24 hours after a rotate-secret call, every
+             *     delivery also carries `X-StellarIndex-Signature-Previous` and
+             *     `X-StellarIndex-Signature-V2-Previous`, built exactly as above
+             *     but with the previous secret. A receiver still holding the old
+             *     secret verifies those; once it holds the new one it verifies
+             *     the unsuffixed headers. Outside a rotation window neither
+             *     header is sent.
              */
             secret: string;
+        };
+        RotateWebhookSecretResponse: {
+            /** Format: uuid */
+            webhook_id: string;
+            /**
+             * @description The new signing secret, returned exactly once; it signs
+             *     `X-StellarIndex-Signature` and `-V2` from now on. Format:
+             *     `wsec_<64 hex chars>`.
+             */
+            secret: string;
+            /**
+             * Format: date-time
+             * @description Until this instant deliveries also carry the
+             *     `X-StellarIndex-Signature-Previous` headers signed with the
+             *     secret this call replaced.
+             */
+            previous_secret_expires_at: string;
         };
         /**
          * @description PATCH body — any subset of fields. Omitted fields keep
@@ -7092,7 +7162,7 @@ export interface components {
         };
         /**
          * @description A customer-registered price-threshold alert backing the
-         *     /v1/dashboard/price-alerts surface (BACKLOG #60). The
+         *     /v1/dashboard/price-alerts surface. The
          *     aggregator's evaluator compares each enabled alert against the
          *     latest closed 1m VWAP for its pair and, on a crossing, enqueues
          *     a `price.alert` webhook delivery to the account's subscribed
@@ -7256,7 +7326,7 @@ export interface components {
             at: string;
         };
         /**
-         * @description Body of a `price.alert` webhook delivery (BACKLOG #60). Fired by
+         * @description Body of a `price.alert` webhook delivery. Fired by
          *     the aggregator's price-alert evaluator when one of the account's
          *     registered alerts crosses its threshold against the latest closed
          *     1-minute VWAP. Sent once per crossing: the alert re-arms only after
@@ -7366,6 +7436,13 @@ export interface components {
          *       prints taken at par with USD, with no prints in the leg's own
          *       quote asset to check a stablecoin de-peg against. Omitted when
          *       false.
+         *     - `proxy_deviation` — set on a TRIANGULATED `/v1/price/at`,
+         *       `/v1/price/changes` or `/v1/vwap` response served through a
+         *       declared USD peg when any declared USD peg's observed
+         *       `crypto:<STABLE>/fiat:USD` price is more than 2% from $1, so the
+         *       peg-as-dollar assumption
+         *       behind the value does not hold. Omitted when false, including
+         *       when no such observation was available.
          *     - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
          *       when the asset's code matches a verified currency's
          *       Stellar ticker but the issuer doesn't. The matching
@@ -7431,6 +7508,11 @@ export interface components {
              * @default false
              */
             pivot_unverified: boolean;
+            /**
+             * @description Set on a TRIANGULATED /v1/price/at, /v1/price/changes or /v1/vwap response served through a declared USD peg when any declared USD peg's observed crypto:<STABLE>/fiat:USD price is more than 2% from $1. Omitted when false, including when no observation was available.
+             * @default false
+             */
+            proxy_deviation: boolean;
             /** @default false */
             unverified_ticker_collision: boolean;
             /** @description Names of the row-narrowing query parameters this response did NOT apply, spelled as the caller sent them (`type`, `code`, `issuer`, `q`). Absent when the response applied every filter it was given — an ignored filter and a matched one otherwise produce the same 200 over the same shape, so a client re-filtering the page has nothing else to key on. Set by `/v1/assets` on the listings whose rows come from a source that cannot narrow: the class-scoped catalogue listings (`asset_class=fiat|stablecoin|crypto`), and the lean asset-catalog fallback served when no listing store is configured. */
@@ -8799,7 +8881,9 @@ export interface components {
             /**
              * @description Present ONLY when `price_usd` is not a DIRECT market
              *     observation, carried through verbatim from the same field on
-             *     `/assets`. `declared_peg`: filled from an operator-declared
+             *     `/assets`. `global_market`: filled from the vetted global
+             *     ticker's cross-venue price because no Stellar market price
+             *     survived the substance gate. `declared_peg`: filled from an operator-declared
              *     1:1 fiat peg times the current FX rate because no
              *     market-derived price survived the thin-market substance
              *     gate. `transitive`: derived through one intermediate hop,
@@ -8809,7 +8893,7 @@ export interface components {
              *     derived would be the same claim with the caveat removed.
              * @enum {string}
              */
-            price_basis?: "declared_peg" | "transitive";
+            price_basis?: "global_market" | "declared_peg" | "transitive";
             /** @description Circulating supply times the served USD price (decimal string). Present only when status is published. */
             market_cap_usd?: string;
         };
@@ -10237,6 +10321,53 @@ export interface components {
              */
             last_seen?: string;
         };
+        /** @description The global-market reference for a vetted same-asset token: the USD price of the global ticker the verified catalogue binds to this asset's EXACT classic (code, issuer), and how far this asset's own Stellar price sits from it. Never matched on code alone — a lookalike issuer wearing the same ticker never carries it. Present only when an aggregator published that ticker in fiat:USD within the last hour. */
+        AssetGlobalMarket: {
+            /** @description The global ticker's canonical id, e.g. "crypto:USDC". */
+            asset: string;
+            /** @description The aggregator's published USD price, verbatim as a decimal string (ADR-0003). */
+            price_usd: string;
+            /** @description The aggregator that published it. */
+            source: string;
+            /**
+             * Format: date-time
+             * @description The aggregator's own observation time for the price. A row stamped more than five minutes ahead of the server clock is never used.
+             */
+            as_of: string;
+            /** @description (Stellar price − global price) / global price × 100 as a signed decimal with two fractional digits ("+1.27", "-0.05", "0.00"). Stellar USD prices are quoted through the deployment's USD-pegged stablecoins, so a global depeg of that proxy moves this figure too. Absent when price_usd is not a Stellar market price (a global_market or declared_peg fill, or no price), and for a declared USD peg itself, whose Stellar USD price is quoted through itself and would measure the global depeg rather than a Stellar break. */
+            stellar_divergence_pct?: string;
+            /** @description True when the absolute stellar_divergence_pct exceeds the deployment's divergence threshold (divergence.threshold_pct): the Stellar market has broken from the global one. Omitted (false) otherwise. */
+            depeg_warning?: boolean;
+            /** @description Present only beside depeg_warning, on /v1/assets/{asset_id}: the issuer behaviours from `issuer_behaviour` that let the issuer move or freeze holders' balances — `auth_clawback_enabled` and `auth_revocable` from its live account flags, `clawback_observed` when the asset's clawback_total is non-zero. Omitted when none applies or the issuer's behaviour did not resolve. */
+            issuer_signals?: ("auth_clawback_enabled" | "auth_revocable" | "clawback_observed")[];
+        };
+        /** @description What a classic asset's issuer can do to holders and what it has done to supply. The four auth flags are the issuer account's CURRENT on-chain AccountEntry flags (omitted when the live entry does not resolve, e.g. a merged issuer — see /v1/issuers/{g_strkey} for the last-known record). The totals are lifetime sums over the asset's Stellar Asset Contract mint/burn/clawback log, the same figures /v1/assets/{asset_id}/supply serves; on a classic asset every mint, burn and clawback is issuer-originated. Totals are omitted when the log is empty, incompletely seeded (recorded burns exceed mints) or did not answer within two seconds. Served on /v1/assets/{asset_id} only, for classic assets. */
+        AssetIssuerBehaviour: {
+            /** @description AUTH_REQUIRED: holders need the issuer's authorisation to hold the asset. */
+            auth_required?: boolean;
+            /** @description AUTH_REVOCABLE: the issuer can revoke a holder's authorisation, freezing the balance. */
+            auth_revocable?: boolean;
+            /** @description AUTH_CLAWBACK_ENABLED: the issuer can claw back balances from trustlines created while set. */
+            auth_clawback_enabled?: boolean;
+            /** @description AUTH_IMMUTABLE: none of the flags can change and the issuer account cannot be merged. */
+            auth_immutable?: boolean;
+            /**
+             * Format: int64
+             * @description The ledger the flags are known to hold as of. Omitted when unknown.
+             */
+            flags_as_of_ledger?: number;
+            /** @description Σ mint, integer string in the asset's smallest unit (7 decimals). Never a JSON number (ADR-0003). */
+            mint_total?: string;
+            /** @description Σ burn, integer string in the asset's smallest unit. */
+            burn_total?: string;
+            /** @description Σ clawback, integer string in the asset's smallest unit. */
+            clawback_total?: string;
+            /**
+             * Format: int64
+             * @description Number of mint/burn/clawback events summed.
+             */
+            supply_flow_count?: number;
+        };
         /**
          * @description An independent listing platform's own USD price for the EXACT Stellar address this asset lives at. It is NOT this index's price for the asset, and it is derived from no Stellar market — the asset's own price_usd, when there is one, sits beside it unchanged.
          *     Present only on a verified-catalogue asset whose market_cap_usd this index declines to publish, and only when the cached listing directory names either the asset's classic `CODE-GISSUER` id or the Stellar Asset Contract address deterministically derived from that (code, issuer) pair and the network passphrase. No code is ever matched: PYUSD, USDT, USDC and XLM are each worn by impersonators on this network, so a code match would hand the real instrument's price to whichever account minted the ticker.
@@ -10354,6 +10485,20 @@ export interface components {
             max_number?: string | null;
             /** @description Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all; false when they declared a bounded supply. */
             is_unlimited?: boolean | null;
+            /** @description SEP-1 `status` of the currency as the issuer declares it: live, dead, test or private. */
+            currency_status?: string | null;
+            /** @description SEP-1 `is_asset_anchored`. Null when the issuer did not declare it; false only when they declared false. */
+            is_asset_anchored?: boolean | null;
+            /** @description SEP-1 `attestation_of_reserve` URL. http(s) only — any other value is dropped at overlay time. */
+            attestation_of_reserve?: string | null;
+            /** @description SEP-1 `redemption_instructions`: how the issuer says the token is redeemed for its underlying. */
+            redemption_instructions?: string | null;
+            /** @description SEP-1 `regulated` (SEP-8 approval required to transact). Null when the issuer did not declare it. */
+            regulated?: boolean | null;
+            /** @description SEP-1 `approval_server` URL for a regulated asset. http(s) only — any other value is dropped at overlay time. */
+            approval_server?: string | null;
+            /** @description SEP-1 `approval_criteria`: the issuer's stated rules for approving a transaction in a regulated asset. */
+            approval_criteria?: string | null;
             /** @description Raw integer in asset's smallest unit (per ADR-0011 supply derivation). Issuer and locked-set balances are netted out only under an exclusion basis; under `classic_lake_flows`, `classic_trustline_sum` and `sep41_lake_flows` it is the un-excluded total (see supply_basis). Null when no snapshot exists. */
             circulating_supply?: string | null;
             /** @description Raw integer in asset's smallest unit. Null when no snapshot exists. */
@@ -10363,10 +10508,10 @@ export interface components {
             /** @description Current per-asset USD price as a fixed-precision decimal string — same value `/v1/price?asset=…&quote=fiat:USD` returns. Inlined so wallet UIs don't need a second round-trip. Null when no USD price can be derived, or when it is withheld — `price_withheld_reason` then says why. When `price_basis` is present the value is NOT a market observation — see that field. */
             price_usd?: string | null;
             /**
-             * @description Present ONLY when price_usd is not a DIRECT market observation. `declared_peg`: the price was filled from an operator-declared 1:1 fiat peg × the current fiat→USD FX rate (pricing_guard.fiat_pegged_classic_assets) because no market-derived price survived the thin-market substance gate — peg-priced rows deliberately carry no change pills, sparkline claim, or market_cap derived from the peg, because the fill asserts a conversion basis, not a market. `transitive`: the price was derived through ONE intermediate hop (asset→hop, hop→USD) where the asset has no direct USD or XLM market of its own; BOTH legs are independently substance-gated before the value is served, so a thin intermediate cannot reprice everything quoted against it. Note this value is served ONLY here — `/v1/price` answers for direct markets and returns no price for a transitive asset. Absent = direct market-derived (the pre-existing contract, unchanged).
+             * @description Present ONLY when price_usd is not a DIRECT market observation. `global_market`: the asset is a classic issuance the verified catalogue binds, on its exact (code, issuer), to a global ticker, no Stellar market price survived the thin-market substance gate, and price_usd is that ticker's fresh cross-venue aggregator price (see `global_market`) — it takes precedence over a declared peg, so a global depeg reaches price_usd instead of being hidden behind a fixed 1:1; like a peg fill it carries no change pills, sparkline claim or market_cap. `declared_peg`: the price was filled from an operator-declared 1:1 fiat peg × the current fiat→USD FX rate (pricing_guard.fiat_pegged_classic_assets) because no market-derived price survived the thin-market substance gate — peg-priced rows deliberately carry no change pills, sparkline claim, or market_cap derived from the peg, because the fill asserts a conversion basis, not a market. `transitive`: the price was derived through ONE intermediate hop (asset→hop, hop→USD) where the asset has no direct USD or XLM market of its own; BOTH legs are independently substance-gated before the value is served, so a thin intermediate cannot reprice everything quoted against it. Note this value is served ONLY here — `/v1/price` answers for direct markets and returns no price for a transitive asset. Absent = direct market-derived (the pre-existing contract, unchanged).
              * @enum {string}
              */
-            price_basis?: "declared_peg" | "transitive";
+            price_basis?: "global_market" | "declared_peg" | "transitive";
             /**
              * @description Present ONLY when price_usd is null because the price was WITHHELD — the market exists and the server declines to publish it — rather than never observed. `/v1/price` answers the same pair with a `price-withheld` 404, and the values are the `reason` vocabulary of `/v1/price/tip/stream`'s `price_withheld` event: `substance` (trailing market activity below the serve floor), `scam_issuer` (a directory-flagged issuer), `upstream_leg` (the stablecoin-proxy leg the USD price derives from is itself withheld), `unattributed` (withheld for a cause the server could not attribute, e.g. the issuer-directory check did not complete). market_cap_usd and fdv_usd are null with it. Absent beside a null price_usd means no price exists, or (listing rows, with flags.stale true) the thin-market gate could not measure the row.
              * @enum {string}
@@ -10386,6 +10531,8 @@ export interface components {
             market_cap_low_liquidity?: boolean;
             /** @description True when market_cap_usd and fdv_usd were deliberately REFUSED (served null) because the two decimals resolvers this response depends on disagreed for a Soroban token at request time: the lake's on-chain decimals() — which `decimals` reports and the supply divisor uses — versus the nonstandard_decimals_assets projection every price-shaped path normalises the USD price through. Either the projection carries a different value, or the lake reads non-7 and the projection has no row yet, so supply and price sit on different scales and their product is wrong by a power of ten. Not a liquidity verdict (market_cap_low_liquidity stays unset). price_usd, circulating_supply and decimals all still serve — each is a fact on its own scale; only the cross-scale product is withheld. Self-clearing: the aggregator's lockstep reconcile repairs the projection toward the lake on its next tick (runbook dex-nonstandard-decimals.md). Omitted when the resolvers agree. */
             market_cap_decimals_mismatch?: boolean;
+            global_market?: components["schemas"]["AssetGlobalMarket"];
+            issuer_behaviour?: components["schemas"]["AssetIssuerBehaviour"];
             listing_reference?: components["schemas"]["AssetListingReference"];
             listing_valuation?: components["schemas"]["AssetListingValuation"];
             /**
@@ -10847,6 +10994,20 @@ export interface components {
             max_number?: string | null;
             /** @description Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all (no fixed_number / max_number / is_unlimited declaration); false when they did and committed to a bounded supply. */
             is_unlimited?: boolean | null;
+            /** @description SEP-1 `status` of the currency as the issuer declares it: live, dead, test or private. */
+            currency_status?: string | null;
+            /** @description SEP-1 `is_asset_anchored`. Null when the issuer did not declare it; false only when they declared false. */
+            is_asset_anchored?: boolean | null;
+            /** @description SEP-1 `attestation_of_reserve` URL. http(s) only — any other value is dropped at overlay time. */
+            attestation_of_reserve?: string | null;
+            /** @description SEP-1 `redemption_instructions`: how the issuer says the token is redeemed for its underlying. */
+            redemption_instructions?: string | null;
+            /** @description SEP-1 `regulated` (SEP-8 approval required to transact). Null when the issuer did not declare it. */
+            regulated?: boolean | null;
+            /** @description SEP-1 `approval_server` URL for a regulated asset. http(s) only — any other value is dropped at overlay time. */
+            approval_server?: string | null;
+            /** @description SEP-1 `approval_criteria`: the issuer's stated rules for approving a transaction in a regulated asset. */
+            approval_criteria?: string | null;
         };
         AssetMetadataEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["AssetMetadata"];
@@ -17828,6 +17989,31 @@ export interface operations {
                                  */
                                 projection_verified_from?: number;
                                 /**
+                                 * Format: int64
+                                 * @description The lowest ledger the run that produced this
+                                 *     verdict reconciled ITSELF. The audit is
+                                 *     incremental: `[projection_reconciled_from,
+                                 *     watermark_ledger]` was proven at `computed_at`,
+                                 *     and anything from `projection_verified_from`
+                                 *     below it was carried from the prior verdict.
+                                 *     Omitted when not recorded.
+                                 */
+                                projection_reconciled_from?: number;
+                                /**
+                                 * Format: date-time
+                                 * @description When one audit run last reconciled the WHOLE
+                                 *     served range cleanly — the age of the oldest
+                                 *     evidence behind `projection_ok: true`.
+                                 *     `computed_at` advances on every run, including
+                                 *     one that only carried the claim forward, so it
+                                 *     is not this. `null` when no evidence is on
+                                 *     record (no clean projection claim, or a claim
+                                 *     carried from a verdict that predates this
+                                 *     field). An old or `null` value under a clean
+                                 *     claim raises `flags.stale`.
+                                 */
+                                projection_evidenced_at: string | null;
+                                /**
                                  * @description Lake-axis coverage (watermark vs tip) — see
                                  *     watermark_ledger. A FRACTION in [0,1] despite
                                  *     the `_pct` name: 1.0 means the verdict reaches
@@ -21875,6 +22061,98 @@ export interface operations {
                 };
             };
             /** @description Another of this account's webhooks already uses this url. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    rotateDashboardWebhookSecret: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Optional client-chosen key (a UUID is ideal) that makes this
+                 *     create safe to retry. Send the SAME value when retrying a request
+                 *     whose outcome you never saw, such as a client timeout: within ten
+                 *     minutes of a successful original, the retry receives the original
+                 *     response verbatim (marked by an `Idempotency-Replayed: true`
+                 *     response header) instead of creating a second resource. A retry
+                 *     that arrives while the original is still running gets 409
+                 *     `idempotency-key-in-flight` with `Retry-After`. Only 2xx
+                 *     responses are replayed; a failed original may be retried with the
+                 *     same key. Keys are scoped to the caller, and dedup is held per API
+                 *     process, so it covers the retry window rather than surviving a
+                 *     restart. Longer than 256 bytes returns 400
+                 *     `idempotency-key-too-long`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rotated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "webhook_id": "0b6a3f2e-9c1d-4e7a-8f5b-6d2c4a1e9b0f",
+                     *       "secret": "wsec_9d2e4f7a1c6b3e8d5a2f9c4b7e1d6a3f8c5b2e9d4a7f1c6e3b8d5a2f9c4b7e1d",
+                     *       "previous_secret_expires_at": "2026-07-04T22:45:47Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["RotateWebhookSecretResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Role can't manage webhooks, OR the write was blocked as
+             *     cross-site: state-changing dashboard + auth requests must
+             *     carry an `Origin` (or `Referer`) matching this API or an
+             *     operator-allow-listed site (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No webhook with this id on this account (absent, already deleted, or another account's). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description A request whose `Idempotency-Key` matches one still being
+             *     processed (`idempotency-key-in-flight`, retryable per
+             *     `Retry-After`).
+             */
             409: {
                 headers: {
                     [name: string]: unknown;

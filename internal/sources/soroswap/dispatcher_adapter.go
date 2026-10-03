@@ -443,6 +443,35 @@ func (d *Decoder) emitCompleted(completed []RawPair) ([]consumer.Event, error) {
 	return out, nil
 }
 
+// Drain implements [dispatcher.Drainer]: it flushes the open swap/sync
+// groups at the end of a bounded stream. A swap-only group is final (the
+// trade reads from the swap body alone, as on a same-pair rotation); a
+// sync-only group is LP-traffic noise and only counted.
+func (d *Decoder) Drain() []consumer.Event {
+	d.mu.Lock()
+	open := d.buf.orphans()
+	clear(d.buf.m)
+	d.mu.Unlock()
+	var out []consumer.Event
+	for _, p := range open {
+		if p.Swap == nil {
+			d.mu.Lock()
+			d.evictedBareSync++
+			d.mu.Unlock()
+			continue
+		}
+		evs, err := d.emitCompleted([]RawPair{p})
+		if err != nil {
+			d.mu.Lock()
+			d.evictedOrphans++
+			d.mu.Unlock()
+			continue
+		}
+		out = append(out, evs...)
+	}
+	return out
+}
+
 // EvictedOrphans is the count of swap-only (no matching sync) buffer
 // entries dropped by age-out — a real lost trade. Excludes bare-sync
 // evictions (see [Decoder.EvictedBareSync]); GH-1308.

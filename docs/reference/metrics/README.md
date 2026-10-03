@@ -620,7 +620,7 @@ rate, absence is unambiguous, which is why this counter is deliberately
 NOT pre-seeded in `seedBoundedLabelSeries` the way the `increase()`- and
 `rate()`-based counters are.
 
-### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`, `stellarindex_dispatcher_evicted_keys_unreadable_total`
+### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`, `stellarindex_dispatcher_evicted_keys_unreadable_total`, `stellarindex_dispatcher_ledger_upgrade_entries_total`
 
 Counters, no labels (process-wide — the underlying dispatcher counters
 aren't attributable to a source).
@@ -642,8 +642,12 @@ flush window's delta on every tick alongside the existing WARN log:
   read, so their state-archival evictions were skipped and each evicted
   balance stays served as live. The dispatcher also logs a WARN with
   the ledger number.
+- `ledger_upgrade_entries` — ledger-upgrade entries (protocol version,
+  base reserve, fee and similar network parameter changes) seen in
+  processed ledgers. Informational: no decoder consumes them, and a
+  non-zero value is expected on an upgrade ledger.
 
-**When to look at these:** any sustained non-zero rate. All four are
+**When to look at these:** any sustained non-zero rate of the first four. All are
 process-lifetime cumulative counters — chart `increase(...[5m])`
 against the flush interval (5m), not the raw value.
 
@@ -1549,7 +1553,7 @@ the per-tick delta.
 
 Counter, label `kind` (`tx_read_errors` | `tx_event_read_errors` |
 `entry_meta_unsupported` | `soroban_fee_meta_unsupported` |
-`tx_read_errors_census` | `tx_event_read_errors_census`). Every kind is
+`evicted_keys_unreadable` | `tx_read_errors_census` | `tx_event_read_errors_census`). Every kind is
 seeded at zero.
 
 Transactions the indexer's two per-ledger read paths could not fully
@@ -1567,6 +1571,11 @@ ledger, not a ledger count.
   `TransactionMeta` version the charged-fee read does not handle, so their
   `soroban_nonrefundable_fee` / `soroban_refundable_fee` /
   `soroban_rent_fee` are written as 0.
+- `evicted_keys_unreadable` — the same extract
+  (`LedgerExtract.EvictedKeysUnreadable`): the ledger's evicted-keys list
+  could not be read, so its eviction `removed` rows are missing and each
+  evicted entry's last write stays current in `ledger_entries_current`.
+  Counts ledgers, not transactions.
 - `tx_read_errors_census`, `tx_event_read_errors_census` —
   `dispatcher.CensusLedger` for the `ledger_ingest_log` substrate row,
   which the indexer skips on any non-zero count: a substrate gap.
@@ -2349,7 +2358,7 @@ row.
 Counter, label `outcome` (`ok` / `refresh_error`).
 
 Per-sweep outcome of the aggregator's protocol-events rollup worker
-(`internal/aggregate/protoeventsrollup`, #43), which folds the
+(`internal/aggregate/protoeventsrollup`, 78dff337b), which folds the
 trailing-24h per-source event census (a UNION ALL count over ~17
 served protocol hypertables) into the `protocol_events_24h` table
 every couple of minutes. That table backs the `events_24h` column on
@@ -2373,7 +2382,7 @@ Histogram, label `outcome` (matches
 
 Wall-clock of one rollup sweep: the trailing-24h UNION ALL census over
 the served protocol hypertables + one upsert + one prune. This is the
-multi-second leg the #43 rollup moved off the `/v1/protocols` request
+multi-second leg the 78dff337b rollup moved off the `/v1/protocols` request
 path, so watching `ok` p95/p99 here is how an operator learns the
 served-tier census is getting heavier as the protocol tables grow —
 long before it would have shown up as a slow endpoint.
@@ -2383,7 +2392,7 @@ long before it would have shown up as a slow endpoint.
 Counter, label `outcome` (`ok` / `refresh_error`).
 
 Per-sweep outcome of the aggregator's asset-volume rollup worker
-(`internal/aggregate/assetvolrollup`, #43), which folds the trailing-24h
+(`internal/aggregate/assetvolrollup`, e0fbbbc3b), which folds the trailing-24h
 per-asset USD-volume SUM over the `prices_1m` continuous aggregate
 (single-sided: each asset as base OR quote) into the `asset_volume_24h`
 table every couple of minutes. That table backs the `volume_24h_usd`
@@ -2407,7 +2416,7 @@ Histogram, label `outcome` (matches
 
 Wall-clock of one rollup sweep: the trailing-24h base-OR-quote SUM over
 `prices_1m` (all pairs) + one upsert + one prune. This is the heaviest
-of the two #43 rollups and the query the rollup moved off the
+of the two 24h rollups (78dff337b, e0fbbbc3b) and the query the rollup moved off the
 `/v1/assets` request path, so watching `ok` p95/p99 here is how an
 operator learns the served-tier volume scan is getting heavier as the
 prices_1m history grows. If it climbs toward the 2-minute cadence the
@@ -2453,7 +2462,7 @@ long before it would surface as a slow endpoint. If it climbs toward the
 Counter, label `outcome` (`ok` / `list_error` / `partial_error`).
 
 Per-sweep outcome of the aggregator's price-alert evaluator
-(`internal/pricealerts`, BACKLOG #60), which checks every enabled
+(`internal/pricealerts`), which checks every enabled
 `price_alerts` row against the latest closed 1-minute VWAP each tick
 and enqueues account-scoped `price.alert` customer-webhook deliveries
 once per threshold crossing (respecting cooldown + `last_fired_at`).

@@ -186,7 +186,7 @@ func (s *Server) resolvePriceAt(
 	}
 	fbSnap, fbFound, fbWithheld, err := s.lookupPriceAtStablecoinFallback(ctx, asset, quote, ts)
 	if err != nil || fbFound {
-		return fbSnap, Flags{Triangulated: true}, fbFound, nil, err
+		return fbSnap, Flags{Triangulated: true, ProxyDeviation: fbFound && s.proxyDeviation(ctx, ts)}, fbFound, nil, err
 	}
 	if withheld == nil {
 		withheld = fbWithheld
@@ -250,7 +250,7 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 // lookupPriceAtStablecoinFallback is the CAGG sibling of the
 // raw-trades stablecoin fallback (vwap.go's
 // tradesInRangeWithStablecoinFallback / chart.go's
-// chartStablecoinFallback) — the deferred half of the #1217 family.
+// chartStablecoinFallback) — the deferred half of the 6505934b5 family.
 // The 1m VWAP CAGG keys buckets by the REAL stored quote asset, so a
 // historical X/fiat:USD lookup misses unless something traded
 // directly in fiat:USD at that instant. When the literal + alias

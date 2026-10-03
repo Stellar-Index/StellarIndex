@@ -81,6 +81,15 @@ type CoverageVerdictView struct {
 	// (`projection_ok` is false in that case). Absent means UNKNOWN, not
 	// "from ledger 0".
 	ProjectionVerifiedFrom uint32 `json:"projection_verified_from,omitempty"`
+	// ProjectionReconciledFrom is the lowest ledger the run that produced
+	// this verdict reconciled itself; anything from ProjectionVerifiedFrom
+	// below it was carried from the prior verdict. Omitted when unrecorded.
+	ProjectionReconciledFrom uint32 `json:"projection_reconciled_from,omitempty"`
+	// ProjectionEvidencedAt is when one run last reconciled the whole served
+	// range cleanly — the age of the oldest evidence behind ProjectionOK.
+	// ComputedAt advances on every run, including one that carried the claim.
+	// null = no evidence on record.
+	ProjectionEvidencedAt *WireTime `json:"projection_evidenced_at"`
 	// CoveragePct is watermark progress vs tip, as a FRACTION in
 	// [0,1] — 1.0 (not 100) means the verdict reaches the tip at
 	// compute time. The name is a legacy misnomer kept for wire
@@ -296,6 +305,14 @@ const coverageVerdictStaleLedgers uint32 = 34560
 // available, or when the live tip is frozen alongside a stalled audit.
 const coverageVerdictStaleAge = 26 * time.Hour
 
+// coverageVerdictEvidenceStaleAge bounds the age of the evidence behind a
+// clean projection claim. The -pass audit judges expiry at run start against
+// the DB-stamped proof time, so it re-proves a claim up to one audit period
+// after [completeness.MaxProjectionCarryAge]; two more periods absorb two
+// missed re-proof nights before the flag fires. The SDEX census is re-proved
+// weekly by compute-completeness-sdex.timer, not by the pass.
+const coverageVerdictEvidenceStaleAge = completeness.MaxProjectionCarryAge + 3*coverageVerdictStaleAge
+
 // coverageIngestStallAge is the ledgerstream cursor age past which ingest
 // counts as stalled — the same 10 minutes after which
 // stellarindex_ingestion_ledger_stalled pages. The cursor is upserted once
@@ -360,20 +377,22 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 		view.Sources = append(view.Sources, CoverageVerdictView{
-			Source:                 sn.Source,
-			Complete:               sn.Complete,
-			LakeComplete:           sn.LakeComplete,
-			SubstrateOK:            sn.SubstrateOK,
-			RecognitionOK:          sn.RecognitionOK,
-			ProjectionOK:           sn.ProjectionOK,
-			GenesisLedger:          sn.Genesis,
-			WatermarkLedger:        sn.Watermark,
-			TipLedger:              sn.Tip,
-			ProjectionVerifiedFrom: sn.ProjectionVerifiedFrom,
-			CoveragePct:            sn.CoveragePct,
-			FirstProblemLedger:     sn.FirstProblem,
-			Detail:                 sn.Detail,
-			ComputedAt:             WireTime(sn.ComputedAt),
+			Source:                   sn.Source,
+			Complete:                 sn.Complete,
+			LakeComplete:             sn.LakeComplete,
+			SubstrateOK:              sn.SubstrateOK,
+			RecognitionOK:            sn.RecognitionOK,
+			ProjectionOK:             sn.ProjectionOK,
+			GenesisLedger:            sn.Genesis,
+			WatermarkLedger:          sn.Watermark,
+			TipLedger:                sn.Tip,
+			ProjectionVerifiedFrom:   sn.ProjectionVerifiedFrom,
+			ProjectionReconciledFrom: sn.ProjectionReconciledFrom,
+			ProjectionEvidencedAt:    wireTimeOrNil(sn.ProjectionEvidencedAt),
+			CoveragePct:              sn.CoveragePct,
+			FirstProblemLedger:       sn.FirstProblem,
+			Detail:                   sn.Detail,
+			ComputedAt:               WireTime(sn.ComputedAt),
 		})
 		if sn.Complete {
 			view.CompleteSources++
@@ -467,8 +486,14 @@ func recognitionAxisView(sn timescale.CompletenessSnapshot) *RecognitionAxisView
 //     computed".
 //   - VERDICT AGE: computed_at older than [coverageVerdictStaleAge], or
 //     absent entirely (an unknown-age verdict cannot be claimed fresh).
+//   - EVIDENCE AGE: a source claiming projection_ok whose
+//     projection_evidenced_at is older than
+//     [coverageVerdictEvidenceStaleAge], or unknown. computed_at is
+//     restamped by a run that only carried the claim forward, so it alone
+//     cannot see a claim whose last real proof is weeks old. Audit axes
+//     carry no projection claim and are exempt.
 //   - INGEST STALL: the ledgerstream cursor itself has not been written
-//     for [coverageIngestStallAge]. The two signals above both measure
+//     for [coverageIngestStallAge]. The signals above both measure
 //     against that cursor, so a frozen cursor plus a still-running audit
 //     keeps the gap at 0 and computed_at fresh while tip_ledger falls
 //     behind the network; the cursor's wall-clock age is the reference
@@ -494,6 +519,10 @@ func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.Co
 			return true
 		}
 		if sn.ComputedAt.IsZero() || now.Sub(sn.ComputedAt) > coverageVerdictStaleAge {
+			return true
+		}
+		if sn.ProjectionOK && !completeness.IsAuditAxis(sn.Source) &&
+			completeness.ProjectionEvidenceExpired(sn.ProjectionEvidencedAt, now, coverageVerdictEvidenceStaleAge) {
 			return true
 		}
 	}

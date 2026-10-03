@@ -189,6 +189,10 @@ func volumeCharacterFromSums(totalNum string, total, topPair, selfCross, issuerS
 	return out
 }
 
+// assetVolumeCharacterRollTimeout bounds one roll; the two-scan roll measures
+// ~23 min on the full lake, so the bound leaves headroom while still guarding a wedge.
+const assetVolumeCharacterRollTimeout = "45min"
+
 // refreshAssetVolumeCharacterPrune drops assets whose priced volume lapsed
 // out of the window this pass — same one-transaction now() trick as the
 // asset_volume_24h rollup: just-upserted rows carry computed_at = now() and
@@ -243,7 +247,7 @@ func (s *Store) RefreshAssetVolumeCharacter(ctx context.Context) error {
 // from the caller's so a caller deadline that already fired doesn't also
 // fail the restore) before the connection goes back to the pool — so an
 // [OpenBackground] connector's session backstop (REC-08) isn't silently
-// replaced by this call's 25min bound for whichever later query lands on
+// replaced by this call's assetVolumeCharacterRollTimeout bound for whichever later query lands on
 // the same pooled connection. A restore that fails marks the connection
 // bad via conn.Raw(driver.ErrBadConn) rather than returning it to the pool
 // with the override still live. max_parallel_workers_per_gather has no
@@ -259,7 +263,7 @@ func (s *Store) rollAssetVolumeCharacter(ctx context.Context) (out []assetVolume
 	// bounded so it can never starve serving (v0.44.1 regression fix):
 	//   - max_parallel_workers_per_gather=2 — leaves cores free for the API
 	//     rather than fanning the scan across every worker.
-	//   - statement_timeout=25min — a wedge guard: if it can't finish, it
+	//   - statement_timeout=assetVolumeCharacterRollTimeout — a wedge guard: if it can't finish, it
 	//     aborts and the last good rollup stands (the worker retries next
 	//     cycle). Session settings, not SET LOCAL, so they cover the read
 	//     that runs outside any transaction.
@@ -277,7 +281,7 @@ func (s *Store) rollAssetVolumeCharacter(ctx context.Context) (out []assetVolume
 	if err := conn.QueryRowContext(ctx, `SELECT current_setting('statement_timeout')`).Scan(&prevTimeout); err != nil {
 		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter read statement_timeout: %w", err)
 	}
-	if _, err := conn.ExecContext(ctx, "SET statement_timeout = '25min'"); err != nil {
+	if _, err := conn.ExecContext(ctx, "SET statement_timeout = '"+assetVolumeCharacterRollTimeout+"'"); err != nil {
 		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter set timeout: %w", err)
 	}
 	defer func() {

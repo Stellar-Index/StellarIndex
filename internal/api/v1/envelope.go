@@ -156,6 +156,10 @@ type Flags struct {
 	// ThinMarket: the price was served under `include_thin=true` from a
 	// market below the substance floor that would otherwise be withheld.
 	ThinMarket bool `json:"thin_market,omitempty"`
+	// ProxyDeviation: a TRIANGULATED fiat:USD price rests on the assumption
+	// that a declared USD peg is $1, and any declared peg's observed dollar
+	// price is more than 2% from $1.
+	ProxyDeviation bool `json:"proxy_deviation,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.
@@ -178,6 +182,16 @@ type Flags struct {
 	// (`asset_class=fiat|stablecoin|crypto`) and the lean AssetReader
 	// fallback.
 	FiltersIgnored []string `json:"filters_ignored,omitempty"`
+	// Degraded marks a 200 whose body this process is carrying forward or
+	// serving partially (a stale-while-revalidate entry past its TTL, a
+	// last-good value after a failed refresh, a held frozen price, a dropped
+	// best-effort section) — an answer the origin replaces once the fault
+	// clears. Never on the wire: writeEnvelopeStatus turns it into
+	// `Cache-Control: no-store`, so a shared cache cannot keep serving it
+	// for its route's full band after recovery. It is set explicitly at
+	// each such exit, never derived from Stale, which also covers fresh
+	// reads of a lagging source that a cache may hold safely.
+	Degraded bool `json:"-"`
 }
 
 // Pagination is present on list-returning endpoints only.
@@ -252,6 +266,9 @@ func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 		env.AsOf = WireTime(time.Now().UTC())
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if env.Flags.Degraded {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(env)
 }
@@ -556,7 +573,7 @@ func handlerTimedOut(callCtx context.Context, err error) bool {
 //	    /* 500 internal */
 //	}
 //
-// Refs: #34 residual ("/v1/issuers returns HTTP 500 (fast ~50ms)
+// Refs: 25fc0dedc residual ("/v1/issuers returns HTTP 500 (fast ~50ms)
 // on the sla-probe's request shape — real bug, low severity").
 func transientStorageErr(err error) bool {
 	if err == nil {
