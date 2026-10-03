@@ -201,6 +201,33 @@ func TestAnsibleRendersDivergenceSupplyToggle(t *testing.T) {
 	}
 }
 
+// TestAnsibleEnablesTiingoOnlyWithKey pins that the r1 template arms the
+// fund-NAV poller from the vault key, so a deploy that renders TIINGO_API_KEY
+// also turns the poller on, and a keyless host stays off.
+func TestAnsibleEnablesTiingoOnlyWithKey(t *testing.T) {
+	const keyVar = "vault_tiingo_api_key"
+	raw, err := os.ReadFile(filepath.Join("..", "..", "configs", "ansible", "roles",
+		"archival-node", "templates", "stellarindex.toml.j2"))
+	if err != nil {
+		t.Fatalf("read template: %v", err)
+	}
+	stanza := tomlStanza(string(raw), "[external.tiingo]")
+	if !strings.Contains(stanza, keyVar) {
+		t.Fatalf("[external.tiingo] stanza does not read %s:\n%s", keyVar, stanza)
+	}
+	jinja := regexp.MustCompile(`\{\{.*?\}\}`)
+	for _, want := range []bool{true, false} {
+		rendered := jinja.ReplaceAllString(stanza, strconv.FormatBool(want))
+		c, err := config.LoadReader(strings.NewReader(rendered), "stellarindex.toml.j2:external.tiingo")
+		if err != nil {
+			t.Fatalf("rendered %v stanza does not load: %v", want, err)
+		}
+		if c.External.Tiingo.Enabled != want {
+			t.Errorf("rendered enabled=%v, want %v", c.External.Tiingo.Enabled, want)
+		}
+	}
+}
+
 // tomlStanza returns header's lines up to the next table header, or "".
 func tomlStanza(text, header string) string {
 	var out []string

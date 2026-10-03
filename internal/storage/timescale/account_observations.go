@@ -40,20 +40,21 @@ func (s *Store) InsertAccountObservation(ctx context.Context, o domain.AccountOb
 	if o.Balance == nil {
 		return fmt.Errorf("timescale: InsertAccountObservation: AccountID=%s Balance is nil", o.AccountID)
 	}
-	// intra_ledger_seq guards the upsert so a LATER intra-ledger change
-	// always wins regardless of which parallel PersistEvents worker commits
-	// last (audit-2026-07-16 C2-6). `<=` (not `<`) keeps a deterministic
-	// re-backfill — which re-assigns the SAME position per change —
-	// idempotent-corrective rather than a no-op.
+	// (walk_version, intra_ledger_seq) guards the upsert so a LATER
+	// intra-ledger change always wins regardless of which parallel
+	// PersistEvents worker commits last (audit-2026-07-16 C2-6), and a
+	// re-derive under a newer walk replaces an older walk's row. `<=` (not
+	// `<`) keeps a deterministic re-backfill — which re-assigns the SAME
+	// position per change — idempotent-corrective rather than a no-op.
 	const q = `
         INSERT INTO account_observations (
             account_id, ledger, observed_at,
             balance_stroops, home_domain, flags, seq_num, is_removal,
-            intra_ledger_seq
+            intra_ledger_seq, walk_version
         ) VALUES (
             $1, $2, $3,
             $4, $5, $6, $7, $8,
-            $9
+            $9, $10
         )
         ON CONFLICT (account_id, ledger, observed_at) DO UPDATE SET
             balance_stroops  = EXCLUDED.balance_stroops,
@@ -61,8 +62,10 @@ func (s *Store) InsertAccountObservation(ctx context.Context, o domain.AccountOb
             flags            = EXCLUDED.flags,
             seq_num          = EXCLUDED.seq_num,
             is_removal       = EXCLUDED.is_removal,
-            intra_ledger_seq = EXCLUDED.intra_ledger_seq
-        WHERE account_observations.intra_ledger_seq <= EXCLUDED.intra_ledger_seq
+            intra_ledger_seq = EXCLUDED.intra_ledger_seq,
+            walk_version     = EXCLUDED.walk_version
+        WHERE (account_observations.walk_version, account_observations.intra_ledger_seq)
+           <= (EXCLUDED.walk_version, EXCLUDED.intra_ledger_seq)
     `
 	// NULL = the AccountEntry carries no home_domain (the protocol has no
 	// unset-vs-empty distinction). "Never observed" is the absence of a
@@ -83,6 +86,7 @@ func (s *Store) InsertAccountObservation(ctx context.Context, o domain.AccountOb
 		o.SeqNum,
 		o.IsRemoval,
 		int64(o.IntraLedgerSeq),
+		observationWalkVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertAccountObservation %s@%d: %w", o.AccountID, o.Ledger, err)

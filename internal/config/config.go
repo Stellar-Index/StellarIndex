@@ -38,7 +38,7 @@ type Config struct {
 	PricingGuard  PricingGuardConfig  `toml:"pricing_guard" doc:"Serving-side price guards — the thin-market substance gate that withholds aggregated price claims for on-chain pairs whose trailing market activity is below the serve floor (2026-08-04 valuation incident)."`
 	DecimalsGuard DecimalsGuardConfig `toml:"decimals_guard" doc:"internal/decimalsguard's one-time startup backfill pass — how far back it scans trade history to self-seed nonstandard_decimals_assets for Soroban tokens that traded and then went dormant."`
 	Divergence    DivergenceConfig    `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink HTTP, plus the on-chain Reflector/Redstone/Band oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
-	PriceAlerts   PriceAlertsConfig   `toml:"price_alerts" doc:"Customer price-threshold alert evaluator (BACKLOG #60). Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
+	PriceAlerts   PriceAlertsConfig   `toml:"price_alerts" doc:"Customer price-threshold alert evaluator. Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
 	SignupReaper  SignupReaperConfig  `toml:"signup_reaper" doc:"F-1255 speculative-account reaper. Deletes orphan accounts left by a lost signup race (Suspended with a 'signup-race:' reason, no user, no key). Runs in the API binary when the dashboard is wired. On by default — the rows are pure garbage."`
 	HashDB        HashDBConfig        `toml:"hashdb" doc:"ADR-0016 drift detector — on-disk (ledger_seq -> sha256(LCM)) record appended by the indexer's live ingest loop and periodically re-verified against a fresh re-read of the same bucket, catching upstream rewrites of previously-fetched ledger bytes. Off by default (opt-in first deploy)."`
 	Obs           ObsConfig           `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
@@ -176,7 +176,7 @@ func (sc SignupReaperConfig) validate() error {
 }
 
 // PriceAlertsConfig gates the aggregator's price-alert evaluator
-// (internal/pricealerts, BACKLOG #60). Off by default — the evaluator
+// (internal/pricealerts). Off by default — the evaluator
 // goroutine is only started when Enabled is true AND the platform v1
 // schema (migration 0027) + price_alerts table (migration 0080) are
 // present. When off, the price-alert CRUD surface still mounts on the

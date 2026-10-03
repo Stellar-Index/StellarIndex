@@ -92,7 +92,7 @@ narrated the response). T+0 = trigger injection at 14:32 UTC.
 - **Patroni absence makes failover path slow under stress.**
   Confirmed by the drill — fix-in-place was chosen partly
   because the manual `pg_basebackup` flip is operator-knowledge
-  today. The `infra/patroni` ansible role landed under PR #344
+  today. The `infra/patroni` ansible role landed under commit 965eed22e
   (closing this gap) but the Patroni-driven failover hasn't
   been drilled against a real Patroni cluster yet — added as a
   follow-up scenario.
@@ -144,7 +144,7 @@ solo drill. A real 3-person drill should file these under the
 | 3 | Did anyone confirm the alert against `/v1/readyz` rather than just the metric? | partial | Yes, but only after checking metrics first — runbook ordering nudges toward metric-first. Action item #1. |
 | 4 | Did the team correctly identify disk-full as the root cause within 15 min? | pass | T+05:00 root-cause; T+18:00 mitigated. |
 | 5 | Did the team decide between failover vs fix-in-place with explicit rationale? | pass | Chose fix-in-place; rationale stated (replica headroom + grace window). |
-| 6 | Did anyone reference the still-open `#11–#16 ansible roles`? | pass | Patroni absence flagged; PR #344 already closes the role itself. |
+| 6 | Did anyone reference the still-open `#11–#16 ansible roles`? | pass | Patroni absence flagged; commit 965eed22e already closes the role itself. |
 | 7 | Did the team run the customer-comms templates correctly? | pass | Used SEV-1 Initial verbatim; no §5.4 violations. |
 | 8 | Did the writeup land within 24 h with action items? | pass | This document. |
 

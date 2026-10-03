@@ -38,8 +38,8 @@ status: living doc
 > item 1.2 removed the need; there is no such table in the schema or code,
 > so do not treat it as shipped *or* as pending.
 
-Captured during the post-#690 perf-investigation pass. The
-route-label fix in #690 stopped masking the slow-request ratio
+Captured during the post-394ac8b1b perf-investigation pass. The
+route-label fix in 394ac8b1b stopped masking the slow-request ratio
 behind constant `route="unmatched"` denominators; the SLO recording
 rules then started reporting real signals.
 
@@ -55,10 +55,10 @@ the underlying DB cost; warm reads are sub-millisecond.
 
 | Endpoint | Cold | Warm | SLA target | Notes |
 |----------|-----:|-----:|-----------:|-------|
-| `/v1/price` (fiat quote) | ~1 ms | ~1 ms | 200 ms | #692 short-circuit; no DB hit |
-| `/v1/oracle/latest` | ~600 ms | ~0.5 ms | 200 ms | Redis 30 s TTL (#696) |
-| `/v1/markets` | ~570 ms | ~0.3 ms | — | Redis 60 s TTL (#697) |
-| `/v1/assets` | ~635 ms | ~0.4 ms | — | Redis 60 s TTL (#697) |
+| `/v1/price` (fiat quote) | ~1 ms | ~1 ms | 200 ms | bfd98fb33 short-circuit; no DB hit |
+| `/v1/oracle/latest` | ~600 ms | ~0.5 ms | 200 ms | Redis 30 s TTL (fcf9735d0) |
+| `/v1/markets` | ~570 ms | ~0.3 ms | — | Redis 60 s TTL (4baf4ca88) |
+| `/v1/assets` | ~635 ms | ~0.4 ms | — | Redis 60 s TTL (4baf4ca88) |
 
 User impact: the moment any consumer makes more than one
 request per minute they see warm reads end-to-end. The smoke
@@ -81,13 +81,13 @@ not a user-experience issue.
 
 | PR | Effect |
 |----|--------|
-| **#690** | `obs.HTTPMetrics` + `obs.CaptureRoute`: fixed the route-label-always-`"unmatched"` bug that masked the slow-request ratio. |
-| **#691** | `slo.yml` recording rules scope to `/v1/price + /v1/oracle/*` (the SLA target), not the entire API surface. |
-| **#692** | `/v1/price` for fiat-quoted pairs short-circuits the `LatestTradesForPair` fallback (a fiat-quoted pair never has on-chain trades). 215 ms → ~1 ms. |
-| **#695** | `/v1/oracle/latest` translates `native` → `[native, crypto:XLM]` (and classic credit assets to their `crypto:<TICKER>` form) so Reflector's per-ticker rows actually surface. |
-| **#696** | Redis read-through cache for `/v1/oracle/latest`, 30 s TTL — 580 ms → 0.5 ms warm. |
-| **#697** | Redis read-through caches for `/v1/assets` + `/v1/markets`, 60 s TTL — both ~600 ms → ~0.3 ms warm. |
-| **#689** | `/v1/status` `Cache-Control: public, max-age=10, s-maxage=15` — CDN-friendly polling. |
+| **394ac8b1b** | `obs.HTTPMetrics` + `obs.CaptureRoute`: fixed the route-label-always-`"unmatched"` bug that masked the slow-request ratio. |
+| **e85ee0fbe** | `slo.yml` recording rules scope to `/v1/price + /v1/oracle/*` (the SLA target), not the entire API surface. |
+| **bfd98fb33** | `/v1/price` for fiat-quoted pairs short-circuits the `LatestTradesForPair` fallback (a fiat-quoted pair never has on-chain trades). 215 ms → ~1 ms. |
+| **547083231** | `/v1/oracle/latest` translates `native` → `[native, crypto:XLM]` (and classic credit assets to their `crypto:<TICKER>` form) so Reflector's per-ticker rows actually surface. |
+| **fcf9735d0** | Redis read-through cache for `/v1/oracle/latest`, 30 s TTL — 580 ms → 0.5 ms warm. |
+| **4baf4ca88** | Redis read-through caches for `/v1/assets` + `/v1/markets`, 60 s TTL — both ~600 ms → ~0.3 ms warm. |
+| **584c5a401** | `/v1/status` `Cache-Control: public, max-age=10, s-maxage=15` — CDN-friendly polling. |
 
 ## What's still pending
 
@@ -141,7 +141,7 @@ would rebuild it. **Operator action; not safe to automate
 without explicit confirmation** (chunk recompression is a write
 operation; if it goes wrong it leaves the chunk in a worse state).
 
-The Redis cache from #696 hides this from user-facing
+The Redis cache from fcf9735d0 hides this from user-facing
 latency, so this is a "nice to have" rather than urgent.
 
 ### 3. Synthetic-monitoring SLO noise — SHIPPED

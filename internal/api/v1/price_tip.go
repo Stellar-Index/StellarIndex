@@ -285,7 +285,7 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	// Read-time stablecoin-fiat proxy: rewrites X/fiat:USD to X/<peg>
 	// at request time using the operator's
 	// [trades].usd_pegged_classic_assets allow-list. Mirrors the
-	// equivalent fallback in priceFallback (#1217). Without this
+	// equivalent fallback in priceFallback (6505934b5). Without this
 	// /v1/price/tip?asset=native&quote=fiat:USD 404s out of the box on
 	// every fresh deployment because nothing on-chain ever quotes in
 	// fiat:USD — same exact failure mode as /v1/price had.

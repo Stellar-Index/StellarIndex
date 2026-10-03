@@ -1,7 +1,7 @@
 #!/bin/bash
-# galexie-archive-tip-lag — defense-in-depth alert source for #26.
+# galexie-archive-tip-lag — defense-in-depth alert source for the 23-day archive stall.
 #
-# WHY: #26 was a 23-day silent stall of galexie-archive (the
+# WHY: there was a 23-day silent stall of galexie-archive (the
 # ADR-0016 R1 durable full-mirror). The recurrence fix is the
 # hourly galexie-archive-fill.timer; this script is the
 # defense-in-depth — if that timer itself silently breaks (mc
@@ -182,7 +182,7 @@ galexie_archive_tip_ledger $archive
 # HELP galexie_live_tip_ledger Newest ledger sequence present in galexie-live (rolling appender).
 # TYPE galexie_live_tip_ledger gauge
 galexie_live_tip_ledger $live
-# HELP galexie_archive_tip_lag_ledgers Ledger lag of galexie-archive behind galexie-live (live - archive). Defense-in-depth for #26: hourly catch-up timer should keep this near zero; sustained drift = the timer / its dependencies have broken.
+# HELP galexie_archive_tip_lag_ledgers Ledger lag of galexie-archive behind galexie-live (live - archive). Defense-in-depth for the 23-day archive stall: hourly catch-up timer should keep this near zero; sustained drift = the timer / its dependencies have broken.
 # TYPE galexie_archive_tip_lag_ledgers gauge
 galexie_archive_tip_lag_ledgers $lag
 # HELP galexie_archive_tip_lag_updated_seconds Unix time of the most recent successful tip-lag computation.

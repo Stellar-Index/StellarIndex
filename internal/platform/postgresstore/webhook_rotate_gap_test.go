@@ -4,22 +4,23 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
 
-// TestRotateWebhookSecret_IsNotImplemented records GH-665 as it stands:
-// the declared in-place rotation returns a not-implemented error without
-// touching the database, so the only rotation path is delete + recreate,
-// whose DELETE cascades away the endpoint's queued deliveries and log.
-// It passes while the gap exists; replace it with the executing
-// integration test the real implementation needs when rotation lands.
-func TestRotateWebhookSecret_IsNotImplemented(t *testing.T) {
-	secret, err := (&WebhookStore{}).RotateWebhookSecret(context.Background(), uuid.New())
-	if err == nil || !strings.Contains(err.Error(), "not yet implemented") {
-		t.Fatalf("RotateWebhookSecret = (%q, %v): rotation now exists — replace this gap record with a real test", secret, err)
+// TestRotateWebhookSecret_RefusesUnusableInput pins the guards that run
+// before any SQL: an empty key would sign every delivery forgeably, and a
+// zero expiry would violate the previous-secret pair CHECK. The in-place
+// UPDATE itself is executed by test/integration's
+// TestCustomerWebhookRotateSecretKeepsQueue.
+func TestRotateWebhookSecret_RefusesUnusableInput(t *testing.T) {
+	store := &WebhookStore{}
+	ctx := context.Background()
+	if err := store.RotateWebhookSecret(ctx, uuid.New(), nil, time.Now().Add(time.Hour)); err == nil || !strings.Contains(err.Error(), "newSecret is empty") {
+		t.Errorf("empty new secret: err = %v, want a refusal before any SQL", err)
 	}
-	if secret != "" {
-		t.Errorf("returned a secret %q alongside the not-implemented error", secret)
+	if err := store.RotateWebhookSecret(ctx, uuid.New(), []byte("wsec_x"), time.Time{}); err == nil || !strings.Contains(err.Error(), "previousExpiresAt is zero") {
+		t.Errorf("zero expiry: err = %v, want a refusal before any SQL", err)
 	}
 }
