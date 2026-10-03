@@ -1429,12 +1429,16 @@
       # here: that is compression_policies_applied's job
       # (scripts/ops/config-assertions.sh), reported through
       # stellarindex_config_assertion_failed.
+      #
+      # `trades` compresses through the custom job
+      # trades_compression_policy (migration 0205), which carries no
+      # hypertable in the jobs view; the COALESCEs map it to `trades`.
       {
         echo "# HELP stellarindex_timescale_chunks_overdue_compression Uncompressed chunks past their hypertable's own compress_after plus one schedule_interval."
         echo "# TYPE stellarindex_timescale_chunks_overdue_compression gauge"
       } >> "$TMP"
 
-      q "SELECT j.hypertable_name,
+      q "SELECT COALESCE(j.hypertable_name, 'trades'),
                 count(*) FILTER (
                   WHERE c.is_compressed = false
                     AND c.range_end < now()
@@ -1442,9 +1446,9 @@
                         - j.schedule_interval)
          FROM timescaledb_information.jobs j
          LEFT JOIN timescaledb_information.chunks c
-                ON c.hypertable_schema = j.hypertable_schema
-               AND c.hypertable_name = j.hypertable_name
-         WHERE j.proc_name = 'policy_compression'
+                ON c.hypertable_schema = COALESCE(j.hypertable_schema, j.proc_schema)
+               AND c.hypertable_name = COALESCE(j.hypertable_name, 'trades')
+         WHERE j.proc_name IN ('policy_compression', 'trades_compression_policy')
          GROUP BY 1"
       rows=0
       bad=0
@@ -1477,7 +1481,7 @@
       # alert's own 6h and 3d windows, never as a counter: job_errors is
       # pruned by a retention job, and a pruned count would read as a
       # counter reset. A persistent collision still surfaces as cagg_stale.
-      q "SELECT j.proc_name, COALESCE(j.hypertable_name,'-'), js.job_id, js.total_failures,
+      q "SELECT j.proc_name, COALESCE(j.hypertable_name, CASE WHEN j.proc_name = 'trades_compression_policy' THEN 'trades' ELSE '-' END), js.job_id, js.total_failures,
                 EXTRACT(epoch FROM j.schedule_interval)::bigint, cr.n6h, cr.n3d
          FROM timescaledb_information.job_stats js
          JOIN timescaledb_information.jobs j USING (job_id)
