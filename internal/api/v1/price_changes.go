@@ -187,7 +187,11 @@ func (s *Server) handlePriceChanges(w http.ResponseWriter, r *http.Request) {
 		*horizons[i] = horizon
 	}
 
-	writeJSON(w, resp, Flags{Triangulated: triangulated})
+	flags := Flags{Triangulated: triangulated}
+	if triangulated {
+		flags.ProxyDeviation = s.pegMarketOffBand(ctx, pair.Quote, quote)
+	}
+	writeJSON(w, resp, flags)
 }
 
 // priceAtResult carries a single point-in-time reader hit.

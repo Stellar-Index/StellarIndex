@@ -15337,6 +15337,17 @@ components:
           prints taken at par with USD, with no prints in the leg's own
           quote asset to check a stablecoin de-peg against. Omitted when
           false.
+        - `proxy_deviation` — set on `/v1/price`, `/v1/price/batch`,
+          `/v1/price/tip`, `/v1/price/at`, `/v1/price/changes`,
+          `/v1/vwap`, `/v1/twap`, single-bar `/v1/ohlc`,
+          `/v1/oracle/lastprice` and `/v1/oracle/x_last_price` when a
+          fiat:USD answer was served through the declared USD-peg proxy
+          (or is a declared peg's own price) and that peg's XLM market
+          is more than 2% off 1.0 (at the requested instant on
+          `/v1/price/at`; at the window end on `/v1/vwap`, `/v1/twap` and
+          single-bar `/v1/ohlc`, where any declared peg counts; the
+          current market on `/v1/price/changes`). Omitted when false, and
+          when the peg has no market to check.
         - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
           when the asset's code matches a verified currency's
           Stellar ticker but the issuer doesn't. The matching
@@ -15430,6 +15441,20 @@ components:
             composite was priced only from stablecoin prints taken at par with
             USD, with no prints in the leg's own quote asset to check a
             stablecoin de-peg against. Omitted when false.
+        proxy_deviation:
+          type: boolean
+          default: false
+          description: >
+            Set on /v1/price, /v1/price/batch, /v1/price/tip, /v1/price/at,
+            /v1/price/changes, /v1/vwap, /v1/twap, single-bar /v1/ohlc,
+            /v1/oracle/lastprice and /v1/oracle/x_last_price when
+            a fiat:USD answer was served through the declared USD-peg proxy
+            (or is a declared peg's own price) and that peg's XLM market is
+            more than 2% off 1.0 (at the requested instant on /v1/price/at;
+            at the window end on /v1/vwap, /v1/twap and single-bar /v1/ohlc,
+            where any declared peg counts; the current market on
+            /v1/price/changes). Omitted when false, and when the peg has no
+            market to check.
         unverified_ticker_collision: { type: boolean, default: false }
         filters_ignored:
           type: array

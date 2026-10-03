@@ -7349,6 +7349,17 @@ export interface components {
          *       prints taken at par with USD, with no prints in the leg's own
          *       quote asset to check a stablecoin de-peg against. Omitted when
          *       false.
+         *     - `proxy_deviation` — set on `/v1/price`, `/v1/price/batch`,
+         *       `/v1/price/tip`, `/v1/price/at`, `/v1/price/changes`,
+         *       `/v1/vwap`, `/v1/twap`, single-bar `/v1/ohlc`,
+         *       `/v1/oracle/lastprice` and `/v1/oracle/x_last_price` when a
+         *       fiat:USD answer was served through the declared USD-peg proxy
+         *       (or is a declared peg's own price) and that peg's XLM market
+         *       is more than 2% off 1.0 (at the requested instant on
+         *       `/v1/price/at`; at the window end on `/v1/vwap`, `/v1/twap` and
+         *       single-bar `/v1/ohlc`, where any declared peg counts; the
+         *       current market on `/v1/price/changes`). Omitted when false, and
+         *       when the peg has no market to check.
          *     - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
          *       when the asset's code matches a verified currency's
          *       Stellar ticker but the issuer doesn't. The matching
@@ -7409,6 +7420,11 @@ export interface components {
              * @default false
              */
             pivot_unverified: boolean;
+            /**
+             * @description Set on /v1/price, /v1/price/batch, /v1/price/tip, /v1/price/at, /v1/price/changes, /v1/vwap, /v1/twap, single-bar /v1/ohlc, /v1/oracle/lastprice and /v1/oracle/x_last_price when a fiat:USD answer was served through the declared USD-peg proxy (or is a declared peg's own price) and that peg's XLM market is more than 2% off 1.0 (at the requested instant on /v1/price/at; at the window end on /v1/vwap, /v1/twap and single-bar /v1/ohlc, where any declared peg counts; the current market on /v1/price/changes). Omitted when false, and when the peg has no market to check.
+             * @default false
+             */
+            proxy_deviation: boolean;
             /** @default false */
             unverified_ticker_collision: boolean;
             /** @description Names of the row-narrowing query parameters this response did NOT apply, spelled as the caller sent them (`type`, `code`, `issuer`, `q`). Absent when the response applied every filter it was given — an ignored filter and a matched one otherwise produce the same 200 over the same shape, so a client re-filtering the page has nothing else to key on. Set by `/v1/assets` on the listings whose rows come from a source that cannot narrow: the class-scoped catalogue listings (`asset_class=fiat|stablecoin|crypto`), and the lean asset-catalog fallback served when no listing store is configured. */

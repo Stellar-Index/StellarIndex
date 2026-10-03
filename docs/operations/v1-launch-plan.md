@@ -350,8 +350,16 @@ honest ceiling of "independent", and it is written here so it is not re-derived.
 > `sdf_reserve_accounts` has no list-level diff against SDF's published
 > list (2% value cross-check only); C1-050 — aggregator and API resolve
 > token decimals independently, market-cap/FDV computed regardless; C1-022
-> — no depeg band on the fiat:USD stablecoin-proxy path, blocked on a
-> USD-quoted stablecoin source (none exists — **the maintainer** picks one).
+> — no depeg band on the fiat:USD stablecoin-proxy path, **PARTIAL: the source
+> is the declared peg's own on-chain XLM book × XLM/fiat:USD (no USD-quoted
+> stablecoin feed needed); `flags.proxy_deviation` fires when it is >2% off
+> 1.0 on `/v1/price`, `/v1/price/batch`, `/v1/price/tip`, `/v1/price/at`,
+> `/v1/price/changes`, `/v1/vwap`, `/v1/twap`, single-bar `/v1/ohlc`, `/v1/oracle/lastprice` and
+> `/v1/oracle/x_last_price`.
+> Still unflagged: `/v1/assets/{id}` (assets_f2.go:596), `/v1/observations`
+> (observations.go:233), `/v1/oracle/prices` (oracle_sep40.go), `/v1/history`
+> (history.go:902), the `/v1/ohlc?interval=` series and `/v1/chart`
+> — the row stays open until those carry it.**
 >
 > **7. Local-toolchain notes that cost an hour:** `verify.sh` compares the
 > lockfile mtime to `node_modules/.modules.yaml` and `make bootstrap-worktree`

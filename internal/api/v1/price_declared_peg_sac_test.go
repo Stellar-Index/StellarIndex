@@ -406,6 +406,11 @@ func TestPrice_NonPegSACAssetStillWalksTheDeclaredPegs(t *testing.T) {
 		t.Errorf("the walk never read %s/%s (asked=%v)", pegAliasAquaSAC, pegAliasUSDCClassic, asked)
 	}
 	for _, pair := range asked {
+		// The declared peg's own XLM book is read on purpose (the
+		// proxy_deviation band); only the requested asset's must not be.
+		if !strings.HasPrefix(pair, pegAliasAquaSAC+"/") {
+			continue
+		}
 		if strings.HasSuffix(pair, "/native") || strings.HasSuffix(pair, "/crypto:XLM") ||
 			strings.HasSuffix(pair, "/"+canonical.XLMSacContractID) {
 			t.Errorf("reader asked for %s — the XLM cross must not run for an asset that is not the declared peg", pair)

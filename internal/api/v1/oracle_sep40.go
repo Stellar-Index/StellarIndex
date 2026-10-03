@@ -208,11 +208,12 @@ func (s *Server) sep40Serve(asset, quote canonical.Asset, rd sep40Read, held fro
 	}
 	frozen := held.outcome == frozenServeHeld
 	flags := Flags{
-		Stale:         rd.stale,
-		Triangulated:  rd.triangulated,
-		Frozen:        frozen,
-		FrozenChecked: held.checked,
-		SingleSource:  frozen,
+		Stale:          rd.stale,
+		Triangulated:   rd.triangulated,
+		ProxyDeviation: rd.snapshot.ProxyDeviation,
+		Frozen:         frozen,
+		FrozenChecked:  held.checked,
+		SingleSource:   frozen,
 	}
 	return out, flags, rd.sources
 }

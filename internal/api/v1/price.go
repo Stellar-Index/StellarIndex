@@ -501,6 +501,11 @@ type PriceSnapshot struct {
 	// [Server.attachCompositeFlags].
 	Substituted bool `json:"-"`
 
+	// ProxyDeviation is set on a stablecoin-proxy serve whose declared
+	// USD peg's own market is more than 2% off 1.0. Not on the wire:
+	// handlers lift it into flags.proxy_deviation.
+	ProxyDeviation bool `json:"-"`
+
 	// usdLeg is set only on an ADR-0051 cross
 	// ([Server.tryUSDAnchoredFiatCross]); see [usdLegFacts].
 	usdLeg *usdLegFacts
@@ -967,7 +972,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	if governing.IsZero() {
 		governing = asset
 	}
-	flags := Flags{Stale: stale, Triangulated: triangulated}
+	flags := Flags{Stale: stale, Triangulated: triangulated, ProxyDeviation: snapshot.ProxyDeviation}
 	// Surface the router's composite-quality signals (diverged /
 	// rerouted) that the aggregator persists to
 	// cachekeys.VWAPCompositeMeta for this pair — a no-op only when
@@ -2023,6 +2028,7 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 		snap, srcs, verdict := s.crossDeclaredPegThroughXLM(ctx, asset, quote)
 		switch verdict {
 		case pegXLMLegPriced:
+			snap.ProxyDeviation = pegOffBand(snap.Price)
 			return snap, srcs, true, false
 		case pegXLMLegRefused:
 			return PriceSnapshot{}, nil, false, true
@@ -2138,6 +2144,7 @@ func (s *Server) walkUSDPegs(
 		// Rewrite the snapshot's Quote field so the wire response
 		// reflects what the user asked for, not the proxy peg.
 		snap.Quote = quote.String()
+		snap.ProxyDeviation = s.pegMarketOffBand(ctx, peg, quote)
 		return snap, srcs, true, withheld
 	}
 	return PriceSnapshot{}, nil, false, withheld
@@ -3539,6 +3546,7 @@ func batchEnvelope(ids []string, results []batchRowResult) Envelope {
 	anyFrozen := false
 	anySingleSource := false
 	anyTriangulated := false
+	anyProxyDeviation := false
 	for i := range results {
 		row := results[i]
 		if !row.ok {
@@ -3552,6 +3560,9 @@ func batchEnvelope(ids []string, results []batchRowResult) Envelope {
 		}
 		if row.triangulated {
 			anyTriangulated = true
+		}
+		if row.snap.ProxyDeviation {
+			anyProxyDeviation = true
 		}
 		for _, src := range row.sources {
 			allSources[src] = struct{}{}
@@ -3588,6 +3599,8 @@ func batchEnvelope(ids []string, results []batchRowResult) Envelope {
 			Frozen:       anyFrozen,
 			SingleSource: anySingleSource,
 			Triangulated: anyTriangulated,
+
+			ProxyDeviation: anyProxyDeviation,
 		},
 	}
 }

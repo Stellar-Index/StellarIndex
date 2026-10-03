@@ -152,7 +152,7 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 // quote-specific, never ORed across the base's other quotes, never read
 // from another alias's market).
 func (s *Server) tipFlags(ctx context.Context, snap PriceSnapshot, asset, quote canonical.Asset, sources []string) Flags {
-	flags := Flags{SingleSource: marketSingleSource(snap, sources)}
+	flags := Flags{SingleSource: marketSingleSource(snap, sources), ProxyDeviation: snap.ProxyDeviation}
 	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(ctx, asset, quote, 0)
 	return flags
 }

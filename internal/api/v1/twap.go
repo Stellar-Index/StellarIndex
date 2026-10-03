@@ -141,7 +141,7 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	}
 	res.Truncated = len(trades) == maxTrades
 	res.Clamped = clamped
-	writeJSON(w, res, Flags{Triangulated: triangulated})
+	writeJSON(w, res, s.fiatProxyFlags(ctx, quote, triangulated, to))
 }
 
 // computeTWAP filters trades at sigma and time-weights the survivors

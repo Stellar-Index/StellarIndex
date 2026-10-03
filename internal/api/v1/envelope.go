@@ -84,6 +84,9 @@ type Envelope struct {
 //   - PivotUnverified: a TRIANGULATED composite priced a leg only from
 //     stablecoin prints taken at par with USD, with no own-quote prints
 //     to check a de-peg against. Omitted when false.
+//   - ProxyDeviation: a fiat:USD price served through the declared
+//     USD-peg proxy (or a declared peg's own price) where the peg's XLM
+//     market is more than 2% off 1.0. Omitted when false.
 type Flags struct {
 	Stale             bool `json:"stale"`
 	ReducedRedundancy bool `json:"reduced_redundancy"`
@@ -150,6 +153,8 @@ type Flags struct {
 	Rerouted bool `json:"rerouted,omitempty"`
 	// PivotUnverified: a composite leg was all stablecoin prints at par, so a de-peg in it went unchecked.
 	PivotUnverified bool `json:"pivot_unverified,omitempty"`
+	// ProxyDeviation: the declared USD peg behind a fiat:USD price trades more than 2% off 1.0 on its own XLM market.
+	ProxyDeviation bool `json:"proxy_deviation,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.
