@@ -428,6 +428,10 @@ type AssetDetail struct {
 	// "override"); null when no snapshot exists.
 	SupplyBasis *string `json:"supply_basis,omitempty"`
 
+	// Trust is the banded trust score with its factor breakdown; set on
+	// the detail lookup only, nil on listing rows.
+	Trust *AssetTrust `json:"trust,omitempty"`
+
 	// SupplyAsOf / SupplyAsOfLedger date the supply observation; nil when
 	// the reading carries no vintage.
 	SupplyAsOf       *time.Time `json:"supply_as_of,omitempty"`
@@ -1534,6 +1538,27 @@ type AssetListingValuation struct {
 	// material: USDT0's trustline-visible supply is 6,469 tokens against
 	// 2,581,052 by mint minus burn.
 	SupplyBasis string `json:"supply_basis,omitempty"`
+}
+
+// AssetTrust is the output-only trust score on [AssetDetail]. A factor
+// with no evidence is "unknown" with nil Points and is excluded from
+// Score; Score is nil when no factor has evidence.
+type AssetTrust struct {
+	FormulaVersion int           `json:"formula_version"`
+	Score          *int          `json:"score"`
+	Band           string        `json:"band"` // "high" / "medium" / "low" / "unknown"
+	CoveragePct    int           `json:"coverage_pct"`
+	Factors        []TrustFactor `json:"factors"`
+}
+
+// TrustFactor is one weighted input to [AssetTrust].
+type TrustFactor struct {
+	ID       string `json:"id"`
+	Band     string `json:"band"`
+	Points   *int   `json:"points"`
+	Weight   int    `json:"weight"`
+	Source   string `json:"source"`
+	Observed string `json:"observed"`
 }
 
 // VerifiedCurrencyListItem is one row in the response to
