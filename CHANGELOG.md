@@ -20,6 +20,141 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.99.0] — 2026-10-03
+
+150 commits since v0.98.0. Seven new migrations, 0199–0205. No breaking API
+change is declared; behaviour changes are listed under Changed. One migration
+carries a REQUIRED follow-up (0203). Deploy notes:
+
+- 0203 `sushiswap_v3_position_events` (REQUIRED-FOLLOWUP): decompress the
+  trades chunks, then `stellarindex-ops projector-replay -source
+  sushiswap_v3 -from 61487379`. The deploy gate refuses to run without
+  `followups_acknowledged=true`.
+- 0204 seals customer-webhook signing keys at rest. Configure the API seal
+  key before the binary swap; existing raw keys are sealed at API startup.
+  Rolling the binary back after rows are sealed leaves them unreadable to the
+  old worker (deliveries fail terminally as `no_secret`), so roll back only
+  together with a restore of the raw keys.
+- 0202 `sushiswap_v3_pools`, 0199 (entry-walk version on balance
+  observations), 0200 (webhook previous secret), 0201 (completeness
+  projection evidence) and 0205 (5 s `lock_timeout` on the trades compression
+  job) are additive.
+- Patroni/etcd now run over mutual TLS by default (#2155): supply the PEM
+  variables before applying the role. galexie is pinned to v29.0.0 for
+  Protocol 29 (#2112). The Galexie archive off-site mirror is retired and torn
+  down where disabled (#2222).
+
+### Changed
+
+- **api — price (#2194, #2144, #2214, #2179, #2101, #2099, OPERATOR-VISIBLE):**
+  vetted classic assets carry `global_market` and, when no Stellar price
+  survives the substance gate, price from it (`price_basis=global_market`),
+  with `stellar_divergence_pct` and `depeg_warning`; `/v1/assets/{id}` adds
+  `issuer_behaviour`. `include_thin` is opt-in on the headline price surfaces.
+  A declared USD peg is no longer crossed through an FX fixing, triangulated
+  USD prices flag proxy deviation, and a rate needs market substance before it
+  values a trade.
+- **api — supply (#2209, #2128, #2196, OPERATOR-VISIBLE):**
+  `/v1/assets/{id}/supply` answers 404 `supply-incomplete` instead of a zero
+  total when there are no flows and the contract-storage fallback declines;
+  `max_supply_basis` carries SEP-1 provenance; contract-storage balances are
+  judged against their TTL.
+- **api — behaviour (#2160, #2163, #2208, #2147, #2299, #2261, OPERATOR-VISIBLE):**
+  degraded 200s carry `Cache-Control: no-store`; `/v1/chart?timeframe=all`
+  is charged by granularity; row-cap truncation is flagged per source read on
+  chart paths; anonymous signup keys expire when idle and free their email;
+  price-withheld 404s carry a machine-readable reason; observation stream
+  ticks read past the SWR history cache.
+- **webhooks (#2136, #2148, OPERATOR-VISIBLE):** `POST
+  /v1/dashboard/webhooks/{id}/rotate-secret` rotates in place with a 24 h
+  overlap (previous key signs only the `-Previous` signature headers); signing
+  keys are sealed with AES-256-GCM at rest.
+- **ops — deploy and recovery (#2149, #2203, #2199, #2157, #2267, #2268):**
+  migrations that blank data name their rebuild in a `REQUIRED-FOLLOWUP`
+  header, enforced by lint and a deploy gate; new range-sharded
+  re-derive-from-ledger driver; protocol-upgrade golden-ledger drill; restore
+  drills run under the heavy-job wrapper and record evidence on any exit.
+- **clickhouse (#2097, #2161, #2181, #2292, #2282):** ZSTD(3) on the three
+  large XDR columns, and recompress refuses LZ4; tx-index miss authority
+  needs a coverage marker; the contiguous-watermark gap scan is bounded; sink
+  open refuses when operator-scope columns are missing.
+- **pricealerts and alerts (#2094, #2131, #2126, #2122, #2116, #2213, #2241,
+  #2301, #2125):** alerts fire once per crossing; a fire claim is refused when
+  the rule changed mid-sweep; new alerts for persistent cache refresh failure,
+  SDEX order-book reload failure, unavailable composite corroboration and ZFS
+  pool predicted fill; divergence alerts read a live gauge.
+- **ops — platform (#2096, #2129, #2119, #2290, #2295, #2286, #2296, #2293,
+  #2184):** ZFS Postgres auto-snapshots kept 3 days, not 7; `RuntimeMaxSec`
+  dropped from oneshot units; lake backup units fail when unconfigured; test-net
+  edge redacts logs and sets security headers; Loki pin and loopback bind
+  asserted; MinIO root credentials guarded against shell metacharacters; Tiingo
+  fund-NAV poller enabled when the key is present.
+
+### Added
+
+- **sushiswap_v3 (#2169, #2180):** position events projected into their own
+  table; pool token identities persisted.
+- **assets (#2189, #2188, #2197, #2120):** SEP-1 currency standing and backing
+  served; daily per-asset holders snapshot; trust score and factor breakdown on
+  asset detail; ISINs declared by more than one issuer surfaced.
+- **chops and movements (#2195, #2138):** account- and asset-keyed
+  entry-change history; CAP-67 mint, burn and clawback derived and served by
+  range.
+- **api (#2146, #2102, #2113):** rendered `/v1/assets` listing page cached;
+  independent cold reads run concurrently on two slow routes; explorer keyset
+  cursors bounded on the leading key.
+
+### Fixed
+
+- **sources:** Phoenix and Soroswap drain open groups at range end (#2154);
+  Upshift and Phoenix events counted by `source_recognition_failing` (#2224);
+  Coinbase drops rejected products and resubscribes (#2206); Binance and
+  Bitstamp skip dust trades without a decode error (#2239); Frankfurter rejects
+  non-USD-base ranges (#2210); exact ECB parse and strict EOF (#2124); empty
+  Reflector/Band batch is a no-op (#2047); external pollers keep staleness
+  honest during throttle cooldown (#2215); sorocredit statement amount flagged
+  unit-unconfirmed (#2254).
+- **projector and dispatcher:** cursor held below a carried output's ledger
+  (#2253); cycle budget escalates for a floor-stalled source (#2164); ledger
+  upgrade entries and unreadable evicted-key lists are counted and logged
+  (#2204, #2123).
+- **supply and completeness:** genesis baseline auto-seeded for newly watched
+  SAC wrappers (#2205); projection claim records when it was last proven
+  (#2137); reconcile floored at genesis (#2134); `/v1/coverage` flagged stale
+  when the ledgerstream cursor stalls (#2121); priceless candidates enumerated
+  on both trade legs (#2221).
+- **timescale and forex:** XLM-leg volume valued with a robust XLM/USD median
+  (#2223); classic first/last ledger kept across batches (#2156); entry-walk
+  version stamped on balance observations (#2135); forex history refresh
+  decided from the newest bar across tickers (#2234, #2242).
+- **freeze and divergence:** VWAP reseeded from the last published value
+  (#2165); escalation history kept when a ladder is retired (#2216);
+  divergence warning latch released when the hook fails (#2229).
+- **explorer and web:** PEG badge limited to catalogue-vouched stablecoins
+  (#2274); drawer no longer stacks two search modals (#2278); raw polls gated on
+  tab visibility (#2277); failed sign-out surfaced (#2151); volume character and
+  holder gaps shown in trust facts (#2192); OG cache keyed on path only
+  (#2270); P24 fee-pool credit excluded from daily fee burn (#2127).
+- **other:** oracle price bounded at 10^15 quote units per base (#2089);
+  stablecoin SACs ranked and scam tags keyed on contra (#2140); classic pool
+  placement in the DEX TVL headline settled (#2106); streaming flags a
+  foreign-clock resume cursor with `stream_gap` (#2150); price staleness
+  labelled by quote (#2147); config example ships a same-origin CORS default
+  (#2262); asset-character roll delayed and its timeout raised (#2185).
+
+### Internal
+
+- Tests: firing tests for 16 page alerts (#2298), Blend position field order
+  (#2251), tradeFromEvent persist guard (#2256), gap-detector decision for
+  observation tables (#2257), explorer home-domain link safety (#2264),
+  dust-floor quote check (#2218); CI: branch-protection status is a gate
+  (#2088), Prometheus rule validation timeout 20m (#2152), prepush fixture
+  stops spawning git maintenance (#2107).
+- Docs and decisions: ADR-0049 accepted (#2090); licensing, RWA basis, price
+  R1, W8-13, privacy rights runbook, SLA-proof sections, runbook and godoc
+  corrections (#2093, #2098, #2100, #2104, #2103, #2110, #2170, #2176, and
+  others); pre-migration `#N` citations repointed to commit shas (#2139).
+
 ## [v0.98.0] — 2026-10-02
 
 67 commits since v0.97.0. Operator-visible: `/v1/divergence` is regrouped by
@@ -612,96 +747,3 @@ ops tooling and Ansible roles. No new migration.
   real trade-sink backpressure log line (#1818), the 8M claimable-balance
   index cap (#1800), the postmortem draft for the 2026-09-02 log-store
   exposure (#1855), and the reused pre-migration PR citations (#1896, #1899).
-
-## [v0.94.0] — 2026-09-29
-
-30 commits since v0.93.0: the cohort DeFi amounts now sum exactly in
-Int256 (OPERATOR ACTION REQUIRED, see below), SEP-1 outages on our side
-stop being published as the issuer's broken domain, the Tier E archive
-verification cron that could never pass is retired, two explorer export
-aborts are fixed, and three pilot waves of inventory fixes land.
-
-### Changed
-
-- **cohort — DeFi position amounts are summed exactly in `Int256`,
-  never through a float (#1628, OPERATOR ACTION REQUIRED):**
-  `stellar.account_cohort_positions{,_staging}.amount` moves from
-  `Float64` to `Int256`. `deploy/clickhouse/account_cohort_rollup.sql`
-  is `si-apply-scope: operator`, so deploy does not apply it. Immediately
-  before rolling the API binary, run
-  `clickhouse-client --port 9300 --multiquery < deploy/clickhouse/account_cohort_rollup.sql`
-  (idempotent). The ch-float lint baseline moves to
-  `lint-migrations-ch-float.baseline`.
-- **ops — verify-archive:** the monthly Tier E cron
-  (`stellar-archivist scan --verify` against the local mirror) is retired
-  along with its alert, rule test and runbook. The mirror was trimmed to
-  `history/` + `ledger/` on 2026-05-21, so the scan failed on every result
-  set and the staleness alert only ever measured that. The `-tier`
-  archivist code stays for operator runs with `-archivist-url`; the
-  scheduled tiers are A + B + D (#1637).
-
-### Fixed
-
-- **metadata — SEP-1 (#1634, #1635):** `sep1_status=unreachable` and the
-  RWA funnel's served-nothing count read `sep1_consecutive_failures > 0`
-  instead of `sep1_resolved_at`. A run judged a systemic outage on our
-  side no longer publishes every touched issuer as having a broken
-  domain. A key that failed on our side is unwound from the retry
-  ladder at the end of its run, and a payload Postgres rejects
-  (SQLSTATE class 22) counts as the document's fault.
-- **rwa:** a classic row valued by the listing directory or a
-  prospectus constant NAV is no longer withheld as
-  `reference_unavailable` when the oracle read fails; only oracle-bound
-  rows depend on it (#1630). `/v1/rwa/history` sends `as_of` and
-  `stale` on a carried-forward series and no longer shares its build
-  with the caller's context (#1623).
-  Contract-only rows are no longer grouped under a blank `by_issuer` key,
-  and `home_domain` carries the issuer's domain rather than the listing
-  directory's (#1636).
-- **explorer:** convert pages read identity from `/v1/external/assets`
-  and bake only served hub tickers (#1629). The markets OHLC strip
-  soft-fails, so an hour whose trades were all filtered as outliers
-  cannot abort the export (#1631).
-- **changesummary:** the four native/fiat entities are no longer
-  emitted (no trade is recorded against them), and a failing pass warns
-  once instead of logging each failure at Debug (#1632).
-- **recognition:** events whose `topic[0]` is not a Symbol are split
-  into distinct shapes by `topics_xdr[1..2]` and arity, so one
-  recognised exemplar no longer hides its unrecognised siblings (#1622).
-- **api — protocols:** when the materialised contract-activity read
-  errors, the protocol page's enrich block falls back to the raw
-  `contract_events` read (already bounded by the raw scan ceiling)
-  instead of degrading to empty (#1645).
-- **timescale:** `PoolsFilter` with no sources binds an empty `text[]`
-  rather than `NULL`, so "no source filter" means match everything (#1644).
-- **timescale — CCTP:** the per-chain volume series breaks ties on
-  `chain_key`, so two chains with equal window volume no longer interleave
-  into many one-row series and the top-5 cut is stable (#1646).
-- **ingest — backfill-router:** the default bucket is the archive bucket,
-  falling back to the live one only when no archive is configured; a
-  historic range against the trimmed live bucket used to exit 0 with
-  "done. 0 ledgers" (#1649). `ch-gate` takes the same default, so a gate
-  over a backfilled range no longer walks 0 ledgers and passes (#1651).
-- **tests:** the checkpoint parent-directory test drives the production
-  `fetchOne` path instead of creating the directories itself (#1647); the
-  SDK spec-contract harness unions `allOf` required lists and walks
-  nullable `oneOf` fields, so `AssetDetail.unverified_warning` and
-  `.fiat_code_anchor` are now compared against the Go types (#1650); the
-  auth rate-limit cross-key isolation test can now fail (#1642); the
-  Chainlink `AnswerUpdated` topic0 is pinned to its known keccak256 (#1643).
-- **docs — launch checklist:** the public-flip dry-run and customer demo
-  boxes are struck; neither applies at 1.0 (#1648).
-- **api — backups:** the diagnostics cache lock is no longer held across
-  the rebuild and the response write, so one slow rebuild cannot stall
-  every concurrent `/v1/backups` read (#1641).
-- **chops — rebuild:** orphaned events evicted during a rebuild are
-  reported in the summary instead of dropped from the count (#1640).
-- **ingest — issuer-enrich:** a non-positive `-batch` is rejected before
-  the command opens any connection (#1639).
-- **diagnostics — rpc-probe:** the getEvents probe is skipped when the
-  node reports `latestLedger` 0 instead of underflowing the range (#1638).
-- **ansible — redis:** the role drops a `CONFIG REWRITE` `nopass` ACL
-  line that overrode `requirepass` (#1627).
-- **ci:** the nightly chaos job gets the dev stack's Postgres DSN (#1625).
-- Band relay trailing-arg tolerance pinned by a test; stale runbook
-  citations and an overdue retirement corrected (#1626, #1633).
