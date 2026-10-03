@@ -326,8 +326,8 @@ probed unauthenticated:
 - **Legacy key surface (2)** — `/account/keys`, `/account/keys/{keyID}`.
   Superseded by `/dashboard/keys` (the richer Postgres-backed store the
   UI uses). Probably wants deprecating rather than building.
-- **Signup (2)** — `POST /signup`, `/signup/verify`. The UI uses the
-  `/auth/login` magic-link flow instead. Dead path, or an unshipped one.
+- **Signup (2)** — `POST /signup`, `/signup/verify`. Retired (410 Gone, INV-0907);
+  the UI uses the `/auth/login` magic-link flow instead.
 - **Account erasure (2)** — `DELETE /dashboard/account`,
   `/dashboard/account/export` (#809). API shipped; the dashboard
   settings page that calls them is the follow-up.
