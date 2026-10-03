@@ -1486,6 +1486,9 @@ type APIConfig struct {
 	// 0 disables it.
 	FailedAuthRateLimitPerMin int `toml:"failed_auth_rate_limit_per_min" doc:"Cap on INVALID-credential (failed-auth) attempts per minute, enforced inside the Auth middleware so credential-stuffing / API-key guessing is throttled even though auth rejects before the main rate limiter (C3-5). Only active when auth_mode != none. Applied independently per resolved client IP and, in the apikey / apikey_optional modes, per presented key prefix (the 12-char display prefix), so guessing aimed at one key from many IPs is still capped; a valid key is never throttled by it. Redis-backed when available, in-process fixed-window fallback otherwise. 0 disables the failed-auth throttle." default:"20"`
 
+	HoldsFile           string        `toml:"holds_file" doc:"Path to a TOML file of [[hold]] entries (asset, contract_id, ledger_from, ledger_to, reason) that mark matching supply, balance and holder responses as under review. Polled every holds_reload_interval; a missing file means no holds and an invalid file keeps the previous list. Empty disables the feature." default:""`
+	HoldsReloadInterval time.Duration `toml:"holds_reload_interval" doc:"How often the API re-reads holds_file." default:"15s"`
+
 	// SingleInstance asserts the deployment runs exactly ONE API
 	// instance, unlocking the per-process Redis-less fallbacks for the
 	// auth throttles and the passkey ceremony replay guard
@@ -2245,6 +2248,7 @@ func defaultAPIConfig() APIConfig {
 		FailedAuthRateLimitPerMin: 20,
 		RateLimitDwell:            30 * time.Second,
 		MonthlyQuotaDwell:         30 * time.Second,
+		HoldsReloadInterval:       15 * time.Second,
 		// Unauth-DoS chokepoint (audit-2026-07-16): the app-layer request
 		// deadline (15s) is the primary bound; the serving-pool
 		// statement_timeout (30s) is the SQL-side backstop, kept longer so
