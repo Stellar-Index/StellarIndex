@@ -257,9 +257,9 @@ type Worker struct {
 }
 
 // NewWorker constructs the worker. interval is the refresh
-// cadence — Massive's hourly grain means anything < 15 min is
-// wasted fetches; 1h is a reasonable default that keeps the
-// cache fresh across operator restarts.
+// cadence. Massive's grouped aggregate is daily, so sub-15-min polling
+// only re-fetches the same bar; 1h keeps the cache fresh across
+// operator restarts and picks up the new UTC day promptly.
 //
 // The curated monetary-base CSV is loaded once at construction
 // (lives in internal/sources/external/forex/circulation_data.csv). Parse
@@ -1151,9 +1151,8 @@ func (w *Worker) shouldRefreshHistory(prevHistory map[string][]HistoryPoint, pub
 	if len(prevHistory) == 0 {
 		return true
 	}
-	// The newest bar across ALL tickers: one ticker can lag (stale or
-	// delisted code, missing on the newest day) and map order is random,
-	// so sampling a single ticker would make the decision nondeterministic.
+	// Tickers can end on different days (a 404 day is skipped per ticker), so
+	// decide from the newest bar across all of them, not one map entry.
 	var newest time.Time
 	for _, points := range prevHistory {
 		if len(points) == 0 {

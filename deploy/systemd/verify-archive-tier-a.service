@@ -16,27 +16,8 @@
 #                                              galexie-archive S3 bucket.
 #   VERIFY_ARCHIVE_FROM                         Default 2 (genesis).
 #   VERIFY_ARCHIVE_WORKERS                      Default 12 (parallel chunks).
-#   VERIFY_ARCHIVE_MAX_RUNTIME                  Default 16h cap here.
-#     NOTE (2026-08-28): r1's ansible-rendered unit (the authority,
-#     verify-archive-tier-a.service.j2) runs UNCAPPED (=0). This
-#     reference copy's [Service] block below carries the SAME
-#     Type=notify + WatchdogSec=1h wiring, so the 16h wall-clock cap
-#     here is not load-bearing for liveness — it was simply never
-#     updated when the template moved to uncapped. Declared in
-#     deploy/systemd/DIVERGENCES (verify-archive-tier-a.service:
-#     Environment:VERIFY_ARCHIVE_MAX_RUNTIME); do not treat this
-#     comment's old wording as a reason the two must differ.
-#
-# Workers + max-runtime were 8 / 8h until 2026-05-13. The 8h cap
-# was tight for a ~62.5M-ledger pubnet — the nightly run completed
-# 34.7M ledgers in 8h (1207 l/s aggregate at 8 workers) then
-# exited 1/FAILURE on context deadline, permanently keeping
-# stellarindex_verify_archive_unit_failed firing. End-to-end at the
-# 8-worker rate needs ~14h. Bumped the defaults to 12 workers + 16h
-# cap: each chunk is an independent walk so workers scale linearly
-# until disk I/O on /var/lib/minio saturates (per the binary's
-# own --workers help text); 16h sits comfortably inside the 24h
-# timer cadence with headroom.
+#   VERIFY_ARCHIVE_MAX_RUNTIME                  Default 0 (uncapped); the
+#                                              bound is WatchdogSec liveness.
 #
 # Run health is observable via systemd unit state — node_exporter's
 # `--collector.systemd` exports the unit's success/failure as
@@ -77,7 +58,8 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 # Sensible defaults. Operators override via /etc/default/stellarindex-ops.
 Environment=VERIFY_ARCHIVE_FROM=2
 Environment=VERIFY_ARCHIVE_WORKERS=12
-Environment=VERIFY_ARCHIVE_MAX_RUNTIME=16h
+# 0 = uncapped: a mid-pass cap leaves the incremental state file unseeded.
+Environment=VERIFY_ARCHIVE_MAX_RUNTIME=0
 Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/stellarindex/verify-archive-state.json
 Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
 # P1-page export path (issue #282). The mismatch counter

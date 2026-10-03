@@ -483,6 +483,10 @@ type AssetDetail struct {
 	// never carries "sep1_declared_max" — see MaxSupplyBasis.
 	SupplyBasis *string `json:"supply_basis,omitempty"`
 
+	// Trust is the banded trust score with its factor breakdown; set on
+	// the detail lookup only, nil on listing rows.
+	Trust *AssetTrust `json:"trust,omitempty"`
+
 	// MaxSupplyBasis names where MaxSupply (and FDVUSD) came from when not the SupplyBasis policy, e.g. "sep1_declared_max".
 	MaxSupplyBasis *string `json:"max_supply_basis,omitempty"`
 
@@ -1353,6 +1357,10 @@ type ChartSeries struct {
 	// Points was withheld because the asset's current market cannot
 	// support a valuation, as on Asset.MarketCapLowLiquidity.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
+	// RowCapTruncated: a Timeframe "all" read hit the 50,000-bucket cap, so
+	// Points is the OLDEST slice and ends at DataEndsAt, short of the present.
+	RowCapTruncated bool       `json:"row_cap_truncated,omitempty"`
+	DataEndsAt      *time.Time `json:"data_ends_at,omitempty"`
 }
 
 // ChangeSummary is the data shape returned by [Client.ChangeSummary]
@@ -1639,6 +1647,27 @@ type AssetListingValuation struct {
 	// material: USDT0's trustline-visible supply is 6,469 tokens against
 	// 2,581,052 by mint minus burn.
 	SupplyBasis string `json:"supply_basis,omitempty"`
+}
+
+// AssetTrust is the output-only trust score on [AssetDetail]. A factor
+// with no evidence is "unknown" with nil Points and is excluded from
+// Score; Score is nil when no factor has evidence.
+type AssetTrust struct {
+	FormulaVersion int           `json:"formula_version"`
+	Score          *int          `json:"score"`
+	Band           string        `json:"band"` // "high" / "medium" / "low" / "unknown"
+	CoveragePct    int           `json:"coverage_pct"`
+	Factors        []TrustFactor `json:"factors"`
+}
+
+// TrustFactor is one weighted input to [AssetTrust].
+type TrustFactor struct {
+	ID       string `json:"id"`
+	Band     string `json:"band"`
+	Points   *int   `json:"points"`
+	Weight   int    `json:"weight"`
+	Source   string `json:"source"`
+	Observed string `json:"observed"`
 }
 
 // VerifiedCurrencyListItem is one row in the response to

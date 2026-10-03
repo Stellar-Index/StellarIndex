@@ -193,12 +193,17 @@ const (
 //	("Factory", "Updated Config")                           factory, body Void
 //	("blend_pool", "set_delegate")                          pool, body Address
 //	("blend_pool", "set_min_trading_a" | "_b")              pool, body i128
+//	("toggle_trading", "enabled")                           pool, body Bool
+//
+// toggle_trading is recognised but projects no row: serving it needs an
+// admin_action slug the phoenix_admin_events CHECK does not allow yet.
 const (
 	EventActionCreateDistributionFlow = "create_distribution_flow"
 	EventActionStakeMigration         = "Stake: Migration: "
 	EventActionStake                  = "Stake"
 	EventActionFactory                = "Factory"
 	EventActionBlendPool              = "blend_pool"
+	EventActionToggleTrading          = "toggle_trading"
 
 	// StakeAction* are the phoenix_stake_events.action slugs for the
 	// stake-contract lifecycle events (migration 0195).
@@ -400,6 +405,7 @@ var (
 	TopicStake                  = scval.MustEncodeString(EventActionStake)
 	TopicFactory                = scval.MustEncodeString(EventActionFactory)
 	TopicBlendPool              = scval.MustEncodeString(EventActionBlendPool)
+	TopicToggleTrading          = scval.MustEncodeString(EventActionToggleTrading)
 
 	TopicMigrationStarted     = scval.MustEncodeString("Start of migration for user: ")
 	TopicMigrationQueried     = scval.MustEncodeString("Query for user completed: ")
@@ -408,6 +414,7 @@ var (
 	TopicBlendSetDelegate     = scval.MustEncodeString("set_delegate")
 	TopicBlendSetMinTradingA  = scval.MustEncodeString("set_min_trading_a")
 	TopicBlendSetMinTradingB  = scval.MustEncodeString("set_min_trading_b")
+	TopicToggleTradingEnabled = scval.MustEncodeString("enabled")
 )
 
 // Liquidity-management topic[0] encodings + topic[1] field names.

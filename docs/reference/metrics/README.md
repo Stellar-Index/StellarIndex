@@ -2229,6 +2229,9 @@ Per-attempt outcome of the customer-webhook delivery worker
 `exhausted` = retry budget hit; `network_error` = TCP/TLS/timeout
 (retry); `webhook_missing` = registry row deleted mid-flight
 (terminal); `disabled` = `webhook.Enabled=false` (terminal);
+`no_secret` = signing key empty or not openable under the configured
+seal key (terminal); `lookup_error` = webhook read failed, including a
+sealed key with no seal key configured (retried);
 `build_error` = malformed URL (terminal); `list_error` /
 `mark_error` = db transport failure on the queue surface
 (transient).
@@ -3468,6 +3471,19 @@ not. Below quorum the warning verdict is carried forward rather than
 re-evaluated, so a 0 means divergence detection is disarmed for the pair
 even though the pass counts `ok`. A pair at 0 across every refresh for
 an hour fires `stellarindex_divergence_pair_below_quorum`.
+
+### `stellarindex_divergence_max_abs_fraction`
+
+Gauge, label `reference`. Largest `|ours − reference| / reference` over the
+pairs that reference currently prices (0.05 = 5 %); 0 when it prices none.
+Pinned (frozen) refreshes carry no verdict and are excluded. Drives
+`stellarindex_price_divergence_warning` (> 0.05) and `_critical` (> 0.10).
+
+### `stellarindex_divergence_pairs_over`
+
+Gauge, label `threshold` (`5pct` / `10pct`). Pairs whose worst reference gap
+exceeds that fraction. No per-pair label; the pairs are in
+`divergence_observations`.
 
 ### `stellarindex_aggregator_baseline_refresh_total`
 
