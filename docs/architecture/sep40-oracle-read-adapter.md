@@ -68,7 +68,7 @@ prices** through the SEP-40 method shape:
 
 This is a **passthrough over our own VWAP/TWAP**, quoting `fiat:USD`,
 matching the "what an on-chain SEP-40 oracle returns" contract. It is
-the *outbound* half of SEP-40 and is not what #60 is about.
+the *outbound* half of SEP-40 and is not what BACKLOG #60 is about.
 
 ### 2. The oracle *ingest* sources — already SEP-40 contracts
 

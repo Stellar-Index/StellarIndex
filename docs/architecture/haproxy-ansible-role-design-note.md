@@ -28,7 +28,7 @@ related:
 > "launch-critical" framing below as of its 2026-05 authorship date.
 >
 > Bootstraps the third launch-critical sub-role of Task #72 after
-> Patroni (#344) and Redis Sentinel (#350). HAProxy is the
+> Patroni (965eed22e) and Redis Sentinel (bb2f4d29e). HAProxy is the
 > api-tier load balancer fronting the `stellarindex-api` pool;
 > keepalived provides the HA between two HAProxy hosts.
 

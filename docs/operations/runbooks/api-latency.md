@@ -145,7 +145,7 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
   with cold Timescale buffers. Warms up within a minute.
 - **`/v1/markets` baseline above 200 ms.** This route does
   `GROUP BY base_asset, quote_asset` across the 14-day chunk
-  window of the trades hypertable. PR #583 baseline was ~540 ms
+  window of the trades hypertable. Commit 22b255819 baseline was ~540 ms
   cold / ~50 ms warm. While a backfill is concurrent (e.g. the
   ongoing 16-way historical fill of 50M-62M ledgers as of
   2026-05-04) the cold call balloons to ~7 s and warm settles
@@ -194,7 +194,7 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
   target (p95) and 4× (p99) so we get lead time, not just
   breach notifications.
 - 2026-04-30 — runbook now also covers the SLO multi-window
-  burn-rate alerts shipped in #313 (per ADR-0009), which route
+  burn-rate alerts shipped in 1c7cc2820 (per ADR-0009), which route
   here. Burn-rate-vs-threshold section explains the different
   semantics so on-call doesn't treat a `_burn_fast` page as a
   benign spike.

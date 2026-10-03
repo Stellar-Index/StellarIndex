@@ -93,7 +93,7 @@ type VolumeReader interface {
 
 // SorobanVolumeReader is OPTIONALLY implemented by the wired
 // [VolumeReader] to provide the XLM-anchored 24h USD volume for
-// pure-Soroban SEP-41 assets (#37). The plain Volume24hUSDForAsset only
+// pure-Soroban SEP-41 assets (fce3e2eef). The plain Volume24hUSDForAsset only
 // sees the insert-time `usd_volume` column — populated when a trade's
 // quote is a USD-pegged classic — so a Soroban token that trades against
 // XLM or another SEP-41 token reports a bogus "0". This variant keeps the
@@ -262,7 +262,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 // trades never populate), so when the reader exposes the XLM-anchored
 // [SorobanVolumeReader] variant we use it — it values the XLM-legged
 // trades through the on-chain XLM/USD VWAP on top of any USD-pegged legs
-// (#37). A Soroban lookup ERROR falls back to the plain reader so a
+// (fce3e2eef). A Soroban lookup ERROR falls back to the plain reader so a
 // transient failure of the richer path can't zero out a figure the plain
 // path could still supply.
 func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
@@ -385,6 +385,56 @@ func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asse
 	priceCopy := l.price
 	detail.PriceUSD = &priceCopy
 	return l.sources
+}
+
+// assetDetailCacheKey keys the opt-in apart: its body can carry a thin
+// price the default body must never replay.
+func assetDetailCacheKey(asset canonical.Asset, includeThin bool) string {
+	if includeThin {
+		return asset.String() + "|thin"
+	}
+	return asset.String()
+}
+
+// clearThinWhenUnpriced drops the thin markers from a detail a later
+// suppressor unpriced, so no response is flagged thin without a price.
+func clearThinWhenUnpriced(d *AssetDetail) {
+	if d.PriceUSD == nil {
+		d.ThinMarket = false
+		d.Substance = nil
+	}
+}
+
+// thinDetailPricePass is the detail's opted-in second pass: re-read the
+// price with the request's thin legs released, after pass 1 left it
+// withheld on measured evidence. It runs only the price producers, never
+// applyF2Fields, so no market cap, FDV or change derives from a thin
+// price. "unattributed" is excluded because on detail it labels the
+// issuer suppression, which no thin release may override.
+func (s *Server) thinDetailPricePass(ctx context.Context, detail *AssetDetail, asset canonical.Asset, off *ThinAdmission) {
+	if detail.PriceUSD != nil || off.Evidence() == nil {
+		return
+	}
+	switch detail.PriceWithheldReason {
+	case "", PriceWithheldSubstance, PriceWithheldUpstreamLeg:
+	default:
+		return
+	}
+	onCtx, on := WithThinAdmission(ctx, asset, defaultPriceQuote, true)
+	trial := *detail
+	trial.PriceWithheldReason = ""
+	s.populatePriceUSD(onCtx, &trial, asset)
+	s.fillTransitivePrice(onCtx, &trial, asset, asset.String())
+	if trial.PriceUSD == nil {
+		return
+	}
+	detail.PriceUSD = trial.PriceUSD
+	detail.PriceBasis = trial.PriceBasis
+	detail.PriceWithheldReason = ""
+	if on.Admitted() {
+		detail.ThinMarket = true
+		detail.Substance = substanceEvidenceWire(on.Evidence())
+	}
 }
 
 // marketCapRefused is the pre-figure half of the valuation guards shared by
@@ -529,7 +579,7 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 // the handler's tryStablecoinFiatProxy fallback at the reader-call
 // level: when the literal lookup misses, walk the operator's
 // usd_pegged_classic_assets and rewrite asset/fiat:USD to
-// asset/<peg>. Same shape as the handler-side fallback in #1217;
+// asset/<peg>. Same shape as the handler-side fallback in 6505934b5;
 // here it lives at the F2-population layer where the handler's
 // priceFallback isn't reachable (the supply / change-24h paths
 // bypass the /v1/price handler entirely).
@@ -594,7 +644,7 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 		return usdPriceLookup{price: snap.Price, sources: len(sources)}
 	}
 	// Read-time stablecoin-fiat proxy fallback (matches the
-	// handler-side fix in #1217 / tryStablecoinFiatProxy). Already
+	// handler-side fix in 6505934b5 / tryStablecoinFiatProxy). Already
 	// decimals-normalized inside tryStablecoinFiatProxy — do NOT re-apply.
 	proxy, proxySources, ok, withheld := s.tryStablecoinFiatProxy(ctx, asset, defaultPriceQuote)
 	if ok && proxy.Price != "" {

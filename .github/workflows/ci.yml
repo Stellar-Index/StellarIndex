@@ -1773,7 +1773,7 @@ jobs:
   monitoring-rules:
     name: prometheus rule validation
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     needs: [preflight]
     # §B: cheap — kept unconditional, same reasoning as doc-checks above.
     # Validates BOTH deploy/monitoring/rules/*.yml (multi-host) and
@@ -2453,6 +2453,12 @@ jobs:
         # firewall pointed at the old port. Structural grep, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-prometheus-port-var-test.sh
+      - name: patroni etcd TLS render test
+        # etcd and Patroni's etcd3 client must render https with mutual cert
+        # auth by default, and the config tasks must refuse missing PEM
+        # material rather than fall back to plaintext.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-patroni-etcd-tls-test.sh
       - name: node-exporter-collectors package install test (T630)
         # The apt/nvme systemd drop-ins repoint ExecStart at
         # /usr/share/prometheus-node-exporter-collectors/{apt_info,

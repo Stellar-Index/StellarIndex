@@ -119,7 +119,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		// different answers, and only the withheld problem names the raw
 		// surfaces where the data IS available.
 		if !ok && (fb.withheld != "" || fb.err != nil) {
-			s.writeFallbackMiss(w, r, asset, defaultPriceQuote, fb)
+			s.writeFallbackMiss(w, r, asset, defaultPriceQuote, fb, nil)
 			return
 		}
 		// F-1339 (G2-02): every fallback degradation is below the
@@ -339,7 +339,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 
 // recentClosedWithStablecoinFallback wraps PriceReader.RecentClosedSnapshots
 // with the same X/fiat:USD → X/<peg> retry shape used in the
-// other handler-side stablecoin-proxy fallbacks (#1217 / #1218 /
+// other handler-side stablecoin-proxy fallbacks (6505934b5 / a8be130dd /
 // #1220). When the literal asset/fiat:USD lookup returns an
 // empty slice AND quote is fiat:USD AND the operator declared
 // classic USD pegs, walks the pegs and returns the first non-empty
@@ -353,7 +353,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 //
 // Without this, /v1/oracle/prices?asset=native silently returns an
 // empty data array on Stellar mainnet — same out-of-the-box failure
-// mode as /v1/oracle/lastprice had pre-#1220, just expressed as
+// mode as /v1/oracle/lastprice had pre-3aaa5c2a4, just expressed as
 // 200-empty rather than 404.
 //
 // T015: both the literal-quote read and the peg walk go through
@@ -490,7 +490,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		ok := fb.ok
 		// MSP-06, as above.
 		if !ok && (fb.withheld != "" || fb.err != nil) {
-			s.writeFallbackMiss(w, r, base, quote, fb)
+			s.writeFallbackMiss(w, r, base, quote, fb, nil)
 			return
 		}
 		// F-1339 (G2-02): fallback responses surface flags.stale=true

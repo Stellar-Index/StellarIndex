@@ -142,7 +142,7 @@ func (s *Store) ListProtocolContracts(ctx context.Context, source string) ([]Pro
 // its /v1/protocols/aquarius roster read 0 contracts despite being the most
 // active AMM (14.9k events/24h, 300+ pools). aquarius_liquidity (migration 0089)
 // carries the emitting POOL contract_id AND the pool's token identities, so
-// aquarius now has a per-pool roster source that also renders a pair (2026-07-07, #91).
+// aquarius now has a per-pool roster source that also renders a pair (2026-07-07, a9f2e301c).
 func projectionContractColumn(source string) (table, column string, ok bool) {
 	switch source {
 	case "defindex":
@@ -179,7 +179,7 @@ func (s *Store) ListSourceContractsFromProjection(ctx context.Context, source st
 	// Oracle sources (band/reflector-*/redstone) share ONE projected table,
 	// oracle_updates, so the generic unfiltered DISTINCT below would return
 	// EVERY oracle's contracts for each source. Their pinned contracts emit
-	// into oracle_updates.contract_id — scope by the source column (#91,
+	// into oracle_updates.contract_id — scope by the source column (a9f2e301c,
 	// 2026-07-07: band/reflector/redstone previously read 0 contracts).
 	switch source {
 	case "band", "reflector-cex", "reflector-dex", "reflector-fx", "redstone":
