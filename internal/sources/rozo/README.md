@@ -41,7 +41,7 @@ Two canonical Go types — `Payment` and `Flush` — corresponding
 
 ## Wiring
 
-This package is **wired into the ingest pipeline** (#41), scoped to
+This package is **wired into the ingest pipeline** (46e0087e8), scoped to
 v1 Payment:
 
 - `dispatcher_adapter.go` — `Decoder`, a stateless topic Decoder

@@ -9,8 +9,8 @@ Promtail agents on every other host that produces logs. Per
 - 30d retention via Loki's compactor.
 
 **Closes Task #72** — the fifth and final sub-role after Patroni
-(#344), Redis Sentinel (#350), HAProxy (#362), and Prometheus
-(#363). Design rationale lives in
+(965eed22e), Redis Sentinel (bb2f4d29e), HAProxy (1836fced9), and Prometheus
+(d770270b3). Design rationale lives in
 [`docs/architecture/loki-ansible-role-design-note.md`](../../../../docs/architecture/loki-ansible-role-design-note.md).
 
 ## Prerequisites

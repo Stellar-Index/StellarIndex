@@ -1630,7 +1630,7 @@ func TestPrice_FiatCrossRate_NotFiatBothSides(t *testing.T) {
 // TestPrice_XLMAlias_NativeFallsThroughToCryptoXLM verifies that
 // /v1/price?asset=native&quote=fiat:USD picks up a VWAP published
 // under crypto:XLM/fiat:USD when no native/fiat:USD key exists.
-// This is the F-1308 / #87 customer-visible 39h-stale bug on
+// This is the F-1308 customer-visible 39h-stale bug on
 // 2026-05-29: SDEX writes `native`, CEX writes `crypto:XLM`; the
 // aggregator's pair-set published under crypto:XLM only, and the
 // public surface queried by `native` and missed.

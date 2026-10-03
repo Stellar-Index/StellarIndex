@@ -61,6 +61,11 @@ func (r *capReader) Cap67MovementsWatermark(ctx context.Context) (uint32, error)
 	return 0, nil
 }
 
+func (r *capReader) Cap67SupplyCoverage(ctx context.Context) (uint32, uint32, bool, error) {
+	r.probe.record(ctx)
+	return 0, 0, false, nil
+}
+
 func (r *capReader) AccountsStats(ctx context.Context) (clickhouse.AccountsStats, bool, error) {
 	r.probe.record(ctx)
 	return clickhouse.AccountsStats{}, false, nil

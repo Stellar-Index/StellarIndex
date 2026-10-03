@@ -430,7 +430,7 @@ func ResolveStreamBucket(cfg config.Config, override string, from, to uint32) (s
 // NewBoundedLedgerStreamConfig returns the ledgerstream.Config that ops
 // subcommands should ALWAYS use when their `-to` may equal the live
 // galexie-archive tip. Always opts into TolerateTrailingMissing per
-// rc.81 (#62 diagnosis); never override that downstream.
+// rc.81 (f7fc1acab diagnosis); never override that downstream.
 //
 // Background: the trailing-edge missing-file failure surfaced in the
 // 2026-05-25 verify-archive bootstrap (project_62_diagnosis_2026_05_25)

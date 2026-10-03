@@ -64,7 +64,7 @@ func TestAPI_EndToEnd(t *testing.T) {
 
 	// Force-refresh the CAGGs /v1/markets reads so it sees the seeded
 	// trades before the 30s policy fires. /v1/markets (DistinctPairs)
-	// enumerates pairs from prices_1d (the right-granularity rewrite, #20)
+	// enumerates pairs from prices_1d (the right-granularity rewrite, cc4ed08ae)
 	// and reads 24h volume from prices_1m — refresh BOTH, else the market
 	// list is empty even though prices_1m has the rows.
 	for _, stmt := range []string{
@@ -77,7 +77,7 @@ func TestAPI_EndToEnd(t *testing.T) {
 	}
 
 	// Same force-refresh for pools_per_source_1h (migration 0036 —
-	// the durable backing for /v1/pools post-#25). Without this the
+	// the durable backing for /v1/pools). Without this the
 	// AllPools sub-test sees an empty CAGG and returns zero rows for
 	// the seeded trades.
 	if _, err := store.DB().ExecContext(ctx,

@@ -26,6 +26,49 @@
       whole internal range (CS-122, audit-2026-06-30).
   no_log: true
 
+- name: assert Patroni etcd client TLS material is supplied
+  assert:
+    that:
+      - etcd_tls_ca_pem is defined
+      - etcd_tls_ca_pem | length > 0
+      - patroni_etcd_client_cert_pem is defined
+      - patroni_etcd_client_cert_pem | length > 0
+      - patroni_etcd_client_key_pem is defined
+      - patroni_etcd_client_key_pem | length > 0
+    fail_msg: >-
+      etcd_tls_ca_pem, patroni_etcd_client_cert_pem and
+      patroni_etcd_client_key_pem must be set (PEM contents from vault;
+      see defaults/main.yml). Refusing to render a Patroni config that
+      talks plaintext to etcd.
+  when: etcd_tls_enabled
+  no_log: true
+
+- name: ensure Patroni etcd TLS directory
+  file:
+    path: "{{ patroni_etcd_tls_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0750'
+  when: etcd_tls_enabled
+
+- name: install Patroni etcd client TLS material
+  copy:
+    content: "{{ item.content }}\n"
+    dest: "{{ patroni_etcd_tls_dir }}/{{ item.name }}"
+    owner: postgres
+    group: postgres
+    mode: "{{ item.mode }}"
+  loop:
+    - { name: ca.pem, content: "{{ etcd_tls_ca_pem | default('') | trim }}", mode: '0644' }
+    - { name: client.pem, content: "{{ patroni_etcd_client_cert_pem | default('') | trim }}", mode: '0644' }
+    - { name: client-key.pem, content: "{{ patroni_etcd_client_key_pem | default('') | trim }}", mode: '0600' }
+  loop_control:
+    label: "{{ item.name }}"
+  when: etcd_tls_enabled
+  no_log: true
+  notify: "patroni config changed"
+
 - name: detect existing Patroni state
   uri:
     url: "http://127.0.0.1:8008/cluster"

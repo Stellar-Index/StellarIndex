@@ -55,8 +55,8 @@ var ErrNoObservation = errors.New("supply: no LCM observation for at least one r
 
 // LCMReserveBalanceReader is a [ReserveBalanceReader] backed by
 // the LCM-derived `account_observations` hypertable. Replaces the
-// operator-static [ConfigReserveBalanceReader] (#285) once the
-// AccountEntry observer (#298) has been backfilled to a deep enough
+// operator-static [ConfigReserveBalanceReader] (ec133606f) once the
+// AccountEntry observer (5e94ba76e) has been backfilled to a deep enough
 // range.
 //
 // Per ADR-0021 the static reader stays in tree as a bootstrap

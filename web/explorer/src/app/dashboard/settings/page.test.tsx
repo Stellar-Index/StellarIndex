@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/api/hooks', async () => {
@@ -8,12 +8,13 @@ vi.mock('@/api/hooks', async () => {
   return { ...actual, useMe: vi.fn() };
 });
 
+const replace = vi.hoisted(() => vi.fn());
 vi.mock('next/navigation', async () => {
   const actual =
     await vi.importActual<typeof import('next/navigation')>('next/navigation');
   return {
     ...actual,
-    useRouter: () => ({ ...actual.useRouter(), replace: vi.fn() }),
+    useRouter: () => ({ ...actual.useRouter(), replace }),
   };
 });
 
@@ -27,6 +28,8 @@ import { useMe } from '@/api/hooks';
 import SettingsPage from './page';
 
 afterEach(() => {
+  vi.unstubAllGlobals();
+  replace.mockReset();
   listPasskeys.mockReset();
 });
 
@@ -57,10 +60,35 @@ describe('/dashboard/settings', () => {
 
     expect(screen.getByText('a@b.com')).toBeInTheDocument();
     expect(screen.getByText('Danger zone')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Sign out/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Sign out/ }),
+    ).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText('No passkeys yet')).toBeInTheDocument();
     });
+  });
+
+  it('signs out on an empty-body 200 and bounces to /signin', async () => {
+    listPasskeys.mockResolvedValue([]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(null, { status: 200 })),
+    );
+    renderSettingsPage();
+    fireEvent.click(screen.getByRole('button', { name: /Sign out/ }));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/signin'));
+  });
+
+  it('does not bounce and shows an error when logout fails', async () => {
+    listPasskeys.mockResolvedValue([]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(null, { status: 500 })),
+    );
+    renderSettingsPage();
+    fireEvent.click(screen.getByRole('button', { name: /Sign out/ }));
+    expect(await screen.findByText(/Sign out failed/)).toBeInTheDocument();
+    expect(replace).not.toHaveBeenCalled();
   });
 });

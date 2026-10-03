@@ -213,8 +213,9 @@ func seedOneAccount(ctx context.Context, reader *clickhouse.ExplorerReader, stor
 		Flags:      seed.Flags,
 		SeqNum:     seed.SeqNum,
 		// Authoritative reconstructed FINAL state for the ledger — sits at
-		// the top of the intra-ledger order so a live per-ledger change
-		// can't overwrite it and a re-seed stays corrective (C2-6).
+		// the top of the intra-ledger order, unbeatable within its walk_version
+		// (a stamped re-derive under a higher version replaces it), so a live
+		// per-ledger change can't overwrite it and a re-seed stays corrective.
 		IntraLedgerSeq: timescale.SeedIntraLedgerSeq,
 	}
 	if err := store.InsertAccountObservation(ctx, domain.AccountObservation(obs)); err != nil {

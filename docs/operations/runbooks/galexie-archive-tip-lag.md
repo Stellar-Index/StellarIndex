@@ -22,16 +22,16 @@ severity: P1 | P3
 
 ## Why this exists
 
-The original `#26` incident was a **23-day silent stall** of
+The original incident was a **23-day silent stall** of
 `galexie-archive` (the ADR-0016 R1 durable full-mirror). The
 `galexie-archive-fill` catch-up script existed but only ran
 manually — when its manual invocation drifted into oblivion,
-nothing surfaced for weeks. The post-`#26` standing fix is the
+nothing surfaced for weeks. The standing fix (f12289f6d) is the
 hourly `galexie-archive-fill.timer`. **This alert is the safety
 net under that:** if the timer itself (or its `mc` aliases, the
 aws-public IAM, or a MinIO mtime-poison deadlock per the "mc mirror
 gotcha") breaks silently, the lag will start growing and Prometheus
-pages within hours — instead of the 23-day blindness `#26` was.
+pages within hours — instead of the original 23-day blindness.
 
 The thresholds were raised on 2026-05-22 (5,000 / 50,000 →
 64,000 / 128,000) to match the partition model above: the old
@@ -88,7 +88,7 @@ ssh r1 'mc ls local/galexie-live | head -1; mc ls local/galexie-archive | head -
   this is already past the tolerance window.
 - **`tip_lag_severe` (>128,000 for 30m ≈ ≥2 completed partitions,
   ~8 days)**: the fill timer has clearly broken — same failure
-  class as #26. Run
+  class as the original stall. Run
   `sudo systemctl start galexie-archive-fill.service`, then
   `journalctl -u galexie-archive-fill.service -n 100` and tail
   `/var/log/galexie-mirror.log` to see the live error; then
@@ -133,8 +133,8 @@ below the floor is not a fill failure.
 
 - ADR-0016 — per-region storage strategies (defines R1 = full mirror).
 - ADR-0027 — LCM cache tiering (hot floor + trim; `docs/operations/lcm-cache-tiering.md`).
-- `#26` — the originating 23-day silent-stall incident.
-- `#7` — LCM-cache tiering (longer-term capacity strategy).
+- `f12289f6d` — the standing fix for the originating 23-day silent-stall incident.
+- `task #7` — LCM-cache tiering (longer-term capacity strategy).
 - [archive-files-missing](archive-files-missing.md) — sibling Tier-A/B archive integrity alert.
 - [galexie-archive-contiguity](galexie-archive-contiguity.md) — the middle-is-intact guard sharing this rule file (`stellarindex_galexie_archive_gap`, `_contiguity_silent`).
 - `galexie-archive-fill.{service,timer}` — canonical source `configs/ansible/roles/archival-node/templates/systemd/*.j2`, installed by `tasks/07-galexie.yml`; the `deploy/systemd/` copies have drifted (bare `ExecStart`, no `run-heavy-job.sh` wrapper) and are not what runs on r1.

@@ -18,6 +18,7 @@ var gateMethods = map[string]bool{
 	"PriceWithholding":      true,
 	"PriceWithholdingAt":    true,
 	"AssetValueWithholding": true,
+	"Judge":                 true,
 }
 
 // halfMethods are the SubstanceGate / ScamGate decision methods. A binary
@@ -28,6 +29,8 @@ var halfMethods = map[string]bool{
 	"AllowedAt":    true,
 	"Verdict":      true,
 	"Probe":        true,
+	"Measure":      true,
+	"MeasureAt":    true,
 	"Withheld":     true,
 	"WithheldPair": true,
 }
