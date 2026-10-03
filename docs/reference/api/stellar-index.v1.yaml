@@ -434,6 +434,7 @@ paths:
         volume-ordered (`asset_class=all`) listing an asset with no USD
         price likewise ranks below every priced one.
       parameters:
+        - { $ref: "#/components/parameters/IncludeThin" }
         - name: include
           in: query
           required: false
@@ -906,6 +907,7 @@ paths:
         self-certifying. A path that is none of the above returns
         400.
       parameters:
+        - { $ref: "#/components/parameters/IncludeThin" }
         - { $ref: "#/components/parameters/AssetIdPath" }
       responses:
         "200":
@@ -1240,6 +1242,7 @@ paths:
         `price-unavailable`, and the batch row is omitted without being
         listed. `/v1/price/tip` keeps the live rate.
       parameters:
+        - { $ref: "#/components/parameters/IncludeThin" }
         - { $ref: "#/components/parameters/AssetQuery" }
         - { $ref: "#/components/parameters/Quote" }
       responses:
@@ -1305,6 +1308,7 @@ paths:
         500. Current price: /v1/price or /v1/price/tip. Multi-horizon
         change: /v1/price/changes.
       parameters:
+        - { $ref: "#/components/parameters/IncludeThin" }
         - { name: asset, in: query, required: true, schema: { type: string }, description: "Canonical asset id (native | CODE-G... | C... | fiat:XXX)." }
         - { name: quote, in: query, required: false, schema: { type: string }, description: "Quote asset id; default fiat:USD." }
         - { name: ts, in: query, required: true, schema: { type: string, format: date-time }, description: "Historical instant, RFC 3339. Must not be in the future." }
@@ -1365,6 +1369,7 @@ paths:
         bucket exists the same stablecoin-proxy chain as /v1/price
         resolves it via an operator-declared USD peg (`flags.triangulated`).
       parameters:
+        - { $ref: "#/components/parameters/IncludeThin" }
         - { $ref: "#/components/parameters/AssetQuery" }
         - { $ref: "#/components/parameters/Quote" }
       responses:
@@ -1601,6 +1606,7 @@ paths:
         id, against both the per-minute rate limit and the monthly
         quota — the same as one `GET /price` per id.
       parameters:
+        - { $ref: "#/components/parameters/IncludeThin" }
         - name: asset_ids
           in: query
           required: false
@@ -1672,6 +1678,8 @@ paths:
         `withheld`; `flags.stale` is
         the OR over returned rows. Metered like the GET form: one
         request unit per de-duplicated id.
+      parameters:
+        - { $ref: "#/components/parameters/IncludeThin" }
       requestBody:
         required: true
         content:
@@ -7880,6 +7888,9 @@ paths:
         XLM cross, a triangulated chain, a fiat cross-rate. 404 when
         the chain serves nothing, or only a declared peg (SEP-40's
         `None`: a declaration is not a price record).
+
+        Does not accept `include_thin`: a SEP-40 consumer never receives a
+        thin-market price.
       parameters:
         - name: asset
           in: query
@@ -13284,6 +13295,22 @@ components:
     # price family (/price, /price/tip, /price/batch, /chart,
     # /observations) where handlePrice et al. fall back to
     # defaultPriceQuote.
+    IncludeThin:
+      name: include_thin
+      in: query
+      required: false
+      schema: { type: boolean, default: false }
+      description: |
+        Opt in to a thin-market price. When the only market behind the
+        price fails the trailing substance floor, the price is served
+        flagged (`flags.thin_market`, or `thin_market` on an asset row)
+        with the `substance` measurement instead of being withheld. Only
+        a substance verdict is released: a flagged issuer, an FX leg or
+        the manipulation guard still withholds. A cleared route always
+        wins over a thin one. Only the literal `true` opts in; any other
+        value is ignored. On `/assets/{asset_id}` it is also ignored for
+        a catalogue slug in this version.
+
     Quote:
       name: quote
       in: query
@@ -15527,6 +15554,13 @@ components:
             the check never ran, so a `false` there must not be read as
             "confirmed not frozen". Same posture as `divergence_checked`.
         single_source:               { type: boolean, default: false }
+        thin_market:
+          type: boolean
+          default: false
+          description: >-
+            True when the request opted in with `include_thin=true` and a
+            served price comes from a market below the substance floor. Key
+            any low-confidence marker on this flag, never on `confidence`.
         diverged:
           type: boolean
           default: false
@@ -19056,6 +19090,19 @@ components:
         price_usd:          { type: [string, "null"], description: "Current per-asset USD price as a fixed-precision decimal string — same value `/v1/price?asset=…&quote=fiat:USD` returns. Inlined so wallet UIs don't need a second round-trip. Null when no USD price can be derived, or when it is withheld — `price_withheld_reason` then says why. When `price_basis` is present the value is NOT a market observation — see that field." }
         price_basis:        { type: string, enum: [declared_peg, transitive], description: "Present ONLY when price_usd is not a DIRECT market observation. `declared_peg`: the price was filled from an operator-declared 1:1 fiat peg × the current fiat→USD FX rate (pricing_guard.fiat_pegged_classic_assets) because no market-derived price survived the thin-market substance gate — peg-priced rows deliberately carry no change pills, sparkline claim, or market_cap derived from the peg, because the fill asserts a conversion basis, not a market. `transitive`: the price was derived through ONE intermediate hop (asset→hop, hop→USD) where the asset has no direct USD or XLM market of its own; BOTH legs are independently substance-gated before the value is served, so a thin intermediate cannot reprice everything quoted against it. Note this value is served ONLY here — `/v1/price` answers for direct markets and returns no price for a transitive asset. Absent = direct market-derived (the pre-existing contract, unchanged)." }
         price_withheld_reason: { type: string, enum: [substance, scam_issuer, upstream_leg, unattributed], description: "Present ONLY when price_usd is null because the price was WITHHELD — the market exists and the server declines to publish it — rather than never observed. `/v1/price` answers the same pair with a `price-withheld` 404, and the values are the `reason` vocabulary of `/v1/price/tip/stream`'s `price_withheld` event: `substance` (trailing market activity below the serve floor), `scam_issuer` (a directory-flagged issuer), `upstream_leg` (the stablecoin-proxy leg the USD price derives from is itself withheld), `unattributed` (withheld for a cause the server could not attribute, e.g. the issuer-directory check did not complete). market_cap_usd and fdv_usd are null with it. Absent beside a null price_usd means no price exists, or (listing rows, with flags.stale true) the thin-market gate could not measure the row." }
+        thin_market:
+          type: boolean
+          description: >-
+            True when `price_usd` was served under `include_thin=true` from a
+            market below the substance floor. No market cap, FDV, change
+            pill, price history or ATH derives from it.
+        substance:
+          description: >-
+            The substance measurement behind a thin price (detail only).
+            `substance` without `thin_market`: a declared peg or the global
+            price won; see `price_basis`.
+          allOf:
+            - { $ref: "#/components/schemas/SubstanceEvidence" }
         change_24h_pct:     { type: [string, "null"], description: "Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. \"+1.27\", \"-0.05\", \"0.00\"). Null when the asset has no current USD price or no comparison bucket ~24h ago." }
         market_cap_usd:     { type: [string, "null"], description: "circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale." }
         fdv_usd:            { type: [string, "null"], description: "max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null, USD price unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale." }
@@ -19189,7 +19236,7 @@ components:
         trade_count_24h:    { type: [integer, "null"], description: "Trades the asset participated in over the trailing 24h." }
         price_history_24h:
           type: [array, "null"]
-          description: "24 hourly USD-price samples (oldest first) for sparkline rendering."
+          description: "24 hourly USD-price samples (oldest first) for sparkline rendering. Null on a `thin_market` row; raw series on /v1/ohlc, /v1/observations."
           items:
             type: object
             properties:
@@ -19198,7 +19245,7 @@ components:
             required: [t]
         price_history_7d:
           type: [array, "null"]
-          description: "7 daily USD-price samples (oldest first)."
+          description: "7 daily USD-price samples (oldest first); also the listing `include=sparkline7d` series. Null on a `thin_market` row; raw series on /v1/ohlc, /v1/observations."
           items:
             type: object
             properties:
@@ -19207,7 +19254,7 @@ components:
             required: [t]
         ath:
           type: [object, "null"]
-          description: "All-time-high USD price + when it was set. Null when no USD-quoted history."
+          description: "All-time-high USD price + when it was set. Null when no USD-quoted history, and on a `thin_market` row; raw series on /v1/ohlc, /v1/observations."
           properties:
             usd: { type: string }
             at:  { type: string, format: date-time }
@@ -19668,7 +19715,7 @@ components:
         # pair. Omitted when no cached score is available — clients
         # that gate on confidence MUST treat the absence as "unknown",
         # not "low".
-        confidence:        { type: [number, "null"], format: float, minimum: 0, maximum: 1, description: "Multi-factor confidence score in [0, 1] (ADR-0019)." }
+        confidence:        { type: [number, "null"], format: float, minimum: 0, maximum: 1, description: "Multi-factor confidence score in [0, 1] (ADR-0019). Under `flags.thin_market` it is capped at a declared ceiling of 0.10, not a measurement; only on /v1/price." }
         confidence_factors:
           type: [object, "null"]
           description: "Per-factor decomposition of confidence (ADR-0019)."
@@ -19743,6 +19790,10 @@ components:
                 27 for a pair already released, or no baseline exists), so a confidence of 0.5 may be the
                 cap rather than the evidence. False means the
                 multi-factor score was served without the ceiling.
+        substance:
+          description: "The substance measurement behind a `flags.thin_market` price."
+          allOf:
+            - { $ref: "#/components/schemas/SubstanceEvidence" }
       required: [asset_id, quote, price, price_type, observed_at]
 
     PriceEnvelope:
@@ -19772,7 +19823,43 @@ components:
                 `price-withheld` 404. An id in neither `data` nor
                 `withheld` has no price data. Input order; absent when
                 nothing was withheld.
+            thin:
+              type: array
+              items: { type: string }
+              description: |
+                Requested ids in `data` whose price comes from a market
+                below the substance floor, served because the request opted
+                in with `include_thin=true`. Input order; absent otherwise.
+                No `change_24h_pct` is derived for these rows.
           required: [data]
+
+    SubstanceEvidence:
+      # The trailing substance measurement behind a thin-market verdict.
+      # Mirrors SubstanceEvidence in internal/api/v1/thin_admission.go.
+      type: object
+      properties:
+        base:           { type: string, description: "The request's base asset; the market measured is the alias union of base and quote." }
+        quote:          { type: string }
+        window_seconds: { type: integer, format: int64, description: "Length of the trailing window measured." }
+        measured_at:    { type: string, format: date-time, description: "When the measurement was taken; a cached verdict can be up to a minute old." }
+        window_end:     { type: string, format: date-time, description: "Where the measured window ends, on point-in-time reads only (the requested instant, grain-truncated)." }
+        volume_usd:     { type: string, description: "USD volume in the window (decimal string; never a JSON number)." }
+        buckets:        { type: integer, format: int64, description: "Active price buckets in the window." }
+        valued_buckets: { type: integer, format: int64, description: "Active buckets carrying a USD valuation." }
+        span_seconds:   { type: integer, format: int64, description: "First-to-last active bucket span." }
+        floor:
+          type: object
+          description: The substance policy the measurement was held to.
+          properties:
+            min_volume_usd:   { type: string, description: "Decimal string." }
+            min_buckets:      { type: integer, format: int64 }
+            min_span_seconds: { type: integer, format: int64 }
+          required: [min_volume_usd, min_buckets, min_span_seconds]
+        failed:
+          type: string
+          enum: [buckets, span, volume, volume_unvalued]
+          description: The first floor the measurement fails.
+      required: [base, quote, window_seconds, measured_at, volume_usd, buckets, valued_buckets, span_seconds, floor, failed]
 
     PriceChangeHorizon:
       # One trailing-window delta on /v1/price/changes. Every field
@@ -19803,6 +19890,9 @@ components:
         withheld:
           type: boolean
           description: "True when the reference bucket exists but a serving gate refused to publish it (thin-market or scam-issuer gate, or the serving-sanity guard). Always false when available is true."
+        thin_market:
+          type: boolean
+          description: "True when this horizon's reference price comes from a market below the substance floor, served under `include_thin=true`."
       required: [change_pct, reference_price, reference_at, resolution, available, withheld]
 
     PriceChanges:
@@ -19824,6 +19914,10 @@ components:
         "24h": { $ref: "#/components/schemas/PriceChangeHorizon" }
         "7d":  { $ref: "#/components/schemas/PriceChangeHorizon" }
         "30d": { $ref: "#/components/schemas/PriceChangeHorizon" }
+        substance:
+          description: "The substance measurement behind a thin current price (current bucket only; a horizon carries only its flag)."
+          allOf:
+            - { $ref: "#/components/schemas/SubstanceEvidence" }
       required: [asset_id, quote, current_price, current_price_type, observed_at, resolution, 1h, 24h, 7d, 30d]
 
     PriceChangesEnvelope:
@@ -21218,4 +21312,12 @@ components:
             Month-to-date request count that triggered the cap.
             Omitted on `monthly-quota-unavailable` — the counter read
             failed, so there is no honest value to report.
+        substance:
+          description: >
+            Extension member on a `price-withheld` 404 from `/v1/price`,
+            `/v1/price/at` and `/v1/price/changes`, for a thin-market reason
+            (`substance`, `upstream_leg`, `unattributed`) only: the
+            measurement the price was withheld on. Absent otherwise.
+          allOf:
+            - { $ref: "#/components/schemas/SubstanceEvidence" }
       required: [type, title, status]
