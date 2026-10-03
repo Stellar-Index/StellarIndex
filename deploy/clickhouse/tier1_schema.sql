@@ -1458,3 +1458,58 @@ ENGINE = MergeTree
 -- ch-census-rollup recomputes and swaps with REPLACE PARTITION '<day>'.
 PARTITION BY day
 ORDER BY (day, contract_id);
+
+-- ── account_entry_changes / asset_entry_changes / entry_history_watermark —
+--    see deploy/clickhouse/entry_history.sql ──
+CREATE TABLE IF NOT EXISTS stellar.account_entry_changes
+(
+    account          String,
+    ledger           UInt32,
+    close_time       DateTime('UTC'),
+    tx_hash          String,
+    op_index         Int32,
+    change_index     UInt32,
+    role             LowCardinality(String),
+    intra_ledger_seq UInt32,
+    entry_type       LowCardinality(String),
+    change_type      LowCardinality(String),
+    changed          Array(LowCardinality(String)),
+    asset            String DEFAULT '',
+    balance          Int128,
+    fields           String DEFAULT '{}' CODEC(ZSTD(3)),
+    ingested_at      DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger, 1000000)
+ORDER BY (account, ledger, tx_hash, op_index, change_index, role);
+
+CREATE TABLE IF NOT EXISTS stellar.asset_entry_changes
+(
+    asset            String,
+    ledger           UInt32,
+    close_time       DateTime('UTC'),
+    tx_hash          String,
+    op_index         Int32,
+    change_index     UInt32,
+    role             LowCardinality(String),
+    intra_ledger_seq UInt32,
+    entry_type       LowCardinality(String),
+    change_type      LowCardinality(String),
+    changed          Array(LowCardinality(String)),
+    account          String DEFAULT '',
+    balance          Int128,
+    fields           String DEFAULT '{}' CODEC(ZSTD(3)),
+    ingested_at      DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger, 1000000)
+ORDER BY (asset, ledger, tx_hash, op_index, change_index, role);
+
+CREATE TABLE IF NOT EXISTS stellar.entry_history_watermark
+(
+    name        String,
+    thru_ledger UInt32,
+    updated_at  DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY name;

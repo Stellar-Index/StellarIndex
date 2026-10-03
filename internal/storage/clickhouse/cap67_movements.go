@@ -249,9 +249,8 @@ func cap67AdvanceProven(ctx context.Context, conn driver.Conn, from, thru uint32
 // magnitude cheaper than the tip-resolving window function, and paid once per
 // window rather than per row.
 func cap67WindowContiguous(ctx context.Context, conn driver.Conn, from, thru uint32) error {
-	const q = `SELECT toUInt64(count(DISTINCT ledger_seq)) FROM stellar.ledgers WHERE ledger_seq >= ? AND ledger_seq <= ?`
-	var present uint64
-	if err := conn.QueryRow(ctx, q, from, thru).Scan(&present); err != nil {
+	present, err := windowLedgersPresent(ctx, conn, from, thru)
+	if err != nil {
 		return fmt.Errorf("clickhouse: cap67 window [%d,%d] contiguity: %w", from, thru, err)
 	}
 	if want := uint64(thru-from) + 1; present != want {
@@ -259,6 +258,15 @@ func cap67WindowContiguous(ctx context.Context, conn driver.Conn, from, thru uin
 			ErrCap67MovementsHole, from, thru, present, want)
 	}
 	return nil
+}
+
+// windowLedgersPresent counts the distinct ledgers stellar.ledgers holds in
+// [from, thru] — the derive watermarks' contiguity proof.
+func windowLedgersPresent(ctx context.Context, conn driver.Conn, from, thru uint32) (uint64, error) {
+	const q = `SELECT toUInt64(count(DISTINCT ledger_seq)) FROM stellar.ledgers WHERE ledger_seq >= ? AND ledger_seq <= ?`
+	var present uint64
+	err := conn.QueryRow(ctx, q, from, thru).Scan(&present)
+	return present, err
 }
 
 // cap67WindowEventsPresent errors (wrapping ErrCap67MovementsEventShortfall)

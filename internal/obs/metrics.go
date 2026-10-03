@@ -735,7 +735,8 @@ func seedBoundedLabelSeriesTail() {
 	// distinguishable from "never wired".
 	for _, kind := range []string{
 		"tx_read_errors", "tx_event_read_errors", "entry_meta_unsupported",
-		"soroban_fee_meta_unsupported", "tx_read_errors_census", "tx_event_read_errors_census",
+		"soroban_fee_meta_unsupported", "evicted_keys_unreadable", "tx_read_errors_census",
+		"tx_event_read_errors_census",
 	} {
 		ChLiveSinkReadUndercountTotal.WithLabelValues(kind)
 	}
@@ -5074,7 +5075,7 @@ var ChLiveSinkLedgersTotal = prometheus.NewCounterVec(
 var ChLiveSinkReadUndercountTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ch_live_sink_read_undercount_total",
-		Help: "Transactions/ledgers a read path could not fully decode, labelled by kind (tx_read_errors|tx_event_read_errors|entry_meta_unsupported|soroban_fee_meta_unsupported|tx_read_errors_census|tx_event_read_errors_census).",
+		Help: "Transactions/ledgers a read path could not fully decode, labelled by kind (tx_read_errors|tx_event_read_errors|entry_meta_unsupported|soroban_fee_meta_unsupported|evicted_keys_unreadable|tx_read_errors_census|tx_event_read_errors_census).",
 	},
 	[]string{"kind"},
 )

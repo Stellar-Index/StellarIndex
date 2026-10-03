@@ -18,6 +18,9 @@ export type PriceProvenance =
   | 'vwap1m'
   | 'triangulated'
   | 'listing'
+  // The vetted token's global ticker price across venues, filled because
+  // no Stellar market price survived the gates.
+  | 'global_market'
   | 'declared_peg'
   // A two-hop DEX route priced by /v1/assets ({asset→hop}, {hop→USD}),
   // both legs substance-gated. Deliberately NOT folded into
@@ -115,8 +118,12 @@ export function LiveAssetPrice({
   // before /v1/assets would serve it. Blanking the route price on
   // that verdict would delete a gated price because a DIFFERENT,
   // ungated one was correctly refused.
+  // 'global_market' is filled exactly when the Stellar market was refused,
+  // so the withheld verdict is expected there too.
   const derived =
-    initialProvenance === 'declared_peg' || initialProvenance === 'transitive';
+    initialProvenance === 'global_market' ||
+    initialProvenance === 'declared_peg' ||
+    initialProvenance === 'transitive';
   const withheld = poll.withheld && !derived;
   const price = poll.withheld && derived ? initialPrice : poll.price;
   const live = poll.polled;
@@ -148,7 +155,8 @@ export function LiveAssetPrice({
   const tipNumber = tipPriceStr != null ? Number(tipPriceStr) : NaN;
   const tipActive = Number.isFinite(tipNumber) && tipNumber > 0;
   const flash = usePriceFlash(tipActive ? tipPriceStr : undefined);
-  const caveat = tipActive && tip ? tipCaveat(tip.data.data, tip.data.flags) : null;
+  const caveat =
+    tipActive && tip ? tipCaveat(tip.data.data, tip.data.flags) : null;
 
   const shown = tipActive ? tipNumber : price;
 
@@ -214,6 +222,11 @@ export function LiveAssetPrice({
         {!withheld &&
           !tipActive &&
           shown != null &&
+          provenance === 'global_market' &&
+          'global market · cross-venue aggregator price · not a Stellar market'}
+        {!withheld &&
+          !tipActive &&
+          shown != null &&
           provenance === 'declared_peg' &&
           'pegged · declared 1:1 fiat peg × fx rate · not a market price'}
         {!withheld &&
@@ -233,6 +246,7 @@ export function LiveAssetPrice({
           shown != null &&
           !live &&
           provenance !== 'listing' &&
+          provenance !== 'global_market' &&
           provenance !== 'declared_peg' &&
           provenance !== 'transitive' &&
           ' · as baked at deploy'}

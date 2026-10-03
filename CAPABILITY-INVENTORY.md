@@ -40,6 +40,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Decode classic op body → `xdrjson.DecodeOperationBody(bodyB64)`
 - Participant accounts → `xdrjson.ParticipantAccounts(bodyB64)`
 - SAC contract id for a classic asset → `xdrjson.SACContractID(assetID, passphrase)`
+- Decode a classic ledger entry to its state fields → `xdrjson.LedgerEntryFields(entry)`
 - Human names → `OpTypeName`, `MemoTypeName`, `AssetID`, `TrustLineAssetID`
 
 ## SEP-1 / stellar.toml + verified currency

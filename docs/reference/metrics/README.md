@@ -1549,7 +1549,7 @@ the per-tick delta.
 
 Counter, label `kind` (`tx_read_errors` | `tx_event_read_errors` |
 `entry_meta_unsupported` | `soroban_fee_meta_unsupported` |
-`tx_read_errors_census` | `tx_event_read_errors_census`). Every kind is
+`evicted_keys_unreadable` | `tx_read_errors_census` | `tx_event_read_errors_census`). Every kind is
 seeded at zero.
 
 Transactions the indexer's two per-ledger read paths could not fully
@@ -1567,6 +1567,11 @@ ledger, not a ledger count.
   `TransactionMeta` version the charged-fee read does not handle, so their
   `soroban_nonrefundable_fee` / `soroban_refundable_fee` /
   `soroban_rent_fee` are written as 0.
+- `evicted_keys_unreadable` — the same extract
+  (`LedgerExtract.EvictedKeysUnreadable`): the ledger's evicted-keys list
+  could not be read, so its eviction `removed` rows are missing and each
+  evicted entry's last write stays current in `ledger_entries_current`.
+  Counts ledgers, not transactions.
 - `tx_read_errors_census`, `tx_event_read_errors_census` —
   `dispatcher.CensusLedger` for the `ledger_ingest_log` substrate row,
   which the indexer skips on any non-zero count: a substrate gap.
