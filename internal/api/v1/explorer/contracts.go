@@ -169,7 +169,7 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 		out.NextCursor = fmt.Sprintf("%d.%s.%d.%d", last.Seq, last.TxHash, last.OpIndex, last.EventIndex)
 	}
 	if !cur.IsSet() {
-		h.writeJSONAt(w, out, degraded, asOf)
+		h.writeJSONAt(w, out, degraded, degraded, asOf)
 		return
 	}
 	_, stale, _ := h.lakeTip(ctx)

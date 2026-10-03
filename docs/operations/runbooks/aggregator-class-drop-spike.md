@@ -124,4 +124,4 @@ Capture for the postmortem:
   `aggregator-outlier-storm`, whose 2026-08-28 redesign no longer
   shares the `offset 1h` shape.
 - 2026-04-25 — initial draft alongside the aggregator metrics
-  PR #26 wire-up.
+  commit 5f64f5e7b wire-up.

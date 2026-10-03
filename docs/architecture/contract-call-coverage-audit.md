@@ -14,7 +14,7 @@ status: point-in-time audit
 > Comparing per-contract activity on Stellar Expert vs our internal
 > `source_entry_counts` to find decoder coverage gaps. Companion to
 > [storage-considerations.md](storage-considerations.md) — both came
-> out of the post-#44 audit work.
+> out of the audit work that followed task #44.
 
 ## Methodology
 
@@ -140,13 +140,13 @@ This is heavy I/O at a 93% pool with snapshot held. **Gated on task #7's snapsho
 The audit confirms the gap but the fix is non-trivial:
 
 ```
-NOW   (this session) ──► audit done, doc shipped, #48 task design captured
+NOW   (this session) ──► audit done, doc shipped, task #48 design captured
 +0d   trim snapshot held, pool at 93%
 +7d   snapshot destroy frees 7 TB, pool → ~43%
-+7d   #48 implementation (design + walker + tests + ADR) — dedicated session
++7d   task #48 implementation (design + walker + tests + ADR) — dedicated session
 +8d   backfill replay across [L50.7M, tip] for router decoder
 +9d   verify cross-check matrix: router entry count climbs to ~40-65k
-+9d   #35 resume (other source backfills) with the same headroom
++9d   task #35 resume (other source backfills) with the same headroom
 ```
 
 ## Walker terrain check (2026-07-05) — what the lake has vs what the walker needs

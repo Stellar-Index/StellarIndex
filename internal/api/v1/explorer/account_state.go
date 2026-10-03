@@ -139,7 +139,7 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Accounts[i] = row
 	}
-	h.writeJSONAt(w, out, stale || snapshotStale, snap.AsOf)
+	h.writeJSONAt(w, out, stale || snapshotStale, snapshotStale, snap.AsOf)
 }
 
 // usdPriceMap builds parallel (asset, price) arrays for wealth ranking: native
@@ -629,7 +629,7 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	for i, hh := range holders {
 		out.Holders[i] = AssetHolderV{AccountID: hh.AccountID, Balance: strconv.FormatInt(hh.Balance, 10)}
 	}
-	h.writeJSONAt(w, out, stale || degraded, asOf.at)
+	h.writeJSONAt(w, out, stale || degraded, degraded, asOf.at)
 }
 
 // PrewarmAccountsWealth primes the wealth-ranking cache so no user ever

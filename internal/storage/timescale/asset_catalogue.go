@@ -530,9 +530,8 @@ func mustSQLTextArrayLiteral(vals []string) string {
 // predicates agree tag for tag (an asset that shows the explorer's
 // "⚠ Flagged" pill is exactly an asset this demotes).
 //
-// dir.tags is NULL for the overwhelming majority of rows (issuer absent
-// from the ~18.5k-row curated directory) and for every Soroban-native row
-// (a contract asset has no issuer account); unnest(NULL) yields zero rows
+// dir.tags is NULL for the overwhelming majority of rows (issuer or
+// contract absent from the ~18.5k-row curated directory); unnest(NULL) yields zero rows
 // so EXISTS is false and the row ranks normally — fail-OPEN, matching the
 // directory overlay and the scam pricing gate.
 var directoryScamFlaggedExpr = `EXISTS (SELECT 1 FROM unnest(dir.tags) t ` +
@@ -585,7 +584,7 @@ func listingRankTierExpr(order AssetsOrder) string {
 //
 // It reads NO hypertable and NO continuous aggregate. Both money columns
 // come from worker-maintained rollups keyed on asset_id — volume from
-// asset_volume_24h (migration 0087, #43) and price/change/source_count
+// asset_volume_24h (migration 0087, e0fbbbc3b) and price/change/source_count
 // from asset_price_snapshot (migration 0154, #331 F1) — so the cost of
 // a listing page is the spine plus three small hash joins, whatever the
 // limit / cursor / filter. Before #331 F1 this query materialised twelve
@@ -665,7 +664,7 @@ const listAssetsBaseSelect = `
 		     AND NOT EXISTS (SELECT 1 FROM classic_assets c WHERE c.asset_id = d.contract_id)
 		),
 		per_asset_24h_vol AS (
-		  -- #43 (2026-07-06 latency incident): read the trailing-24h
+		  -- e0fbbbc3b (2026-07-06 latency incident): read the trailing-24h
 		  -- per-asset USD volume from the asset_volume_24h rollup
 		  -- (migration 0087) instead of re-summing prices_1m per
 		  -- request. The aggregator's assetvolrollup worker runs the
@@ -766,13 +765,12 @@ const listAssetsBaseSelect = `
 		  -- 0136). Read ONLY by listingRankTierExpr's scam-flag demotion —
 		  -- the payload's issuer_directory_* fields are still stamped by the
 		  -- API layer's batch lookup, so this join changes ranking, never
-		  -- served data. Keyed on the issuer G-address exactly like
-		  -- v1.Server.fillIssuerDirectoryTags, so "demoted" and "shows the
-		  -- ⚠ Flagged pill" are the same set of rows. account_directory.address
-		  -- is the PRIMARY KEY, so this join can never fan a listing row out
-		  -- into duplicates; a NULL issuer (every Soroban-native row) simply
-		  -- misses and ranks normally.
-		  LEFT JOIN account_directory      dir    ON dir.address         = ca.issuer_g_strkey
+		  -- served data. Keyed exactly like v1.Server.fillIssuerDirectoryTags
+		  -- (the issuer G-address, or a Soroban-native row's own contract
+		  -- address), so "demoted" and "shows the ⚠ Flagged pill" are the
+		  -- same set of rows. account_directory.address is the PRIMARY KEY,
+		  -- so this join can never fan a listing row out into duplicates.
+		  LEFT JOIN account_directory      dir    ON dir.address         = COALESCE(ca.issuer_g_strkey, ca.asset_id)
 `
 
 // listAssetsBaseSelectSQL renders [listAssetsBaseSelect] for the active
@@ -847,7 +845,7 @@ const refreshAssetVolumePruneExpired = `DELETE FROM asset_volume_24h WHERE compu
 // RefreshAssetVolume24h is the aggregator's wired entry point into the
 // /v1/assets rollup refresh. It delegates to
 // [Store.RefreshAssetListingRollups], which refreshes asset_volume_24h
-// (this method's historical job, #43) AND asset_price_snapshot (#331
+// (this method's historical job, e0fbbbc3b) AND asset_price_snapshot (#331
 // F1) in one transaction.
 //
 // The name is narrower than the behaviour on purpose, and only for as
@@ -1716,7 +1714,7 @@ var getAssetBySlugSQL = `
 		  --   3. canonical asset_id (USDC-GA5Z…)         — asset_id column
 		  -- The OR-WHERE catches all three; the ORDER BY tiebreaks in
 		  -- preference order so a slug input wins over a code-only
-		  -- collision (the disambiguation guard from #45 / scam-token
+		  -- collision (the disambiguation guard from scam-token
 		  -- protection still applies on the friendly-slug path because
 		  -- a curated slug column value beats every code-only match).
 		  -- Pre-2026-05-10 canonical asset_id form (CODE-ISSUER) 404'd

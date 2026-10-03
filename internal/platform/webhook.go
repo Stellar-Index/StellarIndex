@@ -40,7 +40,7 @@ const (
 
 	// WebhookEventPriceAlert fires when one of the account's
 	// registered price-threshold alerts crosses its condition, once per
-	// crossing (BACKLOG #60). Unlike the operational events above, this is a
+	// crossing. Unlike the operational events above, this is a
 	// PER-ACCOUNT event: the aggregator's price-alert evaluator
 	// enqueues it only to the owning account's subscribed webhooks
 	// (via ListWebhooksForAccount, not the global fan-out), so one
@@ -98,14 +98,10 @@ func IsWebhookEventType(s string) bool {
 // posture is honest: the row IS recoverable by anyone with
 // SELECT on `customer_webhooks`.
 //
-// Customer surface: the plaintext key is returned exactly once
-// from `POST /v1/dashboard/webhooks` at creation time and never
-// served back through any API surface again. Re-rotation
-// requires deleting + recreating the webhook so the customer
-// gets a fresh visible key — there is NO "rotate-in-place"
-// path because every such design either re-exposes the old
-// secret to the operator-side audit log or breaks the
-// "exactly-once visibility" property the audit required.
+// Customer surface: each plaintext key is returned exactly once —
+// from `POST /v1/dashboard/webhooks` at creation and from
+// `POST /v1/dashboard/webhooks/{id}/rotate-secret` at rotation — and
+// never served back through any API surface again.
 type CustomerWebhook struct {
 	ID        uuid.UUID
 	AccountID uuid.UUID
@@ -116,10 +112,25 @@ type CustomerWebhook struct {
 	// as `SecretHash` to avoid a Postgres column rename in the
 	// same change-set that introduces the truthful comment.
 	SecretHash []byte
-	Events     []string
-	Enabled    bool
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// PreviousSecret is the key SecretHash held before the last rotation;
+	// deliveries are also signed with it until PreviousSecretExpiresAt so
+	// a receiver can switch keys without rejecting deliveries. Both are
+	// zero when no rotation overlap is open.
+	PreviousSecret          []byte
+	PreviousSecretExpiresAt time.Time
+	Events                  []string
+	Enabled                 bool
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+}
+
+// ActivePreviousSecret returns PreviousSecret while its overlap window is
+// open at now, else nil.
+func (w CustomerWebhook) ActivePreviousSecret(now time.Time) []byte {
+	if len(w.PreviousSecret) == 0 || !now.Before(w.PreviousSecretExpiresAt) {
+		return nil
+	}
+	return w.PreviousSecret
 }
 
 // WebhookDelivery is one attempt to deliver an event to a
@@ -182,26 +193,13 @@ type WebhookStore interface {
 	// the account's webhooks.
 	UpdateWebhook(ctx context.Context, w CustomerWebhook) error
 
-	// RotateWebhookSecret replaces the signing secret. Returns
-	// the new plaintext.
-	//
-	// F-1244 (codex audit-2026-05-13): the prior docstring said
-	// "shown once, not stored". That was misleading — like create,
-	// the new secret IS persisted as the canonical
-	// `customer_webhooks.secret_hash` bytea so the delivery
-	// worker can sign future requests. "Shown once" is the
-	// customer-facing visibility property: the plaintext is
-	// returned by the API call exactly once and never served
-	// back through any subsequent read. The recoverability
-	// posture is identical to Create — see the
-	// [CustomerWebhook] struct doc for the at-rest model.
-	//
-	// Note: as of 2026-05-13 the Postgres implementation of
-	// RotateWebhookSecret is intentionally not wired (callers
-	// rotate by deleting + recreating). The interface is kept
-	// in the contract so the v2 dashboard can plug the in-place
-	// rotation path without re-shaping the store boundary.
-	RotateWebhookSecret(ctx context.Context, id uuid.UUID) (newSecret string, err error)
+	// RotateWebhookSecret makes newSecret the signing key IN PLACE: the
+	// current key moves to PreviousSecret, valid until previousExpiresAt,
+	// and the row, its queued deliveries and its delivery log are kept.
+	// A rotation inside an open overlap replaces the older previous key.
+	// Like create, the key is persisted raw — see [CustomerWebhook].
+	// Returns [ErrNotFound] when the webhook does not exist.
+	RotateWebhookSecret(ctx context.Context, id uuid.UUID, newSecret []byte, previousExpiresAt time.Time) error
 
 	// DeleteWebhook hard-deletes (cascades to deliveries).
 	DeleteWebhook(ctx context.Context, id uuid.UUID) error

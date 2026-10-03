@@ -46,6 +46,12 @@ import (
 // a full re-scan — is a follow-up.)
 const DefaultInterval = 6 * time.Hour
 
+// DefaultStartupDelay holds the first roll back after boot. The roll's long
+// ACCESS SHARE lock on `trades` would otherwise block a follow-up deploy's
+// migrations within that window of a restart. Rolls started by the tick can
+// still collide with a migration; that is not covered here.
+const DefaultStartupDelay = 30 * time.Minute
+
 // Refresher recomputes and atomically replaces the asset_volume_character
 // rollup. Production wiring is *timescale.Store.RefreshAssetVolumeCharacter;
 // tests use a fake.
@@ -58,13 +64,17 @@ type Refresher interface {
 type Options struct {
 	// Interval is the refresh cadence. <= 0 falls back to DefaultInterval.
 	Interval time.Duration
-	Logger   *slog.Logger
+	// StartupDelay is how long Run waits before the first roll. 0 rolls
+	// immediately; negative falls back to DefaultStartupDelay.
+	StartupDelay time.Duration
+	Logger       *slog.Logger
 }
 
 // Worker periodically refreshes the asset_volume_character rollup.
 type Worker struct {
 	refresher Refresher
 	interval  time.Duration
+	delay     time.Duration
 	logger    *slog.Logger
 }
 
@@ -78,20 +88,32 @@ func New(refresher Refresher, opts Options) *Worker {
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
+	delay := opts.StartupDelay
+	if delay < 0 {
+		delay = DefaultStartupDelay
+	}
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Worker{refresher: refresher, interval: interval, logger: logger}
+	return &Worker{refresher: refresher, interval: interval, delay: delay, logger: logger}
 }
 
-// Run refreshes once immediately (so a fresh boot doesn't omit
-// volume_character for a full interval), then on every tick until ctx is
-// cancelled. Refresh failures log + count in the metric; the worker never
+// Run refreshes once after the startup delay, then on every tick until ctx
+// is cancelled. Refresh failures log + count in the metric; the worker never
 // exits on a transient Postgres error.
 func (w *Worker) Run(ctx context.Context) error {
 	if w == nil {
 		return errors.New("assetcharacterrollup: nil Worker")
+	}
+	if w.delay > 0 {
+		t := time.NewTimer(w.delay)
+		defer t.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+		}
 	}
 	return rollupworker.Run(ctx, w.interval, w.refresh)
 }

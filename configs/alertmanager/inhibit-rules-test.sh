@@ -68,6 +68,8 @@ EXPECTED = {
     "stellarindex_galexie_archive_tip_lag_high": "galexie_archive_tip_lag",
     "stellarindex_zfs_pool_critical_space": "zfs_pool_capacity",
     "stellarindex_zfs_pool_low_space": "zfs_pool_capacity",
+    "stellarindex_zfs_pool_fill_90pct_within_7d": "zfs_pool_fill_trend",
+    "stellarindex_zfs_pool_fill_85pct_within_30d": "zfs_pool_fill_trend",
     "stellarindex_ingestion_all_sources_stopped": "ingestion_source_stopped",
     "stellarindex_ingestion_source_stopped": "ingestion_source_stopped",
     "stellarindex_ingestion_source_stopped_low_volume_dex": "ingestion_source_stopped",

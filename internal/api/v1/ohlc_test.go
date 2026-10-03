@@ -176,8 +176,8 @@ func (r *ohlcPairAwareReader) TradesInRange(_ context.Context, pair canonical.Pa
 // USDC peg, the OHLC handler retries against X/<USDC-classic> and
 // returns the bar with flags.triangulated=true. Mirrors
 // /v1/chart's chartStablecoinFallback and the same family
-// of fixes shipped this session for /v1/price (#1217), /v1/price/tip
-// (#1218), /v1/vwap + /v1/twap, /v1/oracle/lastprice (#1220).
+// of fixes shipped this session for /v1/price (6505934b5), /v1/price/tip
+// (a8be130dd), /v1/vwap + /v1/twap, /v1/oracle/lastprice (3aaa5c2a4).
 //
 // Without this, /v1/ohlc?base=native&quote=fiat:USD 404s with
 // "no trades in window" out of the box — /v1/ohlc is
