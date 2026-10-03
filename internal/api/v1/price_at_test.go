@@ -170,7 +170,7 @@ func (s priceAtPairStub) PriceAt(_ context.Context, pair canonical.Pair, _ time.
 }
 
 // TestHandlePriceAt_StablecoinFallback pins the CAGG sibling of the
-// #1217-family stablecoin proxy: a historical native/fiat:USD lookup
+// 6505934b5-family stablecoin proxy: a historical native/fiat:USD lookup
 // with no direct fiat:USD bucket serves the USD-pegged-classic bucket
 // instead, echoing the REQUESTED quote and stamping
 // flags.triangulated.

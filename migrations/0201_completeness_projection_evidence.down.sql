@@ -1,4 +1,4 @@
--- 0199 down — drop the projection evidence columns. Dev/local only
+-- 0201 down — drop the projection evidence columns. Dev/local only
 -- (migrations/README.md rule 9); the binary that writes them must be
 -- rolled back first.
 

@@ -20,10 +20,16 @@ related:
 > sha256) that this template never asked for. See
 > [`sla-proof-procedure.md`](sla-proof-procedure.md).
 >
-> The sections below that the generator does **not** produce —
-> per-endpoint share weights, concurrent-ingest counts, Grafana
-> snapshots, sign-off — are unimplemented rather than dropped. The
-> Grafana rows in particular refer to a host that does not exist.
+> The sections below that the generator does **not** produce are
+> decided, not pending:
+>
+> - **Grafana snapshots:** dropped. The host never existed; the saved
+>   query extract replaces them (see the procedure).
+> - **Sign-off:** dropped. Provenance plus the export sha256 is the
+>   attestation; a hand-entered name backs no number.
+> - **Per-endpoint share weights, concurrent-ingest counts:** not
+>   generated. Add them only as a change to `render-sla-proof.sh` and
+>   its test, tracked as its own item.
 
 **This was the template.** Copy to
 `docs/operations/sla-proof-YYYY-MM-DD.md` after each canonical

@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Migration 0199 + the verdict write: computed_at is restamped by every run,
+// Migration 0201 + the verdict write: computed_at is restamped by every run,
 // including one that only carried the projection claim forward, so the
 // evidence time must be stored apart from it and survive a carry.
 func TestCompletenessProjectionEvidence(t *testing.T) {
@@ -39,7 +39,7 @@ func TestCompletenessProjectionEvidence(t *testing.T) {
 			    substrate_ok, recognition_ok, projection_ok, detail, computed_at)
 			VALUES ($1, 2, 64000000, 64000000, 1, true, true, 0, 51499546, true, true, true, $2, $3)`,
 			r.source, r.detail, provenAt); err != nil {
-			t.Fatalf("seed pre-0199 %s: %v", r.source, err)
+			t.Fatalf("seed pre-0201 %s: %v", r.source, err)
 		}
 	}
 	applyMigrations(t, dsn)
@@ -115,7 +115,7 @@ func TestCompletenessProjectionEvidence(t *testing.T) {
 		t.Fatalf("read columns: %v", err)
 	}
 	if cols != 0 {
-		t.Errorf("0199 down left %d evidence column(s) in place", cols)
+		t.Errorf("0201 down left %d evidence column(s) in place", cols)
 	}
 	applyMigrations(t, dsn)
 }

@@ -100,7 +100,7 @@ sudo -u postgres psql -d stellarindex -c \
 - **Event sources** clear on their own. Each `-pass` re-proves from genesis
   the expired (> 7 d, or `null`) sources, oldest first, at most three per night
   (the pass logs `re-proving expired projection evidence from genesis this
-  pass: …`). Right after migration 0199 every green source is `null`, so the
+  pass: …`). Right after migration 0201 every green source is `null`, so the
   flag holds for about `ceil(green sources / 3)` nights. If a source stays
   expired past that, check the pass's error for a deadline cut.
 - **`sdex` (the census) is re-proved weekly by its own timer.** Its full
@@ -108,7 +108,7 @@ sudo -u postgres psql -d stellarindex -c \
   re-floors it. `compute-completeness-sdex.timer` (Sunday 18:47 UTC) runs the
   nightly driver as `-source sdex -timeout 360m` under the same
   `run-heavy-job.sh` job name, so it never overlaps the nightly pass. Right
-  after migration 0199, sdex stays `null` until that first Sunday run. If the
+  after migration 0201, sdex stays `null` until that first Sunday run. If the
   timer failed or missed a week (`systemctl status compute-completeness-sdex`,
   `journalctl -u compute-completeness-sdex`), re-run it off-peak and outside
   the 05:30 UTC pass window:
@@ -163,7 +163,7 @@ The `detail` column names the per-target Δ and window.
 
 ## Changelog
 
-- 2026-10-02 — added the projection-evidence stale reason (migration 0199):
+- 2026-10-02 — added the projection-evidence stale reason (migration 0201):
   the `-pass` re-proves up to three expired sources per night;
   `compute-completeness-sdex.timer` re-proves `sdex` weekly.
 - 2026-09-30 — the nightly `-pass` orders from-genesis re-verifies last,

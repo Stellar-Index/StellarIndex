@@ -19,7 +19,7 @@ forward.
   the policy refresh window; the 90+-day raw history that 0031
   preserved isn't in the CAGG until you refresh.
 - After **migration 0040** (removed `oracle_updates` retention,
-  2026-05-22, #14). Same shape — the 0034 oracle CAGGs cover their
+  2026-05-22, a4fa3f2e8). Same shape — the 0034 oracle CAGGs cover their
   policy window, the recently-preserved raw history needs a
   one-shot recompute.
 - After any **operator-side raw backfill** that lands rows older

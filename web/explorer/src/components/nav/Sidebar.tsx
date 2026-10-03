@@ -35,7 +35,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useMe, useStatus } from '@/api/hooks';
-import { API_BASE_URL } from '@/api/client';
+import { logout } from '@/api/account';
 import { cn } from '@/lib/cn';
 import { useDialog } from '@/lib/useDialog';
 import { StellarMark } from '@/components/StellarMark';
@@ -382,14 +382,17 @@ function AccountMenu({ email }: { email?: string }) {
   const close = useCallback(() => setOpen(false), []);
   const panelRef = useDialog<HTMLDivElement>(open, close);
 
+  const [signOutFailed, setSignOutFailed] = useState(false);
+
+  // Navigate only once the server confirmed the session is gone; a failed
+  // request leaves the visitor signed in, so say so instead of pretending.
   async function signOut() {
+    setSignOutFailed(false);
     try {
-      await fetch(`${API_BASE_URL}/v1/auth/logout`, {
-        method: 'POST',
-        credentials: 'include',
-      });
+      await logout();
     } catch {
-      /* best-effort */
+      setSignOutFailed(true);
+      return;
     }
     window.location.href = '/';
   }
@@ -446,6 +449,11 @@ function AccountMenu({ email }: { email?: string }) {
             <LogOut className="text-ink-faint h-3.5 w-3.5" />
             Sign out
           </button>
+          {signOutFailed && (
+            <p role="alert" className="text-bad-700 px-3 pt-1 text-xs">
+              Sign out failed. Try again.
+            </p>
+          )}
         </div>
       )}
     </div>

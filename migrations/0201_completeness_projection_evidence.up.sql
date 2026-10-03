@@ -1,4 +1,4 @@
--- 0199 up — record WHEN the projection claim was last proven, separately
+-- 0201 up — record WHEN the projection claim was last proven, separately
 -- from when it was last restated: add `projection_reconciled_from` and
 -- `projection_evidenced_at` to completeness_snapshots.
 --
@@ -17,12 +17,12 @@
 --     reconcile covered. [projection_reconciled_from, watermark_ledger]
 --     was proven at computed_at; [projection_verified_from,
 --     projection_reconciled_from - 1] was carried. 0 = not recorded
---     (pre-0199 row, or projection not evaluated).
+--     (pre-0201 row, or projection not evaluated).
 --   projection_evidenced_at — when one run last reconciled the WHOLE
 --     served range cleanly: the age of the oldest evidence behind
 --     projection_ok = true. A carry keeps the prior value; a fresh full
 --     reconcile stamps now(). NULL = no evidence on record (no clean
---     projection claim, a pre-0199 row, or a carry from such a row).
+--     projection claim, a pre-0201 row, or a carry from such a row).
 --
 -- Backfill: a row whose stored detail states that its run verified "the
 -- full range the served tier holds" (projectionClaim rule 2's exact text)
@@ -61,7 +61,7 @@ COMMENT ON COLUMN completeness_snapshots.projection_reconciled_from IS
     'Lowest ledger THIS run''s projection reconcile covered: '
     '[projection_reconciled_from, watermark_ledger] was proven at '
     'computed_at, anything below it down to projection_verified_from was '
-    'carried from the prior verdict. 0 = not recorded (pre-0199 row, or '
+    'carried from the prior verdict. 0 = not recorded (pre-0201 row, or '
     'projection not evaluated).';
 
 COMMENT ON COLUMN completeness_snapshots.projection_evidenced_at IS

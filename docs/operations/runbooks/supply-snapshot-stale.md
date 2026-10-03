@@ -141,8 +141,8 @@ systemctl start supply-snapshot.service
   alert is real on r1. Rule citation → `rules.r1/supply-snapshot.yml`
   with per-alert severities; commands use r1 shapes;
   `_never_initialized` added to Related.
-- 2026-04-30 — initial draft alongside #295 (textfile + alerts).
-- 2026-04-30 — added two-refresh-paths callout. PR #318's
+- 2026-04-30 — initial draft alongside 1f63b0d56 (textfile + alerts).
+- 2026-04-30 — added two-refresh-paths callout. Commit 8f7aea4fe's
   supply-pipeline architecture documents two producers of
   `asset_supply_history` (systemd timer + aggregator goroutine);
   this alert is timer-path-only, so deployments using the
