@@ -344,13 +344,13 @@ func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clic
 // the request context was the failure (route-sweep 2026-07-29): the
 // day-window FINAL GROUP BY shared the directory's 8s budget and dragged
 // the whole /v1/operations page into its 503 class every 5 minutes.
-func (h *Handler) resolveOpTypeStats() []OpTypeStatV {
+func (h *Handler) resolveOpTypeStats() (stats []OpTypeStatV, fresh bool) {
 	cached, fresh := h.opTypeStats.get()
 	if fresh {
-		return cached
+		return cached, true
 	}
 	h.refreshOpTypeStats() //nolint:contextcheck // intentional detach — the aggregate must never share a request deadline (see refreshOpTypeStats)
-	return cached          // stale (or nil on a cold process — panel appears next request)
+	return cached, false   // stale (or nil on a cold process — panel appears next request)
 }
 
 // PrewarmOpTypeStats primes the trailing-24h op-type breakdown so a cold
@@ -433,6 +433,9 @@ type OperationsView struct {
 	// Zero/false on the no-cursor directory arm, which pages instead.
 	Total     uint32 `json:"total,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
+	// opTypeStatsStale records that OpTypeStats was stale or absent when the
+	// page was assembled, so a cached copy still serves as degraded.
+	opTypeStatsStale bool
 }
 
 // OpTypeStatV is one op-type's count in the trailing-24h window.
@@ -558,15 +561,43 @@ type ThroughputBucketV struct {
 	// TotalCoins are XLM stroops as decimal strings — total_coins is
 	// ~117× past 2^53, so a JSON number would silently lose precision
 	// (ADR-0003). fee_pool is CUMULATIVE: daily fee burn is the delta
-	// between consecutive complete days.
+	// between consecutive complete days, minus FeePoolAdjustment.
 	FeePool         string `json:"fee_pool"`
 	TotalCoins      string `json:"total_coins"`
 	ProtocolVersion uint32 `json:"protocol_version"`
+	// FeePoolAdjustment is the stroops this day's fee_pool changed by
+	// outside any transaction fee (a protocol upgrade crediting the pool).
+	FeePoolAdjustment string `json:"fee_pool_adjustment,omitempty"`
 	// Partial is true for a bucket that does not cover a whole UTC day — in
 	// practice only today, still accumulating. Clients should render it
 	// distinctly and exclude it from window totals; every other bucket is a
 	// complete day (the window is day-aligned).
 	Partial bool `json:"partial,omitempty"`
+}
+
+// knownFeePoolAdjustments lists fee_pool credits that no transaction paid.
+// Each is keyed on its UTC day AND the protocol upgrade applied that day, so
+// a network whose upgrade fell on another day (testnet, futurenet) never
+// matches.
+var knownFeePoolAdjustments = []struct {
+	day                    string
+	fromProtocol, protocol uint32
+	stroops                int64
+}{
+	// Pubnet's P24 upgrade (ledger 59,501,299) credited the pool directly;
+	// total_coins did not change.
+	{day: "2025-10-22", fromProtocol: 23, protocol: 24, stroops: 31_879_035},
+}
+
+// feePoolAdjustment returns the non-fee fee_pool change for day as a stroop
+// string, or "" when there is none.
+func feePoolAdjustment(day string, prevProtocol, protocol uint32) string {
+	for _, a := range knownFeePoolAdjustments {
+		if a.day == day && a.fromProtocol == prevProtocol && a.protocol == protocol {
+			return strconv.FormatInt(a.stroops, 10)
+		}
+	}
+	return ""
 }
 
 // NetworkThroughput serves GET /v1/network/throughput — daily
@@ -629,8 +660,11 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 			ProtocolVersion: b.ProtocolVersion,
 			Partial:         b.Partial,
 		}
+		if i > 0 {
+			out.Buckets[i].FeePoolAdjustment = feePoolAdjustment(out.Buckets[i].Day, buckets[i-1].ProtocolVersion, b.ProtocolVersion)
+		}
 	}
-	h.writeJSONAt(w, out, degraded, asOf)
+	h.writeJSONAt(w, out, degraded, degraded, asOf)
 }
 
 // operationsDirectory serves GET /v1/operations: network-wide
@@ -672,7 +706,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 				"Internal error", http.StatusInternalServerError, "")
 			return
 		}
-		h.writeJSONAt(w, sliceOperationsView(view, limit), degraded, asOf)
+		h.writeJSONAt(w, sliceOperationsView(view, limit), degraded, degraded || view.opTypeStatsStale, asOf)
 		return
 	}
 
@@ -783,7 +817,9 @@ func (h *Handler) buildOperationsDirectory(ctx context.Context, limit int, cur c
 	// fail the listing (only attached on the first page to keep paging
 	// responses lean).
 	if !cur.IsSet() {
-		out.OpTypeStats = h.resolveOpTypeStats() //nolint:contextcheck // intentional detach — the 24h aggregate must never share a request deadline (see resolveOpTypeStats)
+		var fresh bool
+		out.OpTypeStats, fresh = h.resolveOpTypeStats() //nolint:contextcheck // intentional detach — the 24h aggregate must never share a request deadline (see resolveOpTypeStats)
+		out.opTypeStatsStale = !fresh
 	}
 	return out, nil
 }

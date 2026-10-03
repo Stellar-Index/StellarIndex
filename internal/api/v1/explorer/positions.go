@@ -363,7 +363,7 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 		IncludeClosed: includeClosed,
 		Note:          positionsHonestNote,
 		CoverageNote:  snap.coverageNote,
-	}, degraded, asOf)
+	}, degraded, degraded, asOf)
 }
 
 // ─── asset / venue display-label resolution ──────────────────────────

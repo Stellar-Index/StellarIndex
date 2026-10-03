@@ -121,5 +121,9 @@ describe('HomeHeroChart', () => {
     renderHero();
 
     expect(await screen.findByText('Frozen')).toBeInTheDocument();
+    // The held price, not the live tip that disagrees with it.
+    expect(await screen.findByText(/\$0\.170000/)).toBeInTheDocument();
+    expect(screen.queryByText(/live USD price/)).not.toBeInTheDocument();
+    expect(screen.getByText(/USD price · held/)).toBeInTheDocument();
   });
 });

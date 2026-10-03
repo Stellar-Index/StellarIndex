@@ -114,7 +114,7 @@ func TestTransactionByHash_IndexEmptiedUnderLiveReaderStopsBeingAuthoritative(t 
 	if n := countQueries(conn.queries, isIndexLookup); n != 1 {
 		t.Fatalf("index lookups = %d, want 1 — the emptied index must not be consulted at all", n)
 	}
-	if n := countQueries(conn.queries, isIndexProbe); n != 2 {
+	if n := countQueries(conn.queries, isIndexProbe) - countQueries(conn.queries, isCoverageProbe); n != 2 {
 		t.Fatalf("probes = %d, want 2 (cold start + one lease renewal)", n)
 	}
 

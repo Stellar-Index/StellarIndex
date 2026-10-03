@@ -138,8 +138,8 @@ func explorerHandlerFor(s *Server, opts Options, logger *slog.Logger) *explorerp
 		WriteJSON: func(w http.ResponseWriter, data any, stale bool) {
 			writeJSON(w, data, Flags{Stale: stale})
 		},
-		WriteJSONAt: func(w http.ResponseWriter, data any, stale bool, asOf time.Time) {
-			writeEnvelope(w, Envelope{Data: data, AsOf: WireTime(asOf.UTC()), Flags: Flags{Stale: stale}})
+		WriteJSONAt: func(w http.ResponseWriter, data any, stale, degraded bool, asOf time.Time) {
+			writeEnvelope(w, Envelope{Data: data, AsOf: WireTime(asOf.UTC()), Flags: Flags{Stale: stale, Degraded: degraded}})
 		},
 	}
 }
