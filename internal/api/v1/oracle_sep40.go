@@ -119,7 +119,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		// different answers, and only the withheld problem names the raw
 		// surfaces where the data IS available.
 		if !ok && (fb.withheld != "" || fb.err != nil) {
-			s.writeFallbackMiss(w, r, asset, defaultPriceQuote, fb)
+			s.writeFallbackMiss(w, r, asset, defaultPriceQuote, fb, nil)
 			return
 		}
 		// F-1339 (G2-02): every fallback degradation is below the
@@ -489,7 +489,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		ok := fb.ok
 		// MSP-06, as above.
 		if !ok && (fb.withheld != "" || fb.err != nil) {
-			s.writeFallbackMiss(w, r, base, quote, fb)
+			s.writeFallbackMiss(w, r, base, quote, fb, nil)
 			return
 		}
 		// F-1339 (G2-02): fallback responses surface flags.stale=true
