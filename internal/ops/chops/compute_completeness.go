@@ -401,7 +401,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 	priorProj, priorSub, priorRec, priorWatermark := buildPriorVerdicts(priorSnaps)
 	if *pass { // projectionFloor honours an expired carry only in -pass
-		if refloored := expireStaleCarries(priorProj, catalogue, time.Now(), *maxCarryAge, maxEvidenceRefloorsPerPass); len(refloored) > 0 {
+		if refloored := expireStaleCarries(priorProj, catalogue, time.Now(), *maxCarryAge); len(refloored) > 0 {
 			fmt.Fprintf(os.Stderr, "compute-completeness: re-proving expired projection evidence from genesis this pass: %s\n", strings.Join(refloored, ", "))
 		}
 	}
@@ -1515,13 +1515,13 @@ type priorProjection struct {
 const maxEvidenceRefloorsPerPass = 3
 
 // expireStaleCarries marks, oldest evidence first (unknown counts as oldest), at
-// most limit catalogue sources whose clean prior projection claim was last
+// most maxEvidenceRefloorsPerPass catalogue sources whose clean prior projection claim was last
 // reconciled in full longer than maxAge ago (or never) as expired, and returns
 // their names. Census sources are never marked: a full SDEX re-derive outlasts
 // the pass's deadline, and a deadline-cut source writes nothing, so a forced
 // re-floor would re-floor it every night and never refresh; its evidence ages
 // honestly until the weekly -source run re-proves it. maxAge <= 0 disables it.
-func expireStaleCarries(prior map[string]priorProjection, catalogue []reconSource, now time.Time, maxAge time.Duration, limit int) []string {
+func expireStaleCarries(prior map[string]priorProjection, catalogue []reconSource, now time.Time, maxAge time.Duration) []string {
 	var expired []string
 	for _, src := range catalogue {
 		p := prior[src.name]
@@ -1533,8 +1533,8 @@ func expireStaleCarries(prior map[string]priorProjection, catalogue []reconSourc
 	sort.SliceStable(expired, func(i, j int) bool {
 		return prior[expired[i]].evidencedAt.Before(prior[expired[j]].evidencedAt)
 	})
-	if len(expired) > limit {
-		expired = expired[:limit]
+	if len(expired) > maxEvidenceRefloorsPerPass {
+		expired = expired[:maxEvidenceRefloorsPerPass]
 	}
 	for _, name := range expired {
 		p := prior[name]

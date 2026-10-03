@@ -60,7 +60,7 @@ func TestExpireStaleCarries(t *testing.T) {
 		"unknown": {known: true, ok: true},
 		"failing": {known: true, ok: false},
 	}
-	expireStaleCarries(prior, cat, now, maxAge, maxEvidenceRefloorsPerPass)
+	expireStaleCarries(prior, cat, now, maxAge)
 	for name, want := range map[string]bool{"fresh": false, "old": true, "unknown": true, "failing": false} {
 		if got := prior[name].evidenceExpired; got != want {
 			t.Errorf("%s: evidenceExpired = %v, want %v", name, got, want)
@@ -68,7 +68,7 @@ func TestExpireStaleCarries(t *testing.T) {
 	}
 
 	disabled := map[string]priorProjection{"unknown": {known: true, ok: true}}
-	expireStaleCarries(disabled, []reconSource{{name: "unknown"}}, now, 0, maxEvidenceRefloorsPerPass)
+	expireStaleCarries(disabled, []reconSource{{name: "unknown"}}, now, 0)
 	if disabled["unknown"].evidenceExpired {
 		t.Error("-max-carry-age 0 must carry without bound")
 	}
@@ -84,7 +84,7 @@ func TestExpireStaleCarries_NeverRefloorsTheCensus(t *testing.T) {
 		"sdex":     {known: true, ok: true},
 		"aquarius": {known: true, ok: true},
 	}
-	got := expireStaleCarries(prior, cat, now, completeness.MaxProjectionCarryAge, maxEvidenceRefloorsPerPass)
+	got := expireStaleCarries(prior, cat, now, completeness.MaxProjectionCarryAge)
 	if prior["sdex"].evidenceExpired {
 		t.Error("census source marked expired; it must keep carrying with its evidence ageing honestly")
 	}
@@ -113,7 +113,7 @@ func TestExpireStaleCarries_CapsOldestFirst(t *testing.T) {
 		"d": {known: true, ok: true, evidencedAt: now.Add(-9 * day)},
 		"e": {known: true, ok: true, evidencedAt: now.Add(-day)},
 	}
-	got := expireStaleCarries(prior, cat, now, completeness.MaxProjectionCarryAge, maxEvidenceRefloorsPerPass)
+	got := expireStaleCarries(prior, cat, now, completeness.MaxProjectionCarryAge)
 	if strings.Join(got, ",") != "c,b,d" {
 		t.Errorf("refloored = %v, want [c b d] (unknown first, then oldest)", got)
 	}
