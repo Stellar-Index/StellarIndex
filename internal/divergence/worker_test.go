@@ -3,6 +3,7 @@ package divergence_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -124,8 +125,9 @@ func TestRefreshPair_OnWarningFiredEdgeOnly(t *testing.T) {
 		Threshold:            5.0,
 		MinSourcesForWarning: 2,
 		WarningPersistence:   -1, // isolate the edge-latch behaviour from the W3-guards-2 debounce
-		OnWarningFired: func(_ context.Context, _ canonical.Pair, _ divergence.CachedResult) {
+		OnWarningFired: func(_ context.Context, _ canonical.Pair, _ divergence.CachedResult) error {
 			fired++
+			return nil
 		},
 	})
 	ctx := context.Background()
@@ -779,4 +781,34 @@ func unfalsifiableWarningNegatives(fn *ast.FuncDecl) []token.Pos {
 		}
 	}
 	return out
+}
+
+// A hook error leaves the episode undelivered, so the next still-firing
+// refresh retries instead of the notification being dropped.
+func TestRefreshPair_HookErrorReleasesLatch(t *testing.T) {
+	refs := []divergence.Reference{
+		&stubReference{name: "a", price: 1.00},
+		&stubReference{name: "b", price: 1.00},
+		&stubReference{name: "c", price: 1.00},
+	}
+	var calls int
+	svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+		WarningPersistence:   -1,
+		OnWarningFired: func(context.Context, canonical.Pair, divergence.CachedResult) error {
+			calls++
+			if calls == 1 {
+				return errors.New("transient")
+			}
+			return nil
+		},
+	})
+	ctx := context.Background()
+	for i, want := range []int{1, 2, 2} {
+		_ = svc.RefreshPair(ctx, xlmUSD(t), 1.10, time.Now())
+		if calls != want {
+			t.Fatalf("refresh %d: hook calls=%d, want %d", i+1, calls, want)
+		}
+	}
 }

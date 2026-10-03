@@ -321,17 +321,7 @@ func perSourcePoolsCTE(foldIdx int) string {
 	return `
         WITH ` + aliasFoldCTE(foldIdx) + `,
         xlm_usd AS (
-          SELECT vwap
-            FROM prices_1m
-           WHERE base_asset = 'native'
-             AND quote_asset IN (
-               'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-               'fiat:USD'
-             )
-             AND vwap IS NOT NULL
-             AND bucket >= NOW() - INTERVAL '24 hours'
-           ` + xlmUSDNewest + `
-           LIMIT 1
+          ` + xlmUSDVolumeSelect + `
         ),
         pools AS (
           SELECT
