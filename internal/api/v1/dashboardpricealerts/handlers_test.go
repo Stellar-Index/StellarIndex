@@ -104,15 +104,17 @@ func (s *fakeStore) DeletePriceAlert(_ context.Context, id uuid.UUID) error {
 }
 
 // ClaimPriceAlertFire mirrors the store's conditional UPDATE (#368 M10):
-// it stamps only while the alert's own cooldown has elapsed, and reports
-// whether it claimed. Unused by the dashboard handlers — this fake
-// satisfies the whole platform.PriceAlertStore interface, of which the
-// evaluator half is not exercised here.
-func (s *fakeStore) ClaimPriceAlertFire(_ context.Context, id uuid.UUID, firedAt time.Time) (bool, error) {
+// it stamps only while the snapshot's rule is unchanged and the alert's own
+// cooldown has elapsed, and reports whether it claimed. Unused by the
+// dashboard handlers — this fake satisfies the whole
+// platform.PriceAlertStore interface, of which the evaluator half is not
+// exercised here.
+func (s *fakeStore) ClaimPriceAlertFire(_ context.Context, snap platform.PriceAlert, firedAt time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	a, ok := s.alerts[id]
-	if !ok {
+	a, ok := s.alerts[snap.ID]
+	if !ok || !a.Enabled || a.BaseAsset != snap.BaseAsset || a.QuoteAsset != snap.QuoteAsset ||
+		a.Condition != snap.Condition || a.Threshold != snap.Threshold {
 		return false, nil
 	}
 	if a.Disarmed || !a.LastFiredAt.IsZero() &&
@@ -120,7 +122,7 @@ func (s *fakeStore) ClaimPriceAlertFire(_ context.Context, id uuid.UUID, firedAt
 		return false, nil
 	}
 	a.LastFiredAt, a.Disarmed = firedAt, true
-	s.alerts[id] = a
+	s.alerts[snap.ID] = a
 	return true, nil
 }
 
