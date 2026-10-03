@@ -451,11 +451,11 @@ func (s *Server) rwaUnreachedEntities(ctx context.Context, tags []string) []rwaU
 //     the last word on a contract row's cap: it drops whatever cap the
 //     generic fill wrote once it holds its own supply reading, and every
 //     cap on a row whose scale was not read.
-//  2. THE SCAM SUPPRESSION. fillIssuerDirectoryTags keys on the issuer
-//     G-address and skips every row without one, so a contract asset has
-//     never been subject to the directory scam gate on any surface. On
-//     this surface the directory is the PROVENANCE requirement, so
-//     leaving its flag unread would mean admitting a contract on a
+//  2. THE SCAM SUPPRESSION. fillIssuerDirectoryTags runs before the
+//     contract fills below, so its suppression cannot reach a figure they
+//     produce afterwards. On this surface the directory is the
+//     PROVENANCE requirement, so leaving its flag unread at valuation
+//     time would mean admitting a contract on a
 //     directory entry and then declining to read the same entry when it
 //     turns hostile. The tags are re-read at valuation time, not reused
 //     from the membership build, so a flag acquired inside the ten
@@ -502,7 +502,7 @@ func (s *Server) rwaContractListingRows(
 	// 7 when that read misses; fillContractMarketCaps below discards any
 	// such cap.
 	s.stampListingCollisions(details)
-	s.applySubstanceGateToListing(ctx, details)
+	s.applySubstanceGateToListing(ctx, details, false)
 	s.fillMarketCapsFromSupply(ctx, details, map[string]int{})
 	s.fillDeclaredPegPricesInListing(ctx, details)
 	s.fillIssuerDirectoryTags(ctx, details)

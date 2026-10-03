@@ -252,6 +252,7 @@ func TestGateSpellingGuardCatchesHandlerPackageSites(t *testing.T) {
 	shapes := []struct{ name, dir, src string }{
 		{"substance half in a handler", v1ChokepointDir, `func (s *Server) h() bool { return s.substance.Allowed(ctx, a, b, "x") }`},
 		{"scam half in a handler", v1ChokepointDir, `func (s *Server) h() bool { return s.scam.WithheldPair(ctx, a, b, "x") }`},
+		{"uncounted measurement in a handler", v1ChokepointDir, `func (s *Server) h() { _ = s.substance.Measure(ctx, a, b) }`},
 		{"renamed local", v1ChokepointDir, `func (s *Server) h() bool { g := s.substance; return g.AllowedAt(ctx, a, b, at, "x") }`},
 		{"chokepoint name in another package", "../../internal/api/streaming", `func withheldBy() bool { return sub.Allowed(ctx, a, b, "x") }`},
 		{"main.go outside priceWithheld", ".", `func (r storePriceReader) f() bool { return r.substance.Allowed(ctx, a, b, "x") }`},
@@ -280,7 +281,7 @@ const v1ChokepointDir = "../../internal/api/v1"
 // ScamGate decision methods.
 var gateHalfMethods = map[string]bool{
 	"Allowed": true, "AllowedAt": true, "Verdict": true, "Probe": true,
-	"Withheld": true, "WithheldPair": true,
+	"Withheld": true, "WithheldPair": true, "Measure": true, "MeasureAt": true,
 }
 
 var gateChokepoints = map[string]bool{

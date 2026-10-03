@@ -166,9 +166,51 @@ const substanceCacheTTL = 60 * time.Second
 const substanceCacheMax = 8192
 
 type substanceVerdict struct {
-	allowed bool
-	floor   SubstanceFloor
-	expires time.Time
+	allowed  bool
+	floor    SubstanceFloor
+	evidence SubstanceEvidence
+	expires  time.Time
+}
+
+// verdict returns the cached entry as a [SubstanceVerdict]; the evidence
+// is a copy, so a caller cannot write through it into the cache.
+func (e substanceVerdict) verdict() SubstanceVerdict {
+	ev := e.evidence
+	return SubstanceVerdict{Allowed: e.allowed, Measured: true, Floor: e.floor, Evidence: &ev}
+}
+
+// SubstanceEvidence is the measurement a substance verdict was reached
+// on: the market measured (the alias union of Base and Quote), its
+// figures, and the policy they were held to. It lives in the same cache
+// entry as the verdict, so the two cannot disagree.
+type SubstanceEvidence struct {
+	Base, Quote canonical.Asset
+	// Window is the trailing measurement window (Policy.Window).
+	Window     time.Duration
+	MeasuredAt time.Time
+	// WindowEnd is the measurement instant for a live verdict and the
+	// grain-truncated instant for a point-in-time one.
+	WindowEnd time.Time
+	// VolumeUSD is the store's decimal string, verbatim (ADR-0003).
+	VolumeUSD     string
+	Buckets       int64
+	ValuedBuckets int64
+	SpanSeconds   int64
+	// Policy is the policy actually applied: the hour-grain one for an old
+	// point-in-time instant, not the gate's live policy.
+	Policy SubstancePolicy
+	Floor  SubstanceFloor
+}
+
+// SubstanceVerdict is one pair's substance answer with its evidence.
+// Measured=false means no verdict was reached (store error or deadline):
+// Allowed is then false and Evidence nil. A nil gate and an ungated pair
+// are Allowed and Measured with nil Evidence, because nothing was measured.
+type SubstanceVerdict struct {
+	Allowed  bool
+	Measured bool
+	Floor    SubstanceFloor
+	Evidence *SubstanceEvidence
 }
 
 // SubstanceGate is the serving-side thin-market gate. Construct with
@@ -280,34 +322,59 @@ func AssetSubstanceVerdict(
 	ctx context.Context, gate SubstanceVerdicter, asset canonical.Asset,
 	usdPegs []canonical.Asset, surface string,
 ) (allowed, measured bool) {
+	allowed, measured, floor := assetSubstance(ctx, gate, asset, usdPegs)
+	if !allowed {
+		countVerdict(surface, false, measured, floor)
+	}
+	return allowed, measured
+}
+
+// AssetSubstanceVerdictThinServed is [AssetSubstanceVerdict] for a caller
+// that serves a measured-thin asset flagged under the include_thin
+// opt-in. An unmeasured verdict counts as usual; a thin one counts
+// nothing here, because whether the row is finally served thin is known
+// only after later overlays, and the caller counts it then.
+func AssetSubstanceVerdictThinServed(
+	ctx context.Context, gate SubstanceVerdicter, asset canonical.Asset,
+	usdPegs []canonical.Asset, surface string,
+) (allowed, measured bool, floor SubstanceFloor) {
+	allowed, measured, floor = assetSubstance(ctx, gate, asset, usdPegs)
+	if !allowed && !measured {
+		countVerdict(surface, false, false, floor)
+	}
+	return allowed, measured, floor
+}
+
+// assetSubstance is the uncounted fold shared by both asset verdicts.
+func assetSubstance(
+	ctx context.Context, gate SubstanceVerdicter, asset canonical.Asset, usdPegs []canonical.Asset,
+) (allowed, measured bool, floor SubstanceFloor) {
 	if gate == nil {
-		return true, true
+		return true, true, FloorNone
 	}
 	switch asset.Type {
 	case canonical.AssetNative:
-		return true, true
+		return true, true, FloorNone
 	case canonical.AssetClassic, canonical.AssetSoroban:
 	default:
-		return true, true
+		return true, true, FloorNone
 	}
 	quotes := append([]canonical.Asset{canonical.NativeAsset(), fiatUSD}, usdPegs...)
 	measured = true
-	var floor SubstanceFloor
 	for _, quote := range quotes {
 		if asset.Equal(quote) {
 			continue
 		}
 		ok, m, f := gate.Probe(ctx, asset, quote)
 		if ok && m {
-			return true, true
+			return true, true, FloorNone
 		}
 		if !m {
 			measured = false
 		}
 		floor = furthestFloor(floor, f)
 	}
-	countVerdict(surface, false, measured, floor)
-	return false, measured
+	return false, measured, floor
 }
 
 // SubstanceFloor names the floor a withheld market failed; it is the
@@ -435,11 +502,16 @@ func (g *SubstanceGate) Verdict(ctx context.Context, base, quote canonical.Asset
 // floor a withheld pair failed. It is for a caller that folds several
 // pairs into one decision and counts that decision itself.
 func (g *SubstanceGate) Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor SubstanceFloor) {
-	if g == nil {
-		return true, true, FloorNone
-	}
-	if !SubstanceGated(base, quote) {
-		return true, true, FloorNone
+	v := g.Measure(ctx, base, quote)
+	return v.Allowed, v.Measured, v.Floor
+}
+
+// Measure is the live verdict with the evidence behind it, uncounted:
+// whoever decides from it counts the decision. Allowed, Verdict and Probe
+// are projections of it, so every live read shares one cache entry.
+func (g *SubstanceGate) Measure(ctx context.Context, base, quote canonical.Asset) SubstanceVerdict {
+	if g == nil || !SubstanceGated(base, quote) {
+		return SubstanceVerdict{Allowed: true, Measured: true}
 	}
 	key := pairCacheKey(base, quote)
 	now := g.clock()
@@ -447,23 +519,27 @@ func (g *SubstanceGate) Probe(ctx context.Context, base, quote canonical.Asset) 
 	prior, hadPrior := g.cache[key]
 	if hadPrior && now.Before(prior.expires) {
 		g.mu.Unlock()
-		return prior.allowed, true, prior.floor
+		return prior.verdict()
 	}
 	g.mu.Unlock()
 
-	allowed, measured, floor = g.measure(ctx, base, quote)
+	entry, measured := g.measureUnion(ctx, base, quote, g.policy, now, now,
+		func(ctx context.Context, bases, quotes []canonical.Asset) (timescale.MarketSubstance, error) {
+			return g.store.PairMarketSubstance(ctx, bases, quotes, g.policy.Window)
+		})
 	if !measured {
 		// Not cached, so the next request re-measures.
-		return false, false, FloorNone
+		return SubstanceVerdict{}
 	}
+	entry.expires = now.Add(substanceCacheTTL)
 	g.mu.Lock()
 	if len(g.cache) >= substanceCacheMax {
 		g.cache = make(map[string]substanceVerdict)
 	}
-	g.cache[key] = substanceVerdict{allowed: allowed, floor: floor, expires: now.Add(substanceCacheTTL)}
+	g.cache[key] = entry
 	g.mu.Unlock()
-	g.logTransition(base, quote, allowed, floor, hadPrior, prior.allowed)
-	return allowed, true, floor
+	g.logTransition(base, quote, entry.allowed, entry.floor, hadPrior, prior.allowed)
+	return entry.verdict()
 }
 
 // logTransition logs a pair's verdict on TRANSITIONS only — first
@@ -484,40 +560,41 @@ func (g *SubstanceGate) logTransition(base, quote canonical.Asset, allowed bool,
 	}
 }
 
-// measure runs the alias-union substance measurement. measured=false
-// means an infrastructure error prevented a verdict.
-func (g *SubstanceGate) measure(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor SubstanceFloor) {
-	return g.measureUnion(ctx, base, quote, g.policy,
-		func(ctx context.Context, bases, quotes []canonical.Asset) (timescale.MarketSubstance, error) {
-			return g.store.PairMarketSubstance(ctx, bases, quotes, g.policy.Window)
-		})
-}
-
 // measureUnion is the alias-union measurement shared by the live and the
 // point-in-time gate: `read` measures every spelling of base against
 // every spelling of quote as ONE market, held to `policy`. One read, not
 // a per-spelling fold: XLM's SDEX and CEX legs trade in the same
 // minutes, and summing each spelling's distinct-bucket count would count
-// a shared minute once per spelling.
+// a shared minute once per spelling. measured=false means an
+// infrastructure error prevented a verdict; the entry's expiry is unset.
 func (g *SubstanceGate) measureUnion(
-	ctx context.Context, base, quote canonical.Asset, policy SubstancePolicy,
+	ctx context.Context, base, quote canonical.Asset, policy SubstancePolicy, measuredAt, windowEnd time.Time,
 	read func(ctx context.Context, bases, quotes []canonical.Asset) (timescale.MarketSubstance, error),
-) (allowed, measured bool, floor SubstanceFloor) {
+) (entry substanceVerdict, measured bool) {
 	sub, err := read(ctx, canonical.AssetAliases(base), canonical.AssetAliases(quote))
 	if err != nil {
 		if g.logger != nil && ctx.Err() == nil {
 			g.logger.Warn("substance gate: measurement failed — no verdict for the pair",
 				"base", base.String(), "quote", quote.String(), "err", err)
 		}
-		return true, false, FloorNone
+		return substanceVerdict{}, false
 	}
 	vol, ok := new(big.Rat).SetString(sub.VolumeUSD)
 	if !ok {
 		// An unparsable volume verifies nothing, so it fails the volume leg.
 		vol = new(big.Rat)
 	}
-	floor = FailedFloor(vol, sub.Buckets, sub.ValuedBuckets, sub.SpanSeconds, policy)
-	return floor == FloorNone, true, floor
+	floor := FailedFloor(vol, sub.Buckets, sub.ValuedBuckets, sub.SpanSeconds, policy)
+	return substanceVerdict{
+		allowed: floor == FloorNone,
+		floor:   floor,
+		evidence: SubstanceEvidence{
+			Base: base, Quote: quote, Window: policy.Window,
+			MeasuredAt: measuredAt.UTC(), WindowEnd: windowEnd.UTC(),
+			VolumeUSD: sub.VolumeUSD, Buckets: sub.Buckets, ValuedBuckets: sub.ValuedBuckets,
+			SpanSeconds: sub.SpanSeconds, Policy: policy, Floor: floor,
+		},
+	}, true
 }
 
 // hourGrainPolicy is the floor a market is held to when its legs are
@@ -592,11 +669,16 @@ func (g *SubstanceGate) policyAt(age time.Duration) (timescale.HistoryGranularit
 //
 // Nil-receiver safe: a nil gate allows everything.
 func (g *SubstanceGate) AllowedAt(ctx context.Context, base, quote canonical.Asset, at time.Time, surface string) bool {
-	if g == nil {
-		return true
-	}
-	if !SubstanceGated(base, quote) {
-		return true
+	v := g.MeasureAt(ctx, base, quote, at)
+	countVerdict(surface, v.Allowed, v.Measured, v.Floor)
+	return v.Allowed || !v.Measured
+}
+
+// MeasureAt is [SubstanceGate.AllowedAt]'s verdict with its evidence,
+// uncounted.
+func (g *SubstanceGate) MeasureAt(ctx context.Context, base, quote canonical.Asset, at time.Time) SubstanceVerdict {
+	if g == nil || !SubstanceGated(base, quote) {
+		return SubstanceVerdict{Allowed: true, Measured: true}
 	}
 	now := g.clock()
 	asOf := at.UTC()
@@ -614,25 +696,24 @@ func (g *SubstanceGate) AllowedAt(ctx context.Context, base, quote canonical.Ass
 	prior, hadPrior := g.atCache[key]
 	g.mu.Unlock()
 	if hadPrior && now.Before(prior.expires) {
-		countVerdict(surface, prior.allowed, true, prior.floor)
-		return prior.allowed
+		return prior.verdict()
 	}
 
-	allowed, measured, floor := g.measureUnion(ctx, base, quote, policy,
+	entry, measured := g.measureUnion(ctx, base, quote, policy, now, asOf,
 		func(ctx context.Context, bases, quotes []canonical.Asset) (timescale.MarketSubstance, error) {
 			return g.store.PairMarketSubstanceAt(ctx, bases, quotes, asOf, policy.Window, grain)
 		})
-	countVerdict(surface, allowed, measured, floor)
 	if !measured {
-		return true
+		return SubstanceVerdict{}
 	}
+	entry.expires = now.Add(substanceCacheTTL)
 	g.mu.Lock()
 	if len(g.atCache) >= substanceCacheMax {
 		g.atCache = make(map[string]substanceVerdict)
 	}
-	g.atCache[key] = substanceVerdict{allowed: allowed, floor: floor, expires: now.Add(substanceCacheTTL)}
+	g.atCache[key] = entry
 	g.mu.Unlock()
-	return allowed
+	return entry.verdict()
 }
 
 func (g *SubstanceGate) clock() time.Time {

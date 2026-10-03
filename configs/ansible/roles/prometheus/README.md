@@ -12,8 +12,8 @@ Deploy a 2-host Prometheus + AlertManager pair per
   [`deploy/monitoring/rules/`](../../../../deploy/monitoring/rules/)
   (1721 LoC of alerts shipped today).
 
-Pairs with `patroni` (#344), `redis-sentinel` (#350), and
-`haproxy` (#362) — this role is the consumer of all three's
+Pairs with `patroni` (965eed22e), `redis-sentinel` (bb2f4d29e), and
+`haproxy` (1836fced9) — this role is the consumer of all three's
 emitted metrics. Design rationale lives in
 [`docs/architecture/prometheus-ansible-role-design-note.md`](../../../../docs/architecture/prometheus-ansible-role-design-note.md).
 

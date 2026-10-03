@@ -158,7 +158,7 @@ concern.
 
 ## Wiring
 
-This package is **wired into the ingest pipeline** (#40):
+This package is **wired into the ingest pipeline** (1b9a594b4):
 
 - `dispatcher_adapter.go` — `Decoder`, a stateless topic Decoder
   gated on the three known CCTP contracts (`Matches` checks

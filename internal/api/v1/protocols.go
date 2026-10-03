@@ -409,7 +409,7 @@ type ProtocolCompletenessView struct {
 	Complete bool `json:"complete"`
 	// WatermarkLedger is the highest ledger the verdict covers.
 	WatermarkLedger uint32 `json:"watermark_ledger"`
-	// ProjectionVerifiedFrom is the served tier's own floor — the bottom
+	// ProjectionVerifiedFrom is the projection axis's floor — the bottom
 	// of the range Complete is a claim about. Carried here because this
 	// summary republishes Complete, and Complete without its floor reads
 	// as a claim back to the protocol's genesis_ledger (the row directly
@@ -743,7 +743,7 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	// Every row's completeness summary republishes a /v1/coverage verdict,
 	// so the envelope carries that surface's freshness gate too.
-	writeJSON(w, view, Flags{Stale: verdictsStale})
+	writeJSON(w, view, Flags{Stale: verdictsStale, Degraded: len(degraded) > 0})
 }
 
 // protocolsCoverageNote is the directory's honest-degrade statement
@@ -841,7 +841,11 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 		(view.Analytics != nil && view.Analytics.Status == protocolAnalyticsStale)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
-	writeJSON(w, view, Flags{Stale: staleFlag})
+	// A stale or partially built view is replaced by the next rebuild;
+	// verdictsStale alone is a fresh read of an old audit verdict and stays
+	// cacheable.
+	degraded := stale || (view.Analytics != nil && view.Analytics.Status != protocolAnalyticsOK)
+	writeJSON(w, view, Flags{Stale: staleFlag, Degraded: degraded})
 }
 
 // protocolDetailBuilder returns the one build closure both the request

@@ -31,6 +31,21 @@ type VolumeBucket struct {
 	TradeCount int64    `json:"trade_count"`
 }
 
+// parseSourcesInclude reads /v1/sources' `include`; either sparkline implies stats.
+func parseSourcesInclude(raw string) (stats, sparkline, sparkline7d bool) {
+	for _, f := range strings.Split(raw, ",") {
+		switch strings.TrimSpace(f) {
+		case "stats":
+			stats = true
+		case "sparkline":
+			sparkline, stats = true, true
+		case "sparkline7d":
+			sparkline7d, stats = true, true
+		}
+	}
+	return stats, sparkline, sparkline7d
+}
+
 // buildSourceVolumeHistory projects the per-(source, hour) raw buckets
 // into a per-source trailing-24h series, zero-filling missing hours so
 // clients render a continuous chart rather than gappy bars. Carries
@@ -195,26 +210,15 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 	// extra column pay the (cheap) DB hit, while everyone else
 	// keeps the all-static fast path. `include=stats,sparkline`
 	// additionally joins the per-hour 24h volume series.
-	includeFlags := strings.Split(r.URL.Query().Get("include"), ",")
-	includeStats, includeSparkline, includeSparkline7d := false, false, false
-	for _, f := range includeFlags {
-		switch strings.TrimSpace(f) {
-		case "stats":
-			includeStats = true
-		case "sparkline":
-			includeSparkline = true
-			includeStats = true // sparkline implies stats
-		case "sparkline7d":
-			includeSparkline7d = true
-			includeStats = true
-		}
-	}
+	includeStats, includeSparkline, includeSparkline7d := parseSourcesInclude(r.URL.Query().Get("include"))
 	type stats struct {
 		trades  int64
 		volume  string
 		markets int64
 	}
 	statsBySource := map[string]stats{}
+	// Any soft-failed read below ships a partial listing the next request fills.
+	partial := false
 	historyBySource := map[string][]VolumeBucket{}
 	history7dBySource := map[string][]VolumeBucket{}
 	if includeStats && s.sourcesStats != nil {
@@ -228,6 +232,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		cancel()
 		if err != nil {
 			s.logger.Warn("source stats", "err", err)
+			partial = true
 			// Soft-fail: serve the registry without stats.
 		} else {
 			for _, ss := range got {
@@ -250,6 +255,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		cancel()
 		if err != nil {
 			s.logger.Warn("source volume history", "err", err)
+			partial = true
 		} else {
 			historyBySource = buildSourceVolumeHistory(buckets, 24)
 		}
@@ -260,6 +266,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		cancel()
 		if err != nil {
 			s.logger.Warn("source volume history 7d", "err", err)
+			partial = true
 		} else {
 			history7dBySource = buildSourceVolumeHistory(buckets, 24*7)
 		}
@@ -295,5 +302,5 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	writeJSON(w, out, Flags{})
+	writeJSON(w, out, Flags{Degraded: partial})
 }

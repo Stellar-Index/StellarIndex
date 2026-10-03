@@ -208,28 +208,38 @@ func (c *PriceAlertStore) DeletePriceAlert(ctx context.Context, id uuid.UUID) er
 // cooldown_seconds = 0 (the schema default, "re-fire every tick") reduces
 // it to last_fired_at <= firedAt, which is what that setting asks for.
 //
+// The rule predicate pins the claim to the pair, condition and threshold
+// the evaluator compared, and to the alert still being enabled: an edit
+// committed mid-sweep makes the claim match nothing.
+//
 // A row that does not exist and a row still inside its cooldown both
 // return claimed=false — unlike UpdatePriceAlert this does NOT report
 // [platform.ErrNotFound], because the caller's action is identical
 // either way and an alert deleted mid-sweep is not an error.
-func (c *PriceAlertStore) ClaimPriceAlertFire(ctx context.Context, id uuid.UUID, firedAt time.Time) (bool, error) {
+func (c *PriceAlertStore) ClaimPriceAlertFire(ctx context.Context, a platform.PriceAlert, firedAt time.Time) (bool, error) {
 	const q = `
 		UPDATE price_alerts
 		   SET last_fired_at = $2,
 		       disarmed      = true,
 		       updated_at    = now()
 		 WHERE id = $1
+		   AND enabled
 		   AND NOT disarmed
+		   AND base_asset  = $3
+		   AND quote_asset = $4
+		   AND condition   = $5
+		   AND threshold   = $6::numeric
 		   AND (last_fired_at IS NULL
 		        OR last_fired_at + (cooldown_seconds * interval '1 second') <= $2)
 	`
-	res, err := c.s.db.ExecContext(ctx, q, id, firedAt.UTC())
+	res, err := c.s.db.ExecContext(ctx, q, a.ID, firedAt.UTC(),
+		a.BaseAsset, a.QuoteAsset, string(a.Condition), a.Threshold)
 	if err != nil {
-		return false, fmt.Errorf("postgresstore: ClaimPriceAlertFire %s: %w", id, err)
+		return false, fmt.Errorf("postgresstore: ClaimPriceAlertFire %s: %w", a.ID, err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("postgresstore: ClaimPriceAlertFire %s rows affected: %w", id, err)
+		return false, fmt.Errorf("postgresstore: ClaimPriceAlertFire %s rows affected: %w", a.ID, err)
 	}
 	return n == 1, nil
 }

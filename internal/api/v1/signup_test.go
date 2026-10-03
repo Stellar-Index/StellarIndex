@@ -52,6 +52,16 @@ func (f *fakeSignupTracker) MarkSignup(_ context.Context, h, keyID string) error
 	return nil
 }
 
+func (f *fakeSignupTracker) ReleaseSignup(_ context.Context, h, keyID string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.store[h] != keyID {
+		return false, nil
+	}
+	delete(f.store, h)
+	return true, nil
+}
+
 // ReserveEmail mirrors the Redis SETNX semantics: returns
 // auth.ErrSignupEmailReserved when the email-hash is already
 // claimed. F-1218 (codex audit-2026-05-12).

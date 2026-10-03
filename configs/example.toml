@@ -970,8 +970,8 @@ enabled = false
 backfill_window_days = 90
 
 # ──────────────────────────────────────────────────────────────────
-# Price alerts — customer price-threshold alert evaluator
-# (BACKLOG #60). Off by default; when enabled the aggregator sweeps
+# Price alerts — customer price-threshold alert evaluator.
+# Off by default; when enabled the aggregator sweeps
 # price_alerts against the latest closed VWAP every tick and enqueues
 # price.alert webhook deliveries. The CRUD surface mounts regardless.
 # ──────────────────────────────────────────────────────────────────
