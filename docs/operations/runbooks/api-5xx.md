@@ -372,7 +372,7 @@ Common root-cause patterns:
   Detected-by → dual-tree (r1 primary).
 - 2026-04-23 — initial draft. the maintainer.
 - 2026-04-30 — runbook now also covers the SLO multi-window
-  availability burn-rate alerts shipped in #313 (per ADR-0009),
+  availability burn-rate alerts shipped in 1c7cc2820 (per ADR-0009),
   which route here.
 - 2026-05-02 — converted from kubectl/Istio commands to
   systemd / journalctl / HAProxy admin socket, reflecting the

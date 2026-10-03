@@ -46,6 +46,7 @@ The `probe` label names the object:
 | `probe` | Lake object |
 | ------- | ----------- |
 | `tx_hash_index` | `stellar.tx_hash_index` |
+| `tx_hash_index_coverage` | `stellar.tx_hash_index_coverage` (marker; apply `deploy/clickhouse/tx_hash_index_coverage.sql`, then backfill or insert the row) |
 | `contract_active_ledgers` | `stellar.contract_active_ledgers` |
 | `contract_instance_changes` | `stellar.contract_instance_changes` |
 | `contract_instance_changes_tx_key` | `tx_hash` + `intra_ledger_seq` on `stellar.contract_instance_changes` |

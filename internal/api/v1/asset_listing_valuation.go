@@ -611,7 +611,7 @@ func (s *Server) listingValuationCandidate(row *AssetDetail) bool {
 	// PriceBasis is what separates the two cases: a declared-peg or
 	// transitive price is a conversion basis, not a market observation,
 	// so a row carrying one is still a price hole.
-	if row.PriceUSD != nil && row.PriceBasis == "" && !row.MarketCapLowLiquidity {
+	if row.PriceUSD != nil && row.PriceBasis == "" && !row.MarketCapLowLiquidity && !row.ThinMarket {
 		row.ListingValuation = &AssetListingValuation{Status: ListingValuationMarketPriceObserved}
 		return false
 	}

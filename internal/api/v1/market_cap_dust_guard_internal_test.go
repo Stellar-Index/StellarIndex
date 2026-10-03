@@ -236,7 +236,7 @@ func TestApplySubstanceGateToListing(t *testing.T) {
 		{AssetID: "native", Code: "XLM", PriceUSD: &p3, Change24hPct: &ch},
 		{AssetID: "fiat:EUR", Code: "EUR", PriceUSD: &p3},
 	}
-	s.applySubstanceGateToListing(context.Background(), rows)
+	s.applySubstanceGateToListing(context.Background(), rows, false)
 
 	if rows[0].PriceUSD == nil {
 		t.Error("deep pair must keep its listed price")

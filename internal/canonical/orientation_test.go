@@ -110,3 +110,35 @@ func TestOrient_StablecoinRankIsIssuerAgnostic(t *testing.T) {
 		t.Errorf("Orient(native, %s) = (%s, %s), want (native, %s)", realUSDC, b2, q2, realUSDC)
 	}
 }
+
+// A SAC declared in sac_wrappers ranks as the classic stablecoin it
+// wraps, so XLM-SAC/USDC-SAC orients like native/USDC (USDC quote).
+func TestOrient_DeclaredStablecoinSACRanksAsStablecoin(t *testing.T) {
+	if quoteRank(usdcSACAddr) != 1 || len(StablecoinSACForms()) != 0 {
+		t.Fatalf("precondition: an undeclared SAC ranks 1 and no SAC form is listed")
+	}
+	installTestRegistry(t, map[string]string{usdcSACAddr: "USDC:" + usdcIssuer})
+
+	if got := quoteRank(usdcSACAddr); got != 3 {
+		t.Errorf("quoteRank(declared USDC SAC) = %d, want 3", got)
+	}
+	if base, quote, _ := Orient(usdcSACAddr, XLMSacContractID); base != XLMSacContractID || quote != usdcSACAddr {
+		t.Errorf("Orient(USDC SAC, XLM SAC) = (%s, %s), want USDC SAC as quote", base, quote)
+	}
+	if got := quoteRank(unrelatedContract); got != 1 {
+		t.Errorf("quoteRank(undeclared contract) = %d, want 1", got)
+	}
+	if got := StablecoinSACForms(); len(got) != 1 || got[0] != usdcSACAddr {
+		t.Errorf("StablecoinSACForms() = %v, want [%s]", got, usdcSACAddr)
+	}
+}
+
+// The tie-break is byte order, not a locale collation: 'y' (0x79) sorts
+// after 'Z' (0x5A), so the lowercase-led code is the quote.
+func TestOrient_TieBreakIsByteOrder(t *testing.T) {
+	const lower = "yXLM-" + usdcIssuer
+	const upper = "ZZZ-" + usdcIssuer
+	if _, quote, _ := Orient(upper, lower); quote != lower {
+		t.Errorf("Orient(%s, %s) quote = %s, want %s", upper, lower, quote, lower)
+	}
+}

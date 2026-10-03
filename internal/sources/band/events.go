@@ -99,9 +99,10 @@ var (
 	// shifted the signature, or the envelope is broken.
 	ErrMalformedArgs = errors.New("band: malformed InvokeContract args")
 
-	// ErrEmptyRates — the symbol_rates vector was empty (or every
-	// slot was USD / rate 0). Band relayers don't normally submit
-	// empty batches; surface loudly. Since the oracle
+	// ErrEmptyRates — every slot of a non-empty symbol_rates vector
+	// was USD / rate 0, or relay()'s resolve_time falls outside the
+	// contract's acceptance window (an empty vector is a no-op, not
+	// this error). Since the oracle
 	// capture-totality change (PR-2) an unmapped symbol is NOT a
 	// reason: it is recorded verbatim as a `raw:<symbol>` row
 	// (canonical.AssetOracleRaw). The former ErrUnknownSymbol

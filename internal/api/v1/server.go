@@ -90,7 +90,7 @@ type ReadyChecker interface {
 // This constant MUST equal the head under migrations/; the parity test
 // TestExpectedSchemaVersionMatchesMigrationsHead fails CI if a migration
 // is added without bumping it.
-const ExpectedSchemaVersion uint = 198
+const ExpectedSchemaVersion uint = 201
 
 // nonAtomicMigrationVersions lists migration numbers whose up.sql commits
 // mid-file, breaking golang-migrate's one-transaction-per-file guarantee
@@ -658,6 +658,9 @@ type Server struct {
 	// Nil-safe: a nil cache short-circuits every method to no-op +
 	// miss. ttl=0 has the same effect at config layer.
 	assetDetailCache *assetDetailResponseCache
+	// assetListCache is the response-level cache for the default
+	// /v1/assets listing; see [assetListResponseCache].
+	assetListCache *assetListResponseCache
 	// usdPeggedClassics is the operator's allow-list of classic
 	// credit assets they declare as USD-pegged stablecoins.
 	// Mirrors trades.usd_pegged_classic_assets from config. Used
@@ -691,7 +694,7 @@ type Server struct {
 	// computed every ~15s by a background goroutine launched via
 	// [Server.StartIngestionSnapshotRefresh]. Powers
 	// /v1/diagnostics/ingestion sub-millisecond when populated
-	// (#16). Nil before the first refresh fires; handler falls back
+	// (4d6e7ac4f). Nil before the first refresh fires; handler falls back
 	// to inline-build (the legacy 200-500ms path) in that case.
 	ingestionSnapshot atomic.Pointer[ingestionSnapshotEntry]
 	mux               *http.ServeMux
@@ -1365,7 +1368,7 @@ type Options struct {
 	// (blend money-market, blend backstop, phoenix stake, defindex
 	// vault shares, sorocredit, aquarius gauge). timescale.Store
 	// satisfies it. Nil 503s the endpoint. Venue human labels reuse
-	// ProtocolPoolTokens (below) — the same reader the #91 protocol-
+	// ProtocolPoolTokens (below) — the same reader the a9f2e301c protocol-
 	// roster pair-label work already wired.
 	Positions explorerpkg.PositionsReader
 
@@ -1608,7 +1611,6 @@ type Options struct {
 	// 0080); the evaluator that checks the alerts and enqueues
 	// `price.alert` webhook deliveries runs in the aggregator
 	// (`internal/pricealerts`) and is orthogonal to these handlers.
-	// BACKLOG #60.
 	DashboardPriceAlerts DashboardAuthMounter
 
 	// SACWrappers is the operator-config map of SAC C-strkey →
@@ -1881,6 +1883,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		// by construction — the cached entry IS what the handler
 		// produces (see assetDetailResponseCache doc comment).
 		assetDetailCache: newAssetDetailResponseCache(120 * time.Second),
+		assetListCache:   newAssetListResponseCache(assetListCacheTTL, assetListCacheMaxAge),
 		mux:              http.NewServeMux(),
 		publicRoutes:     middleware.NewPublicRoutes(),
 		started:          time.Now().UTC(),
@@ -2757,7 +2760,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	if s.dashboardWebhooks != nil {
 		s.dashboardWebhooks.Mount(s.mux, s.publicRoutes)
 	}
-	// Dashboard price-alert-management routes (BACKLOG #60). Same
+	// Dashboard price-alert-management routes. Same
 	// session-cookie + Postgres-wiring gate as dashboardKeys above.
 	if s.dashboardPriceAlerts != nil {
 		s.dashboardPriceAlerts.Mount(s.mux, s.publicRoutes)
@@ -2942,6 +2945,41 @@ func (s *Server) fillReadyz(done chan struct{}) {
 	s.readyzMu.Lock()
 	s.readyzCode, s.readyzBody, s.readyzAt = code, body, time.Now()
 	s.readyzMu.Unlock()
+}
+
+// ReadinessProbeCadence is how often [Server.StartReadinessProbe] runs a
+// readiness round: one Prometheus scrape interval.
+const ReadinessProbeCadence = 15 * time.Second
+
+// StartReadinessProbe runs a readiness round every `every` until ctx ends, so
+// stellarindex_dependency_up stays current when nothing calls /v1/readyz;
+// request-driven alone, the gauge freezes at its last value and an outage
+// that begins after the last probe never reads 0.
+func (s *Server) StartReadinessProbe(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		s.probeReadyz() //nolint:contextcheck // the round is shared with queued /v1/readyz callers and carries its own 2s budget; ctx bounds only the loop.
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// probeReadyz runs one round through the /v1/readyz single-flight and cache,
+// skipping the tick when a request-driven round is already in flight.
+func (s *Server) probeReadyz() {
+	s.readyzMu.Lock()
+	if s.readyzFlight != nil {
+		s.readyzMu.Unlock()
+		return
+	}
+	done := make(chan struct{})
+	s.readyzFlight = done
+	s.readyzMu.Unlock()
+	s.fillReadyz(done)
 }
 
 // computeReadyz runs one full check round and renders the response.

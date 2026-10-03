@@ -179,16 +179,19 @@ function PlanCard({ me }: { me: MeResponse }) {
 function DangerZone() {
   const router = useRouter();
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutFailed, setSignOutFailed] = useState(false);
 
   async function handleSignOut() {
     setSigningOut(true);
+    setSignOutFailed(false);
     try {
       await logout();
     } catch {
-      // Logout is best-effort — bounce regardless.
-    } finally {
-      router.replace('/signin');
+      setSignOutFailed(true);
+      setSigningOut(false);
+      return;
     }
+    router.replace('/signin');
   }
 
   return (
@@ -222,6 +225,9 @@ function DangerZone() {
             {signingOut ? 'Signing out…' : 'Sign out'}
           </Button>
         </div>
+        {signOutFailed && (
+          <Callout tone="bad">Sign out failed. Try again.</Callout>
+        )}
       </CardBody>
     </Card>
   );

@@ -6,7 +6,7 @@ status: implemented
 
 # CCTP-Stellar coverage — architecture & decoder design
 
-**Status:** Implemented (#40). Live ingest wired 2026-05-22.
+**Status:** Implemented (1b9a594b4). Live ingest wired 2026-05-22.
 **Last verified:** 2026-05-22
 
 This document captures the contract identities, event schemas, and
@@ -221,7 +221,7 @@ shapes to consider:
 
 **Recommendation: (1) `cctp_events` hypertable.** Clean
 semantics; the bridge-flow surface deserves its own table. If
-Rozo (#41) and future bridges share a common shape we can
+Rozo (46e0087e8) and future bridges share a common shape we can
 generalise later.
 
 ## Backfill strategy
