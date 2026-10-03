@@ -10421,6 +10421,34 @@ export interface components {
              */
             supply_basis?: "lake_flows" | "served";
         };
+        /** @description Banded trust score with the factor breakdown behind it, on `/v1/assets/{asset_id}` only. Output-only: no price, rank or gate reads it. A factor with no evidence is `unknown` with null points and is excluded from the score; it is never scored as zero. A scam-class issuer directory flag forces score 0, and a ticker collision caps the score below the medium threshold (band `low`). The formula is versioned. */
+        AssetTrust: {
+            /** @description Version of the weights and thresholds that produced `score`. */
+            formula_version: number;
+            /** @description Weight-averaged points of the known factors; null when no factor has evidence. */
+            score: number | null;
+            /**
+             * @description high >= 75, medium >= 40, low below; unknown when score is null.
+             * @enum {string}
+             */
+            band: "high" | "medium" | "low" | "unknown";
+            /** @description Share of total factor weight that had evidence. */
+            coverage_pct: number;
+            factors: {
+                /** @enum {string} */
+                id: "issuer_reputation" | "ticker_collision" | "sep1_attestation" | "market_substance" | "supply_data";
+                /** @enum {string} */
+                band: "high" | "medium" | "low" | "unknown";
+                /** @description Null when band is unknown. */
+                points: number | null;
+                /** @description Weight in the score; weights sum to 100. */
+                weight: number;
+                /** @description Data source the evidence was read from. */
+                source: string;
+                /** @description Machine-readable description of what was observed. */
+                observed: string;
+            }[];
+        };
         Asset: {
             /**
              * @description Wire-shape discriminator for the /v1/assets/{asset_id} oneOf (ADR-0042). Always "stellar_asset" on this schema. See `Asset.type` for the separate protocol/class discriminator (native/classic/soroban/fiat/global/external) — `kind` says which SHAPE this payload is, `type` says which Stellar asset CLASS within that shape.
@@ -10535,6 +10563,7 @@ export interface components {
             issuer_behaviour?: components["schemas"]["AssetIssuerBehaviour"];
             listing_reference?: components["schemas"]["AssetListingReference"];
             listing_valuation?: components["schemas"]["AssetListingValuation"];
+            trust?: components["schemas"]["AssetTrust"];
             /**
              * @description Which ADR-0011 policy produced the supply numbers, and on
              *     LISTING rows additionally which ARM answered — three can,

@@ -10,7 +10,7 @@ of each via system packages from the Grafana APT repo.
 ## Files
 
 - `loki.r1.yml` — `/etc/loki/config.yml` on r1. Default packaged
-  config; works as-is for single-host. HTTP listener on `:3100`.
+  config; works as-is for single-host. HTTP listener on `127.0.0.1:3100`.
 - `promtail.r1.yml` — `/etc/promtail/config.yml` on r1. Tails
   the systemd journal, ships every unit's entries to local Loki
   with `host=r1` + `unit=<name>` + `job=<name-without-.service>`
@@ -90,8 +90,11 @@ R1 runs in `policy drop` mode and only explicitly accepts the captive-
 core port set, so external probes to `3100` time out (F-1264,
 2026-05-13). The host firewall landed after the original "no firewall"
 wording. Once Caddy fronts it (post-launch follow-up), it'll be
-HTTPS-only via `loki.stellarindex.io` etc. (Applying the loopback bind
-to the running host needs a post-Phase-0 `systemctl restart loki`.)
+HTTPS-only via `loki.stellarindex.io` etc. (Listen addresses are read at start: after copying the config,
+`systemctl restart loki`. The `loki_loopback_bound` assertion in
+`scripts/ops/config-assertions.sh` fails, via
+`stellarindex_config_assertion_failed`, while the file is unpinned or a
+listener on `:3100`/`:9096` is still bound off loopback.)
 
 Operator access today (the only path that works):
 - `ssh -L 3100:localhost:3100 root@136.243.90.96`
