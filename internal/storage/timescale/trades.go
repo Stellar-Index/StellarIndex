@@ -1861,6 +1861,23 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 	return out, nil
 }
 
+// offChainSourcesArg is the comma-joined set of registered sources that
+// are not on-chain (centralised exchanges, FX, aggregators, vendors),
+// bound as `string_to_array($n, ',')` by the raw-trade readers behind
+// /v1/history and /v1/observations. Those routes serve on-chain trades
+// only (exchange redistribution terms), and the filter must sit in the
+// query: a post-fetch drop would break the keyset page sizes.
+func offChainSourcesArg() string {
+	var names []string
+	for name := range external.Registry {
+		if !external.IsOnChain(name) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return strings.Join(names, ",")
+}
+
 // LatestTradePerSource returns the most-recent trade from each source
 // that has ever traded the market `pair` names, in either stored
 // direction and returned in the requested orientation. Empty slice +
@@ -1950,6 +1967,7 @@ func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sour
                   WHERE base_asset  = $1
                     AND quote_asset = $2
                     AND ($3 = '' OR source = $3)
+                    AND source <> ALL(string_to_array($4, ','))
                   ORDER BY source, ts DESC, ledger DESC) head
           CROSS JOIN LATERAL
                 (SELECT * FROM trades
@@ -1972,6 +1990,7 @@ func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sour
                   WHERE base_asset  = $2
                     AND quote_asset = $1
                     AND ($3 = '' OR source = $3)
+                    AND source <> ALL(string_to_array($4, ','))
                   ORDER BY source, ts DESC, ledger DESC) head
           CROSS JOIN LATERAL
                 (SELECT * FROM trades
@@ -1985,7 +2004,7 @@ func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sour
         ORDER BY source
     `
 	rows, err := s.db.QueryContext(ctx, q,
-		p.Base.String(), p.Quote.String(), sourceFilter,
+		p.Base.String(), p.Quote.String(), sourceFilter, offChainSourcesArg(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: LatestTradePerSource: %w", err)
@@ -2283,6 +2302,7 @@ func (s *Store) TradesInRangeAfter(
            AND quote_asset = $2
            AND ts         >= $3
            AND ts          < $4
+           AND source <> ALL(string_to_array($11, ','))
            AND (ts, ledger, tx_hash, op_index, source) > ($5, $6, $7, $8, $9)
          ORDER BY ts ASC, ledger ASC, tx_hash ASC, op_index ASC, source ASC
          LIMIT $10
@@ -2293,7 +2313,8 @@ func (s *Store) TradesInRangeAfter(
 		// $5..$9 — must match the PK tuple order in the SQL above,
 		// NOT the function-signature order.
 		afterTs.UTC(), afterLedger, afterTxHash, afterOpIndex, afterSource,
-		limit, // $10
+		limit,                // $10
+		offChainSourcesArg(), // $11
 	)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: TradesInRangeAfter: %w", err)
