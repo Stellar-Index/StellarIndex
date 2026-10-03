@@ -1384,7 +1384,7 @@ Subcommands:
                           (reflector/redstone), cctp/rozo/defindex, blend's
                           four tables (re-derive bucketed by EventKind), and
                           sdex (lake ops re-derive). Seeds soroswap pairs via RPC.
-  compute-completeness -config PATH [-to N] [-source S] [-ch -pass]
+  compute-completeness -config PATH [-to N] [-allow-frozen-cursor] [-source S] [-ch -pass]
                           ADR-0033 Phase 6: compute the per-source
                           completeness WATERMARK (substrate continuity +
                           hash chain ∧ projection reconciliation) and a
