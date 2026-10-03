@@ -41,8 +41,8 @@ level 3. The chain to `/` is what matters, not the hop count.
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **135** |
-| Level 3 — reachable | **109** |
+| Paths in the OpenAPI contract | **137** |
+| Level 3 — reachable | **111** |
 | Level 2 — consumed but unreachable | **0** |
 | Level 1 — not consumed | **22** |
 | Deliberately excluded (operational) | **4** |
@@ -220,6 +220,8 @@ page carries.
 | `/auth/logout` | POST | 3 | account.ts:logout, components/nav/Sidebar.tsx | global nav chrome; /, /accounts, /accounts/[g] |
 | `/auth/passkey/begin-login` | POST | 3 | account.ts:beginPasskeyLogin | /signin |
 | `/auth/passkey/finish-login` | POST | 3 | account.ts:finishPasskeyLogin | /signin |
+| `/auth/passkey/begin-signup` | POST | 3 | account.ts:beginPasskeySignup | /signin |
+| `/auth/passkey/finish-signup` | POST | 3 | account.ts:finishPasskeySignup | /signin |
 | `/auth/passkey/begin-register` | POST | 3 | account.ts:beginPasskeyRegister | /dashboard/settings |
 | `/auth/passkey/finish-register` | POST | 3 | account.ts:finishPasskeyRegister | /dashboard/settings |
 | `/auth/passkey/credentials` | GET | 3 | account.ts:listPasskeys | /dashboard/settings |

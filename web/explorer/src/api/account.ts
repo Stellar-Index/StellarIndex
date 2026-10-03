@@ -177,6 +177,27 @@ export async function finishPasskeyLogin(
   });
 }
 
+/** POST /v1/auth/passkey/begin-signup — creation options for an email-less new account. */
+export async function beginPasskeySignup(): Promise<unknown> {
+  return accountFetch<unknown>('/auth/passkey/begin-signup', {
+    method: 'POST',
+  });
+}
+
+/**
+ * POST /v1/auth/passkey/finish-signup — create the account; the session
+ * cookie rides the response. Throws ApiError (400) on any failure.
+ */
+export async function finishPasskeySignup(
+  name: string,
+  credential: Record<string, unknown>,
+): Promise<void> {
+  await accountFetch<{ status: string }>('/auth/passkey/finish-signup', {
+    method: 'POST',
+    body: { name, credential },
+  });
+}
+
 /** POST /v1/auth/passkey/begin-register — creation options (session-gated). */
 export async function beginPasskeyRegister(): Promise<unknown> {
   return accountFetch<unknown>('/auth/passkey/begin-register', {

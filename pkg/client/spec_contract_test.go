@@ -200,6 +200,8 @@ var uncoveredOperations = map[string]string{
 	"POST /auth/passkey/finish-login":             "browser WebAuthn ceremony — session-cookie dashboard surface",
 	"POST /auth/passkey/begin-register":           "browser WebAuthn ceremony — session-cookie dashboard surface",
 	"POST /auth/passkey/finish-register":          "browser WebAuthn ceremony — session-cookie dashboard surface",
+	"POST /auth/passkey/begin-signup":             "browser WebAuthn ceremony — session-cookie dashboard surface",
+	"POST /auth/passkey/finish-signup":            "browser WebAuthn ceremony — session-cookie dashboard surface",
 	"GET /auth/passkey/credentials":               "session-cookie dashboard surface",
 	"DELETE /auth/passkey/credentials/{id}":       "session-cookie dashboard surface",
 	"GET /signup/verify":                          "browser onboarding flow — HTML confirmation page",
