@@ -952,6 +952,10 @@ jobs:
         # must FAIL pre-launch-check.sh when missing: "0 failures" is that
         # runbook's acceptance test. Stubbed host tools; runs anywhere.
         run: bash scripts/ops/pre-launch-check-test.sh
+      - name: protocol-upgrade drill fail-closed tests
+        # Stubbed curl; pins that the drill FAILs on a mismatch, an HTTP
+        # error, a truncated list and an old protocol.
+        run: bash scripts/ops/protocol-upgrade-drill-test.sh
       - name: lint-migrations back-numbering self-test
         # GH-1164: a new migration numbered into a gap below the head is
         # invisible to `migrate up` on every deployment already past it.
