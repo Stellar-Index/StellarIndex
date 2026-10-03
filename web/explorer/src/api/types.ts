@@ -4356,6 +4356,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/passkey/begin-signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — begin creating an account with a passkey and no email.
+         * @description Anonymous. Returns the WebAuthn credential-creation options for
+         *     `navigator.credentials.create()` for a brand-new user; no email
+         *     is asked for or stored. Resident key and `userVerification:
+         *     required`, as for `/auth/passkey/begin-register`.
+         *
+         *     Nothing is created until `/auth/passkey/finish-signup`
+         *     succeeds. Sets the same signed, single-use, 5-minute ceremony
+         *     cookie, purpose-bound to sign-up.
+         *
+         *     An account created this way has no email, so there is no
+         *     recovery path: losing every copy of its passkeys loses the
+         *     account. Add a second passkey from the settings page.
+         *
+         *     Capped per client IP (IPv6: per /64) at 10 calls per hour per
+         *     API instance; past the cap the call returns 429 with
+         *     `Retry-After` and issues no challenge.
+         */
+        post: operations["beginPasskeySignup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passkey/finish-signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — finish passkey sign-up; creates the account and mints the session cookie.
+         * @description Anonymous. Verifies the attestation against the sign-up
+         *     ceremony cookie's challenge, spends the challenge, then creates
+         *     the account, its owner user and the credential, sets the same
+         *     session cookies as `/auth/passkey/finish-login`, and returns
+         *     `{status:"ok"}`. The user has an undeliverable placeholder
+         *     address; no mail is ever sent to it.
+         *
+         *     Every verification failure, including a replayed or expired
+         *     ceremony, returns the same generic 400.
+         */
+        post: operations["finishPasskeySignup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/passkey/begin-register": {
         parameters: {
             query?: never;
@@ -22836,6 +22899,115 @@ export interface operations {
              *     the ceremony's freshness could not be established. The
              *     sign-in is refused rather than granted on trust; email-code
              *     sign-in is unaffected.
+             */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    beginPasskeySignup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description WebAuthn creation options. */
+            200: {
+                headers: {
+                    /** @description Signed ceremony cookie; challenge valid 5 minutes, single-use. */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Cross-site write blocked (`cross-site-request-blocked`). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    finishPasskeySignup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Display-only label; defaults to "Passkey". */
+                    name?: string;
+                    /**
+                     * @description The serialized `PublicKeyCredential` attestation
+                     *     from `navigator.credentials.create()`.
+                     */
+                    credential: Record<string, never>;
+                };
+            };
+        };
+        responses: {
+            /** @description Account created and authenticated; session cookie set. */
+            200: {
+                headers: {
+                    /**
+                     * @description `__Host-stellarindex_session` (HttpOnly, Secure) and its
+                     *     JS-readable presence flag `stellarindex_session_present`.
+                     */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "status": "ok"
+                     *     }
+                     */
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "ok";
+                    };
+                };
+            };
+            /** @description Verification failed (generic — modes are indistinguishable). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Cross-site write blocked (`cross-site-request-blocked`). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description The single-use challenge store or the account store could
+             *     not be reached; nothing was granted.
              */
             500: {
                 headers: {
