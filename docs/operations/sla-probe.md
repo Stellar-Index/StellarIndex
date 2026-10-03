@@ -7,7 +7,7 @@ status: living procedure
 # SLA probe — periodic per-endpoint evidence trail
 
 Operational companion to the executable SLA-evidence CLI shipped in
-#283 (`cmd/stellarindex-sla-probe`). This doc covers:
+763b80254 (`cmd/stellarindex-sla-probe`). This doc covers:
 
 - What the probe is + why it runs continuously
 - Daily cron via `configs/healthchecks/stellarindex-sla-probe.{service,timer}`

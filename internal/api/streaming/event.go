@@ -2,9 +2,13 @@ package streaming
 
 import (
 	"fmt"
+	"strconv"
 	"sync/atomic"
 	"time"
 )
+
+// idLen is the width of a generated event ID in hex characters.
+const idLen = 16
 
 // Event is one SSE message ready for delivery on a topic.
 //
@@ -49,7 +53,8 @@ type Event struct {
 // EventTypeStreamGap is the `event:` value Hub.Subscribe emits when a
 // replay cannot cover the requested Last-Event-ID — either because the
 // ring already evicted older events, or because the per-subscription
-// replay budget trimmed them. IDs are timestamp-packed, not a per-topic
+// replay budget trimmed them, or because the cursor is newer than any ID
+// this process could have issued (a foreign ID space). IDs are timestamp-packed, not a per-topic
 // sequence, so a gap is otherwise unobservable to the client (Refs
 // #1035). Sent before any replay event, with no ID of its own — it
 // does not advance the client's resume cursor.
@@ -77,6 +82,24 @@ type Generator struct {
 	// uint64 for atomic-CAS update. counter resets implicitly each
 	// time lastMillis advances.
 	state atomic.Uint64
+}
+
+// Ahead reports whether id is a well-formed ID newer than anything this
+// generator could have issued by now — a cursor minted by another process
+// whose clock runs ahead. Such a cursor sorts above every event in this
+// process's rings, so a resume would replay nothing and hide the loss.
+// Malformed IDs return false: they are not in this ID space at all and
+// keep the plain "replay what sorts after" behaviour.
+func (g *Generator) Ahead(id string) bool {
+	if len(id) != idLen {
+		return false
+	}
+	v, err := strconv.ParseUint(id, 16, 64)
+	if err != nil {
+		return false
+	}
+	ceiling := max(g.state.Load(), uint64(time.Now().UnixMilli())<<16|0xFFFF) //nolint:gosec // wall-clock millis are positive
+	return v > ceiling
 }
 
 // Next returns the next sortable event ID. Goroutine-safe; never

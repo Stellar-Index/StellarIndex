@@ -76,6 +76,9 @@ export function AssetSidebar({
    *  - 'vwap1m'       — /v1/price closed 1-minute VWAP (the real thing)
    *  - 'triangulated' — composed client-side from asset/XLM × XLM/USD
    *  - 'listing'      — build-time listing cache; can lag hours–days
+   *  - 'global_market' — the vetted token's global ticker price across
+   *                     venues (price_basis=global_market); not a
+   *                     Stellar market observation
    *  - 'declared_peg' — server-filled operator-declared 1:1 fiat peg ×
    *                     current FX rate (price_basis=declared_peg); not
    *                     a market observation

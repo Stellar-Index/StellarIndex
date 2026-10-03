@@ -3,13 +3,15 @@ package v1
 import (
 	"context"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // Issuer directory-label overlay for /v1/assets + /v1/assets/{id}.
 //
-// Joins each asset's issuer G-address against the curated third-party
+// Joins each asset's issuer G-address (a contract token's own C-address)
+// against the curated third-party
 // account_directory table (migration 0136; synced from the MIT-licensed
 // stellar-expert/public-directory) and stamps the additive
 // issuer_directory_{tags,domain,name} fields onto AssetDetail.
@@ -55,15 +57,33 @@ func stampIssuerDirectory(detail *AssetDetail, e timescale.DirectoryEntry) {
 	detail.IssuerDirectoryName = e.Name
 }
 
+// directoryAddress is the account_directory key that labels the asset: a
+// classic asset's issuer G-address, or a contract token's own C-address
+// (it has no issuer account, and the directory labels contracts too).
+// Empty for assets with neither (native, fiat, catalogue-global).
+func directoryAddress(d *AssetDetail) string {
+	if d.Issuer != nil && *d.Issuer != "" {
+		return *d.Issuer
+	}
+	if d.Type == string(canonical.AssetSoroban) {
+		return d.AssetID
+	}
+	return ""
+}
+
 // applyIssuerDirectoryTags resolves the single detail-page issuer.
 func (s *Server) applyIssuerDirectoryTags(ctx context.Context, detail *AssetDetail) {
-	if s.directory == nil || detail == nil || detail.Issuer == nil || *detail.Issuer == "" {
+	if s.directory == nil || detail == nil {
 		return
 	}
-	e, ok, err := s.directory.DirectoryEntryByAddress(ctx, *detail.Issuer)
+	addr := directoryAddress(detail)
+	if addr == "" {
+		return
+	}
+	e, ok, err := s.directory.DirectoryEntryByAddress(ctx, addr)
 	if err != nil {
 		s.logger.Warn("asset issuer directory lookup failed — withholding pricing",
-			"issuer", *detail.Issuer, "err", err)
+			"address", addr, "err", err)
 		detail.issuerDirectoryUnchecked = true
 		return
 	}
@@ -74,8 +94,8 @@ func (s *Server) applyIssuerDirectoryTags(ctx context.Context, detail *AssetDeta
 }
 
 // fillIssuerDirectoryTags resolves the whole listing page's issuer set
-// in ONE batch query (no N+1), then stamps each row. Rows without an
-// issuer (native / catalogue-global) are skipped.
+// in ONE batch query (no N+1), then stamps each row. Rows with no
+// directoryAddress (native / catalogue-global) are skipped.
 func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail) {
 	if s.directory == nil || len(rows) == 0 {
 		return
@@ -83,15 +103,15 @@ func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail
 	seen := make(map[string]struct{}, len(rows))
 	addrs := make([]string, 0, len(rows))
 	for i := range rows {
-		iss := rows[i].Issuer
-		if iss == nil || *iss == "" {
+		addr := directoryAddress(&rows[i])
+		if addr == "" {
 			continue
 		}
-		if _, dup := seen[*iss]; dup {
+		if _, dup := seen[addr]; dup {
 			continue
 		}
-		seen[*iss] = struct{}{}
-		addrs = append(addrs, *iss)
+		seen[addr] = struct{}{}
+		addrs = append(addrs, addr)
 	}
 	if len(addrs) == 0 {
 		return
@@ -102,15 +122,15 @@ func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail
 			"n", len(addrs), "err", err)
 	}
 	for i := range rows {
-		iss := rows[i].Issuer
-		if iss == nil || *iss == "" {
+		addr := directoryAddress(&rows[i])
+		if addr == "" {
 			continue
 		}
 		if err != nil {
 			withholdUncheckedIssuerPricing(&rows[i])
 			continue
 		}
-		if e, ok := found[*iss]; ok {
+		if e, ok := found[addr]; ok {
 			stampIssuerDirectory(&rows[i], e)
 			suppressScamIssuerPricing(&rows[i])
 		}
@@ -195,6 +215,8 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	// to produce.
 	d.ListingReference = nil
 	d.ListingValuation = nil
+	// global_market.price_usd is a dollar price for this row too.
+	d.GlobalMarket = nil
 }
 
 // withholdPriceSeriesWhenUnpriced drops every derived PRICE-OVER-TIME

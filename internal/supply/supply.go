@@ -74,9 +74,9 @@ const (
 	// stellar.toml (max_number, falling back to fixed_number). The
 	// cap is issuer-SELF-DECLARED — a display value, not on-chain
 	// enforced (ADR-0011 §Algorithm 2/3 max_supply precedence step
-	// 2). Total/circulating still come from the snapshot's original
-	// algorithm; this basis flags that the max (and hence FDV) rests
-	// on the issuer's declaration.
+	// 2). Carried on [Supply.MaxSupplyBasis] only: total/circulating
+	// still come from the snapshot's own algorithm, which [Supply.Basis]
+	// keeps naming.
 	BasisSEP1DeclaredMax Basis = "sep1_declared_max"
 
 	// BasisSEP41LakeFlows — Algorithm 3, lake-derived: a SEP-41 token's raw
@@ -226,6 +226,9 @@ func (b Basis) LowerBound() bool {
 //   - Basis identifies which policy produced this Supply. Surfaced
 //     on API responses so consumers know whether to trust the
 //     absolute number.
+//   - MaxSupplyBasis is set only when MaxSupply came from somewhere
+//     other than the policy Basis names — today the SEP-1 overlay.
+//     Empty means MaxSupply (if any) is covered by Basis.
 //   - LedgerSequence + ObservedAt mark the ledger this snapshot
 //     reflects. UTC; ledger close time, not write time.
 type Supply struct {
@@ -234,6 +237,7 @@ type Supply struct {
 	CirculatingSupply *big.Int
 	MaxSupply         *big.Int
 	Basis             Basis
+	MaxSupplyBasis    Basis
 	LedgerSequence    uint32
 	ObservedAt        time.Time
 

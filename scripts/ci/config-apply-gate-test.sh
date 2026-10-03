@@ -91,7 +91,7 @@ mkrepo() {
       configs/ansible/roles/prometheus/templates configs/ansible/inventory \
       configs/ansible/playbooks configs/healthchecks scripts/ops scripts/dev \
       configs/prometheus/rules.r1 deploy/monitoring/rules deploy/systemd \
-      deploy/clickhouse internal/x
+      deploy/clickhouse internal/x configs/loki
     printf 'v1\n' > configs/ansible/roles/archival-node/templates/stellarindex.toml.j2
     printf 'v1\n' > configs/ansible/roles/archival-node/tasks/10-observability.yml
     printf 'v1\n' > configs/ansible/roles/archival-node/files/node-healthcheck.sh
@@ -103,6 +103,8 @@ mkrepo() {
     printf 'v1\n' > configs/healthchecks/smoke.sh
     printf 'v1\n' > scripts/ops/config-assertions.sh
     printf 'v1\n' > scripts/dev/r1-smoke.sh
+    printf 'v1\n' > configs/prometheus/prometheus.r1.yml
+    printf 'v1\n' > configs/loki/promtail.r1.yml
     printf 'v1\n' > deploy/systemd/stellarindex-api.service
     printf 'package x\n' > internal/x/x.go
     # A ClickHouse surface with a real statement in it, so a later edit
@@ -242,7 +244,9 @@ for p in \
   configs/ansible/inventory/r1.yml \
   configs/healthchecks/smoke.sh \
   scripts/ops/config-assertions.sh \
-  scripts/dev/r1-smoke.sh; do
+  scripts/dev/r1-smoke.sh \
+  configs/prometheus/prometheus.r1.yml \
+  configs/loki/promtail.r1.yml; do
   mkrepo
   release "$p"
   runGate v0.2.0
@@ -715,6 +719,32 @@ else
     check_caller "deploy.yml's baseline ignores sidecars outside the region's manifest set" "ok"
   else
     check_caller "deploy.yml's baseline ignores sidecars outside the region's manifest set (the baseline step must take steps.binset.outputs.region_set and filter the sidecars by it — a binary no deploy touches at this region otherwise drags the baseline back)" "no"
+  fi
+
+  # The rule apply is continue-on-error, and the gate only needs rules.r1/
+  # when it changed and was not acknowledged; otherwise only a separate
+  # outcome check, placed after the verification steps, can turn a failed
+  # apply red.
+  if python3 - "$WF" <<'PY'
+import sys, yaml
+steps = yaml.safe_load(open(sys.argv[1]))["jobs"]["deploy"]["steps"]
+names = [s.get("name", "") for s in steps]
+idx = [i for i, s in enumerate(steps)
+       if "steps.prom_rules.outcome" in str(s.get("env", {}).get("OUTCOME", ""))]
+if len(idx) != 1:
+    sys.exit(1)
+s = steps[idx[0]]
+ok = (not s.get("continue-on-error")
+      and "inputs.region == 'r1'" in str(s.get("if", ""))
+      and 'exit 1' in s.get("run", "")
+      and idx[0] > names.index("Config-apply gate")
+      and idx[0] > names.index("Served-path smoke"))
+sys.exit(0 if ok else 1)
+PY
+  then
+    check_caller "deploy.yml fails an r1 job whose Prometheus rule apply failed, after the verification steps" "ok"
+  else
+    check_caller "deploy.yml fails an r1 job whose Prometheus rule apply failed (need one non-continue-on-error r1 step reading steps.prom_rules.outcome that exits 1, after Config-apply gate and Served-path smoke)" "no"
   fi
 fi
 

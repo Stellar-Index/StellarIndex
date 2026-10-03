@@ -95,7 +95,7 @@ func wealthTestHandler(reader ExplorerReader) (*Handler, *struct {
 			rec.status, rec.stale = http.StatusOK, stale
 			w.WriteHeader(http.StatusOK)
 		},
-		WriteJSONAt: func(w http.ResponseWriter, view any, stale bool, asOf time.Time) {
+		WriteJSONAt: func(w http.ResponseWriter, view any, stale, _ bool, asOf time.Time) {
 			rec.status, rec.stale, rec.asOf, rec.viaAt, rec.view = http.StatusOK, stale, asOf, true, view
 			w.WriteHeader(http.StatusOK)
 		},

@@ -39,6 +39,12 @@ forever. `cycleOneSource` flips the gauge to `1` once the source has sat
 at the floor and failed to advance for `WedgeCycles` (5) consecutive
 cycles; any advancing cycle clears it.
 
+At the floor the projector escalates that source's per-cycle deadline:
+`PerSourceTimeout` doubles for each consecutive floor-stall, capped at
+`MaxCycleBudgetMultiple` (8×, 8 minutes), and resets on the first advancing
+cycle. The gauge stays raised until a cycle advances, so a wedge that
+survives the cap still needs the mitigation below.
+
 This is the same failure class as the 2026-07-10 aquarius-rewards stall
 and the 2026-08-01 aquarius-reserves stall (wedged 3.5h at ledger
 63,488,687) — previously visible only as "lag stopped falling".
@@ -62,9 +68,10 @@ ssh r1 'journalctl -u stellarindex-indexer --since "30 min ago" --no-pager \
 
 ## Mitigation
 
-Remediation is **manual and operator-owned** — the projector deliberately
-does not auto-raise the budget or auto-decompress (either could starve the
-host or thrash merges under load). Pick the smallest safe lever:
+Beyond the capped automatic budget escalation above, remediation is
+**manual and operator-owned** — the projector does not auto-decompress
+(it could starve the host or thrash merges under load). Pick the smallest
+safe lever:
 
 - [ ] **Decompress the offending range** (preferred when the wedge is over a
   single cold/compressed chunk). Recompressing the partition that holds the

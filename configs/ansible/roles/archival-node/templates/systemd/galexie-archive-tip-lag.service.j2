@@ -1,9 +1,9 @@
-# systemd service: galexie-archive tip-lag textfile updater (#31).
+# systemd service: galexie-archive tip-lag textfile updater (538d0e752).
 #
 # Computes the ledger lag between galexie-live (current) and
 # galexie-archive (durable mirror), writes a Prometheus textfile
 # at /var/lib/node_exporter/textfile_collector/galexie_archive_tip_lag.prom
-# for node_exporter to surface. Defense-in-depth for #26: the
+# for node_exporter to surface. Defense-in-depth for the 23-day archive stall: the
 # hourly galexie-archive-fill.timer is the primary recurrence
 # fix; if it silently breaks, this metric + its alert pages within
 # hours instead of the 23 days the original incident went unnoticed.
@@ -12,10 +12,10 @@
 # top object of the newest partition), runs in seconds.
 #
 # Runs as root: uses the `local` mc alias which lives in root's
-# ~/.mc/config.json (same as galexie-archive-fill.service per #26).
+# ~/.mc/config.json (same as galexie-archive-fill.service).
 
 [Unit]
-Description=Stellar Index — galexie-archive tip-lag metric updater (#31)
+Description=Stellar Index — galexie-archive tip-lag metric updater (538d0e752)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
 After=minio.service
 Wants=minio.service

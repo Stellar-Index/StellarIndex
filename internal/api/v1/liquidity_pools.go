@@ -131,7 +131,7 @@ func (s *Server) handleLiquidityPools(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := s.nativeLPListing(ctx)
+	rows, degraded, err := s.nativeLPListingDegraded(ctx)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -145,7 +145,7 @@ func (s *Server) handleLiquidityPools(w http.ResponseWriter, r *http.Request) {
 		rows = rows[:limit]
 	}
 	_, stale, _ := s.lakeWatermark(ctx)
-	writeJSON(w, rows, Flags{Stale: stale})
+	writeJSON(w, rows, Flags{Stale: stale, Degraded: degraded})
 }
 
 // serveOneLiquidityPool handles the ?pool= single-pool path: validate
@@ -201,15 +201,23 @@ func (s *Server) serveOneLiquidityPool(ctx context.Context, w http.ResponseWrite
 // stellarindex_explorer_swr_refresh_total{cache="native_lp_listing"} — and
 // every row carries its own per-pool as_of_ledger regardless.
 func (s *Server) nativeLPListing(ctx context.Context) ([]LiquidityPoolReservesRow, error) {
+	rows, _, err := s.nativeLPListingDegraded(ctx)
+	return rows, err
+}
+
+// nativeLPListingDegraded is nativeLPListing plus whether the rows are a
+// carried-forward entry: past the TTL, or last-good after a failed scan.
+func (s *Server) nativeLPListingDegraded(ctx context.Context) ([]LiquidityPoolReservesRow, bool, error) {
 	s.nativeLPMu.Lock()
 	rows, fetched := s.nativeLPCached, s.nativeLPFetched
 	s.nativeLPMu.Unlock()
 
 	if !fetched.IsZero() {
-		if time.Since(fetched) >= nativeLPListingTTL {
+		lapsed := time.Since(fetched) >= nativeLPListingTTL
+		if lapsed {
 			s.refreshNativeLPListing() //nolint:contextcheck // intentional detach — the rescan must outlive the request that noticed the lapse (see refreshNativeLPListing)
 		}
-		return rows, nil
+		return rows, lapsed, nil
 	}
 	return s.fillNativeLPListing(ctx)
 }
@@ -218,7 +226,7 @@ func (s *Server) nativeLPListing(ctx context.Context) ([]LiquidityPoolReservesRo
 // mutex collapses a burst of concurrent COLD callers onto one scan (the
 // posture the old TTL branch had for every caller); it is never held while
 // a warm entry is being served.
-func (s *Server) fillNativeLPListing(ctx context.Context) ([]LiquidityPoolReservesRow, error) {
+func (s *Server) fillNativeLPListing(ctx context.Context) ([]LiquidityPoolReservesRow, bool, error) {
 	s.nativeLPFillMu.Lock()
 	defer s.nativeLPFillMu.Unlock()
 
@@ -228,7 +236,7 @@ func (s *Server) fillNativeLPListing(ctx context.Context) ([]LiquidityPoolReserv
 	rows, fetched := s.nativeLPCached, s.nativeLPFetched
 	s.nativeLPMu.Unlock()
 	if !fetched.IsZero() && time.Since(fetched) < nativeLPListingTTL {
-		return rows, nil
+		return rows, false, nil
 	}
 
 	start := time.Now()
@@ -236,9 +244,9 @@ func (s *Server) fillNativeLPListing(ctx context.Context) ([]LiquidityPoolReserv
 	obs.ObserveExplorerSWRRefresh("native_lp_listing", start, err)
 	if err != nil {
 		if !fetched.IsZero() {
-			return rows, nil // last-good beats failing the request
+			return rows, true, nil // last-good beats failing the request
 		}
-		return nil, err
+		return nil, false, err
 	}
 	out := make([]LiquidityPoolReservesRow, 0, len(states))
 	for _, st := range states {
@@ -247,7 +255,7 @@ func (s *Server) fillNativeLPListing(ctx context.Context) ([]LiquidityPoolReserv
 	s.nativeLPMu.Lock()
 	s.nativeLPCached, s.nativeLPFetched = out, time.Now()
 	s.nativeLPMu.Unlock()
-	return out, nil
+	return out, false, nil
 }
 
 // refreshNativeLPListing kicks ONE detached rescan (a no-op while one is
@@ -267,7 +275,7 @@ func (s *Server) refreshNativeLPListing() {
 		defer worker.Recover(s.logger, "api-native-lp-listing-refresh")
 		ctx, cancel := context.WithTimeout(context.Background(), nativeLPListingRefreshTimeout)
 		defer cancel()
-		if _, err := s.fillNativeLPListing(ctx); err != nil {
+		if _, _, err := s.fillNativeLPListing(ctx); err != nil {
 			// The previous entry is retained and still served; the
 			// refresh metric above is where a dying refresher shows up.
 			s.logger.Warn("native liquidity-pool listing detached refresh failed (serving last good)", "err", err)
