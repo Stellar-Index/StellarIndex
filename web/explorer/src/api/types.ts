@@ -450,6 +450,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/assets/{asset_id}/supply/flows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Daily mint / burn / clawback series for one token.
+         * @description The token's supply-changing events from the ClickHouse
+         *     `supply_flows` lake (the same log `/v1/assets/{asset_id}/supply`
+         *     sums), bucketed by the UTC day their ledger closed, over the
+         *     token's whole recorded history in ascending order. Each day
+         *     carries the per-kind sums and `net` = mint − burn − clawback.
+         *     Amounts are base-unit decimal strings (ADR-0003); clients apply
+         *     per-asset decimals for display.
+         *
+         *     A day with no flows has no row: the log records every event that
+         *     can move supply, so a missing day means supply did not change
+         *     that day. `history_incomplete` is true when the running net dips
+         *     below zero on some day — earlier mints are missing from the lake,
+         *     so the series must not be cumulated into a supply level.
+         *
+         *     Resolution matches `/supply`: a Soroban contract id (`C…`) is used
+         *     directly and a classic asset (`CODE-ISSUER`) resolves to its
+         *     derived Stellar-Asset-Contract. XLM has no mint/burn log (its
+         *     supply is the ledger header's `total_coins`), so `native` / `XLM`
+         *     returns 404, as do ids with no contract (`fiat:*`).
+         *
+         *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the
+         *     read is fresh to; `flags.stale` fires when the watermark's close
+         *     time trails now by more than 300s.
+         */
+        get: operations["getAssetSupplyFlows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/assets/{asset_id}/holders": {
         parameters: {
             query?: never;
@@ -11147,6 +11189,43 @@ export interface components {
         AssetSupplyEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["AssetSupply"];
         };
+        AssetSupplyFlows: {
+            asset_id: string;
+            /** @description The contract the supply_flows log is keyed by. */
+            contract_id: string;
+            days: components["schemas"]["AssetSupplyFlowDay"][];
+            /**
+             * @description True when the running mint − burn − clawback dips below zero:
+             *     earlier mints are missing from the lake, so do not cumulate
+             *     the series into a supply level.
+             */
+            history_incomplete: boolean;
+            /**
+             * Format: int64
+             * @description Lake watermark the read is fresh to; omitted when no watermark reader is wired.
+             */
+            as_of_ledger?: number;
+        };
+        AssetSupplyFlowDay: {
+            /**
+             * Format: date
+             * @description UTC day the flows' ledgers closed.
+             */
+            day: string;
+            /** @description Σ minted, base units (decimal string). */
+            mint: string;
+            /** @description Σ burned, base units (decimal string). */
+            burn: string;
+            /** @description Σ clawed back, base units (decimal string). */
+            clawback: string;
+            /** @description mint − burn − clawback; signed decimal string. */
+            net: string;
+            /**
+             * Format: int64
+             * @description Events behind the day's sums.
+             */
+            flows: number;
+        };
         Price: {
             asset_id: string;
             quote: string;
@@ -13938,6 +14017,68 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    getAssetSupplyFlows: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
+                 *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
+                 *     validated per SEP-23. The handler is strict — short symbols
+                 *     like `XLM` or `USDC` are NOT accepted here; use `native` or
+                 *     the full `<code>-<G…>` form.
+                 * @example native
+                 */
+                asset_id: components["parameters"]["AssetIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Daily supply flows, ascending by day. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *         "days": [
+                     *           {
+                     *             "day": "2026-09-01",
+                     *             "mint": "25000000000000",
+                     *             "burn": "4000000000000",
+                     *             "clawback": "0",
+                     *             "net": "21000000000000",
+                     *             "flows": 412
+                     *           }
+                     *         ],
+                     *         "history_incomplete": false,
+                     *         "as_of_ledger": 63340102
+                     *       },
+                     *       "as_of": "2026-09-02T00:00:05.000000000Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: components["schemas"]["AssetSupplyFlows"];
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     getAssetHolders: {
         parameters: {
             query?: {
@@ -15689,6 +15830,15 @@ export interface operations {
                  *     limit.
                  */
                 source?: "soroswap";
+                /**
+                 * @description Optional. A canonical asset id (`native`, `CODE-ISSUER`, a
+                 *     `C…` contract). Restricts the response to pools holding the
+                 *     asset on either side under any of its alias forms: a classic
+                 *     asset or XLM matches pairs over its Stellar-Asset-Contract.
+                 *     An asset with no Soroswap pair returns an empty list. 400
+                 *     when malformed or combined with `pool`.
+                 */
+                asset?: string;
             };
             header?: never;
             path?: never;
@@ -15802,6 +15952,15 @@ export interface operations {
                  *     top-ranked pools to return. 1-100, default 25.
                  */
                 limit?: number;
+                /**
+                 * @description Optional (listing only). A canonical asset id (`native`,
+                 *     `CODE-ISSUER`, or a SAC `C…` contract the alias registry maps
+                 *     to its classic form — XLM's SAC always). Restricts the ranked listing to pools holding
+                 *     the asset on either side, drawn from every captured native
+                 *     pool rather than the global top 100. 400 when malformed or
+                 *     combined with `pool`.
+                 */
+                asset?: string;
             };
             header?: never;
             path?: never;

@@ -27,6 +27,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/incidents"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/version"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
@@ -307,6 +308,7 @@ type Server struct {
 	// nativeLPRefreshing admits one detached rescan at a time.
 	nativeLPMu              sync.Mutex
 	nativeLPCached          []LiquidityPoolReservesRow
+	nativeLPAll             []clickhouse.NativeLiquidityPoolState
 	nativeLPFetched         time.Time
 	nativeLPFillMu          sync.Mutex
 	nativeLPRefreshing      atomic.Bool
@@ -2479,6 +2481,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// Live per-token supply from the decode-at-ingest supply_flows lake
 	// (ADR-0034).
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/supply", s.handleAssetSupply)
+	s.mux.HandleFunc("GET /v1/assets/{asset_id}/supply/flows", s.handleAssetSupplyFlows)
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/holders", s.explorerHandler.AssetHolders)
 
 	// Current price — last-trade fallback today; VWAP path when

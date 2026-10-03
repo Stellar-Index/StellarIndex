@@ -1002,6 +1002,28 @@ type Market struct {
 	FirstTradeAt *time.Time `json:"first_trade_at,omitempty"`
 }
 
+// AssetSupplyFlows is the data payload of [Client.AssetSupplyFlows].
+// HistoryIncomplete is true when the running net dips below zero, so
+// Days must not be cumulated into a supply level.
+type AssetSupplyFlows struct {
+	AssetID           string               `json:"asset_id"`
+	ContractID        string               `json:"contract_id"`
+	Days              []AssetSupplyFlowDay `json:"days"`
+	HistoryIncomplete bool                 `json:"history_incomplete"`
+	AsOfLedger        *int64               `json:"as_of_ledger,omitempty"`
+}
+
+// AssetSupplyFlowDay is one UTC day of supply flows. Mint/Burn/Clawback
+// are base-unit decimal strings; Net = mint - burn - clawback (signed).
+type AssetSupplyFlowDay struct {
+	Day      string `json:"day"`
+	Mint     string `json:"mint"`
+	Burn     string `json:"burn"`
+	Clawback string `json:"clawback"`
+	Net      string `json:"net"`
+	Flows    int64  `json:"flows"`
+}
+
 // AssetMetadata is the data shape returned by [Client.AssetMetadata]
 // (the SEP-1 overlay endpoint, /v1/assets/{id}/metadata). Mirrors
 // the AssetMetadata schema in openapi/stellar-index.v1.yaml.

@@ -84,6 +84,7 @@ var coveredOperations = []coveredOperation{
 	// spec schemas (Asset, GlobalAssetView) document round-trips.
 	{sdkMethod: "Asset", method: "GET", path: "/assets/{asset_id}", payload: nil, envelopeRef: "#/components/schemas/AssetEnvelope"},
 	{"AssetMetadata", "GET", "/assets/{asset_id}/metadata", AssetMetadata{}, ""},
+	{"AssetSupplyFlows", "GET", "/assets/{asset_id}/supply/flows", AssetSupplyFlows{}, ""},
 	{"Sources", "GET", "/sources", Source{}, ""},
 	{"Aggregators", "GET", "/aggregators", AggregatorRow{}, ""},
 	{"Methodology", "GET", "/methodology", Methodology{}, ""},
