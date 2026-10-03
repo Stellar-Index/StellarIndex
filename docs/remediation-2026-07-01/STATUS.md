@@ -15,7 +15,7 @@ Tracks the fix-everything pass over both audits. Operator-only items live in
 > now a BLOCKING gate: (1) `TestFXQuoteAtOrBefore/FXSources` stale assertion
 > (`massive` joined the FX registry); (2) `TestAPI_EndToEnd//v1/markets` +
 > `TestTradesInRangeAndMarkets` refreshed only `prices_1m` but `DistinctPairs`
-> enumerates pairs from `prices_1d` (the #20 right-granularity rewrite) — now
+> enumerates pairs from `prices_1d` (the cc4ed08ae right-granularity rewrite) — now
 > refresh both; (3) the Blend round-trip tests substring-matched compact JSON
 > against a postgres jsonb column that pretty-prints with spaces — the `contains`
 > helper is now whitespace-insensitive.

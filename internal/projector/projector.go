@@ -1248,7 +1248,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 
 	prefilter := src.PrefilterContractIDs()
 	if p.chAddr != "" {
-		// CH feed-switch (#10): read contract_events directly (already an
+		// CH feed-switch (ADR-0034 #10): read contract_events directly (already an
 		// events.Event, no Reconstruct). No FINAL — small forward window +
 		// idempotent downstream writes absorb any duplicate.
 		err = clickhouse.StreamContractEventsFiltered(cycleCtx, p.chAddr, fromLedger, toLedger,

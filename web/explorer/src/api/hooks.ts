@@ -442,7 +442,7 @@ export function isOnChainSource(s: Source): boolean {
  * useSources — fetches the source registry.
  *
  * `includeStats` opts into per-source 24h trade counts via the
- * `?include=stats` flag the backend added in #845. Cheap (one
+ * `?include=stats` flag the backend added in f37a81dad. Cheap (one
  * GROUP BY against the trades hypertable) but not free, so the
  * static-only callers (e.g. the home page's source list) leave it
  * off.

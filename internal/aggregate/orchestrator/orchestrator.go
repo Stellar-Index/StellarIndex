@@ -390,7 +390,7 @@ type Config struct {
 	//
 	//   - ActionAllow → publish normally.
 	//   - ActionWarn  → publish; downstream divergence-warning path
-	//                   (already handled out-of-band via #205).
+	//                   (already handled out-of-band via e29f1bfff).
 	//   - ActionFreeze → DO NOT publish the new bucket; serve the
 	//                    previous bucket's last-known-good value
 	//                    instead. FreezeWriter writes the marker so
@@ -440,7 +440,7 @@ type Config struct {
 
 	// FreezeWriter, when non-nil and Anomaly is also non-nil, writes
 	// a freeze marker to Redis when Anomaly returns ActionFreeze.
-	// The API's freeze.Looker (#226) reads the same key to set
+	// The API's freeze.Looker (48953beb7) reads the same key to set
 	// flags.frozen=true on /v1/price responses for the affected
 	// pair.
 	//

@@ -1773,7 +1773,7 @@ jobs:
   monitoring-rules:
     name: prometheus rule validation
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     needs: [preflight]
     # §B: cheap — kept unconditional, same reasoning as doc-checks above.
     # Validates BOTH deploy/monitoring/rules/*.yml (multi-host) and

@@ -160,7 +160,7 @@ ReadWritePaths=/var/lib/node_exporter/textfile_collector
 # Historical context for future archaeologists:
 #   - 2026-05-19 (Task #13): TimeoutStartSec was 4h, too tight for
 #     a fresh bootstrap; raised to 17h.
-#   - 2026-05-23 (#62 root cause): 17h was sized for the 12-worker
+#   - 2026-05-23 (f7fc1acab root cause): 17h was sized for the 12-worker
 #     parallel walk, but parallelism never actually happened on r1
 #     (splitRange `to <= from` guard + MinIO IAM denying ListBucket).
 #     Bootstrap walked serially at ~700 ledgers/s = ~25h needed;
