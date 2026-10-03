@@ -28,8 +28,8 @@ enforces it); any per-alert detail page follows it.
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 66 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 245 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `page` | 67 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
+  | `ticket` | 246 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -174,7 +174,7 @@ signal lands.
 | `stellarindex_systemd_unit_failed` | `node_systemd_unit_state{state="failed"}` (catch-all, minus dedicated-alert units) | in `failed` 15m, activating dips under 10m bridged | ticket | [systemd-unit-failed](runbooks/systemd-unit-failed.md) |
 | `stellarindex_timescale_cagg_stale` | `time() - stellarindex_cagg_last_refresh_unix` per CAGG | > 5× its refresh interval | ticket | [cagg-stale](runbooks/cagg-stale.md) |
 | `stellarindex_timescale_cagg_refresh_missing` | `last_over_time(stellarindex_cagg_last_refresh_unix[1d]) unless stellarindex_cagg_last_refresh_unix` per CAGG — a dropped/renamed refresh policy removes the cagg's row from the probe entirely, which `stellarindex_timescale_cagg_stale` cannot see (an absent series never satisfies `time() - x > N`) | a cagg series present within the last day is absent now, for ≥ 15 min | ticket | [cagg-stale](runbooks/cagg-stale.md) |
-| `stellarindex_timescale_job_failures_climbing` | `increase(stellarindex_timescale_job_failures_total[6h\|3d])` per job, the 3d one also × `stellarindex_timescale_job_schedule_interval_seconds` | > 10 failures in 6h, ≥ 3 in 3d, or failures × schedule_interval ≥ 36h (half its scheduled runs in 3d), 30m | ticket | [timescale-job-failures-climbing](runbooks/timescale-job-failures-climbing.md) |
+| `stellarindex_timescale_job_failures_climbing` | `increase(stellarindex_timescale_job_failures_total[6h\|3d])` per job less `stellarindex_timescale_job_concurrent_refresh_failures_6h\|3d`, the 3d one also × `stellarindex_timescale_job_schedule_interval_seconds` | > 10 failures in 6h, ≥ 3 in 3d, or failures × schedule_interval ≥ 36h (half its scheduled runs in 3d), 30m | ticket | [timescale-job-failures-climbing](runbooks/timescale-job-failures-climbing.md) |
 | `stellarindex_timescale_compression_lag` | `stellarindex_timescale_chunks_overdue_compression` | > 0 for > 24 h | informational | [compression-lag](runbooks/compression-lag.md) |
 | `stellarindex_timescale_probe_degraded` | `stellarindex_timescale_probe_query_ok` / `_probe_rows` / `_probe_last_run_unix` | a query errored, a query returned no rows, the file stopped being rewritten (> 10 min), or it was never written — for > 15 min | ticket | [timescale-probe-degraded](runbooks/timescale-probe-degraded.md) |
 | `stellarindex_pg_lock_convoy` | `stellarindex_pg_lock_convoy_wait_seconds_max` (timescale-jobs-probe.sh via node_exporter — NOT postgres_exporter, which was itself in the 2026-09-10 convoy) — backends queued behind a lock request that is itself queued | > 120 s for 2 min | page | [pg-lock-convoy](runbooks/pg-lock-convoy.md) |
@@ -679,6 +679,8 @@ auto-unfreeze at all. Rules in
 | `stellarindex_zfs_pool_degraded` | `node_zfs_pool_state{state=~"DEGRADED|FAULTED|UNAVAIL"}` | any, for > 60 s | page | [zfs-degraded](runbooks/zfs-degraded.md) |
 | `stellarindex_zfs_pool_low_space` | `min by (instance) (node_filesystem_avail_bytes{fstype="zfs"})` | < 1.3 TB free for > 15 min | ticket | [zfs-pool-full](runbooks/zfs-pool-full.md) |
 | `stellarindex_zfs_pool_critical_space` | `min by (instance) (node_filesystem_avail_bytes{fstype="zfs"})` | < 650 GB free for > 5 min | page | [zfs-pool-full](runbooks/zfs-pool-full.md) |
+| `stellarindex_zfs_pool_fill_85pct_within_30d` | `predict_linear` over 14 d of daily `min_over_time(node_filesystem_avail_bytes{fstype="zfs"}[1d])` troughs, ÷ reconstructed pool capacity | projected < 15 % free in 30 d, for > 1 h | ticket | [zfs-pool-full](runbooks/zfs-pool-full.md) |
+| `stellarindex_zfs_pool_fill_90pct_within_7d` | same | projected < 10 % free in 7 d, for > 30 min | page | [zfs-pool-full](runbooks/zfs-pool-full.md) |
 | `stellarindex_nvme_smart_warn` | `increase(nvme_num_err_log_entries_total[1h])` | > 0 for > 5 min | ticket | [nvme-smart](runbooks/nvme-smart.md) |
 | `stellarindex_nvme_thermal_throttle` | `nvme_temperature_celsius` | > 70 °C for > 5 min | page | [nvme-thermal](runbooks/nvme-thermal.md) |
 | `stellarindex_nvme_wear_high` | `nvme_percentage_used_ratio` | > 0.80 for > 1 h | ticket | [nvme-smart](runbooks/nvme-smart.md) |
