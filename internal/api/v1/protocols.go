@@ -743,7 +743,7 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	// Every row's completeness summary republishes a /v1/coverage verdict,
 	// so the envelope carries that surface's freshness gate too.
-	writeJSON(w, view, Flags{Stale: verdictsStale})
+	writeJSON(w, view, Flags{Stale: verdictsStale, Degraded: len(degraded) > 0})
 }
 
 // protocolsCoverageNote is the directory's honest-degrade statement
@@ -841,7 +841,11 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 		(view.Analytics != nil && view.Analytics.Status == protocolAnalyticsStale)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
-	writeJSON(w, view, Flags{Stale: staleFlag})
+	// A stale or partially built view is replaced by the next rebuild;
+	// verdictsStale alone is a fresh read of an old audit verdict and stays
+	// cacheable.
+	degraded := stale || (view.Analytics != nil && view.Analytics.Status != protocolAnalyticsOK)
+	writeJSON(w, view, Flags{Stale: staleFlag, Degraded: degraded})
 }
 
 // protocolDetailBuilder returns the one build closure both the request

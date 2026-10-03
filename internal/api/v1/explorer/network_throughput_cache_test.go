@@ -315,7 +315,7 @@ func TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock(t *testing.T) 
 		w.WriteHeader(status)
 	}
 	var got NetworkThroughputView
-	h.WriteJSONAt = func(w http.ResponseWriter, data any, _ bool, _ time.Time) {
+	h.WriteJSONAt = func(w http.ResponseWriter, data any, _, _ bool, _ time.Time) {
 		got, _ = data.(NetworkThroughputView)
 		w.WriteHeader(http.StatusOK)
 	}
@@ -354,7 +354,7 @@ func TestNetworkThroughput_FeePoolAdjustmentOnP24UpgradeDay(t *testing.T) {
 	h.ParseWindowDays = func(_ http.ResponseWriter, _ *http.Request, def int) (int, bool) { return def, true }
 	h.ClientAborted = func(*http.Request, error) bool { return false }
 	var got NetworkThroughputView
-	h.WriteJSONAt = func(w http.ResponseWriter, data any, _ bool, _ time.Time) {
+	h.WriteJSONAt = func(w http.ResponseWriter, data any, _, _ bool, _ time.Time) {
 		got, _ = data.(NetworkThroughputView)
 		w.WriteHeader(http.StatusOK)
 	}

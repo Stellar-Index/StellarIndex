@@ -1075,6 +1075,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	}
 	flags.Frozen = frozen
 	flags.FrozenChecked = frozenChecked
+	flags.Degraded = frozen
 	// SingleSource is forced true when the snapshot is the LKG
 	// fallback — by the ActionFreeze contract every frozen response
 	// is single-sourced (a multi-source bucket couldn't have been
@@ -3743,6 +3744,7 @@ func batchEnvelope(ids []string, results []batchRowResult) Envelope {
 			ThinMarket:   len(thin) > 0,
 			Stale:        anyStale,
 			Frozen:       anyFrozen,
+			Degraded:     anyFrozen,
 			SingleSource: anySingleSource,
 			Triangulated: anyTriangulated,
 		},
