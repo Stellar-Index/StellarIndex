@@ -78,10 +78,10 @@ func (d *Decoder) Matches(ev events.Event) bool {
 
 // Decode implements [dispatcher.Decoder]. Returns exactly one
 // consumer.Event for the four decoded kinds and ZERO events for the
-// eight recognized-but-undecoded ones.
+// ten recognized-but-undecoded ones.
 //
 // Zero rows with NO error is the deliberate ADR-0033 signal: those
-// eight are real, gated, fully classified events with no serveable
+// ten are real, gated, fully classified events with no serveable
 // state of their own (see the package doc for why each is skipped), so
 // the re-derive must count their ledgers as expected-zero. Returning an
 // error instead would mark the ledger blind and hold this source's

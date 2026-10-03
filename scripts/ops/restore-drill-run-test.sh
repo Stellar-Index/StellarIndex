@@ -216,7 +216,7 @@ c="$work/c2"; mkdir -p "$c"; seed_stale_pass "$c"
 FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=1 run_drill "$c"
 rc="$(cat "$c/rc")"
 if [[ "$rc" == "1" ]]; then
-  ok "restore failure exits with the failure count (1)"
+  ok "restore failure exits 1 (any failed check)"
 else
   bad "restore failure: expected exit 1, got $rc: $(tail -n 3 "$c/out")"
 fi
@@ -248,7 +248,7 @@ c="$work/c3"; mkdir -p "$c"; seed_stale_pass "$c"
 FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=0 FAKE_PG_START_RC=1 run_drill "$c"
 rc="$(cat "$c/rc")"
 if [[ "$rc" == "1" ]]; then
-  ok "pg_start failure exits with the failure count (1)"
+  ok "pg_start failure exits 1 (any failed check)"
 else
   bad "pg_start failure: expected exit 1, got $rc: $(tail -n 3 "$c/out")"
 fi
@@ -281,7 +281,7 @@ c="$work/c4"; mkdir -p "$c"; seed_stale_pass "$c"
 DRILL_REPO=2 FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=1 run_drill "$c"
 rc="$(cat "$c/rc")"
 if [[ "$rc" == "1" ]]; then
-  ok "repo2 restore failure exits with the failure count (1)"
+  ok "repo2 restore failure exits 1 (any failed check)"
 else
   bad "repo2 restore failure: expected exit 1, got $rc: $(tail -n 3 "$c/out")"
 fi
@@ -560,6 +560,27 @@ if [[ "$leftovers" == "0" ]]; then
   ok "a refusal leaves no temp file behind"
 else
   bad "a refusal left $leftovers temp file(s)"
+fi
+
+echo "restore-drill-run-test: failure exit code never collides with the refusal code"
+FEC="$work/failure_exit_code.sh"
+{
+  echo 'set -uo pipefail'
+  grep '^failure_exit_code()' "$DRILL"
+  # shellcheck disable=SC2016  # emitted into the harness verbatim
+  echo 'for n in 0 1 2 3; do fail_count=$n; failure_exit_code; done'
+} > "$FEC"
+got="$(bash "$FEC" 2>&1 | tr '\n' ' ')"
+if [[ "$got" == "0 1 1 1 " ]]; then
+  ok "0/1/2/3 failed checks exit 0/1/1/1 (2 stays the refusal code)"
+else
+  bad "failure_exit_code for 0..3 failures: expected '0 1 1 1', got '$got'"
+fi
+# shellcheck disable=SC2016  # literal match
+if grep -q 'exit "\$fail_count"' "$DRILL"; then
+  bad "a raw exit \"\$fail_count\" remains in restore-drill.sh"
+else
+  ok "no exit path returns the raw failure count"
 fi
 
 echo "restore-drill-run-test: $pass passed, $fail failed"

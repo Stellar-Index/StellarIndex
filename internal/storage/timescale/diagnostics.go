@@ -750,6 +750,9 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 //	soroswap_liquidity             — Soroswap add/remove liquidity; literal
 //	                                 source 'soroswap' (summed WITH skim +
 //	                                 swaps).
+//	sushiswap_v3_position_events   — SushiSwap V3 mint/burn/collect; literal
+//	                                 source 'sushiswap_v3' (summed WITH swaps
+//	                                 from `trades`).
 //	phoenix_initialize             — Phoenix pool initialize; and
 //	phoenix_admin_events           — Phoenix admin; literal source 'phoenix'.
 //	blend_emitter_events           — Blend emitter distribute/drop/swap-
@@ -901,6 +904,8 @@ const seedSourceEntryCountsSQL = `
             SELECT 'aquarius'           AS source, count(*) AS c FROM aquarius_admin
             UNION ALL
             SELECT 'soroswap'           AS source, count(*) AS c FROM soroswap_liquidity
+            UNION ALL
+            SELECT 'sushiswap_v3'       AS source, count(*) AS c FROM sushiswap_v3_position_events
             UNION ALL
             SELECT 'phoenix'            AS source, count(*) AS c FROM phoenix_initialize
             UNION ALL
