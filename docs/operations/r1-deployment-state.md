@@ -89,7 +89,7 @@ Phase-3 validator work.
 | galexie | active, exporting | Own captive-core; uploading `FC4A....xdr.zst` objects to MinIO galexie-live at ~1/ledger. ~100 objects/5min at steady state. **The single stellar-core on the box.** |
 | minio | active | Buckets: `galexie-live`, `galexie-archive`, `backups`. `stellarindex-reader` MinIO user (read-only on both galexie buckets) created 2026-04-26; password rotated + persisted to `/etc/default/stellarindex` 2026-05-03. |
 | **stellarindex-indexer** | **active (NEW 2026-05-03)** | Reads galexie-live tail via S3 GetObject; cursor-resumable. Live tail of pubnet from L62,403,000+. Dispatches to 11 source decoders + writes to `trades` + `oracle_updates` hypertables. Listens for /metrics on `127.0.0.1:9464`. |
-| **stellarindex-aggregator** | **active (NEW 2026-05-03)** | Tick-driven VWAP/TWAP/divergence/freeze/supply orchestration. Writes per-pair closed-bucket VWAPs to Redis cache (`vwap:<pair>:<window>`) + the `prices_1m` CAGG. Listens for /metrics on `127.0.0.1:9465` (auto-shifted off the indexer's :9464 default per #540). |
+| **stellarindex-aggregator** | **active (NEW 2026-05-03)** | Tick-driven VWAP/TWAP/divergence/freeze/supply orchestration. Writes per-pair closed-bucket VWAPs to Redis cache (`vwap:<pair>:<window>`) + the `prices_1m` CAGG. Listens for /metrics on `127.0.0.1:9465` (auto-shifted off the indexer's :9464 default per 4f46ca32f). |
 | **stellarindex-api** | **active (NEW 2026-05-03)** | Public REST + SSE. `auth_mode=none` for the bringup phase. Listens on `0.0.0.0:3000`. /v1/healthz + /v1/readyz green; /v1/price serves real closed-bucket VWAPs. |
 | node_exporter | active | :9100 |
 | ~~stellar-core-prometheus-exporter~~ | **REMOVED 2026-04-23** | Scraped primary /info endpoint; captives don't expose one. |
@@ -112,7 +112,7 @@ captured here so R2 / R3 bringup follows the same path:
 5. scp'd 4 binaries + migrations dir to r1.
 6. Ran `stellarindex-migrate up` — 15/15 migrations applied
    after fixing migration 0005's TimescaleDB unique-index bug
-   (PR #540 — the partition column `time` must be in the index).
+   (commit 4f46ca32f — the partition column `time` must be in the index).
 7. Wrote `/etc/systemd/system/stellarindex-{indexer,aggregator,api}.service`
    units pointing at `/etc/default/stellarindex` for env.
 8. `systemctl enable --now` for each service in dependency order:
@@ -258,7 +258,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
 2. **SCVal decoders implemented + audited for 7 of 8 sources.**
    (Updated 2026-05-01.) All 8 source decoders have real bodies —
    soroswap, aquarius, phoenix, reflector, sdex, comet, band,
-   redstone — landed across PRs #5, #7, #15, #19 plus subsequent
+   redstone — landed across commits 00b9f495c, ee0360da4, 320be3cc4, 7fb063d08 plus subsequent
    fix-ups (Reflector OpIndex stride, Aquarius event fan-out,
    Redstone Bytes unwrap, Band ContractCallDecoder).
    Per-WASM-hash audits **completed 2026-04-29** for soroswap,
@@ -280,7 +280,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    [docs/architecture/contract-schema-evolution.md](../architecture/contract-schema-evolution.md).
 
 5e. **Tagged-release deploy workflow available.**
-   (Done 2026-05-05, PRs #645/#647/#648/#650/#651.) `gh workflow run
+   (Done 2026-05-05, commits 44e48e1f4/e4c9430d6/792b0c125/1560296d9/34c9fc5fc.) `gh workflow run
    deploy.yml -f region=r1 -f version=vX.Y.Z` is now the supported
    path for getting a tagged binary release onto r1. Workflow
    downloads SHA256-verified binaries from the GitHub Release,
@@ -299,7 +299,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    still the fallback.
 
 5f. **Self-service signup + apikey_optional auth wired.**
-   (Done 2026-05-05, PRs #662 #663 + r1 deploy.) A user can now
+   (Done 2026-05-05, commits 83e9c79cc 09097021a + r1 deploy.) A user can now
    `POST /v1/signup {"email": "..."}` and get back a freshly-minted
    API key (Starter tier, 1000 req/min). The key authenticates on
    every subsequent request via `Authorization: Bearer <key>`.
@@ -376,10 +376,10 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
 
 4. **Layer-2 monitoring (Prometheus on a separate box) — role
    exists, deploy still pending on r1.** (Updated 2026-05-01.) The
-   ansible role + AlertManager pair shipped in PR #363 — see
+   ansible role + AlertManager pair shipped in commit d770270b3 — see
    `configs/ansible/roles/prometheus/`. Companion design note at
    `docs/architecture/prometheus-ansible-role-design-note.md`.
-   Loki + Promtail sibling role landed in #364 (`docs/architecture/loki-ansible-role-design-note.md`).
+   Loki + Promtail sibling role landed in 707c2c2c5 (`docs/architecture/loki-ansible-role-design-note.md`).
    Both wait on a staging deploy to actually run; until then,
    Layer-1 (Healthchecks.io push) catches total-death but the
    28+ alert rules in `deploy/monitoring/rules/` (including the
@@ -413,20 +413,20 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
 
    The fix required four PRs and a config edit:
 
-   - **PR #629** — aggregator stablecoin-fiat-proxy expansion now
+   - **commit a5cb70575** — aggregator stablecoin-fiat-proxy expansion now
      reads `[trades].usd_pegged_classic_assets`, so a target
      `native/fiat:USD` expands to include source `native/USDC-GA5Z…`
      (matches actual on-chain Circle-USDC trades).
-   - **PR #630** — `defaultPairs()` emits BOTH `crypto:XLM/fiat:*`
+   - **commit b00c8f3dc** — `defaultPairs()` emits BOTH `crypto:XLM/fiat:*`
      and `native/fiat:*`. The API resolves the caller's asset
      literally; on-chain trades store the `native` form, so without
      this every default-pair tick produced an empty window.
-   - **PR #631** — `/v1/price` Redis-VWAP fallback serves direct
+   - **commit 28cdf55ab** — `/v1/price` Redis-VWAP fallback serves direct
      rewrites, not just triangulated values. The "Timescale is the
      source of truth for direct VWAPs" invariant only applies to
      LITERAL trade pairs; for aggregator-rewritten pairs the Redis
      `vwap:` key IS the source of truth.
-   - **PR #632** — fallback lookup window 1m → 5m. The aggregator's
+   - **commit 3d529fd35** — fallback lookup window 1m → 5m. The aggregator's
      default windows are `[5m, 1h, 24h]` — a 1m lookup missed every
      read.
 
@@ -453,7 +453,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    **Remaining gaps** (operator-tracked, not blocking):
    - `/v1/price/tip?asset=native&quote=fiat:USD` still 404s — uses
      a different reader path that doesn't share the Redis fallback.
-     Fix is parallel to #631 + #632 but lives in a different
+     Fix is parallel to 28cdf55ab + 3d529fd35 but lives in a different
      handler; track separately if launch needs it.
    - ~~`/v1/price?asset=crypto:XLM&quote=fiat:USD` (abstract form)
      still 404s — would require enabled CEX connectors emitting
@@ -464,7 +464,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
      give them ~1 baseline cycle to catch up.
 
 5c. ~~**Discovery sink dropping ~3 k hits/min sustained.**~~
-   **RESOLVED 2026-05-04 18:40 UTC, PR #621.** The async discovery
+   **RESOLVED 2026-05-04 18:40 UTC, commit 111a1573a.** The async discovery
    sink now keeps a process-local `(contract_id, event_type)`
    seen-set and silently skips repeats before they hit the buffered
    channel — the recorder upserts on the same key, so re-enqueue
@@ -479,7 +479,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    first push for any key after restart still records.
 
 5b. **`classic_assets` table seeded from trades.**
-   (Done 2026-05-04, PR #595 context.) Direct SQL backfill
+   (Done 2026-05-04, commit 9b407ec88 context.) Direct SQL backfill
    from `DISTINCT issuer_g_strkey FROM classic_assets WHERE
    issuer_g_strkey IS NOT NULL` populated `issuers` with
    25,256 rows so `/v1/issuers/{g_strkey}` returns real data
@@ -544,10 +544,10 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
 
 ### Backlog (no urgency)
 7. ~~Scope Galexie to a dedicated MinIO user with bucket-scoped
-   write-only policy.~~ **Done — PR #156 (2026-04-23):** `galexie-writer`
+   write-only policy.~~ **Done — Task #156 (2026-04-23):** `galexie-writer`
    has write-only on `galexie-live`; `galexie-archive-writer` has
    write-only on `galexie-archive` (used during the historical fill);
-   `stellarindex-reader` has read on both (PR #162, 2026-04-26).
+   `stellarindex-reader` has read on both (2026-04-26).
 
 8. Galexie's resume-from-last-ledger behaviour: wrapper currently
    restarts from `archive_tip - 128` every time. Long-term should

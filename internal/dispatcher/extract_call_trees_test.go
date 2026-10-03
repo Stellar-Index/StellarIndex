@@ -6,7 +6,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// extractInvokeContractCallTrees is the #48 fix — walks the full
+// extractInvokeContractCallTrees is the 1b1e46a09 fix — walks the full
 // Soroban auth tree per op, capturing every (contract_id,
 // function_name, args) tuple reachable from each op's HostFunction.
 // Pre-fix, the dispatcher only saw the top-level call; ~99.99% of
@@ -67,7 +67,7 @@ func authNodeContract(t *testing.T, contractByte byte, fnName string, subs ...xd
 }
 
 // TestExtractCallTrees_topLevelOnlyNoAuth — falls back to top-level
-// invocation when the op has no Auth array. Pre-#48 behaviour
+// invocation when the op has no Auth array. Pre-1b1e46a09 behaviour
 // preserved for this case.
 func TestExtractCallTrees_topLevelOnlyNoAuth(t *testing.T) {
 	op := opInvokeNoAuth(t, 0xAA, "do_thing")
@@ -93,7 +93,7 @@ func TestExtractCallTrees_topLevelOnlyNoAuth(t *testing.T) {
 
 // TestExtractCallTrees_authRootOnly — auth tree present with just a
 // root (no sub-invocations). Returns exactly the root call. This is
-// the equivalent of the pre-#48 baseline for txs that DO have auth
+// the equivalent of the pre-1b1e46a09 baseline for txs that DO have auth
 // entries; we expect no behavioural change for direct-router calls.
 func TestExtractCallTrees_authRootOnly(t *testing.T) {
 	root := authNodeContract(t, 0xBB, "swap_exact_tokens_for_tokens")
@@ -118,7 +118,7 @@ func TestExtractCallTrees_authRootOnly(t *testing.T) {
 
 // TestExtractCallTrees_aggregatorWrappingRouter — the headline bug
 // scenario. Top-level op calls aggregator.yeet, auth tree shows
-// aggregator → router.swap → pair.swap. Pre-#48 the dispatcher saw
+// aggregator → router.swap → pair.swap. Pre-1b1e46a09 the dispatcher saw
 // only aggregator.yeet (no decoder matched). Post-fix it sees all
 // three calls; the router decoder's Matches() picks the router node.
 func TestExtractCallTrees_aggregatorWrappingRouter(t *testing.T) {
@@ -163,7 +163,7 @@ func TestExtractCallTrees_aggregatorWrappingRouter(t *testing.T) {
 			t.Errorf("call[%d].CallPath last = %d, want %d (path=%v)", i, calls[i].CallPath[len(calls[i].CallPath)-1], w.pathLast, calls[i].CallPath)
 		}
 		if !equalStringSlices(calls[i].CallPathContracts, w.chain) {
-			t.Errorf("call[%d].CallPathContracts = %v, want %v (aggregator wraps router wraps pair — the #11 ordered contract chain)", i, calls[i].CallPathContracts, w.chain)
+			t.Errorf("call[%d].CallPathContracts = %v, want %v (aggregator wraps router wraps pair — the ROADMAP #11 ordered contract chain)", i, calls[i].CallPathContracts, w.chain)
 		}
 	}
 	// The router node specifically: chain must end in its own

@@ -15,7 +15,7 @@ severity: P3
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/price-alerts.yml` |
 | Typical MTTR | 5–30 min (usually Postgres reachability recovery) |
-| Impact | The aggregator's price-alert evaluator can't read the enabled `price_alerts` set, so NO customer price alerts are evaluated. Customers who registered alerts receive no `price.alert` webhooks even when their threshold is crossed. The public pricing surface is unaffected — this is a notifications-only degradation (BACKLOG #60). |
+| Impact | The aggregator's price-alert evaluator can't read the enabled `price_alerts` set, so NO customer price alerts are evaluated. Customers who registered alerts receive no `price.alert` webhooks even when their threshold is crossed. The public pricing surface is unaffected — this is a notifications-only degradation. |
 
 ## Symptoms
 
@@ -136,7 +136,6 @@ Capture for the postmortem: the underlying error class, whether the
 
 ## Changelog
 
-- 2026-07-05 — initial draft alongside the price-alert evaluator
-  (BACKLOG #60).
+- 2026-07-05 — initial draft alongside the price-alert evaluator.
 - 2026-09-26 — per-alert deadline, `evaluations_failing` and
   `sweep_stale` (GH #749).

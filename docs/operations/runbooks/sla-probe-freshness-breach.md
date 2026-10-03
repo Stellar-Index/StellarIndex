@@ -224,4 +224,4 @@ reading the wrong key.
   reads. Endpoint name corrected to `oracle-latest`; commands
   moved to r1 shapes; source-stopped description replaced with the
   real gated + allowlisted rule. Status promoted ratified → current.
-- 2026-04-30 — initial draft alongside #294 (alert rules).
+- 2026-04-30 — initial draft alongside 4778c79b4 (alert rules).

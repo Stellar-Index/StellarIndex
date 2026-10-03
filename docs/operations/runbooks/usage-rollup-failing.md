@@ -103,4 +103,4 @@ Redis/Postgres blips do not fire it.
   the only one.
 - 2026-09-21 — documented the `usage-rollup-backfill` catch-up step
   (#798); the mitigation previously claimed no such step existed.
-- 2026-07-04 — created with the usage-rollup pipeline (#32/#37b).
+- 2026-07-04 — created with the usage-rollup pipeline.

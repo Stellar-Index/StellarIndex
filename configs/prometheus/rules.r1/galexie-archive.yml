@@ -1,8 +1,8 @@
 ---
-# galexie-archive tip-lag alerts (#31) — defense-in-depth for #26.
+# galexie-archive tip-lag alerts (538d0e752) — defense-in-depth for the 23-day archive stall.
 #
-# #26 was a 23-day silent stall of galexie-archive (the ADR-0016 R1
-# durable full-mirror). The recurrence fix shipped in #26 is the
+# The original incident was a 23-day silent stall of galexie-archive (the ADR-0016 R1
+# durable full-mirror). The recurrence fix (f12289f6d) is the
 # hourly `galexie-archive-fill.timer`; this alert is the safety net
 # under it — if that timer (or its `mc` aliases, aws-public IAM,
 # etc.) silently breaks, we want to PAGE in hours, not weeks.
@@ -33,7 +33,7 @@
 #   Warn threshold: >64,000 sustained 90 min → a completed partition
 #     stayed un-mirrored past two hourly fill cycles.
 #   Page threshold: >128,000 → ≥2 completed partitions behind; the
-#     hourly fill has clearly broken (the #26 failure class).
+#     hourly fill has clearly broken (the 23-day-stall failure class).
 # The pre-2026-05-22 thresholds (5,000 / 50,000) predated this model
 # and false-fired through every normal partition cycle.
 
@@ -81,8 +81,8 @@ groups:
             galexie-archive is {{ $value }} ledgers behind galexie-live
             — more than two full 64,000-ledger partitions. The hourly
             galexie-archive-fill.timer has clearly broken — same
-            failure class as the original 23-day stall #26 was the
-            initial fix for. Customer impact: local WASM-walks +
+            failure class as the original 23-day stall the hourly
+            timer was added for. Customer impact: local WASM-walks +
             historical backfills past the gap will fail; R1's
             full-mirror integrity-leader role is broken until repair.
             Runbook: same as above.

@@ -100,7 +100,7 @@ func TestF2_VolumeReaderReceivesTradeTableKey(t *testing.T) {
 
 // stubDualVolumeReader implements BOTH v1.VolumeReader and the optional
 // v1.SorobanVolumeReader, recording which method the asset-detail path
-// invoked so tests can pin the Soroban→XLM-anchored routing (#37).
+// invoked so tests can pin the Soroban→XLM-anchored routing (fce3e2eef).
 type stubDualVolumeReader struct {
 	plainKey   string
 	sorobanKey string
@@ -537,7 +537,7 @@ func TestF2_PriceLookupErrorFallsThrough(t *testing.T) {
 // reader's literal native/fiat:USD lookup misses (the steady-state
 // case on Stellar mainnet — nothing on-chain quotes in fiat:USD),
 // lookupUSDPrice now walks the operator's classic USD pegs. Same
-// shape as the handler-side fix in #1217 / tryStablecoinFiatProxy,
+// shape as the handler-side fix in 6505934b5 / tryStablecoinFiatProxy,
 // but applied at the F2-population layer where the handler's
 // priceFallback isn't reachable. Without this, market_cap_usd /
 // fdv_usd / change_24h_pct stayed null on every on-chain asset.

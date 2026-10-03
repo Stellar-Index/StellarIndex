@@ -105,4 +105,4 @@ histograms see the same backend. The probe just adds:
   key (F-1311 keyless-429 fake-fails). Rule citation →
   `rules.r1/sla-probe.yml`; Prometheus queries use the
   localhost-on-r1 shape.
-- 2026-04-30 — initial draft alongside #294 (alert rules).
+- 2026-04-30 — initial draft alongside 4778c79b4 (alert rules).

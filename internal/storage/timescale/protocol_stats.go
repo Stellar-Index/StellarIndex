@@ -10,7 +10,7 @@ import (
 // every served protocol table, each leg labelled with the logical
 // source name the API's protocol registry uses.
 //
-// Since the 2026-07-06 latency fix (#43) this no longer runs inline on
+// Since the 2026-07-06 latency fix (78dff337b) this no longer runs inline on
 // the request path — the aggregator's protoeventsrollup worker runs it
 // on a slow cadence via [Store.RefreshProtocolEventCounts] and folds
 // the result into the protocol_events_24h rollup (migration 0086), and
@@ -153,7 +153,7 @@ const readProtocolEventsRollup = `SELECT source, events_24h FROM protocol_events
 
 // CountRecentEventsBySource returns the trailing-24h decoded-event
 // count per logical source name, read from the protocol_events_24h
-// rollup (migration 0086, #43). Multi-table sources (blend, phoenix,
+// rollup (migration 0086, 78dff337b). Multi-table sources (blend, phoenix,
 // comet, soroswap) are summed across their tables by the worker, so
 // the caller gets one number per source. The map also carries trades'
 // off-chain sources (binance, kraken, …); protocol-scoped callers

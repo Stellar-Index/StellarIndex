@@ -30,7 +30,7 @@ name: deploy
 # on tag push — the release workflow produces the artefacts; a human
 # decides when each region picks them up.
 #
-# Stack: depends on PRs #645 (release.yml + Dockerfiles + SemVer
+# Stack: depends on commits 44e48e1f4 (release.yml + Dockerfiles + SemVer
 # policy) which produces the v* tagged release artefacts this
 # workflow downloads.
 
