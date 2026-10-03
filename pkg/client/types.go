@@ -26,9 +26,11 @@ type Envelope[T any] struct {
 	Withheld []string `json:"withheld,omitempty"`
 	// Thin names the ids in Data served from a market below the
 	// substance floor under the include_thin opt-in (batch only).
-	Thin    []string `json:"thin,omitempty"`
-	Sources []string `json:"sources,omitempty"`
-	Flags   Flags    `json:"flags"`
+	Thin []string `json:"thin,omitempty"`
+	// UnderReviewReason is the operator-supplied reason; present exactly when Flags.UnderReview is true.
+	UnderReviewReason string   `json:"under_review_reason,omitempty"`
+	Sources           []string `json:"sources,omitempty"`
+	Flags             Flags    `json:"flags"`
 	// Pagination is a POINTER so it matches the server's wire shape
 	// (internal/api/v1/envelope.go uses *Pagination): nil ⇒ the field
 	// is absent. A value type here made `omitempty` a no-op (omitempty
@@ -104,6 +106,8 @@ type Flags struct {
 	PivotUnverified bool `json:"pivot_unverified,omitempty"`
 	// ThinMarket: a served price comes from a market below the substance floor (include_thin opt-in).
 	ThinMarket bool `json:"thin_market,omitempty"`
+	// UnderReview: an operator hold covers the asset, contract or ledger; figures are served unchanged but unconfirmed.
+	UnderReview bool `json:"under_review,omitempty"`
 	// ProxyDeviation: a triangulated fiat:USD price was served through a USD peg while a declared peg trades off $1.
 	ProxyDeviation bool `json:"proxy_deviation,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
