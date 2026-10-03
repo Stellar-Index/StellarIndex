@@ -195,6 +195,8 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	// to produce.
 	d.ListingReference = nil
 	d.ListingValuation = nil
+	// global_market.price_usd is a dollar price for this row too.
+	d.GlobalMarket = nil
 }
 
 // withholdPriceSeriesWhenUnpriced drops every derived PRICE-OVER-TIME
