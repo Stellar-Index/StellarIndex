@@ -219,3 +219,26 @@ func TestGlobalMarket_DepegWarningFoldsIssuerSignals(t *testing.T) {
 		}
 	}
 }
+
+// A thin-market price served under include_thin is never a basis for a
+// divergence, depeg warning or issuer signals (#2144); the reference stays.
+func TestGlobalMarket_ThinPriceCarriesNoDerivedSignals(t *testing.T) {
+	s := globalMarketServer(t)
+	refs := map[string]rwaReference{"crypto:USDC": {
+		priceUSD: big.NewRat(1, 1), wire: "1", source: "coingecko", asOf: time.Now(),
+	}}
+	p := "0.90"
+	d := AssetDetail{AssetID: globalTestUSDC, PriceUSD: &p, ThinMarket: true}
+	s.applyGlobalMarket(&d, refs, time.Now())
+
+	if strPtr(d.PriceUSD) != p {
+		t.Fatalf("thin price altered: %s", strPtr(d.PriceUSD))
+	}
+	gm := d.GlobalMarket
+	if gm == nil {
+		t.Fatal("global_market reference not attached")
+	}
+	if gm.StellarDivergencePct != nil || gm.DepegWarning || len(gm.IssuerSignals) != 0 {
+		t.Errorf("derived from thin price: %+v", gm)
+	}
+}

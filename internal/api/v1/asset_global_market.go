@@ -133,6 +133,9 @@ func (s *Server) applyGlobalMarket(row *AssetDetail, refs map[string]rwaReferenc
 	case s.isDeclaredUSDPeg(local):
 		// A declared USD peg is the USD proxy itself: its Stellar USD price
 		// is quoted through itself, so the gap would measure a global depeg.
+	case row.ThinMarket:
+		// A thin price is served under include_thin as-is; nothing is
+		// derived from it, so no divergence, depeg warning or signals.
 	default:
 		s.stampStellarDivergence(gm, *row.PriceUSD, ref.priceUSD)
 		if gm.DepegWarning {
