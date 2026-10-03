@@ -24,6 +24,14 @@ type Decoder struct {
 // observation should simply not register the decoder.
 var ErrEmptyWatchSet = errors.New("sep41_supply: cannot construct Decoder with empty watched-contract list")
 
+// NewUngatedDecoder returns a Decoder for lake-derive jobs
+// (ch-cap67-movements) that classify by topic alone across every
+// contract. Its Matches always returns false (empty watched set), so it
+// can never be wired into the dispatcher/projector gated paths.
+func NewUngatedDecoder() *Decoder {
+	return &Decoder{watched: map[string]struct{}{}}
+}
+
 // NewDecoder constructs a Decoder watching the supplied
 // SEP-41 contract C-strkey list. Empty strings are rejected as
 // a configuration error.
