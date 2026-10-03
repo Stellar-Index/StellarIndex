@@ -1356,8 +1356,10 @@ Two alerts read it, and only one of them can fire for that series:
 ### `stellarindex_trade_inserts_total`
 
 Counter, labels `source`, `usd_volume_populated` (`yes` | `no` |
-`unroutable`). `unroutable` is an unpriced trade whose two classic legs
-share one issuer; the on-chain coverage alert excludes it from the ratio.
+`unroutable` | `thin`). `unroutable` is an unpriced trade whose two classic
+legs share one issuer; `thin` is an unpriced trade whose only candidate rate
+was refused by the substance gate (market below the valuation floor). The
+on-chain coverage alert excludes both from the ratio.
 
 Per-source attempt counter for `Store.InsertTrade`, broken out by
 whether `usd_volume` was populated at insert time (per L2.2 phase 1
