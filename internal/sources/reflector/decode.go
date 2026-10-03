@@ -96,7 +96,9 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 		return nil, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
 	if len(prices) == 0 {
-		return nil, ErrEmptyPrices
+		// An empty on-wire vector carries nothing to project: a recognised
+		// no-op (as in redstone), not a decode error that blinds the ledger.
+		return nil, nil
 	}
 	if err := checkFanoutBounds(e, len(prices)); err != nil {
 		return nil, err

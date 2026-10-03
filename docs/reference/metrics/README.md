@@ -1787,12 +1787,13 @@ signed delivery goes out. A dashboard summing the counter without a
 
 ### `stellarindex_price_staleness_seconds`
 
-Gauge, label `asset`.
+Gauge, labels `asset`, `quote`.
 
-Age of the most recent price served for `asset` via `/v1/price`, in
-seconds. Updated per request so a popular asset keeps a fresh
-reading; unqueried assets stop updating and the `price-stale` alert
-uses `change()` to distinguish "no-update" from "updated-but-stale".
+Age of the most recent aggregated VWAP write for each configured
+(`asset`, `quote`) pair, in seconds, set by the aggregator at the end
+of every tick. XLM is emitted under both `native` and `crypto:XLM`,
+merged per quote. The `price-stale` alert fires on any series above
+120 s and on the series being absent (a wedged aggregator).
 
 ### `stellarindex_ratelimit_fail_open_total`
 
@@ -3026,6 +3027,24 @@ guarded surface only).
 When to look at it: expected zero. A sustained non-zero rate means the
 substance store is too slow or down for the request path; correlate
 with the timescale readyz probe. Dashboard-only, no alert rule.
+
+### `stellarindex_price_serve_thin_admitted_total`
+
+Counter, labels `surface` and `floor` (both as on
+`stellarindex_price_serve_substance_withheld_total`).
+
+Fires once per thin-market verdict served flagged because the request
+opted in with `?include_thin=true`: the market failed the substance
+floor, and the response carries the price as `thin_market` with its
+`substance` evidence instead of withholding it. Price surfaces count per
+read, so an opted-in thin serve counts its default pass under
+`…_substance_withheld_total` and its second pass here.
+`surface="listing"` counts once per served row, after the declared-peg
+fill and the scam-issuer suppression, and never as withheld;
+`surface="detail"` counts at the read.
+
+When to look at it: the opt-in's adoption, by surface. It never counts a
+default response. Dashboard-only, no alert rule.
 
 ### `stellarindex_pricingguard_trailing_fetch_failed_total`
 

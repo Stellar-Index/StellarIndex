@@ -229,11 +229,10 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// declaration. applySep1Overlay (which runs before applyF2Fields
 	// in handleAssetGet) stamped those fields on detail in DISPLAY
 	// units; the resolver scales them to raw units by
-	// detail.Decimals. An applied overlay relabels
-	// supply_basis="sep1_declared_max" so consumers can see the cap
+	// detail.Decimals. An applied overlay sets
+	// max_supply_basis="sep1_declared_max" so consumers can see the cap
 	// (and the FDV derived from it) is issuer-self-declared, not
-	// on-chain enforced. Wired 2026-07-05 — previously supply.Overlay
-	// had zero callers (F-1354 / D2-03).
+	// on-chain enforced; supply_basis keeps naming the circulating policy.
 	if haveSnap && snap.MaxSupply == nil {
 		overlaid, applied, err := supply.Overlay(ctx, snap, asset, sep1DeclaredMaxResolver{detail: detail})
 		if err != nil {
@@ -327,6 +326,10 @@ func populateSupplyFields(detail *AssetDetail, snap supply.Supply) {
 	if snap.MaxSupply != nil {
 		v := snap.MaxSupply.String()
 		detail.MaxSupply = &v
+		if snap.MaxSupplyBasis != "" {
+			b := string(snap.MaxSupplyBasis)
+			detail.MaxSupplyBasis = &b
+		}
 	}
 	if snap.Basis != "" {
 		v := string(snap.Basis)
@@ -382,6 +385,56 @@ func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asse
 	priceCopy := l.price
 	detail.PriceUSD = &priceCopy
 	return l.sources
+}
+
+// assetDetailCacheKey keys the opt-in apart: its body can carry a thin
+// price the default body must never replay.
+func assetDetailCacheKey(asset canonical.Asset, includeThin bool) string {
+	if includeThin {
+		return asset.String() + "|thin"
+	}
+	return asset.String()
+}
+
+// clearThinWhenUnpriced drops the thin markers from a detail a later
+// suppressor unpriced, so no response is flagged thin without a price.
+func clearThinWhenUnpriced(d *AssetDetail) {
+	if d.PriceUSD == nil {
+		d.ThinMarket = false
+		d.Substance = nil
+	}
+}
+
+// thinDetailPricePass is the detail's opted-in second pass: re-read the
+// price with the request's thin legs released, after pass 1 left it
+// withheld on measured evidence. It runs only the price producers, never
+// applyF2Fields, so no market cap, FDV or change derives from a thin
+// price. "unattributed" is excluded because on detail it labels the
+// issuer suppression, which no thin release may override.
+func (s *Server) thinDetailPricePass(ctx context.Context, detail *AssetDetail, asset canonical.Asset, off *ThinAdmission) {
+	if detail.PriceUSD != nil || off.Evidence() == nil {
+		return
+	}
+	switch detail.PriceWithheldReason {
+	case "", PriceWithheldSubstance, PriceWithheldUpstreamLeg:
+	default:
+		return
+	}
+	onCtx, on := WithThinAdmission(ctx, asset, defaultPriceQuote, true)
+	trial := *detail
+	trial.PriceWithheldReason = ""
+	s.populatePriceUSD(onCtx, &trial, asset)
+	s.fillTransitivePrice(onCtx, &trial, asset, asset.String())
+	if trial.PriceUSD == nil {
+		return
+	}
+	detail.PriceUSD = trial.PriceUSD
+	detail.PriceBasis = trial.PriceBasis
+	detail.PriceWithheldReason = ""
+	if on.Admitted() {
+		detail.ThinMarket = true
+		detail.Substance = substanceEvidenceWire(on.Evidence())
+	}
 }
 
 // marketCapRefused is the pre-figure half of the valuation guards shared by

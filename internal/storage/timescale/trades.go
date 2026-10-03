@@ -1319,8 +1319,8 @@ func scanBatchTradeRows(ctx context.Context, tx *sql.Tx, query string, args []an
 		if isUnitRatio {
 			perSourceUnitRatio[source]++
 		}
-		noteRegistryObservation(seenAssets, baseAsset, registryObservation{ledger: ledger, ts: ts})
-		noteRegistryObservation(seenAssets, quoteAsset, registryObservation{ledger: ledger, ts: ts})
+		noteRegistryObservation(seenAssets, baseAsset, newRegistryObservation(ledger, ts))
+		noteRegistryObservation(seenAssets, quoteAsset, newRegistryObservation(ledger, ts))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, nil, fmt.Errorf("timescale: BatchInsertTrades rows.Err: %w", err)
@@ -1621,12 +1621,22 @@ func (s *Store) insertTradeSubBatches(ctx context.Context, insertRows []canonica
 	return out, nil
 }
 
-// noteRegistryObservation keeps asset's highest-ledger observation — the
-// one rule for folding landed rows and merging sub-batches alike.
+// noteRegistryObservation folds o into asset's observation, keeping the
+// lowest and highest ledger separately — the one rule for folding landed rows
+// and merging sub-batches alike.
 func noteRegistryObservation(seen map[string]registryObservation, asset string, o registryObservation) {
-	if prev, ok := seen[asset]; !ok || o.ledger > prev.ledger {
+	prev, ok := seen[asset]
+	if !ok {
 		seen[asset] = o
+		return
 	}
+	if o.minLedger < prev.minLedger {
+		prev.minLedger, prev.minTs = o.minLedger, o.minTs
+	}
+	if o.maxLedger > prev.maxLedger {
+		prev.maxLedger, prev.maxTs = o.maxLedger, o.maxTs
+	}
+	seen[asset] = prev
 }
 
 // registerBatchLandedAssets runs the classic-asset registry hook for the
@@ -1640,7 +1650,7 @@ func (s *Store) registerBatchLandedAssets(ctx context.Context, seenAssets map[st
 	// / issuers permanently under-populated for batch-ingested assets. We
 	// register only genuinely-inserted rows (matching InsertTrade's F-1243
 	// duplicate-replay guard), deduped to the distinct assets in this batch,
-	// each at the highest ledger we saw. Soft-fail + dedupe-cached, exactly
+	// each over the lowest..highest ledger we saw. Soft-fail + dedupe-cached, exactly
 	// like the single-row path — a registry write can't sink the committed
 	// batch, and steady state is a no-op after the first touch per asset.
 	for assetID, obsv := range seenAssets {
@@ -1654,9 +1664,9 @@ func (s *Store) registerBatchLandedAssets(ctx context.Context, seenAssets map[st
 				"asset", assetID, "err", perr)
 			continue
 		}
-		if regErr := s.registerClassicAssetSeen(ctx, asset, obsv.ledger, obsv.ts); regErr != nil {
+		if regErr := s.registerClassicAssetRange(ctx, asset, obsv); regErr != nil {
 			slog.Default().Debug("timescale: batch classic-asset registry upsert failed (soft-skip)",
-				"asset", assetID, "ledger", obsv.ledger, "err", regErr)
+				"asset", assetID, "ledger", obsv.maxLedger, "err", regErr)
 		}
 	}
 }
@@ -1720,12 +1730,17 @@ func countZeroLegAdmitted(t canonical.Trade) {
 	}
 }
 
-// registryObservation is the highest-ledger observation of a landed asset
-// within one BatchInsertTrades call — the input to the C2-13b batch-path
-// classic-asset/issuer registry hook.
+// registryObservation is the lowest and highest ledger observation of a
+// landed asset within one BatchInsertTrades call — the input to the C2-13b
+// batch-path classic-asset/issuer registry hook. Both ends are carried so a
+// backfill batch offers the true first-seen minimum, not just its tip.
 type registryObservation struct {
-	ledger uint32
-	ts     time.Time
+	minLedger, maxLedger uint32
+	minTs, maxTs         time.Time
+}
+
+func newRegistryObservation(ledger uint32, ts time.Time) registryObservation {
+	return registryObservation{minLedger: ledger, maxLedger: ledger, minTs: ts, maxTs: ts}
 }
 
 // A market has NO stored direction of its own, and the two readers

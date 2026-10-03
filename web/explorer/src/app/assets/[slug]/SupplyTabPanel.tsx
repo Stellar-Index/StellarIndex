@@ -118,7 +118,13 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
             <Metric
               label="Max"
               value={max != null ? formatCompact(max) : '—'}
-              sublabel={a.is_unlimited === true ? 'Unlimited' : ''}
+              sublabel={
+                a.is_unlimited === true
+                  ? 'Unlimited'
+                  : a.max_supply_basis === 'sep1_declared_max'
+                    ? 'Issuer-declared in stellar.toml'
+                    : ''
+              }
             />
           </div>
 
