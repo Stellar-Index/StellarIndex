@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"net/http"
 	"strconv"
 	"time"
@@ -60,6 +61,8 @@ type VWAPResult struct {
 	// the last closed boundary per ADR-0015 — the served window is
 	// narrower than the one asked for.
 	Clamped bool `json:"clamped"`
+	// Breakdown is present only for ?breakdown=source.
+	Breakdown *VWAPBreakdown `json:"breakdown,omitempty"`
 }
 
 // handleVWAP serves GET /v1/vwap?base=...&quote=...&from=...&to=...&outlier_sigma=...
@@ -145,6 +148,11 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	breakdown, bucketInterval, ok := parseVWAPBreakdown(w, r)
+	if !ok {
+		return
+	}
+
 	// maxTrades caps each single-shot aggregation. Hitting the cap
 	// means the computed VWAP is only over the NEWEST N trades in
 	// the window (the reader drops the oldest rows — see
@@ -173,6 +181,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	volumeDecimals := commonAmountScaleDecimals(trades)
 
 	pre := len(trades)
+	fetched := trades
 	if sigma > 0 {
 		trades = aggregate.FilterOutliers(trades, sigma)
 	}
@@ -218,7 +227,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// the aggregator's shortest-window VWAP now, and this value is computed
 	// here from raw trades over a caller-chosen [from, to), so the verdict
 	// never saw it — the same reason /v1/price/at carries none.
-	writeJSON(w, VWAPResult{
+	res := VWAPResult{
 		From:                WireTime(from),
 		To:                  WireTime(to),
 		Price:               ratToDecimal(price, ohlcPriceDigits),
@@ -230,7 +239,17 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		OutliersFiltered:    outliersFiltered,
 		Truncated:           pre == maxTrades,
 		Clamped:             clamped,
-	}, Flags{Triangulated: triangulated, ProxyDeviation: triangulated && s.proxyDeviation(ctx, to)})
+	}
+	if breakdown {
+		adjust := func(p *big.Rat) *big.Rat {
+			return aggregate.AdjustPrice(p,
+				aggregate.ResolveDecimals(s.nonstandardDecimals, base),
+				aggregate.ResolveDecimals(s.nonstandardDecimals, quote))
+		}
+		res.Breakdown = buildVWAPBreakdown(fetched, trades, bucketInterval, from, to,
+			pair.Quote.Type != canonical.AssetFiat, adjust, pre == maxTrades)
+	}
+	writeJSON(w, res, Flags{Triangulated: triangulated, ProxyDeviation: triangulated && s.proxyDeviation(ctx, to)})
 }
 
 // parseVWAPOutlierSigma parses ?outlier_sigma=, defaulting to 0 (no

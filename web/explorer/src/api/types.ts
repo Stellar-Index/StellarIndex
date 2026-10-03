@@ -11817,6 +11817,52 @@ export interface components {
              *     closed boundary per ADR-0015.
              */
             clamped: boolean;
+            breakdown?: components["schemas"]["VWAPBreakdown"];
+        };
+        /**
+         * @description Present only with `breakdown=source`. Volumes are in the same units
+         *     as the response's `base_volume` / `quote_volume` (see their
+         *     `*_decimals`), so a bucket's sources sum to the bucket. Computed
+         *     from the same trades as the headline price: when `truncated` is
+         *     true the fetch cap was hit and the breakdown covers only the
+         *     newest trades of the window, a lower bound rather than the whole.
+         */
+        VWAPBreakdown: {
+            /** @description Bucket width asked for; null when the whole window is one bucket. */
+            interval: string | null;
+            truncated: boolean;
+            /** @description Ascending by `start`; only buckets holding at least one fetched trade. */
+            buckets: {
+                /**
+                 * Format: date-time
+                 * @description UTC-aligned bucket start (not clamped to the window).
+                 */
+                start: string;
+                /** Format: date-time */
+                end: string;
+                /** @description Σ post-filter quote volume of the bucket. */
+                quote_volume: string;
+                /** @description Post-filter trades in the bucket. */
+                trade_count: number;
+                /** @description Ordered by quote volume descending, then name. */
+                sources: {
+                    source: string;
+                    /** @description This source's VWAP in the bucket; null when the outlier filter left it no trades. */
+                    price: string | null;
+                    base_volume: string;
+                    quote_volume: string;
+                    /** @description Post-filter trades. */
+                    trade_count: number;
+                    /**
+                     * @description This source's post-filter quote volume over the bucket's
+                     *     total, scale-normalised across venues, floored to 10
+                     *     decimal places (weights sum to 1 to that precision).
+                     */
+                    weight: string;
+                    /** @description Trades of this source in the bucket the `outlier_sigma` filter removed; 0 when sigma is 0. */
+                    outliers_excluded: number;
+                }[];
+            }[];
         };
         VWAPEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["VWAPResult"];
@@ -15185,6 +15231,20 @@ export interface operations {
                 to?: components["parameters"]["To"];
                 /** @description Drop trades > N σ from window mean. 0 disables (default). */
                 outlier_sigma?: number;
+                /**
+                 * @description Opt in to a per-source, per-bucket breakdown (`data.breakdown`):
+                 *     each venue's VWAP, base/quote volume, trade count, weight in
+                 *     this endpoint's VWAP, and how many of its trades the
+                 *     `outlier_sigma` filter excluded. Omitted, the response is
+                 *     unchanged.
+                 */
+                breakdown?: "source";
+                /**
+                 * @description Bucket width for `breakdown=source`, UTC-aligned (same ladder as
+                 *     `/v1/ohlc`). Omitted, the whole window is one bucket. 400
+                 *     without `breakdown=source`.
+                 */
+                interval?: "1m" | "5m" | "15m" | "30m" | "1h" | "2h" | "4h" | "12h" | "1d" | "3d" | "1w" | "2w" | "1mo";
             };
             header?: never;
             path?: never;
