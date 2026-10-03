@@ -85,7 +85,7 @@ If a query is the problem, run it directly and read the error:
 
 ```sh
 runuser -u postgres -- psql -d stellarindex -c \
-  "SELECT count(*) FROM timescaledb_information.jobs WHERE proc_name = 'policy_compression';"
+  "SELECT count(*) FROM timescaledb_information.jobs WHERE proc_name IN ('policy_compression', 'trades_compression_policy');"
 ```
 
 ## Typical root causes

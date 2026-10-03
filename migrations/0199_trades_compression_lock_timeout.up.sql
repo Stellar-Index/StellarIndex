@@ -36,7 +36,8 @@ DECLARE
     prev text := current_setting('lock_timeout');
 BEGIN
     -- Session-level: SET LOCAL would end at the policy's first per-chunk
-    -- COMMIT. Restored for a by-hand CALL run_job.
+    -- COMMIT. Restored only after a successful run: a failed by-hand CALL
+    -- run_job leaves that session at 5s.
     PERFORM set_config('lock_timeout', '5s', false);
     CALL _timescaledb_functions.policy_compression(job_id, config);
     PERFORM set_config('lock_timeout', prev, false);
@@ -66,6 +67,18 @@ BEGIN
     IF n_builtin <> 1 OR n_bounded <> 0 THEN
         RAISE EXCEPTION '0199: expected one built-in trades compression policy and no trades_compression_policy job, found % and %',
             n_builtin, n_bounded;
+    END IF;
+
+    -- A usd-volume-restamp -write run holds this session lock and ends by
+    -- alter_job on the job it paused; deleting that job under it would leave
+    -- the replacement paused. Key form: pg_advisory_lock(int4) is a bigint
+    -- key split into classid (high 32) and objid (low 32), objsubid 1.
+    IF EXISTS (SELECT 1 FROM pg_locks l
+                WHERE l.locktype = 'advisory' AND l.objsubid = 1
+                  AND ((l.classid::bigint << 32) | l.objid::bigint)
+                      = hashtext('usd-volume-restamp:trades')::bigint
+                  AND l.pid <> pg_backend_pid()) THEN
+        RAISE EXCEPTION '0199: a usd-volume-restamp -write run holds advisory lock hashtext(''usd-volume-restamp:trades''); it will re-enable the built-in compression job by id on exit. Let it finish (or stop it), then re-run the migration';
     END IF;
 
     SELECT j.job_id, j.schedule_interval, j.max_runtime, j.max_retries,

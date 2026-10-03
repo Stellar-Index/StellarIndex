@@ -1469,7 +1469,7 @@
       # schedule_interval rides along so the alert can judge a job by
       # the runs it was scheduled for, not by one absolute count that a
       # slow enough job can never reach.
-      q "SELECT j.proc_name, COALESCE(j.hypertable_name,'-'), js.job_id, js.total_failures,
+      q "SELECT j.proc_name, COALESCE(j.hypertable_name, CASE WHEN j.proc_name = 'trades_compression_policy' THEN 'trades' ELSE '-' END), js.job_id, js.total_failures,
                 EXTRACT(epoch FROM j.schedule_interval)::bigint
          FROM timescaledb_information.job_stats js
          JOIN timescaledb_information.jobs j USING (job_id)"

@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -288,14 +289,19 @@ func assertFreezeChunkStillCompressed(t *testing.T, ctx context.Context, dsn str
 // create a compressed chunk that 0119's ALTER TABLE then has to survive.
 func applyMigrationsUpTo(t *testing.T, dsn string, version uint) {
 	t.Helper()
+	if err := applyMigrationsUpToErr(dsn, version); err != nil {
+		t.Fatalf("migrate to %d: %v", version, err)
+	}
+}
+
+// applyMigrationsUpToErr returns the migration's error instead of failing.
+func applyMigrationsUpToErr(dsn string, version uint) error {
 	_, thisFile, _, _ := runtime.Caller(0)
 	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
 	m, err := migrate.New("file://"+migrationsDir, dsn)
 	if err != nil {
-		t.Fatalf("migrate.New: %v", err)
+		return fmt.Errorf("migrate.New: %w", err)
 	}
 	defer func() { _, _ = m.Close() }()
-	if err := m.Migrate(version); err != nil {
-		t.Fatalf("migrate to %d: %v", version, err)
-	}
+	return m.Migrate(version)
 }

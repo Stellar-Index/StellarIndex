@@ -146,6 +146,59 @@ func TestMigration0199_TradesCompressionGivesUpOnALockedChunk(t *testing.T) {
 	}
 }
 
+// TestMigration0199_RefusesWhileARestampHoldsItsLock pins that the swap
+// does not delete the built-in job under a live usd-volume-restamp -write.
+func TestMigration0199_RefusesWhileARestampHoldsItsLock(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	c.InstallAliasRegistry(nil)
+
+	dsn := startTimescale(t, ctx)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+
+	applyMigrationsUpTo(t, dsn, 198)
+	requireSchemaVersion(t, ctx, db, 198)
+	quiesceCAGGRefreshPolicies(t, ctx, db)
+
+	holder, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("holder conn: %v", err)
+	}
+	defer func() { _ = holder.Close() }()
+	var got bool
+	if err := holder.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(hashtext($1::text))`,
+		timescale.USDVolumeRestampLockName).Scan(&got); err != nil || !got {
+		t.Fatalf("take the restamp lock: got=%v err=%v", got, err)
+	}
+
+	err = applyMigrationsUpToErr(dsn, 199)
+	if err == nil || !strings.Contains(err.Error(), "usd-volume-restamp") {
+		t.Fatalf("0199 with the restamp lock held: err=%v, want a refusal naming usd-volume-restamp", err)
+	}
+	if before := tradesCompressionJobs(t, ctx, db); before.builtin != 1 || before.bounded != 0 {
+		t.Fatalf("after the refusal: built-in=%d bounded=%d, want 1 and 0", before.builtin, before.bounded)
+	}
+
+	// A refused step leaves schema_migrations dirty; put it back to retry.
+	if _, err := db.ExecContext(ctx, `UPDATE schema_migrations SET version = 198, dirty = false`); err != nil {
+		t.Fatalf("clear the dirty flag: %v", err)
+	}
+	var released bool
+	if err := holder.QueryRowContext(ctx, `SELECT pg_advisory_unlock(hashtext($1::text))`,
+		timescale.USDVolumeRestampLockName).Scan(&released); err != nil || !released {
+		t.Fatalf("release the restamp lock: %v %v", released, err)
+	}
+	applyMigrationsUpTo(t, dsn, 199)
+	requireSchemaVersion(t, ctx, db, 199)
+	if after := tradesCompressionJobs(t, ctx, db); after.builtin != 0 || after.bounded != 1 {
+		t.Fatalf("after 0199: built-in=%d bounded=%d, want 0 and 1", after.builtin, after.bounded)
+	}
+}
+
 type tradesCompressionJobSettings struct {
 	schedule, maxRuntime, retryPeriod string
 	maxRetries                        int
