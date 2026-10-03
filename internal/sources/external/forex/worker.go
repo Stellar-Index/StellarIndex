@@ -796,10 +796,17 @@ func (w *Worker) writeBatch(ctx context.Context, res guardResult) {
 	// that actually answered. Attributing a fallback's rows to massive
 	// would report a feed as healthy while it was in fact down.
 	//
-	// Placed after the committed non-empty write, on the same reasoning
-	// the liveness gauge below documents: an empty batch or a failed
-	// insert must not make the feed look productive.
-	obs.SourceEventsTotal.WithLabelValues(w.sourceLabel()).Add(float64(len(batch)))
+	// Placed after the committed write, on the same reasoning the
+	// liveness gauge below documents: a failed insert must not make the
+	// feed look productive.
+	//
+	// Counts fresh upstream rates, not len(batch): the synthetic USD anchor
+	// and carried-forward history bars are written every refresh even when
+	// the upstream is dead, so they would keep a dead feed's counter moving.
+	fresh := res.freshQuotes()
+	if fresh > 0 {
+		obs.SourceEventsTotal.WithLabelValues(w.sourceLabel()).Add(float64(fresh))
+	}
 
 	// Stamp the FX-feed liveness gauge ONLY when the committed write
 	// carried at least one upstream current rate. A failed insert
@@ -809,7 +816,7 @@ func (w *Worker) writeBatch(ctx context.Context, res guardResult) {
 	// was dropped, so they would keep a dead feed looking fresh. The
 	// stellarindex_external_fx_feed_stale alert keys off this gauge's
 	// staleness, BEFORE the 7-day fx_snap lookback expires.
-	if res.freshQuotes() > 0 {
+	if fresh > 0 {
 		obs.ExternalFXLastQuoteUnix.WithLabelValues(w.sourceLabel()).Set(float64(time.Now().Unix()))
 	}
 }
