@@ -219,6 +219,8 @@ page carries.
 | `/auth/logout` | POST | 3 | account.ts:logout, components/nav/Sidebar.tsx | global nav chrome; /, /accounts, /accounts/[g] |
 | `/auth/passkey/begin-login` | POST | 3 | account.ts:beginPasskeyLogin | /signin |
 | `/auth/passkey/finish-login` | POST | 3 | account.ts:finishPasskeyLogin | /signin |
+| `/auth/passkey/begin-signup` | POST | 3 | account.ts:beginPasskeySignup | /signin |
+| `/auth/passkey/finish-signup` | POST | 3 | account.ts:finishPasskeySignup | /signin |
 | `/auth/passkey/begin-register` | POST | 3 | account.ts:beginPasskeyRegister | /dashboard/settings |
 | `/auth/passkey/finish-register` | POST | 3 | account.ts:finishPasskeyRegister | /dashboard/settings |
 | `/auth/passkey/credentials` | GET | 3 | account.ts:listPasskeys | /dashboard/settings |
