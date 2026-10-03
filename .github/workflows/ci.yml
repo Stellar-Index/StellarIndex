@@ -784,6 +784,8 @@ jobs:
         run: ./scripts/dev/lint-changed-test.sh
       - name: doctor self-test
         run: ./scripts/dev/doctor-test.sh
+      - name: verify-r1-sync self-test
+        run: ./scripts/dev/verify-r1-sync-test.sh
       - name: lint-external-channels
         # A repository setting or DNS name that is switched off cannot be
         # seen from inside the tree, so three published channels shipped

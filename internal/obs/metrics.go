@@ -2619,13 +2619,13 @@ var PriceAlertEvalTotal = prometheus.NewCounterVec(
 
 // PriceAlertEvaluatedTotal — one increment per alert per sweep, labelled
 // by that alert's outcome (pricealerts.AlertOutcomes): fired, not_crossed,
-// no_price, stale, cooling_down, no_subscriber, claim_lost, error, timeout.
+// already_fired, no_price, stale, cooling_down, no_subscriber, claim_lost, error, timeout.
 // PriceAlertEvalTotal's `partial_error` is one sample per sweep whether
 // one alert or all of them failed; this counter separates the two.
 var PriceAlertEvaluatedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_alert_evaluated_total",
-		Help: "Per-alert price-alert evaluation outcomes (fired|not_crossed|no_price|stale|cooling_down|no_subscriber|claim_lost|error|timeout).",
+		Help: "Per-alert price-alert evaluation outcomes (fired|not_crossed|already_fired|no_price|stale|cooling_down|no_subscriber|claim_lost|error|timeout).",
 	},
 	[]string{"outcome"},
 )
@@ -3284,8 +3284,9 @@ var StreamPublishStallTotal = prometheus.NewCounterVec(
 
 // ─── Pricing / oracle metrics ────────────────────────────────────
 
-// PriceStalenessSeconds — per-asset gauge showing how old our
-// latest aggregated-price observation is. Alert fires when >120s.
+// PriceStalenessSeconds — per-(asset, quote) gauge showing how old our
+// latest aggregated-price observation for that pair is. Alert fires
+// when >120s; the quote label names which quote stopped publishing.
 //
 // CARDINALITY WARNING: Stellar has tens of thousands of classic
 // assets. Writers MUST restrict emission to an allow-list (top-N
@@ -3297,9 +3298,9 @@ var StreamPublishStallTotal = prometheus.NewCounterVec(
 var PriceStalenessSeconds = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_price_staleness_seconds",
-		Help: "Age of the most recent aggregated price per asset (seconds). Writers MUST restrict to a top-N allow-list.",
+		Help: "Age of the most recent aggregated price per (asset, quote) pair (seconds). Writers MUST restrict to a top-N allow-list.",
 	},
-	[]string{"asset"},
+	[]string{"asset", "quote"},
 )
 
 // OracleLastUpdateUnix — per-(source, asset) gauge with the Unix

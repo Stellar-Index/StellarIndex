@@ -297,6 +297,10 @@ type ExplorerReader interface {
 	// watermark, keeping the merge gap-free and double-count-free at
 	// any derive progress. Implementations cache (~60s).
 	Cap67MovementsWatermark(ctx context.Context) (uint32, error)
+	// Cap67SupplyCoverage is the ledger range, at or below the watermark,
+	// the derive has also covered with mint, burn and clawback (ok=false:
+	// none yet). Same cache as the watermark.
+	Cap67SupplyCoverage(ctx context.Context) (from, thru uint32, ok bool, err error)
 	// AccountsStats is the /accounts hub analytics snapshot (rollup-
 	// backed; ok=false while the rollup hasn't completed a cycle).
 	AccountsStats(ctx context.Context) (clickhouse.AccountsStats, bool, error)

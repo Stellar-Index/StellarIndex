@@ -78,8 +78,8 @@ func TestOverlay_OperatorOverridePreserved(t *testing.T) {
 
 // TestOverlay_AppliesSEP1WhenAvailable — happy path: no operator
 // override, SEP-1 declaration present and parseable; MaxSupply gets
-// populated and Basis flips to SEP1DeclaredMax so the wire labels
-// the cap as issuer-self-declared.
+// populated, MaxSupplyBasis labels the cap as issuer-self-declared,
+// and Basis keeps naming the circulating policy.
 func TestOverlay_AppliesSEP1WhenAvailable(t *testing.T) {
 	resolver := &stubMetadataResolver{raw: "21000000000000000", ok: true}
 	snap := supply.Supply{
@@ -99,8 +99,11 @@ func TestOverlay_AppliesSEP1WhenAvailable(t *testing.T) {
 	if got.MaxSupply == nil || got.MaxSupply.String() != "21000000000000000" {
 		t.Errorf("MaxSupply = %v, want 21000000000000000", got.MaxSupply)
 	}
-	if got.Basis != supply.BasisSEP1DeclaredMax {
-		t.Errorf("Basis = %q, want %q", got.Basis, supply.BasisSEP1DeclaredMax)
+	if got.MaxSupplyBasis != supply.BasisSEP1DeclaredMax {
+		t.Errorf("MaxSupplyBasis = %q, want %q", got.MaxSupplyBasis, supply.BasisSEP1DeclaredMax)
+	}
+	if got.Basis != supply.BasisIssuerExclusion {
+		t.Errorf("Basis = %q, want unchanged %q", got.Basis, supply.BasisIssuerExclusion)
 	}
 }
 
@@ -247,8 +250,11 @@ func TestOverlay_RejectsZeroOrBelowCirculating(t *testing.T) {
 		if got.MaxSupply == nil || got.MaxSupply.String() != "2000" {
 			t.Errorf("MaxSupply = %v, want 2000", got.MaxSupply)
 		}
-		if got.Basis != supply.BasisSEP1DeclaredMax {
-			t.Errorf("Basis = %q, want %q", got.Basis, supply.BasisSEP1DeclaredMax)
+		if got.MaxSupplyBasis != supply.BasisSEP1DeclaredMax {
+			t.Errorf("MaxSupplyBasis = %q, want %q", got.MaxSupplyBasis, supply.BasisSEP1DeclaredMax)
+		}
+		if got.Basis != supply.BasisIssuerExclusion {
+			t.Errorf("Basis = %q, want unchanged %q", got.Basis, supply.BasisIssuerExclusion)
 		}
 	})
 
@@ -374,12 +380,12 @@ func TestOverlay_NilResolverIsNoop(t *testing.T) {
 	}
 }
 
-// TestOverlay_BasisOverrideAlsoRelabelled — when an asset already
-// has Basis=Override (e.g. operator extended the locked-set but
-// didn't supply a max_supply), applying the SEP-1 max still
-// relabels to SEP1DeclaredMax: the max/FDV now rest on the issuer's
-// declaration and the wire must say so.
-func TestOverlay_BasisOverrideAlsoRelabelled(t *testing.T) {
+// TestOverlay_BasisOverrideKeptBesideDeclaredMax — when an asset
+// already has Basis=Override (e.g. operator extended the locked-set
+// but didn't supply a max_supply), applying the SEP-1 max labels the
+// max as self-declared without erasing the operator-curated
+// circulating policy.
+func TestOverlay_BasisOverrideKeptBesideDeclaredMax(t *testing.T) {
 	resolver := &stubMetadataResolver{raw: "1000000", ok: true}
 	snap := supply.Supply{
 		AssetKey: "USDC:GA1", TotalSupply: big.NewInt(1000),
@@ -390,7 +396,31 @@ func TestOverlay_BasisOverrideAlsoRelabelled(t *testing.T) {
 	if err != nil || !applied {
 		t.Fatalf("expected overlay applied; err=%v applied=%v", err, applied)
 	}
-	if got.Basis != supply.BasisSEP1DeclaredMax {
-		t.Errorf("Basis = %q, want %q", got.Basis, supply.BasisSEP1DeclaredMax)
+	if got.MaxSupplyBasis != supply.BasisSEP1DeclaredMax {
+		t.Errorf("MaxSupplyBasis = %q, want %q", got.MaxSupplyBasis, supply.BasisSEP1DeclaredMax)
+	}
+	if got.Basis != supply.BasisOverride {
+		t.Errorf("Basis = %q, want unchanged %q", got.Basis, supply.BasisOverride)
+	}
+}
+
+// TestOverlay_KeepsLowerBoundBasis — the circulating lower-bound flag
+// is derived from Basis, so a floor reading that gains a declared max
+// must still read as a floor.
+func TestOverlay_KeepsLowerBoundBasis(t *testing.T) {
+	for _, b := range []supply.Basis{supply.BasisClassicTrustlineSum, supply.BasisContractStorageBalances} {
+		resolver := &stubMetadataResolver{raw: "1000000", ok: true}
+		snap := supply.Supply{
+			AssetKey: "USDC:GA1", TotalSupply: big.NewInt(1000),
+			CirculatingSupply: big.NewInt(1000), Basis: b,
+		}
+		usdc, _ := canonical.NewClassicAsset("USDC", validIssuer)
+		got, applied, err := supply.Overlay(context.Background(), snap, usdc, resolver)
+		if err != nil || !applied {
+			t.Fatalf("%s: expected overlay applied; err=%v applied=%v", b, err, applied)
+		}
+		if !got.Basis.LowerBound() {
+			t.Errorf("%s: Basis after overlay = %q, no longer a lower bound", b, got.Basis)
+		}
 	}
 }

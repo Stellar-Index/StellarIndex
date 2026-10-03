@@ -274,9 +274,10 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pgRows, tailNote := h.fetchSEP41MovementsTail(ctx, g, limit, cur, filter, pgFloor)
-	coverageNote := movementsCoverageNote(wm, tailNote)
+	supply := h.movementsSupplyRange(ctx, wm)
+	coverageNote := movementsCoverageNote(wm, tailNote, supply)
 	if filter.Kind != "" && filter.Kind != "transfer" {
-		coverageNote = movementsPreP23KindNote(filter.Kind)
+		coverageNote = movementsKindNote(filter.Kind, supply)
 	}
 	h.assertMovementsNonOverlap(chRows, pgRows, pgFloor)
 
@@ -430,25 +431,85 @@ func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, l
 //
 // Every variant ends with movementsKindGapNote: the note scopes kinds as
 // well as assets.
-func movementsCoverageNote(wm uint32, tailNote string) string {
-	return movementsArchiveNote(wm, tailNote) + "; " + movementsKindGapNote
+func movementsCoverageNote(wm uint32, tailNote string, supply supplyRange) string {
+	return movementsArchiveNote(wm, tailNote) + "; " + movementsKindGapNote(supply)
 }
 
-// movementsKindGapNote names what no arm serves. The cap67 archive and the
-// Postgres tail both carry CAP-67 `transfer` events only (mint, burn and
-// clawback live in sep41_supply_events and are not derived into movements),
-// and classicmovements has no fee or order-book-fill kind at any epoch.
-const movementsKindGapNote = "from 2025-09-03 (P23) on, this feed carries transfer movements only — " +
-	"mint, burn and clawback (including every payment to or from an asset's issuer) are not served, " +
-	"and fees and order-book fills are not served at any ledger"
+// supplyRange is the ledger range the archive serves mint, burn and clawback
+// over; from 0 means none.
+type supplyRange struct{ from, thru uint32 }
 
-// movementsPreP23KindNote replaces the archive note under a ?kind= filter
-// other than transfer: only the pre-P23 classic archive can match it, so
-// the results stop at the P23 boundary however far the archive has run.
-func movementsPreP23KindNote(kind string) string {
+// movementsSupplyRange reads the range the derive has recorded as covered
+// with the supply kinds, clamped to this page's watermark (a pinned one
+// included). Ledgers derived before those kinds joined are outside it until
+// the derive backfills them, so the note states the recorded range, never
+// P23..watermark. A read error reads as none: the note must not over-claim.
+func (h *Handler) movementsSupplyRange(ctx context.Context, wm uint32) supplyRange {
+	if wm == 0 {
+		return supplyRange{}
+	}
+	from, thru, ok, err := h.Reader.Cap67SupplyCoverage(ctx)
+	if err != nil {
+		h.Logger.Warn("cap67 supply coverage read failed — disclosing no supply-kind coverage", "err", err)
+		return supplyRange{}
+	}
+	thru = min(thru, wm)
+	if !ok || thru < from {
+		return supplyRange{}
+	}
+	return supplyRange{from: from, thru: thru}
+}
+
+// movementsKindGapNote names what each arm serves by kind. The cap67 archive
+// carries mint, burn and clawback over the supply range only; elsewhere from
+// P23 on, and in the Postgres tail, it is `transfer` alone; classicmovements
+// has no fee or order-book-fill kind at any epoch.
+func movementsKindGapNote(supply supplyRange) string {
+	const noFees = ", and fees and order-book fills are not served at any ledger"
+	if supply.from == 0 {
+		return "from 2025-09-03 (P23) on, this feed carries transfer movements only — mint, burn and clawback " +
+			"(including every payment to or from an asset's issuer) are not served yet" + noFees
+	}
+	var gap string
+	from := "2025-09-03 (P23)"
+	if supply.from > timescale.MovementsFloor() {
+		gap = fmt.Sprintf("from 2025-09-03 (P23) through ledger %d this feed carries transfer movements only "+
+			"(mint, burn and clawback there are still being backfilled); ", supply.from-1)
+		from = fmt.Sprintf("ledger %d", supply.from)
+	}
+	return gap + fmt.Sprintf("from %s through ledger %d the archive also carries mint, burn and clawback "+
+		"(CAP-67's form of every payment to or from an asset's issuer); above that ledger the feed carries "+
+		"transfer movements only", from, supply.thru) + noFees
+}
+
+// movementsKindNote replaces the archive note under a ?kind= filter other
+// than transfer, naming the ledgers that kind can match: the CAP-67 supply
+// kinds only the supply range (clawback the pre-P23 classic archive too),
+// every other kind only before P23.
+func movementsKindNote(kind string, supply supplyRange) string {
+	floor := timescale.MovementsFloor()
+	switch kind {
+	case "mint", "burn", "clawback":
+		var pre string
+		if kind == "clawback" {
+			pre = fmt.Sprintf("before ledger %d (2025-09-03, P23) from classic clawback operations, and ", floor)
+		}
+		if supply.from == 0 {
+			return fmt.Sprintf("movement_kind %q is served %sfrom P23 on only from the movement archive, which "+
+				"has not derived this kind yet, so no later rows are returned; see "+
+				"/accounts/{g}/operations for later activity", kind, pre)
+		}
+		note := fmt.Sprintf("movement_kind %q is served %sfrom ledger %d through ledger %d from the CAP-67 "+
+			"movement archive (derive progress, not a verified completeness verdict)", kind, pre, max(supply.from, floor), supply.thru)
+		if supply.from > floor {
+			note += fmt.Sprintf("; ledgers %d through %d (from P23) are still being backfilled for this kind "+
+				"and return no rows", floor, supply.from-1)
+		}
+		return note + "; newer movements of this kind appear as the archive follows the tip"
+	}
 	return fmt.Sprintf("movement_kind %q is served only before ledger %d (2025-09-03, P23): from P23 on, "+
-		"this feed carries transfer movements only, so these results stop at that boundary; see "+
-		"/accounts/{g}/operations for later activity", kind, timescale.MovementsFloor())
+		"this feed carries transfer, mint, burn and clawback movements only, so these results stop at that "+
+		"boundary; see /accounts/{g}/operations for later activity", kind, floor)
 }
 
 func movementsArchiveNote(wm uint32, tailNote string) string {
