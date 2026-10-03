@@ -27,7 +27,7 @@ related:
 > deferred post-v1.0 ([`multi-region-ha.md`](multi-region-ha.md) §0c/§10).
 >
 > *Original note:* Bootstraps the fourth sub-role of Task #72 after Patroni
-> (#344), Redis Sentinel (#350), and HAProxy (#362). Closes the
+> (965eed22e), Redis Sentinel (bb2f4d29e), and HAProxy (1836fced9). Closes the
 > "metrics surface that emits → metrics surface that scrapes"
 > seam for the launch-readiness HA path: the previous three
 > roles all emit Prometheus metrics; this role is the consumer.

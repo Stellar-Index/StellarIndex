@@ -4,7 +4,7 @@
 #
 # Scrape source: node_exporter's textfile_collector reads
 # `/var/lib/node_exporter/textfile_collector/sla_probe.prom`,
-# which the probe writes via -textfile-output (introduced in #293).
+# which the probe writes via -textfile-output (introduced in ffd5998bb).
 # Metric names + labels defined in cmd/stellarindex-sla-probe/textfile.go.
 #
 # Alert family:
