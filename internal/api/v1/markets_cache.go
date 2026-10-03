@@ -230,17 +230,24 @@ func (c *CachedMarketsReader) AssetMarketsAt(ctx context.Context, asset, cursor 
 // removing the fragile "handlers upstream sort sources so order is
 // stable" convention the pre-typed key relied on.
 func (c *CachedMarketsReader) AllPools(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, error) {
+	rows, next, _, err := c.AllPoolsStale(ctx, filter, cursor, limit, order)
+	return rows, next, err
+}
+
+// AllPoolsStale is AllPools plus whether the rows came from the
+// stale-while-revalidate branch (past the TTL) — see poolsStaleReader.
+func (c *CachedMarketsReader) AllPoolsStale(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, bool, error) {
 	if c.ttl <= 0 {
-		return c.upstream.AllPools(ctx, filter, cursor, limit, order)
+		rows, next, err := c.upstream.AllPools(ctx, filter, cursor, limit, order)
+		return rows, next, false, err
 	}
 	key := newCacheKey("AllPools").
 		strSet(filter.Sources).
 		str(filter.Base).str(filter.Quote).str(filter.Asset).
 		str(cursor).int(limit).order(int(order)).build()
-	rows, next, err := c.fetchPools(ctx, "all_pools", key, func(ctx context.Context) ([]Pool, string, error) {
+	return c.fetchPools(ctx, "all_pools", key, func(ctx context.Context) ([]Pool, string, error) {
 		return c.upstream.AllPools(ctx, filter, cursor, limit, order)
 	})
-	return rows, next, err
 }
 
 // marketsRefreshBudget bounds a stale-while-revalidate background
@@ -430,7 +437,7 @@ func (c *CachedMarketsReader) fetchPools(
 	ctx context.Context,
 	op, key string,
 	upstream func(context.Context) ([]Pool, string, error),
-) ([]Pool, string, error) {
+) ([]Pool, string, bool, error) {
 	c.mu.Lock()
 	e, ok := c.entries[key]
 
@@ -439,7 +446,7 @@ func (c *CachedMarketsReader) fetchPools(
 		out, next := e.pools, e.cursor
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "hit").Inc()
-		return slices.Clone(out), next, nil
+		return slices.Clone(out), next, false, nil
 	}
 
 	// (A') Stale-while-revalidate.
@@ -455,11 +462,11 @@ func (c *CachedMarketsReader) fetchPools(
 			// intentional — see fetchPairs (A'). The pools refresh
 			// MUST outlive the stale response's request ctx.
 			go runDetachedFill(c.logger, "api-markets-pools-refresh", marketsRefreshBudget, done, marketsPageFill(upstream), c.settlePools(op, key, entry))
-			return slices.Clone(out), next, nil
+			return slices.Clone(out), next, true, nil
 		}
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "stale").Inc()
-		return slices.Clone(out), next, nil
+		return slices.Clone(out), next, true, nil
 	}
 
 	// (B)/(C) Cold: join or start a detached fill — see fetchPairs.
@@ -483,14 +490,14 @@ func (c *CachedMarketsReader) fetchPools(
 			if !leader {
 				obs.APICacheOpsTotal.WithLabelValues("markets", op, "miss").Inc()
 			}
-			return nil, "", err
+			return nil, "", false, err
 		}
 		if !leader {
 			obs.APICacheOpsTotal.WithLabelValues("markets", op, "hit").Inc()
 		}
-		return slices.Clone(rows), cursor, nil
+		return slices.Clone(rows), cursor, false, nil
 	case <-ctx.Done():
-		return nil, "", ctx.Err()
+		return nil, "", false, ctx.Err()
 	}
 }
 

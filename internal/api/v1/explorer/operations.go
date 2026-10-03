@@ -344,13 +344,13 @@ func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clic
 // the request context was the failure (route-sweep 2026-07-29): the
 // day-window FINAL GROUP BY shared the directory's 8s budget and dragged
 // the whole /v1/operations page into its 503 class every 5 minutes.
-func (h *Handler) resolveOpTypeStats() []OpTypeStatV {
+func (h *Handler) resolveOpTypeStats() (stats []OpTypeStatV, fresh bool) {
 	cached, fresh := h.opTypeStats.get()
 	if fresh {
-		return cached
+		return cached, true
 	}
 	h.refreshOpTypeStats() //nolint:contextcheck // intentional detach — the aggregate must never share a request deadline (see refreshOpTypeStats)
-	return cached          // stale (or nil on a cold process — panel appears next request)
+	return cached, false   // stale (or nil on a cold process — panel appears next request)
 }
 
 // PrewarmOpTypeStats primes the trailing-24h op-type breakdown so a cold
@@ -433,6 +433,9 @@ type OperationsView struct {
 	// Zero/false on the no-cursor directory arm, which pages instead.
 	Total     uint32 `json:"total,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
+	// opTypeStatsStale records that OpTypeStats was stale or absent when the
+	// page was assembled, so a cached copy still serves as degraded.
+	opTypeStatsStale bool
 }
 
 // OpTypeStatV is one op-type's count in the trailing-24h window.
@@ -661,7 +664,7 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 			out.Buckets[i].FeePoolAdjustment = feePoolAdjustment(out.Buckets[i].Day, buckets[i-1].ProtocolVersion, b.ProtocolVersion)
 		}
 	}
-	h.writeJSONAt(w, out, degraded, asOf)
+	h.writeJSONAt(w, out, degraded, degraded, asOf)
 }
 
 // operationsDirectory serves GET /v1/operations: network-wide
@@ -703,7 +706,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 				"Internal error", http.StatusInternalServerError, "")
 			return
 		}
-		h.writeJSONAt(w, sliceOperationsView(view, limit), degraded, asOf)
+		h.writeJSONAt(w, sliceOperationsView(view, limit), degraded, degraded || view.opTypeStatsStale, asOf)
 		return
 	}
 
@@ -814,7 +817,9 @@ func (h *Handler) buildOperationsDirectory(ctx context.Context, limit int, cur c
 	// fail the listing (only attached on the first page to keep paging
 	// responses lean).
 	if !cur.IsSet() {
-		out.OpTypeStats = h.resolveOpTypeStats() //nolint:contextcheck // intentional detach — the 24h aggregate must never share a request deadline (see resolveOpTypeStats)
+		var fresh bool
+		out.OpTypeStats, fresh = h.resolveOpTypeStats() //nolint:contextcheck // intentional detach — the 24h aggregate must never share a request deadline (see resolveOpTypeStats)
+		out.opTypeStatsStale = !fresh
 	}
 	return out, nil
 }
