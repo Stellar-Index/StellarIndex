@@ -57,8 +57,8 @@ func TestWorker_StalledEndpointDoesNotBlockOthers(t *testing.T) {
 
 	store := newFakeStore()
 	secret := []byte("test-secret-bytes")
-	a := platform.CustomerWebhook{ID: uuid.New(), URL: stalled.URL, SecretHash: secret, Enabled: true}
-	b := platform.CustomerWebhook{ID: uuid.New(), URL: healthy.URL, SecretHash: secret, Enabled: true}
+	a := platform.CustomerWebhook{ID: uuid.New(), URL: stalled.URL, SigningKey: secret, Enabled: true}
+	b := platform.CustomerWebhook{ID: uuid.New(), URL: healthy.URL, SigningKey: secret, Enabled: true}
 	store.addWebhook(a)
 	store.addWebhook(b)
 	due := time.Now().Add(-time.Second)

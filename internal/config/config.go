@@ -1567,6 +1567,8 @@ type DashboardConfig struct {
 
 	CodeSecretEnv string `toml:"code_secret_env" doc:"Environment variable holding the server secret that keys the 6-digit email-code derivation (HMAC over the stored token hash — without it a Postgres read would reveal every in-flight sign-in code) AND the WebAuthn passkey-ceremony, magic-link login-intent and login-device cookie MACs. Each consumer MACs under its own HKDF-derived key. Any long random string (32+ bytes). Required while passkeys are wired (the API refuses to start without it); otherwise an unset/empty env falls back to a random per-process secret: still keyed, but in-flight codes, magic links and browsers' login-device markers stop verifying across a restart or another instance." default:"STELLARINDEX_DASHBOARD_CODE_SECRET"`
 
+	WebhookSealKeyEnv string `toml:"webhook_seal_key_env" doc:"Environment variable holding the secret that seals customer-webhook signing keys at rest (AES-256-GCM under an HKDF-derived key; column customer_webhooks.signing_key_sealed). At least 32 bytes; a shorter value refuses to start. Separate from code_secret_env so either can be rotated alone. Unset/empty stores new signing keys raw (logged at startup) and cannot read a sealed one, so deliveries to sealed webhooks wait until it is set. Changing the value makes every sealed key unreadable: their deliveries fail terminally, and the webhooks must be recreated (dashboard edit and delete still work without the key)." default:"STELLARINDEX_WEBHOOK_SEAL_KEY"`
+
 	MagicLinkTTLMinutes int `toml:"magic_link_ttl_minutes" doc:"Magic-link validity in minutes. Default 15 — long enough for an email to arrive + the user to switch contexts; short enough to limit replay-window if a phone is briefly unattended." default:"15"`
 
 	SessionTTLDays int `toml:"session_ttl_days" doc:"Session-cookie lifetime in days. Default 30 — matches typical SaaS dashboards; users sign in monthly without re-authing." default:"30"`
@@ -2279,6 +2281,7 @@ func defaultAPIConfig() APIConfig {
 			EmailFrom:           "Stellar Index <hello@stellarindex.io>",
 			ResendAPIKeyEnv:     "STELLARINDEX_RESEND_API_KEY",
 			CodeSecretEnv:       "STELLARINDEX_DASHBOARD_CODE_SECRET",
+			WebhookSealKeyEnv:   "STELLARINDEX_WEBHOOK_SEAL_KEY",
 			MagicLinkTTLMinutes: 15,
 			SessionTTLDays:      30,
 			CookieSecure:        true, // dev (http://localhost) overrides to false

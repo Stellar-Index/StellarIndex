@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -161,7 +162,7 @@ func TestWorker_DeliversOn2xx(t *testing.T) {
 	store.addWebhook(platform.CustomerWebhook{
 		ID:         webhookID,
 		URL:        ts.URL,
-		SecretHash: secret,
+		SigningKey: secret,
 		Enabled:    true,
 	})
 	deliveryID := uuid.New()
@@ -225,7 +226,7 @@ func TestWorker_SignatureV2BindsDeliveryIDAndEvent(t *testing.T) {
 
 	store := newFakeStore()
 	webhookID, secret := makeWebhook(t, ts.URL, true)
-	store.addWebhook(platform.CustomerWebhook{ID: webhookID, URL: ts.URL, SecretHash: secret, Enabled: true})
+	store.addWebhook(platform.CustomerWebhook{ID: webhookID, URL: ts.URL, SigningKey: secret, Enabled: true})
 	deliveryID := uuid.New()
 	payload := []byte(`{"event":"incident.sev1"}`)
 	store.enqueue(platform.WebhookDelivery{
@@ -270,7 +271,7 @@ func TestWorker_NetworkErrorDoesNotLeakRawErrorText(t *testing.T) {
 	store := newFakeStore()
 	webhookID, secret := makeWebhook(t, url, true)
 	store.addWebhook(platform.CustomerWebhook{
-		ID: webhookID, URL: url, SecretHash: secret, Enabled: true,
+		ID: webhookID, URL: url, SigningKey: secret, Enabled: true,
 	})
 	deliveryID := uuid.New()
 	store.enqueue(platform.WebhookDelivery{
@@ -307,7 +308,7 @@ func TestWorker_5xxRetryThenSchedules(t *testing.T) {
 	store := newFakeStore()
 	webhookID, secret := makeWebhook(t, ts.URL, true)
 	store.addWebhook(platform.CustomerWebhook{
-		ID: webhookID, URL: ts.URL, SecretHash: secret, Enabled: true,
+		ID: webhookID, URL: ts.URL, SigningKey: secret, Enabled: true,
 	})
 	deliveryID := uuid.New()
 	store.enqueue(platform.WebhookDelivery{
@@ -347,7 +348,7 @@ func TestWorker_4xxIsTerminal(t *testing.T) {
 	store := newFakeStore()
 	webhookID, secret := makeWebhook(t, ts.URL, true)
 	store.addWebhook(platform.CustomerWebhook{
-		ID: webhookID, URL: ts.URL, SecretHash: secret, Enabled: true,
+		ID: webhookID, URL: ts.URL, SigningKey: secret, Enabled: true,
 	})
 	deliveryID := uuid.New()
 	store.enqueue(platform.WebhookDelivery{
@@ -377,7 +378,7 @@ func TestWorker_DisabledWebhookTerminates(t *testing.T) {
 	webhookID, secret := makeWebhook(t, "https://wherever.example", false)
 	store.addWebhook(platform.CustomerWebhook{
 		ID: webhookID, URL: "https://wherever.example",
-		SecretHash: secret, Enabled: false, // disabled
+		SigningKey: secret, Enabled: false, // disabled
 	})
 	deliveryID := uuid.New()
 	store.enqueue(platform.WebhookDelivery{
@@ -455,7 +456,7 @@ func TestWorker_EmptySecret_TerminalNoDelivery(t *testing.T) {
 	store.addWebhook(platform.CustomerWebhook{
 		ID:         webhookID,
 		URL:        ts.URL,
-		SecretHash: []byte{}, // empty signing key
+		SigningKey: []byte{}, // empty signing key
 		Enabled:    true,
 	})
 	deliveryID := uuid.New()
@@ -509,7 +510,7 @@ func TestWorker_DeliveryDurationMetricRecorded(t *testing.T) {
 	store := newFakeStore()
 	webhookID, secret := makeWebhook(t, ts.URL, true)
 	store.addWebhook(platform.CustomerWebhook{
-		ID: webhookID, URL: ts.URL, SecretHash: secret, Enabled: true,
+		ID: webhookID, URL: ts.URL, SigningKey: secret, Enabled: true,
 	})
 	store.enqueue(platform.WebhookDelivery{
 		ID:            uuid.New(),
@@ -554,7 +555,7 @@ func TestWorker_TransientGetWebhookError_LeavesDeliveryForRetry(t *testing.T) {
 	webhookID := uuid.New()
 	store.addWebhook(platform.CustomerWebhook{
 		ID: webhookID, URL: "https://customer.example.com/hook",
-		SecretHash: []byte("test-secret-bytes"), Enabled: true,
+		SigningKey: []byte("test-secret-bytes"), Enabled: true,
 	})
 	// The row exists; the READ is what fails.
 	store.getErr = errors.New("read tcp 10.0.0.2:5432: connection reset by peer")
@@ -606,6 +607,55 @@ func TestWorker_MissingWebhook_IsStillTerminal(t *testing.T) {
 	}
 }
 
+// TestWorker_UnsealableKey splits the two unseal failures: with no seal key
+// configured, setting one repairs the row, so it is left for retry; a key
+// that fails authentication under the configured seal key never opens, so
+// the delivery fails terminally instead of retrying on every lease expiry.
+func TestWorker_UnsealableKey(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		err          error
+		wantTerminal bool
+	}{
+		{"no seal key configured", fmt.Errorf("get: %w", platform.ErrWebhookSealKeyMissing), false},
+		{"wrong seal key", fmt.Errorf("get: %w", platform.ErrWebhookKeyUnsealable), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeStore()
+			webhookID := uuid.New()
+			store.addWebhook(platform.CustomerWebhook{
+				ID: webhookID, URL: "https://customer.example.com/hook", Enabled: true,
+			})
+			store.getErr = tc.err
+			deliveryID := uuid.New()
+			store.enqueue(platform.WebhookDelivery{
+				ID: deliveryID, WebhookID: webhookID,
+				EventType:     string(platform.WebhookEventIncidentSEV1),
+				Payload:       []byte(`{}`),
+				NextAttemptAt: time.Now().Add(-time.Second),
+			})
+
+			runOneTick(t, store, customerwebhook.Options{PollInterval: 30 * time.Millisecond})
+
+			store.mu.Lock()
+			defer store.mu.Unlock()
+			got := store.failures[deliveryID]
+			if !tc.wantTerminal {
+				if len(got) != 0 {
+					t.Fatalf("delivery marked failed (%+v) with no seal key configured; want it left for retry", got)
+				}
+				return
+			}
+			if len(got) != 1 || !got[0].terminal {
+				t.Fatalf("failures = %+v, want exactly one terminal failure for an unopenable key", got)
+			}
+			if _, ok := store.delivered[deliveryID]; ok {
+				t.Error("delivery must not be marked delivered when the key cannot be unsealed")
+			}
+		})
+	}
+}
+
 // TestWorker_TerminalMarkWriteError_SurfacesOnMarkErrorCounter pins
 // NTF-WH-01: when a TERMINAL MarkAttemptFailed store write fails, the
 // worker must not silently discard the error. The row keeps the claim
@@ -622,7 +672,7 @@ func TestWorker_TerminalMarkWriteError_SurfacesOnMarkErrorCounter(t *testing.T) 
 	store.addWebhook(platform.CustomerWebhook{
 		ID:         webhookID,
 		URL:        "https://hooks.example.com/x",
-		SecretHash: []byte("test-secret-bytes"),
+		SigningKey: []byte("test-secret-bytes"),
 		Enabled:    false, // → terminal "disabled" path → markTerminal
 	})
 	deliveryID := uuid.New()
