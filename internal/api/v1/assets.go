@@ -555,6 +555,8 @@ type AssetDetail struct {
 	// false".
 	IsUnlimited *bool `json:"is_unlimited,omitempty"`
 
+	Sep1CurrencyAuthority
+
 	// UnverifiedWarning points at the verified Stellar-canonical
 	// asset when the requested asset uses a verified currency's
 	// ticker code but is NOT the verified issuer (R-018 ticker
@@ -4182,6 +4184,23 @@ type AssetMetadata struct {
 	FixedNumber *string `json:"fixed_number,omitempty"`
 	MaxNumber   *string `json:"max_number,omitempty"`
 	IsUnlimited *bool   `json:"is_unlimited,omitempty"`
+	Sep1CurrencyAuthority
+}
+
+// Sep1CurrencyAuthority is what the issuer's own [[CURRENCIES]] entry says
+// about the asset's standing and backing. Issuer-declared and unverified by
+// this index; set only when sep1_status is "verified".
+type Sep1CurrencyAuthority struct {
+	// CurrencyStatus is SEP-1 `status` (live, dead, test, private).
+	CurrencyStatus *string `json:"currency_status,omitempty"`
+	// IsAssetAnchored and Regulated are nil when the issuer did not say,
+	// distinct from an explicit false.
+	IsAssetAnchored        *bool   `json:"is_asset_anchored,omitempty"`
+	AttestationOfReserve   *string `json:"attestation_of_reserve,omitempty"`
+	RedemptionInstructions *string `json:"redemption_instructions,omitempty"`
+	Regulated              *bool   `json:"regulated,omitempty"`
+	ApprovalServer         *string `json:"approval_server,omitempty"`
+	ApprovalCriteria       *string `json:"approval_criteria,omitempty"`
 }
 
 // handleAssetMetadata serves GET /v1/assets/{asset_id}/metadata.
@@ -4265,6 +4284,8 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 		FixedNumber:     detail.FixedNumber,
 		MaxNumber:       detail.MaxNumber,
 		IsUnlimited:     detail.IsUnlimited,
+
+		Sep1CurrencyAuthority: detail.Sep1CurrencyAuthority,
 	}
 	writeJSON(w, out, Flags{Stale: homeDomainDegraded})
 }
@@ -4415,6 +4436,34 @@ func applySep1VerifiedFields(detail *AssetDetail, sep *timescale.IssuerSep1Cache
 	} else if match.Decimals > 0 {
 		dd := match.Decimals
 		detail.DisplayDecimals = &dd
+	}
+	detail.Sep1CurrencyAuthority = sep1CurrencyAuthorityFrom(match)
+}
+
+// sep1CurrencyAuthorityFrom projects the entry's standing and backing
+// declarations. The two URL fields are served only when they pass the same
+// http(s) and attribute-breakout check as the logo, since clients link them.
+func sep1CurrencyAuthorityFrom(match *timescale.IssuerSep1Currency) Sep1CurrencyAuthority {
+	nonEmpty := func(s string) *string {
+		if v := strings.TrimSpace(s); v != "" {
+			return &v
+		}
+		return nil
+	}
+	safeURL := func(s string) *string {
+		if v := strings.TrimSpace(s); isSafeImageURL(v) {
+			return &v
+		}
+		return nil
+	}
+	return Sep1CurrencyAuthority{
+		CurrencyStatus:         nonEmpty(match.Status),
+		IsAssetAnchored:        match.IsAssetAnchored,
+		AttestationOfReserve:   safeURL(match.AttestationOfReserve),
+		RedemptionInstructions: nonEmpty(match.RedemptionInstructions),
+		Regulated:              match.Regulated,
+		ApprovalServer:         safeURL(match.ApprovalServer),
+		ApprovalCriteria:       nonEmpty(match.ApprovalCriteria),
 	}
 }
 
