@@ -3803,6 +3803,15 @@ expected shape, whereas a slow trickle with Redis healthy means
 markers are being evicted (`maxmemory-policy`) or expiring early,
 which is a real configuration fault worth chasing.
 
+### `stellarindex_api_freeze_lookup_failures_total`
+
+Counter, no labels.
+
+API-side freeze-marker reads that returned an error (Redis outage or
+timeout); client aborts are excluded. Each failure serves the price
+with `frozen_checked=false`. Alerted by
+`stellarindex_api_freeze_lookup_failing`.
+
 ### `stellarindex_anomaly_freeze_ladder_write_failures_total`
 
 Counter, label `op` (`mark_hold` / `clear`).

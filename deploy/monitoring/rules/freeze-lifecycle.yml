@@ -245,6 +245,29 @@ groups:
             migration 0119 is applied in this environment.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
 
+      # ─── P3: API cannot read freeze markers ─────────────────────
+      #
+      # stellarindex_api_freeze_lookup_failures_total counts API-side
+      # freeze-marker read errors (Redis outage/timeout). Each one serves
+      # a price with frozen_checked=false, i.e. no freeze verdict.
+      - alert: stellarindex_api_freeze_lookup_failing
+        expr: |
+          increase(stellarindex_api_freeze_lookup_failures_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+          summary: "API freeze-marker lookups are failing (P3)"
+          description: |
+            The API failed to read freeze markers for 5+ minutes, so
+            /v1/price responses are served with `frozen_checked=false`
+            and a frozen pair may be published as live. Check API to
+            Redis connectivity.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+
       # ─── P3: operators are manually unfreezing at a rising rate ──
       #
       # stellarindex_anomaly_freeze_released_total{mode="operator"}
