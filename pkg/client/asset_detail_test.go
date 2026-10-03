@@ -104,6 +104,32 @@ func TestAssetDetail_DecodesFullWirePayload(t *testing.T) {
 	}
 }
 
+// TestAssetDetail_DecodesMaxSupplyBasis pins that a SEP-1-declared max
+// arrives on max_supply_basis while supply_basis keeps the circulating policy.
+func TestAssetDetail_DecodesMaxSupplyBasis(t *testing.T) {
+	t.Parallel()
+	body := `{
+	  "kind": "stellar_asset",
+	  "asset_id": "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+	  "type": "credit_alphanum4",
+	  "decimals": 7,
+	  "sep1_status": "verified",
+	  "max_supply": "100000000000000",
+	  "supply_basis": "issuer_exclusion",
+	  "max_supply_basis": "sep1_declared_max"
+	}`
+	var got client.AssetDetail
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.SupplyBasis == nil || *got.SupplyBasis != "issuer_exclusion" {
+		t.Errorf("supply_basis = %v, want issuer_exclusion", got.SupplyBasis)
+	}
+	if got.MaxSupplyBasis == nil || *got.MaxSupplyBasis != "sep1_declared_max" {
+		t.Errorf("max_supply_basis = %v, want sep1_declared_max", got.MaxSupplyBasis)
+	}
+}
+
 // TestAssetDetail_OmitsNullsOnReencode verifies the SDK round-trips
 // nil-pointer F2 / overlay fields back to omitted JSON keys (so a
 // consumer that reads + re-emits doesn't accidentally publish
@@ -122,7 +148,7 @@ func TestAssetDetail_OmitsNullsOnReencode(t *testing.T) {
 		t.Fatalf("Marshal: %v", err)
 	}
 	got := string(out)
-	for _, missing := range []string{"max_supply", "fdv_usd", "circulating_supply", "volume_24h_usd", "market_cap_usd", "name", "image", "conditions", "fixed_number", "max_number", "is_unlimited"} {
+	for _, missing := range []string{"max_supply", "max_supply_basis", "fdv_usd", "circulating_supply", "volume_24h_usd", "market_cap_usd", "name", "image", "conditions", "fixed_number", "max_number", "is_unlimited"} {
 		if containsKey(got, missing) {
 			t.Errorf("encoded form contains %q for nil pointer; want omitted: %s", missing, got)
 		}

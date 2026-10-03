@@ -30,8 +30,9 @@ vi.mock('@/lib/live/hooks', async (importOriginal) => ({
 }));
 
 const sources = [
-  { name: 'sdex', selectable: true },
-  { name: 'coingecko', selectable: false },
+  { name: 'sdex', selectable: true, on_chain: true },
+  { name: 'binance', selectable: true, on_chain: false },
+  { name: 'coingecko', selectable: false, on_chain: false },
 ];
 
 let fetched: string[] = [];
@@ -61,7 +62,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('overlay helpers', () => {
-  it('offers only selectable sources', () => {
+  it('offers only selectable on-chain sources', () => {
     expect(selectableSources(sources as never).map((s) => s.name)).toEqual([
       'sdex',
     ]);

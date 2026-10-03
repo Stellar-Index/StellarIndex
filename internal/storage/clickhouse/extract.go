@@ -84,8 +84,15 @@ func ExtractLedger(lcm xdr.LedgerCloseMeta, passphrase string) (LedgerExtract, e
 	for i := range txs {
 		extractTx(&ext, txs[i], seq, closeTime)
 	}
+	// An unreadable list is counted, not fatal: the rest of the ledger still
+	// lands, but every dropped eviction leaves a lapsed entry reading as live.
+	evicted, err := lcm.EvictedLedgerKeys()
+	if err != nil {
+		ext.EvictedKeysUnreadable++
+		evicted = nil
+	}
 	// ADR-0038 Phase C substrate (closes G12-03).
-	extractLedgerEntryChanges(&ext, txs, seq, closeTime)
+	extractLedgerEntryChanges(&ext, txs, evicted, seq, closeTime)
 
 	return ext, nil
 }

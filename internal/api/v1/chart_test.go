@@ -833,6 +833,121 @@ func TestChart_TimeframeAllNeverTruncated(t *testing.T) {
 	}
 }
 
+// A timeframe=all read that fills the 50k row cap holds the OLDEST slice;
+// the response must say so, and a bounded or under-cap read must not.
+func TestChart_TimeframeAllRowCapTruncated(t *testing.T) {
+	const historyMaxPoints = 50_000 // internal/api/v1/history.go
+	t0 := time.Now().UTC().Add(-historyMaxPoints * time.Minute).Truncate(time.Minute)
+	full := make([]v1.HistoryPoint, historyMaxPoints)
+	for i := range full {
+		full[i] = v1.HistoryPoint{Bucket: t0.Add(time.Duration(i) * time.Minute), VWAP: "1.0"}
+	}
+	cases := []struct {
+		name   string
+		query  string
+		points []v1.HistoryPoint
+		want   bool
+	}{
+		{"all at cap", "timeframe=all&granularity=1m", full, true},
+		{"all under cap", "timeframe=all&granularity=1m", full[:10], false},
+		{"bounded at cap", "timeframe=24h&granularity=1m", full, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := v1.New(v1.Options{History: &stubHistoryReader{points: tc.points}})
+			ts := httpTestServer(t, srv)
+			resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&"+tc.query)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status=%d", resp.StatusCode)
+			}
+			var env struct {
+				Data v1.ChartSeries `json:"data"`
+			}
+			mustDecode(t, resp, &env)
+			if env.Data.RowCapTruncated != tc.want {
+				t.Fatalf("row_cap_truncated = %v, want %v", env.Data.RowCapTruncated, tc.want)
+			}
+			if tc.want {
+				if env.Data.DataEndsAt == nil || !time.Time(*env.Data.DataEndsAt).Equal(full[len(full)-1].Bucket) {
+					t.Errorf("data_ends_at = %v, want %v", env.Data.DataEndsAt, full[len(full)-1].Bucket)
+				}
+			} else if env.Data.DataEndsAt != nil {
+				t.Errorf("data_ends_at = %v, want nil", env.Data.DataEndsAt)
+			}
+		})
+	}
+}
+
+func chartRowCapSeries(start time.Time, n int, step time.Duration) []v1.HistoryPoint {
+	out := make([]v1.HistoryPoint, n)
+	for i := range out {
+		out[i] = v1.HistoryPoint{Bucket: start.Add(time.Duration(i) * step), VWAP: "1.0"}
+	}
+	return out
+}
+
+func getChartSeries(t *testing.T, reader v1.HistoryReader, query string) v1.ChartSeries {
+	t.Helper()
+	ts := httpTestServer(t, v1.New(v1.Options{History: reader}))
+	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&"+query)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.ChartSeries `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	return body.Data
+}
+
+// The cap is judged per source read, not on the merged output: a capped
+// source flags the series even when an uncapped one extends it, and a
+// union that merely totals 50k does not.
+func TestChart_RowCapTruncated_PerSourceRead(t *testing.T) {
+	const capN = 50_000 // historyMaxPoints
+	t0 := time.Now().UTC().Add(-2 * capN * time.Minute).Truncate(time.Minute)
+	capped := chartRowCapSeries(t0, capN, time.Minute)
+	later := chartRowCapSeries(t0.Add(capN*time.Minute), 1000, time.Minute)
+
+	s := getChartSeries(t, &pairKeyedHistoryReader{byPair: map[string][]v1.HistoryPoint{
+		"native/fiat:USD":     capped,
+		"crypto:XLM/fiat:USD": later,
+	}}, "timeframe=all&granularity=1m")
+	if !s.RowCapTruncated {
+		t.Fatal("row_cap_truncated = false; one source read hit the cap")
+	}
+	if s.DataEndsAt == nil || !time.Time(*s.DataEndsAt).Equal(capped[capN-1].Bucket) {
+		t.Errorf("data_ends_at = %v, want the capped source's end %v", s.DataEndsAt, capped[capN-1].Bucket)
+	}
+
+	half := chartRowCapSeries(t0, capN/2, time.Minute)
+	rest := chartRowCapSeries(t0.Add(capN/2*time.Minute), capN/2, time.Minute)
+	s = getChartSeries(t, &pairKeyedHistoryReader{byPair: map[string][]v1.HistoryPoint{
+		"native/fiat:USD":     half,
+		"crypto:XLM/fiat:USD": rest,
+	}}, "timeframe=all&granularity=1m")
+	if len(s.Points) != capN {
+		t.Fatalf("union has %d points, want %d", len(s.Points), capN)
+	}
+	if s.RowCapTruncated || s.DataEndsAt != nil {
+		t.Errorf("uncapped sources whose union is %d flagged: %v %v", capN, s.RowCapTruncated, s.DataEndsAt)
+	}
+}
+
+func TestChart_TWAP_RowCapTruncated(t *testing.T) {
+	const capN = 50_000 // historyMaxPoints
+	t0 := time.Now().UTC().Add(-capN * time.Hour).Truncate(time.Hour)
+	full := chartRowCapSeries(t0, capN, time.Hour)
+	s := getChartSeries(t, &stubHistoryReader{twapPoints: full}, "price_type=twap&timeframe=all&granularity=1h")
+	if !s.RowCapTruncated || s.DataEndsAt == nil || !time.Time(*s.DataEndsAt).Equal(full[capN-1].Bucket) {
+		t.Fatalf("twap at cap: truncated=%v ends=%v", s.RowCapTruncated, s.DataEndsAt)
+	}
+	s = getChartSeries(t, &stubHistoryReader{twapPoints: full[:10]}, "price_type=twap&timeframe=all&granularity=1h")
+	if s.RowCapTruncated {
+		t.Error("twap under cap flagged")
+	}
+}
+
 func TestChart_MarketCap_FiatCNY_ComputesFromM2(t *testing.T) {
 	d1 := time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)
 	d2 := time.Date(2025, 1, 3, 0, 0, 0, 0, time.UTC)

@@ -13,8 +13,8 @@ Audit log for the `rozo` source's `BackfillSafe` flag. See
 
 ## Status
 
-**Skeleton (2026-05-24).** Source decoder + wiring landed in #41
-(commit `1170cd99`); registry entry sits at `BackfillSafe: false`
+**Skeleton (2026-05-24).** Source decoder + wiring landed in
+commit `46e0087e8`; registry entry sits at `BackfillSafe: false`
 pending the wasm-history walk. The walk itself is gated on r1's
 verify-archive bootstrap finishing (ZFS-ARC + MinIO I/O
 contention — see README.md §2 "Where to run wasm-history") so
@@ -43,7 +43,7 @@ unaffected either way.
 | Decoder file | [`internal/sources/rozo/decode.go`](../../../internal/sources/rozo/decode.go) |
 | Dispatcher hook | event-based `Decoder` (topic[0] classify; one of two `Event*` symbols) |
 | Package README | [`internal/sources/rozo/README.md`](../../../internal/sources/rozo/README.md) |
-| Wiring PR | #41 (commit `1170cd99`) |
+| Wiring commit | `46e0087e8` |
 
 ## Mainnet contracts
 

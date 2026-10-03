@@ -27,7 +27,7 @@ import (
 // Stellar joined Chainlink Scale in 2025/2026 but at audit time
 // no Soroban Data Feeds contracts were live on mainnet. Chainlink's
 // data is on-chain on Ethereum + L2s; we read it via eth_call
-// against the AggregatorV3 contract's `latestAnswer()` view
+// against the AggregatorV3 contract's `latestRoundData()` view
 // function on a public Ethereum RPC endpoint.
 //
 // Role: divergence cross-check ONLY. Chainlink does not contribute

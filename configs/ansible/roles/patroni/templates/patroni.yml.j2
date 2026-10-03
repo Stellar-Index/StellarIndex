@@ -16,6 +16,12 @@ restapi:
     password: '{{ patroni_rest_basic_auth_password }}'
 
 etcd3:
+{% if etcd_tls_enabled %}
+  protocol: https
+  cacert: {{ patroni_etcd_tls_dir }}/ca.pem
+  cert: {{ patroni_etcd_tls_dir }}/client.pem
+  key: {{ patroni_etcd_tls_dir }}/client-key.pem
+{% endif %}
   hosts:
 {% for host in groups['postgres_cluster'] %}
     - "{{ hostvars[host].ansible_host }}:{{ etcd_client_port }}"

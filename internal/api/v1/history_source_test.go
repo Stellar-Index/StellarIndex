@@ -95,6 +95,7 @@ func TestHistory_SourceFilterValidation(t *testing.T) {
 	for _, c := range []struct{ source, problem string }{
 		{"nope-not-a-source", "unknown-source"},
 		{"coingecko", "off-chain-source-filter"},
+		{"binance", "off-chain-source-filter"},
 	} {
 		resp := mustGet(t, ts.URL+"/v1/history?base=native&quote=fiat:USD&source="+c.source)
 		body, _ := io.ReadAll(resp.Body)

@@ -306,7 +306,7 @@ func historyTradeRows(trades []canonical.Trade, baseDec, quoteDec int) []TradeRo
 // reader can honour it, writing the problem response when not.
 func historySourceParam(w http.ResponseWriter, r *http.Request, reader HistoryReader) (string, bool) {
 	source := r.URL.Query().Get("source")
-	if !sourceFilterOK(w, r, source) {
+	if !rawTradeSourceFilterOK(w, r, source) {
 		return "", false
 	}
 	if _, ok := reader.(SourceHistoryReader); source != "" && !ok {

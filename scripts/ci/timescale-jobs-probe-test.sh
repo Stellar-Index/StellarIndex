@@ -118,12 +118,14 @@ for a in "$@"; do
   prev="$a"
 done
 kind=other
+# Most specific first: the cagg query also joins job_stats, and the
+# job_stats query also reads job_errors for the concurrent-refresh counts.
 case "$sql" in
-  *job_errors*)                          kind=job_errors ;;
   *pg_blocking_pids*)                    kind=lock_convoy ;;
   *policy_refresh_continuous_aggregate*) kind=cagg ;;
   *policy_compression*)                  kind=compression ;;
   *job_stats\ js*)                       kind=jobs ;;
+  *job_errors*)                          kind=job_errors ;;
 esac
 if [[ -n "${PSQL_ENV_LOG:-}" ]]; then
   printf '%s\t%s\n' "$kind" "${PGOPTIONS-<unset>}" >> "$PSQL_ENV_LOG"
@@ -178,8 +180,8 @@ case "$kind" in
   cagg)        printf "${CAGG_ROWS:-prices_1m|1788598634|60
 oracle_prices_1m|1788598600|30}\n" ;;
   compression) printf 'trades|3\nfx_quotes|0\n' ;;
-  jobs)        printf "${JOB_ROWS:-policy_compression|trades|1001|0|43200
-policy_retention|-|1002|2|86400}\n" ;;
+  jobs)        printf "${JOB_ROWS:-policy_compression|trades|1001|0|43200|0|0
+policy_retention|-|1002|2|86400|1|2}\n" ;;
   # `-At` prints err_message verbatim: a quote, a backslash, a pipe and a
   # brace arrive raw, and a newline in the text starts an output line
   # that is NOT a new record.
@@ -477,8 +479,8 @@ eq 1 "$(metric 'stellarindex_timescale_probe_query_ok{query="job_stats"}')" "cle
 #     A NULL interval (an empty field under -At) costs only the gauge.
 #     The failure count beside it is still true and is still emitted;
 #     the query reports query_ok 0 so the blind interval arm is loud.
-run "" "" "" "" "" "policy_compression|trades|1001|4|
-policy_retention|-|1002|2|86400"
+run "" "" "" "" "" "policy_compression|trades|1001|4||0|0
+policy_retention|-|1002|2|86400|0|0"
 parses "a NULL job interval still produces a parseable file"
 eq 4 "$(metric 'stellarindex_timescale_job_failures_total{job_id="1001",proc="policy_compression",hypertable="trades"}')" \
   "a NULL interval does not suppress that job's failure counter"
@@ -490,6 +492,41 @@ eq 0 "$(metric 'stellarindex_timescale_probe_query_ok{query="job_stats"}')" \
   "…and reports query_ok 0 for job_stats"
 eq 2 "$(metric 'stellarindex_timescale_probe_rows{query="job_stats"}')" \
   "…while rows still counts both emitted failure counters"
+
+# 6g. The concurrent-refresh gauges the failures alert subtracts. They
+#     must carry the counter's exact label set (a mismatch would join to
+#     nothing and fall back to the raw count), emit an explicit 0, and the
+#     query must ask job_errors for that error class over both windows.
+run "" ""
+eq 2 "$(metric 'stellarindex_timescale_job_concurrent_refresh_failures_3d{job_id="1002",proc="policy_retention",hypertable="-"}')" \
+  "clean run: the 3d concurrent-refresh count is emitted with the counter's labels"
+eq 1 "$(metric 'stellarindex_timescale_job_concurrent_refresh_failures_6h{job_id="1002",proc="policy_retention",hypertable="-"}')" \
+  "…and so is the 6h one"
+eq 0 "$(metric 'stellarindex_timescale_job_concurrent_refresh_failures_3d{job_id="1001",proc="policy_compression",hypertable="trades"}')" \
+  "…and a job with no collision emits an explicit 0"
+jobs_sql=$(SRC="$SRC" python3 - <<'PY'
+import io, os, yaml
+for task in yaml.safe_load(io.open(os.environ["SRC"], encoding="utf-8")) or []:
+    if isinstance(task, dict) and task.get("name") == "TimescaleDB job/CAGG health probe (script)":
+        c = task["ansible.builtin.copy"]["content"]
+        i = c.index("js.total_failures")
+        print(c[c.rindex('q "', 0, i):c.index('"\n', i)])
+PY
+) || exit 1
+for want in "ILIKE '%concurrent refresh%'" "interval '6 hours'" "interval '3 days'"; do
+  holds "the job_stats query filters job_errors with $want" grep -qF -- "$want" <<< "$jobs_sql"
+done
+
+#     A short row (no collision columns) keeps its failure counter, emits
+#     no collision gauge for the alert to fall back from, and is loud.
+run "" "" "" "" "" "policy_compression|trades|1001|4|43200"
+eq 4 "$(metric 'stellarindex_timescale_job_failures_total{job_id="1001",proc="policy_compression",hypertable="trades"}')" \
+  "a row without collision columns keeps its failure counter"
+eq "" "$(metric 'stellarindex_timescale_job_concurrent_refresh_failures_3d{job_id="1001",proc="policy_compression",hypertable="trades"}')" \
+  "…emits no collision gauge"
+eq 0 "$(metric 'stellarindex_timescale_probe_query_ok{query="job_stats"}')" \
+  "…and reports query_ok 0 for job_stats"
+parses "…and still produces a parseable file"
 
 # ─── 7. the job failure reason ──────────────────────────────────────
 #

@@ -236,6 +236,12 @@ func TestClickHouseTxHashIndexProbeFallback(t *testing.T) {
 		if err := ib.Send(); err != nil {
 			t.Fatalf("send tx_hash_index batch: %v", err)
 		}
+		if err := conn.Exec(ctx, `TRUNCATE TABLE stellar.tx_hash_index_coverage`); err != nil {
+			t.Fatalf("truncate tx_hash_index_coverage: %v", err)
+		}
+		if err := conn.Exec(ctx, `INSERT INTO stellar.tx_hash_index_coverage (covered_from, covered_to) VALUES (2, 72000500)`); err != nil {
+			t.Fatalf("insert coverage marker: %v", err)
+		}
 	}
 
 	// ── Fast path: index present (hash → ledger A) ───────────────────────────
@@ -252,6 +258,24 @@ func TestClickHouseTxHashIndexProbeFallback(t *testing.T) {
 	if txHit.Seq != ledgerA || txHit.TxIndex != txIdxA {
 		t.Fatalf("index hit resolved to ledger %d (tx_index %d), want %d/%d — fast path (tx_hash_index) not used",
 			txHit.Seq, txHit.TxIndex, ledgerA, txIdxA)
+	}
+
+	// ── Fallback: index seeded but no coverage marker → scan ─────────────────
+	seedIndex()
+	if err := conn.Exec(ctx, `TRUNCATE TABLE stellar.tx_hash_index_coverage`); err != nil {
+		t.Fatalf("truncate tx_hash_index_coverage: %v", err)
+	}
+	er3, err := chstore.NewExplorerReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("new explorer reader (no marker): %v", err)
+	}
+	t.Cleanup(func() { _ = er3.Close() })
+	txNoMarker, found, err := er3.TransactionByHash(ctx, txHash)
+	if err != nil || !found {
+		t.Fatalf("TransactionByHash (no marker): found=%v err=%v", found, err)
+	}
+	if txNoMarker.Seq != ledgerB {
+		t.Fatalf("no-marker lookup resolved to ledger %d, want %d — index used without a coverage marker", txNoMarker.Seq, ledgerB)
 	}
 
 	// ── Fallback: index empty → bloom scan (latest-ingested = ledger B) ──────

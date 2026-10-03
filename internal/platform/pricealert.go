@@ -156,11 +156,14 @@ type PriceAlertStore interface {
 	// UPDATEs on the row lock, so the loser re-evaluates the predicate
 	// against the winner's committed row and matches nothing.
 	//
-	// claimed=false means "not yours to deliver": either another
-	// evaluator claimed this window, or the alert was deleted mid-sweep.
-	// Both call for the same thing — skip the fan-out — so they are
-	// deliberately not distinguished.
-	ClaimPriceAlertFire(ctx context.Context, id uuid.UUID, firedAt time.Time) (claimed bool, err error)
+	// a is the snapshot the caller evaluated: the claim also requires the
+	// row to still be enabled with the same pair, condition and threshold.
+	//
+	// claimed=false means "not yours to deliver": another evaluator
+	// claimed this window, or the alert was edited, disabled or deleted
+	// mid-sweep. All call for the same thing — skip the fan-out — so they
+	// are deliberately not distinguished.
+	ClaimPriceAlertFire(ctx context.Context, a PriceAlert, firedAt time.Time) (claimed bool, err error)
 
 	// RearmPriceAlert clears Disarmed after the evaluator saw the condition
 	// stop holding, but only while last_fired_at still equals lastFiredAt,

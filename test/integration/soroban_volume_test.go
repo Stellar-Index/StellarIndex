@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestSorobanVolume24hUSD_XLMAnchored proves #37 end-to-end: a
+// TestSorobanVolume24hUSD_XLMAnchored proves fce3e2eef end-to-end: a
 // pure-Soroban SEP-41 token whose liquidity is quoted in XLM gets a REAL
 // trailing-24h USD volume from Store.SorobanVolume24hUSDForAsset, while
 // the plain Store.Volume24hUSDForAsset (which only sees the insert-time

@@ -8,6 +8,21 @@ import (
 	"time"
 )
 
+func TestRangeUSDRates_rejectsNonUSDBase(t *testing.T) {
+	for _, base := range []string{"EUR", ""} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"base":"` + base + `","rates":{"2024-01-02":{"USD":1.09,"JPY":156.0}}}`))
+		}))
+		c := NewClient().WithBase(srv.URL)
+		d, _ := time.Parse("2006-01-02", "2024-01-02")
+		days, err := c.RangeUSDRates(context.Background(), d, d)
+		srv.Close()
+		if err == nil || days != nil {
+			t.Errorf("base %q: want error and no rows, got days=%v err=%v", base, days, err)
+		}
+	}
+}
+
 func TestRangeUSDRates_parsesPayload(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

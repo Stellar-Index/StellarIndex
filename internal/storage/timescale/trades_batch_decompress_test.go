@@ -50,7 +50,7 @@ func TestScanBatchTradeOutcome_LiftsTheDecompressionCapInItsOwnTransaction(t *te
 	if perSourceNew["sdex"] != 2 || perSourceUnitRatio["sdex"] != 1 {
 		t.Errorf("tallies = new %v unit-ratio %v, want sdex: 2 new, 1 unit-ratio", perSourceNew, perSourceUnitRatio)
 	}
-	if obs, ok := seen["native"]; !ok || obs.ledger != 61249958 {
+	if obs, ok := seen["native"]; !ok || obs.maxLedger != 61249958 {
 		t.Errorf("seen[native] = %+v, want the highest-ledger observation 61249958", obs)
 	}
 }

@@ -1310,8 +1310,8 @@ func scanBatchTradeRows(ctx context.Context, tx *sql.Tx, query string, args []an
 		if isUnitRatio {
 			perSourceUnitRatio[source]++
 		}
-		noteRegistryObservation(seenAssets, baseAsset, registryObservation{ledger: ledger, ts: ts})
-		noteRegistryObservation(seenAssets, quoteAsset, registryObservation{ledger: ledger, ts: ts})
+		noteRegistryObservation(seenAssets, baseAsset, newRegistryObservation(ledger, ts))
+		noteRegistryObservation(seenAssets, quoteAsset, newRegistryObservation(ledger, ts))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, nil, fmt.Errorf("timescale: BatchInsertTrades rows.Err: %w", err)
@@ -1612,12 +1612,22 @@ func (s *Store) insertTradeSubBatches(ctx context.Context, insertRows []canonica
 	return out, nil
 }
 
-// noteRegistryObservation keeps asset's highest-ledger observation — the
-// one rule for folding landed rows and merging sub-batches alike.
+// noteRegistryObservation folds o into asset's observation, keeping the
+// lowest and highest ledger separately — the one rule for folding landed rows
+// and merging sub-batches alike.
 func noteRegistryObservation(seen map[string]registryObservation, asset string, o registryObservation) {
-	if prev, ok := seen[asset]; !ok || o.ledger > prev.ledger {
+	prev, ok := seen[asset]
+	if !ok {
 		seen[asset] = o
+		return
 	}
+	if o.minLedger < prev.minLedger {
+		prev.minLedger, prev.minTs = o.minLedger, o.minTs
+	}
+	if o.maxLedger > prev.maxLedger {
+		prev.maxLedger, prev.maxTs = o.maxLedger, o.maxTs
+	}
+	seen[asset] = prev
 }
 
 // registerBatchLandedAssets runs the classic-asset registry hook for the
@@ -1631,7 +1641,7 @@ func (s *Store) registerBatchLandedAssets(ctx context.Context, seenAssets map[st
 	// / issuers permanently under-populated for batch-ingested assets. We
 	// register only genuinely-inserted rows (matching InsertTrade's F-1243
 	// duplicate-replay guard), deduped to the distinct assets in this batch,
-	// each at the highest ledger we saw. Soft-fail + dedupe-cached, exactly
+	// each over the lowest..highest ledger we saw. Soft-fail + dedupe-cached, exactly
 	// like the single-row path — a registry write can't sink the committed
 	// batch, and steady state is a no-op after the first touch per asset.
 	for assetID, obsv := range seenAssets {
@@ -1645,9 +1655,9 @@ func (s *Store) registerBatchLandedAssets(ctx context.Context, seenAssets map[st
 				"asset", assetID, "err", perr)
 			continue
 		}
-		if regErr := s.registerClassicAssetSeen(ctx, asset, obsv.ledger, obsv.ts); regErr != nil {
+		if regErr := s.registerClassicAssetRange(ctx, asset, obsv); regErr != nil {
 			slog.Default().Debug("timescale: batch classic-asset registry upsert failed (soft-skip)",
-				"asset", assetID, "ledger", obsv.ledger, "err", regErr)
+				"asset", assetID, "ledger", obsv.maxLedger, "err", regErr)
 		}
 	}
 }
@@ -1711,12 +1721,17 @@ func countZeroLegAdmitted(t canonical.Trade) {
 	}
 }
 
-// registryObservation is the highest-ledger observation of a landed asset
-// within one BatchInsertTrades call — the input to the C2-13b batch-path
-// classic-asset/issuer registry hook.
+// registryObservation is the lowest and highest ledger observation of a
+// landed asset within one BatchInsertTrades call — the input to the C2-13b
+// batch-path classic-asset/issuer registry hook. Both ends are carried so a
+// backfill batch offers the true first-seen minimum, not just its tip.
 type registryObservation struct {
-	ledger uint32
-	ts     time.Time
+	minLedger, maxLedger uint32
+	minTs, maxTs         time.Time
+}
+
+func newRegistryObservation(ledger uint32, ts time.Time) registryObservation {
+	return registryObservation{minLedger: ledger, maxLedger: ledger, minTs: ts, maxTs: ts}
 }
 
 // A market has NO stored direction of its own, and the two readers
@@ -1846,6 +1861,23 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 	return out, nil
 }
 
+// offChainSourcesArg is the comma-joined set of registered sources that
+// are not on-chain (centralised exchanges, FX, aggregators, vendors),
+// bound as `string_to_array($n, ',')` by the raw-trade readers behind
+// /v1/history and /v1/observations. Those routes serve on-chain trades
+// only (exchange redistribution terms), and the filter must sit in the
+// query: a post-fetch drop would break the keyset page sizes.
+func offChainSourcesArg() string {
+	var names []string
+	for name := range external.Registry {
+		if !external.IsOnChain(name) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return strings.Join(names, ",")
+}
+
 // LatestTradePerSource returns the most-recent trade from each source
 // that has ever traded the market `pair` names, in either stored
 // direction and returned in the requested orientation. Empty slice +
@@ -1935,6 +1967,7 @@ func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sour
                   WHERE base_asset  = $1
                     AND quote_asset = $2
                     AND ($3 = '' OR source = $3)
+                    AND source <> ALL(string_to_array($4, ','))
                   ORDER BY source, ts DESC, ledger DESC) head
           CROSS JOIN LATERAL
                 (SELECT * FROM trades
@@ -1957,6 +1990,7 @@ func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sour
                   WHERE base_asset  = $2
                     AND quote_asset = $1
                     AND ($3 = '' OR source = $3)
+                    AND source <> ALL(string_to_array($4, ','))
                   ORDER BY source, ts DESC, ledger DESC) head
           CROSS JOIN LATERAL
                 (SELECT * FROM trades
@@ -1970,7 +2004,7 @@ func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sour
         ORDER BY source
     `
 	rows, err := s.db.QueryContext(ctx, q,
-		p.Base.String(), p.Quote.String(), sourceFilter,
+		p.Base.String(), p.Quote.String(), sourceFilter, offChainSourcesArg(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: LatestTradePerSource: %w", err)
@@ -2298,6 +2332,7 @@ func (s *Store) tradesInRangeAfter(
            AND quote_asset = $2
            AND ts         >= $3
            AND ts          < $4
+           AND source <> ALL(string_to_array($11, ','))
            AND (ts, ledger, tx_hash, op_index, source) > ($5, $6, $7, $8, $9)
          ORDER BY ts ASC, ledger ASC, tx_hash ASC, op_index ASC, source ASC
          LIMIT $10
@@ -2313,7 +2348,8 @@ func (s *Store) tradesInRangeAfter(
           FROM trades
          WHERE base_asset  = $1
            AND quote_asset = $2
-           AND source      = $11
+           AND source      = $12
+           AND source <> ALL(string_to_array($11, ','))
            AND ts         >= $3
            AND ts          < $4
            AND (ts, ledger, tx_hash, op_index, source) > ($5, $6, $7, $8, $9)
@@ -2326,12 +2362,13 @@ func (s *Store) tradesInRangeAfter(
 		// $5..$9 — must match the PK tuple order in the SQL above,
 		// NOT the function-signature order.
 		afterTs.UTC(), afterLedger, afterTxHash, afterOpIndex, afterSource,
-		limit, // $10
+		limit,                // $10
+		offChainSourcesArg(), // $11
 	}
 	query := q
 	if source != "" {
 		query = qSource
-		args = append(args, source) // $11
+		args = append(args, source) // $12
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -2404,7 +2441,7 @@ func (s *Store) tradesInRangeAfter(
 // loss — every input is a NUMERIC column read as text; floats never
 // touch the money path per ADR-0003). On the trades path that is the
 // per-trade ratio QuoteAmount/BaseAmount — FX-source trades use a
-// uniform 1e8 scale on each side so the ratio is dimensionally clean
+// uniform 1e6 scale on each side so the ratio is dimensionally clean
 // (the scale cancels). On the fx_quotes path it is the rate_usd ratio,
 // which is already scale-free. Empty `fxSources` returns ErrNoFXQuote
 // without touching the DB.

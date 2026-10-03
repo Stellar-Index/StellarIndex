@@ -23,7 +23,7 @@ import (
 //   - asset (required) — canonical asset id; mirrors /v1/price.
 //   - quote (optional, default fiat:USD)
 //   - source (optional) — narrow to a single on-chain source; result is
-//     then a 0- or 1-element array. Off-chain names 400 (sourceFilterOK).
+//     then a 0- or 1-element array. Off-chain names, exchanges included, 400 (rawTradeSourceFilterOK).
 //   - aggregate=latest (optional) — collapse to the single most-recent
 //     trade across all sources. Returns a 0- or 1-element array
 //     (preserves the array wire shape; aggregate=latest does NOT
@@ -67,7 +67,7 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	source := r.URL.Query().Get("source")
-	if !sourceFilterOK(w, r, source) {
+	if !rawTradeSourceFilterOK(w, r, source) {
 		return
 	}
 

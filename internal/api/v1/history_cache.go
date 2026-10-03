@@ -46,7 +46,7 @@ import (
 // correctness loss (the exact query result — including a legitimate
 // empty slice — is cached).
 //
-// SWR shape mirrors the proven #22/#23 pattern
+// SWR shape mirrors the proven ba0374697/a5573b499 pattern
 // (asset_catalogue_cache.go / markets_cache.go) with one deliberate change:
 // the cold fill runs in a **detached** goroutine on its own budget,
 // not the request ctx. The handler's hard 8s ceiling would
@@ -123,7 +123,7 @@ func NewCachedHistoryReader(upstream HistoryReader, ttl time.Duration) *CachedHi
 // historyRefreshBudget bounds a detached cold-fill or
 // stale-while-revalidate background refresh — independent of any
 // request ctx (the whole point: outlive the handler's 8s ceiling).
-// Matches coins/markets refresh budgets (the proven #22 pattern).
+// Matches coins/markets refresh budgets (the proven ba0374697 pattern).
 const historyRefreshBudget = 30 * time.Second
 
 // TradesInRangeAfterFromSource forwards to the upstream when it supports the
@@ -172,10 +172,19 @@ func (c *CachedHistoryReader) evictIfFullLocked() {
 	}
 }
 
+type freshHistoryKey struct{}
+
+// withFreshHistory marks ctx so [CachedHistoryReader.LatestTradePerSource]
+// reads through to the store. A caller that stamps its own as_of=now (the
+// observations stream) must not re-emit a cached trade as current.
+func withFreshHistory(ctx context.Context) context.Context {
+	return context.WithValue(ctx, freshHistoryKey{}, true)
+}
+
 func (c *CachedHistoryReader) LatestTradePerSource(
 	ctx context.Context, pair canonical.Pair, sourceFilter string,
 ) ([]canonical.Trade, error) {
-	if c.ttl <= 0 {
+	if fresh, _ := ctx.Value(freshHistoryKey{}).(bool); fresh || c.ttl <= 0 {
 		return c.HistoryReader.LatestTradePerSource(ctx, pair, sourceFilter)
 	}
 	key := pair.Base.String() + "|" + pair.Quote.String() + "|" + sourceFilter

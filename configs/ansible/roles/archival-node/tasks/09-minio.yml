@@ -146,6 +146,7 @@
     owner: root
     group: minio
     mode: "0640"
+  no_log: true  # the rendered file holds MINIO_ROOT_PASSWORD; --diff would print it
   notify: Restart minio
 
 - name: Install MinIO systemd unit

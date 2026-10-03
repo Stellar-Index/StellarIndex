@@ -75,6 +75,16 @@ func TestTradesInRangeAfterFromSource(t *testing.T) {
 		t.Fatalf("unknown source: rows=%d err=%v, want empty", len(none), err)
 	}
 
+	// The off-chain exclusion still applies when a source is named.
+	cex := mkIntegrationTrade("binance", 6, t0.Add(6*time.Minute), pair, 1_000_000_000, 12_000_000)
+	if err := store.InsertTrade(ctx, cex); err != nil {
+		t.Fatalf("InsertTrade binance: %v", err)
+	}
+	offChain, err := store.TradesInRangeAfterFromSource(ctx, pair, "binance", from, to, time.Time{}, 0, "", "", 0, 100)
+	if err != nil || len(offChain) != 0 {
+		t.Fatalf("off-chain source: rows=%d err=%v, want empty", len(offChain), err)
+	}
+
 	all, err := store.TradesInRangeAfterFromSource(ctx, pair, "", from, to, time.Time{}, 0, "", "", 0, 100)
 	if err != nil || len(all) != 5 {
 		t.Fatalf("empty source: rows=%d err=%v, want the unfiltered 5", len(all), err)

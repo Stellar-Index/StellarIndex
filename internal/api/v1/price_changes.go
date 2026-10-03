@@ -45,6 +45,9 @@ type PriceChangeHorizon struct {
 	// "no data that far back" on an unavailable horizon; always false
 	// when Available is true.
 	Withheld bool `json:"withheld"`
+	// ThinMarket: the reference bucket was served under `include_thin=true`
+	// from a market below the substance floor.
+	ThinMarket bool `json:"thin_market,omitempty"`
 }
 
 // PriceChanges is the GET /v1/price/changes payload: the current
@@ -69,6 +72,10 @@ type PriceChanges struct {
 	H24 PriceChangeHorizon `json:"24h"`
 	D7  PriceChangeHorizon `json:"7d"`
 	D30 PriceChangeHorizon `json:"30d"`
+
+	// Substance is the measurement behind a CURRENT bucket served under
+	// `include_thin=true`; a horizon carries only its thin_market flag.
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
 // priceChangesCurrentStaleness bounds how old the "current" bucket may
@@ -148,18 +155,20 @@ func (s *Server) handlePriceChanges(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	now := time.Now().UTC()
-	pair, current, triangulated, found, withheld, err := s.resolvePriceChangePair(ctx, asset, quote, now)
+	cur, err := s.priceChangeCurrentThin(ctx, r, asset, quote, now)
 	if err != nil {
 		s.writePriceAtReadFailure(ctx, w, r, "/v1/price/changes", err)
 		return
 	}
-	if !found {
+	pair, current, withheld := cur.pair, cur.res, cur.withheld
+	if !cur.found {
 		if withheld != nil {
 			// At least one orientation HAS a closed bucket and a serving
 			// gate refused to publish it — the distinct 404 type so
 			// integrators can branch, same contract as /v1/price and
 			// /v1/price/tip (see ErrPriceWithheld).
-			writePriceWithheldProblem(w, r, asset, quote, priceWithheldReason(withheld))
+			reason := priceWithheldReason(withheld)
+			writePriceWithheldProblemEvidence(w, r, asset, quote, reason, thinEvidenceFor(cur.adm, reason))
 			return
 		}
 		writeProblem(w, r,
@@ -177,17 +186,91 @@ func (s *Server) handlePriceChanges(w http.ResponseWriter, r *http.Request) {
 		ObservedAt:       current.observedAt.UTC().Format(time.RFC3339),
 		Resolution:       resolutionLabel(current.resSec),
 	}
+	flags := Flags{Triangulated: cur.triangulated}
+	flags.ProxyDeviation = cur.triangulated && s.proxyDeviation(ctx, now)
+	if cur.adm.Admitted() {
+		flags.ThinMarket = true
+		resp.Substance = substanceEvidenceWire(cur.adm.Evidence())
+	}
 	horizons := []*PriceChangeHorizon{&resp.H1, &resp.H24, &resp.D7, &resp.D30}
 	for i, h := range priceChangeHorizons {
-		horizon, err := s.priceChangeHorizon(ctx, pair, current.value, now.Add(-h.dur), h.dur)
+		horizon, err := s.priceChangeHorizonThin(ctx, r, asset, quote, pair, current.value, now.Add(-h.dur), h.dur)
 		if err != nil {
 			s.writePriceAtReadFailure(ctx, w, r, "/v1/price/changes", err)
 			return
 		}
+		flags.ThinMarket = flags.ThinMarket || horizon.ThinMarket
 		*horizons[i] = horizon
 	}
 
-	writeJSON(w, resp, Flags{Triangulated: triangulated})
+	writeJSON(w, resp, flags)
+}
+
+// priceChangeCurrent is the resolved anchor of /v1/price/changes and the
+// [ThinAdmission] record of the pass that resolved it.
+type priceChangeCurrent struct {
+	pair         canonical.Pair
+	res          priceAtResult
+	triangulated bool
+	found        bool
+	withheld     error
+	adm          *ThinAdmission
+}
+
+// priceChangeCurrentThin resolves the anchor with the default read, and
+// only when that ended withheld on a measured thin leg and the request
+// opted in, again with that leg admitted. A failed second pass serves the
+// first pass's verdict: an optional retry never turns a 404 into a 5xx.
+func (s *Server) priceChangeCurrentThin(ctx context.Context, r *http.Request, asset, quote canonical.Asset, now time.Time) (priceChangeCurrent, error) {
+	offCtx, off := WithThinAdmission(ctx, asset, quote, false)
+	cur, err := s.priceChangeCurrentPass(offCtx, asset, quote, now)
+	cur.adm = off
+	if err != nil || cur.found || cur.withheld == nil || !includeThinRequested(r) || !off.ThinWithheld(priceWithheldReason(cur.withheld)) {
+		return cur, err
+	}
+	onCtx, on := WithThinAdmission(ctx, asset, quote, true)
+	thin, err := s.priceChangeCurrentPass(onCtx, asset, quote, now)
+	if err != nil {
+		s.logger.Warn("include_thin second pass failed; serving the withheld verdict",
+			"err", err, "asset", asset.String(), "quote", quote.String())
+		return cur, nil
+	}
+	if !thin.found {
+		return cur, nil
+	}
+	thin.adm = on
+	return thin, nil
+}
+
+func (s *Server) priceChangeCurrentPass(ctx context.Context, asset, quote canonical.Asset, now time.Time) (priceChangeCurrent, error) {
+	pair, res, triangulated, found, withheld, err := s.resolvePriceChangePair(ctx, asset, quote, now)
+	return priceChangeCurrent{pair: pair, res: res, triangulated: triangulated, found: found, withheld: withheld}, err
+}
+
+// priceChangeHorizonThin is [Server.priceChangeHorizon] with the same
+// two-pass rule, on a record of the horizon's own: each horizon is a
+// point-in-time read with its own verdict.
+func (s *Server) priceChangeHorizonThin(
+	ctx context.Context, r *http.Request, asset, quote canonical.Asset, pair canonical.Pair,
+	currentPrice string, target time.Time, tolerance time.Duration,
+) (PriceChangeHorizon, error) {
+	offCtx, off := WithThinAdmission(ctx, asset, quote, false)
+	h, reason, err := s.priceChangeHorizon(offCtx, pair, currentPrice, target, tolerance)
+	if err != nil || !includeThinRequested(r) || !off.ThinWithheld(reason) {
+		return h, err
+	}
+	onCtx, on := WithThinAdmission(ctx, asset, quote, true)
+	thin, _, err := s.priceChangeHorizon(onCtx, pair, currentPrice, target, tolerance)
+	if err != nil {
+		s.logger.Warn("include_thin second pass failed; serving the withheld verdict",
+			"err", err, "asset", asset.String(), "quote", quote.String())
+		return h, nil
+	}
+	if !thin.Available {
+		return h, nil
+	}
+	thin.ThinMarket = on.Admitted()
+	return thin, nil
 }
 
 // priceAtResult carries a single point-in-time reader hit.
@@ -292,16 +375,19 @@ func (s *Server) currentPriceForAliases(
 // ErrPriceAtGuarded) additionally sets Withheld: the gates are asked
 // about `target`, not `now` (T038), so one horizon can be withheld while
 // its siblings are not, and a consumer must not read that null as "no
-// history that far back".
+// history that far back". The reason is the withheld reference's.
 func (s *Server) priceChangeHorizon(
 	ctx context.Context, pair canonical.Pair, currentPrice string, target time.Time, tolerance time.Duration,
-) (PriceChangeHorizon, error) {
+) (PriceChangeHorizon, PriceWithheldReason, error) {
 	value, observedAt, resSec, err := s.priceAt.PriceAt(ctx, pair, target, tolerance)
 	if err != nil {
 		if !isPriceAtMiss(err) {
-			return PriceChangeHorizon{}, err
+			return PriceChangeHorizon{}, "", err
 		}
-		return PriceChangeHorizon{Available: false, Withheld: errors.Is(err, ErrPriceWithheld)}, nil
+		if errors.Is(err, ErrPriceWithheld) {
+			return PriceChangeHorizon{Available: false, Withheld: true}, priceWithheldReason(err), nil
+		}
+		return PriceChangeHorizon{Available: false}, "", nil
 	}
 	// dex-nonstandard-decimals forward normalization (M2) on the absolute
 	// reference price. `currentPrice` was already normalized against this SAME
@@ -311,7 +397,7 @@ func (s *Server) priceChangeHorizon(
 	value = s.normalizeRawRatioString(value, pair.Base, pair.Quote)
 	pct, err := pctChange(currentPrice, value)
 	if err != nil {
-		return PriceChangeHorizon{Available: false}, nil //nolint:nilerr // documented above: an unparseable ratio degrades to unavailable, like populateChange24h/batchChange24h treat the same pctChange failure modes
+		return PriceChangeHorizon{Available: false}, "", nil //nolint:nilerr // documented above: an unparseable ratio degrades to unavailable, like populateChange24h/batchChange24h treat the same pctChange failure modes
 	}
 	at := observedAt.UTC().Format(time.RFC3339)
 	res := resolutionLabel(resSec)
@@ -321,7 +407,7 @@ func (s *Server) priceChangeHorizon(
 		ReferenceAt:    &at,
 		Resolution:     &res,
 		Available:      true,
-	}, nil
+	}, "", nil
 }
 
 // resolutionLabel maps a bucket width in seconds back to the CAGG
