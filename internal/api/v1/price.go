@@ -923,6 +923,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	if frozen {
 		snapshot, sources, triangulated = held.snapshot, held.sources, held.triangulated
 		stale, viaFallback = true, true
+		served = held.pairBase
 	}
 
 	s.handlePriceTail(w, r, asset, quote, served, snapshot, sources, stale, triangulated, viaFallback, frozen, frozenChecked, adm)
@@ -1050,7 +1051,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	// fields nil, and the response ships cleanly without them. Skipped
 	// on a substituted snapshot — see [Server.attachConfidence] (RNC27).
 	if !snapshot.Substituted {
-		s.attachConfidence(r, &snapshot, asset, quote)
+		s.attachConfidence(r, &snapshot, asset, quote, heldWindow(frozen, snapshot, confidenceLookupWindow))
 	}
 
 	// Every per-pair marker below is asked for the spelling the price was
@@ -1070,10 +1071,11 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	// Best-effort. Skipped on a substituted snapshot — see
 	// [Server.attachCompositeFlags] (RNC27).
 	if !snapshot.Substituted {
-		s.attachCompositeFlags(r, &flags, governing, quote, triangulationLookupWindow, false)
+		s.attachCompositeFlags(r, &flags, governing, quote, heldWindow(frozen, snapshot, triangulationLookupWindow), false)
 	}
 	flags.Frozen = frozen
 	flags.FrozenChecked = frozenChecked
+	flags.Degraded = frozen
 	// SingleSource is forced true when the snapshot is the LKG
 	// fallback — by the ActionFreeze contract every frozen response
 	// is single-sourced (a multi-source bucket couldn't have been
@@ -2815,11 +2817,20 @@ func formatCrossRate(r *big.Rat) string {
 	return s
 }
 
+// heldWindow is the window a per-pair enrichment lookup must ask for: a held
+// (frozen) value was priced by its own window, not the default one.
+func heldWindow(frozen bool, snap PriceSnapshot, def time.Duration) time.Duration {
+	if frozen && snap.WindowSeconds > 0 {
+		return time.Duration(snap.WindowSeconds) * time.Second
+	}
+	return def
+}
+
 // attachConfidence consults the wired ConfidenceLooker (when set)
 // and populates snap.Confidence + snap.ConfidenceFactors. Best-
 // effort: cache misses + read errors leave the fields nil so the
 // response still ships cleanly without confidence enrichment.
-func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, quote canonical.Asset) {
+func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, quote canonical.Asset, window time.Duration) {
 	if s.confidence == nil {
 		return
 	}
@@ -2834,7 +2845,7 @@ func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, q
 	// confidence as "unknown", so every client using Stellar's own
 	// canonical form got a permanent "unknown" (cold audit 2026-08-04).
 	for _, a := range assetAliases(asset) {
-		got, ok, err := s.confidence.LookupConfidence(r.Context(), a, quote, confidenceLookupWindow)
+		got, ok, err := s.confidence.LookupConfidence(r.Context(), a, quote, window)
 		if err != nil {
 			if !clientAborted(r, err) {
 				s.logger.Warn("confidence lookup failed",
@@ -3015,6 +3026,9 @@ type frozenResolution struct {
 	snapshot     PriceSnapshot
 	sources      []string
 	triangulated bool
+	// pairBase is the spelling whose marker fired and whose held value was
+	// read; the composite-meta lookup must ask for the same pair.
+	pairBase canonical.Asset
 }
 
 // frozenHeldWindows are the aggregator windows a freeze can be holding
@@ -3086,6 +3100,7 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 			checked:      true,
 			sources:      []string{},
 			triangulated: v.Triangulated,
+			pairBase:     pairBase,
 			snapshot: PriceSnapshot{
 				AssetID:   requested.String(),
 				Quote:     quote.String(),
@@ -3729,6 +3744,7 @@ func batchEnvelope(ids []string, results []batchRowResult) Envelope {
 			ThinMarket:   len(thin) > 0,
 			Stale:        anyStale,
 			Frozen:       anyFrozen,
+			Degraded:     anyFrozen,
 			SingleSource: anySingleSource,
 			Triangulated: anyTriangulated,
 		},

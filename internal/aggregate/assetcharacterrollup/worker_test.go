@@ -64,6 +64,28 @@ func TestRun_RefreshesImmediately(t *testing.T) {
 	}
 }
 
+// TestRun_StartupDelayHoldsFirstRoll proves no roll happens at t=0 when a
+// startup delay is configured and ctx is cancelled inside it.
+func TestRun_StartupDelayHoldsFirstRoll(t *testing.T) {
+	f := &fakeRefresher{}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := New(f, Options{Interval: time.Hour, StartupDelay: time.Hour}).Run(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Run err = %v, want deadline exceeded", err)
+	}
+	if f.calls != 0 {
+		t.Errorf("refresher called %d times during the startup delay, want 0", f.calls)
+	}
+}
+
+// TestNew_NegativeDelayDefaults keeps the production default when unset.
+func TestNew_NegativeDelayDefaults(t *testing.T) {
+	if got := New(&fakeRefresher{}, Options{StartupDelay: -1}).delay; got != DefaultStartupDelay {
+		t.Errorf("delay = %s, want %s", got, DefaultStartupDelay)
+	}
+}
+
 // TestDefaultInterval_Sane keeps the heavy roll on a slow cadence.
 func TestDefaultInterval_Sane(t *testing.T) {
 	if DefaultInterval < 5*time.Minute {

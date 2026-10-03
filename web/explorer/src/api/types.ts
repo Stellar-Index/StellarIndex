@@ -4001,7 +4001,10 @@ export interface paths {
         /**
          * Customer dashboard — delete a webhook.
          * @description Session-gated. Hard-deletes the registry row and cascades
-         *     to webhook_deliveries. An absent or cross-account id returns
+         *     to webhook_deliveries: queued and retrying deliveries are
+         *     dropped and the delivery log is gone. To change the signing
+         *     secret, use rotate-secret instead, which keeps both. An absent
+         *     or cross-account id returns
          *     404 (the same shape, so presence never leaks); a client
          *     retrying a delete whose response it lost should treat 404 as
          *     already deleted.
@@ -4012,10 +4015,41 @@ export interface paths {
         /**
          * Customer dashboard — update a webhook.
          * @description Session-gated. Patches name / url / events / enabled.
-         *     SecretHash is immutable; rotation lives behind a separate
-         *     endpoint when it ships.
+         *     The signing secret is not patchable; rotate it with
+         *     POST /v1/dashboard/webhooks/{id}/rotate-secret.
          */
         patch: operations["updateDashboardWebhook"];
+        trace?: never;
+    };
+    "/dashboard/webhooks/{id}/rotate-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — rotate a webhook's signing secret.
+         * @description Session-gated. Replaces the signing secret in place and returns
+         *     the new one ONCE. The webhook keeps its id, its queued and
+         *     retrying deliveries and its delivery log. For 24 hours
+         *     (`previous_secret_expires_at`) every delivery is signed with
+         *     both secrets: the new one in `X-StellarIndex-Signature` /
+         *     `X-StellarIndex-Signature-V2`, the old one in
+         *     `X-StellarIndex-Signature-Previous` /
+         *     `X-StellarIndex-Signature-V2-Previous` (see
+         *     `CreateWebhookResponse.secret`). Rotating again inside that
+         *     window ends the old secret's signing at once. Owner / admin /
+         *     member only. Send an `Idempotency-Key` so a retried request
+         *     replays the first response instead of rotating twice.
+         */
+        post: operations["rotateDashboardWebhookSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/dashboard/webhooks/{id}/deliveries": {
@@ -4050,7 +4084,7 @@ export interface paths {
         /**
          * Customer dashboard — list this account's price alerts.
          * @description Session-gated. Returns every price-threshold alert this
-         *     account has registered, newest first. BACKLOG #60.
+         *     account has registered, newest first.
          */
         get: operations["listDashboardPriceAlerts"];
         put?: never;
@@ -6964,8 +6998,8 @@ export interface components {
         /**
          * @description Customer-registered webhook endpoint backing the
          *     /v1/dashboard/webhooks surface. SecretHash is intentionally
-         *     omitted — the plaintext signing secret is returned ONCE at
-         *     create time + never again.
+         *     omitted — each plaintext signing secret is returned ONCE, at
+         *     create or rotate-secret time, and never again.
          */
         DashboardWebhook: {
             /** Format: uuid */
@@ -7052,8 +7086,33 @@ export interface components {
              *     of the same delivery. It is NOT stable across a re-emit of
              *     the same logical event, so it dedupes retries, not re-sends.
              *     Trust it only after `X-StellarIndex-Signature-V2` verifies.
+             *
+             *     ROTATION: for 24 hours after a rotate-secret call, every
+             *     delivery also carries `X-StellarIndex-Signature-Previous` and
+             *     `X-StellarIndex-Signature-V2-Previous`, built exactly as above
+             *     but with the previous secret. A receiver still holding the old
+             *     secret verifies those; once it holds the new one it verifies
+             *     the unsuffixed headers. Outside a rotation window neither
+             *     header is sent.
              */
             secret: string;
+        };
+        RotateWebhookSecretResponse: {
+            /** Format: uuid */
+            webhook_id: string;
+            /**
+             * @description The new signing secret, returned exactly once; it signs
+             *     `X-StellarIndex-Signature` and `-V2` from now on. Format:
+             *     `wsec_<64 hex chars>`.
+             */
+            secret: string;
+            /**
+             * Format: date-time
+             * @description Until this instant deliveries also carry the
+             *     `X-StellarIndex-Signature-Previous` headers signed with the
+             *     secret this call replaced.
+             */
+            previous_secret_expires_at: string;
         };
         /**
          * @description PATCH body — any subset of fields. Omitted fields keep
@@ -7092,7 +7151,7 @@ export interface components {
         };
         /**
          * @description A customer-registered price-threshold alert backing the
-         *     /v1/dashboard/price-alerts surface (BACKLOG #60). The
+         *     /v1/dashboard/price-alerts surface. The
          *     aggregator's evaluator compares each enabled alert against the
          *     latest closed 1m VWAP for its pair and, on a crossing, enqueues
          *     a `price.alert` webhook delivery to the account's subscribed
@@ -7256,7 +7315,7 @@ export interface components {
             at: string;
         };
         /**
-         * @description Body of a `price.alert` webhook delivery (BACKLOG #60). Fired by
+         * @description Body of a `price.alert` webhook delivery. Fired by
          *     the aggregator's price-alert evaluator when one of the account's
          *     registered alerts crosses its threshold against the latest closed
          *     1-minute VWAP. Sent once per crossing: the alert re-arms only after
@@ -21875,6 +21934,98 @@ export interface operations {
                 };
             };
             /** @description Another of this account's webhooks already uses this url. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    rotateDashboardWebhookSecret: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Optional client-chosen key (a UUID is ideal) that makes this
+                 *     create safe to retry. Send the SAME value when retrying a request
+                 *     whose outcome you never saw, such as a client timeout: within ten
+                 *     minutes of a successful original, the retry receives the original
+                 *     response verbatim (marked by an `Idempotency-Replayed: true`
+                 *     response header) instead of creating a second resource. A retry
+                 *     that arrives while the original is still running gets 409
+                 *     `idempotency-key-in-flight` with `Retry-After`. Only 2xx
+                 *     responses are replayed; a failed original may be retried with the
+                 *     same key. Keys are scoped to the caller, and dedup is held per API
+                 *     process, so it covers the retry window rather than surviving a
+                 *     restart. Longer than 256 bytes returns 400
+                 *     `idempotency-key-too-long`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rotated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "webhook_id": "0b6a3f2e-9c1d-4e7a-8f5b-6d2c4a1e9b0f",
+                     *       "secret": "wsec_9d2e4f7a1c6b3e8d5a2f9c4b7e1d6a3f8c5b2e9d4a7f1c6e3b8d5a2f9c4b7e1d",
+                     *       "previous_secret_expires_at": "2026-07-04T22:45:47Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["RotateWebhookSecretResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Role can't manage webhooks, OR the write was blocked as
+             *     cross-site: state-changing dashboard + auth requests must
+             *     carry an `Origin` (or `Referer`) matching this API or an
+             *     operator-allow-listed site (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No webhook with this id on this account (absent, already deleted, or another account's). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description A request whose `Idempotency-Key` matches one still being
+             *     processed (`idempotency-key-in-flight`, retryable per
+             *     `Retry-After`).
+             */
             409: {
                 headers: {
                     [name: string]: unknown;

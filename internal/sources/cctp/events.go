@@ -51,7 +51,7 @@
 // Design rationale and full per-event schemas extracted from the
 // contracts' Rust source: docs/architecture/cctp-stellar-coverage.md.
 //
-// Wiring (#40): decode.go decodes; consumer.go projects each event
+// Wiring (1b9a594b4): decode.go decodes; consumer.go projects each event
 // into the canonical cctp.Event row; dispatcher_adapter.go is the
 // dispatcher Decoder; the indexer's sink persists via
 // Store.InsertCCTPEvent into the cctp_events hypertable

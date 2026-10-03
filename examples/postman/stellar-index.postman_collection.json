@@ -35049,7 +35049,7 @@
                   "request": {
                     "name": "Customer dashboard — update a webhook.",
                     "description": {
-                      "content": "Session-gated. Patches name / url / events / enabled.\nSecretHash is immutable; rotation lives behind a separate\nendpoint when it ships.\n",
+                      "content": "Session-gated. Patches name / url / events / enabled.\nThe signing secret is not patchable; rotate it with\nPOST /v1/dashboard/webhooks/{id}/rotate-secret.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -35534,7 +35534,7 @@
                   "request": {
                     "name": "Customer dashboard — delete a webhook.",
                     "description": {
-                      "content": "Session-gated. Hard-deletes the registry row and cascades\nto webhook_deliveries. An absent or cross-account id returns\n404 (the same shape, so presence never leaks); a client\nretrying a delete whose response it lost should treat 404 as\nalready deleted.\n",
+                      "content": "Session-gated. Hard-deletes the registry row and cascades\nto webhook_deliveries: queued and retrying deliveries are\ndropped and the delivery log is gone. To change the signing\nsecret, use rotate-secret instead, which keeps both. An absent\nor cross-account id returns\n404 (the same shape, so presence never leaks); a client\nretrying a delete whose response it lost should treat 404 as\nalready deleted.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -35859,6 +35859,476 @@
                   }
                 },
                 {
+                  "name": "rotate-secret",
+                  "description": "",
+                  "item": [
+                    {
+                      "name": "Customer dashboard — rotate a webhook's signing secret.",
+                      "request": {
+                        "name": "Customer dashboard — rotate a webhook's signing secret.",
+                        "description": {
+                          "content": "Session-gated. Replaces the signing secret in place and returns\nthe new one ONCE. The webhook keeps its id, its queued and\nretrying deliveries and its delivery log. For 24 hours\n(`previous_secret_expires_at`) every delivery is signed with\nboth secrets: the new one in `X-StellarIndex-Signature` /\n`X-StellarIndex-Signature-V2`, the old one in\n`X-StellarIndex-Signature-Previous` /\n`X-StellarIndex-Signature-V2-Previous` (see\n`CreateWebhookResponse.secret`). Rotating again inside that\nwindow ends the old secret's signing at once. Owner / admin /\nmember only. Send an `Idempotency-Key` so a retried request\nreplays the first response instead of rotating twice.\n",
+                          "type": "text/plain"
+                        },
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "webhooks",
+                            ":id",
+                            "rotate-secret"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id",
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              }
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "disabled": false,
+                            "description": {
+                              "content": "Optional client-chosen key (a UUID is ideal) that makes this\ncreate safe to retry. Send the SAME value when retrying a request\nwhose outcome you never saw, such as a client timeout: within ten\nminutes of a successful original, the retry receives the original\nresponse verbatim (marked by an `Idempotency-Replayed: true`\nresponse header) instead of creating a second resource. A retry\nthat arrives while the original is still running gets 409\n`idempotency-key-in-flight` with `Retry-After`. Only 2xx\nresponses are replayed; a failed original may be retried with the\nsame key. Keys are scoped to the caller, and dedup is held per API\nprocess, so it covers the retry window rather than surviving a\nrestart. Longer than 256 bytes returns 400\n`idempotency-key-too-long`.\n",
+                              "type": "text/plain"
+                            },
+                            "key": "Idempotency-Key",
+                            "value": "<string>"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/json"
+                          }
+                        ],
+                        "method": "POST",
+                        "body": {},
+                        "auth": {
+                          "type": "apikey",
+                          "apikey": [
+                            {
+                              "key": "key",
+                              "value": "__Host-stellarindex_session"
+                            },
+                            {
+                              "key": "value",
+                              "value": "{{apiKey}}"
+                            },
+                            {
+                              "key": "in",
+                              "value": "header"
+                            }
+                          ]
+                        }
+                      },
+                      "response": [
+                        {
+                          "name": "Rotated.",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "dashboard",
+                                "webhooks",
+                                ":id",
+                                "rotate-secret"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) ",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<uuid>",
+                                  "key": "id"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "disabled": false,
+                                "description": {
+                                  "content": "Optional client-chosen key (a UUID is ideal) that makes this\ncreate safe to retry. Send the SAME value when retrying a request\nwhose outcome you never saw, such as a client timeout: within ten\nminutes of a successful original, the retry receives the original\nresponse verbatim (marked by an `Idempotency-Replayed: true`\nresponse header) instead of creating a second resource. A retry\nthat arrives while the original is still running gets 409\n`idempotency-key-in-flight` with `Retry-After`. Only 2xx\nresponses are replayed; a failed original may be retried with the\nsame key. Keys are scoped to the caller, and dedup is held per API\nprocess, so it covers the retry window rather than surviving a\nrestart. Longer than 256 bytes returns 400\n`idempotency-key-too-long`.\n",
+                                  "type": "text/plain"
+                                },
+                                "key": "Idempotency-Key",
+                                "value": "<string>"
+                              },
+                              {
+                                "key": "Accept",
+                                "value": "application/json"
+                              },
+                              {
+                                "description": {
+                                  "content": "Added as a part of security scheme: apikey",
+                                  "type": "text/plain"
+                                },
+                                "key": "__Host-stellarindex_session",
+                                "value": "<API Key>"
+                              }
+                            ],
+                            "method": "POST",
+                            "body": {}
+                          },
+                          "status": "OK",
+                          "code": 200,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/json"
+                            }
+                          ],
+                          "body": "{\n  \"webhook_id\": \"<uuid>\",\n  \"secret\": \"<string>\",\n  \"previous_secret_expires_at\": \"<dateTime>\"\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        },
+                        {
+                          "name": "Client-supplied parameters didn't validate.",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "dashboard",
+                                "webhooks",
+                                ":id",
+                                "rotate-secret"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) ",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<uuid>",
+                                  "key": "id"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "disabled": false,
+                                "description": {
+                                  "content": "Optional client-chosen key (a UUID is ideal) that makes this\ncreate safe to retry. Send the SAME value when retrying a request\nwhose outcome you never saw, such as a client timeout: within ten\nminutes of a successful original, the retry receives the original\nresponse verbatim (marked by an `Idempotency-Replayed: true`\nresponse header) instead of creating a second resource. A retry\nthat arrives while the original is still running gets 409\n`idempotency-key-in-flight` with `Retry-After`. Only 2xx\nresponses are replayed; a failed original may be retried with the\nsame key. Keys are scoped to the caller, and dedup is held per API\nprocess, so it covers the retry window rather than surviving a\nrestart. Longer than 256 bytes returns 400\n`idempotency-key-too-long`.\n",
+                                  "type": "text/plain"
+                                },
+                                "key": "Idempotency-Key",
+                                "value": "<string>"
+                              },
+                              {
+                                "key": "Accept",
+                                "value": "application/problem+json"
+                              },
+                              {
+                                "description": {
+                                  "content": "Added as a part of security scheme: apikey",
+                                  "type": "text/plain"
+                                },
+                                "key": "__Host-stellarindex_session",
+                                "value": "<API Key>"
+                              }
+                            ],
+                            "method": "POST",
+                            "body": {}
+                          },
+                          "status": "Bad Request",
+                          "code": 400,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/problem+json"
+                            }
+                          ],
+                          "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"volume\",\n    \"window_end\": \"<dateTime>\"\n  }\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        },
+                        {
+                          "name": "No valid session cookie.",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "dashboard",
+                                "webhooks",
+                                ":id",
+                                "rotate-secret"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) ",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<uuid>",
+                                  "key": "id"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "disabled": false,
+                                "description": {
+                                  "content": "Optional client-chosen key (a UUID is ideal) that makes this\ncreate safe to retry. Send the SAME value when retrying a request\nwhose outcome you never saw, such as a client timeout: within ten\nminutes of a successful original, the retry receives the original\nresponse verbatim (marked by an `Idempotency-Replayed: true`\nresponse header) instead of creating a second resource. A retry\nthat arrives while the original is still running gets 409\n`idempotency-key-in-flight` with `Retry-After`. Only 2xx\nresponses are replayed; a failed original may be retried with the\nsame key. Keys are scoped to the caller, and dedup is held per API\nprocess, so it covers the retry window rather than surviving a\nrestart. Longer than 256 bytes returns 400\n`idempotency-key-too-long`.\n",
+                                  "type": "text/plain"
+                                },
+                                "key": "Idempotency-Key",
+                                "value": "<string>"
+                              },
+                              {
+                                "key": "Accept",
+                                "value": "application/problem+json"
+                              },
+                              {
+                                "description": {
+                                  "content": "Added as a part of security scheme: apikey",
+                                  "type": "text/plain"
+                                },
+                                "key": "__Host-stellarindex_session",
+                                "value": "<API Key>"
+                              }
+                            ],
+                            "method": "POST",
+                            "body": {}
+                          },
+                          "status": "Unauthorized",
+                          "code": 401,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/problem+json"
+                            }
+                          ],
+                          "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"volume\",\n    \"window_end\": \"<dateTime>\"\n  }\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        },
+                        {
+                          "name": "Role can't manage webhooks, OR the write was blocked as\ncross-site: state-changing dashboard + auth requests must\ncarry an `Origin` (or `Referer`) matching this API or an\noperator-allow-listed site (`cross-site-request-blocked`).",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "dashboard",
+                                "webhooks",
+                                ":id",
+                                "rotate-secret"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) ",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<uuid>",
+                                  "key": "id"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "disabled": false,
+                                "description": {
+                                  "content": "Optional client-chosen key (a UUID is ideal) that makes this\ncreate safe to retry. Send the SAME value when retrying a request\nwhose outcome you never saw, such as a client timeout: within ten\nminutes of a successful original, the retry receives the original\nresponse verbatim (marked by an `Idempotency-Replayed: true`\nresponse header) instead of creating a second resource. A retry\nthat arrives while the original is still running gets 409\n`idempotency-key-in-flight` with `Retry-After`. Only 2xx\nresponses are replayed; a failed original may be retried with the\nsame key. Keys are scoped to the caller, and dedup is held per API\nprocess, so it covers the retry window rather than surviving a\nrestart. Longer than 256 bytes returns 400\n`idempotency-key-too-long`.\n",
+                                  "type": "text/plain"
+                                },
+                                "key": "Idempotency-Key",
+                                "value": "<string>"
+                              },
+                              {
+                                "key": "Accept",
+                                "value": "application/problem+json"
+                              },
+                              {
+                                "description": {
+                                  "content": "Added as a part of security scheme: apikey",
+                                  "type": "text/plain"
+                                },
+                                "key": "__Host-stellarindex_session",
+                                "value": "<API Key>"
+                              }
+                            ],
+                            "method": "POST",
+                            "body": {}
+                          },
+                          "status": "Forbidden",
+                          "code": 403,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/problem+json"
+                            }
+                          ],
+                          "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"volume\",\n    \"window_end\": \"<dateTime>\"\n  }\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        },
+                        {
+                          "name": "No webhook with this id on this account (absent, already deleted, or another account's).",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "dashboard",
+                                "webhooks",
+                                ":id",
+                                "rotate-secret"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) ",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<uuid>",
+                                  "key": "id"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "disabled": false,
+                                "description": {
+                                  "content": "Optional client-chosen key (a UUID is ideal) that makes this\ncreate safe to retry. Send the SAME value when retrying a request\nwhose outcome you never saw, such as a client timeout: within ten\nminutes of a successful original, the retry receives the original\nresponse verbatim (marked by an `Idempotency-Replayed: true`\nresponse header) instead of creating a second resource. A retry\nthat arrives while the original is still running gets 409\n`idempotency-key-in-flight` with `Retry-After`. Only 2xx\nresponses are replayed; a failed original may be retried with the\nsame key. Keys are scoped to the caller, and dedup is held per API\nprocess, so it covers the retry window rather than surviving a\nrestart. Longer than 256 bytes returns 400\n`idempotency-key-too-long`.\n",
+                                  "type": "text/plain"
+                                },
+                                "key": "Idempotency-Key",
+                                "value": "<string>"
+                              },
+                              {
+                                "key": "Accept",
+                                "value": "application/problem+json"
+                              },
+                              {
+                                "description": {
+                                  "content": "Added as a part of security scheme: apikey",
+                                  "type": "text/plain"
+                                },
+                                "key": "__Host-stellarindex_session",
+                                "value": "<API Key>"
+                              }
+                            ],
+                            "method": "POST",
+                            "body": {}
+                          },
+                          "status": "Not Found",
+                          "code": 404,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/problem+json"
+                            }
+                          ],
+                          "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"volume\",\n    \"window_end\": \"<dateTime>\"\n  }\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        },
+                        {
+                          "name": "A request whose `Idempotency-Key` matches one still being\nprocessed (`idempotency-key-in-flight`, retryable per\n`Retry-After`).",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "dashboard",
+                                "webhooks",
+                                ":id",
+                                "rotate-secret"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) ",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<uuid>",
+                                  "key": "id"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "disabled": false,
+                                "description": {
+                                  "content": "Optional client-chosen key (a UUID is ideal) that makes this\ncreate safe to retry. Send the SAME value when retrying a request\nwhose outcome you never saw, such as a client timeout: within ten\nminutes of a successful original, the retry receives the original\nresponse verbatim (marked by an `Idempotency-Replayed: true`\nresponse header) instead of creating a second resource. A retry\nthat arrives while the original is still running gets 409\n`idempotency-key-in-flight` with `Retry-After`. Only 2xx\nresponses are replayed; a failed original may be retried with the\nsame key. Keys are scoped to the caller, and dedup is held per API\nprocess, so it covers the retry window rather than surviving a\nrestart. Longer than 256 bytes returns 400\n`idempotency-key-too-long`.\n",
+                                  "type": "text/plain"
+                                },
+                                "key": "Idempotency-Key",
+                                "value": "<string>"
+                              },
+                              {
+                                "key": "Accept",
+                                "value": "application/problem+json"
+                              },
+                              {
+                                "description": {
+                                  "content": "Added as a part of security scheme: apikey",
+                                  "type": "text/plain"
+                                },
+                                "key": "__Host-stellarindex_session",
+                                "value": "<API Key>"
+                              }
+                            ],
+                            "method": "POST",
+                            "body": {}
+                          },
+                          "status": "Conflict",
+                          "code": 409,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/problem+json"
+                            }
+                          ],
+                          "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"volume\",\n    \"window_end\": \"<dateTime>\"\n  }\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        }
+                      ],
+                      "event": [],
+                      "protocolProfileBehavior": {
+                        "disableBodyPruning": true
+                      }
+                    }
+                  ]
+                },
+                {
                   "name": "deliveries",
                   "description": "",
                   "item": [
@@ -35973,7 +36443,7 @@
                               "value": "application/json"
                             }
                           ],
-                          "body": "{\n  \"deliveries\": [\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"incident.sev1\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<dateTime>\",\n      \"delivered_at\": \"<dateTime>\",\n      \"last_error\": \"<string>\",\n      \"last_response_status\": \"<integer>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"price.alert\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<dateTime>\",\n      \"delivered_at\": \"<dateTime>\",\n      \"last_error\": \"<string>\",\n      \"last_response_status\": \"<integer>\"\n    }\n  ]\n}",
+                          "body": "{\n  \"deliveries\": [\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"divergence.firing\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<dateTime>\",\n      \"delivered_at\": \"<dateTime>\",\n      \"last_error\": \"<string>\",\n      \"last_response_status\": \"<integer>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"incident.resolved\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<dateTime>\",\n      \"delivered_at\": \"<dateTime>\",\n      \"last_error\": \"<string>\",\n      \"last_response_status\": \"<integer>\"\n    }\n  ]\n}",
                           "cookie": [],
                           "_postman_previewlanguage": "json"
                         },
@@ -36222,7 +36692,7 @@
               "request": {
                 "name": "Customer dashboard — list this account's price alerts.",
                 "description": {
-                  "content": "Session-gated. Returns every price-threshold alert this\naccount has registered, newest first. BACKLOG #60.\n",
+                  "content": "Session-gated. Returns every price-threshold alert this\naccount has registered, newest first.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -36302,7 +36772,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"alerts\": [\n    {\n      \"id\": \"<uuid>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"condition\": \"above\",\n      \"threshold\": \"<string>\",\n      \"cooldown_seconds\": \"<integer>\",\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\",\n      \"last_fired_at\": \"<dateTime>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"condition\": \"below\",\n      \"threshold\": \"<string>\",\n      \"cooldown_seconds\": \"<integer>\",\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\",\n      \"last_fired_at\": \"<dateTime>\"\n    }\n  ],\n  \"max_alerts\": \"<integer>\"\n}",
+                  "body": "{\n  \"alerts\": [\n    {\n      \"id\": \"<uuid>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"condition\": \"below\",\n      \"threshold\": \"<string>\",\n      \"cooldown_seconds\": \"<integer>\",\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\",\n      \"last_fired_at\": \"<dateTime>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"condition\": \"above\",\n      \"threshold\": \"<string>\",\n      \"cooldown_seconds\": \"<integer>\",\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\",\n      \"last_fired_at\": \"<dateTime>\"\n    }\n  ],\n  \"max_alerts\": \"<integer>\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -36396,7 +36866,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                  "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
                   "options": {
                     "raw": {
                       "headerFamily": "json",
@@ -36467,7 +36937,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -36484,7 +36954,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"id\": \"<uuid>\",\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\",\n  \"created_at\": \"<dateTime>\",\n  \"updated_at\": \"<dateTime>\",\n  \"last_fired_at\": \"<dateTime>\"\n}",
+                  "body": "{\n  \"id\": \"<uuid>\",\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\",\n  \"created_at\": \"<dateTime>\",\n  \"updated_at\": \"<dateTime>\",\n  \"last_fired_at\": \"<dateTime>\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -36532,7 +37002,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -36597,7 +37067,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -36662,7 +37132,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -36727,7 +37197,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -36893,7 +37363,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"id\": \"<uuid>\",\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\",\n  \"created_at\": \"<dateTime>\",\n  \"updated_at\": \"<dateTime>\",\n  \"last_fired_at\": \"<dateTime>\"\n}",
+                      "body": "{\n  \"id\": \"<uuid>\",\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\",\n  \"created_at\": \"<dateTime>\",\n  \"updated_at\": \"<dateTime>\",\n  \"last_fired_at\": \"<dateTime>\"\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -38071,7 +38541,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"289362\"\n}",
+                  "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"526957\"\n}",
                   "options": {
                     "raw": {
                       "headerFamily": "json",
@@ -38109,7 +38579,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"289362\"\n}",
+                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"526957\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -38166,7 +38636,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"289362\"\n}",
+                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"526957\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -38214,7 +38684,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"289362\"\n}",
+                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"526957\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -38262,7 +38732,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"289362\"\n}",
+                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"526957\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -41452,7 +41922,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"ledger\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 1356.984805315733,\n          \"key_1\": 628.1780987046659\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": false,\n          \"key_1\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"coverage_note\": \"<string>\",\n    \"total\": \"<integer>\",\n    \"truncated\": \"<boolean>\"\n  }\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"ledger\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 3164.430563338101,\n          \"key_1\": false\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"coverage_note\": \"<string>\",\n    \"total\": \"<integer>\",\n    \"truncated\": \"<boolean>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -41673,7 +42143,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"close_time\": \"<dateTime>\",\n    \"fee_charged\": \"<string>\",\n    \"hash\": \"<string>\",\n    \"index\": \"<integer>\",\n    \"ledger\": \"<integer>\",\n    \"max_fee\": \"<string>\",\n    \"operation_count\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 1274.8023658059537,\n          \"key_1\": 6932.24370945245\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": false,\n          \"key_1\": false,\n          \"key_2\": \"string\",\n          \"key_3\": false\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"result\": \"<string>\",\n    \"result_code\": \"<integer>\",\n    \"source_account\": \"<string>\",\n    \"successful\": \"<boolean>\",\n    \"memo_type\": \"<string>\",\n    \"memo\": \"<string>\",\n    \"memo_base64\": \"<string>\",\n    \"fee_bump\": {\n      \"fee_account\": \"<string>\",\n      \"inner_max_fee\": \"<string>\",\n      \"inner_hash\": \"<string>\",\n      \"inner_result_code\": \"<integer>\",\n      \"inner_result\": \"<string>\"\n    },\n    \"events\": [\n      {\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"contract_id\": \"<string>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\"\n      },\n      {\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"contract_id\": \"<string>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\"\n      }\n    ],\n    \"coverage_note\": \"<string>\"\n  }\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"close_time\": \"<dateTime>\",\n    \"fee_charged\": \"<string>\",\n    \"hash\": \"<string>\",\n    \"index\": \"<integer>\",\n    \"ledger\": \"<integer>\",\n    \"max_fee\": \"<string>\",\n    \"operation_count\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 6932.24370945245,\n          \"key_1\": 6753.266027662903,\n          \"key_2\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 7615.456497296691\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"result\": \"<string>\",\n    \"result_code\": \"<integer>\",\n    \"source_account\": \"<string>\",\n    \"successful\": \"<boolean>\",\n    \"memo_type\": \"<string>\",\n    \"memo\": \"<string>\",\n    \"memo_base64\": \"<string>\",\n    \"fee_bump\": {\n      \"fee_account\": \"<string>\",\n      \"inner_max_fee\": \"<string>\",\n      \"inner_hash\": \"<string>\",\n      \"inner_result_code\": \"<integer>\",\n      \"inner_result\": \"<string>\"\n    },\n    \"events\": [\n      {\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"contract_id\": \"<string>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\"\n      },\n      {\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"contract_id\": \"<string>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\"\n      }\n    ],\n    \"coverage_note\": \"<string>\"\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -41914,7 +42384,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"ledger\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 1632.0804134011269,\n          \"key_1\": false,\n          \"key_2\": true\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"op_type_stats\": [\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"coverage_note\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"ledger\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": \"string\",\n          \"key_1\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": \"string\",\n          \"key_1\": 8009,\n          \"key_2\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"op_type_stats\": [\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"coverage_note\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -43314,7 +43784,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"account\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": true,\n          \"key_1\": true\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"scope\": \"all\",\n    \"next_cursor\": \"<string>\",\n    \"coverage_note\": \"<string>\",\n    \"as_of_ledger\": \"<long>\"\n  }\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"account\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": true,\n          \"key_1\": \"string\",\n          \"key_2\": 8823\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 4743,\n          \"key_1\": \"string\",\n          \"key_2\": 4347,\n          \"key_3\": false\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"scope\": \"all\",\n    \"next_cursor\": \"<string>\",\n    \"coverage_note\": \"<string>\",\n    \"as_of_ledger\": \"<long>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -43514,7 +43984,7 @@
                             "type": "text/plain"
                           },
                           "key": "direction",
-                          "value": "received"
+                          "value": "sent"
                         },
                         {
                           "disabled": false,
@@ -43597,7 +44067,7 @@
                                 "type": "text/plain"
                               },
                               "key": "direction",
-                              "value": "received"
+                              "value": "sent"
                             },
                             {
                               "disabled": false,
@@ -43639,7 +44109,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"account\": \"<string>\",\n    \"movements\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"sent\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"cap67_event\",\n        \"decimals\": \"<integer>\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": 9137,\n          \"key_1\": 4450\n        }\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"self\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"cap67_derived\",\n        \"decimals\": \"<integer>\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": 7647\n        }\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"account\": \"<string>\",\n    \"movements\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"received\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"classic_derived\",\n        \"decimals\": \"<integer>\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": \"string\",\n          \"key_1\": 8163.772304542363\n        }\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"sent\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"classic_derived\",\n        \"decimals\": \"<integer>\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": true\n        }\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -43690,7 +44160,7 @@
                                 "type": "text/plain"
                               },
                               "key": "direction",
-                              "value": "received"
+                              "value": "sent"
                             },
                             {
                               "disabled": false,
@@ -43783,7 +44253,7 @@
                                 "type": "text/plain"
                               },
                               "key": "direction",
-                              "value": "received"
+                              "value": "sent"
                             },
                             {
                               "disabled": false,
@@ -43946,7 +44416,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"account\": \"<string>\",\n    \"positions\": [\n      {\n        \"protocol\": \"aquarius\",\n        \"position_kind\": \"backstop_shares\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"superseded_by_auction\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"event_derived\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      },\n      {\n        \"protocol\": \"aquarius\",\n        \"position_kind\": \"credit\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"shares\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"event_derived\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      }\n    ],\n    \"include_closed\": \"<boolean>\",\n    \"note\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"account\": \"<string>\",\n    \"positions\": [\n      {\n        \"protocol\": \"phoenix\",\n        \"position_kind\": \"vault_shares\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"superseded_by_auction\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"event_derived\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      },\n      {\n        \"protocol\": \"phoenix\",\n        \"position_kind\": \"gauge\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"signed_delta_sum_unconfirmed_unit\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"event_derived\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      }\n    ],\n    \"include_closed\": \"<boolean>\",\n    \"note\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -44199,7 +44669,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"account\": \"<string>\",\n    \"trades\": [\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"maker\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\",\n        \"signer\": \"<string>\"\n      },\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"taker\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\",\n        \"signer\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"next_cursor\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"account\": \"<string>\",\n    \"trades\": [\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"taker\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\",\n        \"signer\": \"<string>\"\n      },\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"taker\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\",\n        \"signer\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"next_cursor\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -44372,7 +44842,7 @@
                             "type": "text/plain"
                           },
                           "key": "relation",
-                          "value": "created"
+                          "value": "sponsored"
                         },
                         {
                           "disabled": false,
@@ -44437,7 +44907,7 @@
                                 "type": "text/plain"
                               },
                               "key": "relation",
-                              "value": "created"
+                              "value": "sponsored"
                             },
                             {
                               "disabled": false,
@@ -44512,7 +44982,7 @@
                                 "type": "text/plain"
                               },
                               "key": "relation",
-                              "value": "created"
+                              "value": "sponsored"
                             },
                             {
                               "disabled": false,
@@ -44587,7 +45057,7 @@
                                 "type": "text/plain"
                               },
                               "key": "relation",
-                              "value": "created"
+                              "value": "sponsored"
                             },
                             {
                               "disabled": false,
@@ -44877,7 +45347,7 @@
                                 "type": "text/plain"
                               },
                               "key": "relation",
-                              "value": "created"
+                              "value": "sponsored"
                             }
                           ],
                           "variable": [
@@ -44925,7 +45395,7 @@
                                     "type": "text/plain"
                                   },
                                   "key": "relation",
-                                  "value": "created"
+                                  "value": "sponsored"
                                 }
                               ],
                               "variable": [
@@ -44958,7 +45428,7 @@
                               "value": "application/json"
                             }
                           ],
-                          "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"account\": \"<string>\",\n    \"relation\": \"created\",\n    \"covered\": \"<boolean>\",\n    \"holdings\": [\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"native\",\n        \"holders\": \"<long>\",\n        \"balance\": \"<string>\",\n        \"price_usd\": \"<string>\",\n        \"value_usd\": \"<string>\"\n      },\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"classic\",\n        \"holders\": \"<long>\",\n        \"balance\": \"<string>\",\n        \"price_usd\": \"<string>\",\n        \"value_usd\": \"<string>\"\n      }\n    ],\n    \"holdings_truncated\": \"<boolean>\",\n    \"valuation\": {\n      \"priced_holdings\": \"<integer>\",\n      \"unpriced_holdings\": \"<integer>\",\n      \"price_cap\": \"<integer>\",\n      \"unpriced_over_cap\": \"<integer>\",\n      \"basis\": \"live_vwap_current\",\n      \"total_usd\": \"<string>\",\n      \"degraded\": \"<boolean>\"\n    },\n    \"flows\": {\n      \"granularity\": \"1M\",\n      \"assets\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"assets_truncated\": \"<boolean>\",\n      \"points\": [\n        {\n          \"period\": \"<string>\",\n          \"period_start\": \"<dateTime>\",\n          \"movements\": \"<long>\",\n          \"active_accounts\": \"<long>\",\n          \"priced_assets\": \"<long>\",\n          \"by_asset\": [\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            },\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            }\n          ],\n          \"inflow_usd\": \"<string>\",\n          \"outflow_usd\": \"<string>\",\n          \"inflow_usd_then\": \"<string>\",\n          \"outflow_usd_then\": \"<string>\"\n        },\n        {\n          \"period\": \"<string>\",\n          \"period_start\": \"<dateTime>\",\n          \"movements\": \"<long>\",\n          \"active_accounts\": \"<long>\",\n          \"priced_assets\": \"<long>\",\n          \"by_asset\": [\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            },\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            }\n          ],\n          \"inflow_usd\": \"<string>\",\n          \"outflow_usd\": \"<string>\",\n          \"inflow_usd_then\": \"<string>\",\n          \"outflow_usd_then\": \"<string>\"\n        }\n      ]\n    },\n    \"contracts\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"movements\": \"<long>\",\n        \"active_accounts\": \"<long>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"protocol\": \"<string>\",\n        \"label\": \"<string>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"movements\": \"<long>\",\n        \"active_accounts\": \"<long>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"protocol\": \"<string>\",\n        \"label\": \"<string>\"\n      }\n    ],\n    \"positions\": [\n      {\n        \"protocol\": \"<string>\",\n        \"position_kind\": \"<string>\",\n        \"venue\": \"<string>\",\n        \"holders\": \"<long>\",\n        \"amount\": \"<string>\",\n        \"asset\": \"<string>\",\n        \"asset_label\": \"<string>\"\n      },\n      {\n        \"protocol\": \"<string>\",\n        \"position_kind\": \"<string>\",\n        \"venue\": \"<string>\",\n        \"holders\": \"<long>\",\n        \"amount\": \"<string>\",\n        \"asset\": \"<string>\",\n        \"asset_label\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"cohort\": {\n      \"accounts\": \"<long>\",\n      \"live_accounts\": \"<long>\",\n      \"active_30d\": \"<long>\",\n      \"active_90d\": \"<long>\",\n      \"active_365d\": \"<long>\"\n    },\n    \"cycle\": {\n      \"computed_at\": \"<dateTime>\",\n      \"tip_ledger\": \"<long>\"\n    }\n  }\n}",
+                          "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"account\": \"<string>\",\n    \"relation\": \"sponsored\",\n    \"covered\": \"<boolean>\",\n    \"holdings\": [\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"classic\",\n        \"holders\": \"<long>\",\n        \"balance\": \"<string>\",\n        \"price_usd\": \"<string>\",\n        \"value_usd\": \"<string>\"\n      },\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"native\",\n        \"holders\": \"<long>\",\n        \"balance\": \"<string>\",\n        \"price_usd\": \"<string>\",\n        \"value_usd\": \"<string>\"\n      }\n    ],\n    \"holdings_truncated\": \"<boolean>\",\n    \"valuation\": {\n      \"priced_holdings\": \"<integer>\",\n      \"unpriced_holdings\": \"<integer>\",\n      \"price_cap\": \"<integer>\",\n      \"unpriced_over_cap\": \"<integer>\",\n      \"basis\": \"live_vwap_current\",\n      \"total_usd\": \"<string>\",\n      \"degraded\": \"<boolean>\"\n    },\n    \"flows\": {\n      \"granularity\": \"1M\",\n      \"assets\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"assets_truncated\": \"<boolean>\",\n      \"points\": [\n        {\n          \"period\": \"<string>\",\n          \"period_start\": \"<dateTime>\",\n          \"movements\": \"<long>\",\n          \"active_accounts\": \"<long>\",\n          \"priced_assets\": \"<long>\",\n          \"by_asset\": [\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            },\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            }\n          ],\n          \"inflow_usd\": \"<string>\",\n          \"outflow_usd\": \"<string>\",\n          \"inflow_usd_then\": \"<string>\",\n          \"outflow_usd_then\": \"<string>\"\n        },\n        {\n          \"period\": \"<string>\",\n          \"period_start\": \"<dateTime>\",\n          \"movements\": \"<long>\",\n          \"active_accounts\": \"<long>\",\n          \"priced_assets\": \"<long>\",\n          \"by_asset\": [\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            },\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            }\n          ],\n          \"inflow_usd\": \"<string>\",\n          \"outflow_usd\": \"<string>\",\n          \"inflow_usd_then\": \"<string>\",\n          \"outflow_usd_then\": \"<string>\"\n        }\n      ]\n    },\n    \"contracts\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"movements\": \"<long>\",\n        \"active_accounts\": \"<long>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"protocol\": \"<string>\",\n        \"label\": \"<string>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"movements\": \"<long>\",\n        \"active_accounts\": \"<long>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"protocol\": \"<string>\",\n        \"label\": \"<string>\"\n      }\n    ],\n    \"positions\": [\n      {\n        \"protocol\": \"<string>\",\n        \"position_kind\": \"<string>\",\n        \"venue\": \"<string>\",\n        \"holders\": \"<long>\",\n        \"amount\": \"<string>\",\n        \"asset\": \"<string>\",\n        \"asset_label\": \"<string>\"\n      },\n      {\n        \"protocol\": \"<string>\",\n        \"position_kind\": \"<string>\",\n        \"venue\": \"<string>\",\n        \"holders\": \"<long>\",\n        \"amount\": \"<string>\",\n        \"asset\": \"<string>\",\n        \"asset_label\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"cohort\": {\n      \"accounts\": \"<long>\",\n      \"live_accounts\": \"<long>\",\n      \"active_30d\": \"<long>\",\n      \"active_90d\": \"<long>\",\n      \"active_365d\": \"<long>\"\n    },\n    \"cycle\": {\n      \"computed_at\": \"<dateTime>\",\n      \"tip_ledger\": \"<long>\"\n    }\n  }\n}",
                           "cookie": [],
                           "_postman_previewlanguage": "json"
                         },
@@ -44983,7 +45453,7 @@
                                     "type": "text/plain"
                                   },
                                   "key": "relation",
-                                  "value": "created"
+                                  "value": "sponsored"
                                 }
                               ],
                               "variable": [
@@ -45041,7 +45511,7 @@
                                     "type": "text/plain"
                                   },
                                   "key": "relation",
-                                  "value": "created"
+                                  "value": "sponsored"
                                 }
                               ],
                               "variable": [
@@ -45370,7 +45840,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"entries\": {\n      \"key_0\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      }\n    }\n  }\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"entries\": {\n      \"key_0\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      },\n      \"key_1\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      },\n      \"key_2\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      }\n    }\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -45553,7 +46023,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"contract\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"account\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
