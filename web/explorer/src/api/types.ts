@@ -6128,9 +6128,12 @@ export interface components {
              *       - shares: an exact current count of a protocol's own
              *         share/LP token, minted/burned 1:1 with the summed events
              *         (Blend Backstop, Phoenix stake, DeFindex vault shares).
-             *       - stateful_current: the protocol's own most-recently
-             *         PUBLISHED figure (sorocredit's latest statement amount),
-             *         not a delta sum this endpoint computed.
+             *       - stateful_current_unconfirmed_unit: the protocol's own
+             *         most-recently PUBLISHED figure (sorocredit's latest
+             *         statement amount), not a delta sum this endpoint computed.
+             *         The statement's unit/scale is not contract-source-confirmed:
+             *         the raw on-chain integer is served unscaled, so do not
+             *         assume 7-decimal USDC base units.
              *       - signed_delta_sum_unconfirmed_unit: a sum of signed
              *         per-event deltas whose unit is not contract-source-
              *         confirmed (Aquarius gauge position_update — see
@@ -6149,7 +6152,7 @@ export interface components {
              *         position); amount is "".
              * @enum {string}
              */
-            amount_semantics: "net_underlying_at_event_time" | "shares" | "stateful_current" | "signed_delta_sum_unconfirmed_unit" | "superseded_by_auction" | "not_yet_published";
+            amount_semantics: "net_underlying_at_event_time" | "shares" | "stateful_current_unconfirmed_unit" | "signed_delta_sum_unconfirmed_unit" | "superseded_by_auction" | "not_yet_published";
             /** @description The most recent contributing event's ledger + close time. */
             last_activity: {
                 ledger: number;
@@ -8804,10 +8807,9 @@ export interface components {
              *     liquidity-pool reserves and SAC-held balances are absent by
              *     construction — measured across the served set on 2026-09-15
              *     that was 89.5% of EURMTL, 73.3% of PYUSD, 64.5% of SHX and
-             *     15.4% of USDC. `contract_storage_balances` misses TIME:
-             *     Soroban state expiry archives contract-data entries, and an
-             *     archived balance is real, restorable, and not a ledger entry
-             *     right now.
+             *     15.4% of USDC. `contract_storage_balances` misses balance
+             *     entries the lake's current-state projection never captured,
+             *     such as one dormant since before its coverage began.
              */
             circulating_supply_lower_bound?: boolean;
             /**
@@ -10421,6 +10423,34 @@ export interface components {
              */
             supply_basis?: "lake_flows" | "served";
         };
+        /** @description Banded trust score with the factor breakdown behind it, on `/v1/assets/{asset_id}` only. Output-only: no price, rank or gate reads it. A factor with no evidence is `unknown` with null points and is excluded from the score; it is never scored as zero. A scam-class issuer directory flag forces score 0, and a ticker collision caps the score below the medium threshold (band `low`). The formula is versioned. */
+        AssetTrust: {
+            /** @description Version of the weights and thresholds that produced `score`. */
+            formula_version: number;
+            /** @description Weight-averaged points of the known factors; null when no factor has evidence. */
+            score: number | null;
+            /**
+             * @description high >= 75, medium >= 40, low below; unknown when score is null.
+             * @enum {string}
+             */
+            band: "high" | "medium" | "low" | "unknown";
+            /** @description Share of total factor weight that had evidence. */
+            coverage_pct: number;
+            factors: {
+                /** @enum {string} */
+                id: "issuer_reputation" | "ticker_collision" | "sep1_attestation" | "market_substance" | "supply_data";
+                /** @enum {string} */
+                band: "high" | "medium" | "low" | "unknown";
+                /** @description Null when band is unknown. */
+                points: number | null;
+                /** @description Weight in the score; weights sum to 100. */
+                weight: number;
+                /** @description Data source the evidence was read from. */
+                source: string;
+                /** @description Machine-readable description of what was observed. */
+                observed: string;
+            }[];
+        };
         Asset: {
             /**
              * @description Wire-shape discriminator for the /v1/assets/{asset_id} oneOf (ADR-0042). Always "stellar_asset" on this schema. See `Asset.type` for the separate protocol/class discriminator (native/classic/soroban/fiat/global/external) — `kind` says which SHAPE this payload is, `type` says which Stellar asset CLASS within that shape.
@@ -10535,6 +10565,7 @@ export interface components {
             issuer_behaviour?: components["schemas"]["AssetIssuerBehaviour"];
             listing_reference?: components["schemas"]["AssetListingReference"];
             listing_valuation?: components["schemas"]["AssetListingValuation"];
+            trust?: components["schemas"]["AssetTrust"];
             /**
              * @description Which ADR-0011 policy produced the supply numbers, and on
              *     LISTING rows additionally which ARM answered — three can,
@@ -10564,10 +10595,9 @@ export interface components {
              *     reports for the same asset.
              *     `contract_storage_balances` sums the per-holder Balance
              *     entries out of a contract's own storage, for a token whose
-             *     event log is empty. Also a lower bound, but blind to TIME
-             *     rather than to domains: Soroban state expiry archives
-             *     contract-data entries, so a real and restorable balance can
-             *     be invisible to it.
+             *     event log is empty. Also a lower bound, but blind to
+             *     uncaptured entries rather than to domains: a balance entry
+             *     the lake's current-state projection never captured is absent.
              *
              *     Surfaced so consumers can decide how much to trust the
              *     absolute value: `issuer_exclusion`/`admin_exclusion` are
@@ -11039,11 +11069,15 @@ export interface components {
              * @enum {string}
              */
             source: "mint_burn_flows" | "ledger_total_coins" | "contract_storage_balances";
-            /** @description True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only balances that are ledger entries right now, and Soroban state expiry archives contract-data entries, so a real and restorable balance can be invisible to it. Omitted when false. */
+            /** @description True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only the balance entries the lake's current-state projection captured, so an entry dormant since before its coverage began is absent. Omitted when false. */
             circulating_supply_lower_bound?: boolean;
-            /** @description Number of per-holder balance entries summed. Only present for source=contract_storage_balances. */
+            /** @description Number of per-holder balance entries summed. Only present for source=contract_storage_balances. A temporary entry whose TTL lapsed has been deleted by the network and is not counted. */
             balance_entries?: number;
-            /** @description Whether every cross-check the contract itself published agreed with what was summed — its own TotalSupply against the sum, and its own HolderCount against the number of entries visible. False means the contract reports more holders (or a larger total) than the lake can show, which is what an archived balance looks like; the figure is still served, but as a floor. Only present for source=contract_storage_balances; absent means the contract offered no cross-checks, which is not the same as a failed one. */
+            /** @description How many of balance_entries are persistent entries whose TTL had lapsed at the lake tip. They are archived, not destroyed — still owned and restorable — so they stay in total_supply. Only present for source=contract_storage_balances, and only when non-zero. */
+            archived_balance_entries?: number;
+            /** @description Decimal string: the part of total_supply held in archived_balance_entries, in the token's smallest unit. Present exactly when archived_balance_entries is. */
+            archived_balance_total?: string;
+            /** @description Whether every cross-check the contract itself published agreed with what was summed — its own TotalSupply against the sum, and its own HolderCount against the number of entries visible. False means the contract reports more holders (or a larger total) than the lake can show, which is what an entry the lake never captured looks like; the figure is still served, but as a floor. Only present for source=contract_storage_balances; absent means the contract offered no cross-checks, which is not the same as a failed one. */
             supply_consistent?: boolean;
             /** @description The scale the CONTRACT ITSELF declares, read from its instance storage (METADATA or Config, either spelling). Only present for source=contract_storage_balances. OMITTED when the chain declares no scale — a consumer must not substitute a default, because a wrong exponent is a published money figure wrong by a power of ten. */
             decimals?: number;
@@ -25036,7 +25070,7 @@ export interface operations {
                      *               "USDC"
                      *             ],
                      *             "amount": "480000000",
-                     *             "amount_semantics": "stateful_current",
+                     *             "amount_semantics": "stateful_current_unconfirmed_unit",
                      *             "last_activity": {
                      *               "ledger": 63316350,
                      *               "time": "2026-07-10T21:40:11Z"

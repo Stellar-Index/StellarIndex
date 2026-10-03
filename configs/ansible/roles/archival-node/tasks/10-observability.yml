@@ -39,7 +39,8 @@
     # Group-write is for units that write .prom files via
     # SupplementaryGroups=stellarindex: pgbackrest-backup.service (User=postgres)
     # and the DynamicUser stellarindex-{sla-probe,smoke,heartbeat@}.service.
-    mode: "0775"
+    # Sticky: a group writer cannot delete or rename over another writer's .prom.
+    mode: "1775"
 
 # /etc/default/supply-snapshot — operator override that wires the
 # textfile-collector path the supply-snapshot binary writes its
@@ -437,6 +438,7 @@
       [Service]
       Type=oneshot
       ExecStart=/usr/local/sbin/galexie-catchup-probe.sh
+      TimeoutStartSec=60
   notify: daemon-reload
 
 - name: galexie catchup-probe timer
@@ -1020,6 +1022,7 @@
       [Service]
       Type=oneshot
       ExecStart=/usr/local/bin/ledger-meta-decode-probe
+      TimeoutStartSec=120
       Nice=10
   notify: Reload systemd
   tags: [observability, protocol-guard]

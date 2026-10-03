@@ -47,8 +47,8 @@ measures **distribution**.
 |---|---|---|
 | Quantity | `Σmint − Σburn − Σclawback` | `Σ(held balances)` |
 | Shape | an accumulation over history | a level, right now |
-| Correct when | the log is complete from the token's first ledger | the balances are live ledger entries |
-| Fails by | silently understating, to the point of `0` | missing archived entries |
+| Correct when | the log is complete from the token's first ledger | the lake captured every balance entry |
+| Fails by | silently understating, to the point of `0` | missing entries the lake never captured |
 
 They answer different questions and can legitimately differ. Where the event log
 *is* complete they converge, and that was measured rather than assumed — see §5.
@@ -86,20 +86,31 @@ addend.
 
 ## 4. It is a lower bound, and a different kind from the trustline sum
 
-The reading sees only balances that exist as ledger entries **now**. Soroban
-state expiry archives contract-data entries, and an archived balance is real,
-restorable, and invisible here. The figure is therefore a floor, and carries
+The lake never records an eviction: a balance entry whose TTL lapsed keeps its
+last-known row in the current-state projection exactly as if it were live. So
+every summed balance is judged against its TTL at the lake tip:
+
+- a lapsed **temporary** entry has been deleted by the network and is dropped;
+- a lapsed **persistent** entry has been archived, not destroyed — still owned,
+  restorable, and counted by the contract's own `TotalSupply` — so it stays in
+  the sum and is disclosed as `archived_balance_entries` /
+  `archived_balance_total`;
+- an entry with no TTL row is kept: only a proven lapse justifies a drop.
+
+What the reading cannot see is a balance entry the lake's current-state
+projection never captured — one dormant since before that projection's
+coverage began. The figure is therefore a floor, and carries
 `circulating_supply_lower_bound` on the wire.
 
 This is a different blindness from the classic trustline sum's:
 
 - the **trustline sum** misses whole holding *domains* — claimable balances,
   liquidity-pool reserves, SAC-held contract balances;
-- **this** misses *time*.
+- **this** misses *entries outside the projection's coverage*.
 
 Where a contract publishes its own `HolderCount`, the reading reports whether
 that count matched the number of entries we could see. A disagreement is exactly
-what an archived balance looks like from here, and it is surfaced
+what a missing entry looks like from here, and it is surfaced
 (`supply_consistent: false`) rather than hidden — the figure is still served,
 because a mostly-complete measurement is worth more than no measurement, but it
 is never presented as exact.
@@ -146,7 +157,7 @@ All 24 deal tokens, read through the production reader against r1:
 - **24/24** — our balance sum equals the contract's own declared `TotalSupply`,
   exactly.
 - **24/24** — our balance-entry count equals the contract's own declared
-  `HolderCount`, exactly. Nothing is archived out of view.
+  `HolderCount`, exactly. No entry is missing from view.
 - **24/24** — decimals **read from the chain**, not borrowed (§6).
 - Total: **5,481,130,428,800,000 raw = 548,113,042.88 tokens.**
 

@@ -329,6 +329,46 @@ tests:
         alertname: stellarindex_sla_probe_p95_breach
         exp_alerts: []
 
+  - interval: 1m
+    name: probe p95 over the published 200ms pages
+    input_series:
+      - series: 'stellarindex_sla_probe_latency_ms{job="node_exporter",instance="r1:9100",endpoint="price",quantile="0.95"}'
+        values: '250+0x60'
+      - series: 'stellarindex_sla_probe_latency_ms{job="node_exporter",instance="r1:9100",endpoint="price",quantile="0.99"}'
+        values: '300+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_sla_probe_p95_breach
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              endpoint: price
+              quantile: "0.95"
+              severity: page
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-p95-breach.md
+              summary: "price p95 latency 250ms exceeds SLA target (200ms) sustained 30m"
+              description: |
+                The SLA probe's per-endpoint p95 has been above the SLA-stated
+                200 ms target for ≥ 30 minutes (2 timer firings). Customer
+                impact: the Freighter detail page shows degraded responsiveness
+                on price for the watched pair. Runbook walks
+                through price-specific diagnostics, then
+                general API-latency triage.
+
+  - interval: 1m
+    name: probe p95 under the published 200ms stays silent
+    input_series:
+      - series: 'stellarindex_sla_probe_latency_ms{job="node_exporter",instance="r1:9100",endpoint="price",quantile="0.95"}'
+        values: '150+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_sla_probe_p95_breach
+        exp_alerts: []
+
   # ── the sibling verdict gauge: unchanged expr, pinned so it stays ──
   # stellarindex_sla_probe_unit_failed is the probe's own verdict, not
   # systemd's — the wrapper always exits 0. It reads 1 whenever ANY SLA
