@@ -4,8 +4,8 @@
 # BACKUP DATABASE {{ ch_lake_backup_database | default('stellar') }} into the
 # `{{ ch_lake_backup_disk | default('si_lake_backup') }}` disk that
 # clickhouse-lake-backup-disk.xml.j2 declares. With no disk configured the
-# run only reports configured=0, which stellarindex_ch_lake_backup_stale
-# tickets by host.
+# run reports configured=0 and exits 1, so the unit shows failed and
+# stellarindex_ch_lake_backup_stale tickets the host.
 
 [Unit]
 Description=Stellar Index — ClickHouse lake data backup (ADR-0043 §2.4)
@@ -26,6 +26,10 @@ Environment=MAX_BANDWIDTH={{ ch_lake_backup_max_bandwidth | default(104857600) }
 {% if ch_lake_backup_s3_endpoint | default('') != '' %}
 Environment=BACKUP_DISK={{ ch_lake_backup_disk | default('si_lake_backup') }}
 {% endif %}
+# Deliberately NOT under run-heavy-job.sh: the server owns the BACKUP and
+# writes it off-host, so the pool watchdog's stop would kill only this
+# polling script and orphan the backup (never recorded in the chain files).
+# The script itself refuses a second concurrent backup.
 ExecStart=/usr/local/bin/ch-lake-backup.sh
 # Root: clickhouse-disks (the chain prune) reads the server config, which
 # holds the backup disk's credentials at mode 0640 root:clickhouse.

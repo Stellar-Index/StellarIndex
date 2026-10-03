@@ -1,6 +1,9 @@
 package canonical
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // nativeSAC is the Stellar Asset Contract address that wraps native
 // XLM (the Soroban-side alias for `native`). Both forms rank as XLM
@@ -57,11 +60,15 @@ func assetCode(assetID string) string {
 // identity. If you ever add a path that maps a rank-3 asset to a
 // fiat value, it MUST do its own issuer check; this ranking is not
 // one.
+//
+// A SAC declared in `[supply].sac_wrappers` ranks as the classic asset it
+// wraps, so a market traded through the SAC orients the same way as its
+// classic twin; an undeclared C-address cannot be inverted and ranks 1.
 func quoteRank(assetID string) int {
 	if strings.HasPrefix(assetID, "fiat:") {
 		return 4
 	}
-	if StablecoinCodes[assetCode(assetID)] {
+	if StablecoinCodes[assetCode(assetID)] || isStablecoinSACForm(assetID) {
 		return 3
 	}
 	if xlmQuoteRankForms[assetID] {
@@ -83,6 +90,31 @@ var xlmQuoteRankForms = func() map[string]bool {
 	}
 	return m
 }()
+
+// isStablecoinSACForm reports whether assetID is a Soroban form whose
+// alias family leads with a stablecoin-coded asset in the active registry.
+func isStablecoinSACForm(assetID string) bool {
+	fam, ok := activeAliasRegistry().families[assetID]
+	if !ok || len(fam) == 0 || fam[0].String() == assetID {
+		return false
+	}
+	head := fam[0]
+	return head.Type == AssetClassic && StablecoinCodes[head.Code]
+}
+
+// StablecoinSACForms returns, sorted, every SAC form in the active alias
+// registry that [quoteRank] ranks as a stablecoin — the SQL mirror's
+// rank-3 C-address list.
+func StablecoinSACForms() []string {
+	var out []string
+	for form := range activeAliasRegistry().families {
+		if isStablecoinSACForm(form) {
+			out = append(out, form)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
 
 // Orient returns the canonical (base, quote) orientation of the market
 // formed by asset_ids a and b, plus whether the INPUT order (a=base,

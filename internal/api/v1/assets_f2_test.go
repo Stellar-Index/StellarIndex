@@ -100,7 +100,7 @@ func TestF2_VolumeReaderReceivesTradeTableKey(t *testing.T) {
 
 // stubDualVolumeReader implements BOTH v1.VolumeReader and the optional
 // v1.SorobanVolumeReader, recording which method the asset-detail path
-// invoked so tests can pin the Soroban→XLM-anchored routing (#37).
+// invoked so tests can pin the Soroban→XLM-anchored routing (fce3e2eef).
 type stubDualVolumeReader struct {
 	plainKey   string
 	sorobanKey string
@@ -355,9 +355,9 @@ func TestF2_NoMaxSupply_OmitsFDV(t *testing.T) {
 // callers, F-1354). A classic asset with an uncapped snapshot (no
 // operator override) + an issuer stellar.toml declaring max_number
 // must serve max_supply in RAW units (display × 10^decimals),
-// compute fdv_usd from it, and relabel
-// supply_basis="sep1_declared_max" so the wire says the cap is
-// issuer-self-declared.
+// compute fdv_usd from it, and set max_supply_basis="sep1_declared_max"
+// so the wire says the cap is issuer-self-declared — while supply_basis
+// keeps naming the circulating policy.
 func TestF2_SEP1DeclaredMaxOverlay(t *testing.T) {
 	assetID := "USDC-" + testUSDCIssuer
 	snap := supply.Supply{
@@ -398,8 +398,9 @@ func TestF2_SEP1DeclaredMaxOverlay(t *testing.T) {
 	mustContain(t, body, `"max_supply":"500000000000000"`)
 	// fdv = 5e14 / 10^7 × $1.00 = $50,000,000.00
 	mustContain(t, body, `"fdv_usd":"50000000.00"`)
-	// The cap's provenance is on the wire.
-	mustContain(t, body, `"supply_basis":"sep1_declared_max"`)
+	// The cap's provenance is on the wire, beside the circulating policy.
+	mustContain(t, body, `"max_supply_basis":"sep1_declared_max"`)
+	mustContain(t, body, `"supply_basis":"issuer_exclusion"`)
 	// total/circulating untouched by the overlay.
 	mustContain(t, body, `"total_supply":"400000000000000"`)
 	mustContain(t, body, `"market_cap_usd":"40000000.00"`)
@@ -442,6 +443,9 @@ func TestF2_SEP1DeclaredMaxOverlay_UnlimitedBlocks(t *testing.T) {
 	}
 	if strings.Contains(body, `"max_supply"`) {
 		t.Errorf("max_supply must stay absent when is_unlimited=true; body=%s", body)
+	}
+	if strings.Contains(body, `"max_supply_basis"`) {
+		t.Errorf("max_supply_basis must stay absent without a max_supply; body=%s", body)
 	}
 	mustContain(t, body, `"supply_basis":"issuer_exclusion"`)
 }
@@ -533,7 +537,7 @@ func TestF2_PriceLookupErrorFallsThrough(t *testing.T) {
 // reader's literal native/fiat:USD lookup misses (the steady-state
 // case on Stellar mainnet — nothing on-chain quotes in fiat:USD),
 // lookupUSDPrice now walks the operator's classic USD pegs. Same
-// shape as the handler-side fix in #1217 / tryStablecoinFiatProxy,
+// shape as the handler-side fix in 6505934b5 / tryStablecoinFiatProxy,
 // but applied at the F2-population layer where the handler's
 // priceFallback isn't reachable. Without this, market_cap_usd /
 // fdv_usd / change_24h_pct stayed null on every on-chain asset.

@@ -139,7 +139,7 @@ func supplyCmd(args []string) error {
 // (live LCM AccountEntry observer wins when populated; operator-
 // static `[supply] reserve_balances_stroops` is the bring-up
 // fallback). The live observer was wired into the indexer
-// dispatcher by L2.12a (PRs #411-#413).
+// dispatcher by L2.12a (commits 94077b327..db913eb28).
 //
 // Flags:
 //

@@ -37,6 +37,16 @@ type txIndexBackfillPlan struct {
 	write  bool // -write; without it the run previews the range and fills nothing
 }
 
+// genesisLedger is the first ledger a lake holds; a run starting here and
+// ending at the resolved tip proves the index covers all history.
+const genesisLedger = 2
+
+// coversHistory reports whether a completed run spans genesis→tip, which is
+// what the reader's coverage marker asserts.
+func (p txIndexBackfillPlan) coversHistory() bool {
+	return p.from <= genesisLedger && p.to == 0
+}
+
 // parseTxIndexBackfillFlags parses the ch-txindex-backfill flags and enforces
 // the safe default described on chTxIndexBackfill: no implicit full-history
 // run. It does not touch ClickHouse (tip resolution happens in the runner),
@@ -95,8 +105,19 @@ func chTxIndexBackfill(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "ch-txindex-backfill: filling stellar.tx_hash_index for ledgers %d..%d (window %d) on %s\n",
 		plan.from, last, plan.window, plan.chAddr)
-	return clickhouse.BackfillTxHashIndex(ctx, plan.chAddr, plan.from, last, plan.window,
-		func(format string, a ...any) {
-			fmt.Fprintf(os.Stderr, "ch-txindex-backfill: "+format+"\n", a...)
-		})
+	logf := func(format string, a ...any) {
+		fmt.Fprintf(os.Stderr, "ch-txindex-backfill: "+format+"\n", a...)
+	}
+	if err := clickhouse.BackfillTxHashIndex(ctx, plan.chAddr, plan.from, last, plan.window, logf); err != nil {
+		return err
+	}
+	if !plan.coversHistory() {
+		logf("partial range; coverage marker NOT written (needs a run from ledger %d to the tip)", genesisLedger)
+		return nil
+	}
+	if err := clickhouse.MarkTxHashIndexCovered(ctx, plan.chAddr, plan.from, last); err != nil {
+		return err
+	}
+	logf("coverage marker written for ledgers %d..%d", plan.from, last)
+	return nil
 }

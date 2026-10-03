@@ -34,7 +34,10 @@ type Envelope struct {
 	// `data` because a serving gate declined to publish their price —
 	// distinct from an id omitted for having no data. Only
 	// /v1/price/batch sets it; absent when nothing was withheld.
-	Withheld   []string    `json:"withheld,omitempty"`
+	Withheld []string `json:"withheld,omitempty"`
+	// Thin names the requested ids /v1/price/batch served under
+	// `include_thin=true` from a market below the substance floor.
+	Thin       []string    `json:"thin,omitempty"`
 	Sources    []string    `json:"sources,omitempty"`
 	Flags      Flags       `json:"flags"`
 	Pagination *Pagination `json:"pagination,omitempty"`
@@ -150,6 +153,9 @@ type Flags struct {
 	Rerouted bool `json:"rerouted,omitempty"`
 	// PivotUnverified: a composite leg was all stablecoin prints at par, so a de-peg in it went unchecked.
 	PivotUnverified bool `json:"pivot_unverified,omitempty"`
+	// ThinMarket: the price was served under `include_thin=true` from a
+	// market below the substance floor that would otherwise be withheld.
+	ThinMarket bool `json:"thin_market,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.
@@ -172,6 +178,16 @@ type Flags struct {
 	// (`asset_class=fiat|stablecoin|crypto`) and the lean AssetReader
 	// fallback.
 	FiltersIgnored []string `json:"filters_ignored,omitempty"`
+	// Degraded marks a 200 whose body this process is carrying forward or
+	// serving partially (a stale-while-revalidate entry past its TTL, a
+	// last-good value after a failed refresh, a held frozen price, a dropped
+	// best-effort section) — an answer the origin replaces once the fault
+	// clears. Never on the wire: writeEnvelopeStatus turns it into
+	// `Cache-Control: no-store`, so a shared cache cannot keep serving it
+	// for its route's full band after recovery. It is set explicitly at
+	// each such exit, never derived from Stale, which also covers fresh
+	// reads of a lagging source that a cache may hold safely.
+	Degraded bool `json:"-"`
 }
 
 // Pagination is present on list-returning endpoints only.
@@ -203,6 +219,9 @@ type Problem struct {
 	RequestID       string    `json:"request_id,omitempty"`
 	CoverageFrom    *WireTime `json:"coverage_from,omitempty"`
 	OutsideCoverage bool      `json:"outside_coverage,omitempty"`
+	// Substance is the measurement behind a thin-market price-withheld
+	// verdict; absent on every other problem.
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
 // writeJSON writes the Envelope + 200. The convention everywhere in
@@ -243,6 +262,9 @@ func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 		env.AsOf = WireTime(time.Now().UTC())
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if env.Flags.Degraded {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(env)
 }
@@ -260,7 +282,7 @@ func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 // covers the BLANKET middleware deadline only; an error path holding the
 // error from a handler's OWN budget must call writeProblemErr instead.
 func writeProblem(w http.ResponseWriter, r *http.Request, typeURL, title string, status int, detail string) {
-	writeProblemCoverage(w, r, typeURL, title, status, detail, nil, false)
+	writeProblemCoverage(w, r, typeURL, title, status, detail, nil, false, nil)
 }
 
 // writeProblemCoverage is [writeProblem] carrying the coverage-floor
@@ -272,7 +294,7 @@ func writeProblem(w http.ResponseWriter, r *http.Request, typeURL, title string,
 func writeProblemCoverage(
 	w http.ResponseWriter, r *http.Request,
 	typeURL, title string, status int, detail string,
-	coverageFrom *time.Time, outsideCoverage bool,
+	coverageFrom *time.Time, outsideCoverage bool, substance *SubstanceEvidence,
 ) {
 	if status == http.StatusInternalServerError && requestDeadlineExpired(r) {
 		typeURL, title, status, detail = requestTimeoutType, requestTimeoutTitle,
@@ -287,6 +309,7 @@ func writeProblemCoverage(
 		RequestID:       middleware.RequestIDFrom(r),
 		CoverageFrom:    wireTimePtr(coverageFrom),
 		OutsideCoverage: outsideCoverage,
+		Substance:       substance,
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	// Errors override the cache-control middleware's per-route
@@ -546,7 +569,7 @@ func handlerTimedOut(callCtx context.Context, err error) bool {
 //	    /* 500 internal */
 //	}
 //
-// Refs: #34 residual ("/v1/issuers returns HTTP 500 (fast ~50ms)
+// Refs: 25fc0dedc residual ("/v1/issuers returns HTTP 500 (fast ~50ms)
 // on the sla-probe's request shape — real bug, low severity").
 func transientStorageErr(err error) bool {
 	if err == nil {
