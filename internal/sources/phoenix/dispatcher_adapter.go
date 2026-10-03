@@ -404,6 +404,19 @@ func (d *Decoder) decodeDistributeRewardsEvent(ev *events.Event, closedAt time.T
 	return []consumer.Event{StakeEvent{Change: change}}, nil
 }
 
+// Drain implements [dispatcher.Drainer]: it flushes every open correlation
+// group at the end of a bounded stream. Decodable swap groups are emitted
+// (with any trades carried from a failed Decode); the rest count as orphans.
+func (d *Decoder) Drain() []consumer.Event {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	swaps, other := d.buf.drain()
+	d.evictedOrphans += other
+	out := append(d.carried, d.rescueEvicted(swaps)...)
+	d.carried = nil
+	return out
+}
+
 // EvictedOrphans is the count of incomplete RawSwaps dropped by
 // buffer age-out since this Decoder was constructed. Production
 // callers will read this via obs.SourceOrphanEventsTotal once the

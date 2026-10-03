@@ -831,6 +831,14 @@ type Orchestrator struct {
 	// not do one without the other.
 	prevVWAPs map[string]*big.Rat
 
+	// prevVWAPAt is when each prevVWAPs entry was set; an entry with no
+	// stamp is never aged.
+	prevVWAPAt map[string]time.Time
+
+	// prevVWAPBucketEnd is the closed-bucket end each prevVWAPs entry was
+	// published for: the observed-at stamp a re-seeded held value must carry.
+	prevVWAPBucketEnd map[string]time.Time
+
 	// frozenPrevVWAPs is the SHADOW comparator for pairs whose bucket was
 	// REFUSED by the freeze lifecycle (2026-08-24, the XLM/GBP ratchet +
 	// unscored-stall incidents). prevVWAPs deliberately does not advance
@@ -1080,6 +1088,8 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 		cfg:               cfg,
 		logger:            logger,
 		prevVWAPs:         make(map[string]*big.Rat, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		prevVWAPAt:        make(map[string]time.Time, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		prevVWAPBucketEnd: make(map[string]time.Time, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
 		frozenPrevVWAPs:   make(map[string]*big.Rat),
 		lastWriteAt:       make(map[string]time.Time, len(cfg.Pairs)),
 		lastComposites:    make(map[string]compositeSample, len(cfg.Triangulations)*max(len(cfg.Windows), 1)),
@@ -1392,6 +1402,7 @@ func (o *Orchestrator) refreshPairWindow(
 	if prior, ok := o.decidedBuckets[stateKey]; ok && prior.end.Equal(bucketEnd) {
 		return o.replayDecidedBucket(ctx, pair, window, prior, now)
 	}
+	o.ageComparator(stateKey, now)
 	pub, err := o.decideBucket(ctx, pair, window, bucketEnd, now)
 	if err != nil {
 		// Undecided: the next tick retries this bucket from scratch.
@@ -1554,7 +1565,7 @@ func (o *Orchestrator) decideBucket(
 	// triangulate_corroborate.go). The composite reference changes only
 	// the VERDICT (compositeRef), never the count.
 	if o.stepPhase2Freeze(ctx, pair, window, stateKey, now,
-		conf, confOK, distinctSourceCount(trades), prevForConfidence, vwap, compositeRef) {
+		conf, confOK, distinctSourceCount(trades), vwap, compositeRef) {
 		// Refused: advance the shadow comparator with this bucket's
 		// fresh VWAP so the NEXT frozen bucket scores a per-tick
 		// return (and a post-restart frozen pair becomes scorable
@@ -1588,8 +1599,31 @@ func (o *Orchestrator) decideBucket(
 	// advance frozenPrevVWAPs above, which is what mid-freeze scoring
 	// compares against; keeping the pinned value here as the sole
 	// comparator was the auto-unfreeze ratchet (see frozenPrevVWAPs).
-	o.prevVWAPs[stateKey] = vwap
+	o.setComparator(stateKey, vwap, now, bucketEnd)
 	return pub, nil
+}
+
+// setComparator records a published bucket as the window's prev-VWAP
+// comparator with the times its aging and re-seeding read.
+func (o *Orchestrator) setComparator(stateKey string, vwap *big.Rat, now, bucketEnd time.Time) {
+	o.prevVWAPs[stateKey] = vwap
+	o.prevVWAPAt[stateKey] = now
+	o.prevVWAPBucketEnd[stateKey] = bucketEnd
+}
+
+// ageComparator drops a prevVWAPs entry the window has not refreshed within
+// [Orchestrator.vwapMaxAge]. A comparator that old no longer has a cached
+// last-known-good beside it, so a freeze fired against it would refuse the
+// bucket with no value held to serve. A live freeze keeps its comparator:
+// it is the held value.
+func (o *Orchestrator) ageComparator(stateKey string, now time.Time) {
+	at, stamped := o.prevVWAPAt[stateKey]
+	if !stamped || o.freezeStates[stateKey].Active() || now.Sub(at) <= o.vwapMaxAge() {
+		return
+	}
+	delete(o.prevVWAPs, stateKey)
+	delete(o.prevVWAPAt, stateKey)
+	delete(o.prevVWAPBucketEnd, stateKey)
 }
 
 // heldDirect is a triangulation target's priced direct bucket awaiting
@@ -2099,7 +2133,7 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 	// re-freezes it, which is intended — the durable remedy for a
 	// mis-calibration is a threshold change, not repeated overrides.
 	if !o.stepFreezeLifecycle(ctx, pair, window, stateKey,
-		freeze.Signal{Now: now, Fires: true}, decision, prev) {
+		freeze.Signal{Now: now, Fires: true}, decision) {
 		return decision.Action, true
 	}
 	return decision.Action, false

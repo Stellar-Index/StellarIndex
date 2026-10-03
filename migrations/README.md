@@ -162,6 +162,24 @@ migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
     `lint-migrations.sh` enforces that every recreated view is named;
     the data-freshness gauge `stellarindex_cagg_history_missing{view}`
     is what shows the refresh was skipped.
+12. **An up-migration that blanks data a deployment must rebuild —
+    an unqualified `DELETE` or a `TRUNCATE`, or a continuous aggregate
+    recreated `WITH NO DATA` — declares each rebuild command on its own
+    header line:**
+
+    ```sql
+    -- REQUIRED-FOLLOWUP: stellarindex-ops projector-replay -config /etc/stellarindex.toml -source cctp -from 62146641 -write
+    -- REQUIRED-FOLLOWUP: CALL refresh_continuous_aggregate('prices_1m', NULL, NULL);
+    ```
+
+    `deploy.yml`'s migration follow-up gate
+    (`scripts/ci/migration-followup-gate.sh`) lists these lines from
+    every migration a deploy adds and refuses to start until the
+    operator passes `followups_acknowledged=true`. Use the marker on
+    any other up-migration whose data needs a follow-up too (a
+    targeted `DELETE … WHERE`). Pass 10 of `lint-migrations.sh`
+    enforces it; the seven shipped files that predate it are listed
+    there.
 
 ## Amending a shipped migration
 
@@ -476,7 +494,9 @@ rejects a row that is not.
 | 0197 | [`0197_trades_compress_after_roll_window.up.sql`](0197_trades_compress_after_roll_window.up.sql) | Raises the `trades` compression policy's `compress_after` from 7 to 15 days, past the 6-hourly asset-character roll's 14-day window, so compression never needs a chunk the roll is reading. Pairs with the roll binding its window as a literal so it locks only in-window chunks. |
 | 0198 | [`0198_price_alerts_disarmed.up.sql`](0198_price_alerts_disarmed.up.sql) | Adds `price_alerts.disarmed boolean NOT NULL DEFAULT false` (GH #664) so an alert fires once per crossing instead of every cooldown while its condition holds. `ClaimPriceAlertFire` refuses a disarmed row and sets the flag; the evaluator clears it (`RearmPriceAlert`, compare-and-swap on `last_fired_at`) when a fresh closed bucket shows the condition no longer holds; `UpdatePriceAlert` clears it when pair, condition or threshold change or a disabled alert is re-enabled. Every row starts armed: an alert holding at deploy fires at most once more. Rule-9 safe: constant default, catalog-only; the previous binary ignores the column. Down drops it. Up and down are executed in `test/integration/price_alerts_disarmed_test.go`. |
 | 0199 | [`0199_observation_walk_version.up.sql`](0199_observation_walk_version.up.sql) | Adds `walk_version smallint NOT NULL DEFAULT 0` to the five balance-observation hypertables; the writers stamp `dispatcher.EntryWalkVersion` and guard on `(walk_version, intra_ledger_seq) <= EXCLUDED`, so a re-derive under a newer entry walk replaces a row an older walk numbered higher (0 = not recorded, sorts below every version). |
-| 0200 | [`0200_create_sushiswap_v3_pools.up.sql`](0200_create_sushiswap_v3_pools.up.sql) | Creates `sushiswap_v3_pools` (pool, factory, token0, token1, fee tier, tick spacing, creation ledger; `soroswap_pairs` shape). Written from each factory `pool_created` event and read at boot to restore the decoder's pool→token map, so a pool admitted through the `protocol_contracts` warm no longer fails closed until its creation event is replayed. New table, no backfill: pools in the curated `MainnetPools` need no row, and `projector-replay` from a pool's creation ledger writes one. Down drops it. Up and down are executed in `test/integration/sushiswap_v3_pools_storage_test.go`. |
+| 0200 | [`0200_customer_webhooks_previous_secret.up.sql`](0200_customer_webhooks_previous_secret.up.sql) | Adds `customer_webhooks.previous_secret bytea` + `previous_secret_expires_at timestamptz` (CHECK: set or cleared together) so a signing key rotates IN PLACE (GH #665): `RotateWebhookSecret` moves `secret_hash` into `previous_secret` and the delivery worker signs with both keys until the expiry, instead of a delete + recreate that cascaded away the webhook's queued deliveries and log. Rule-9 safe: nullable columns, catalog-only; the previous binary ignores them. |
+| 0201 | [`0201_completeness_projection_evidence.up.sql`](0201_completeness_projection_evidence.up.sql) | Adds `completeness_snapshots.projection_reconciled_from bigint NOT NULL DEFAULT 0` (the lowest ledger the run's own projection reconcile covered) and nullable `projection_evidenced_at timestamptz` (when one run last reconciled the whole served range cleanly). `computed_at` is stamped on every write, so a claim the incremental `-pass` audit carried forward read as freshly proven; the evidence time survives a carry, feeds the `/v1/coverage` staleness gate and bounds the carry (`-max-carry-age`). Backfills `projection_evidenced_at = computed_at` only where the stored detail states a full-range reconcile and `projection_ok` holds; on a deployed host that matches ~0 rows (the nightly `-pass` carries, and a carry writes different detail text), so every row stays NULL (unknown). After deploy the `-pass` re-proves green sources from genesis, at most three per night, oldest/unknown evidence first, and `/v1/coverage` reads `flags.stale` until they are re-proved; `sdex` (the census) is never re-proved by the pass; the weekly `compute-completeness-sdex.timer` (Sunday 18:47 UTC) re-proves it, so it stays NULL until that first run or a manual `systemctl start compute-completeness-sdex.service`. Rule-9 safe: constant default / NULL, the previous binary ignores both columns. Down drops them. Up and down are executed in `test/integration/completeness_projection_evidence_test.go`. |
+| 0202 | [`0202_create_sushiswap_v3_pools.up.sql`](0202_create_sushiswap_v3_pools.up.sql) | Creates `sushiswap_v3_pools` (pool, factory, token0, token1, fee tier, tick spacing, creation ledger; `soroswap_pairs` shape). Written from each factory `pool_created` event and read at boot to restore the decoder's pool→token map, so a pool admitted through the `protocol_contracts` warm no longer fails closed until its creation event is replayed. New table, no backfill: pools in the curated `MainnetPools` need no row, and `projector-replay` from a pool's creation ledger writes one. Down drops it. Up is executed in `test/integration/sushiswap_v3_pools_storage_test.go`; down in `TestMigrationsRoundTrip` (`test/integration/migrations_test.go`), which asserts the table is gone. |
 
 F-1241 (codex audit-2026-05-12): the table previously stopped at
 0015, leaving 0016..0029 (14 migrations) undocumented even though

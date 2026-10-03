@@ -89,6 +89,23 @@ type Decoder interface {
 	Decode(ev events.Event) ([]consumer.Event, error)
 }
 
+// Drainer is an OPTIONAL interface a stateful [Decoder] implements to flush
+// correlation groups still buffered when a bounded stream ends. Without it a
+// group that only an age sweep or a later event would emit (a pre-upgrade
+// phoenix swap, a soroswap swap with no following sync) is lost with the
+// range's last events. Drain also empties the buffers.
+type Drainer interface {
+	Drain() []consumer.Event
+}
+
+// Drain flushes dec if it is a [Drainer]; any other value yields nil.
+func Drain(dec any) []consumer.Event {
+	if dr, ok := dec.(Drainer); ok {
+		return dr.Drain()
+	}
+	return nil
+}
+
 // StateWriteKeyConsumer is an OPTIONAL interface a [Decoder]
 // additionally implements to declare that its Decode reads
 // events.Event.StateWriteKeys for events of specific contracts.
@@ -1277,19 +1294,9 @@ func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []inges
 // Keys of entry types no decoder watches (the paired TTL keys, contract
 // code) fall out at each decoder's Matches — same as any unmatched change.
 //
-// KNOWN DIVERGENCE FROM THE LAKE, and it is deliberate: the lake walker
-// (clickhouse.extractEntryChanges) mirrors phases 1-3 and has no eviction
-// phase, so from here the live observers see an eviction the lake does not.
-// The live path is the writer of the served supply components, so fixing it
-// first is what stops the drift; until the lake walker grows the same phase,
-// stellar.ledger_entries_current keeps an archived entry's last write as its
-// current version and every reader of it that does not apply a liveness
-// filter of its own reads that as live. The lake readers that COULD
-// reinstate a supply component already carry one — the SAC seed drops
-// positively-archived keys through clickhouse.ClassifyTTLLiveness (v0.21.4),
-// as do the pool-state readers — and a seed row lands at the entry's
-// last-write ledger, BELOW the eviction ledger, so it cannot displace a live
-// eviction row on read either way.
+// The lake walker (clickhouse.extractLedgerEntryChanges) records the same
+// phase as `removed` rows at the same positions; entry_walk_parity_test.go
+// pins the two together.
 //
 // An LCM whose evicted keys cannot be read yields none. The SDK panics
 // rather than erroring on an unknown version, and ProcessLedger has already

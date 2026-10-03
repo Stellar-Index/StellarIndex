@@ -48,10 +48,11 @@ func (r *opsDirReader) RecentOperations(_ context.Context, _ int, _ clickhouse.E
 
 // writeCapture records what the handler asked the envelope writer for.
 type writeCapture struct {
-	calls int
-	stale bool
-	asOf  time.Time
-	view  OperationsView
+	calls    int
+	stale    bool
+	degraded bool
+	asOf     time.Time
+	view     OperationsView
 }
 
 func newOpsDirHandler() (*Handler, *opsDirReader, *writeCapture) {
@@ -68,9 +69,10 @@ func newOpsDirHandler() (*Handler, *opsDirReader, *writeCapture) {
 		}
 		w.WriteHeader(http.StatusOK)
 	}
-	h.WriteJSONAt = func(w http.ResponseWriter, data any, stale bool, asOf time.Time) {
+	h.WriteJSONAt = func(w http.ResponseWriter, data any, stale, degraded bool, asOf time.Time) {
 		captured.calls++
 		captured.stale = stale
+		captured.degraded = degraded
 		captured.asOf = asOf
 		if v, ok := data.(OperationsView); ok {
 			captured.view = v
@@ -356,5 +358,22 @@ func TestOperationsDirectory_ColdCacheSingleFlightsConcurrentFirstPageRequests(t
 	}
 	if got := reader.calls.Load(); got != 1 {
 		t.Errorf("cold ?limit= sweep made %d lake reads, want 1 (single-flighted cold fill)", got)
+	}
+}
+
+// A page assembled without a fresh op-type panel is partial: it must reach
+// the envelope writer as degraded (no-store) even when the rows are fresh.
+func TestOperationsDirectory_PageWithoutAFreshOpTypePanelIsDegraded(t *testing.T) {
+	h, _, captured := newOpsDirHandler()
+	getOperations(t, h)
+	if captured.stale || !captured.degraded {
+		t.Errorf("cold op-type panel: stale=%v degraded=%v, want stale=false degraded=true", captured.stale, captured.degraded)
+	}
+
+	h, _, captured = newOpsDirHandler()
+	h.opTypeStats.put([]OpTypeStatV{{Type: "OperationTypePayment", Count: 1}})
+	getOperations(t, h)
+	if captured.stale || captured.degraded {
+		t.Errorf("fresh op-type panel: stale=%v degraded=%v, want both false", captured.stale, captured.degraded)
 	}
 }

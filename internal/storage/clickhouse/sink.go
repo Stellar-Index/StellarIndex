@@ -157,7 +157,7 @@ type LedgerEntryChangeRow struct {
 	// fee changes (tx-set apply order), phase 2 every tx's apply-phase meta
 	// (tx-changes-before, per-op changes in op_index/change_index order,
 	// tx-changes-after), phase 3 every tx's post-apply fee changes (P23
-	// Soroban refunds). This mirrors the SDK's canonical
+	// Soroban refunds), phase 4 the ledger's evicted keys. This mirrors the SDK's canonical
 	// ingest.LedgerChangeReader state machine and dispatcher's
 	// walkLedgerEntryChanges exactly. This doc previously described a
 	// PER-TRANSACTION order, which mis-ranked tx1's apply-phase change below
@@ -242,6 +242,12 @@ type LedgerExtract struct {
 	// soroban_*_fee columns are written as 0, indistinguishable from a
 	// zero charge. Same in-memory-only treatment as the counts above.
 	SorobanFeeMetaUnsupported int
+
+	// EvictedKeysUnreadable is 1 when the LedgerCloseMeta's evicted-keys
+	// list could not be read: this ledger's eviction rows are missing, so
+	// each evicted entry's last write stays current. Same in-memory-only
+	// treatment as the counts above.
+	EvictedKeysUnreadable int
 }
 
 // ErrBufferFull is returned by [Sink.Add] when the in-memory buffer is already

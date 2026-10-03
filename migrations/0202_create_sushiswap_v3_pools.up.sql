@@ -1,4 +1,4 @@
--- 0200 up — `sushiswap_v3_pools`: pool → token identities for the
+-- 0202 up — `sushiswap_v3_pools`: pool → token identities for the
 -- sushiswap_v3 decoder (soroswap_pairs shape, migration 0016).
 --
 -- protocol_contracts stores a contract SET only. A pool admitted through

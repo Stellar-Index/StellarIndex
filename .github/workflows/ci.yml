@@ -878,6 +878,11 @@ jobs:
         # production and `main` is unprotected, so it must run numbering,
         # compat, immutability and commands — not compat alone.
         run: ./scripts/ci/deploy-migration-gate-coverage-test.sh
+      - name: migration follow-up gate self-test
+        # A migration that blanks data names its rebuild in a
+        # `-- REQUIRED-FOLLOWUP:` line; deploy.yml must refuse to start
+        # until those are acknowledged.
+        run: ./scripts/ci/migration-followup-gate-test.sh
       - name: deploy served-path smoke asserts readiness on every region
         # GH-910: runs the real step against stub curl/ssh — /v1/readyz
         # (not the constant-body /v1/healthz) must gate, and testnet and

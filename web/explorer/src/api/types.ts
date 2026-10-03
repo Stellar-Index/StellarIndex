@@ -2341,6 +2341,17 @@ export interface paths {
          *     `[projection_verified_from, watermark_ledger]`, NOT over
          *     `[genesis_ledger, watermark_ledger]`. Read the two together.
          *
+         *     **Proven vs carried.** The audit runs daily and re-reconciles only
+         *     the ledgers since its last run, carrying the prior clean projection
+         *     claim over the rest; once a claim's evidence is a week old it
+         *     re-proves that source's whole served range (a few sources per
+         *     night; `sdex`, whose full re-proof outlasts the nightly run, by a
+         *     separate weekly run). `computed_at` is when a verdict was
+         *     last restated; `projection_evidenced_at` is when the claim was last
+         *     proven end to end, and `projection_reconciled_from` is where this
+         *     run's own reconcile began. `flags.stale` is raised when a clean
+         *     claim's evidence is older than about ten days, or unknown.
+         *
          *     **`sources` holds sources only.** The ADR-0033 recognition audit
          *     also produces a SYSTEM-wide census — event shapes in the lake on
          *     contracts no indexed source owns, i.e. Soroban protocols we have
@@ -4001,7 +4012,10 @@ export interface paths {
         /**
          * Customer dashboard — delete a webhook.
          * @description Session-gated. Hard-deletes the registry row and cascades
-         *     to webhook_deliveries. An absent or cross-account id returns
+         *     to webhook_deliveries: queued and retrying deliveries are
+         *     dropped and the delivery log is gone. To change the signing
+         *     secret, use rotate-secret instead, which keeps both. An absent
+         *     or cross-account id returns
          *     404 (the same shape, so presence never leaks); a client
          *     retrying a delete whose response it lost should treat 404 as
          *     already deleted.
@@ -4012,10 +4026,41 @@ export interface paths {
         /**
          * Customer dashboard — update a webhook.
          * @description Session-gated. Patches name / url / events / enabled.
-         *     SecretHash is immutable; rotation lives behind a separate
-         *     endpoint when it ships.
+         *     The signing secret is not patchable; rotate it with
+         *     POST /v1/dashboard/webhooks/{id}/rotate-secret.
          */
         patch: operations["updateDashboardWebhook"];
+        trace?: never;
+    };
+    "/dashboard/webhooks/{id}/rotate-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — rotate a webhook's signing secret.
+         * @description Session-gated. Replaces the signing secret in place and returns
+         *     the new one ONCE. The webhook keeps its id, its queued and
+         *     retrying deliveries and its delivery log. For 24 hours
+         *     (`previous_secret_expires_at`) every delivery is signed with
+         *     both secrets: the new one in `X-StellarIndex-Signature` /
+         *     `X-StellarIndex-Signature-V2`, the old one in
+         *     `X-StellarIndex-Signature-Previous` /
+         *     `X-StellarIndex-Signature-V2-Previous` (see
+         *     `CreateWebhookResponse.secret`). Rotating again inside that
+         *     window ends the old secret's signing at once. Owner / admin /
+         *     member only. Send an `Idempotency-Key` so a retried request
+         *     replays the first response instead of rotating twice.
+         */
+        post: operations["rotateDashboardWebhookSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/dashboard/webhooks/{id}/deliveries": {
@@ -6964,8 +7009,8 @@ export interface components {
         /**
          * @description Customer-registered webhook endpoint backing the
          *     /v1/dashboard/webhooks surface. SecretHash is intentionally
-         *     omitted — the plaintext signing secret is returned ONCE at
-         *     create time + never again.
+         *     omitted — each plaintext signing secret is returned ONCE, at
+         *     create or rotate-secret time, and never again.
          */
         DashboardWebhook: {
             /** Format: uuid */
@@ -7052,8 +7097,33 @@ export interface components {
              *     of the same delivery. It is NOT stable across a re-emit of
              *     the same logical event, so it dedupes retries, not re-sends.
              *     Trust it only after `X-StellarIndex-Signature-V2` verifies.
+             *
+             *     ROTATION: for 24 hours after a rotate-secret call, every
+             *     delivery also carries `X-StellarIndex-Signature-Previous` and
+             *     `X-StellarIndex-Signature-V2-Previous`, built exactly as above
+             *     but with the previous secret. A receiver still holding the old
+             *     secret verifies those; once it holds the new one it verifies
+             *     the unsuffixed headers. Outside a rotation window neither
+             *     header is sent.
              */
             secret: string;
+        };
+        RotateWebhookSecretResponse: {
+            /** Format: uuid */
+            webhook_id: string;
+            /**
+             * @description The new signing secret, returned exactly once; it signs
+             *     `X-StellarIndex-Signature` and `-V2` from now on. Format:
+             *     `wsec_<64 hex chars>`.
+             */
+            secret: string;
+            /**
+             * Format: date-time
+             * @description Until this instant deliveries also carry the
+             *     `X-StellarIndex-Signature-Previous` headers signed with the
+             *     secret this call replaced.
+             */
+            previous_secret_expires_at: string;
         };
         /**
          * @description PATCH body — any subset of fields. Omitted fields keep
@@ -10354,6 +10424,20 @@ export interface components {
             max_number?: string | null;
             /** @description Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all; false when they declared a bounded supply. */
             is_unlimited?: boolean | null;
+            /** @description SEP-1 `status` of the currency as the issuer declares it: live, dead, test or private. */
+            currency_status?: string | null;
+            /** @description SEP-1 `is_asset_anchored`. Null when the issuer did not declare it; false only when they declared false. */
+            is_asset_anchored?: boolean | null;
+            /** @description SEP-1 `attestation_of_reserve` URL. http(s) only — any other value is dropped at overlay time. */
+            attestation_of_reserve?: string | null;
+            /** @description SEP-1 `redemption_instructions`: how the issuer says the token is redeemed for its underlying. */
+            redemption_instructions?: string | null;
+            /** @description SEP-1 `regulated` (SEP-8 approval required to transact). Null when the issuer did not declare it. */
+            regulated?: boolean | null;
+            /** @description SEP-1 `approval_server` URL for a regulated asset. http(s) only — any other value is dropped at overlay time. */
+            approval_server?: string | null;
+            /** @description SEP-1 `approval_criteria`: the issuer's stated rules for approving a transaction in a regulated asset. */
+            approval_criteria?: string | null;
             /** @description Raw integer in asset's smallest unit (per ADR-0011 supply derivation). Issuer and locked-set balances are netted out only under an exclusion basis; under `classic_lake_flows`, `classic_trustline_sum` and `sep41_lake_flows` it is the un-excluded total (see supply_basis). Null when no snapshot exists. */
             circulating_supply?: string | null;
             /** @description Raw integer in asset's smallest unit. Null when no snapshot exists. */
@@ -10847,6 +10931,20 @@ export interface components {
             max_number?: string | null;
             /** @description Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all (no fixed_number / max_number / is_unlimited declaration); false when they did and committed to a bounded supply. */
             is_unlimited?: boolean | null;
+            /** @description SEP-1 `status` of the currency as the issuer declares it: live, dead, test or private. */
+            currency_status?: string | null;
+            /** @description SEP-1 `is_asset_anchored`. Null when the issuer did not declare it; false only when they declared false. */
+            is_asset_anchored?: boolean | null;
+            /** @description SEP-1 `attestation_of_reserve` URL. http(s) only — any other value is dropped at overlay time. */
+            attestation_of_reserve?: string | null;
+            /** @description SEP-1 `redemption_instructions`: how the issuer says the token is redeemed for its underlying. */
+            redemption_instructions?: string | null;
+            /** @description SEP-1 `regulated` (SEP-8 approval required to transact). Null when the issuer did not declare it. */
+            regulated?: boolean | null;
+            /** @description SEP-1 `approval_server` URL for a regulated asset. http(s) only — any other value is dropped at overlay time. */
+            approval_server?: string | null;
+            /** @description SEP-1 `approval_criteria`: the issuer's stated rules for approving a transaction in a regulated asset. */
+            approval_criteria?: string | null;
         };
         AssetMetadataEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["AssetMetadata"];
@@ -17828,6 +17926,31 @@ export interface operations {
                                  */
                                 projection_verified_from?: number;
                                 /**
+                                 * Format: int64
+                                 * @description The lowest ledger the run that produced this
+                                 *     verdict reconciled ITSELF. The audit is
+                                 *     incremental: `[projection_reconciled_from,
+                                 *     watermark_ledger]` was proven at `computed_at`,
+                                 *     and anything from `projection_verified_from`
+                                 *     below it was carried from the prior verdict.
+                                 *     Omitted when not recorded.
+                                 */
+                                projection_reconciled_from?: number;
+                                /**
+                                 * Format: date-time
+                                 * @description When one audit run last reconciled the WHOLE
+                                 *     served range cleanly — the age of the oldest
+                                 *     evidence behind `projection_ok: true`.
+                                 *     `computed_at` advances on every run, including
+                                 *     one that only carried the claim forward, so it
+                                 *     is not this. `null` when no evidence is on
+                                 *     record (no clean projection claim, or a claim
+                                 *     carried from a verdict that predates this
+                                 *     field). An old or `null` value under a clean
+                                 *     claim raises `flags.stale`.
+                                 */
+                                projection_evidenced_at: string | null;
+                                /**
                                  * @description Lake-axis coverage (watermark vs tip) — see
                                  *     watermark_ledger. A FRACTION in [0,1] despite
                                  *     the `_pct` name: 1.0 means the verdict reaches
@@ -21875,6 +21998,98 @@ export interface operations {
                 };
             };
             /** @description Another of this account's webhooks already uses this url. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    rotateDashboardWebhookSecret: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Optional client-chosen key (a UUID is ideal) that makes this
+                 *     create safe to retry. Send the SAME value when retrying a request
+                 *     whose outcome you never saw, such as a client timeout: within ten
+                 *     minutes of a successful original, the retry receives the original
+                 *     response verbatim (marked by an `Idempotency-Replayed: true`
+                 *     response header) instead of creating a second resource. A retry
+                 *     that arrives while the original is still running gets 409
+                 *     `idempotency-key-in-flight` with `Retry-After`. Only 2xx
+                 *     responses are replayed; a failed original may be retried with the
+                 *     same key. Keys are scoped to the caller, and dedup is held per API
+                 *     process, so it covers the retry window rather than surviving a
+                 *     restart. Longer than 256 bytes returns 400
+                 *     `idempotency-key-too-long`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rotated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "webhook_id": "0b6a3f2e-9c1d-4e7a-8f5b-6d2c4a1e9b0f",
+                     *       "secret": "wsec_9d2e4f7a1c6b3e8d5a2f9c4b7e1d6a3f8c5b2e9d4a7f1c6e3b8d5a2f9c4b7e1d",
+                     *       "previous_secret_expires_at": "2026-07-04T22:45:47Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["RotateWebhookSecretResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Role can't manage webhooks, OR the write was blocked as
+             *     cross-site: state-changing dashboard + auth requests must
+             *     carry an `Origin` (or `Referer`) matching this API or an
+             *     operator-allow-listed site (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No webhook with this id on this account (absent, already deleted, or another account's). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description A request whose `Idempotency-Key` matches one still being
+             *     processed (`idempotency-key-in-flight`, retryable per
+             *     `Retry-After`).
+             */
             409: {
                 headers: {
                     [name: string]: unknown;

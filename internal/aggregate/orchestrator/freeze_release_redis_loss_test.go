@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"math/big"
 	"testing"
 	"time"
 
@@ -177,7 +176,7 @@ func TestFreezeLifecycle_ReleaseDuringRedisLossKeepsEscalatedSibling(t *testing.
 	f.flushRedis()
 
 	refused := o.stepFreezeLifecycle(ctx, f.pair, f.short, f.key(f.short), healthySignal(),
-		coldSiblingDecision(), big.NewRat(1, 8))
+		coldSiblingDecision())
 	if refused {
 		t.Fatal("setup: the 5m window was expected to earn its release on this tick")
 	}

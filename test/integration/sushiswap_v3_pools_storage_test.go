@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestSushiswapV3Pools_UpsertLoadRoundTrip executes migration 0200 and proves
+// TestSushiswapV3Pools_UpsertLoadRoundTrip executes migration 0202 and proves
 // rows round-trip and a re-upsert replaces in place.
 func TestSushiswapV3Pools_UpsertLoadRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -45,15 +45,27 @@ func TestSushiswapV3Pools_UpsertLoadRoundTrip(t *testing.T) {
 	if err := store.UpsertSushiswapV3Pool(ctx, want); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
-	if err := store.UpsertSushiswapV3Pool(ctx, want); err != nil {
-		t.Fatalf("re-Upsert: %v", err)
-	}
-
 	got, err := store.LoadSushiswapV3Pools(ctx)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("Load = %#v, want [%#v]", got, want)
+	}
+
+	// A conflicting upsert with changed columns must overwrite in place.
+	changed := want
+	changed.FeePips = 3000
+	changed.TickSpacing = 60
+	changed.Token1 = contractStrkeyFromSeed(t, 0xD4)
+	if err := store.UpsertSushiswapV3Pool(ctx, changed); err != nil {
+		t.Fatalf("re-Upsert changed: %v", err)
+	}
+	got, err = store.LoadSushiswapV3Pools(ctx)
+	if err != nil {
+		t.Fatalf("Load after re-upsert: %v", err)
+	}
+	if len(got) != 1 || got[0] != changed {
+		t.Fatalf("Load after re-upsert = %#v, want [%#v]", got, changed)
 	}
 }

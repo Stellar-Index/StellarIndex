@@ -50,6 +50,9 @@ MIN_FREE_GB="${MIN_FREE_GB:-200}"
 # the WAL that archive-get pulls into pg_wal during recovery.
 DRILL_SIZE_MARGIN_PCT="${DRILL_SIZE_MARGIN_PCT:-125}"
 DRILL_WAL_HEADROOM_GB="${DRILL_WAL_HEADROOM_GB:-50}"
+# Pool free space run-heavy-job.sh's watchdog stops the job below
+# (HEAVY_MIN_DATA_KB): the restore must fit above it or it is killed mid-way.
+DRILL_POOL_FLOOR_GB="${DRILL_POOL_FLOOR_GB:-$(( ${HEAVY_MIN_DATA_KB:-314572800} / 1048576 ))}"
 PG_VERSION="${PG_VERSION:-15}"
 PG_BIN="${PG_BIN:-/usr/lib/postgresql/${PG_VERSION}/bin}"
 LIVE_DSN="${STELLARINDEX_POSTGRES_DSN:-}"
@@ -210,11 +213,11 @@ need_gb=$(( backup_gb * DRILL_SIZE_MARGIN_PCT / 100 + DRILL_WAL_HEADROOM_GB ))
 
 mkdir -p "$DRILL_ROOT"
 free_gb=$(df -BG --output=avail "$DRILL_ROOT" | tail -1 | tr -dc '0-9')
-if (( free_gb < need_gb )); then
-  note "only ${free_gb}G free under $DRILL_ROOT, need ${need_gb}G (latest backup ${backup_gb}G × ${DRILL_SIZE_MARGIN_PCT}% + ${DRILL_WAL_HEADROOM_GB}G WAL headroom; floor ${MIN_FREE_GB}G) — refusing"
+if (( free_gb < need_gb + DRILL_POOL_FLOOR_GB )); then
+  note "only ${free_gb}G free under $DRILL_ROOT, need ${need_gb}G (latest backup ${backup_gb}G × ${DRILL_SIZE_MARGIN_PCT}% + ${DRILL_WAL_HEADROOM_GB}G WAL headroom; floor ${MIN_FREE_GB}G) + ${DRILL_POOL_FLOOR_GB}G pool floor — refusing"
   exit 2
 fi
-note "capacity: ${free_gb}G free under $DRILL_ROOT ≥ ${need_gb}G needed for a ${backup_gb}G backup"
+note "capacity: ${free_gb}G free under $DRILL_ROOT ≥ ${need_gb}G needed for a ${backup_gb}G backup (+ ${DRILL_POOL_FLOOR_GB}G pool floor)"
 
 DATA_DIR="$DRILL_ROOT/pgdata-$(date +%Y%m%d-%H%M%S)"
 # 1 while `pgbackrest restore` is writing DATA_DIR. A restore that dies
