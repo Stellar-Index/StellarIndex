@@ -48,6 +48,7 @@ var handlerSpecFieldPairs = []struct {
 	typ    reflect.Type
 }{
 	{"Asset", reflect.TypeOf(AssetDetail{})},
+	{"AssetMetadata", reflect.TypeOf(AssetMetadata{})},
 	{"AssetSupply", reflect.TypeOf(AssetSupply{})},
 	{"TradeRow", reflect.TypeOf(TradeRow{})},
 	{"OHLCBar", reflect.TypeOf(OHLCBar{})},

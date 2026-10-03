@@ -18887,6 +18887,16 @@ components:
         fixed_number:      { type: [string, "null"], description: "SEP-1-declared fixed total supply (decimal string in the asset's smallest integer unit). Distinct from `total_supply` below — that's the live-ledger sum." }
         max_number:        { type: [string, "null"], description: "SEP-1-declared maximum supply ceiling (decimal string). Distinct from `max_supply` below which is operator/policy-derived." }
         is_unlimited:      { type: [boolean, "null"], description: "Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all; false when they declared a bounded supply." }
+        # SEP-1 standing and backing declarations from the same
+        # [[CURRENCIES]] entry. Issuer-declared, not verified by this
+        # index; null unless sep1_status == "verified".
+        currency_status:         { type: [string, "null"], description: "SEP-1 `status` of the currency as the issuer declares it: live, dead, test or private." }
+        is_asset_anchored:       { type: [boolean, "null"], description: "SEP-1 `is_asset_anchored`. Null when the issuer did not declare it; false only when they declared false." }
+        attestation_of_reserve:  { type: [string, "null"], description: "SEP-1 `attestation_of_reserve` URL. http(s) only — any other value is dropped at overlay time." }
+        redemption_instructions: { type: [string, "null"], description: "SEP-1 `redemption_instructions`: how the issuer says the token is redeemed for its underlying." }
+        regulated:               { type: [boolean, "null"], description: "SEP-1 `regulated` (SEP-8 approval required to transact). Null when the issuer did not declare it." }
+        approval_server:         { type: [string, "null"], description: "SEP-1 `approval_server` URL for a regulated asset. http(s) only — any other value is dropped at overlay time." }
+        approval_criteria:       { type: [string, "null"], description: "SEP-1 `approval_criteria`: the issuer's stated rules for approving a transaction in a regulated asset." }
         # F2 fields — Market Cap / FDV / Circulating / Total / Max
         # Supply (ADR-0011).
         #
@@ -19351,6 +19361,16 @@ components:
         fixed_number:    { type: [string, "null"], description: "SEP-1-declared fixed total supply (decimal string in the asset's smallest integer unit). Distinct from /v1/assets/{id}'s `total_supply` which is the live-ledger sum." }
         max_number:      { type: [string, "null"], description: "SEP-1-declared maximum supply ceiling (decimal string). Distinct from /v1/assets/{id}'s `max_supply` which is operator/policy-derived." }
         is_unlimited:    { type: [boolean, "null"], description: "Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all (no fixed_number / max_number / is_unlimited declaration); false when they did and committed to a bounded supply." }
+        # SEP-1 standing and backing declarations from the same
+        # [[CURRENCIES]] entry. Issuer-declared, not verified by this
+        # index; null unless sep1_status == "verified".
+        currency_status:         { type: [string, "null"], description: "SEP-1 `status` of the currency as the issuer declares it: live, dead, test or private." }
+        is_asset_anchored:       { type: [boolean, "null"], description: "SEP-1 `is_asset_anchored`. Null when the issuer did not declare it; false only when they declared false." }
+        attestation_of_reserve:  { type: [string, "null"], description: "SEP-1 `attestation_of_reserve` URL. http(s) only — any other value is dropped at overlay time." }
+        redemption_instructions: { type: [string, "null"], description: "SEP-1 `redemption_instructions`: how the issuer says the token is redeemed for its underlying." }
+        regulated:               { type: [boolean, "null"], description: "SEP-1 `regulated` (SEP-8 approval required to transact). Null when the issuer did not declare it." }
+        approval_server:         { type: [string, "null"], description: "SEP-1 `approval_server` URL for a regulated asset. http(s) only — any other value is dropped at overlay time." }
+        approval_criteria:       { type: [string, "null"], description: "SEP-1 `approval_criteria`: the issuer's stated rules for approving a transaction in a regulated asset." }
       required: [asset_id, sep1_status]
 
     AssetMetadataEnvelope:
