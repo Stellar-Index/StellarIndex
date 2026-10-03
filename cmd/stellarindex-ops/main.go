@@ -21,7 +21,7 @@
 //   - Archive integrity + WASM tracking (internal/ops/archive):
 //     `verify-archive`, `archive-completeness`, `cross-region-check`,
 //     `cross-region-monitor`, `trim-galexie-archive`,
-//     `rehydrate-galexie-archive`, `wasm-history`,
+//     `rehydrate-galexie-archive`, `galexie-mirror-verify`, `wasm-history`,
 //     `wasm-history-merge-jsonl`, `extract-wasm-from-galexie`.
 //   - Soroban discovery (internal/ops/discovery): `discovery`.
 //   - Supply (internal/ops/supply): `supply`.
@@ -163,6 +163,7 @@ var subcommands = map[string]func(args []string) error{
 	"cross-region-monitor":      archive.Run,
 	"trim-galexie-archive":      archive.Run,
 	"rehydrate-galexie-archive": archive.Run,
+	"galexie-mirror-verify":     archive.Run,
 	"wasm-history":              archive.Run,
 	"wasm-history-merge-jsonl":  archive.Run,
 	"extract-wasm-from-galexie": archive.Run,
@@ -1673,6 +1674,19 @@ Subcommands:
                               missing_in_cold counter).
                           Refuses to run if cold tier is not configured
                           (cfg.Storage.ColdTieringEnabled() == false).
+  galexie-mirror-verify -config PATH [-bucket B] [-from N] [-to N] [-parallel N] [-max-report N] [-textfile-output PATH]
+                          Read-only. Compare every object of the local
+                          Galexie mirror (storage.s3_bucket_archive)
+                          with the same key on the upstream dataset
+                          (storage.s3_cold_*) by ETag and size, per
+                          partition present on both sides. Prints one
+                          MISMATCH line per differing object with its
+                          partition and ledger; cause is
+                          upstream-rewritten (upstream modified after
+                          our copy), local-differs, or local-only.
+                          Exits non-zero on any mismatch or listing
+                          error. galexie-archive-fill checks presence
+                          only, so this is what sees a re-export.
   mint-key -config PATH -identifier ID -label LABEL -reason TEXT [-actor NAME] [-tier T [-confirm-operator]] [-scopes S,..] [-rate-limit-per-min N] [-expires-in DUR]
                           Issue a fresh API key directly via the
                           Redis API-key store. Operator-only path

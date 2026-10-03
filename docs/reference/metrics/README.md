@@ -4747,6 +4747,35 @@ re-serves a stale textfile verbatim on every scrape, so a stopped timer
 FREEZES the gauges above at their last healthy value instead of making
 them absent; this is the only series that can see that.
 
+## Galexie mirror vs upstream dataset (textfile collector, Go-emitted)
+
+Emitted by `stellarindex-ops galexie-mirror-verify`
+(`internal/ops/archive/galexie_mirror_verify.go`) into
+`/var/lib/node_exporter/textfile_collector/galexie_archive_upstream.prom`
+by the weekly `galexie-mirror-verify.timer` (archival-node role, tag
+`ops-jobs`). The file is rewritten only when a comparison completes, so a
+failing run leaves the previous verdict and its stamp in place. Alerted
+on by `deploy/monitoring/rules/galexie-archive.yml`; runbook
+`docs/operations/runbooks/galexie-archive-upstream-divergence.md`.
+
+### `galexie_archive_upstream_objects`
+
+Gauge, label `result`. Objects in partitions present on both sides, by
+outcome of comparing ETag and size with the same key upstream:
+`matched`, `upstream-rewritten` (differs, upstream newer than our copy),
+`local-differs` (differs, our copy newer), `local-only` (absent
+upstream), `unverifiable` (multipart ETag on one side, sizes equal),
+`missing-local` (upstream object not yet mirrored; the fill's concern).
+The first three after `matched` are divergence.
+
+### `galexie_archive_upstream_partitions_compared`
+
+Gauge. Partitions present on both sides that the last run compared.
+
+### `galexie_archive_upstream_last_success_unix`
+
+Gauge. Unix time the last completed comparison wrote the file.
+
 ## Changelog
 
 - 2026-09-27 — added `stellarindex_ch_live_sink_read_undercount_total`

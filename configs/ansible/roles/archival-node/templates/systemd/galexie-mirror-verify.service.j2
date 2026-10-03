@@ -1,0 +1,60 @@
+# systemd unit: weekly content comparison of the Galexie mirror against
+# the upstream public dataset.
+#
+# Rendered by Ansible. Runs `stellarindex-ops galexie-mirror-verify`, which
+# compares every object of galexie-archive with the same key on the
+# storage.s3_cold_* upstream by ETag and size and writes the verdict to
+# galexie_archive_upstream.prom. galexie-archive-fill copies only what is
+# absent and verify-archive checks header hashes, so neither sees an
+# upstream re-export that changed a ledger's meta after we mirrored it.
+#
+# A non-zero exit is usually a real verdict (a differing object), not a
+# crash; the textfile is written before the exit, so
+# stellarindex_galexie_archive_upstream_divergence carries the triage.
+
+[Unit]
+Description=Stellar Index — galexie mirror vs upstream content comparison (weekly)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-upstream-divergence.md
+After=network-online.target minio.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# Defaults first so /etc/default/stellarindex-ops can override them.
+Environment=MIRROR_VERIFY_PARALLEL=4
+Environment=MIRROR_VERIFY_TEXTFILE=/var/lib/node_exporter/textfile_collector/galexie_archive_upstream.prom
+EnvironmentFile=-/etc/default/stellarindex-ops
+
+# The full walk lists every mirrored object on MinIO, so it takes the
+# heavy-job lock and queues behind another holder rather than skip a week.
+Environment=HEAVY_JOB_LOCK_WAIT=72000
+SuccessExitStatus=75
+Environment=HEAVY_JOB_CLASS=scheduled
+ExecStart=/usr/local/sbin/run-heavy-job.sh galexie-mirror-verify \
+  /usr/local/bin/stellarindex-ops galexie-mirror-verify \
+  -config /etc/stellarindex.toml \
+  -parallel ${MIRROR_VERIFY_PARALLEL} \
+  -textfile-output ${MIRROR_VERIFY_TEXTFILE}
+
+User=stellarindex
+Group=stellarindex
+
+# full, not strict: run-heavy-job.sh takes its lock under /run, as for
+# verify-archive-tier-b.
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+
+# The lock wait plus up to 4 h of listing.
+TimeoutStartSec=86400
+
+CPUWeight=20
+IOWeight=20
+
+[Install]
+WantedBy=multi-user.target

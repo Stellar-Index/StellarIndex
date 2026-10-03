@@ -1513,6 +1513,58 @@
       changed_when: false
       failed_when: false
 
+# ── galexie-mirror-verify — mirror content vs the upstream dataset ───
+# galexie-archive-fill checks presence only, so an upstream re-export of a
+# ledger we already hold is invisible to it. Gated on an upstream being
+# configured (galexie_mirror_verify_enabled).
+- name: Install + enable galexie-mirror-verify (hosts with an upstream dataset)
+  tags: [ops-jobs]
+  when: galexie_mirror_verify_enabled | bool
+  block:
+    - name: Install galexie-mirror-verify unit + timer
+      ansible.builtin.template:
+        src: "systemd/{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - galexie-mirror-verify.service
+        - galexie-mirror-verify.timer
+      notify: Reload systemd
+      register: galexie_mirror_verify_units
+
+    - name: Enable + start galexie-mirror-verify.timer
+      ansible.builtin.systemd:
+        name: galexie-mirror-verify.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+      when:
+        # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+        - not (ansible_check_mode and galexie_mirror_verify_units is changed)
+
+- name: Remove galexie-mirror-verify where no upstream dataset is configured
+  tags: [ops-jobs]
+  when: not (galexie_mirror_verify_enabled | bool)
+  block:
+    - name: Stop + disable galexie-mirror-verify timer and service
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - galexie-mirror-verify.timer
+        - galexie-mirror-verify.service
+      failed_when: false
+
+    - name: Remove galexie-mirror-verify unit files
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - galexie-mirror-verify.timer
+        - galexie-mirror-verify.service
+      notify: Reload systemd
+
 - name: Retire the cap67-movements timer in favour of the follow daemon (5.3)
   # The follow daemon (cap67-movements.service, Type=simple, -follow) is the
   # SINGLE writer of stellar.account_movements. Stop + disable the old timer
