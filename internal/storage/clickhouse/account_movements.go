@@ -561,18 +561,11 @@ func chunkStrings(ids []string, n int) [][]string {
 // table itself, purely as a footprint safety bound, not to dodge a
 // text-size or index-FPR ceiling — see its doc comment.
 //
-// idx_cb_balance_id remains valuable and is NOT being removed: any
-// TRUE point lookup (a literal `= ?` or a small hand-written `IN (?)`
-// with a handful of ids) still benefits from it, and ClickHouse's
-// skip-index pruning for such a query only fires when the WHERE
-// predicate is textually IDENTICAL to the indexed expression — so the
-// WHERE clause below MUST stay exactly
-// `JSONExtractString(attributes, 'balance_id')` (not a rewritten
-// equivalent: a CTE, a different function, a cast, …) even though
-// THIS function's batched external-table query no longer benefits
-// from that index itself. Any divergence silently falls back to a
-// full scan with no query error to signal it, for either access
-// pattern.
+// idx_cb_balance_id does not back this batched lookup: the query runs with
+// use_skip_indexes=0 because a bloom-filter false-positive rate compounded
+// over a large IN-set matches every granule. No current reader uses the
+// index; it only prunes when the predicate is textually identical to the
+// indexed expression.
 //
 // The returned map contains ONLY found ids; a balance_id absent from
 // it means no matching create row exists YET for it in what's been
@@ -611,8 +604,7 @@ func FindClaimableBalanceCreates(ctx context.Context, addr string, balanceIDHexe
 // cbLookupCreatesQuery matches chunk's ids against the external table
 // (`cb_ids`, one `balance_id String` column) findClaimableBalanceCreatesChunk
 // attaches via clickhouse.WithExternalTable — a hash-set semijoin, not
-// an inlined IN-list. See FindClaimableBalanceCreates' doc comment for
-// why the WHERE expression must stay textually exact.
+// an inlined IN-list.
 // The SETTINGS clause lives in the SQL text, not clickhouse.WithSettings:
 // observed live (2026-07-13) that per-query context settings did NOT reach
 // the server when combined with WithExternalTable — the failing query ran
