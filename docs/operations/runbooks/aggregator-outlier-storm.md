@@ -58,9 +58,9 @@ severity: P3
 - The published VWAP for that pair is typically still correct — cross-check the
   pair's `div:<pair>` Redis flag / API `flags.divergence_warning` for actual
   price impact before assuming the served number is wrong.
-- **Do NOT wait on `stellarindex_price_divergence_{warning,critical}`** — those
-  alerts are INERT (F-1329, no Prometheus producer; divergence values live in
-  Postgres + the `div:` Redis cache + the API flag, not the registry).
+- The live divergence signal is `stellarindex_divergence_max_abs_fraction`,
+  which drives `stellarindex_price_divergence_{warning,critical}`; check it
+  beside the `div:` Redis flag and the API flag.
 - An **agreed** move across venues (the 2026-08-28 shape) does **not** fire
   either alert any more. If you see a market-wide move alongside a ticket,
   the ticket is about a venue that did *not* move with the others.

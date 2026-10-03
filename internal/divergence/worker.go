@@ -318,6 +318,7 @@ type Service struct {
 	warningState map[string]bool
 	firingSince  map[string]firingStreak
 	restored     map[string]bool
+	gaps         *gapTracker
 }
 
 // firingStreak is one pair's raw-firing run: since is its first firing
@@ -371,9 +372,15 @@ func NewService(opts ServiceOptions) (*Service, error) {
 	}
 	refs := independentReferences(opts.References)
 	seedReferenceOutcomes(refs)
+	ttl := cacheTTL(opts.RefreshInterval, opts.PairCount, timeout)
+	names := make([]string, 0, len(refs))
+	for _, r := range refs {
+		names = append(names, safeName(r))
+	}
 	return &Service{
 		maxGap:       2 * max(persistence, opts.RefreshInterval),
-		cacheTTL:     cacheTTL(opts.RefreshInterval, opts.PairCount, timeout),
+		cacheTTL:     ttl,
+		gaps:         newGapTracker(names, ttl),
 		refs:         refs,
 		cache:        opts.Cache,
 		threshold:    threshold,
@@ -505,6 +512,7 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 	checked := res.SuccessCount >= s.minSources
 	evaluated := checked && !pinned
 	recordReferenceHealth(pair, res, checked)
+	s.gaps.observe(pair.String(), ourPrice, res.Sources, pinned, time.Now())
 
 	// W3-guards-2: our value is a shortest-window VWAP; the references
 	// are instantaneous spot quotes. On a fast price move the VWAP lags
