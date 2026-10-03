@@ -228,8 +228,23 @@ DATA_DIR="$DRILL_ROOT/pgdata-$(date +%Y%m%d-%H%M%S)"
 # that must not linger. Post-restore failures (recovery, verification)
 # are different: there the datadir IS the evidence, and is kept.
 restore_in_progress=0
+evidence_recorded=0
+drill_stage="startup"
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via the EXIT trap below
 cleanup() {
+  local rc=$?
+  # Any exit that did not go through record_evidence (an unguarded psql,
+  # tee or command substitution dying under `set -e`) is still a drill
+  # that ran: count it and record it rather than leave the old metric ageing.
+  if [[ "$evidence_recorded" -eq 0 ]]; then
+    [[ "$rc" -ne 0 ]] || rc=1
+    fail_count=$((fail_count + 1))
+    drill_aborted_at="${drill_stage} (unexpected exit, status $rc)"
+    note "FAIL  unexpected exit during $drill_stage (status $rc) — recording the run"
+    record_evidence
+    emit_metric
+    rc=1
+  fi
   if [[ -f "$DATA_DIR/postmaster.pid" ]]; then
     sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA_DIR" stop -m immediate || true
   fi
@@ -241,6 +256,7 @@ cleanup() {
   else
     echo "restore-drill: KEEPING $DATA_DIR for diagnosis (failures=$fail_count); delete it manually" >&2
   fi
+  exit "$rc"
 }
 trap cleanup EXIT
 
@@ -263,6 +279,7 @@ trap cleanup EXIT
 # run" and "ran and found a problem" must not share a signal.
 drill_aborted_at=""
 record_evidence() {
+  evidence_recorded=1
   local evidence_file="$LOG_DIR/restore-drills.md"
   if mkdir -p "$LOG_DIR" 2>/dev/null && {
         echo "## $(date -u +%F) restore drill (repo${DRILL_REPO})"
@@ -488,6 +505,7 @@ abort_drill() {
 }
 
 # ─── phase 1: restore ───────────────────────────────────────────────
+drill_stage="pg_restore"
 note "restoring stanza=$STANZA repo=$DRILL_REPO into $DATA_DIR …"
 mkdir -p "$DATA_DIR" && chown postgres:postgres "$DATA_DIR" && chmod 700 "$DATA_DIR"
 restore_started=$(date +%s)
@@ -504,6 +522,7 @@ else
 fi
 
 # ─── phase 2: start scratch instance + recover ──────────────────────
+drill_stage="pg_start"
 # Recovery target: end of archived WAL. Disposable instance — no
 # archive_command, loopback only, alternate port.
 # Debian layout: the live cluster's postgresql.conf + pg_hba.conf live
@@ -571,6 +590,7 @@ qlive() {
 }
 
 # ─── phase 3: verification ──────────────────────────────────────────
+drill_stage="verification"
 # 3a. The restored DB answers and has the core tables.
 tables=$(q "SELECT count(*) FROM information_schema.tables WHERE table_name IN ('trades','oracle_updates','ledger_ingest_log','completeness_snapshots')")
 check "core_tables" "$([[ "$tables" == "4" ]] && echo 1 || echo 0)" "found $tables/4 core tables"
@@ -651,6 +671,7 @@ live_rows=$(qlive "SELECT count(*) FROM trades WHERE ledger BETWEEN $window_lo A
 check "trades_window_match" "$([[ "$restored_rows" == "$live_rows" ]] && echo 1 || echo 0)" "trades[$window_lo,$window_hi]: restored=$restored_rows live=$live_rows"
 
 # ─── phase 4 (optional): ClickHouse re-derive sample ────────────────
+drill_stage="ch_rederive"
 # Proves the ADR-0043 §2.2 "lake is re-derivable" claim + measures RTO.
 #
 # WHY DRY-RUN rather than the ADR's "scratch database": clickhouse.Open
