@@ -42,6 +42,9 @@ export type CandlePoint = {
 /** One point of a price envelope drawn as two lines over the candles. */
 export type BandPoint = { time: number; upper: number; lower: number };
 
+/** One trade from a single source, drawn as a marker over the candles. */
+export type OverlayPoint = { time: number; value: number };
+
 export type CandleChartProps = {
   data: CandlePoint[];
   height?: number;
@@ -57,6 +60,8 @@ export type CandleChartProps = {
   livePrice?: number | null;
   /** Optional upper/lower envelope overlaid on the price pane. */
   band?: BandPoint[] | null;
+  /** Optional per-source trade markers overlaid on the price pane. */
+  overlay?: OverlayPoint[] | null;
   /**
    * Text alternative for the canvas-rendered chart (WCAG 1.1.1).
    * lightweight-charts paints to a <canvas> with no DOM text, so
@@ -80,6 +85,7 @@ export function CandleChart({
   className,
   livePrice,
   band,
+  overlay,
   ariaLabel,
 }: CandleChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -87,6 +93,7 @@ export function CandleChart({
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const bandRef = useRef<[ISeriesApi<'Line'>, ISeriesApi<'Line'>] | null>(null);
+  const overlayRef = useRef<ISeriesApi<'Line'> | null>(null);
   const priceLineRef = useRef<IPriceLine | null>(null);
   const themeRef = useRef<ChartTheme | null>(null);
 
@@ -94,6 +101,7 @@ export function CandleChart({
     (p) => p.volume != null && Number.isFinite(p.volume),
   );
   const hasBand = !!band && band.length > 0;
+  const hasOverlay = !!overlay;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -145,6 +153,18 @@ export function CandleChart({
       bandRef.current = [line(), line()];
     }
 
+    if (hasOverlay) {
+      overlayRef.current = chart.addSeries(LineSeries, {
+        color: theme.brand,
+        lineVisible: false,
+        pointMarkersVisible: true,
+        pointMarkersRadius: 3,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+    }
+
     if (hasVolume) {
       // Volume in its own pane (index 1), below the price pane.
       const volume = chart.addSeries(
@@ -182,12 +202,13 @@ export function CandleChart({
       seriesRef.current = null;
       volumeRef.current = null;
       bandRef.current = null;
+      overlayRef.current = null;
       // The price line is owned by the disposed series; drop the handle so
       // the live-price effect recreates it against the fresh series rather
       // than calling applyOptions on a dead one.
       priceLineRef.current = null;
     };
-  }, [height, hasVolume, hasBand]);
+  }, [height, hasVolume, hasBand, hasOverlay]);
 
   // Push new data on prop changes (and initial mount) without destroying the chart.
   useEffect(() => {
@@ -207,8 +228,12 @@ export function CandleChart({
       upper.setData(toLine(band, 'upper'));
       lower.setData(toLine(band, 'lower'));
     }
+    if (overlayRef.current && overlay) {
+      overlayRef.current.applyOptions({ priceFormat });
+      overlayRef.current.setData(toOverlay(overlay));
+    }
     chartRef.current?.timeScale().fitContent();
-  }, [data, band]);
+  }, [data, band, overlay]);
 
   // Live current-price line (RT-2): mirror the headline's live tip onto the
   // chart's right axis so the current-price label ticks with each trade
@@ -340,6 +365,16 @@ function toLine(
   edge: 'upper' | 'lower',
 ): LineData<Time>[] {
   return points.map((p) => ({ time: p.time as Time, value: p[edge] }));
+}
+
+// lightweight-charts rejects equal timestamps; several trades can land in one
+// second, so the last one wins.
+function toOverlay(points: OverlayPoint[]): LineData<Time>[] {
+  const byTime = new Map<number, number>();
+  for (const p of points) byTime.set(p.time, p.value);
+  return [...byTime.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([time, value]) => ({ time: time as Time, value }));
 }
 
 // Volume bars, tinted to the bar's direction (up when close ≥ open) at low

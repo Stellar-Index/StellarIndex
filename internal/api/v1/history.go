@@ -213,6 +213,22 @@ type TradeRow struct {
 	RoutedVia string `json:"routed_via,omitempty"`
 }
 
+// SourceHistoryReader is the optional single-source variant of
+// [HistoryReader.TradesInRangeAfter]. A reader that does not implement it
+// cannot serve `?source=` on /v1/history.
+type SourceHistoryReader interface {
+	TradesInRangeAfterFromSource(
+		ctx context.Context,
+		pair canonical.Pair,
+		source string,
+		from, to, afterTs time.Time,
+		afterLedger uint32,
+		afterTxHash, afterSource string,
+		afterOpIndex uint32,
+		limit int,
+	) ([]canonical.Trade, error)
+}
+
 // tradeRowFrom converts canonical.Trade → wire shape. Price is
 // computed at `decimals` fractional digits (default 10 — generous
 // enough for sub-stroop precision without being absurd).
@@ -286,7 +302,24 @@ func historyTradeRows(trades []canonical.Trade, baseDec, quoteDec int) []TradeRo
 	return rows
 }
 
-// handleHistory serves GET /v1/history?base=<id>&quote=<id>&from=<rfc3339>&to=<rfc3339>&limit=<int>.
+// historySourceParam validates the optional `source` filter and that the
+// reader can honour it, writing the problem response when not.
+func historySourceParam(w http.ResponseWriter, r *http.Request, reader HistoryReader) (string, bool) {
+	source := r.URL.Query().Get("source")
+	if !sourceFilterOK(w, r, source) {
+		return "", false
+	}
+	if _, ok := reader.(SourceHistoryReader); source != "" && !ok {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/history-unavailable",
+			"Source filter not available", http.StatusServiceUnavailable,
+			"this deployment's HistoryReader cannot filter by source")
+		return "", false
+	}
+	return source, true
+}
+
+// handleHistory serves GET /v1/history?base=<id>&quote=<id>&from=<rfc3339>&to=<rfc3339>&limit=<int>[&source=<name>].
 //
 // Defaults:
 //   - from: to - 1h (1-hour window rolling back from `to`)
@@ -320,6 +353,11 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// different reader method, HistoryPoints, used by /v1/chart), so it
 	// no longer needs the decline guard. The per-row Price field is
 	// normalized after decimals are resolved further down.
+
+	source, ok := historySourceParam(w, r, reader)
+	if !ok {
+		return
+	}
 
 	from, to, ok := parseFromTo(w, r)
 	if !ok {
@@ -374,7 +412,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// endpoint's worst-case hold.
 	hCtx, hCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer hCancel()
-	trades, next, err := s.tradesInRangeAfterWithAliases(hCtx, reader, pair,
+	trades, next, err := s.tradesInRangeAfterWithAliases(hCtx, reader, pair, source,
 		from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
 	if err != nil {
 		if clientAborted(r, err) {
@@ -961,6 +999,7 @@ func (s *Server) tradesInRangeAfterWithAliases(
 	ctx context.Context,
 	reader HistoryReader,
 	pair canonical.Pair,
+	source string,
 	from, to, afterTs time.Time,
 	afterLedger uint32,
 	afterTxHash, afterSource string,
@@ -968,6 +1007,10 @@ func (s *Server) tradesInRangeAfterWithAliases(
 	limit int,
 ) ([]canonical.Trade, *historyCursor, error) {
 	read := func(p canonical.Pair, n int) ([]canonical.Trade, error) {
+		if sr, ok := reader.(SourceHistoryReader); ok && source != "" {
+			return sr.TradesInRangeAfterFromSource(ctx, p, source, from, to,
+				afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, n)
+		}
 		return reader.TradesInRangeAfter(ctx, p, from, to,
 			afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, n)
 	}

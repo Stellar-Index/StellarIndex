@@ -2237,6 +2237,36 @@ func (s *Store) TradesInRangeAfter(
 	afterOpIndex uint32,
 	limit int,
 ) ([]canonical.Trade, error) {
+	return s.tradesInRangeAfter(ctx, p, "", from, to, afterTs,
+		afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
+}
+
+// TradesInRangeAfterFromSource is [Store.TradesInRangeAfter] restricted to
+// rows written by one source. An empty source is the unfiltered read.
+func (s *Store) TradesInRangeAfterFromSource(
+	ctx context.Context,
+	p canonical.Pair,
+	source string,
+	from, to, afterTs time.Time,
+	afterLedger uint32,
+	afterTxHash, afterSource string,
+	afterOpIndex uint32,
+	limit int,
+) ([]canonical.Trade, error) {
+	return s.tradesInRangeAfter(ctx, p, source, from, to, afterTs,
+		afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
+}
+
+func (s *Store) tradesInRangeAfter(
+	ctx context.Context,
+	p canonical.Pair,
+	source string,
+	from, to, afterTs time.Time,
+	afterLedger uint32,
+	afterTxHash, afterSource string,
+	afterOpIndex uint32,
+	limit int,
+) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 1000
 	}
@@ -2272,14 +2302,38 @@ func (s *Store) TradesInRangeAfter(
          ORDER BY ts ASC, ledger ASC, tx_hash ASC, op_index ASC, source ASC
          LIMIT $10
     `
-	rows, err := s.db.QueryContext(ctx, q,
+	// The filtered variant is a separate statement so the unfiltered plan
+	// stays exactly as it was.
+	const qSource = `
+        SELECT source, ledger, tx_hash, op_index, ts,
+               base_asset, quote_asset,
+               base_amount, quote_amount,
+               COALESCE(maker, ''), COALESCE(taker, ''),
+               COALESCE(routed_via, '')
+          FROM trades
+         WHERE base_asset  = $1
+           AND quote_asset = $2
+           AND source      = $11
+           AND ts         >= $3
+           AND ts          < $4
+           AND (ts, ledger, tx_hash, op_index, source) > ($5, $6, $7, $8, $9)
+         ORDER BY ts ASC, ledger ASC, tx_hash ASC, op_index ASC, source ASC
+         LIMIT $10
+    `
+	args := []any{
 		p.Base.String(), p.Quote.String(), // $1, $2
 		from.UTC(), to.UTC(), // $3, $4
 		// $5..$9 — must match the PK tuple order in the SQL above,
 		// NOT the function-signature order.
 		afterTs.UTC(), afterLedger, afterTxHash, afterOpIndex, afterSource,
 		limit, // $10
-	)
+	}
+	query := q
+	if source != "" {
+		query = qSource
+		args = append(args, source) // $11
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: TradesInRangeAfter: %w", err)
 	}
