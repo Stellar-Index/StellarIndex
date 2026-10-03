@@ -369,9 +369,12 @@ func writePriceWithheldProblem(w http.ResponseWriter, r *http.Request, asset, qu
 // never carries the numbers; the `substance` member does.
 func writePriceWithheldProblemEvidence(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset, reason PriceWithheldReason, ev *SubstanceEvidence) {
 	title, detail := priceWithheldWording(asset.String()+" / "+quote.String(), reason)
+	if reason == "" {
+		reason = PriceWithheldUnattributed
+	}
 	writeProblemCoverage(w, r,
 		"https://api.stellarindex.io/errors/price-withheld",
-		title, http.StatusNotFound, detail, nil, false, ev)
+		title, http.StatusNotFound, detail, nil, false, ev, reason)
 }
 
 func priceWithheldWording(pair string, reason PriceWithheldReason) (title, detail string) {
