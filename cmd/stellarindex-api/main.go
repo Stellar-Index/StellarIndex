@@ -1781,6 +1781,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		apiSrv.StartIngestionSnapshotRefresh(rootCtx)
 	}()
 
+	// Keeps stellarindex_dependency_up fresh without /v1/readyz traffic, so
+	// a dependency outage alerts even when no probe is polling.
+	bgWG.Add(1)
+	go func() {
+		defer bgWG.Done()
+		defer recoverBackgroundWorker(logger, "readiness-probe")
+		apiSrv.StartReadinessProbe(rootCtx, v1.ReadinessProbeCadence)
+	}()
+
 	httpSrv := &http.Server{
 		Addr:              cfg.API.ListenAddr,
 		Handler:           apiSrv.Handler(),

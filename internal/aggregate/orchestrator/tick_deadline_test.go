@@ -68,7 +68,7 @@ func TestTick_WedgedStoreCallIsCutAndTheNextTickRecovers(t *testing.T) {
 	parent, stop := context.WithCancel(context.Background())
 	defer stop()
 
-	obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC").Set(-1)
+	obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC", "fiat:USD").Set(-1)
 	errTicksBefore := testutil.ToFloat64(obs.AggregatorTicksTotal.WithLabelValues("error"))
 	done := make(chan error, 1)
 	go func() { done <- o.Tick(parent) }()
@@ -91,7 +91,7 @@ func TestTick_WedgedStoreCallIsCutAndTheNextTickRecovers(t *testing.T) {
 	if d := testutil.ToFloat64(obs.AggregatorTicksTotal.WithLabelValues("error")) - errTicksBefore; d != 1 {
 		t.Errorf("ticks_total{outcome=error} delta = %v, want 1", d)
 	}
-	if got := testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC")); got == -1 {
+	if got := testutil.ToFloat64(obs.PriceStalenessSeconds.WithLabelValues("crypto:BTC", "fiat:USD")); got == -1 {
 		t.Error("the cut tick did not emit the staleness gauge — a wedge would freeze it at its last reading")
 	}
 

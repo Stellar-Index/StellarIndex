@@ -620,7 +620,7 @@ rate, absence is unambiguous, which is why this counter is deliberately
 NOT pre-seeded in `seedBoundedLabelSeries` the way the `increase()`- and
 `rate()`-based counters are.
 
-### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`
+### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`, `stellarindex_dispatcher_evicted_keys_unreadable_total`
 
 Counters, no labels (process-wide — the underlying dispatcher counters
 aren't attributable to a source).
@@ -638,8 +638,12 @@ flush window's delta on every tick alongside the existing WARN log:
   entry-change walk was skipped for an unhandled `TransactionMeta`
   version; every classic balance / trustline / offer / LP change in
   that tx becomes invisible.
+- `evicted_keys_unreadable` — ledgers whose evicted-key list failed to
+  read, so their state-archival evictions were skipped and each evicted
+  balance stays served as live. The dispatcher also logs a WARN with
+  the ledger number.
 
-**When to look at these:** any sustained non-zero rate. All three are
+**When to look at these:** any sustained non-zero rate. All four are
 process-lifetime cumulative counters — chart `increase(...[5m])`
 against the flush interval (5m), not the raw value.
 
@@ -1783,12 +1787,13 @@ signed delivery goes out. A dashboard summing the counter without a
 
 ### `stellarindex_price_staleness_seconds`
 
-Gauge, label `asset`.
+Gauge, labels `asset`, `quote`.
 
-Age of the most recent price served for `asset` via `/v1/price`, in
-seconds. Updated per request so a popular asset keeps a fresh
-reading; unqueried assets stop updating and the `price-stale` alert
-uses `change()` to distinguish "no-update" from "updated-but-stale".
+Age of the most recent aggregated VWAP write for each configured
+(`asset`, `quote`) pair, in seconds, set by the aggregator at the end
+of every tick. XLM is emitted under both `native` and `crypto:XLM`,
+merged per quote. The `price-stale` alert fires on any series above
+120 s and on the series being absent (a wedged aggregator).
 
 ### `stellarindex_ratelimit_fail_open_total`
 
@@ -2451,7 +2456,7 @@ Per-sweep outcome of the aggregator's price-alert evaluator
 (`internal/pricealerts`, BACKLOG #60), which checks every enabled
 `price_alerts` row against the latest closed 1-minute VWAP each tick
 and enqueues account-scoped `price.alert` customer-webhook deliveries
-when a threshold is crossed (respecting cooldown + `last_fired_at`).
+once per threshold crossing (respecting cooldown + `last_fired_at`).
 Only emits when `[price_alerts] enabled = true`.
 
 When to look at it: customers report their price-threshold webhooks
@@ -2469,7 +2474,7 @@ configs/prometheus/rules.r1/price-alerts.yml).
 
 ### `stellarindex_price_alert_evaluated_total`
 
-Counter, label `outcome` (`fired` / `not_crossed` / `no_price` / `stale` /
+Counter, label `outcome` (`fired` / `not_crossed` / `already_fired` / `no_price` / `stale` /
 `cooling_down` / `no_subscriber` / `claim_lost` / `error` / `timeout`),
 every child seeded when the evaluator is built.
 
@@ -2478,6 +2483,8 @@ One increment per alert per sweep. `timeout` is the alert's own deadline
 `stale` is a closed VWAP bucket older than the evaluator's own freshness
 budget (`maxPriceStaleness`, 15 min) — rejected rather than notifying off
 a price that no longer describes a live crossing.
+`already_fired` is an alert whose condition still holds since it last
+fired; it re-arms when a fresh price shows the condition cleared.
 More than half of evaluations ending in `error` / `timeout` for 30 min
 fires `stellarindex_price_alert_evaluations_failing`.
 

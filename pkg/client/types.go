@@ -466,9 +466,13 @@ type AssetDetail struct {
 	ListingValuation *AssetListingValuation `json:"listing_valuation,omitempty"`
 
 	// SupplyBasis identifies which ADR-0011 policy produced the
-	// supply numbers (e.g. "issuer_exclusion", "admin_exclusion",
-	// "override"); null when no snapshot exists.
+	// total/circulating numbers (e.g. "issuer_exclusion",
+	// "admin_exclusion", "override"); null when no snapshot exists. It
+	// never carries "sep1_declared_max" — see MaxSupplyBasis.
 	SupplyBasis *string `json:"supply_basis,omitempty"`
+
+	// MaxSupplyBasis names where MaxSupply (and FDVUSD) came from when not the SupplyBasis policy, e.g. "sep1_declared_max".
+	MaxSupplyBasis *string `json:"max_supply_basis,omitempty"`
 
 	// SupplyAsOf / SupplyAsOfLedger date the supply observation; nil when
 	// the reading carries no vintage.
@@ -2222,6 +2226,16 @@ type RWAPremium struct {
 	Pct    *string `json:"pct,omitempty"`
 }
 
+// RWAISINCollision reports one ISIN declared in anchor_asset by several
+// issuer accounts. A declared ISIN is a claim, not proof of holding it.
+type RWAISINCollision struct {
+	// ISIN is the declared identifier in canonical upper-case form.
+	ISIN string `json:"isin"`
+	// DeclaredByIssuers counts the distinct issuer accounts, this row's
+	// included, declaring ISIN.
+	DeclaredByIssuers int `json:"declared_by_issuers"`
+}
+
 // RWAAsset is one member of the set, with the evidence that admitted
 // it. Identity is (Code, Issuer); Code alone identifies nothing.
 type RWAAsset struct {
@@ -2254,6 +2268,9 @@ type RWAAsset struct {
 	Recognition string `json:"recognition"`
 	AnchorClass string `json:"anchor_class,omitempty"`
 	AnchorAsset string `json:"anchor_asset,omitempty"`
+	// ISINCollision is set when AnchorAsset is an ISIN more than one
+	// issuer account declares. Informational: it never changes the row.
+	ISINCollision *RWAISINCollision `json:"isin_collision,omitempty"`
 	// Valuation is the observed-market-price money, or the reason there
 	// is none; ReferenceValuation is the same float at the reference
 	// price. The two are separate bases and are never summed.

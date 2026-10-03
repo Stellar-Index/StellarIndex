@@ -65,18 +65,34 @@ const cap67WMRetryAfter = schemaProbeRetryAfter
 // callers wait on the flight or their own ctx, whichever ends first, so
 // a slow store cannot queue every request behind a context-blind lock.
 func (r *ExplorerReader) Cap67MovementsWatermark(ctx context.Context) (uint32, error) {
+	cov, err := r.cap67Coverage(ctx)
+	return cov.Thru, err
+}
+
+// Cap67SupplyCoverage is the ledger range the archive also derived mint,
+// burn and clawback over (ok=false: none), from the same cached read.
+func (r *ExplorerReader) Cap67SupplyCoverage(ctx context.Context) (from, thru uint32, ok bool, err error) {
+	cov, err := r.cap67Coverage(ctx)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	from, thru, ok = cov.SupplyRange()
+	return from, thru, ok, nil
+}
+
+func (r *ExplorerReader) cap67Coverage(ctx context.Context) (Cap67Coverage, error) {
 	for {
-		flight, owner, hit, wm, err := r.cap67WMClaim(time.Now())
+		flight, owner, hit, cov, err := r.cap67WMClaim(time.Now())
 		switch {
 		case hit:
-			return wm, err
+			return cov, err
 		case owner:
 			return r.refreshCap67WM(ctx, flight)
 		}
 		select {
 		case <-flight:
 		case <-ctx.Done():
-			return 0, fmt.Errorf("clickhouse: cap67 watermark: %w", ctx.Err())
+			return Cap67Coverage{}, fmt.Errorf("clickhouse: cap67 watermark: %w", ctx.Err())
 		}
 	}
 }
@@ -84,26 +100,26 @@ func (r *ExplorerReader) Cap67MovementsWatermark(ctx context.Context) (uint32, e
 // cap67WMClaim answers from cache (hit) — a fresh value, or a recent
 // failure still inside its back-off — or else hands back the flight to
 // wait on, creating it when this caller is the owner.
-func (r *ExplorerReader) cap67WMClaim(now time.Time) (flight chan struct{}, owner, hit bool, wm uint32, err error) {
+func (r *ExplorerReader) cap67WMClaim(now time.Time) (flight chan struct{}, owner, hit bool, cov Cap67Coverage, err error) {
 	r.cap67WMMu.Lock()
 	defer r.cap67WMMu.Unlock()
 	if !r.cap67WMAt.IsZero() && now.Sub(r.cap67WMAt) < cap67WMTTL {
-		return nil, false, true, r.cap67WM, nil
+		return nil, false, true, r.cap67Cov, nil
 	}
 	if r.cap67WMErr != nil && now.Sub(r.cap67WMErrAt) < cap67WMRetryAfter {
-		return nil, false, true, 0, r.cap67WMErr
+		return nil, false, true, Cap67Coverage{}, r.cap67WMErr
 	}
 	if r.cap67WMFlight != nil {
-		return r.cap67WMFlight, false, false, 0, nil
+		return r.cap67WMFlight, false, false, Cap67Coverage{}, nil
 	}
 	r.cap67WMFlight = make(chan struct{})
-	return r.cap67WMFlight, true, false, 0, nil
+	return r.cap67WMFlight, true, false, Cap67Coverage{}, nil
 }
 
 // refreshCap67WM runs the owned flight and publishes its outcome. The
 // flight is released even on panic, so one bad read cannot wedge every
 // later caller on a channel that never closes.
-func (r *ExplorerReader) refreshCap67WM(ctx context.Context, flight chan struct{}) (wm uint32, err error) {
+func (r *ExplorerReader) refreshCap67WM(ctx context.Context, flight chan struct{}) (cov Cap67Coverage, err error) {
 	completed := false
 	defer func() {
 		r.cap67WMMu.Lock()
@@ -111,7 +127,7 @@ func (r *ExplorerReader) refreshCap67WM(ctx context.Context, flight chan struct{
 		switch {
 		case !completed:
 		case err == nil:
-			r.cap67WM, r.cap67WMAt, r.cap67WMErr = wm, now, nil
+			r.cap67Cov, r.cap67WMAt, r.cap67WMErr = cov, now, nil
 		case !errors.Is(ctx.Err(), context.Canceled):
 			// A caller's own disconnect says nothing about the store; a
 			// deadline or backend error does, and backs everyone off.
@@ -121,9 +137,9 @@ func (r *ExplorerReader) refreshCap67WM(ctx context.Context, flight chan struct{
 		r.cap67WMMu.Unlock()
 		close(flight)
 	}()
-	wm, err = cap67WatermarkOn(ctx, r.conn)
+	cov, err = cap67CoverageOn(ctx, r.conn)
 	completed = true
-	return wm, err
+	return cov, err
 }
 
 // ErrCap67MovementsHole reports a REFUSED watermark advance: the lake does
@@ -275,3 +291,131 @@ const cap67WindowEventCensusQuery = `
 			GROUP BY ledger_seq
 		)),
 		(SELECT toUInt64(count()) FROM stellar.contract_events WHERE ledger_seq BETWEEN ? AND ?)`
+
+// Supply-kind coverage rows in stellar.cap67_movements_watermark. Mint, burn
+// and clawback joined the derive after deployments had advanced the main
+// watermark over transfer-only windows, so the ledgers derived with them form
+// their own range [from, thru]: from only moves down (read with min) and thru
+// only up (read with max), so unmerged RMT rows never misreport it.
+const (
+	cap67SupplyFromName = "cap67_movements_supply_from"
+	cap67SupplyThruName = "cap67_movements_supply_thru"
+)
+
+// Cap67Coverage is the derive's progress in one read: Thru is the main
+// watermark; [SupplyFrom, SupplyThru] the contiguous range also derived with
+// mint, burn and clawback (SupplyFrom 0 = none yet).
+type Cap67Coverage struct {
+	Thru       uint32
+	SupplyFrom uint32
+	SupplyThru uint32
+}
+
+// SupplyRange is the supply-kind range clamped to the main watermark; ok is
+// false when it is empty.
+func (c Cap67Coverage) SupplyRange() (from, thru uint32, ok bool) {
+	thru = min(c.SupplyThru, c.Thru)
+	if c.SupplyFrom == 0 || thru < c.SupplyFrom {
+		return 0, 0, false
+	}
+	return c.SupplyFrom, thru, true
+}
+
+const cap67CoverageQuery = `SELECT
+	maxIf(thru_ledger, name = 'cap67_movements'),
+	minIf(thru_ledger, name = '` + cap67SupplyFromName + `'),
+	maxIf(thru_ledger, name = '` + cap67SupplyThruName + `')
+FROM stellar.cap67_movements_watermark`
+
+func cap67CoverageOn(ctx context.Context, conn driver.Conn) (Cap67Coverage, error) {
+	var c Cap67Coverage
+	if err := conn.QueryRow(ctx, cap67CoverageQuery).Scan(&c.Thru, &c.SupplyFrom, &c.SupplyThru); err != nil {
+		if isSchemaAbsent(err) {
+			return Cap67Coverage{}, nil // table not provisioned — feed not enabled
+		}
+		return Cap67Coverage{}, fmt.Errorf("clickhouse: cap67 coverage: %w", err)
+	}
+	return c, nil
+}
+
+// Cap67MovementsCoverage reads the derive's progress uncached (the derive
+// job's view; the API reads it through ExplorerReader's cache).
+func Cap67MovementsCoverage(ctx context.Context, addr string) (Cap67Coverage, error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return Cap67Coverage{}, err
+	}
+	defer func() { _ = conn.Close() }()
+	return cap67CoverageOn(ctx, conn)
+}
+
+// ExtendCap67SupplyCoverage records that [lo, hi] was derived with the supply
+// kinds. The range grows only by a window that overlaps or abuts it, so a
+// stretch derived transfer-only (by an older binary) is never claimed, and
+// only once the newly claimed ledgers are proven present with all their
+// events, as for the main watermark. A first window writes from before thru:
+// a crash between them leaves an empty range at from, which never over-claims.
+func ExtendCap67SupplyCoverage(ctx context.Context, addr string, lo, hi uint32) error {
+	if lo == 0 || hi < lo {
+		return fmt.Errorf("clickhouse: cap67 supply window [%d,%d] is not a ledger range (genesis is ledger 1)", lo, hi)
+	}
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	return extendCap67SupplyCoverageOn(ctx, conn, lo, hi)
+}
+
+func extendCap67SupplyCoverageOn(ctx context.Context, conn driver.Conn, lo, hi uint32) error {
+	cov, err := cap67CoverageOn(ctx, conn)
+	if err != nil {
+		return err
+	}
+	from := cov.SupplyFrom
+	if from == 0 {
+		if err := cap67WindowProven(ctx, conn, lo, hi); err != nil {
+			return err
+		}
+		if err := setCap67SupplyBound(ctx, conn, cap67SupplyFromName, lo); err != nil {
+			return err
+		}
+		return setCap67SupplyBound(ctx, conn, cap67SupplyThruName, hi)
+	}
+	thru := max(cov.SupplyThru, from-1)
+	if lo > thru+1 || hi+1 < from {
+		return nil
+	}
+	if lo < from {
+		if err := cap67WindowProven(ctx, conn, lo, from-1); err != nil {
+			return err
+		}
+		if err := setCap67SupplyBound(ctx, conn, cap67SupplyFromName, lo); err != nil {
+			return err
+		}
+	}
+	if hi > thru {
+		if err := cap67WindowProven(ctx, conn, thru+1, hi); err != nil {
+			return err
+		}
+		return setCap67SupplyBound(ctx, conn, cap67SupplyThruName, hi)
+	}
+	return nil
+}
+
+// cap67WindowProven errors unless [lo, hi] holds every ledger and every
+// event those ledgers declare.
+func cap67WindowProven(ctx context.Context, conn driver.Conn, lo, hi uint32) error {
+	if err := cap67WindowContiguous(ctx, conn, lo, hi); err != nil {
+		return err
+	}
+	return cap67WindowEventsPresent(ctx, conn, lo, hi)
+}
+
+func setCap67SupplyBound(ctx context.Context, conn driver.Conn, name string, ledger uint32) error {
+	const q = `INSERT INTO stellar.cap67_movements_watermark (name, thru_ledger) VALUES (?, ?)`
+	if err := conn.Exec(ctx, q, name, ledger); err != nil {
+		return fmt.Errorf("clickhouse: set %s %d: %w", name, ledger, err)
+	}
+	return nil
+}

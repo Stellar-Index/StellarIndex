@@ -1583,7 +1583,10 @@ is a lightweight documentation sign-off, not open work.
 **Amended 2026-09-28 (#346):** PRV-1 is superseded. Account erasure and
 export were built in GH #809 (`internal/accounterasure`, migration 0188);
 the operator procedure and the backup/snapshot copies an erasure cannot
-reach are in `runbooks/account-erasure.md`.
+reach are in `runbooks/account-erasure.md`. Retention is keep-indefinitely
+with pseudonymisation on erasure; identity checks and the access,
+correction, restriction, objection and single-member erasure procedures
+are in `runbooks/privacy-rights-requests.md`.
 
 ---
 
@@ -1718,6 +1721,16 @@ were all found to be done or half-done once checked).
     Reopen only if a dormant-pool audit shows a material gap. The seed
     would then copy `supply seed-claimable-balances`.
 13. `accounts/{g}/trades` windowing; movements 11-month gap; wasm full-scan.
+    **DECIDED.** Movements gap closed on measurement (13b, W8 box above);
+    wasm full-scan fixed (`509d1d83`). Trades: deep per-account history is
+    served from an account-keyed ClickHouse table, `stellar.trades_by_account`
+    (ADR-0048 serve-by-query-shape, the `account_movements` pattern). Rejected:
+    taker/maker in `trades`' `compress_segmentby` (recompresses every chunk and
+    splits the `base_asset, quote_asset, source` segments the pair reads ride),
+    and keeping the bounded horizon as the v1 contract (the account page must
+    cover the account's whole lifetime). Until that table ships, `/trades`
+    floors at the uncompressed horizon and its `note` says so. The build (DDL,
+    writer, reader, OpenAPI) is its own slice with a plan review.
 14. ADR-0017 contract 4 never runs; archive `chmod o+rx` one-off.
 15. CI/test gaps: `lint-metric-refs` accepts comments; TWAP CAGG 5-month
     coverage; revocation drift guard misses the cache-hit path; no
@@ -4751,7 +4764,8 @@ are obsolete — repo has been public since 2026-07-03):
     companion): 24 of its 35 rows were done and never struck — rows 1 and 19
     closed on the day it was compiled (`d1cd18ac`, `a1c5c2e5`), rows 2 and 5
     two days later (`f75ab4b2`, `ef278218`). Still-open threads carry here:
-    **#7 → W8-13** (needs the decision), **#12 residual (r1
+    **#7 → W8-13** (decided: `stellar.trades_by_account` in ClickHouse; see
+    W8-13), **#12 residual (r1
     `[supply].sac_wrappers`) → W2 + an r1 config confirm**, **#14 → W5.4**,
     **#15 → W8-12** (ACCEPTED 2026-10-02), **#18 residual (MinBatchLimit wedge) → W8-9**, **#22
     residual → W6.5**, **#31/#34 → `audit-remediation-operator-actions.md`**,

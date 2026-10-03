@@ -135,6 +135,7 @@ half of the erasure already happened.
 
 ## Related
 
+- [`privacy-rights-requests.md`](privacy-rights-requests.md) — identity checks and every other rights request (access, correction, restriction, objection, single-member erasure)
 - [`docs/architecture/platform-spec.md` §8.3](../../architecture/platform-spec.md) — the built behaviour
 - [`migrations/0188_account_erasure.up.sql`](../../../migrations/0188_account_erasure.up.sql) — the audit exception and the slug tombstone
 - [`admin-audit-write-failing.md`](admin-audit-write-failing.md) — the audit sink the export and staff rows depend on

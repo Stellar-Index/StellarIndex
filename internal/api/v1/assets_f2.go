@@ -229,11 +229,10 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// declaration. applySep1Overlay (which runs before applyF2Fields
 	// in handleAssetGet) stamped those fields on detail in DISPLAY
 	// units; the resolver scales them to raw units by
-	// detail.Decimals. An applied overlay relabels
-	// supply_basis="sep1_declared_max" so consumers can see the cap
+	// detail.Decimals. An applied overlay sets
+	// max_supply_basis="sep1_declared_max" so consumers can see the cap
 	// (and the FDV derived from it) is issuer-self-declared, not
-	// on-chain enforced. Wired 2026-07-05 — previously supply.Overlay
-	// had zero callers (F-1354 / D2-03).
+	// on-chain enforced; supply_basis keeps naming the circulating policy.
 	if haveSnap && snap.MaxSupply == nil {
 		overlaid, applied, err := supply.Overlay(ctx, snap, asset, sep1DeclaredMaxResolver{detail: detail})
 		if err != nil {
@@ -327,6 +326,10 @@ func populateSupplyFields(detail *AssetDetail, snap supply.Supply) {
 	if snap.MaxSupply != nil {
 		v := snap.MaxSupply.String()
 		detail.MaxSupply = &v
+		if snap.MaxSupplyBasis != "" {
+			b := string(snap.MaxSupplyBasis)
+			detail.MaxSupplyBasis = &b
+		}
 	}
 	if snap.Basis != "" {
 		v := string(snap.Basis)
