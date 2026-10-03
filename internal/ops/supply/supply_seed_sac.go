@@ -213,8 +213,9 @@ func (r sacSeedRun) seed(ctx context.Context, progress *seedProgress) error {
 			IsRemoval:  seed.IsRemoval,
 			// The seed is the authoritative reconstructed FINAL state for its
 			// ledger (latest lake entry), so it sits at the top of the
-			// intra-ledger order — a live per-ledger change can never
-			// overwrite it, a re-seed stays corrective (audit-2026-07-16 C2-6).
+			// intra-ledger order — unbeatable within its walk_version (a
+			// stamped re-derive under a higher version replaces it), so a live
+			// per-ledger change can't overwrite it and a re-seed stays corrective.
 			IntraLedgerSeq: timescale.SeedIntraLedgerSeq,
 		})
 	})

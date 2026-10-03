@@ -42,6 +42,11 @@ func (f *fakeAccountStore) Create(_ context.Context, req auth.CreateAPIKeyReques
 	if f.err != nil {
 		return auth.APIKeyRecord{}, "", f.err
 	}
+	// Record the mint so a later list sees it, as the real store does.
+	if f.listed == nil {
+		f.listed = map[string][]auth.APIKeyRecord{}
+	}
+	f.listed[req.Identifier] = append(f.listed[req.Identifier], f.rec)
 	return f.rec, f.plain, nil
 }
 
