@@ -226,8 +226,8 @@ durable Soroban events; backfill decodes identically to live, subject to
 ## Update cadence / staleness
 
 A feed may go quiet up to 24h if the underlying price hasn't moved > 0.2%.
-The decoder publishes `DefaultResolutionSeconds = 86400`, which seeds
-each RedStone asset's default staleness budget at 10× that — the
+The decoder publishes `DefaultResolutionSeconds = 86400`, which declares
+heartbeat + 2 h grace (26 h) as each RedStone asset's default staleness budget, via `obs.DeclareOracleHeartbeat` — the
 threshold `oracle-stale` compares against, so a legitimately quiet feed
 does not fire. Since #478 that budget is a per-(source, asset) gauge
 (`stellarindex_oracle_staleness_budget_seconds`) and a single asset

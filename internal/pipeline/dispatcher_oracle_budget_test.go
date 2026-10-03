@@ -99,10 +99,13 @@ func TestBuildDispatcher_DeclaresBudgetForEveryOracleSource(t *testing.T) {
 					"resolution, so stellarindex_oracle_stale can never fire for any "+
 					"of its assets", source)
 			}
-			if want := obs.OracleStaleBudgetMultiplier * fx.resolutionSeconds; got != want {
-				t.Errorf("budget for %q = %v, want %v (%d × %v declared resolution — "+
-					"the pre-#478 threshold)",
-					source, got, want, obs.OracleStaleBudgetMultiplier, fx.resolutionSeconds)
+			want := obs.OracleStaleBudgetMultiplier * fx.resolutionSeconds
+			if source == redstone.SourceName {
+				want = fx.resolutionSeconds + obs.OracleHeartbeatGrace
+			}
+			if got != want {
+				t.Errorf("budget for %q = %v, want %v (declared resolution %v)",
+					source, got, want, fx.resolutionSeconds)
 			}
 			if reg := external.Lookup(source).OracleResolution.Seconds(); reg != fx.resolutionSeconds {
 				t.Errorf("external.Registry[%q].OracleResolution = %vs, but the dispatcher "+
