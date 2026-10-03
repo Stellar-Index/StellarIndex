@@ -76,6 +76,13 @@ superseded_by: null
 > this row's presence. Migration 0182 corrects the stored catalog comment
 > to match.
 
+> **Reality note (2026-10-02, GH #921).** The served `tip` is resolved
+> from the live `ledgerstream` cursor, so `coverage = 1` means "verified
+> to where ingest stopped", not to the network tip. `/v1/coverage`
+> therefore sets `flags.stale` when that cursor has not been written for
+> 10 minutes, as well as on verdict age and on the cursor-vs-verdict
+> ledger gap (`internal/api/v1/coverage_verdicts.go::coverageVerdictsStale`).
+
 ## Context
 
 We want **100% confidence that we have 100% coverage** of every

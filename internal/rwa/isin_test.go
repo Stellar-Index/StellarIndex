@@ -157,3 +157,19 @@ func TestProseAnchorAssetIsStillRefused(t *testing.T) {
 		t.Errorf("reject = %q, want %q", v.Reject, RejectNoInstrumentClaim)
 	}
 }
+
+// Every ISIN comparison keys on one form, so a declaration differing only
+// in case or surrounding space names the same security.
+func TestCanonicalISIN(t *testing.T) {
+	for in, want := range map[string]string{
+		"LU2900381208":    "LU2900381208",
+		" lu2900381208\t": "LU2900381208",
+		"LU2900381209":    "",
+		"FOBXX":           "",
+	} {
+		got, ok := CanonicalISIN(in)
+		if got != want || ok != (want != "") {
+			t.Errorf("CanonicalISIN(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+	}
+}

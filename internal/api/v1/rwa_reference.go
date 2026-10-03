@@ -510,10 +510,20 @@ type rwaReferences struct {
 	// fundNAV holds the latest dollar NAV per fund ticker, from the one
 	// source the fund bindings name. Keyed by the ticker verbatim.
 	fundNAV map[string]rwaReference
+	// globalUSD holds the newest aggregator USD price per global ticker
+	// (crypto:USDC …), keyed by the canonical asset id. Read by the asset
+	// surfaces' global-market fill ([Server.applyGlobalMarket]), not here.
+	globalUSD map[string]rwaReference
 	// available is false when no oracle reader is wired or the read
 	// failed. Distinguished from "the oracles publish nothing for these
 	// instruments", which is a finding a failed read may not make.
 	available bool
+}
+
+// addSideFeed files u under fundNAV or globalUSD and reports whether
+// either claimed it, so the instrument-feed rules below never see it.
+func (r *rwaReferences) addSideFeed(u canonical.OracleUpdate) bool {
+	return rwaAddFundNAV(r.fundNAV, u) || addGlobalMarketRow(r.globalUSD, u)
 }
 
 // rwaReferenceSnapshot reduces one oracle-stream read to the references
@@ -531,10 +541,11 @@ func rwaReferenceSnapshotFrom(updates []canonical.OracleUpdate) rwaReferences {
 		byFeed:    map[string]rwaReference{},
 		nonUSD:    map[string]string{},
 		fundNAV:   map[string]rwaReference{},
+		globalUSD: map[string]rwaReference{},
 		available: true,
 	}
 	for _, u := range updates {
-		if rwaAddFundNAV(out.fundNAV, u) {
+		if out.addSideFeed(u) {
 			continue
 		}
 		// Namespace gate: only ADR-0028 instrument feeds. Whether any

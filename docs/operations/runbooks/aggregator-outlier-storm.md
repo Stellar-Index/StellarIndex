@@ -208,7 +208,7 @@ Capture for the postmortem:
 ## Changelog
 
 - 2026-04-25 — initial draft alongside the aggregator metrics
-  PR #26 wire-up.
+  commit 5f64f5e7b wire-up.
 - 2026-08-24 — per-pair `pair` label on the drop counter (task #29);
   spam-wave signature section from the 2026-08-14 token-farm storm.
 - 2026-08-26 — **rescope**: replaced the self-poisoning

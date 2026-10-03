@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -51,6 +52,68 @@ func TestSignup_KeyIsMeteredAtFreeTierQuota(t *testing.T) {
 	}
 	if want := platform.TierFree.MaxMonthlyQuota(); sub.MonthlyQuota != want {
 		t.Fatalf("signup key MonthlyQuota = %d, want %d (0 ships an unmetered key)", sub.MonthlyQuota, want)
+	}
+}
+
+// TestSignup_KeyAgesOutWhenIdle asserts an anonymous signup key is
+// written with the sliding idle TTL, so an abandoned one is reaped
+// instead of occupying the credential keyspace forever.
+func TestSignup_KeyAgesOutWhenIdle(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	ts := newSignupTestServer(t, auth.NewRedisAPIKeyStore(rdb), newFakeSignupTracker())
+	resp := postSignup(t, ts, `{"email":"idle@example.com","label":"app"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /v1/signup status = %d, want 200", resp.StatusCode)
+	}
+
+	records := 0
+	for _, k := range mr.Keys() {
+		if !strings.HasPrefix(k, "apikey:") {
+			continue
+		}
+		records++
+		if got := mr.TTL(k); got != auth.MirroredKeyIdleTTL {
+			t.Errorf("%s TTL = %v, want %v (a TTL-less signup key is never reaped)", k, got, auth.MirroredKeyIdleTTL)
+		}
+	}
+	if records != 1 {
+		t.Fatalf("found %d apikey: records after one signup, want 1", records)
+	}
+}
+
+// TestSignup_ReSignupAfterKeyLapses — once the idle signup key has aged
+// out, the same email must be able to sign up again; while it is live,
+// a second signup is still refused.
+func TestSignup_ReSignupAfterKeyLapses(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	ts := newSignupTestServer(t, auth.NewRedisAPIKeyStore(rdb), auth.NewRedisSignupTracker(rdb))
+	const body = `{"email":"lapse@example.com","label":"app"}`
+	signup := func() int {
+		resp := postSignup(t, ts, body)
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	if got := signup(); got != http.StatusOK {
+		t.Fatalf("first signup status = %d, want 200", got)
+	}
+	if got := signup(); got != http.StatusConflict {
+		t.Fatalf("signup while key is live status = %d, want 409", got)
+	}
+
+	mr.FastForward(auth.MirroredKeyIdleTTL + 24*time.Hour)
+	if got := signup(); got != http.StatusOK {
+		t.Fatalf("signup after key lapsed status = %d, want 200 (email locked out with no key)", got)
+	}
+	if got := signup(); got != http.StatusConflict {
+		t.Fatalf("signup after re-signup status = %d, want 409", got)
 	}
 }
 

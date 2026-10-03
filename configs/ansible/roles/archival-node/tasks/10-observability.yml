@@ -6,7 +6,7 @@
 # Promtail ships journald logs to the local Loki (:3100).
 
 # Node-exporter source-of-truth: the Debian package
-# `prometheus-node-exporter` (#33 cutover 2026-05-20). Previously
+# `prometheus-node-exporter` (176596608 cutover 2026-05-20). Previously
 # we hand-downloaded /usr/local/bin/node_exporter and a custom
 # systemd unit, which (a) silently squatted :9100 against any
 # parallel-installed package, (b) didn't auto-update for CVE
@@ -122,13 +122,13 @@
     enabled: true
     daemon_reload: true
 
-# Idempotent cleanup for boxes that ran the old (pre-#33)
+# Idempotent cleanup for boxes that ran the old (pre-176596608)
 # playbook: stop + disable the hand-rolled node_exporter.service
 # so the two binaries no longer collide on :9100. The unit file +
 # /usr/local/bin/node_exporter binary are left in place as a
 # zero-downtime rollback path (`systemctl stop
 # prometheus-node-exporter && systemctl start node_exporter`).
-- name: Stop legacy node_exporter.service (#33 cutover)
+- name: Stop legacy node_exporter.service (176596608 cutover)
   ansible.builtin.systemd:
     name: node_exporter.service
     state: stopped
@@ -1465,14 +1465,32 @@
       # schedule_interval rides along so the alert can judge a job by
       # the runs it was scheduled for, not by one absolute count that a
       # slow enough job can never reach.
+      #
+      # So do the failures that were a concurrent refresh rejecting the
+      # policy (an operator replay or backfill refreshing the same CAGG
+      # window): the job body is fine and the next tick retries, but
+      # total_failures cannot tell them apart and the alert's 3-day arm
+      # held for three days after one such collision. Counted over the
+      # alert's own 6h and 3d windows, never as a counter: job_errors is
+      # pruned by a retention job, and a pruned count would read as a
+      # counter reset. A persistent collision still surfaces as cagg_stale.
       q "SELECT j.proc_name, COALESCE(j.hypertable_name,'-'), js.job_id, js.total_failures,
-                EXTRACT(epoch FROM j.schedule_interval)::bigint
+                EXTRACT(epoch FROM j.schedule_interval)::bigint, cr.n6h, cr.n3d
          FROM timescaledb_information.job_stats js
-         JOIN timescaledb_information.jobs j USING (job_id)"
+         JOIN timescaledb_information.jobs j USING (job_id)
+         CROSS JOIN LATERAL (
+           SELECT count(*) FILTER (WHERE je.finish_time > now() - interval '6 hours') AS n6h,
+                  count(*) AS n3d
+             FROM timescaledb_information.job_errors je
+            WHERE je.job_id = js.job_id
+              AND je.finish_time > now() - interval '3 days'
+              AND je.err_message ILIKE '%concurrent refresh%') cr"
       rows=0
       bad=0
       intervals=""
-      while IFS='|' read -r proc ht jid fails iv; do
+      collisions6h=""
+      collisions3d=""
+      while IFS='|' read -r proc ht jid fails iv cr6h cr3d; do
         [ -n "${jid:-}" ] || continue
         # job_id is a LABEL here, but it is still read from the reply, so
         # a command tag would land in it and shift every later field —
@@ -1491,11 +1509,25 @@
         else
           bad=$((bad + 1))
         fi
+        # Absent collision gauges make the alert fall back to the raw
+        # counter: louder, never quieter.
+        if is_num "${cr6h:-}" && is_num "${cr3d:-}"; then
+          collisions6h+="stellarindex_timescale_job_concurrent_refresh_failures_6h{job_id=\"$jid\",proc=\"$proc\",hypertable=\"$ht\"} $cr6h"$'\n'
+          collisions3d+="stellarindex_timescale_job_concurrent_refresh_failures_3d{job_id=\"$jid\",proc=\"$proc\",hypertable=\"$ht\"} $cr3d"$'\n'
+        else
+          bad=$((bad + 1))
+        fi
       done <<< "$Q_OUT" >> "$TMP"
       {
         echo "# HELP stellarindex_timescale_job_schedule_interval_seconds Configured schedule_interval per TimescaleDB background job."
         echo "# TYPE stellarindex_timescale_job_schedule_interval_seconds gauge"
         printf '%s' "$intervals"
+        echo "# HELP stellarindex_timescale_job_concurrent_refresh_failures_6h Failed runs per job in the last 6h whose job_errors message is a concurrent CAGG refresh."
+        echo "# TYPE stellarindex_timescale_job_concurrent_refresh_failures_6h gauge"
+        printf '%s' "$collisions6h"
+        echo "# HELP stellarindex_timescale_job_concurrent_refresh_failures_3d Failed runs per job in the last 3d whose job_errors message is a concurrent CAGG refresh."
+        echo "# TYPE stellarindex_timescale_job_concurrent_refresh_failures_3d gauge"
+        printf '%s' "$collisions3d"
       } >> "$TMP"
       [ "$bad" -eq 0 ] || Q_OK=0
       health job_stats "$Q_OK" "$rows"

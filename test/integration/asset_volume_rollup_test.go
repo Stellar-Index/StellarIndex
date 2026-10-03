@@ -11,9 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// liveAsset24hVolSQL is the pre-#43 single-asset per-request SUM the
+// liveAsset24hVolSQL is the pre-e0fbbbc3b single-asset per-request SUM the
 // per_asset_24h_vol CTE used to inline. The rollup must reproduce it
-// byte-for-byte (only NUMERIC, ADR-0003) — the #43 change moved the
+// byte-for-byte (only NUMERIC, ADR-0003) — the e0fbbbc3b change moved the
 // compute off the request path, not the value.
 const liveAsset24hVolSQL = `
 SELECT COALESCE(SUM(volume_usd), 0)::text
@@ -31,7 +31,7 @@ SELECT COALESCE(SUM(volume_usd), 0)::text
        AND volume_usd IS NOT NULL
   ) t`
 
-// TestAssetVolumeRollup_MatchesLiveSum proves the #43 rollup end-to-end:
+// TestAssetVolumeRollup_MatchesLiveSum proves the e0fbbbc3b rollup end-to-end:
 // RefreshAssetVolume24h populates asset_volume_24h with values that are
 // byte-identical to the old inline per-request SUM over prices_1m, the
 // refresh is idempotent, and an asset that ages out of the 24h window is

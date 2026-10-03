@@ -784,6 +784,8 @@ jobs:
         run: ./scripts/dev/lint-changed-test.sh
       - name: doctor self-test
         run: ./scripts/dev/doctor-test.sh
+      - name: verify-r1-sync self-test
+        run: ./scripts/dev/verify-r1-sync-test.sh
       - name: lint-external-channels
         # A repository setting or DNS name that is switched off cannot be
         # seen from inside the tree, so three published channels shipped
@@ -876,6 +878,11 @@ jobs:
         # production and `main` is unprotected, so it must run numbering,
         # compat, immutability and commands — not compat alone.
         run: ./scripts/ci/deploy-migration-gate-coverage-test.sh
+      - name: migration follow-up gate self-test
+        # A migration that blanks data names its rebuild in a
+        # `-- REQUIRED-FOLLOWUP:` line; deploy.yml must refuse to start
+        # until those are acknowledged.
+        run: ./scripts/ci/migration-followup-gate-test.sh
       - name: deploy served-path smoke asserts readiness on every region
         # GH-910: runs the real step against stub curl/ssh — /v1/readyz
         # (not the constant-body /v1/healthz) must gate, and testnet and
@@ -947,11 +954,20 @@ jobs:
         # Postgres worker headroom pair and the ClickHouse drop-guard
         # ceiling, including its lockstep with the ansible role default.
         run: bash scripts/ops/config-assertions_test.sh
+      - name: rederive-from driver tests
+        # Drives the parallel re-derive driver with a fake ops binary: each
+        # window backfilled once, the seed/rebuild chain gated on a complete
+        # lake, and a failed or killed run resuming without redoing work.
+        run: bash scripts/ops/rederive-from-test.sh
       - name: pre-launch-check heartbeat-URL tests
         # Every Healthchecks.io URL wire-paging.md has the operator create
         # must FAIL pre-launch-check.sh when missing: "0 failures" is that
         # runbook's acceptance test. Stubbed host tools; runs anywhere.
         run: bash scripts/ops/pre-launch-check-test.sh
+      - name: protocol-upgrade drill fail-closed tests
+        # Stubbed curl; pins that the drill FAILs on a mismatch, an HTTP
+        # error, a truncated list and an old protocol.
+        run: bash scripts/ops/protocol-upgrade-drill-test.sh
       - name: lint-migrations back-numbering self-test
         # GH-1164: a new migration numbered into a gap below the head is
         # invisible to `migrate up` on every deployment already past it.
@@ -1771,7 +1787,7 @@ jobs:
   monitoring-rules:
     name: prometheus rule validation
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     needs: [preflight]
     # §B: cheap — kept unconditional, same reasoning as doc-checks above.
     # Validates BOTH deploy/monitoring/rules/*.yml (multi-host) and
@@ -2451,6 +2467,12 @@ jobs:
         # firewall pointed at the old port. Structural grep, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-prometheus-port-var-test.sh
+      - name: patroni etcd TLS render test
+        # etcd and Patroni's etcd3 client must render https with mutual cert
+        # auth by default, and the config tasks must refuse missing PEM
+        # material rather than fall back to plaintext.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-patroni-etcd-tls-test.sh
       - name: node-exporter-collectors package install test (T630)
         # The apt/nvme systemd drop-ins repoint ExecStart at
         # /usr/share/prometheus-node-exporter-collectors/{apt_info,

@@ -51,7 +51,10 @@ func TestLakeReadersAreDialledWithRetry(t *testing.T) {
 	// single synchronous dial so a bad config fails -dry-run instead of
 	// only surfacing at a real start. The real boot path does not use
 	// this call; it goes through newLazyCloseTimeReader (GH-902) above.
-	knownDirectDials := []string{"NewExplorerReader"}
+	// Plus the SEP-41 genesis auto-seeder's NewSupplyReader: dialled per
+	// seed attempt and failed closed, so a cold lake is retried on the next
+	// attempt rather than disabling anything for the process lifetime.
+	knownDirectDials := []string{"NewExplorerReader", "NewSupplyReader"}
 	if got := c.directConstructors(); !slices.Equal(got, knownDirectDials) {
 		t.Errorf("direct lake dials in package main = %v, want %v:\n%s\na new one is a "+
 			"component that gives up on a cold lake for its whole process lifetime; either "+

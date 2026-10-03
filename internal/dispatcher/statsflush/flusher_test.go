@@ -251,6 +251,21 @@ func TestFlushAt_PromotesEvictedKeysUnreadable(t *testing.T) {
 	}
 }
 
+// TestFlushAt_PromotesLedgerUpgradeEntries pins that upgrade entries reach
+// the counter once, and a second tick at the same total adds nothing.
+func TestFlushAt_PromotesLedgerUpgradeEntries(t *testing.T) {
+	before := testutil.ToFloat64(obs.DispatcherLedgerUpgradeEntriesTotal)
+	src := &stubStatsSource{stats: dispatcher.Stats{LedgerUpgradeEntries: 3}}
+	f := New(src, &fakeStatsWriter{}, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)), Options{Interval: 5 * time.Minute})
+
+	f.flushAt(context.Background(), time.Now())
+	f.flushAt(context.Background(), time.Now())
+
+	if got := testutil.ToFloat64(obs.DispatcherLedgerUpgradeEntriesTotal) - before; got != 3 {
+		t.Errorf("DispatcherLedgerUpgradeEntriesTotal delta = %v, want 3", got)
+	}
+}
+
 // TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch is the
 // regression test for T110/RLT-135: the end-of-flush snapshot used to
 // omit EntryMetaUnsupported, so f.last.EntryMetaUnsupported stayed 0

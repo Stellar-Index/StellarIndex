@@ -17,6 +17,8 @@ export function provenanceFromBasis(
   switch (basis) {
     case undefined:
       return direct;
+    case 'global_market':
+      return 'global_market';
     case 'declared_peg':
       return 'declared_peg';
     case 'transitive':

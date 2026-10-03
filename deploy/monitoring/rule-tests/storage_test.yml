@@ -1545,6 +1545,124 @@ tests:
         alertname: stellarindex_timescale_job_failures_climbing
         exp_alerts: []
 
+  # ── failures that were a concurrent CAGG refresh are discounted ──
+  # r1's prices_1m refresh failed 6 times in one hour with "could not
+  # refresh continuous aggregate due to a concurrent refresh" while an
+  # operator replay refreshed the same window, and the 3-day arm then held
+  # for three days. One shape per job:
+  #   1088  six collisions, nothing else         — quiet;
+  #   1089  six collisions plus three real ones  — the real three still fire;
+  #   1090  six failures, collision gauge absent — falls back to the raw
+  #         count, so a missing gauge can only make the alert louder;
+  #   1091  twelve collisions in an hour         — quiet on the 6h arm too.
+  - interval: 1m
+    name: concurrent-refresh failures are discounted, real ones and a missing gauge still fire
+    input_series:
+      - series: 'stellarindex_timescale_job_failures_total{job="node_exporter",instance="r1:9100",job_id="1088",proc="policy_refresh_continuous_aggregate",hypertable="prices_1m"}'
+        values: '0x600 1x10 2x10 3x10 4x10 5x10 6x3600'
+      - series: 'stellarindex_timescale_job_concurrent_refresh_failures_6h{job="node_exporter",instance="r1:9100",job_id="1088",proc="policy_refresh_continuous_aggregate",hypertable="prices_1m"}'
+        values: '0x600 1x10 2x10 3x10 4x10 5x10 6x300 0x3300'
+      - series: 'stellarindex_timescale_job_concurrent_refresh_failures_3d{job="node_exporter",instance="r1:9100",job_id="1088",proc="policy_refresh_continuous_aggregate",hypertable="prices_1m"}'
+        values: '0x600 1x10 2x10 3x10 4x10 5x10 6x3600'
+      - series: 'stellarindex_timescale_job_failures_total{job="node_exporter",instance="r1:9100",job_id="1089",proc="policy_refresh_continuous_aggregate",hypertable="prices_5m"}'
+        values: '0x600 1x10 2x10 3x10 4x10 5x10 6x60 7x60 8x60 9x3600'
+      - series: 'stellarindex_timescale_job_concurrent_refresh_failures_6h{job="node_exporter",instance="r1:9100",job_id="1089",proc="policy_refresh_continuous_aggregate",hypertable="prices_5m"}'
+        values: '0x600 1x10 2x10 3x10 4x10 5x10 6x300 0x3300'
+      - series: 'stellarindex_timescale_job_concurrent_refresh_failures_3d{job="node_exporter",instance="r1:9100",job_id="1089",proc="policy_refresh_continuous_aggregate",hypertable="prices_5m"}'
+        values: '0x600 1x10 2x10 3x10 4x10 5x10 6x3600'
+      - series: 'stellarindex_timescale_job_failures_total{job="node_exporter",instance="r1:9100",job_id="1090",proc="policy_refresh_continuous_aggregate",hypertable="prices_15m"}'
+        values: '0x600 1x10 2x10 3x10 4x10 5x10 6x3600'
+      # 1091: twelve collisions inside an hour, past the 6h arm's > 10.
+      - series: 'stellarindex_timescale_job_failures_total{job="node_exporter",instance="r1:9100",job_id="1091",proc="policy_refresh_continuous_aggregate",hypertable="prices_1h"}'
+        values: '0x60 0+1x12 12x4200'
+      - series: 'stellarindex_timescale_job_concurrent_refresh_failures_6h{job="node_exporter",instance="r1:9100",job_id="1091",proc="policy_refresh_continuous_aggregate",hypertable="prices_1h"}'
+        values: '0x60 0+1x12 12x360 0x3840'
+      - series: 'stellarindex_timescale_job_concurrent_refresh_failures_3d{job="node_exporter",instance="r1:9100",job_id="1091",proc="policy_refresh_continuous_aggregate",hypertable="prices_1h"}'
+        values: '0x60 0+1x12 12x4200'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: stellarindex_timescale_job_failures_climbing
+        exp_alerts: []
+      - eval_time: 20h
+        alertname: stellarindex_timescale_job_failures_climbing
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              job_id: "1089"
+              proc: policy_refresh_continuous_aggregate
+              hypertable: prices_5m
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-job-failures-climbing.md
+              summary: "TimescaleDB job policy_refresh_continuous_aggregate failing repeatedly (prices_5m)"
+              description: |
+                Job 1089 (policy_refresh_continuous_aggregate on
+                prices_5m) is failing repeatedly: more than 10 runs in
+                6 hours, 3 or more runs in 3 days, or at least half of the runs its
+                schedule_interval gave it in 3 days. TimescaleDB retries on the next
+                tick, so the caggs may look fresh and no staleness ticket will fire —
+                that is exactly how the 2026 background-worker starvation stayed
+                invisible.
+
+                The three arms are not redundant. This counter is per job, so a job
+                scheduled every T can accrue at most 6h/T failures and the 6h arm is
+                unreachable for anything slower than ~36 minutes — every compression
+                policy and five of the CAGG refresh policies. The 3-day count judges
+                those, but is itself unreachable once T exceeds a day; the
+                schedule_interval arm judges any T, and a job slower than 1.5 days
+                trips it on a single failed run.
+
+                Check max_parallel_workers / timescaledb.max_background_workers
+                headroom first; "failed to start job" in the job_errors view means
+                starvation, not a broken job body.
+
+                The counter above says only that policy_refresh_continuous_aggregate is
+                failing, never why. Query
+                stellarindex_timescale_job_last_failure_reason_info{job_id="1089"}
+                for the most recent job_errors.err_message text without a
+                psql round trip.
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              job_id: "1090"
+              proc: policy_refresh_continuous_aggregate
+              hypertable: prices_15m
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-job-failures-climbing.md
+              summary: "TimescaleDB job policy_refresh_continuous_aggregate failing repeatedly (prices_15m)"
+              description: |
+                Job 1090 (policy_refresh_continuous_aggregate on
+                prices_15m) is failing repeatedly: more than 10 runs in
+                6 hours, 3 or more runs in 3 days, or at least half of the runs its
+                schedule_interval gave it in 3 days. TimescaleDB retries on the next
+                tick, so the caggs may look fresh and no staleness ticket will fire —
+                that is exactly how the 2026 background-worker starvation stayed
+                invisible.
+
+                The three arms are not redundant. This counter is per job, so a job
+                scheduled every T can accrue at most 6h/T failures and the 6h arm is
+                unreachable for anything slower than ~36 minutes — every compression
+                policy and five of the CAGG refresh policies. The 3-day count judges
+                those, but is itself unreachable once T exceeds a day; the
+                schedule_interval arm judges any T, and a job slower than 1.5 days
+                trips it on a single failed run.
+
+                Check max_parallel_workers / timescaledb.max_background_workers
+                headroom first; "failed to start job" in the job_errors view means
+                starvation, not a broken job body.
+
+                The counter above says only that policy_refresh_continuous_aggregate is
+                failing, never why. Query
+                stellarindex_timescale_job_last_failure_reason_info{job_id="1090"}
+                for the most recent job_errors.err_message text without a
+                psql round trip.
+
   # ── 14d-review (2026-09-27, extended 2026-09-28): the
   # textfile_producer_stale catch-all false-fires on producer shapes with
   # no dedicated staleness alert: ops_job's pid-orphan siblings, the

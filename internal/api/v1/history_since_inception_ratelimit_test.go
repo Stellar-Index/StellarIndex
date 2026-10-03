@@ -31,6 +31,13 @@ func (r *grainCountingHistoryReader) HistoryPoints(ctx context.Context, pair can
 	return r.stubHistoryReader.HistoryPoints(ctx, pair, granularity, limit)
 }
 
+func (r *grainCountingHistoryReader) HistoryPointsInRange(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time, limit int) ([]v1.HistoryPoint, error) {
+	if granularity == "1m" {
+		r.oneMinuteReads.Add(1)
+	}
+	return r.stubHistoryReader.HistoryPointsInRange(ctx, pair, granularity, from, to, limit)
+}
+
 // sinceInceptionProbe is rejected (missing asset) before any read and
 // answered no-store, so it reports the remainder the request above left.
 const sinceInceptionProbe = "/v1/history/since-inception"

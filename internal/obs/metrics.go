@@ -129,6 +129,7 @@ func registerPricingMetrics() {
 		AggregatorMinUSDVolumeUnvaluableTotal,
 		PriceServeSubstanceWithheldTotal,
 		PriceServeSubstanceUnmeasuredTotal,
+		PriceServeThinAdmittedTotal,
 		PriceServeScamWithheldTotal,
 		PricingGuardTrailingFetchFailedTotal,
 
@@ -310,6 +311,7 @@ func registerAppMetricsTail() {
 		DispatcherTxEventReadErrorsTotal,
 		DispatcherEntryMetaUnsupportedTotal,
 		DispatcherEvictedKeysUnreadableTotal,
+		DispatcherLedgerUpgradeEntriesTotal,
 		SourceUncorroboratedCallsTotal,
 
 		MEVDetectRunsTotal,
@@ -736,7 +738,8 @@ func seedBoundedLabelSeriesTail() {
 	// distinguishable from "never wired".
 	for _, kind := range []string{
 		"tx_read_errors", "tx_event_read_errors", "entry_meta_unsupported",
-		"soroban_fee_meta_unsupported", "tx_read_errors_census", "tx_event_read_errors_census",
+		"soroban_fee_meta_unsupported", "evicted_keys_unreadable", "tx_read_errors_census",
+		"tx_event_read_errors_census",
 	} {
 		ChLiveSinkReadUndercountTotal.WithLabelValues(kind)
 	}
@@ -846,7 +849,7 @@ var HTTPRequestDuration = prometheus.NewHistogramVec(
 //
 // SDEX uses a separate ingest path (trades hypertable, classic
 // not Soroban); its detection lives under {source="sdex",
-// table="trades"} as of rc.88 / PR #3.
+// table="trades"} as of rc.88.
 //
 // Gauge semantics: set to current value on every detector cycle;
 // reset to 0 when the worker finds no gaps >= threshold. NOT a
@@ -1431,6 +1434,16 @@ var DispatcherEvictedKeysUnreadableTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_dispatcher_evicted_keys_unreadable_total",
 		Help: "Ledgers whose state-archival evicted keys failed to read; their evictions were skipped and the evicted entries stay served as live.",
+	},
+)
+
+// DispatcherLedgerUpgradeEntriesTotal — process-wide counter of ledger
+// upgrade entries seen (dispatcher.Stats.LedgerUpgradeEntries). Observed only;
+// no decoder reads upgrade changes.
+var DispatcherLedgerUpgradeEntriesTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dispatcher_ledger_upgrade_entries_total",
+		Help: "Ledger upgrade entries (protocol version, base reserve, config settings) seen in ingested ledgers.",
 	},
 )
 
@@ -2492,7 +2505,7 @@ var UsageRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 
 // ProtocolEventsRollupSweepsTotal — per-sweep outcome counter for the
 // aggregator's protocol-events rollup worker
-// (internal/aggregate/protoeventsrollup, #43), which folds the
+// (internal/aggregate/protoeventsrollup, 78dff337b), which folds the
 // trailing-24h per-source event census into the protocol_events_24h
 // table so /v1/protocols' events_24h column reads a keyed-on-PK lookup
 // instead of a multi-table UNION count per request. Labels:
@@ -2519,7 +2532,7 @@ var ProtocolEventsRollupSweepsTotal = prometheus.NewCounterVec(
 // operators chart `ok` p95/p99 separately from the fail-fast error path.
 //
 // Buckets span 10 ms → 30 s: the census is the multi-second leg the
-// #43 rollup moved off the request path, so watching its p95 here is
+// 78dff337b rollup moved off the request path, so watching its p95 here is
 // how an operator learns the served-tier census is getting heavier.
 var ProtocolEventsRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
@@ -2532,7 +2545,7 @@ var ProtocolEventsRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 
 // AssetVolumeRollupSweepsTotal — per-sweep outcome counter for the
 // aggregator's asset-volume rollup worker
-// (internal/aggregate/assetvolrollup, #43), which folds the trailing-24h
+// (internal/aggregate/assetvolrollup, e0fbbbc3b), which folds the trailing-24h
 // per-asset USD-volume SUM over prices_1m (single-sided: base OR quote)
 // into the asset_volume_24h table so the /v1/assets listing reads a
 // keyed-on-PK lookup instead of the ~256k-row per-request scan the
@@ -2559,7 +2572,7 @@ var AssetVolumeRollupSweepsTotal = prometheus.NewCounterVec(
 // prices_1m + one upsert + one prune), labelled by outcome so operators
 // chart `ok` p95/p99 separately from the fail-fast error path.
 //
-// Buckets span 50 ms → 60 s: this is the heaviest of the two #43
+// Buckets span 50 ms → 60 s: this is the heaviest of the two 24h
 // rollups (an all-asset prices_1m scan), so watching its p95 here is
 // how an operator learns the served-tier volume scan is getting heavier
 // — long before it would have shown up as a slow /v1/assets endpoint.
@@ -2617,7 +2630,7 @@ var AssetCharacterRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 )
 
 // PriceAlertEvalTotal — per-sweep outcome counter for the aggregator's
-// price-alert evaluator (internal/pricealerts, BACKLOG #60), which
+// price-alert evaluator (internal/pricealerts), which
 // checks every enabled price_alerts row against the latest closed 1m
 // VWAP each tick and enqueues account-scoped `price.alert` webhook
 // deliveries when a threshold is crossed. Labels:
@@ -3308,8 +3321,9 @@ var StreamPublishStallTotal = prometheus.NewCounterVec(
 
 // ─── Pricing / oracle metrics ────────────────────────────────────
 
-// PriceStalenessSeconds — per-asset gauge showing how old our
-// latest aggregated-price observation is. Alert fires when >120s.
+// PriceStalenessSeconds — per-(asset, quote) gauge showing how old our
+// latest aggregated-price observation for that pair is. Alert fires
+// when >120s; the quote label names which quote stopped publishing.
 //
 // CARDINALITY WARNING: Stellar has tens of thousands of classic
 // assets. Writers MUST restrict emission to an allow-list (top-N
@@ -3321,9 +3335,9 @@ var StreamPublishStallTotal = prometheus.NewCounterVec(
 var PriceStalenessSeconds = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_price_staleness_seconds",
-		Help: "Age of the most recent aggregated price per asset (seconds). Writers MUST restrict to a top-N allow-list.",
+		Help: "Age of the most recent aggregated price per (asset, quote) pair (seconds). Writers MUST restrict to a top-N allow-list.",
 	},
-	[]string{"asset"},
+	[]string{"asset", "quote"},
 )
 
 // OracleLastUpdateUnix — per-(source, asset) gauge with the Unix
@@ -3940,6 +3954,25 @@ var PriceServeSubstanceUnmeasuredTotal = prometheus.NewCounterVec(
 		Help: "Substance-gate verdicts that could not be measured (store error or deadline), labelled by serving surface.",
 	},
 	[]string{"surface"},
+)
+
+// PriceServeThinAdmittedTotal — count of thin-market verdicts SERVED
+// because the request opted in with `?include_thin=true`: the market
+// failed the substance floor, and the response carries the price flagged
+// `thin_market` with its substance evidence instead of withholding it.
+// Same `surface` and `floor` labels as PriceServeSubstanceWithheldTotal.
+// The price surfaces count per read (a coalesced read once): an opted-in
+// thin serve counts its default pass as withheld and its second pass
+// here. surface=listing counts once per served row, after the
+// declared-peg fill and the scam-issuer suppression, and never as
+// withheld; surface=detail counts at the read and can include a price the
+// issuer-directory suppression later nulls. Dashboard-only, no alert rule.
+var PriceServeThinAdmittedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_price_serve_thin_admitted_total",
+		Help: "Thin-market substance verdicts served flagged under the include_thin opt-in, labelled by serving surface and the floor that failed.",
+	},
+	[]string{"surface", "floor"},
 )
 
 // PriceServeScamWithheldTotal — count of aggregated-price serves withheld
@@ -5077,7 +5110,7 @@ var ChLiveSinkLedgersTotal = prometheus.NewCounterVec(
 var ChLiveSinkReadUndercountTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ch_live_sink_read_undercount_total",
-		Help: "Transactions/ledgers a read path could not fully decode, labelled by kind (tx_read_errors|tx_event_read_errors|entry_meta_unsupported|soroban_fee_meta_unsupported|tx_read_errors_census|tx_event_read_errors_census).",
+		Help: "Transactions/ledgers a read path could not fully decode, labelled by kind (tx_read_errors|tx_event_read_errors|entry_meta_unsupported|soroban_fee_meta_unsupported|evicted_keys_unreadable|tx_read_errors_census|tx_event_read_errors_census).",
 	},
 	[]string{"kind"},
 )

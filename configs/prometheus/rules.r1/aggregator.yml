@@ -371,7 +371,7 @@ groups:
             class). Recovery: free disk → BGSAVE → cache rebuilds.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
 
-      # ─── #43: protocol-events rollup worker ────────────────────
+      # ─── 78dff337b: protocol-events rollup worker ────────────────────
       # The aggregator's protoeventsrollup worker folds the
       # trailing-24h per-source event census into protocol_events_24h
       # so /v1/protocols' events_24h reads a keyed-on-PK lookup. A
@@ -396,7 +396,7 @@ groups:
             not zeros). Customer pricing surface is unaffected. Fix the
             failing Postgres backend and the next sweep catches up.
 
-      # ─── #43: asset-volume rollup worker ───────────────────────
+      # ─── e0fbbbc3b: asset-volume rollup worker ───────────────────────
       # The aggregator's assetvolrollup worker folds the trailing-24h
       # per-asset USD-volume SUM over prices_1m into asset_volume_24h
       # so the /v1/assets listing reads a keyed-on-PK lookup. A

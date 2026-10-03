@@ -174,7 +174,7 @@ func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 	// changed. Stamp it from the same cached watermark the other
 	// current-state reads use.
 	_, stale, _ := s.lakeWatermark(ctx)
-	writeJSON(w, out, Flags{Stale: stale}, sourceSoroswap)
+	writeJSON(w, out, Flags{Stale: stale, Degraded: !displaysOK}, sourceSoroswap)
 }
 
 // parsePoolReservesQuery validates ?source= and ?pool=. ok=false after
