@@ -135,9 +135,10 @@ groups:
         # modifier here.
         #
         # The budget defaults to 10 × the source's declared resolution
-        # (obs.OracleStaleBudgetMultiplier) — exactly the threshold this
-        # expression used to compute inline — so an asset with no
-        # operator override alerts at precisely the age it always did.
+        # (obs.OracleStaleBudgetMultiplier); heartbeat sources (RedStone)
+        # default to heartbeat + 2 h instead. For the 10× default, an
+        # asset with no operator override alerts at the same age the
+        # former inline expression did.
         # Per-asset exceptions live in `[[oracle.staleness_overrides]]`,
         # because staleness is a per-ASSET property even where cadence
         # is per-source: reflector-cex crypto:DAI is a peg asset that
@@ -157,7 +158,8 @@ groups:
           description: |
             {{ $labels.source }} hasn't published a price for {{ $labels.asset }}
             in longer than that pair's staleness budget (default 10× the
-            source's declared resolution; per-asset overrides live in
+            source's declared resolution, or heartbeat + 2 h for heartbeat
+            sources such as RedStone; per-asset overrides live in
             [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
             or a signal of oracle failure — check the oracle's own status page.
       # Aggregator's divergence-cache refresh loop — `refresh_error`
