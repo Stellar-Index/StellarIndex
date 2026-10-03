@@ -59,7 +59,7 @@ func TestRegistry_RetiredFXIdentityStaysUnregistered(t *testing.T) {
 func TestIsOnChain_Partition(t *testing.T) {
 	offChain := map[string]bool{
 		// CEX
-		"binance": true, "kraken": true, "bitstamp": true, "coinbase": true,
+		"binance": true, "kraken": true, "bitstamp": true, "coinbase": true, "poloniex_via_btc": true,
 		// FX
 		"massive": true, "exchangeratesapi": true,
 		// aggregators

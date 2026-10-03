@@ -74,8 +74,7 @@ func (s *Streamer) Class() external.Class { return external.ClassExchange }
 //
 // Empty `pairs` is rejected — Binance requires explicit subscription.
 // Auto-enumeration of all listed symbols is a future capability; for
-// v1 the operator configures the pair set explicitly via the indexer
-// config.
+// v1 the caller passes the pair set (e.g. DefaultPairList).
 func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan canonical.Trade, error) {
 	if len(pairs) == 0 {
 		return nil, errors.New("binance: pairs required — auto-enumeration not yet supported")

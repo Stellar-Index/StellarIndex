@@ -103,7 +103,8 @@ Environment=HEAVY_JOB_LOCK_WAIT=72000
 # 75 only reaches this unit from a caller that unsets the wait; kept for
 # the wrapper-wide SuccessExitStatus=75 contract.
 SuccessExitStatus=75
-# Timer-fired: shares run-heavy-job.sh's host-wide lock, never refused by it.
+# Timer-fired: queues (HEAVY_JOB_LOCK_WAIT) behind other heavy jobs; a wait
+# that runs out fails the unit (exit 1).
 Environment=HEAVY_JOB_CLASS=scheduled
 ExecStart=/usr/local/sbin/run-heavy-job.sh verify-archive \
   /usr/local/bin/stellarindex-ops verify-archive \

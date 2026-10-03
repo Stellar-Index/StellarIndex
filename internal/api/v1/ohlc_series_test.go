@@ -823,3 +823,38 @@ func TestOHLCSeries_FiatCombinedStatesLiftTarget(t *testing.T) {
 		t.Errorf("v_quote / 10^v_quote_decimals = %s USD, want 220", got.FloatString(10))
 	}
 }
+
+// A bar names the venues behind it on both read paths, so a derived
+// series (poloniex_via_btc) is distinguishable from fill-derived bars.
+func TestOHLCSeries_ServesPerBarSources(t *testing.T) {
+	t0 := time.Date(2016, 1, 1, 0, 0, 0, 0, time.UTC)
+	derived := mkSeriesBar(t0, "0.0019", "0.0019", "0.0019", "0.0019", "100", "1", 1)
+	derived.Sources = []string{"poloniex_via_btc"}
+	reader := &stubHistoryReader{
+		ohlcSeriesFn: func(_ context.Context, pair canonical.Pair, _ string, _, _ time.Time, _ int) ([]v1.OHLCSeriesBar, error) {
+			if pair.Base.String() == "crypto:XLM" && (pair.Quote.String() == "fiat:USD" || pair.Quote.String() == "crypto:BTC") {
+				return []v1.OHLCSeriesBar{derived}, nil
+			}
+			return nil, nil
+		},
+	}
+	ts := httpTestServer(t, v1.New(v1.Options{History: reader}))
+
+	for _, quote := range []string{"fiat:USD", "crypto:BTC"} {
+		resp := mustGet(t, ts.URL+"/v1/ohlc?base=crypto:XLM&quote="+quote+"&interval=1d")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("quote=%s: status = %d", quote, resp.StatusCode)
+		}
+		var body struct {
+			Data struct {
+				Intervals []struct {
+					Sources []string `json:"sources"`
+				} `json:"intervals"`
+			} `json:"data"`
+		}
+		mustDecode(t, resp, &body)
+		if len(body.Data.Intervals) != 1 || len(body.Data.Intervals[0].Sources) != 1 || body.Data.Intervals[0].Sources[0] != "poloniex_via_btc" {
+			t.Errorf("quote=%s: intervals = %+v, want one bar with sources [poloniex_via_btc]", quote, body.Data.Intervals)
+		}
+	}
+}

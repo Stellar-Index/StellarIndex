@@ -133,7 +133,11 @@ var Registry = map[string]Metadata{
 	"binance":  {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true},
 	"kraken":   {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true /* implemented, but 720-interval cap: ~30d at 1h */, BackfillSafe: true},
 	"bitstamp": {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true},
-	"coinbase": {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true},
+	// Poloniex XLM/BTC crossed with a USD-quoted BTC leg: history-only daily
+	// bars for the span before any USD venue listed XLM. A derived close is
+	// not a fill, so the live aggregator never counts it toward VWAP.
+	"poloniex_via_btc": {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true},
+	"coinbase":         {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true},
 
 	// ─── Institutional FX feeds ──────────────────────────────────
 	// `massive` is the ACTIVE fiat-FX feed (massive.com — the same vendor

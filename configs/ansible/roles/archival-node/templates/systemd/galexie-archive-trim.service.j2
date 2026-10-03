@@ -42,17 +42,19 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 # stellarindex-reader pair, which DeleteObject rejects with AccessDenied.
 EnvironmentFile=-/etc/default/galexie-archive-trim
 
-# 75 = run-heavy-job.sh skipped this fire (per-job lock held): not a
+# 75 = run-heavy-job.sh skipped this fire (a lock was held): not a
 # failure, but ExecMainStatus=75 keeps it distinct from a run.
 SuccessExitStatus=75
-# Timer-fired: shares run-heavy-job.sh's host-wide lock, never refused by it.
+# Queue behind another heavy job (host-wide and scheduled locks) for up to
+# 12h instead of skipping the fire; TimeoutStartSec below covers wait + run.
+Environment=HEAVY_JOB_LOCK_WAIT=43200
 Environment=HEAVY_JOB_CLASS=scheduled
 ExecStart=/usr/local/sbin/run-heavy-job.sh galexie-archive-trim \
   /usr/local/bin/stellarindex-ops trim-galexie-archive \
   -older-than-ledger ${TRIM_CUTOFF} \
   -commit
 
-TimeoutStartSec=21600
+TimeoutStartSec=64800
 Nice=10
 IOSchedulingClass=idle
 
