@@ -399,6 +399,17 @@ func drainUntilClosed(ch <-chan canonical.Trade) {
 	}
 }
 
+// maxTradeFutureSkew absorbs host/venue clock skew; minTradeTime is the
+// Stellar network's genesis. A trade outside [minTradeTime, now+skew] comes
+// from a unit mismatch or a vendor fault and would corrupt time-ordered data.
+const maxTradeFutureSkew = 5 * time.Minute
+
+var minTradeTime = time.Date(2015, 9, 30, 0, 0, 0, 0, time.UTC)
+
+func plausibleTradeTime(ts, now time.Time) bool {
+	return !ts.Before(minTradeTime) && !ts.After(now.Add(maxTradeFutureSkew))
+}
+
 // forwardTrades drains one streamer's channel into the shared sink,
 // wrapping each trade as a TradeEvent. Returns when the source
 // channel closes (streamer shutdown) or ctx is cancelled.
@@ -426,6 +437,12 @@ func forwardTrades(
 			// the same $0.001 on XLM/BTC as on XLM/USDT (C2-016).
 			if trade.QuoteAmount.Cmp(minStreamQuoteUnits(trade.Pair.Quote)) < 0 {
 				obs.ExternalDustDroppedTotal.WithLabelValues(source).Inc()
+				continue
+			}
+			if !plausibleTradeTime(trade.Timestamp, time.Now()) {
+				obs.ExternalBadTimestampDroppedTotal.WithLabelValues(source).Inc()
+				logger.Warn("dropping trade with implausible timestamp",
+					"source", source, "timestamp", trade.Timestamp)
 				continue
 			}
 			obs.CEXStreamLastTradeUnix.WithLabelValues(source).Set(float64(time.Now().Unix()))
@@ -472,8 +489,12 @@ func pollOutcome(trades []canonical.Trade, updates []canonical.OracleUpdate, err
 	}
 }
 
-func emitPollResults(ctx context.Context, sink chan<- consumer.Event, trades []canonical.Trade, updates []canonical.OracleUpdate) {
+func emitPollResults(ctx context.Context, source string, sink chan<- consumer.Event, trades []canonical.Trade, updates []canonical.OracleUpdate) {
 	for _, t := range trades {
+		if !plausibleTradeTime(t.Timestamp, time.Now()) {
+			obs.ExternalBadTimestampDroppedTotal.WithLabelValues(source).Inc()
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -532,7 +553,7 @@ func runPoller(
 			return
 		}
 		obs.ExternalPollerLastSuccessUnix.WithLabelValues(name).Set(float64(time.Now().Unix()))
-		emitPollResults(ctx, sink, trades, updates)
+		emitPollResults(ctx, name, sink, trades, updates)
 	}
 
 	// Fire once on start, then on the ticker cadence.
