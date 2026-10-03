@@ -7436,6 +7436,13 @@ export interface components {
          *       prints taken at par with USD, with no prints in the leg's own
          *       quote asset to check a stablecoin de-peg against. Omitted when
          *       false.
+         *     - `proxy_deviation` — set on a TRIANGULATED `/v1/price/at`,
+         *       `/v1/price/changes` or `/v1/vwap` response served through a
+         *       declared USD peg when any declared USD peg's observed
+         *       `crypto:<STABLE>/fiat:USD` price is more than 2% from $1, so the
+         *       peg-as-dollar assumption
+         *       behind the value does not hold. Omitted when false, including
+         *       when no such observation was available.
          *     - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
          *       when the asset's code matches a verified currency's
          *       Stellar ticker but the issuer doesn't. The matching
@@ -7501,6 +7508,11 @@ export interface components {
              * @default false
              */
             pivot_unverified: boolean;
+            /**
+             * @description Set on a TRIANGULATED /v1/price/at, /v1/price/changes or /v1/vwap response served through a declared USD peg when any declared USD peg's observed crypto:<STABLE>/fiat:USD price is more than 2% from $1. Omitted when false, including when no observation was available.
+             * @default false
+             */
+            proxy_deviation: boolean;
             /** @default false */
             unverified_ticker_collision: boolean;
             /** @description Names of the row-narrowing query parameters this response did NOT apply, spelled as the caller sent them (`type`, `code`, `issuer`, `q`). Absent when the response applied every filter it was given — an ignored filter and a matched one otherwise produce the same 200 over the same shape, so a client re-filtering the page has nothing else to key on. Set by `/v1/assets` on the listings whose rows come from a source that cannot narrow: the class-scoped catalogue listings (`asset_class=fiat|stablecoin|crypto`), and the lean asset-catalog fallback served when no listing store is configured. */
@@ -11424,6 +11436,21 @@ export interface components {
                  *     its cap. Omitted when false.
                  */
                 market_cap_low_liquidity?: boolean;
+                /**
+                 * @description True when an unbounded read (`timeframe=all`) hit the
+                 *     50 000-bucket response cap, so `points` holds the
+                 *     OLDEST slice of this pair's history and stops short of
+                 *     the present. Request a coarser `granularity` to see
+                 *     the whole span. Omitted when false.
+                 */
+                row_cap_truncated?: boolean;
+                /**
+                 * Format: date-time
+                 * @description Last bucket of the earliest source read that hit the row
+                 *     cap; the series is incomplete after it. Only present when
+                 *     `row_cap_truncated=true`.
+                 */
+                data_ends_at?: string;
             };
         };
         TradeRow: {

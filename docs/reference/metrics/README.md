@@ -620,7 +620,7 @@ rate, absence is unambiguous, which is why this counter is deliberately
 NOT pre-seeded in `seedBoundedLabelSeries` the way the `increase()`- and
 `rate()`-based counters are.
 
-### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`, `stellarindex_dispatcher_evicted_keys_unreadable_total`
+### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`, `stellarindex_dispatcher_evicted_keys_unreadable_total`, `stellarindex_dispatcher_ledger_upgrade_entries_total`
 
 Counters, no labels (process-wide — the underlying dispatcher counters
 aren't attributable to a source).
@@ -642,8 +642,12 @@ flush window's delta on every tick alongside the existing WARN log:
   read, so their state-archival evictions were skipped and each evicted
   balance stays served as live. The dispatcher also logs a WARN with
   the ledger number.
+- `ledger_upgrade_entries` — ledger-upgrade entries (protocol version,
+  base reserve, fee and similar network parameter changes) seen in
+  processed ledgers. Informational: no decoder consumes them, and a
+  non-zero value is expected on an upgrade ledger.
 
-**When to look at these:** any sustained non-zero rate. All four are
+**When to look at these:** any sustained non-zero rate of the first four. All are
 process-lifetime cumulative counters — chart `increase(...[5m])`
 against the flush interval (5m), not the raw value.
 
@@ -3467,6 +3471,19 @@ not. Below quorum the warning verdict is carried forward rather than
 re-evaluated, so a 0 means divergence detection is disarmed for the pair
 even though the pass counts `ok`. A pair at 0 across every refresh for
 an hour fires `stellarindex_divergence_pair_below_quorum`.
+
+### `stellarindex_divergence_max_abs_fraction`
+
+Gauge, label `reference`. Largest `|ours − reference| / reference` over the
+pairs that reference currently prices (0.05 = 5 %); 0 when it prices none.
+Pinned (frozen) refreshes carry no verdict and are excluded. Drives
+`stellarindex_price_divergence_warning` (> 0.05) and `_critical` (> 0.10).
+
+### `stellarindex_divergence_pairs_over`
+
+Gauge, label `threshold` (`5pct` / `10pct`). Pairs whose worst reference gap
+exceeds that fraction. No per-pair label; the pairs are in
+`divergence_observations`.
 
 ### `stellarindex_aggregator_baseline_refresh_total`
 

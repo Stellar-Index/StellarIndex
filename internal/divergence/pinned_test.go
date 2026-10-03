@@ -24,8 +24,9 @@ func TestRefreshPinnedPair_ReachesNoVerdict(t *testing.T) {
 		Threshold:            5.0,
 		MinSourcesForWarning: 2,
 		ObservationSink:      sink,
-		OnWarningFired: func(context.Context, canonical.Pair, divergence.CachedResult) {
+		OnWarningFired: func(context.Context, canonical.Pair, divergence.CachedResult) error {
 			fired++
+			return nil
 		},
 	})
 	pair := xlmUSD(t)

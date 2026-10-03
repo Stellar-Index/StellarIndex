@@ -21,7 +21,7 @@ import (
 )
 
 // preSealMigration is the newest migration before 0204 on this branch.
-const preSealMigration = 201
+const preSealMigration = 203
 
 // TestCustomerWebhooksSigningKeySealed executes migration 0204 up and down
 // and the store paths around it: a raw pre-0204 key pair (current and
