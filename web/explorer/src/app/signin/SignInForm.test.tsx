@@ -86,3 +86,40 @@ describe('SignInForm passkey entry', () => {
     ).toBeInTheDocument();
   });
 });
+
+describe('SignInForm email login', () => {
+  it('leaves the sending state when the login request stalls', async () => {
+    supportsPasskeys.mockReturnValue(false);
+    // A fetch that only settles when its signal aborts, like a stalled API.
+    const fetchStub = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (signal?.aborted) reject(signal.reason);
+          signal?.addEventListener('abort', () => reject(signal.reason));
+        }),
+    );
+    vi.stubGlobal('fetch', fetchStub);
+    const timeout = vi
+      .spyOn(AbortSignal, 'timeout')
+      .mockImplementation(() => AbortSignal.abort());
+
+    try {
+      render(<SignInForm />);
+      fireEvent.change(screen.getByLabelText(/email/i), {
+        target: { value: 'a@example.com' },
+      });
+      fireEvent.click(
+        screen.getByRole('button', { name: /Send sign-in code/ }),
+      );
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        /Network error/,
+      );
+      expect(timeout).toHaveBeenCalled();
+    } finally {
+      timeout.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+});
