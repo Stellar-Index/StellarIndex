@@ -46,29 +46,29 @@ severity: P3
 
 ## Quick diagnosis (≤ 5 min)
 
-> NB: the `mc` commands below are **Phase-3 placeholders** — no
-> `myminio/history-archive` bucket exists today. The archive is
-> the `/srv/history-archive` filesystem; r1's MinIO holds
-> `galexie-live`, `galexie-archive`, and `backups`
-> (`configs/ansible/roles/archival-node/tasks/09-minio.yml`).
-> Adjust to the real publish target when Phase-3 lands.
+The archive is the `/srv/history-archive` filesystem; r1's MinIO holds
+`galexie-live`, `galexie-archive` and `backups`, not a history bucket
+(`configs/ansible/roles/archival-node/tasks/09-minio.yml`).
 
 ```sh
 # stellar-core publisher logs
 ssh root@<val-host> "journalctl -u stellar-core -n 500 --no-pager" \
   | grep -iE 'history|publish|upload'
 
-# Can we write to the archive backend? (S3 / MinIO — Phase-3 topology)
-mc ls myminio/history-archive/live/ | tail   # adjust alias
-mc stat myminio/history-archive/
+# Newest published checkpoint and archive state file
+ssh root@<val-host> "cat /srv/history-archive/.well-known/stellar-history.json | head -c 400"
 
-# Space + permission on the archive bucket
-mc admin info myminio
+# Space and ownership on the archive volume
+ssh root@<val-host> "df -h /srv/history-archive; ls -ld /srv/history-archive"
 ```
+
+When a publish target moves to S3/MinIO (Phase-3), replace these with the
+matching `mc ls` / `mc stat` / `mc admin info` against that bucket.
 
 ## Typical root causes
 
-1. **Archive backend (MinIO / S3) outage or auth failure**.
+1. **Archive backend outage or auth failure** (today: the
+   `/srv/history-archive` volume; Phase-3: MinIO / S3).
    Credentials rotated without updating core, bucket policy
    changed, bucket full.
    - Mitigation: fix auth; confirm bucket has capacity.
@@ -116,6 +116,9 @@ mc admin info myminio
 
 ## Changelog
 
+- 2026-10-03 — Quick-diagnosis commands now target the real
+  `/srv/history-archive` filesystem instead of a non-existent
+  `myminio/history-archive` bucket.
 - 2026-08-29 — re-verified against HEAD. Banner tightened: the
   alert is inert EVERYWHERE (no producer exists in the codebase at
   all — F-1329, KNOWN_INERT in scripts/ci/lint-metric-refs.sh),
