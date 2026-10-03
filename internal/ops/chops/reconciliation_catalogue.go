@@ -90,6 +90,15 @@ type reconSource struct {
 	census         bool   // sdex: expected = decoder re-derive over the lake's SDEX ops
 	genesis        uint32 // first-possible-data ledger; mirrors DefaultGapDetectorTargets (WASM-audit sourced)
 
+	// servedWindowReason, when non-empty, lets the projection reconcile floor
+	// at each target's served MIN(ledger) instead of genesis: the served tier
+	// deliberately holds only a window of this source, so a prefix the lake
+	// has but Postgres lacks is not a gap. Empty (every source by default)
+	// means the served tier claims genesis-to-tip and an unprojected prefix
+	// fails the projection axis. TestCatalogue_ServedWindowExemptionsReviewed
+	// pins the allow-list.
+	servedWindowReason string
+
 	// Factory-anchored gating (ADR-0035): when factories is non-empty, dec
 	// gates Matches() on a registry of factory-deployed children, so the
 	// re-derive must seed that registry before counting. A re-derive that
@@ -586,9 +595,12 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				{"blend_admin", "", []string{blend.AdminEventKind}},
 			},
 		},
-		{name: "sdex", genesis: 2, census: true, targets: []reconTarget{
-			{"trades", sdexTradesFilter, nil},
-		}},
+		{
+			name: "sdex", genesis: 2, census: true,
+			servedWindowReason: "served sdex trades are the ADR-0034 working set: the pre-window classic history is lake-only " +
+				"(ch-rebuild -sdex backfills it), and a census re-derive from ledger 2 would outlast every pass",
+			targets: []reconTarget{{"trades", sdexTradesFilter, nil}},
+		},
 	}
 
 	// Oracle sources: decoder needs a real contract address; include only
@@ -643,7 +655,8 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			//
 			// Expect this to turn band RED until a catch-up runs: oracle_updates
 			// starts at 60,000,414, so the 9.16M ledgers between the true genesis
-			// and the first projected row are a real gap that 60,000,000 was hiding.
+			// and the first projected row are a real gap. The reconcile floors at
+			// genesis (no servedWindowReason), so that gap fails projection_ok.
 			name: "band", genesis: 50_842_736, callContract: a, callDec: band.NewDecoder(a),
 			targets: []reconTarget{{"oracle_updates", "source = 'band'", nil}},
 		})

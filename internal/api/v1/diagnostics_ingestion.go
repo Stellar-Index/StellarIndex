@@ -336,7 +336,7 @@ var sourceGenesisLedger = map[string]int64{
 	// only the current CDKFHFJI… at 57,056,338.
 	"defindex": int64(defindex.GenesisLedger),
 
-	// cctp + rozo (#40 / #41) — exact deploy ledgers from the
+	// cctp + rozo (1b9a594b4 / 46e0087e8) — exact deploy ledgers from the
 	// completed WASM-history walks (docs/operations/wasm-audits/
 	// {cctp,rozo}.md). Each audit records a single one-time deploy per
 	// contract with a UTC timestamp; the genesis is the MIN across the
@@ -499,7 +499,7 @@ type SourceHealthRow struct {
 // so 15s smooths the load from a refreshing status page without
 // hiding live degradation.
 func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Request) {
-	// #16: serve from the background-refreshed snapshot when present —
+	// 4d6e7ac4f: serve from the background-refreshed snapshot when present —
 	// sub-millisecond instead of the 200-500ms inline build. Falls back
 	// to inline-build when the refresher hasn't fired yet (process just
 	// booted), or has died and gone stale, so first-request-after-restart

@@ -700,8 +700,8 @@ Subcommands:
   discovery list -config PATH [-since DUR] [-limit N]
                           List SEP-41 contracts auto-detected from the
                           event stream (the dispatcher's discovery
-                          hook from #225 + the indexer wire-up from
-                          #230 populate discovered_assets in
+                          hook from 526b520f0 + the indexer wire-up from
+                          2c2e4e55b populate discovered_assets in
                           production). Output is one row per
                           contract: contract_id, first_seen_at,
                           first_seen_event, event_count. Ordered by

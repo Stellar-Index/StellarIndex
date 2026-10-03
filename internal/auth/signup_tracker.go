@@ -18,8 +18,9 @@ import (
 //
 // The mapping is set-once on first signup; a second signup for the
 // same email-hash reads the existing key_id and the handler returns
-// 409. There's no TTL — signups are intended to be permanent
-// (operator-side cleanup if a customer needs the email freed).
+// 409. The mapping has no TTL of its own: the signup key ages out when
+// idle, and the handler frees the email via [ReleaseSignup] once the
+// account holds no live key.
 //
 // Safe for concurrent use.
 type RedisSignupTracker struct {
@@ -113,4 +114,22 @@ func (t *RedisSignupTracker) MarkSignup(ctx context.Context, emailHash, keyID st
 		return fmt.Errorf("redis set %s: %w", signupKey(emailHash), err)
 	}
 	return nil
+}
+
+// releaseSignupScript deletes the mapping only while it still names the
+// lapsed key, so a concurrent signup that already re-claimed it survives.
+var releaseSignupScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`)
+
+// ReleaseSignup implements [v1.SignupTracker.ReleaseSignup].
+func (t *RedisSignupTracker) ReleaseSignup(ctx context.Context, emailHash, keyID string) (bool, error) {
+	n, err := releaseSignupScript.Run(ctx, t.rdb, []string{signupKey(emailHash)}, keyID).Int()
+	if err != nil {
+		return false, fmt.Errorf("redis release %s: %w", signupKey(emailHash), err)
+	}
+	return n == 1, nil
 }

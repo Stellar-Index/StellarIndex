@@ -271,7 +271,7 @@ func TestPriceTip_RedisFallbackForRewrittenPair(t *testing.T) {
 // LatestPrice + Redis VWAP cache all miss but the operator has
 // declared classic USD pegs, the handler rewrites X/fiat:USD to
 // X/<peg> at request time. Same shape as /v1/price's
-// tryStablecoinFiatProxy fallback (#1217). Without this
+// tryStablecoinFiatProxy fallback (6505934b5). Without this
 // /v1/price/tip?asset=native&quote=fiat:USD 404s out of the box on
 // every fresh deployment.
 func TestPriceTip_StablecoinFiatProxyFallback(t *testing.T) {

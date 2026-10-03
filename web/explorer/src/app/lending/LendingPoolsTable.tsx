@@ -22,7 +22,7 @@ type LendingPool = NonNullable<
 // Curated metadata for every Blend mainnet contract we know of.
 // Sourced from docs/operations/wasm-audits/blend.md (Phase 4 walk,
 // last verified 2026-05-03). Reserve-asset breakdown per pool
-// needs a Blend-pool-storage reader that doesn't exist yet (#84);
+// needs a Blend-pool-storage reader that doesn't exist yet (task #84);
 // until then this table at least gives users deploy timestamps +
 // initiator addresses so pools are distinguishable.
 interface PoolMeta {

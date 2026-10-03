@@ -353,7 +353,7 @@ fix.
 
 ## Changelog
 
-- 2026-04-30 — initial draft alongside #313 (supply-refresh
+- 2026-04-30 — initial draft alongside 13b8e42c9 (supply-refresh
   alerts).
 - 2026-04-30 — quick-diagnosis #2 corrected: the
   `aggregator_supply_refresh_total` metric DOES carry an

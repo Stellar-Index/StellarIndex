@@ -80,4 +80,4 @@ None known yet. The alert requires 30 min of continuous failures at a
 
 ## Changelog
 
-- 2026-07-06 — created with the protocol-events rollup (#43).
+- 2026-07-06 — created with the protocol-events rollup (78dff337b).

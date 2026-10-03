@@ -26,10 +26,10 @@ import (
 //   - router_subinvocation_op_ledger62029020.b64
 //     tx da2ffe5a8651e2289408631a180cc8f6fe26247c6558bfc80dbf6d9527849cc7
 //     op 0, ledger 62,029,020 (closed 2026-04-08 18:35:46 UTC).
-//     The headline #11 shape: an AGGREGATOR (`exec` on CD45PQFH…JRZH)
+//     The headline ROADMAP #11 shape: an AGGREGATOR (`exec` on CD45PQFH…JRZH)
 //     wraps an adapter (`swap_exact_tokens_for_tokens` on
 //     CAYP3UWL…TXTO) which wraps the ROUTER two levels deep. The
-//     pre-#48 top-level-only walk never saw this call — the 8,729×
+//     pre-1b1e46a09 top-level-only walk never saw this call — the 8,729×
 //     undercount class.
 //
 // The tests drive the exact production path: dispatcher call-tree
@@ -133,7 +133,7 @@ func TestRealBytes_TopLevelRouterCall(t *testing.T) {
 	if s.DeadlineTs.Year() != 58233 {
 		t.Errorf("DeadlineTs year = %d, want 58233 (garbage sentinel preserved at decode layer)", s.DeadlineTs.Year())
 	}
-	// #11 columns: direct call → depth 0, top_level, chain = [router].
+	// ROADMAP #11 columns: direct call → depth 0, top_level, chain = [router].
 	if s.CallDepth != 0 {
 		t.Errorf("CallDepth = %d, want 0", s.CallDepth)
 	}
@@ -146,7 +146,7 @@ func TestRealBytes_TopLevelRouterCall(t *testing.T) {
 }
 
 // TestRealBytes_SubInvocationRouterCall — aggregator-wrapped router
-// invocation two levels deep. THE shape the pre-#48 walk missed.
+// invocation two levels deep. THE shape the pre-1b1e46a09 walk missed.
 func TestRealBytes_SubInvocationRouterCall(t *testing.T) {
 	t.Parallel()
 	op := loadRealOp(t, "router_subinvocation_op_ledger62029020.b64")
@@ -187,7 +187,7 @@ func TestRealBytes_SubInvocationRouterCall(t *testing.T) {
 	if !s.DeadlineTs.Equal(time.Date(2026, 4, 8, 18, 36, 5, 0, time.UTC)) {
 		t.Errorf("DeadlineTs = %v, want 2026-04-08T18:36:05Z", s.DeadlineTs)
 	}
-	// #11 columns: two wrapping layers → depth 2, sub_invocation,
+	// ROADMAP #11 columns: two wrapping layers → depth 2, sub_invocation,
 	// chain = [aggregator, adapter, router].
 	wantChain := []string{
 		"CD45PQFHSIUMIC4MVZXCQ2RD6REKXJMEHWRN56TWT3C4DV2U4DHVJRZH", // aggregator `exec`
