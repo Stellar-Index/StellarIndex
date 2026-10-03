@@ -2,7 +2,7 @@
 #
 # Runs the hardened /usr/local/bin/galexie-archive-fill — the
 # per-partition mirror (aws-public-blockchain → local galexie-archive)
-# that the team already built but, until #26, only ever invoked by
+# that the team already built but, until f12289f6d, only ever invoked by
 # hand. galexie-archive silently fell ~23 days / ~346k ledgers behind
 # (2026-04-26 → 2026-05-19) precisely because nothing scheduled this
 # script: the live appender (galexie.service) kept galexie-live
@@ -23,7 +23,7 @@
 # service user has no mc config).
 
 [Unit]
-Description=Stellar Index — galexie-archive scheduled catch-up (#26)
+Description=Stellar Index — galexie-archive scheduled catch-up (f12289f6d)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/galexie-backfill.md
 After=network-online.target minio.service
 Wants=network-online.target

@@ -984,7 +984,7 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 		// just the top-level. This is the canonical source for
 		// ContractCallDecoder routing because most Soroswap traffic
 		// reaches the router as a sub-invocation of an aggregator
-		// contract — the pre-#48 top-level-only walk missed ~99.99%
+		// contract — the pre-1b1e46a09 top-level-only walk missed ~99.99%
 		// of router calls (see
 		// docs/architecture/contract-call-coverage-audit.md).
 		//

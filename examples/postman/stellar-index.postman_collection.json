@@ -36222,7 +36222,7 @@
               "request": {
                 "name": "Customer dashboard — list this account's price alerts.",
                 "description": {
-                  "content": "Session-gated. Returns every price-threshold alert this\naccount has registered, newest first. BACKLOG #60.\n",
+                  "content": "Session-gated. Returns every price-threshold alert this\naccount has registered, newest first.\n",
                   "type": "text/plain"
                 },
                 "url": {

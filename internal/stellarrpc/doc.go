@@ -12,7 +12,7 @@
 //     (one-shot health/liveness check against any stellar-rpc).
 //   - internal/sources/soroswap/factory_seed.go — boot-time
 //     factory sweep via simulateTransaction to seed the
-//     pair→tokens registry for pre-history pairs (PR #14). Not
+//     pair→tokens registry for pre-history pairs (commit cfd284649). Not
 //     on the live-ingest hot path; idempotent on restart.
 //   - scripts/dev/* fixture-capture scripts.
 //

@@ -370,7 +370,7 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// trips this well before a natural quiet stretch would.
 	{Source: "aquarius-rewards", CanonicalSource: "aquarius", Table: "aquarius_rewards_events", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 100000},
 	// aquarius-admin: the governance/upgrade admin surface (ROADMAP
-	// #89, migration 0100) — router-scoped, operator-triggered
+	// ROADMAP #89, migration 0100) — router-scoped, operator-triggered
 	// actions (upgrades, ownership transfers, emergency mode). Rare by
 	// design (apply_upgrade: 706 lifetime across the whole protocol
 	// history is the DENSEST of the eight kinds); wide override
