@@ -101,6 +101,8 @@ esac
 SH
 cat > "$shims/psql" <<'SH'
 #!/usr/bin/env bash
+# FAKE_PSQL_FAIL_MATCH: fail any query containing this text.
+[[ -n "${FAKE_PSQL_FAIL_MATCH:-}" && "$*" == *"$FAKE_PSQL_FAIL_MATCH"* ]] && exit 7
 exit 0
 SH
 # util-linux flock is absent on macOS, so the lock needs a shim — and an
@@ -561,6 +563,26 @@ if [[ "$leftovers" == "0" ]]; then
 else
   bad "a refusal left $leftovers temp file(s)"
 fi
+
+# ─── 9. an unguarded call dies under set -e: still evidence + metric ──
+# A verification query (phase 3) and the live-settings psql|tee (phase 2)
+# each exit non-zero; the EXIT trap must record the run, not leave the
+# previous PASS being scraped.
+for spec in "c9a:information_schema:verification" "c9b:pg_settings:pg_start"; do
+  IFS=: read -r name match stage <<<"$spec"
+  c="$work/$name"; mkdir -p "$c"; seed_stale_pass "$c"
+  FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_PSQL_FAIL_MATCH="$match" run_drill "$c"
+  rc="$(cat "$c/rc")"
+  if [[ "$rc" == "1" ]] && grep -q "ABORTED at $stage (unexpected exit" "$c/log/restore-drills.md" 2>/dev/null \
+       && grep -q '^stellarindex_restore_drill_failures{repo="1"} 1$' "$c/textfile/restore_drill.prom" \
+       && ! grep -q "^stellarindex_restore_drill_last_success_unix" "$c/textfile/restore_drill.prom"; then
+    ok "unguarded failure in $stage: exit 1, evidence entry, failures=1, no last_success"
+  else
+    bad "unguarded failure in $stage left no honest record (rc=$rc):
+$(cat "$c/log/restore-drills.md" 2>/dev/null || echo '<no evidence>')
+$(cat "$c/textfile/restore_drill.prom")"
+  fi
+done
 
 echo "restore-drill-run-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]] || exit 1
