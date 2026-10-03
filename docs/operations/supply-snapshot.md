@@ -97,7 +97,7 @@ prohibits.
 As of PR #300 (Task #54 closed), the supply-snapshot subcommand
 chains the live `LCMReserveBalanceReader` (backed by the
 `account_observations` hypertable populated by the AccountEntry
-observer in #298) with the operator-static `ConfigReserveBalanceReader`
+observer in 5e94ba76e) with the operator-static `ConfigReserveBalanceReader`
 as fallback. On every run:
 
 1. The live reader queries the most-recent observation

@@ -36,9 +36,11 @@ import (
 // the handler's boundary logic can be exercised without a live ClickHouse.
 type movementsArmReader struct {
 	*capReader
-	wm     uint32
-	wmErr  error
-	chRows []clickhouse.AccountMovementRow
+	wm    uint32
+	wmErr error
+	// supplyFrom..supplyThru is the supply-kind range (supplyFrom 0: none).
+	supplyFrom, supplyThru uint32
+	chRows                 []clickhouse.AccountMovementRow
 
 	// gotFilter is the filter the handler actually passed to the CH arm
 	// — the seam F055's ceiling travels through.
@@ -47,6 +49,10 @@ type movementsArmReader struct {
 
 func (r *movementsArmReader) Cap67MovementsWatermark(context.Context) (uint32, error) {
 	return r.wm, r.wmErr
+}
+
+func (r *movementsArmReader) Cap67SupplyCoverage(context.Context) (uint32, uint32, bool, error) {
+	return r.supplyFrom, r.supplyThru, r.supplyFrom != 0, r.wmErr
 }
 
 func (r *movementsArmReader) AccountMovements(ctx context.Context, _ string, limit int, _ clickhouse.AccountMovementCursor, f clickhouse.AccountMovementFilter) ([]clickhouse.AccountMovementRow, error) {

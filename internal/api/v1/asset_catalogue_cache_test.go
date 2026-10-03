@@ -432,7 +432,7 @@ func (h *upstreamHold) awaitCall(t *testing.T, what string) {
 
 // TestCachedAssetsReader_SWRServesStaleAndRefreshes: an expired entry
 // returns the stale value IMMEDIATELY (not blocked on the slow
-// upstream refetch — the #22 fix), a single background refresh runs,
+// upstream refetch — the ba0374697 fix), a single background refresh runs,
 // and afterwards the fresh value is served.
 func TestCachedAssetsReader_SWRServesStaleAndRefreshes(t *testing.T) {
 	up := &swrAssetsUpstream{fakeAssetsUpstream: &fakeAssetsUpstream{}, val: "v1"}

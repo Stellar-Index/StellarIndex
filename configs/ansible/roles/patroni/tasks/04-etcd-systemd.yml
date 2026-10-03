@@ -21,7 +21,10 @@
 
 - name: verify etcd cluster health
   command: >
-    etcdctl --endpoints=http://{{ ansible_host }}:{{ etcd_client_port }}
+    etcdctl --endpoints={{ 'https' if etcd_tls_enabled else 'http' }}://{{ ansible_host }}:{{ etcd_client_port }}
+    {% if etcd_tls_enabled %}--cacert={{ etcd_tls_dir }}/ca.pem
+    --cert={{ etcd_tls_dir }}/server.pem
+    --key={{ etcd_tls_dir }}/server-key.pem{% endif %}
     endpoint health
   register: _etcd_health
   retries: 5

@@ -291,7 +291,7 @@ events. Backfill replays of L50,644,229 → L51,656,691 are safe.
 
 | source | BackfillSafe | rationale |
 | --- | --- | --- |
-| `reflector-fx` | **`true`** (flipped in PR #266) | Single WASM hash since first deploy; matches current decoder; live ingest healthy. |
+| `reflector-fx` | **`true`** (flipped in commit 950891bde) | Single WASM hash since first deploy; matches current decoder; live ingest healthy. |
 | `reflector-dex` | **`true`** (flipped in this PR) | v2 (`4a64c8c8…`) + v3 (`df88820e…`) hashes both verified. v3 from fixtures + production health; v2 from disassembly + interface diff (cosmetic) + SDK-family compat. |
 | `reflector-cex` | **`true`** (flipped in this PR) | Same evidence as DEX — both contracts share the same two hashes and the same disassembly findings apply. |
 

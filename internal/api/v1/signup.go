@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
@@ -47,6 +48,37 @@ type SignupTracker interface {
 	// ReserveEmail: the reservation TTL is cleared and the key_id
 	// becomes the durable value.
 	MarkSignup(ctx context.Context, emailHash, keyID string) error
+
+	// ReleaseSignup deletes the mapping only if it still names keyID,
+	// reporting whether it did.
+	ReleaseSignup(ctx context.Context, emailHash, keyID string) (bool, error)
+}
+
+// reclaimLapsedSignup frees and re-reserves an email whose prior signup
+// account holds no live key (an idle signup key ages out), so the owner
+// is not locked out by a mapping to a credential that no longer exists.
+// Any read failure keeps the email taken.
+func (s *Server) reclaimLapsedSignup(ctx context.Context, emailHash, identifier string) bool {
+	keyID, err := s.signups.LookupByEmailHash(ctx, emailHash)
+	if err != nil || keyID == "" || keyID == "pending" {
+		return false
+	}
+	keys, err := s.accounts.ListKeysForIdentifier(ctx, identifier)
+	if err != nil {
+		s.logger.Warn("signup lapsed-key check failed", "err", err, "identifier", identifier)
+		return false
+	}
+	now := time.Now()
+	for _, k := range keys {
+		if k.RevokedAt.IsZero() && (k.ExpiresAt.IsZero() || now.Before(k.ExpiresAt)) {
+			return false
+		}
+	}
+	released, err := s.signups.ReleaseSignup(ctx, emailHash, keyID)
+	if err != nil || !released {
+		return false
+	}
+	return s.signups.ReserveEmail(ctx, emailHash) == nil
 }
 
 // SignupIPThrottle is the v1 boundary for the per-IP signup
@@ -191,6 +223,9 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	// crashed handler doesn't strand the email.
 	if s.signups != nil {
 		err := s.signups.ReserveEmail(r.Context(), emailHash)
+		if errors.Is(err, auth.ErrSignupEmailReserved) && s.reclaimLapsedSignup(r.Context(), emailHash, identifier) {
+			err = nil
+		}
 		if errors.Is(err, auth.ErrSignupEmailReserved) {
 			// audit-2026-07 (LOW): this 409 is an email-existence
 			// oracle, but genericising it away is impossible without
@@ -227,6 +262,9 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		// Explicit free-tier cap: an omitted quota persists 0, which
 		// middleware.MonthlyQuota reads as unmetered.
 		MonthlyQuota: platform.TierFree.MaxMonthlyQuota(),
+		// Anonymous signup is open to anyone, so an abandoned key must
+		// age out of the validator pool rather than persist forever.
+		SelfService: true,
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {

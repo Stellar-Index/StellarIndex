@@ -738,7 +738,7 @@ func run(cfgPath string, dryRun bool) error {
 		}
 	}()
 
-	// ─── Protocol-events rollup worker (#43) ────────────────────
+	// ─── Protocol-events rollup worker (78dff337b) ────────────────────
 	// Folds the trailing-24h per-source event census into the
 	// protocol_events_24h table (migration 0086) every couple of
 	// minutes so /v1/protocols' events_24h column reads a keyed-on-PK
@@ -758,7 +758,7 @@ func run(cfgPath string, dryRun bool) error {
 		}
 	}()
 
-	// ─── Asset-volume rollup worker (#43) ───────────────────────
+	// ─── Asset-volume rollup worker (e0fbbbc3b) ───────────────────────
 	// Folds the trailing-24h per-asset USD-volume SUM over prices_1m
 	// into the asset_volume_24h table (migration 0087) every couple of
 	// minutes so the /v1/assets listing reads a keyed-on-PK lookup
@@ -1047,7 +1047,7 @@ func run(cfgPath string, dryRun bool) error {
 		logger.Warn("decimals-guard: disabled — no ClickHouse lake configured (storage.clickhouse_addr); non-7-decimal DEX-token detection is OFF for this process")
 	}
 
-	// ─── Price-alert evaluator (BACKLOG #60) ────────────────────
+	// ─── Price-alert evaluator ─────────────────────────────────
 	// Off by default. When [price_alerts] enabled=true, sweeps the
 	// enabled price_alerts rows against the latest closed 1m VWAP each
 	// tick and enqueues ACCOUNT-scoped `price.alert` webhook deliveries

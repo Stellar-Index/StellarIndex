@@ -88,7 +88,7 @@ feed_ids are NOT always the display name —
 `EUROC` is `EUROC/EUR`, `BENJI` is `BENJI_ETHEREUM_FUNDAMENTAL`,
 the SolvBTC variants carry `_FUNDAMENTAL` suffixes.
 
-Pre-#53 the decoder matched `canonical.IsKnownCrypto(feedID)`.
+Pre-ecc289c6b the decoder matched `canonical.IsKnownCrypto(feedID)`.
 Because the EUROC feed_id is `EUROC/EUR` — not the allow-list
 entry `EUROC` — **EUROC silently never decoded**, and all 11
 RWA / tokenized-BTC feeds were dropped. The registry fixes both.
