@@ -28,12 +28,13 @@ type SEP41SupplyStore interface {
 	SACBalanceForContractAtOrBefore(ctx context.Context, contractHolder, assetKey string, asOfLedger uint32) (*big.Int, error)
 	TrustlineBalanceForAccountAtOrBefore(ctx context.Context, accountID, assetKey string, asOfLedger uint32) (*big.Int, error)
 
-	// MinSEP41ComponentLedger returns MAX(ledger) of the sole
-	// SEP-41 component table (sep41_supply_events) for the
-	// contract. F-1236 (codex audit-2026-05-12) — feeds the
-	// Refresher's stale-component freshness gate. Zero = no
-	// observations yet (gate-skip signal). Optional: returning
-	// (0, nil) preserves legacy permissive behaviour.
+	// MinSEP41ComponentLedger returns the producer-wide watermark,
+	// MAX(ledger) across all of sep41_supply_events, for a contract that
+	// has events at or before asOfLedger. It feeds the Refresher's
+	// stale-component freshness gate: a quiet contract is not stale, a
+	// stalled producer is. Zero = the contract has no events yet
+	// (gate-skip signal). Optional: returning (0, nil) preserves legacy
+	// permissive behaviour.
 	MinSEP41ComponentLedger(ctx context.Context, contractID string, asOfLedger uint32) (uint32, error)
 
 	// SEP41GenesisBaselineSeeded reports whether a pre-Soroban
