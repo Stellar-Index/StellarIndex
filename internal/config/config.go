@@ -1515,10 +1515,8 @@ type APIConfig struct {
 	// the F-1218 wave 45 gate: API-key Subjects whose
 	// EmailVerifiedAt is zero AND whose identifier indicates
 	// /v1/signup origin get 403 with a Problem-JSON pointing
-	// at the verify endpoint. Default false to preserve the
-	// pre-F-1218 wire contract — operators flip this on after
-	// they've given existing customers a grace window to click
-	// their verification link.
+	// at the verify endpoint. Default true; operators set it false
+	// to allow unverified signup keys.
 	SignupRequireEmailVerification bool            `toml:"signup_require_email_verification" doc:"F-1218: when true, /v1/signup-minted API keys must complete email-ownership-proof (clicking the link emailed at signup) before they can authenticate. Default true (2026-05-13): we are still pre-launch with no consumer traffic, so the safe default is to require verification — operators who want to allow unverified signup must opt in explicitly. Pre-launch default-flip narrows the launch-blocker surface; F-1218 closure required this." default:"true"`
 	CDNEnabled                     bool            `toml:"cdn_enabled" doc:"Emit CDN-friendly Cache-Control headers on long-immutable endpoints." default:"true"`
 	AllowedOrigins                 []string        `toml:"allowed_origins" doc:"CORS allow-list for browser clients. Empty (default) is same-origin only — no cross-origin browser client can read responses. SEC-14 (audit-2026-07-23): a wildcard here is fully cross-origin readable by every website out of the box; operators opt into cross-origin explicitly by listing their own hostnames." default:"[]"`

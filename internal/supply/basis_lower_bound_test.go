@@ -20,7 +20,7 @@ import (
 func TestLowerBoundNamesEveryBasisInTheVocabulary(t *testing.T) {
 	want := map[Basis]bool{
 		// Floors. Blind in different ways: the trustline sum misses
-		// holding DOMAINS, the storage sum misses TIME.
+		// holding DOMAINS, the storage sum misses uncaptured entries.
 		BasisClassicTrustlineSum:     true,
 		BasisContractStorageBalances: true,
 

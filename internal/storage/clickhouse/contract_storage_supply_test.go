@@ -247,40 +247,7 @@ func TestBalanceAmountI128LowWordHighBit(t *testing.T) {
 }
 
 func TestContractStorageSupplyRefusesNegativeBalance(t *testing.T) {
-	var holderKey xdr.Uint256
-	holderKey[0] = 1
-	holder := xdr.AccountId{
-		Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
-		Ed25519: &holderKey,
-	}
-	contractID := xdr.ContractId(mustContractHash(t, caocxwnxContractID))
-	key := xdr.LedgerKey{
-		Type: xdr.LedgerEntryTypeContractData,
-		ContractData: &xdr.LedgerKeyContractData{
-			Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &contractID},
-			Key:        balanceKeyFor(holder),
-			Durability: xdr.ContractDataDurabilityPersistent,
-		},
-	}
-	entry := xdr.LedgerEntry{
-		Data: xdr.LedgerEntryData{
-			Type: xdr.LedgerEntryTypeContractData,
-			ContractData: &xdr.ContractDataEntry{
-				Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &contractID},
-				Key:        balanceKeyFor(holder),
-				Durability: xdr.ContractDataDurabilityPersistent,
-				Val:        xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &xdr.Int128Parts{Hi: -1, Lo: 0}},
-			},
-		},
-	}
-	keyB64, err := xdr.MarshalBase64(key)
-	if err != nil {
-		t.Fatalf("marshal key: %v", err)
-	}
-	entryB64, err := xdr.MarshalBase64(entry)
-	if err != nil {
-		t.Fatalf("marshal entry: %v", err)
-	}
+	keyB64, entryB64 := balanceRowWith(t, xdr.ContractDataDurabilityPersistent, xdr.Int128Parts{Hi: -1, Lo: 0})
 
 	out := ContractStorageSupply{ContractID: caocxwnxContractID, Total: new(big.Int)}
 	if err := out.apply(keyB64, entryB64, 0); err == nil {
@@ -530,4 +497,67 @@ func mustContractHash(t *testing.T, contractID string) xdr.Hash {
 	var h xdr.Hash
 	copy(h[:], raw)
 	return h
+}
+
+// balanceRow builds one key_xdr/entry_xdr pair for a Balance(Address) entry on
+// the CAOCXWNX contract, holding amount under the given durability.
+func balanceRow(t *testing.T, durability xdr.ContractDataDurability, amount uint64) (string, string) {
+	t.Helper()
+	return balanceRowWith(t, durability, xdr.Int128Parts{Lo: xdr.Uint64(amount)})
+}
+
+func balanceRowWith(t *testing.T, durability xdr.ContractDataDurability, amount xdr.Int128Parts) (string, string) {
+	t.Helper()
+	var holderKey xdr.Uint256
+	holderKey[0] = 1
+	holder := xdr.AccountId{
+		Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
+		Ed25519: &holderKey,
+	}
+	contractID := xdr.ContractId(mustContractHash(t, caocxwnxContractID))
+	contract := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &contractID}
+	key := xdr.LedgerKey{
+		Type: xdr.LedgerEntryTypeContractData,
+		ContractData: &xdr.LedgerKeyContractData{
+			Contract: contract, Key: balanceKeyFor(holder), Durability: durability,
+		},
+	}
+	entry := xdr.LedgerEntry{
+		Data: xdr.LedgerEntryData{
+			Type: xdr.LedgerEntryTypeContractData,
+			ContractData: &xdr.ContractDataEntry{
+				Contract: contract, Key: balanceKeyFor(holder), Durability: durability,
+				Val: xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &amount},
+			},
+		},
+	}
+	keyB64, err := xdr.MarshalBase64(key)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	entryB64, err := xdr.MarshalBase64(entry)
+	if err != nil {
+		t.Fatalf("marshal entry: %v", err)
+	}
+	return keyB64, entryB64
+}
+
+// A live_until below the entry's own last write cannot be true — a write needs
+// a live entry — so it is stale TTL data, not proof of a lapse.
+func TestContractStorageSupplySettleKeepsStaleTTLAsLive(t *testing.T) {
+	keyB64, entryB64 := balanceRow(t, xdr.ContractDataDurabilityTemporary, 7)
+	out := ContractStorageSupply{ContractID: caocxwnxContractID, Total: new(big.Int)}
+	if err := out.apply(keyB64, entryB64, 500); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	out.settle(map[string]uint32{keyB64: 499}, 1_000)
+	if out.BalanceEntries != 1 || out.Total.Int64() != 7 || out.ArchivedEntries != 0 || out.AsOfLedger != 500 {
+		t.Errorf("settled to %d entries / %s / %d archived / as of %d, want 1 / 7 / 0 / 500",
+			out.BalanceEntries, out.Total, out.ArchivedEntries, out.AsOfLedger)
+	}
+	out.settle(map[string]uint32{keyB64: 999}, 1_000)
+	if out.BalanceEntries != 0 || out.Total.Sign() != 0 || out.AsOfLedger != 0 {
+		t.Errorf("a temporary balance lapsed at 999 against tip 1000 settled to %d entries / %s",
+			out.BalanceEntries, out.Total)
+	}
 }

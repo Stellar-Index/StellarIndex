@@ -109,11 +109,15 @@ func TestSupplyFallsBackToContractStorageWhenNoFlows(t *testing.T) {
 			got.Source, supply.BasisContractStorageBalances)
 	}
 	if !got.CirculatingSupplyLowerBound {
-		t.Error("circulating_supply_lower_bound is false on a storage-summed figure; state expiry " +
-			"can archive a real balance out of view, so the figure is a floor")
+		t.Error("circulating_supply_lower_bound is false on a storage-summed figure; a balance entry " +
+			"the lake never captured is out of view, so the figure is a floor")
 	}
 	if got.BalanceEntries != 6 {
 		t.Errorf("balance_entries = %d, want 6", got.BalanceEntries)
+	}
+	if got.ArchivedBalanceEntries != 0 || got.ArchivedBalanceTotal != nil {
+		t.Errorf("archived = %d / %v on a reading with nothing archived, want both absent",
+			got.ArchivedBalanceEntries, got.ArchivedBalanceTotal)
 	}
 	if got.SupplyConsistent == nil || !*got.SupplyConsistent {
 		t.Errorf("supply_consistent = %v, want true", got.SupplyConsistent)
@@ -206,7 +210,7 @@ func TestSupplyStorageFallbackFlagsInconsistency(t *testing.T) {
 	}
 	if got.SupplyConsistent == nil || *got.SupplyConsistent {
 		t.Errorf("supply_consistent = %v, want false — the contract declares more holders than "+
-			"the lake can show, which is what an archived balance looks like", got.SupplyConsistent)
+			"the lake can show, which is what an uncaptured balance entry looks like", got.SupplyConsistent)
 	}
 	if !got.CirculatingSupplyLowerBound {
 		t.Error("lower-bound flag cleared on a figure we know is incomplete")
@@ -227,5 +231,26 @@ func TestSupplyStorageFallbackOmitsDecimalsWhenChainDeclaresNone(t *testing.T) {
 	}
 	if got.TotalSupply != storageDealTotal {
 		t.Errorf("total_supply = %q; the RAW figure is still defensible without a scale", got.TotalSupply)
+	}
+}
+
+// An archived persistent balance is still owned and restorable, so it stays in
+// total_supply — but the response must say how much of the figure rests on
+// entries whose TTL has lapsed rather than present it as uniformly live.
+func TestSupplyStorageFallbackDisclosesArchivedBalances(t *testing.T) {
+	out := dealStorageSupply()
+	out.ArchivedEntries, out.ArchivedTotal = 2, big.NewInt(1_250_000)
+	rec := serveSupplyWithStorage(t, zeroFlows(), &fakeStorageSupply{out: out}, storageDealContractID)
+
+	got := decodeSupply(t, rec.Body.Bytes())
+	if got.TotalSupply != storageDealTotal || got.BalanceEntries != 6 {
+		t.Errorf("total_supply = %q over %d entries, want %q over 6 — archived balances are supply",
+			got.TotalSupply, got.BalanceEntries, storageDealTotal)
+	}
+	if got.ArchivedBalanceEntries != 2 || got.ArchivedBalanceTotal == nil || *got.ArchivedBalanceTotal != "1250000" {
+		t.Errorf("archived = %d / %v, want 2 / \"1250000\"", got.ArchivedBalanceEntries, got.ArchivedBalanceTotal)
+	}
+	if !got.CirculatingSupplyLowerBound {
+		t.Error("lower-bound flag cleared on a storage-summed figure")
 	}
 }
