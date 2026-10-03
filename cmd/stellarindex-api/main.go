@@ -1345,7 +1345,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Prices:      priceReader,
 		// 2m SWR cache on LatestTradePerSource only (the
 		// /v1/observations primitive — an unbounded DISTINCT ON scan
-		// over the trades hypertable, ~8s → 503; #29). All other
+		// over the trades hypertable, ~8s → 503; c5a1a0e67). All other
 		// HistoryReader methods pass through. Cold fill is detached
 		// so it outlives the handler's 8s ceiling and warms the
 		// cache for the status page's 2-min poll.
@@ -1523,7 +1523,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// `usageReader == nil` with an empty list, which is the
 		// correct "Redis absent → no usage data" shape.
 		UsageReader: usageReaderOrNil(usageCounter),
-		// Per-endpoint usage rollups (#32/#37b): reads the
+		// Per-endpoint usage rollups: reads the
 		// `usage_daily` hypertable the usage-rollup worker below
 		// maintains. The handler prefers this over UsageReader and
 		// falls back per-request when the read errors or the table
@@ -1772,7 +1772,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		logger.Info("stream publisher disabled (no pairs configured); /v1/price/stream serves heartbeats only")
 	}
 
-	// #16: background refresher for /v1/diagnostics/ingestion. Builds
+	// 4d6e7ac4f: background refresher for /v1/diagnostics/ingestion. Builds
 	// the snapshot every 15s into an atomic.Pointer that the handler
 	// serves sub-ms (the inline build was 200-500ms — fine, but the
 	// status-page tile polls every 15-30s and this turns it into a
@@ -1789,6 +1789,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		defer bgWG.Done()
 		defer recoverBackgroundWorker(logger, "ingestion-snapshot-refresh")
 		apiSrv.StartIngestionSnapshotRefresh(rootCtx)
+	}()
+
+	// Keeps stellarindex_dependency_up fresh without /v1/readyz traffic, so
+	// a dependency outage alerts even when no probe is polling.
+	bgWG.Add(1)
+	go func() {
+		defer bgWG.Done()
+		defer recoverBackgroundWorker(logger, "readiness-probe")
+		apiSrv.StartReadinessProbe(rootCtx, v1.ReadinessProbeCadence)
 	}()
 
 	httpSrv := &http.Server{
@@ -1872,7 +1881,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		logger.Info("customer-webhook delivery worker started")
 	}
 
-	// Usage-rollup worker (#32/#37b): folds the Redis per-endpoint
+	// Usage-rollup worker: folds the Redis per-endpoint
 	// detail counters (written by middleware.UsageTracker) into the
 	// `usage_daily` Timescale hypertable every 5 min so
 	// /v1/account/usage can serve per-endpoint request / error /
@@ -1996,7 +2005,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		serveErr <- nil
 	}()
 
-	// #37 full fix: HTTP self-call prewarm. Hits /v1/assets/<id> for
+	// 01e91b683 full fix: HTTP self-call prewarm. Hits /v1/assets/<id> for
 	// native + every verified currency on a 60s cadence so EVERY
 	// cache the handler touches — not just the 7 CachedAssetsReader
 	// SWR slots warmed by prewarmCaches — stays hot. Covers the F2
@@ -2266,7 +2275,7 @@ func buildWebhookHandlers(db *sql.DB, logger *slog.Logger) (*postgresstore.Webho
 }
 
 // buildPriceAlertHandlers constructs the dashboard price-alert CRUD
-// handlers (BACKLOG #60) atop the shared platform store. The evaluator
+// handlers atop the shared platform store. The evaluator
 // that checks these alerts + enqueues price.alert deliveries runs in
 // the aggregator binary (internal/pricealerts); these handlers are the
 // customer-facing registration surface.
@@ -2604,7 +2613,7 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		return dashboardBundle{}, err
 	}
 
-	// BACKLOG #60: dashboard price-alert CRUD atop the same Postgres.
+	// Dashboard price-alert CRUD atop the same Postgres.
 	priceAlertsH, err := buildPriceAlertHandlers(pg, logger)
 	if err != nil {
 		return dashboardBundle{}, err
@@ -3922,11 +3931,15 @@ func priceWithheld(
 	for _, opt := range opts {
 		opt(&q)
 	}
+	adm := v1.ThinAdmissionFrom(ctx)
 	gate := pricingguard.Gate{Substance: substance, Scam: scam}
-	if q.pointInTime {
-		return gate.PriceWithholdingAt(ctx, base, quote, q.at, surface)
-	}
-	return gate.PriceWithholding(ctx, base, quote, surface)
+	v := gate.Judge(ctx, base, quote, surface, pricingguard.Query{
+		PointInTime: q.pointInTime,
+		At:          q.at,
+		AdmitThin:   adm.Requested() && adm.Covers(base, quote),
+	})
+	adm.Record(base, quote, v)
+	return v.Withholding
 }
 
 // withholdingQuery is what a seam may tell the chokepoint about the
@@ -4380,7 +4393,7 @@ func (r storeVolumeReader) Volume24hUSDForAsset(ctx context.Context, assetKey st
 // SorobanVolume24hUSDForAsset implements the optional
 // v1.SorobanVolumeReader — the XLM-anchored 24h USD-volume variant used
 // for pure-Soroban SEP-41 assets whose liquidity is quoted in XLM rather
-// than a USD-pegged classic (#37).
+// than a USD-pegged classic (fce3e2eef).
 func (r storeVolumeReader) SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (string, error) {
 	return r.s.SorobanVolume24hUSDForAsset(ctx, assetKey)
 }
@@ -4413,7 +4426,7 @@ var usdQuoteAsset = func() canonical.Asset {
 // adapter walks the pegs and re-runs the at-or-before lookup
 // against asset/<peg>. First non-error result wins. Without
 // this, /v1/assets/{id}.change_24h_pct silently stays null for
-// every on-chain asset (mirrors the same gap fixed in #1217 for
+// every on-chain asset (mirrors the same gap fixed in 6505934b5 for
 // the /v1/price handler).
 //
 // decimals is the confirmed non-7-decimals table. The bucket this
@@ -5888,7 +5901,7 @@ func prewarmNetworkStats(ctx context.Context, logger *slog.Logger, networkStats 
 // /v1/assets/{id} fires SEVEN SWR-cached reader calls per request
 // (full fan-out at internal/api/v1/asset_catalogue_extension.go):
 //
-//	GetAssetByAssetID         — the asset-catalogue row itself (rc.61 #37 fix)
+//	GetAssetByAssetID         — the asset-catalogue row itself (rc.61 01e91b683 fix)
 //	GetAssetTopMarkets(id, 5) — top 5 markets per asset
 //	GetAssetPriceHistory24h   — 24h sparkline
 //	GetAssetPriceHistory7d    — 7d sparkline
@@ -5896,7 +5909,7 @@ func prewarmNetworkStats(ctx context.Context, logger *slog.Logger, networkStats 
 //	GetAssetTradeCount24h     — 24h trade count
 //	GetAssetATH               — all-time high
 //
-// Pre-#37 full-deferred: only GetAssetByAssetID was prewarmed; the
+// Pre-01e91b683 full-deferred: only GetAssetByAssetID was prewarmed; the
 // other SIX readers cold-filled on first hit, costing ~2s on
 // /v1/assets/USDC-GA5Z…'s first request post-restart even though
 // subsequent hits served sub-ms warm. Live-measured 2026-05-20.
@@ -6006,32 +6019,39 @@ func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenA
 	// landing). Then every verified currency.
 	targets := append([]string{"native"}, verifiedAssetIDs...)
 
+	// The explorer opts into include_thin, which is its own cache entry.
+	queries := []string{"", "?include_thin=true"}
+	warm := func(id, query string) {
+		start := time.Now()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+id+query, nil)
+		if err != nil {
+			logger.Debug("self-prewarm request build failed", "asset_id", id, "err", err)
+			return
+		}
+		// Mark as synthetic so obs.HTTPMetrics keeps these
+		// deliberately-cold warming requests out of the
+		// customer-facing latency histogram + SLO. Without this
+		// the prewarmer's own ~570ms cold misses dominate p95/p99.
+		req.Header.Set("User-Agent", "stellarindex-prewarm/1")
+		resp, err := client.Do(req)
+		elapsed := time.Since(start)
+		if err != nil {
+			if ctx.Err() == nil {
+				logger.Debug("self-prewarm GET failed", "asset_id", id, "query", query, "err", err, "elapsed", elapsed.String())
+			}
+			return
+		}
+		_ = resp.Body.Close()
+		logger.Debug("self-prewarm /v1/assets", "asset_id", id, "query", query, "status", resp.StatusCode, "elapsed", elapsed.String())
+	}
 	runPass := func() {
 		for _, id := range targets {
-			if ctx.Err() != nil {
-				return
-			}
-			start := time.Now()
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+id, nil)
-			if err != nil {
-				logger.Debug("self-prewarm request build failed", "asset_id", id, "err", err)
-				continue
-			}
-			// Mark as synthetic so obs.HTTPMetrics keeps these
-			// deliberately-cold warming requests out of the
-			// customer-facing latency histogram + SLO. Without this
-			// the prewarmer's own ~570ms cold misses dominate p95/p99.
-			req.Header.Set("User-Agent", "stellarindex-prewarm/1")
-			resp, err := client.Do(req)
-			elapsed := time.Since(start)
-			if err != nil {
-				if ctx.Err() == nil {
-					logger.Debug("self-prewarm GET failed", "asset_id", id, "err", err, "elapsed", elapsed.String())
+			for _, query := range queries {
+				if ctx.Err() != nil {
+					return
 				}
-				continue
+				warm(id, query)
 			}
-			_ = resp.Body.Close()
-			logger.Debug("self-prewarm /v1/assets", "asset_id", id, "status", resp.StatusCode, "elapsed", elapsed.String())
 		}
 	}
 

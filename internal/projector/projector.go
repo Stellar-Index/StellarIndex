@@ -103,6 +103,11 @@ const cursorCommitTimeout = 10 * time.Second
 // unchanged; this only makes the terminal stall observable/alertable.
 const WedgeCycles = 5
 
+// MaxCycleBudgetMultiple caps how far a floor-stalled source's per-cycle
+// budget escalates (PerSourceTimeout << n, n <= 3 → 8×, 8 minutes). A floor
+// range that cannot finish in that is not a slow range, it needs an operator.
+const MaxCycleBudgetMultiple = 8
+
 // ReplayWindowRefreshInterval is how often the projector re-reads the
 // operator-recorded projection dirty windows (migration 0125) to republish
 // obs.ProjectorReplayWindowActive. One tiny SELECT for ALL sources per
@@ -758,6 +763,18 @@ type wedgeTracker struct {
 	floorStalls int
 }
 
+// budget is this source's per-cycle deadline: PerSourceTimeout doubled for each
+// consecutive floor-stall, capped at MaxCycleBudgetMultiple. The window cannot
+// shrink below the floor, so a longer deadline is the only lever left to let
+// the identical range finish; an advancing cycle resets it.
+func (wt *wedgeTracker) budget() time.Duration {
+	mult := 1
+	for i := 0; i < wt.floorStalls && mult < MaxCycleBudgetMultiple; i++ {
+		mult *= 2
+	}
+	return PerSourceTimeout * time.Duration(mult)
+}
+
 // floorStall records one cycle that ended at the window floor, under a deadline,
 // without advancing the cursor. It raises the wedge gauge once the stall has
 // persisted WedgeCycles consecutive cycles (and keeps it raised while it does).
@@ -1043,7 +1060,7 @@ func (p *Projector) commitCursor(ctx context.Context, source string, read timesc
 //nolint:gocognit,funlen // linear cycle (cursor read → tip → scan → cursor write) with a source branch (soroban_events vs CH); splitting into helpers would scatter the cycle's success/failure metric emissions and make the control flow harder to audit.
 func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint32, tracker *poisonTracker, wedge *wedgeTracker, lake *sourceLake) { //nolint:gocyclo // essential, cohesive durability classification (C2-1)
 	start := time.Now()
-	cycleCtx, cancel := context.WithTimeout(ctx, PerSourceTimeout)
+	cycleCtx, cancel := context.WithTimeout(ctx, wedge.budget())
 	defer cancel()
 
 	cursor, err := p.store.GetCursor(cycleCtx, "projector", src.Name)
@@ -1248,7 +1265,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 
 	prefilter := src.PrefilterContractIDs()
 	if p.chAddr != "" {
-		// CH feed-switch (#10): read contract_events directly (already an
+		// CH feed-switch (ADR-0034 #10): read contract_events directly (already an
 		// events.Event, no Reconstruct). No FINAL — small forward window +
 		// idempotent downstream writes absorb any duplicate.
 		err = clickhouse.StreamContractEventsFiltered(cycleCtx, p.chAddr, fromLedger, toLedger,

@@ -142,6 +142,7 @@ run_drill() {
   mkdir -p "$d/root" "$d/log" "$d/textfile"
   PATH="$shims:$PATH" PG_BIN="$pgbin" \
     DRILL_ROOT="$d/root" DRILL_LOCK="${FAKE_DRILL_LOCK:-$d/lock}" RESTORE_DRILL_LOG_DIR="$d/log" TEXTFILE_DIR="$d/textfile" \
+    DRILL_POOL_FLOOR_GB="${FAKE_POOL_FLOOR_GB:-0}" \
     DRILL_CH_WINDOW='' STELLARINDEX_POSTGRES_DSN='' WAL_DRAIN_TIMEOUT=0 \
     bash "$DRILL" >"$d/out" 2>&1
   echo $? > "$d/rc"
@@ -189,6 +190,25 @@ if [[ "$(cat "$c/rc")" != "2" ]] && grep -q "capacity: 500G free" "$c/out"; then
 else
   bad "500G free vs 300G backup: expected to proceed, got exit $(cat "$c/rc"):
 $(tail -n 5 "$c/out")"
+fi
+
+# The wrapper's pool watchdog stops a job below 300 G pool free. 600 G free
+# passes the backup-only check for a 300 G backup (425 G) but the restore
+# would be killed mid-way, so it must be refused up front.
+c="$work/c1c"; mkdir -p "$c"
+FAKE_POOL_FLOOR_GB=300 FAKE_DF_AVAIL_G=600 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=1 run_drill "$c"
+if [[ "$(cat "$c/rc")" == "2" ]] && grep -q "300G pool floor — refusing" "$c/out"; then
+  ok "600G free vs 300G backup + 300G pool floor: refused (exit 2)"
+else
+  bad "600G free vs 300G backup + 300G pool floor: expected exit 2 + pool-floor refusal, got exit $(cat "$c/rc"):
+$(tail -n 5 "$c/out")"
+fi
+c="$work/c1d"; mkdir -p "$c"
+FAKE_POOL_FLOOR_GB=300 FAKE_DF_AVAIL_G=800 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=1 run_drill "$c"
+if [[ "$(cat "$c/rc")" != "2" ]] && grep -q "capacity: 800G free" "$c/out"; then
+  ok "800G free vs 300G backup + 300G pool floor: proceeds"
+else
+  bad "800G free vs 300G backup + 300G pool floor: expected to proceed, got exit $(cat "$c/rc")"
 fi
 
 # ─── 2. pgbackrest restore fails: evidence + metric + partial removed ──

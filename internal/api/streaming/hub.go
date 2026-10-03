@@ -450,8 +450,10 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 			// beyond the queue depth hits it); flagging it as a gap
 			// would fire on nearly every large resume rather than on
 			// genuine, unrecoverable loss.
-			if lastEventID != "" && oldestHeld != "" &&
-				oldestHeld > lastEventID && t.hasEvictedBuffered() {
+			// A cursor from a foreign ID space (another region whose clock
+			// is ahead) sorts above the whole ring, so replay is empty and
+			// would otherwise look like a clean resume.
+			if h.resumeGap(t, lastEventID, oldestHeld) {
 				gaps = append(gaps, newStreamGapEvent(topic, lastEventID, oldestHeld))
 			}
 			merged = append(merged, trimmed...)
@@ -477,6 +479,17 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 	}
 
 	return sub.ch, cancel, nil
+}
+
+// resumeGap reports whether a resume at lastEventID lost events on t:
+// the ring evicted past the cursor, or the cursor is from a foreign ID
+// space. Caller holds t.mu.
+func (h *Hub) resumeGap(t *topicState, lastEventID, oldestHeld string) bool {
+	if lastEventID == "" {
+		return false
+	}
+	evictedPast := oldestHeld != "" && oldestHeld > lastEventID && t.hasEvictedBuffered()
+	return evictedPast || h.gen.Ahead(lastEventID)
 }
 
 // newStreamGapEvent builds the diagnostic marker Subscribe sends ahead

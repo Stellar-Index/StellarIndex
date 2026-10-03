@@ -9,6 +9,51 @@
     state: directory
     mode: '0755'
 
+# Asserted here (not only in preflight) so a partial `--tags config`
+# run can never render a plaintext etcd by accident.
+- name: assert etcd TLS material is supplied
+  assert:
+    that:
+      - etcd_tls_ca_pem is defined
+      - etcd_tls_ca_pem | length > 0
+      - etcd_tls_cert_pem is defined
+      - etcd_tls_cert_pem | length > 0
+      - etcd_tls_key_pem is defined
+      - etcd_tls_key_pem | length > 0
+    fail_msg: >-
+      etcd_tls_ca_pem, etcd_tls_cert_pem and etcd_tls_key_pem must be
+      set (PEM contents from vault; see defaults/main.yml). Refusing to
+      configure etcd without TLS; set etcd_tls_enabled=false only for a
+      throwaway lab cluster.
+  when: etcd_tls_enabled
+  no_log: true
+
+- name: ensure etcd TLS directory
+  file:
+    path: "{{ etcd_tls_dir }}"
+    state: directory
+    owner: root
+    group: etcd
+    mode: '0750'
+  when: etcd_tls_enabled
+
+- name: install etcd TLS material
+  copy:
+    content: "{{ item.content }}\n"
+    dest: "{{ etcd_tls_dir }}/{{ item.name }}"
+    owner: root
+    group: etcd
+    mode: "{{ item.mode }}"
+  loop:
+    - { name: ca.pem, content: "{{ etcd_tls_ca_pem | default('') | trim }}", mode: '0644' }
+    - { name: server.pem, content: "{{ etcd_tls_cert_pem | default('') | trim }}", mode: '0644' }
+    - { name: server-key.pem, content: "{{ etcd_tls_key_pem | default('') | trim }}", mode: '0640' }
+  loop_control:
+    label: "{{ item.name }}"
+  when: etcd_tls_enabled
+  no_log: true
+  notify: "etcd config changed"
+
 - name: render /etc/default/etcd
   template:
     src: etcd.conf.j2

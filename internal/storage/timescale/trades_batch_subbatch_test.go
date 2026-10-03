@@ -56,9 +56,9 @@ func registeredUSDCLedger(t *testing.T, conn *scriptedConn) int64 {
 	t.Helper()
 	for _, st := range conn.stmts {
 		if strings.Contains(st.sql, "INSERT INTO classic_assets") {
-			l, ok := st.arg(t, 5).(int)
+			l, ok := st.arg(t, 7).(int)
 			if !ok {
-				t.Fatalf("classic_assets $5 is %T, want int", st.arg(t, 5))
+				t.Fatalf("classic_assets $7 is %T, want int", st.arg(t, 7))
 			}
 			return int64(l)
 		}

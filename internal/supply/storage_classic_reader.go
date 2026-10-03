@@ -50,7 +50,7 @@ type ClassicSupplyStore interface {
 }
 
 // StorageClassicSupplyReader satisfies [ClassicSupplyReader] by
-// composing the four classic-supply hypertables (#303) populated
+// composing the four classic-supply hypertables (3e215c2e2) populated
 // by the trustlines / claimable_balances / liquidity_pools /
 // sac_balances observers. Per ADR-0022 PR 5/5 — closes the
 // Algorithm 2 producer pipeline.

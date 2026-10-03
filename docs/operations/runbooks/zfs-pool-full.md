@@ -5,13 +5,13 @@ status: draft
 severity: P1
 ---
 
-# Runbook — `stellarindex_zfs_pool_low_space` / `stellarindex_zfs_pool_critical_space`
+# Runbook — `stellarindex_zfs_pool_low_space` / `stellarindex_zfs_pool_critical_space` / `stellarindex_zfs_pool_fill_85pct_within_30d` / `stellarindex_zfs_pool_fill_90pct_within_7d`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_zfs_pool_low_space` (P3, ticket) · `stellarindex_zfs_pool_critical_space` (P1, page) |
+| Alert | `stellarindex_zfs_pool_low_space` (P3, ticket) · `stellarindex_zfs_pool_critical_space` (P1, page) · `stellarindex_zfs_pool_fill_85pct_within_30d` (P3, ticket) · `stellarindex_zfs_pool_fill_90pct_within_7d` (P1, page) |
 | Severity | P1 (critical) / P3 (low) |
 | Detected by | Prometheus rule in `configs/prometheus/rules.r1/infra.yml` (R1 overlay) |
 | Typical MTTR | 15–45 min (reclaim) |
@@ -30,6 +30,13 @@ pool-free proxy. Thresholds are absolute (box-specific: ~16.8 TiB usable).
 
 - `stellarindex_zfs_pool_low_space` — under **1.3 TB** free for 15 min. Plan reclamation.
 - `stellarindex_zfs_pool_critical_space` — under **650 GB** free for 5 min. Reclaim NOW.
+- `stellarindex_zfs_pool_fill_85pct_within_30d` — a linear fit over 14 days of
+  daily free-space troughs projects under **15 %** free within 30 days (or the
+  troughs are already below it). Plan reclamation; nothing is stalling yet.
+- `stellarindex_zfs_pool_fill_90pct_within_7d` — the same fit projects under
+  **10 %** free within 7 days. Find what is filling the pool today
+  (`zfs list -o name,used -s used`, compare with yesterday) and reclaim before
+  the floors fire.
 - ClickHouse / MinIO / Postgres write latency climbing; possible `ENOSPC` in service logs.
 
 ## Quick diagnosis (≤ 5 min)
@@ -68,13 +75,17 @@ incident. See the storage section of the 2026-07-17 live r1 review (commit `ca2f
 
 - A large re-derive / backfill (e.g. ADR-0047 Phase 0) transiently dips free
   space, then merges compact it back. The `for:` windows (15 m / 5 m) ride out
-  brief dips; a sustained breach is real.
+  brief dips; a sustained breach is real. The trend alerts are not ridden out
+  the same way: a large one-off write steepens the 14-day fit until it ages
+  out. If the pool has since compacted back, the projection recovers as new
+  daily troughs arrive; silence the trend alert rather than retune it.
 
 ## Related
 
 - Companion runbook: [`zfs-degraded.md`](zfs-degraded.md) — the redundancy side
   (drive failure) of the same pool. Capacity here; parity there.
-- Rule: `configs/prometheus/rules.r1/infra.yml` (`stellarindex.infra` group).
+- Rule: `configs/prometheus/rules.r1/infra.yml` (`stellarindex.infra` group for
+  the floors, `stellarindex.infra_pool_trend` for the projections).
 - Storage plan: [go-live-master-plan.md (§ storage/runway)](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/audit/audit-2026-07-16/go-live-master-plan.md).
 
 ## Changelog

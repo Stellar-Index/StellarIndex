@@ -42,7 +42,7 @@ func TestCreateCapped_ChildKeySlidingIdleTTL(t *testing.T) {
 }
 
 // TestCreate_OperatorIssuedKeyStaysPersistent — a request that is not
-// SelfService (ops CLI, admin mint, signup) keeps no Redis expiry.
+// SelfService (ops CLI, admin mint) keeps no Redis expiry.
 func TestCreate_OperatorIssuedKeyStaysPersistent(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

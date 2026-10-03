@@ -1,8 +1,8 @@
-# systemd timer: hourly galexie-archive catch-up (#26).
+# systemd timer: hourly galexie-archive catch-up (f12289f6d).
 #
 # Hourly is the deliberate cadence: a stalled archive is then
 # detected+repaired within ~1h instead of the 23 days the original
-# #26 outage went unnoticed. The pull source is aws-public-blockchain
+# stall went unnoticed. The pull source is aws-public-blockchain
 # (full durable Stellar history), so frequency is not bounded by
 # galexie-live's rolling retention. A normal hour's drift is a
 # handful of partitions and fills in seconds; the cost when there's
@@ -15,7 +15,7 @@
 # reboot can't silently reopen the gap.
 
 [Unit]
-Description=Hourly galexie-archive catch-up (#26 standing fix)
+Description=Hourly galexie-archive catch-up (f12289f6d standing fix)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/galexie-backfill.md
 
 [Timer]
