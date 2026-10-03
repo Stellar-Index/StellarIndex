@@ -90,6 +90,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/customerwebhook"
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
+	"github.com/Stellar-Index/StellarIndex/internal/holds"
 	"github.com/Stellar-Index/StellarIndex/internal/logincodereaper"
 	"github.com/Stellar-Index/StellarIndex/internal/magiclinkreaper"
 	"github.com/Stellar-Index/StellarIndex/internal/metadata"
@@ -1568,6 +1569,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			AggregatorSources: external.AggregatorSources(),
 		},
 	})
+
+	if cfg.API.HoldsFile != "" {
+		bgWG.Add(1)
+		go func() {
+			defer bgWG.Done()
+			defer recoverBackgroundWorker(logger, "holds-watch")
+			holds.Watch(rootCtx, cfg.API.HoldsFile, cfg.API.HoldsReloadInterval, apiSrv.SetHolds, logger.With("component", "holds"))
+		}()
+	}
 
 	// Shared tip-stream producer ceiling. The config defaults equal the
 	// registry's built-in ones, so behaviour changes only on opt-in.

@@ -7418,6 +7418,11 @@ export interface components {
              * @default false
              */
             outside_coverage: boolean;
+            /**
+             * @description Set on `/v1/assets/{asset_id}`, `/v1/assets/{asset_id}/supply`, `/v1/assets/{asset_id}/holders` and `/v1/accounts/{g_strkey}` when an operator hold covers the asset, contract or ledger the response is about. The figures are served unchanged; treat them as unconfirmed. The envelope's `under_review_reason` says why. Omitted when false.
+             * @default false
+             */
+            under_review: boolean;
         };
         /**
          * @description Present on list endpoints when more rows exist beyond the
@@ -7445,6 +7450,8 @@ export interface components {
              */
             coverage_from?: string;
             sources?: string[];
+            /** @description Operator-supplied reason; present exactly when `flags.under_review` is true. */
+            under_review_reason?: string;
             flags: components["schemas"]["Flags"];
         };
         /**

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/holds"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
@@ -84,6 +85,38 @@ func (s *stubAssetsReaderExt) GetAssetTradeCount24h(_ context.Context, _ string)
 
 // ptr is a tiny helper.
 func sptr(s string) *string { return &s }
+
+func TestAssetGet_HoldMarksUnderReview(t *testing.T) {
+	usdc, err := canonical.NewClassicAsset("USDC", testUSDCIssuer)
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	reader := &stubAssetReader{
+		byID: map[string]v1.AssetDetail{
+			usdc.String(): {AssetID: usdc.String(), Type: "classic", Code: "USDC"},
+		},
+	}
+	srv := v1.New(v1.Options{Assets: reader, AssetsReader: &stubAssetsReaderExt{}})
+	list, err := holds.Parse([]byte("[[hold]]\nasset = \"" + usdc.String() + "\"\nreason = \"r\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.SetHolds(list)
+	resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/assets/"+usdc.String())
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	var body struct {
+		Flags  map[string]any `json:"flags"`
+		Reason string         `json:"under_review_reason"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Flags["under_review"] != true || body.Reason != "r" {
+		t.Errorf("not marked: flags=%v reason=%q", body.Flags, body.Reason)
+	}
+}
 
 func TestAssetGet_AssetExtension_Populates(t *testing.T) {
 	price := sptr("1.0008")

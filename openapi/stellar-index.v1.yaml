@@ -15454,6 +15454,15 @@ components:
             deployment holds for the pair, so nothing was there to return.
             Never set on a range that straddles the floor, and never set when
             the floor could not be established. Omitted when false.
+        under_review:
+          type: boolean
+          default: false
+          description: >
+            Set on `/v1/assets/{asset_id}`, `/v1/assets/{asset_id}/supply`,
+            `/v1/assets/{asset_id}/holders` and `/v1/accounts/{g_strkey}` when an operator hold covers the
+            asset, contract or ledger the response is about. The figures are
+            served unchanged; treat them as unconfirmed. The envelope's
+            `under_review_reason` says why. Omitted when false.
       required: [stale, reduced_redundancy, triangulated, divergence_warning]
 
     Pagination:
@@ -15510,6 +15519,9 @@ components:
         sources:
           type: array
           items: { type: string }
+        under_review_reason:
+          type: string
+          description: Operator-supplied reason; present exactly when `flags.under_review` is true.
         flags: { $ref: "#/components/schemas/Flags" }
       required: [as_of, flags]
 
