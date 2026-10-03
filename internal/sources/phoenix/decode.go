@@ -303,6 +303,12 @@ func classifyAny(e *events.Event) (action, string) {
 	case TopicSymbolWithdrawRewards:
 		return actionWithdrawRewards, e.Topic[1]
 	case TopicSymbolDistributeRewards:
+		// The only audited shape is ("distribute_rewards","asset"); any
+		// other topic[1] is unaudited and must surface as a recognition
+		// gap, not decode its body as an asset address (INV-2280).
+		if e.Topic[1] != TopicSymbolDRAsset {
+			return actionUnknown, ""
+		}
 		return actionDistributeRewards, e.Topic[1]
 	case TopicSymbolAdmin:
 		return actionAdmin, e.Topic[1]
