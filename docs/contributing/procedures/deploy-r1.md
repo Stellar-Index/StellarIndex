@@ -36,6 +36,10 @@ binary on probe failure**. Two sharp edges:
   old-binary compatibility (additive = fine; renames/drops = not).
 - `migrations_skip` is a string→bool footgun with history — leave it
   alone unless you know why you're setting it.
+- A release whose migrations declare `-- REQUIRED-FOLLOWUP:` commands
+  (a replay or CAGG refresh) is refused until you pass
+  `followups_acknowledged=true`; run those commands straight after the
+  deploy — the data they name serves empty until you do.
 
 ## Post-deploy verification (ALWAYS, in order)
 
