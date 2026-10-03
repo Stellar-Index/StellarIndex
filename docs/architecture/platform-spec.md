@@ -544,7 +544,7 @@ CREATE TABLE customer_webhooks (
     name          text NOT NULL,
     url           text NOT NULL,
     secret_hash   bytea,             -- legacy RAW signing key; NULL once sealed
-    signing_key_sealed bytea,        -- sealed signing key (migration 0199)
+    signing_key_sealed bytea,        -- sealed signing key (migration 0204)
     events        text[] NOT NULL,   -- ['key.minted', 'invoice.paid', ...]
     enabled       bool NOT NULL DEFAULT true,
     created_at    timestamptz NOT NULL DEFAULT now()
@@ -775,7 +775,7 @@ audit-2026-07-23); the audit row carries `keys_clamped` /
     hashed. With `api.dashboard.webhook_seal_key_env` set, the
     API seals it with AES-256-GCM (row id as associated data)
     into `customer_webhooks.signing_key_sealed` and seals any
-    raw legacy key at startup (migration 0199). The misnamed
+    raw legacy key at startup (migration 0204). The misnamed
     `secret_hash` column holds a raw key only for rows written
     without a seal key.
 - Postgres at-rest encryption: trust the disk subsystem (LUKS on
@@ -784,11 +784,11 @@ audit-2026-07-23); the audit row carries `keys_clamped` /
 
 ### 8.2 Audit retention
 
-- `audit_log`: kept indefinitely (the retention decision recorded in
-  [`privacy-rights-requests.md`](../operations/runbooks/privacy-rights-requests.md)).
-  Migrations 0179/0188 make the table append-only apart from an erasure's
-  scrub, and `internal/retentionreaper` does not reap it. A shorter period
-  would need an archiver and a migration granting its delete.
+- `audit_log`: 12 months online, 7 years archived to S3 — **NOT BUILT.**
+  No archiver exists and nothing deletes a row: migrations 0179/0188 make
+  the table append-only apart from an erasure's scrub, and
+  `internal/retentionreaper` deliberately does not reap it. Rows are kept
+  indefinitely until a retention period is decided (#346 F1).
 - `api_usage_events`: 12 months hot, then dropped (customers can
   export their own data anytime)
 

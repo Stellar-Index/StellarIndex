@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -239,9 +240,14 @@ func (c *WebhookStore) GetWebhook(ctx context.Context, id uuid.UUID) (platform.C
 	if w.SigningKey, err = c.openSigningKey(w.ID, raw, sealed); err != nil {
 		return w, fmt.Errorf("postgresstore: GetWebhook: %w", err)
 	}
-	if w.PreviousSigningKey, err = c.openSigningKey(w.ID, prevRaw, prevSealed); err != nil {
-		w.SigningKey = nil
-		return w, fmt.Errorf("postgresstore: GetWebhook: previous key: %w", err)
+	// An expired previous key is never opened, and one that fails to open
+	// is dropped: it must not take the current key down with it.
+	if time.Now().Before(w.PreviousSecretExpiresAt) {
+		if w.PreviousSigningKey, err = c.openSigningKey(w.ID, prevRaw, prevSealed); err != nil {
+			slog.Warn("webhook previous signing key unopenable, dropped",
+				"webhook_id", w.ID, "error", err)
+			w.PreviousSigningKey = nil
+		}
 	}
 	return w, nil
 }
