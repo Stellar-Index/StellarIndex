@@ -201,6 +201,33 @@ func TestAssetMetadata_PathPrefix(t *testing.T) {
 	}
 }
 
+// TestAssetSupplyFlows_DecodesDecimalStrings — path suffix and string
+// amounts survive a round-trip (ADR-0003).
+func TestAssetSupplyFlows_DecodesDecimalStrings(t *testing.T) {
+	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		want := "/v1/assets/USDC-GA5Z.../supply/flows"
+		if r.URL.Path != want {
+			t.Errorf("path = %q, want %q", r.URL.Path, want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"asset_id":"USDC-GA5Z...","contract_id":"CABC","days":[{"day":"2026-09-01","mint":"340282366920938463463374607431768211455","burn":"4","clawback":"0","net":"340282366920938463463374607431768211451","flows":412}],"history_incomplete":false,"as_of_ledger":63340102},"as_of":"2026-09-02T00:00:05Z","flags":{}}`))
+	})
+	got, err := c.AssetSupplyFlows(context.Background(), "USDC-GA5Z...")
+	if err != nil {
+		t.Fatalf("AssetSupplyFlows: %v", err)
+	}
+	d := got.Data
+	if len(d.Days) != 1 || d.Days[0].Mint != "340282366920938463463374607431768211455" || d.Days[0].Flows != 412 {
+		t.Errorf("days = %+v", d.Days)
+	}
+	if d.AsOfLedger == nil || *d.AsOfLedger != 63340102 || d.HistoryIncomplete {
+		t.Errorf("as_of_ledger/history_incomplete = %v/%v", d.AsOfLedger, d.HistoryIncomplete)
+	}
+	if _, err := c.AssetSupplyFlows(context.Background(), ""); err == nil {
+		t.Error("empty asset id: want error")
+	}
+}
+
 // TestMe_PathOnly — Me has no parameters; just a path round-trip.
 func TestMe_PathOnly(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {

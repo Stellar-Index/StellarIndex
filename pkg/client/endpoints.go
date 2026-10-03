@@ -516,6 +516,20 @@ func (c *Client) AssetMetadata(ctx context.Context, assetID string) (*Envelope[A
 	return &env, nil
 }
 
+// AssetSupplyFlows fetches the daily mint / burn / clawback series for
+// one token (GET /v1/assets/{asset_id}/supply/flows). Amounts are
+// base-unit decimal strings (ADR-0003).
+func (c *Client) AssetSupplyFlows(ctx context.Context, assetID string) (*Envelope[AssetSupplyFlows], error) {
+	if assetID == "" {
+		return nil, &APIError{Status: 400, Title: "asset_id required"}
+	}
+	var out Envelope[AssetSupplyFlows]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/assets/"+url.PathEscape(assetID)+"/supply/flows", nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // SourcesOptions filters [Client.Sources]. Class is one of the
 // canonical class strings ("exchange" / "aggregator" / "oracle" /
 // "authority_sanity" / "lending" / "router" / "bridge"); empty
