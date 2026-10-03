@@ -1,5 +1,5 @@
 # Binance default pair map — the built-in set we stream when the
-# operator enables Binance in config without specifying a pair list.
+# operator enables Binance.
 # Embedded into the binary via //go:embed (see pairs.go); editing this
 # file still requires a rebuild + redeploy — it is NOT a runtime
 # config surface. What the YAML buys is a declarative, reviewable

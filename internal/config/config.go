@@ -739,10 +739,8 @@ func (m MetadataConfig) HomeDomainFor(issuer string) (string, bool) {
 // sub-struct; disabled by default so fresh deployments don't
 // attempt network egress until the operator opts in.
 //
-// Pair lists are hardcoded per venue for v1 (see venue package's
-// DefaultPairs). A future PR adds per-venue pair override YAML once
-// the fleet stabilises; deferred to keep config surface narrow
-// until operators actually ask for it.
+// Pair lists are code, not config (see venue package's DefaultPairs);
+// changing one is a pairs.go / pairs.yaml edit.
 type ExternalConfig struct {
 	Binance           ExternalStreamerConfig      `toml:"binance"          doc:"Binance spot WebSocket aggTrade streamer. Pair list: internal/sources/external/binance/pairs.yaml."`
 	Kraken            ExternalStreamerConfig      `toml:"kraken"           doc:"Kraken v2 WebSocket trade streamer. Pair list: internal/sources/external/kraken/pairs.go."`

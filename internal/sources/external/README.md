@@ -82,10 +82,10 @@ contribute to fiat-pair VWAP.
 
 ### Per-venue pair lists
 
-Hardcoded inside each venue package's `pairs.go` (where it
-exists). A future PR exposes per-venue pair override via TOML
-once the fleet stabilises; deferred to keep the config surface
-narrow until operators actually ask for it.
+Code, not config (streaming venues only): each venue package's `pairs.go` (Binance: the
+embedded `pairs.yaml`). Changing a venue's pairs is a change to
+that file, reviewed like any other; there is no per-venue TOML
+override, which keeps the config surface narrow.
 
 ### Decode-error budgets
 
