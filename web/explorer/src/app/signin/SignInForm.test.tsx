@@ -86,3 +86,45 @@ describe('SignInForm passkey entry', () => {
     ).toBeInTheDocument();
   });
 });
+
+describe('SignInForm email request bound', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('returns to the email form when the login request hangs past the timeout', async () => {
+    supportsPasskeys.mockReturnValue(false);
+    const timeout = new AbortController();
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(new DOMException('Request timed out', 'TimeoutError')),
+            );
+          }),
+      ),
+    );
+
+    render(<SignInForm />);
+    fireEvent.change(screen.getByLabelText(/email/i), {
+      target: { value: 'a@example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Send sign-in code/ }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Send sign-in code/ }),
+      ).toBeDisabled(),
+    );
+
+    timeout.abort();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Network error/);
+    expect(
+      screen.getByRole('button', { name: /Send sign-in code/ }),
+    ).toBeEnabled();
+  });
+});
