@@ -12440,6 +12440,11 @@ export interface components {
             month_to_date?: number;
             /** @description Extension member on a `price-withheld` 404 from `/v1/price`, `/v1/price/at` and `/v1/price/changes`, for a thin-market reason (`substance`, `upstream_leg`, `unattributed`) only: the measurement the price was withheld on. Absent otherwise. */
             substance?: components["schemas"]["SubstanceEvidence"];
+            /**
+             * @description Extension member on every `price-withheld` 404: why the price was withheld; a superset of the `price_withheld_reason` values on asset rows (the price SSE stream's withheld event carries it too). Branch on this, not on `title`. Absent on every other problem.
+             * @enum {string}
+             */
+            reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "manipulation_guard" | "fx_leg_unavailable";
         };
     };
     responses: {
