@@ -18,9 +18,10 @@ import (
 // moneyColumnExceptions are the migrated columns whose DDL carries a
 // `-- lint-money:ok <reason>` marker; the test requires both halves to agree.
 var moneyColumnExceptions = map[string]bool{
-	"public.sdex_offer_events.price_n": true,
-	"public.sdex_offer_events.price_d": true,
-	"public.defindex_fees.fee_index":   true,
+	"public.sdex_offer_events.price_n":   true,
+	"public.sdex_offer_events.price_d":   true,
+	"public.defindex_fees.fee_index":     true,
+	"public.sushiswap_v3_pools.fee_pips": true,
 }
 
 // TestMoneyColumnsAreNumeric is the runtime half of the ADR-0003 money
