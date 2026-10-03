@@ -112,7 +112,10 @@ type PriceTipQuery struct {
 // `PriceSnapshot.PriceType`:
 //
 //   - "vwap" with `WindowSeconds=N` — at least one trade in the
-//     last N seconds; rolling-window VWAP.
+//     last N seconds; rolling-window VWAP. When the requested window
+//     is empty and shorter than 30s, the server retries once at 30s,
+//     so the returned `WindowSeconds` can exceed the requested one;
+//     read it from the response rather than assuming your input.
 //   - "last_trade" — window was empty; the most recent observation
 //     as-is. Caller reads `ObservedAt` to decide if it's fresh
 //     enough for their use case.
