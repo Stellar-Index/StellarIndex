@@ -89,6 +89,23 @@ type Decoder interface {
 	Decode(ev events.Event) ([]consumer.Event, error)
 }
 
+// Drainer is an OPTIONAL interface a stateful [Decoder] implements to flush
+// correlation groups still buffered when a bounded stream ends. Without it a
+// group that only an age sweep or a later event would emit (a pre-upgrade
+// phoenix swap, a soroswap swap with no following sync) is lost with the
+// range's last events. Drain also empties the buffers.
+type Drainer interface {
+	Drain() []consumer.Event
+}
+
+// Drain flushes dec if it is a [Drainer]; any other value yields nil.
+func Drain(dec any) []consumer.Event {
+	if dr, ok := dec.(Drainer); ok {
+		return dr.Drain()
+	}
+	return nil
+}
+
 // StateWriteKeyConsumer is an OPTIONAL interface a [Decoder]
 // additionally implements to declare that its Decode reads
 // events.Event.StateWriteKeys for events of specific contracts.
