@@ -10,7 +10,7 @@
 // `verify-served-values`, `verify-usd-volume`, `usd-volume-restamp`,
 // `sdex-claim-audit`, `classic-movements-backfill`, `projected-rebuild`,
 // `reconcile-balances`, `verify-contiguity`, `verify-hashchain`,
-// `verify-lake` — ADR-0033/ADR-0034 completeness + reconciliation checks,
+// `verify-lake`, `verify-network-state` — ADR-0033/ADR-0034 completeness + reconciliation checks,
 // the ADR-0034 Phase 2-4 lake backfill/gate/reproject/rebuild tools, the
 // ADR-0047 pre-P23 classic-movement reconstruction backfill, the ADR-0048
 // D3 bulk catch-up path for projected sources, the reconcile-balances
@@ -21,7 +21,9 @@
 // doesn't cover), and verify-lake's four-check "is the lake sound?"
 // invocation run daily by verify-lake.timer (the three checks above, via the
 // same package-private run* funcs verify-contiguity and verify-hashchain
-// call, plus a raw-table census of the other five raw tables), which is why reconciliation_catalogue.go and gated_recon_seed.go
+// call, plus a raw-table census of the other five raw tables), and
+// verify-network-state's comparison of derived state with the network's own
+// (hot-archive buckets, lumen conservation), which is why reconciliation_catalogue.go and gated_recon_seed.go
 // (shared re-derivation source-set + factory-child preseed helpers used
 // by ch-rebuild, ch-reproject, compute-completeness, and
 // verify-reconciliation) live here too rather than in a 7th package.
@@ -136,6 +138,8 @@ func verifierVerb(verb string) (func([]string) error, bool) {
 		return verifyHashChain, true
 	case "verify-lake":
 		return verifyLake, true
+	case "verify-network-state":
+		return verifyNetworkState, true
 	case "wasm-drift":
 		return wasmDrift, true
 	default:
