@@ -60,6 +60,16 @@ Adopt the three-tier architecture detailed in `docs/architecture/multi-region-ha
   re-ingestable projection (consistent with ADR-0043, which rejects backing up the derived
   lake). Recovery/bootstrap = re-ingest from the archive.
 
+> **Durability decision amended 2026-10-02.** The raw galexie-archive is
+> no longer mirrored off-site. It is a copy of SDF's public dataset
+> (`s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`) and is
+> re-pulled from there, so its loss is a *time* exposure, not a *data*
+> exposure (ADR-0043 §2 amendment, 2026-08-29: accept the dependency, do
+> not duplicate public data into our own storage). The off-site copies are
+> the ClickHouse lake and Postgres (pgBackRest), both on Backblaze B2. The
+> "crown jewel" bullet above and `galexie-archive-mirror` are superseded;
+> the mirror is disabled by default (`galexie_archive_mirror_enabled`).
+
 Fleet cost: **~$15–18 K/yr** (single box per region). Full detail, phasing (Phase 0–4),
 per-region shapes, and the prerequisite workstreams (determinism hardening, lake-aware
 health, off-site archive DR, greenfield HA foundation, multi-region inventory/deploy) are

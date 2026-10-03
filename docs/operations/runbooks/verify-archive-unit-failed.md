@@ -50,13 +50,13 @@ The journal output's last lines indicate the failure mode:
 | `WATCHDOG` timeout / `SIGTERM` | 1h of *silence* tripped `WatchdogSec` (r1 runs uncapped — `VERIFY_ARCHIVE_MAX_RUNTIME=0`; binary default 24h); investigate what the walk was stuck on |
 | `access denied` / `403` | AWS / MinIO credentials in `/etc/default/stellarindex-ops` rotated or wrong |
 
-Three max-runtime values exist; only the first is deployed. The ansible
-templates (`configs/ansible/roles/archival-node/templates/systemd/verify-archive-tier-{a,b}.service.j2`)
-set `VERIFY_ARCHIVE_MAX_RUNTIME=0` (uncapped) and are the authority. The
-`deploy/systemd/verify-archive-tier-{a,b}.service` reference copies still
-show `16h`; that drift is registered in `deploy/systemd/DIVERGENCES`. The
-binary's own `-max-runtime` default (24h) applies only to a manual run
-that omits the flag.
+Two max-runtime values exist. The ansible templates
+(`configs/ansible/roles/archival-node/templates/systemd/verify-archive-tier-{a,b}.service.j2`)
+and the `deploy/systemd/verify-archive-tier-{a,b}.service` reference copies
+both set `VERIFY_ARCHIVE_MAX_RUNTIME=0` (uncapped, bounded by `WatchdogSec`);
+the authority lint enforces that they agree. The binary's own
+`-max-runtime` default (24h) applies only to a manual run that omits the
+flag.
 
 ## Mitigation (≤ 15 min)
 
