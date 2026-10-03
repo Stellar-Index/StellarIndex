@@ -301,6 +301,11 @@ func classifyAny(e *events.Event) (action, string) {
 	case TopicSymbolWithdrawRewards:
 		return actionWithdrawRewards, e.Topic[1]
 	case TopicSymbolDistributeRewards:
+		// Only the documented ("distribute_rewards","asset") pair carries the
+		// decoded body; any other topic[1] is unaudited and stays unknown.
+		if e.Topic[1] != TopicSymbolDRAsset {
+			return actionUnknown, ""
+		}
 		return actionDistributeRewards, e.Topic[1]
 	case TopicSymbolAdmin:
 		return actionAdmin, e.Topic[1]

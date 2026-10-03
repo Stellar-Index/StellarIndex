@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // ─── real-lake golden frames (base64 XDR) ────────────────────────
@@ -148,6 +149,17 @@ func TestGolden_DistributeRewards(t *testing.T) {
 	wantAsset := "CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32"
 	if change.LPToken != wantAsset {
 		t.Errorf("LPToken(asset)=%q want %q", change.LPToken, wantAsset)
+	}
+}
+
+func TestClassifyAny_DistributeRewardsRequiresAssetTopic(t *testing.T) {
+	t.Parallel()
+	ev := &events.Event{Topic: []string{
+		"AAAADgAAABJkaXN0cmlidXRlX3Jld2FyZHMAAA==", // "distribute_rewards"
+		scval.MustEncodeString("other"),
+	}}
+	if a, ft := classifyAny(ev); a != actionUnknown || ft != "" {
+		t.Fatalf("classifyAny = (%v,%q), want (actionUnknown,\"\")", a, ft)
 	}
 }
 
