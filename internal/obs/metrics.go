@@ -223,6 +223,7 @@ func registerFreezeLifecycleMetrics() {
 		AnomalyFreezeRecoveredTotal,
 		AnomalyFreezeLadderRehydratedTotal,
 		AnomalyFreezeLadderWriteFailuresTotal,
+		APIFreezeLookupFailuresTotal,
 		AnomalyFreezeRecoverySweepsTotal,
 
 		// Composite-reference corroboration of the phase-2 verdict
@@ -4436,6 +4437,18 @@ var AnomalyFreezeLadderWriteFailuresTotal = prometheus.NewCounterVec(
 		Help: "Durable freeze-ladder writes that did not land, by call site (mark_hold|clear). Sustained non-zero = the Redis-flush protection is inert.",
 	},
 	[]string{"op"},
+)
+
+// APIFreezeLookupFailuresTotal — counter of API-side freeze-marker reads
+// that returned an error (Redis outage, timeout), excluding client aborts.
+// The response carries frozen_checked=false for each, but nothing else
+// surfaces a degraded freeze read; sustained non-zero means price responses
+// are being served without a freeze verdict.
+var APIFreezeLookupFailuresTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_api_freeze_lookup_failures_total",
+		Help: "API freeze-marker lookups that failed (client aborts excluded). Sustained non-zero = price responses are served with frozen_checked=false.",
+	},
 )
 
 // AnomalyFreezeRecoverySweepsTotal — counter of recovery-worker

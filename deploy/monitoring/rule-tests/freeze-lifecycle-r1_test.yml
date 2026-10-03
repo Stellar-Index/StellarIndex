@@ -55,6 +55,39 @@ tests:
         alertname: stellarindex_anomaly_freeze_ladder_write_failures
         exp_alerts: []
 
+  - interval: 30s
+    name: sustained API freeze lookup failures page a ticket
+    input_series:
+      - series: 'stellarindex_api_freeze_lookup_failures_total'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: stellarindex_api_freeze_lookup_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+              summary: "API freeze-marker lookups are failing (P3)"
+              description: |
+                The API failed to read freeze markers for 5+ minutes, so
+                /v1/price responses are served with `frozen_checked=false`
+                and a frozen pair may be published as live. Check API to
+                Redis connectivity.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+
+  - interval: 30s
+    name: no API freeze lookup failures never fires
+    input_series:
+      - series: 'stellarindex_api_freeze_lookup_failures_total'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: stellarindex_api_freeze_lookup_failing
+        exp_alerts: []
+
   # ── freeze_released_total{mode="operator"} is now read by a real
   # alert instead of only appearing in annotation prose ───────────────
   - interval: 30s

@@ -17,6 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
@@ -2990,6 +2991,7 @@ func (s *Server) lookupFrozen(r *http.Request, asset, quote canonical.Asset) (fr
 	frozen, err := s.freeze.FrozenForPair(r.Context(), asset, quote)
 	if err != nil {
 		if !clientAborted(r, err) {
+			obs.APIFreezeLookupFailuresTotal.Inc()
 			s.logger.Warn("freeze lookup failed",
 				"err", err,
 				"asset", asset.String(),
