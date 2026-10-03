@@ -107,19 +107,11 @@ func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 
 // webhookDTO is the wire shape the dashboard reads.
 //
-// F-1244 (codex audit-2026-05-13): the prior docstring claimed
-// "the plaintext is shown to the customer once at create time +
-// never persisted." That mixed two distinct properties: the
-// plaintext IS persisted as the canonical
-// `customer_webhooks.secret_hash` bytea (the delivery worker
-// needs the same bytes to sign requests). The "shown once"
-// property is API-surface visibility — the plaintext is
-// returned by `POST /v1/dashboard/webhooks` exactly once and
-// never served back through any subsequent read. SecretHash
-// stays out of this DTO so the dashboard can't accidentally
-// re-expose the bytes; rotation returns the new key once from
-// HandleRotateSecret. See [platform.CustomerWebhook] for the
-// at-rest model.
+// The signing key is persisted (the delivery worker needs it to sign),
+// but it is returned by `POST /v1/dashboard/webhooks` exactly once and
+// stays out of this DTO so no later read re-exposes it; rotation returns
+// the new key once from HandleRotateSecret. See [platform.CustomerWebhook]
+// for the at-rest model.
 type webhookDTO struct {
 	ID        string        `json:"id"`
 	Name      string        `json:"name"`
@@ -265,13 +257,9 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		AccountID: sc.Account.ID,
 		Name:      req.Name,
 		URL:       req.URL,
-		// SecretHash is the HMAC signing key, not a hash. See
-		// [platform.CustomerWebhook] doc — the field name is a
-		// historical artefact tracked by F-1244 (codex
-		// audit-2026-05-12). The customer receives the plaintext
-		// `secret` exactly once in the response below and never
-		// again; HandleRotateSecret replaces it in place.
-		SecretHash: []byte(secret),
+		// The customer receives the plaintext `secret` exactly once
+		// in the response below; HandleRotateSecret replaces it in place.
+		SigningKey: []byte(secret),
 		Events:     req.Events,
 		Enabled:    enabled,
 	}
@@ -309,7 +297,7 @@ type updateRequest struct {
 	Enabled *bool    `json:"enabled,omitempty"`
 }
 
-// HandleUpdate patches mutable fields. SecretHash + AccountID are
+// HandleUpdate patches mutable fields. SigningKey + AccountID are
 // immutable here; HandleRotateSecret replaces the key.
 func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
@@ -325,7 +313,7 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	current, err := h.cfg.Webhooks.GetWebhook(r.Context(), id)
+	current, err := h.getWebhookMeta(r.Context(), id)
 	if err != nil {
 		// Should never happen — parseAndAuthorise just looked it
 		// up — but guard anyway.
@@ -380,7 +368,7 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	updated, err := h.cfg.Webhooks.GetWebhook(r.Context(), id)
+	updated, err := h.getWebhookMeta(r.Context(), id)
 	if err != nil {
 		h.cfg.Logger.Error("reload webhook after update", "err", err, "id", id)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
@@ -517,6 +505,18 @@ func canManage(role platform.Role) bool {
 	}
 }
 
+// getWebhookMeta is GetWebhook for callers that never touch the signing
+// key: an unsealable key must not block an owner from editing or deleting
+// the webhook, which is the documented recovery from a lost seal key.
+func (h *Handlers) getWebhookMeta(ctx context.Context, id uuid.UUID) (platform.CustomerWebhook, error) {
+	w, err := h.cfg.Webhooks.GetWebhook(ctx, id)
+	if errors.Is(err, platform.ErrWebhookKeyUnsealable) {
+		w.SigningKey = nil
+		return w, nil
+	}
+	return w, err
+}
+
 // parseAndAuthorise extracts the {id} path value, scopes it to the
 // session's account (404 otherwise — don't leak presence). On
 // failure writes the response and returns ok=false.
@@ -531,7 +531,7 @@ func parseAndAuthorise(w http.ResponseWriter, r *http.Request, h *Handlers, acco
 		writeProblem(w, http.StatusBadRequest, "id is not a valid uuid", r.URL.Path)
 		return uuid.Nil, false
 	}
-	current, err := h.cfg.Webhooks.GetWebhook(r.Context(), id)
+	current, err := h.getWebhookMeta(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, platform.ErrNotFound) {
 			writeProblem(w, http.StatusNotFound, "webhook not found", r.URL.Path)

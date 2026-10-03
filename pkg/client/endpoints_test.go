@@ -1046,9 +1046,8 @@ func TestRevokeKey_EmptyKeyID(t *testing.T) {
 	}
 }
 
-// TestRevokeKey_404 — server says the key doesn't exist (or was
-// already revoked); SDK surfaces it as *APIError so callers can
-// branch on the status without parsing the message.
+// TestRevokeKey_404 — the SDK maps an error status to *APIError so
+// callers can branch on the status without parsing the message.
 func TestRevokeKey_404(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/problem+json")

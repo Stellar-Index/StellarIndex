@@ -33,8 +33,8 @@ func TestMigration0205_TradesCompressionGivesUpOnALockedChunk(t *testing.T) {
 	}
 	defer db.Close()
 
-	applyMigrationsUpTo(t, dsn, 198)
-	requireSchemaVersion(t, ctx, db, 198)
+	applyMigrationsUpTo(t, dsn, 204)
+	requireSchemaVersion(t, ctx, db, 204)
 	quiesceCAGGRefreshPolicies(t, ctx, db)
 	before := tradesCompressionJobs(t, ctx, db)
 	if before.builtin != 1 || before.bounded != 0 {
@@ -131,8 +131,8 @@ func TestMigration0205_TradesCompressionGivesUpOnALockedChunk(t *testing.T) {
 	if err := store.SetJobScheduled(ctx, p.JobID, true); err != nil {
 		t.Fatal(err)
 	}
-	applyMigrationsUpTo(t, dsn, 198)
-	requireSchemaVersion(t, ctx, db, 198)
+	applyMigrationsUpTo(t, dsn, 204)
+	requireSchemaVersion(t, ctx, db, 204)
 	down := tradesCompressionJobs(t, ctx, db)
 	if down.builtin != 1 || down.bounded != 0 {
 		t.Fatalf("after 0205 down: built-in=%d bounded=%d, want 1 and 0", down.builtin, down.bounded)
@@ -160,8 +160,8 @@ func TestMigration0205_RefusesWhileARestampHoldsItsLock(t *testing.T) {
 	}
 	defer db.Close()
 
-	applyMigrationsUpTo(t, dsn, 198)
-	requireSchemaVersion(t, ctx, db, 198)
+	applyMigrationsUpTo(t, dsn, 204)
+	requireSchemaVersion(t, ctx, db, 204)
 	quiesceCAGGRefreshPolicies(t, ctx, db)
 
 	holder, err := db.Conn(ctx)
@@ -184,7 +184,7 @@ func TestMigration0205_RefusesWhileARestampHoldsItsLock(t *testing.T) {
 	}
 
 	// A refused step leaves schema_migrations dirty; put it back to retry.
-	if _, err := db.ExecContext(ctx, `UPDATE schema_migrations SET version = 198, dirty = false`); err != nil {
+	if _, err := db.ExecContext(ctx, `UPDATE schema_migrations SET version = 204, dirty = false`); err != nil {
 		t.Fatalf("clear the dirty flag: %v", err)
 	}
 	var released bool

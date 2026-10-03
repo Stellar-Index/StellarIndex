@@ -3619,10 +3619,12 @@ var APIStreamHubTopicsReapedTotal = prometheus.NewCounter(prometheus.CounterOpts
 //   - network_error  — TCP/TLS/timeout error, scheduled for retry
 //   - webhook_missing — GetWebhook returned ErrNotFound mid-flight
 //   - disabled       — webhook.Enabled=false, silently terminated
-//   - no_secret      — the webhook's signing secret is empty (terminal)
+//   - no_secret      — the signing secret is empty, or fails to unseal
+//     under the configured seal key (terminal)
 //   - build_error    — http.NewRequestWithContext failed (malformed URL)
 //   - list_error     — ListPendingDeliveries failed (db transport)
-//   - lookup_error   — GetWebhook failed for a non-NotFound reason
+//   - lookup_error   — GetWebhook failed for a non-NotFound reason,
+//     including a sealed key with no seal key configured (retried)
 //   - mark_error     — Mark{Delivered,AttemptFailed} failed
 //
 // All twelve are pre-seeded in [seedBoundedLabelSeries] (#368 M6):
