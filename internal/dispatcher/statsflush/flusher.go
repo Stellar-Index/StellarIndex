@@ -72,8 +72,8 @@ type Flusher struct {
 	last dispatcher.Stats
 
 	// obsLast baselines the dispatcher-level Prometheus counters
-	// (TxReadErrors, TxEventReadErrors, EntryMetaUnsupported)
-	// separately from last. Those obs.Add + WARN emissions happen
+	// (TxReadErrors, TxEventReadErrors, EntryMetaUnsupported,
+	// EvictedKeysUnreadable) separately from last. Those obs.Add + WARN emissions happen
 	// unconditionally, before InsertDecoderStats, so they must not
 	// share a baseline with the per-source DB rows: INT-05
 	// deliberately holds `last` back on a write failure so the next
@@ -89,9 +89,10 @@ type Flusher struct {
 // dispatcherObsCounters is the baseline for the dispatcher-level
 // counters promoted straight to Prometheus (see obsLast).
 type dispatcherObsCounters struct {
-	TxReadErrors         int
-	TxEventReadErrors    int
-	EntryMetaUnsupported int
+	TxReadErrors          int
+	TxEventReadErrors     int
+	EntryMetaUnsupported  int
+	EvictedKeysUnreadable int
 	// UncorroboratedCalls is per-source (W8.4a oracle-forgery rejections
 	// can hit any oracle-class ContractCallDecoder), unlike its scalar
 	// siblings above. Same obsLast-not-f.last reasoning applies.
@@ -258,6 +259,19 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 	}
 	f.obsLast.EntryMetaUnsupported = current.EntryMetaUnsupported
 
+	// An unreadable evicted-key list drops a whole ledger's state-archival
+	// evictions, leaving each evicted balance served as live. The
+	// dispatcher logs the ledger itself; this is the alertable series.
+	if delta := current.EvictedKeysUnreadable - f.obsLast.EvictedKeysUnreadable; delta > 0 {
+		f.logger.Warn("dispatcher: evicted ledger keys unreadable during this flush window — state-archival evictions being skipped",
+			"delta", delta,
+			"total", current.EvictedKeysUnreadable,
+			"window", f.interval.String(),
+		)
+		obs.DispatcherEvictedKeysUnreadableTotal.Add(float64(delta))
+	}
+	f.obsLast.EvictedKeysUnreadable = current.EvictedKeysUnreadable
+
 	// UncorroboratedCalls (W8.4a): a call an oracle decoder refused to
 	// corroborate is a security signal (rejected forgery, or a
 	// routing-shape change), not routine noise — same immediate-WARN
@@ -297,7 +311,8 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 
 	// Snapshot for next-tick delta computation. Make a copy of the
 	// maps so concurrent dispatcher writes can't mutate our reference.
-	// TxReadErrors/TxEventReadErrors/EntryMetaUnsupported are NOT
+	// TxReadErrors/TxEventReadErrors/EntryMetaUnsupported/
+	// EvictedKeysUnreadable are NOT
 	// carried here — obsLast (advanced above, independent of write
 	// success) is their baseline; folding them into this DB-row
 	// snapshot would re-couple them to INT-05's hold-back-on-failure

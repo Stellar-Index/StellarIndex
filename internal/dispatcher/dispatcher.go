@@ -359,36 +359,24 @@ type LedgerEntryChangeDecoder interface {
 // RENUMBERS existing positions may bump the constant — read the repair path
 // below before you do.
 //
-// WHY THIS MATTERS, and it is not academic. intra_ledger_seq is PERSISTED
-// and COMPARED ACROSS BINARY VERSIONS by two guards:
+// WHY THIS MATTERS. intra_ledger_seq is PERSISTED and COMPARED ACROSS
+// BINARY VERSIONS, and a bump RENUMBERS every ledger: the v1 walk could give
+// an account's final balance position 6 where the v2 walk correctly gives 3.
 //
-//   - account_observations (and its four sibling *_observations tables):
-//     `WHERE intra_ledger_seq <= EXCLUDED.intra_ledger_seq` (migration 0111);
-//   - ledger_entries_current_v2: the ReplacingMergeTree version
-//     `(ledger_seq << 32) | intra_ledger_seq`.
+//   - account_observations and its four siblings stamp this constant as
+//     walk_version and guard on `(walk_version, intra_ledger_seq) <=
+//     EXCLUDED` (migration 0199), so a re-derive under a bumped version
+//     replaces an older walk's row even at a lower position. A renumbering
+//     shipped WITHOUT a bump evaluates `6 <= 3` and the correction is
+//     silently dropped on every re-run; its only repair is
+//     reconstruct-final-then-seed at timescale.SeedIntraLedgerSeq
+//     (migration 0120).
+//   - ledger_entries_current_v2's ReplacingMergeTree version
+//     `(ledger_seq << 32) | intra_ledger_seq` carries no walk version, so
+//     there a lower-numbered correction cannot displace a higher-numbered
+//     legacy row: delete the range and reproject.
 //
-// Both assume the two positions being compared are drawn from the same
-// numbering. A version bump RENUMBERS every ledger, so a legacy row can
-// OUTRANK a correction: if the v1 walk gave an account's final balance
-// position 6, and the v2 walk correctly places that same final balance at
-// position 3, the guard evaluates `6 <= 3` = false and the corrected write
-// is SILENTLY DROPPED — permanently. Replaying the re-derive does not help,
-// because it re-computes the same lower position every time.
-//
-// THE REPAIR PATH for a version bump is therefore NOT "replay the changes".
-// It is RECONSTRUCT-FINAL-THEN-SEED: derive the FINAL per-(key, ledger)
-// state and write ONE row per key per ledger stamped
-// timescale.SeedIntraLedgerSeq (= math.MaxUint32), which the `<=` guard
-// always admits and a re-run re-admits idempotently. It is only sound for a
-// reconstructed FINAL state — stamping the sentinel on a change-by-change
-// replay would tie every change in the ledger at MaxUint32 and re-open C2-6.
-// See migration 0120 and
-// docs/operations/runbooks/entry-walk-renumbering.md.
-//
-// On the ClickHouse side the equivalent repair is the existing
-// delete-then-replay per range (the master plan's re-derive procedure): a
-// lower RMT version cannot displace a higher one either, so the partition
-// must be dropped before re-ingest.
+// Procedure: docs/operations/runbooks/entry-walk-renumbering.md.
 const EntryWalkVersion = 2
 
 type LedgerEntryChangeContext struct {
@@ -471,11 +459,12 @@ type Dispatcher struct {
 	// there. See [Dispatcher.SetRawEventSink].
 	rawEventSink RawEventSink
 
-	// logger is used by exactly one code path: the decoder-panic guard
-	// (#371 F1, see recordDecoderPanic). The dispatcher is otherwise
-	// silent by design — every other signal it produces is a counter
-	// the caller mirrors into obs — but a recovered panic has to carry
-	// its stack and ledger coordinate somewhere an operator can read.
+	// logger is used by two code paths: the decoder-panic guard
+	// (#371 F1, see recordDecoderPanic) and an unreadable evicted-key
+	// list (see walkEvictedKeys). The dispatcher is otherwise silent by
+	// design — every other signal it produces is a counter the caller
+	// mirrors into obs — but those two have to carry their ledger
+	// coordinate somewhere an operator can read.
 	// Nil is fine: [Dispatcher.log] falls back to slog.Default(). See
 	// [Dispatcher.SetLogger].
 	logger *slog.Logger
@@ -539,6 +528,11 @@ type Dispatcher struct {
 	// transactions is invisible, and without this counter that is
 	// indistinguishable from a ledger in which nothing happened.
 	entryMetaUnsupported int
+
+	// evictedKeysUnreadable counts ledgers whose evicted-key list could
+	// not be read, so none of their state-archival evictions reached the
+	// entry decoders — each evicted balance then stays served as live.
+	evictedKeysUnreadable int
 
 	// uncorroboratedCalls is the per-source count of ContractCall
 	// invocations an [ExecutionCorroborationRequirer] decoder MATCHED
@@ -675,8 +669,8 @@ func (d *Dispatcher) SetRawEventSink(sink RawEventSink) {
 	d.rawEventSink = sink
 }
 
-// SetLogger installs the logger the decoder-panic guard writes to
-// (#371 F1). Nil leaves the fallback in place (slog.Default()), so a
+// SetLogger installs the logger the decoder-panic guard and the
+// eviction-read failure write to (#371 F1). Nil leaves the fallback in place (slog.Default()), so a
 // dispatcher built without one still reports a recovered panic — just
 // without the binary/format the operator configured. Not safe
 // concurrent with ProcessLedger; called once at startup.
@@ -729,6 +723,9 @@ type Stats struct {
 	// A sustained climb means the LedgerEntry supply observers are
 	// blind while every component table simply stops advancing.
 	EntryMetaUnsupported int
+	// EvictedKeysUnreadable counts ledgers whose evicted-key list failed
+	// to read; every eviction in them is missing from the served state.
+	EvictedKeysUnreadable int
 	// UncorroboratedCalls is the per-source count of oracle-class
 	// ContractCall invocations dropped before Decode because they were
 	// only DECLARED in the auth tree, never executed (W8.4a). Non-zero on
@@ -763,6 +760,7 @@ func (d *Dispatcher) Stats() Stats {
 	txReadErrs := d.txReadErrors
 	txEventReadErrs := d.txEventReadErrors
 	entryMetaUnsup := d.entryMetaUnsupported
+	evictedUnreadable := d.evictedKeysUnreadable
 	d.statsMu.Unlock()
 
 	orphanCopied := map[string]int{}
@@ -786,16 +784,17 @@ func (d *Dispatcher) Stats() Stats {
 		}
 	}
 	return Stats{
-		EventsSeen:           seenCopied,
-		DecodeErrors:         decodeCopied,
-		OrphanEvents:         orphanCopied,
-		UnknownContractDrops: unknownContractCopied,
-		NonDirectionalSwaps:  nonDirectionalCopied,
-		UnmatchedHits:        unmatched,
-		TxReadErrors:         txReadErrs,
-		TxEventReadErrors:    txEventReadErrs,
-		EntryMetaUnsupported: entryMetaUnsup,
-		UncorroboratedCalls:  uncorrCopied,
+		EventsSeen:            seenCopied,
+		DecodeErrors:          decodeCopied,
+		OrphanEvents:          orphanCopied,
+		UnknownContractDrops:  unknownContractCopied,
+		NonDirectionalSwaps:   nonDirectionalCopied,
+		UnmatchedHits:         unmatched,
+		TxReadErrors:          txReadErrs,
+		TxEventReadErrors:     txEventReadErrs,
+		EntryMetaUnsupported:  entryMetaUnsup,
+		EvictedKeysUnreadable: evictedUnreadable,
+		UncorroboratedCalls:   uncorrCopied,
 	}
 }
 
@@ -1249,7 +1248,7 @@ func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []inges
 	// transaction-scoped, so empty TxHash and OpIndex -1 like the fee
 	// blocks, and last in the walk because core evicts at ledger close,
 	// after every transaction has applied. See [walkEvictedKeys].
-	outputs = append(outputs, walkEvictedKeys(lcm, dispatchFor(""))...)
+	outputs = append(outputs, d.walkEvictedKeys(lcm, ledgerSeq, dispatchFor(""))...)
 	return outputs
 }
 
@@ -1292,14 +1291,21 @@ func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []inges
 // last-write ledger, BELOW the eviction ledger, so it cannot displace a live
 // eviction row on read either way.
 //
-// An LCM version that cannot report evictions yields none. The SDK panics
+// An LCM whose evicted keys cannot be read yields none. The SDK panics
 // rather than erroring on an unknown version, and ProcessLedger has already
 // reached that panic via lcm.LedgerSequence() long before this point, so the
-// error arm here is unreachable in practice — treating it as "no evictions"
-// keeps a future SDK that starts returning it from dropping the ledger.
-func walkEvictedKeys(lcm xdr.LedgerCloseMeta, dispatch func(int, xdr.LedgerEntryChange) []consumer.Event) []consumer.Event {
+// error arm is unreachable today. If a future SDK starts returning it, the
+// rest of the ledger still lands, but the arm is COUNTED and logged with the
+// ledger: every eviction it drops leaves a served balance above the truth,
+// and the ledger number is what a replay needs.
+func (d *Dispatcher) walkEvictedKeys(lcm evictedKeysSource, ledgerSeq uint32, dispatch func(int, xdr.LedgerEntryChange) []consumer.Event) []consumer.Event {
 	keys, err := lcm.EvictedLedgerKeys()
 	if err != nil {
+		d.statsMu.Lock()
+		d.evictedKeysUnreadable++
+		d.statsMu.Unlock()
+		d.log().Warn("dispatcher: evicted ledger keys unreadable — this ledger's state-archival evictions skipped",
+			"ledger", ledgerSeq, "err", err)
 		return nil
 	}
 	var outs []consumer.Event
@@ -1310,6 +1316,12 @@ func walkEvictedKeys(lcm xdr.LedgerCloseMeta, dispatch func(int, xdr.LedgerEntry
 		})...)
 	}
 	return outs
+}
+
+// evictedKeysSource is the slice of xdr.LedgerCloseMeta the eviction phase
+// reads; a test can stand in a source whose read fails.
+type evictedKeysSource interface {
+	EvictedLedgerKeys() ([]xdr.LedgerKey, error)
 }
 
 // entryChangeTxHash is the hex tx hash used to stamp entry-change contexts.

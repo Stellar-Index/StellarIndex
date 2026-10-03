@@ -75,6 +75,16 @@ func IsISIN(s string) bool {
 	return (10-sum%10)%10 == digits[len(digits)-1]
 }
 
+// CanonicalISIN returns s in the trimmed, upper-case form every ISIN
+// comparison keys on, and whether it is a well-formed ISIN at all.
+func CanonicalISIN(s string) (string, bool) {
+	u, ok := upperASCII12(s)
+	if !ok || !IsISIN(u) {
+		return "", false
+	}
+	return u, true
+}
+
 // upperASCII12 trims s and upper-cases ASCII letters only, reporting
 // whether 12 bytes remain. strings.ToUpper would fold U+017F and U+0131
 // onto 'S' and 'I', accepting a string no ISIN lookup resolves.

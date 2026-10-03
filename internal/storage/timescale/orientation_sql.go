@@ -30,13 +30,26 @@ func stablecoinInListSQL() string {
 
 // quoteRankSQL is a SQL CASE mirroring canonical.quoteRank for the
 // given asset column: fiat (4) > stablecoin (3) > XLM (2) > token (1).
-// Higher = more quote-like.
+// Higher = more quote-like. Rendered per query because the declared
+// stablecoin SACs come from the alias registry installed at start-up.
 func quoteRankSQL(col string) string {
 	return fmt.Sprintf(`(CASE
         WHEN %[1]s LIKE 'fiat:%%' THEN 4
-        WHEN split_part(replace(%[1]s, 'crypto:', ''), '-', 1) IN (%[2]s) THEN 3
+        WHEN split_part(replace(%[1]s, 'crypto:', ''), '-', 1) IN (%[2]s) THEN 3%[4]s
         WHEN %[1]s IN ('native', 'crypto:XLM', '%[3]s') THEN 2
-        ELSE 1 END)`, col, stablecoinInListSQL(), nativeXLMSAC)
+        ELSE 1 END)`, col, stablecoinInListSQL(), nativeXLMSAC, stablecoinSACArmSQL(col))
+}
+
+// stablecoinSACArmSQL is quoteRankSQL's rank-3 arm for the declared
+// stablecoin SACs, or "" when none is declared (an empty IN list is a
+// syntax error). The forms passed strkey validation in the registry, so
+// they are base32 literals with no quoting surface.
+func stablecoinSACArmSQL(col string) string {
+	forms := canonical.StablecoinSACForms()
+	if len(forms) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("\n        WHEN %s IN ('%s') THEN 3", col, strings.Join(forms, "', '"))
 }
 
 // marketKeySQL is a market's identity for COUNTING: its unordered
@@ -76,8 +89,10 @@ func canonOrientSQL() (canonBase, canonQuote, flipped string) {
 	const bcol, qcol = "base_asset", "quote_asset"
 	rb, rq := quoteRankSQL(bcol), quoteRankSQL(qcol)
 	// The stored base (bcol) is actually the canonical QUOTE when it
-	// outranks the stored quote, or on a tie sorts after it.
-	flipped = fmt.Sprintf("(%[1]s > %[2]s OR (%[1]s = %[2]s AND %[3]s > %[4]s))", rb, rq, bcol, qcol)
+	// outranks the stored quote, or on a tie sorts after it. COLLATE "C"
+	// makes the tie-break byte order, as Go's string compare is; the
+	// database's default collation (e.g. en_US) orders mixed case differently.
+	flipped = fmt.Sprintf(`(%[1]s > %[2]s OR (%[1]s = %[2]s AND %[3]s COLLATE "C" > %[4]s COLLATE "C"))`, rb, rq, bcol, qcol)
 	canonBase = fmt.Sprintf("(CASE WHEN %s THEN %s ELSE %s END)", flipped, qcol, bcol)
 	canonQuote = fmt.Sprintf("(CASE WHEN %s THEN %s ELSE %s END)", flipped, bcol, qcol)
 	return canonBase, canonQuote, flipped

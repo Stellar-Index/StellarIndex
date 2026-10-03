@@ -530,9 +530,8 @@ func mustSQLTextArrayLiteral(vals []string) string {
 // predicates agree tag for tag (an asset that shows the explorer's
 // "⚠ Flagged" pill is exactly an asset this demotes).
 //
-// dir.tags is NULL for the overwhelming majority of rows (issuer absent
-// from the ~18.5k-row curated directory) and for every Soroban-native row
-// (a contract asset has no issuer account); unnest(NULL) yields zero rows
+// dir.tags is NULL for the overwhelming majority of rows (issuer or
+// contract absent from the ~18.5k-row curated directory); unnest(NULL) yields zero rows
 // so EXISTS is false and the row ranks normally — fail-OPEN, matching the
 // directory overlay and the scam pricing gate.
 var directoryScamFlaggedExpr = `EXISTS (SELECT 1 FROM unnest(dir.tags) t ` +
@@ -766,13 +765,12 @@ const listAssetsBaseSelect = `
 		  -- 0136). Read ONLY by listingRankTierExpr's scam-flag demotion —
 		  -- the payload's issuer_directory_* fields are still stamped by the
 		  -- API layer's batch lookup, so this join changes ranking, never
-		  -- served data. Keyed on the issuer G-address exactly like
-		  -- v1.Server.fillIssuerDirectoryTags, so "demoted" and "shows the
-		  -- ⚠ Flagged pill" are the same set of rows. account_directory.address
-		  -- is the PRIMARY KEY, so this join can never fan a listing row out
-		  -- into duplicates; a NULL issuer (every Soroban-native row) simply
-		  -- misses and ranks normally.
-		  LEFT JOIN account_directory      dir    ON dir.address         = ca.issuer_g_strkey
+		  -- served data. Keyed exactly like v1.Server.fillIssuerDirectoryTags
+		  -- (the issuer G-address, or a Soroban-native row's own contract
+		  -- address), so "demoted" and "shows the ⚠ Flagged pill" are the
+		  -- same set of rows. account_directory.address is the PRIMARY KEY,
+		  -- so this join can never fan a listing row out into duplicates.
+		  LEFT JOIN account_directory      dir    ON dir.address         = COALESCE(ca.issuer_g_strkey, ca.asset_id)
 `
 
 // listAssetsBaseSelectSQL renders [listAssetsBaseSelect] for the active
