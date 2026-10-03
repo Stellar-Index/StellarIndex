@@ -29,7 +29,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 67 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 246 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 247 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -231,6 +231,7 @@ signal lands.
 | `stellarindex_api_error_rate_critical` | same | > 5 % for > 2 min | page | [api-5xx](runbooks/api-5xx.md) |
 | `stellarindex_api_price_stale` | `stellarindex_price_staleness_seconds` per (asset, quote) | > 120 s sustained 5 min | ticket | [price-stale](runbooks/price-stale.md) |
 | `stellarindex_api_cache_miss_rate_high` | `rate(stellarindex_api_cache_ops_total{result="miss"}[5m]) / rate(stellarindex_api_cache_ops_total{result=~"hit\|miss\|stale"}[5m])` per (cache, op) | > 50 % sustained 10 min on a hot op (≥ 0.1 req/s) | ticket | [cache-miss-rate-high](runbooks/cache-miss-rate-high.md) |
+| `stellarindex_api_cache_refresh_failing` | `increase(stellarindex_api_cache_ops_total{result="refresh_error"}[15m])` per (cache, op) | > 0 for 30 min (every window has a failed background refresh; callers get `flags.stale`) | ticket | [cache-miss-rate-high](runbooks/cache-miss-rate-high.md) |
 
 ## Notify (transactional-email) alerts
 
