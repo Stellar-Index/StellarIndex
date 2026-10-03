@@ -258,8 +258,8 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	//     verifier or sender failure here logs at warn and drops
 	//     `email_verification_sent: false` on the wire. Under
 	//     signup_require_email_verification the key 403s until
-	//     verified, and there is no resend route yet.
-	emailSent := s.issueSignupVerification(r, rec.KeyID, req.Email)
+	//     verified; POST /v1/signup/resend-verification re-sends the link.
+	emailSent := s.issueSignupVerification(r.Context(), rec.KeyID, req.Email)
 
 	// 11. Reply with plaintext (shown ONCE) + audit record.
 	writeJSON(w, SignupResult{
@@ -287,7 +287,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 // short-circuit the customer's signup response (the audit's
 // remediation is to MAKE the proof available, not to take
 // signup down when the email infra is unhealthy).
-func (s *Server) issueSignupVerification(r *http.Request, keyID, toEmail string) bool {
+func (s *Server) issueSignupVerification(ctx context.Context, keyID, toEmail string) bool {
 	if s.signupVerifier == nil || s.signupVerifyEmailer == nil {
 		return false
 	}
@@ -305,12 +305,12 @@ func (s *Server) issueSignupVerification(r *http.Request, keyID, toEmail string)
 			"err", err, "key_id", keyID)
 		return false
 	}
-	if err := s.signupVerifier.Reserve(r.Context(), token, keyID, auth.DefaultSignupVerifyTTL); err != nil {
+	if err := s.signupVerifier.Reserve(ctx, token, keyID, auth.DefaultSignupVerifyTTL); err != nil {
 		s.logger.Warn("signup verification: token reservation failed",
 			"err", err, "key_id", keyID)
 		return false
 	}
-	if err := s.signupVerifyEmailer.SendSignupVerification(r.Context(), toEmail, verifyURL); err != nil {
+	if err := s.signupVerifyEmailer.SendSignupVerification(ctx, toEmail, verifyURL); err != nil {
 		s.logger.Warn("signup verification: send failed",
 			"err", err, "key_id", keyID, "to", maskEmail(toEmail))
 		return false

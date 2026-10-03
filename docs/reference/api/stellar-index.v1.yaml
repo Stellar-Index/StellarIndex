@@ -9218,6 +9218,77 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
 
+  /signup/resend-verification:
+    post:
+      operationId: resendSignupVerification
+      tags: [account]
+      security: []
+      summary: Re-send the signup verification email.
+      description: |
+        For a key that is 403-locked because its first verification
+        mail never arrived. The reply is identical whether or not the
+        address has a signup awaiting verification, so the route does
+        not reveal which addresses have accounts; when one does, a new
+        link is mailed and every earlier link stops working.
+
+        Each request spends a per-address budget (3/hour) and a
+        per-IP budget (10/hour) whether or not the address is known,
+        and answers `429` with `Retry-After` once either is spent.
+        If the budget store is unreachable the route answers `503`
+        and sends nothing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, description: "The address used at signup." }
+      responses:
+        "200":
+          description: Accepted. Identical for known and unknown addresses.
+          content:
+            application/json:
+              example:
+                data:
+                  detail: if that address has a signup awaiting verification, a new link is on its way and earlier links no longer work
+                as_of: '2026-07-03T09:00:00Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          detail: { type: string }
+                        required: [detail]
+        "400":
+          description: Malformed body or unparseable address.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "429":
+          description: Per-address or per-IP resend budget spent.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "503":
+          description: Verification flow, mail sender or budget store not available.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
   /dashboard/account:
     delete:
       operationId: deleteDashboardAccount

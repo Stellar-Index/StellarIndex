@@ -29,11 +29,13 @@ import (
 //     family `signup:verify:<sha256(token)>` → keyID).
 //   - tests / Redis-less dev: in-memory fakes.
 //
-// Reserve writes the token → keyID mapping; Consume reads + deletes
-// in one round-trip (GETDEL) to make the token single-use.
+// Reserve writes the token → keyID mapping and retires any earlier
+// token for the same keyID (one live token per key, so a resend
+// invalidates the previous mail); Consume reads + deletes in one
+// round-trip (GETDEL) to make the token single-use.
 type SignupVerifier interface {
 	// Reserve persists the (token, keyID) mapping with the given
-	// TTL. Returns [ErrSignupVerifyReserved] when the token is
+	// TTL and invalidates the keyID's previous token. Returns [ErrSignupVerifyReserved] when the token is
 	// already in flight (rare; the caller's plaintext is generated
 	// from crypto/rand and the collision space is 256 bits).
 	Reserve(ctx context.Context, token, keyID string, ttl time.Duration) error
@@ -100,6 +102,13 @@ func signupVerifyKey(token string) string {
 	return "signup:verify:" + hex.EncodeToString(sum[:])
 }
 
+// signupVerifyCurrentKey is the keyID → live-token-row index that lets
+// Reserve retire the predecessor. Under `signup:verify:` (a colon never
+// appears in the hex token hashes) so the Redis ACL already covers it.
+func signupVerifyCurrentKey(keyID string) string {
+	return "signup:verify:current:" + keyID
+}
+
 // Reserve implements [SignupVerifier.Reserve]. Plaintext token
 // in, hashed key out, SETNX with the supplied TTL. A pre-
 // existing row with a DIFFERENT keyID returns
@@ -133,6 +142,27 @@ func (v *RedisSignupVerifier) Reserve(ctx context.Context, token, keyID string, 
 		// customer's window doesn't shrink because they retried.
 		if err := v.rdb.Expire(ctx, key, ttl).Err(); err != nil {
 			return fmt.Errorf("redis expire %s: %w", key, err)
+		}
+	}
+	return v.retirePrevious(ctx, key, keyID, ttl)
+}
+
+// retirePrevious points the keyID's index at the new token row and
+// deletes the row it pointed at before. SET…GET is atomic, so
+// concurrent reservations chain-retire each other and exactly the last
+// index writer's token stays live.
+func (v *RedisSignupVerifier) retirePrevious(ctx context.Context, newRow, keyID string, ttl time.Duration) error {
+	prev, err := v.rdb.SetArgs(ctx, signupVerifyCurrentKey(keyID), newRow,
+		redis.SetArgs{Get: true, TTL: ttl}).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		// Unindexed, the row could never be retired; drop it so the
+		// caller's failed send leaves no live token behind.
+		_ = v.rdb.Del(ctx, newRow).Err()
+		return fmt.Errorf("redis set %s: %w", signupVerifyCurrentKey(keyID), err)
+	}
+	if prev != "" && prev != newRow {
+		if err := v.rdb.Del(ctx, prev).Err(); err != nil {
+			return fmt.Errorf("redis del %s: %w", prev, err)
 		}
 	}
 	return nil

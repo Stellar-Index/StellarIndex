@@ -227,44 +227,45 @@ func (c closedBucketChecker) Ping(ctx context.Context) error {
 //
 // Thread-safe.
 type Server struct {
-	logger              *slog.Logger
-	network             string
-	checks              []ReadyChecker
-	assets              AssetReader
-	prices              PriceReader
-	history             HistoryReader
-	markets             MarketsReader
-	oracle              OracleReader
-	sep1Cache           Sep1CachedReader
-	accounts            AccountStore
-	accountKeyQuota     int
-	platformAccounts    PlatformAccountStore
-	platformUsers       AccountSessionRevoker
-	registerAccounts    RegisterAccountCreator
-	apiKeyBudgets       APIKeyBudgetStores
-	statusNotices       StatusNoticeStore
-	audit               AuditSink
-	signups             SignupTracker
-	signupIPThrottle    SignupIPThrottle
-	signupVerifier      SignupVerifier
-	signupVerifyEmailer SignupVerifyEmailer
-	signupVerifyBaseURL string
-	apiKeyEmailVerifier APIKeyEmailVerifier
-	divergence          DivergenceLooker
-	freeze              FrozenLooker
-	substance           PriceSubstanceGate
-	transitive          TransitivePricer
-	scam                PriceScamGate
-	supply              SupplyLooker
-	tokenSupply         TokenSupplyReader
-	storageSupply       ContractStorageSupplyReader
-	tokenDecimals       TokenDecimalsReader
-	tokenSymbol         TokenSymbolReader
-	rwaContracts        RWADirectoryContractReader
-	rwaListings         RWAListingDirectoryReader
-	listings            AssetListingDirectoryReader
-	rwaCurated          RWACuratedDirectoryReader
-	rwaCuratedSnap      rwaCuratedCache
+	logger               *slog.Logger
+	network              string
+	checks               []ReadyChecker
+	assets               AssetReader
+	prices               PriceReader
+	history              HistoryReader
+	markets              MarketsReader
+	oracle               OracleReader
+	sep1Cache            Sep1CachedReader
+	accounts             AccountStore
+	accountKeyQuota      int
+	platformAccounts     PlatformAccountStore
+	platformUsers        AccountSessionRevoker
+	registerAccounts     RegisterAccountCreator
+	apiKeyBudgets        APIKeyBudgetStores
+	statusNotices        StatusNoticeStore
+	audit                AuditSink
+	signups              SignupTracker
+	signupIPThrottle     SignupIPThrottle
+	signupVerifier       SignupVerifier
+	signupResendThrottle SignupResendThrottle
+	signupVerifyEmailer  SignupVerifyEmailer
+	signupVerifyBaseURL  string
+	apiKeyEmailVerifier  APIKeyEmailVerifier
+	divergence           DivergenceLooker
+	freeze               FrozenLooker
+	substance            PriceSubstanceGate
+	transitive           TransitivePricer
+	scam                 PriceScamGate
+	supply               SupplyLooker
+	tokenSupply          TokenSupplyReader
+	storageSupply        ContractStorageSupplyReader
+	tokenDecimals        TokenDecimalsReader
+	tokenSymbol          TokenSymbolReader
+	rwaContracts         RWADirectoryContractReader
+	rwaListings          RWAListingDirectoryReader
+	listings             AssetListingDirectoryReader
+	rwaCurated           RWACuratedDirectoryReader
+	rwaCuratedSnap       rwaCuratedCache
 	// assetListings memoises one read of the listing directory for the
 	// /v1/assets listing-priced valuation arm — see
 	// asset_listing_valuation.go. Not shared with rwaListings' snapshot:
@@ -933,6 +934,11 @@ type Options struct {
 	// it returns 503 with a clear "verification not configured"
 	// message so customers don't get the silent-no-op surprise.
 	SignupVerifier SignupVerifier
+
+	// SignupResendThrottle budgets POST /v1/signup/resend-verification
+	// per address and per IP. Nil disables the route (503): a resend
+	// sends mail, so there is no unthrottled mode.
+	SignupResendThrottle SignupResendThrottle
 
 	// SignupVerifyEmailer, when non-nil + paired with a non-nil
 	// `SignupVerifier`, makes the signup handler issue a token,
@@ -1782,6 +1788,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		signups:                 opts.Signups,
 		signupIPThrottle:        opts.SignupIPThrottle,
 		signupVerifier:          opts.SignupVerifier,
+		signupResendThrottle:    opts.SignupResendThrottle,
 		signupVerifyEmailer:     opts.SignupVerifyEmailer,
 		signupVerifyBaseURL:     opts.SignupVerifyBaseURL,
 		apiKeyEmailVerifier:     opts.APIKeyEmailVerifier,
@@ -2736,6 +2743,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// page's POST consumes the token.
 	s.handlePublic("GET /v1/signup/verify", s.handleSignupVerifyPage)
 	s.handlePublic("POST /v1/signup/verify", s.handleSignupVerify)
+	s.handlePublic("POST /v1/signup/resend-verification", s.handleSignupResend)
 
 	// Customer-dashboard magic-link auth — POST /v1/auth/login +
 	// GET /v1/auth/callback + POST /v1/auth/logout. Mounted only

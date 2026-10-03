@@ -3825,6 +3825,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/signup/resend-verification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-send the signup verification email.
+         * @description For a key that is 403-locked because its first verification
+         *     mail never arrived. The reply is identical whether or not the
+         *     address has a signup awaiting verification, so the route does
+         *     not reveal which addresses have accounts; when one does, a new
+         *     link is mailed and every earlier link stops working.
+         *
+         *     Each request spends a per-address budget (3/hour) and a
+         *     per-IP budget (10/hour) whether or not the address is known,
+         *     and answers `429` with `Retry-After` once either is spent.
+         *     If the budget store is unreachable the route answers `503`
+         *     and sends nothing.
+         */
+        post: operations["resendSignupVerification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dashboard/account": {
         parameters: {
             query?: never;
@@ -20982,6 +21012,80 @@ export interface operations {
                 };
             };
             /** @description SignupVerifier not configured (Redis unavailable). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    resendSignupVerification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The address used at signup. */
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Accepted. Identical for known and unknown addresses. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "detail": "if that address has a signup awaiting verification, a new link is on its way and earlier links no longer work"
+                     *       },
+                     *       "as_of": "2026-07-03T09:00:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            detail: string;
+                        };
+                    };
+                };
+            };
+            /** @description Malformed body or unparseable address. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Per-address or per-IP resend budget spent. */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Verification flow, mail sender or budget store not available. */
             503: {
                 headers: {
                     [name: string]: unknown;

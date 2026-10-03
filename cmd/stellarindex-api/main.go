@@ -580,6 +580,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			"the per-IP signup cap is NOT shared across instances")
 	}
 
+	// Resend budget (per address + per IP); Redis-only, so a Redis-less
+	// deployment answers 503 on the resend route.
+	var signupResendThrottle v1.SignupResendThrottle
+	if rdb != nil {
+		signupResendThrottle = auth.NewRedisSignupResendThrottle(rdb)
+	}
+
 	// F-1218 wave 42 + 43 (codex audit-2026-05-12): the email-
 	// ownership-proof verifier. Wired only when Redis is reachable;
 	// the signup handler issues a token in a future wave and the
@@ -1370,21 +1377,22 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// The hour-bucket CAGG read behind /v1/rwa/premium's market
 		// leg. Uncached here for OracleHistory's reason — the handler
 		// caches the assembled series, not the read.
-		MarketHistory:       store,
-		RWAPremiumSubstance: substanceGate.Policy(),
-		Sep1Cache:           store,
-		Accounts:            accountStore,
-		PlatformAccounts:    platformAccountStore,
-		PlatformUsers:       platformUserStore,
-		RegisterAccounts:    registerAccountStore,
-		APIKeyBudgets:       apiKeyBudgets,
-		StatusNotices:       statusNoticeStore,
-		Audit:               adminAudit,
-		Signups:             signupTracker,
-		SignupIPThrottle:    signupIPThrottle,
-		SignupVerifier:      signupVerifier,
-		SignupVerifyEmailer: signupVerifyEmailerOrNil(dashboardBundle.sender, dashboardBundle.emailFrom, cfg.API.SignupRequireEmailVerification),
-		SignupVerifyBaseURL: cfg.API.ExternalBaseURL,
+		MarketHistory:        store,
+		RWAPremiumSubstance:  substanceGate.Policy(),
+		Sep1Cache:            store,
+		Accounts:             accountStore,
+		PlatformAccounts:     platformAccountStore,
+		PlatformUsers:        platformUserStore,
+		RegisterAccounts:     registerAccountStore,
+		APIKeyBudgets:        apiKeyBudgets,
+		StatusNotices:        statusNoticeStore,
+		Audit:                adminAudit,
+		Signups:              signupTracker,
+		SignupIPThrottle:     signupIPThrottle,
+		SignupVerifier:       signupVerifier,
+		SignupResendThrottle: signupResendThrottle,
+		SignupVerifyEmailer:  signupVerifyEmailerOrNil(dashboardBundle.sender, dashboardBundle.emailFrom, cfg.API.SignupRequireEmailVerification),
+		SignupVerifyBaseURL:  cfg.API.ExternalBaseURL,
 		// F-1218 wave 45 (codex audit-2026-05-12): the verify
 		// handler flips the EmailVerifiedAt flag on the
 		// underlying Redis-stored API key record after Consume.

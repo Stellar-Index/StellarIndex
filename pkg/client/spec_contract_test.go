@@ -204,6 +204,7 @@ var uncoveredOperations = map[string]string{
 	"DELETE /auth/passkey/credentials/{id}":   "session-cookie dashboard surface",
 	"GET /signup/verify":                      "browser onboarding flow — HTML confirmation page",
 	"POST /signup/verify":                     "browser onboarding flow — the confirmation page's form submit",
+	"POST /signup/resend-verification":        "browser onboarding flow — re-sends the signup verification mail",
 	"GET /dashboard/keys":                     "session-cookie dashboard surface",
 	"POST /dashboard/keys":                    "session-cookie dashboard surface",
 	"DELETE /dashboard/keys/{id}":             "session-cookie dashboard surface",

@@ -78,7 +78,7 @@ func writeEmailUnverified(w http.ResponseWriter, r *http.Request) {
 		"type":     "https://api.stellarindex.io/errors/signup-verify-required",
 		"title":    "Email verification required",
 		"status":   http.StatusForbidden,
-		"detail":   "this API key was minted via /v1/signup but the post-signup verification email hasn't been confirmed yet. Click the link in the email we sent, or contact support if you didn't receive it.",
+		"detail":   "this API key was minted via /v1/signup but the post-signup verification email hasn't been confirmed yet. Click the link in the email we sent, or request a new one with POST /v1/signup/resend-verification (body {\"email\": …}).",
 		"instance": r.URL.Path,
 	}
 	body, err := json.Marshal(payload)
