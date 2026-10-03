@@ -104,6 +104,8 @@ type Flags struct {
 	PivotUnverified bool `json:"pivot_unverified,omitempty"`
 	// ThinMarket: a served price comes from a market below the substance floor (include_thin opt-in).
 	ThinMarket bool `json:"thin_market,omitempty"`
+	// ProxyDeviation: a triangulated fiat:USD price was served through a USD peg while a declared peg trades off $1.
+	ProxyDeviation bool `json:"proxy_deviation,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.
@@ -400,7 +402,8 @@ type AssetDetail struct {
 	PriceUSD *string `json:"price_usd,omitempty"`
 
 	// PriceBasis identifies a PriceUSD that is NOT a direct market
-	// observation. "declared_peg": the price was filled from an
+	// observation. "global_market": filled from the vetted global
+	// ticker's cross-venue price (see GlobalMarket). "declared_peg": the price was filled from an
 	// operator-declared 1:1 fiat peg × the current fiat→USD FX rate
 	// because no market-derived price survived the server's substance
 	// gate. "transitive": the price was derived through one
@@ -415,6 +418,15 @@ type AssetDetail struct {
 	// vocabulary of the `price-withheld` 404: "substance",
 	// "scam_issuer", "upstream_leg" or "unattributed".
 	PriceWithheldReason string `json:"price_withheld_reason,omitempty"`
+
+	// GlobalMarket is the global-market reference for a classic asset the
+	// verified catalogue binds to a global ticker on its exact (code,
+	// issuer), with the Stellar price's divergence from it.
+	GlobalMarket *AssetGlobalMarket `json:"global_market,omitempty"`
+
+	// IssuerBehaviour is a classic asset's issuer flags and lifetime
+	// mint/burn/clawback totals; asset detail only.
+	IssuerBehaviour *AssetIssuerBehaviour `json:"issuer_behaviour,omitempty"`
 
 	// ThinMarket: PriceUSD comes from a market below the substance floor
 	// (include_thin opt-in); no valuation or series derives from it.
@@ -1548,6 +1560,35 @@ type GlobalAssetView struct {
 	// wire parity with AssetDetail; the fiat market cap (M2 × deep FX rate)
 	// is never dust-gated, so this stays false on catalogue rows today.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
+}
+
+// AssetGlobalMarket is a vetted same-asset token's global-market USD
+// price and the signed percentage its Stellar price diverges from it.
+type AssetGlobalMarket struct {
+	Asset                string    `json:"asset"`
+	PriceUSD             string    `json:"price_usd"`
+	Source               string    `json:"source"`
+	AsOf                 time.Time `json:"as_of"`
+	StellarDivergencePct *string   `json:"stellar_divergence_pct,omitempty"`
+	DepegWarning         bool      `json:"depeg_warning,omitempty"`
+	// IssuerSignals names the issuer behaviours present beside a depeg
+	// warning: "auth_clawback_enabled", "auth_revocable", "clawback_observed".
+	IssuerSignals []string `json:"issuer_signals,omitempty"`
+}
+
+// AssetIssuerBehaviour is what a classic asset's issuer can do to holders
+// (live account flags) and has done to supply. Totals are integer strings
+// in the asset's smallest unit.
+type AssetIssuerBehaviour struct {
+	AuthRequired        *bool   `json:"auth_required,omitempty"`
+	AuthRevocable       *bool   `json:"auth_revocable,omitempty"`
+	AuthClawbackEnabled *bool   `json:"auth_clawback_enabled,omitempty"`
+	AuthImmutable       *bool   `json:"auth_immutable,omitempty"`
+	FlagsAsOfLedger     *uint32 `json:"flags_as_of_ledger,omitempty"`
+	MintTotal           *string `json:"mint_total,omitempty"`
+	BurnTotal           *string `json:"burn_total,omitempty"`
+	ClawbackTotal       *string `json:"clawback_total,omitempty"`
+	SupplyFlowCount     *uint64 `json:"supply_flow_count,omitempty"`
 }
 
 // AssetListingReference is an independent listing platform's own USD
