@@ -494,33 +494,52 @@ func (r *ExplorerReader) contractCodeHistoryLegacy(ctx context.Context, cidHash 
 
 // contractCodeHistoryIndexedQuery reads the keyed instance-executable
 // timeline (deploy/clickhouse/contract_instance_changes.sql). The
-// contract_hash predicate is the table's primary-key prefix, ascending
-// order matches the collapse loop, and the same newest-preserving cap as
-// the legacy scan bounds pathological instance-storage churn: the inner
-// select keeps the NEWEST rows, the outer re-sorts ascending.
+// contract_hash predicate is the table's primary-key prefix.
+//
+// Consecutive identical executables are collapsed SERVER-side (lagInFrame
+// over the full ordered timeline) BEFORE the cap, so the cap bounds the
+// number of executable CHANGES returned rather than raw instance writes:
+// a contract that rewrites its instance storage tens of thousands of times
+// keeps every executable it ever pointed at, including A->B->A. The cap
+// stays as a newest-preserving backstop on pathological upgrade churn: the
+// middle select keeps the NEWEST changes, the outer re-sorts ascending.
+// The window ORDER BY deliberately omits ASC so the shape stays distinct
+// from the outer re-sort.
 //
 // change_index restarts per TRANSACTION, so it cannot order two
 // transactions' writes in one ledger; intra_ledger_seq (the per-LEDGER walk
 // position) does, and change_index then only breaks ties inside one tx and
 // on legacy rows whose intra_ledger_seq is still 0.
 const contractCodeHistoryIndexedQuery = `SELECT ledger_seq, close_time, wasm_hash FROM (
-			SELECT ledger_seq, close_time, wasm_hash, intra_ledger_seq, change_index
-			FROM stellar.contract_instance_changes
-			WHERE contract_hash = ? AND is_sac = 0 AND wasm_hash != ''
+			SELECT ledger_seq, close_time, wasm_hash, intra_ledger_seq, change_index FROM (
+				SELECT ledger_seq, close_time, wasm_hash, intra_ledger_seq, change_index,
+					lagInFrame(wasm_hash, 1, '') OVER (
+						ORDER BY ledger_seq, intra_ledger_seq, change_index
+						ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS prev_hash
+				FROM stellar.contract_instance_changes
+				WHERE contract_hash = ? AND is_sac = 0 AND wasm_hash != ''
+			)
+			WHERE wasm_hash != prev_hash
 			ORDER BY ledger_seq DESC, intra_ledger_seq DESC, change_index DESC
 			LIMIT ?
-		) ORDER BY ledger_seq ASC, intra_ledger_seq ASC, change_index ASC`
+		) ORDER BY ledger_seq ASC, intra_ledger_seq ASC, change_index ASC` + explorerScanSettings
 
 // contractCodeHistoryIndexedQueryOldKey serves a table still on the
 // pre-intra_ledger_seq shape (instanceChangesTxKeyed false) until its
 // rebuild cut-over.
 const contractCodeHistoryIndexedQueryOldKey = `SELECT ledger_seq, close_time, wasm_hash FROM (
-			SELECT ledger_seq, close_time, wasm_hash, change_index
-			FROM stellar.contract_instance_changes
-			WHERE contract_hash = ? AND is_sac = 0 AND wasm_hash != ''
+			SELECT ledger_seq, close_time, wasm_hash, change_index FROM (
+				SELECT ledger_seq, close_time, wasm_hash, change_index,
+					lagInFrame(wasm_hash, 1, '') OVER (
+						ORDER BY ledger_seq, change_index
+						ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS prev_hash
+				FROM stellar.contract_instance_changes
+				WHERE contract_hash = ? AND is_sac = 0 AND wasm_hash != ''
+			)
+			WHERE wasm_hash != prev_hash
 			ORDER BY ledger_seq DESC, change_index DESC
 			LIMIT ?
-		) ORDER BY ledger_seq ASC, change_index ASC`
+		) ORDER BY ledger_seq ASC, change_index ASC` + explorerScanSettings
 
 // contractWasmHashIndexedQuery reads the ledger-final instance write; the
 // order is contractCodeHistoryIndexedQuery's, newest first.
@@ -536,9 +555,9 @@ const contractWasmHashIndexedQueryOldKey = `SELECT is_sac, wasm_hash FROM stella
 
 // contractCodeHistoryIndexed is ContractCodeHistory's fast path over the
 // keyed index: no XDR decode (the MV/backfill already extracted the
-// executable verdict), collapse of consecutive identical hashes in Go —
-// which also absorbs RMT pre-merge duplicate keys, since a duplicate row
-// carries the same hash as its neighbour.
+// executable verdict). The SQL collapses consecutive identical hashes; the
+// Go loop re-checks the boundary so RMT pre-merge duplicate keys, which
+// carry the same hash as their neighbour, can never surface twice.
 func (r *ExplorerReader) contractCodeHistoryIndexed(ctx context.Context, cid xdr.Hash) ([]ContractCodeVersion, error) {
 	q := contractCodeHistoryIndexedQuery
 	if !r.instanceChangesTxKeyed(ctx) {
