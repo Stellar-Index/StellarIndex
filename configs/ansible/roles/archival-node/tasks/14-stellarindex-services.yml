@@ -263,6 +263,7 @@
     owner: root
     group: root
     mode: "0644"
+  diff: false
   notify:
     - Restart stellarindex-indexer
     - Restart stellarindex-aggregator

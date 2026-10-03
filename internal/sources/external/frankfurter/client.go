@@ -99,6 +99,11 @@ func (c *Client) RangeUSDRates(ctx context.Context, from, to time.Time) ([]DayRa
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("decode %s: %w", url, err)
 	}
+	// Rates are stored as 1 USD = N; a reply in another base would be
+	// silently mislabelled, so reject it rather than trust the query string.
+	if !strings.EqualFold(raw.Base, "USD") {
+		return nil, fmt.Errorf("frankfurter %s..%s: response base %q, want USD", fromStr, toStr, raw.Base)
+	}
 	out := make([]DayRates, 0, len(raw.Rates))
 	for date, rates := range raw.Rates {
 		d, err := time.Parse("2006-01-02", date)
