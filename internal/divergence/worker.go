@@ -252,10 +252,10 @@ type ServiceOptions struct {
 	// OnWarningFired, when non-nil, is invoked from RefreshPair on
 	// the EDGE — a refresh that flips a pair from "below
 	// threshold" → "above threshold" (or fires for the first
-	// time). Best-effort: errors / panics inside the hook do not
-	// propagate. F-1249 (codex audit-2026-05-12): the aggregator
-	// wires this to customerwebhook.Fanout.Publish so dashboard
-	// hooks subscribed to `divergence.firing` get a callback.
+	// time). A non-nil error releases the warning latch so the next
+	// refresh retries; panics inside the hook do not propagate. The
+	// aggregator wires this to the fanout's PublishOnce so hooks
+	// subscribed to `divergence.firing` get a callback.
 	//
 	// Edge-only firing (vs every-refresh-while-firing) prevents
 	// the API binary's delivery queue from re-spamming subscribers
@@ -268,7 +268,9 @@ type ServiceOptions struct {
 // WarningHook is the callback shape for edge-triggered divergence
 // warnings. `cached` is the same CachedResult Redis has just
 // stored; reuse it to build the webhook payload.
-type WarningHook func(ctx context.Context, pair canonical.Pair, cached CachedResult)
+// A non-nil error means the notification was lost: the edge latch is
+// released so the next refresh that still fires retries the hook.
+type WarningHook func(ctx context.Context, pair canonical.Pair, cached CachedResult) error
 
 // Service wraps a set of References + a cache writer, exposing a
 // single [Service.RefreshPair] method the aggregator hooks into
@@ -310,12 +312,18 @@ type Service struct {
 	// [Service.warningPersists]. It is cleared the moment a refresh
 	// finds the raw condition clear.
 	//
+	// notified records the pairs whose current firing episode has been
+	// delivered to onWarning. It is separate from warningState because
+	// warningState is the published verdict and must stay true while a
+	// failed delivery is retried.
+	//
 	// restored records the pairs whose maps were seeded from the previous
 	// process's cached result ([Service.restoreWarningState]). warningMu
-	// guards all three maps.
+	// guards all four maps.
 	onWarning    WarningHook
 	warningMu    sync.Mutex
 	warningState map[string]bool
+	notified     map[string]bool
 	firingSince  map[string]firingStreak
 	restored     map[string]bool
 }
@@ -385,6 +393,7 @@ func NewService(opts ServiceOptions) (*Service, error) {
 		logger:       opts.Logger,
 		onWarning:    opts.OnWarningFired,
 		warningState: map[string]bool{},
+		notified:     map[string]bool{},
 		firingSince:  map[string]firingStreak{},
 		restored:     map[string]bool{},
 	}, nil
@@ -657,16 +666,32 @@ func (s *Service) lastFiringSince(pairKey string) time.Time {
 }
 
 // recordWarning latches an evaluated refresh's verdict and runs the
-// F-1249 edge-triggered hook: it fires only on `false → true`, so the
+// F-1249 edge-triggered hook: it fires once per episode, so the
 // customer-webhook queue gets one POST per episode rather than one per
-// refresh-while-firing, and a return to false re-arms it.
+// refresh-while-firing, and a return to false re-arms it. A hook error
+// leaves the episode undelivered so the next firing refresh retries it;
+// the published verdict is unaffected.
 func (s *Service) recordWarning(ctx context.Context, pair canonical.Pair, cached CachedResult) {
+	key := pair.String()
 	s.warningMu.Lock()
-	prev := s.warningState[pair.String()]
-	s.warningState[pair.String()] = cached.WarningFired
+	s.warningState[key] = cached.WarningFired
+	if !cached.WarningFired {
+		delete(s.notified, key)
+	}
+	deliver := s.onWarning != nil && cached.WarningFired && !s.notified[key]
+	if deliver {
+		s.notified[key] = true
+	}
 	s.warningMu.Unlock()
-	if s.onWarning != nil && cached.WarningFired && !prev {
-		s.onWarning(ctx, pair, cached)
+	if !deliver {
+		return
+	}
+	if err := s.onWarning(ctx, pair, cached); err != nil {
+		s.warningMu.Lock()
+		if s.warningState[key] {
+			delete(s.notified, key)
+		}
+		s.warningMu.Unlock()
 	}
 }
 
@@ -764,6 +789,7 @@ func (s *Service) restoreWarningState(ctx context.Context, pairKey, cacheKey str
 	}
 	if _, live := s.warningState[pairKey]; !live && prior.WarningFired {
 		s.warningState[pairKey] = true
+		s.notified[pairKey] = true
 	}
 }
 
