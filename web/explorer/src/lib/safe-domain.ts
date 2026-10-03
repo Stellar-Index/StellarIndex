@@ -38,13 +38,10 @@ export function isSafeHomeDomain(
 // endpoint for automated screenshot/preview bots), not just a normal
 // third-party tracking beacon.
 //
-// This is necessarily host-string validation only: JS can't resolve DNS
-// before the browser's own `<img>` fetch, so a public hostname that's
-// later repointed (DNS rebinding) isn't caught here — closing that
-// requires routing icons through a same-origin proxy (tracked in
-// public/_headers' img-src TODO), which is a separate, larger change.
-// This closes the straightforward case: an issuer setting `image` to a
-// literal private/loopback/link-local IP or `localhost`.
+// Host-string validation only: JS can't resolve DNS before a fetch. The
+// browser never contacts the issuer host, though — icons load through the
+// same-origin /icon proxy (functions/icon.js, see iconProxySrc), which
+// fetches at the edge and enforces its own checks.
 const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 
 function isPrivateIPv4(host: string): boolean {
@@ -112,4 +109,9 @@ export function isSafePublicImageUrl(
   if (!parsed.hostname) return false;
   if (isPrivateHostname(parsed.hostname)) return false;
   return true;
+}
+
+/** Same-origin URL that serves a validated issuer icon via the /icon proxy. */
+export function iconProxySrc(url: string): string {
+  return `/icon?u=${encodeURIComponent(url)}`;
 }
