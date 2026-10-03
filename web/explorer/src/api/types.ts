@@ -2341,6 +2341,17 @@ export interface paths {
          *     `[projection_verified_from, watermark_ledger]`, NOT over
          *     `[genesis_ledger, watermark_ledger]`. Read the two together.
          *
+         *     **Proven vs carried.** The audit runs daily and re-reconciles only
+         *     the ledgers since its last run, carrying the prior clean projection
+         *     claim over the rest; once a claim's evidence is a week old it
+         *     re-proves that source's whole served range (a few sources per
+         *     night; `sdex`, whose full re-proof outlasts the nightly run, by a
+         *     separate weekly run). `computed_at` is when a verdict was
+         *     last restated; `projection_evidenced_at` is when the claim was last
+         *     proven end to end, and `projection_reconciled_from` is where this
+         *     run's own reconcile began. `flags.stale` is raised when a clean
+         *     claim's evidence is older than about ten days, or unknown.
+         *
          *     **`sources` holds sources only.** The ADR-0033 recognition audit
          *     also produces a SYSTEM-wide census — event shapes in the lake on
          *     contracts no indexed source owns, i.e. Soroban protocols we have
@@ -17914,6 +17925,31 @@ export interface operations {
                                  *     UNKNOWN, never "from ledger 0".
                                  */
                                 projection_verified_from?: number;
+                                /**
+                                 * Format: int64
+                                 * @description The lowest ledger the run that produced this
+                                 *     verdict reconciled ITSELF. The audit is
+                                 *     incremental: `[projection_reconciled_from,
+                                 *     watermark_ledger]` was proven at `computed_at`,
+                                 *     and anything from `projection_verified_from`
+                                 *     below it was carried from the prior verdict.
+                                 *     Omitted when not recorded.
+                                 */
+                                projection_reconciled_from?: number;
+                                /**
+                                 * Format: date-time
+                                 * @description When one audit run last reconciled the WHOLE
+                                 *     served range cleanly — the age of the oldest
+                                 *     evidence behind `projection_ok: true`.
+                                 *     `computed_at` advances on every run, including
+                                 *     one that only carried the claim forward, so it
+                                 *     is not this. `null` when no evidence is on
+                                 *     record (no clean projection claim, or a claim
+                                 *     carried from a verdict that predates this
+                                 *     field). An old or `null` value under a clean
+                                 *     claim raises `flags.stale`.
+                                 */
+                                projection_evidenced_at: string | null;
                                 /**
                                  * @description Lake-axis coverage (watermark vs tip) — see
                                  *     watermark_ledger. A FRACTION in [0,1] despite

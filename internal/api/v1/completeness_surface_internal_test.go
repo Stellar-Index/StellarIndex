@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -60,5 +61,20 @@ func TestCoverageVerdictStaleAgeTighterThanLedgerHorizon(t *testing.T) {
 	}
 	if coverageVerdictStaleAge >= ledgerHorizon {
 		t.Errorf("coverageVerdictStaleAge = %s, must be tighter than the ledger horizon (%s)", coverageVerdictStaleAge, ledgerHorizon)
+	}
+}
+
+// TestCoverageVerdictEvidenceStaleAgeOutlastsTheCarryBound pins the evidence
+// gate against the audit's own re-verify cadence. Expiry is judged at run start
+// against a DB-stamped proof time, so -pass re-proves a claim up to one audit
+// period after MaxProjectionCarryAge, inside the unit's 180-minute budget; two
+// further missed nights must still not read stale.
+func TestCoverageVerdictEvidenceStaleAgeOutlastsTheCarryBound(t *testing.T) {
+	if want := completeness.MaxProjectionCarryAge + 3*coverageVerdictStaleAge; coverageVerdictEvidenceStaleAge != want {
+		t.Errorf("coverageVerdictEvidenceStaleAge = %s, want carry bound + 3 audit grace periods (%s)", coverageVerdictEvidenceStaleAge, want)
+	}
+	const auditPeriod, passBudget = 24 * time.Hour, 180 * time.Minute
+	if floor := completeness.MaxProjectionCarryAge + 3*auditPeriod + passBudget; coverageVerdictEvidenceStaleAge <= floor {
+		t.Errorf("coverageVerdictEvidenceStaleAge = %s, must exceed carry bound + the expiry slip + two missed nights + pass budget (%s)", coverageVerdictEvidenceStaleAge, floor)
 	}
 }
