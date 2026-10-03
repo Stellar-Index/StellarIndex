@@ -130,20 +130,19 @@ func (d *Decoder) Matches(ev events.Event) bool {
 
 // Decode implements [dispatcher.Decoder].
 //
-// Only `swap` produces output. `mint` / `burn` / `collect` (the
-// concentrated-liquidity position lifecycle) and `init` / `upgraded` /
-// `migrated` (the pool lifecycle) are recognized, gated and deliberately
-// projected as ZERO rows: they are real events with no trades in them and
-// no table of their own yet, so counting them as expected-zero is what
-// keeps the ADR-0033 re-derive honest rather than going blind on their
-// ledgers. They are the natural next increment for this source — a
-// positions/liquidity table, in the shape of soroswap_liquidity.
+// `swap` produces a trade; `mint` / `burn` / `collect` (the
+// concentrated-liquidity position lifecycle) produce a PositionEvent. The
+// pool lifecycle (`init` / `upgraded` / `migrated`) is recognized, gated and
+// deliberately projected as ZERO rows, so the ADR-0033 re-derive counts it
+// as expected-zero rather than going blind on those ledgers.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
-	switch classify(&ev) {
+	switch kind := classify(&ev); kind {
 	case EventPoolCreated:
 		return nil, d.seedFromCreation(ev)
 	case EventSwap:
 		return d.emitTrade(ev)
+	case EventMint, EventBurn, EventCollect:
+		return d.emitPosition(ev, kind)
 	default:
 		return nil, nil
 	}
@@ -214,6 +213,45 @@ func (d *Decoder) emitTrade(ev events.Event) ([]consumer.Event, error) {
 		return nil, err
 	}
 	return []consumer.Event{TradeEvent{Trade: trade}}, nil
+}
+
+// emitPosition decodes one pool mint / burn / collect into a PositionEvent.
+// A gated pool with no token mapping fails closed exactly like a swap does
+// (counted ErrUnknownPool, no row), never a row with invented assets.
+func (d *Decoder) emitPosition(ev events.Event, kind string) ([]consumer.Event, error) {
+	closedAt, err := ev.EventClosedAt()
+	if err != nil {
+		return nil, err
+	}
+	fields, err := decodePositionFields(kind, ev.Value)
+	if err != nil {
+		return nil, err
+	}
+	tokens, known := d.poolTokensFor(ev.ContractID)
+	if !known {
+		d.bumpUnknownPool()
+		return nil, ErrUnknownPool
+	}
+	return []consumer.Event{PositionEvent{
+		ContractID: ev.ContractID,
+		Ledger:     ev.Ledger,
+		TxHash:     ev.TxHash,
+		OpIndex:    uint32(ev.OperationIndex),
+		//nolint:gosec // EventIndex is non-negative by Soroban spec.
+		EventIndex: uint32(ev.EventIndex),
+		ObservedAt: closedAt,
+		Action:     kind,
+		Owner:      fields.Owner,
+		Sender:     fields.Sender,
+		Recipient:  fields.Recipient,
+		Token0:     tokens.Token0.String(),
+		Token1:     tokens.Token1.String(),
+		TickLower:  fields.TickLower,
+		TickUpper:  fields.TickUpper,
+		Liquidity:  fields.Liquidity,
+		Amount0:    fields.Amount0,
+		Amount1:    fields.Amount1,
+	}}, nil
 }
 
 // poolTokensFor reads the token map under the read lock. One helper for
