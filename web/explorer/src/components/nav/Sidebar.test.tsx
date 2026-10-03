@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Hermetic by default: the Status pill's shared useStatus query fetches
@@ -26,6 +32,12 @@ vi.mock('@/api/hooks', async () => {
 });
 
 import { SidebarNav } from './Sidebar';
+import { ConsoleShell } from './ConsoleShell';
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/',
+  useRouter: () => ({ push: vi.fn() }),
+}));
 
 // ACC-06: the account menu had no focus-trap/focus-restore — closing it
 // (Escape) never returned focus to the trigger button, unlike the shared
@@ -202,5 +214,46 @@ describe('Sidebar AccountMenu', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/failed/i);
     expect(loc.href).toBe('/dashboard');
     vi.unstubAllGlobals();
+  });
+});
+
+// The rail and the mobile drawer each mount a SearchModal; Cmd-K must never
+// leave two "Site search" dialogs stacked.
+describe('ConsoleShell search dialogs', () => {
+  function renderShell() {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <ConsoleShell>
+          <div />
+        </ConsoleShell>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+  }
+
+  it('opens one dialog on Cmd-K while the drawer is open', () => {
+    renderShell();
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    expect(screen.getAllByRole('dialog', { name: 'Site search' })).toHaveLength(
+      1,
+    );
+  });
+
+  it('keeps one dialog when Cmd-K follows the drawer search button', () => {
+    renderShell();
+    const drawer = screen.getByRole('dialog', { name: 'Navigation' });
+    fireEvent.click(
+      within(drawer).getByRole('button', { name: 'Open search' }),
+    );
+    expect(screen.getAllByRole('dialog', { name: 'Site search' })).toHaveLength(
+      1,
+    );
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    expect(screen.getAllByRole('dialog', { name: 'Site search' })).toHaveLength(
+      1,
+    );
   });
 });

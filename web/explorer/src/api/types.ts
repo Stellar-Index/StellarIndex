@@ -11436,6 +11436,21 @@ export interface components {
                  *     its cap. Omitted when false.
                  */
                 market_cap_low_liquidity?: boolean;
+                /**
+                 * @description True when an unbounded read (`timeframe=all`) hit the
+                 *     50 000-bucket response cap, so `points` holds the
+                 *     OLDEST slice of this pair's history and stops short of
+                 *     the present. Request a coarser `granularity` to see
+                 *     the whole span. Omitted when false.
+                 */
+                row_cap_truncated?: boolean;
+                /**
+                 * Format: date-time
+                 * @description Last bucket of the earliest source read that hit the row
+                 *     cap; the series is incomplete after it. Only present when
+                 *     `row_cap_truncated=true`.
+                 */
+                data_ends_at?: string;
             };
         };
         TradeRow: {
