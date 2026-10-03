@@ -138,7 +138,7 @@ journalctl -u stellarindex-aggregator --since "1 hour ago" -n 200 | \
   → `rules.r1/supply-refresh.yml`; commands use r1 shapes;
   `_never_initialized` + `ch-supply-gapfill-failed.md` added to
   Related.
-- 2026-04-30 — initial draft alongside #313 (supply-refresh
+- 2026-04-30 — initial draft alongside 13b8e42c9 (supply-refresh
   alerts).
 - 2026-04-30 — quick-diagnosis #3 now references the
   `asset_key` label so operators can confirm

@@ -6,7 +6,7 @@
 # Promtail ships journald logs to the local Loki (:3100).
 
 # Node-exporter source-of-truth: the Debian package
-# `prometheus-node-exporter` (#33 cutover 2026-05-20). Previously
+# `prometheus-node-exporter` (176596608 cutover 2026-05-20). Previously
 # we hand-downloaded /usr/local/bin/node_exporter and a custom
 # systemd unit, which (a) silently squatted :9100 against any
 # parallel-installed package, (b) didn't auto-update for CVE
@@ -122,13 +122,13 @@
     enabled: true
     daemon_reload: true
 
-# Idempotent cleanup for boxes that ran the old (pre-#33)
+# Idempotent cleanup for boxes that ran the old (pre-176596608)
 # playbook: stop + disable the hand-rolled node_exporter.service
 # so the two binaries no longer collide on :9100. The unit file +
 # /usr/local/bin/node_exporter binary are left in place as a
 # zero-downtime rollback path (`systemctl stop
 # prometheus-node-exporter && systemctl start node_exporter`).
-- name: Stop legacy node_exporter.service (#33 cutover)
+- name: Stop legacy node_exporter.service (176596608 cutover)
   ansible.builtin.systemd:
     name: node_exporter.service
     state: stopped

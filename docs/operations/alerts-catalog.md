@@ -28,8 +28,8 @@ enforces it); any per-alert detail page follows it.
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 66 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 245 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `page` | 67 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
+  | `ticket` | 246 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -446,8 +446,8 @@ chain-link locally. See [archive-completeness.md](archive-completeness.md).
 | `stellarindex_galexie_archive_contiguity_silent` | `absent_over_time(galexie_archive_unexpected_gaps[3h])` | for 15 m (hourly scan dark) | ticket | [galexie-archive-contiguity](runbooks/galexie-archive-contiguity.md) |
 | `stellarindex_galexie_archive_scan_degraded` | `galexie_archive_scan_ok` / `_scan_last_run_unix` | the bucket listing errored, the scan stopped rewriting its file (> 3 h), or it was never written — for > 15 min. A failed read no longer publishes a partition verdict at all, so this is what speaks for it | ticket | [galexie-archive-contiguity](runbooks/galexie-archive-contiguity.md) |
 
-Defense-in-depth for `#26` — the original 23-day silent stall of
-`galexie-archive`. The post-`#26` fix is the hourly
+Defense-in-depth for the original 23-day silent stall of
+`galexie-archive`. The standing fix (f12289f6d) is the hourly
 `galexie-archive-fill.timer`; these alerts page within hours if
 that timer (or its `mc` aliases / aws-public IAM / MinIO
 mtime-poison failure mode) silently breaks. Metric source:
@@ -679,6 +679,8 @@ auto-unfreeze at all. Rules in
 | `stellarindex_zfs_pool_degraded` | `node_zfs_pool_state{state=~"DEGRADED|FAULTED|UNAVAIL"}` | any, for > 60 s | page | [zfs-degraded](runbooks/zfs-degraded.md) |
 | `stellarindex_zfs_pool_low_space` | `min by (instance) (node_filesystem_avail_bytes{fstype="zfs"})` | < 1.3 TB free for > 15 min | ticket | [zfs-pool-full](runbooks/zfs-pool-full.md) |
 | `stellarindex_zfs_pool_critical_space` | `min by (instance) (node_filesystem_avail_bytes{fstype="zfs"})` | < 650 GB free for > 5 min | page | [zfs-pool-full](runbooks/zfs-pool-full.md) |
+| `stellarindex_zfs_pool_fill_85pct_within_30d` | `predict_linear` over 14 d of daily `min_over_time(node_filesystem_avail_bytes{fstype="zfs"}[1d])` troughs, ÷ reconstructed pool capacity | projected < 15 % free in 30 d, for > 1 h | ticket | [zfs-pool-full](runbooks/zfs-pool-full.md) |
+| `stellarindex_zfs_pool_fill_90pct_within_7d` | same | projected < 10 % free in 7 d, for > 30 min | page | [zfs-pool-full](runbooks/zfs-pool-full.md) |
 | `stellarindex_nvme_smart_warn` | `increase(nvme_num_err_log_entries_total[1h])` | > 0 for > 5 min | ticket | [nvme-smart](runbooks/nvme-smart.md) |
 | `stellarindex_nvme_thermal_throttle` | `nvme_temperature_celsius` | > 70 °C for > 5 min | page | [nvme-thermal](runbooks/nvme-thermal.md) |
 | `stellarindex_nvme_wear_high` | `nvme_percentage_used_ratio` | > 0.80 for > 1 h | ticket | [nvme-smart](runbooks/nvme-smart.md) |

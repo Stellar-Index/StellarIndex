@@ -3218,6 +3218,9 @@ export interface paths {
          *     XLM cross, a triangulated chain, a fiat cross-rate. 404 when
          *     the chain serves nothing, or only a declared peg (SEP-40's
          *     `None`: a declaration is not a price record).
+         *
+         *     Does not accept `include_thin`: a SEP-40 consumer never receives a
+         *     thin-market price.
          */
         get: operations["getOracleLastPrice"];
         put?: never;
@@ -4047,7 +4050,7 @@ export interface paths {
         /**
          * Customer dashboard — list this account's price alerts.
          * @description Session-gated. Returns every price-threshold alert this
-         *     account has registered, newest first. BACKLOG #60.
+         *     account has registered, newest first.
          */
         get: operations["listDashboardPriceAlerts"];
         put?: never;
@@ -7089,7 +7092,7 @@ export interface components {
         };
         /**
          * @description A customer-registered price-threshold alert backing the
-         *     /v1/dashboard/price-alerts surface (BACKLOG #60). The
+         *     /v1/dashboard/price-alerts surface. The
          *     aggregator's evaluator compares each enabled alert against the
          *     latest closed 1m VWAP for its pair and, on a crossing, enqueues
          *     a `price.alert` webhook delivery to the account's subscribed
@@ -7253,7 +7256,7 @@ export interface components {
             at: string;
         };
         /**
-         * @description Body of a `price.alert` webhook delivery (BACKLOG #60). Fired by
+         * @description Body of a `price.alert` webhook delivery. Fired by
          *     the aggregator's price-alert evaluator when one of the account's
          *     registered alerts crosses its threshold against the latest closed
          *     1-minute VWAP. Sent once per crossing: the alert re-arms only after
@@ -7408,6 +7411,11 @@ export interface components {
             frozen_checked: boolean;
             /** @default false */
             single_source: boolean;
+            /**
+             * @description True when the request opted in with `include_thin=true` and a served price comes from a market below the substance floor. Key any low-confidence marker on this flag, never on `confidence`.
+             * @default false
+             */
+            thin_market: boolean;
             /**
              * @description Set on a TRIANGULATED /v1/price response when the composite came from routes that disagreed (the aggregator's router divergence signal). Omitted when false.
              * @default false
@@ -10364,6 +10372,10 @@ export interface components {
              * @enum {string}
              */
             price_withheld_reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed";
+            /** @description True when `price_usd` was served under `include_thin=true` from a market below the substance floor. No market cap, FDV, change pill, price history or ATH derives from it. */
+            thin_market?: boolean;
+            /** @description The substance measurement behind a thin price (detail only). `substance` without `thin_market`: a declared peg or the global price won; see `price_basis`. */
+            substance?: components["schemas"]["SubstanceEvidence"];
             /** @description Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. "+1.27", "-0.05", "0.00"). Null when the asset has no current USD price or no comparison bucket ~24h ago. */
             change_24h_pct?: string | null;
             /** @description circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale. */
@@ -10518,19 +10530,19 @@ export interface components {
             markets_count?: number | null;
             /** @description Trades the asset participated in over the trailing 24h. */
             trade_count_24h?: number | null;
-            /** @description 24 hourly USD-price samples (oldest first) for sparkline rendering. */
+            /** @description 24 hourly USD-price samples (oldest first) for sparkline rendering. Null on a `thin_market` row; raw series on /v1/ohlc, /v1/observations. */
             price_history_24h?: {
                 /** Format: date-time */
                 t: string;
                 p?: string | null;
             }[] | null;
-            /** @description 7 daily USD-price samples (oldest first). */
+            /** @description 7 daily USD-price samples (oldest first); also the listing `include=sparkline7d` series. Null on a `thin_market` row; raw series on /v1/ohlc, /v1/observations. */
             price_history_7d?: {
                 /** Format: date-time */
                 t: string;
                 p?: string | null;
             }[] | null;
-            /** @description All-time-high USD price + when it was set. Null when no USD-quoted history. */
+            /** @description All-time-high USD price + when it was set. Null when no USD-quoted history, and on a `thin_market` row; raw series on /v1/ohlc, /v1/observations. */
             ath?: {
                 usd: string;
                 /** Format: date-time */
@@ -10949,7 +10961,7 @@ export interface components {
             change_24h_pct?: string | null;
             /**
              * Format: float
-             * @description Multi-factor confidence score in [0, 1] (ADR-0019).
+             * @description Multi-factor confidence score in [0, 1] (ADR-0019). Under `flags.thin_market` it is capped at a declared ceiling of 0.10, not a measurement; only on /v1/price.
              */
             confidence?: number | null;
             /** @description Per-factor decomposition of confidence (ADR-0019). */
@@ -10981,6 +10993,8 @@ export interface components {
                 /** @description True when the ADR-0019 bootstrap ceiling (0.5) bounded confidence because baseline_age_days is below 28.5 (below 27 for a pair already released, or no baseline exists), so a confidence of 0.5 may be the cap rather than the evidence. False means the multi-factor score was served without the ceiling. */
                 bootstrap_capped?: boolean;
             } | null;
+            /** @description The substance measurement behind a `flags.thin_market` price. */
+            substance?: components["schemas"]["SubstanceEvidence"];
         };
         PriceEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["Price"];
@@ -10997,6 +11011,64 @@ export interface components {
              *     nothing was withheld.
              */
             withheld?: string[];
+            /**
+             * @description Requested ids in `data` whose price comes from a market
+             *     below the substance floor, served because the request opted
+             *     in with `include_thin=true`. Input order; absent otherwise.
+             *     No `change_24h_pct` is derived for these rows.
+             */
+            thin?: string[];
+        };
+        SubstanceEvidence: {
+            /** @description The request's base asset; the market measured is the alias union of base and quote. */
+            base: string;
+            quote: string;
+            /**
+             * Format: int64
+             * @description Length of the trailing window measured.
+             */
+            window_seconds: number;
+            /**
+             * Format: date-time
+             * @description When the measurement was taken; a cached verdict can be up to a minute old.
+             */
+            measured_at: string;
+            /**
+             * Format: date-time
+             * @description Where the measured window ends, on point-in-time reads only (the requested instant, grain-truncated).
+             */
+            window_end?: string;
+            /** @description USD volume in the window (decimal string; never a JSON number). */
+            volume_usd: string;
+            /**
+             * Format: int64
+             * @description Active price buckets in the window.
+             */
+            buckets: number;
+            /**
+             * Format: int64
+             * @description Active buckets carrying a USD valuation.
+             */
+            valued_buckets: number;
+            /**
+             * Format: int64
+             * @description First-to-last active bucket span.
+             */
+            span_seconds: number;
+            /** @description The substance policy the measurement was held to. */
+            floor: {
+                /** @description Decimal string. */
+                min_volume_usd: string;
+                /** Format: int64 */
+                min_buckets: number;
+                /** Format: int64 */
+                min_span_seconds: number;
+            };
+            /**
+             * @description The first floor the measurement fails.
+             * @enum {string}
+             */
+            failed: "buckets" | "span" | "volume" | "volume_unvalued";
         };
         PriceChangeHorizon: {
             /** @description Signed percentage move of the current price vs the reference price, two fractional digits with an explicit leading "+" on gains (e.g. "+3.62", "-1.04", "0.00"). Null when unavailable. */
@@ -11014,6 +11086,8 @@ export interface components {
             available: boolean;
             /** @description True when the reference bucket exists but a serving gate refused to publish it (thin-market or scam-issuer gate, or the serving-sanity guard). Always false when available is true. */
             withheld: boolean;
+            /** @description True when this horizon's reference price comes from a market below the substance floor, served under `include_thin=true`. */
+            thin_market?: boolean;
         };
         PriceChanges: {
             asset_id: string;
@@ -11039,6 +11113,8 @@ export interface components {
             "24h": components["schemas"]["PriceChangeHorizon"];
             "7d": components["schemas"]["PriceChangeHorizon"];
             "30d": components["schemas"]["PriceChangeHorizon"];
+            /** @description The substance measurement behind a thin current price (current bucket only; a horizon carries only its flag). */
+            substance?: components["schemas"]["SubstanceEvidence"];
         };
         PriceChangesEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["PriceChanges"];
@@ -12186,6 +12262,8 @@ export interface components {
              * @description Extension member on `monthly-quota-exceeded` 429s only. Month-to-date request count that triggered the cap. Omitted on `monthly-quota-unavailable` — the counter read failed, so there is no honest value to report.
              */
             month_to_date?: number;
+            /** @description Extension member on a `price-withheld` 404 from `/v1/price`, `/v1/price/at` and `/v1/price/changes`, for a thin-market reason (`substance`, `upstream_leg`, `unattributed`) only: the measurement the price was withheld on. Absent otherwise. */
+            substance?: components["schemas"]["SubstanceEvidence"];
         };
     };
     responses: {
@@ -12381,6 +12459,18 @@ export interface components {
          * @example native
          */
         AssetQuery: string;
+        /**
+         * @description Opt in to a thin-market price. When the only market behind the
+         *     price fails the trailing substance floor, the price is served
+         *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+         *     with the `substance` measurement instead of being withheld. Only
+         *     a substance verdict is released: a flagged issuer, an FX leg or
+         *     the manipulation guard still withholds. A cleared route always
+         *     wins over a thin one. Only the literal `true` opts in; any other
+         *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+         *     a catalogue slug in this version.
+         */
+        IncludeThin: boolean;
         /**
          * @description Quote-side asset. Either a canonical asset identifier (`native`,
          *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
@@ -12843,6 +12933,18 @@ export interface operations {
     listAssets: {
         parameters: {
             query?: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
                 /** @description Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page). */
                 include?: string;
                 /**
@@ -13314,7 +13416,20 @@ export interface operations {
     };
     getAsset: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
+            };
             header?: never;
             path: {
                 /**
@@ -13586,6 +13701,18 @@ export interface operations {
         parameters: {
             query: {
                 /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
+                /**
                  * @description Canonical asset identifier — matches the `asset_id` on
                  *     response bodies. Query-parameter form is the shorter `asset`
                  *     per the handler implementations (/v1/price, /v1/oracle/latest).
@@ -13648,6 +13775,18 @@ export interface operations {
     getPriceAt: {
         parameters: {
             query: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
                 /** @description Canonical asset id (native | CODE-G... | C... | fiat:XXX). */
                 asset: string;
                 /** @description Quote asset id; default fiat:USD. */
@@ -13699,6 +13838,18 @@ export interface operations {
     getPriceChanges: {
         parameters: {
             query: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
                 /**
                  * @description Canonical asset identifier — matches the `asset_id` on
                  *     response bodies. Query-parameter form is the shorter `asset`
@@ -13926,6 +14077,18 @@ export interface operations {
         parameters: {
             query?: {
                 /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
+                /**
                  * @description Comma-separated canonical asset ids, max 100. Same strict
                  *     form as `/v1/price?asset=` — short symbols are rejected.
                  *     Required unless `pairs` is supplied instead.
@@ -14006,7 +14169,20 @@ export interface operations {
     };
     getPriceBatchBulk: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
+            };
             header?: never;
             path?: never;
             cookie?: never;
