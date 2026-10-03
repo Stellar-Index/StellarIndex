@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/big"
 	"net/http"
 	"strconv"
 	"time"
@@ -92,38 +91,17 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Scam-issuer gate (wave-D MSP-02). /v1/vwap and /v1/twap served a
-	// flagged issuer's aggregated price at 200 while /v1/price,
-	// /v1/price/tip, /v1/price/batch, the SEP-40 oracle and the asset
-	// headline all withheld it — reproduced live against a directory-
-	// flagged issuer, 200 with a price on both. Worse, pricingguard's own
-	// package doc (scam.go) and PR #182's merged body BOTH asserted these
-	// two endpoints were covered by the reader-seam gate. They never
-	// were: the ScamGate is consumed at exactly four sites, none of them
-	// here, and no middleware does asset-level withholding.
+	// Scam-issuer gate on BOTH legs: keyed on the base alone,
+	// `?base=native&quote=<FLAGGED>` would republish a withheld market's
+	// price as its reciprocal. The fold lives in pricingguard.
 	//
-	// BOTH LEGS. It covers every quote of a flagged base (including the
-	// XLM-triangulated headline) and every base quoted IN a flagged
-	// asset: keyed on the base alone, `?base=native&quote=<FLAGGED>`
-	// republished the withheld market's price as its exact reciprocal,
-	// at 200, unauthenticated (F002). The fold lives in pricingguard —
-	// this site passes the pair and asks once.
+	// Scam only, not the substance gate: that would newly 404 every thin
+	// pair on a surface ADR-0015 positions as "compute it yourself", which
+	// is an owner decision.
 	//
-	// SCAM ONLY, deliberately not the substance gate. The scam gate is
-	// targeted (flagged issuers) and directly implements the 2026-08-25
-	// decision. The substance gate would newly 404 every THIN pair here,
-	// which is both a breaking change for existing clients and arguably
-	// wrong on principle: VWAPResult's own doc and ADR-0015 position
-	// /v1/vwap as the "narrow the window and compute it yourself" surface
-	// OPPOSITE /v1/price. That is an owner decision, not something to
-	// smuggle in with a scam fix.
-	//
-	// The gate goes in the HANDLER, not in the shared
-	// tradesInRangeWithStablecoinFallback: that helper is also the fetch
-	// behind the single-bar /v1/ohlc, and scam.go, substance.go, the
-	// config docs and the withheld problem's own guidance text all
-	// promise /v1/ohlc stays visible. Gating there would make our own
-	// error message's escape-hatch advice a lie.
+	// In the handler, not tradesInRangeWithStablecoinFallback: that helper
+	// also backs the single-bar /v1/ohlc, which the withheld problem's
+	// guidance promises stays visible.
 	if s.writeIfScamWithheld(w, r, base, quote, "vwap") {
 		return
 	}
@@ -143,12 +121,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sigma, ok := parseVWAPOutlierSigma(w, r)
-	if !ok {
-		return
-	}
-
-	breakdown, bucketInterval, ok := parseVWAPBreakdown(w, r)
+	sigma, breakdown, ok := parseVWAPParams(w, r)
 	if !ok {
 		return
 	}
@@ -227,7 +200,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// the aggregator's shortest-window VWAP now, and this value is computed
 	// here from raw trades over a caller-chosen [from, to), so the verdict
 	// never saw it — the same reason /v1/price/at carries none.
-	res := VWAPResult{
+	writeJSON(w, VWAPResult{
 		From:                WireTime(from),
 		To:                  WireTime(to),
 		Price:               ratToDecimal(price, ohlcPriceDigits),
@@ -239,17 +212,18 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		OutliersFiltered:    outliersFiltered,
 		Truncated:           pre == maxTrades,
 		Clamped:             clamped,
+		Breakdown:           s.vwapBreakdown(breakdown, pair, fetched, trades, from, to, pre == maxTrades),
+	}, Flags{Triangulated: triangulated, ProxyDeviation: triangulated && s.proxyDeviation(ctx, to)})
+}
+
+// parseVWAPParams parses ?outlier_sigma= then ?breakdown= / ?interval=.
+func parseVWAPParams(w http.ResponseWriter, r *http.Request) (float64, *ohlcInterval, bool) {
+	sigma, ok := parseVWAPOutlierSigma(w, r)
+	if !ok {
+		return 0, nil, false
 	}
-	if breakdown {
-		adjust := func(p *big.Rat) *big.Rat {
-			return aggregate.AdjustPrice(p,
-				aggregate.ResolveDecimals(s.nonstandardDecimals, base),
-				aggregate.ResolveDecimals(s.nonstandardDecimals, quote))
-		}
-		res.Breakdown = buildVWAPBreakdown(fetched, trades, bucketInterval, from, to,
-			pair.Quote.Type != canonical.AssetFiat, adjust, pre == maxTrades)
-	}
-	writeJSON(w, res, Flags{Triangulated: triangulated, ProxyDeviation: triangulated && s.proxyDeviation(ctx, to)})
+	breakdown, ok := parseVWAPBreakdown(w, r)
+	return sigma, breakdown, ok
 }
 
 // parseVWAPOutlierSigma parses ?outlier_sigma=, defaulting to 0 (no

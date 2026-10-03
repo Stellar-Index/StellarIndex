@@ -53,10 +53,10 @@ type VWAPBreakdown struct {
 	Buckets   []VWAPBreakdownBucket `json:"buckets"`
 }
 
-// parseVWAPBreakdown validates ?breakdown= and ?interval=. enabled=false
-// with ok=true means the caller did not opt in. ok=false means a
-// problem+json has been written.
-func parseVWAPBreakdown(w http.ResponseWriter, r *http.Request) (enabled bool, interval ohlcInterval, ok bool) {
+// parseVWAPBreakdown validates ?breakdown= and ?interval=. A nil interval
+// with ok=true means the caller did not opt in; "" means one bucket over
+// the window. ok=false means a problem+json has been written.
+func parseVWAPBreakdown(w http.ResponseWriter, r *http.Request) (interval *ohlcInterval, ok bool) {
 	q := r.URL.Query()
 	rawBreakdown, rawInterval := q.Get("breakdown"), q.Get("interval")
 	if rawBreakdown == "" {
@@ -65,22 +65,41 @@ func parseVWAPBreakdown(w http.ResponseWriter, r *http.Request) (enabled bool, i
 				"https://api.stellarindex.io/errors/invalid-interval",
 				"Invalid interval", http.StatusBadRequest,
 				"interval is only valid together with breakdown=source")
-			return false, "", false
+			return nil, false
 		}
-		return false, "", true
+		return nil, true
 	}
 	if rawBreakdown != vwapBreakdownSource {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-breakdown",
 			"Invalid breakdown", http.StatusBadRequest,
 			"breakdown must be \""+vwapBreakdownSource+"\" or omitted")
-		return false, "", false
+		return nil, false
 	}
-	if rawInterval == "" {
-		return true, "", true
+	var iv ohlcInterval
+	if rawInterval != "" {
+		if iv, ok = parseOHLCInterval(w, r, rawInterval); !ok {
+			return nil, false
+		}
 	}
-	interval, ok = parseOHLCInterval(w, r, rawInterval)
-	return ok, interval, ok
+	return &iv, true
+}
+
+// vwapBreakdown builds the ?breakdown=source block, or nil when interval
+// is nil. Prices get the same nonstandard-decimals correction as the
+// headline price.
+func (s *Server) vwapBreakdown(
+	interval *ohlcInterval, pair canonical.Pair, pre, post []canonical.Trade, from, to time.Time, truncated bool,
+) *VWAPBreakdown {
+	if interval == nil {
+		return nil
+	}
+	adjust := func(p *big.Rat) *big.Rat {
+		return aggregate.AdjustPrice(p,
+			aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base),
+			aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Quote))
+	}
+	return buildVWAPBreakdown(pre, post, *interval, from, to, pair.Quote.Type != canonical.AssetFiat, adjust, truncated)
 }
 
 // vwapBucketBounds returns the UTC-aligned bounds of the bucket holding t.
@@ -93,10 +112,11 @@ func vwapBucketBounds(t time.Time, interval ohlcInterval, from, to time.Time) (t
 		t = t.UTC()
 		s := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
 		return s, s.AddDate(0, 1, 0)
+	default:
+		d := interval.duration()
+		s := t.UTC().Truncate(d)
+		return s, s.Add(d)
 	}
-	d := interval.duration()
-	s := t.UTC().Truncate(d)
-	return s, s.Add(d)
 }
 
 type vwapBucketTrades struct {
