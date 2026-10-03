@@ -708,3 +708,48 @@ tests:
       - eval_time: 1996m
         alertname: stellarindex_aggregator_bootstrap_cap_reengaged
         exp_alerts: []
+
+  # ── stellarindex_change_summary_stale ────────────────────────────
+  # Heartbeat frozen at 60s (the seed). time()-60 > 1800 from 31m, held
+  # 15m → firing by 46m. A gauge at 0 (worker never ran) stays silent.
+  - interval: 1m
+    name: a change-summary worker that never upserts tickets at 46m
+    input_series:
+      - series: 'stellarindex_change_summary_last_success_unix{job="stellarindex_aggregator"}'
+        values: '60x120'
+      - series: 'stellarindex_change_summary_last_success_unix{job="stellarindex_indexer"}'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_change_summary_stale
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: stellarindex_change_summary_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+              job: stellarindex_aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/change-summary-stale.md
+              summary: "change_summary_5m has not been refreshed in over 30 min — explorer deltas are frozen"
+              description: |
+                No change-summary pass has upserted a single entity in over
+                30 minutes (six 5-minute intervals) plus a 15-minute
+                for-duration. The explorer delta strips (h1/h24/d7/d30,
+                ATH/ATL, streak) are serving the last written rows. Look at
+                the aggregator's `change-summary pass had failures` warns for
+                `first_err`, and
+                stellarindex_change_summary_passes_total{outcome="failed"}.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/change-summary-stale.md
+
+  - interval: 5m
+    name: a change-summary worker upserting every 5 minutes never tickets
+    input_series:
+      - series: 'stellarindex_change_summary_last_success_unix{job="stellarindex_aggregator"}'
+        values: '300+300x24'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_change_summary_stale
+        exp_alerts: []
