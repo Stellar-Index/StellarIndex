@@ -62,7 +62,7 @@ type SoroswapRouterSwap struct {
 	// CallPath is the ordered contract C-strkey chain from the top-level
 	// invocation down to the router (always ends in ContractID), CallDepth
 	// = len(CallPath)-1, CallKind is 'top_level' | 'sub_invocation'.
-	// An empty CallKind writes SQL NULLs for all three (the pre-#11 legacy
+	// An empty CallKind writes SQL NULLs for all three (the pre-ROADMAP #11 legacy
 	// row shape) — set all three together or none; the migration's CHECK
 	// rejects partial combinations.
 	CallPath  []string

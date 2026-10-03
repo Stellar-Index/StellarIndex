@@ -11,6 +11,7 @@ import { useLastPathSegment } from '@/lib/useLastPathSegment';
 import type { Envelope } from '@/app/explorer-shared';
 
 import { AssetScamCallout } from './AssetScamCallout';
+import { AssetTrustFacts } from './AssetTrustFacts';
 import { LiveAssetPrice } from './LiveAssetPrice';
 import { type PriceBasis, provenanceFromBasis } from './priceProvenance';
 import { formatCompact } from '@/lib/format';
@@ -38,6 +39,11 @@ interface AssetShellDetail {
    */
   issuer_directory_tags?: string[] | null;
   issuer_directory_domain?: string | null;
+  volume_character?: 'market' | 'operational' | 'concentrated';
+  volume_character_signals?: {
+    window_days: number;
+    top_account_pair_vol_share: number;
+  };
   issuer_scam_reason?: string | null;
 }
 
@@ -120,6 +126,15 @@ export function AssetPathView() {
           { label: 'Assets', href: '/assets' },
           { label: d.code ?? slug },
         ]}
+      />
+      <AssetTrustFacts
+        assetID={d.asset_id}
+        issuer={d.issuer ?? null}
+        directoryTags={d.issuer_directory_tags}
+        scamReason={d.issuer_scam_reason}
+        directoryDomain={d.issuer_directory_domain}
+        volumeCharacter={d.volume_character}
+        volumeCharacterSignals={d.volume_character_signals}
       />
       <Panel
         title={`${d.code ?? slug} — asset`}

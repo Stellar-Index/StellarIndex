@@ -19,7 +19,7 @@ import (
 // [dispatcher.LedgerEntryChangeDecoder].
 //
 // Watched-asset driven via the same operator config the
-// trustlines observer (#304) consumes. Removed-variant changes
+// trustlines observer (43a075422) consumes. Removed-variant changes
 // (a claim) are resolved through the pre-image STATE change that
 // stellar-core emits immediately before them — see package doc.
 type Observer struct {

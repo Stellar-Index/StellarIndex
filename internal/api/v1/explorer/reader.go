@@ -297,6 +297,10 @@ type ExplorerReader interface {
 	// watermark, keeping the merge gap-free and double-count-free at
 	// any derive progress. Implementations cache (~60s).
 	Cap67MovementsWatermark(ctx context.Context) (uint32, error)
+	// Cap67SupplyCoverage is the ledger range, at or below the watermark,
+	// the derive has also covered with mint, burn and clawback (ok=false:
+	// none yet). Same cache as the watermark.
+	Cap67SupplyCoverage(ctx context.Context) (from, thru uint32, ok bool, err error)
 	// AccountsStats is the /accounts hub analytics snapshot (rollup-
 	// backed; ok=false while the rollup hasn't completed a cycle).
 	AccountsStats(ctx context.Context) (clickhouse.AccountsStats, bool, error)
@@ -426,9 +430,10 @@ type Handler struct {
 	// WriteJSONAt is WriteJSON with an explicit envelope as_of — used by the
 	// snapshot-backed listings so a degraded (stale-snapshot) response
 	// carries the snapshot's REAL computation time instead of now().
-	// Optional: nil falls back to WriteJSON (same wire shape; as_of is
-	// always present on the envelope either way).
-	WriteJSONAt   func(w http.ResponseWriter, data any, stale bool, asOf time.Time)
+	// degraded marks a carried-forward body that no shared cache may keep
+	// (v1 Flags.Degraded). Optional: nil falls back to WriteJSON (same wire
+	// shape; as_of is always present on the envelope either way).
+	WriteJSONAt   func(w http.ResponseWriter, data any, stale, degraded bool, asOf time.Time)
 	WriteProblem  func(w http.ResponseWriter, r *http.Request, typeURL, title string, status int, detail string)
 	ClientAborted func(r *http.Request, err error) bool
 
@@ -509,9 +514,9 @@ func (h *Handler) detachedGate() *clickhouse.RefreshGate {
 // writeJSONAt writes data with an explicit envelope as_of when the seam is
 // wired, degrading to the plain WriteJSON (as_of = now) when not — test
 // handlers that only wire WriteJSON keep working unchanged.
-func (h *Handler) writeJSONAt(w http.ResponseWriter, data any, stale bool, asOf time.Time) {
-	if h.WriteJSONAt != nil && !asOf.IsZero() {
-		h.WriteJSONAt(w, data, stale, asOf)
+func (h *Handler) writeJSONAt(w http.ResponseWriter, data any, stale, degraded bool, asOf time.Time) {
+	if h.WriteJSONAt != nil && (!asOf.IsZero() || degraded) {
+		h.WriteJSONAt(w, data, stale, degraded, asOf)
 		return
 	}
 	h.WriteJSON(w, data, stale)

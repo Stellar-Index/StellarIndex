@@ -43,7 +43,7 @@ Rozo unblocks two Stellar-specific cross-chain UX gaps:
    can't `InvokeContract` on Stellar; Rozo's intent_bridge
    exposes a relayer-driven path.
 
-Like CCTP (#40), Rozo is a **bridge** semantic — not a price
+Like CCTP (1b9a594b4), Rozo is a **bridge** semantic — not a price
 source. It doesn't fit `ClassExchange`. Shares CCTP's
 `ClassBridge`-or-not design question.
 
@@ -89,7 +89,7 @@ vs outflow, flagging stuck relayer balances, deriving USDC / EURC
 bridge volume independent of on-Soroban contract events.
 
 The v1 README explicitly notes v2 is gated on Circle's CCTP
-launch on Stellar (which is now live — see #40). Rozo v2
+launch on Stellar (which is now live — see 1b9a594b4). Rozo v2
 mainnet deployment is expected but not yet executed.
 
 Source repos:

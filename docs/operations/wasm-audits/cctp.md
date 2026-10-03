@@ -13,8 +13,8 @@ Audit log for the `cctp` source's `BackfillSafe` flag. See
 
 ## Status
 
-**Approved (2026-05-26).** Source decoder + wiring landed in #40
-(commit `8448db13`); the wasm-history walk (§"WASM timeline" below)
+**Approved (2026-05-26).** Source decoder + wiring landed in
+commit `1b9a594b4`; the wasm-history walk (§"WASM timeline" below)
 found zero upgrades across all 3 mainnet contracts, and the registry
 entry was flipped to `BackfillSafe: true` in the same commit as the
 audit decision below.
@@ -37,7 +37,7 @@ output is unaffected either way.
 | Decoder file | [`internal/sources/cctp/decode.go`](../../../internal/sources/cctp/decode.go) |
 | Dispatcher hook | event-based `Decoder` (topic[0] classify; one of 26 `Event*` symbols) |
 | Package README | [`internal/sources/cctp/README.md`](../../../internal/sources/cctp/README.md) |
-| Wiring PR | #40 (commit `8448db13`) |
+| Wiring commit | `1b9a594b4` |
 
 ## Mainnet contracts
 

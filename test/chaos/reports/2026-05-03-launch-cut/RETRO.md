@@ -3,7 +3,7 @@ title: Chaos Wave 1 — launch-cut RETRO
 date: 2026-05-03
 operator: maintainer
 target: http://localhost:8080 (make-dev stack)
-build: 0fe10a3-dirty (post-#540)
+build: 0fe10a3-dirty (post-4f46ca32f)
 ---
 
 # Chaos Wave 1 — launch-cut retro

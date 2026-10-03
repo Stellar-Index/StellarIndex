@@ -32,4 +32,3 @@ ReadWritePaths=/var/lib/node_exporter/textfile_collector
 # so it fails and frees the next hourly tick instead of leaving the
 # config-assertion textfile gauge silently stuck.
 TimeoutStartSec=5min
-RuntimeMaxSec=5min
