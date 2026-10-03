@@ -54,6 +54,44 @@ func TestRefreshPair_ExportsReferenceOutcomesAndQuorumLoss(t *testing.T) {
 	}
 }
 
+// The per-reference gap and pair counts reach the registry as bounded
+// aggregates: a 12 % miss on one reference trips both thresholds, and a
+// pinned refresh (no verdict) clears the pair.
+func TestRefreshPair_ExportsBoundedGapGauges(t *testing.T) {
+	refs := []divergence.Reference{
+		&stubReference{name: "gap-far", price: 1.00},
+		&stubReference{name: "gap-near", price: 1.12},
+	}
+	svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{MinSourcesForWarning: 2})
+	pair := xlmUSD(t)
+	gap := func(ref string) float64 {
+		return testutil.ToFloat64(obs.DivergenceMaxAbsFraction.WithLabelValues(ref))
+	}
+	over := func(th string) float64 {
+		return testutil.ToFloat64(obs.DivergencePairsOver.WithLabelValues(th))
+	}
+
+	if err := svc.RefreshPair(context.Background(), pair, 1.12, time.Now()); err != nil {
+		t.Fatalf("RefreshPair: %v", err)
+	}
+	if got := gap("gap-far"); got < 0.119 || got > 0.121 {
+		t.Errorf("max_abs_fraction{gap-far} = %v, want ~0.12", got)
+	}
+	if got := gap("gap-near"); got != 0 {
+		t.Errorf("max_abs_fraction{gap-near} = %v, want 0", got)
+	}
+	if over("5pct") != 1 || over("10pct") != 1 {
+		t.Errorf("pairs_over = 5pct:%v 10pct:%v, want 1 and 1", over("5pct"), over("10pct"))
+	}
+
+	if err := svc.RefreshPinnedPair(context.Background(), pair, 1.12, time.Now()); err != nil {
+		t.Fatalf("RefreshPinnedPair: %v", err)
+	}
+	if gap("gap-far") != 0 || over("5pct") != 0 {
+		t.Errorf("pinned refresh left gap=%v over5=%v, want both cleared", gap("gap-far"), over("5pct"))
+	}
+}
+
 // The per-reference outcome is a metric label, so it must be a bounded
 // class even where Failures carries verbatim error text.
 func TestCompare_OutcomesAreBoundedClasses(t *testing.T) {
