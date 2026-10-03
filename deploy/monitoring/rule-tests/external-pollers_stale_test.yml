@@ -1,0 +1,48 @@
+---
+# promtool unit tests for the generic vs hourly-Tiingo staleness split.
+#
+#   promtool test rules deploy/monitoring/rule-tests/external-pollers_stale_test.yml
+
+rule_files:
+  - ../rules/external-pollers.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Hourly poller, last success 55 min ago: neither rule may fire.
+  - interval: 1m
+    input_series:
+      - series: 'stellarindex_external_poller_last_success_unix{source="tiingo"}'
+        values: '0+0x60'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: stellarindex_external_poller_stale
+        exp_alerts: []
+      - eval_time: 55m
+        alertname: stellarindex_external_poller_stale_tiingo
+        exp_alerts: []
+
+  # Tiingo dark for 2h20m: only the tiingo rule fires.
+  - interval: 1m
+    input_series:
+      - series: 'stellarindex_external_poller_last_success_unix{source="tiingo"}'
+        values: '0+0x200'
+    alert_rule_test:
+      - eval_time: 140m
+        alertname: stellarindex_external_poller_stale
+        exp_alerts: []
+      - eval_time: 140m
+        alertname: stellarindex_external_poller_stale_tiingo
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+              source: tiingo
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
+              summary: "Tiingo poller has not succeeded in 2+ h (>2x poll interval)"
+              description: |
+                Tiingo's 1h poll interval skipped at least one whole cycle.
+                Either the Tiingo API is down or throttling (4xx/5xx), the
+                API token expired, or the indexer host lost outbound HTTPS.
