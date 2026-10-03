@@ -667,6 +667,7 @@ type ohlcBucketAcc struct {
 	highs   []*big.Rat            // per-constituent highs (bucket high = max)
 	lows    []*big.Rat            // per-constituent lows  (bucket low  = min)
 	n       int64
+	sources map[string]struct{} // venues behind the bucket; served as `sources`
 	// commonScale is the finest smallest-unit scale any bar admitted to
 	// THIS bucket declares — the lift target, so every lift is an exact
 	// integer multiply by 10^(common−scale) ≥ 1 and nothing is divided
@@ -685,7 +686,7 @@ type ohlcScaleAcc struct {
 }
 
 func newOHLCBucketAcc() *ohlcBucketAcc {
-	return &ohlcBucketAcc{byScale: make(map[int]*ohlcScaleAcc, 2), commonScale: ohlcBarScaleUnknown}
+	return &ohlcBucketAcc{byScale: make(map[int]*ohlcScaleAcc, 2), sources: map[string]struct{}{}, commonScale: ohlcBarScaleUnknown}
 }
 
 func (a *ohlcBucketAcc) add(b *OHLCSeriesBar, scale int) {
@@ -719,6 +720,9 @@ func (a *ohlcBucketAcc) add(b *OHLCSeriesBar, scale int) {
 		sa.quoteVol.Add(sa.quoteVol, qv)
 	}
 	a.n += b.N
+	for _, src := range b.Sources {
+		a.sources[src] = struct{}{}
+	}
 	// Collect the per-constituent extremes; the bucket extreme is simply the
 	// max/min across them (each constituent's own extreme already excludes
 	// dust — see selectExtreme).
@@ -776,7 +780,22 @@ func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 		VBaseDecimals:  wireScaleDecimals(stated),
 		VQuoteDecimals: wireScaleDecimals(stated),
 		N:              a.n,
+		Sources:        sortedSources(a.sources),
 	}
+}
+
+// sortedSources renders a source set in lexical order so a bucket's
+// provenance is a function of its bars, never of map iteration.
+func sortedSources(set map[string]struct{}) []string {
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for src := range set {
+		out = append(out, src)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // selectExtreme returns the bucket high (isHigh=true) or low across the

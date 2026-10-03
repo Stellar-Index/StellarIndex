@@ -19695,6 +19695,13 @@ components:
         t:     { type: string, format: date-time }
         p:     { type: string }
         v_usd: { type: [string, "null"] }
+        sources:
+          type: array
+          items: { type: string }
+          description: |
+            Present only when a venue outside the VWAP contributed to this
+            point (for example `poloniex_via_btc`, a derived XLM/BTC x
+            BTC/USD daily close). Such a point is not a fill-derived VWAP.
       required: [t, p]
 
     HistoryEnvelope:
@@ -20110,6 +20117,15 @@ components:
             Equal to it today (a source stamps both legs of a trade at
             one scale); carried separately because a scale belongs to
             an amount, not to a pair.
+        sources:
+          type: array
+          items: { type: string }
+          description: |
+            Venues that contributed to THIS bar, sorted. Omitted when the
+            bar's venues are not recorded. A bar whose sources include a
+            derived or vendor series (for example `poloniex_via_btc`, an
+            XLM/BTC daily close crossed with a BTC/USD daily close) is not
+            a fill-derived VWAP and must not be charted or compared as one.
         n: { type: integer, format: int64, description: "Trade count in the bucket." }
         truncated:
           type: boolean

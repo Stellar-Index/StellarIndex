@@ -10998,6 +10998,12 @@ export interface components {
             t: string;
             p: string;
             v_usd?: string | null;
+            /**
+             * @description Present only when a venue outside the VWAP contributed to this
+             *     point (for example `poloniex_via_btc`, a derived XLM/BTC x
+             *     BTC/USD daily close). Such a point is not a fill-derived VWAP.
+             */
+            sources?: string[];
         };
         HistoryEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: {
@@ -11381,6 +11387,14 @@ export interface components {
              *     an amount, not to a pair.
              */
             v_quote_decimals: number | null;
+            /**
+             * @description Venues that contributed to THIS bar, sorted. Omitted when the
+             *     bar's venues are not recorded. A bar whose sources include a
+             *     derived or vendor series (for example `poloniex_via_btc`, an
+             *     XLM/BTC daily close crossed with a BTC/USD daily close) is not
+             *     a fill-derived VWAP and must not be charted or compared as one.
+             */
+            sources?: string[];
             /**
              * Format: int64
              * @description Trade count in the bucket.
