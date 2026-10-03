@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS sushiswap_v3_pools (
     factory_id      text        NOT NULL,
     token0          text        NOT NULL,
     token1          text        NOT NULL,
-    fee_pips        integer     NOT NULL, -- lint-money:ok fee tier in hundredths of a bp, not an amount
+    fee_pips        integer     NOT NULL, -- lint-money:ok fee tier in pips (rate, not an amount)
     tick_spacing    integer     NOT NULL,
     creation_ledger bigint      NOT NULL,
     observed_at     timestamptz NOT NULL DEFAULT now(),
