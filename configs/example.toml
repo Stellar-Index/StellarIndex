@@ -938,6 +938,7 @@ enabled = false
 # substance_min_span_minutes = 360    # 0 = library default
 # substance_window_hours     = 24     # 0 = library default
 # fx_cross_max_age_hours     = 76     # staleness budget for the fiat-cross-rate fallback; 0 = library default
+# disable_fiat_basis = false       # ADR-0053 kill switch — serve a single-venue fiat book instead of the USD-anchored derivation
 # [pricing_guard.fiat_pegged_classic_assets]
 # "AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU" = "AUD"
 

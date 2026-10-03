@@ -478,6 +478,8 @@ type Server struct {
 	// be before [Server.tryFiatCrossRate] / [Server.tryUSDAnchoredFiatCross]
 	// refuse to serve it (T650). See fxCrossStale's doc comment.
 	fxCrossMaxAge time.Duration
+	// fiatBasisDisabled turns off [Server.preferUSDAnchoredBasis].
+	fiatBasisDisabled bool
 	// fxFixings binds closed-bucket FX legs; nil leaves those crosses unserved.
 	fxFixings        *fxFixingCache
 	explorer         ExplorerReader
@@ -1276,6 +1278,10 @@ type Options struct {
 	// identical fx_quotes staleness profile.
 	FXCrossMaxAgeHours int
 
+	// DisableFiatBasis serves a single-venue fiat book as read instead of
+	// the ADR-0053 USD-anchored derivation (pricing_guard.disable_fiat_basis).
+	DisableFiatBasis bool
+
 	// FXFixings binds the closed surfaces' FX legs to the vendor's time
 	// series (fx_fixings). Nil: closed fiat crosses are not served.
 	FXFixings FXFixingReader
@@ -1767,6 +1773,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		maxMarketCapVolumeRatio: opts.MaxMarketCapVolumeRatio,
 		currencies:              opts.Currencies,
 		fxCrossMaxAge:           fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours),
+		fiatBasisDisabled:       opts.DisableFiatBasis,
 		fxFixings:               newFXFixingCache(opts.FXFixings, logger, fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours)),
 		explorer:                opts.Explorer,
 		issuerAuthFlags:         opts.IssuerAuthFlags,

@@ -594,6 +594,24 @@ export interface paths {
          *        rather than a direct trade. Same fallback fires on
          *        `/v1/price/tip`, `/v1/price/batch`,
          *        `/v1/oracle/lastprice`, and `/v1/oracle/x_last_price`.
+         *     5. USD-anchored cross for a non-fiat asset in a non-USD fiat
+         *        (ADR-0051): the asset's USD price × the USD→CCY fixing bound
+         *        at the USD bucket's end, `flags.triangulated=true`, with
+         *        `fx_rate`, `fx_as_of` and `usd_leg` on the row.
+         *
+         *     Basis rule (ADR-0053): when step 1 finds a direct fiat book
+         *     (e.g. `native/fiat:CHF`) served by a single venue, and the
+         *     step-5 derivation is fresh and rests on a USD leg from at least
+         *     two venues, the derivation is served instead — one exchange's
+         *     book is not allowed to stand in for the market when the
+         *     aggregated USD price can anchor it. A multi-venue fiat book is
+         *     always served as observed, and a derivation that misses,
+         *     withholds or is stale leaves the direct book in place.
+         *     `/v1/price/batch` and `/v1/oracle/x_last_price` apply the same
+         *     rule (`/v1/oracle/lastprice` is USD-quoted, so it never applies
+         *     there). A row the rule serves omits `confidence`,
+         *     `confidence_factors` and the composite and divergence flags:
+         *     they are keyed on the pair and describe the displaced book.
          *
          *     Returns 404 only when every path above misses — with one
          *     deliberate exception: the **thin-market substance gate**. When
@@ -7487,10 +7505,12 @@ export interface components {
          *       quote we hold no market for is answered by composing the
          *       asset's USD price with the USD→CCY foreign-exchange rate
          *       (ADR-0051) — the local-currency path, which is how the
-         *       ~130 currencies beyond USD/EUR/GBP resolve at all. An
-         *       OBSERVED market always wins over a derived value, so
-         *       `triangulated: false` on a fiat quote means real trades
-         *       backed it. Derived values credit both legs in `sources`
+         *       ~130 currencies beyond USD/EUR/GBP resolve at all. A
+         *       multi-venue OBSERVED market always wins over a derived
+         *       value; a single-venue fiat book yields to the derivation
+         *       when a multi-venue USD leg anchors it (ADR-0053). Either way
+         *       `triangulated: false` on a fiat quote means real trades in
+         *       that quote backed it. Derived values credit both legs in `sources`
          *       (the USD leg's venues plus the FX feed), and the FX leg is
          *       a DAILY fix while `observed_at` reports the USD leg's own
          *       (much fresher) timestamp — fine for display, not a

@@ -339,6 +339,11 @@ type PricingGuardConfig struct {
 	// stamped with a fresh-looking observed_at.
 	FXCrossMaxAgeHours int `toml:"fx_cross_max_age_hours" doc:"Staleness budget in hours for the forex snapshot rate backing /v1/price's fiat-cross-rate and USD-anchored-fiat-cross fallbacks; older than this is refused rather than served. Mirrors aggregate.composite_reference.fx_max_age_hours (same fx_quotes staleness profile — daily buckets that pause over market closes). 0 = pricingguard default (76)." default:"76"`
 
+	// DisableFiatBasis switches off the ADR-0053 basis rule, so a
+	// single-venue fiat book is served even where a multi-venue USD
+	// leg could anchor the price. Kill switch, not a tuning knob.
+	DisableFiatBasis bool `toml:"disable_fiat_basis" doc:"Disable the ADR-0053 fiat basis rule: /v1/price and /v1/price/batch serve a single-venue direct fiat book as-is instead of the USD-anchored derivation (multi-venue USD leg × bound FX fixing). Kill switch, not a tuning knob." default:"false"`
+
 	// FiatPeggedClassicAssets maps a classic credit asset_key
 	// (canonical "CODE-ISSUER" wire form) to the ISO-4217 ticker of
 	// the fiat currency the OPERATOR declares it 1:1-pegged to (e.g.

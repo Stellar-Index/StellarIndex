@@ -1454,6 +1454,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// fallbacks (T650) — the in-memory forex cache never expires on
 		// its own.
 		FXCrossMaxAgeHours: cfg.PricingGuard.FXCrossMaxAgeHours,
+		DisableFiatBasis:   cfg.PricingGuard.DisableFiatBasis,
 		FXFixings:          store,
 		FXHistory:          &fxHistoryReader{store: store},
 		SEP10:              sep10Validator,

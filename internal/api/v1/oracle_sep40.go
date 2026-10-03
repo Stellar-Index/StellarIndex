@@ -527,6 +527,15 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The ADR-0053 basis rule, as on /v1/price, so both closed surfaces
+	// serve one number for the pair.
+	if !viaFallback {
+		if basis, ok := s.preferUSDAnchoredBasis(ctx, base, quote, snapshot, sources); ok {
+			snapshot, sources, served, triangulated, stale = basis.snap, basis.sources, basis.served, true, basis.stale
+			viaFallback = true
+		}
+	}
+
 	// Freeze, then the shared tail — see handleOracleLastPrice.
 	held := s.resolveFrozenServeFor(r, snapshot, base, served, quote)
 	if held.outcome == frozenServeNothingHeld {
