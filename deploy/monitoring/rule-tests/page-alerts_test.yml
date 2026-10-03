@@ -1,0 +1,429 @@
+---
+# promtool firing tests for severity=page alerts: each fires on the state it
+# names and stays silent on the healthy shape, so a renamed alert or a broken
+# expr fails CI.
+#
+#   promtool test rules deploy/monitoring/rule-tests/page-alerts_test.yml
+
+rule_files:
+  - ../rules/aggregator.yml
+  - ../rules/api.yml
+  - ../rules/cache.yml
+  - ../rules/freeze-lifecycle.yml
+  - ../rules/galexie-archive.yml
+  - ../rules/infra.yml
+  - ../rules/ingestion.yml
+  - ../rules/stellar.yml
+  - ../rules/stellar-stack-version.yml
+  - ../rules/storage.yml
+  - ../rules/supply-snapshot.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: api_error_rate_critical fires
+    input_series:
+      - series: 'http_requests_total{job="stellarindex_api",status="500"}'
+        values: '0+10x40'
+      - series: 'http_requests_total{job="stellarindex_api",status="200"}'
+        values: '0+100x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_api_error_rate_critical
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: api
+              alert_family: api_error_rate
+            exp_annotations:
+              description: "> 5 % of requests returning 5xx. Customers are broken; declare\nSEV-1 and follow the api-5xx runbook.\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md"
+              summary: "API 5xx rate 9.091% (SEV-1)"
+
+  - interval: 30s
+    name: api_error_rate_critical stays silent when healthy
+    input_series:
+      - series: 'http_requests_total{job="stellarindex_api",status="500"}'
+        values: '0+1x40'
+      - series: 'http_requests_total{job="stellarindex_api",status="200"}'
+        values: '0+100x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_api_error_rate_critical
+        exp_alerts: []
+
+  - interval: 30s
+    name: aggregator_silent fires
+    input_series:
+      - series: 'stellarindex_aggregator_vwap_writes_total'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_aggregator_silent
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              description: "Zero VWAP writes for 5+ minutes. Either the orchestrator\ntick loop is wedged, the (pair, window) refresh path is\nconsistently empty, or the Redis write is erroring on every\nattempt. VWAP keys expire cachekeys.VWAPMaxAge (5 min) after\nthe last write, so /v1/price?window= has been answering 404\nfor 5-10 minutes when this fires. /v1/vwap is unaffected (it\nscans raw trades on-query).\nRunbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-silent.md\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-silent.md"
+              summary: "Aggregator has stopped writing VWAP cache (P1)"
+
+  - interval: 30s
+    name: aggregator_silent stays silent when healthy
+    input_series:
+      - series: 'stellarindex_aggregator_vwap_writes_total'
+        values: '0+5x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_aggregator_silent
+        exp_alerts: []
+
+  - interval: 30s
+    name: aggregator_cache_write_errors fires
+    input_series:
+      - series: 'stellarindex_aggregator_vwap_cache_write_errors_total'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_aggregator_cache_write_errors
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              description: "VWAP cache writes are erroring; rewritten / triangulated /\nstablecoin-proxy pairs on /v1/price are about to start\nreturning 404 (or already are). Most common cause: Redis\nBGSAVE is failing because the root FS is full\n(stop-writes-on-bgsave-error=yes default \u2014 May-10 SEV-2\nclass). Recovery: free disk \u2192 BGSAVE \u2192 cache rebuilds.\nRunbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md"
+              summary: "Aggregator failing to publish VWAPs to Redis cache (P1)"
+
+  - interval: 30s
+    name: aggregator_cache_write_errors stays silent when healthy
+    input_series:
+      - series: 'stellarindex_aggregator_vwap_cache_write_errors_total'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_aggregator_cache_write_errors
+        exp_alerts: []
+
+  - interval: 30s
+    name: supply_snapshot_circulating_zero fires
+    input_series:
+      - series: 'stellarindex_supply_snapshot_circulating_xlm{asset_key="XLM"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_supply_snapshot_circulating_zero
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: supply
+              asset_key: XLM
+            exp_annotations:
+              description: "Per ADR-0011 native XLM circulating = total - \u03a3(SDF reserves).\nA zero or negative value means either the operator-managed\nreserve_balances_stroops sum exceeds the frozen total\n(config error), or the XLMComputer math is broken (bug).\nRunbook: dry-run the writer with the live config; check\nthe operator-supplied balances against SDF's latest\nannouncement.\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot-circulating-zero.md"
+              summary: "XLM circulating supply gauge is 0 \u2014 operator config or computer bug"
+
+  - interval: 30s
+    name: supply_snapshot_circulating_zero stays silent when healthy
+    input_series:
+      - series: 'stellarindex_supply_snapshot_circulating_xlm{asset_key="XLM"}'
+        values: '100+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_supply_snapshot_circulating_zero
+        exp_alerts: []
+
+  - interval: 30s
+    name: anomaly_freeze_escalated fires
+    input_series:
+      - series: 'stellarindex_anomaly_freeze_escalated_total'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_anomaly_freeze_escalated
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              description: "A freeze exhausted ADR-0019's extension ladder: it held\nthrough its initial hold plus 4 \u00d7 30-minute extensions\n(\u2265 2h) without the pair ever meeting the auto-unfreeze\ncondition (confidence > 0.30 AND z < 3.0 for two\nconsecutive buckets, each corroborated by a lens agreeing\nwithin 5% with the fresh candidate price \u2014 pairs with no\ncorroborating reference NEVER auto-release and always land\nhere; see the ADR-0019 2026-08-24 amendment). The freeze\nis now held until an\noperator acts \u2014 it will NOT clear on its own, and the\naffected pair's /v1/price serves a last-known-good price\nwith flags.frozen=true until then.\n\nTwo hours of a pair failing to look healthy is either a\nreal sustained manipulation or a genuine repricing the\nper-asset baseline has not absorbed. Both need a human.\n\nTriage:\n  - `journalctl -u stellarindex-aggregator | grep \"freeze escalated\"`\n    \u2014 one ERROR line per escalation with the pair, its\n    fired_at, and the reason string carrying the\n    confidence / z / source_count that fired it.\n  - `redis-cli --scan --pattern 'freeze:*'` then\n    `redis-cli GET <key> | jq .state` \u2014 fired_at,\n    hold_until, extensions_used, escalated, and\n    unfreeze_streak for each frozen pair.\n  - `SELECT * FROM freeze_events WHERE recovered_at IS NULL`\n    \u2014 the durable mirror of the same set.\n\nResolution paths:\n  1. Confirmed manipulation \u2192 leave frozen; the freeze is\n     doing its job. Ack the page.\n  2. Genuine repricing / false positive \u2192 run\n     `stellarindex-ops freeze-unfreeze`. It clears the\n     marker AND stamps recovered_at on the durable\n     freeze_events row, and the release counts as\n     stellarindex_anomaly_freeze_released_total{mode=\"operator\"}.\n     If the underlying condition still fires the pair will\n     re-freeze \u2014 that is intended; the durable fix is a\n     threshold or baseline change, not repeated unfreezes.\n\nDo NOT `redis-cli DEL` the marker. Against an ESCALATED\nfreeze that is permanently inert: since migration 0119 the\naggregator falls back to the durable ladder in\nfreeze_events when the marker is absent, rehydrates, and\nre-writes the key on its next tick. The operator sees the\nkey disappear, concludes the pair is released, and closes\nthe page while the price stays pinned. (This annotation\ntold you to do exactly that until 2026-08-04.)\nRunbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md"
+              summary: "Freeze escalated to operator review \u2014 will NOT auto-unfreeze (P1)"
+
+  - interval: 30s
+    name: anomaly_freeze_escalated stays silent when healthy
+    input_series:
+      - series: 'stellarindex_anomaly_freeze_escalated_total'
+        values: '3+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_anomaly_freeze_escalated
+        exp_alerts: []
+
+  - interval: 30s
+    name: dependency_down fires
+    input_series:
+      - series: 'stellarindex_dependency_up{dependency="postgres"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_dependency_down
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: storage
+              dependency: postgres
+            exp_annotations:
+              description: "The API's /v1/readyz check for postgres has been\nfailing for 2+ minutes on .\n\nFor clickhouse this is the raw lake (ADR-0034): ingest writes and\nevery projector read go through it, and it has no exporter of its\nown, so this gauge is the only signal that it is gone.\n\nFor postgres/redis the dedicated exporter alerts fire alongside\nthis one and carry more detail \u2014 treat those as primary and this\nas corroboration.\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dependency-down.md"
+              summary: "API dependency postgres is unreachable"
+
+  - interval: 30s
+    name: dependency_down stays silent when healthy
+    input_series:
+      - series: 'stellarindex_dependency_up{dependency="postgres"}'
+        values: '1+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_dependency_down
+        exp_alerts: []
+
+  - interval: 30s
+    name: stellar_core_autoupgrade_failed fires
+    input_series:
+      - series: 'stellarindex_stellar_core_autoupgrade_result{result="rolled_back"}'
+        values: '1+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_stellar_core_autoupgrade_failed
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: stellar-stack
+              result: rolled_back
+            exp_annotations:
+              description: "stellar-core-auto-upgrade could not move core from\n to  with the\ngalexie tip advancing. rolled_back: the previous core is\nreinstalled and ingest continues, until the next protocol\nvote halts it. failed: ingest may be down now. Read\n`journalctl -u stellar-core-auto-upgrade -u galexie`, then\nfollow the runbook's coordinated-upgrade checklist by hand.\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md"
+              summary: "stellar-core auto-upgrade to  rolled_back ()"
+
+  - interval: 30s
+    name: stellar_core_autoupgrade_failed stays silent when healthy
+    input_series:
+      - series: 'stellarindex_stellar_core_autoupgrade_result{result="rolled_back"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_stellar_core_autoupgrade_failed
+        exp_alerts: []
+
+  - interval: 30s
+    name: ledger_meta_decode_failing fires
+    input_series:
+      - series: 'stellarindex_ledger_meta_decode_failures_total'
+        values: '2+0x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ledger_meta_decode_failing
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              description: "A component cannot decode ledger meta the network is now\nproducing. This is almost always \"we are behind a protocol\nupgrade\": the installed galexie / indexer predates an XDR change\n(e.g. P28's ParallelTxExecutionStage) and refuses the ledger.\n\nData is NOT corrupted \u2014 the decode is fail-closed \u2014 but that\ncomponent has STOPPED ingesting and will not resume on its own.\n\nFix: identify the unit from the `unit` label, bump it\n(galexie_version / stellar_core_version / the release binary's\ngo-stellar-sdk), and re-apply. See protocol-upgrades.md.\nCheck stellarindex_stellar_stack_version_lag for which component.\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-meta-decode-failing.md"
+              summary: "Ledger-meta XDR decode failing \u2014 a component is behind a protocol"
+
+  - interval: 30s
+    name: ledger_meta_decode_failing stays silent when healthy
+    input_series:
+      - series: 'stellarindex_ledger_meta_decode_failures_total'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ledger_meta_decode_failing
+        exp_alerts: []
+
+  - interval: 30s
+    name: stellar_core_ledger_age fires
+    input_series:
+      - series: 'stellarindex_stellar_core_last_ledger_time_unix'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_stellar_core_ledger_age
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: stellar
+            exp_annotations:
+              description: "stellar-core hasn't applied a ledger in > 60 s. Either the node\nis out of sync (catchup required) or it's disconnected from the\nnetwork. Upstream data to our pipeline halts.\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/core-lag.md"
+              summary: "stellar-core ledger age 5m 0s (SEV-1)"
+
+  - interval: 30s
+    name: stellar_core_ledger_age stays silent when healthy
+    input_series:
+      - series: 'stellarindex_stellar_core_last_ledger_time_unix'
+        values: '290+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_stellar_core_ledger_age
+        exp_alerts: []
+
+  - interval: 30s
+    name: redis_master_down fires
+    input_series:
+      - series: 'redis_up{instance="cache1:6379"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_redis_master_down
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: cache
+              instance: cache1:6379
+            exp_annotations:
+              description: "A Redis master has been unreachable for 30+ s. Sentinel should\npromote a replica within 30 s \u2014 until it does, API handlers for\nkeys on this shard fall back to Timescale with stale_flag=true.\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-master-down.md"
+              summary: "Redis master cache1:6379 down (SEV-1)"
+
+  - interval: 30s
+    name: redis_master_down stays silent when healthy
+    input_series:
+      - series: 'redis_up{instance="cache1:6379"}'
+        values: '1+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_redis_master_down
+        exp_alerts: []
+
+  - interval: 30s
+    name: galexie_archive_tip_lag_severe fires
+    input_series:
+      - series: 'galexie_archive_tip_lag_ledgers'
+        values: '200000+0x100'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_galexie_archive_tip_lag_severe
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: archive
+              alert_family: galexie_archive_tip_lag
+            exp_annotations:
+              description: "galexie-archive is 200000 ledgers behind galexie-live\n\u2014 more than two full 64,000-ledger partitions. The hourly\ngalexie-archive-fill.timer has clearly broken \u2014 same\nfailure class as the original 23-day stall the hourly\ntimer was added for. Customer impact: local WASM-walks +\nhistorical backfills past the gap will fail; R1's\nfull-mirror integrity-leader role is broken until repair.\nRunbook: same as above.\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md"
+              summary: "galexie-archive >2 partitions behind live (200000 ledgers, P1)"
+
+  - interval: 30s
+    name: galexie_archive_tip_lag_severe stays silent when healthy
+    input_series:
+      - series: 'galexie_archive_tip_lag_ledgers'
+        values: '100000+0x100'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_galexie_archive_tip_lag_severe
+        exp_alerts: []
+
+  - interval: 30s
+    name: zfs_pool_degraded fires
+    input_series:
+      - series: 'node_zfs_zpool_state{instance="r1:9100",zpool="tank",state="degraded"}'
+        values: '1+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_zfs_pool_degraded
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: infra
+              instance: r1:9100
+              zpool: tank
+              state: degraded
+            exp_annotations:
+              description: "The data ZFS pool reports degraded \u2014 one or more drives\nhave failed. This pool is raidz1 (single parity): it tolerates\nonly ONE drive failure \u2014 a second failure before the resilver\ncompletes means data loss. Replace + resilver IMMEDIATELY.\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-degraded.md"
+              summary: "ZFS pool tank is degraded (SEV-1)"
+
+  - interval: 30s
+    name: zfs_pool_degraded stays silent when healthy
+    input_series:
+      - series: 'node_zfs_zpool_state{instance="r1:9100",zpool="tank",state="degraded"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_zfs_pool_degraded
+        exp_alerts: []
+
+  - interval: 30s
+    name: worker_panicked fires
+    input_series:
+      - series: 'stellarindex_worker_panics_total{worker="w"}'
+        values: '1+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_worker_panicked
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: infra
+              worker: w
+            exp_annotations:
+              description: "worker.Recover swallowed a panic in w so the\nprocess stayed up \u2014 but that worker will not run again until\nits unit restarts. Nothing downstream fires until the symptom\n(stale prices, unbounded table, cold cache) appears. See the\nrunbook: identify the worker, restart the owning unit, file the\npanic as a bug.\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/worker-panicked.md"
+              summary: "background worker w panicked and is STOPPED (#368 M4)"
+
+  - interval: 30s
+    name: worker_panicked stays silent when healthy
+    input_series:
+      - series: 'stellarindex_worker_panics_total{worker="w"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_worker_panicked
+        exp_alerts: []
+
+  - interval: 30s
+    name: decoder_panicked fires
+    input_series:
+      - series: 'stellarindex_decoder_panics_total{source="s"}'
+        values: '1+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_decoder_panicked
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: ingestion
+              source: s
+            exp_annotations:
+              description: "The s decoder panicked on a ledger input. The\ndispatcher skipped that input and ingest continued, so the cursor\nis advancing and every other source is unaffected \u2014 but this\ndecoder will keep dropping every event of that shape until a\nfixed binary ships. The raw event is still in the ClickHouse\nlake, so nothing is lost permanently. Runbook: find the\n`decoder panicked` log line (it carries ledger / tx_hash /\nop_index / stack), fix the decoder, then re-derive the window\nwith projector-replay or ch-rebuild.\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/decoder-panicked.md"
+              summary: "decoder s panicked \u2014 its events are being SKIPPED (#371 F1)"
+
+  - interval: 30s
+    name: decoder_panicked stays silent when healthy
+    input_series:
+      - series: 'stellarindex_decoder_panics_total{source="s"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_decoder_panicked
+        exp_alerts: []
