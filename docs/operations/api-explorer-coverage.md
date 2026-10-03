@@ -41,8 +41,8 @@ level 3. The chain to `/` is what matters, not the hop count.
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **134** |
-| Level 3 — reachable | **108** |
+| Paths in the OpenAPI contract | **136** |
+| Level 3 — reachable | **110** |
 | Level 2 — consumed but unreachable | **0** |
 | Level 1 — not consumed | **22** |
 | Deliberately excluded (operational) | **4** |
