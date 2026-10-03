@@ -20,8 +20,9 @@ import (
 // pure passthrough.
 type HistoryPoint struct {
 	Bucket    time.Time
-	VWAP      string  // NUMERIC text from Postgres
-	VolumeUSD *string // NULL when no usd_volume column entries — e.g. early classic-only ledgers
+	VWAP      string   // NUMERIC text from Postgres
+	VolumeUSD *string  // NULL when no usd_volume column entries — e.g. early classic-only ledgers
+	Sources   []string // sorted union of the bucket's `sources`
 }
 
 // HistoryGranularity is the CAGG selector for [Store.HistoryPoints].
@@ -486,13 +487,13 @@ func (s *Store) HistoryPoints(ctx context.Context, p canonical.Pair, granularity
 	// enum, not user input. See HistoryGranularity.Validate above.
 	q := fmt.Sprintf(`
 		SELECT * FROM (
-		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text
+		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text, sources
 		       FROM %[1]s
 		      WHERE base_asset = $1 AND quote_asset = $2
 		        AND bucket <= now() - INTERVAL '%[2]s'
 		      ORDER BY bucket ASC%[3]s)
 		    UNION ALL
-		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text
+		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text, sources
 		       FROM %[1]s
 		      WHERE base_asset = $2 AND quote_asset = $1
 		        AND bucket <= now() - INTERVAL '%[2]s'
@@ -527,6 +528,7 @@ func scanHistoryPoints(rows *sql.Rows, base string, limit int, what string) ([]H
 		curBucket time.Time
 		curDirs   []dirVWAP
 		curUSD    []sql.NullString
+		curSrcs   []string
 		open      bool
 	)
 	flush := func() {
@@ -538,10 +540,12 @@ func scanHistoryPoints(rows *sql.Rows, base string, limit int, what string) ([]H
 		if !ok {
 			return
 		}
+		sort.Strings(curSrcs)
 		out = append(out, HistoryPoint{
 			Bucket:    curBucket,
 			VWAP:      vwap,
 			VolumeUSD: sumUSDVolume(curUSD),
+			Sources:   curSrcs,
 		})
 	}
 	for rows.Next() {
@@ -551,14 +555,16 @@ func scanHistoryPoints(rows *sql.Rows, base string, limit int, what string) ([]H
 			vwap    string
 			volume  string
 			vusd    sql.NullString
+			srcs    stringArray
 		)
-		if err := rows.Scan(&bucket, &rowBase, &vwap, &volume, &vusd); err != nil {
+		if err := rows.Scan(&bucket, &rowBase, &vwap, &volume, &vusd, &srcs); err != nil {
 			return nil, fmt.Errorf("timescale: %s scan: %w", what, err)
 		}
 		if !open || !bucket.Equal(curBucket) {
 			flush()
-			curBucket, curDirs, curUSD, open = bucket, curDirs[:0], curUSD[:0], true
+			curBucket, curDirs, curUSD, curSrcs, open = bucket, curDirs[:0], curUSD[:0], nil, true
 		}
+		curSrcs = appendSources(curSrcs, srcs)
 		curDirs = append(curDirs, dirVWAP{
 			vwapText:   vwap,
 			volumeText: volume,
@@ -693,12 +699,12 @@ func (s *Store) HistoryPointsInRange(
 	// enum, not user input. See HistoryGranularity.Validate.
 	q := fmt.Sprintf(`
 		SELECT * FROM (
-		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text
+		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text, sources
 		       FROM %[1]s
 		      WHERE base_asset = $1 AND quote_asset = $2%[2]s
 		      ORDER BY bucket ASC%[3]s)
 		    UNION ALL
-		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text
+		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text, sources
 		       FROM %[1]s
 		      WHERE base_asset = $2 AND quote_asset = $1%[2]s
 		      ORDER BY bucket ASC%[3]s)

@@ -45,14 +45,13 @@ type OHLCSeriesBar struct {
 	Truncated      bool  `json:"truncated,omitempty"`
 
 	// Sources is the set of venues that contributed to the bucket,
-	// carried from the CAGG's own `sources` column. It is deliberately
-	// OFF the wire (`json:"-"`): it exists so a caller that COMBINES
-	// bars across markets can lift them to a common smallest-unit
-	// scale first — see [Server.ohlcSeriesFiatCombined] — and so the
-	// non-combined path can resolve VBaseDecimals/VQuoteDecimals via
-	// [annotateOHLCSeriesBarScale]. The scale itself is on the wire;
-	// the venue list that produced it is not.
-	Sources []string `json:"-"`
+	// carried from the CAGG's own `sources` column. It is the per-bar
+	// provenance: a derived or vendor bar names its source here, so it
+	// never reads as a fill-derived VWAP. It also lets a caller that
+	// COMBINES bars across markets lift them to a common smallest-unit
+	// scale first — see [Server.ohlcSeriesFiatCombined] — and resolves
+	// VBaseDecimals/VQuoteDecimals via [annotateOHLCSeriesBarScale].
+	Sources []string `json:"sources,omitempty"`
 }
 
 // OHLCSeriesResponse is the wire envelope for /v1/ohlc?interval=...
@@ -471,9 +470,8 @@ func (s *Server) ohlcSeriesWithAliases(
 // bar's own Sources via [barScaleDecimals] — the non-combined path's
 // counterpart to [ohlcBucketAcc.finalize], which sets the combined path's
 // equivalent directly from its per-bucket commonScale (the two must not
-// share one code path: a combined bar's own Sources is unset — the
-// contributing venues live on the constituent bars finalize folded
-// together, not on the bucket it produced).
+// share one code path: a combined bucket's scale is the lift target of
+// its constituents, not a lookup on the union of their venues).
 func annotateOHLCSeriesBarScale(bars []OHLCSeriesBar) {
 	for i := range bars {
 		d := barScaleDecimals(bars[i].Sources)

@@ -210,7 +210,7 @@ func TestSources_NetworkScoped(t *testing.T) {
 // silently vanish from test nets. Only off-chain feeds may rely on that default.
 func TestSources_EveryRegistryNameClassified(t *testing.T) {
 	offChain := map[string]bool{
-		"binance": true, "kraken": true, "bitstamp": true, "coinbase": true, // CEX
+		"binance": true, "kraken": true, "bitstamp": true, "coinbase": true, "poloniex_via_btc": true, // CEX
 		"massive": true, "exchangeratesapi": true, "ecb": true, // FX
 		"coingecko": true, "coinmarketcap": true, "cryptocompare": true, // aggregators
 		"chainlink": true, // EVM oracle, read off-chain

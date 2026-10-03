@@ -318,6 +318,9 @@ type HistoryPoint struct {
 	T         time.Time `json:"t"`
 	P         string    `json:"p"`
 	VolumeUSD *string   `json:"v_usd,omitempty"`
+	// Sources is set only when a non-VWAP venue (a derived series)
+	// contributed to the point.
+	Sources []string `json:"sources,omitempty"`
 }
 
 // AssetDetail is the data shape returned by [Client.Assets] (listing)
@@ -801,6 +804,9 @@ type OHLCSeriesBar struct {
 	VQuoteDecimals *int      `json:"v_quote_decimals"`
 	N              int64     `json:"n"`
 	Truncated      bool      `json:"truncated,omitempty"`
+	// Sources are the venues behind this bar; a derived or vendor series
+	// is not a fill-derived VWAP.
+	Sources []string `json:"sources,omitempty"`
 }
 
 // Source is the data shape returned by [Client.Sources] — one
