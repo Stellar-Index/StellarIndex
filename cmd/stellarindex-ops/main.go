@@ -1504,7 +1504,7 @@ Subcommands:
                           QUOTE leg is not USD-pegged, recomputes
                           usd_volume = base_amount/1e7 x XLM/USD-at-ts by
                           calling the store's own
-                          tradeUSDVolumeViaXLMBaseAnchor with the installed
+                          usdVolumeViaXLMBaseAnchor with the installed
                           VWAPUSDFXResolver — the same function InsertTrade
                           calls. Repairs the pre-fd1860bd class (#372):
                           XLM-base trades valued QUOTE-side through the

@@ -98,7 +98,7 @@ type USDVolumeFXResolver interface {
 //     already XLM stroops (decimals=7, the Stellar classic
 //     invariant XLM keeps even wrapped in a Soroban pool), so
 //     usd_volume = base_amount/1e7 × XLM/USD. See
-//     [tradeUSDVolumeViaXLMBaseAnchor].
+//     [usdVolumeViaXLMBaseAnchor].
 //
 // On a DEX trade with an XLM leg on EITHER side, that XLM anchor runs
 // ahead of tier 3 (base side first, then [tradeUSDVolumeViaXLMQuoteAnchorFor]).
@@ -129,16 +129,25 @@ type USDVolumeFXResolver interface {
 // on rows built from the BASE leg, i.e. report a fleet-wide violation, or —
 // the quiet direction — verify nothing at all.
 func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolumeQuoteSpec, fxResolver USDVolumeFXResolver) *string {
+	v, _ := tradeUSDVolumeChecked(ctx, t, quoteSpec, fxResolver)
+	return v
+}
+
+// tradeUSDVolumeChecked is [tradeUSDVolume] with a resolver read error
+// returned instead of folded into NULL. On error the value is nil and no
+// later tier is tried: a rate that could not be read is not a decline, so
+// falling through would store a lower tier's estimate in its place.
+func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *USDVolumeQuoteSpec, fxResolver USDVolumeFXResolver) (*string, error) {
 	q := t.QuoteAmount.BigInt()
 	if q == nil || q.Sign() <= 0 {
-		return nil
+		return nil, nil
 	}
 	md := external.Lookup(t.Source)
 	if md.Class != external.ClassExchange {
 		// Oracles and aggregators don't emit Trades — defensive nil
 		// keeps the function honest if a misregistered source ever
 		// sneaks one in.
-		return nil
+		return nil, nil
 	}
 	if decimals, ok := usdVolumeDecimals(t.Pair.Quote, md, quoteSpec); ok {
 		denom := scaleDenominator(decimals)
@@ -147,19 +156,19 @@ func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolume
 		// for any value that fit in the original big.Int (NUMERIC is
 		// arbitrary-precision; FloatString just chooses a render).
 		rendered := new(big.Rat).SetFrac(q, denom).FloatString(8)
-		return &rendered
+		return &rendered, nil
 	}
 	// Tier 2b — the BASE leg is USD-pegged. Same exactness class as
 	// tiers 1/2 (a declared peg, no market lookup), so it belongs here,
 	// ahead of the estimated FX tiers.
 	if v := tradeUSDVolumeViaUSDBase(t, md, quoteSpec); v != nil {
-		return v
+		return v, nil
 	}
 	// Phase 2 fallback — only when the operator wired an FX
 	// resolver. Skip when nil to keep the no-config path on the
 	// existing Phase 1 behaviour exactly.
 	if fxResolver == nil {
-		return nil
+		return nil, nil
 	}
 	// When the BASE leg is XLM, value the trade off that leg BEFORE
 	// asking the resolver to price the quote.
@@ -192,26 +201,26 @@ func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolume
 	// it is sitting in the row, it is both the more trustworthy leg and
 	// the one whose value we can state exactly. Restricted to XLM
 	// deliberately — a non-XLM base would resolve through the same
-	// poisonable bridge, and tradeUSDVolumeViaXLMBaseAnchor is
+	// poisonable bridge, and usdVolumeViaXLMBaseAnchor is
 	// SubclassDEX-only, so CEX pricing is untouched.
 	if isXLMAsset(t.Pair.Base) {
-		if v := tradeUSDVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver); v != nil {
-			return v
+		if v, err := usdVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver); err != nil || v != nil {
+			return v, err
 		}
 	}
 	// Same anchor when the pool stored XLM as the QUOTE leg: orientation is
 	// the pool's token order, so both sides of one economic swap must value alike.
 	if isXLMAsset(t.Pair.Quote) && !isXLMAsset(t.Pair.Base) {
-		if v, _ := tradeUSDVolumeViaXLMQuoteAnchorFor(ctx, t, fxResolver); v != nil {
-			return v
+		if v, err := tradeUSDVolumeViaXLMQuoteAnchorFor(ctx, t, fxResolver); err != nil || v != nil {
+			return v, err
 		}
 	}
-	if v := tradeUSDVolumeViaFX(ctx, t, md, fxResolver); v != nil {
-		return v
+	if v, err := usdVolumeViaFX(ctx, t, md, fxResolver); err != nil || v != nil {
+		return v, err
 	}
 	// Tier 4 (L7.6) — quote-side resolution declined; try the
 	// XLM-base anchor before giving up.
-	return tradeUSDVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver)
+	return usdVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver)
 }
 
 // tradeUSDVolumeViaUSDBase is tier 2b: value the trade off a
@@ -261,9 +270,8 @@ func tradeUSDVolumeViaUSDBase(t canonical.Trade, md external.Metadata, quoteSpec
 // fixed-precision NUMERIC string.
 //
 // Errors in the resolver are silent here — the function returns
-// nil so the trade still inserts with NULL `usd_volume`, and the
-// caller (InsertTrade) doesn't fail the row. Operators read the
-// fall-through rate via [TradeInsertsTotal]'s no-label series.
+// nil. The write path uses [usdVolumeViaFX] and decides per derive
+// generation whether to fail or store NULL.
 func tradeUSDVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Metadata, r USDVolumeFXResolver) *string {
 	v, _ := usdVolumeViaFX(ctx, t, md, r)
 	return v
@@ -303,9 +311,9 @@ func usdVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Metadata
 	// DEX-only: CEX/FX quote rates are vendor feeds, not poisonable
 	// bridges, and their pairs' base legs are often unresolvable anyway.
 	if md.Subclass == external.SubclassDEX {
-		usdAmount = boundUSDVolume(ctx, r, usdAmount, t.Pair.Base, t.BaseAmount, decimals, t.Timestamp)
-		if usdAmount == nil {
-			return nil, nil
+		usdAmount, err = boundUSDVolume(ctx, r, usdAmount, t.Pair.Base, t.BaseAmount, decimals, t.Timestamp)
+		if err != nil || usdAmount == nil {
+			return nil, err
 		}
 	}
 	rendered := usdAmount.FloatString(8)
@@ -345,14 +353,19 @@ func usdVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Metadata
 // anchor was found consuming the identical rate with neither. They are
 // one function so that a tier cannot acquire the rate without the bound.
 // Callers must NOT route an XLM-anchored value through here — see
-// [tradeUSDVolumeViaXLMBaseAnchor].
-func boundUSDVolume(ctx context.Context, r USDVolumeFXResolver, candidate *big.Rat, other canonical.Asset, otherAmount canonical.Amount, decimals int, at time.Time) *big.Rat {
-	otherVal := fxLegValue(ctx, r, other, otherAmount, decimals, at)
+// [usdVolumeViaXLMBaseAnchor].
+func boundUSDVolume(ctx context.Context, r USDVolumeFXResolver, candidate *big.Rat, other canonical.Asset, otherAmount canonical.Amount, decimals int, at time.Time) (*big.Rat, error) {
+	otherVal, err := fxLegValue(ctx, r, other, otherAmount, decimals, at)
+	if err != nil {
+		// The cross-check could not run; serving the candidate unchecked
+		// would bypass the bound this function exists to enforce.
+		return nil, err
+	}
 	if otherVal == nil {
 		if candidate.Cmp(singleLegMaxUSDVolume) > 0 {
-			return nil
+			return nil, nil
 		}
-		return candidate
+		return candidate, nil
 	}
 	hi, lo := candidate, otherVal
 	if hi.Cmp(lo) < 0 {
@@ -361,9 +374,9 @@ func boundUSDVolume(ctx context.Context, r USDVolumeFXResolver, candidate *big.R
 	// hi > lo * factor → divergent → conservative leg wins.
 	bound := new(big.Rat).Mul(lo, usdLegAgreementFactor)
 	if hi.Cmp(bound) > 0 && candidate.Cmp(otherVal) > 0 {
-		return otherVal
+		return otherVal, nil
 	}
-	return candidate
+	return candidate, nil
 }
 
 // usdLegAgreementFactor is how far the two independently-valued legs of
@@ -390,25 +403,28 @@ var singleLegMaxUSDVolume = new(big.Rat).SetInt64(100_000_000)
 // fxLegValue values one leg of a trade through the resolver: amount /
 // 10^decimals x USDPriceAt(asset). nil when the asset has no resolvable
 // rate (which keeps the caller on its single-leg behaviour — no
-// cross-check is possible).
-func fxLegValue(ctx context.Context, r USDVolumeFXResolver, asset canonical.Asset, amount canonical.Amount, decimals int, at time.Time) *big.Rat {
+// cross-check is possible). A resolver read error is returned, not nil.
+func fxLegValue(ctx context.Context, r USDVolumeFXResolver, asset canonical.Asset, amount canonical.Amount, decimals int, at time.Time) (*big.Rat, error) {
 	rateStr, ok, err := r.USDPriceAt(ctx, asset, at)
-	if err != nil || !ok || rateStr == "" {
-		return nil
+	if err != nil {
+		return nil, err
+	}
+	if !ok || rateStr == "" {
+		return nil, nil
 	}
 	rate, ok := new(big.Rat).SetString(rateStr)
 	if !ok || rate.Sign() <= 0 {
-		return nil
+		return nil, nil
 	}
 	amt := amount.BigInt()
 	if amt == nil || amt.Sign() <= 0 {
-		return nil
+		return nil, nil
 	}
 	v := new(big.Rat).SetFrac(amt, scaleDenominator(decimals))
-	return v.Mul(v, rate)
+	return v.Mul(v, rate), nil
 }
 
-// tradeUSDVolumeViaXLMBaseAnchor is the write-time counterpart of
+// usdVolumeViaXLMBaseAnchor is the write-time counterpart of
 // [Store.SorobanVolume24hUSDForAsset]'s query-time
 // `base_asset IN ('native', SAC)` CASE. It fires only when
 // [tradeUSDVolumeViaFX] declined the quote asset — i.e. the trade's
@@ -450,13 +466,6 @@ func fxLegValue(ctx context.Context, r USDVolumeFXResolver, asset canonical.Asse
 // token's scale cancels in the raw-rate product (see
 // [baseAnchorEligible]). Only per-whole-unit price tiers need real
 // decimals, and those stay restricted to classic + SAC.
-func tradeUSDVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subclass external.Subclass, r USDVolumeFXResolver) *string {
-	v, _ := usdVolumeViaXLMBaseAnchor(ctx, t, subclass, r)
-	return v
-}
-
-// usdVolumeViaXLMBaseAnchor is [tradeUSDVolumeViaXLMBaseAnchor] with the
-// resolver's read error returned rather than folded into a decline.
 func usdVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subclass external.Subclass, r USDVolumeFXResolver) (*string, error) {
 	if r == nil || subclass != external.SubclassDEX {
 		// Off-chain sources don't have this orientation problem —
@@ -506,9 +515,9 @@ func usdVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subclass 
 	// Applied HERE rather than at the waterfall's call sites so the
 	// restamp tiers, which reach this function directly, inherit it.
 	if !isXLMAsset(t.Pair.Base) {
-		usdAmount = boundUSDVolume(ctx, r, usdAmount, t.Pair.Quote, t.QuoteAmount, stellarClassicDecimals, t.Timestamp)
-		if usdAmount == nil {
-			return nil, nil
+		usdAmount, err = boundUSDVolume(ctx, r, usdAmount, t.Pair.Quote, t.QuoteAmount, stellarClassicDecimals, t.Timestamp)
+		if err != nil || usdAmount == nil {
+			return nil, err
 		}
 	}
 	rendered := usdAmount.FloatString(8)
@@ -581,7 +590,7 @@ const (
 // xlmBaseTierFor mirrors [tradeUSDVolume]'s branch order for one stored
 // trade: a DEX source, a quote leg [usdVolumeDecimals] does NOT recognise
 // as a USD peg, and an XLM base leg is exactly the combination under
-// which the waterfall takes the [tradeUSDVolumeViaXLMBaseAnchor] branch
+// which the waterfall takes the [usdVolumeViaXLMBaseAnchor] branch
 // ahead of the quote side. Every gate is the insert path's own call, not
 // a restatement of it.
 func xlmBaseTierFor(t canonical.Trade, quoteSpec *USDVolumeQuoteSpec) restampTierVerdict {
@@ -601,7 +610,7 @@ func xlmBaseTierFor(t canonical.Trade, quoteSpec *USDVolumeQuoteSpec) restampTie
 //
 // The two tiers are deliberately DISJOINT. A trade with XLM on both legs
 // (`native` against the SAC wrapper) is the xlm-base tier's — the
-// waterfall reaches [tradeUSDVolumeViaXLMBaseAnchor] through the base leg
+// waterfall reaches [usdVolumeViaXLMBaseAnchor] through the base leg
 // there, so a second tier claiming the same row would fight it at a
 // different generation. A USD-pegged base leg is tier 2b's, exactly
 // ([tradeUSDVolumeViaUSDBase] runs BEFORE any FX tier), and a USD-pegged
@@ -668,7 +677,7 @@ func cexSourceNames() []string {
 	return out
 }
 
-// tradeUSDVolumeViaXLMBaseAnchorFor is [tradeUSDVolumeViaXLMBaseAnchor]
+// tradeUSDVolumeViaXLMBaseAnchorFor is [usdVolumeViaXLMBaseAnchor]
 // for a STORED row: it resolves the source's subclass itself rather than
 // taking it from a caller that would have to look it up the same way. A
 // resolver read error is returned so a restamp aborts instead of filing it
@@ -734,7 +743,7 @@ func tradeUSDVolumeViaFiatQuoteFor(ctx context.Context, t canonical.Trade, r USD
 }
 
 // baseAnchorEligible reports whether an asset can be valued from a
-// raw-VWAP rate by [tradeUSDVolumeViaXLMBaseAnchor].
+// raw-VWAP rate by [usdVolumeViaXLMBaseAnchor].
 //
 // The 1e7 divisor there looks like it assumes the base asset has 7
 // decimals. It does not — and this is the subtle part worth stating
@@ -1093,8 +1102,8 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
         SELECT count(*) FILTER (WHERE inserted) FROM ins
     `
 	var usdVolume any // sql NULL when nil; pq accepts the *string form too
-	v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
-	if err := s.reDeriveNullVolumeGuard(t, v); err != nil {
+	v, err := s.resolveUSDVolume(ctx, t)
+	if err != nil {
 		return err
 	}
 	if v != nil {
@@ -1188,8 +1197,8 @@ func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Tra
 			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12,
 		))
 		var usdVolume any
-		v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
-		if err := s.reDeriveNullVolumeGuard(t, v); err != nil {
+		v, err := s.resolveUSDVolume(ctx, t)
+		if err != nil {
 			return nil, nil, err
 		}
 		if v != nil {
