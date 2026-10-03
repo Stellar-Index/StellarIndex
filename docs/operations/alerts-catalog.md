@@ -231,6 +231,7 @@ signal lands.
 | `stellarindex_api_error_rate_critical` | same | > 5 % for > 2 min | page | [api-5xx](runbooks/api-5xx.md) |
 | `stellarindex_api_price_stale` | `stellarindex_price_staleness_seconds` per (asset, quote) | > 120 s sustained 5 min | ticket | [price-stale](runbooks/price-stale.md) |
 | `stellarindex_api_cache_miss_rate_high` | `rate(stellarindex_api_cache_ops_total{result="miss"}[5m]) / rate(stellarindex_api_cache_ops_total{result=~"hit\|miss\|stale"}[5m])` per (cache, op) | > 50 % sustained 10 min on a hot op (≥ 0.1 req/s) | ticket | [cache-miss-rate-high](runbooks/cache-miss-rate-high.md) |
+| `stellarindex_api_cache_refresh_failing` | `increase(stellarindex_api_cache_ops_total{result="refresh_error"}[15m])` per (cache, op) | > 0 for 30 min (every window has a failed background refresh; callers get `flags.stale`) | ticket | [cache-miss-rate-high](runbooks/cache-miss-rate-high.md) |
 
 ## Notify (transactional-email) alerts
 

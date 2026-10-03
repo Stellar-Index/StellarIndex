@@ -1297,7 +1297,7 @@ const closedVWAP1mAtOrBeforeQuery = `
 // (ADR-0015) — the open bucket is excluded. Returns
 // [sql.ErrNoRows] when no closed bucket exists at-or-before t
 // (e.g. the pair was first traded < 24h ago, or the prices_1m
-// retention horizon (30 d) elided the row), and also when the
+// retention horizon (90 d) elided the row), and also when the
 // bucket's VWAP will not parse as a positive rational — an
 // unusable anchor is reported as absent rather than propagated into
 // a percentage.
