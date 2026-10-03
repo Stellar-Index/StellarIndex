@@ -794,7 +794,11 @@ export interface paths {
         };
         /**
          * Raw per-source observations (ADR-0018 Surface 3).
-         * @description Lowest-level surface per ADR-0018: returns the most-recent
+         * @description On-chain sources only: centralised-exchange trade rows are never
+         *     served here (exchange redistribution terms); their prices reach
+         *     you only in aggregate, via `/v1/vwap`.
+         *
+         *     Lowest-level surface per ADR-0018: returns the most-recent
          *     trade from each source that has ever traded the (asset, quote)
          *     pair. No aggregation, no chaining, no smoothing — purely
          *     "what each venue last published".
@@ -858,6 +862,7 @@ export interface paths {
          *     clamp 1–60 s — independent of tip's `window_seconds` because
          *     observations does not aggregate).
          *
+         *     - On-chain sources only, as on `/v1/observations`.
          *     - First event fires synchronously on connect; data may be
          *       an empty array (the pair has no observations yet — same
          *       200/empty contract as the request endpoint, NOT 404).
@@ -979,7 +984,11 @@ export interface paths {
         };
         /**
          * Raw trade history for a pair in a time window.
-         * @description Returns per-trade records ordered (ts, ledger, tx_hash, op_index, source)
+         * @description On-chain sources only: centralised-exchange trade rows are never
+         *     served here (exchange redistribution terms); their prices reach
+         *     you only in aggregate, via `/v1/vwap`.
+         *
+         *     Returns per-trade records ordered (ts, ledger, tx_hash, op_index, source)
          *     ascending. Cursor paginates across the full-PK tuple; truncating
          *     the cursor at (ts, ledger) would drop rows sharing those
          *     values (high-volume ledgers).
@@ -14466,7 +14475,7 @@ export interface operations {
                  * @example fiat:USD
                  */
                 quote?: components["parameters"]["Quote"];
-                /** @description Restrict to one on-chain source's or CEX venue's most-recent trade (0/1 row). A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`. */
+                /** @description Restrict to one on-chain source's most-recent trade (0/1 row). Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /**
                  * @description `latest` collapses to the single most-recent trade across
@@ -14547,7 +14556,7 @@ export interface operations {
                  * @example fiat:USD
                  */
                 quote?: components["parameters"]["Quote"];
-                /** @description Restrict to one on-chain source's or CEX venue's most-recent trade. A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`. */
+                /** @description Restrict to one on-chain source's most-recent trade. Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /**
                  * @description `latest` collapses to the single most-recent trade across

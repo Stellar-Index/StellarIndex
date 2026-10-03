@@ -7079,7 +7079,7 @@
           "request": {
             "name": "Raw per-source observations (ADR-0018 Surface 3).",
             "description": {
-              "content": "Lowest-level surface per ADR-0018: returns the most-recent\ntrade from each source that has ever traded the (asset, quote)\npair. No aggregation, no chaining, no smoothing — purely\n\"what each venue last published\".\n\nA market is served from BOTH stored orientations. The decoder\nrecords `base/quote` and `quote/base` as separate rows, and a row\nheld the other way round is re-expressed into the orientation\nrequested: the two legs swap, the two amounts swap with them, and\n`price` — always quote/base — is the exact reciprocal of the\nstored one. The swap is performed on the smallest-unit integer\namounts, so nothing is rounded on the way. `base_asset` /\n`quote_asset` on such a row report the orientation served, not the\none stored. A source that traded the market BOTH ways round still\nreturns one row — its later trade — so the array stays one row per\nsource. Same market, same rule, as `/v1/history`.\n\n- `?source=X` narrows to a single source (0- or 1-element array).\n- `?aggregate=latest` collapses to the single newest trade across\n  sources (preserves the array wire shape; length 1).\n- **Freshness is PER OBSERVATION, not envelope-level (W8.11).**\n  `flags.stale` is **always** `false` here (there is no aggregation\n  contract to fall short of), and the envelope `as_of` is the\n  RESPONSE time, not the data's age. A source can be arbitrarily\n  stale — a venue that last traded the pair weeks ago still returns\n  that last trade. Assess freshness from each observation's own\n  trade timestamp (`ts`); do NOT infer it from `as_of` or\n  `flags.stale` on this endpoint.\n- **`flags.divergence_checked` is likewise always `false` here.**\n  The cross-reference check vouches for an aggregated VWAP, and\n  this surface serves raw per-source trades with no aggregated\n  value to vouch for, so `divergence_warning` is never meaningful\n  on this endpoint. Use `/v1/price` or `/v1/vwap` for a\n  cross-referenced number.\n- Cross-region consistency is **NOT** provable on this surface;\n  use `/v1/price` for the closed-bucket guarantee.\n- Empty pair returns 200 with `data: []`, not 404.\n\nURL discipline: `?granularity=` and `?window_seconds=` return 400\n— those are closed-bucket and tip concepts respectively.\n",
+              "content": "On-chain sources only: centralised-exchange trade rows are never\nserved here (exchange redistribution terms); their prices reach\nyou only in aggregate, via `/v1/vwap`.\n\nLowest-level surface per ADR-0018: returns the most-recent\ntrade from each source that has ever traded the (asset, quote)\npair. No aggregation, no chaining, no smoothing — purely\n\"what each venue last published\".\n\nA market is served from BOTH stored orientations. The decoder\nrecords `base/quote` and `quote/base` as separate rows, and a row\nheld the other way round is re-expressed into the orientation\nrequested: the two legs swap, the two amounts swap with them, and\n`price` — always quote/base — is the exact reciprocal of the\nstored one. The swap is performed on the smallest-unit integer\namounts, so nothing is rounded on the way. `base_asset` /\n`quote_asset` on such a row report the orientation served, not the\none stored. A source that traded the market BOTH ways round still\nreturns one row — its later trade — so the array stays one row per\nsource. Same market, same rule, as `/v1/history`.\n\n- `?source=X` narrows to a single source (0- or 1-element array).\n- `?aggregate=latest` collapses to the single newest trade across\n  sources (preserves the array wire shape; length 1).\n- **Freshness is PER OBSERVATION, not envelope-level (W8.11).**\n  `flags.stale` is **always** `false` here (there is no aggregation\n  contract to fall short of), and the envelope `as_of` is the\n  RESPONSE time, not the data's age. A source can be arbitrarily\n  stale — a venue that last traded the pair weeks ago still returns\n  that last trade. Assess freshness from each observation's own\n  trade timestamp (`ts`); do NOT infer it from `as_of` or\n  `flags.stale` on this endpoint.\n- **`flags.divergence_checked` is likewise always `false` here.**\n  The cross-reference check vouches for an aggregated VWAP, and\n  this surface serves raw per-source trades with no aggregated\n  value to vouch for, so `divergence_warning` is never meaningful\n  on this endpoint. Use `/v1/price` or `/v1/vwap` for a\n  cross-referenced number.\n- Cross-region consistency is **NOT** provable on this surface;\n  use `/v1/price` for the closed-bucket guarantee.\n- Empty pair returns 200 with `data: []`, not 404.\n\nURL discipline: `?granularity=` and `?window_seconds=` return 400\n— those are closed-bucket and tip concepts respectively.\n",
               "type": "text/plain"
             },
             "url": {
@@ -7111,7 +7111,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Restrict to one on-chain source's or CEX venue's most-recent trade (0/1 row). A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`.",
+                    "content": "Restrict to one on-chain source's most-recent trade (0/1 row). Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`.",
                     "type": "text/plain"
                   },
                   "key": "source",
@@ -7172,7 +7172,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Restrict to one on-chain source's or CEX venue's most-recent trade (0/1 row). A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`.",
+                        "content": "Restrict to one on-chain source's most-recent trade (0/1 row). Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`.",
                         "type": "text/plain"
                       },
                       "key": "source",
@@ -7243,7 +7243,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Restrict to one on-chain source's or CEX venue's most-recent trade (0/1 row). A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`.",
+                        "content": "Restrict to one on-chain source's most-recent trade (0/1 row). Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`.",
                         "type": "text/plain"
                       },
                       "key": "source",
@@ -7314,7 +7314,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Restrict to one on-chain source's or CEX venue's most-recent trade (0/1 row). A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`.",
+                        "content": "Restrict to one on-chain source's most-recent trade (0/1 row). Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`.",
                         "type": "text/plain"
                       },
                       "key": "source",
@@ -7385,7 +7385,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Restrict to one on-chain source's or CEX venue's most-recent trade (0/1 row). A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`.",
+                        "content": "Restrict to one on-chain source's most-recent trade (0/1 row). Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`.",
                         "type": "text/plain"
                       },
                       "key": "source",
@@ -7439,7 +7439,7 @@
               "request": {
                 "name": "SSE stream of raw per-source observations (ADR-0018).",
                 "description": {
-                  "content": "Streaming counterpart of `/v1/observations`. Same compute\nlogic; pushed on a per-connection tick (default every 5 s,\nclamp 1–60 s — independent of tip's `window_seconds` because\nobservations does not aggregate).\n\n- First event fires synchronously on connect; data may be\n  an empty array (the pair has no observations yet — same\n  200/empty contract as the request endpoint, NOT 404).\n- Recurring events fire unconditionally on each tick (no\n  server-side dedupe) — clients diff against the previous\n  payload if they want change-detection.\n- Heartbeats every 15 s as comment lines.\n- `flags.stale` and `flags.divergence_checked` are always\n  `false` on every tick, for the reasons given on the request\n  endpoint: this is the raw per-source surface, with nothing\n  aggregated for a staleness contract or a cross-reference\n  verdict to vouch for.\n- URL discipline: `?granularity=` and `?window_seconds=`\n  return 400.\n",
+                  "content": "Streaming counterpart of `/v1/observations`. Same compute\nlogic; pushed on a per-connection tick (default every 5 s,\nclamp 1–60 s — independent of tip's `window_seconds` because\nobservations does not aggregate).\n\n- On-chain sources only, as on `/v1/observations`.\n- First event fires synchronously on connect; data may be\n  an empty array (the pair has no observations yet — same\n  200/empty contract as the request endpoint, NOT 404).\n- Recurring events fire unconditionally on each tick (no\n  server-side dedupe) — clients diff against the previous\n  payload if they want change-detection.\n- Heartbeats every 15 s as comment lines.\n- `flags.stale` and `flags.divergence_checked` are always\n  `false` on every tick, for the reasons given on the request\n  endpoint: this is the raw per-source surface, with nothing\n  aggregated for a staleness contract or a cross-reference\n  verdict to vouch for.\n- URL discipline: `?granularity=` and `?window_seconds=`\n  return 400.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -7472,7 +7472,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Restrict to one on-chain source's or CEX venue's most-recent trade. A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`.",
+                        "content": "Restrict to one on-chain source's most-recent trade. Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`.",
                         "type": "text/plain"
                       },
                       "key": "source",
@@ -7543,7 +7543,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Restrict to one on-chain source's or CEX venue's most-recent trade. A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`.",
+                            "content": "Restrict to one on-chain source's most-recent trade. Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`.",
                             "type": "text/plain"
                           },
                           "key": "source",
@@ -7624,7 +7624,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Restrict to one on-chain source's or CEX venue's most-recent trade. A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`.",
+                            "content": "Restrict to one on-chain source's most-recent trade. Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`.",
                             "type": "text/plain"
                           },
                           "key": "source",
@@ -7705,7 +7705,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Restrict to one on-chain source's or CEX venue's most-recent trade. A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`.",
+                            "content": "Restrict to one on-chain source's most-recent trade. Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`.",
                             "type": "text/plain"
                           },
                           "key": "source",
@@ -7786,7 +7786,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Restrict to one on-chain source's or CEX venue's most-recent trade. A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`.",
+                            "content": "Restrict to one on-chain source's most-recent trade. Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`.",
                             "type": "text/plain"
                           },
                           "key": "source",
@@ -7853,7 +7853,7 @@
           "request": {
             "name": "Raw trade history for a pair in a time window.",
             "description": {
-              "content": "Returns per-trade records ordered (ts, ledger, tx_hash, op_index, source)\nascending. Cursor paginates across the full-PK tuple; truncating\nthe cursor at (ts, ledger) would drop rows sharing those\nvalues (high-volume ledgers).\n\nXLM's canonical spellings (`native`, `crypto:XLM`, its SAC) are\ndifferent venue populations, so a pair with no trades under the\nrequested spelling is retried under the others and the first\npopulated one answers. Each row reports the `base_asset` /\n`quote_asset` it was stored under, which is not necessarily the\nspelling that was asked for.\n\nA market is served from BOTH stored orientations. The decoder\nrecords `base/quote` and `quote/base` as separate rows, and rows\nheld the other way round are re-expressed into the orientation\nrequested: the two legs swap, the two amounts swap with them,\nand `price` — always quote/base — is the exact reciprocal of the\nstored one. The swap is performed on the smallest-unit integer\namounts, so nothing is rounded on the way. `base_asset` /\n`quote_asset` on such a row report the orientation served, not\nthe one stored. An empty first page carries `coverage_from`\n(and, when the window ends at or before it,\n`flags.outside_coverage`) measured over both orientations, the\nsame population this page returns. A page reached by `cursor`\ncarries neither: it means the window was drained, not that\nnothing was there.\n\nEvery row in the window is served EXACTLY ONCE across a drain, so\na client may append pages and sum them directly. `limit` is a\npage-size target rather than an exact count, though, and both\ndirections of that need handling:\n\n- A page may come back SHORT of `limit` while more rows exist.\n  Detect the end of the data by the ABSENCE of `pagination`,\n  never by a page shorter than `limit`.\n- A page may EXCEED `limit`. Trades sharing an exact\n  (ts, ledger, tx_hash, op_index) — one operation recorded by\n  several sources — are served together rather than split\n  across a page edge, so a page runs to the end of such a group.\n  The excess is bounded by the size of one group, i.e. by the\n  number of sources that recorded that single operation, and is\n  independent of `limit`: a `limit=1` request over a\n  three-source group returns three rows.\n\nBucketed/granularity-based history (VWAP/TWAP series at 1m/15m/...)\nwill ship via the aggregator binary (see\ncmd/stellarindex-aggregator) on a different response shape —\nnot this endpoint.\n",
+              "content": "On-chain sources only: centralised-exchange trade rows are never\nserved here (exchange redistribution terms); their prices reach\nyou only in aggregate, via `/v1/vwap`.\n\nReturns per-trade records ordered (ts, ledger, tx_hash, op_index, source)\nascending. Cursor paginates across the full-PK tuple; truncating\nthe cursor at (ts, ledger) would drop rows sharing those\nvalues (high-volume ledgers).\n\nXLM's canonical spellings (`native`, `crypto:XLM`, its SAC) are\ndifferent venue populations, so a pair with no trades under the\nrequested spelling is retried under the others and the first\npopulated one answers. Each row reports the `base_asset` /\n`quote_asset` it was stored under, which is not necessarily the\nspelling that was asked for.\n\nA market is served from BOTH stored orientations. The decoder\nrecords `base/quote` and `quote/base` as separate rows, and rows\nheld the other way round are re-expressed into the orientation\nrequested: the two legs swap, the two amounts swap with them,\nand `price` — always quote/base — is the exact reciprocal of the\nstored one. The swap is performed on the smallest-unit integer\namounts, so nothing is rounded on the way. `base_asset` /\n`quote_asset` on such a row report the orientation served, not\nthe one stored. An empty first page carries `coverage_from`\n(and, when the window ends at or before it,\n`flags.outside_coverage`) measured over both orientations, the\nsame population this page returns. A page reached by `cursor`\ncarries neither: it means the window was drained, not that\nnothing was there.\n\nEvery row in the window is served EXACTLY ONCE across a drain, so\na client may append pages and sum them directly. `limit` is a\npage-size target rather than an exact count, though, and both\ndirections of that need handling:\n\n- A page may come back SHORT of `limit` while more rows exist.\n  Detect the end of the data by the ABSENCE of `pagination`,\n  never by a page shorter than `limit`.\n- A page may EXCEED `limit`. Trades sharing an exact\n  (ts, ledger, tx_hash, op_index) — one operation recorded by\n  several sources — are served together rather than split\n  across a page edge, so a page runs to the end of such a group.\n  The excess is bounded by the size of one group, i.e. by the\n  number of sources that recorded that single operation, and is\n  independent of `limit`: a `limit=1` request over a\n  three-source group returns three rows.\n\nBucketed/granularity-based history (VWAP/TWAP series at 1m/15m/...)\nwill ship via the aggregator binary (see\ncmd/stellarindex-aggregator) on a different response shape —\nnot this endpoint.\n",
               "type": "text/plain"
             },
             "url": {

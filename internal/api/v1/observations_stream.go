@@ -12,6 +12,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // Observations-stream tunables. interval_seconds is the per-connection
@@ -96,7 +97,7 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 	}
 
 	source := r.URL.Query().Get("source")
-	if !sourceFilterOK(w, r, source) {
+	if !rawTradeSourceFilterOK(w, r, source) {
 		return
 	}
 
@@ -233,6 +234,10 @@ func firstScanError(errs []error) error {
 // and is mutated in place.
 func mergeNewestPerSource(merged []canonical.Trade, bySource map[string]int, trades []canonical.Trade) []canonical.Trade {
 	for _, t := range trades {
+		// Backstop for the storage-side filter: no exchange row is served raw.
+		if !external.IsOnChain(t.Source) {
+			continue
+		}
 		if i, ok := bySource[t.Source]; ok {
 			if isLater(t, merged[i]) {
 				merged[i] = t
