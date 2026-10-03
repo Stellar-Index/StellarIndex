@@ -425,7 +425,7 @@ func TestDecoder_Matches(t *testing.T) {
 	businessTopics := []string{
 		// Auction.
 		TopicSymbolNewAuction, TopicSymbolFillAuction, TopicSymbolDeleteAuction,
-		// Money-market (#25).
+		// Money-market (309acb489).
 		TopicSymbolSupply, TopicSymbolWithdraw, TopicSymbolSupplyCollateral,
 		TopicSymbolWithdrawCollateral, TopicSymbolBorrow, TopicSymbolRepay, TopicSymbolFlashLoan,
 		// Emission / credit-risk.

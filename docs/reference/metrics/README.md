@@ -2349,7 +2349,7 @@ row.
 Counter, label `outcome` (`ok` / `refresh_error`).
 
 Per-sweep outcome of the aggregator's protocol-events rollup worker
-(`internal/aggregate/protoeventsrollup`, #43), which folds the
+(`internal/aggregate/protoeventsrollup`, 78dff337b), which folds the
 trailing-24h per-source event census (a UNION ALL count over ~17
 served protocol hypertables) into the `protocol_events_24h` table
 every couple of minutes. That table backs the `events_24h` column on
@@ -2373,7 +2373,7 @@ Histogram, label `outcome` (matches
 
 Wall-clock of one rollup sweep: the trailing-24h UNION ALL census over
 the served protocol hypertables + one upsert + one prune. This is the
-multi-second leg the #43 rollup moved off the `/v1/protocols` request
+multi-second leg the 78dff337b rollup moved off the `/v1/protocols` request
 path, so watching `ok` p95/p99 here is how an operator learns the
 served-tier census is getting heavier as the protocol tables grow —
 long before it would have shown up as a slow endpoint.
@@ -2383,7 +2383,7 @@ long before it would have shown up as a slow endpoint.
 Counter, label `outcome` (`ok` / `refresh_error`).
 
 Per-sweep outcome of the aggregator's asset-volume rollup worker
-(`internal/aggregate/assetvolrollup`, #43), which folds the trailing-24h
+(`internal/aggregate/assetvolrollup`, e0fbbbc3b), which folds the trailing-24h
 per-asset USD-volume SUM over the `prices_1m` continuous aggregate
 (single-sided: each asset as base OR quote) into the `asset_volume_24h`
 table every couple of minutes. That table backs the `volume_24h_usd`
@@ -2407,7 +2407,7 @@ Histogram, label `outcome` (matches
 
 Wall-clock of one rollup sweep: the trailing-24h base-OR-quote SUM over
 `prices_1m` (all pairs) + one upsert + one prune. This is the heaviest
-of the two #43 rollups and the query the rollup moved off the
+of the two 24h rollups (78dff337b, e0fbbbc3b) and the query the rollup moved off the
 `/v1/assets` request path, so watching `ok` p95/p99 here is how an
 operator learns the served-tier volume scan is getting heavier as the
 prices_1m history grows. If it climbs toward the 2-minute cadence the
@@ -2453,7 +2453,7 @@ long before it would surface as a slow endpoint. If it climbs toward the
 Counter, label `outcome` (`ok` / `list_error` / `partial_error`).
 
 Per-sweep outcome of the aggregator's price-alert evaluator
-(`internal/pricealerts`, BACKLOG #60), which checks every enabled
+(`internal/pricealerts`), which checks every enabled
 `price_alerts` row against the latest closed 1-minute VWAP each tick
 and enqueues account-scoped `price.alert` customer-webhook deliveries
 once per threshold crossing (respecting cooldown + `last_fired_at`).

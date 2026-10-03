@@ -556,7 +556,7 @@ func handlerTimedOut(callCtx context.Context, err error) bool {
 //	    /* 500 internal */
 //	}
 //
-// Refs: #34 residual ("/v1/issuers returns HTTP 500 (fast ~50ms)
+// Refs: 25fc0dedc residual ("/v1/issuers returns HTTP 500 (fast ~50ms)
 // on the sla-probe's request shape — real bug, low severity").
 func transientStorageErr(err error) bool {
 	if err == nil {

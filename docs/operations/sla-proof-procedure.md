@@ -6,7 +6,7 @@ related:
   - scripts/ops/sla-proof-from-probe.sh
   - scripts/ci/render-sla-proof.sh
   - test/load/scenarios/06-mixed-realistic.js
-  - docs/architecture/k6-load-tests-design-note.md §"How the proof report (#77) is generated"
+  - docs/architecture/k6-load-tests-design-note.md §"How the proof report (Task #77) is generated"
   - docs/architecture/launch-readiness-backlog.md L5.* / L6.*
 ---
 

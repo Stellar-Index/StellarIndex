@@ -54,9 +54,9 @@ satisfies it.
 
 | ✓ | Item | Evidence |
 |---|---|---|
-| ☑ | Postgres password from the predecessor-system probe scrubbed from working tree | PR #169 |
-| ☑ | r1 public IP scrubbed from working tree | PR #169 |
-| ☑ | `configs/ansible/inventory/r1.yml` removed from tracked files (added to `.gitignore`) | PR #169 |
+| ☑ | Postgres password from the predecessor-system probe scrubbed from working tree | commit 01a417654 |
+| ☑ | r1 public IP scrubbed from working tree | commit 01a417654 |
+| ☑ | `configs/ansible/inventory/r1.yml` removed from tracked files (added to `.gitignore`) | commit 01a417654 |
 | ☑ | `SECURITY.md` lists `security@stellarindex.io` as the public reporting address (not an internal alias) | `SECURITY.md:9` (verified 2026-04-30) |
 | ☑ | `CODEOWNERS` uses external @-handles only — no internal-only logins | `CODEOWNERS` (only `the maintainer`, verified 2026-04-30) |
 | ☑ | `README.md` reads as a public landing page — what the project does, who it's for, getting-started link, badge for license + CI | `README.md` (verified 2026-04-30) |
@@ -67,7 +67,7 @@ satisfies it.
 | ☑ | Every CI workflow in `.github/workflows/` runs on the public repo without internal secrets | `.github/workflows/{ci,api-docs}.yml` (verified 2026-04-30 — no `secrets.` references) |
 | ☑ | `AGENTS.md` reads cleanly without referencing private internal-archive paths or internal-only operator names | `AGENTS.md` (reviewed 2026-04-30 — pattern scan + manual spot-checks; 0 private references; 2 non-blocking editorial recs noted) |
 | ☑ | `docs/operations/r1-deployment-state.md` does not include credentials, API keys, or unredacted IPs | `docs/operations/r1-deployment-state.md` (verified 2026-04-30 — credentials are pointers only, no IPs in file) |
-| ☑ | Every ADR's "Status" reflects current state (no stale "Proposed" on accepted ADRs) | `docs/adr/` (all 0001-0024 are `Accepted`, verified 2026-05-02; 0012 is reserved-future per multi-region-topology.md). Initial sweep covered 0001-0021 on 2026-04-30; 0022 (classic supply observers, PR #302), 0023 (SEP-41 supply, PR #308), 0024 (Redis HA via Sentinel, PR #343) merged after that and confirmed `Accepted` in this re-verification. |
+| ☑ | Every ADR's "Status" reflects current state (no stale "Proposed" on accepted ADRs) | `docs/adr/` (all 0001-0024 are `Accepted`, verified 2026-05-02; 0012 is reserved-future per multi-region-topology.md). Initial sweep covered 0001-0021 on 2026-04-30; 0022 (classic supply observers, commit b772cc9ed), 0023 (SEP-41 supply, commit 4c5536c6c), 0024 (Redis HA via Sentinel, commit e9e338efd) merged after that and confirmed `Accepted` in this re-verification. |
 | ☑ | Final secret scan with `gitleaks detect --source .` returns clean | `gitleaks 8.30.1` — 0 leaks across 553 commits, scanned 2026-04-30 |
 
 **All rows verified 2026-04-30.** Both originally-deferred
@@ -88,7 +88,7 @@ PRs land between checklist verification and launch day. **Do this
 2. **Re-run the file-level scrub check.** A directory listing
    should show no `*.env`, `*.key`, `*.pem`, `secrets/*`,
    `inventory/r1.yml`, or any file matching the patterns from
-   the original PR #169 scrub.
+   the original commit 01a417654 scrub.
 3. **`make test && make test-integration`** — the green build
    that gets tagged v1.0 must pass both. A flake counts as
    not-green; rerun after the flake is fixed.
