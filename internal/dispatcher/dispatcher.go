@@ -546,6 +546,11 @@ type Dispatcher struct {
 	// entry decoders — each evicted balance then stays served as live.
 	evictedKeysUnreadable int
 
+	// ledgerUpgradeEntries counts upgrade entries (protocol version, base
+	// reserve, config settings, ...) seen in closed ledgers. No decoder
+	// reads them; the count makes a protocol change visible.
+	ledgerUpgradeEntries int
+
 	// uncorroboratedCalls is the per-source count of ContractCall
 	// invocations an [ExecutionCorroborationRequirer] decoder MATCHED
 	// but the dispatcher DROPPED before Decode because the call was only
@@ -738,6 +743,10 @@ type Stats struct {
 	// EvictedKeysUnreadable counts ledgers whose evicted-key list failed
 	// to read; every eviction in them is missing from the served state.
 	EvictedKeysUnreadable int
+	// LedgerUpgradeEntries counts ledger-upgrade entries seen. They are
+	// observed, not decoded: a non-zero delta marks a network-wide
+	// parameter change (protocol, base reserve, Soroban config).
+	LedgerUpgradeEntries int
 	// UncorroboratedCalls is the per-source count of oracle-class
 	// ContractCall invocations dropped before Decode because they were
 	// only DECLARED in the auth tree, never executed (W8.4a). Non-zero on
@@ -773,6 +782,7 @@ func (d *Dispatcher) Stats() Stats {
 	txEventReadErrs := d.txEventReadErrors
 	entryMetaUnsup := d.entryMetaUnsupported
 	evictedUnreadable := d.evictedKeysUnreadable
+	upgradeEntries := d.ledgerUpgradeEntries
 	d.statsMu.Unlock()
 
 	orphanCopied := map[string]int{}
@@ -806,6 +816,7 @@ func (d *Dispatcher) Stats() Stats {
 		TxEventReadErrors:     txEventReadErrs,
 		EntryMetaUnsupported:  entryMetaUnsup,
 		EvictedKeysUnreadable: evictedUnreadable,
+		LedgerUpgradeEntries:  upgradeEntries,
 		UncorroboratedCalls:   uncorrCopied,
 	}
 }
@@ -885,6 +896,8 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 		outputs = append(outputs,
 			d.walkLedgerEntryChanges(lcm, txs, ledgerSeq, parsedClosedAt)...)
 	}
+	// Outside the guard: upgrades are observed even with no entry decoders.
+	d.noteLedgerUpgrades(lcm.UpgradesProcessing(), ledgerSeq)
 
 	for i := range txs {
 		tx := txs[i]
@@ -1148,7 +1161,9 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 // LEDGER UPGRADES (the SDK's 4th state, upgradeChangesState) are deliberately
 // NOT walked: they are not transaction-scoped, carry no TxHash, and no
 // LedgerEntryChangeDecoder consumes them today. The lake walker makes the
-// identical choice, so the two stay in step.
+// identical choice, so the two stay in step. They are COUNTED and logged
+// per ledger by [ProcessLedger] ([noteLedgerUpgrades]), whether or not any
+// entry decoder is registered, so a network parameter change is visible.
 //
 // IntraLedgerSeq is the per-ledger monotonic position, advanced for every
 // walked change (matched or not) so relative order is preserved; gaps from
@@ -1262,6 +1277,22 @@ func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []inges
 	// after every transaction has applied. See [walkEvictedKeys].
 	outputs = append(outputs, d.walkEvictedKeys(lcm, ledgerSeq, dispatchFor(""))...)
 	return outputs
+}
+
+// noteLedgerUpgrades counts and logs a ledger's upgrade entries. It never
+// dispatches them: no decoder consumes upgrade changes.
+func (d *Dispatcher) noteLedgerUpgrades(ups []xdr.UpgradeEntryMeta, ledgerSeq uint32) {
+	if len(ups) == 0 {
+		return
+	}
+	types := make([]string, len(ups))
+	for i := range ups {
+		types[i] = ups[i].Upgrade.Type.String()
+	}
+	d.statsMu.Lock()
+	d.ledgerUpgradeEntries += len(ups)
+	d.statsMu.Unlock()
+	d.log().Info("dispatcher: ledger carries upgrades", "ledger", ledgerSeq, "types", types)
 }
 
 // walkEvictedKeys dispatches one synthetic Removed change per ledger key

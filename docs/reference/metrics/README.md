@@ -620,7 +620,7 @@ rate, absence is unambiguous, which is why this counter is deliberately
 NOT pre-seeded in `seedBoundedLabelSeries` the way the `increase()`- and
 `rate()`-based counters are.
 
-### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`, `stellarindex_dispatcher_evicted_keys_unreadable_total`
+### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`, `stellarindex_dispatcher_evicted_keys_unreadable_total`, `stellarindex_dispatcher_ledger_upgrade_entries_total`
 
 Counters, no labels (process-wide — the underlying dispatcher counters
 aren't attributable to a source).
@@ -642,8 +642,12 @@ flush window's delta on every tick alongside the existing WARN log:
   read, so their state-archival evictions were skipped and each evicted
   balance stays served as live. The dispatcher also logs a WARN with
   the ledger number.
+- `ledger_upgrade_entries` — ledger-upgrade entries (protocol version,
+  base reserve, fee and similar network parameter changes) seen in
+  processed ledgers. Informational: no decoder consumes them, and a
+  non-zero value is expected on an upgrade ledger.
 
-**When to look at these:** any sustained non-zero rate. All four are
+**When to look at these:** any sustained non-zero rate of the first four. All are
 process-lifetime cumulative counters — chart `increase(...[5m])`
 against the flush interval (5m), not the raw value.
 

@@ -308,6 +308,7 @@ func registerAppMetricsTail() {
 		DispatcherTxEventReadErrorsTotal,
 		DispatcherEntryMetaUnsupportedTotal,
 		DispatcherEvictedKeysUnreadableTotal,
+		DispatcherLedgerUpgradeEntriesTotal,
 		SourceUncorroboratedCallsTotal,
 
 		MEVDetectRunsTotal,
@@ -1429,6 +1430,16 @@ var DispatcherEvictedKeysUnreadableTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_dispatcher_evicted_keys_unreadable_total",
 		Help: "Ledgers whose state-archival evicted keys failed to read; their evictions were skipped and the evicted entries stay served as live.",
+	},
+)
+
+// DispatcherLedgerUpgradeEntriesTotal — process-wide counter of ledger
+// upgrade entries seen (dispatcher.Stats.LedgerUpgradeEntries). Observed only;
+// no decoder reads upgrade changes.
+var DispatcherLedgerUpgradeEntriesTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dispatcher_ledger_upgrade_entries_total",
+		Help: "Ledger upgrade entries (protocol version, base reserve, config settings) seen in ingested ledgers.",
 	},
 )
 
