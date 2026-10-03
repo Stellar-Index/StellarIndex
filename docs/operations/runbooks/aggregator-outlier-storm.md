@@ -145,8 +145,11 @@ gating.
 - [ ] **Connector regression**: identify the offending source via
       `stellarindex_source_events_total` × `stellarindex_source_decode_errors_total`
       ratio + recent deploy diff. Disable that source in TOML
-      (`[external.<venue>] enabled = false`) and reload — the
-      orchestrator picks up the change at next tick.
+      (`[external.<venue>] enabled = false`) to stop new ingest, and
+      add it to `aggregate.excluded_sources` to drop its
+      already-stored trades from VWAP at read time (`enabled=false`
+      alone leaves them in the window). Restart the aggregator to
+      apply; the `prices_1m` CAGG is not source-filtered.
 - [ ] **Filter mis-calibration**: if neither of the above holds and
       `trim_fraction` is sustained > 1 h, raise
       `aggregate.outlier_sigma_threshold` from 4.0 → 5.0 / 6.0 to
