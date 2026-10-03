@@ -113,7 +113,7 @@ func TestAccountOperations_BoundArgsBindInsideKeyArms(t *testing.T) {
 	conn.respond = withOpsBySourceRows(func(string) (driver.Rows, error) { return &stubRows{}, nil })
 	r := &ExplorerReader{conn: conn}
 	cur := ExplorerCursor{Ledger: 63_000_000, A: 4, B: 2}
-	if _, err := r.AccountOperations(context.Background(), "GTEST", 9, cur); err != nil {
+	if _, err := r.accountOperationsExact(context.Background(), "GTEST", 9, cur, 0, false); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
 	q := conn.queries[len(conn.queries)-1]

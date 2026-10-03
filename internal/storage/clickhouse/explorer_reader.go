@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -924,10 +925,31 @@ func (r *ExplorerReader) RecentOperations(ctx context.Context, limit int, cur Ex
 }
 
 // recentOperationsPage runs ONE RecentOperations pass, bounded to the tail
-// window or not. Arg order mirrors recentOperationsQuery's clause order:
-// the cursor tuple, then the window's lower bound, then the limit.
+// window or not. It reads a small window in sort-key order (read-in-order
+// early exit) and dedups adjacent duplicate keys in Go; only a window that
+// cannot prove a full page falls back to the exact LIMIT 1 BY query.
 func (r *ExplorerReader) recentOperationsPage(ctx context.Context, limit int, cur ExplorerCursor, bounded bool) ([]OpRow, error) {
-	q := recentOperationsQuery(cur.IsSet(), bounded)
+	window := windowRows(limit, windowFactorKeys)
+	rows, err := r.queryRecentOperations(ctx, recentOperationsWindowQuery(cur.IsSet(), bounded), cur, bounded, window)
+	if err != nil {
+		return nil, err
+	}
+	deduped, ok := dedupWindow(rows, window, limit, opRowKey, nil)
+	if ok {
+		if len(deduped) > limit {
+			deduped = deduped[:limit]
+		}
+		return deduped, nil
+	}
+	return r.queryRecentOperations(ctx, recentOperationsQuery(cur.IsSet(), bounded), cur, bounded, limit)
+}
+
+func opRowKey(o OpRow) [3]uint32 { return [3]uint32{o.Seq, o.TxIndex, o.OpIndex} }
+
+// queryRecentOperations runs one recentOperationsQuery-shaped statement
+// reading `n` rows. Arg order mirrors the clause order: the cursor tuple,
+// then the window's lower bound, then n.
+func (r *ExplorerReader) queryRecentOperations(ctx context.Context, q string, cur ExplorerCursor, bounded bool, n int) ([]OpRow, error) {
 	args := []any{}
 	switch {
 	case cur.IsSet():
@@ -947,7 +969,7 @@ func (r *ExplorerReader) recentOperationsPage(ctx context.Context, limit int, cu
 	case bounded:
 		args = append(args, uint32(recentLedgersTailWindow))
 	}
-	args = append(args, limit)
+	args = append(args, n)
 	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
 		if isTooManyRows(err) {
@@ -963,7 +985,8 @@ func (r *ExplorerReader) recentOperationsPage(ctx context.Context, limit int, cu
 	return scanOpsLight(rows)
 }
 
-// recentOperationsQuery builds RecentOperations' SQL.
+// recentOperationsQuery builds RecentOperations' exact-dedup SQL, the fallback
+// when a windowed read (recentOperationsWindowQuery) cannot prove a full page.
 //
 // LIMIT 1 BY the operations primary key (audit DAT-10): stellar.operations
 // is ReplacingMergeTree(ingested_at); a re-ingested operation leaves an
@@ -997,6 +1020,16 @@ func (r *ExplorerReader) recentOperationsPage(ctx context.Context, limit int, cu
 // the reason that #444 bound now actually bites — see #484) plus
 // recentOperationsCursorRowCeiling. Both are documented on their consts.
 func recentOperationsQuery(hasCursor, bounded bool) string {
+	return recentOperationsSQL(hasCursor, bounded, true)
+}
+
+// recentOperationsWindowQuery is the same read without the LIMIT 1 BY, so the
+// reverse read-in-order early exit applies; the caller dedups the window.
+func recentOperationsWindowQuery(hasCursor, bounded bool) string {
+	return recentOperationsSQL(hasCursor, bounded, false)
+}
+
+func recentOperationsSQL(hasCursor, bounded, exactDedup bool) string {
 	q := `SELECT ` + opColsLight + ` FROM stellar.operations`
 	switch {
 	case hasCursor && bounded:
@@ -1006,8 +1039,11 @@ func recentOperationsQuery(hasCursor, bounded bool) string {
 	case bounded:
 		q += ` WHERE ledger_seq > (SELECT max(ledger_seq) FROM stellar.operations) - ?`
 	}
-	q += ` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?`
-	q += explorerScanSettings
+	q += ` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC`
+	if exactDedup {
+		q += ` LIMIT 1 BY ledger_seq, tx_index, op_index`
+	}
+	q += ` LIMIT ?` + explorerScanSettings
 	if hasCursor {
 		q += recentOperationsCursorRowCeiling
 	}
@@ -1463,6 +1499,117 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 	if !r.opsBySourceAvailable(ctx) {
 		return nil, errOpsBySourceMissing
 	}
+	if rows, ok, err := r.accountTransactionsWindowed(ctx, account, limit, cur); err != nil || ok {
+		return rows, err
+	}
+	return r.accountTransactionsExact(ctx, account, limit, cur)
+}
+
+// accountTxKey is one transaction's (ledger_seq, tx_index) listing key.
+type accountTxKey struct{ ledger, txIndex uint32 }
+
+func (k accountTxKey) after(o accountTxKey) bool {
+	return k.ledger > o.ledger || (k.ledger == o.ledger && k.txIndex > o.txIndex)
+}
+
+// accountTransactionsWindowed pages the two account-keyed arms by reading a
+// bounded window of each in sort-key order (no LIMIT 1 BY, so the read stops
+// early), collapses the per-tx rows in Go, merges the arms and hydrates the
+// surviving keys. ok=false means a window could not prove it held `limit`
+// distinct transactions; the caller then runs the exact query.
+//
+// Exactness: an arm whose window was not filled is exhausted; a filled arm
+// proved >= limit distinct keys, so every key it omitted ranks below `limit`
+// keys already in hand and cannot enter the merged top `limit`.
+func (r *ExplorerReader) accountTransactionsWindowed(ctx context.Context, account string, limit int, cur ExplorerCursor) ([]TxSummary, bool, error) {
+	window := windowRows(limit, windowFactorTxArm)
+	cursorClause := ""
+	var cursorArgs []any
+	if cur.IsSet() {
+		cursorClause = ` AND (ledger_seq, tx_index) < (?, ?)`
+		cursorArgs = []any{cur.Ledger, cur.A}
+	}
+	arms := [...]string{
+		`SELECT ledger_seq, tx_index FROM stellar.ops_by_source WHERE source_account = ?`,
+		`SELECT ledger_seq, tx_index FROM stellar.operation_participants WHERE account = ?`,
+	}
+	var merged []accountTxKey
+	for _, arm := range arms {
+		args := append([]any{account}, cursorArgs...)
+		args = append(args, window)
+		keys, ok, err := windowedKeyRead(ctx, r.conn, arm+cursorClause+` ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?`+explorerScanSettings,
+			args, window, limit, func(rows driver.Rows) (accountTxKey, error) {
+				var k accountTxKey
+				err := rows.Scan(&k.ledger, &k.txIndex)
+				return k, err
+			})
+		if err != nil || !ok {
+			return nil, false, err
+		}
+		merged = append(merged, keys...)
+	}
+	keys := mergeKeysDesc(merged, limit, accountTxKey.after)
+	if len(keys) == 0 {
+		return nil, true, nil
+	}
+	q := `SELECT ` + txCols + ` FROM stellar.transactions FINAL
+		WHERE (ledger_seq, tx_index) IN (` + tupleList(keys, func(k accountTxKey) []uint32 { return []uint32{k.ledger, k.txIndex} }) + `)
+		ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?` + explorerScanSettings
+	rows, err := r.conn.Query(ctx, q, limit)
+	if err != nil {
+		return nil, false, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
+	}
+	defer func() { _ = rows.Close() }()
+	out, err := scanTxSummaries(rows)
+	return out, err == nil, err
+}
+
+// windowedKeyRead runs one windowed key read and collapses adjacent duplicate
+// keys; ok=false when the window cannot prove `limit` distinct keys.
+func windowedKeyRead[K comparable](ctx context.Context, conn driver.Conn, q string, args []any, window, limit int,
+	scan func(driver.Rows) (K, error),
+) ([]K, bool, error) {
+	rows, err := conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("clickhouse: windowed key read: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var raw []K
+	for rows.Next() {
+		k, err := scan(rows)
+		if err != nil {
+			return nil, false, fmt.Errorf("clickhouse: scan windowed key: %w", err)
+		}
+		raw = append(raw, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("clickhouse: windowed key read: %w", err)
+	}
+	keys, ok := dedupWindow(raw, window, limit, func(k K) K { return k }, nil)
+	return keys, ok, nil
+}
+
+// mergeKeysDesc concatenates arm key lists, orders them newest-first, drops
+// cross-arm duplicates and keeps the first n.
+func mergeKeysDesc[K comparable](keys []K, n int, after func(a, b K) bool) []K {
+	sort.SliceStable(keys, func(i, j int) bool { return after(keys[i], keys[j]) })
+	out := keys[:0:0]
+	for i, k := range keys {
+		if i > 0 && keys[i-1] == k {
+			continue
+		}
+		out = append(out, k)
+		if len(out) == n {
+			break
+		}
+	}
+	return out
+}
+
+// accountTransactionsExact is the LIMIT 1 BY form: exact on every input but
+// O(account history) per page, so it only runs when the windowed read cannot
+// prove a full page.
+func (r *ExplorerReader) accountTransactionsExact(ctx context.Context, account string, limit int, cur ExplorerCursor) ([]TxSummary, error) {
 	var cursorArgs []any
 	if cur.IsSet() {
 		cursorArgs = []any{cur.Ledger, cur.A}
@@ -1624,16 +1771,87 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	if !r.opsBySourceAvailable(ctx) {
 		return nil, errOpsBySourceMissing
 	}
-	var cursorArgs []any
-	if cur.IsSet() {
-		cursorArgs = []any{cur.Ledger, cur.A, cur.B}
-	}
 	// The activity watermark bounds each arm's resolve (`ledger_seq <= ?`)
 	// so a long-idle account's page stops at its real last activity —
 	// exact, never row-hiding (see accountOperationsQuery). No watermark
 	// (table absent, backfill pending, or the account has no row) → the
 	// unbounded resolve, exactly as before the watermark existed.
 	bound, hasBound := r.accountActivityWatermark(ctx, account)
+	if rows, ok, err := r.accountOperationsWindowed(ctx, account, limit, cur, bound, hasBound); err != nil || ok {
+		return rows, err
+	}
+	return r.accountOperationsExact(ctx, account, limit, cur, bound, hasBound)
+}
+
+// accountOpKey is one operation's (ledger_seq, tx_index, op_index) key.
+type accountOpKey struct{ ledger, txIndex, opIndex uint32 }
+
+func (k accountOpKey) after(o accountOpKey) bool {
+	if k.ledger != o.ledger {
+		return k.ledger > o.ledger
+	}
+	if k.txIndex != o.txIndex {
+		return k.txIndex > o.txIndex
+	}
+	return k.opIndex > o.opIndex
+}
+
+// accountOperationsWindowed is accountTransactionsWindowed for operations: the
+// sourced and participant arms are read as bounded sort-key-ordered windows,
+// merged in Go and hydrated once. ok=false sends the caller to the exact query.
+func (r *ExplorerReader) accountOperationsWindowed(ctx context.Context, account string, limit int, cur ExplorerCursor, bound uint32, hasBound bool) ([]OpRow, bool, error) {
+	window := windowRows(limit, windowFactorKeys)
+	clauses := ""
+	var extra []any
+	if hasBound {
+		clauses += ` AND ledger_seq <= ?`
+		extra = append(extra, bound)
+	}
+	if cur.IsSet() {
+		clauses += ` AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
+		extra = append(extra, cur.Ledger, cur.A, cur.B)
+	}
+	arms := [...]string{
+		`SELECT ledger_seq, tx_index, op_index FROM stellar.ops_by_source WHERE source_account = ? AND op_index != 4294967295`,
+		`SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?`,
+	}
+	var merged []accountOpKey
+	for _, arm := range arms {
+		args := append(append([]any{account}, extra...), window)
+		keys, ok, err := windowedKeyRead(ctx, r.conn, arm+clauses+` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?`+explorerScanSettings,
+			args, window, limit, func(rows driver.Rows) (accountOpKey, error) {
+				var k accountOpKey
+				err := rows.Scan(&k.ledger, &k.txIndex, &k.opIndex)
+				return k, err
+			})
+		if err != nil || !ok {
+			return nil, false, err
+		}
+		merged = append(merged, keys...)
+	}
+	keys := mergeKeysDesc(merged, limit, accountOpKey.after)
+	if len(keys) == 0 {
+		return nil, true, nil
+	}
+	q := `SELECT ` + opCols + ` FROM stellar.operations FINAL
+		WHERE (ledger_seq, tx_index, op_index) IN (` + tupleList(keys, func(k accountOpKey) []uint32 { return []uint32{k.ledger, k.txIndex, k.opIndex} }) + `)
+		ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?` + explorerScanSettings
+	rows, err := r.conn.Query(ctx, q, limit)
+	if err != nil {
+		return nil, false, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
+	}
+	defer func() { _ = rows.Close() }()
+	out, err := scanOps(rows)
+	return out, err == nil, err
+}
+
+// accountOperationsExact is the LIMIT 1 BY form (exact, O(account history)
+// per page), used when the windowed read cannot prove a full page.
+func (r *ExplorerReader) accountOperationsExact(ctx context.Context, account string, limit int, cur ExplorerCursor, bound uint32, hasBound bool) ([]OpRow, error) {
+	var cursorArgs []any
+	if cur.IsSet() {
+		cursorArgs = []any{cur.Ledger, cur.A, cur.B}
+	}
 	q := accountOperationsQuery(cur.IsSet(), hasBound)
 	args := []any{account}
 	if hasBound {

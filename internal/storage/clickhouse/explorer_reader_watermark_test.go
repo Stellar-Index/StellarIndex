@@ -60,7 +60,7 @@ func TestAccountOperations_WatermarkBoundsEachArmResolve(t *testing.T) {
 	conn := watermarkStubConn(watermark, &stubRows{})
 	r := &ExplorerReader{conn: conn}
 
-	if _, err := r.AccountOperations(context.Background(), account, limit, ExplorerCursor{}); err != nil {
+	if _, err := r.accountOperationsExact(context.Background(), account, limit, ExplorerCursor{}, watermark, true); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
 	q := conn.queries[len(conn.queries)-1]
@@ -105,7 +105,7 @@ func TestAccountOperations_WatermarkPreservesCursorArgOrder(t *testing.T) {
 	r := &ExplorerReader{conn: conn}
 
 	cur := ExplorerCursor{Ledger: 63_000_000, A: 4, B: 2}
-	if _, err := r.AccountOperations(context.Background(), "GTEST", limit, cur); err != nil {
+	if _, err := r.accountOperationsExact(context.Background(), "GTEST", limit, cur, watermark, true); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
 	q := conn.queries[len(conn.queries)-1]
@@ -141,7 +141,7 @@ func TestAccountOperations_NoWatermarkFallsBackUnbounded(t *testing.T) {
 	conn := watermarkStubConn(0, &stubRows{})
 	r := &ExplorerReader{conn: conn}
 
-	if _, err := r.AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
+	if _, err := r.accountOperationsExact(context.Background(), "GTEST", limit, ExplorerCursor{}, 0, false); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
 	q := conn.queries[len(conn.queries)-1]
