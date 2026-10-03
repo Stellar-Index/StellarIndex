@@ -249,7 +249,7 @@ type HistoryQuery struct {
 }
 
 // HistorySinceInception fetches the full historical series for an
-// asset/quote at the chosen granularity. CAGG-served per PR #195.
+// asset/quote at the chosen granularity. CAGG-served per commit 2ecc50fbd.
 // Long-running for fine-grained granularities; pass a context with
 // an appropriate deadline.
 func (c *Client) HistorySinceInception(ctx context.Context, q HistoryQuery) (*Envelope[HistorySeries], error) {

@@ -47,6 +47,9 @@
 #                       rewrite its manifest row (commit the result).
 #   --migrations-ack    record that the range's migrations have been read for
 #                       old-binary compatibility (CS-099).
+#   --followups-ack     record that you will run the range's
+#                       `-- REQUIRED-FOLLOWUP:` commands straight after the
+#                       deploy; the dispatch then carries followups_acknowledged.
 #
 # Everything this reads from a host is read-only: `cat` of the deploy
 # sidecars, `systemctl is-enabled` / `is-active`, and a `test -x`. Nothing
@@ -69,6 +72,8 @@ VERSION=""
 NO_HOST=0
 REFRESH=0
 MIGRATIONS_ACK=0
+FOLLOWUPS_ACK=0
+FOLLOWUPS_DISPATCH=0
 
 # Findings that require an operator decision before the dispatch. Anything
 # appended here makes the exit non-zero; the recommended command is still
@@ -80,7 +85,7 @@ NOTES=()
 usage() {
     cat >&2 <<'USAGE'
 usage: scripts/dev/preflight-deploy.sh --region <r1|testnet|futurenet> --version vX.Y.Z
-                                       [--no-host] [--refresh-manifest] [--migrations-ack]
+                                       [--no-host] [--refresh-manifest] [--migrations-ack] [--followups-ack]
        make preflight-deploy REGION=r1 VERSION=vX.Y.Z
 
 exit 0  ready — the printed dispatch is warranted by the evidence above it
@@ -96,6 +101,7 @@ while [ $# -gt 0 ]; do
         --no-host) NO_HOST=1; shift ;;
         --refresh-manifest) REFRESH=1; shift ;;
         --migrations-ack) MIGRATIONS_ACK=1; shift ;;
+        --followups-ack) FOLLOWUPS_ACK=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "preflight-deploy: unknown argument '$1'" >&2; usage; exit 2 ;;
     esac
@@ -621,6 +627,17 @@ else
     echo "  CS-099: these apply BEFORE the binary swap and are NOT rolled back if a"
     echo "  health probe fails. Every one must leave ${BASELINE}'s binaries working"
     echo "  against the new schema."
+    # Same gate, same baseline as deploy.yml's follow-up step, so a release
+    # that declares a rebuild cannot preflight clean and then fail to dispatch.
+    if ! followup_out="$(bash scripts/ci/migration-followup-gate.sh "$VERSION" false "$BASELINE" 2>&1)"; then
+        printf '%s\n' "$followup_out" | sed 's/^/  /'
+        if [ "$FOLLOWUPS_ACK" -eq 0 ]; then
+            block "this range declares REQUIRED-FOLLOWUP command(s) — deploy.yml refuses to start without followups_acknowledged; re-run with --followups-ack only if you will run them straight after the deploy"
+        else
+            FOLLOWUPS_DISPATCH=1
+            echo "  --followups-ack: the dispatch below carries followups_acknowledged=true."
+        fi
+    fi
     compat_dir="$(mktemp -d)"
     if git archive "$VERSION" migrations | tar -x -C "$compat_dir" 2>/dev/null; then
         compat_out="$(MIGRATIONS_DIR="${compat_dir}/migrations" bash scripts/ci/lint-migration-compat.sh --staged 2>&1)"
@@ -684,7 +701,12 @@ echo ""
 echo "gh workflow run deploy.yml \\"
 echo "  -f region=${REGION} \\"
 echo "  -f version=${VERSION} \\"
-echo "  -f binaries=${binaries_csv}"
+if [ "$FOLLOWUPS_DISPATCH" -eq 1 ]; then
+    echo "  -f binaries=${binaries_csv} \\"
+    echo "  -f followups_acknowledged=true"
+else
+    echo "  -f binaries=${binaries_csv}"
+fi
 
 [ ${#BLOCKERS[@]} -eq 0 ] || exit 1
 exit 0

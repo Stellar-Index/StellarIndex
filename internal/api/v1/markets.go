@@ -125,6 +125,22 @@ type marketsStaleReader interface {
 	AssetMarketsAt(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
 }
 
+// poolsStaleReader is marketsStaleReader's /v1/pools counterpart: stale
+// reports rows served from the cache's stale-while-revalidate branch.
+type poolsStaleReader interface {
+	AllPoolsStale(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, bool, error)
+}
+
+// allPools reads through poolsStaleReader when the wired reader has it; an
+// uncached read is live, so stale is false.
+func allPools(ctx context.Context, reader MarketsReader, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, bool, error) {
+	if sr, ok := reader.(poolsStaleReader); ok {
+		return sr.AllPoolsStale(ctx, filter, cursor, limit, order)
+	}
+	rows, next, err := reader.AllPools(ctx, filter, cursor, limit, order)
+	return rows, next, false, err
+}
+
 // Pool is the wire shape for /v1/pools entries. Same fields as
 // Market but with a `source` dimension so the same physical pair
 // traded on two DEXes shows as two rows.
@@ -316,7 +332,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	// fast 503 they can retry against a now-warm cache.
 	pCtx, pCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer pCancel()
-	rows, next, err := reader.AllPools(pCtx, filter, cursor, limit, order)
+	rows, next, stale, err := allPools(pCtx, reader, filter, cursor, limit, order)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -347,7 +363,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	for i := range rows {
 		rows[i].LastPrice = s.adjustListingPriceStrings(pCtx, rows[i].Base, rows[i].Quote, rows[i].LastPrice, "pools")
 	}
-	env := Envelope{Data: rows, Flags: Flags{}}
+	env := Envelope{Data: rows, Flags: Flags{Degraded: stale}}
 	if next != "" {
 		env.Pagination = &Pagination{Next: next}
 	}
@@ -634,6 +650,8 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	// Both enrichment readers are pair-wide (every venue). Beside a
 	// ?source= row's single-venue headline they would contradict it, so omit them.
 	pairWide := source == ""
+	// A dropped enrichment is a partial page the next request fills.
+	enrichFailed := false
 	if includeInception && pairWide && len(rows) > 0 {
 		pairs := make([][2]string, len(rows))
 		for i, m := range rows {
@@ -643,6 +661,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		// page without inception rather than 5xx-ing a listing.
 		if firsts, fErr := reader.FirstTradeBatch(mCtx, pairs); fErr != nil {
 			s.logger.Warn("markets inception batch failed", "err", fErr)
+			enrichFailed = true
 		} else {
 			for i, m := range rows {
 				if t, ok := firsts[m.Base+"|"+m.Quote]; ok {
@@ -667,6 +686,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		// sparkline data).
 		if hist, hErr := reader.GetPairsVolumeHistory24hBatch(mCtx, pairs); hErr != nil {
 			s.logger.Warn("markets sparkline batch failed", "err", hErr)
+			enrichFailed = true
 		} else {
 			for i, m := range rows {
 				key := m.Base + "|" + m.Quote
@@ -691,7 +711,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	// zero and writeEnvelope defaults as_of to now (W8 reconciliation).
 	env := Envelope{
 		Data:  rows,
-		Flags: Flags{Stale: stale},
+		Flags: Flags{Stale: stale, Degraded: stale || enrichFailed},
 	}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())

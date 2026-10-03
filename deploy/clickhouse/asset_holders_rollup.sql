@@ -58,3 +58,29 @@ ORDER BY asset;
 
 CREATE TABLE IF NOT EXISTS stellar.asset_holders_counts_staging
 AS stellar.asset_holders_counts;
+
+-- asset_stats_daily — one concentration snapshot per asset per UTC day
+-- (holders, trustlines incl. zero-balance, top-10/100 balance, Gini),
+-- written by the same cycle AFTER its swap, so a host without these two
+-- tables still publishes boards and only the snapshot step fails. Each
+-- cycle recomputes the current day into the staging twin and swaps it in
+-- with REPLACE PARTITION: history accrues from the first cycle after this
+-- DDL is applied and cannot be backfilled from ledger_entries_current.
+CREATE TABLE IF NOT EXISTS stellar.asset_stats_daily
+(
+    day            Date,
+    asset          String,
+    holders        Int64,
+    trustlines     Int64,
+    balance_total  Int128,
+    top10_balance  Int128,
+    top100_balance Int128,
+    gini           Nullable(Float64),
+    computed_at    DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+PARTITION BY day
+ORDER BY (asset, day);
+
+CREATE TABLE IF NOT EXISTS stellar.asset_stats_daily_staging
+AS stellar.asset_stats_daily;

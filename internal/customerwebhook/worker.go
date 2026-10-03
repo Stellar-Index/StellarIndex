@@ -534,9 +534,6 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 		return
 	}
 
-	sigTS := w.opts.Clock().Unix()
-	signature := w.signFn(wh.SigningKey, sigTS, d.Payload)
-	deliverySig := signDeliveryHMACSHA256(wh.SigningKey, sigTS, d.ID.String(), d.EventType, d.Payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, wh.URL, bytes.NewReader(d.Payload))
 	if err != nil {
 		// URL malformed at request-build time. This is
@@ -553,10 +550,8 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", webhookUserAgent)
 	req.Header.Set("X-StellarIndex-Event", d.EventType)
-	req.Header.Set("X-StellarIndex-Timestamp", strconv.FormatInt(sigTS, 10))
-	req.Header.Set("X-StellarIndex-Signature", "sha256="+signature)
 	req.Header.Set("X-StellarIndex-Delivery-Id", d.ID.String())
-	req.Header.Set("X-StellarIndex-Signature-V2", "sha256="+deliverySig)
+	w.setSignatureHeaders(req.Header, wh, d)
 
 	// Time the HTTP roundtrip + body drain. Recorded against the
 	// outcome label so operators can chart p95/p99 latency
@@ -859,6 +854,22 @@ func jitterDelay(delay time.Duration) time.Duration {
 	}
 	// rand.Int64N(half+1) ∈ [0, half]; result ∈ [half, delay].
 	return half + time.Duration(rand.Int64N(int64(half)+1))
+}
+
+// setSignatureHeaders signs d with the webhook's current key and, while a
+// rotation overlap is open, also with the previous key in the -Previous
+// headers, so a receiver still holding the old key keeps verifying until
+// it switches.
+func (w *Worker) setSignatureHeaders(h http.Header, wh platform.CustomerWebhook, d platform.WebhookDelivery) {
+	now := w.opts.Clock()
+	sigTS := now.Unix()
+	h.Set("X-StellarIndex-Timestamp", strconv.FormatInt(sigTS, 10))
+	h.Set("X-StellarIndex-Signature", "sha256="+w.signFn(wh.SigningKey, sigTS, d.Payload))
+	h.Set("X-StellarIndex-Signature-V2", "sha256="+signDeliveryHMACSHA256(wh.SigningKey, sigTS, d.ID.String(), d.EventType, d.Payload))
+	if prev := wh.ActivePreviousSigningKey(now); prev != nil {
+		h.Set("X-StellarIndex-Signature-Previous", "sha256="+w.signFn(prev, sigTS, d.Payload))
+		h.Set("X-StellarIndex-Signature-V2-Previous", "sha256="+signDeliveryHMACSHA256(prev, sigTS, d.ID.String(), d.EventType, d.Payload))
+	}
 }
 
 // signHMACSHA256 produces the hex-encoded HMAC-SHA-256 signature over the

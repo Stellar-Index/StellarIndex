@@ -48,7 +48,11 @@ func TestWorker_EveryDeliveryHeaderIsInSpec(t *testing.T) {
 
 	store := newFakeStore()
 	webhookID, secret := makeWebhook(t, ts.URL, true)
-	store.addWebhook(platform.CustomerWebhook{ID: webhookID, URL: ts.URL, SigningKey: secret, Enabled: true})
+	// A rotation overlap is open so the -Previous signature headers are sent too.
+	store.addWebhook(platform.CustomerWebhook{
+		ID: webhookID, URL: ts.URL, SigningKey: secret, Enabled: true,
+		PreviousSigningKey: []byte("previous-key"), PreviousSecretExpiresAt: time.Now().Add(time.Hour),
+	})
 	store.enqueue(platform.WebhookDelivery{
 		ID:            uuid.New(),
 		WebhookID:     webhookID,

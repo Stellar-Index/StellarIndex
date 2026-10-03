@@ -123,8 +123,17 @@ func (s *fakeStore) UpdateWebhook(_ context.Context, w platform.CustomerWebhook)
 	return nil
 }
 
-func (s *fakeStore) RotateWebhookSecret(_ context.Context, _ uuid.UUID) (string, error) {
-	return "", errors.New("not implemented")
+func (s *fakeStore) RotateWebhookSecret(_ context.Context, id uuid.UUID, newSecret []byte, previousExpiresAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w, ok := s.webhooks[id]
+	if !ok {
+		return platform.ErrNotFound
+	}
+	w.PreviousSigningKey, w.PreviousSecretExpiresAt = w.SigningKey, previousExpiresAt
+	w.SigningKey = newSecret
+	s.webhooks[id] = w
+	return nil
 }
 
 func (s *fakeStore) DeleteWebhook(_ context.Context, id uuid.UUID) error {
