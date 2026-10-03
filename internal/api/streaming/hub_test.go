@@ -839,3 +839,37 @@ func TestDoc_MaxTopicsIsNotAHardCeiling(t *testing.T) {
 		t.Fatalf("doc.go accessor list omits Hub.BufferedTopicCount, the accessor that now tracks memory since rings allocate lazily")
 	}
 }
+
+func TestHub_ForeignFutureCursorEmitsStreamGap(t *testing.T) {
+	hub := streaming.NewHub(8)
+	hub.Publish("topic", "x", []byte("one"))
+
+	// A cursor minted by a process whose clock is far ahead sorts above
+	// the whole ring: without a marker the resume looks clean.
+	future := fmt.Sprintf("%016x", uint64(time.Now().Add(time.Hour).UnixMilli())<<16)
+	sub, cancel, err := hub.Subscribe([]string{"topic"}, future)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+
+	got := drainNonblocking(t, sub, 1, time.Second)
+	if len(got) != 1 || got[0].Type != streaming.EventTypeStreamGap {
+		t.Fatalf("want one %q marker, got %+v", streaming.EventTypeStreamGap, got)
+	}
+}
+
+func TestHub_OwnCursorEmitsNoStreamGap(t *testing.T) {
+	hub := streaming.NewHub(8)
+	cursor := hub.Publish("topic", "x", []byte("one"))
+
+	sub, cancel, err := hub.Subscribe([]string{"topic"}, cursor)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+
+	if got := drainNonblocking(t, sub, 1, 100*time.Millisecond); len(got) != 0 {
+		t.Fatalf("own-space cursor produced events: %+v", got)
+	}
+}

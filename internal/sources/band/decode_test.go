@@ -460,17 +460,32 @@ func TestDecodeRelay_AllUnknownRecordedAsRaw_USDAndZeroStillSkipped(t *testing.T
 	}
 }
 
-func TestDecodeRelay_EmptyRates_Rejects(t *testing.T) {
+func TestDecodeRelay_EmptyRates_IsNoOp(t *testing.T) {
 	args := []string{
 		encodeAddressArg(t, relayerG),
 		encodeSymbolRatesArg(t, nil),
 		encodeU64Arg(t, 1_745_000_000),
 		encodeU64Arg(t, 1),
 	}
+	updates, err := decodeRelayArgs(FnRelay, args, adapterC,
+		52_000_000, "abcd", 0, "", "", time.Now())
+	if err != nil || updates != nil {
+		t.Errorf("empty symbol_rates: got (%v, %v), want (nil, nil) no-op", updates, err)
+	}
+}
+
+// The empty-vector no-op must not mask a malformed call.
+func TestDecodeRelay_EmptyRates_MalformedResolveTimeRejects(t *testing.T) {
+	args := []string{
+		encodeAddressArg(t, relayerG),
+		encodeSymbolRatesArg(t, nil),
+		encodeAddressArg(t, relayerG),
+		encodeU64Arg(t, 1),
+	}
 	_, err := decodeRelayArgs(FnRelay, args, adapterC,
 		52_000_000, "abcd", 0, "", "", time.Now())
-	if !errors.Is(err, ErrEmptyRates) {
-		t.Errorf("expected ErrEmptyRates, got %v", err)
+	if !errors.Is(err, ErrMalformedArgs) {
+		t.Errorf("expected ErrMalformedArgs, got %v", err)
 	}
 }
 

@@ -145,8 +145,8 @@ func TestAccountOperations_PerArmLimitPreservesCursorArgOrder(t *testing.T) {
 		t.Fatalf("AccountOperations: %v", err)
 	}
 	want := []any{
-		"GTEST", cur.Ledger, cur.A, cur.B, limit, // arm 1: account, cursor, page size
-		"GTEST", cur.Ledger, cur.A, cur.B, limit, // arm 2: same
+		"GTEST", cur.Ledger, cur.Ledger, cur.A, cur.B, limit, // arm 1: account, leading-key bound, cursor, page size
+		"GTEST", cur.Ledger, cur.Ledger, cur.A, cur.B, limit, // arm 2: same
 		limit, // keyset merge
 		limit, // hydration pass (two-phase, 2026-08-13)
 	}

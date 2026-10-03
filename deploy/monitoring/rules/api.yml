@@ -174,7 +174,7 @@ groups:
           component: api
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-stale.md
-          summary: "Price for {{ $labels.asset }} is {{ $value }}s stale"
+          summary: "Price for {{ $labels.asset }} in {{ $labels.quote }} is {{ $value }}s stale"
           description: |
             The most recent aggregated price observation is older than 2 min
             (Freighter SLA is 30 s freshness; we alarm at 4× SLA). Usually
@@ -227,6 +227,30 @@ groups:
             (Order, Sources, Limit, …) means a phantom warmed slot.
             Follow the cache-miss-rate-high runbook.
 
+      # Background refresh failures. The SWR wrappers keep serving the
+      # last good row while a refresh fails, so clients only see
+      # `flags.stale`; this is the operator-side signal. increase()>0
+      # held for 30m means every 15m window contained a failure, i.e.
+      # the refresh is failing persistently, not a one-off blip.
+      - alert: stellarindex_api_cache_refresh_failing
+        expr: |
+          sum by (cache, op) (increase(stellarindex_api_cache_ops_total{result="refresh_error"}[15m])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache-miss-rate-high.md
+          summary: "API cache {{ $labels.cache }}/{{ $labels.op }} background refresh failing"
+          description: |
+            The background refresh for {{ $labels.cache }}/{{ $labels.op }}
+            has failed in every 15 min window for 30 min. Callers are being
+            served the last good value with flags.stale set, and it keeps
+            ageing. Check the API logs for the refresh error and the
+            upstream store (Postgres / ClickHouse) for that op.
+            See the cache-miss-rate-high runbook, "Refresh failures".
+
       # Customer-webhook delivery health (F-1270 audit-2026-05-12).
       # The worker emits one outcome label per attempt; sustained
       # 5xx + network_error means one customer's endpoint is broken.
@@ -262,7 +286,7 @@ groups:
                AND created_at > now() - interval '15 min'
              GROUP BY webhook_id ORDER BY 2 DESC LIMIT 10`.
 
-      # Usage-rollup worker health (#32/#37b). The API binary folds
+      # Usage-rollup worker health. The API binary folds
       # the Redis per-endpoint usage counters into the usage_daily
       # hypertable every 5 min; /v1/account/usage + the dashboard's
       # per-endpoint analytics read the rollups. Sustained failure
@@ -944,6 +968,33 @@ groups:
             as_of_ledger; maintain_failing stays silent throughout because
             nothing here is an error. Check ch-live-catchup and the lake's
             contiguity around the held cursor first.
+
+      # A failed daily re-load retries once an hour (SDEXOrderBookReloadRetry)
+      # while the old book keeps serving, so its load_error is too sparse for
+      # maintain_failing's rate()[15m] + for: 30m to ever hold. The 3h window
+      # outlasts the widest gap between two failed attempts (1h retry + the 30m
+      # load timeout); for: 2h lets the next retry heal a single failure.
+      - alert: stellarindex_sdex_orderbook_reload_failing
+        expr: |
+          sum by (instance) (increase(stellarindex_sdex_orderbook_maintain_total{outcome="load_error"}[3h])) > 0
+          unless sum by (instance) (increase(stellarindex_sdex_orderbook_maintain_total{outcome="load_ok"}[3h])) > 0
+        for: 2h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sdex-orderbook-maintain-failing.md
+          summary: "SDEX order-book full load failing with no success for 2+ hours on {{ $labels.instance }}"
+          description: |
+            Every full-book load attempt on this instance for 2+ hours
+            has failed and none has succeeded. After the first load this
+            is the daily self-heal re-load, retried hourly: the old book
+            keeps serving and advancing, but changes that landed below
+            its cursor stay wrong until a re-load lands, and
+            maintain_failing cannot see errors this sparse. Check
+            ClickHouse health and the load's duration against its 30m
+            timeout first.
 
       # The invariant the order book's quarantine exists to hold: a
       # resting Stellar book can never have best bid > best ask, so a

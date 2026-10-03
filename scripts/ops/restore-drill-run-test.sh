@@ -142,6 +142,7 @@ run_drill() {
   mkdir -p "$d/root" "$d/log" "$d/textfile"
   PATH="$shims:$PATH" PG_BIN="$pgbin" \
     DRILL_ROOT="$d/root" DRILL_LOCK="${FAKE_DRILL_LOCK:-$d/lock}" RESTORE_DRILL_LOG_DIR="$d/log" TEXTFILE_DIR="$d/textfile" \
+    DRILL_POOL_FLOOR_GB="${FAKE_POOL_FLOOR_GB:-0}" \
     DRILL_CH_WINDOW='' STELLARINDEX_POSTGRES_DSN='' WAL_DRAIN_TIMEOUT=0 \
     bash "$DRILL" >"$d/out" 2>&1
   echo $? > "$d/rc"
@@ -191,12 +192,31 @@ else
 $(tail -n 5 "$c/out")"
 fi
 
+# The wrapper's pool watchdog stops a job below 300 G pool free. 600 G free
+# passes the backup-only check for a 300 G backup (425 G) but the restore
+# would be killed mid-way, so it must be refused up front.
+c="$work/c1c"; mkdir -p "$c"
+FAKE_POOL_FLOOR_GB=300 FAKE_DF_AVAIL_G=600 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=1 run_drill "$c"
+if [[ "$(cat "$c/rc")" == "2" ]] && grep -q "300G pool floor — refusing" "$c/out"; then
+  ok "600G free vs 300G backup + 300G pool floor: refused (exit 2)"
+else
+  bad "600G free vs 300G backup + 300G pool floor: expected exit 2 + pool-floor refusal, got exit $(cat "$c/rc"):
+$(tail -n 5 "$c/out")"
+fi
+c="$work/c1d"; mkdir -p "$c"
+FAKE_POOL_FLOOR_GB=300 FAKE_DF_AVAIL_G=800 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=1 run_drill "$c"
+if [[ "$(cat "$c/rc")" != "2" ]] && grep -q "capacity: 800G free" "$c/out"; then
+  ok "800G free vs 300G backup + 300G pool floor: proceeds"
+else
+  bad "800G free vs 300G backup + 300G pool floor: expected to proceed, got exit $(cat "$c/rc")"
+fi
+
 # ─── 2. pgbackrest restore fails: evidence + metric + partial removed ──
 c="$work/c2"; mkdir -p "$c"; seed_stale_pass "$c"
 FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=1 run_drill "$c"
 rc="$(cat "$c/rc")"
 if [[ "$rc" == "1" ]]; then
-  ok "restore failure exits with the failure count (1)"
+  ok "restore failure exits 1 (any failed check)"
 else
   bad "restore failure: expected exit 1, got $rc: $(tail -n 3 "$c/out")"
 fi
@@ -228,7 +248,7 @@ c="$work/c3"; mkdir -p "$c"; seed_stale_pass "$c"
 FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=0 FAKE_PG_START_RC=1 run_drill "$c"
 rc="$(cat "$c/rc")"
 if [[ "$rc" == "1" ]]; then
-  ok "pg_start failure exits with the failure count (1)"
+  ok "pg_start failure exits 1 (any failed check)"
 else
   bad "pg_start failure: expected exit 1, got $rc: $(tail -n 3 "$c/out")"
 fi
@@ -261,7 +281,7 @@ c="$work/c4"; mkdir -p "$c"; seed_stale_pass "$c"
 DRILL_REPO=2 FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=1 run_drill "$c"
 rc="$(cat "$c/rc")"
 if [[ "$rc" == "1" ]]; then
-  ok "repo2 restore failure exits with the failure count (1)"
+  ok "repo2 restore failure exits 1 (any failed check)"
 else
   bad "repo2 restore failure: expected exit 1, got $rc: $(tail -n 3 "$c/out")"
 fi
@@ -540,6 +560,27 @@ if [[ "$leftovers" == "0" ]]; then
   ok "a refusal leaves no temp file behind"
 else
   bad "a refusal left $leftovers temp file(s)"
+fi
+
+echo "restore-drill-run-test: failure exit code never collides with the refusal code"
+FEC="$work/failure_exit_code.sh"
+{
+  echo 'set -uo pipefail'
+  grep '^failure_exit_code()' "$DRILL"
+  # shellcheck disable=SC2016  # emitted into the harness verbatim
+  echo 'for n in 0 1 2 3; do fail_count=$n; failure_exit_code; done'
+} > "$FEC"
+got="$(bash "$FEC" 2>&1 | tr '\n' ' ')"
+if [[ "$got" == "0 1 1 1 " ]]; then
+  ok "0/1/2/3 failed checks exit 0/1/1/1 (2 stays the refusal code)"
+else
+  bad "failure_exit_code for 0..3 failures: expected '0 1 1 1', got '$got'"
+fi
+# shellcheck disable=SC2016  # literal match
+if grep -q 'exit "\$fail_count"' "$DRILL"; then
+  bad "a raw exit \"\$fail_count\" remains in restore-drill.sh"
+else
+  ok "no exit path returns the raw failure count"
 fi
 
 echo "restore-drill-run-test: $pass passed, $fail failed"

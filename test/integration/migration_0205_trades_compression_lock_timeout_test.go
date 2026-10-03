@@ -17,11 +17,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestMigration0199_TradesCompressionGivesUpOnALockedChunk pins that the
+// TestMigration0205_TradesCompressionGivesUpOnALockedChunk pins that the
 // trades compression job bounds its wait for a chunk lock: behind a reader
 // it fails within seconds and leaves the chunk uncompressed instead of
 // queueing every later reader of the chunk behind it.
-func TestMigration0199_TradesCompressionGivesUpOnALockedChunk(t *testing.T) {
+func TestMigration0205_TradesCompressionGivesUpOnALockedChunk(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	c.InstallAliasRegistry(nil)
@@ -38,17 +38,17 @@ func TestMigration0199_TradesCompressionGivesUpOnALockedChunk(t *testing.T) {
 	quiesceCAGGRefreshPolicies(t, ctx, db)
 	before := tradesCompressionJobs(t, ctx, db)
 	if before.builtin != 1 || before.bounded != 0 {
-		t.Fatalf("before 0199: built-in=%d bounded=%d, want 1 and 0", before.builtin, before.bounded)
+		t.Fatalf("before 0205: built-in=%d bounded=%d, want 1 and 0", before.builtin, before.bounded)
 	}
 
-	applyMigrationsUpTo(t, dsn, 199)
-	requireSchemaVersion(t, ctx, db, 199)
+	applyMigrationsUpTo(t, dsn, 205)
+	requireSchemaVersion(t, ctx, db, 205)
 	after := tradesCompressionJobs(t, ctx, db)
 	if after.builtin != 0 || after.bounded != 1 {
-		t.Fatalf("after 0199: built-in=%d bounded=%d, want 0 and 1", after.builtin, after.bounded)
+		t.Fatalf("after 0205: built-in=%d bounded=%d, want 0 and 1", after.builtin, after.bounded)
 	}
 	if after.job != before.job {
-		t.Errorf("after 0199 the job settings changed:\n got %+v\nwant %+v", after.job, before.job)
+		t.Errorf("after 0205 the job settings changed:\n got %+v\nwant %+v", after.job, before.job)
 	}
 
 	store, err := timescale.Open(ctx, dsn)
@@ -135,20 +135,20 @@ func TestMigration0199_TradesCompressionGivesUpOnALockedChunk(t *testing.T) {
 	requireSchemaVersion(t, ctx, db, 198)
 	down := tradesCompressionJobs(t, ctx, db)
 	if down.builtin != 1 || down.bounded != 0 {
-		t.Fatalf("after 0199 down: built-in=%d bounded=%d, want 1 and 0", down.builtin, down.bounded)
+		t.Fatalf("after 0205 down: built-in=%d bounded=%d, want 1 and 0", down.builtin, down.bounded)
 	}
 	if down.job != before.job {
-		t.Errorf("after 0199 down the job settings changed:\n got %+v\nwant %+v", down.job, before.job)
+		t.Errorf("after 0205 down the job settings changed:\n got %+v\nwant %+v", down.job, before.job)
 	}
 	var procs int
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pg_proc WHERE proname = 'trades_compression_policy'`).Scan(&procs); err != nil || procs != 0 {
-		t.Errorf("after 0199 down trades_compression_policy procedures = %d (err %v), want 0", procs, err)
+		t.Errorf("after 0205 down trades_compression_policy procedures = %d (err %v), want 0", procs, err)
 	}
 }
 
-// TestMigration0199_RefusesWhileARestampHoldsItsLock pins that the swap
+// TestMigration0205_RefusesWhileARestampHoldsItsLock pins that the swap
 // does not delete the built-in job under a live usd-volume-restamp -write.
-func TestMigration0199_RefusesWhileARestampHoldsItsLock(t *testing.T) {
+func TestMigration0205_RefusesWhileARestampHoldsItsLock(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	c.InstallAliasRegistry(nil)
@@ -175,9 +175,9 @@ func TestMigration0199_RefusesWhileARestampHoldsItsLock(t *testing.T) {
 		t.Fatalf("take the restamp lock: got=%v err=%v", got, err)
 	}
 
-	err = applyMigrationsUpToErr(dsn, 199)
+	err = applyMigrationsUpToErr(dsn, 205)
 	if err == nil || !strings.Contains(err.Error(), "usd-volume-restamp") {
-		t.Fatalf("0199 with the restamp lock held: err=%v, want a refusal naming usd-volume-restamp", err)
+		t.Fatalf("0205 with the restamp lock held: err=%v, want a refusal naming usd-volume-restamp", err)
 	}
 	if before := tradesCompressionJobs(t, ctx, db); before.builtin != 1 || before.bounded != 0 {
 		t.Fatalf("after the refusal: built-in=%d bounded=%d, want 1 and 0", before.builtin, before.bounded)
@@ -192,10 +192,10 @@ func TestMigration0199_RefusesWhileARestampHoldsItsLock(t *testing.T) {
 		timescale.USDVolumeRestampLockName).Scan(&released); err != nil || !released {
 		t.Fatalf("release the restamp lock: %v %v", released, err)
 	}
-	applyMigrationsUpTo(t, dsn, 199)
-	requireSchemaVersion(t, ctx, db, 199)
+	applyMigrationsUpTo(t, dsn, 205)
+	requireSchemaVersion(t, ctx, db, 205)
 	if after := tradesCompressionJobs(t, ctx, db); after.builtin != 0 || after.bounded != 1 {
-		t.Fatalf("after 0199: built-in=%d bounded=%d, want 0 and 1", after.builtin, after.bounded)
+		t.Fatalf("after 0205: built-in=%d bounded=%d, want 0 and 1", after.builtin, after.bounded)
 	}
 }
 

@@ -30,7 +30,7 @@ name: deploy
 # on tag push — the release workflow produces the artefacts; a human
 # decides when each region picks them up.
 #
-# Stack: depends on PRs #645 (release.yml + Dockerfiles + SemVer
+# Stack: depends on commits 44e48e1f4 (release.yml + Dockerfiles + SemVer
 # policy) which produces the v* tagged release artefacts this
 # workflow downloads.
 
@@ -121,6 +121,13 @@ on:
         # config per docs/operations/deploy-config-apply.md. A config-free
         # release passes the gate regardless.
         description: 'Acknowledge you have applied (or will apply) any config/schema this release changed — binary deploy does NOT apply it. See docs/operations/deploy-config-apply.md.'
+        required: false
+        type: boolean
+        default: false
+      followups_acknowledged:
+        # Separate from config_acknowledged: that one asserts a surface is
+        # ALREADY applied, this one that a rebuild WILL run after the deploy.
+        description: 'Acknowledge you will run every `-- REQUIRED-FOLLOWUP:` command the new migrations declare (replay / CAGG refresh) straight after this deploy. See migrations/README.md rule 12.'
         required: false
         type: boolean
         default: false
@@ -1160,6 +1167,26 @@ jobs:
             echo "live=" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Migration follow-up gate
+        # Before the playbook, so no migration that blanks data (and names
+        # its rebuild with `-- REQUIRED-FOLLOWUP:`) applies until the
+        # operator has acknowledged the rebuild. Same baseline as the
+        # config-apply gate, so a skip-ahead deploy lists every skipped
+        # release's follow-ups. The script is read from the dispatching
+        # commit, not the checked-out tag: a rollback to a tag that predates
+        # the gate must still run it.
+        env:
+          VERSION: ${{ inputs.version }}
+          FOLLOWUPS_ACK: ${{ inputs.followups_acknowledged }}
+          BASELINE: ${{ steps.baseline.outputs.live }}
+        run: |
+          gate="$RUNNER_TEMP/migration-followup-gate.sh"
+          if ! git show "${GITHUB_SHA}:scripts/ci/migration-followup-gate.sh" > "$gate"; then
+            echo "::error::migration follow-up gate: cannot read the gate script at the dispatching commit ${GITHUB_SHA}; refusing to deploy (fail-closed). Dispatch from main."
+            exit 1
+          fi
+          bash "$gate" "$VERSION" "$FOLLOWUPS_ACK" "$BASELINE"
+
       - name: Run deploy playbook
         id: playbook
         # F-1298 (wave 126): inputs through `env:`. Note that
@@ -1232,8 +1259,9 @@ jobs:
         # inventory group r1 does not have — so it stays in the gate.
         #
         # continue-on-error: the binaries are already live by this point.
-        # A failed rule apply must be LOUD (the gate below then fails,
-        # because the surface stays unexempted) but must not abort the
+        # A failed rule apply must be LOUD (the gate below keeps the
+        # surface unexempted, and "Prometheus rules applied (r1)" fails
+        # the job after verification) but must not abort the
         # remaining post-deploy verification. apply-rules.sh restores its
         # own backup on failure, so a bad apply leaves the previous rule
         # set running rather than none.
@@ -1606,6 +1634,20 @@ jobs:
             1) echo "::warning::test net(s) behind ${VERSION} — run the catch-up dispatches listed above (deploy.yml, region=testnet / futurenet, the test-net binary set). fleet-release-drift.yml opens a tracking issue if they are still behind after 24h." ;;
             *) echo "::warning::fleet release parity could not compare every host (see above) — the test-net versions are UNKNOWN, which is not the same as in step." ;;
           esac
+
+      - name: Prometheus rules applied (r1)
+        # prom_rules is continue-on-error, so on its own a failed apply leaves
+        # the job green whenever the gate does not need rules.r1/ (unchanged in
+        # the range, or acknowledged). Last, so every verification above runs.
+        if: ${{ !cancelled() && inputs.region == 'r1' && steps.playbook.outcome == 'success' }}
+        env:
+          OUTCOME: ${{ steps.prom_rules.outcome }}
+        run: |
+          if [ "$OUTCOME" != "success" ]; then
+            echo "::error::Apply Prometheus rules (r1) ended '${OUTCOME}': the binaries are live but r1 may not run this release's alert rules. Fix the cause in that step's log and re-run this deploy."
+            exit 1
+          fi
+          echo "Prometheus rules applied and verified live on r1."
 
       - name: Summary
         if: always()

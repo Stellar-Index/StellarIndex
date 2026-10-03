@@ -362,7 +362,7 @@ func (s *Store) TradesDataVolumePath(ctx context.Context) (string, error) {
 
 // ─── the `trades` compression policy ─────────────────────────────────────
 //
-// migrations/0199 runs the `trades` compression policy as the custom job
+// migrations/0205 runs the `trades` compression policy as the custom job
 // `trades_compression_policy` (the built-in policy under a lock_timeout), a
 // background job on a 12-hour schedule that selects every chunk older than
 // the lag whose status is not fully-compressed and calls compress_chunk on

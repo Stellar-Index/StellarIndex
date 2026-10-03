@@ -28,7 +28,7 @@ severity: P3
 - `SELECT * FROM timescaledb_information.jobs WHERE proc_name IN
   ('policy_compression', 'trades_compression_policy')` shows failures or
   skipped runs. `trades` compresses through the custom job
-  `trades_compression_policy` (migration 0199), which has no
+  `trades_compression_policy` (migration 0205), which has no
   `hypertable_name` in the jobs view; the queries below map it to `trades`.
 
 ## Quick diagnosis (≤ 5 min)

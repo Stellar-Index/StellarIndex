@@ -28,6 +28,7 @@ const TIP_LIVE_STALE_MS = 30_000;
 export function HomeHeroChart() {
   const { price, flags, change24hPct: change } = useNativeUsdPrice();
   const stale = flags.stale === true;
+  const frozen = flags.frozen === true;
   // Make the "live USD price" label honest (RT-2): overlay the tip-price
   // stream on the build-time-baked initial and flash on each tick. A
   // frame older than TIP_LIVE_STALE_MS (stream wedged/quiet) must not
@@ -36,7 +37,9 @@ export function HomeHeroChart() {
   const tip = useTipStream('native');
   const tipFresh =
     tip != null && !isFrameStale(clock, tip.receivedAt, TIP_LIVE_STALE_MS);
-  const tipStr = tipFresh ? tip.data.data.price : undefined;
+  // A frozen pair's /v1/price holds a value the tip stream no longer
+  // agrees with; show the held one rather than a live-looking number.
+  const tipStr = tipFresh && !frozen ? tip.data.data.price : undefined;
   const tipActive = tipStr != null && Number.isFinite(Number(tipStr));
   const livePrice = tipActive
     ? Number(tipStr)
@@ -59,9 +62,11 @@ export function HomeHeroChart() {
             Stellar Lumens ·{' '}
             {tipActive
               ? 'live USD price'
-              : stale
-                ? 'USD price · stale'
-                : 'USD price'}
+              : frozen
+                ? 'USD price · held'
+                : stale
+                  ? 'USD price · stale'
+                  : 'USD price'}
           </span>
           {livePrice != null && (
             <span

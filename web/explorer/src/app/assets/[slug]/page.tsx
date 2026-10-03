@@ -30,6 +30,7 @@ import { AssetScamCallout } from './AssetScamCallout';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
 import { AssetSidebar } from './AssetSidebar';
+import { AssetTrustFacts } from './AssetTrustFacts';
 import { headlinePriceProvenance } from './priceProvenance';
 import { SourceBreakdown } from '../../markets/[pair]/SourceBreakdown';
 import { AssetTabs, ActiveTabSlot } from './AssetTabs';
@@ -873,6 +874,11 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   // they were: since 2026-08-25 the server also withholds price + market
   // cap for a flagged issuer (pricingguard.ScamGate) and ranks the asset
   // last (#356). lib/directory-tags.ts documents both exceptions.
+  const assetIDParts = coin.asset_id.split('-');
+  const issuerStrkey =
+    assetIDParts.length === 2 && assetIDParts[1].startsWith('G')
+      ? assetIDParts[1]
+      : null;
   return (
     <Container className="space-y-8 py-8 sm:py-10">
       <script
@@ -1007,16 +1013,21 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
         </aside>
 
         <div className="min-w-0 space-y-4">
-          {(() => {
-            const parts = coin.asset_id.split('-');
-            const issuer =
-              parts.length === 2 && parts[1].startsWith('G') ? parts[1] : null;
-            return issuer ? (
-              <Suspense fallback={null}>
-                <IssuerPanel gStrkey={issuer} />
-              </Suspense>
-            ) : null;
-          })()}
+          {issuerStrkey ? (
+            <Suspense fallback={null}>
+              <IssuerPanel gStrkey={issuerStrkey} />
+            </Suspense>
+          ) : null}
+
+          <AssetTrustFacts
+            assetID={coin.asset_id}
+            issuer={issuerStrkey}
+            directoryTags={coin.issuer_directory_tags}
+            scamReason={coin.issuer_scam_reason}
+            directoryDomain={coin.issuer_directory_domain}
+            volumeCharacter={coin.volume_character}
+            volumeCharacterSignals={coin.volume_character_signals}
+          />
 
           <Suspense fallback={null}>
             <AssetTabs slug={coin.slug} hasIssuer={false} />
@@ -1372,6 +1383,9 @@ function OverviewBody({
             {detail?.supply_basis && (
               <Stat label="Supply basis" value={detail.supply_basis} />
             )}
+            {detail?.max_supply_basis && (
+              <Stat label="Max basis" value={detail.max_supply_basis} />
+            )}
           </dl>
         </Panel>
       )}
@@ -1462,37 +1476,19 @@ function athDrawdown(
 // ChangePctLabel renders a signed percentage with emerald-up /
 // rose-down / slate-zero colour. Accepts the wire-format string
 // (e.g. "+1.27", "-0.05", "0.00") and the window label.
-// peggedTo recognises the well-known stablecoins on Stellar by
-// asset code and returns the fiat they're soft-pegged to. Used to
-// suppress the meaningless change pills (a 0.00% / 0.05% pill on
-// USDC tells the reader nothing — "Pegged to USD" is honest).
-//
-// Codes are case-sensitive on Stellar (alphanum4 / alphanum12);
-// pegs not on this list still show change pills as before.
+// peggedTo returns the fiat a verified-catalogue stablecoin is pegged to,
+// used to suppress the meaningless change pills (a 0.05% pill on USDC
+// tells the reader nothing). Only codes whose issuer the catalogue
+// vouches for (internal/currency/data/seed.yaml) belong here: for any
+// other code nothing proves the issuer, and a badge on a bare code would
+// hide an impersonator's real price movement.
 function peggedTo(code: string): string | null {
   switch (code) {
     case 'USDC':
-    case 'USDT':
     case 'PYUSD':
-    case 'DAI':
-    case 'BUSD':
-    case 'TUSD':
-    case 'USDP':
       return 'USD';
     case 'EURC':
-    case 'EUROC':
-    case 'EUROB':
       return 'EUR';
-    case 'MXNe':
-      return 'MXN';
-    case 'BRZ':
-      return 'BRL';
-    case 'GBPC':
-      return 'GBP';
-    case 'AUDD':
-      return 'AUD';
-    case 'NGNT':
-      return 'NGN';
     default:
       return null;
   }

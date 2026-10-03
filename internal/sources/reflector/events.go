@@ -124,10 +124,10 @@ var (
 	// timestamp lives in topic[2], not the body).
 	ErrMalformedPayload = errors.New("reflector: malformed event payload")
 
-	// ErrEmptyPrices — prices vector was empty, or every slot was
-	// non-positive. Reflector should never emit this (5-min cadence
-	// implies always at least one price), but guard against it
-	// defensively. Since the oracle capture-totality change (PR-2)
+	// ErrEmptyPrices — every slot of a non-empty prices vector was
+	// non-positive (an empty on-wire vector is a no-op, not this
+	// error). Reflector filters zero prices before publish, so this
+	// should never fire; guard against it defensively. Since the oracle capture-totality change (PR-2)
 	// an unmapped symbol is NOT a reason: it is recorded verbatim
 	// as a `raw:<symbol>` row (canonical.AssetOracleRaw), so an
 	// all-unknown vector decodes to rows, not to this error. The

@@ -112,7 +112,10 @@ type PriceTipQuery struct {
 // `PriceSnapshot.PriceType`:
 //
 //   - "vwap" with `WindowSeconds=N` — at least one trade in the
-//     last N seconds; rolling-window VWAP.
+//     last N seconds; rolling-window VWAP. When the requested window
+//     is empty and shorter than 30s, the server retries once at 30s,
+//     so the returned `WindowSeconds` can exceed the requested one;
+//     read it from the response rather than assuming your input.
 //   - "last_trade" — window was empty; the most recent observation
 //     as-is. Caller reads `ObservedAt` to decide if it's fresh
 //     enough for their use case.
@@ -249,7 +252,7 @@ type HistoryQuery struct {
 }
 
 // HistorySinceInception fetches the full historical series for an
-// asset/quote at the chosen granularity. CAGG-served per PR #195.
+// asset/quote at the chosen granularity. CAGG-served per commit 2ecc50fbd.
 // Long-running for fine-grained granularities; pass a context with
 // an appropriate deadline.
 func (c *Client) HistorySinceInception(ctx context.Context, q HistoryQuery) (*Envelope[HistorySeries], error) {
