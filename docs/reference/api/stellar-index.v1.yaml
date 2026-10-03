@@ -12651,7 +12651,7 @@ paths:
                     venue: CCG5EWFY2KCWWYYEIUMIRG6WSAQFLDR5QE5FMCWY25N36XA5GYTCPQWR
                     assets: [USDC]
                     amount: '480000000'
-                    amount_semantics: stateful_current
+                    amount_semantics: stateful_current_unconfirmed_unit
                     last_activity: { ledger: 63316350, time: '2026-07-10T21:40:11Z' }
                     basis: stateful
                   include_closed: false
@@ -14261,9 +14261,12 @@ components:
               - shares: an exact current count of a protocol's own
                 share/LP token, minted/burned 1:1 with the summed events
                 (Blend Backstop, Phoenix stake, DeFindex vault shares).
-              - stateful_current: the protocol's own most-recently
-                PUBLISHED figure (sorocredit's latest statement amount),
-                not a delta sum this endpoint computed.
+              - stateful_current_unconfirmed_unit: the protocol's own
+                most-recently PUBLISHED figure (sorocredit's latest
+                statement amount), not a delta sum this endpoint computed.
+                The statement's unit/scale is not contract-source-confirmed:
+                the raw on-chain integer is served unscaled, so do not
+                assume 7-decimal USDC base units.
               - signed_delta_sum_unconfirmed_unit: a sum of signed
                 per-event deltas whose unit is not contract-source-
                 confirmed (Aquarius gauge position_update — see
@@ -14280,7 +14283,7 @@ components:
               - not_yet_published: a stateful position the protocol has
                 published no figure for yet (a just-opened sorocredit
                 position); amount is "".
-          enum: [net_underlying_at_event_time, shares, stateful_current, signed_delta_sum_unconfirmed_unit, superseded_by_auction, not_yet_published]
+          enum: [net_underlying_at_event_time, shares, stateful_current_unconfirmed_unit, signed_delta_sum_unconfirmed_unit, superseded_by_auction, not_yet_published]
         last_activity:
           type: object
           description: The most recent contributing event's ledger + close time.
@@ -19102,6 +19105,34 @@ components:
             2,581,052 by mint-burn.
       required: [status]
 
+    AssetTrust:
+      type: object
+      description: >-
+        Banded trust score with the factor breakdown behind it, on
+        `/v1/assets/{asset_id}` only. Output-only: no price, rank or gate
+        reads it. A factor with no evidence is `unknown` with null points and
+        is excluded from the score; it is never scored as zero. A scam-class
+        issuer directory flag forces score 0, and a ticker collision caps the
+        score below the medium threshold (band `low`). The formula is versioned.
+      required: [formula_version, score, band, coverage_pct, factors]
+      properties:
+        formula_version: { type: integer, description: "Version of the weights and thresholds that produced `score`." }
+        score:           { type: [integer, "null"], minimum: 0, maximum: 100, description: "Weight-averaged points of the known factors; null when no factor has evidence." }
+        band:            { type: string, enum: [high, medium, low, unknown], description: "high >= 75, medium >= 40, low below; unknown when score is null." }
+        coverage_pct:    { type: integer, minimum: 0, maximum: 100, description: "Share of total factor weight that had evidence." }
+        factors:
+          type: array
+          items:
+            type: object
+            required: [id, band, points, weight, source, observed]
+            properties:
+              id:       { type: string, enum: [issuer_reputation, ticker_collision, sep1_attestation, market_substance, supply_data] }
+              band:     { type: string, enum: [high, medium, low, unknown] }
+              points:   { type: [integer, "null"], minimum: 0, maximum: 100, description: "Null when band is unknown." }
+              weight:   { type: integer, description: "Weight in the score; weights sum to 100." }
+              source:   { type: string, description: "Data source the evidence was read from." }
+              observed: { type: string, description: "Machine-readable description of what was observed." }
+
     # Asset catalogue
     Asset:
       type: object
@@ -19223,6 +19254,7 @@ components:
         issuer_behaviour:   { $ref: "#/components/schemas/AssetIssuerBehaviour" }
         listing_reference:  { $ref: "#/components/schemas/AssetListingReference" }
         listing_valuation:  { $ref: "#/components/schemas/AssetListingValuation" }
+        trust:              { $ref: "#/components/schemas/AssetTrust" }
         supply_basis:
           type: [string, "null"]
           enum: [xlm_sdf_reserve_exclusion, xlm_sdf_reserve_exclusion_static, xlm_total_only, issuer_exclusion, admin_exclusion, sep41_total_only, override, sep1_declared_max, sep41_lake_flows, classic_lake_flows, classic_trustline_sum, contract_storage_balances, no_metadata]

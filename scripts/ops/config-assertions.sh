@@ -489,6 +489,28 @@ else
   skip minio_prometheus_token_present
 fi
 
+# ── Loki stays loopback-only ─────────────────────────────────────────
+# Loki runs with auth_enabled: false, so the only access control is where
+# it listens. loki.r1.yml is hand-copied to /etc/loki/config.yml and
+# listen addresses are read at start, so a repo pin can sit un-applied
+# behind a pending restart. Check the file (codified) and the live
+# sockets (in effect); a listener on :3100/:9096 bound off loopback fails.
+# Skipped where no Loki config is installed.
+LOKI_CONFIG="${LOKI_CONFIG:-/etc/loki/config.yml}"
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
+loki_loopback_bound() {
+  grep -qE '^[[:space:]]*http_listen_address:[[:space:]]*127\.0\.0\.1[[:space:]]*$' "$LOKI_CONFIG" || return 1
+  grep -qE '^[[:space:]]*grpc_listen_address:[[:space:]]*127\.0\.0\.1[[:space:]]*$' "$LOKI_CONFIG" || return 1
+  local socks
+  socks=$(ss -ltnH 2>/dev/null) || return 1
+  ! grep -E '[:.](3100|9096)[[:space:]]' <<<"$socks" | grep -qvE '^[^[:space:]]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+(127\.0\.0\.1|\[::1\]):'
+}
+if [[ -f "$LOKI_CONFIG" ]]; then
+  assert_cmd loki_loopback_bound loki_loopback_bound
+else
+  skip loki_loopback_bound
+fi
+
 chmod 644 "$TMP"
 mv "$TMP" "$OUT"
 echo "config-assertions: $fails failure(s)" >&2
