@@ -156,10 +156,19 @@ func (c *CachedHistoryReader) evictIfFullLocked() {
 	}
 }
 
+type freshHistoryKey struct{}
+
+// withFreshHistory marks ctx so [CachedHistoryReader.LatestTradePerSource]
+// reads through to the store. A caller that stamps its own as_of=now (the
+// observations stream) must not re-emit a cached trade as current.
+func withFreshHistory(ctx context.Context) context.Context {
+	return context.WithValue(ctx, freshHistoryKey{}, true)
+}
+
 func (c *CachedHistoryReader) LatestTradePerSource(
 	ctx context.Context, pair canonical.Pair, sourceFilter string,
 ) ([]canonical.Trade, error) {
-	if c.ttl <= 0 {
+	if fresh, _ := ctx.Value(freshHistoryKey{}).(bool); fresh || c.ttl <= 0 {
 		return c.HistoryReader.LatestTradePerSource(ctx, pair, sourceFilter)
 	}
 	key := pair.Base.String() + "|" + pair.Quote.String() + "|" + sourceFilter

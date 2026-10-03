@@ -20265,6 +20265,21 @@ components:
                     currency under another issuer also gets an empty
                     series, without this flag, as the detail page withholds
                     its cap. Omitted when false.
+                row_cap_truncated:
+                  type: boolean
+                  description: |
+                    True when an unbounded read (`timeframe=all`) hit the
+                    50 000-bucket response cap, so `points` holds the
+                    OLDEST slice of this pair's history and stops short of
+                    the present. Request a coarser `granularity` to see
+                    the whole span. Omitted when false.
+                data_ends_at:
+                  type: string
+                  format: date-time
+                  description: |
+                    Last bucket of the earliest source read that hit the row
+                    cap; the series is incomplete after it. Only present when
+                    `row_cap_truncated=true`.
               required: [asset_id, quote, timeframe, granularity, price_type, points, truncated, discontinuous]
           required: [data]
 

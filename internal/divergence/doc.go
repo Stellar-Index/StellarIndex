@@ -22,7 +22,7 @@
 //     /simple/price endpoint. Always-on by default (free tier,
 //     no auth).
 //   - [ChainlinkReference] — HTTP reference against Chainlink's
-//     EVM AggregatorV3 `latestAnswer()` selector. Off by default;
+//     EVM AggregatorV3 `latestRoundData()` selector. Off by default;
 //     operator opts in via FeedMap of mainnet feed addresses.
 //   - [OracleReference] — on-chain oracle references (reflector-dex
 //     / reflector-cex / reflector-fx / redstone / band). No HTTP:
