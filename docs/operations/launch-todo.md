@@ -126,7 +126,7 @@ alarm; P0-3 code done (operator purchase pending).
 
 | # | Item | Type | Status |
 |---|------|------|--------|
-| P0-1 | **`sep1-refresh` systemd timer** — no timer existed; issuer `org_name`/`org_verified` re-froze without it. | [code] | ✅ **DONE** — Ansible templates added (daily 05:12 UTC); installed + enabled on r1; ran once. Completes #46. |
+| P0-1 | **`sep1-refresh` systemd timer** — no timer existed; issuer `org_name`/`org_verified` re-froze without it. | [code] | ✅ **DONE** — Ansible templates added (daily 05:12 UTC); installed + enabled on r1; ran once. |
 | P0-2 | **`compute-completeness` systemd timer** — no timer; ADR-0033 verdict frozen 17–21 days. | [code] | ✅ **DONE** — daily 05:30 UTC timer + `run-compute-completeness.sh` self-chunking per-source driver (25k windows so the SDEX reconcile never hits ClickHouse's 12 GiB limit; never regresses ahead sources). Installed + enabled; catch-up kicked off. |
 | P0-3 | **CoinGecko paid plan** — oracle feed dead 11 days (10k free-tier limit → 429 loop). | [OPS+code] | 🟡 **CODE DONE** — poller now auto-switches to `pro-api.coingecko.com` when a Pro key is set (was a foot-gun: Pro keys 404 on the public host). ⏳ **Operator:** buy the Pro plan, set `COINGECKO_API_KEY` in `/etc/default/stellarindex`, restart indexer. |
 | P0-4 | ~~Massive FX poller stalled~~ | [OPS] | ✅ **FALSE ALARM** — FX is healthy; the worker runs in the **API** binary (`fx_quotes persisted rows:797` hourly). The audit misread `observed_at` (data-publish time, not write time). No action. |

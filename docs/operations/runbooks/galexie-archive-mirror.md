@@ -24,7 +24,9 @@ severity: P3
   is `0` (no off-site target configured) or `1` (configured, but no verified
   run has succeeded in 48 h).
 - `systemctl status galexie-archive-mirror.service` shows a failed or
-  long-running run.
+  long-running run. An unconfigured host fails every run on purpose
+  (`no DEST_ENDPOINT configured` in the journal): a run that copied nothing
+  never reports success.
 
 ## Quick diagnosis (≤ 5 min)
 

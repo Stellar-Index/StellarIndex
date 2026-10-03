@@ -260,6 +260,10 @@ SURFACES=(
   'configs/ansible/inventory/'
   'configs/healthchecks/'
   'configs/prometheus/rules.r1/'
+  # r1's scrape config and its single-host Loki/promtail: installed by hand
+  # per their READMEs, never by a deploy.
+  'configs/prometheus/prometheus.r1.yml'
+  'configs/loki/'
   'configs/alertmanager/'
   'deploy/monitoring/rules/'
   'deploy/systemd/'

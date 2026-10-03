@@ -14,7 +14,7 @@ import (
 // computing its own valuations, which is the only reason it cannot
 // publish a figure /v1/assets would withhold. That reuse is a
 // hand-copied call sequence in rwaListingRows, so it can silently fall
-// behind: a gate added to handleAssetListFromAssets would leave the RWA
+// behind: a gate added to buildAssetListPage would leave the RWA
 // page serving the ungated figure, and nothing else in the suite would
 // notice.
 //
@@ -69,7 +69,7 @@ func TestRWAListingPipelineMatchesTheAssetsListing(t *testing.T) {
 // The contract arm reads its own rows — the listing spine cannot express
 // the volume-gate-free read it needs — so it is a second hand-copied
 // call sequence, with the same failure mode: a gate added to
-// handleAssetListFromAssets would leave contract rows serving the
+// buildAssetListPage would leave contract rows serving the
 // ungated figure, and nothing behavioural would notice.
 //
 // Three of the pipeline's steps are no-ops on a contract row (no code,
@@ -83,7 +83,7 @@ func TestRWAContractPipelineMatchesTheAssetsListing(t *testing.T) {
 
 func assertRWAPipelineMatchesListing(t *testing.T, file, fn string) {
 	t.Helper()
-	listing := serverCallsIn(t, "assets.go", "handleAssetListFromAssets")
+	listing := serverCallsIn(t, "assets.go", "buildAssetListPage")
 	rwa := serverCallsIn(t, file, fn)
 	if len(listing) == 0 || len(rwa) == 0 {
 		t.Fatalf("parsed no calls (listing=%v %s=%v) — the guard is not reading what it thinks", listing, fn, rwa)
@@ -117,7 +117,7 @@ func assertRWAPipelineMatchesListing(t *testing.T, file, fn string) {
 
 	for call, reason := range listingOnlyPipelineCalls {
 		if !slices.Contains(listing, call) {
-			t.Errorf("listingOnlyPipelineCalls entry %q is stale — handleAssetListFromAssets no longer calls it (reason recorded: %s)",
+			t.Errorf("listingOnlyPipelineCalls entry %q is stale — buildAssetListPage no longer calls it (reason recorded: %s)",
 				call, reason)
 		}
 	}

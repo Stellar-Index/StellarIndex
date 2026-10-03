@@ -113,7 +113,7 @@ never contribute to VWAP/prices. Double-guarded:
 `IncludeInVWAP=false`. Regression tests:
 `TestFilterForVWAP_ExcludesSoroswapRouter` +
 `TestTick_SoroswapRouterTradeNeverContributesToVWAP`
-(`internal/aggregate/orchestrator`). The #11 sub-invocation rows ride
+(`internal/aggregate/orchestrator`). The ROADMAP #11 sub-invocation rows ride
 the identical single-table path — no new route into `trades`.
 
 ## Deliberately-excluded surface (EVERY-event principle)
