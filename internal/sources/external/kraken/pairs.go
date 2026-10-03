@@ -48,6 +48,18 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 		fiatAssets[code] = a
 	}
 
+	// USD-quoted stablecoins: the only direct observation of a peg against
+	// the dollar, which the API's depeg band compares with $1.
+	stables := []string{"USDT", "USDC"}
+	stableAssets := make(map[string]canonical.Asset, len(stables))
+	for _, code := range stables {
+		a, err := canonical.NewCryptoAsset(code)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", code, err)
+		}
+		stableAssets[code] = a
+	}
+
 	majors := []string{
 		"ADA", "ATOM", "AVAX", "BCH", "BNB", "DASH", "DOGE", "DOT",
 		"LINK", "LTC", "NEAR", "SHIB", "SOL", "TON", "TRX", "UNI", "XRP",
@@ -87,6 +99,13 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 				quote  canonical.Asset
 			}{base.code + "/" + fiat, base.asset, fiatAssets[fiat]})
 		}
+	}
+	for _, code := range stables {
+		spec = append(spec, struct {
+			symbol string
+			base   canonical.Asset
+			quote  canonical.Asset
+		}{code + "/USD", stableAssets[code], fiatAssets["USD"]})
 	}
 	for _, code := range majors {
 		spec = append(spec, struct {

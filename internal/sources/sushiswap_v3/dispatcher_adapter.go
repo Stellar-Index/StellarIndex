@@ -2,6 +2,7 @@ package sushiswap_v3
 
 import (
 	"errors"
+	"strconv"
 	"sync"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -33,9 +34,9 @@ type PoolTokens struct {
 // pools admitted by an operator or discovered after the table was frozen),
 // and live factory `pool_created` events (covering everything from here
 // on). The DB warm reaches the gate only — protocol_contracts stores a
-// contract SET, not token identities — so a pool admitted purely that way
-// is gated IN but has no token mapping until its creation event is
-// replayed; its swaps then fail closed and are counted
+// contract SET, not token identities, so a pool admitted purely that way
+// is gated IN but has no token mapping unless the sushiswap_v3_pools row
+// (contractid.WithAttrSeed) carries it; without one its swaps fail closed and are counted
 // ([Decoder.SkippedUnknownPool]) instead of being written with invented
 // assets.
 //
@@ -77,7 +78,25 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 		}
 		d.poolTokens[pool] = PoolTokens{Token0: tok0, Token1: tok1}
 	}
+	d.seedPersistedPools()
 	return d
+}
+
+// seedPersistedPools restores the token map for pools admitted from the
+// durable pool table, without overriding a curated entry. A row that no
+// longer parses is skipped: the pool stays gated and fails closed.
+func (d *Decoder) seedPersistedPools() {
+	for pool, a := range d.reg.AllAttrs() {
+		if _, ok := d.poolTokens[pool]; ok {
+			continue
+		}
+		tok0, err0 := canonical.NewSorobanAsset(a[AttrToken0])
+		tok1, err1 := canonical.NewSorobanAsset(a[AttrToken1])
+		if err0 != nil || err1 != nil {
+			continue
+		}
+		d.poolTokens[pool] = PoolTokens{Token0: tok0, Token1: tok1}
+	}
 }
 
 // Name implements [dispatcher.Decoder].
@@ -130,20 +149,19 @@ func (d *Decoder) Matches(ev events.Event) bool {
 
 // Decode implements [dispatcher.Decoder].
 //
-// Only `swap` produces output. `mint` / `burn` / `collect` (the
-// concentrated-liquidity position lifecycle) and `init` / `upgraded` /
-// `migrated` (the pool lifecycle) are recognized, gated and deliberately
-// projected as ZERO rows: they are real events with no trades in them and
-// no table of their own yet, so counting them as expected-zero is what
-// keeps the ADR-0033 re-derive honest rather than going blind on their
-// ledgers. They are the natural next increment for this source — a
-// positions/liquidity table, in the shape of soroswap_liquidity.
+// `swap` produces a trade; `mint` / `burn` / `collect` (the
+// concentrated-liquidity position lifecycle) produce a PositionEvent. The
+// pool lifecycle (`init` / `upgraded` / `migrated`) is recognized, gated and
+// deliberately projected as ZERO rows, so the ADR-0033 re-derive counts it
+// as expected-zero rather than going blind on those ledgers.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
-	switch classify(&ev) {
+	switch kind := classify(&ev); kind {
 	case EventPoolCreated:
 		return nil, d.seedFromCreation(ev)
 	case EventSwap:
 		return d.emitTrade(ev)
+	case EventMint, EventBurn, EventCollect:
+		return d.emitPosition(ev, kind)
 	default:
 		return nil, nil
 	}
@@ -165,10 +183,27 @@ func (d *Decoder) seedFromCreation(ev events.Event) error {
 	d.mu.Lock()
 	d.poolTokens[fields.Pool] = PoolTokens{Token0: fields.Token0, Token1: fields.Token1}
 	d.mu.Unlock()
-	// Seed fires the persistence hook outside the decoder lock, so the
+	// Seed fires the persistence hooks outside the decoder lock, so the
 	// mapping survives a restart after the cursor has passed this ledger.
-	d.reg.Seed(fields.Pool, ev.ContractID, ev.Ledger)
+	d.reg.SeedWithAttrs(fields.Pool, ev.ContractID, ev.Ledger, poolAttrs(fields))
 	return nil
+}
+
+// Attribute keys of the persisted per-pool row.
+const (
+	AttrToken0      = "token0"
+	AttrToken1      = "token1"
+	AttrFeePips     = "fee_pips"
+	AttrTickSpacing = "tick_spacing"
+)
+
+func poolAttrs(f PoolCreatedFields) contractid.Attrs {
+	return contractid.Attrs{
+		AttrToken0:      f.Token0.String(),
+		AttrToken1:      f.Token1.String(),
+		AttrFeePips:     strconv.FormatUint(uint64(f.FeePips), 10),
+		AttrTickSpacing: strconv.FormatInt(int64(f.TickSpacing), 10),
+	}
 }
 
 // emitTrade decodes one pool `swap` into a TradeEvent, or into a counted
@@ -214,6 +249,45 @@ func (d *Decoder) emitTrade(ev events.Event) ([]consumer.Event, error) {
 		return nil, err
 	}
 	return []consumer.Event{TradeEvent{Trade: trade}}, nil
+}
+
+// emitPosition decodes one pool mint / burn / collect into a PositionEvent.
+// A gated pool with no token mapping fails closed exactly like a swap does
+// (counted ErrUnknownPool, no row), never a row with invented assets.
+func (d *Decoder) emitPosition(ev events.Event, kind string) ([]consumer.Event, error) {
+	closedAt, err := ev.EventClosedAt()
+	if err != nil {
+		return nil, err
+	}
+	fields, err := decodePositionFields(kind, ev.Value)
+	if err != nil {
+		return nil, err
+	}
+	tokens, known := d.poolTokensFor(ev.ContractID)
+	if !known {
+		d.bumpUnknownPool()
+		return nil, ErrUnknownPool
+	}
+	return []consumer.Event{PositionEvent{
+		ContractID: ev.ContractID,
+		Ledger:     ev.Ledger,
+		TxHash:     ev.TxHash,
+		OpIndex:    uint32(ev.OperationIndex),
+		//nolint:gosec // EventIndex is non-negative by Soroban spec.
+		EventIndex: uint32(ev.EventIndex),
+		ObservedAt: closedAt,
+		Action:     kind,
+		Owner:      fields.Owner,
+		Sender:     fields.Sender,
+		Recipient:  fields.Recipient,
+		Token0:     tokens.Token0.String(),
+		Token1:     tokens.Token1.String(),
+		TickLower:  fields.TickLower,
+		TickUpper:  fields.TickUpper,
+		Liquidity:  fields.Liquidity,
+		Amount0:    fields.Amount0,
+		Amount1:    fields.Amount1,
+	}}, nil
 }
 
 // poolTokensFor reads the token map under the read lock. One helper for

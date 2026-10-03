@@ -148,6 +148,48 @@ func caseBodyPersists(t *testing.T, fn *ast.FuncDecl) map[string]bool {
 	return out
 }
 
+// caseTypesCalling returns the `pkg.Type` case labels of fn's type
+// switches whose body calls the plain function callee(...).
+func caseTypesCalling(t *testing.T, fn *ast.FuncDecl, callee string) map[string]bool {
+	t.Helper()
+	out := map[string]bool{}
+	ast.Inspect(fn, func(n ast.Node) bool {
+		sw, ok := n.(*ast.TypeSwitchStmt)
+		if !ok {
+			return true
+		}
+		for _, stmt := range sw.Body.List {
+			cc, ok := stmt.(*ast.CaseClause)
+			if !ok {
+				continue
+			}
+			calls := false
+			for _, s := range cc.Body {
+				ast.Inspect(s, func(n ast.Node) bool {
+					if call, ok := n.(*ast.CallExpr); ok {
+						if id, ok := call.Fun.(*ast.Ident); ok && id.Name == callee {
+							calls = true
+						}
+					}
+					return true
+				})
+			}
+			if !calls {
+				continue
+			}
+			for _, expr := range cc.List {
+				if sel, ok := expr.(*ast.SelectorExpr); ok {
+					if pkg, ok := sel.X.(*ast.Ident); ok {
+						out[pkg.Name+"."+sel.Sel.Name] = true
+					}
+				}
+			}
+		}
+		return true
+	})
+	return out
+}
+
 // bodyCallsPersist reports whether stmts (a case clause's body)
 // contains, anywhere in its subtree, a call to a `persist*` helper or
 // a `store.<Method>(...)` call — the two shapes every real HandleEvent
@@ -303,6 +345,15 @@ func TestLockstep_ProjectedEventsHavePersistArms(t *testing.T) {
 	for _, typ := range sortedKeys(trades) {
 		if !handle[typ] {
 			t.Errorf("tradeFromEvent lists %s but HandleEvent has no arm — batch path and slow path disagree", typ)
+		}
+	}
+	callers := caseTypesCalling(t, handleFn, "persistTrade")
+	if len(callers) == 0 {
+		t.Fatal("no HandleEvent arm calls persistTrade — renamed? update this guard")
+	}
+	for _, typ := range sortedKeys(callers) {
+		if !trades[typ] {
+			t.Errorf("HandleEvent arm for %s calls persistTrade but tradeFromEvent omits it — the event silently takes the slow per-event path", typ)
 		}
 	}
 }

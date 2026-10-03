@@ -249,6 +249,14 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	// 0196 — trades.tx_index, the post-insert apply-order tag.
 	assertColumnType(t, db, ctx, "trades", "tx_index", "integer")
 
+	// 0203 — sushiswap_v3_position_events: hypertable, compression, no
+	// retention, bigint generation from creation.
+	assertHypertableExists(t, db, ctx, "sushiswap_v3_position_events")
+	assertCompressionEnabled(t, db, ctx, "sushiswap_v3_position_events", true)
+	assertPolicyAttached(t, db, ctx, "sushiswap_v3_position_events", "policy_compression")
+	assertPolicyAbsent(t, db, ctx, "sushiswap_v3_position_events", "policy_retention")
+	assertColumnType(t, db, ctx, "sushiswap_v3_position_events", "derive_generation", "bigint")
+
 	// ─── Down: roll everything back ─────────────────────────────
 	// 0191's down refuses (LOUD) while any trades row has a zero leg;
 	// the two probe rows accepted above must go first.
@@ -271,6 +279,7 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	assertTableAbsent(t, db, ctx, "oracle_updates")
 	assertTableAbsent(t, db, ctx, "soroban_events")
 	assertTableAbsent(t, db, ctx, "fx_fixings")
+	assertTableAbsent(t, db, ctx, "sushiswap_v3_pools")
 	for _, cagg := range []string{
 		"prices_1m", "prices_15m", "prices_1h",
 		"prices_4h", "prices_1d", "prices_1w", "prices_1mo",
