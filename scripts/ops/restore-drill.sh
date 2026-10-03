@@ -27,7 +27,8 @@
 #   DRILL_REPO=2 bash scripts/ops/restore-drill.sh    # prove the OFFSITE copy (restore-drill-offsite.timer)
 #   DRILL_CH_WINDOW=100000 bash scripts/ops/restore-drill.sh  # + CH re-derive sample
 #
-# Exit code: number of failed verification checks; 2 for a precondition
+# Exit code: 1 if any verification check failed (the count is in the
+# evidence log and the failures metric), else 0; 2 for a precondition
 # refusal (wrong user, missing tool, too little free space, or a
 # drill-script/binary flag drift — see the CH preflight below). A
 # precondition refusal is deliberately NOT counted as a verification
@@ -397,8 +398,8 @@ emit_metric() {
   # remove. A withheld line leaves its series absent, and both staleness
   # alerts already read absence.
   #
-  # This never changes the drill's exit code: `exit "$fail_count"` is
-  # the count of FAILED CHECKS OF THE BACKUP, and a metric-writer fault
+  # This never changes the drill's exit code: `exit "$(failure_exit_code)"` is
+  # the verdict on FAILED CHECKS OF THE BACKUP, and a metric-writer fault
   # is not a fact about the backup (the same reasoning that made the
   # lock a refusal rather than a counted failure). The tally gauge and
   # the journal carry it instead.
@@ -472,15 +473,18 @@ emit_metric() {
   return 0
 }
 
+# A raw count would collide with the refusal code at exactly 2 failures.
+failure_exit_code() { if [[ "$fail_count" -gt 0 ]]; then echo 1; else echo 0; fi; }
+
 # abort_drill <stage>: a stage the rest of the drill cannot proceed
 # without has failed. Record it (evidence + metric) and exit with the
-# failure count — never a bare `exit` from mid-drill.
+# failure code — never a bare `exit` from mid-drill.
 abort_drill() {
   drill_aborted_at="$1"
   note "aborting at $drill_aborted_at — recording the run before exit"
   record_evidence
   emit_metric
-  exit "$fail_count"
+  exit "$(failure_exit_code)"
 }
 
 # ─── phase 1: restore ───────────────────────────────────────────────
@@ -699,4 +703,4 @@ record_evidence
 emit_metric
 
 note "done: $fail_count failure(s)"
-exit "$fail_count"
+exit "$(failure_exit_code)"

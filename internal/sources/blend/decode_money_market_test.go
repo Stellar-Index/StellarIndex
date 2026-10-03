@@ -785,3 +785,64 @@ func TestDecoderDecode_AllEventKinds(t *testing.T) {
 		})
 	}
 }
+
+// Every position kind shares one positional body, (token_amount,
+// b_or_d_amount). Both are i128, so arity and type guards cannot
+// catch a swapped order; distinct values per kind make it visible.
+func TestDecodePositionEvent_FieldOrderAllKinds(t *testing.T) {
+	t.Parallel()
+	kinds := []struct {
+		kind  string
+		topic string
+	}{
+		{EventSupply, TopicSymbolSupply},
+		{EventWithdraw, TopicSymbolWithdraw},
+		{EventSupplyCollateral, TopicSymbolSupplyCollateral},
+		{EventWithdrawCollateral, TopicSymbolWithdrawCollateral},
+		{EventBorrow, TopicSymbolBorrow},
+		{EventRepay, TopicSymbolRepay},
+	}
+	asset := contractStrkeyFromSeed(t, 0x61)
+	user := accountStrkeyFromSeed(t, 0x62)
+	for i, k := range kinds {
+		tokenAmt := big.NewInt(int64(1_000_000_000 + i))
+		bdAmt := big.NewInt(int64(2_000_000_000 + i))
+		ev := &events.Event{
+			ContractID: contractStrkeyFromSeed(t, 0x60),
+			Topic: []string{
+				k.topic,
+				encodeScVal(t, addressScVal(t, asset)),
+				encodeScVal(t, addressScVal(t, user)),
+			},
+			Value: encodeScVal(t, vecScVal(i128ScVal(t, tokenAmt), i128ScVal(t, bdAmt))),
+		}
+		if got := classifyAny(ev); got != k.kind {
+			t.Fatalf("%s: classifyAny=%q", k.kind, got)
+		}
+		out, err := decodePositionEvent(ev, k.kind, time.Time{})
+		if err != nil {
+			t.Fatalf("%s: %v", k.kind, err)
+		}
+		if out.TokenAmount.Cmp(tokenAmt) != 0 || out.BOrDAmount.Cmp(bdAmt) != 0 {
+			t.Errorf("%s: token=%s b_or_d=%s want %s / %s",
+				k.kind, out.TokenAmount, out.BOrDAmount, tokenAmt, bdAmt)
+		}
+	}
+}
+
+// A claim body with its fields swapped must fail rather than
+// promote the wrong element as an amount.
+func TestDecodeClaim_SwappedBodyRejected(t *testing.T) {
+	t.Parallel()
+	ev := &events.Event{
+		ContractID: contractStrkeyFromSeed(t, 0x63),
+		Topic: []string{
+			TopicSymbolClaim,
+			encodeScVal(t, addressScVal(t, accountStrkeyFromSeed(t, 0x64))),
+		},
+		Value: encodeScVal(t, vecScVal(i128ScVal(t, big.NewInt(5)), vecScVal(u32ScVal(1)))),
+	}
+	if _, err := decodeClaim(ev, time.Time{}); err == nil {
+		t.Fatal("swapped claim body decoded without error")
+	}
+}

@@ -19102,6 +19102,34 @@ components:
             2,581,052 by mint-burn.
       required: [status]
 
+    AssetTrust:
+      type: object
+      description: >-
+        Banded trust score with the factor breakdown behind it, on
+        `/v1/assets/{asset_id}` only. Output-only: no price, rank or gate
+        reads it. A factor with no evidence is `unknown` with null points and
+        is excluded from the score; it is never scored as zero. A scam-class
+        issuer directory flag forces score 0, and a ticker collision caps the
+        score below the medium threshold (band `low`). The formula is versioned.
+      required: [formula_version, score, band, coverage_pct, factors]
+      properties:
+        formula_version: { type: integer, description: "Version of the weights and thresholds that produced `score`." }
+        score:           { type: [integer, "null"], minimum: 0, maximum: 100, description: "Weight-averaged points of the known factors; null when no factor has evidence." }
+        band:            { type: string, enum: [high, medium, low, unknown], description: "high >= 75, medium >= 40, low below; unknown when score is null." }
+        coverage_pct:    { type: integer, minimum: 0, maximum: 100, description: "Share of total factor weight that had evidence." }
+        factors:
+          type: array
+          items:
+            type: object
+            required: [id, band, points, weight, source, observed]
+            properties:
+              id:       { type: string, enum: [issuer_reputation, ticker_collision, sep1_attestation, market_substance, supply_data] }
+              band:     { type: string, enum: [high, medium, low, unknown] }
+              points:   { type: [integer, "null"], minimum: 0, maximum: 100, description: "Null when band is unknown." }
+              weight:   { type: integer, description: "Weight in the score; weights sum to 100." }
+              source:   { type: string, description: "Data source the evidence was read from." }
+              observed: { type: string, description: "Machine-readable description of what was observed." }
+
     # Asset catalogue
     Asset:
       type: object
@@ -19223,6 +19251,7 @@ components:
         issuer_behaviour:   { $ref: "#/components/schemas/AssetIssuerBehaviour" }
         listing_reference:  { $ref: "#/components/schemas/AssetListingReference" }
         listing_valuation:  { $ref: "#/components/schemas/AssetListingValuation" }
+        trust:              { $ref: "#/components/schemas/AssetTrust" }
         supply_basis:
           type: [string, "null"]
           enum: [xlm_sdf_reserve_exclusion, xlm_sdf_reserve_exclusion_static, xlm_total_only, issuer_exclusion, admin_exclusion, sep41_total_only, override, sep1_declared_max, sep41_lake_flows, classic_lake_flows, classic_trustline_sum, contract_storage_balances, no_metadata]
@@ -20236,6 +20265,21 @@ components:
                     currency under another issuer also gets an empty
                     series, without this flag, as the detail page withholds
                     its cap. Omitted when false.
+                row_cap_truncated:
+                  type: boolean
+                  description: |
+                    True when an unbounded read (`timeframe=all`) hit the
+                    50 000-bucket response cap, so `points` holds the
+                    OLDEST slice of this pair's history and stops short of
+                    the present. Request a coarser `granularity` to see
+                    the whole span. Omitted when false.
+                data_ends_at:
+                  type: string
+                  format: date-time
+                  description: |
+                    Last bucket of the earliest source read that hit the row
+                    cap; the series is incomplete after it. Only present when
+                    `row_cap_truncated=true`.
               required: [asset_id, quote, timeframe, granularity, price_type, points, truncated, discontinuous]
           required: [data]
 
