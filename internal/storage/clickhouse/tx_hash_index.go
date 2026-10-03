@@ -56,6 +56,23 @@ func BackfillTxHashIndex(ctx context.Context, addr string, from, to, window uint
 		}, logf)
 }
 
+// MarkTxHashIndexCovered records that stellar.tx_hash_index holds every
+// transaction in [from, to] so the reader may treat an index miss as
+// authoritative. Call it only after a genesis→tip BackfillTxHashIndex run
+// succeeded.
+func MarkTxHashIndexCovered(ctx context.Context, addr string, from, to uint32) error {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if err := conn.Exec(ctx,
+		`INSERT INTO stellar.tx_hash_index_coverage (covered_from, covered_to) VALUES (?, ?)`, from, to); err != nil {
+		return fmt.Errorf("clickhouse: tx-hash-index coverage marker: %w", err)
+	}
+	return nil
+}
+
 // runWindowedBackfill walks [from, to] in windows of `window` ledgers,
 // running exec once per window and reporting progress (+ the exact resume
 // point) after each. Shared loop shell behind BackfillTxHashIndex and

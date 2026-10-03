@@ -59,7 +59,7 @@ type SEP41KindTotals struct {
 
 // StorageSEP41SupplyReader satisfies [SEP41SupplyReader] by
 // composing the SEP41 event-sum totals (sep41_supply_events) plus the
-// SAC-balance per-contract lookup primitive (#303). Per ADR-0023
+// SAC-balance per-contract lookup primitive (3e215c2e2). Per ADR-0023
 // PR 3/4 — closes the algorithm 3 reader path.
 //
 // AdminBalance handling: Algorithm 3 names AdminBalance as a
@@ -204,7 +204,7 @@ var _ SEP41SupplyReader = (*StorageSEP41SupplyReader)(nil)
 // AssetBoundSEP41Computer adapts a [SEP41Computer] to the
 // [SnapshotComputer] interface (the [Refresher]'s computer
 // contract) by baking in a fixed [canonical.Asset]. Mirrors
-// [AssetBoundClassicComputer] from #307 — the aggregator
+// [AssetBoundClassicComputer] from f93e4bc2d — the aggregator
 // constructs one per watched SEP-41 contract for its dedicated
 // Refresher goroutine.
 type AssetBoundSEP41Computer struct {

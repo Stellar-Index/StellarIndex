@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
-import { API_BASE_URL } from '@/api/client';
+import { API_BASE_URL, timeoutSignal } from '@/api/client';
 import { Button, Segmented } from '@/components/ui';
 import {
   isFrameStale,
@@ -260,7 +260,7 @@ export function MarketChart({
     queryKey: ['/v1/ohlc', base, quote, activeGrain, limit],
     queryFn: async ({ signal }) => {
       const url = `${API_BASE_URL}/v1/ohlc?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&interval=${activeGrain}&limit=${limit}`;
-      const r = await fetch(url, { signal });
+      const r = await fetch(url, { signal: timeoutSignal(undefined, signal) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const env = (await r.json()) as { data?: { intervals?: OHLCBar[] } };
       return env.data?.intervals ?? [];

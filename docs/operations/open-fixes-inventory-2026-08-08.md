@@ -32,7 +32,7 @@ status: point-in-time audit
 >
 > | Was | Now tracked as |
 > |---|---|
-> | 7 — per-account deep trade history (CH account-keyed mirror vs accept the bounded horizon) | **W8 item 13** (`accounts/{g}/trades` windowing) — needs the decision, not just the code |
+> | 7 — per-account deep trade history (CH account-keyed mirror vs accept the bounded horizon) | **W8 item 13** (`accounts/{g}/trades` windowing) — decided: ClickHouse account-keyed `stellar.trades_by_account`; the build remains |
 > | 12 residual — r1 `[supply].sac_wrappers` for USDC/AQUA (the code shipped; the r1 config has no landing evidence, so the "53.5% of USDC volume invisible" headline is not closed) | **W2** (asset identity) + an r1 config confirm |
 > | 14 — SEP-41 genesis rollup resets (12 of 13 remain) | **W5.4** — gated on the `ops_batch` ClickHouse profile on r1 |
 > | 15 — LP reserve/trustline backfill path | **W8 item 12** — design decision outstanding |

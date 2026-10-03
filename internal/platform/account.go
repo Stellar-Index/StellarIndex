@@ -210,7 +210,7 @@ func (t Tier) MaxWebhooks() int {
 }
 
 // MaxPriceAlerts returns the per-tier ceiling on registered price
-// alerts an account can hold (BACKLOG #60). Same tier-aware ladder
+// alerts an account can hold. Same tier-aware ladder
 // shape as [Tier.MaxWebhooks]; the override seam is
 // dashboardpricealerts.Config.AlertQuotas. Unknown tiers are treated
 // as free, matching the other tier ladders.

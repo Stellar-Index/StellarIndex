@@ -7,7 +7,7 @@
 //
 // Design rationale: docs/architecture/rozo-stellar-coverage.md.
 //
-// Wiring (#41): decode.go decodes; consumer.go projects each event
+// Wiring (46e0087e8): decode.go decodes; consumer.go projects each event
 // into the canonical rozo.Event row; dispatcher_adapter.go is the
 // dispatcher Decoder; the indexer's sink persists via
 // Store.InsertRozoEvent into the rozo_events hypertable

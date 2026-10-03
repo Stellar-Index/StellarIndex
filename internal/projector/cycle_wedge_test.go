@@ -672,6 +672,44 @@ func TestCycle_FlooredDeadlineStallSetsAndClearsWedgeGauge(t *testing.T) {
 	}
 }
 
+// TestCycle_FloorStallEscalatesCycleBudget: at the floor the window cannot
+// shrink, so each consecutive floor-stall must lengthen the next cycle's
+// deadline (capped), and an advancing cycle must reset it.
+func TestCycle_FloorStallEscalatesCycleBudget(t *testing.T) {
+	const source = "wedge-budget-escalation"
+	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+
+	var remaining time.Duration
+	h := newWedgeHarness(t, source, rows, 2000, func(consumer.Event) error { return context.DeadlineExceeded })
+	h.window = MinBatchLimit
+	h.proj.sink = func(ctx context.Context, _ consumer.Event) error {
+		if d, ok := ctx.Deadline(); ok {
+			remaining = time.Until(d)
+		}
+		return nil
+	}
+
+	var wt wedgeTracker
+	if got := wt.budget(); got != PerSourceTimeout {
+		t.Fatalf("fresh budget = %v, want %v", got, PerSourceTimeout)
+	}
+	for i := 0; i < 10; i++ {
+		wt.floorStall(source)
+	}
+	if got, want := wt.budget(), PerSourceTimeout*MaxCycleBudgetMultiple; got != want {
+		t.Fatalf("capped budget = %v, want %v", got, want)
+	}
+
+	h.wedge = wedgeTracker{floorStalls: 2}
+	h.cycle()
+	if remaining <= 2*PerSourceTimeout || remaining > 4*PerSourceTimeout {
+		t.Fatalf("cycle deadline = %v, want in (%v, %v] after 2 floor-stalls", remaining, 2*PerSourceTimeout, 4*PerSourceTimeout)
+	}
+	if got := h.wedge.budget(); got != PerSourceTimeout {
+		t.Fatalf("budget after an advancing cycle = %v, want %v", got, PerSourceTimeout)
+	}
+}
+
 // TestCycle_NonFlooredDeadlineDoesNotWedge is the anti-false-positive half: a
 // source that keeps blowing the deadline but is STILL SHRINKING (window above
 // the floor) is adapting, not wedged — the flag must stay 0 until the window

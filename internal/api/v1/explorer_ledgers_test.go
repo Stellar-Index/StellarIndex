@@ -205,6 +205,10 @@ func (s *stubExplorerReader) Cap67MovementsWatermark(_ context.Context) (uint32,
 	return s.cap67WM, nil
 }
 
+func (s *stubExplorerReader) Cap67SupplyCoverage(_ context.Context) (uint32, uint32, bool, error) {
+	return 0, 0, false, nil
+}
+
 func (s *stubExplorerReader) AccountsStats(_ context.Context) (clickhouse.AccountsStats, bool, error) {
 	return s.accountsStats, s.accountsStats.TotalAccounts > 0, nil
 }
