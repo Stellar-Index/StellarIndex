@@ -7,9 +7,12 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
@@ -238,7 +241,7 @@ func (o *Orchestrator) unpricedBucket(
 			Class:  o.classOf(pair),
 			Reason: "phase2:unscored",
 		}
-		o.stepFreezeLifecycle(ctx, pair, window, stateKey, freeze.Signal{Now: now}, decision, o.prevVWAPs[stateKey])
+		o.stepFreezeLifecycle(ctx, pair, window, stateKey, freeze.Signal{Now: now}, decision)
 	}
 	return nil, nil
 }
@@ -265,7 +268,6 @@ func (o *Orchestrator) stepPhase2Freeze(
 	conf confidenceComputation,
 	confOK bool,
 	sourceCount int,
-	prevVWAP *big.Rat,
 	vwap *big.Rat,
 	compositeRef compositeReference,
 ) bool {
@@ -317,7 +319,7 @@ func (o *Orchestrator) stepPhase2Freeze(
 			}
 		}
 	}
-	return o.stepFreezeLifecycle(ctx, pair, window, stateKey, sig, decision, prevVWAP)
+	return o.stepFreezeLifecycle(ctx, pair, window, stateKey, sig, decision)
 }
 
 // corroborated reports whether a corroborating lens produced a
@@ -358,7 +360,6 @@ func (o *Orchestrator) stepFreezeLifecycle(
 	stateKey string,
 	sig freeze.Signal,
 	decision anomaly.Decision,
-	prevVWAP *big.Rat,
 ) bool {
 	prev, overridden, err := o.loadFreezeState(ctx, pair, window, stateKey)
 	if err != nil {
@@ -382,7 +383,7 @@ func (o *Orchestrator) stepFreezeLifecycle(
 	if !prev.Active() && !out.State.OverriddenAt.IsZero() {
 		obs.AnomalyFreezeRefiredAfterOverrideTotal.Inc()
 	}
-	o.engageFreeze(ctx, pair, window, stateKey, decision, prevVWAP, out)
+	o.engageFreeze(ctx, pair, window, stateKey, decision, out)
 	return true
 }
 
@@ -483,7 +484,6 @@ func (o *Orchestrator) engageFreeze(
 	window time.Duration,
 	stateKey string,
 	decision anomaly.Decision,
-	prevVWAP *big.Rat,
 	out freeze.Outcome,
 ) {
 	o.freezeStates[stateKey] = out.State
@@ -512,6 +512,7 @@ func (o *Orchestrator) engageFreeze(
 	// of whether a FreezeWriter is wired — the LKG keeps serving
 	// either way.
 	o.keepFrozenVWAPAlive(ctx, pair, window, out.MarkerTTL)
+	o.reseedFrozenVWAP(ctx, pair, window, stateKey, out.MarkerTTL)
 
 	if o.cfg.FreezeWriter == nil {
 		return
@@ -520,8 +521,8 @@ func (o *Orchestrator) engageFreeze(
 	// stays in cache because the caller skips the cache write).
 	// Empty string when no prior bucket exists (first-tick freeze).
 	var frozenValue string
-	if prevVWAP != nil {
-		frozenValue = formatRatFixed(prevVWAP, 12)
+	if held := o.prevVWAPs[stateKey]; held != nil {
+		frozenValue = formatRatFixed(held, 12)
 	}
 	// Record the ladder against the window that owns it: the marker is
 	// pair-scoped (its presence is the API's pair-wide flags.frozen) but
@@ -536,6 +537,36 @@ func (o *Orchestrator) engageFreeze(
 		// failed, the API won't see flags.frozen. Operators alert on
 		// AnomalyFreezeEngagedTotal vs the API-side flag rate; a
 		// sustained gap = the writer is broken. Don't fail the tick.
+	}
+}
+
+// reseedFrozenVWAP writes the held comparator back as the window's VWAP, with
+// the observed-at stamp the API requires, when the keys are absent (cache
+// flushed mid-hold). Without it the API reads frozen=true with no servable
+// value and answers 503 for the rest of the hold. SetNX: a surviving value or
+// stamp is never overwritten. The stamp is the held bucket's own end, never
+// the reseed time, so the served age stays honest; with no known end the
+// reseed is skipped.
+func (o *Orchestrator) reseedFrozenVWAP(ctx context.Context, pair canonical.Pair, window time.Duration, stateKey string, ttl time.Duration) {
+	// Read the last PUBLISHED value, not the caller's comparator: mid-freeze
+	// that is the previous refused bucket and must never be served as held.
+	held := o.prevVWAPs[stateKey]
+	heldEnd, ok := o.prevVWAPBucketEnd[stateKey]
+	if held == nil || !ok {
+		return
+	}
+	if ttl <= 0 {
+		ttl = cachekeys.FreezeTTL
+	}
+	key := cachekeys.VWAP(pair.Base, pair.Quote, window).String()
+	atKey := cachekeys.VWAPObservedAt(pair.Base, pair.Quote, window).String()
+	if _, err := o.cache.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.SetNX(ctx, atKey, cachekeys.FormatVWAPObservedAt(heldEnd), ttl)
+		p.SetNX(ctx, key, formatRatFixed(held, 12), ttl)
+		return nil
+	}); err != nil {
+		o.logger.Debug("freeze: held VWAP reseed failed",
+			"pair", pair.String(), "window", window, "key", key, "err", err)
 	}
 }
 

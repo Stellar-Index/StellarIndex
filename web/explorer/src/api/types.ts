@@ -10424,6 +10424,20 @@ export interface components {
             max_number?: string | null;
             /** @description Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all; false when they declared a bounded supply. */
             is_unlimited?: boolean | null;
+            /** @description SEP-1 `status` of the currency as the issuer declares it: live, dead, test or private. */
+            currency_status?: string | null;
+            /** @description SEP-1 `is_asset_anchored`. Null when the issuer did not declare it; false only when they declared false. */
+            is_asset_anchored?: boolean | null;
+            /** @description SEP-1 `attestation_of_reserve` URL. http(s) only — any other value is dropped at overlay time. */
+            attestation_of_reserve?: string | null;
+            /** @description SEP-1 `redemption_instructions`: how the issuer says the token is redeemed for its underlying. */
+            redemption_instructions?: string | null;
+            /** @description SEP-1 `regulated` (SEP-8 approval required to transact). Null when the issuer did not declare it. */
+            regulated?: boolean | null;
+            /** @description SEP-1 `approval_server` URL for a regulated asset. http(s) only — any other value is dropped at overlay time. */
+            approval_server?: string | null;
+            /** @description SEP-1 `approval_criteria`: the issuer's stated rules for approving a transaction in a regulated asset. */
+            approval_criteria?: string | null;
             /** @description Raw integer in asset's smallest unit (per ADR-0011 supply derivation). Issuer and locked-set balances are netted out only under an exclusion basis; under `classic_lake_flows`, `classic_trustline_sum` and `sep41_lake_flows` it is the un-excluded total (see supply_basis). Null when no snapshot exists. */
             circulating_supply?: string | null;
             /** @description Raw integer in asset's smallest unit. Null when no snapshot exists. */
@@ -10917,6 +10931,20 @@ export interface components {
             max_number?: string | null;
             /** @description Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all (no fixed_number / max_number / is_unlimited declaration); false when they did and committed to a bounded supply. */
             is_unlimited?: boolean | null;
+            /** @description SEP-1 `status` of the currency as the issuer declares it: live, dead, test or private. */
+            currency_status?: string | null;
+            /** @description SEP-1 `is_asset_anchored`. Null when the issuer did not declare it; false only when they declared false. */
+            is_asset_anchored?: boolean | null;
+            /** @description SEP-1 `attestation_of_reserve` URL. http(s) only — any other value is dropped at overlay time. */
+            attestation_of_reserve?: string | null;
+            /** @description SEP-1 `redemption_instructions`: how the issuer says the token is redeemed for its underlying. */
+            redemption_instructions?: string | null;
+            /** @description SEP-1 `regulated` (SEP-8 approval required to transact). Null when the issuer did not declare it. */
+            regulated?: boolean | null;
+            /** @description SEP-1 `approval_server` URL for a regulated asset. http(s) only — any other value is dropped at overlay time. */
+            approval_server?: string | null;
+            /** @description SEP-1 `approval_criteria`: the issuer's stated rules for approving a transaction in a regulated asset. */
+            approval_criteria?: string | null;
         };
         AssetMetadataEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["AssetMetadata"];
