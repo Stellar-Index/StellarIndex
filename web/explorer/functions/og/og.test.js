@@ -523,4 +523,22 @@ describe('og function — edge cache (K060)', () => {
     // edge cache written by the first, not by re-rendering.
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('shares one cache entry across query strings so a varying ?x= cannot force re-renders', async () => {
+    vi.stubGlobal('caches', { default: makeFakeCache() });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ data: { price: '1.5' } }), {
+        status: 200,
+      }),
+    );
+
+    const first = makeCacheContext('/og/markets/native~usdc?x=1');
+    expect((await onRequest(first.context)).status).toBe(200);
+    await Promise.all(first.pending);
+
+    const second = makeCacheContext('/og/markets/native~usdc?x=2&y=3');
+    expect((await onRequest(second.context)).status).toBe(200);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
 });

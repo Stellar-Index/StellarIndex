@@ -41,8 +41,8 @@ level 3. The chain to `/` is what matters, not the hop count.
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **136** |
-| Level 3 — reachable | **110** |
+| Paths in the OpenAPI contract | **137** |
+| Level 3 — reachable | **111** |
 | Level 2 — consumed but unreachable | **0** |
 | Level 1 — not consumed | **22** |
 | Deliberately excluded (operational) | **4** |
@@ -211,6 +211,7 @@ page carries.
 | `/dashboard/webhooks` | GET, POST | 3 | account.ts:createDashboardWebhook, account.ts:listDashboardWebhooks | /dashboard/webhooks |
 | `/dashboard/webhooks/{id}` | PATCH, DELETE | 3 | account.ts:deleteDashboardWebhook, account.ts:updateDashboardWebhook | /dashboard/webhooks |
 | `/dashboard/webhooks/{id}/deliveries` | GET | 1 | account.ts:listWebhookDeliveries | /dashboard/webhooks |
+| `/dashboard/webhooks/{id}/rotate-secret` | POST | 3 | account.ts:rotateDashboardWebhookSecret | /dashboard/webhooks |
 | `/dashboard/price-alerts` | GET, POST | 3 | account.ts:createPriceAlert, account.ts:listPriceAlerts | /dashboard/price-alerts |
 | `/dashboard/price-alerts/{id}` | PATCH, DELETE | 3 | account.ts:deletePriceAlert, account.ts:updatePriceAlert | /dashboard/price-alerts |
 | `/auth/login` | POST | 3 | app/signin/SignInForm.tsx, app/status/StatusPageClient.tsx | /signin, /signup, /status |
@@ -327,8 +328,8 @@ probed unauthenticated:
 - **Legacy key surface (2)** — `/account/keys`, `/account/keys/{keyID}`.
   Superseded by `/dashboard/keys` (the richer Postgres-backed store the
   UI uses). Probably wants deprecating rather than building.
-- **Signup (2)** — `POST /signup`, `/signup/verify`. The UI uses the
-  `/auth/login` magic-link flow instead. Dead path, or an unshipped one.
+- **Signup (2)** — `POST /signup`, `/signup/verify`. Retired (410 Gone, INV-0907);
+  the UI uses the `/auth/login` magic-link flow instead.
 - **Account erasure (2)** — `DELETE /dashboard/account`,
   `/dashboard/account/export` (#809). API shipped; the dashboard
   settings page that calls them is the follow-up.

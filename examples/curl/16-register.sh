@@ -5,11 +5,11 @@
 # a single unauthenticated POST. No email required (an optional
 # contact email + display name may be sent as JSON). The plaintext
 # api_key is returned exactly once — store it; if lost, register
-# again. Per-IP throttled (shared budget with /v1/signup).
+# again. Per-IP throttled (per-IP, default 5/hour).
 #
 # Production-safety: a casual `bash 16-register.sh` would create a
-# real account row in prod every time, so the same
-# CONFIRM_PROD_SIGNUP=1 gate as 02-signup.sh applies. Local /
+# real account row in prod every time, so the CONFIRM_PROD_SIGNUP=1
+# gate applies. Local /
 # staging deployments (any non-prod API_BASE_URL) bypass the gate.
 set -euo pipefail
 BASE="${API_BASE_URL:-https://api.stellarindex.io}"

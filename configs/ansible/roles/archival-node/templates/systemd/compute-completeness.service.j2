@@ -32,6 +32,9 @@ Environment=CH_ADDR=127.0.0.1:9300
 SuccessExitStatus=75
 # Timer-fired: shares run-heavy-job.sh's host-wide lock, never refused by it.
 Environment=HEAVY_JOB_CLASS=scheduled
+# Shares the job name with compute-completeness-sdex.service, so it queues
+# (up to that unit's 390 min run) instead of skipping a night (GH-1229).
+Environment=HEAVY_JOB_LOCK_WAIT=23400
 ExecStart=/usr/local/sbin/run-heavy-job.sh compute-completeness /usr/local/sbin/run-compute-completeness.sh
 
 # De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
@@ -52,7 +55,8 @@ ProtectControlGroups=true
 # One -pass call proves recognition (~60s) + substrate once, then reconciles
 # each source's new suffix — steady-state ticks finish in minutes. The first
 # pass additionally seeds any never-verified source from genesis; cap generously.
-TimeoutStartSec=180min
+# Whole seconds: the 23400 s lock wait + 180 min for the pass itself.
+TimeoutStartSec=34200
 
 [Install]
 WantedBy=multi-user.target

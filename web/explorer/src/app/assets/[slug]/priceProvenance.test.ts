@@ -17,6 +17,15 @@ describe('headlinePriceProvenance', () => {
     ).toBe('transitive');
   });
 
+  it('captions a global-market listing price as global_market', () => {
+    expect(
+      headlinePriceProvenance(null, {
+        price_usd: '0.97000000',
+        price_basis: 'global_market',
+      }),
+    ).toBe('global_market');
+  });
+
   it('captions a declared-peg listing price as declared_peg', () => {
     expect(
       headlinePriceProvenance(null, {

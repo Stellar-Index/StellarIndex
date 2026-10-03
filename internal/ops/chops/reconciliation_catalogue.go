@@ -400,6 +400,9 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			newGatedDec: func() gatedDecoder { return sushiswap_v3.NewDecoder() },
 			targets: []reconTarget{
 				{"trades", "source = 'sushiswap_v3'", []string{"sushiswap_v3.trade"}},
+				// One decoded mint/burn/collect → one row, so the per-ledger
+				// count reconciles 1:1 (persistSushiswapV3Position is a single INSERT).
+				{"sushiswap_v3_position_events", "", []string{"sushiswap_v3.position"}},
 			},
 		},
 		{

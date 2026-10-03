@@ -314,6 +314,60 @@ func coverageStaleFlag(t *testing.T, url string) bool {
 	return env.Flags.Stale
 }
 
+// TestHandleCoverageVerdicts_StaleWhenProjectionEvidenceIsOld: a verdict
+// restamped minutes ago by a run that only CARRIED its projection claim is
+// fresh by computed_at and tip, yet the claim's last full reconcile can be
+// weeks old. The evidence time must qualify it; a false claim needs none.
+func TestHandleCoverageVerdicts_StaleWhenProjectionEvidenceIsOld(t *testing.T) {
+	now := time.Now().UTC()
+	serve := func(projectionOK bool, evidencedAt time.Time) string {
+		return httpTestServer(t, v1.New(v1.Options{
+			CompletenessReader: &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{{
+				Source: "blend", Genesis: 51_499_546, Tip: 63_000_000, Watermark: 63_000_000,
+				CoveragePct: 1, Complete: projectionOK, LakeComplete: true,
+				SubstrateOK: true, RecognitionOK: true, ProjectionOK: projectionOK,
+				ProjectionVerifiedFrom: 51_499_546, ProjectionReconciledFrom: 62_990_000,
+				ComputedAt: now.Add(-5 * time.Minute), ProjectionEvidencedAt: evidencedAt,
+			}}},
+			Cursors: &stubCursorsReader{rows: []timescale.Cursor{
+				mkCursor("ledgerstream", "", 63_000_500, 4*time.Second),
+			}},
+		})).URL
+	}
+	for _, tc := range []struct {
+		name         string
+		projectionOK bool
+		evidencedAt  time.Time
+		want         bool
+	}{
+		{"claim proven in full a day ago", true, now.Add(-24 * time.Hour), false},
+		{"claim carried on 30-day-old evidence", true, now.Add(-30 * 24 * time.Hour), true},
+		{"claim with no evidence on record", true, time.Time{}, true},
+		{"failing claim needs no evidence", false, time.Time{}, false},
+	} {
+		if got := coverageStaleFlag(t, serve(tc.projectionOK, tc.evidencedAt)); got != tc.want {
+			t.Errorf("%s: flags.stale = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+
+	resp := mustGet(t, serve(true, time.Time{})+"/v1/coverage")
+	var env struct {
+		Data struct {
+			Sources []map[string]any `json:"sources"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	row := env.Data.Sources[0]
+	if v, ok := row["projection_evidenced_at"]; !ok || v != nil {
+		t.Errorf("projection_evidenced_at = %v (present=%v), want an explicit null for unknown evidence", v, ok)
+	}
+	if v := row["projection_reconciled_from"]; v != float64(62_990_000) {
+		t.Errorf("projection_reconciled_from = %v, want 62990000", v)
+	}
+}
+
 // TestHandleCoverageVerdicts_StaleWhenVerdictTrailsLiveTip pins the
 // MNY-04 / A-H-4 live-tip gate.
 //
@@ -340,7 +394,8 @@ func TestHandleCoverageVerdicts_StaleWhenVerdictTrailsLiveTip(t *testing.T) {
 			Source: "blend", Genesis: 51_499_546, Tip: 63_000_000, Watermark: 63_000_000,
 			CoveragePct: 1, Complete: true, LakeComplete: true,
 			SubstrateOK: true, RecognitionOK: true, ProjectionOK: true,
-			ComputedAt: time.Now().UTC().Add(-5 * time.Minute),
+			ComputedAt:            time.Now().UTC().Add(-5 * time.Minute),
+			ProjectionEvidencedAt: time.Now().UTC().Add(-24 * time.Hour),
 		}}},
 		Cursors: &stubCursorsReader{rows: []timescale.Cursor{
 			mkCursor("ledgerstream", "", 63_040_000, 4*time.Second),
@@ -365,7 +420,8 @@ func TestHandleCoverageVerdicts_FreshVerdictNotStale(t *testing.T) {
 			Source: "blend", Genesis: 51_499_546, Tip: 63_000_000, Watermark: 63_000_000,
 			CoveragePct: 1, Complete: true, LakeComplete: true,
 			SubstrateOK: true, RecognitionOK: true, ProjectionOK: true,
-			ComputedAt: time.Now().UTC().Add(-5 * time.Minute),
+			ComputedAt:            time.Now().UTC().Add(-5 * time.Minute),
+			ProjectionEvidencedAt: time.Now().UTC().Add(-24 * time.Hour),
 		}}},
 		Cursors: &stubCursorsReader{rows: []timescale.Cursor{
 			// 500 ledgers ≈ 42 min of chain, well inside the ~3h horizon.
@@ -389,7 +445,8 @@ func TestHandleCoverageVerdicts_StaleWhenIngestStalled(t *testing.T) {
 		Source: "blend", Genesis: 51_499_546, Tip: 63_000_000, Watermark: 63_000_000,
 		CoveragePct: 1, Complete: true, LakeComplete: true,
 		SubstrateOK: true, RecognitionOK: true, ProjectionOK: true,
-		ComputedAt: time.Now().UTC().Add(-5 * time.Minute),
+		ProjectionEvidencedAt: time.Now().UTC().Add(-24 * time.Hour),
+		ComputedAt:            time.Now().UTC().Add(-5 * time.Minute),
 	}}
 	stalled := v1.New(v1.Options{
 		CompletenessReader: &stubCompletenessReader{snaps: snaps},
@@ -425,7 +482,8 @@ func TestHandleCoverageVerdicts_StaleWhenVerdictIsOld(t *testing.T) {
 		Source: "blend", Genesis: 51_499_546, Tip: 63_000_000, Watermark: 63_000_000,
 		CoveragePct: 1, Complete: true, LakeComplete: true,
 		SubstrateOK: true, RecognitionOK: true, ProjectionOK: true,
-		ComputedAt: time.Now().UTC().Add(-30 * time.Hour),
+		ComputedAt:            time.Now().UTC().Add(-30 * time.Hour),
+		ProjectionEvidencedAt: time.Now().UTC().Add(-30 * time.Hour),
 	}}
 	srv := v1.New(v1.Options{CompletenessReader: &stubCompletenessReader{snaps: snaps}})
 	ts := httpTestServer(t, srv)
@@ -561,6 +619,7 @@ func TestHandleCoverageVerdicts_StaleGateIgnoresNotApplicableSource(t *testing.T
 			Source: "sdex", Genesis: 2, Tip: 4_467_014, Watermark: 4_467_014,
 			CoveragePct: 100, Complete: true, LakeComplete: true,
 			SubstrateOK: true, RecognitionOK: true, ProjectionOK: true, ComputedAt: now,
+			ProjectionEvidencedAt: now,
 		},
 		{
 			// Pubnet-only, not applicable on testnet, and never revisited

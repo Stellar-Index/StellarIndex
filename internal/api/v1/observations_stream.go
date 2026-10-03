@@ -12,6 +12,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // Observations-stream tunables. interval_seconds is the per-connection
@@ -42,7 +43,8 @@ const (
 //     observations returns empty arrays not 404s, and the stream
 //     mirrors that).
 //   - Recurring events: every interval_seconds (default 5, clamp 1–60)
-//     a fresh LatestTradePerSource scan runs and an `observations_update`
+//     a fresh LatestTradePerSource scan (bypassing the SWR history cache,
+//     since each event is stamped as_of=now) runs and an `observations_update`
 //     event fires UNCONDITIONALLY (no client-side dedupe). Customers
 //     who want change-detection diff against the previous payload.
 //   - Heartbeats: every streaming.DefaultHeartbeatInterval (15 s) when
@@ -95,7 +97,7 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 	}
 
 	source := r.URL.Query().Get("source")
-	if !sourceFilterOK(w, r, source) {
+	if !rawTradeSourceFilterOK(w, r, source) {
 		return
 	}
 
@@ -116,7 +118,7 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 	// Synchronous first compute. We commit to streaming here — even
 	// an empty array is a valid steady-state for this surface, so we
 	// don't 404 on emptiness (the request endpoint doesn't either).
-	first, err := s.computeObservations(r.Context(), pair, source, aggregate)
+	first, err := s.computeObservations(withFreshHistory(r.Context()), pair, source, aggregate)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -232,6 +234,10 @@ func firstScanError(errs []error) error {
 // and is mutated in place.
 func mergeNewestPerSource(merged []canonical.Trade, bySource map[string]int, trades []canonical.Trade) []canonical.Trade {
 	for _, t := range trades {
+		// Backstop for the storage-side filter: no exchange row is served raw.
+		if !external.IsOnChain(t.Source) {
+			continue
+		}
 		if i, ok := bySource[t.Source]; ok {
 			if isLater(t, merged[i]) {
 				merged[i] = t
@@ -292,7 +298,7 @@ func (s *Server) runObservationsStreamProducer(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			trades, err := s.computeObservations(ctx, pair, source, aggregate)
+			trades, err := s.computeObservations(withFreshHistory(ctx), pair, source, aggregate)
 			if err != nil {
 				if ctx.Err() == nil {
 					s.logger.Warn("computeObservations failed (stream tick) — skipping emit",

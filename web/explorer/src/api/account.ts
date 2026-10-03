@@ -450,6 +450,24 @@ export async function updateDashboardWebhook(
   );
 }
 
+export type RotateWebhookSecretResponse =
+  components['schemas']['RotateWebhookSecretResponse'];
+
+/**
+ * POST /v1/dashboard/webhooks/{id}/rotate-secret — replace the signing
+ * secret in place (shown once); the old one keeps signing until
+ * `previous_secret_expires_at`. Idempotency-keyed so a retry never
+ * rotates twice.
+ */
+export async function rotateDashboardWebhookSecret(
+  id: string,
+): Promise<RotateWebhookSecretResponse> {
+  return idempotentCreate<RotateWebhookSecretResponse>(
+    `/dashboard/webhooks/${encodeURIComponent(id)}/rotate-secret`,
+    {},
+  );
+}
+
 /** DELETE /v1/dashboard/webhooks/{id} — remove a webhook (idempotent). */
 export async function deleteDashboardWebhook(id: string): Promise<void> {
   await accountFetch<void>(`/dashboard/webhooks/${encodeURIComponent(id)}`, {

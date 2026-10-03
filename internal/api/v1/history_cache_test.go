@@ -342,3 +342,27 @@ func TestCachedHistoryReader_SWRKeepsStaleOnError(t *testing.T) {
 		t.Fatalf("refresh not retried after re-expire; calls=%d want 3", up.calls.Load())
 	}
 }
+
+// TestCachedHistoryReader_FreshContextBypassesCache: a warm entry must not
+// answer a caller that marked its ctx fresh, and the bypass leaves the
+// cached entry untouched.
+func TestCachedHistoryReader_FreshContextBypassesCache(t *testing.T) {
+	up := &fakeHist{}
+	c := NewCachedHistoryReader(up, time.Minute)
+	p := histTestPair(t)
+
+	if _, err := c.LatestTradePerSource(context.Background(), p, ""); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	rows, err := c.LatestTradePerSource(withFreshHistory(context.Background()), p, "")
+	if err != nil || len(rows) != 1 || rows[0].Ledger != histFreshLedger {
+		t.Fatalf("fresh read: rows=%v err=%v, want the store's ledger %d", rows, err, histFreshLedger)
+	}
+	cached, err := c.LatestTradePerSource(context.Background(), p, "")
+	if err != nil || len(cached) != 1 || cached[0].Ledger != histStaleLedger {
+		t.Fatalf("plain read after bypass: %v err=%v, want the original cached entry", cached, err)
+	}
+	if up.calls.Load() != 2 {
+		t.Fatalf("want 2 upstream calls (warm + bypass); got %d", up.calls.Load())
+	}
+}

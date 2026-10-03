@@ -251,15 +251,18 @@ func TestResolveOpTypeStats_NeverComputesInline(t *testing.T) {
 	h, reader := newSWRHandler()
 	// Cold: returns nothing (panel omitted — op_type_stats is omitempty),
 	// kicks the detached refresh.
-	if got := h.resolveOpTypeStats(); got != nil {
-		t.Fatalf("cold resolve returned %v, want nil (panel appears next request)", got)
+	if got, fresh := h.resolveOpTypeStats(); got != nil || fresh {
+		t.Fatalf("cold resolve returned %v (fresh=%v), want nil and not fresh (panel appears next request)", got, fresh)
 	}
 	waitFlightIdle(t, &h.opTypeStats.flight, "stats")
 	if got := reader.statsCalls.Load(); got != 1 {
 		t.Fatalf("detached stats refresh ran %d times, want 1", got)
 	}
 	// Warm: served from cache, no further compute.
-	stats := h.resolveOpTypeStats()
+	stats, fresh := h.resolveOpTypeStats()
+	if !fresh {
+		t.Error("warm resolve reported a stale panel")
+	}
 	if len(stats) != 1 || stats[0].Type != "payment" || stats[0].Count != 9 {
 		t.Fatalf("warm resolve = %+v, want the cached normalized breakdown", stats)
 	}

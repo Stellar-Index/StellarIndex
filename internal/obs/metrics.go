@@ -223,6 +223,7 @@ func registerFreezeLifecycleMetrics() {
 		AnomalyFreezeRecoveredTotal,
 		AnomalyFreezeLadderRehydratedTotal,
 		AnomalyFreezeLadderWriteFailuresTotal,
+		APIFreezeLookupFailuresTotal,
 		AnomalyFreezeRecoverySweepsTotal,
 
 		// Composite-reference corroboration of the phase-2 verdict
@@ -260,6 +261,8 @@ func registerAppMetricsTail() {
 		// DivergenceRefreshTotal in [registerAppMetrics] for funlen.
 		DivergenceReferenceTotal,
 		DivergencePairQuorumMet,
+		DivergenceMaxAbsFraction,
+		DivergencePairsOver,
 		// Readiness-check gauge (#371 F2) — the only alertable signal
 		// ClickHouse has, since it is the one dependency on r1 with no
 		// Prometheus exporter of its own.
@@ -309,6 +312,7 @@ func registerAppMetricsTail() {
 		DispatcherTxEventReadErrorsTotal,
 		DispatcherEntryMetaUnsupportedTotal,
 		DispatcherEvictedKeysUnreadableTotal,
+		DispatcherLedgerUpgradeEntriesTotal,
 		SourceUncorroboratedCallsTotal,
 
 		MEVDetectRunsTotal,
@@ -735,7 +739,8 @@ func seedBoundedLabelSeriesTail() {
 	// distinguishable from "never wired".
 	for _, kind := range []string{
 		"tx_read_errors", "tx_event_read_errors", "entry_meta_unsupported",
-		"soroban_fee_meta_unsupported", "tx_read_errors_census", "tx_event_read_errors_census",
+		"soroban_fee_meta_unsupported", "evicted_keys_unreadable", "tx_read_errors_census",
+		"tx_event_read_errors_census",
 	} {
 		ChLiveSinkReadUndercountTotal.WithLabelValues(kind)
 	}
@@ -1430,6 +1435,16 @@ var DispatcherEvictedKeysUnreadableTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_dispatcher_evicted_keys_unreadable_total",
 		Help: "Ledgers whose state-archival evicted keys failed to read; their evictions were skipped and the evicted entries stay served as live.",
+	},
+)
+
+// DispatcherLedgerUpgradeEntriesTotal — process-wide counter of ledger
+// upgrade entries seen (dispatcher.Stats.LedgerUpgradeEntries). Observed only;
+// no decoder reads upgrade changes.
+var DispatcherLedgerUpgradeEntriesTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dispatcher_ledger_upgrade_entries_total",
+		Help: "Ledger upgrade entries (protocol version, base reserve, config settings) seen in ingested ledgers.",
 	},
 )
 
@@ -2403,6 +2418,28 @@ var DivergencePairQuorumMet = prometheus.NewGaugeVec(
 		Help: "1 when the pair's latest divergence refresh met the reference quorum (min_sources_for_warning), 0 when detection was disarmed.",
 	},
 	[]string{"pair"},
+)
+
+// DivergenceMaxAbsFraction is the largest |ours − reference| / reference
+// across every pair a reference currently prices, as a fraction (0.05 = 5 %).
+// Labelled by reference only, so cardinality stays bounded by the configured
+// reference set however many pairs are checked.
+var DivergenceMaxAbsFraction = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_divergence_max_abs_fraction",
+		Help: "Largest absolute fractional gap between our price and the reference's, over the pairs the reference currently prices (0.05 = 5%).",
+	},
+	[]string{"reference"},
+)
+
+// DivergencePairsOver counts the pairs whose worst reference gap exceeds a
+// fixed fraction. threshold ∈ {5pct, 10pct}.
+var DivergencePairsOver = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_divergence_pairs_over",
+		Help: "Pairs whose largest reference gap exceeds the threshold (5pct|10pct).",
+	},
+	[]string{"threshold"},
 )
 
 // UsageRollupSweepsTotal — per-outcome counter for the API binary's
@@ -3583,10 +3620,12 @@ var APIStreamHubTopicsReapedTotal = prometheus.NewCounter(prometheus.CounterOpts
 //   - network_error  — TCP/TLS/timeout error, scheduled for retry
 //   - webhook_missing — GetWebhook returned ErrNotFound mid-flight
 //   - disabled       — webhook.Enabled=false, silently terminated
-//   - no_secret      — the webhook's signing secret is empty (terminal)
+//   - no_secret      — the signing secret is empty, or fails to unseal
+//     under the configured seal key (terminal)
 //   - build_error    — http.NewRequestWithContext failed (malformed URL)
 //   - list_error     — ListPendingDeliveries failed (db transport)
-//   - lookup_error   — GetWebhook failed for a non-NotFound reason
+//   - lookup_error   — GetWebhook failed for a non-NotFound reason,
+//     including a sealed key with no seal key configured (retried)
 //   - mark_error     — Mark{Delivered,AttemptFailed} failed
 //
 // All twelve are pre-seeded in [seedBoundedLabelSeries] (#368 M6):
@@ -4400,6 +4439,18 @@ var AnomalyFreezeLadderWriteFailuresTotal = prometheus.NewCounterVec(
 	[]string{"op"},
 )
 
+// APIFreezeLookupFailuresTotal — counter of API-side freeze-marker reads
+// that returned an error (Redis outage, timeout), excluding client aborts.
+// The response carries frozen_checked=false for each, but nothing else
+// surfaces a degraded freeze read; sustained non-zero means price responses
+// are being served without a freeze verdict.
+var APIFreezeLookupFailuresTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_api_freeze_lookup_failures_total",
+		Help: "API freeze-marker lookups that failed (client aborts excluded). Sustained non-zero = price responses are served with frozen_checked=false.",
+	},
+)
+
 // AnomalyFreezeRecoverySweepsTotal — counter of recovery-worker
 // poll cycles, labelled by outcome (ok / partial / error). Sustained
 // `error` indicates the lister or Redis transport is broken; sustained
@@ -5074,7 +5125,7 @@ var ChLiveSinkLedgersTotal = prometheus.NewCounterVec(
 var ChLiveSinkReadUndercountTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ch_live_sink_read_undercount_total",
-		Help: "Transactions/ledgers a read path could not fully decode, labelled by kind (tx_read_errors|tx_event_read_errors|entry_meta_unsupported|soroban_fee_meta_unsupported|tx_read_errors_census|tx_event_read_errors_census).",
+		Help: "Transactions/ledgers a read path could not fully decode, labelled by kind (tx_read_errors|tx_event_read_errors|entry_meta_unsupported|soroban_fee_meta_unsupported|evicted_keys_unreadable|tx_read_errors_census|tx_event_read_errors_census).",
 	},
 	[]string{"kind"},
 )

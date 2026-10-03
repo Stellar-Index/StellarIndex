@@ -56,7 +56,14 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 # run's verdict to restore_drill_repo2.prom with repo="2" on every series
 # — the series stellarindex_restore_drill_offsite_stale reads.
 Environment=DRILL_REPO=2
-ExecStart=/usr/local/bin/restore-drill.sh
+# 75 = run-heavy-job.sh skipped this fire (lock held): not a failure.
+SuccessExitStatus=75
+# Timer-fired: shares run-heavy-job.sh's host-wide lock, never refused by it.
+Environment=HEAVY_JOB_CLASS=scheduled
+# A stop must let the script's EXIT trap shut down the scratch Postgres and
+# remove its data dir before SIGKILL.
+Environment=HEAVY_JOB_STOP_TIMEOUT=15min
+ExecStart=/usr/local/sbin/run-heavy-job.sh restore-drill-offsite /usr/local/bin/restore-drill.sh
 # The script itself requires root (drops to postgres via sudo -u for
 # the actual pg/pgbackrest operations) — see its own EUID check.
 User=root
