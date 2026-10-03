@@ -125,7 +125,8 @@ func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWeb
 // registered, ordered by CreatedAt desc.
 func (c *WebhookStore) ListWebhooksForAccount(ctx context.Context, accountID uuid.UUID) ([]platform.CustomerWebhook, error) {
 	const q = `
-		SELECT id, account_id, name, url, secret_hash, events, enabled,
+		SELECT id, account_id, name, url, secret_hash,
+		       previous_secret, previous_secret_expires_at, events, enabled,
 		       created_at, updated_at
 		  FROM customer_webhooks
 		 WHERE account_id = $1
@@ -167,7 +168,8 @@ func (c *WebhookStore) ListWebhooksForAccount(ctx context.Context, accountID uui
 // side's "active authenticates, everything else does not".
 func (c *WebhookStore) ListWebhooksSubscribedTo(ctx context.Context, eventType platform.WebhookEventType) ([]platform.CustomerWebhook, error) {
 	const q = `
-		SELECT id, account_id, name, url, secret_hash, events, enabled,
+		SELECT id, account_id, name, url, secret_hash,
+		       previous_secret, previous_secret_expires_at, events, enabled,
 		       created_at, updated_at
 		  FROM customer_webhooks
 		 WHERE enabled = TRUE
@@ -199,7 +201,8 @@ func (c *WebhookStore) ListWebhooksSubscribedTo(ctx context.Context, eventType p
 // GetWebhook returns one row by ID. ErrNotFound when absent.
 func (c *WebhookStore) GetWebhook(ctx context.Context, id uuid.UUID) (platform.CustomerWebhook, error) {
 	const q = `
-		SELECT id, account_id, name, url, secret_hash, events, enabled,
+		SELECT id, account_id, name, url, secret_hash,
+		       previous_secret, previous_secret_expires_at, events, enabled,
 		       created_at, updated_at
 		  FROM customer_webhooks
 		 WHERE id = $1
@@ -602,16 +605,19 @@ type rowScanner interface {
 
 func scanWebhookRow(s rowScanner) (platform.CustomerWebhook, error) {
 	var (
-		w      platform.CustomerWebhook
-		events []string
+		w              platform.CustomerWebhook
+		events         []string
+		previousExpiry sql.NullTime
 	)
 	if err := s.Scan(
 		&w.ID, &w.AccountID, &w.Name, &w.URL, &w.SecretHash,
+		&w.PreviousSecret, &previousExpiry,
 		pgarray.Strings(&events), &w.Enabled, &w.CreatedAt, &w.UpdatedAt,
 	); err != nil {
 		return platform.CustomerWebhook{}, fmt.Errorf("postgresstore: scan webhook: %w", err)
 	}
 	w.Events = events
+	w.PreviousSecretExpiresAt = previousExpiry.Time
 	return w, nil
 }
 
@@ -644,35 +650,37 @@ func scanDeliveryRow(s rowScanner) (platform.WebhookDelivery, error) {
 
 // ─── Dashboard-flow surfaces (extends EnqueueDelivery/MarkDelivered) ─────
 
-// RotateWebhookSecret replaces the signing secret. Returns the new
-// plaintext.
-//
-// At-rest model: the bytes ARE persisted as the canonical
-// `customer_webhooks.secret_hash` bytea — the delivery worker
-// reads them back to sign future requests, identical to the
-// create path. The field name is a historical misnomer
-// (originally promised hash-only persistence, the implementation
-// always stored the live HMAC key); see
-// [platform.CustomerWebhook] for the full at-rest discussion
-// including the F-1244 (codex audit-2026-05-13) reconciliation.
-//
-// Customer-facing visibility: the plaintext is returned by this
-// call exactly once and never served back through any
-// subsequent read. That one-time-visibility property is what
-// "shown once" referred to in the prior docstring; it is NOT
-// the same as "never persisted to disk", and the prior
-// conflation of the two was the gap F-1244 closed.
-//
-// Stub: today returns "" + a not-implemented error. Customers
-// rotate by deleting + recreating the webhook (which already
-// works via the create path), so the in-place rotation surface
-// isn't on the critical path. The interface seam stays here so
-// the v2 dashboard can plug in-place rotation without
-// re-shaping the store boundary.
-func (c *WebhookStore) RotateWebhookSecret(ctx context.Context, id uuid.UUID) (string, error) {
-	_ = ctx
-	_ = id
-	return "", errors.New("postgresstore: RotateWebhookSecret not yet implemented (dashboard rotates by delete + recreate today; the v2 in-place path lands when the dashboard CRUD UI ships it)")
+// RotateWebhookSecret swaps the signing key in one UPDATE: the
+// right-hand secret_hash reads the pre-update value, so the outgoing key
+// lands in previous_secret. The row is never deleted, so its queued
+// deliveries and delivery log survive the rotation.
+func (c *WebhookStore) RotateWebhookSecret(ctx context.Context, id uuid.UUID, newSecret []byte, previousExpiresAt time.Time) error {
+	if len(newSecret) == 0 {
+		return errors.New("postgresstore: RotateWebhookSecret: newSecret is empty")
+	}
+	if previousExpiresAt.IsZero() {
+		return errors.New("postgresstore: RotateWebhookSecret: previousExpiresAt is zero")
+	}
+	const q = `
+		UPDATE customer_webhooks
+		   SET previous_secret            = secret_hash,
+		       previous_secret_expires_at = $3,
+		       secret_hash                = $2,
+		       updated_at                 = now()
+		 WHERE id = $1
+	`
+	res, err := c.s.db.ExecContext(ctx, q, id, newSecret, previousExpiresAt)
+	if err != nil {
+		return fmt.Errorf("postgresstore: RotateWebhookSecret %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("postgresstore: RotateWebhookSecret %s rows affected: %w", id, err)
+	}
+	if n == 0 {
+		return platform.ErrNotFound
+	}
+	return nil
 }
 
 // AppendDelivery records one delivery attempt. Returns the

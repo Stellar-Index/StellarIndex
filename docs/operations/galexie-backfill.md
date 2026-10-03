@@ -56,7 +56,7 @@ afterwards to prove the bytes are canonical.
 1. **Disk check** — ensure the `data` zpool has room (~2.5 TB for
    genesis-to-tip after zstd). `zfs list data/minio` + `zpool list`.
 2. **MinIO user** — `galexie-writer` is scoped to `galexie-live`
-   only (PR #156). Create `galexie-backfill-writer` with write
+   only (Task #156). Create `galexie-backfill-writer` with write
    access scoped to `galexie-archive`; revoke it after the backfill
    completes.
 3. **Captive-core config** — copy
@@ -144,7 +144,7 @@ ledger[N+1].LedgerHeader.PreviousLedgerHash`. Catches any internal
 corruption, dropped ledger, or replay divergence regardless of
 upstream trust.
 
-Command: `stellarindex-ops verify-archive -tier chain` (PR #17).
+Command: `stellarindex-ops verify-archive -tier chain` (commit d8abecac1).
 
 ### Tier B — Checkpoint anchoring against local history archive (primary, free, mandatory)
 
@@ -161,7 +161,7 @@ checkpoint hashes match at every 64th ledger, inter-checkpoint
 content is byte-identical by induction (each ledger's hash chains to
 the next).
 
-Command: `stellarindex-ops verify-archive -tier checkpoint` (PR #18).
+Command: `stellarindex-ops verify-archive -tier checkpoint` (commit a1cd9f167).
 
 ### Tier C — Byte-compare sample against SDF's GCS bucket (optional, belt-and-braces)
 
@@ -201,7 +201,7 @@ agreed on those bytes via SCP consensus. Cryptographically the
 strongest evidence available short of running our own validator.
 
 Command: `stellarindex-ops verify-archive -tier peers -peer-samples
-20 -peers <url>,<url>,...` (PR #20). Defaults to a built-in
+20 -peers <url>,<url>,...` (commit 19e607ac2). Defaults to a built-in
 seven-peer set when `-peers` is empty.
 
 Cost: tiny — one HTTP GET per (checkpoint × peer). ~20 × 6 = 120

@@ -32,7 +32,7 @@ import (
 // table on the same cadence the sibling volume rollup already runs at.
 // The listing then LEFT JOINs `asset_price_snapshot`.
 // Same pattern, same reasons, as migration 0087 (`asset_volume_24h`,
-// #43) and 0149 (`asset_volume_character`).
+// e0fbbbc3b) and 0149 (`asset_volume_character`).
 //
 // Why a plain worker-maintained table and not the two alternatives:
 //
@@ -548,7 +548,7 @@ func execRowCount(ctx context.Context, tx *sql.Tx, q string) (int64, error) {
 }
 
 // RefreshAssetListingRollups recomputes BOTH rollups the /v1/assets
-// listing LEFT JOINs — asset_volume_24h (migration 0087, #43) and
+// listing LEFT JOINs — asset_volume_24h (migration 0087, e0fbbbc3b) and
 // asset_price_snapshot (migration 0154, #331 F1) — and atomically
 // replaces their contents.
 //

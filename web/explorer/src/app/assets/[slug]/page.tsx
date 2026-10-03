@@ -1383,6 +1383,9 @@ function OverviewBody({
             {detail?.supply_basis && (
               <Stat label="Supply basis" value={detail.supply_basis} />
             )}
+            {detail?.max_supply_basis && (
+              <Stat label="Max basis" value={detail.max_supply_basis} />
+            )}
           </dl>
         </Panel>
       )}
