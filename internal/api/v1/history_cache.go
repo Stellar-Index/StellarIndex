@@ -126,6 +126,22 @@ func NewCachedHistoryReader(upstream HistoryReader, ttl time.Duration) *CachedHi
 // Matches coins/markets refresh budgets (the proven ba0374697 pattern).
 const historyRefreshBudget = 30 * time.Second
 
+// TradesInRangeAfterFromSource forwards to the upstream when it supports the
+// single-source read; it is never cached. Errors otherwise so a caller that
+// skipped the [SourceHistoryReader] check cannot silently get unfiltered rows.
+func (c *CachedHistoryReader) TradesInRangeAfterFromSource(
+	ctx context.Context, pair canonical.Pair, source string,
+	from, to, afterTs time.Time, afterLedger uint32,
+	afterTxHash, afterSource string, afterOpIndex uint32, limit int,
+) ([]canonical.Trade, error) {
+	sr, ok := c.HistoryReader.(SourceHistoryReader)
+	if !ok {
+		return nil, errors.New("history: upstream reader cannot filter by source")
+	}
+	return sr.TradesInRangeAfterFromSource(ctx, pair, source, from, to,
+		afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
+}
+
 // LatestTradePerSource is the one cached method. See type doc.
 // evictIfFullLocked drops the oldest-filled entry when the map is at
 // capacity. Caller must hold c.mu.

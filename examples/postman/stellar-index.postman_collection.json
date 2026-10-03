@@ -7912,6 +7912,15 @@
                 {
                   "disabled": false,
                   "description": {
+                    "content": "Restrict the feed to trades written by one on-chain source. An off-chain source (CEX venue or data vendor) returns 400 `off-chain-source-filter`; an unregistered name returns 400 `unknown-source`. `coverage_from` on an empty page still describes the pair across all sources.",
+                    "type": "text/plain"
+                  },
+                  "key": "source",
+                  "value": "<string>"
+                },
+                {
+                  "disabled": false,
+                  "description": {
                     "content": "Opaque pagination token echoed from a prior response's\n`pagination.next`. Pass it verbatim — it is a base64url-encoded\nblob whose internal shape is an implementation detail and\nchanges without notice. Clients MUST NOT parse, decode, or\nconstruct cursors by hand.\n\nA cursor is stable across retries but not across schema\nchanges; treat it as short-lived (minutes, not days). Empty\nmeans \"start from the beginning\".\n",
                     "type": "text/plain"
                   },
@@ -7987,6 +7996,15 @@
                       },
                       "key": "limit",
                       "value": "1000"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Restrict the feed to trades written by one on-chain source. An off-chain source (CEX venue or data vendor) returns 400 `off-chain-source-filter`; an unregistered name returns 400 `unknown-source`. `coverage_from` on an empty page still describes the pair across all sources.",
+                        "type": "text/plain"
+                      },
+                      "key": "source",
+                      "value": "<string>"
                     },
                     {
                       "disabled": false,
@@ -8080,6 +8098,15 @@
                     {
                       "disabled": false,
                       "description": {
+                        "content": "Restrict the feed to trades written by one on-chain source. An off-chain source (CEX venue or data vendor) returns 400 `off-chain-source-filter`; an unregistered name returns 400 `unknown-source`. `coverage_from` on an empty page still describes the pair across all sources.",
+                        "type": "text/plain"
+                      },
+                      "key": "source",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
                         "content": "Opaque pagination token echoed from a prior response's\n`pagination.next`. Pass it verbatim — it is a base64url-encoded\nblob whose internal shape is an implementation detail and\nchanges without notice. Clients MUST NOT parse, decode, or\nconstruct cursors by hand.\n\nA cursor is stable across retries but not across schema\nchanges; treat it as short-lived (minutes, not days). Empty\nmeans \"start from the beginning\".\n",
                         "type": "text/plain"
                       },
@@ -8165,6 +8192,15 @@
                       },
                       "key": "limit",
                       "value": "1000"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Restrict the feed to trades written by one on-chain source. An off-chain source (CEX venue or data vendor) returns 400 `off-chain-source-filter`; an unregistered name returns 400 `unknown-source`. `coverage_from` on an empty page still describes the pair across all sources.",
+                        "type": "text/plain"
+                      },
+                      "key": "source",
+                      "value": "<string>"
                     },
                     {
                       "disabled": false,
@@ -8312,6 +8348,15 @@
                     {
                       "disabled": false,
                       "description": {
+                        "content": "Restrict the feed to trades written by one on-chain source. An off-chain source (CEX venue or data vendor) returns 400 `off-chain-source-filter`; an unregistered name returns 400 `unknown-source`. `coverage_from` on an empty page still describes the pair across all sources.",
+                        "type": "text/plain"
+                      },
+                      "key": "source",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
                         "content": "Opaque pagination token echoed from a prior response's\n`pagination.next`. Pass it verbatim — it is a base64url-encoded\nblob whose internal shape is an implementation detail and\nchanges without notice. Clients MUST NOT parse, decode, or\nconstruct cursors by hand.\n\nA cursor is stable across retries but not across schema\nchanges; treat it as short-lived (minutes, not days). Empty\nmeans \"start from the beginning\".\n",
                         "type": "text/plain"
                       },
@@ -8397,6 +8442,15 @@
                       },
                       "key": "limit",
                       "value": "1000"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Restrict the feed to trades written by one on-chain source. An off-chain source (CEX venue or data vendor) returns 400 `off-chain-source-filter`; an unregistered name returns 400 `unknown-source`. `coverage_from` on an empty page still describes the pair across all sources.",
+                        "type": "text/plain"
+                      },
+                      "key": "source",
+                      "value": "<string>"
                     },
                     {
                       "disabled": false,

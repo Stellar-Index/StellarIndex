@@ -14738,6 +14738,8 @@ export interface operations {
                  */
                 to?: components["parameters"]["To"];
                 limit?: number;
+                /** @description Restrict the feed to trades written by one on-chain source. An off-chain source (CEX venue or data vendor) returns 400 `off-chain-source-filter`; an unregistered name returns 400 `unknown-source`. `coverage_from` on an empty page still describes the pair across all sources. */
+                source?: string;
                 /**
                  * @description Opaque pagination token echoed from a prior response's
                  *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
