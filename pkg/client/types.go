@@ -104,6 +104,8 @@ type Flags struct {
 	PivotUnverified bool `json:"pivot_unverified,omitempty"`
 	// ThinMarket: a served price comes from a market below the substance floor (include_thin opt-in).
 	ThinMarket bool `json:"thin_market,omitempty"`
+	// ProxyDeviation: a triangulated fiat:USD price was served through a USD peg while a declared peg trades off $1.
+	ProxyDeviation bool `json:"proxy_deviation,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -70,6 +71,9 @@ func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan ca
 	if logger == nil {
 		logger = slog.Default()
 	}
+	// Touched only from the Loop's connection goroutine (Subscribe and
+	// HandleFrame never run concurrently).
+	active := products
 	if s.Endpoint == "" {
 		s.Endpoint = WSEndpoint
 	}
@@ -85,7 +89,7 @@ func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan ca
 			sub := subscribeReq{
 				Type: "subscribe",
 				Channels: []subscribeChannel{
-					{Name: ChannelName, ProductIDs: products},
+					{Name: ChannelName, ProductIDs: active},
 				},
 			}
 			bs, err := json.Marshal(sub)
@@ -100,6 +104,9 @@ func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan ca
 		HandleFrame: func(data []byte) ([]canonical.Trade, error) {
 			trade, isTrade, err := parseFrame(data, s.PairMap)
 			if err != nil {
+				if errors.Is(err, ErrSubscriptionRejected) {
+					active = dropAndLog(logger, active, err)
+				}
 				return nil, err
 			}
 			if !isTrade {
@@ -139,6 +146,39 @@ func classifyDisconnect(err error) string {
 		return "subscription_rejected"
 	}
 	return wsclient.ClassifyDisconnect(err)
+}
+
+func dropAndLog(logger *slog.Logger, active []string, err error) []string {
+	remaining, dropped := dropRejectedProducts(active, err.Error())
+	if len(dropped) > 0 {
+		logger.Error("coinbase rejected products — dropping them and resubscribing without",
+			"source", SourceName, "products", dropped, "remaining", len(remaining))
+	}
+	return remaining
+}
+
+// dropRejectedProducts removes every product the rejection text names, so
+// one delisted product cannot starve the whole venue. It never empties the
+// list: with nothing left to subscribe the rejection stays a loud config error.
+func dropRejectedProducts(active []string, text string) (remaining, dropped []string) {
+	named := make(map[string]bool)
+	for _, tok := range strings.FieldsFunc(strings.ToUpper(text), func(r rune) bool {
+		return (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-'
+	}) {
+		named[tok] = true
+	}
+	remaining = make([]string, 0, len(active))
+	for _, id := range active {
+		if named[strings.ToUpper(id)] {
+			dropped = append(dropped, id)
+		} else {
+			remaining = append(remaining, id)
+		}
+	}
+	if len(remaining) == 0 {
+		return active, nil
+	}
+	return remaining, dropped
 }
 
 func (s *Streamer) productsFor(pairs []canonical.Pair) ([]string, error) {
