@@ -74,17 +74,23 @@ type AssetSupply struct {
 	// rather than the figure itself, and the consumer must not present it as an
 	// exact supply.
 	//
-	// It is set for "contract_storage_balances": that reading sees only
-	// balances that exist as ledger entries right now, and Soroban state expiry
-	// archives contract-data entries, so a real and restorable balance can be
-	// invisible to it. Where the contract publishes its own holder count,
-	// SupplyConsistent reports whether the two agreed — a disagreement is what
-	// an archived balance looks like from here.
+	// It is set for "contract_storage_balances": that reading sees only the
+	// balance entries the lake's current-state projection captured, so an entry
+	// dormant since before its coverage began is absent. Where the contract
+	// publishes its own holder count, SupplyConsistent reports whether the two
+	// agreed — a disagreement is what a missing entry looks like from here.
 	CirculatingSupplyLowerBound bool `json:"circulating_supply_lower_bound,omitempty"`
 
 	// BalanceEntries is how many per-holder balance entries were summed.
 	// Only set for "contract_storage_balances".
 	BalanceEntries int `json:"balance_entries,omitempty"`
+
+	// ArchivedBalanceEntries and ArchivedBalanceTotal are the part of
+	// BalanceEntries and TotalSupply held in persistent entries whose TTL had
+	// lapsed at the lake tip: archived, still owned and restorable, so counted.
+	// Only set for "contract_storage_balances", and only when non-zero.
+	ArchivedBalanceEntries int     `json:"archived_balance_entries,omitempty"`
+	ArchivedBalanceTotal   *string `json:"archived_balance_total,omitempty"`
 
 	// SupplyConsistent, when non-nil, reports whether every cross-check the
 	// contract itself published agreed with what we summed — its own
@@ -263,6 +269,10 @@ func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID 
 		Source:                      string(supply.BasisContractStorageBalances),
 		CirculatingSupplyLowerBound: true,
 		BalanceEntries:              st.BalanceEntries,
+	}
+	if st.ArchivedEntries > 0 && st.ArchivedTotal != nil {
+		archived := st.ArchivedTotal.String()
+		resp.ArchivedBalanceEntries, resp.ArchivedBalanceTotal = st.ArchivedEntries, &archived
 	}
 	if st.HasSelfChecks() {
 		consistent := st.SelfConsistent()
