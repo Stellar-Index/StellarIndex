@@ -376,36 +376,24 @@ type LedgerEntryChangeDecoder interface {
 // RENUMBERS existing positions may bump the constant — read the repair path
 // below before you do.
 //
-// WHY THIS MATTERS, and it is not academic. intra_ledger_seq is PERSISTED
-// and COMPARED ACROSS BINARY VERSIONS by two guards:
+// WHY THIS MATTERS. intra_ledger_seq is PERSISTED and COMPARED ACROSS
+// BINARY VERSIONS, and a bump RENUMBERS every ledger: the v1 walk could give
+// an account's final balance position 6 where the v2 walk correctly gives 3.
 //
-//   - account_observations (and its four sibling *_observations tables):
-//     `WHERE intra_ledger_seq <= EXCLUDED.intra_ledger_seq` (migration 0111);
-//   - ledger_entries_current_v2: the ReplacingMergeTree version
-//     `(ledger_seq << 32) | intra_ledger_seq`.
+//   - account_observations and its four siblings stamp this constant as
+//     walk_version and guard on `(walk_version, intra_ledger_seq) <=
+//     EXCLUDED` (migration 0199), so a re-derive under a bumped version
+//     replaces an older walk's row even at a lower position. A renumbering
+//     shipped WITHOUT a bump evaluates `6 <= 3` and the correction is
+//     silently dropped on every re-run; its only repair is
+//     reconstruct-final-then-seed at timescale.SeedIntraLedgerSeq
+//     (migration 0120).
+//   - ledger_entries_current_v2's ReplacingMergeTree version
+//     `(ledger_seq << 32) | intra_ledger_seq` carries no walk version, so
+//     there a lower-numbered correction cannot displace a higher-numbered
+//     legacy row: delete the range and reproject.
 //
-// Both assume the two positions being compared are drawn from the same
-// numbering. A version bump RENUMBERS every ledger, so a legacy row can
-// OUTRANK a correction: if the v1 walk gave an account's final balance
-// position 6, and the v2 walk correctly places that same final balance at
-// position 3, the guard evaluates `6 <= 3` = false and the corrected write
-// is SILENTLY DROPPED — permanently. Replaying the re-derive does not help,
-// because it re-computes the same lower position every time.
-//
-// THE REPAIR PATH for a version bump is therefore NOT "replay the changes".
-// It is RECONSTRUCT-FINAL-THEN-SEED: derive the FINAL per-(key, ledger)
-// state and write ONE row per key per ledger stamped
-// timescale.SeedIntraLedgerSeq (= math.MaxUint32), which the `<=` guard
-// always admits and a re-run re-admits idempotently. It is only sound for a
-// reconstructed FINAL state — stamping the sentinel on a change-by-change
-// replay would tie every change in the ledger at MaxUint32 and re-open C2-6.
-// See migration 0120 and
-// docs/operations/runbooks/entry-walk-renumbering.md.
-//
-// On the ClickHouse side the equivalent repair is the existing
-// delete-then-replay per range (the master plan's re-derive procedure): a
-// lower RMT version cannot displace a higher one either, so the partition
-// must be dropped before re-ingest.
+// Procedure: docs/operations/runbooks/entry-walk-renumbering.md.
 const EntryWalkVersion = 2
 
 type LedgerEntryChangeContext struct {
