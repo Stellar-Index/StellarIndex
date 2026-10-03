@@ -101,6 +101,89 @@ var excludedFromGapDetector = map[string]string{
 	"classic_movements": "historical-only, no live writer (ADR-0047 D2) — see the comment above this map entry.",
 }
 
+// The five LedgerEntryChange supply observers' tables only get a row when a
+// WATCHED entry changes, so a ledger with no row is the normal case, not a
+// loss, and a LAG-over-DISTINCT gap scan would alert on that quiet. Only the
+// account observer has a true processed watermark (account_observer_watermark,
+// migration 0144); the other four do not, and MAX(ledger) of their tables
+// goes stale on a healthy observer, so they cannot tell dead from quiet.
+// That liveness gap is open. The ADR-0033 re-derive covers soroban_events only.
+const (
+	accountObserverReason = "watched-set-sparse LedgerEntryChange observer table: absent ledgers are quiet, not lost, so a ledger-gap target would false-alert. Liveness is account_observer_watermark; there is no ADR-0033 reconcile axis for LedgerEntry sources."
+	noWatermarkReason     = "watched-set-sparse LedgerEntryChange observer table: absent ledgers are quiet, not lost, so a ledger-gap target would false-alert. OPEN GAP: no processed watermark exists, so a dead observer is indistinguishable from a quiet one; there is no ADR-0033 reconcile axis for LedgerEntry sources."
+)
+
+// excludedObservationTables records the explicit gap-detector decision for
+// every `*_observations` table. A new one must be registered as a target or
+// added here, so the blind spot is a tracked choice rather than an omission.
+var excludedObservationTables = map[string]string{
+	"account_observations":     accountObserverReason,
+	"trustline_observations":   noWatermarkReason,
+	"claimable_observations":   noWatermarkReason,
+	"lp_reserve_observations":  noWatermarkReason,
+	"sac_balance_observations": noWatermarkReason,
+	"divergence_observations":  "cross-source price divergence log keyed by pair and time, not a per-ledger ingest stream.",
+}
+
+// TestObservationTablesHaveExplicitGapDetectorDecision fails when a
+// `*_observations` migration table is neither a gap-detector target nor in
+// [excludedObservationTables], and when an exclusion outlives its table or
+// contradicts a registered target.
+func TestObservationTablesHaveExplicitGapDetectorDecision(t *testing.T) {
+	t.Parallel()
+
+	migrations, err := filepath.Glob(findRepoRoot(t) + "/migrations/*.up.sql")
+	if err != nil || len(migrations) == 0 {
+		t.Fatalf("glob migrations: %v (n=%d)", err, len(migrations))
+	}
+	registered := make(map[string]bool, len(DefaultGapDetectorTargets))
+	for _, target := range DefaultGapDetectorTargets {
+		registered[target.Table] = true
+	}
+
+	createTable := regexp.MustCompile(`(?m)^\s*CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+([a-z][a-z0-9_]*_observations)\b`)
+	dropTable := regexp.MustCompile(`(?m)^\s*DROP\s+TABLE(?:\s+IF\s+EXISTS)?\s+([a-z][a-z0-9_]*_observations)\b`)
+	created := map[string]bool{}
+	dropped := map[string]bool{}
+	for _, path := range migrations {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		for _, m := range createTable.FindAllStringSubmatch(string(body), -1) {
+			created[m[1]] = true
+		}
+		for _, m := range dropTable.FindAllStringSubmatch(string(body), -1) {
+			dropped[m[1]] = true
+		}
+	}
+	for table := range dropped {
+		delete(created, table)
+	}
+
+	for table := range created {
+		if registered[table] {
+			if excludedObservationTables[table] != "" {
+				t.Errorf("%q is both a gap-detector target and in excludedObservationTables", table)
+			}
+			continue
+		}
+		if excludedObservationTables[table] == "" {
+			t.Errorf("observation table %q has no gap-detector target and no entry in excludedObservationTables", table)
+		}
+	}
+	for table := range excludedObservationTables {
+		if !created[table] {
+			t.Errorf("excludedObservationTables[%q] names a table no migration creates — delete the entry", table)
+		}
+	}
+	for _, want := range []string{"account_observations", "trustline_observations", "claimable_observations", "lp_reserve_observations", "sac_balance_observations"} {
+		if !created[want] {
+			t.Errorf("guard no longer sees %q — the migration walk is broken", want)
+		}
+	}
+}
+
 // inferSourceName guesses the canonical source-label slug for a
 // table by stripping the table-suffix and replacing underscores
 // with hyphens. Used in the lint failure message to suggest a
