@@ -481,7 +481,7 @@ Free and Partner, plus anonymous callers:
 | Tier | How obtained | Per-key default (req/min) | Per-key ceiling (req/min) | Identity |
 | ---- | ------------ | ------------------------: | ------------------------: | -------- |
 | Anonymous | no API key | `[api].anon_rate_limit_per_min` (code default **60**; r1 runs it higher — read `X-RateLimit-Limit`, don't hard-code either number) | n/a (`[api].anon_rate_limit_per_min`) | per IP (XFF-aware via `api.trusted_proxy_cidrs`) |
-| Free | `POST /v1/signup` (every registered account's default) | **1,000** | **1,000** | per API key |
+| Free | `POST /v1/register` (every registered account's default) | **1,000** | **1,000** | per API key |
 | Partner | staff-set `tier` on `PATCH /v1/admin/accounts/{id}` | **1,000** | **100,000** | per API key |
 
 Default and ceiling apply to dashboard-minted keys: a key minted

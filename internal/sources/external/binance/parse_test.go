@@ -228,3 +228,11 @@ func TestParseAggTradeFrame_RejectsSymbolThatWouldTruncateSeed(t *testing.T) {
 		t.Fatalf("err = %v, want ErrSyntheticSeedTooLong", errA)
 	}
 }
+
+func TestHandleFrame_DustTradeIsQuietSkip(t *testing.T) {
+	raw := []byte(`{"stream":"xlmusdt@aggTrade","data":{"e":"aggTrade","E":1745000000000,"s":"XLMUSDT","a":1,"p":"0.16","q":"0.00000001","f":1,"l":1,"T":1745000000100,"m":true}}`)
+	trades, err := handleFrame(raw, buildPairMap(t))
+	if err != nil || len(trades) != 0 {
+		t.Fatalf("dust frame: trades=%d err=%v, want none", len(trades), err)
+	}
+}

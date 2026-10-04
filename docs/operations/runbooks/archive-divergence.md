@@ -124,7 +124,7 @@ There is no "history-scanner job". The real producers are:
 - **Tier B** — checkpoint cross-check against the local
   archivist mirror (`verify-archive-tier-b.{service,timer}`).
 - **Tier D** — weekly multi-peer sampling: root cron, Sunday
-  10:23 (`-tier peers -peer-samples 50`, output to journald tag
+  16:23 (`-tier peers -peer-samples 50`, output to journald tag
   `stellarindex-tier-d`), under `run-heavy-job.sh` with its OWN
   lock, `verify-archive-tier-d` — it does not share the tier A/B
   `verify-archive` lock, so a tier A/B run never skips it and it

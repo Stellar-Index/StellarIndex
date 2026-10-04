@@ -355,6 +355,9 @@ type SupplyFlowDay struct {
 	// net redemptions is negative, which is a real reading and not an
 	// error.
 	Net *big.Int
+	// Mint, Burn and Clawback are the day's unsigned per-kind sums. A kind
+	// outside the three is counted in Flows but in none of these, as in Net.
+	Mint, Burn, Clawback *big.Int
 	// Flows counts the events behind Net. A day with a zero Net and a
 	// positive Flows saw mints and burns cancel, which is a different
 	// fact from a day with no flows at all — and the latter has no row
@@ -388,6 +391,9 @@ const supplyFlowsDailyByContractsQuery = `
 			kind = 'mint',                    toInt256(amount),
 			kind IN ('burn', 'clawback'),    -toInt256(amount),
 			toInt256(0)))) AS net,
+		toString(sumIf(toInt256(amount), kind = 'mint'))     AS mint,
+		toString(sumIf(toInt256(amount), kind = 'burn'))     AS burn,
+		toString(sumIf(toInt256(amount), kind = 'clawback')) AS clawback,
 		count() AS flows
 	FROM stellar.supply_flows FINAL
 	WHERE contract_id IN (?)
@@ -437,15 +443,21 @@ func (r *SupplyReader) DailySupplyFlowsForContracts(ctx context.Context, contrac
 			contractID string
 			day        time.Time
 			netS       string
+			mintS      string
+			burnS      string
+			clawbackS  string
 			flows      uint64
 		)
-		if err := rows.Scan(&contractID, &day, &netS, &flows); err != nil {
+		if err := rows.Scan(&contractID, &day, &netS, &mintS, &burnS, &clawbackS, &flows); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan daily supply flow row: %w", err)
 		}
 		out = append(out, SupplyFlowDay{
 			ContractID: contractID,
 			Day:        day.UTC(),
 			Net:        mustBig(netS),
+			Mint:       mustBig(mintS),
+			Burn:       mustBig(burnS),
+			Clawback:   mustBig(clawbackS),
 			Flows:      flows,
 		})
 	}

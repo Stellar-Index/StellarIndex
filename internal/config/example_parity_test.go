@@ -228,6 +228,19 @@ func TestAnsibleEnablesTiingoOnlyWithKey(t *testing.T) {
 	}
 }
 
+// TestExampleTOMLAllowedOriginsIsNotWildcard pins the shipped example to
+// the code default (same-origin only): an operator who copies it must not
+// get wide-open CORS.
+func TestExampleTOMLAllowedOriginsIsNotWildcard(t *testing.T) {
+	c, err := config.Load(filepath.Join("..", "..", "configs", "example.toml"))
+	if err != nil {
+		t.Fatalf("load example.toml: %v", err)
+	}
+	if len(c.API.AllowedOrigins) != 0 {
+		t.Errorf("configs/example.toml ships allowed_origins = %q; the code default is []", c.API.AllowedOrigins)
+	}
+}
+
 // tomlStanza returns header's lines up to the next table header, or "".
 func tomlStanza(text, header string) string {
 	var out []string

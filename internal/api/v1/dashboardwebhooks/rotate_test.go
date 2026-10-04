@@ -40,7 +40,7 @@ func TestMount_RotateSecret_KeepsWebhookAndQueue(t *testing.T) {
 	id := uuid.New()
 	oldKey := []byte("wsec_old")
 	store.webhooks[id] = platform.CustomerWebhook{
-		ID: id, AccountID: sc.Account.ID, SecretHash: oldKey,
+		ID: id, AccountID: sc.Account.ID, SigningKey: oldKey,
 		URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
 	}
 	store.deliveries[id] = []platform.WebhookDelivery{{ID: uuid.New(), WebhookID: id, EventType: "incident.sev1"}}
@@ -62,11 +62,11 @@ func TestMount_RotateSecret_KeepsWebhookAndQueue(t *testing.T) {
 	}
 
 	got := store.webhooks[id]
-	if string(got.SecretHash) != resp.Secret || resp.Secret == string(oldKey) || len(resp.Secret) < 10 {
-		t.Errorf("stored key %q, returned %q: want the fresh returned key stored", got.SecretHash, resp.Secret)
+	if string(got.SigningKey) != resp.Secret || resp.Secret == string(oldKey) || len(resp.Secret) < 10 {
+		t.Errorf("stored key %q, returned %q: want the fresh returned key stored", got.SigningKey, resp.Secret)
 	}
-	if string(got.PreviousSecret) != string(oldKey) || !got.PreviousSecretExpiresAt.Equal(wantExpiry) {
-		t.Errorf("previous = (%q, %v), want the old key until %v", got.PreviousSecret, got.PreviousSecretExpiresAt, wantExpiry)
+	if string(got.PreviousSigningKey) != string(oldKey) || !got.PreviousSecretExpiresAt.Equal(wantExpiry) {
+		t.Errorf("previous = (%q, %v), want the old key until %v", got.PreviousSigningKey, got.PreviousSecretExpiresAt, wantExpiry)
 	}
 	if len(store.deliveries[id]) != 1 {
 		t.Errorf("queued deliveries = %d after rotate, want the 1 queued before it", len(store.deliveries[id]))
@@ -79,7 +79,7 @@ func TestMount_RotateSecret_KeepsWebhookAndQueue(t *testing.T) {
 	if err := json.Unmarshal(replay.Body.Bytes(), &again); err != nil {
 		t.Fatalf("decode replay: %v", err)
 	}
-	if again.Secret != resp.Secret || string(store.webhooks[id].PreviousSecret) != string(oldKey) {
+	if again.Secret != resp.Secret || string(store.webhooks[id].PreviousSigningKey) != string(oldKey) {
 		t.Error("idempotent replay rotated the key a second time")
 	}
 }
@@ -89,7 +89,7 @@ func TestHandleRotateSecret_CrossAccountAndRole(t *testing.T) {
 	stranger := uuid.New()
 	strangerKey := []byte("wsec_stranger")
 	store.webhooks[stranger] = platform.CustomerWebhook{
-		ID: stranger, AccountID: uuid.New(), SecretHash: strangerKey,
+		ID: stranger, AccountID: uuid.New(), SigningKey: strangerKey,
 		URL: "https://y.example", Events: []string{"incident.sev1"}, Enabled: true,
 	}
 	req := sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks/"+stranger.String()+"/rotate-secret", nil, sc)
@@ -99,7 +99,7 @@ func TestHandleRotateSecret_CrossAccountAndRole(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Errorf("cross-account rotate: status = %d, want 404", w.Code)
 	}
-	if string(store.webhooks[stranger].SecretHash) != string(strangerKey) {
+	if string(store.webhooks[stranger].SigningKey) != string(strangerKey) {
 		t.Error("cross-account rotate changed the other account's key")
 	}
 

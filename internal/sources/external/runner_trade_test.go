@@ -3,6 +3,8 @@ package external
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -92,5 +94,24 @@ func TestRun_PollerContinuesAfterError(t *testing.T) {
 
 	if p.calls < 2 {
 		t.Errorf("calls = %d, want ≥2 (poller didn't retry after error)", p.calls)
+	}
+}
+
+// Trades already buffered when ctx is cancelled must still reach the sink.
+func TestForwardTrades_FlushesBufferedOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	in := make(chan canonical.Trade, 3)
+	for i := uint32(1); i <= 3; i++ {
+		in <- testTrade(t, "flush-venue", i)
+	}
+	sink := make(chan consumer.Event, 3)
+
+	forwardTrades(ctx, "flush-venue", in, sink,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if got := len(sink); got != 3 {
+		t.Fatalf("flushed %d buffered trades after cancel, want 3", got)
 	}
 }

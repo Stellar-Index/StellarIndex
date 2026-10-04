@@ -28,6 +28,8 @@ var bareResponseOperations = map[string]string{
 	"verifyLoginCode":               "session-cookie magic-link sign-in; handler writes the bare DTO",
 	"beginPasskeyLogin":             "session-cookie passkey sign-in; handler writes the bare WebAuthn options",
 	"finishPasskeyLogin":            "session-cookie passkey sign-in; handler writes the bare DTO",
+	"beginPasskeySignup":            "session-cookie passkey sign-up; handler writes the bare WebAuthn options",
+	"finishPasskeySignup":           "session-cookie passkey sign-up; handler writes the bare DTO",
 	"beginPasskeyRegistration":      "session-cookie passkey registration; handler writes the bare WebAuthn options",
 	"finishPasskeyRegistration":     "session-cookie passkey registration; handler writes the bare DTO",
 	"listPasskeyCredentials":        "session-cookie passkey management; handler writes the bare DTO",

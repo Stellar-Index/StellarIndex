@@ -147,7 +147,8 @@ func substrateForGenesis(ctx context.Context, scan substrateScanner, cache map[u
 func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo // linear computor; one block per claim.
 	fs := flag.NewFlagSet("compute-completeness", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
-	toFlag := fs.Uint("to", 0, "Tip ledger (inclusive); 0 = resolve from the live ledgerstream cursor")
+	toFlag := fs.Uint("to", 0, "Tip ledger (inclusive); 0 = resolve from the live ledgerstream cursor. A frozen cursor is refused either way unless -allow-frozen-cursor is set")
+	allowFrozenCursor := fs.Bool("allow-frozen-cursor", false, "Stamp a verdict even though the ledgerstream cursor is provably behind the network (operator override; requires -to)")
 	only := fs.String("source", "", "Limit to one source (e.g. soroswap|blend|reflector-dex|sdex)")
 	useCH := fs.Bool("ch", false, "Read all three claims from the certified ClickHouse lake (substrate + recognition + projection re-derive) instead of Postgres soroban_events — fast, off the serving DB (ADR-0033 + ADR-0034)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (with -ch; without it, SDEX's projection still re-derives from the lake)")
@@ -156,6 +157,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	fromLedger := fs.Uint("from", 0, "INCREMENTAL verify: only check [from, tip], trusting [genesis, from] as already verified (substrate + recognition + projection all scoped to [from, tip]); the watermark still extends to tip when the window is clean. 0 = full verify from each source's genesis. The completeness timer passes min(watermark) from the prior snapshots so each run re-checks only new ledgers — minutes, not hours. An incremental run can only CONFIRM or DOWNGRADE the served `complete` axis, never upgrade it: a range it did not reconcile is carried from the prior verdict, and a FAILING prior verdict is cleared only by a full run (INV-5 — see projectionClaim).")
 	pass := fs.Bool("pass", false, "WHOLE-PASS mode: prove recognition + substrate ONCE at full range for the ENTIRE source catalogue, then reconcile EACH source's projection incrementally from its own prior watermark (projectionFloor). One process replaces the per-source, per-chunk driver that re-ran the load-heaviest global recognition scan (DistinctTopicShapes, ~60s) on EVERY 25k chunk — the nightly timeout that froze the alphabetical tail's verdicts. Because substrate is proven at FULL tip, its write advances the tip and is never blocked by the CS-083 guard (the low-tip substrate flap). Every catalogue source gets a verdict — a never-seeded source, and a source whose prior projection verdict was FAILING, both reconcile from genesis (a red source has no verified ground to resume from, so the pass re-verifies it rather than carrying the failure forward forever). Requires -ch; incompatible with -source / -from / -skip-substrate / -skip-recognition (the per-chunk knobs it replaces).")
 	maxCarryAge := fs.Duration("max-carry-age", completeness.MaxProjectionCarryAge, "With -pass: a source whose clean projection claim was last reconciled over its whole served range longer ago than this (or never, on record) re-verifies from genesis instead of carrying the claim forward again — oldest evidence first, at most 3 sources per pass, never the SDEX census (its full re-verify outlasts the pass; compute-completeness-sdex.timer re-proves it weekly with -source sdex). 0 = carry without bound.")
+	sourceTimeout := fs.Duration("source-timeout", 45*time.Minute, "Deadline for ONE source's evaluation; a source that exceeds it gets no verdict (its prior stands) and the pass moves on, so one slow source cannot starve the rest. 0 disables.")
 	timeout := fs.Duration("timeout", 120*time.Minute, "Deadline for the whole run; sources not reached by it keep their prior verdict and are named in the error. Keep it below the systemd unit's TimeoutStartSec.")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -187,13 +189,10 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 	defer func() { _ = store.Close() }()
 
-	tip := uint32(*toFlag)
-	if tip == 0 {
-		cur, gerr := store.GetCursor(ctx, "ledgerstream", "")
-		if gerr != nil {
-			return fmt.Errorf("resolve tip from ledgerstream cursor: %w (pass -to to override)", gerr)
-		}
-		tip = cur.LastLedger
+	cur, gerr := store.GetCursor(ctx, "ledgerstream", "")
+	tip, err := verdictTipFromCursorRead(uint32(*toFlag), cur, gerr, time.Now(), *allowFrozenCursor) //nolint:gosec // ledger seq fits uint32
+	if err != nil {
+		return fmt.Errorf("compute-completeness: %w", err)
 	}
 	if tip == 0 {
 		return fmt.Errorf("tip resolved to 0 — pass -to")
@@ -468,7 +467,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 
 	// ── Per-source watermark ────────────────────────────────────────
-	evalSource := func(src reconSource) error {
+	evalSource := func(ctx context.Context, src reconSource) error {
 		genesis := src.genesis
 		var problems []uint32
 		var detail []string
@@ -801,7 +800,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	if *pass {
 		catalogue = orderForPass(catalogue, priorProj, priorWatermark)
 	}
-	srcErr := evaluateEachSource(ctx, catalogue, *only, evalSource)
+	srcErr := evaluateEachSource(ctx, catalogue, *only, *sourceTimeout, evalSource)
 	if recSnapErr != nil {
 		return errors.Join(srcErr, recSnapErr)
 	}
@@ -830,7 +829,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 // fresh verdict from every source after it. An errored source publishes
 // nothing and keeps its prior verdict. A done ctx stops the walk, since every
 // remaining eval would fail the same way, and the error names each skipped source.
-func evaluateEachSource(ctx context.Context, catalogue []reconSource, only string, eval func(reconSource) error) error {
+// perSource > 0 bounds each eval: one that outlives it fails alone (no verdict,
+// prior stands) instead of consuming the run's deadline.
+func evaluateEachSource(ctx context.Context, catalogue []reconSource, only string, perSource time.Duration, eval func(context.Context, reconSource) error) error {
 	var errs []error
 	for i, src := range catalogue {
 		if only != "" && src.name != only {
@@ -846,7 +847,13 @@ func evaluateEachSource(ctx context.Context, catalogue []reconSource, only strin
 			errs = append(errs, fmt.Errorf("not evaluated, prior verdicts stand (%s): %w", strings.Join(skipped, ", "), cerr))
 			break
 		}
-		if err := eval(src); err != nil {
+		sctx, scancel := ctx, context.CancelFunc(func() {})
+		if perSource > 0 {
+			sctx, scancel = context.WithTimeout(ctx, perSource)
+		}
+		err := eval(sctx, src)
+		scancel()
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "compute-completeness: %s: NO VERDICT this run, prior verdict stands: %v\n", src.name, err)
 			errs = append(errs, err)
 		}
@@ -942,6 +949,53 @@ func projectionFloor(genesis uint32, pass bool, prior priorProjection, priorWate
 		return uint32(fromLedger) //nolint:gosec // ledger seq fits uint32
 	}
 	return genesis
+}
+
+// maxTipCursorLagLedgers is how far the network may provably have run past the
+// ledgerstream cursor before the cursor stops being usable as the verdict tip:
+// ~1h at [completeness.SlowestLedgerClose], far above a live indexer's lag.
+const maxTipCursorLagLedgers uint32 = 600
+
+// tipFromLiveCursor resolves the verdict tip from the live ledgerstream cursor,
+// refusing a cursor the network has provably left behind (ADR-0033: no cursor
+// trust). A frozen ingest would otherwise stamp a fresh computed_at onto a
+// verdict "complete to tip" for a tip the network passed long ago; refusing
+// writes no snapshot, so the stored verdicts age into the API's stale gate.
+func tipFromLiveCursor(cur timescale.Cursor, now time.Time) (uint32, error) {
+	floor := completeness.NetworkTipLowerBound(cur.LastLedger, cur.UpdatedAt, now)
+	if lag := floor - cur.LastLedger; lag > maxTipCursorLagLedgers {
+		return 0, fmt.Errorf("ledgerstream cursor is frozen at ledger %d (last advanced %s ago; the network has closed at least %d ledgers since) — it is not the network tip, so no verdict is stamped against it (-allow-frozen-cursor with -to overrides)",
+			cur.LastLedger, now.Sub(cur.UpdatedAt).Round(time.Second), lag)
+	}
+	return cur.LastLedger, nil
+}
+
+// verdictTipFromCursorRead applies the cursor read result: with an explicit -to,
+// a missing cursor row means there is no live ingest to guard (a host that never
+// ingested); any other read error, or a missing row without -to, fails closed.
+func verdictTipFromCursorRead(to uint32, cur timescale.Cursor, readErr error, now time.Time, allowFrozen bool) (uint32, error) {
+	if readErr != nil {
+		if to != 0 && errors.Is(readErr, timescale.ErrNotFound) {
+			return to, nil
+		}
+		return 0, fmt.Errorf("read ledgerstream cursor: %w", readErr)
+	}
+	return resolveVerdictTip(to, cur, now, allowFrozen)
+}
+
+// resolveVerdictTip picks the verdict tip. The frozen-cursor guard applies to an
+// explicit -to as well, since the nightly wrapper passes -to (cursor minus a
+// margin) and would otherwise keep refreshing computed_at against a stalled
+// ingest. Only an explicit override skips it.
+func resolveVerdictTip(to uint32, cur timescale.Cursor, now time.Time, allowFrozen bool) (uint32, error) {
+	live, err := tipFromLiveCursor(cur, now)
+	switch {
+	case err != nil && (!allowFrozen || to == 0):
+		return 0, err
+	case to != 0:
+		return to, nil
+	}
+	return live, nil
 }
 
 // sourceProjectionFloor is projectionFloor for one catalogue source. In -pass

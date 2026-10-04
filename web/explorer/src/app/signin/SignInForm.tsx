@@ -3,17 +3,21 @@
 import { useState, useSyncExternalStore } from 'react';
 import { AlertCircle, KeyRound, Loader2, Mail } from 'lucide-react';
 
-import { API_BASE_URL } from '@/api/client';
+import { API_BASE_URL, timeoutSignal } from '@/api/client';
 import {
   ApiError,
   beginPasskeyLogin,
+  beginPasskeySignup,
   finishPasskeyLogin,
+  finishPasskeySignup,
   verifyCode,
 } from '@/api/account';
 import {
+  createPasskey,
   getPasskeyAssertion,
   isCeremonyCancelled,
   supportsPasskeys,
+  type ServerCreationOptions,
   type ServerRequestOptions,
 } from '@/lib/webauthn';
 import { Button } from '@/components/ui';
@@ -71,6 +75,27 @@ export function SignInForm({
     }
   }
 
+  async function onPasskeySignup() {
+    setError(null);
+    setPasskeyBusy(true);
+    try {
+      const options = (await beginPasskeySignup()) as ServerCreationOptions;
+      const credential = await createPasskey(options);
+      await finishPasskeySignup('Passkey', credential);
+      window.location.assign('/dashboard');
+      return;
+    } catch (err) {
+      if (!isCeremonyCancelled(err)) {
+        setError(
+          err instanceof ApiError
+            ? (err.detail ?? 'Passkey sign-up failed — try again or use email.')
+            : 'Passkey sign-up failed — try again or use email.',
+        );
+      }
+      setPasskeyBusy(false);
+    }
+  }
+
   async function onSubmitEmail(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = email.trim().toLowerCase();
@@ -94,6 +119,7 @@ export function SignInForm({
         // browser "would have stored", which is exactly the assumption
         // this call broke. accountFetch has always had it.
         credentials: 'include',
+        signal: timeoutSignal(),
       });
       if (!res.ok) {
         let detail: string | undefined;
@@ -278,13 +304,23 @@ export function SignInForm({
             )}
             Sign in with a passkey
           </button>
+          <button
+            type="button"
+            onClick={onPasskeySignup}
+            disabled={passkeyBusy}
+            className="text-ink-muted hover:text-ink w-full text-center text-xs underline disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Create an account with a passkey, no email
+          </button>
         </>
       )}
 
       <p className="text-ink-muted text-xs">
         Passwordless sign-in — we email a 6-digit code (and a one-click link),
         valid for 15 minutes. New emails create an account on first sign-in.
-        Passkeys can be added from the dashboard once you&apos;re in.
+        Passkeys can be added from the dashboard once you&apos;re in. An account
+        created with a passkey alone has no email, so there is no recovery if
+        every copy of the passkey is lost.
       </p>
     </form>
   );

@@ -82,7 +82,7 @@ three-tier waterfall:
 
 1. `usdVolumeDecimals` — quote is USD / USD-pegged
 2. `tradeUSDVolumeViaFX` — `VWAPUSDFXResolver.USDPriceAt(quote, ts)`
-3. `tradeUSDVolumeViaXLMBaseAnchor` — XLM-base anchor
+3. `usdVolumeViaXLMBaseAnchor` — XLM-base anchor
 
 The tiers are sound; **tier 2 queries the wrong table**. `VWAPUSDFXResolver`
 looks up `<asset>/<peg>` in `prices_1m`, but `prices_1m` contains only

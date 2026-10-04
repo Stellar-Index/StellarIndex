@@ -2,6 +2,7 @@ package classicmovements
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -489,6 +490,30 @@ func TestDecodeCAP0038Revocation_liquidation_emitsTwoLegs(t *testing.T) {
 	}
 	if movements[2].Amount.String() != "800" || movements[3].Amount.String() != "4000" {
 		t.Errorf("create amounts = %s/%s, want 800/4000", movements[2].Amount.String(), movements[3].Amount.String())
+	}
+}
+
+// The created balances' change order differs between exports of one ledger;
+// leg_index is part of account_movements' key, so it must follow the balance
+// id, not the order the changes arrived in.
+func TestDecodeCAP0038Revocation_legIndexIndependentOfChangeOrder(t *testing.T) {
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	usdc := mkAlphanum4Asset(t, "USDC", 0x99)
+	op := mkAllowTrustOp(t, 0x98, "USDC", 0)
+	result := mkAllowTrustSuccessResult()
+	a := mkClaimableBalanceCreatedChange(t, 0x9A, native, 800)
+	b := mkClaimableBalanceCreatedChange(t, 0x9B, usdc, 4000)
+
+	one, err := DecodeCAP0038Revocation(40_000_000, time.Time{}, "tx8", 0, op, result, []EntryChangeXDR{a, b})
+	if err != nil {
+		t.Fatalf("DecodeCAP0038Revocation: %v", err)
+	}
+	two, err := DecodeCAP0038Revocation(40_000_000, time.Time{}, "tx8", 0, op, result, []EntryChangeXDR{b, a})
+	if err != nil {
+		t.Fatalf("DecodeCAP0038Revocation: %v", err)
+	}
+	if !reflect.DeepEqual(one, two) {
+		t.Fatalf("the same liquidation in two change orders produced different legs:\n%+v\n%+v", one, two)
 	}
 }
 

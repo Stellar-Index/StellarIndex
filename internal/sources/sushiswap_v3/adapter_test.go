@@ -201,19 +201,15 @@ func TestDecode_NonDirectionalSwapIsARecognizedNoOp(t *testing.T) {
 	}
 }
 
-// TestDecode_PositionAndLifecycleEventsProjectZeroRows records the
-// deliberate scope of this increment: mint / burn / collect / init /
-// upgraded / migrated are gated and recognized, and project nothing.
-func TestDecode_PositionAndLifecycleEventsProjectZeroRows(t *testing.T) {
+// TestDecode_LifecycleEventsProjectZeroRows: init / upgraded / migrated are
+// gated and recognized, and project nothing.
+func TestDecode_LifecycleEventsProjectZeroRows(t *testing.T) {
 	d := NewDecoder()
 	for _, tc := range []struct {
 		name  string
 		topic string
 		body  string
 	}{
-		{EventMint, TopicSymbolMint, goldenMint},
-		{EventBurn, TopicSymbolBurn, goldenBurn},
-		{EventCollect, TopicSymbolCollect, goldenBurn},
 		{EventInit, TopicSymbolInit, goldenPoolCreated},
 		{EventUpgraded, TopicSymbolUpgraded, goldenPoolCreated},
 		{EventMigrated, TopicSymbolMigrated, goldenPoolCreated},

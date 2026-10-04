@@ -104,6 +104,8 @@ type Flags struct {
 	PivotUnverified bool `json:"pivot_unverified,omitempty"`
 	// ThinMarket: a served price comes from a market below the substance floor (include_thin opt-in).
 	ThinMarket bool `json:"thin_market,omitempty"`
+	// ProxyDeviation: a triangulated fiat:USD price was served through a USD peg while a declared peg trades off $1.
+	ProxyDeviation bool `json:"proxy_deviation,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.
@@ -480,6 +482,10 @@ type AssetDetail struct {
 	// "admin_exclusion", "override"); null when no snapshot exists. It
 	// never carries "sep1_declared_max" — see MaxSupplyBasis.
 	SupplyBasis *string `json:"supply_basis,omitempty"`
+
+	// Trust is the banded trust score with its factor breakdown; set on
+	// the detail lookup only, nil on listing rows.
+	Trust *AssetTrust `json:"trust,omitempty"`
 
 	// MaxSupplyBasis names where MaxSupply (and FDVUSD) came from when not the SupplyBasis policy, e.g. "sep1_declared_max".
 	MaxSupplyBasis *string `json:"max_supply_basis,omitempty"`
@@ -996,6 +1002,28 @@ type Market struct {
 	FirstTradeAt *time.Time `json:"first_trade_at,omitempty"`
 }
 
+// AssetSupplyFlows is the data payload of [Client.AssetSupplyFlows].
+// HistoryIncomplete is true when the running net dips below zero, so
+// Days must not be cumulated into a supply level.
+type AssetSupplyFlows struct {
+	AssetID           string               `json:"asset_id"`
+	ContractID        string               `json:"contract_id"`
+	Days              []AssetSupplyFlowDay `json:"days"`
+	HistoryIncomplete bool                 `json:"history_incomplete"`
+	AsOfLedger        *int64               `json:"as_of_ledger,omitempty"`
+}
+
+// AssetSupplyFlowDay is one UTC day of supply flows. Mint/Burn/Clawback
+// are base-unit decimal strings; Net = mint - burn - clawback (signed).
+type AssetSupplyFlowDay struct {
+	Day      string `json:"day"`
+	Mint     string `json:"mint"`
+	Burn     string `json:"burn"`
+	Clawback string `json:"clawback"`
+	Net      string `json:"net"`
+	Flows    int64  `json:"flows"`
+}
+
 // AssetMetadata is the data shape returned by [Client.AssetMetadata]
 // (the SEP-1 overlay endpoint, /v1/assets/{id}/metadata). Mirrors
 // the AssetMetadata schema in openapi/stellar-index.v1.yaml.
@@ -1351,6 +1379,10 @@ type ChartSeries struct {
 	// Points was withheld because the asset's current market cannot
 	// support a valuation, as on Asset.MarketCapLowLiquidity.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
+	// RowCapTruncated: a Timeframe "all" read hit the 50,000-bucket cap, so
+	// Points is the OLDEST slice and ends at DataEndsAt, short of the present.
+	RowCapTruncated bool       `json:"row_cap_truncated,omitempty"`
+	DataEndsAt      *time.Time `json:"data_ends_at,omitempty"`
 }
 
 // ChangeSummary is the data shape returned by [Client.ChangeSummary]
@@ -1480,6 +1512,35 @@ type VWAPResult struct {
 	Truncated           bool `json:"truncated"`
 	// Clamped: see [OHLCBar.Clamped].
 	Clamped bool `json:"clamped"`
+	// Breakdown is set only for a `breakdown=source` request.
+	Breakdown *VWAPBreakdown `json:"breakdown,omitempty"`
+}
+
+// VWAPBreakdown mirrors `internal/api/v1.VWAPBreakdown`.
+type VWAPBreakdown struct {
+	Interval  *string               `json:"interval"`
+	Truncated bool                  `json:"truncated"`
+	Buckets   []VWAPBreakdownBucket `json:"buckets"`
+}
+
+// VWAPBreakdownBucket is one time bucket of a [VWAPBreakdown].
+type VWAPBreakdownBucket struct {
+	Start       time.Time             `json:"start"`
+	End         time.Time             `json:"end"`
+	QuoteVolume string                `json:"quote_volume"`
+	TradeCount  int                   `json:"trade_count"`
+	Sources     []VWAPSourceBreakdown `json:"sources"`
+}
+
+// VWAPSourceBreakdown is one venue's share of a [VWAPBreakdownBucket].
+type VWAPSourceBreakdown struct {
+	Source           string  `json:"source"`
+	Price            *string `json:"price"`
+	BaseVolume       string  `json:"base_volume"`
+	QuoteVolume      string  `json:"quote_volume"`
+	TradeCount       int     `json:"trade_count"`
+	Weight           string  `json:"weight"`
+	OutliersExcluded int     `json:"outliers_excluded"`
 }
 
 // TWAPResult is the data shape returned by [Client.TWAP] —
@@ -1637,6 +1698,27 @@ type AssetListingValuation struct {
 	// material: USDT0's trustline-visible supply is 6,469 tokens against
 	// 2,581,052 by mint minus burn.
 	SupplyBasis string `json:"supply_basis,omitempty"`
+}
+
+// AssetTrust is the output-only trust score on [AssetDetail]. A factor
+// with no evidence is "unknown" with nil Points and is excluded from
+// Score; Score is nil when no factor has evidence.
+type AssetTrust struct {
+	FormulaVersion int           `json:"formula_version"`
+	Score          *int          `json:"score"`
+	Band           string        `json:"band"` // "high" / "medium" / "low" / "unknown"
+	CoveragePct    int           `json:"coverage_pct"`
+	Factors        []TrustFactor `json:"factors"`
+}
+
+// TrustFactor is one weighted input to [AssetTrust].
+type TrustFactor struct {
+	ID       string `json:"id"`
+	Band     string `json:"band"`
+	Points   *int   `json:"points"`
+	Weight   int    `json:"weight"`
+	Source   string `json:"source"`
+	Observed string `json:"observed"`
 }
 
 // VerifiedCurrencyListItem is one row in the response to

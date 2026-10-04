@@ -5,18 +5,24 @@ import { SignInForm } from './SignInForm';
 
 const beginPasskeyLogin = vi.hoisted(() => vi.fn());
 const finishPasskeyLogin = vi.hoisted(() => vi.fn());
+const beginPasskeySignup = vi.hoisted(() => vi.fn());
+const finishPasskeySignup = vi.hoisted(() => vi.fn());
 vi.mock('@/api/account', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/account')>()),
   beginPasskeyLogin,
   finishPasskeyLogin,
+  beginPasskeySignup,
+  finishPasskeySignup,
 }));
 
 const supportsPasskeys = vi.hoisted(() => vi.fn());
 const getPasskeyAssertion = vi.hoisted(() => vi.fn());
+const createPasskey = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/webauthn', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/webauthn')>()),
   supportsPasskeys,
   getPasskeyAssertion,
+  createPasskey,
 }));
 
 afterEach(() => {
@@ -24,6 +30,9 @@ afterEach(() => {
   finishPasskeyLogin.mockReset();
   supportsPasskeys.mockReset();
   getPasskeyAssertion.mockReset();
+  beginPasskeySignup.mockReset();
+  finishPasskeySignup.mockReset();
+  createPasskey.mockReset();
 });
 
 describe('SignInForm passkey entry', () => {
@@ -66,6 +75,34 @@ describe('SignInForm passkey entry', () => {
     await waitFor(() => expect(assign).toHaveBeenCalledWith('/dashboard'));
   });
 
+  it('creates an email-less account through the signup ceremony', async () => {
+    supportsPasskeys.mockReturnValue(true);
+    const options = { publicKey: { challenge: 'example-challenge' } };
+    const credential = { id: 'example-credential-id' };
+    beginPasskeySignup.mockResolvedValue(options);
+    createPasskey.mockResolvedValue(credential);
+    finishPasskeySignup.mockResolvedValue(undefined);
+    const assign = vi.fn();
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, assign },
+      writable: true,
+    });
+
+    render(<SignInForm />);
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /Create an account with a passkey/,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(finishPasskeySignup).toHaveBeenCalledWith('Passkey', credential),
+    );
+    expect(createPasskey).toHaveBeenCalledWith(options);
+    expect(beginPasskeyLogin).not.toHaveBeenCalled();
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/dashboard'));
+  });
+
   it('surfaces a verification failure without leaving the email form', async () => {
     supportsPasskeys.mockReturnValue(true);
     beginPasskeyLogin.mockResolvedValue({ publicKey: {} });
@@ -84,5 +121,47 @@ describe('SignInForm passkey entry', () => {
     expect(
       screen.getByRole('button', { name: /Send sign-in code/ }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('SignInForm email request bound', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('returns to the email form when the login request hangs past the timeout', async () => {
+    supportsPasskeys.mockReturnValue(false);
+    const timeout = new AbortController();
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(new DOMException('Request timed out', 'TimeoutError')),
+            );
+          }),
+      ),
+    );
+
+    render(<SignInForm />);
+    fireEvent.change(screen.getByLabelText(/email/i), {
+      target: { value: 'a@example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Send sign-in code/ }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Send sign-in code/ }),
+      ).toBeDisabled(),
+    );
+
+    timeout.abort();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Network error/);
+    expect(
+      screen.getByRole('button', { name: /Send sign-in code/ }),
+    ).toBeEnabled();
   });
 });

@@ -290,12 +290,13 @@ func (h *Handler) LedgerTransactions(w http.ResponseWriter, r *http.Request) {
 	// Total/Truncated come from the ledger header, not the tx query, so a
 	// header-read hiccup only loses this metadata (both fields stay zero)
 	// rather than failing a request the transaction fetch already served.
-	if hdr, found, herr := h.Reader.LedgerBySeq(ctx, seq); herr != nil {
+	hdr, found, herr := h.Reader.LedgerBySeq(ctx, seq)
+	if herr != nil {
 		h.Logger.Warn("explorer LedgerBySeq (transactions total) failed", "err", herr, "seq", seq)
 	} else if found {
 		out.Total = hdr.TxCount
 		out.Truncated = hdr.TxCount > uint32(len(rows))
 	}
 	_, stale, _ := h.LakeWatermark(ctx)
-	h.WriteJSON(w, out, stale)
+	h.writeJSONAt(w, out, stale, herr != nil, time.Time{})
 }
