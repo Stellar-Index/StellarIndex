@@ -365,7 +365,10 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				{"phoenix_admin_events", "", []string{"phoenix.admin"}},
 			},
 		},
-		{name: "comet", genesis: 51_499_546, dec: comet.NewDecoder(), targets: []reconTarget{
+		// contractIDs scopes the lake read to the curated pool (regateSource unions
+		// the protocol_contracts registry in); without it the re-derive streamed
+		// every POOL-topic-candidate event in [floor, tip] and timed out the pass.
+		{name: "comet", genesis: 51_499_546, dec: comet.NewDecoder(), contractIDs: comet.MainnetGatedSet(), targets: []reconTarget{
 			{"trades", "source = 'comet'", []string{"comet.trade"}},
 			{"comet_liquidity", "", []string{"comet.liquidity"}},
 		}},

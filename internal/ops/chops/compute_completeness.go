@@ -157,6 +157,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	fromLedger := fs.Uint("from", 0, "INCREMENTAL verify: only check [from, tip], trusting [genesis, from] as already verified (substrate + recognition + projection all scoped to [from, tip]); the watermark still extends to tip when the window is clean. 0 = full verify from each source's genesis. The completeness timer passes min(watermark) from the prior snapshots so each run re-checks only new ledgers — minutes, not hours. An incremental run can only CONFIRM or DOWNGRADE the served `complete` axis, never upgrade it: a range it did not reconcile is carried from the prior verdict, and a FAILING prior verdict is cleared only by a full run (INV-5 — see projectionClaim).")
 	pass := fs.Bool("pass", false, "WHOLE-PASS mode: prove recognition + substrate ONCE at full range for the ENTIRE source catalogue, then reconcile EACH source's projection incrementally from its own prior watermark (projectionFloor). One process replaces the per-source, per-chunk driver that re-ran the load-heaviest global recognition scan (DistinctTopicShapes, ~60s) on EVERY 25k chunk — the nightly timeout that froze the alphabetical tail's verdicts. Because substrate is proven at FULL tip, its write advances the tip and is never blocked by the CS-083 guard (the low-tip substrate flap). Every catalogue source gets a verdict — a never-seeded source, and a source whose prior projection verdict was FAILING, both reconcile from genesis (a red source has no verified ground to resume from, so the pass re-verifies it rather than carrying the failure forward forever). Requires -ch; incompatible with -source / -from / -skip-substrate / -skip-recognition (the per-chunk knobs it replaces).")
 	maxCarryAge := fs.Duration("max-carry-age", completeness.MaxProjectionCarryAge, "With -pass: a source whose clean projection claim was last reconciled over its whole served range longer ago than this (or never, on record) re-verifies from genesis instead of carrying the claim forward again — oldest evidence first, at most 3 sources per pass, never the SDEX census (its full re-verify outlasts the pass; compute-completeness-sdex.timer re-proves it weekly with -source sdex). 0 = carry without bound.")
+	sourceTimeout := fs.Duration("source-timeout", 45*time.Minute, "Deadline for ONE source's evaluation; a source that exceeds it gets no verdict (its prior stands) and the pass moves on, so one slow source cannot starve the rest. 0 disables.")
 	timeout := fs.Duration("timeout", 120*time.Minute, "Deadline for the whole run; sources not reached by it keep their prior verdict and are named in the error. Keep it below the systemd unit's TimeoutStartSec.")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -466,7 +467,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 
 	// ── Per-source watermark ────────────────────────────────────────
-	evalSource := func(src reconSource) error {
+	evalSource := func(ctx context.Context, src reconSource) error {
 		genesis := src.genesis
 		var problems []uint32
 		var detail []string
@@ -799,7 +800,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	if *pass {
 		catalogue = orderForPass(catalogue, priorProj, priorWatermark)
 	}
-	srcErr := evaluateEachSource(ctx, catalogue, *only, evalSource)
+	srcErr := evaluateEachSource(ctx, catalogue, *only, *sourceTimeout, evalSource)
 	if recSnapErr != nil {
 		return errors.Join(srcErr, recSnapErr)
 	}
@@ -828,7 +829,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 // fresh verdict from every source after it. An errored source publishes
 // nothing and keeps its prior verdict. A done ctx stops the walk, since every
 // remaining eval would fail the same way, and the error names each skipped source.
-func evaluateEachSource(ctx context.Context, catalogue []reconSource, only string, eval func(reconSource) error) error {
+// perSource > 0 bounds each eval: one that outlives it fails alone (no verdict,
+// prior stands) instead of consuming the run's deadline.
+func evaluateEachSource(ctx context.Context, catalogue []reconSource, only string, perSource time.Duration, eval func(context.Context, reconSource) error) error {
 	var errs []error
 	for i, src := range catalogue {
 		if only != "" && src.name != only {
@@ -844,7 +847,13 @@ func evaluateEachSource(ctx context.Context, catalogue []reconSource, only strin
 			errs = append(errs, fmt.Errorf("not evaluated, prior verdicts stand (%s): %w", strings.Join(skipped, ", "), cerr))
 			break
 		}
-		if err := eval(src); err != nil {
+		sctx, scancel := ctx, context.CancelFunc(func() {})
+		if perSource > 0 {
+			sctx, scancel = context.WithTimeout(ctx, perSource)
+		}
+		err := eval(sctx, src)
+		scancel()
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "compute-completeness: %s: NO VERDICT this run, prior verdict stands: %v\n", src.name, err)
 			errs = append(errs, err)
 		}
