@@ -85,8 +85,9 @@ TIP=$(( TIP - 100 ))
 PASS_TIMEOUT="${PASS_TIMEOUT:-120m}"
 
 # Arguments replace `-pass -timeout $PASS_TIMEOUT`: compute-completeness-sdex
-# .service passes `-source sdex -timeout 360m` for the weekly full SDEX re-proof
-# the pass never forces, and still needs the tip margin above.
+# .service passes `-source sdex -timeout 360m` and compute-completeness-sep41
+# .service `-source sep41_transfers -timeout 360m` for the weekly full re-proofs
+# the pass never forces, and both still need the tip margin above.
 if [ "$#" -gt 0 ]; then
   MODE=("$@")
 else

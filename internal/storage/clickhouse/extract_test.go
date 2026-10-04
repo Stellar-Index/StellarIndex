@@ -243,3 +243,33 @@ func TestLedgerHeaderCounts_FailedTxBasisMismatch(t *testing.T) {
 			ext.Ledger.SorobanEventCount)
 	}
 }
+
+// TestExtractLedger_UnreadableTxCountsTowardTxCount (INV-2315): a tx the
+// reader cannot resolve is skipped, but stored tx_count must still include
+// it so gate.go's stored-vs-rows comparison fails instead of agreeing on
+// fewer transactions.
+func TestExtractLedger_UnreadableTxCountsTowardTxCount(t *testing.T) {
+	lcm := xdr.LedgerCloseMeta{
+		V: 0,
+		V0: &xdr.LedgerCloseMetaV0{
+			LedgerHeader: xdr.LedgerHeaderHistoryEntry{Header: xdr.LedgerHeader{LedgerSeq: 100}},
+			// Result names a hash with no envelope in TxSet: Read() errors.
+			TxProcessing: []xdr.TransactionResultMeta{{
+				Result: xdr.TransactionResultPair{TransactionHash: xdr.Hash{0x01}},
+			}},
+		},
+	}
+	ext, err := ExtractLedger(lcm, "Test SDF Network ; September 2015")
+	if err != nil {
+		t.Fatalf("ExtractLedger: %v", err)
+	}
+	if ext.TxReadErrors != 1 {
+		t.Fatalf("TxReadErrors = %d, want 1 (fixture must trigger a read error)", ext.TxReadErrors)
+	}
+	if len(ext.Txs) != 0 {
+		t.Fatalf("transactions rows = %d, want 0", len(ext.Txs))
+	}
+	if ext.Ledger.TxCount != 1 {
+		t.Fatalf("Ledger.TxCount = %d, want 1 (the unreadable tx must be counted)", ext.Ledger.TxCount)
+	}
+}

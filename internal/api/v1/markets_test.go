@@ -393,6 +393,63 @@ func TestMarkets_SWRStaleServeStampsHonestFlags(t *testing.T) {
 	}
 }
 
+// swrStalePoolsUpstream serves one pool on the cold fill, then errors once
+// failNow is set, so the cache serves the expired entry.
+type swrStalePoolsUpstream struct {
+	*stubMarketsReader
+	failNow atomic.Bool
+}
+
+func (u *swrStalePoolsUpstream) AllPools(ctx context.Context, f timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Pool, string, error) {
+	if u.failNow.Load() {
+		return nil, "", errors.New("swr pools refresh boom")
+	}
+	return u.stubMarketsReader.AllPools(ctx, f, cursor, limit, order)
+}
+
+// /v1/pools served from an expired cache entry whose refresh keeps failing
+// must report flags.stale=true and the rows' original fill time as as_of.
+func TestPools_SWRStaleServeStampsHonestFlags(t *testing.T) {
+	const ttl = 40 * time.Millisecond
+	up := &swrStalePoolsUpstream{
+		stubMarketsReader: &stubMarketsReader{
+			pairs: []v1.Market{{Base: "native", Quote: "fiat:USD"}},
+		},
+	}
+	srv := v1.New(v1.Options{Markets: v1.NewCachedMarketsReader(up, ttl)})
+	ts := httpTestServer(t, srv)
+
+	type envelope struct {
+		Data  []v1.Pool `json:"data"`
+		AsOf  time.Time `json:"as_of"`
+		Flags struct {
+			Stale bool `json:"stale"`
+		} `json:"flags"`
+	}
+
+	var fresh envelope
+	mustDecode(t, mustGet(t, ts.URL+"/v1/pools"), &fresh)
+	if len(fresh.Data) != 1 || fresh.Flags.Stale {
+		t.Fatalf("fresh serve: rows=%d stale=%v, want 1 row, stale=false", len(fresh.Data), fresh.Flags.Stale)
+	}
+
+	up.failNow.Store(true)
+	time.Sleep(2 * ttl)
+
+	beforeStale := time.Now()
+	var stale envelope
+	mustDecode(t, mustGet(t, ts.URL+"/v1/pools"), &stale)
+	if len(stale.Data) != 1 {
+		t.Fatalf("stale serve: got %d rows, want the old rows served (1)", len(stale.Data))
+	}
+	if !stale.Flags.Stale {
+		t.Errorf("stale serve: flags.stale = false, want true")
+	}
+	if !stale.AsOf.Equal(fresh.AsOf) || !stale.AsOf.Before(beforeStale) {
+		t.Errorf("stale serve: as_of = %v, want the original fill time %v (before %v)", stale.AsOf, fresh.AsOf, beforeStale)
+	}
+}
+
 // TestMarkets_LastTradeAtVsBucketCloseAt — F-0065 fix (2026-05-27).
 // Pins the wire contract: BOTH `last_trade_at` (minute-precise) AND
 // `bucket_close_at` (daily bucket-start) ship on every row, and they

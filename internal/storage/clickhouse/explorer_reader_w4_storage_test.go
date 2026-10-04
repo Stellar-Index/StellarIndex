@@ -170,7 +170,8 @@ func TestContractEventsRecent_ActiveLedgerBound(t *testing.T) {
 	}
 	r := &ExplorerReader{conn: conn}
 
-	rows, err := r.ContractEventsRecent(context.Background(), "CTESTCONTRACT", 100, ContractEventsCursor{})
+	// limit 2 == rows served: the bounded page is full, so it is trusted.
+	rows, err := r.ContractEventsRecent(context.Background(), "CTESTCONTRACT", 2, ContractEventsCursor{})
 	if err != nil {
 		t.Fatalf("ContractEventsRecent: %v", err)
 	}
@@ -179,6 +180,38 @@ func TestContractEventsRecent_ActiveLedgerBound(t *testing.T) {
 	}
 	if len(conn.queries) != 3 {
 		t.Fatalf("issued %d queries, want 3 (probe + ledgers walk + bounded events)", len(conn.queries))
+	}
+}
+
+// TestContractEventsRecent_PartialWalkShortPageFallsThrough (INV-2314): a
+// NON-empty walk can still be truncated by a partial backfill (recent
+// ledgers indexed, older not). A short bounded page must be re-read
+// unbounded so older events are served and pagination is not ended early.
+func TestContractEventsRecent_PartialWalkShortPageFallsThrough(t *testing.T) {
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "contract_active_ledgers") {
+			if strings.Contains(q, "WHERE contract_id") {
+				return &stubRows{data: [][]any{{uint32(100)}}}, nil
+			}
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		}
+		if strings.Contains(q, "ledger_seq IN (?)") {
+			return &stubRows{data: [][]any{contractEventRecentRowFor(100, 0, 0)}}, nil
+		}
+		return &stubRows{data: [][]any{
+			contractEventRecentRowFor(100, 0, 0),
+			contractEventRecentRowFor(50, 0, 0),
+		}}, nil
+	}
+	r := &ExplorerReader{conn: conn}
+
+	rows, err := r.ContractEventsRecent(context.Background(), "CTESTCONTRACT", 2, ContractEventsCursor{})
+	if err != nil {
+		t.Fatalf("ContractEventsRecent: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2 — the older event the partial walk omitted", len(rows))
 	}
 }
 

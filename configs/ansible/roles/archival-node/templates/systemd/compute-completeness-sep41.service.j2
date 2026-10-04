@@ -1,0 +1,57 @@
+# systemd unit: weekly full re-proof of the sep41_transfers completeness verdict.
+#
+# Rendered by Ansible. The nightly -pass never re-floors sep41_transfers
+# (reconSource.reproofOutlastsPass): the watched set includes the KALE SAC,
+# whose CAP-67 transfers sit in nearly every contract_events granule, so a
+# from-genesis re-derive reads the whole Soroban-era lake and overran the
+# pass's 45 min -source-timeout on 2026-10-04. Without this unit its
+# projection_evidenced_at ages past the /v1/coverage evidence gate. -timeout
+# is the sdex unit's 360m: both re-read the full Soroban-era range, sdex
+# measured ~4.8 h, and sep41_transfers is unmeasured beyond ">45 min", so it
+# gets the proven ceiling rather than a guess. A -source run ignores
+# -source-timeout.
+#
+# Wednesday, opposite the sdex unit's Sunday, so the two weekly re-proofs
+# never queue together; 18:47 UTC is clear of the 05:30 daily pass and the
+# 02:00-08:17 nightly heavy-job window. Job name "compute-completeness" is
+# shared with the nightly and sdex units on purpose: run-heavy-job.sh's
+# per-name lock keeps the writers of completeness_snapshots from overlapping.
+
+[Unit]
+Description=Stellar Index — weekly full sep41_transfers completeness re-proof
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/completeness-incomplete.md
+After=network-online.target postgresql.service clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/compute-completeness
+EnvironmentFile=-/etc/default/stellarindex
+
+Environment=CONFIG_PATH=/etc/stellarindex.toml
+Environment=CH_ADDR=127.0.0.1:9300
+
+# 75 = run-heavy-job.sh skipped this fire (per-job lock held): not a
+# failure, but ExecMainStatus=75 keeps it distinct from a run.
+SuccessExitStatus=75
+# Timer-fired: shares run-heavy-job.sh's host-wide lock, never refused by it.
+Environment=HEAVY_JOB_CLASS=scheduled
+Environment=HEAVY_JOB_LOCK_WAIT=10800
+ExecStart=/usr/local/sbin/run-heavy-job.sh compute-completeness /usr/local/sbin/run-compute-completeness.sh -source sep41_transfers -timeout 360m
+
+User=stellarindex
+Group=stellarindex
+
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Whole seconds: up to 180 min queued behind the nightly lock + the tool's
+# 360 min -timeout + 15 min margin.
+TimeoutStartSec=33300
+
+[Install]
+WantedBy=multi-user.target

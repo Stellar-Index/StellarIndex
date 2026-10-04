@@ -125,20 +125,21 @@ type marketsStaleReader interface {
 	AssetMarketsAt(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
 }
 
-// poolsStaleReader is marketsStaleReader's /v1/pools counterpart: stale
-// reports rows served from the cache's stale-while-revalidate branch.
+// poolsStaleReader is marketsStaleReader's /v1/pools counterpart: observedAt
+// is the served rows' fetch time and stale reports rows served from the
+// cache's stale-while-revalidate branch.
 type poolsStaleReader interface {
-	AllPoolsStale(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, bool, error)
+	AllPoolsStale(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, time.Time, bool, error)
 }
 
 // allPools reads through poolsStaleReader when the wired reader has it; an
-// uncached read is live, so stale is false.
-func allPools(ctx context.Context, reader MarketsReader, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, bool, error) {
+// uncached read is live: zero observedAt, stale false.
+func allPools(ctx context.Context, reader MarketsReader, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, time.Time, bool, error) {
 	if sr, ok := reader.(poolsStaleReader); ok {
 		return sr.AllPoolsStale(ctx, filter, cursor, limit, order)
 	}
 	rows, next, err := reader.AllPools(ctx, filter, cursor, limit, order)
-	return rows, next, false, err
+	return rows, next, time.Time{}, false, err
 }
 
 // Pool is the wire shape for /v1/pools entries. Same fields as
@@ -332,7 +333,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	// fast 503 they can retry against a now-warm cache.
 	pCtx, pCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer pCancel()
-	rows, next, stale, err := allPools(pCtx, reader, filter, cursor, limit, order)
+	rows, next, observedAt, stale, err := allPools(pCtx, reader, filter, cursor, limit, order)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -363,7 +364,10 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	for i := range rows {
 		rows[i].LastPrice = s.adjustListingPriceStrings(pCtx, rows[i].Base, rows[i].Quote, rows[i].LastPrice, "pools")
 	}
-	env := Envelope{Data: rows, Flags: Flags{Degraded: stale}}
+	env := Envelope{Data: rows, Flags: Flags{Stale: stale, Degraded: stale}}
+	if !observedAt.IsZero() {
+		env.AsOf = WireTime(observedAt.UTC())
+	}
 	if next != "" {
 		env.Pagination = &Pagination{Next: next}
 	}
