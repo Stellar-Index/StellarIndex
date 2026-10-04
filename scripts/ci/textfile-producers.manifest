@@ -63,6 +63,7 @@ configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml              redis_
 # second `# TYPE` for one family, rejects the file exactly as hard.
 cmd/stellarindex-sla-probe/textfile.go                                    operator-supplied                  cmd/stellarindex-sla-probe/textfile_test.go
 internal/archivecompleteness/metrics.go                                   archive_completeness.prom          internal/archivecompleteness/metrics_test.go
+internal/ops/archive/galexie_mirror_verify.go                             operator-supplied                  internal/ops/archive/galexie_mirror_verify_test.go
 internal/ops/archive/verify_archive_textfile.go                           operator-supplied                  internal/ops/archive/verify_archive_textfile_test.go
 internal/ops/chops/verify_lake.go                                         operator-supplied                  internal/ops/chops/verify_lake_test.go
 internal/ops/chops/verify_served_values.go                                served_values.prom                 internal/ops/chops/verify_served_values_test.go

@@ -1,0 +1,18 @@
+# systemd timer: weekly galexie mirror vs upstream content comparison.
+#
+# Weekly: upstream re-exports are rare and the walk lists every mirrored
+# object on both sides. stellarindex_galexie_archive_upstream_check_stale
+# allows two missed weeks before it fires.
+
+[Unit]
+Description=Weekly galexie mirror vs upstream content comparison
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-upstream-divergence.md
+
+[Timer]
+OnCalendar=Sun *-*-* 03:41:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+Unit=galexie-mirror-verify.service
+
+[Install]
+WantedBy=timers.target

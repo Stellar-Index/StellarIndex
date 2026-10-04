@@ -4,7 +4,7 @@
 // Package archive holds the stellarindex-ops archive-integrity + WASM
 // history subcommands: `verify-archive`, `archive-completeness`,
 // `cross-region-check`, `cross-region-monitor`, `trim-galexie-archive`,
-// `rehydrate-galexie-archive`, `wasm-history`,
+// `rehydrate-galexie-archive`, `galexie-mirror-verify`, `wasm-history`,
 // `wasm-history-merge-jsonl`, `extract-wasm-from-galexie`,
 // `compare-entry-changes`.
 //
@@ -52,6 +52,8 @@ func Run(args []string) error {
 		return trimGalexieArchive(args[1:])
 	case "rehydrate-galexie-archive":
 		return rehydrateGalexieArchive(args[1:])
+	case "galexie-mirror-verify":
+		return galexieMirrorVerify(args[1:])
 	case "wasm-history":
 		return wasmHistory(args[1:])
 	case "wasm-history-merge-jsonl":
