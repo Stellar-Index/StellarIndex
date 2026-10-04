@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // Row is the storage-neutral shape the worker hands to the Sink.
@@ -176,6 +177,8 @@ func (w *Worker) Run(ctx context.Context) error {
 	t := time.NewTicker(w.interval)
 	defer t.Stop()
 
+	obs.ChangeSummaryLastSuccessUnix.Set(float64(w.clock().Unix()))
+
 	// Refresh once immediately so a fresh boot doesn't wait a full
 	// interval before the explorer has data.
 	w.refresh(ctx)
@@ -209,10 +212,30 @@ func (w *Worker) refresh(ctx context.Context) {
 			}
 		}
 	}
-	if len(failed) > 0 && ctx.Err() == nil {
+	if ctx.Err() != nil {
+		return
+	}
+	recordPass(len(w.entities), len(failed), now)
+	if len(failed) > 0 {
 		w.logger.Warn("change-summary pass had failures",
 			"failed", len(failed), "total", len(w.entities),
 			"entities", failed, "first_err", firstErr)
+	}
+}
+
+// recordPass publishes the pass outcome. The heartbeat advances on any
+// upsert, so one permanently-empty pair neither masks nor fakes an outage.
+func recordPass(total, failed int, now time.Time) {
+	outcome := "ok"
+	switch {
+	case total > 0 && failed == total:
+		outcome = "failed"
+	case failed > 0:
+		outcome = "partial"
+	}
+	obs.ChangeSummaryPassesTotal.WithLabelValues(outcome).Inc()
+	if outcome != "failed" {
+		obs.ChangeSummaryLastSuccessUnix.Set(float64(now.Unix()))
 	}
 }
 
