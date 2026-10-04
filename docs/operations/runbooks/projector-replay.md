@@ -33,6 +33,24 @@ concurrently against overlapping history for the same source).
 (un-checkpointed after failed inserts — re-run to retry it) or
 permanently dropped any trade; the summary it prints says which.
 
+This holds for a migration's follow-up too: one
+written as `projector-replay -source X -from N` (0137, 0164, 0203)
+goes through `projected-rebuild` when `N` is more than about 1M ledgers
+behind the tip.
+
+`projected-rebuild -resume` (the default) skips every window that has a
+checkpoint (`ingestion_cursors`, `source = 'projected-rebuild'`,
+`sub_source = 'X:<from>-<to>'`) without checking that the table still
+holds its rows. A migration that empties a projected table therefore
+deletes that source's checkpoints in the same file (0206 did it for
+comet, cctp, rozo and sushiswap_v3; `lint-migrations.sh` pass 10
+enforces it). Do not
+run a `projected-rebuild` for that source while the migration applies:
+a window it checkpoints before the `DELETE` is skipped afterwards. If a
+table is empty over a range its checkpoints claim, delete that source's
+`projected-rebuild` rows from `ingestion_cursors` by hand, in the shape
+of 0206's `DELETE`, then re-run.
+
 ## Why this exists
 
 ADR-0032 Phase 5 (rc.97) **deleted** the family of `*-backfill`
@@ -287,6 +305,9 @@ sink-side adaptive shrink converges the window automatically.
 
 ## Changelog
 
+- 2026-10-04 — INV-1848: a migration follow-up over ~1M ledgers goes
+  through `projected-rebuild`; an emptying migration clears its
+  source's rebuild checkpoints, and none may run while it applies.
 - 2026-09-18 — K006: the command no longer returns at the rewind. It
   waits for the projector to re-walk the range, then re-materializes the
   seven `prices_*` aggregates over it; `-wait`, `-refresh-caggs` and

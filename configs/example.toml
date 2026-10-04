@@ -423,8 +423,9 @@ fx_max_age_hours = 76    # fx_quotes buckets are daily + pause over market close
 
 # ──────────────────────────────────────────────────────────────────
 # Anomaly — ADR-0019 anomaly detection. Phase 1 (per-class thresholds)
-# + Phase 2 (per-asset MAD baseline + confidence). Both run; freeze
-# fires only when both agree. Off by default during roll-out.
+# + Phase 2 (per-asset MAD baseline + confidence). Both run; either
+# can freeze on its own and both share one freeze lifecycle. Off by
+# default during roll-out.
 # ──────────────────────────────────────────────────────────────────
 [anomaly]
 enabled = false

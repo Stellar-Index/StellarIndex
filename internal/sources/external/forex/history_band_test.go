@@ -17,6 +17,28 @@ func snapshotWithHistory(current map[string]float64, history map[string][]Histor
 	return s
 }
 
+// A break spanning several trailing bars is re-scored in full on every
+// refresh; the stuck streak must advance once per refresh, not per bar.
+func TestGuardSnapshot_StuckStreakCountsRefreshesNotBars(t *testing.T) {
+	w, _ := bandTestWorker(io.Discard)
+	today := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
+	w.guards["ETB"] = &rateGuard{lastAccepted: 160}
+
+	const brokenBars = 7
+	points := make([]HistoryPoint, brokenBars)
+	for i := range points {
+		points[i] = HistoryPoint{Date: today.Add(-time.Duration(i+1) * 24 * time.Hour), RateUSD: 44}
+	}
+	for i := 1; i <= stuckRejectionThreshold; i++ {
+		snap := snapshotWithHistory(map[string]float64{"ETB": 160}, map[string][]HistoryPoint{"ETB": points})
+		snap.PublishedAt = today.Add(18 * time.Hour)
+		w.guardSnapshot(snap)
+		if got := w.guards["ETB"].stuckCount; got != i {
+			t.Fatalf("after %d refreshes stuckCount = %d, want %d", i, got, i)
+		}
+	}
+}
+
 // TestPersistSnapshot_HistoryRowRejectsBadBar is the MR-1 proven-red guard
 // (audit-2026-08-14). Regression (1): the trailing-7d history rows were
 // written with ONLY a >0/finite filter — no [maxRateDeviation] band — so a
