@@ -584,6 +584,7 @@ func run(cfgPath string, dryRun bool) error {
 			},
 		},
 		DisableClassFilter:        cfg.Aggregate.DisableClassFilter,
+		ExcludedSources:           cfg.Aggregate.ExcludedSources,
 		EnableStablecoinFiatProxy: cfg.Aggregate.EnableStablecoinFiatProxy,
 		USDPeggedClassicAssets:    cfg.Trades.USDPeggedClassics(logger),
 		USDPeggedSorobanAssets:    resolveUSDPeggedSorobanAssets(cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers, logger),
