@@ -45,7 +45,7 @@ func TestPriceSourceContributions_Migration0169(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	seedAndCompressContributionChunk(t, ctx, db)
 
-	applyMigrations(t, dsn)
+	applyMigrationsUpTo(t, dsn, 169)
 	assertContributionChunkCompressed(t, ctx, db)
 
 	var legacyWindow sql.NullInt64

@@ -70,15 +70,13 @@ func parsePairsYAML(b []byte) (pairsFile, error) {
 }
 
 // DefaultPairs returns the built-in pair map for Binance — the
-// common set we stream when the operator enables Binance in config
-// without specifying a pair list. Covers the largest XLM markets,
-// the two reference crypto anchors, and the top-cap globals that
+// common set we stream when the operator enables Binance. Covers
+// the largest XLM markets, the two reference crypto anchors, and the top-cap globals that
 // every CoinGecko-class consumer expects.
 //
 // Returned map is Binance-symbol (uppercase, no separator) →
 // canonical.Pair. Passed into NewStreamer. Extending the set is a
-// one-entry addition to pairs.yaml; per-operator overrides land in
-// config in a follow-up PR.
+// one-entry addition to pairs.yaml.
 func DefaultPairs() (map[string]canonical.Pair, error) {
 	f, err := parsePairsYAML(pairsYAML)
 	if err != nil {
