@@ -164,7 +164,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		writeFrozenNothingHeldProblem(w, r, asset, defaultPriceQuote)
 		return
 	}
-	out, flags, sources := s.sep40Serve(asset, defaultPriceQuote, sep40Read{
+	out, flags, sources := s.sep40Serve(ctx, asset, defaultPriceQuote, sep40Read{
 		snapshot: snapshot, sources: sources, stale: stale, triangulated: triangulated, viaFallback: viaFallback,
 	}, held)
 	writeJSON(w, out, flags, sources...)
@@ -189,7 +189,7 @@ type sep40Read struct {
 // builds the response. A held value replaces the read wholesale — value,
 // sources, triangulation — and is stale and single-sourced by
 // construction, as on /v1/price.
-func (s *Server) sep40Serve(asset, quote canonical.Asset, rd sep40Read, held frozenResolution) (SEP40Price, Flags, []string) {
+func (s *Server) sep40Serve(ctx context.Context, asset, quote canonical.Asset, rd sep40Read, held frozenResolution) (SEP40Price, Flags, []string) {
 	if held.outcome == frozenServeHeld {
 		rd = sep40Read{
 			snapshot: held.snapshot, sources: held.sources, stale: true,
@@ -208,12 +208,13 @@ func (s *Server) sep40Serve(asset, quote canonical.Asset, rd sep40Read, held fro
 	}
 	frozen := held.outcome == frozenServeHeld
 	flags := Flags{
-		Stale:         rd.stale,
-		Triangulated:  rd.triangulated,
-		Frozen:        frozen,
-		Degraded:      frozen,
-		FrozenChecked: held.checked,
-		SingleSource:  frozen,
+		Stale:          rd.stale,
+		Triangulated:   rd.triangulated,
+		ProxyDeviation: rd.triangulated && s.proxyDeviation(ctx, time.Now().UTC()),
+		Frozen:         frozen,
+		Degraded:       frozen,
+		FrozenChecked:  held.checked,
+		SingleSource:   frozen,
 	}
 	return out, flags, rd.sources
 }
@@ -542,7 +543,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		writeFrozenNothingHeldProblem(w, r, base, quote)
 		return
 	}
-	out, flags, sources := s.sep40Serve(base, quote, sep40Read{
+	out, flags, sources := s.sep40Serve(ctx, base, quote, sep40Read{
 		snapshot: snapshot, sources: sources, stale: stale, triangulated: triangulated, viaFallback: viaFallback,
 	}, held)
 	writeJSON(w, out, flags, sources...)

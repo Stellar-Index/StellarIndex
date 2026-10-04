@@ -13,6 +13,7 @@ package chops
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -43,7 +44,7 @@ func TestRecordCHRebuildDirtyWindows_OneWindowPerDeletedSource(t *testing.T) {
 	rec := &fakeDirtyWindowRecorder{}
 	var out strings.Builder
 	if err := recordCHRebuildDirtyWindows(context.Background(), rec, &out, 61_000_000, 61_999_999,
-		[]string{"soroswap", "cctp"}); err != nil {
+		[]string{"soroswap", "cctp"}, timescale.CHRebuildEmptiedReason); err != nil {
 		t.Fatalf("recordCHRebuildDirtyWindows: %v", err)
 	}
 	if len(rec.got) != 2 {
@@ -77,7 +78,7 @@ func TestRecordCHRebuildDirtyWindows_StoreFailureIsNotSwallowed(t *testing.T) {
 	rec := &fakeDirtyWindowRecorder{failOn: "cctp"}
 	var out strings.Builder
 	err := recordCHRebuildDirtyWindows(context.Background(), rec, &out, 61_000_000, 61_999_999,
-		[]string{"soroswap", "cctp"})
+		[]string{"soroswap", "cctp"}, timescale.CHRebuildEmptiedReason)
 	if err == nil {
 		t.Fatal("a store that refused the write reported success")
 	}
@@ -95,7 +96,7 @@ func TestRecordCHRebuildDirtyWindows_EmptySourceSetIsAnError(t *testing.T) {
 	t.Parallel()
 	rec := &fakeDirtyWindowRecorder{}
 	var out strings.Builder
-	if err := recordCHRebuildDirtyWindows(context.Background(), rec, &out, 1, 2, nil); err == nil {
+	if err := recordCHRebuildDirtyWindows(context.Background(), rec, &out, 1, 2, nil, timescale.CHRebuildEmptiedReason); err == nil {
 		t.Fatal("recording zero windows reported success")
 	}
 	if len(rec.got) != 0 {
@@ -159,5 +160,61 @@ func TestCheckCHRebuildRecordDirtyFlags(t *testing.T) {
 					tc.recordDirty, tc.preflight, tc.write, err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// A -write run rewrites served rows below the completeness watermark. Before
+// it writes, it must file the same obligation projector-replay and
+// projected-rebuild file, one per re-derived source, or the next verdict
+// carries its prior clean claim over the rewritten range.
+func TestCHRebuild_WriteRecordsDirtyWindowBeforeWriting(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("ch_rebuild.go")
+	if err != nil {
+		t.Fatalf("read ch_rebuild.go: %v", err)
+	}
+	body := funcBodyFrom(string(b), "chRebuild")
+	if body == "" {
+		t.Fatal("chRebuild not found — this test is asserting nothing")
+	}
+	record := strings.Index(body, "recordCHRebuildDirtyWindows(ctx, store, os.Stderr, lo, hi, rederived, timescale.CHRebuildWriteReason)")
+	preflight := strings.Index(body, "return reportCHRebuildPreflight(")
+	writer := strings.Index(body, "drainAndWrite(")
+	if preflight < 0 || writer < 0 {
+		t.Fatalf("anchors not found (preflight %d, writer %d) — this test is asserting nothing", preflight, writer)
+	}
+	switch {
+	case record < 0:
+		t.Fatal("chRebuild -write records no projection dirty window: the next completeness verdict carries its prior clean claim over the rewritten range")
+	case record < preflight:
+		t.Error("the record precedes the -preflight stop: a preflight, which writes nothing, would file an obligation")
+	case record > writer:
+		t.Error("the record follows the writer: a run that fails partway leaves rewritten rows certified by stale evidence")
+	}
+	if !strings.Contains(body[record-300:record], "if write {") {
+		t.Error("the record is not gated on -write: a dry run would file an obligation")
+	}
+	if !strings.Contains(body[record:record+300], "return ") {
+		t.Error("a failed record does not stop the run: it would write without the obligation filed")
+	}
+}
+
+func TestRecordCHRebuildDirtyWindows_WriteReason(t *testing.T) {
+	t.Parallel()
+	rec := &fakeDirtyWindowRecorder{}
+	var out strings.Builder
+	if err := recordCHRebuildDirtyWindows(context.Background(), rec, &out, 62_000_000, 62_999_999,
+		[]string{"sdex"}, timescale.CHRebuildWriteReason); err != nil {
+		t.Fatalf("recordCHRebuildDirtyWindows: %v", err)
+	}
+	if len(rec.got) != 1 {
+		t.Fatalf("recorded %+v, want one window", rec.got)
+	}
+	got := rec.got[0]
+	if want := "ch-rebuild -write [62000000,62999999]"; got.Reason != want {
+		t.Errorf("reason = %q, want %q", got.Reason, want)
+	}
+	if got.IsProjectorReplay() {
+		t.Error("a ch-rebuild -write window classifies as a projector-replay rewind — it would suppress the projector lag alert")
 	}
 }

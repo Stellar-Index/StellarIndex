@@ -959,8 +959,8 @@ type Options struct {
 
 	// Scam, when non-nil, withholds the aggregated price for
 	// directory-scam-flagged issuers on the paths the server gates
-	// directly (the tip VWAP). Reader-backed paths gate inside the
-	// readers. Production impl internal/pricingguard.ScamGate.
+	// directly (tip VWAP, VWAP, TWAP, chart, history and the price
+	// stream). Reader-backed paths gate inside the readers. Production impl internal/pricingguard.ScamGate.
 	Scam PriceScamGate
 
 	// Supply, when non-nil, populates the F2 fields

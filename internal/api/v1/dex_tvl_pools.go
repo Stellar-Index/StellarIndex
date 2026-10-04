@@ -331,7 +331,7 @@ func (s *Server) handleProtocolTVL(w http.ResponseWriter, r *http.Request) {
 	if view.Pools == nil {
 		view.Pools = []DEXTVLPoolView{}
 	}
-	writeJSON(w, view, Flags{Stale: snap.CarriedForward}, meta.Name)
+	writeJSON(w, view, Flags{Stale: snap.CarriedForward, Degraded: snap.CarriedForward}, meta.Name)
 }
 
 // dexTVLNotDerivedReason explains a 404 on a KNOWN protocol: the

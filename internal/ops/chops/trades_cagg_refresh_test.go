@@ -64,9 +64,15 @@ func (f *fakeTradesCAGGStore) refresh(view string, from, to time.Time, force boo
 	if view == f.failView {
 		return errors.New("canceling statement due to statement timeout")
 	}
-	f.refreshed = append(f.refreshed, view)
 	if f.windows == nil {
 		f.windows, f.forced = map[string][2]time.Time{}, map[string]bool{}
+	}
+	// RunCAGGRefreshStep cuts a long window into consecutive CALLs; record
+	// them as the one per-view refresh they make up.
+	if n := len(f.refreshed); n > 0 && f.refreshed[n-1] == view && f.windows[view][1].Equal(from) {
+		from = f.windows[view][0]
+	} else {
+		f.refreshed = append(f.refreshed, view)
 	}
 	f.windows[view] = [2]time.Time{from, to}
 	f.forced[view] = force

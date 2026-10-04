@@ -287,7 +287,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		TradeCount:          bar.TradeCount,
 		Truncated:           preFilter == maxTradesForOHLC,
 		Clamped:             clamped,
-	}, Flags{Triangulated: triangulated})
+	}, Flags{Triangulated: triangulated, ProxyDeviation: triangulated && s.proxyDeviation(ctx, to)})
 }
 
 // filterOHLCOutliers applies the single-bar outlier filter. A window
