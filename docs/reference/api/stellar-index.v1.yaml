@@ -19840,7 +19840,7 @@ components:
       properties:
         asset_id:       { type: string, description: "The requested asset_id, echoed back." }
         contract_id:    { type: string, description: "The contract (Soroban token or classic SAC) supply is keyed by. Omitted for native XLM." }
-        total_supply:   { type: string, description: "Decimal string. mint − burn − clawback (or the ledger total_coins for native). Never a JSON number (ADR-0003)." }
+        total_supply:   { type: string, description: "Decimal string. mint − burn − clawback (or the ledger total_coins for native). Never a JSON number (ADR-0003). For source=mint_burn_flows this is a figure derived from the event log, not one the issuer publishes; supply_basis says which log." }
         mint_total:     { type: string, description: "Decimal string: Σ mint. Omitted for native." }
         burn_total:     { type: string, description: "Decimal string: Σ burn. Omitted for native." }
         clawback_total: { type: string, description: "Decimal string: Σ clawback. Omitted for native." }
@@ -19849,6 +19849,10 @@ components:
           type: string
           enum: [mint_burn_flows, ledger_total_coins, contract_storage_balances]
           description: "How total_supply was derived: mint/burn/clawback flows, the ledger header total_coins (native XLM), or — for a token whose event log is empty — the per-holder Balance entries summed out of the contract's own storage."
+        supply_basis:
+          type: string
+          enum: [sep41_lake_flows, classic_lake_flows]
+          description: "Which event log a source=mint_burn_flows total_supply was summed from, in the vocabulary Asset.supply_basis uses. `sep41_lake_flows`: the requested Soroban contract's own mint/burn/clawback events. `classic_lake_flows`: a classic CODE-ISSUER asset's net over its derived Stellar Asset Contract's unified (CAP-67) mint/burn/clawback events. That is a derived reading, not an issuer-authoritative supply, and an UPPER reading rather than a certified one: it is only as complete as the replayed flow history, and a replayed historical mint with no matching burn inflates it. It is not a lower bound either. Omitted for every other source."
         circulating_supply_lower_bound:
           type: boolean
           description: "True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only the balance entries the lake's current-state projection captured, so an entry dormant since before its coverage began is absent. Omitted when false."

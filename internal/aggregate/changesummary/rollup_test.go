@@ -200,6 +200,69 @@ func TestComputeSummary_ATLSkipsZero(t *testing.T) {
 	}
 }
 
+// A single wild bucket must not become the published ATH/ATL: the sink
+// ratchets them for good.
+func TestComputeSummary_ExtremesIgnoreOutlierBuckets(t *testing.T) {
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	series := []TimedValue{
+		{At: now.Add(-4 * time.Hour), Value: "0.10"},
+		{At: now.Add(-3 * time.Hour), Value: "9000.00"}, // bad bucket
+		{At: now.Add(-2 * time.Hour), Value: "0.12"},
+		{At: now.Add(-1 * time.Hour), Value: "0.00001"}, // bad bucket
+		{At: now, Value: "0.11"},
+	}
+	row := computeSummary(Entity{Type: "coin", ID: "x"}, series, now)
+	if row.ATHValue == nil || *row.ATHValue != "0.12" {
+		t.Errorf("ATH = %v, want 0.12", row.ATHValue)
+	}
+	if row.ATLValue == nil || *row.ATLValue != "0.10" {
+		t.Errorf("ATL = %v, want 0.10", row.ATLValue)
+	}
+}
+
+// A wild newest bucket must not reach the ratchet: ATH/ATL stay NULL so the
+// sink's GREATEST/LEAST keep the stored extremes.
+func TestComputeSummary_WildCurrentLeavesExtremesNil(t *testing.T) {
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	build := func(base, cur string) []TimedValue {
+		var s []TimedValue
+		for i := 20; i >= 1; i-- {
+			s = append(s, TimedValue{At: now.Add(-time.Duration(i) * time.Minute), Value: base})
+		}
+		return append(s, TimedValue{At: now, Value: cur})
+	}
+	for _, c := range []struct{ base, cur string }{{"0.11", "9000"}, {"1", "0.0001"}} {
+		row := computeSummary(Entity{Type: "coin", ID: "x"}, build(c.base, c.cur), now)
+		if row.CurrentValue != c.cur {
+			t.Errorf("CurrentValue = %q, want %q", row.CurrentValue, c.cur)
+		}
+		if row.ATHValue != nil || row.ATLValue != nil {
+			t.Errorf("base %s cur %s: ATH/ATL = %v/%v, want nil/nil", c.base, c.cur, row.ATHValue, row.ATLValue)
+		}
+	}
+}
+
+func TestComputeSummary_ExtremesKeepRealMovesAndShortSeries(t *testing.T) {
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	// A 50x genuine rally stays inside the band.
+	row := computeSummary(Entity{Type: "coin", ID: "x"}, []TimedValue{
+		{At: now.Add(-2 * time.Hour), Value: "1"},
+		{At: now.Add(-1 * time.Hour), Value: "25"},
+		{At: now, Value: "50"},
+	}, now)
+	if *row.ATHValue != "50" || *row.ATLValue != "1" {
+		t.Errorf("ATH/ATL = %s/%s, want 50/1", *row.ATHValue, *row.ATLValue)
+	}
+	// Two points cannot say which side is the outlier: both are kept.
+	row = computeSummary(Entity{Type: "coin", ID: "x"}, []TimedValue{
+		{At: now.Add(-1 * time.Hour), Value: "1"},
+		{At: now, Value: "100000"},
+	}, now)
+	if *row.ATHValue != "100000" || *row.ATLValue != "1" {
+		t.Errorf("ATH/ATL = %s/%s, want 100000/1", *row.ATHValue, *row.ATLValue)
+	}
+}
+
 // TestComputeSummary_PreservesFullPrecision — GH #602: a price with more
 // significant digits than float64 can carry must round-trip byte-for-byte
 // into CurrentValue/ATHValue/ATLValue. A ParseFloat round-trip (the old
@@ -216,8 +279,11 @@ func TestComputeSummary_PreservesFullPrecision(t *testing.T) {
 	if row.CurrentValue != precise {
 		t.Errorf("CurrentValue = %q, want %q (exact digits lost)", row.CurrentValue, precise)
 	}
-	if row.ATHValue == nil || *row.ATHValue != precise {
-		t.Errorf("ATHValue = %v, want %q (exact digits lost)", row.ATHValue, precise)
+	if row.ATHValue == nil {
+		t.Fatalf("ATHValue = nil, want %q", precise)
+	}
+	if *row.ATHValue != precise {
+		t.Errorf("ATHValue = %q, want %q (exact digits lost)", *row.ATHValue, precise)
 	}
 }
 
@@ -284,5 +350,33 @@ func TestComputeAcceleration(t *testing.T) {
 				t.Errorf("computeAcceleration = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestExtremes_BeyondFloat64NotDropped(t *testing.T) {
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	series := []TimedValue{
+		{At: now.Add(-2 * time.Hour), Value: "1e400"},
+		{At: now.Add(-1 * time.Hour), Value: "3e400"},
+		{At: now, Value: "2e400"},
+	}
+	ath, _, atl, _, ok := extremes(series, series[2])
+	if !ok || ath != "3e400" || atl != "1e400" {
+		t.Errorf("ath=%q atl=%q ok=%v, want 3e400/1e400/true", ath, atl, ok)
+	}
+}
+
+func TestExtremes_BandEdgesInclusive(t *testing.T) {
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	vals := []string{"1", "1", "1", "1000", "0.001", "1001", "0.00099"}
+	var series []TimedValue
+	for i, v := range vals {
+		series = append(series, TimedValue{At: now.Add(time.Duration(i-len(vals)) * time.Hour), Value: v})
+	}
+	cur := TimedValue{At: now, Value: "1"}
+	series = append(series, cur)
+	ath, _, atl, _, ok := extremes(series, cur)
+	if !ok || ath != "1000" || atl != "0.001" {
+		t.Errorf("ath=%q atl=%q ok=%v, want 1000/0.001/true", ath, atl, ok)
 	}
 }

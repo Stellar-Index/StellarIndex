@@ -77,6 +77,7 @@ type fakeReplayStore struct {
 	fakeProjectorCursor
 	rangeFrom, rangeTo uint32
 	refreshed          []string
+	lastTo             time.Time
 }
 
 func (f *fakeReplayStore) LedgerRangeToTimeRange(_ context.Context, from, to uint32) (time.Time, time.Time, error) {
@@ -95,8 +96,13 @@ func (f *fakeReplayStore) RefreshContinuousAggregateForced(ctx context.Context, 
 	return f.RefreshContinuousAggregate(ctx, name, from, to)
 }
 
-func (f *fakeReplayStore) RefreshContinuousAggregate(_ context.Context, name string, _, _ time.Time) error {
-	f.refreshed = append(f.refreshed, name)
+func (f *fakeReplayStore) RefreshContinuousAggregate(_ context.Context, name string, from, to time.Time) error {
+	// RunCAGGRefreshStep cuts a long window into consecutive CALLs; record
+	// them as the one per-view refresh they make up.
+	if n := len(f.refreshed); n == 0 || f.refreshed[n-1] != name || !f.lastTo.Equal(from) {
+		f.refreshed = append(f.refreshed, name)
+	}
+	f.lastTo = to
 	return nil
 }
 

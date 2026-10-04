@@ -67,6 +67,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // Store is the subset of timescale.Store the orchestrator needs.
@@ -346,15 +347,10 @@ type Config struct {
 	// as $0 and windows carrying real dollar volume were dropped as
 	// "below floor". Tier 2 of [usdQuoteDecimals] closes that.
 	//
-	// Non-USD fiat pairs (fiat:EUR, fiat:GBP, …) remain exempt — the
-	// $10k-style threshold is a USD figure and converting a EUR- or
-	// GBP-denominated window into USD needs a live FX rate this gate
-	// doesn't have (a distinct, still-open question from the
-	// Soroban/classic gap above). A quote asset this package can't
-	// value in USD by any of the three tiers above (e.g. a pure
-	// Soroban/Soroban pair with no declared peg) also stays exempt —
-	// see dropForMinUSDVolume's unvaluable branch for why that's a
-	// deliberate pass-through rather than fail-closed.
+	// Non-USD fiat pairs (fiat:EUR, fiat:GBP, …) are converted to USD
+	// at the [Config.FXStore] snap and held to the same floor; with no
+	// admissible FX rate the window is dropped (fail-closed), since the
+	// floor cannot be verified. See dropForMinUSDVolume.
 	//
 	// Default 0 = filter off. Production deployments stamp 10_000
 	// (== $10k in window) per the AggregateConfig default, matching
@@ -1490,7 +1486,7 @@ func (o *Orchestrator) decideBucket(
 	// it into the VWAP — the gate is supposed to keep thin survivor
 	// sets out, so the input it evaluates must be the survivor set.
 	survivorUSD := survivorUSDVolume(trades, tradeUSD)
-	if o.dropForMinUSDVolume(pair, trades, survivorUSD) {
+	if o.dropForMinUSDVolume(ctx, pair, trades, survivorUSD, now) {
 		return o.unpricedBucket(ctx, pair, window, now)
 	}
 
@@ -2518,32 +2514,34 @@ func minUSDVolumeRat(floor float64) *big.Rat {
 //     blackout concern keeps its answer — the WARN + metric name the
 //     missing peg, and adding it to usd_pegged_classic_assets /
 //     sac_wrappers un-blacks the pair deliberately, with valuation.
-//   - Quote is fiat but not USD (EUR, GBP, …): exempt, no WARN — a
-//     distinct, pre-existing, already-understood scope boundary (the
-//     threshold is a USD figure; converting a EUR/GBP window needs a
-//     live FX rate, same "no live lookup" limit as above, but this
-//     shape isn't new and isn't a manipulation-guard regression, so
-//     it doesn't need the same loud surfacing).
+//   - Quote is fiat but not USD (EUR, GBP, …): the survivor window's
+//     quote volume is converted to USD at the [Config.FXStore] snap
+//     ([fiatWindowUSDVolume]) and held to the same floor, so a EUR or
+//     GBP window never publishes on volume a USD window would be refused
+//     for. No admissible FX rate drops the window, as above.
 //
 // See [Config.MinUSDVolume] for the full threshold semantics.
-func (o *Orchestrator) dropForMinUSDVolume(pair canonical.Pair, trades []canonical.Trade, usdVolume *big.Rat) bool {
-	_ = trades // retained for tracing dimensions if future gates want it
+func (o *Orchestrator) dropForMinUSDVolume(ctx context.Context, pair canonical.Pair, trades []canonical.Trade, usdVolume *big.Rat, now time.Time) bool {
 	if o.cfg.MinUSDVolume <= 0 {
 		return false
 	}
 	if _, valuable := usdQuoteDecimals(pair.Quote, o.cfg.USDPeggedClassicAssets, o.cfg.USDPeggedSorobanAssets); !valuable {
-		if pair.Quote.Type == canonical.AssetClassic || pair.Quote.Type == canonical.AssetSoroban {
-			obs.AggregatorMinUSDVolumeUnvaluableTotal.WithLabelValues(pair.String()).Inc()
+		switch pair.Quote.Type {
+		case canonical.AssetClassic, canonical.AssetSoroban:
 			o.logger.Warn("min_usd_volume floor unverifiable: on-chain quote asset has no recognised USD peg — window DROPPED (fail-closed; add the peg to usd_pegged_classic_assets / sac_wrappers to publish this pair)",
 				"pair", pair.String())
-			obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume_unvaluable").Inc()
-			o.mu.Lock()
-			o.emptyWindows++
-			o.mu.Unlock()
-			obs.AggregatorEmptyWindowsTotal.Inc()
-			return true
+			return o.dropMinUSDVolumeUnvaluable(pair)
+		case canonical.AssetFiat:
+			v, reason := o.fiatWindowUSDVolume(ctx, pair.Quote, trades, now)
+			if reason != "" {
+				o.logger.Warn("min_usd_volume floor unverifiable: no admissible FX rate for the fiat quote — window DROPPED (fail-closed)",
+					"pair", pair.String(), "reason", reason)
+				return o.dropMinUSDVolumeUnvaluable(pair)
+			}
+			usdVolume = v
+		default:
+			return false
 		}
-		return false
 	}
 	// A NaN/+Inf floor can never be met, so it drops (fail-closed).
 	if floor := minUSDVolumeRat(o.cfg.MinUSDVolume); floor != nil && usdVolume.Cmp(floor) >= 0 {
@@ -2555,6 +2553,57 @@ func (o *Orchestrator) dropForMinUSDVolume(pair canonical.Pair, trades []canonic
 	o.mu.Unlock()
 	obs.AggregatorEmptyWindowsTotal.Inc()
 	return true
+}
+
+func (o *Orchestrator) dropMinUSDVolumeUnvaluable(pair canonical.Pair) bool {
+	obs.AggregatorMinUSDVolumeUnvaluableTotal.WithLabelValues(pair.String()).Inc()
+	obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume_unvaluable").Inc()
+	o.mu.Lock()
+	o.emptyWindows++
+	o.mu.Unlock()
+	obs.AggregatorEmptyWindowsTotal.Inc()
+	return true
+}
+
+// fiatWindowUSDVolume values a non-USD fiat-quoted window in USD: the
+// quote volume at each source's declared off-chain scale (the fiat:USD
+// tier of [usdQuoteDecimalsForTrade]) times the quote→USD rate from the
+// same FX snap and admission rule triangulation uses. Returns a non-empty
+// refusal reason when no admissible rate exists.
+func (o *Orchestrator) fiatWindowUSDVolume(ctx context.Context, quote canonical.Asset, trades []canonical.Trade, now time.Time) (*big.Rat, string) {
+	if o.cfg.FXStore == nil {
+		return nil, "fx_store_unwired"
+	}
+	usd, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		return nil, "fx_pair_invalid"
+	}
+	leg, err := canonical.NewPair(quote, usd)
+	if err != nil {
+		return nil, "fx_pair_invalid"
+	}
+	rate, observedAt, source, err := o.cfg.FXStore.FXQuoteAtOrBefore(ctx, leg, now, external.FXSources())
+	switch {
+	case errors.Is(err, timescale.ErrNoFXQuote):
+		return nil, "fx_missing"
+	case err != nil:
+		return nil, "fx_error: " + err.Error()
+	case rate == nil || rate.Sign() <= 0:
+		return nil, "fx_non_positive"
+	}
+	if reason := fxSnapRejection(now, observedAt, source, o.cfg.CompositeReference.withDefaults().FXMaxAge); reason != "" {
+		return nil, reason
+	}
+	sum := new(big.Rat)
+	for i := range trades {
+		amt := trades[i].QuoteAmount.BigInt()
+		if amt == nil || amt.Sign() == 0 {
+			continue
+		}
+		scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(external.Lookup(trades[i].Source).AmountScaleDecimals())), nil)
+		sum.Add(sum, new(big.Rat).SetFrac(amt, scale))
+	}
+	return sum.Mul(sum, rate), ""
 }
 
 // dropUnpriceable removes stored trades with a zero leg before the venue
