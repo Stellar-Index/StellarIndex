@@ -3,7 +3,7 @@
 import { useState, useSyncExternalStore } from 'react';
 import { AlertCircle, KeyRound, Loader2, Mail } from 'lucide-react';
 
-import { API_BASE_URL } from '@/api/client';
+import { API_BASE_URL, timeoutSignal } from '@/api/client';
 import {
   ApiError,
   beginPasskeyLogin,
@@ -119,6 +119,7 @@ export function SignInForm({
         // browser "would have stored", which is exactly the assumption
         // this call broke. accountFetch has always had it.
         credentials: 'include',
+        signal: timeoutSignal(),
       });
       if (!res.ok) {
         let detail: string | undefined;

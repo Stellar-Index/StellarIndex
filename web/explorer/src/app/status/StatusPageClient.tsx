@@ -697,7 +697,10 @@ export default function StatusPageClient({
     // only log a console error and set the feed to "error").
     if (!CURRENT_NETWORK.pricing) return;
     let cancelled = false;
-    fetch(`${API_BASE_URL}/v1/incidents`, { cache: 'no-store' })
+    fetch(`${API_BASE_URL}/v1/incidents`, {
+      cache: 'no-store',
+      signal: timeoutSignal(),
+    })
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((env: IncidentsAPIShape) => {
         if (cancelled) return;

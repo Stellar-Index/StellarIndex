@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { formatPriceSmall } from '@/lib/format';
 import { pollWhileVisible } from '@/lib/live/visiblePoll';
 
-import { API_BASE_URL as API_BASE } from '@/api/client';
+import { API_BASE_URL as API_BASE, timeoutSignal } from '@/api/client';
 
 /**
  * LivePrice — client-side price hydration for the embed widgets
@@ -39,6 +39,7 @@ export function LivePrice({
       try {
         const res = await fetch(
           `${API_BASE}/v1/price?asset=${encodeURIComponent(assetId)}&quote=${encodeURIComponent(quote)}`,
+          { signal: timeoutSignal() },
         );
         if (!res.ok) {
           // 404/403: the API is deliberately withholding the price (not a
