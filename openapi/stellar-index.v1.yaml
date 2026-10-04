@@ -15720,8 +15720,10 @@ components:
           default: false
           description: >-
             True when the request opted in with `include_thin=true` and a
-            served price comes from a market below the substance floor. Key
-            any low-confidence marker on this flag, never on `confidence`.
+            served price comes from a market below the substance floor, or
+            when /v1/vwap or /v1/twap (which serve such a market by default)
+            computed from one. Key any low-confidence marker on this flag,
+            never on `confidence`.
         diverged:
           type: boolean
           default: false
@@ -20833,6 +20835,14 @@ components:
             closed boundary per ADR-0015.
         breakdown:
           $ref: "#/components/schemas/VWAPBreakdown"
+        substance:
+          description: >-
+            Present only when the pair is below the substance floor that
+            /v1/price withholds on (`flags.thin_market` is then true). The
+            measurement is the pair's live trailing window, not the
+            requested one; this endpoint still serves the price.
+          allOf:
+            - { $ref: "#/components/schemas/SubstanceEvidence" }
       required: [from, to, price, base_volume, quote_volume, base_volume_decimals, quote_volume_decimals, trade_count, outliers_filtered, truncated, clamped]
 
     VWAPBreakdown:
@@ -20922,6 +20932,10 @@ components:
         clamped:
           type: boolean
           description: See VWAPResult.clamped.
+        substance:
+          description: See VWAPResult.substance.
+          allOf:
+            - { $ref: "#/components/schemas/SubstanceEvidence" }
       required: [from, to, price, trade_count, outliers_filtered, truncated, clamped]
 
     TWAPEnvelope:

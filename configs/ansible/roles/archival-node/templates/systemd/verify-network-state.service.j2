@@ -21,6 +21,9 @@ Environment=CH_ADDR=127.0.0.1:9300
 Environment=TEXTFILE=/var/lib/node_exporter/textfile_collector/network_state_verify.prom
 # 75 = run-heavy-job lock skip; a real failure count is carried by network_state_verify.prom and `stellarindex_network_state_verify_failed`, not the exit code.
 SuccessExitStatus=75
+# Queue behind another heavy job (host-wide and scheduled locks) for up to
+# 12h instead of skipping the fire; TimeoutStartSec below covers wait + run.
+Environment=HEAVY_JOB_LOCK_WAIT=43200
 Environment=HEAVY_JOB_CLASS=scheduled
 EnvironmentFile=-/etc/default/verify-network-state
 EnvironmentFile=-/etc/default/stellarindex
@@ -45,7 +48,8 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 
 # One FINAL pass over ledger_entries_current plus the hot-archive bucket download.
-TimeoutStartSec=4h
+# Whole seconds: the 43200 s lock wait + 4h for the run itself.
+TimeoutStartSec=57600
 
 [Install]
 WantedBy=multi-user.target
