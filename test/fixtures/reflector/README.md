@@ -35,19 +35,23 @@ Contract IDs (mainnet):
 | CEX | `CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN` |
 | FX  | `CBKGPWGKSKZF52CFHMTRR23TBWTPMRDIYZ4O2P5VS65BMHYH4DXMCJZC` |
 
-### Resolving WASM hash
+### Resolving the WASM hash
 
-The capture script doesn't auto-resolve the WASM hash — it accepts
-it via `WASM_HASH=…` env var. To pin:
+The capture script takes the hash via `WASM_HASH=...`. Resolve it from
+the ClickHouse lake (no RPC or Horizon):
 
-1. `stellar-rpc getLedgerEntries` with a `LedgerKey::ContractData`
-   key of `(contract, LedgerKeyContractInstance)` returns the
-   instance entry. Its `.executable.wasm` field is the hash.
-2. `stellar contract info interface --id <C>` via stellar-cli also
-   surfaces it when the cli is configured.
+```sql
+-- contract_hash = lower hex of the 32-byte payload of the C... strkey:
+--   python3 -c "import base64,sys;print(base64.b32decode(sys.argv[1])[1:33].hex())" C...
+SELECT ledger_seq, is_sac, wasm_hash
+FROM stellar.contract_instance_changes FINAL
+WHERE contract_hash = '<hex>' AND ledger_seq <= <capture ledger>
+ORDER BY ledger_seq DESC, intra_ledger_seq DESC LIMIT 1
+```
 
-`stellarindex-ops resolve-wasm <contract>` is planned (not yet wired)
-to do this in one step.
+The first row is the executable live at the capture ledger. For the
+full per-hash timeline straight from the archive, use
+`stellarindex-ops wasm-history -contracts C... -from N -to N`.
 
 ## Fixture file shape
 

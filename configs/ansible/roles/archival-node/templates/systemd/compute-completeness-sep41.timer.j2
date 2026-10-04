@@ -1,0 +1,24 @@
+# systemd timer: weekly full sep41_transfers completeness re-proof.
+#
+# Rendered by Ansible. Companion to compute-completeness-sep41.service.
+#
+# Time slot: Wednesday 18:47 UTC (sdex owns Sunday) + up to 10 min jitter, outside the 02:00-08:17
+# morning oneshot cluster. Even at the tool's 360 min -timeout it ends by
+# ~00:57, well before the 05:30 nightly pass, which shares its job lock.
+# Weekly keeps sep41_transfers' evidence (re-proved every 7 d) inside the /v1/coverage
+# evidence gate (MaxProjectionCarryAge + 3 x 26 h); one missed week trips it.
+# Persistent=true: if the box was off on Wednesday evening, fire on next boot;
+# the shared lock then queues whichever of the two units fires second.
+
+[Unit]
+Description=Weekly full sep41_transfers completeness re-proof
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/completeness-incomplete.md
+
+[Timer]
+OnCalendar=Wed *-*-* 18:47:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+Unit=compute-completeness-sep41.service
+
+[Install]
+WantedBy=timers.target

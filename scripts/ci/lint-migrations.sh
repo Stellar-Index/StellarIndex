@@ -449,8 +449,9 @@ hyper_indexes() {
 # Pass 6 — CREATE INDEX on an existing hypertable. The in-transaction
 # build holds a SHARE lock that blocks every write to the table for the
 # whole build, and a partial index still scans every row. 0037's header
-# is the recipe: `IF NOT EXISTS`, so an operator's CREATE INDEX
-# CONCURRENTLY pre-build turns the migration into a no-op, and
+# is the recipe: `IF NOT EXISTS`, so an operator's per-chunk pre-build
+# (timescaledb.transaction_per_chunk; hypertables reject CREATE INDEX
+# CONCURRENTLY, see 0123) turns the migration into a no-op, and
 # `SET LOCAL lock_timeout`, so the build cannot queue every writer behind
 # an open transaction. Shipped migrations are immutable, so the ones that
 # predate this pass are listed below (0150's operator
@@ -493,7 +494,7 @@ for f in "$MIG_DIR"/*.up.sql; do
     missing=""
     [ "$ine" = 1 ] || missing="IF NOT EXISTS"
     [ "$lt" = 1 ] || missing="${missing:+${missing} and }SET LOCAL lock_timeout"
-    echo "lint-migrations ❌ ${f}: CREATE INDEX ${idx} ON ${tbl} lacks ${missing} — ${tbl} is an existing hypertable, and the in-transaction build blocks every write to it for the whole build. Write CREATE INDEX IF NOT EXISTS (so a CREATE INDEX CONCURRENTLY pre-build makes the migration a no-op) under SET LOCAL lock_timeout, and name the pre-build in the header and the README register row (0037 is the recipe)." >&2
+    echo "lint-migrations ❌ ${f}: CREATE INDEX ${idx} ON ${tbl} lacks ${missing} — ${tbl} is an existing hypertable, and the in-transaction build blocks every write to it for the whole build. Write CREATE INDEX IF NOT EXISTS (so a per-chunk pre-build via timescaledb.transaction_per_chunk makes the migration a no-op; hypertables reject CONCURRENTLY) under SET LOCAL lock_timeout, and name the pre-build in the header and the README register row (0037 is the recipe)." >&2
     fail=1
   done < <(hyper_indexes "$f")
 done
