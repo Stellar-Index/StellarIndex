@@ -20,6 +20,20 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.102.0] — 2026-10-04
+
+2 commits since v0.101.0. No migrations, no `pkg/*` break, no API change.
+
+### Fixed
+
+- **completeness:** blend's projection read is scoped to its factories plus
+  its registered and deploy-announced pools, through the gated prefilter
+  (#2322).
+
+### Documentation
+
+- **sla:** weekly SLA proof for 2026-10-04 (not proven).
+
 ## [v0.101.0] — 2026-10-04
 
 5 commits since v0.100.0. No migrations, no `pkg/*` break, no API change.
@@ -391,136 +405,3 @@ run after deploy:
   struct is in-process, so no wire or OpenAPI shape changes.
 - **test (#2065, #2070):** the since-inception limiter clock is pinned, and
   the sep41 rollup comment integration test pins version 193.
-
-## [v0.97.0] — 2026-09-30
-
-36 commits since v0.96.0. Operator-visible: `GET /v1/operations` rejects any
-`ledger` parameter with a 400 that names the new
-`GET /v1/ledgers/{seq}/operations` route (OpenAPI 1.31.0); two new off-chain
-feeds ship disabled — `[external.openexchangerates]` (`enabled = false`,
-`OPENEXCHANGERATES_APP_ID`) and `[external.tiingo]` (`enabled = false`,
-`TIINGO_API_KEY`), the latter valuing twelve WisdomTree fund shares at their
-daily NAV once enabled; the forex worker polls every
-`[external.massive] refresh_interval` (default 1h, floored at 10m); a new
-`stellarindex-ops wasm-drift` check with two ticket alerts, for which the
-repo ships no scheduling unit; `verify-lake`, `verify-contiguity` and
-`verify-hashchain` with `-to 0` fail closed when the lake trails the history
-archive tip by more than 100 ledgers; `compute-completeness` takes
-`-timeout` (default 120m, `PASS_TIMEOUT` in the driver); `sla-probe` paces
-at `-max-rps` (default 100); test nets stop serving pubnet reference
-listings; the next archival-node apply renders WAL archiving and restarts
-Postgres. After deploy, run `projector-replay -source phoenix -from
-63295145` to add the Map-schema pool's liquidity rows (#2002). No new
-migration.
-
-### Breaking
-
-- **api — `GET /v1/operations?ledger=` retired (#1992, #2007,
-  OPERATOR-VISIBLE):** the one-ledger read is now
-  `GET /v1/ledgers/{seq}/operations` (limit 1–2000, closed-ledger cache
-  band); any `ledger` parameter on `/v1/operations` returns a 400
-  `invalid-parameter` problem naming that route, so `/v1/operations` is the
-  tip-advancing directory only (ADR-0018).
-
-### Changed
-
-- **ops — lake verifiers' auto `-to` (#1974, OPERATOR-VISIBLE):** with
-  `-to 0`, `verify-lake`, `verify-contiguity` and `verify-hashchain` also
-  read the tip from `stellar.history_archive_url` and fail closed when the
-  lake trails it by more than 100 ledgers, so a Galexie stall no longer
-  certifies the lake complete; an unreachable tip warns and is skipped.
-- **ops — compute-completeness (#1879, OPERATOR-VISIBLE):** in `-pass` mode
-  sources that re-verify from genesis run after the incremental ones, the
-  recognition snapshot is written before the loop, a deadline stop names
-  every skipped source, and the deadline is a `-timeout` flag (default
-  120m) the driver passes through `PASS_TIMEOUT`.
-- **sla-probe — request pacing (#1905, OPERATOR-VISIBLE):** `-max-rps`
-  (default 100, 0 = unpaced) caps all workers through one limiter so a run
-  no longer trips the per-key rate limit and pages on its own 429s; stats
-  carry `failed_by_status` and the availability reason names the most
-  frequent cause.
-- **api — test-net listings (#1951, OPERATOR-VISIBLE):** on testnet and
-  futurenet `/v1/sources` and its health route keep only sources that apply
-  to the network, `/v1/assets/verified`, `/v1/external/assets` and
-  `/v1/aggregators` return an empty list, `/v1/external/assets/{slug}`
-  returns 404, and the pubnet warning stamps are skipped; pubnet and an
-  unset network are unchanged.
-- **ansible — archival-node WAL archiving (#1731, OPERATOR-VISIBLE):**
-  `postgresql.conf.j2` renders `archive_mode`, `archive_command` and
-  `archive_timeout`, gated on `pgbackrest_backup_enabled`, so a rebuilt host
-  keeps point-in-time recovery; the next apply restarts Postgres with the
-  values the reference host already runs.
-- **ansible — pg-logrotate (#1897, OPERATOR-VISIBLE):** the hourly
-  `pg-logrotate.service` reads a role-owned
-  `/etc/stellarindex-pg-logrotate.conf` (stock policy plus `maxsize 500M`)
-  instead of the uncapped distro file.
-- **ci — deprecations (#1969):** `check-deprecations.sh` fails a
-  `// Deprecated:` paragraph with no `vX.Y.Z` removal version in CI,
-  `verify.sh` and `lint-changed`; the legacy tier constants are scheduled
-  for v2.0.0.
-- **release — build provenance (#1945):** `release.yml` attests every
-  subject in `SHA256SUMS` (binaries and `migrations.tar.gz`) with
-  `actions/attest-build-provenance` after signing, and a failed attestation
-  stops the release; `release-process.md` documents
-  `gh attestation verify`.
-
-### Added
-
-- **forex — Open Exchange Rates (#2011, OPERATOR-VISIBLE):**
-  `[external.openexchangerates]` (`enabled` default false, `app_id` /
-  `OPENEXCHANGERATES_APP_ID`) builds a provider for the hourly USD-base
-  board, sending the app id only in the Authorization header and refusing a
-  malformed board whole; the worker stores it but never fetches it, so
-  serving stays massive then ECB. The worker cadence is
-  `[external.massive] refresh_interval` (default 1h; under 10m is raised to
-  10m and logged).
-- **rwa — WisdomTree fund NAV (#2012, OPERATOR-VISIBLE):** a Tiingo poller
-  in the indexer (`[external.tiingo]`, disabled by default,
-  `TIINGO_API_KEY`, hourly) stores daily NAVs for twelve WisdomTree
-  fund-share tokens bound on exact `(code, issuer)` as reference-only
-  `raw:<TICKER>` rows; the new `fund_nav` provenance ranks between the
-  oracle and listing arms with `decimals_published: 2` and no premium, a
-  NAV older than 5 days is `reference_expired`, and oracle rows gain
-  `nav_disagreement` past half a cent.
-- **ops — wasm-drift (#2004, #2013, OPERATOR-VISIBLE):**
-  `stellarindex-ops wasm-drift` resolves the current WASM hash of every
-  audited gated source's contracts from the lake and flags any hash not in
-  `internal/ops/chops/audited_wasm.json`, writing `wasm_drift.prom`;
-  `stellarindex_wasm_drift` and `stellarindex_wasm_drift_stale` (no run in
-  2 days) are ticket alerts with a runbook. sushiswap_v3 and upshift gain
-  audit logs and manifest hashes.
-- **web — legal pages (#2010):** `/terms` and `/privacy` are live, linked
-  from the sidebar rail, footer and sitemap; the sign-up form states that
-  creating an account accepts them, and `/pricing` describes usage as
-  per-account.
-
-### Fixed
-
-- **forex — held rates after restart (#1995):** on its first refresh the
-  worker seeds held tickers from the newest `fx_quotes` row within 7 days,
-  so a fiat the upstream has not yet republished no longer drops out of
-  `/v1/price` after a restart.
-- **openapi — envelope declared (#1972):** the 38 enveloped 2xx data
-  schemas declare `EnvelopeMeta` (`as_of`, `flags`) as `allOf`; the data
-  subtrees are unchanged, and the 18 session-cookie dashboard/auth
-  operations are named as the bare-on-the-wire exemption.
-- **phoenix (#2002, #2001):** the Map-schema pool's `provide_liquidity` and
-  `withdraw_liquidity` events decode into `phoenix_liquidity` rows (replay
-  above); a bond-instrument contract that only shares the `"bond"` topic
-  word leaves the curated stake set.
-- **oracle — raw rows (#1925):** the `oracle_prices_1d` read behind the
-  RWA history series drops `raw:` assets in both its keys and its SQL.
-- **deploy — cut-over DDL (#1961):** the evidence step no longer refutes a
-  ClickHouse DDL whose created objects are declared transient
-  (`si-cutover-object`); it leaves it to the operator's acknowledgement.
-- **markets (#1950):** empty commit; the SAC-spelling fold in
-  `/v1/markets` and `/v1/pools` shipped in v0.96.0 as #1966.
-- **docs:** the frozen-price flag docs state what a held value carries,
-  including its own `observed_at` and `/v1/price/batch` (#1847); the launch
-  plan's D1 freeze passage matches the measured state (#2009); the HA plan
-  gains a ClickHouse lake tier (#1767); the design system records the
-  Tailwind v4 browser baseline (#1930); the host-down runbook records the
-  Hetzner Robot server numbers (#2008); the DNS/email perimeter's
-  owner-side steps are closed (#2014); the metrics reference cross-links
-  the monthly-quota fail-closed alert (#2020); the coverage doc cites the
-  commit behind a reused PR number instead of the number (#1901).
