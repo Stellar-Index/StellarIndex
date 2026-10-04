@@ -123,12 +123,12 @@ export default function PrivacyPage() {
           message, a digest, the page section and the page path — no account
           data) to Cloudflare, where it lands in our function logs.
         </p>
-        {/* source: web/explorer/public/_headers (img-src https:) */}
+        {/* source: web/explorer/public/_headers (img-src), web/explorer/functions/icon.js */}
         <p>
-          Asset icons are served from their issuers&rsquo; own hosts, not from
-          us. When a page shows an icon, your browser fetches it from that host
-          directly, so the host sees your IP address and user agent under its
-          own privacy policy.
+          Asset icons are published by their issuers. Your browser loads them
+          from our own <code>/icon</code> endpoint, which fetches the issuer
+          image from our edge, so the issuer&rsquo;s host does not see your IP
+          address or user agent. The icon is cached for up to a day.
         </p>
         {/* source: web/explorer/src/app/layout.tsx, web/explorer/public/_headers, web/explorer/src/app/assets/[slug]/AssetClientFallback.tsx */}
         <p>
@@ -227,7 +227,7 @@ export default function PrivacyPage() {
             },
             {
               term: 'Legitimate interests',
-              def: 'Our legitimate interest in keeping the Service secure and available, and enforcing fair use (Art. 6(1)(f)): the audit log, anonymous request logs, per-IP rate-limit counters (IPv6 per /64), invalid-API-key counters, the sign-in device cookie, the sign-in request records, the CDN edge logs, client error reports, the POST /v1/signup email hash, and the icon fetches from issuer hosts.',
+              def: 'Our legitimate interest in keeping the Service secure and available, and enforcing fair use (Art. 6(1)(f)): the audit log, anonymous request logs, per-IP rate-limit counters (IPv6 per /64), invalid-API-key counters, the sign-in device cookie, the sign-in request records, the CDN edge logs, client error reports, the POST /v1/signup email hash, and the proxied asset-icon requests.',
             },
             {
               term: 'Legal obligation',

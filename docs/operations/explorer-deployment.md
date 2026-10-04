@@ -241,7 +241,8 @@ The `/*` rule sends:
   `https://api.futurenet.stellarindex.io`. One static file serves every
   network's build, and the network switcher probes every network's tip,
   so dropping any of them blocks fetch and EventSource on that network.
-  `img-src` allows `https:` because asset icons are issuer-hosted.
+  `img-src` is `'self' data:`; issuer-hosted asset icons load through
+  the same-origin `/icon` Pages Function (`functions/icon.js`).
   `'unsafe-inline'` is allowed on `script-src` / `style-src` because the
   Next.js static export emits inline bootstrap scripts and Tailwind
   styles.
