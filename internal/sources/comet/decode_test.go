@@ -221,31 +221,18 @@ func TestDecodeSwap_WrongTopic_Rejects(t *testing.T) {
 	}
 }
 
-// TestDecodeSwap_DispatchIsByTopicNotContract pins the AGENTS.md
-// surprise: the Comet decoder matches by (POOL, swap) topic shape,
-// not by contract address. Any pubnet contract that deploys
-// Balancer-v1 Comet bytecode emits the same wire shape and is
-// attributed to Source="comet".
-//
-// This is intentional — the decoder has no concept of "the one
-// canonical Comet pool"; it's a generic Balancer-v1 decoder.
-// Operators who want narrower coverage filter downstream by
-// (Trade.Source, contract_id) rather than at dispatch time.
-//
-// The guard exists to catch a future change that would
-// inadvertently narrow the decoder to a specific contract
-// allow-list — that would silently drop legitimate trades from
-// any new Balancer-v1 deployment. F-1242 (audit-2026-05-12).
-func TestDecodeSwap_DispatchIsByTopicNotContract(t *testing.T) {
+// TestDecodeSwap_DoesNotReadContractID pins that decodeSwap is a pure
+// body decoder: it never reads ContractID. The contract-identity gate
+// lives in Decoder.Matches (ADR-0035/0040) and is pinned in
+// adapter_test.go; calling decodeSwap directly bypasses it.
+func TestDecodeSwap_DoesNotReadContractID(t *testing.T) {
 	caller := accountStrkeyFromSeed(t, 0x10)
 	tokenIn := contractStrkeyFromSeed(t, 0x20)
 	tokenOut := contractStrkeyFromSeed(t, 0x30)
 	body := encodeSwapBody(t, caller, tokenIn, tokenOut, big.NewInt(1_000), big.NewInt(2_000))
 
-	// Same body, two distinct contract IDs (the known Blend
-	// backstop pool vs an arbitrary "future" Balancer-v1
-	// deployment). The decoder doesn't read ContractID, so both
-	// events MUST attribute to Source="comet".
+	// Same body, two distinct contract IDs: decodeSwap ignores
+	// ContractID, so both attribute identically.
 	cometContractA := contractStrkeyFromSeed(t, 0xAA)
 	cometContractB := contractStrkeyFromSeed(t, 0xBB)
 
@@ -261,7 +248,7 @@ func TestDecodeSwap_DispatchIsByTopicNotContract(t *testing.T) {
 			t.Fatalf("decodeSwap from contract %s: %v", contractID, err)
 		}
 		if trade.Source != SourceName {
-			t.Errorf("contract %s: Source = %q, want %q (dispatch is by topic, not contract)",
+			t.Errorf("contract %s: Source = %q, want %q (decodeSwap must not depend on contract)",
 				contractID, trade.Source, SourceName)
 		}
 	}

@@ -156,8 +156,8 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	skipRecognition := fs.Bool("skip-recognition", false, "Trust the prior recognition audit (recognition_ok=true) instead of re-scanning all topic shapes — the global DistinctTopicShapes scan is the load-heaviest step; skip it for gentle projection-only iteration once recognition is verified")
 	fromLedger := fs.Uint("from", 0, "INCREMENTAL verify: only check [from, tip], trusting [genesis, from] as already verified (substrate + recognition + projection all scoped to [from, tip]); the watermark still extends to tip when the window is clean. 0 = full verify from each source's genesis. The completeness timer passes min(watermark) from the prior snapshots so each run re-checks only new ledgers — minutes, not hours. An incremental run can only CONFIRM or DOWNGRADE the served `complete` axis, never upgrade it: a range it did not reconcile is carried from the prior verdict, and a FAILING prior verdict is cleared only by a full run (INV-5 — see projectionClaim).")
 	pass := fs.Bool("pass", false, "WHOLE-PASS mode: prove recognition + substrate ONCE at full range for the ENTIRE source catalogue, then reconcile EACH source's projection incrementally from its own prior watermark (projectionFloor). One process replaces the per-source, per-chunk driver that re-ran the load-heaviest global recognition scan (DistinctTopicShapes, ~60s) on EVERY 25k chunk — the nightly timeout that froze the alphabetical tail's verdicts. Because substrate is proven at FULL tip, its write advances the tip and is never blocked by the CS-083 guard (the low-tip substrate flap). Every catalogue source gets a verdict — a never-seeded source, and a source whose prior projection verdict was FAILING, both reconcile from genesis (a red source has no verified ground to resume from, so the pass re-verifies it rather than carrying the failure forward forever). Requires -ch; incompatible with -source / -from / -skip-substrate / -skip-recognition (the per-chunk knobs it replaces).")
-	maxCarryAge := fs.Duration("max-carry-age", completeness.MaxProjectionCarryAge, "With -pass: a source whose clean projection claim was last reconciled over its whole served range longer ago than this (or never, on record) re-verifies from genesis instead of carrying the claim forward again — oldest evidence first, at most 3 sources per pass, never the SDEX census (its full re-verify outlasts the pass; compute-completeness-sdex.timer re-proves it weekly with -source sdex). 0 = carry without bound.")
-	sourceTimeout := fs.Duration("source-timeout", 45*time.Minute, "Deadline for ONE source's evaluation; a source that exceeds it gets no verdict (its prior stands) and the pass moves on, so one slow source cannot starve the rest. 0 disables.")
+	maxCarryAge := fs.Duration("max-carry-age", completeness.MaxProjectionCarryAge, "With -pass: a source whose clean projection claim was last reconciled over its whole served range longer ago than this (or never, on record) re-verifies from genesis instead of carrying the claim forward again — oldest evidence first, at most 3 sources per pass, never the SDEX census or a reproofOutlastsPass source such as sep41_transfers (their full re-verify outlasts the pass; compute-completeness-sdex.timer re-proves sdex weekly with -source sdex). 0 = carry without bound.")
+	sourceTimeout := fs.Duration("source-timeout", 45*time.Minute, "Deadline for ONE source's evaluation; a source that exceeds it gets no verdict (its prior stands) and the pass moves on, so one slow source cannot starve the rest. 0 disables; ignored with -source, where -timeout is the budget (the weekly SDEX re-proof needs hours).")
 	timeout := fs.Duration("timeout", 120*time.Minute, "Deadline for the whole run; sources not reached by it keep their prior verdict and are named in the error. Keep it below the systemd unit's TimeoutStartSec.")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -848,7 +848,7 @@ func evaluateEachSource(ctx context.Context, catalogue []reconSource, only strin
 			break
 		}
 		sctx, scancel := ctx, context.CancelFunc(func() {})
-		if perSource > 0 {
+		if perSource > 0 && only == "" { // with -source the run's -timeout is that source's budget
 			sctx, scancel = context.WithTimeout(ctx, perSource)
 		}
 		err := eval(sctx, src)
@@ -866,21 +866,24 @@ func evaluateEachSource(ctx context.Context, catalogue []reconSource, only strin
 // catalogue order within each group, so one long re-verify that exhausts the
 // run's deadline cannot withhold a fresh verdict from the cheap ones. Within the
 // from-genesis group the census (SDEX) source runs last: its full-history
-// op re-derive can outlast the whole pass, while event sources take seconds.
+// op re-derive can outlast the whole pass, while event sources take seconds; a
+// reproofOutlastsPass source runs just before it.
 func orderForPass(catalogue []reconSource, prior map[string]priorProjection, priorWatermark map[string]uint32) []reconSource {
 	ordered := make([]reconSource, 0, len(catalogue))
-	var fromGenesis, censusFromGenesis []reconSource
+	var fromGenesis, heavyFromGenesis, censusFromGenesis []reconSource
 	for _, src := range catalogue {
 		switch {
 		case sourceProjectionFloor(src, true, prior[src.name], priorWatermark[src.name], 0) > src.genesis:
 			ordered = append(ordered, src)
 		case src.census:
 			censusFromGenesis = append(censusFromGenesis, src)
+		case src.outlastsPass():
+			heavyFromGenesis = append(heavyFromGenesis, src)
 		default:
 			fromGenesis = append(fromGenesis, src)
 		}
 	}
-	return append(append(ordered, fromGenesis...), censusFromGenesis...)
+	return append(append(append(ordered, fromGenesis...), heavyFromGenesis...), censusFromGenesis...)
 }
 
 // projectionFloor is the incremental projection reconcile floor for ONE source.
@@ -1579,7 +1582,7 @@ func expireStaleCarries(prior map[string]priorProjection, catalogue []reconSourc
 	var expired []string
 	for _, src := range catalogue {
 		p := prior[src.name]
-		if !src.census && p.known && p.ok && completeness.ProjectionEvidenceExpired(p.evidencedAt, now, maxAge) {
+		if !src.outlastsPass() && p.known && p.ok && completeness.ProjectionEvidenceExpired(p.evidencedAt, now, maxAge) {
 			expired = append(expired, src.name)
 		}
 	}

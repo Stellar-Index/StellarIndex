@@ -407,9 +407,10 @@ stops on its own when `/var/lib/stellarindex/sdex-history.stop` exists, when
 the Postgres volume has < 300G free (2.7T free at start; `trades` is 95 GB),
 or at the floor 50,746,445 (2024-03-11, the first on-chain AMM trade). Next
 chunk's upper bound lives in `/var/lib/stellarindex/sdex-history.next`; the
-log is `/var/log/stellarindex/sdex-history.log`. Known caveat carried from
-the by-hand runs: `ch-rebuild -write` records no projection dirty window, so
-the completeness verdict keeps its prior claim over these ranges.
+log is `/var/log/stellarindex/sdex-history.log`. Chunks written before
+`ch-rebuild -write` recorded a projection dirty window (it now records one
+per re-derived source before it writes) left the completeness verdict
+carrying its prior claim over those ranges.
 
 **Sponsor / creator cohort pages — SHIPPED 2026-09-17 (post-1.0 item, done
 early because it was asked for by name).** `/insights/sponsors/{g}` and

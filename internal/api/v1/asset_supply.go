@@ -70,6 +70,12 @@ type AssetSupply struct {
 	// supply events at all).
 	Source string `json:"source"`
 
+	// SupplyBasis names the reading behind a "mint_burn_flows" TotalSupply, in
+	// the supply.Basis vocabulary the listings use. A classic asset's figure
+	// is classic_lake_flows: its derived SAC's event net, not a figure the
+	// issuer publishes, and an upper reading rather than a certified one.
+	SupplyBasis string `json:"supply_basis,omitempty"`
+
 	// CirculatingSupplyLowerBound is true when TotalSupply is a PROVABLE FLOOR
 	// rather than the figure itself, and the consumer must not present it as an
 	// exact supply.
@@ -214,6 +220,10 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	basis := supply.BasisSEP41LakeFlows
+	if !canonical.IsContractID(assetID) {
+		basis = supply.BasisClassicLakeFlows
+	}
 	mint, burn, clawback := sup.Mint.String(), sup.Burn.String(), sup.Clawback.String()
 	wmLedger, stale, _ := s.lakeWatermark(ctx)
 	writeJSON(w, AssetSupply{
@@ -225,6 +235,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		ClawbackTotal: &clawback,
 		FlowCount:     sup.FlowCount,
 		Source:        "mint_burn_flows",
+		SupplyBasis:   basis.String(),
 		AsOfLedger:    wmLedger,
 	}, Flags{Stale: stale})
 }

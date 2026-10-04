@@ -287,7 +287,7 @@ func gateLedger(lcm sdkxdr.LedgerCloseMeta, passphrase string) (want gateCounts,
 		trades: uint64(census.ClassicTradeEffectCount),
 	}
 	got := gateCounts{
-		tx:     uint64(ext.Ledger.TxCount),
+		tx:     uint64(len(ext.Txs)), // rows landed; Ledger.TxCount now includes unreadable txs
 		op:     uint64(ext.Ledger.OpCount),
 		events: uint64(ext.Ledger.SorobanEventCount),
 		trades: uint64(ext.Ledger.ClassicTradeEffectCount),

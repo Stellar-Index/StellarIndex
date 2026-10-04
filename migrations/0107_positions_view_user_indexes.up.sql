@@ -32,8 +32,9 @@
 -- blend_backstop_events sibling (whose user_address genuinely IS
 -- nullable — 5 of 12 event kinds carry no user, migration 0063).
 --
--- No CONCURRENTLY (matches 0106's own convention): r1 gets a by-hand
--- CONCURRENTLY index ahead of this migration; this file's plain form is
+-- No CONCURRENTLY (matches 0106's own convention; hypertables reject it):
+-- r1 gets a by-hand per-chunk-transaction index ahead of this migration;
+-- this file's plain form is
 -- what a fresh/dev deployment's migration run actually executes and is
 -- a safe no-op on r1 once the by-hand index exists.
 

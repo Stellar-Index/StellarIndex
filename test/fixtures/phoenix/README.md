@@ -98,8 +98,10 @@ Replayed by `internal/sources/phoenix/event_shapes_test.go`.
 ## Known gaps
 
 - **WASM hash not yet resolved.** Fixtures currently land under
-  `v1-2026-04-23/` (tag + date). Re-label when the ops CLI lands
-  a `resolve-wasm` subcommand.
+  `v1-2026-04-23/` (tag + date), not a hash directory. Resolve it from the lake
+  with the query in the "Resolving the WASM hash" section of
+  [test/fixtures/reflector/README.md](../reflector/README.md), using
+  the fixtures' `contract_id` and the capture ledger, then relabel.
 - **No `pool_stable` swap fixtures.** The discovery doc noted pool-
   stable's swap event wasn't fully read during Phase 1. If mainnet
   shows stable-pool swap events with a different 8-field shape

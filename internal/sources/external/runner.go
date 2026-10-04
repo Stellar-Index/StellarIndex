@@ -399,6 +399,17 @@ func drainUntilClosed(ch <-chan canonical.Trade) {
 	}
 }
 
+// maxTradeFutureSkew absorbs host/venue clock skew; minTradeTime is the
+// Stellar network's genesis. A trade outside [minTradeTime, now+skew] comes
+// from a unit mismatch or a vendor fault and would corrupt time-ordered data.
+const maxTradeFutureSkew = 5 * time.Minute
+
+var minTradeTime = time.Date(2015, 9, 30, 0, 0, 0, 0, time.UTC)
+
+func plausibleTradeTime(ts, now time.Time) bool {
+	return !ts.Before(minTradeTime) && !ts.After(now.Add(maxTradeFutureSkew))
+}
+
 // shutdownDrainGrace bounds how long forwardTrades keeps pushing already-
 // buffered trades to the sink after ctx is cancelled, so a stalled consumer
 // cannot hold up shutdown.
@@ -435,7 +446,7 @@ func forwardTrades(
 	}
 }
 
-// forwardTrade applies the dust floor and sends one trade to the sink. It
+// forwardTrade applies the dust and timestamp filters and sends one trade to the sink. It
 // returns false when ctx was cancelled before the send completed.
 func forwardTrade(ctx context.Context, source string, trade canonical.Trade, sink chan<- consumer.Event) bool {
 	// Drop sub-$0.001 dust fills — see minStreamQuoteUnits. They
@@ -445,6 +456,12 @@ func forwardTrade(ctx context.Context, source string, trade canonical.Trade, sin
 	// the same $0.001 on XLM/BTC as on XLM/USDT (C2-016).
 	if trade.QuoteAmount.Cmp(minStreamQuoteUnits(trade.Pair.Quote)) < 0 {
 		obs.ExternalDustDroppedTotal.WithLabelValues(source).Inc()
+		return true
+	}
+	if !plausibleTradeTime(trade.Timestamp, time.Now()) {
+		obs.ExternalBadTimestampDroppedTotal.WithLabelValues(source).Inc()
+		slog.Warn("dropping trade with implausible timestamp",
+			"source", source, "timestamp", trade.Timestamp)
 		return true
 	}
 	obs.CEXStreamLastTradeUnix.WithLabelValues(source).Set(float64(time.Now().Unix()))
@@ -514,8 +531,12 @@ func pollOutcome(trades []canonical.Trade, updates []canonical.OracleUpdate, err
 	}
 }
 
-func emitPollResults(ctx context.Context, sink chan<- consumer.Event, trades []canonical.Trade, updates []canonical.OracleUpdate) {
+func emitPollResults(ctx context.Context, source string, sink chan<- consumer.Event, trades []canonical.Trade, updates []canonical.OracleUpdate) {
 	for _, t := range trades {
+		if !plausibleTradeTime(t.Timestamp, time.Now()) {
+			obs.ExternalBadTimestampDroppedTotal.WithLabelValues(source).Inc()
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -574,7 +595,7 @@ func runPoller(
 			return
 		}
 		obs.ExternalPollerLastSuccessUnix.WithLabelValues(name).Set(float64(time.Now().Unix()))
-		emitPollResults(ctx, sink, trades, updates)
+		emitPollResults(ctx, name, sink, trades, updates)
 	}
 
 	// Fire once on start, then on the ticker cadence.

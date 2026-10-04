@@ -3,10 +3,12 @@
 # ([hashdb].enabled=false); once an operator opts a region in, the
 # indexer appends sha256(LCM) per ledger on its live ingest loop and
 # periodically re-reads a trailing window from the same bucket to
-# compare. Metrics are declared in internal/obs/metrics.go and only
-# emit non-zero-cardinality series once a region has hashdb enabled —
-# both alerts below are inert (no series, no fire) on a region that
-# hasn't opted in.
+# compare. Metrics are declared in internal/obs/metrics.go; the counters
+# are registered and the append/verify outcome series seeded at 0 in
+# every process, so they exist on a region that hasn't opted in but
+# stay at zero. The rate()/increase() alerts below stay quiet on such a
+# region because their numerators are zero, not because the series are
+# missing.
 #
 # Alert family:
 #
