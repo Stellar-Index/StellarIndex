@@ -594,6 +594,11 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		{
 			name: "blend", genesis: blend.FactoryGenesisLedger, dec: blend.NewDecoder(),
 			factories: blend.MainnetPoolFactories, creationSym: blend.EventDeploy,
+			// Identity-gated (factories ∪ registered pools): scope the lake read to
+			// that set, walked from the factories' deploy events through tip, as
+			// aquarius does. A static contractIDs list would miss pools deployed
+			// after the snapshot; the unscoped read hit the per-source deadline.
+			newGatedDec: func() gatedDecoder { return blend.NewDecoder() },
 			targets: []reconTarget{
 				{"blend_auctions", "", []string{blend.NewAuctionEventKind, blend.FillAuctionEventKind, blend.DeleteAuctionEventKind}},
 				{"blend_positions", "", []string{blend.PositionEventKind}},
