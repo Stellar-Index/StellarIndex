@@ -172,7 +172,18 @@ type reconSource struct {
 	// in-stream self-seeding (see gatedPrefilter). Returning the concrete
 	// gatedDecoder keeps the enumeration type-safe. See ADR-0035 gating.
 	newGatedDec func() gatedDecoder
+
+	// reproofOutlastsPass, when non-empty, says why this source's from-genesis
+	// re-proof cannot fit the daily -pass: the pass never forces it on expired
+	// evidence and runs it after the other from-genesis sources, as it does
+	// for the census. A failing prior still re-verifies (bounded by
+	// -source-timeout); a `-source <name>` run re-proves it in full.
+	reproofOutlastsPass string
 }
+
+// outlastsPass reports whether the daily -pass must not force this source's
+// from-genesis re-proof (the SDEX census, or a named heavy source).
+func (s reconSource) outlastsPass() bool { return s.census || s.reproofOutlastsPass != "" }
 
 // gatedDecoder is a decoder that can enumerate its gated contract set — the
 // factory trust roots ∪ registered children. Both aquarius.Decoder and
@@ -550,7 +561,12 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				{"blend_backstop_events", "", []string{"blend_backstop.event"}},
 			},
 		},
-		{name: "defindex", genesis: defindex.GenesisLedger, dec: defindex.NewDecoder(), targets: []reconTarget{
+		// contractIDs scopes the lake read to the curated vault ∪ strategy set
+		// (regateSource unions the protocol_contracts registry in). Safe as a
+		// static list: Decode is per-event and a factory `create` never
+		// registers a child, so Matches can accept nothing outside it. Unscoped,
+		// the re-derive streamed the whole lake and hit the per-source deadline.
+		{name: "defindex", genesis: defindex.GenesisLedger, dec: defindex.NewDecoder(), contractIDs: defindex.MainnetGatedSet(), targets: []reconTarget{
 			// ADR-0035/0040 contract-gated (curated set): the bare
 			// NewDecoder() carries the in-code evidence-verified seed
 			// (defindex.MainnetGatedSet), which is the trust root — the
@@ -974,6 +990,9 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 				sep41transfers.SymbolSetAuthorized,
 			},
 			targets: []reconTarget{{"sep41_transfers", filter, []string{sep41transfers.EventKind}}},
+			reproofOutlastsPass: "the watched set includes the KALE SAC, whose CAP-67 transfers sit in " +
+				"nearly every contract_events granule, so the contract_id bloom index skips almost nothing and " +
+				"a from-genesis re-derive reads the whole Soroban-era lake; it exceeded -source-timeout on r1 (2026-10-04)",
 		},
 		{
 			name: sep41supply.SourceName, genesis: floor,
