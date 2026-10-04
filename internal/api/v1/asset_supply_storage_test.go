@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -108,11 +109,15 @@ func TestSupplyFallsBackToContractStorageWhenNoFlows(t *testing.T) {
 			got.Source, supply.BasisContractStorageBalances)
 	}
 	if !got.CirculatingSupplyLowerBound {
-		t.Error("circulating_supply_lower_bound is false on a storage-summed figure; state expiry " +
-			"can archive a real balance out of view, so the figure is a floor")
+		t.Error("circulating_supply_lower_bound is false on a storage-summed figure; a balance entry " +
+			"the lake never captured is out of view, so the figure is a floor")
 	}
 	if got.BalanceEntries != 6 {
 		t.Errorf("balance_entries = %d, want 6", got.BalanceEntries)
+	}
+	if got.ArchivedBalanceEntries != 0 || got.ArchivedBalanceTotal != nil {
+		t.Errorf("archived = %d / %v on a reading with nothing archived, want both absent",
+			got.ArchivedBalanceEntries, got.ArchivedBalanceTotal)
 	}
 	if got.SupplyConsistent == nil || !*got.SupplyConsistent {
 		t.Errorf("supply_consistent = %v, want true", got.SupplyConsistent)
@@ -157,9 +162,11 @@ func TestSupplyDoesNotConsultStorageWhenFlowsExist(t *testing.T) {
 	}
 }
 
-// TestSupplyKeepsEventReadingWhenStorageDeclines pins that the fallback is a
-// fallback: its refusals must not turn a 200 into an error.
-func TestSupplyKeepsEventReadingWhenStorageDeclines(t *testing.T) {
+// TestSupplyIsNotFoundWhenNoFlowsAndStorageDeclines pins that a flowless token
+// whose storage fallback declines gets a 404, never the unfounded zero
+// supply_flows scans to: a refusal of the optional source must not turn into a
+// "fully burned" claim.
+func TestSupplyIsNotFoundWhenNoFlowsAndStorageDeclines(t *testing.T) {
 	cases := []struct {
 		name string
 		st   ContractStorageSupplyReader
@@ -174,16 +181,12 @@ func TestSupplyKeepsEventReadingWhenStorageDeclines(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := serveSupplyWithStorage(t, zeroFlows(), tc.st, storageDealContractID)
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d, want 200 — a declining optional source must not fail the "+
-					"request (body=%s)", rec.Code, rec.Body)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404 — no flows and no storage reading is the absence of "+
+					"a figure, not a supply of zero (body=%s)", rec.Code, rec.Body)
 			}
-			got := decodeSupply(t, rec.Body.Bytes())
-			if got.Source != "mint_burn_flows" {
-				t.Errorf("source = %q, want mint_burn_flows", got.Source)
-			}
-			if got.CirculatingSupplyLowerBound || got.BalanceEntries != 0 || got.SupplyConsistent != nil {
-				t.Error("storage-only fields leaked onto a response the storage reader did not fill")
+			if strings.Contains(rec.Body.String(), `"total_supply"`) {
+				t.Errorf("404 body carries a total_supply: %s", rec.Body)
 			}
 		})
 	}
@@ -207,7 +210,7 @@ func TestSupplyStorageFallbackFlagsInconsistency(t *testing.T) {
 	}
 	if got.SupplyConsistent == nil || *got.SupplyConsistent {
 		t.Errorf("supply_consistent = %v, want false — the contract declares more holders than "+
-			"the lake can show, which is what an archived balance looks like", got.SupplyConsistent)
+			"the lake can show, which is what an uncaptured balance entry looks like", got.SupplyConsistent)
 	}
 	if !got.CirculatingSupplyLowerBound {
 		t.Error("lower-bound flag cleared on a figure we know is incomplete")
@@ -228,5 +231,26 @@ func TestSupplyStorageFallbackOmitsDecimalsWhenChainDeclaresNone(t *testing.T) {
 	}
 	if got.TotalSupply != storageDealTotal {
 		t.Errorf("total_supply = %q; the RAW figure is still defensible without a scale", got.TotalSupply)
+	}
+}
+
+// An archived persistent balance is still owned and restorable, so it stays in
+// total_supply — but the response must say how much of the figure rests on
+// entries whose TTL has lapsed rather than present it as uniformly live.
+func TestSupplyStorageFallbackDisclosesArchivedBalances(t *testing.T) {
+	out := dealStorageSupply()
+	out.ArchivedEntries, out.ArchivedTotal = 2, big.NewInt(1_250_000)
+	rec := serveSupplyWithStorage(t, zeroFlows(), &fakeStorageSupply{out: out}, storageDealContractID)
+
+	got := decodeSupply(t, rec.Body.Bytes())
+	if got.TotalSupply != storageDealTotal || got.BalanceEntries != 6 {
+		t.Errorf("total_supply = %q over %d entries, want %q over 6 — archived balances are supply",
+			got.TotalSupply, got.BalanceEntries, storageDealTotal)
+	}
+	if got.ArchivedBalanceEntries != 2 || got.ArchivedBalanceTotal == nil || *got.ArchivedBalanceTotal != "1250000" {
+		t.Errorf("archived = %d / %v, want 2 / \"1250000\"", got.ArchivedBalanceEntries, got.ArchivedBalanceTotal)
+	}
+	if !got.CirculatingSupplyLowerBound {
+		t.Error("lower-bound flag cleared on a storage-summed figure")
 	}
 }

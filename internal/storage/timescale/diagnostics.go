@@ -549,7 +549,7 @@ type BackfillCoverage struct {
 // BackfillCoverageStats is intentionally a no-op (returns no rows).
 // Retained only for interface/return-type compatibility with the
 // CoverageCache scaffolding, which is removed in the server-side
-// snapshot-pregeneration refactor (#16).
+// snapshot-pregeneration refactor (4d6e7ac4f).
 //
 // Why it does nothing: it used to scan `trades` per source for
 // earliest/latest ledger + an approximate trade count, cached by
@@ -566,7 +566,7 @@ type BackfillCoverage struct {
 // not chunk-exclude and walked the full ~2700-chunk hypertable to
 // the statement-timeout (57014) — the root cause of the
 // CoverageCache cold-start hang and a primary SLO-burn contributor.
-// #12 only time-bounded that wasted work; this removes it entirely
+// 0e470e96c only time-bounded that wasted work; this removes it entirely
 // (the honest fix). Cursor-first coverage + the source_entry_counts
 // tally already supply everything the diagnostics surface needs.
 func (s *Store) BackfillCoverageStats(_ context.Context) ([]BackfillCoverage, error) {
@@ -750,6 +750,9 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 //	soroswap_liquidity             — Soroswap add/remove liquidity; literal
 //	                                 source 'soroswap' (summed WITH skim +
 //	                                 swaps).
+//	sushiswap_v3_position_events   — SushiSwap V3 mint/burn/collect; literal
+//	                                 source 'sushiswap_v3' (summed WITH swaps
+//	                                 from `trades`).
 //	phoenix_initialize             — Phoenix pool initialize; and
 //	phoenix_admin_events           — Phoenix admin; literal source 'phoenix'.
 //	blend_emitter_events           — Blend emitter distribute/drop/swap-
@@ -901,6 +904,8 @@ const seedSourceEntryCountsSQL = `
             SELECT 'aquarius'           AS source, count(*) AS c FROM aquarius_admin
             UNION ALL
             SELECT 'soroswap'           AS source, count(*) AS c FROM soroswap_liquidity
+            UNION ALL
+            SELECT 'sushiswap_v3'       AS source, count(*) AS c FROM sushiswap_v3_position_events
             UNION ALL
             SELECT 'phoenix'            AS source, count(*) AS c FROM phoenix_initialize
             UNION ALL

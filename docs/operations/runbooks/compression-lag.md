@@ -25,8 +25,11 @@ severity: P3
   `compress_after`, plus one of its `schedule_interval`s of grace —
   not past a fixed 7 days. The alert names the hypertable.
 - Disk usage growing faster than expected.
-- `SELECT * FROM timescaledb_information.jobs WHERE proc_name =
-  'policy_compression'` shows failures or skipped runs.
+- `SELECT * FROM timescaledb_information.jobs WHERE proc_name IN
+  ('policy_compression', 'trades_compression_policy')` shows failures or
+  skipped runs. `trades` compresses through the custom job
+  `trades_compression_policy` (migration 0205), which has no
+  `hypertable_name` in the jobs view; the queries below map it to `trades`.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -39,9 +42,9 @@ psql -c "SELECT c.hypertable_name, c.chunk_schema, c.chunk_name,
                 j.schedule_interval
          FROM timescaledb_information.jobs j
          JOIN timescaledb_information.chunks c
-              ON c.hypertable_schema = j.hypertable_schema
-             AND c.hypertable_name = j.hypertable_name
-         WHERE j.proc_name = 'policy_compression'
+              ON c.hypertable_schema = COALESCE(j.hypertable_schema, j.proc_schema)
+             AND c.hypertable_name = COALESCE(j.hypertable_name, 'trades')
+         WHERE j.proc_name IN ('policy_compression', 'trades_compression_policy')
            AND c.is_compressed = false
            AND c.range_end < now()
                - COALESCE((j.config->>'compress_after')::interval, interval '7 days')
@@ -52,7 +55,7 @@ psql -c "SELECT c.hypertable_name, c.chunk_schema, c.chunk_name,
 # Why is the job failing?
 psql -c "SELECT * FROM timescaledb_information.job_stats
          WHERE job_id IN (SELECT job_id FROM timescaledb_information.jobs
-                          WHERE proc_name = 'policy_compression');"
+                          WHERE proc_name IN ('policy_compression', 'trades_compression_policy'));"
 
 # Manual compression — does it work? Chunks live in the
 # _timescaledb_internal schema; compress_chunk needs the
@@ -66,6 +69,11 @@ psql -c "SELECT compress_chunk('<chunk_schema>.<chunk_name>');"
    hot chunk gets new rows while the job tries to compress it.
    - Mitigation: widen the `compress_after` interval so only
      truly-cold chunks are touched.
+   - On `trades` the job asks for each chunk lock under a 5 s
+     `lock_timeout` and fails the run ("columnstore policy failure")
+     rather than queue readers behind it; a long reader of an old chunk
+     (a historical CAGG refresh) shows up here as repeated failures until
+     it finishes.
 
 2. **Schema change conflicts** — a `ALTER TABLE` on the hypertable
    invalidates pending compression. TimescaleDB's compression is
@@ -92,9 +100,9 @@ psql -c "SELECT compress_chunk('<chunk_schema>.<chunk_name>');"
       psql -c "SELECT compress_chunk(c.chunk_schema || '.' || c.chunk_name)
                FROM timescaledb_information.jobs j
                JOIN timescaledb_information.chunks c
-                    ON c.hypertable_schema = j.hypertable_schema
-                   AND c.hypertable_name = j.hypertable_name
-               WHERE j.proc_name = 'policy_compression'
+                    ON c.hypertable_schema = COALESCE(j.hypertable_schema, j.proc_schema)
+                   AND c.hypertable_name = COALESCE(j.hypertable_name, 'trades')
+               WHERE j.proc_name IN ('policy_compression', 'trades_compression_policy')
                  AND c.is_compressed = false
                  AND c.range_end < now()
                      - COALESCE((j.config->>'compress_after')::interval, interval '7 days')

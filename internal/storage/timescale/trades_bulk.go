@@ -418,12 +418,12 @@ const (
 func (s *Store) resolveRowUSDVolume(
 	ctx context.Context, rows []canonical.Trade, out []sql.NullString, errAt []error, i int,
 ) {
-	v := tradeUSDVolume(ctx, rows[i], s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
-	if err := s.reDeriveNullVolumeGuard(rows[i], v); err != nil {
+	v, err := s.resolveUSDVolume(ctx, rows[i])
+	if err != nil {
 		errAt[i] = err
 		return
 	}
-	obs.TradeInsertsTotal.WithLabelValues(rows[i].Source, usdPopulatedLabel(rows[i].Pair, v != nil)).Inc()
+	obs.TradeInsertsTotal.WithLabelValues(rows[i].Source, s.usdLabel(rows[i], v)).Inc()
 	if v != nil {
 		out[i] = sql.NullString{String: *v, Valid: true}
 	}
@@ -690,10 +690,8 @@ func (s *Store) recordBulkLandedEffects(ctx context.Context, rows []canonical.Tr
 		recordDexTradeUnitRatio(*t)
 		for _, side := range [2]canonical.Asset{t.Pair.Base, t.Pair.Quote} {
 			key := side.String()
-			if prev, ok := seenAssets[key]; !ok || t.Ledger > prev.ledger {
-				seenAssets[key] = registryObservation{ledger: t.Ledger, ts: t.Timestamp}
-				assetOf[key] = side
-			}
+			noteRegistryObservation(seenAssets, key, newRegistryObservation(t.Ledger, t.Timestamp))
+			assetOf[key] = side
 		}
 	}
 	now := float64(time.Now().Unix())
@@ -702,9 +700,9 @@ func (s *Store) recordBulkLandedEffects(ctx context.Context, rows []canonical.Tr
 		obs.SourceLastInsertUnix.WithLabelValues(source).Set(now)
 	}
 	for key, obsv := range seenAssets {
-		if err := s.registerClassicAssetSeen(ctx, assetOf[key], obsv.ledger, obsv.ts); err != nil {
+		if err := s.registerClassicAssetRange(ctx, assetOf[key], obsv); err != nil {
 			slog.Default().Debug("timescale: bulk classic-asset registry upsert failed (soft-skip)",
-				"asset", key, "ledger", obsv.ledger, "err", err)
+				"asset", key, "ledger", obsv.maxLedger, "err", err)
 		}
 	}
 }

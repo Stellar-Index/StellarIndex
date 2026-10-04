@@ -147,7 +147,7 @@ reason         = "DAI is a peg asset: Reflector's CEX feed republishes it only w
 # &quote=fiat:USD returned 404 because the aggregator was querying
 # XLM/fiat:USD verbatim (no abstract trades) and the dominant XLM/USD
 # volume on Stellar is quoted in classic Circle USDC, which is
-# intentionally not in the abstract stablecoin map. Per PR #629 the
+# intentionally not in the abstract stablecoin map. Per commit a5cb70575 the
 # aggregator now reads usd_pegged_classic_assets from this config
 # and appends classic source pairs to USD-target expansions.
 # ──────────────────────────────────────────────────────────────────
@@ -339,10 +339,11 @@ usd_pegged_classic_assets = []   {# pricing off (test net): no USD pegs, assets 
   [external.openexchangerates]
   enabled = false
 
-  # Fund NAV for the RWA reference surface. Needs TIINGO_API_KEY in
-  # /etc/default/stellarindex before it can be enabled.
+  # Fund NAV for the RWA reference surface. Enabled only when the vault
+  # holds vault_tiingo_api_key (rendered to TIINGO_API_KEY in
+  # /etc/default/stellarindex); without a key the poller refuses to start.
   [external.tiingo]
-  enabled = false
+  enabled = {{ 'true' if (vault_tiingo_api_key | default('')) | length > 0 else 'false' }}
 
   [external.chainlink]
   enabled = true
@@ -421,6 +422,8 @@ resend_api_key_env = "STELLARINDEX_RESEND_API_KEY"
 # Keys the 6-digit email-code derivation (HMAC over the stored token
 # hash). Unset env → random per-process secret (codes die on restart).
 code_secret_env    = "STELLARINDEX_DASHBOARD_CODE_SECRET"
+# Seals customer-webhook signing keys at rest; unset env stores them raw.
+webhook_seal_key_env = "STELLARINDEX_WEBHOOK_SEAL_KEY"
 cookie_secure      = true
 cookie_domain      = "{{ stellarindex_dashboard_cookie_domain | default('') }}"
 

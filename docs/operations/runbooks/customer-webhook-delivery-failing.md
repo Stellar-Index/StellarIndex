@@ -157,6 +157,17 @@ contention or a slow statement on `webhook_deliveries`
 (`pg_stat_activity`, `pg_locks`). Such a row keeps its claim lease
 and is retried when the lease expires, with a fresh budget.
 
+## Seal key (`STELLARINDEX_WEBHOOK_SEAL_KEY`)
+
+Signing keys, current and rotation-previous, are sealed at rest under
+`vault_webhook_seal_key` (migration 0204). An unset key on the API logs a
+startup warning and every delivery to a sealed webhook counts
+`outcome="lookup_error"` and waits; set the vault value and redeploy to
+drain them. A changed key is terminal (`no_secret`) for every sealed
+webhook: there is no in-place seal-key rotation. To rotate it, restore the
+old value, or accept that customers must recreate their webhooks (edit and
+delete work without the key).
+
 ## Related
 
 - `internal/customerwebhook/worker.go` — implementation

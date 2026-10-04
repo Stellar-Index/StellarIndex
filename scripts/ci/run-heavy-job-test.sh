@@ -313,6 +313,12 @@ while IFS= read -r unit; do
   if grep -qx 'Environment=HEAVY_JOB_CLASS=scheduled' "$unit"; then ok "$unit declares HEAVY_JOB_CLASS=scheduled"; else bad "$unit ExecStarts run-heavy-job.sh without Environment=HEAVY_JOB_CLASS=scheduled — the timer would be refused whenever another heavy job runs"; fi
 done < <(grep -rlE '^ExecStart=[^ ]*run-heavy-job\.sh ' configs/ansible/roles/archival-node/templates/systemd deploy/systemd)
 if [ "$units" -gt 0 ]; then ok "$units wrapper unit(s) checked"; else bad "no unit ExecStarts run-heavy-job.sh — the unit check ran over nothing"; fi
+# Local-pool restores must stay under the wrapper (lock, memory cap, disk
+# watchdog). The exempt units and why: maintainer-workflow.md §Heavy one-shot jobs.
+for u in restore-drill restore-drill-offsite; do
+  f="configs/ansible/roles/archival-node/templates/systemd/$u.service.j2"
+  if grep -qE '^ExecStart=[^ ]*run-heavy-job\.sh ' "$f"; then ok "$u is wrapped by run-heavy-job.sh"; else bad "$u ExecStarts its script bare — no lock, memory cap or disk watchdog"; fi
+done
 
 # ── 9. the watchdog does not hold the lock (root branch only) ────────
 if [ "$branch" != "non-root" ]; then

@@ -182,6 +182,7 @@ echo "=== every scripts/ci self-test has a runner ===" && ./scripts/ci/check-sel
 echo "=== CI meta-gate coverage ===" && ./scripts/ci/ci-meta-gate-coverage-test.sh
 echo "=== deploy checkout ref ===" && ./scripts/ci/deploy-checkout-ref-test.sh
 echo "=== deploy migration gate coverage ===" && ./scripts/ci/deploy-migration-gate-coverage-test.sh
+echo "=== migration follow-up gate ===" && ./scripts/ci/migration-followup-gate-test.sh
 echo "=== deploy served-path smoke ===" && ./scripts/ci/deploy-served-path-smoke-test.sh
 echo "=== Pages deploy branch label ===" && ./scripts/ci/pages-deploy-branch-test.sh
 # The verifier image installs the Postman converter from a Dockerfile ARG whose
@@ -311,8 +312,8 @@ echo "=== API-key keyspace walk ===" && ./scripts/ci/lint-apikey-scan.sh
 echo "=== API-key keyspace walk self-test ===" && ./scripts/ci/lint-apikey-scan-test.sh
 echo "=== Unbounded latest-row reads ===" && python3 ./scripts/ci/lint-unbounded-latest-row.py
 echo "=== Unbounded latest-row reads self-test ===" && ./scripts/ci/lint-unbounded-latest-row-test.sh
-echo "=== Healthcheck oneshot start/runtime bound ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout.sh
-echo "=== Healthcheck oneshot start/runtime bound self-test ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout-test.sh
+echo "=== Oneshot unit start bound (no ignored RuntimeMaxSec) ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout.sh
+echo "=== Oneshot unit start bound self-test ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout-test.sh
 echo "=== Deploy-baseline self-test ===" && ./scripts/ci/deploy-baseline-test.sh
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
 echo "=== Production credentials behind an environment gate ===" && python3 ./scripts/ci/lint-deploy-credentials.py
@@ -389,6 +390,7 @@ fi
 echo "=== Baseline-growth tripwire ===" && ./scripts/ci/lint-baseline-growth.sh
 echo "=== Restore-drill contract + abort-path tests ===" && bash scripts/ops/restore-drill-test.sh && bash scripts/ops/restore-drill-run-test.sh
 echo "=== config-assertions live-guard tests ===" && bash scripts/ops/config-assertions_test.sh
+echo "=== rederive-from driver tests ===" && bash scripts/ops/rederive-from-test.sh
 # BASE_SHA-gated like lint-baseline-growth.sh: self-skips locally, real in CI.
 echo "=== Replay-plan tripwire ===" && ./scripts/ci/lint-replay-plan.sh
 echo "=== External channels ===" && ./scripts/ci/lint-external-channels.sh
@@ -424,6 +426,7 @@ echo "=== ClickHouse ops-user contract self-test ===" && ./scripts/ops/ch-ops-us
 # caught this. Run it here explicitly.
 echo "=== Changed-file dispatcher self-test ===" && ./scripts/dev/lint-changed-test.sh
 echo "=== Doctor self-test ===" && ./scripts/dev/doctor-test.sh
+echo "=== verify-r1-sync self-test ===" && ./scripts/dev/verify-r1-sync-test.sh
 # GH-775: pins commit-identity-range.sh's new-branch/tag fallback (a
 # detached-HEAD checkout with the branch's own commit also present as a
 # remote-tracking ref) against the exact regression that made the range
@@ -611,10 +614,12 @@ lane_d() { # everything else
     echo "=== Ansible ZFS ARC cap self-test ===" && ./scripts/ci/ansible-zfs-arc-cap-test.sh
     echo "=== Ansible Postgres log size-cap self-test ===" && ./scripts/ci/ansible-pg-logrotate-cap-test.sh
     echo "=== Ansible prometheus port var self-test ===" && ./scripts/ci/ansible-prometheus-port-var-test.sh
+    echo "=== Ansible patroni etcd TLS self-test ===" && ./scripts/ci/ansible-patroni-etcd-tls-test.sh
     echo "=== Ansible node-exporter-collectors install self-test ===" && ./scripts/ci/ansible-node-exporter-collectors-install-test.sh
     echo "=== Ansible Caddy signing-key pipefail self-test ===" && ./scripts/ci/ansible-caddy-key-pipefail-test.sh
     echo "=== Promtail server listen-address self-test ===" && ./scripts/ci/promtail-listen-address-test.sh
     echo "=== Ansible README parity self-test ===" && ./scripts/ci/ansible-readme-parity-test.sh
+    echo "=== Ansible env-file secret guard self-test ===" && ./scripts/ci/ansible-envfile-secret-guard-test.sh
     echo "=== Ansible pubnet example checksum parity self-test ===" && ./scripts/ci/ansible-pubnet-checksum-parity-test.sh
     echo "=== Ansible keepalived healthcheck self-test ===" && ./scripts/ci/ansible-keepalived-healthcheck-test.sh
     echo "=== HAProxy http-request timeout self-test ===" && ./scripts/ci/haproxy-http-request-timeout-test.sh

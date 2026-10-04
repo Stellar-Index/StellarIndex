@@ -28,15 +28,11 @@ describe('logout', () => {
     expect(sessionHintPresent()).toBe(false);
   });
 
-  it('drops the hint even when the request fails', async () => {
-    // Sign-out is best-effort — both call sites bounce the visitor
-    // regardless of the response — so local state must not stay
-    // signed-in because the request that was meant to end the session
-    // could not be delivered.
+  it('keeps the hint when the request fails, so the UI stays signed in', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
 
     await expect(logout()).rejects.toThrow();
-    expect(sessionHintPresent()).toBe(false);
+    expect(sessionHintPresent()).toBe(true);
   });
 });
 
@@ -87,7 +83,7 @@ describe('idempotent creates', () => {
       ok: true,
       status: 201,
       statusText: '201',
-      json: async () => ({}),
+      text: async () => '{}',
     }) as Response;
 
   it('retries a timed-out create with the same Idempotency-Key, then rotates it', async () => {
@@ -130,5 +126,17 @@ describe('idempotent creates', () => {
     expect(first).toBeTruthy();
     expect(second).toBeTruthy();
     expect(second).not.toBe(first);
+  });
+});
+
+describe('an empty 200 body', () => {
+  it('resolves logout instead of failing on res.json()', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(null, { status: 200 })),
+    );
+
+    await expect(logout()).resolves.toBeUndefined();
+    expect(sessionHintPresent()).toBe(false);
   });
 });

@@ -427,6 +427,29 @@ func (r *VWAPUSDFXResolver) resolveRate(ctx context.Context, asset canonical.Ass
 	return rate, nil
 }
 
+// ThinMarketRefused reports whether asset had a candidate rate at `at` that
+// the substance gate refused and none it allowed, read from the verdicts the
+// last USDPriceAt call cached (no query). It only relabels coverage metrics;
+// usd_volume stays NULL either way.
+func (r *VWAPUSDFXResolver) ThinMarketRefused(asset canonical.Asset, at time.Time) bool {
+	if !r.substanceGate || isXLMAsset(asset) {
+		return false
+	}
+	asOf := at.UTC().Truncate(time.Hour).UnixMilli()
+	refused := false
+	for _, market := range []string{"direct", "xlm"} {
+		verdict, ok := r.lookupCache(fxCacheKey{asset: "substance:" + market + ":" + asset.String(), bucketMs: asOf})
+		if !ok {
+			continue
+		}
+		if verdict != "" {
+			return false
+		}
+		refused = true
+	}
+	return refused
+}
+
 // ─── the substance gate ──────────────────────────────────────────────
 
 // The valuation substance floor: pricingguard's default serve floor,

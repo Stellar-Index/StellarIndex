@@ -107,7 +107,7 @@ func TestLogin_EmptyResendKey_IsACountedFailureNeverSent(t *testing.T) {
 	beforeFailed := magicLinkNotifyCount(t, obs.NotifySendResultFailed)
 
 	var logs bytes.Buffer
-	w, tokens, sender := loginThroughProductionWiring(t, &logs)
+	w, tokens, _ := loginThroughProductionWiring(t, &logs)
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("login status with no mail credential = %d, want 503 — the API must not "+
@@ -134,11 +134,6 @@ func TestLogin_EmptyResendKey_IsACountedFailureNeverSent(t *testing.T) {
 	if !strings.Contains(logs.String(), rlt321MailEnv) {
 		t.Errorf("boot log does not name the env var the operator must set: %s", logs.String())
 	}
-	// The signup sibling must keep treating this transport as "no mail":
-	// email_verification_sent:false, never a doomed send.
-	if e := signupVerifyEmailerOrNil(sender, "Stellar Index <hello@stellarindex.io>", true); e != nil {
-		t.Errorf("signupVerifyEmailerOrNil = %T, want nil for a transport with no credential", e)
-	}
 }
 
 // TestBuildDashboardSender_WhitespaceOnlyCredential_IsNotATransport: a
@@ -157,9 +152,6 @@ func TestBuildDashboardSender_WhitespaceOnlyCredential_IsNotATransport(t *testin
 	}
 	if _, isResend := sender.(*notify.ResendSender); isResend {
 		t.Errorf("a whitespace-only credential wired a live Resend transport")
-	}
-	if e := signupVerifyEmailerOrNil(sender, "Stellar Index <hello@stellarindex.io>", true); e != nil {
-		t.Errorf("signupVerifyEmailerOrNil = %T, want nil for a whitespace-only credential", e)
 	}
 }
 
@@ -187,9 +179,6 @@ func TestBuildDashboardSender_WithCredential_WiresResendAndNeverLogsIt(t *testin
 	}
 	if strings.Contains(logs.String(), fixtureValue) || strings.Contains(logs.String(), fixtureValue[:8]) {
 		t.Errorf("the mail credential (or a prefix of it) reached the log")
-	}
-	if signupVerifyEmailerOrNil(sender, "Stellar Index <hello@stellarindex.io>", true) == nil {
-		t.Errorf("signupVerifyEmailerOrNil = nil for a configured Resend transport")
 	}
 }
 

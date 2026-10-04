@@ -48,8 +48,23 @@ func TestSourceFilter_Classes(t *testing.T) {
 			urls := []string{
 				oracle.URL + "/v1/oracle/latest?asset=native&source=" + tc.src,
 				markets.URL + "/v1/markets?source=" + tc.src,
-				obs.URL + "/v1/observations?asset=native&quote=fiat:USD&source=" + tc.src,
 			}
+			// Raw-trade routes serve on-chain sources only: an exchange
+			// venue is refused there but selectable elsewhere.
+			rawWant := tc.wantType
+			if tc.name == "cex" {
+				rawWant = "off-chain-source-filter"
+			}
+			assertRaw := func(u string) {
+				if rawWant == "" {
+					if resp := mustGet(t, u); resp.StatusCode != http.StatusOK {
+						t.Errorf("%s: status = %d, want 200", u, resp.StatusCode)
+					}
+					return
+				}
+				assertProblem(t, mustGet(t, u), rawWant)
+			}
+			assertRaw(obs.URL + "/v1/observations?asset=native&quote=fiat:USD&source=" + tc.src)
 			for _, u := range urls {
 				resp := mustGet(t, u)
 				if tc.wantType == "" {
@@ -61,8 +76,8 @@ func TestSourceFilter_Classes(t *testing.T) {
 				assertProblem(t, resp, tc.wantType)
 			}
 			// The stream holds a 200 open, so only the refusal is asserted.
-			if tc.wantType != "" {
-				assertProblem(t, mustGet(t, stream+"/v1/observations/stream?asset=native&quote=fiat:USD&source="+tc.src), tc.wantType)
+			if rawWant != "" {
+				assertProblem(t, mustGet(t, stream+"/v1/observations/stream?asset=native&quote=fiat:USD&source="+tc.src), rawWant)
 			}
 		})
 	}

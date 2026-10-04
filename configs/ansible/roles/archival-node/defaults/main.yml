@@ -443,8 +443,8 @@ ch_schema_snapshot_offsite_ack: false
 # ch_lake_backup_full_interval_days, daily incrementals on top of it.
 # The units install on every host with a ClickHouse; the backup itself
 # runs only once ch_lake_backup_s3_endpoint is set. Until then the run
-# reports configured=0 and stellarindex_ch_lake_backup_stale tickets the
-# host. Restore: docs/operations/runbooks/ch-lake-backup.md.
+# reports configured=0, the unit fails, and stellarindex_ch_lake_backup_stale
+# tickets the host. Restore: docs/operations/runbooks/ch-lake-backup.md.
 ch_lake_backup_enabled: true
 ch_lake_backup_database: "stellar"
 ch_lake_backup_disk: "si_lake_backup"
@@ -463,16 +463,13 @@ ch_lake_backup_retain_chains: 1
 # lake (~2 days) off the serving path's disks. 0 = unlimited.
 ch_lake_backup_max_bandwidth: 104857600
 
-# ───── Galexie archive off-site mirror (off-site-backup-plan.md §1, NS03) ─
-# `mc mirror` of the local galexie-archive bucket to an off-site alias,
-# verified after each run with `mc mirror --dry-run`. The unit installs on
-# every host with Galexie; the mirror itself runs only once
-# galexie_archive_mirror_s3_endpoint is set. Until then the run reports
-# configured=0 and stellarindex_galexie_archive_mirror_stale tickets the
-# host. This is an inert mechanism landed ahead of its off-site target —
-# off-site-backup-plan.md §1 records the same status the ZFS local
-# snapshot and ADR-0043's lake backup shipped with.
-galexie_archive_mirror_enabled: true
+# ───── Galexie archive off-site mirror (retired 2026-10-02) ───────────────
+# The raw archive is NOT backed up off-site: it is a copy of SDF's public
+# dataset and is re-pulled from there (ADR-0043 §2 amendment 2026-08-29).
+# Off-site copies are the ClickHouse lake and Postgres on B2. false removes
+# the units, script and textfile from the host; true re-installs the mirror,
+# which then needs galexie_archive_mirror_s3_endpoint or its unit fails.
+galexie_archive_mirror_enabled: false
 # s3 endpoint INCLUDING bucket, e.g.
 # "https://<account>.r2.cloudflarestorage.com". Empty = not configured.
 galexie_archive_mirror_s3_endpoint: ""

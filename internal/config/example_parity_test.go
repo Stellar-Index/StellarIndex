@@ -201,6 +201,46 @@ func TestAnsibleRendersDivergenceSupplyToggle(t *testing.T) {
 	}
 }
 
+// TestAnsibleEnablesTiingoOnlyWithKey pins that the r1 template arms the
+// fund-NAV poller from the vault key, so a deploy that renders TIINGO_API_KEY
+// also turns the poller on, and a keyless host stays off.
+func TestAnsibleEnablesTiingoOnlyWithKey(t *testing.T) {
+	const keyVar = "vault_tiingo_api_key"
+	raw, err := os.ReadFile(filepath.Join("..", "..", "configs", "ansible", "roles",
+		"archival-node", "templates", "stellarindex.toml.j2"))
+	if err != nil {
+		t.Fatalf("read template: %v", err)
+	}
+	stanza := tomlStanza(string(raw), "[external.tiingo]")
+	if !strings.Contains(stanza, keyVar) {
+		t.Fatalf("[external.tiingo] stanza does not read %s:\n%s", keyVar, stanza)
+	}
+	jinja := regexp.MustCompile(`\{\{.*?\}\}`)
+	for _, want := range []bool{true, false} {
+		rendered := jinja.ReplaceAllString(stanza, strconv.FormatBool(want))
+		c, err := config.LoadReader(strings.NewReader(rendered), "stellarindex.toml.j2:external.tiingo")
+		if err != nil {
+			t.Fatalf("rendered %v stanza does not load: %v", want, err)
+		}
+		if c.External.Tiingo.Enabled != want {
+			t.Errorf("rendered enabled=%v, want %v", c.External.Tiingo.Enabled, want)
+		}
+	}
+}
+
+// TestExampleTOMLAllowedOriginsIsNotWildcard pins the shipped example to
+// the code default (same-origin only): an operator who copies it must not
+// get wide-open CORS.
+func TestExampleTOMLAllowedOriginsIsNotWildcard(t *testing.T) {
+	c, err := config.Load(filepath.Join("..", "..", "configs", "example.toml"))
+	if err != nil {
+		t.Fatalf("load example.toml: %v", err)
+	}
+	if len(c.API.AllowedOrigins) != 0 {
+		t.Errorf("configs/example.toml ships allowed_origins = %q; the code default is []", c.API.AllowedOrigins)
+	}
+}
+
 // tomlStanza returns header's lines up to the next table header, or "".
 func tomlStanza(text, header string) string {
 	var out []string

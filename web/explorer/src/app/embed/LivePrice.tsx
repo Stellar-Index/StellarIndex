@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { formatPriceSmall } from '@/lib/format';
+import { pollWhileVisible } from '@/lib/live/visiblePoll';
 
 import { API_BASE_URL as API_BASE } from '@/api/client';
 
@@ -59,10 +60,10 @@ export function LivePrice({
       }
     }
     void tick();
-    const t = setInterval(tick, 60_000);
+    const stop = pollWhileVisible(() => void tick(), 60_000);
     return () => {
       cancelled = true;
-      clearInterval(t);
+      stop();
     };
   }, [assetId, format, quote]);
 
