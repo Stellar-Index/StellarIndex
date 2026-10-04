@@ -28,7 +28,9 @@
 #
 # And the follow-up marker pass: an up.sql that blanks data (unqualified
 # DELETE, TRUNCATE, CAGG recreated WITH NO DATA) with no
-# `-- REQUIRED-FOLLOWUP:` line is CAUGHT, as is a misspelled marker.
+# `-- REQUIRED-FOLLOWUP:` line is CAUGHT, as is a misspelled marker, and
+# so is a rebuild follow-up whose file keeps the source's projected-rebuild
+# checkpoints.
 #
 # The Postgres passes run against the real migrations/ tree in every case,
 # so this file assumes (and the first case asserts) that tree is clean.
@@ -448,10 +450,43 @@ d="$(mig fu-marked 0002_disarm.up.sql <<'SQL'
 -- REQUIRED-FOLLOWUP: stellarindex-ops projector-replay -config /etc/stellarindex.toml -source cctp -from 62146641 -write
 BEGIN;
 DELETE FROM cctp_events;
+DELETE FROM ingestion_cursors WHERE source = 'projected-rebuild' AND sub_source LIKE 'cctp:%';
 COMMIT;
 SQL
 )"
-clean_mig "an unqualified DELETE that names its follow-up passes" "$d"
+clean_mig "an unqualified DELETE that names its follow-up and clears its checkpoints passes" "$d"
+
+d="$(mig fu-no-ckpt-clear 0002_disarm.up.sql <<'SQL'
+-- REQUIRED-FOLLOWUP: stellarindex-ops projector-replay -config /etc/stellarindex.toml -source cctp -from 62146641 -write
+BEGIN;
+DELETE FROM cctp_events;
+COMMIT;
+SQL
+)"
+mcatches "a rebuild follow-up whose file keeps the source's projected-rebuild checkpoints is caught" "$d" \
+  "does not delete their projected-rebuild checkpoints"
+
+d="$(mig fu-ckpt-other-source 0002_disarm.up.sql <<'SQL'
+-- REQUIRED-FOLLOWUP: stellarindex-ops projected-rebuild -config /etc/stellarindex.toml -source cctp -from 62146641 -write
+-- REQUIRED-FOLLOWUP: stellarindex-ops projected-rebuild -config /etc/stellarindex.toml -source rozo -from 60829397 -write
+BEGIN;
+DELETE FROM cctp_events;
+DELETE FROM rozo_events;
+DELETE FROM ingestion_cursors WHERE source = 'projector' AND sub_source LIKE 'cctp:%';
+DELETE FROM ingestion_cursors WHERE source = 'projected-rebuild' AND sub_source LIKE 'rozo:%';
+COMMIT;
+SQL
+)"
+mcatches "clearing another source's or the live projector's cursors does not count" "$d" \
+  "(see 0206):"$'\n'"  cctp"$'\n'"lint-migrations: follow-up marker pass"
+
+d="$(mig fu-ckpt-stale-baseline 0203_create_sushiswap_v3_position_events.up.sql <<'SQL'
+-- REQUIRED-FOLLOWUP: stellarindex-ops projector-replay -source sushiswap_v3 -from 61487379
+DELETE FROM ingestion_cursors WHERE source = 'projected-rebuild' AND sub_source LIKE 'sushiswap_v3:%';
+SQL
+)"
+mcatches "a rebuild_ckpt_baseline file that now clears its checkpoints is a stale entry" "$d" \
+  "stale rebuild_ckpt_baseline entry 0203_create_sushiswap_v3_position_events.up.sql"
 
 d="$(mig fu-do-truncate 0002_reset.up.sql <<'SQL'
 DO $$ BEGIN TRUNCATE rozo_events; END $$;

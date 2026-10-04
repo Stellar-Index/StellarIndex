@@ -1,9 +1,10 @@
 // Package anomaly implements the Phase-1 component of [ADR-0019] —
 // per-asset-class threshold-based anomaly detection. It runs alongside
 // Phase 2 (per-asset MAD baselines + multi-factor confidence) rather
-// than being superseded by it: both layers vote into the orchestrator's
-// freeze decision via the [Phase2FreezeConfig] AND-of-three-signals
-// rule.
+// than being superseded by it: either layer can start a freeze on its own
+// (Phase 1 via the class-threshold AND below, Phase 2 via the
+// [Phase2FreezeConfig] AND-of-three-signals rule), and both share one
+// freeze lifecycle.
 //
 // # Scope
 //
@@ -18,10 +19,12 @@
 // (per-asset MAD baselines + z-score) and
 // [internal/aggregate/confidence] (seven-factor weighted-geomean
 // confidence). The aggregator orchestrator wires both — Phase 1 here
-// gates "is this movement large for this asset class" while Phase 2
-// gates "is this movement statistically anomalous AND under-confident
-// AND under-corroborated". Both must agree before the orchestrator
-// flips ActionFreeze.
+// freezes on "this movement is large for this asset class AND has at
+// most one source" while Phase 2 freezes on "this movement is
+// statistically anomalous AND under-confident AND under-corroborated".
+// The two are independent triggers, not a joint vote: a Phase 1 fire
+// freezes without a Phase 2 signal. Once a window is frozen, Phase 1
+// stands down and the Phase 2 lifecycle alone decides release.
 //
 // # The decision algorithm
 //
