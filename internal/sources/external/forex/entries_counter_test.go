@@ -126,3 +126,23 @@ func TestPersistSnapshot_attributesEntriesToTheProviderThatAnswered(t *testing.T
 			"the primary reports a down feed as healthy", got)
 	}
 }
+
+// A batch holding only the synthetic USD anchor and carried-forward
+// history bars carries no upstream rate; it must not count as entries.
+func TestPersistSnapshot_doesNotCountAnchorOrCarriedHistory(t *testing.T) {
+	obs.SourceEventsTotal.Reset()
+
+	w := &Worker{writer: &fakeFXWriter{}, logger: discardLogger()}
+	now := time.Now().UTC()
+	w.persistSnapshot(context.Background(), &Snapshot{
+		PublishedAt: now,
+		Currencies:  []Currency{{Ticker: anchorTicker, RateUSD: 1}},
+		History7d: map[string][]HistoryPoint{
+			"EUR": {{Date: now.AddDate(0, 0, -1), RateUSD: 1.08}},
+		},
+	})
+
+	if got := entriesFor("massive"); got != 0 {
+		t.Errorf("entries = %v for an anchor+history-only batch, want 0", got)
+	}
+}

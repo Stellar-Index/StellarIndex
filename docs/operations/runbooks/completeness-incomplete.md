@@ -117,6 +117,13 @@ sudo -u postgres psql -d stellarindex -c \
   sudo systemctl start --no-block compute-completeness-sdex.service
   ```
 
+  `sep41_transfers` is handled the same way by
+  `compute-completeness-sep41.timer` (Wednesday 18:47 UTC,
+  `-source sep41_transfers -timeout 360m`): the watched KALE SAC puts its
+  CAP-67 transfers in nearly every lake granule, so its from-genesis re-proof
+  overruns the pass's 45 min `-source-timeout` and the pass never forces it.
+  Re-run with `sudo systemctl start --no-block compute-completeness-sep41.service`.
+
   The unit is the fallback to prefer: it applies the driver's tip−100 margin,
   without which undrained ledgers read as sdex mismatches. Do not add
   `-from`: a run that starts above the served floor carries the range below it
@@ -162,6 +169,9 @@ The `detail` column names the per-target Δ and window.
 - `docs/operations/launch-todo.md` Phase C.
 
 ## Changelog
+
+- 2026-10-04 — `sep41_transfers` left the pass's forced re-proof;
+  `compute-completeness-sep41.timer` re-proves it weekly (Wednesday).
 
 - 2026-10-02 — added the projection-evidence stale reason (migration 0201):
   the `-pass` re-proves up to three expired sources per night;

@@ -154,7 +154,8 @@ type Flags struct {
 	// PivotUnverified: a composite leg was all stablecoin prints at par, so a de-peg in it went unchecked.
 	PivotUnverified bool `json:"pivot_unverified,omitempty"`
 	// ThinMarket: the price was served under `include_thin=true` from a
-	// market below the substance floor that would otherwise be withheld.
+	// market below the substance floor that would otherwise be withheld,
+	// or by /v1/vwap or /v1/twap, which serve such a market by default.
 	ThinMarket bool `json:"thin_market,omitempty"`
 	// ProxyDeviation: a TRIANGULATED fiat:USD price rests on the assumption
 	// that a declared USD peg is $1, and any declared peg's observed dollar

@@ -220,6 +220,11 @@ type Worker struct {
 	// Only touched from guardSnapshot (single-goroutine, as guards).
 	historyVeto map[string]float64
 
+	// streakCounted is guardSnapshot-scoped: tickers whose stuck streak
+	// already moved this refresh. nil outside a refresh (every refusal
+	// counts), so the streak measures refreshes, not broken bars.
+	streakCounted map[string]bool
+
 	// rawHistory is the trailing-7d series exactly as last fetched —
 	// every dated bar, including the ones the band refuses. It is carried
 	// from refresh to refresh HERE and never published: the heal and the
@@ -690,7 +695,8 @@ func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 	today := snap.PublishedAt.UTC().Truncate(24 * time.Hour)
 
 	w.computeHistoryVeto(snap)
-	defer func() { w.historyVeto = nil }()
+	w.streakCounted = map[string]bool{}
+	defer func() { w.historyVeto, w.streakCounted = nil, nil }()
 
 	res := guardResult{
 		current: make(map[string]bool, len(snap.Currencies)),
@@ -796,10 +802,17 @@ func (w *Worker) writeBatch(ctx context.Context, res guardResult) {
 	// that actually answered. Attributing a fallback's rows to massive
 	// would report a feed as healthy while it was in fact down.
 	//
-	// Placed after the committed non-empty write, on the same reasoning
-	// the liveness gauge below documents: an empty batch or a failed
-	// insert must not make the feed look productive.
-	obs.SourceEventsTotal.WithLabelValues(w.sourceLabel()).Add(float64(len(batch)))
+	// Placed after the committed write, on the same reasoning the
+	// liveness gauge below documents: a failed insert must not make the
+	// feed look productive.
+	//
+	// Counts fresh upstream rates, not len(batch): the synthetic USD anchor
+	// and carried-forward history bars are written every refresh even when
+	// the upstream is dead, so they would keep a dead feed's counter moving.
+	fresh := res.freshQuotes()
+	if fresh > 0 {
+		obs.SourceEventsTotal.WithLabelValues(w.sourceLabel()).Add(float64(fresh))
+	}
 
 	// Stamp the FX-feed liveness gauge ONLY when the committed write
 	// carried at least one upstream current rate. A failed insert
@@ -809,7 +822,7 @@ func (w *Worker) writeBatch(ctx context.Context, res guardResult) {
 	// was dropped, so they would keep a dead feed looking fresh. The
 	// stellarindex_external_fx_feed_stale alert keys off this gauge's
 	// staleness, BEFORE the 7-day fx_snap lookback expires.
-	if res.freshQuotes() > 0 {
+	if fresh > 0 {
 		obs.ExternalFXLastQuoteUnix.WithLabelValues(w.sourceLabel()).Set(float64(time.Now().Unix()))
 	}
 }
@@ -1077,10 +1090,17 @@ func (w *Worker) acceptHistoryRate(ticker string, rate float64) bool {
 	// refresh, so the reclassification never engaged.
 	if g.stuckRejectedRate > 0 &&
 		math.Abs(rate-g.stuckRejectedRate)/g.stuckRejectedRate <= stuckSameRateTolerance {
-		g.stuckCount++
+		// A break spanning several trailing bars is re-scored in full every
+		// refresh; count it once per refresh so the threshold stays ~12 refreshes.
+		if !w.streakCounted[ticker] {
+			g.stuckCount++
+		}
 	} else {
 		g.stuckRejectedRate = rate
 		g.stuckCount = 1
+	}
+	if w.streakCounted != nil {
+		w.streakCounted[ticker] = true
 	}
 	reason := "history_deviation"
 	if g.stuckCount > stuckRejectionThreshold {

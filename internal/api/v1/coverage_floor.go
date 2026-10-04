@@ -629,6 +629,7 @@ func (s *Server) writeChartSeries(
 	writeJSONCoverage(w, series, Flags{
 		Triangulated:    walk.proxied,
 		Stale:           walk.degraded,
+		Degraded:        walk.degraded,
 		OutsideCoverage: outside,
 	}, coverageFrom)
 }
