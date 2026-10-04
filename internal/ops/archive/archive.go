@@ -4,7 +4,7 @@
 // Package archive holds the stellarindex-ops archive-integrity + WASM
 // history subcommands: `verify-archive`, `archive-completeness`,
 // `cross-region-check`, `cross-region-monitor`, `trim-galexie-archive`,
-// `rehydrate-galexie-archive`, `wasm-history`,
+// `rehydrate-galexie-archive`, `galexie-mirror-verify`, `wasm-history`,
 // `wasm-history-merge-jsonl`, `extract-wasm-from-galexie`.
 //
 // wasm-history/extract-wasm-from-galexie live here rather than in
@@ -35,7 +35,7 @@ import (
 // Run is the internal/ops/archive package's entry point — see
 // discovery.Run's doc comment for the calling convention shared by
 // every internal/ops/* package post-split. args[0] is the subcommand
-// verb (one of the nine this package owns, `archive-completeness` and
+// verb (one of the ten this package owns, `archive-completeness` and
 // `wasm-history-merge-jsonl` included); args[1:] are its flags.
 func Run(args []string) error {
 	switch args[0] {
@@ -51,6 +51,8 @@ func Run(args []string) error {
 		return trimGalexieArchive(args[1:])
 	case "rehydrate-galexie-archive":
 		return rehydrateGalexieArchive(args[1:])
+	case "galexie-mirror-verify":
+		return galexieMirrorVerify(args[1:])
 	case "wasm-history":
 		return wasmHistory(args[1:])
 	case "wasm-history-merge-jsonl":
