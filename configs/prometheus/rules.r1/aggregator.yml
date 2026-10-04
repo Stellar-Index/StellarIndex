@@ -422,6 +422,34 @@ groups:
             persist, not zeros). Customer pricing surface is unaffected.
             Fix the failing Postgres backend and the next sweep catches up.
 
+      # ─── asset-volume-character rollup worker ────────────────────────
+      # The worker sweeps every 6h (the roll scans the full 14-day trades
+      # window), so the 15m/for-30m shape of the sibling rollup alerts
+      # could never fire: one error leaves a ~15m rate blip. Fire instead
+      # on a refresh_error in the last 13h with no ok sweep in that window,
+      # i.e. two consecutive sweeps failed. Analytics only.
+      - alert: stellarindex_asset_character_rollup_failing
+        expr: |
+          sum(increase(stellarindex_asset_character_rollup_sweeps_total{outcome="refresh_error"}[13h])) > 0
+            unless
+          sum(increase(stellarindex_asset_character_rollup_sweeps_total{outcome="ok"}[13h])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/asset-character-rollup-failing.md
+          summary: "Asset-character rollup failing: errors with no successful sweep in 13h"
+          description: |
+            The aggregator's asset-volume-character rollup worker (6h
+            cadence) has recorded refresh errors and no successful sweep
+            in the last 13h. The volume_character label and signals on
+            /v1/assets and /v1/assets/{id} stop advancing (last-good
+            rows persist, not blank). Pricing, verification and the raw
+            volume_24h_usd are unaffected. Fix the failing Postgres
+            backend; the next sweep catches up.
+
       # ─── Decimals-assumption landmine (decoder-correctness audit F2) ─
       # The served price is Σ(quote_amount)/Σ(base_amount) on RAW
       # smallest-unit integers (prices_* CAGGs + aggregate.VWAP); the

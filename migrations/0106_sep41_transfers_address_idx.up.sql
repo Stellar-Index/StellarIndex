@@ -24,11 +24,12 @@
 -- rows, but the column is nullable) out of the index.
 --
 -- IF NOT EXISTS + no CONCURRENTLY, matching migration 0083's own
--- convention: r1 gets CREATE INDEX CONCURRENTLY applied by hand ahead
--- of this migration (golang-migrate runs each file in a transaction,
--- and CONCURRENTLY cannot run inside one); this file's plain form is
--- what a fresh/dev deployment's migration run actually executes, and
--- is a safe no-op on r1 once the by-hand CONCURRENTLY index exists.
+-- convention: sep41_transfers is a hypertable, which rejects CREATE
+-- INDEX CONCURRENTLY, so r1 gets the index built by hand ahead of this
+-- migration using per-chunk transactions (timescaledb.transaction_per_chunk,
+-- see 0123); this file's plain form is what a fresh/dev deployment's
+-- migration run actually executes, and is a safe no-op on r1 once the
+-- by-hand index exists.
 
 BEGIN;
 

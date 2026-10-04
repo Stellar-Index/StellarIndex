@@ -1096,6 +1096,18 @@ venue (e.g. `coinbase`) can mean the streamer wedged — cross-check
 `stellarindex_cex_stream_last_trade_unix` / the CEX stream disconnect
 counter.
 
+### `stellarindex_external_bad_timestamp_dropped_total`
+
+Counter, label `source`.
+
+CEX trades dropped at ingest because the vendor timestamp was
+implausible: more than 5 minutes ahead of the local clock, or before
+2015-09-30 (a seconds/microseconds-vs-milliseconds mix-up lands in one
+of those). Applies to streamed and polled trades.
+
+When to look: any non-zero rate means a venue changed its timestamp
+format or sent bad data; check the venue's payload.
+
 ### `stellarindex_external_poller_refused_entries_total`
 
 Counter, labels `source`, `reason` ∈ {ambiguous_symbol, id_mismatch}.
@@ -2447,7 +2459,9 @@ label, or the directory's demote-adjusted order stops moving. Sustained
 unreachable, or migration 0149 missing on this deployment). The rollup keeps
 its last-good rows, so the label goes stale, not blank. Informational
 severity: `volume_character` is analytics-only — pricing, verification, and
-the raw `volume_24h_usd` chain fact are unaffected.
+the raw `volume_24h_usd` chain fact are unaffected. Alert:
+`stellarindex_asset_character_rollup_failing` (6h cadence, so it keys on a
+13h window: errors with no `ok` sweep).
 
 ### `stellarindex_asset_character_rollup_sweep_duration_seconds`
 

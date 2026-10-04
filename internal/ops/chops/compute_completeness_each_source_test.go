@@ -11,6 +11,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/completeness"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 )
 
 // TestEvaluateEachSource_OneFailureDoesNotWithholdLaterVerdicts (#805, #1202
@@ -178,5 +182,78 @@ func TestEvaluateEachSource_PerSourceBudgetDoesNotStarveLaterSources(t *testing.
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("err = %v, want comet's deadline reported (no fake verdict)", err)
+	}
+}
+
+// With -source the run's -timeout is the one source's budget: the per-source
+// bound must not cut the weekly `-source sdex` re-proof (hours) at 45m.
+func TestEvaluateEachSource_SourceFilterIgnoresPerSourceBudget(t *testing.T) {
+	cat := []reconSource{{name: "sdex"}}
+	err := evaluateEachSource(context.Background(), cat, "sdex", time.Nanosecond, func(ctx context.Context, _ reconSource) error {
+		time.Sleep(5 * time.Millisecond)
+		return ctx.Err()
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want the -source run to keep the run budget", err)
+	}
+}
+
+// A reproofOutlastsPass source is never re-floored on expired evidence, and
+// when it does start from genesis it runs after the light from-genesis
+// sources and before the census.
+func TestPass_HeavyReproofIsNotForcedAndRunsLate(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-30 * 24 * time.Hour)
+	cat := []reconSource{
+		{name: "sdex", census: true, genesis: 1},
+		{name: "defindex", genesis: 1},
+		{name: "sep41_transfers", genesis: 1, reproofOutlastsPass: "heavy"},
+	}
+	prior := map[string]priorProjection{
+		"defindex":        {known: true, ok: true, evidencedAt: old},
+		"sep41_transfers": {known: true, ok: true, evidencedAt: old},
+	}
+	if got := expireStaleCarries(prior, cat, now, completeness.MaxProjectionCarryAge); !slices.Equal(got, []string{"defindex"}) {
+		t.Errorf("expired = %v, want only defindex", got)
+	}
+	var names []string
+	for _, s := range orderForPass(cat, map[string]priorProjection{}, map[string]uint32{}) {
+		names = append(names, s.name)
+	}
+	if want := []string{"defindex", "sep41_transfers", "sdex"}; !slices.Equal(names, want) {
+		t.Errorf("order = %v, want %v", names, want)
+	}
+}
+
+// defindex's lake read must be contract-scoped, and the scope must cover
+// everything its decoder can accept, or the expected side undercounts.
+func TestCatalogue_DefindexReDeriveIsContractScoped(t *testing.T) {
+	cat, _, err := buildReconciliationCatalogue(config.Config{})
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	src := catalogueSource(t, cat, "defindex")
+	if len(src.contractIDs) == 0 {
+		t.Fatal("defindex has no contractIDs: its re-derive streams the whole lake")
+	}
+	for _, c := range append(append([]string{}, defindex.MainnetVaults...), defindex.MainnetStrategies...) {
+		if !slices.Contains(src.contractIDs, c) {
+			t.Errorf("defindex prefilter omits gated contract %s", c)
+		}
+	}
+	if src.outlastsPass() {
+		t.Error("defindex is contract-scoped now; it must stay in the pass's evidence re-proof")
+	}
+	if s := catalogueSource(t, cat, "sdex"); !s.outlastsPass() {
+		t.Error("sdex census must stay out of the pass's forced re-proof")
+	}
+	var cfg config.Config
+	cfg.Supply.WatchedSEP41Contracts = []string{defindex.MainnetVaults[0]}
+	sep, err := buildSEP41ReconSources(cfg)
+	if err != nil {
+		t.Fatalf("buildSEP41ReconSources: %v", err)
+	}
+	if s := catalogueSource(t, sep, "sep41_transfers"); !s.outlastsPass() {
+		t.Error("sep41_transfers must stay out of the pass's forced re-proof")
 	}
 }

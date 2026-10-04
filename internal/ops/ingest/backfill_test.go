@@ -439,9 +439,15 @@ func (f *fakeCAGGRefresher) Prices1mRetentionArmed(context.Context) (bool, error
 }
 
 func (f *fakeCAGGRefresher) RefreshContinuousAggregate(_ context.Context, name string, from, to time.Time) error {
-	f.refreshedViews = append(f.refreshedViews, name)
 	if f.windows == nil {
 		f.windows = map[string][2]time.Time{}
+	}
+	// RunCAGGRefreshStep cuts a long window into consecutive CALLs; record
+	// them as the one per-view refresh they make up.
+	if n := len(f.refreshedViews); n > 0 && f.refreshedViews[n-1] == name && f.windows[name][1].Equal(from) {
+		from = f.windows[name][0]
+	} else {
+		f.refreshedViews = append(f.refreshedViews, name)
 	}
 	f.windows[name] = [2]time.Time{from, to}
 	return f.failViews[name]
@@ -650,6 +656,8 @@ type serialisationProbeRefresher struct {
 	inFlight int
 	maxSeen  int
 	calls    int
+	lastView string
+	lastTo   time.Time
 }
 
 func (p *serialisationProbeRefresher) LedgerRangeToTimeRange(_ context.Context, _, _ uint32) (time.Time, time.Time, error) {
@@ -668,10 +676,14 @@ func (p *serialisationProbeRefresher) RefreshContinuousAggregateForced(ctx conte
 	return p.RefreshContinuousAggregate(ctx, name, from, to)
 }
 
-func (p *serialisationProbeRefresher) RefreshContinuousAggregate(_ context.Context, _ string, _, _ time.Time) error {
+func (p *serialisationProbeRefresher) RefreshContinuousAggregate(_ context.Context, name string, from, to time.Time) error {
 	p.mu.Lock()
 	p.inFlight++
-	p.calls++
+	// Count views, not the CALLs RunCAGGRefreshStep cuts one into.
+	if name != p.lastView || !from.Equal(p.lastTo) {
+		p.calls++
+	}
+	p.lastView, p.lastTo = name, to
 	if p.inFlight > p.maxSeen {
 		p.maxSeen = p.inFlight
 	}

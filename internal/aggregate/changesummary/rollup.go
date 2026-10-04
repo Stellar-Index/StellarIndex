@@ -317,38 +317,84 @@ func computeSummary(ent Entity, series []TimedValue, now time.Time) Row {
 	// worker only fetches 30d of history. A future pass that wants true
 	// all-time can switch the query to a 1-day-bucketed CAGG covering
 	// the full hypertable.
-	athValue, athAt := current.Value, current.At
-	atlValue, atlAt := current.Value, current.At
-	athRat, seedOK := new(big.Rat).SetString(current.Value)
-	if seedOK {
-		atlRat := new(big.Rat).Set(athRat)
-		for _, p := range series {
-			v, ok := new(big.Rat).SetString(p.Value)
-			// Skip unparseable or zero points explicitly. A zero (or
-			// unparseable value) mid-series must not become the ATL:
-			// the previous `|| atlValue == 0` reset corrupted ATL
-			// whenever a single bad/zero point appeared ([100,5,0,90]
-			// yielded ATL=90 instead of 5).
-			if !ok || v.Sign() == 0 {
-				continue
-			}
-			if v.Cmp(athRat) > 0 {
-				athRat, athValue, athAt = v, p.Value, p.At
-			}
-			if v.Cmp(atlRat) < 0 {
-				atlRat, atlValue, atlAt = v, p.Value, p.At
-			}
-		}
+	if athValue, athAt, atlValue, atlAt, ok := extremes(series, current); ok {
+		row.ATHValue = ptrStr(athValue)
+		row.ATHAt = ptrTime(athAt)
+		row.ATLValue = ptrStr(atlValue)
+		row.ATLAt = ptrTime(atlAt)
 	}
-	row.ATHValue = ptrStr(athValue)
-	row.ATHAt = ptrTime(athAt)
-	row.ATLValue = ptrStr(atlValue)
-	row.ATLAt = ptrTime(atlAt)
 
 	row.StreakDirection, row.StreakDays = computeStreak(series)
 	row.Acceleration = computeAcceleration(series)
 
 	return row
+}
+
+// extremeBand bounds how far a point may sit from the series median and
+// still count toward ATH/ATL. The sink ratchets those with GREATEST/LEAST,
+// so a single wild 1m bucket would otherwise pin the published extreme
+// permanently.
+const extremeBand = 1000
+
+// minPointsForBand is the fewest positive points at which a median says
+// anything about which side of a two-point gap is the outlier.
+const minPointsForBand = 3
+
+// extremes returns the ATH and ATL over series, ignoring unparseable and
+// zero points and (once the series is long enough to tell) points further
+// than extremeBand from the median. ok is false when current is itself out
+// of band or nothing qualifies: the caller then leaves ATH/ATL NULL so the
+// sink's GREATEST/LEAST keep the stored extremes. A zero mid-series must
+// not become the ATL ([100,5,0,90] has ATL 5).
+func extremes(series []TimedValue, current TimedValue) (athValue string, athAt time.Time, atlValue string, atlAt time.Time, ok bool) {
+	pts := positivePoints(series)
+	var lo, hi *big.Rat
+	if len(pts) >= minPointsForBand {
+		vals := make([]*big.Rat, len(pts))
+		for i, q := range pts {
+			vals[i] = q.v
+		}
+		sort.Slice(vals, func(i, j int) bool { return vals[i].Cmp(vals[j]) < 0 })
+		med := vals[(len(vals)-1)/2]
+		band := new(big.Rat).SetInt64(extremeBand)
+		lo, hi = new(big.Rat).Quo(med, band), new(big.Rat).Mul(med, band)
+	}
+	var athRat, atlRat *big.Rat
+	currentIn := false
+	for _, q := range pts {
+		if hi != nil && (q.v.Cmp(lo) < 0 || q.v.Cmp(hi) > 0) {
+			continue
+		}
+		if q.p.At.Equal(current.At) && q.p.Value == current.Value {
+			currentIn = true
+		}
+		if athRat == nil || q.v.Cmp(athRat) > 0 {
+			athRat, athValue, athAt = q.v, q.p.Value, q.p.At
+		}
+		if atlRat == nil || q.v.Cmp(atlRat) < 0 {
+			atlRat, atlValue, atlAt = q.v, q.p.Value, q.p.At
+		}
+	}
+	return athValue, athAt, atlValue, atlAt, currentIn
+}
+
+type ratPoint struct {
+	v *big.Rat
+	p TimedValue
+}
+
+// positivePoints keeps the parseable, strictly positive points with their
+// exact value.
+func positivePoints(series []TimedValue) []ratPoint {
+	pts := make([]ratPoint, 0, len(series))
+	for _, p := range series {
+		v, ok := new(big.Rat).SetString(p.Value)
+		if !ok || v.Sign() <= 0 {
+			continue
+		}
+		pts = append(pts, ratPoint{v, p})
+	}
+	return pts
 }
 
 // valueAt returns the most-recent observation whose timestamp is

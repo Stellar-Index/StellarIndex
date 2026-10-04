@@ -449,8 +449,9 @@ hyper_indexes() {
 # Pass 6 — CREATE INDEX on an existing hypertable. The in-transaction
 # build holds a SHARE lock that blocks every write to the table for the
 # whole build, and a partial index still scans every row. 0037's header
-# is the recipe: `IF NOT EXISTS`, so an operator's CREATE INDEX
-# CONCURRENTLY pre-build turns the migration into a no-op, and
+# is the recipe: `IF NOT EXISTS`, so an operator's per-chunk pre-build
+# (timescaledb.transaction_per_chunk; hypertables reject CREATE INDEX
+# CONCURRENTLY, see 0123) turns the migration into a no-op, and
 # `SET LOCAL lock_timeout`, so the build cannot queue every writer behind
 # an open transaction. Shipped migrations are immutable, so the ones that
 # predate this pass are listed below (0150's operator
@@ -493,7 +494,7 @@ for f in "$MIG_DIR"/*.up.sql; do
     missing=""
     [ "$ine" = 1 ] || missing="IF NOT EXISTS"
     [ "$lt" = 1 ] || missing="${missing:+${missing} and }SET LOCAL lock_timeout"
-    echo "lint-migrations ❌ ${f}: CREATE INDEX ${idx} ON ${tbl} lacks ${missing} — ${tbl} is an existing hypertable, and the in-transaction build blocks every write to it for the whole build. Write CREATE INDEX IF NOT EXISTS (so a CREATE INDEX CONCURRENTLY pre-build makes the migration a no-op) under SET LOCAL lock_timeout, and name the pre-build in the header and the README register row (0037 is the recipe)." >&2
+    echo "lint-migrations ❌ ${f}: CREATE INDEX ${idx} ON ${tbl} lacks ${missing} — ${tbl} is an existing hypertable, and the in-transaction build blocks every write to it for the whole build. Write CREATE INDEX IF NOT EXISTS (so a per-chunk pre-build via timescaledb.transaction_per_chunk makes the migration a no-op; hypertables reject CONCURRENTLY) under SET LOCAL lock_timeout, and name the pre-build in the header and the README register row (0037 is the recipe)." >&2
     fail=1
   done < <(hyper_indexes "$f")
 done
@@ -666,6 +667,38 @@ followup_baseline='0115_ohlc_extremes_notional_floor.up.sql
 0166_twap_notional_floor.up.sql
 0187_price_caggs_priceable_filter.up.sql'
 
+# A follow-up that rebuilds a projected source (projector-replay or
+# projected-rebuild -source X) must sit in a file that also deletes X's
+# projected-rebuild checkpoints (ingestion_cursors, source =
+# 'projected-rebuild', sub_source LIKE 'X:%'). projected-rebuild -resume
+# skips every checkpointed window without looking at the table, so a
+# checkpoint written before the migration keeps those windows empty
+# (0137, 0164, 0203; cleared by 0206). Shipped files that predate the rule:
+rebuild_ckpt_baseline='0203_create_sushiswap_v3_position_events.up.sql'
+
+# rebuild_ckpt_missing <file>: each source a rebuild follow-up names whose
+# projected-rebuild checkpoints the file does not delete, one per line.
+rebuild_ckpt_missing() {
+  local srcs cleared src
+  srcs="$(grep -E '^-- REQUIRED-FOLLOWUP: [^[:space:]]' "$1" \
+    | grep -E 'projector-replay|projected-rebuild' \
+    | sed -nE 's/.*[[:space:]]--?source[[:space:]=]+([^[:space:]]+).*/\1/p' \
+    | tr ',A-Z' '\na-z' | sort -u || true)"
+  [ -n "$srcs" ] || return 0
+  cleared="$(sql_stmts "$1" | awk '
+    { s = tolower($0) }
+    (s ~ /^delete from ingestion_cursors / || s ~ / begin delete from ingestion_cursors /) \
+      && s ~ /[^_]source ?= ?\047projected-rebuild\047/ {
+      while (match(s, /like \047[^\047:]+:%\047/)) {
+        print substr(s, RSTART + 6, RLENGTH - 9); s = substr(s, RSTART + RLENGTH)
+      }
+    }')"
+  while IFS= read -r src; do
+    [ -n "$src" ] || continue
+    grep -qxF "$src" <<<"$cleared" || echo "$src"
+  done <<<"$srcs"
+}
+
 # blanking_stmts <file>: the statements that blank data, one per line.
 # A DO block's first statement follows its BEGIN, hence the second form.
 blanking_stmts() {
@@ -679,6 +712,7 @@ blanking_stmts() {
 }
 
 fu_seen=""
+rc_seen=""
 fu_blanking=0
 for f in "$MIG_DIR"/*.up.sql; do
   [ -e "$f" ] || continue
@@ -689,6 +723,16 @@ for f in "$MIG_DIR"/*.up.sql; do
     echo "lint-migrations ❌ ${f}: malformed follow-up marker — write exactly \`-- REQUIRED-FOLLOWUP: <command>\` or the deploy gate never sees it:" >&2
     indent "$bad_marker" >&2
     fail=1
+  fi
+  ckpt_missing="$(rebuild_ckpt_missing "$f")"
+  if [ -n "$ckpt_missing" ]; then
+    if grep -qx "$b" <<<"$rebuild_ckpt_baseline"; then
+      rc_seen="${rc_seen}${b}"$'\n'
+    else
+      echo "lint-migrations ❌ ${f}: a REQUIRED-FOLLOWUP rebuilds these sources but the file does not delete their projected-rebuild checkpoints — projected-rebuild -resume would skip every window checkpointed before this migration. Add DELETE FROM ingestion_cursors WHERE source = 'projected-rebuild' AND sub_source LIKE '<source>:%' (see 0206):" >&2
+      indent "$ckpt_missing" >&2
+      fail=1
+    fi
   fi
   blanks="$(blanking_stmts "$f")"
   [ -n "$blanks" ] || continue
@@ -710,6 +754,14 @@ while IFS= read -r entry; do
     fail=1
   fi
 done <<<"$followup_baseline"
+while IFS= read -r entry; do
+  [ -n "$entry" ] || continue
+  [ -e "${MIG_DIR}/${entry}" ] || continue
+  if ! grep -qx "$entry" <<<"$rc_seen"; then
+    echo "lint-migrations ❌ stale rebuild_ckpt_baseline entry ${entry} — its rebuild follow-ups now clear their checkpoints; remove it (the list only shrinks)" >&2
+    fail=1
+  fi
+done <<<"$rebuild_ckpt_baseline"
 echo "lint-migrations: follow-up marker pass found ${fu_blanking} data-blanking file(s) under ${MIG_DIR}."
 
 if [ "$fail" -eq 0 ]; then

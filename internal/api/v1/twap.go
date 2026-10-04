@@ -31,6 +31,8 @@ type TWAPResult struct {
 	// still-filling bucket (or in the future) and was pulled back to
 	// the last closed boundary per ADR-0015.
 	Clamped bool `json:"clamped"`
+	// Substance: see [VWAPResult.Substance].
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
 // handleTWAP serves GET /v1/twap?base=...&quote=...&from=...&to=...
@@ -141,7 +143,8 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	}
 	res.Truncated = len(trades) == maxTrades
 	res.Clamped = clamped
-	writeJSON(w, res, Flags{Triangulated: triangulated})
+	res.Substance = s.thinMarketEvidence(ctx, base, quote, "twap")
+	writeJSON(w, res, Flags{Triangulated: triangulated, ThinMarket: res.Substance != nil, ProxyDeviation: triangulated && s.proxyDeviation(ctx, to)})
 }
 
 // computeTWAP filters trades at sigma and time-weights the survivors

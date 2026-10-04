@@ -67,5 +67,7 @@ buffer uses — then runs both through `decodeSwap`.
   then, the `new_pair` decoder is covered by the SDK-encoded tests
   in `decode_test.go`.
 - **WASM hash not yet resolved.** Fixtures currently land under
-  `v1-2026-04-23/` (tag + date label). When `stellarindex-ops
-  resolve-wasm` lands, re-label to the true WASM hash.
+  `v1-2026-04-23/` (tag + date), not a hash directory. Resolve it from the lake
+  with the query in the "Resolving the WASM hash" section of
+  [test/fixtures/reflector/README.md](../reflector/README.md), using
+  the fixtures' `contract_id` and the capture ledger, then relabel.
