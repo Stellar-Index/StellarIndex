@@ -36,6 +36,8 @@ import (
 //     count (number of liquidity providers) — the only cross-pool-
 //     comparable size signal without USD pricing of arbitrary pool
 //     assets.
+//   - asset (optional, listing only): a canonical asset id; restricts the
+//     ranked listing to pools holding any of its alias forms on either side.
 //
 // Consistency surface: current ledger-entry state (tip-adjacent, per-
 // pool `as_of_ledger` stamps the exact state ledger) — not closed-
@@ -122,6 +124,10 @@ func (s *Server) handleLiquidityPools(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
 
+	assetFilter, ok := parsePoolAssetFilter(w, r)
+	if !ok {
+		return
+	}
 	if poolFilter := r.URL.Query().Get("pool"); poolFilter != "" {
 		s.serveOneLiquidityPool(ctx, w, r, poolFilter)
 		return
@@ -131,7 +137,7 @@ func (s *Server) handleLiquidityPools(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := s.nativeLPListing(ctx)
+	rows, all, degraded, err := s.nativeLPSnapshot(ctx)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -141,11 +147,14 @@ func (s *Server) handleLiquidityPools(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
+	if assetFilter != nil {
+		rows = nativeLPRowsForAsset(all, assetFilter, limit)
+	}
 	if len(rows) > limit {
 		rows = rows[:limit]
 	}
 	_, stale, _ := s.lakeWatermark(ctx)
-	writeJSON(w, rows, Flags{Stale: stale})
+	writeJSON(w, rows, Flags{Stale: stale, Degraded: degraded})
 }
 
 // serveOneLiquidityPool handles the ?pool= single-pool path: validate
@@ -201,53 +210,85 @@ func (s *Server) serveOneLiquidityPool(ctx context.Context, w http.ResponseWrite
 // stellarindex_explorer_swr_refresh_total{cache="native_lp_listing"} — and
 // every row carries its own per-pool as_of_ledger regardless.
 func (s *Server) nativeLPListing(ctx context.Context) ([]LiquidityPoolReservesRow, error) {
+	rows, _, _, err := s.nativeLPSnapshot(ctx)
+	return rows, err
+}
+
+// nativeLPSnapshot is [Server.nativeLPListing] plus every captured pool's
+// state in the same ranked order, which the ?asset= filter reads (an
+// asset's pools are not confined to the global top N), and whether the
+// rows are a carried-forward entry: past the TTL, or last-good after a
+// failed scan.
+func (s *Server) nativeLPSnapshot(ctx context.Context) ([]LiquidityPoolReservesRow, []clickhouse.NativeLiquidityPoolState, bool, error) {
 	s.nativeLPMu.Lock()
-	rows, fetched := s.nativeLPCached, s.nativeLPFetched
+	rows, all, fetched := s.nativeLPCached, s.nativeLPAll, s.nativeLPFetched
 	s.nativeLPMu.Unlock()
 
 	if !fetched.IsZero() {
-		if time.Since(fetched) >= nativeLPListingTTL {
+		lapsed := time.Since(fetched) >= nativeLPListingTTL
+		if lapsed {
 			s.refreshNativeLPListing() //nolint:contextcheck // intentional detach — the rescan must outlive the request that noticed the lapse (see refreshNativeLPListing)
 		}
-		return rows, nil
+		return rows, all, lapsed, nil
 	}
 	return s.fillNativeLPListing(ctx)
+}
+
+// nativeLPRowsForAsset returns up to limit ranked pools holding any alias
+// form of the filtered asset on either side.
+func nativeLPRowsForAsset(all []clickhouse.NativeLiquidityPoolState, f *poolAssetFilter, limit int) []LiquidityPoolReservesRow {
+	out := []LiquidityPoolReservesRow{}
+	for _, st := range all {
+		if len(out) >= limit {
+			break
+		}
+		if f.hasClassic(st.AssetA) || f.hasClassic(st.AssetB) {
+			out = append(out, buildLiquidityPoolRow(st))
+		}
+	}
+	return out
 }
 
 // fillNativeLPListing runs the ranked scan and stores the result. The fill
 // mutex collapses a burst of concurrent COLD callers onto one scan (the
 // posture the old TTL branch had for every caller); it is never held while
 // a warm entry is being served.
-func (s *Server) fillNativeLPListing(ctx context.Context) ([]LiquidityPoolReservesRow, error) {
+func (s *Server) fillNativeLPListing(ctx context.Context) ([]LiquidityPoolReservesRow, []clickhouse.NativeLiquidityPoolState, bool, error) {
 	s.nativeLPFillMu.Lock()
 	defer s.nativeLPFillMu.Unlock()
 
 	// Double-check: a caller that queued behind another's fill must serve
 	// that result rather than rescan.
 	s.nativeLPMu.Lock()
-	rows, fetched := s.nativeLPCached, s.nativeLPFetched
+	rows, all, fetched := s.nativeLPCached, s.nativeLPAll, s.nativeLPFetched
 	s.nativeLPMu.Unlock()
 	if !fetched.IsZero() && time.Since(fetched) < nativeLPListingTTL {
-		return rows, nil
+		return rows, all, false, nil
 	}
 
+	// Uncapped: the scan reads and ranks every pool anyway, and the
+	// ?asset= filter needs the tail beyond the top-N rows.
 	start := time.Now()
-	states, err := s.explorer.NativeLiquidityPoolsRanked(ctx, nativeLPListingCap)
+	states, err := s.explorer.NativeLiquidityPoolsRanked(ctx, 0)
 	obs.ObserveExplorerSWRRefresh("native_lp_listing", start, err)
 	if err != nil {
 		if !fetched.IsZero() {
-			return rows, nil // last-good beats failing the request
+			return rows, all, true, nil // last-good beats failing the request
 		}
-		return nil, err
+		return nil, nil, false, err
 	}
-	out := make([]LiquidityPoolReservesRow, 0, len(states))
-	for _, st := range states {
+	top := states
+	if len(top) > nativeLPListingCap {
+		top = top[:nativeLPListingCap]
+	}
+	out := make([]LiquidityPoolReservesRow, 0, len(top))
+	for _, st := range top {
 		out = append(out, buildLiquidityPoolRow(st))
 	}
 	s.nativeLPMu.Lock()
-	s.nativeLPCached, s.nativeLPFetched = out, time.Now()
+	s.nativeLPCached, s.nativeLPAll, s.nativeLPFetched = out, states, time.Now()
 	s.nativeLPMu.Unlock()
-	return out, nil
+	return out, states, false, nil
 }
 
 // refreshNativeLPListing kicks ONE detached rescan (a no-op while one is
@@ -267,7 +308,7 @@ func (s *Server) refreshNativeLPListing() {
 		defer worker.Recover(s.logger, "api-native-lp-listing-refresh")
 		ctx, cancel := context.WithTimeout(context.Background(), nativeLPListingRefreshTimeout)
 		defer cancel()
-		if _, err := s.fillNativeLPListing(ctx); err != nil {
+		if _, _, _, err := s.fillNativeLPListing(ctx); err != nil {
 			// The previous entry is retained and still served; the
 			// refresh metric above is where a dying refresher shows up.
 			s.logger.Warn("native liquidity-pool listing detached refresh failed (serving last good)", "err", err)

@@ -74,9 +74,9 @@ const (
 	// stellar.toml (max_number, falling back to fixed_number). The
 	// cap is issuer-SELF-DECLARED — a display value, not on-chain
 	// enforced (ADR-0011 §Algorithm 2/3 max_supply precedence step
-	// 2). Total/circulating still come from the snapshot's original
-	// algorithm; this basis flags that the max (and hence FDV) rests
-	// on the issuer's declaration.
+	// 2). Carried on [Supply.MaxSupplyBasis] only: total/circulating
+	// still come from the snapshot's own algorithm, which [Supply.Basis]
+	// keeps naming.
 	BasisSEP1DeclaredMax Basis = "sep1_declared_max"
 
 	// BasisSEP41LakeFlows — Algorithm 3, lake-derived: a SEP-41 token's raw
@@ -159,11 +159,12 @@ const (
 	// history, while an accumulation is only as complete as its log.
 	//
 	// A figure on this basis is a LOWER BOUND and carries the
-	// circulating_supply_lower_bound flag. It is blind to balances that are not
-	// ledger entries right now — Soroban state expiry archives contract-data
-	// entries, and an archived balance is real, restorable, and invisible here.
-	// That is a different blindness from the classic trustline sum's, which
-	// misses whole holding DOMAINS: this one misses TIME.
+	// circulating_supply_lower_bound flag. It is blind to balance entries the
+	// lake's current-state projection never captured. Archived (TTL-lapsed)
+	// persistent balances are NOT missing: the lake never records an eviction,
+	// so they are summed, and they are still owned and restorable. That is a
+	// different blindness from the classic trustline sum's, which misses whole
+	// holding DOMAINS: this one misses entries outside the projection.
 	BasisContractStorageBalances Basis = "contract_storage_balances"
 
 	// BasisNoMetadata — we don't have a defensible value for
@@ -185,9 +186,9 @@ func (b Basis) String() string { return string(b) }
 // so claimable balances, liquidity-pool reserves and SAC-held contract
 // balances are absent by construction. Measured across the served set on
 // 2026-09-15 that was 89.5% of EURMTL, 73.3% of PYUSD, 64.5% of SHX and
-// 15.4% of USDC. [BasisContractStorageBalances] misses TIME: Soroban
-// state expiry archives contract-data entries, and an archived balance is
-// real, restorable, and not a ledger entry right now.
+// 15.4% of USDC. [BasisContractStorageBalances] misses balance entries the
+// lake's current-state projection never captured, such as one dormant since
+// before its coverage began.
 //
 // Every other basis in this vocabulary either covers all four holding
 // domains at once (the flow sums, which do not know where a token came to
@@ -225,6 +226,9 @@ func (b Basis) LowerBound() bool {
 //   - Basis identifies which policy produced this Supply. Surfaced
 //     on API responses so consumers know whether to trust the
 //     absolute number.
+//   - MaxSupplyBasis is set only when MaxSupply came from somewhere
+//     other than the policy Basis names — today the SEP-1 overlay.
+//     Empty means MaxSupply (if any) is covered by Basis.
 //   - LedgerSequence + ObservedAt mark the ledger this snapshot
 //     reflects. UTC; ledger close time, not write time.
 type Supply struct {
@@ -233,6 +237,7 @@ type Supply struct {
 	CirculatingSupply *big.Int
 	MaxSupply         *big.Int
 	Basis             Basis
+	MaxSupplyBasis    Basis
 	LedgerSequence    uint32
 	ObservedAt        time.Time
 

@@ -103,7 +103,7 @@ func TestAccountOperations_WindowedReadHasNoLimit1By(t *testing.T) {
 			}
 		default:
 			arms++
-			want := []any{"GTEST", uint32(200), uint32(1), uint32(2), windowRows(limit, windowFactorKeys)}
+			want := []any{"GTEST", uint32(200), uint32(200), uint32(1), uint32(2), windowRows(limit, windowFactorKeys)}
 			got := conn.args[i]
 			if len(got) != len(want) {
 				t.Fatalf("arm args = %v, want %v", got, want)

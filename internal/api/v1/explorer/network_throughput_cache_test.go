@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -314,7 +315,7 @@ func TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock(t *testing.T) 
 		w.WriteHeader(status)
 	}
 	var got NetworkThroughputView
-	h.WriteJSONAt = func(w http.ResponseWriter, data any, _ bool, _ time.Time) {
+	h.WriteJSONAt = func(w http.ResponseWriter, data any, _, _ bool, _ time.Time) {
 		got, _ = data.(NetworkThroughputView)
 		w.WriteHeader(http.StatusOK)
 	}
@@ -340,5 +341,66 @@ func TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock(t *testing.T) 
 	}
 	if got.Buckets[0].Partial {
 		t.Error("a genuinely complete bucket must stay non-partial")
+	}
+}
+
+// TestNetworkThroughput_FeePoolAdjustmentOnP24UpgradeDay pins the fee-burn
+// correction across ledger 59,501,299: pubnet's P24 upgrade credited the fee
+// pool with stroops no transaction paid, so that day's fee_pool delta minus
+// fee_pool_adjustment must equal the fees actually burned. The same calendar
+// day without the 23→24 transition (another network) carries no adjustment.
+func TestNetworkThroughput_FeePoolAdjustmentOnP24UpgradeDay(t *testing.T) {
+	h, _ := newThroughputHandler()
+	h.ParseWindowDays = func(_ http.ResponseWriter, _ *http.Request, def int) (int, bool) { return def, true }
+	h.ClientAborted = func(*http.Request, error) bool { return false }
+	var got NetworkThroughputView
+	h.WriteJSONAt = func(w http.ResponseWriter, data any, _, _ bool, _ time.Time) {
+		got, _ = data.(NetworkThroughputView)
+		w.WriteHeader(http.StatusOK)
+	}
+	serve := func(buckets []clickhouse.ThroughputBucket) {
+		t.Helper()
+		got = NetworkThroughputView{}
+		h.throughput.put(buckets)
+		h.NetworkThroughput(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/network/throughput", nil))
+		if len(got.Buckets) != len(buckets) {
+			t.Fatalf("served %d buckets, want %d", len(got.Buckets), len(buckets))
+		}
+	}
+	day := func(s string) time.Time {
+		d, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+
+	const base, burned, injected int64 = 1_000_000_000_000, 5_000_000_000, 31_879_035
+	serve([]clickhouse.ThroughputBucket{
+		{Day: day("2025-10-21"), FeePool: base, ProtocolVersion: 23},
+		{Day: day("2025-10-22"), FeePool: base + burned + injected, ProtocolVersion: 24},
+		{Day: day("2025-10-23"), FeePool: base + 2*burned + injected, ProtocolVersion: 24},
+	})
+	if got.Buckets[0].FeePoolAdjustment != "" || got.Buckets[2].FeePoolAdjustment != "" {
+		t.Errorf("adjustment leaked onto a neighbouring day: %+v", got.Buckets)
+	}
+	for i := 1; i < len(got.Buckets); i++ {
+		prev, _ := strconv.ParseInt(got.Buckets[i-1].FeePool, 10, 64)
+		cur, _ := strconv.ParseInt(got.Buckets[i].FeePool, 10, 64)
+		var adj int64
+		if s := got.Buckets[i].FeePoolAdjustment; s != "" {
+			adj, _ = strconv.ParseInt(s, 10, 64)
+		}
+		if burn := cur - prev - adj; burn != burned {
+			t.Errorf("%s: fee burn = %d stroops, want %d (fee_pool_adjustment %q)", got.Buckets[i].Day, burn, burned, got.Buckets[i].FeePoolAdjustment)
+		}
+	}
+
+	serve([]clickhouse.ThroughputBucket{
+		{Day: day("2025-10-21"), FeePool: 1, ProtocolVersion: 24},
+		{Day: day("2025-10-22"), FeePool: 2, ProtocolVersion: 24},
+	})
+	if adj := got.Buckets[1].FeePoolAdjustment; adj != "" {
+		t.Errorf("2025-10-22 without a 23→24 upgrade got fee_pool_adjustment %q, want none", adj)
 	}
 }

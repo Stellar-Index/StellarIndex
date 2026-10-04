@@ -167,6 +167,9 @@ type Config struct {
 	// passkeyBeginLimiter caps anonymous begin-login ceremonies per
 	// client IP; installed by validate(), never configurable off.
 	passkeyBeginLimiter *ratelimit.LocalFixedWindowCounter
+	// passkeySignupLimiter caps anonymous account-creating ceremonies per
+	// client IP; installed by validate(), never configurable off.
+	passkeySignupLimiter *ratelimit.LocalFixedWindowCounter
 	// signedInBrowserSends caps the sends [Handlers.admitSignedInBrowser]
 	// lets past a full LoginThrottle: one per address per link lifetime per
 	// instance. Installed by validate(), never configurable off.
@@ -231,6 +234,9 @@ func (c *Config) validate() error {
 	}
 	if c.passkeyBeginLimiter == nil {
 		c.passkeyBeginLimiter = ratelimit.NewLocalFixedWindowCounter(passkeyBeginLoginWindow, c.Now)
+	}
+	if c.passkeySignupLimiter == nil {
+		c.passkeySignupLimiter = ratelimit.NewLocalFixedWindowCounter(passkeySignupWindow, c.Now)
 	}
 	if c.DashboardBaseURL == "" {
 		return errors.New("dashboardauth: DashboardBaseURL is required")
@@ -341,6 +347,10 @@ func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 			sameSite(http.HandlerFunc(h.HandlePasskeyBeginLogin)))
 		public.Handle(mux, "POST /v1/auth/passkey/finish-login",
 			sameSite(http.HandlerFunc(h.HandlePasskeyFinishLogin)))
+		public.Handle(mux, "POST /v1/auth/passkey/begin-signup",
+			sameSite(http.HandlerFunc(h.HandlePasskeyBeginSignup)))
+		public.Handle(mux, "POST /v1/auth/passkey/finish-signup",
+			sameSite(http.HandlerFunc(h.HandlePasskeyFinishSignup)))
 		mux.Handle("POST /v1/auth/passkey/begin-register",
 			requireSession(sameSite(http.HandlerFunc(h.HandlePasskeyBeginRegister))))
 		mux.Handle("POST /v1/auth/passkey/finish-register",
@@ -1012,7 +1022,7 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 	// response so the two can never disagree about whether a session
 	// was just issued. See [SessionHintCookieName].
 	h.setSessionHintCookie(w, sess.ExpiresAt)
-	if email, err := notify.CanonicalRecipient(user.Email); err == nil {
+	if email, err := notify.CanonicalRecipient(user.Email); err == nil && !platform.IsPlaceholderEmail(email) {
 		h.setLoginDeviceCookie(w, email)
 	}
 	return nil

@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -166,6 +167,16 @@ func TestFreezeLadder_DurableAcrossRedisLoss(t *testing.T) {
 	if n := countOpenFreezeRows(t, ctx, dsn, asset.String(), quote.String()); n != 1 {
 		t.Fatalf("retiring the ladder closed the row (%d open); recovered_at is the recovery worker's job", n)
 	}
+	// The retire must keep the escalation history the timeline reports.
+	rows, lerr := store.ListFreezeEvents(ctx, true, 10)
+	if lerr != nil || len(rows) != 1 {
+		t.Fatalf("ListFreezeEvents after retire = (%d rows, err=%v), want 1 row", len(rows), lerr)
+	}
+	if r := rows[0]; r.Escalated == nil || !*r.Escalated || r.ExtensionsUsed == nil ||
+		*r.ExtensionsUsed != freeze.DefaultMaxExtensions || r.Corroborated == nil || !*r.Corroborated {
+		t.Fatalf("retire erased the escalation history: escalated=%v extensions_used=%v corroborated=%v",
+			r.Escalated, r.ExtensionsUsed, r.Corroborated)
+	}
 	// Restore the escalated ladder for the override assertions below.
 	if err := sink.SaveLadder(ctx, asset, quote, want); err != nil {
 		t.Fatalf("SaveLadder(restore): %v", err)
@@ -288,14 +299,19 @@ func assertFreezeChunkStillCompressed(t *testing.T, ctx context.Context, dsn str
 // create a compressed chunk that 0119's ALTER TABLE then has to survive.
 func applyMigrationsUpTo(t *testing.T, dsn string, version uint) {
 	t.Helper()
+	if err := applyMigrationsUpToErr(dsn, version); err != nil {
+		t.Fatalf("migrate to %d: %v", version, err)
+	}
+}
+
+// applyMigrationsUpToErr returns the migration's error instead of failing.
+func applyMigrationsUpToErr(dsn string, version uint) error {
 	_, thisFile, _, _ := runtime.Caller(0)
 	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
 	m, err := migrate.New("file://"+migrationsDir, dsn)
 	if err != nil {
-		t.Fatalf("migrate.New: %v", err)
+		return fmt.Errorf("migrate.New: %w", err)
 	}
 	defer func() { _, _ = m.Close() }()
-	if err := m.Migrate(version); err != nil {
-		t.Fatalf("migrate to %d: %v", version, err)
-	}
+	return m.Migrate(version)
 }

@@ -75,17 +75,7 @@ func sourceStatsQuery() string {
 	canonBase, canonQuote, _ := canonOrientSQL()
 	return `
 		WITH xlm_usd AS (
-		  SELECT vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND vwap IS NOT NULL
-		     AND bucket >= NOW() - INTERVAL '24 hours'
-		   ` + xlmUSDNewest + `
-		   LIMIT 1
+		  ` + xlmUSDVolumeSelect + `
 		)
 		-- Two-level aggregate (site-audit S38). The natural form of this
 		-- query — a single GROUP BY source carrying
@@ -246,17 +236,7 @@ func (s *Store) sourceVolumeHistory(ctx context.Context, window string) ([]Sourc
 const (
 	pairSourceStatsQuery = `
 		WITH xlm_usd AS (
-		  SELECT vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND vwap IS NOT NULL
-		     AND bucket >= NOW() - INTERVAL '24 hours'
-		   ` + xlmUSDNewest + `
-		   LIMIT 1
+		  ` + xlmUSDVolumeSelect + `
 		),
 		per_source AS (
 		SELECT source,
@@ -292,17 +272,7 @@ const (
 	`
 	assetSourceStatsQuery = `
 		WITH xlm_usd AS (
-		  SELECT vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND vwap IS NOT NULL
-		     AND bucket >= NOW() - INTERVAL '24 hours'
-		   ` + xlmUSDNewest + `
-		   LIMIT 1
+		  ` + xlmUSDVolumeSelect + `
 		),
 		per_source AS (
 		SELECT source,

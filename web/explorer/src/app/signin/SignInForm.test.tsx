@@ -5,18 +5,24 @@ import { SignInForm } from './SignInForm';
 
 const beginPasskeyLogin = vi.hoisted(() => vi.fn());
 const finishPasskeyLogin = vi.hoisted(() => vi.fn());
+const beginPasskeySignup = vi.hoisted(() => vi.fn());
+const finishPasskeySignup = vi.hoisted(() => vi.fn());
 vi.mock('@/api/account', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/account')>()),
   beginPasskeyLogin,
   finishPasskeyLogin,
+  beginPasskeySignup,
+  finishPasskeySignup,
 }));
 
 const supportsPasskeys = vi.hoisted(() => vi.fn());
 const getPasskeyAssertion = vi.hoisted(() => vi.fn());
+const createPasskey = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/webauthn', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/webauthn')>()),
   supportsPasskeys,
   getPasskeyAssertion,
+  createPasskey,
 }));
 
 afterEach(() => {
@@ -24,6 +30,9 @@ afterEach(() => {
   finishPasskeyLogin.mockReset();
   supportsPasskeys.mockReset();
   getPasskeyAssertion.mockReset();
+  beginPasskeySignup.mockReset();
+  finishPasskeySignup.mockReset();
+  createPasskey.mockReset();
 });
 
 describe('SignInForm passkey entry', () => {
@@ -63,6 +72,34 @@ describe('SignInForm passkey entry', () => {
     );
     expect(beginPasskeyLogin).toHaveBeenCalledTimes(1);
     expect(getPasskeyAssertion).toHaveBeenCalledWith(options);
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/dashboard'));
+  });
+
+  it('creates an email-less account through the signup ceremony', async () => {
+    supportsPasskeys.mockReturnValue(true);
+    const options = { publicKey: { challenge: 'example-challenge' } };
+    const credential = { id: 'example-credential-id' };
+    beginPasskeySignup.mockResolvedValue(options);
+    createPasskey.mockResolvedValue(credential);
+    finishPasskeySignup.mockResolvedValue(undefined);
+    const assign = vi.fn();
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, assign },
+      writable: true,
+    });
+
+    render(<SignInForm />);
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /Create an account with a passkey/,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(finishPasskeySignup).toHaveBeenCalledWith('Passkey', credential),
+    );
+    expect(createPasskey).toHaveBeenCalledWith(options);
+    expect(beginPasskeyLogin).not.toHaveBeenCalled();
     await waitFor(() => expect(assign).toHaveBeenCalledWith('/dashboard'));
   });
 

@@ -2,6 +2,7 @@ package bitstamp
 
 import (
 	"errors"
+	"log/slog"
 	"math/big"
 	"testing"
 	"time"
@@ -168,8 +169,8 @@ func TestParseFrame_DustTradeReturnsTypedSentinel(t *testing.T) {
 	// every-trade and silent ingestion drop.
 	//
 	// Following the Coinbase + Binance dust-trade pattern, parseTrade
-	// now returns ErrDustTrade so the streamer's existing skip-on-error
-	// branch drops the frame quietly instead.
+	// now returns ErrDustTrade, which the streamer's handleFrame drops
+	// instead of counting it as a decode error.
 	//
 	// Reproduces the production log signature from r1 2026-05-10
 	// 15:26:51 UTC ("insert trade failed … quote_amount must be
@@ -223,5 +224,13 @@ func TestParseMicrotimestamp_FallbackToSeconds(t *testing.T) {
 	}
 	if ts.Unix() != 1_745_000_000 {
 		t.Errorf("ts = %v, Unix = %d want 1745000000", ts, ts.Unix())
+	}
+}
+
+func TestHandleFrame_DustTradeIsQuietSkip(t *testing.T) {
+	raw := []byte(`{"event":"trade","channel":"live_trades_xlmusd","data":{"id":1,"timestamp":"1745000000","microtimestamp":"1745000000123456","amount":0.00000001,"amount_str":"0.00000001","price":0.16,"price_str":"0.16000000","type":0,"buy_order_id":1,"sell_order_id":2}}`)
+	trades, err := handleFrame(raw, mustPairs(t), slog.Default())
+	if err != nil || len(trades) != 0 {
+		t.Fatalf("dust frame: trades=%d err=%v, want none", len(trades), err)
 	}
 }

@@ -86,6 +86,7 @@ run() {
   # TO is the monitor's required range end; the seed script resolves its
   # own TO from the lake, so only the monitor may see it pre-set.
   [ "$name" = backfill-monitor ] && envs+=(TO=1)
+  [ "$name" = rederive ] && envs+=(REDERIVE_LOG="$TMP/rederive.log")
   # LIVE_ERA_FROM is ch-live-catchup's required live-era floor (#371 F10);
   # ansible templates it into /etc/default/stellarindex-ops per host. The
   # script now refuses to run without it, so the credential contract below
@@ -152,6 +153,9 @@ fi
 check d3 d3-lecur-v2-rebuild.sh \
   "--port 9300 --max_execution_time 3600 --max_memory_usage 20000000000 --max_bytes_before_external_sort 4000000000 --max_bytes_before_external_group_by 4000000000 --max_threads 10 -q SELECT max(ledger_seq) FROM stellar.ledger_entry_changes" \
   probe-ordinals
+check rederive rederive-from.sh \
+  "--port 9300 -q SELECT max(ledger_seq) FROM stellar.ledgers" \
+  -from 100 -state-dir "$TMP/state/rederive"
 check backfill-monitor ch-backfill-monitor.sh \
   "--port 9300 --query SELECT formatReadableSize(sum(bytes_on_disk)) FROM system.parts WHERE database='stellar' AND active"
 

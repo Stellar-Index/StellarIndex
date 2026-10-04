@@ -38,7 +38,7 @@ type Config struct {
 	PricingGuard  PricingGuardConfig  `toml:"pricing_guard" doc:"Serving-side price guards — the thin-market substance gate that withholds aggregated price claims for on-chain pairs whose trailing market activity is below the serve floor (2026-08-04 valuation incident)."`
 	DecimalsGuard DecimalsGuardConfig `toml:"decimals_guard" doc:"internal/decimalsguard's one-time startup backfill pass — how far back it scans trade history to self-seed nonstandard_decimals_assets for Soroban tokens that traded and then went dormant."`
 	Divergence    DivergenceConfig    `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink HTTP, plus the on-chain Reflector/Redstone/Band oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
-	PriceAlerts   PriceAlertsConfig   `toml:"price_alerts" doc:"Customer price-threshold alert evaluator (BACKLOG #60). Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
+	PriceAlerts   PriceAlertsConfig   `toml:"price_alerts" doc:"Customer price-threshold alert evaluator. Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
 	SignupReaper  SignupReaperConfig  `toml:"signup_reaper" doc:"F-1255 speculative-account reaper. Deletes orphan accounts left by a lost signup race (Suspended with a 'signup-race:' reason, no user, no key). Runs in the API binary when the dashboard is wired. On by default — the rows are pure garbage."`
 	HashDB        HashDBConfig        `toml:"hashdb" doc:"ADR-0016 drift detector — on-disk (ledger_seq -> sha256(LCM)) record appended by the indexer's live ingest loop and periodically re-verified against a fresh re-read of the same bucket, catching upstream rewrites of previously-fetched ledger bytes. Off by default (opt-in first deploy)."`
 	Obs           ObsConfig           `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
@@ -176,7 +176,7 @@ func (sc SignupReaperConfig) validate() error {
 }
 
 // PriceAlertsConfig gates the aggregator's price-alert evaluator
-// (internal/pricealerts, BACKLOG #60). Off by default — the evaluator
+// (internal/pricealerts). Off by default — the evaluator
 // goroutine is only started when Enabled is true AND the platform v1
 // schema (migration 0027) + price_alerts table (migration 0080) are
 // present. When off, the price-alert CRUD surface still mounts on the
@@ -338,6 +338,11 @@ type PricingGuardConfig struct {
 	// worker would keep answering forever from its last good fetch,
 	// stamped with a fresh-looking observed_at.
 	FXCrossMaxAgeHours int `toml:"fx_cross_max_age_hours" doc:"Staleness budget in hours for the forex snapshot rate backing /v1/price's fiat-cross-rate and USD-anchored-fiat-cross fallbacks; older than this is refused rather than served. Mirrors aggregate.composite_reference.fx_max_age_hours (same fx_quotes staleness profile — daily buckets that pause over market closes). 0 = pricingguard default (76)." default:"76"`
+
+	// DisableFiatBasis switches off the ADR-0053 basis rule, so a
+	// single-venue fiat book is served even where a multi-venue USD
+	// leg could anchor the price. Kill switch, not a tuning knob.
+	DisableFiatBasis bool `toml:"disable_fiat_basis" doc:"Disable the ADR-0053 fiat basis rule: /v1/price and /v1/price/batch serve a single-venue direct fiat book as-is instead of the USD-anchored derivation (multi-venue USD leg × bound FX fixing). Kill switch, not a tuning knob." default:"false"`
 
 	// FiatPeggedClassicAssets maps a classic credit asset_key
 	// (canonical "CODE-ISSUER" wire form) to the ISO-4217 ticker of
@@ -1515,10 +1520,8 @@ type APIConfig struct {
 	// the F-1218 wave 45 gate: API-key Subjects whose
 	// EmailVerifiedAt is zero AND whose identifier indicates
 	// /v1/signup origin get 403 with a Problem-JSON pointing
-	// at the verify endpoint. Default false to preserve the
-	// pre-F-1218 wire contract — operators flip this on after
-	// they've given existing customers a grace window to click
-	// their verification link.
+	// at the verify endpoint. Default true; operators set it false
+	// to allow unverified signup keys.
 	SignupRequireEmailVerification bool            `toml:"signup_require_email_verification" doc:"F-1218: when true, /v1/signup-minted API keys must complete email-ownership-proof (clicking the link emailed at signup) before they can authenticate. Default true (2026-05-13): we are still pre-launch with no consumer traffic, so the safe default is to require verification — operators who want to allow unverified signup must opt in explicitly. Pre-launch default-flip narrows the launch-blocker surface; F-1218 closure required this." default:"true"`
 	CDNEnabled                     bool            `toml:"cdn_enabled" doc:"Emit CDN-friendly Cache-Control headers on long-immutable endpoints." default:"true"`
 	AllowedOrigins                 []string        `toml:"allowed_origins" doc:"CORS allow-list for browser clients. Empty (default) is same-origin only — no cross-origin browser client can read responses. SEC-14 (audit-2026-07-23): a wildcard here is fully cross-origin readable by every website out of the box; operators opt into cross-origin explicitly by listing their own hostnames." default:"[]"`
@@ -1568,6 +1571,8 @@ type DashboardConfig struct {
 	ResendAPIKeyEnv string `toml:"resend_api_key_env" doc:"Environment variable holding the Resend transactional-email API key (re_…). An unset or empty value wires an unconfigured mail sender: POST /v1/auth/login answers 503 and counts a failed send, and signup reports email_verification_sent:false. Production sets this." default:"STELLARINDEX_RESEND_API_KEY"`
 
 	CodeSecretEnv string `toml:"code_secret_env" doc:"Environment variable holding the server secret that keys the 6-digit email-code derivation (HMAC over the stored token hash — without it a Postgres read would reveal every in-flight sign-in code) AND the WebAuthn passkey-ceremony, magic-link login-intent and login-device cookie MACs. Each consumer MACs under its own HKDF-derived key. Any long random string (32+ bytes). Required while passkeys are wired (the API refuses to start without it); otherwise an unset/empty env falls back to a random per-process secret: still keyed, but in-flight codes, magic links and browsers' login-device markers stop verifying across a restart or another instance." default:"STELLARINDEX_DASHBOARD_CODE_SECRET"`
+
+	WebhookSealKeyEnv string `toml:"webhook_seal_key_env" doc:"Environment variable holding the secret that seals customer-webhook signing keys at rest (AES-256-GCM under an HKDF-derived key; column customer_webhooks.signing_key_sealed). At least 32 bytes; a shorter value refuses to start. Separate from code_secret_env so either can be rotated alone. Unset/empty stores new signing keys raw (logged at startup) and cannot read a sealed one, so deliveries to sealed webhooks wait until it is set. Changing the value makes every sealed key unreadable: their deliveries fail terminally, and the webhooks must be recreated (dashboard edit and delete still work without the key)." default:"STELLARINDEX_WEBHOOK_SEAL_KEY"`
 
 	MagicLinkTTLMinutes int `toml:"magic_link_ttl_minutes" doc:"Magic-link validity in minutes. Default 15 — long enough for an email to arrive + the user to switch contexts; short enough to limit replay-window if a phone is briefly unattended." default:"15"`
 
@@ -2281,6 +2286,7 @@ func defaultAPIConfig() APIConfig {
 			EmailFrom:           "Stellar Index <hello@stellarindex.io>",
 			ResendAPIKeyEnv:     "STELLARINDEX_RESEND_API_KEY",
 			CodeSecretEnv:       "STELLARINDEX_DASHBOARD_CODE_SECRET",
+			WebhookSealKeyEnv:   "STELLARINDEX_WEBHOOK_SEAL_KEY",
 			MagicLinkTTLMinutes: 15,
 			SessionTTLDays:      30,
 			CookieSecure:        true, // dev (http://localhost) overrides to false

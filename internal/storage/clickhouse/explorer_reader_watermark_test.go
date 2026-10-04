@@ -115,8 +115,8 @@ func TestAccountOperations_WatermarkPreservesCursorArgOrder(t *testing.T) {
 		t.Fatalf("bound clause must precede the cursor clause in the emitted SQL:\n%s", q)
 	}
 	want := []any{
-		"GTEST", watermark, cur.Ledger, cur.A, cur.B, limit, // arm 1
-		"GTEST", watermark, cur.Ledger, cur.A, cur.B, limit, // arm 2
+		"GTEST", watermark, cur.Ledger, cur.Ledger, cur.A, cur.B, limit, // arm 1
+		"GTEST", watermark, cur.Ledger, cur.Ledger, cur.A, cur.B, limit, // arm 2
 		limit, // keyset merge
 		limit, // hydration pass
 	}

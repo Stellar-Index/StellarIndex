@@ -283,7 +283,7 @@ consumer of its own; its only caller is the backfill command.)
   Postgres connection at all (ADR-0048 D2). Always run under
   `/usr/local/sbin/run-heavy-job.sh` for anything beyond a small range
   (AGENTS.md heavy-job doctrine).
-- **Serving**: none yet — write-path only (see `doc.go`).
+- **Serving**: GET /v1/accounts/{g_strkey}/movements (`internal/api/v1/explorer/movements.go` AccountMovements) — ADR-0048 D5's read-time merge with sep41_transfers (see `doc.go`).
 
 ## References
 

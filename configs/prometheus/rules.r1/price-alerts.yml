@@ -1,5 +1,5 @@
 ---
-# Price-alert evaluator health (BACKLOG #60). The aggregator's
+# Price-alert evaluator health. The aggregator's
 # price-alert evaluation sweep (internal/pricealerts) checks every
 # enabled price_alerts row against the latest closed 1m VWAP each tick
 # and enqueues `price.alert` customer-webhook deliveries. These alerts

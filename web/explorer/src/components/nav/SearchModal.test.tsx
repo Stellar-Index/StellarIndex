@@ -47,6 +47,24 @@ describe('SearchModal result announcement', () => {
   });
 });
 
+// The desktop rail and the mobile drawer each mount a SearchModal; only
+// one may listen for Cmd-K or the shortcut stacks two dialogs.
+describe('SearchModal Cmd-K ownership', () => {
+  it('opens one modal when a second instance has the shortcut disabled', () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <SearchModal />
+        <SearchModal shortcut={false} />
+      </QueryClientProvider>,
+    );
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+  });
+});
+
 // The ⌘K result builder is the fourth copy of the verified-badge rule
 // (AssetsTable / HomeTopAssets / HomeTopMovers are the other three) and
 // was the only one that did not consult unverified_ticker_collision. The

@@ -121,7 +121,7 @@ func uniqueURLHook(accountID uuid.UUID, url string) platform.CustomerWebhook {
 		AccountID:  accountID,
 		Name:       "hook",
 		URL:        url,
-		SecretHash: signing[:],
+		SigningKey: signing[:],
 		Events:     []string{string(platform.WebhookEventIncidentSEV1)},
 		Enabled:    true,
 	}

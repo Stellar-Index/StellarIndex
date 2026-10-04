@@ -40,6 +40,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Decode classic op body → `xdrjson.DecodeOperationBody(bodyB64)`
 - Participant accounts → `xdrjson.ParticipantAccounts(bodyB64)`
 - SAC contract id for a classic asset → `xdrjson.SACContractID(assetID, passphrase)`
+- Decode a classic ledger entry to its state fields → `xdrjson.LedgerEntryFields(entry)`
 - Human names → `OpTypeName`, `MemoTypeName`, `AssetID`, `TrustLineAssetID`
 
 ## SEP-1 / stellar.toml + verified currency
@@ -106,6 +107,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Cross-check vs reference → `divergence.Compare`; `NewCoinGeckoReference`, `NewChainlinkReference`; `divergence.NewService(opts)`
 - CoinGecko key auth (Pro host switch + Pro/Demo header) → `coingecko.ResolveEndpoint`, `coingecko.SetAuthHeader` (`internal/sources/external/coingecko`)
 - Completeness verdict (ADR-0033) → `completeness.ComputeWatermark`, `AuditRecognition`, `ReconcileCounts`, `SumKinds` (authoritative = `completeness_snapshots`)
+- Network tip lower bound from a cursor + wall clock (catches a frozen ingest frontier) → `completeness.NetworkTipLowerBound`
 - Supply → `supply.NewClassicComputer`, `NewSEP41Computer`, `NewRefresher`, `NewCrossCheckRefresher`, reserve readers
 - Incident post-mortems → `incidents.Load(logger)`
 

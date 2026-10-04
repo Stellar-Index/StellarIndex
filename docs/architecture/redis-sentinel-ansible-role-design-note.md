@@ -353,7 +353,7 @@ Coverage matrix #12 (Redis sub-role) flips ✅.
 | CHANGELOG | 0.5 h |
 | **Total** | **~21 h, 2.5-3 days** |
 
-The matrix's bundled "~1 week for all five sub-roles of #72" is
+The matrix's bundled "~1 week for all five sub-roles of Task #72" is
 unrealistic given Patroni alone is 3-4 days; Patroni + Redis
 Sentinel together is ~7 days = exactly one week.
 

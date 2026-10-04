@@ -89,8 +89,8 @@ import (
 //     decompressed is. Over a multi-day run the policy would re-compress
 //     the open chunk between two batches, and the next batch would crawl
 //     through the per-row path this mode exists to escape, without an
-//     error. The job is resolved by what it is (policy_compression on
-//     trades), re-read under the lock, paused before the first decompress,
+//     error. The job is resolved by what it is (trades_compression_policy,
+//     migration 0205), re-read under the lock, paused before the first decompress,
 //     and re-enabled on EVERY exit path on a context that survives the
 //     run's cancellation — BEFORE the lock is released, so a run waiting
 //     on the lock never inherits a paused policy; the re-enable SQL is

@@ -157,7 +157,9 @@ func (f *fakeUserStore) CreateUser(_ context.Context, u platform.User) (platform
 			return platform.User{}, platform.ErrConflict
 		}
 	}
-	u.ID = uuid.New()
+	if u.ID == uuid.Nil {
+		u.ID = uuid.New()
+	}
 	u.CreatedAt = time.Now().UTC()
 	f.users[u.ID] = u
 	return u, nil

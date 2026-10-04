@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -92,5 +94,27 @@ func TestTokenSymbolResolver_NoCatalogue(t *testing.T) {
 	// No catalogue → USDC SAC is unknown → truncated fallback (never a panic).
 	if got := r.symbol(usdcSAC); got != truncContract(usdcSAC) {
 		t.Fatalf("USDC symbol without catalogue = %q, want truncated fallback", got)
+	}
+}
+
+// A failed pool-token read must surface so buildProtocolDetail marks the
+// build degraded instead of serving a pair-less roster as healthy.
+func TestEnrichContractTokens_ReportsReadFailure(t *testing.T) {
+	meta := ProtocolMeta{Name: "comet"}
+	for _, tc := range []struct {
+		name   string
+		reader *scriptedPoolTokens
+		want   bool
+	}{
+		{"healthy", &scriptedPoolTokens{resp: map[string][]string{"CPOOL1": {"CA", "CB"}}}, true},
+		{"read failed", &scriptedPoolTokens{err: errors.New("pool tokens broke")}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(Options{ProtocolPoolTokens: tc.reader})
+			rows := []ProtocolContractView{{ContractID: "CPOOL1"}}
+			if got := s.enrichContractTokens(context.Background(), meta, rows); got != tc.want {
+				t.Errorf("enrichContractTokens ok = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

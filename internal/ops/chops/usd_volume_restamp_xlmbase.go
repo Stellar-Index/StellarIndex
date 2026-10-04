@@ -23,7 +23,7 @@ import (
 // different shape of job and carries a different set of guards:
 //
 //   - the value is computed in Go by the store's own
-//     tradeUSDVolumeViaXLMBaseAnchor — the function the live insert path
+//     usdVolumeViaXLMBaseAnchor — the function the live insert path
 //     calls — against the installed VWAPUSDFXResolver, so the restamped
 //     number and the number a re-inserted row would carry are the same
 //     number by construction, not by two implementations agreeing;
