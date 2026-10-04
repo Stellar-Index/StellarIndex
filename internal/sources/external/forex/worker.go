@@ -220,6 +220,11 @@ type Worker struct {
 	// Only touched from guardSnapshot (single-goroutine, as guards).
 	historyVeto map[string]float64
 
+	// streakCounted is guardSnapshot-scoped: tickers whose stuck streak
+	// already moved this refresh. nil outside a refresh (every refusal
+	// counts), so the streak measures refreshes, not broken bars.
+	streakCounted map[string]bool
+
 	// rawHistory is the trailing-7d series exactly as last fetched —
 	// every dated bar, including the ones the band refuses. It is carried
 	// from refresh to refresh HERE and never published: the heal and the
@@ -690,7 +695,8 @@ func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 	today := snap.PublishedAt.UTC().Truncate(24 * time.Hour)
 
 	w.computeHistoryVeto(snap)
-	defer func() { w.historyVeto = nil }()
+	w.streakCounted = map[string]bool{}
+	defer func() { w.historyVeto, w.streakCounted = nil, nil }()
 
 	res := guardResult{
 		current: make(map[string]bool, len(snap.Currencies)),
@@ -1084,10 +1090,17 @@ func (w *Worker) acceptHistoryRate(ticker string, rate float64) bool {
 	// refresh, so the reclassification never engaged.
 	if g.stuckRejectedRate > 0 &&
 		math.Abs(rate-g.stuckRejectedRate)/g.stuckRejectedRate <= stuckSameRateTolerance {
-		g.stuckCount++
+		// A break spanning several trailing bars is re-scored in full every
+		// refresh; count it once per refresh so the threshold stays ~12 refreshes.
+		if !w.streakCounted[ticker] {
+			g.stuckCount++
+		}
 	} else {
 		g.stuckRejectedRate = rate
 		g.stuckCount = 1
+	}
+	if w.streakCounted != nil {
+		w.streakCounted[ticker] = true
 	}
 	reason := "history_deviation"
 	if g.stuckCount > stuckRejectionThreshold {

@@ -1520,6 +1520,8 @@ type VWAPResult struct {
 	Clamped bool `json:"clamped"`
 	// Breakdown is set only for a `breakdown=source` request.
 	Breakdown *VWAPBreakdown `json:"breakdown,omitempty"`
+	// Substance is the measurement behind a Flags.ThinMarket result.
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
 // VWAPBreakdown mirrors `internal/api/v1.VWAPBreakdown`.
@@ -1563,6 +1565,8 @@ type TWAPResult struct {
 	Truncated        bool      `json:"truncated"`
 	// Clamped: see [OHLCBar.Clamped].
 	Clamped bool `json:"clamped"`
+	// Substance is the measurement behind a Flags.ThinMarket result.
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
 // Pool is one row from [Client.Pools] — a single (source, base,
