@@ -166,7 +166,7 @@ func (rec *idempotencyRecorder) Write(b []byte) (int, error) {
 //
 // subjectKeyFn scopes the cache to the caller (account/session) so
 // two different callers who happen to pick the same literal key
-// string never collide. A nil subjectKeyFn, an empty subject, or a
+// string never collide; the method and path scope it to one route. A nil subjectKeyFn, an empty subject, or a
 // missing/blank header leaves the request to run normally — the
 // header is opt-in, matching its semantics elsewhere (Stripe et al.).
 //
@@ -194,7 +194,9 @@ func Idempotency(store *IdempotencyStore, subjectKeyFn func(*http.Request) strin
 				next.ServeHTTP(w, r)
 				return
 			}
-			cacheKey := subject + ":" + rawKey
+			// Route-scoped so one key reused across endpoints (or across
+			// {id}s) never replays another route's response.
+			cacheKey := subject + ":" + r.Method + " " + r.URL.Path + ":" + rawKey
 
 			prior, claim := store.begin(cacheKey)
 			switch claim {

@@ -46,7 +46,7 @@ func TestLakeWatermark_ClampsToContiguousTip(t *testing.T) {
 	conn.respond = func(q string) (driver.Rows, error) {
 		switch {
 		case isContiguityQuery(q):
-			return &stubRows{data: [][]any{{uint64(rawTip), firstGap, uint64(from)}}}, nil
+			return &stubRows{data: [][]any{{uint64(rawTip), firstGap, uint64(from), uint64(rawTip)}}}, nil
 		case isCloseTimeAtLedgerQuery(q):
 			return &stubRows{data: [][]any{{wantCloseTime}}}, nil
 		case isCombinedTipQuery(q):

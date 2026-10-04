@@ -50,6 +50,11 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
+// GatedContractSet returns the decoder's current gate — the pool-factory trust
+// roots ∪ every registered pool: exactly the contracts Matches() can accept,
+// so it is the contract-id prefilter for the -ch completeness re-derive.
+func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
+
 // Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY,
 // not topic symbol (ADR-0035, F-1347): a non-Blend contract that emits a
 // `supply`/`claim`/`set_admin`/… topic (SACs and other DeFi do) must NOT

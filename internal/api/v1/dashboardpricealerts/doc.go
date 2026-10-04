@@ -1,6 +1,6 @@
 // Package dashboardpricealerts serves the customer-facing
 // `/v1/dashboard/price-alerts*` CRUD surface that backs the dashboard's
-// price-alert management page (BACKLOG #60, RFP §6).
+// price-alert management page (RFP §6).
 //
 // Mounting + session auth mirror internal/api/v1/dashboardwebhooks: a
 // session cookie planted by dashboardauth.Middleware identifies the

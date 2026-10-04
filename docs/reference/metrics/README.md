@@ -620,7 +620,7 @@ rate, absence is unambiguous, which is why this counter is deliberately
 NOT pre-seeded in `seedBoundedLabelSeries` the way the `increase()`- and
 `rate()`-based counters are.
 
-### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`, `stellarindex_dispatcher_evicted_keys_unreadable_total`
+### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`, `stellarindex_dispatcher_evicted_keys_unreadable_total`, `stellarindex_dispatcher_ledger_upgrade_entries_total`
 
 Counters, no labels (process-wide — the underlying dispatcher counters
 aren't attributable to a source).
@@ -642,8 +642,12 @@ flush window's delta on every tick alongside the existing WARN log:
   read, so their state-archival evictions were skipped and each evicted
   balance stays served as live. The dispatcher also logs a WARN with
   the ledger number.
+- `ledger_upgrade_entries` — ledger-upgrade entries (protocol version,
+  base reserve, fee and similar network parameter changes) seen in
+  processed ledgers. Informational: no decoder consumes them, and a
+  non-zero value is expected on an upgrade ledger.
 
-**When to look at these:** any sustained non-zero rate. All four are
+**When to look at these:** any sustained non-zero rate of the first four. All are
 process-lifetime cumulative counters — chart `increase(...[5m])`
 against the flush interval (5m), not the raw value.
 
@@ -1352,8 +1356,10 @@ Two alerts read it, and only one of them can fire for that series:
 ### `stellarindex_trade_inserts_total`
 
 Counter, labels `source`, `usd_volume_populated` (`yes` | `no` |
-`unroutable`). `unroutable` is an unpriced trade whose two classic legs
-share one issuer; the on-chain coverage alert excludes it from the ratio.
+`unroutable` | `thin`). `unroutable` is an unpriced trade whose two classic
+legs share one issuer; `thin` is an unpriced trade whose only candidate rate
+was refused by the substance gate (market below the valuation floor). The
+on-chain coverage alert excludes both from the ratio.
 
 Per-source attempt counter for `Store.InsertTrade`, broken out by
 whether `usd_volume` was populated at insert time (per L2.2 phase 1
@@ -1549,7 +1555,7 @@ the per-tick delta.
 
 Counter, label `kind` (`tx_read_errors` | `tx_event_read_errors` |
 `entry_meta_unsupported` | `soroban_fee_meta_unsupported` |
-`tx_read_errors_census` | `tx_event_read_errors_census`). Every kind is
+`evicted_keys_unreadable` | `tx_read_errors_census` | `tx_event_read_errors_census`). Every kind is
 seeded at zero.
 
 Transactions the indexer's two per-ledger read paths could not fully
@@ -1567,6 +1573,11 @@ ledger, not a ledger count.
   `TransactionMeta` version the charged-fee read does not handle, so their
   `soroban_nonrefundable_fee` / `soroban_refundable_fee` /
   `soroban_rent_fee` are written as 0.
+- `evicted_keys_unreadable` — the same extract
+  (`LedgerExtract.EvictedKeysUnreadable`): the ledger's evicted-keys list
+  could not be read, so its eviction `removed` rows are missing and each
+  evicted entry's last write stays current in `ledger_entries_current`.
+  Counts ledgers, not transactions.
 - `tx_read_errors_census`, `tx_event_read_errors_census` —
   `dispatcher.CensusLedger` for the `ledger_ingest_log` substrate row,
   which the indexer skips on any non-zero count: a substrate gap.
@@ -1787,12 +1798,13 @@ signed delivery goes out. A dashboard summing the counter without a
 
 ### `stellarindex_price_staleness_seconds`
 
-Gauge, label `asset`.
+Gauge, labels `asset`, `quote`.
 
-Age of the most recent price served for `asset` via `/v1/price`, in
-seconds. Updated per request so a popular asset keeps a fresh
-reading; unqueried assets stop updating and the `price-stale` alert
-uses `change()` to distinguish "no-update" from "updated-but-stale".
+Age of the most recent aggregated VWAP write for each configured
+(`asset`, `quote`) pair, in seconds, set by the aggregator at the end
+of every tick. XLM is emitted under both `native` and `crypto:XLM`,
+merged per quote. The `price-stale` alert fires on any series above
+120 s and on the series being absent (a wedged aggregator).
 
 ### `stellarindex_ratelimit_fail_open_total`
 
@@ -2219,6 +2231,9 @@ Per-attempt outcome of the customer-webhook delivery worker
 `exhausted` = retry budget hit; `network_error` = TCP/TLS/timeout
 (retry); `webhook_missing` = registry row deleted mid-flight
 (terminal); `disabled` = `webhook.Enabled=false` (terminal);
+`no_secret` = signing key empty or not openable under the configured
+seal key (terminal); `lookup_error` = webhook read failed, including a
+sealed key with no seal key configured (retried);
 `build_error` = malformed URL (terminal); `list_error` /
 `mark_error` = db transport failure on the queue surface
 (transient).
@@ -2348,7 +2363,7 @@ row.
 Counter, label `outcome` (`ok` / `refresh_error`).
 
 Per-sweep outcome of the aggregator's protocol-events rollup worker
-(`internal/aggregate/protoeventsrollup`, #43), which folds the
+(`internal/aggregate/protoeventsrollup`, 78dff337b), which folds the
 trailing-24h per-source event census (a UNION ALL count over ~17
 served protocol hypertables) into the `protocol_events_24h` table
 every couple of minutes. That table backs the `events_24h` column on
@@ -2372,7 +2387,7 @@ Histogram, label `outcome` (matches
 
 Wall-clock of one rollup sweep: the trailing-24h UNION ALL census over
 the served protocol hypertables + one upsert + one prune. This is the
-multi-second leg the #43 rollup moved off the `/v1/protocols` request
+multi-second leg the 78dff337b rollup moved off the `/v1/protocols` request
 path, so watching `ok` p95/p99 here is how an operator learns the
 served-tier census is getting heavier as the protocol tables grow —
 long before it would have shown up as a slow endpoint.
@@ -2382,7 +2397,7 @@ long before it would have shown up as a slow endpoint.
 Counter, label `outcome` (`ok` / `refresh_error`).
 
 Per-sweep outcome of the aggregator's asset-volume rollup worker
-(`internal/aggregate/assetvolrollup`, #43), which folds the trailing-24h
+(`internal/aggregate/assetvolrollup`, e0fbbbc3b), which folds the trailing-24h
 per-asset USD-volume SUM over the `prices_1m` continuous aggregate
 (single-sided: each asset as base OR quote) into the `asset_volume_24h`
 table every couple of minutes. That table backs the `volume_24h_usd`
@@ -2406,7 +2421,7 @@ Histogram, label `outcome` (matches
 
 Wall-clock of one rollup sweep: the trailing-24h base-OR-quote SUM over
 `prices_1m` (all pairs) + one upsert + one prune. This is the heaviest
-of the two #43 rollups and the query the rollup moved off the
+of the two 24h rollups (78dff337b, e0fbbbc3b) and the query the rollup moved off the
 `/v1/assets` request path, so watching `ok` p95/p99 here is how an
 operator learns the served-tier volume scan is getting heavier as the
 prices_1m history grows. If it climbs toward the 2-minute cadence the
@@ -2452,7 +2467,7 @@ long before it would surface as a slow endpoint. If it climbs toward the
 Counter, label `outcome` (`ok` / `list_error` / `partial_error`).
 
 Per-sweep outcome of the aggregator's price-alert evaluator
-(`internal/pricealerts`, BACKLOG #60), which checks every enabled
+(`internal/pricealerts`), which checks every enabled
 `price_alerts` row against the latest closed 1-minute VWAP each tick
 and enqueues account-scoped `price.alert` customer-webhook deliveries
 once per threshold crossing (respecting cooldown + `last_fired_at`).
@@ -3027,6 +3042,24 @@ When to look at it: expected zero. A sustained non-zero rate means the
 substance store is too slow or down for the request path; correlate
 with the timescale readyz probe. Dashboard-only, no alert rule.
 
+### `stellarindex_price_serve_thin_admitted_total`
+
+Counter, labels `surface` and `floor` (both as on
+`stellarindex_price_serve_substance_withheld_total`).
+
+Fires once per thin-market verdict served flagged because the request
+opted in with `?include_thin=true`: the market failed the substance
+floor, and the response carries the price as `thin_market` with its
+`substance` evidence instead of withholding it. Price surfaces count per
+read, so an opted-in thin serve counts its default pass under
+`…_substance_withheld_total` and its second pass here.
+`surface="listing"` counts once per served row, after the declared-peg
+fill and the scam-issuer suppression, and never as withheld;
+`surface="detail"` counts at the read.
+
+When to look at it: the opt-in's adoption, by surface. It never counts a
+default response. Dashboard-only, no alert rule.
+
 ### `stellarindex_pricingguard_trailing_fetch_failed_total`
 
 Counter, label `path` (`latest` | `at`).
@@ -3441,6 +3474,19 @@ re-evaluated, so a 0 means divergence detection is disarmed for the pair
 even though the pass counts `ok`. A pair at 0 across every refresh for
 an hour fires `stellarindex_divergence_pair_below_quorum`.
 
+### `stellarindex_divergence_max_abs_fraction`
+
+Gauge, label `reference`. Largest `|ours − reference| / reference` over the
+pairs that reference currently prices (0.05 = 5 %); 0 when it prices none.
+Pinned (frozen) refreshes carry no verdict and are excluded. Drives
+`stellarindex_price_divergence_warning` (> 0.05) and `_critical` (> 0.10).
+
+### `stellarindex_divergence_pairs_over`
+
+Gauge, label `threshold` (`5pct` / `10pct`). Pairs whose worst reference gap
+exceeds that fraction. No per-pair label; the pairs are in
+`divergence_observations`.
+
 ### `stellarindex_aggregator_baseline_refresh_total`
 
 Counter, label `outcome` (`ok` / `ok_unvalued` / `not_enough_samples` /
@@ -3774,6 +3820,15 @@ correlation — a burst immediately after a Redis restart is the
 expected shape, whereas a slow trickle with Redis healthy means
 markers are being evicted (`maxmemory-policy`) or expiring early,
 which is a real configuration fault worth chasing.
+
+### `stellarindex_api_freeze_lookup_failures_total`
+
+Counter, no labels.
+
+API-side freeze-marker reads that returned an error (Redis outage or
+timeout); client aborts are excluded. Each failure serves the price
+with `frozen_checked=false`. Alerted by
+`stellarindex_api_freeze_lookup_failing`.
 
 ### `stellarindex_anomaly_freeze_ladder_write_failures_total`
 
@@ -4746,6 +4801,35 @@ Gauge, no label. Unix time of the last successful run. node_exporter
 re-serves a stale textfile verbatim on every scrape, so a stopped timer
 FREEZES the gauges above at their last healthy value instead of making
 them absent; this is the only series that can see that.
+
+## Galexie mirror vs upstream dataset (textfile collector, Go-emitted)
+
+Emitted by `stellarindex-ops galexie-mirror-verify`
+(`internal/ops/archive/galexie_mirror_verify.go`) into
+`/var/lib/node_exporter/textfile_collector/galexie_archive_upstream.prom`
+by the weekly `galexie-mirror-verify.timer` (archival-node role, tag
+`ops-jobs`). The file is rewritten only when a comparison completes, so a
+failing run leaves the previous verdict and its stamp in place. Alerted
+on by `deploy/monitoring/rules/galexie-archive.yml`; runbook
+`docs/operations/runbooks/galexie-archive-upstream-divergence.md`.
+
+### `galexie_archive_upstream_objects`
+
+Gauge, label `result`. Objects in partitions present on both sides, by
+outcome of comparing ETag and size with the same key upstream:
+`matched`, `upstream-rewritten` (differs, upstream newer than our copy),
+`local-differs` (differs, our copy newer), `local-only` (absent
+upstream), `unverifiable` (multipart ETag on one side, sizes equal),
+`missing-local` (upstream object not yet mirrored; the fill's concern).
+The first three after `matched` are divergence.
+
+### `galexie_archive_upstream_partitions_compared`
+
+Gauge. Partitions present on both sides that the last run compared.
+
+### `galexie_archive_upstream_last_success_unix`
+
+Gauge. Unix time the last completed comparison wrote the file.
 
 ## Changelog
 

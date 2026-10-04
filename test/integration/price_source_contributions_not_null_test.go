@@ -53,7 +53,7 @@ func scalarInt(t *testing.T, ctx context.Context, db *sql.DB, q string) int {
 	return n
 }
 
-// TestPriceSourceContributions_Migration0200 pins the release-N+2 step
+// TestPriceSourceContributions_Migration0207 pins the release-N+2 step
 // against real TimescaleDB, with the legacy chunks COMPRESSED:
 //
 //   - NULL-window rows are removed (whole legacy chunks dropped, the chunk
@@ -61,7 +61,7 @@ func scalarInt(t *testing.T, ctx context.Context, db *sql.DB, q string) int {
 //   - window_seconds is NOT NULL and CHECK (> 0), the 0026 key is gone, so
 //     a 5m row on a 1h row's bucket is accepted;
 //   - down restores the nullable column and the 0026 key.
-func TestPriceSourceContributions_Migration0200(t *testing.T) {
+func TestPriceSourceContributions_Migration0207(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -87,15 +87,15 @@ func TestPriceSourceContributions_Migration0200(t *testing.T) {
 		t.Fatalf("compressed %d chunks, want >= 3 — the compressed-chunk claim would be vacuous", compressed)
 	}
 
-	if err := migrateUpToErr(dsn, 200); err != nil {
+	if err := migrateUpToErr(dsn, 207); err != nil {
 		t.Fatalf("migrate to 200: %v", err)
 	}
 
 	if n := scalarInt(t, ctx, db, `SELECT count(*) FROM price_source_contributions`); n != 3 {
-		t.Errorf("rows after 0200 = %d, want the 3 windowed rows", n)
+		t.Errorf("rows after 0207 = %d, want the 3 windowed rows", n)
 	}
 	if n := scalarInt(t, ctx, db, `SELECT count(*) FROM price_source_contributions WHERE window_seconds IS NOT NULL`); n != 3 {
-		t.Errorf("windowed rows after 0200 = %d, want 3", n)
+		t.Errorf("windowed rows after 0207 = %d, want 3", n)
 	}
 	if after := scalarInt(t, ctx, db, `SELECT count(*) FROM show_chunks('price_source_contributions')`); after >= chunksBefore {
 		t.Errorf("chunks %d -> %d, want the all-legacy chunks dropped", chunksBefore, after)
@@ -116,28 +116,28 @@ func TestPriceSourceContributions_Migration0200(t *testing.T) {
 		t.Errorf("a second window on an occupied bucket was refused: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, ins+`('crypto:ETH','fiat:USD',NULL,now(),'kraken',1,1)`); err == nil {
-		t.Error("a NULL-window row was accepted after 0200")
+		t.Error("a NULL-window row was accepted after 0207")
 	}
 	if _, err := db.ExecContext(ctx, ins+`('crypto:ETH','fiat:USD',0,now(),'kraken',1,1)`); err == nil {
-		t.Error("a zero-window row was accepted after 0200")
+		t.Error("a zero-window row was accepted after 0207")
 	}
 
 	// Down cannot restore the 0026 key over rows that collide on it.
 	execAll(t, ctx, db, `DELETE FROM price_source_contributions WHERE window_seconds = 86400`)
-	if err := migrateUpToErr(dsn, 199); err != nil {
+	if err := migrateUpToErr(dsn, 205); err != nil {
 		t.Fatalf("migrate down to 199: %v", err)
 	}
 	if n := scalarInt(t, ctx, db, `
 		SELECT count(*) FROM information_schema.columns
 		 WHERE table_name = 'price_source_contributions' AND column_name = 'window_seconds' AND is_nullable = 'YES'`); n != 1 {
-		t.Error("after 0200 down window_seconds is not nullable again")
+		t.Error("after 0207 down window_seconds is not nullable again")
 	}
 }
 
-// TestPriceSourceContributions_Migration0200_RefusesActiveLegacyWriter pins
+// TestPriceSourceContributions_Migration0207_RefusesActiveLegacyWriter pins
 // the guard: NULL rows with no windowed row after them mean a pre-0169
 // writer is (or was last) active, and nothing may be deleted.
-func TestPriceSourceContributions_Migration0200_RefusesActiveLegacyWriter(t *testing.T) {
+func TestPriceSourceContributions_Migration0207_RefusesActiveLegacyWriter(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -150,11 +150,11 @@ func TestPriceSourceContributions_Migration0200_RefusesActiveLegacyWriter(t *tes
 		INSERT INTO price_source_contributions (asset_id, quote_id, bucket, source, weight, trade_count)
 		VALUES ('crypto:BTC','fiat:USD', now(), 'binance', 1, 1)`)
 
-	err := migrateUpToErr(dsn, 200)
+	err := migrateUpToErr(dsn, 207)
 	if err == nil || errors.Is(err, migrate.ErrNoChange) {
-		t.Fatalf("0200 applied over live NULL-window rows: err = %v", err)
+		t.Fatalf("0207 applied over live NULL-window rows: err = %v", err)
 	}
 	if n := scalarInt(t, ctx, db, `SELECT count(*) FROM price_source_contributions`); n != 1 {
-		t.Errorf("rows after refused 0200 = %d, want 1 (nothing deleted)", n)
+		t.Errorf("rows after refused 0207 = %d, want 1 (nothing deleted)", n)
 	}
 }

@@ -191,7 +191,7 @@ func TestExtractEntryChanges_IntraLedgerSeqOrdersLastChangeWins(t *testing.T) {
 	extractLedgerEntryChanges(&ext, []ingest.LedgerTransaction{
 		mkTx(0x01, updated, removed),
 		mkTx(0x02, otherChange),
-	}, 100, now)
+	}, nil, 100, now)
 
 	if len(ext.Changes) != 3 {
 		t.Fatalf("expected 3 extracted changes, got %d", len(ext.Changes))
@@ -281,7 +281,7 @@ func TestExtractLedgerEntryChanges_FeePhasePrecedesApplyPhase(t *testing.T) {
 	extractLedgerEntryChanges(&ext, []ingest.LedgerTransaction{
 		mkTx(0x01, []xdr.LedgerEntryChange{acctAt(990)}, []xdr.LedgerEntryChange{acctAt(500)}),
 		mkTx(0x02, []xdr.LedgerEntryChange{acctAt(980)}, nil),
-	}, 100, time.Unix(0, 0).UTC())
+	}, nil, 100, time.Unix(0, 0).UTC())
 
 	if len(ext.Changes) != 3 {
 		t.Fatalf("expected 3 extracted changes, got %d", len(ext.Changes))
@@ -365,7 +365,7 @@ func TestExtractLedgerEntryChanges_RestoredEntryAndTTLAreRecorded(t *testing.T) 
 	}
 
 	var ext LedgerExtract
-	extractLedgerEntryChanges(&ext, []ingest.LedgerTransaction{tx}, 1000, time.Unix(0, 0).UTC())
+	extractLedgerEntryChanges(&ext, []ingest.LedgerTransaction{tx}, nil, 1000, time.Unix(0, 0).UTC())
 
 	if len(ext.Changes) != 2 {
 		t.Fatalf("extracted %d changes, want 2 (restored contract_data + restored ttl)", len(ext.Changes))
@@ -413,5 +413,49 @@ func TestChangeTypeName_CoversEveryXDRVariant(t *testing.T) {
 	}
 	if seen < 5 {
 		t.Fatalf("only %d valid change types enumerated; the pinned XDR defines at least 5", seen)
+	}
+}
+
+// TestExtractLedgerEntryChanges_BlockOrderDoesNotChangeRows: two exports of one
+// ledger can list a block's keys in different orders (stellar-core's hash-map
+// order). Re-extracting from either must give identical rows, or the lake's
+// (tx, op, change_index) identity and intra_ledger_seq flip between ingests.
+func TestExtractLedgerEntryChanges_BlockOrderDoesNotChangeRows(t *testing.T) {
+	trust := func(code string, balance int64) xdr.LedgerEntryChange {
+		e := xdr.LedgerEntry{
+			LastModifiedLedgerSeq: 100,
+			Data: xdr.LedgerEntryData{
+				Type: xdr.LedgerEntryTypeTrustline,
+				TrustLine: &xdr.TrustLineEntry{
+					AccountId: xdr.MustAddress(ecTestG),
+					Asset:     xdr.MustNewCreditAsset(code, ecTestIssuer).ToTrustLineAsset(),
+					Balance:   xdr.Int64(balance),
+				},
+			},
+		}
+		return xdr.LedgerEntryChange{Type: xdr.LedgerEntryChangeTypeLedgerEntryUpdated, Updated: &e}
+	}
+	extract := func(block ...xdr.LedgerEntryChange) []LedgerEntryChangeRow {
+		var ext LedgerExtract
+		extractLedgerEntryChanges(&ext, []ingest.LedgerTransaction{{
+			Result: xdr.TransactionResultPair{TransactionHash: xdr.Hash{0x07}},
+			UnsafeMeta: xdr.TransactionMeta{
+				V:  3,
+				V3: &xdr.TransactionMetaV3{Operations: []xdr.OperationMeta{{Changes: block}}},
+			},
+		}}, nil, 100, time.Unix(0, 0).UTC())
+		return ext.Changes
+	}
+
+	a, b, c := trust("AAA", 1), trust("BBB", 2), trust("CCC", 3)
+	one := extract(a, b, c)
+	two := extract(c, a, b)
+	if len(one) != 3 || len(two) != 3 {
+		t.Fatalf("expected 3 rows from each order, got %d / %d", len(one), len(two))
+	}
+	for i := range one {
+		if one[i] != two[i] {
+			t.Errorf("row %d differs between export orders:\n  %+v\n  %+v", i, one[i], two[i])
+		}
 	}
 }

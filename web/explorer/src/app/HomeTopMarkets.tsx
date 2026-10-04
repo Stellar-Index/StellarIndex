@@ -30,7 +30,7 @@ import { shortAssetText } from '@/lib/asset-label';
  * limits 5/25/100/200, not 500). Pre-2026-05-09 this used
  * limit=500 and slugged the home page with a 5–8s cold-cache SQL
  * scan to throw away 490 rows. Each row deep-links to the per-pair
- * detail page at /markets/{base~quote} (PR #803).
+ * detail page at /markets/{base~quote} (commit 9eff6abd8).
  */
 export function HomeTopMarkets() {
   const { data, isLoading, isError } = useMarkets(25, 'volume_24h_usd_desc');

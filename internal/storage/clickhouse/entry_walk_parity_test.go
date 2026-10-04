@@ -325,3 +325,129 @@ func TestEntryWalkParity_PostApplyFeeRefundIsWalked(t *testing.T) {
 		t.Errorf("post-apply fee row op_index = %d, want -1 (a tx-level change)", got.OpIndex)
 	}
 }
+
+// evictionSpy records the walk's Removed changes — the shape the dispatcher's
+// eviction phase dispatches — keyed so they compare against lake rows.
+type evictionSpy struct{ steps []walkStep }
+
+func (s *evictionSpy) Name() string { return "parity-eviction-spy" }
+
+func (s *evictionSpy) Matches(c xdr.LedgerEntryChange) bool { return c.Removed != nil }
+
+func (s *evictionSpy) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.Event, error) {
+	raw, err := ctx.Change.Removed.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	s.steps = append(s.steps, walkStep{
+		Seq:     ctx.IntraLedgerSeq,
+		TxHash:  ctx.TxHash,
+		OpIndex: int32(ctx.OpIndex),
+		KeyXDR:  base64.StdEncoding.EncodeToString(raw),
+	})
+	return nil, nil
+}
+
+// TestEntryWalkParity_EvictedKeysAreRecordedByBothWalkers: an entry whose TTL
+// lapses is reported only in the LCM's evicted-keys list, never in tx meta.
+// The lake must record a deleted (temporary) entry as a `removed` row at the
+// eviction ledger, at the same position the live dispatcher walks it, or
+// ledger_entries_current keeps the entry's last write as live. A persistent
+// entry or contract code is archived, not deleted, so the lake writes no row
+// and its last live value stays current.
+func TestEntryWalkParity_EvictedKeysAreRecordedByBothWalkers(t *testing.T) {
+	const ledger = 4713
+	lcm := buildParityLedger(t, ledger, []parityTx{
+		{seed: 0x91, success: true, fee: []int64{700}, apply: []int64{650}, postApplyFee: []int64{660}},
+	})
+	cid := xdr.ContractId{0xE1}
+	dataKey := xdr.LedgerKey{
+		Type: xdr.LedgerEntryTypeContractData,
+		ContractData: &xdr.LedgerKeyContractData{
+			Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &cid},
+			Key:        xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance},
+			Durability: xdr.ContractDataDurabilityTemporary,
+		},
+	}
+	persistentKey := dataKey
+	persistentKey.ContractData = &xdr.LedgerKeyContractData{
+		Contract:   dataKey.ContractData.Contract,
+		Key:        xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance},
+		Durability: xdr.ContractDataDurabilityPersistent,
+	}
+	codeKey := xdr.LedgerKey{Type: xdr.LedgerEntryTypeContractCode, ContractCode: &xdr.LedgerKeyContractCode{Hash: xdr.Hash{0xE3}}}
+	ttlKey := xdr.LedgerKey{Type: xdr.LedgerEntryTypeTtl, Ttl: &xdr.LedgerKeyTtl{KeyHash: xdr.Hash{0xE2}}}
+	lcm.V2.EvictedKeys = []xdr.LedgerKey{persistentKey, dataKey, codeKey, ttlKey}
+
+	spy := &evictionSpy{}
+	d := dispatcher.New()
+	d.AddEntryDecoder(spy)
+	if _, err := d.ProcessLedger(lcm, parityPassphrase); err != nil {
+		t.Fatalf("dispatcher.ProcessLedger: %v", err)
+	}
+	ext, err := clickhouse.ExtractLedger(lcm, parityPassphrase)
+	if err != nil {
+		t.Fatalf("clickhouse.ExtractLedger: %v", err)
+	}
+	if ext.EvictedKeysUnreadable != 0 {
+		t.Fatalf("EvictedKeysUnreadable = %d on a readable list", ext.EvictedKeysUnreadable)
+	}
+
+	var lake []walkStep
+	var removed []clickhouse.LedgerEntryChangeRow
+	var lastTxSeq uint32
+	for _, row := range ext.Changes {
+		if row.ChangeType != "removed" {
+			lastTxSeq = max(lastTxSeq, row.IntraLedgerSeq)
+			continue
+		}
+		removed = append(removed, row)
+		lake = append(lake, walkStep{Seq: row.IntraLedgerSeq, TxHash: row.TxHash, OpIndex: row.OpIndex, KeyXDR: row.KeyXDR})
+	}
+
+	archived := map[string]bool{}
+	for _, k := range []xdr.LedgerKey{persistentKey, codeKey} {
+		raw, err := k.MarshalBinary()
+		if err != nil {
+			t.Fatalf("marshal archived key: %v", err)
+		}
+		archived[base64.StdEncoding.EncodeToString(raw)] = true
+	}
+	var deleted []walkStep
+	for _, st := range spy.steps {
+		if !archived[st.KeyXDR] {
+			deleted = append(deleted, st)
+		}
+	}
+	if len(spy.steps) != 4 || len(deleted) != 2 || len(lake) != 2 {
+		t.Fatalf("evicted keys walked: dispatcher %d (%d deleted), lake %d, want 4 (2) and 2\n  dispatcher: %v\n  lake:       %v",
+			len(spy.steps), len(deleted), len(lake), spy.steps, lake)
+	}
+	for i := range deleted {
+		if deleted[i] != lake[i] {
+			t.Errorf("eviction step %d differs:\n  dispatcher: %s key=%s\n  lake:       %s key=%s",
+				i, deleted[i], deleted[i].KeyXDR, lake[i], lake[i].KeyXDR)
+		}
+	}
+
+	wantTypes := []string{"contract_data", "ttl"}
+	for i, row := range removed {
+		if row.LedgerSeq != ledger || row.TxHash != "" || row.OpIndex != -1 {
+			t.Errorf("eviction row %d at (ledger %d, tx %q, op %d), want (%d, \"\", -1)",
+				i, row.LedgerSeq, row.TxHash, row.OpIndex, ledger)
+		}
+		if row.EntryType != wantTypes[i] || row.EntryXDR != "" {
+			t.Errorf("eviction row %d entry_type=%q entry_xdr empty=%v, want %q with no entry",
+				i, row.EntryType, row.EntryXDR == "", wantTypes[i])
+		}
+		// Rows share (ledger_seq, tx_hash, op_index), the RMT sort-key prefix,
+		// so change_index alone keeps them from collapsing into one at merge.
+		if row.ChangeIndex != uint32(i) {
+			t.Errorf("eviction row %d change_index = %d, want %d", i, row.ChangeIndex, i)
+		}
+		if row.IntraLedgerSeq <= lastTxSeq {
+			t.Errorf("eviction row %d intra_ledger_seq %d must follow every tx-phase change (last %d)",
+				i, row.IntraLedgerSeq, lastTxSeq)
+		}
+	}
+}

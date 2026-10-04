@@ -74,6 +74,15 @@ type APIError struct {
 	// own (the server omits it whenever the floor is unknown).
 	OutsideCoverage bool
 
+	// Substance is the `substance` extension member on a thin-market
+	// `price-withheld` 404: the measurement the price was withheld on.
+	Substance *SubstanceEvidence
+
+	// Reason is the `reason` extension member on a `price-withheld` 404:
+	// the machine-readable cause (e.g. "substance", "scam_issuer"). Branch
+	// on this rather than on Title. Empty on every other error.
+	Reason string
+
 	// MonthlyQuota is the `monthly_quota` extension member on a
 	// MonthlyQuota-shaped 429 (middleware.MonthlyQuota's
 	// monthly-quota-exceeded and monthly-quota-unavailable bodies): the
@@ -174,6 +183,8 @@ func parseAPIError(status int, contentType, retryAfter string, body []byte) *API
 	apiErr.RequestID = p.RequestID
 	apiErr.CoverageFrom = p.CoverageFrom
 	apiErr.OutsideCoverage = p.OutsideCoverage
+	apiErr.Substance = p.Substance
+	apiErr.Reason = p.Reason
 	apiErr.MonthlyQuota = p.MonthlyQuota
 	apiErr.MonthToDate = p.MonthToDate
 
@@ -254,4 +265,7 @@ type problemJSON struct {
 	OutsideCoverage bool       `json:"outside_coverage,omitempty"`
 	MonthlyQuota    *int64     `json:"monthly_quota,omitempty"`
 	MonthToDate     *int64     `json:"month_to_date,omitempty"`
+
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
+	Reason    string             `json:"reason,omitempty"`
 }

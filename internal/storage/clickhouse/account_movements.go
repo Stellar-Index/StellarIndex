@@ -561,18 +561,11 @@ func chunkStrings(ids []string, n int) [][]string {
 // table itself, purely as a footprint safety bound, not to dodge a
 // text-size or index-FPR ceiling — see its doc comment.
 //
-// idx_cb_balance_id remains valuable and is NOT being removed: any
-// TRUE point lookup (a literal `= ?` or a small hand-written `IN (?)`
-// with a handful of ids) still benefits from it, and ClickHouse's
-// skip-index pruning for such a query only fires when the WHERE
-// predicate is textually IDENTICAL to the indexed expression — so the
-// WHERE clause below MUST stay exactly
-// `JSONExtractString(attributes, 'balance_id')` (not a rewritten
-// equivalent: a CTE, a different function, a cast, …) even though
-// THIS function's batched external-table query no longer benefits
-// from that index itself. Any divergence silently falls back to a
-// full scan with no query error to signal it, for either access
-// pattern.
+// idx_cb_balance_id does not back this batched lookup: the query runs with
+// use_skip_indexes=0 because a bloom-filter false-positive rate compounded
+// over a large IN-set matches every granule. No current reader uses the
+// index; it only prunes when the predicate is textually identical to the
+// indexed expression.
 //
 // The returned map contains ONLY found ids; a balance_id absent from
 // it means no matching create row exists YET for it in what's been
@@ -611,8 +604,7 @@ func FindClaimableBalanceCreates(ctx context.Context, addr string, balanceIDHexe
 // cbLookupCreatesQuery matches chunk's ids against the external table
 // (`cb_ids`, one `balance_id String` column) findClaimableBalanceCreatesChunk
 // attaches via clickhouse.WithExternalTable — a hash-set semijoin, not
-// an inlined IN-list. See FindClaimableBalanceCreates' doc comment for
-// why the WHERE expression must stay textually exact.
+// an inlined IN-list.
 // The SETTINGS clause lives in the SQL text, not clickhouse.WithSettings:
 // observed live (2026-07-13) that per-query context settings did NOT reach
 // the server when combined with WithExternalTable — the failing query ran
@@ -790,8 +782,23 @@ const accountMovementCols = `ledger, ledger_close_time, tx_hash, op_index, leg_i
 // the same fan-out the pin bounds. Pinning threads on a range read costs
 // nothing when the part count is small.
 func accountMovementsQuery(filter AccountMovementFilter, hasCursor bool) string {
+	return accountMovementsSQL(filter, hasCursor, true)
+}
+
+// accountMovementsWindowQuery reads the same range in sort-key order with the
+// row version (ingested_at) appended and no LIMIT 1 BY, so the read stops
+// early; the caller keeps the newest version per key.
+func accountMovementsWindowQuery(filter AccountMovementFilter, hasCursor bool) string {
+	return accountMovementsSQL(filter, hasCursor, false)
+}
+
+func accountMovementsSQL(filter AccountMovementFilter, hasCursor, exactDedup bool) string {
 	var sb strings.Builder
-	sb.WriteString("SELECT " + accountMovementCols + " FROM stellar.account_movements WHERE address = ?")
+	cols := accountMovementCols
+	if !exactDedup {
+		cols += ", ingested_at"
+	}
+	sb.WriteString("SELECT " + cols + " FROM stellar.account_movements WHERE address = ?")
 	if filter.Kind != "" {
 		sb.WriteString(" AND movement_kind = ?")
 	}
@@ -805,7 +812,9 @@ func accountMovementsQuery(filter AccountMovementFilter, hasCursor bool) string 
 		sb.WriteString(" AND ledger <= ?")
 	}
 	if hasCursor {
-		sb.WriteString(" AND (ledger, tx_hash, op_index, leg_index) < (?, ?, ?, ?)")
+		// The leading `ledger <= ?` is implied by the tuple but is what lets the
+		// primary index cut the range at the cursor; a tuple alone is not pruned.
+		sb.WriteString(" AND ledger <= ? AND (ledger, tx_hash, op_index, leg_index) < (?, ?, ?, ?)")
 	}
 	// LIMIT 1 BY = the DAT-10 read-time dedup the sibling account readers
 	// (AccountTransactions / AccountOperations) already carry: an un-merged
@@ -816,7 +825,11 @@ func accountMovementsQuery(filter AccountMovementFilter, hasCursor bool) string 
 	// contiguous range scan already returns. ingested_at DESC makes the kept
 	// row the newest version: a re-derive rewrites a key in place (e.g. only
 	// counterparty changes), and without it an un-merged older part can win.
-	sb.WriteString(" ORDER BY ledger DESC, tx_hash DESC, op_index DESC, leg_index DESC, ingested_at DESC LIMIT 1 BY ledger, tx_hash, op_index, leg_index LIMIT ?")
+	if exactDedup {
+		sb.WriteString(" ORDER BY ledger DESC, tx_hash DESC, op_index DESC, leg_index DESC, ingested_at DESC LIMIT 1 BY ledger, tx_hash, op_index, leg_index LIMIT ?")
+	} else {
+		sb.WriteString(" ORDER BY ledger DESC, tx_hash DESC, op_index DESC, leg_index DESC LIMIT ?")
+	}
 	sb.WriteString(explorerScanSettings)
 	return sb.String()
 }
@@ -839,12 +852,10 @@ func accountMovementsQuery(filter AccountMovementFilter, hasCursor bool) string 
 // BEFORE this query's LIMIT — never as a post-read trim, which would
 // return short (or empty) pages and strand the history below it.
 //
-// No FINAL, but LIMIT 1 BY (see accountMovementsQuery): the previous
-// comment here claimed parity with AccountOperations/AccountTransactions
-// while those siblings actually dedup via LIMIT 1 BY and this reader did
-// not (audit 2026-08-21, determinism finding 2) — making this the one
-// served lake feed that could repeat rows and shift its keyset cursor
-// during a re-derive's un-merged window. Now deduped the same way.
+// No FINAL. The page is read as a bounded window in sort-key order (no
+// LIMIT 1 BY, which would stop ClickHouse's read-in-order early exit), the
+// newest ingested_at per key is kept in Go, and a window that cannot prove a
+// full page falls back to the exact LIMIT 1 BY query (accountMovementsQuery).
 func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, limit int, cur AccountMovementCursor, filter AccountMovementFilter) ([]AccountMovementRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 25
@@ -863,16 +874,75 @@ func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, l
 		args = append(args, filter.MaxLedger)
 	}
 	if cur.IsSet() {
-		args = append(args, cur.Ledger, cur.TxHash, cur.OpIndex, cur.LegIndex)
+		args = append(args, cur.Ledger, cur.Ledger, cur.TxHash, cur.OpIndex, cur.LegIndex)
 	}
-	args = append(args, limit)
+	window := windowRows(limit, windowFactorKeys)
+	if page, ok, err := r.accountMovementsWindowed(ctx, address, limit, window, cur, filter, append(args, window)); err != nil || ok {
+		return page, err
+	}
+	return r.queryAccountMovements(ctx, address, accountMovementsQuery(filter, cur.IsSet()), append(args, limit))
+}
 
-	rows, err := r.conn.Query(ctx, accountMovementsQuery(filter, cur.IsSet()), args...)
+func (r *ExplorerReader) queryAccountMovements(ctx context.Context, address, q string, args []any) ([]AccountMovementRow, error) {
+	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: account %s movements: %w", address, err)
 	}
 	defer func() { _ = rows.Close() }()
 	return scanAccountMovementRows(rows, address)
+}
+
+type movementKey struct {
+	ledger, opIndex, legIndex uint32
+	txHash                    string
+}
+
+// accountMovementsWindowed reads one window in sort-key order, keeps the
+// newest ingested_at per key and serves the page. ok=false means the window
+// could not prove a full page; the caller runs the exact LIMIT 1 BY query.
+func (r *ExplorerReader) accountMovementsWindowed(ctx context.Context, address string, limit, window int, cur AccountMovementCursor, filter AccountMovementFilter, args []any) ([]AccountMovementRow, bool, error) {
+	rows, err := r.conn.Query(ctx, accountMovementsWindowQuery(filter, cur.IsSet()), args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("clickhouse: account %s movements: %w", address, err)
+	}
+	defer func() { _ = rows.Close() }()
+	versioned, err := scanAccountMovementVersions(rows, address)
+	if err != nil {
+		return nil, false, err
+	}
+	deduped, ok := dedupWindow(versioned, window, limit,
+		func(v accountMovementVersion) movementKey {
+			return movementKey{v.row.Ledger, v.row.OpIndex, v.row.LegIndex, v.row.TxHash}
+		},
+		func(a, b accountMovementVersion) bool { return a.ingestedAt.After(b.ingestedAt) })
+	if !ok {
+		return nil, false, nil
+	}
+	if len(deduped) > limit {
+		deduped = deduped[:limit]
+	}
+	out := make([]AccountMovementRow, len(deduped))
+	for i, v := range deduped {
+		out[i] = v.row
+	}
+	return out, true, nil
+}
+
+type accountMovementVersion struct {
+	row        AccountMovementRow
+	ingestedAt time.Time
+}
+
+func scanAccountMovementVersions(rows driver.Rows, address string) ([]accountMovementVersion, error) {
+	var out []accountMovementVersion
+	for rows.Next() {
+		var v accountMovementVersion
+		if err := scanAccountMovementRow(rows, address, &v.row, &v.ingestedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // scanAccountMovementRows scans accountMovementCols rows into
@@ -882,24 +952,37 @@ func scanAccountMovementRows(rows driver.Rows, address string) ([]AccountMovemen
 	var out []AccountMovementRow
 	for rows.Next() {
 		var row AccountMovementRow
-		var direction, attrs string
-		var amt *big.Int
-		if err := rows.Scan(
-			&row.Ledger, &row.LedgerCloseTime, &row.TxHash, &row.OpIndex, &row.LegIndex,
-			&direction, &row.MovementKind, &row.Provenance, &row.Asset, &row.Counterparty,
-			&amt, &attrs,
-		); err != nil {
-			return nil, fmt.Errorf("clickhouse: scan account movement row: %w", err)
-		}
-		row.Address = address
-		row.Direction = AccountMovementDirection(direction)
-		row.Amount = amt
-		if attrs != "" && attrs != "{}" {
-			if uerr := json.Unmarshal([]byte(attrs), &row.Attributes); uerr != nil {
-				return nil, fmt.Errorf("clickhouse: unmarshal account movement attributes: %w", uerr)
-			}
+		if err := scanAccountMovementRow(rows, address, &row, nil); err != nil {
+			return nil, err
 		}
 		out = append(out, row)
 	}
 	return out, rows.Err()
+}
+
+// scanAccountMovementRow scans one accountMovementCols row; a non-nil version
+// also receives the trailing ingested_at column.
+func scanAccountMovementRow(rows driver.Rows, address string, row *AccountMovementRow, version *time.Time) error {
+	var direction, attrs string
+	var amt *big.Int
+	dest := []any{
+		&row.Ledger, &row.LedgerCloseTime, &row.TxHash, &row.OpIndex, &row.LegIndex,
+		&direction, &row.MovementKind, &row.Provenance, &row.Asset, &row.Counterparty,
+		&amt, &attrs,
+	}
+	if version != nil {
+		dest = append(dest, version)
+	}
+	if err := rows.Scan(dest...); err != nil {
+		return fmt.Errorf("clickhouse: scan account movement row: %w", err)
+	}
+	row.Address = address
+	row.Direction = AccountMovementDirection(direction)
+	row.Amount = amt
+	if attrs != "" && attrs != "{}" {
+		if uerr := json.Unmarshal([]byte(attrs), &row.Attributes); uerr != nil {
+			return fmt.Errorf("clickhouse: unmarshal account movement attributes: %w", uerr)
+		}
+	}
+	return nil
 }

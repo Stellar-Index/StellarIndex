@@ -73,22 +73,27 @@ func scanUser(row interface {
 	return u, nil
 }
 
-// CreateUser inserts a new user row.
+// CreateUser inserts a new user row. A non-nil u.ID is kept (a passkey signup
+// binds it into the credential before the row exists); nil takes the default.
 func (r *UserStore) CreateUser(ctx context.Context, u platform.User) (platform.User, error) {
 	const q = `
 		INSERT INTO users (
-			account_id, email, display_name, role,
+			id, account_id, email, display_name, role,
 			mfa_enabled, mfa_secret_enc, mfa_recovery_codes_hashed,
 			is_staff
 		)
-		VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7, $8)
+		VALUES (COALESCE($9::uuid, uuid_generate_v4()), $1, $2, NULLIF($3, ''), $4, $5, $6, $7, $8)
 		RETURNING ` + userColumns
 
+	var id any
+	if u.ID != uuid.Nil {
+		id = u.ID
+	}
 	row := r.s.db.QueryRowContext(ctx, q,
 		u.AccountID, u.Email, u.DisplayName, string(u.Role),
 		u.MFAEnabled, u.MFASecretEnc,
 		u.MFARecoveryCodesHashed,
-		u.IsStaff,
+		u.IsStaff, id,
 	)
 	out, err := scanUser(row)
 	if err != nil {

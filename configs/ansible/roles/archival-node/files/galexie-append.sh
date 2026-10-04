@@ -9,7 +9,7 @@
 #      resume from `last_exported + 1`. This is the path on every
 #      RESTART of an already-running deployment (the common case);
 #      it guarantees no gap when the service is restarted after
-#      having uploaded ledgers previously (#50: gap created by ZFS
+#      having uploaded ledgers previously (8b14c8b59: gap created by ZFS
 #      migration on 2026-05-21 because the wrapper used to skip to
 #      the archive tip every time).
 #
@@ -24,7 +24,7 @@
 # request 404 and captive-core spins.
 #
 # 2026-04-23: removed the "wait for primary stellar-core" preamble.
-# 2026-05-21: added resume-from-last-exported logic (#50).
+# 2026-05-21: added resume-from-last-exported logic (8b14c8b59).
 
 set -euo pipefail
 

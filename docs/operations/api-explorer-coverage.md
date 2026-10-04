@@ -41,10 +41,10 @@ level 3. The chain to `/` is what matters, not the hop count.
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **134** |
-| Level 3 — reachable | **108** |
+| Paths in the OpenAPI contract | **138** |
+| Level 3 — reachable | **111** |
 | Level 2 — consumed but unreachable | **0** |
-| Level 1 — not consumed | **22** |
+| Level 1 — not consumed | **23** |
 | Deliberately excluded (operational) | **4** |
 
 Re-derived against the repo on 2026-09-24: the endpoint table, these
@@ -131,6 +131,7 @@ page carries.
 | `/assets/{asset_id}` | GET | 3 | app/HomeTryAPI.tsx, app/assets/[slug]/AssetClientFallback.tsx | /, /assets/[slug], /convert/[from]/[to], /docs, /network +1 |
 | `/assets/{asset_id}/metadata` | GET | 1 | — | — |
 | `/assets/{asset_id}/supply` | GET | 3 | hooks.ts:useAssetSupply | /assets/[slug] |
+| `/assets/{asset_id}/supply/flows` | GET | 1 | — | — |
 | `/assets/{asset_id}/holders` | GET | 3 | app/assets/[slug]/HoldersTabPanel.tsx | /assets/[slug] |
 | `/price` | GET | 3 | ../functions/og/[[path]].js, app/HomeTryAPI.tsx | /, /accounts, /accounts/[g], /aggregators, /amm +71 |
 | `/price/at` | GET | 1 | — | — |
@@ -211,6 +212,7 @@ page carries.
 | `/dashboard/webhooks` | GET, POST | 3 | account.ts:createDashboardWebhook, account.ts:listDashboardWebhooks | /dashboard/webhooks |
 | `/dashboard/webhooks/{id}` | PATCH, DELETE | 3 | account.ts:deleteDashboardWebhook, account.ts:updateDashboardWebhook | /dashboard/webhooks |
 | `/dashboard/webhooks/{id}/deliveries` | GET | 1 | account.ts:listWebhookDeliveries | /dashboard/webhooks |
+| `/dashboard/webhooks/{id}/rotate-secret` | POST | 3 | account.ts:rotateDashboardWebhookSecret | /dashboard/webhooks |
 | `/dashboard/price-alerts` | GET, POST | 3 | account.ts:createPriceAlert, account.ts:listPriceAlerts | /dashboard/price-alerts |
 | `/dashboard/price-alerts/{id}` | PATCH, DELETE | 3 | account.ts:deletePriceAlert, account.ts:updatePriceAlert | /dashboard/price-alerts |
 | `/auth/login` | POST | 3 | app/signin/SignInForm.tsx, app/status/StatusPageClient.tsx | /signin, /signup, /status |
@@ -219,6 +221,8 @@ page carries.
 | `/auth/logout` | POST | 3 | account.ts:logout, components/nav/Sidebar.tsx | global nav chrome; /, /accounts, /accounts/[g] |
 | `/auth/passkey/begin-login` | POST | 3 | account.ts:beginPasskeyLogin | /signin |
 | `/auth/passkey/finish-login` | POST | 3 | account.ts:finishPasskeyLogin | /signin |
+| `/auth/passkey/begin-signup` | POST | 3 | account.ts:beginPasskeySignup | /signin |
+| `/auth/passkey/finish-signup` | POST | 3 | account.ts:finishPasskeySignup | /signin |
 | `/auth/passkey/begin-register` | POST | 3 | account.ts:beginPasskeyRegister | /dashboard/settings |
 | `/auth/passkey/finish-register` | POST | 3 | account.ts:finishPasskeyRegister | /dashboard/settings |
 | `/auth/passkey/credentials` | GET | 3 | account.ts:listPasskeys | /dashboard/settings |
@@ -253,7 +257,7 @@ page carries.
 | `/accounts/{g_strkey}/graph/cohort` | GET | 3 | app/insights/AccountRelationCohort.tsx | /insights/creators/[address], /insights/sponsors/[address] |
 | `/search` | GET | 3 | components/nav/SearchModal.tsx | global nav chrome; /, /accounts, /accounts/[g] |
 
-## Level 1 — the 22 stranded endpoints
+## Level 1 — the 23 stranded endpoints
 
 Every one of these was probed live on 2026-09-09. **All 19 exist and
 answer** — none 404s at the route level. This is served data with no
@@ -263,7 +267,7 @@ Building pages for them is a product decision and is deliberately not
 made here. What follows is what is stranded and roughly what it would
 take.
 
-### Public data with no surface (8)
+### Public data with no surface (9)
 
 | Endpoint | What is stranded | Rough cost |
 |---|---|---|
@@ -275,6 +279,7 @@ take.
 | `/pairs` | Per-pair trade stats (`trade_count_24h`, `volume_24h_usd`) for an explicit base/quote. Both params required. | Small — overlaps what `/markets` already gives; likely redundant rather than missing. |
 | `/directory` | Curated address labels with tags and provenance (`source: stellar-expert`). `src/components/DirectoryLabel.tsx` exists and renders the `directory` field that comes back *embedded in other responses* — but the standalone bulk endpoint is never called. | Small. The rendering component is already built. |
 | `/ledgers/{seq}/operations` | One ledger's operations, fully decoded, with `total`/`truncated` from the header. The only per-ledger operations read (`/operations` refuses `?ledger=`); not in the 2026-09-09 probe. The ledger page lists transactions but never the decoded operations. | Small — a tab on `/ledgers/[seq]`. |
+| `/assets/{asset_id}/supply/flows` | Daily mint / burn / clawback series from the `supply_flows` lake, with `net` and a `history_incomplete` flag; added with the SDK method `AssetSupplyFlows`. | Small — a chart panel beside the supply card on `/assets/[slug]`. |
 
 ### `/methodology` — the one with a page that ignores it
 
@@ -325,8 +330,8 @@ probed unauthenticated:
 - **Legacy key surface (2)** — `/account/keys`, `/account/keys/{keyID}`.
   Superseded by `/dashboard/keys` (the richer Postgres-backed store the
   UI uses). Probably wants deprecating rather than building.
-- **Signup (2)** — `POST /signup`, `/signup/verify`. The UI uses the
-  `/auth/login` magic-link flow instead. Dead path, or an unshipped one.
+- **Signup (2)** — `POST /signup`, `/signup/verify`. Retired (410 Gone, INV-0907);
+  the UI uses the `/auth/login` magic-link flow instead.
 - **Account erasure (2)** — `DELETE /dashboard/account`,
   `/dashboard/account/export` (#809). API shipped; the dashboard
   settings page that calls them is the follow-up.

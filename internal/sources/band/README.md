@@ -79,8 +79,17 @@ a decode error).
 `env.ledger().timestamp()` which is seconds). The decoder converts
 it with `time.Unix(resolveSeconds, 0)` and stores it on
 `canonical.OracleUpdate.Timestamp` (the field is `Timestamp`, not
-`PublishedAt`). Out-of-range values (0 / pre-epoch, or a sentinel
-far-future u64) fall back to the ledger close time.
+`PublishedAt`). Out-of-range values (before the 2001 floor, or at or
+beyond the ledger close + 1h) are handled per function:
+
+- `relay`: values before the 2001 floor are garbage (the decoder's own
+  bound); values at or beyond close + OFFSET are a silent on-chain
+  no-op (the contract gates only `resolve_time < ledger.timestamp +
+  OFFSET`). Either way the decoder drops the whole call (surfaced via
+  the decode-error counter) rather than write a rate the chain never
+  applied.
+- `force_relay`: unconditional admin path with no such gate; the
+  timestamp falls back to the ledger close time.
 
 ### Q6 — Synthetic OpIndex fan-out
 

@@ -30,14 +30,27 @@ type CompletenessSnapshot struct {
 	// evaluated. See [CompletenessSnapshot.foundProblem].
 	FoundProblem bool
 	// ProjectionVerifiedFrom is the PROJECTION axis's floor (migration
-	// 0155): the lowest ledger the served tier holds any row at for this
-	// source, computed by chops.projectionScopes as the minimum over the
-	// source's targets. ProjectionOK is a claim about
+	// 0155), computed by chops.projectionScopes: the source's genesis, or
+	// for a declared served window the minimum served row over its
+	// targets. ProjectionOK is a claim about
 	// [ProjectionVerifiedFrom, Watermark] and about nothing below it —
 	// Genesis is the LAKE axis's floor and is routinely ten years lower.
 	// 0 = not recorded (pre-0155 snapshot, or projection not evaluated);
 	// never read 0 as a floor.
 	ProjectionVerifiedFrom uint32
+	// ProjectionReconciledFrom is the lowest ledger THIS run's projection
+	// reconcile covered (migration 0201); [ProjectionVerifiedFrom,
+	// ProjectionReconciledFrom) was carried. 0 = not recorded.
+	ProjectionReconciledFrom uint32
+	// ProjectionEvidencedAt is when one run last reconciled the whole
+	// served range cleanly — the oldest evidence behind ProjectionOK, which
+	// a carry preserves and ComputedAt does not. Zero = none on record.
+	ProjectionEvidencedAt time.Time
+	// ProjectionEvidencedNow is write-only (no column): this run reconciled
+	// the whole served range cleanly, so the write stamps
+	// projection_evidenced_at with the same now() as computed_at and
+	// ignores ProjectionEvidencedAt.
+	ProjectionEvidencedNow bool
 	SubstrateOK            bool
 	RecognitionOK          bool
 	ProjectionOK           bool
@@ -55,8 +68,10 @@ const upsertCompletenessSnapshotQuery = `
             source, genesis_ledger, tip_ledger, watermark_ledger,
             coverage_pct, complete, lake_complete, first_problem_ledger,
             projection_verified_from,
-            substrate_ok, recognition_ok, projection_ok, detail, computed_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now())
+            substrate_ok, recognition_ok, projection_ok, detail, computed_at,
+            projection_reconciled_from, projection_evidenced_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now(),
+            $15, CASE WHEN $16::boolean THEN now() ELSE $17::timestamptz END)
         ON CONFLICT (source) DO UPDATE SET
             genesis_ledger           = EXCLUDED.genesis_ledger,
             -- tip_ledger is network head and monotonic: GREATEST keeps a
@@ -73,7 +88,9 @@ const upsertCompletenessSnapshotQuery = `
             recognition_ok           = EXCLUDED.recognition_ok,
             projection_ok            = EXCLUDED.projection_ok,
             detail                   = EXCLUDED.detail,
-            computed_at              = now()
+            computed_at              = now(),
+            projection_reconciled_from = EXCLUDED.projection_reconciled_from,
+            projection_evidenced_at  = EXCLUDED.projection_evidenced_at
         -- CS-083: never let a regressive-window run (a smaller -to, or a
         -- mid-walk stall) overwrite a more-advanced verdict — that's how a
         -- source read complete=true pinned at a STALE tip. Apply the update
@@ -112,6 +129,8 @@ func execCompletenessSnapshot(ctx context.Context, ex snapshotExecer, snap Compl
 		int64(snap.ProjectionVerifiedFrom),
 		snap.SubstrateOK, snap.RecognitionOK, snap.ProjectionOK, snap.Detail,
 		snap.foundProblem(),
+		int64(snap.ProjectionReconciledFrom), snap.ProjectionEvidencedNow,
+		sql.NullTime{Time: snap.ProjectionEvidencedAt, Valid: !snap.ProjectionEvidencedAt.IsZero()},
 	)
 	if err != nil {
 		return false, err
@@ -221,7 +240,8 @@ func (s *Store) ListCompletenessSnapshots(ctx context.Context) ([]CompletenessSn
         SELECT source, genesis_ledger, tip_ledger, watermark_ledger,
                coverage_pct, complete, lake_complete, first_problem_ledger,
                projection_verified_from,
-               substrate_ok, recognition_ok, projection_ok, detail, computed_at
+               substrate_ok, recognition_ok, projection_ok, detail, computed_at,
+               projection_reconciled_from, projection_evidenced_at
         FROM completeness_snapshots
         ORDER BY source`
 	rows, err := s.db.QueryContext(ctx, q)
@@ -234,13 +254,15 @@ func (s *Store) ListCompletenessSnapshots(ctx context.Context) ([]CompletenessSn
 		var (
 			snap                        CompletenessSnapshot
 			genesis, tip, wm, firstProb int64
-			projFrom                    int64
+			projFrom, reconciledFrom    int64
+			evidencedAt                 sql.NullTime
 		)
 		if err := rows.Scan(
 			&snap.Source, &genesis, &tip, &wm,
 			&snap.CoveragePct, &snap.Complete, &snap.LakeComplete, &firstProb,
 			&projFrom,
 			&snap.SubstrateOK, &snap.RecognitionOK, &snap.ProjectionOK, &snap.Detail, &snap.ComputedAt,
+			&reconciledFrom, &evidencedAt,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: ListCompletenessSnapshots scan: %w", err)
 		}
@@ -249,6 +271,10 @@ func (s *Store) ListCompletenessSnapshots(ctx context.Context) ([]CompletenessSn
 		snap.Watermark = uint32(wm)
 		snap.FirstProblem = uint32(firstProb)
 		snap.ProjectionVerifiedFrom = uint32(projFrom)
+		snap.ProjectionReconciledFrom = uint32(reconciledFrom)
+		if evidencedAt.Valid {
+			snap.ProjectionEvidencedAt = evidencedAt.Time
+		}
 		out = append(out, snap)
 	}
 	if err := rows.Err(); err != nil {

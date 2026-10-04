@@ -128,7 +128,7 @@ func TestLatestTradeReadsBreakSameLedgerTiesOnTheFullKey(t *testing.T) {
 	stmt := capturePreparedStatement(t, ctx, db, nil, "DISTINCT ON (source)", "FROM trades")
 	mustExecPlan(t, ctx, db, `SET plan_cache_mode = force_custom_plan`)
 	mustExecPlan(t, ctx, db, `PREPARE tiebreak_plan_probe AS `+stmt)
-	rows, err := db.QueryContext(ctx, `EXPLAIN EXECUTE tiebreak_plan_probe('`+a+`', '`+b+`', '')`)
+	rows, err := db.QueryContext(ctx, `EXPLAIN EXECUTE tiebreak_plan_probe('`+a+`', '`+b+`', '', 'binance,bitstamp,coinbase,kraken')`)
 	if err != nil {
 		t.Fatalf("EXPLAIN: %v", err)
 	}

@@ -153,7 +153,7 @@ grep -E "sdf_reserve_accounts|reserve_balances_stroops" /etc/stellarindex.toml
   `supply: ConfigReserveBalanceReader: no balance configured for
   account G...`. Rule citation → `rules.r1/supply-snapshot.yml`;
   commands use r1 shapes.
-- 2026-04-30 — initial draft alongside #295 (textfile + alerts).
+- 2026-04-30 — initial draft alongside 1f63b0d56 (textfile + alerts).
 - 2026-04-30 — coverage caveat added: this alert is timer-path-
   only and cannot fire on aggregator-resident-only deployments;
   goroutine-path equivalent is supply-refresh-error-dominant.md.

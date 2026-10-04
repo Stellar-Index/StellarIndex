@@ -32,7 +32,7 @@ import (
 // table on the same cadence the sibling volume rollup already runs at.
 // The listing then LEFT JOINs `asset_price_snapshot`.
 // Same pattern, same reasons, as migration 0087 (`asset_volume_24h`,
-// #43) and 0149 (`asset_volume_character`).
+// e0fbbbc3b) and 0149 (`asset_volume_character`).
 //
 // Why a plain worker-maintained table and not the two alternatives:
 //
@@ -347,6 +347,29 @@ const xlmFormPrefOpen = `array_position(ARRAY[` + xlmQuotes + `], `
 // [usdQuotePref] so a same-minute USDC and fiat:USD print resolve stably.
 const xlmUSDNewest = `ORDER BY bucket DESC, ` + usdQuotePref
 
+// xlmUSDVolumeSelect is the XLM/USD scalar that converts XLM-legged volume to
+// USD: the median vwap of the minutes within 15 min of the newest print, so a
+// single thin or off-market minute cannot rescale every venue's figure. It
+// is volume-display only; price paths keep [xlmUSDNewest].
+const xlmUSDVolumeSelect = `SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY vwap) AS vwap
+		    FROM prices_1m
+		   WHERE base_asset = 'native'
+		     AND quote_asset IN (
+		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		       'fiat:USD'
+		     )
+		     AND vwap IS NOT NULL
+		     AND bucket >= now() - INTERVAL '24 hours'
+		     AND bucket > (SELECT max(bucket)
+		                     FROM prices_1m
+		                    WHERE base_asset = 'native'
+		                      AND quote_asset IN (
+		                        'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		                        'fiat:USD'
+		                      )
+		                      AND vwap IS NOT NULL
+		                      AND bucket >= now() - INTERVAL '24 hours') - INTERVAL '15 minutes'`
+
 // xlmUSDCTEs is XLM's own USD price now and at each change lookback,
 // shared by the rollup, the detail query and the native row. `bucket` is
 // the observation minute [priceArmPickExpr] ages a triangulated price by.
@@ -548,7 +571,7 @@ func execRowCount(ctx context.Context, tx *sql.Tx, q string) (int64, error) {
 }
 
 // RefreshAssetListingRollups recomputes BOTH rollups the /v1/assets
-// listing LEFT JOINs — asset_volume_24h (migration 0087, #43) and
+// listing LEFT JOINs — asset_volume_24h (migration 0087, e0fbbbc3b) and
 // asset_price_snapshot (migration 0154, #331 F1) — and atomically
 // replaces their contents.
 //

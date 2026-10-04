@@ -29,6 +29,8 @@ import (
 //     derives its DEFAULT budget (multiplier × resolution) — the exact
 //     number the alert used to compute inline, so nothing moves for an
 //     asset nobody overrode.
+//   - [DeclareOracleHeartbeat] does the same for heartbeat sources,
+//     whose default budget is heartbeat + [OracleHeartbeatGrace].
 //   - [SetOracleStalenessOverrides] installs the operator's
 //     per-(source, asset) exceptions from `[[oracle.staleness_overrides]]`.
 //   - [RecordOracleUpdate] emits the age and the budget together.
@@ -91,6 +93,22 @@ func DeclareOracleResolution(source string, resolutionSeconds float64) {
 	oracleStaleness.bySource[source] = OracleStaleBudgetMultiplier * resolutionSeconds
 }
 
+// OracleHeartbeatGrace is the slack added to a heartbeat-driven source's
+// heartbeat before a silent asset tickets.
+const OracleHeartbeatGrace = 2 * 3600
+
+// DeclareOracleHeartbeat is [DeclareOracleResolution] for a source whose
+// declared cadence is a heartbeat, i.e. the longest gap a healthy feed
+// may show. A multiple of that would let a dead feed hide for days, so
+// the budget is the heartbeat plus [OracleHeartbeatGrace].
+func DeclareOracleHeartbeat(source string, heartbeatSeconds float64) {
+	OracleResolutionSeconds.WithLabelValues(source).Set(heartbeatSeconds)
+
+	oracleStaleness.mu.Lock()
+	defer oracleStaleness.mu.Unlock()
+	oracleStaleness.bySource[source] = heartbeatSeconds + OracleHeartbeatGrace
+}
+
 // SetOracleStalenessOverrides REPLACES the operator override set — it
 // is a whole-policy install from config, not an accumulating register,
 // so removing a row from the config removes the override on restart.
@@ -112,7 +130,7 @@ func SetOracleStalenessOverrides(overrides []OracleStalenessOverride) {
 
 // OracleStalenessBudget reports the staleness budget for one
 // (source, asset): the operator override if there is one, else the
-// source's default (multiplier × declared resolution).
+// source's declared default.
 //
 // A source that never declared a resolution yields +Inf, which
 // reproduces the pre-#478 behaviour exactly: the old expression joined

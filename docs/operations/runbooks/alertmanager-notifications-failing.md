@@ -159,8 +159,14 @@ the check to arm that path:
    check (by pinging its `/fail` endpoint) would make one signal mean
    both "Prometheus or Alertmanager is dead" and "chat delivery is
    being refused", which sends the operator to the wrong runbook.
-   Give it a long period/grace: it is pinged only when something is
-   wrong, so it must not go down on its own.
+   Period and grace 365 days: it is pinged only when something is
+   wrong, so it must not go down on its own. Turn on HTTP body
+   filtering (API: `filter_http_body`, not `filter_body`, which is
+   email only) with failure keyword `"status":"firing"` and success
+   keyword `"status":"resolved"`; without it every Alertmanager POST
+   is a success ping and a delivery failure never alarms. Notify by
+   email, not Discord. Test with one POST of each body; the check
+   goes down, then up.
 2. Add the ping URL to `/etc/default/alertmanager-secrets` on r1 as
    `HEALTHCHECKS_ALERT_DELIVERY_URL`.
 3. `bash configs/alertmanager/apply.sh` — it prints

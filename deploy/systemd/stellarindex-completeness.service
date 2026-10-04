@@ -29,4 +29,3 @@ ProtectControlGroups=true
 # Bound a hung run so it fails and frees the next tick instead of
 # wedging the completeness verdict indefinitely.
 TimeoutStartSec=30min
-RuntimeMaxSec=30min

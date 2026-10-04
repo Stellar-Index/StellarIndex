@@ -622,8 +622,9 @@ func (s *Server) handleSDEXOrderbook(w http.ResponseWriter, r *http.Request) {
 	// GH-987: snap.at is the last SUCCESSFUL Advance (a failed one
 	// leaves it untouched — see Advance's early return), so this is the
 	// only honest staleness signal a wedged book has.
+	// A stale book is the last good snapshot carried past failed advances.
 	stale := time.Since(snap.at) > SDEXOrderBookStaleAfter
-	writeJSON(w, view, Flags{Stale: stale})
+	writeJSON(w, view, Flags{Stale: stale, Degraded: stale})
 }
 
 // parseOrderBookParams validates selling/buying (canonical classic

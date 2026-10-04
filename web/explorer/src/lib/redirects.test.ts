@@ -58,7 +58,11 @@ function compile(pattern: string): { regex: RegExp; names: string[] } {
   return { regex: new RegExp(`^${regexStr}$`), names };
 }
 
-function applyDest(dest: string, names: string[], match: RegExpMatchArray): string {
+function applyDest(
+  dest: string,
+  names: string[],
+  match: RegExpMatchArray,
+): string {
   let result = dest;
   names.forEach((name, i) => {
     result = result.replace(new RegExp(`:${name}\\b`), match[i + 1] ?? '');
@@ -71,7 +75,11 @@ function matchOne(path: string, rules: Rule[]): Rule | null {
     const { regex, names } = compile(rule.pattern);
     const m = path.match(regex);
     if (m) {
-      return { pattern: path, dest: applyDest(rule.dest, names, m), status: rule.status };
+      return {
+        pattern: path,
+        dest: applyDest(rule.dest, names, m),
+        status: rule.status,
+      };
     }
   }
   return null;
@@ -95,7 +103,8 @@ function follow(
     const rule = matchOne(current, rules);
     if (!rule) return { resolved: matchedAtLeastOnce, finalPath: current };
     matchedAtLeastOnce = true;
-    if (rule.dest.startsWith('http')) return { resolved: true, finalPath: rule.dest };
+    if (rule.dest.startsWith('http'))
+      return { resolved: true, finalPath: rule.dest };
     current = rule.dest;
   }
   return { resolved: true, finalPath: current };
@@ -135,5 +144,11 @@ describe('_redirects: /currencies bare-form aliases (T247)', () => {
     const result = follow('/currencies/doge', rules);
     expect(result.finalPath.endsWith('//')).toBe(false);
     expect(result.finalPath).toBe('/currencies/doge/');
+  });
+});
+
+describe('_redirects: bare-form sdex alias', () => {
+  it.each(['/protocols/sdex', '/protocols/sdex/'])('301s %s to /sdex/', (p) => {
+    expect(follow(p, rules)).toEqual({ resolved: true, finalPath: '/sdex/' });
   });
 });

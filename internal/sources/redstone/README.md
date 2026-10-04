@@ -88,7 +88,7 @@ feed_ids are NOT always the display name —
 `EUROC` is `EUROC/EUR`, `BENJI` is `BENJI_ETHEREUM_FUNDAMENTAL`,
 the SolvBTC variants carry `_FUNDAMENTAL` suffixes.
 
-Pre-#53 the decoder matched `canonical.IsKnownCrypto(feedID)`.
+Pre-ecc289c6b the decoder matched `canonical.IsKnownCrypto(feedID)`.
 Because the EUROC feed_id is `EUROC/EUR` — not the allow-list
 entry `EUROC` — **EUROC silently never decoded**, and all 11
 RWA / tokenized-BTC feeds were dropped. The registry fixes both.
@@ -150,7 +150,8 @@ hasn't moved more than 0.2% in either direction. The decoder
 publishes
 `DefaultResolutionSeconds = 24 * 60 * 60` as the
 `stellarindex_oracle_resolution_seconds` gauge so the
-`oracle-stale` alert (which fires at `> 10× resolution`) has the
+`oracle-stale` alert (whose RedStone budget is the 26 h heartbeat, via
+`obs.DeclareOracleHeartbeat`) has the
 correct threshold for a quiet feed.
 
 ### Q6 — `i128` everywhere — but the price is `U256`

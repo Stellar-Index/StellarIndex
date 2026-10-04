@@ -14,6 +14,7 @@
 //   - POST   /v1/dashboard/webhooks         — create
 //   - PATCH  /v1/dashboard/webhooks/{id}    — update name / url / events / enabled
 //   - DELETE /v1/dashboard/webhooks/{id}    — delete (cascades to deliveries)
+//   - POST   /v1/dashboard/webhooks/{id}/rotate-secret — new secret; old one co-signs for 24h
 //   - GET    /v1/dashboard/webhooks/{id}/deliveries — most-recent attempts
 //
 // Wire shape: bare JSON, not the v1 envelope — the dashboard

@@ -97,9 +97,6 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 	if err != nil {
 		return nil, fmt.Errorf("%w: symbol_rates not a Vec: %w", ErrMalformedArgs, err)
 	}
-	if len(pairs) == 0 {
-		return nil, ErrEmptyRates
-	}
 	if len(pairs) > opIndexFanoutStride {
 		return nil, fmt.Errorf("band: symbol_rates length %d exceeds fanout stride %d",
 			len(pairs), opIndexFanoutStride)
@@ -116,6 +113,11 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 	resolveSeconds, err := scval.AsU64(timeSv)
 	if err != nil {
 		return nil, fmt.Errorf("%w: resolve_time: %w", ErrMalformedArgs, err)
+	}
+	if len(pairs) == 0 {
+		// A well-formed call with an empty symbol_rates writes nothing
+		// on-chain: a recognised no-op, not a decode error that blinds the ledger.
+		return nil, nil
 	}
 	// Defensive fallback: relayer-supplied resolve_time is a u64;
 	// canonical.SafeUnixSeconds bound-checks the RAW u64 (pre-2001

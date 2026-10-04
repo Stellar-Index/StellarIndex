@@ -92,13 +92,16 @@ const DIRECTION_OPTIONS: { value: string; label: string }[] = [
 
 // The full movement_kind vocabulary this endpoint can serve (see
 // AccountMovement.movement_kind's doc comment, openapi/stellar-index.v1.yaml).
-// Every value except "transfer" only appears on ClickHouse pre-P23 archive
-// rows; "transfer" is the only kind the Postgres post-P23 tail ever emits.
+// "mint" and "burn" appear only on post-P23 archive rows, "transfer" and
+// "clawback" on both epochs, every other kind only on pre-P23 archive rows;
+// the Postgres post-P23 tail emits "transfer" alone.
 // An unrecognized kind isn't an error server-side — it's just a filter that
 // matches nothing — so this list is a UX convenience, not a hard contract.
 const KIND_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: 'All kinds' },
   { value: 'transfer', label: 'Transfer' },
+  { value: 'mint', label: 'Mint' },
+  { value: 'burn', label: 'Burn' },
   { value: 'payment', label: 'Payment' },
   { value: 'create_account', label: 'Create account' },
   { value: 'path_payment', label: 'Path payment' },
