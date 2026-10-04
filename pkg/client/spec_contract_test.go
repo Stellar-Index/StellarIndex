@@ -84,6 +84,7 @@ var coveredOperations = []coveredOperation{
 	// spec schemas (Asset, GlobalAssetView) document round-trips.
 	{sdkMethod: "Asset", method: "GET", path: "/assets/{asset_id}", payload: nil, envelopeRef: "#/components/schemas/AssetEnvelope"},
 	{"AssetMetadata", "GET", "/assets/{asset_id}/metadata", AssetMetadata{}, ""},
+	{"AssetSupplyFlows", "GET", "/assets/{asset_id}/supply/flows", AssetSupplyFlows{}, ""},
 	{"Sources", "GET", "/sources", Source{}, ""},
 	{"Aggregators", "GET", "/aggregators", AggregatorRow{}, ""},
 	{"Methodology", "GET", "/methodology", Methodology{}, ""},
@@ -200,6 +201,8 @@ var uncoveredOperations = map[string]string{
 	"POST /auth/passkey/finish-login":             "browser WebAuthn ceremony — session-cookie dashboard surface",
 	"POST /auth/passkey/begin-register":           "browser WebAuthn ceremony — session-cookie dashboard surface",
 	"POST /auth/passkey/finish-register":          "browser WebAuthn ceremony — session-cookie dashboard surface",
+	"POST /auth/passkey/begin-signup":             "browser WebAuthn ceremony — session-cookie dashboard surface",
+	"POST /auth/passkey/finish-signup":            "browser WebAuthn ceremony — session-cookie dashboard surface",
 	"GET /auth/passkey/credentials":               "session-cookie dashboard surface",
 	"DELETE /auth/passkey/credentials/{id}":       "session-cookie dashboard surface",
 	"GET /signup/verify":                          "browser onboarding flow — HTML confirmation page",

@@ -25,7 +25,7 @@ groups:
       # is 6h.)
       - alert: stellarindex_external_poller_stale
         expr: |
-          (time() - stellarindex_external_poller_last_success_unix{source!="ecb"}) > 1800
+          (time() - stellarindex_external_poller_last_success_unix{source!~"ecb|tiingo"}) > 1800
         for: 5m
         labels:
           severity: ticket
@@ -65,6 +65,25 @@ groups:
             the indexer host lost outbound HTTPS to ECB, or the
             poller goroutine deadlocked. Severity is informational
             because ECB rates are fallback FX, not primary pricing.
+
+      # Tiingo polls hourly (internal/sources/external/tiingo/events.go
+      # DefaultPollInterval), so the 30m generic rule would fire after
+      # every successful poll. 2x interval = one whole missed cycle.
+      - alert: stellarindex_external_poller_stale_tiingo
+        expr: |
+          (time() - stellarindex_external_poller_last_success_unix{source="tiingo"}) > 7200
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
+          summary: "Tiingo poller has not succeeded in 2+ h (>2x poll interval)"
+          description: |
+            Tiingo's 1h poll interval skipped at least one whole cycle.
+            Either the Tiingo API is down or throttling (4xx/5xx), the
+            API token expired, or the indexer host lost outbound HTTPS.
 
       # One Chainlink ingest feed has returned no round within its
       # max_age_hours for 30+ min. The poller's own tick stays green

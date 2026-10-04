@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -447,9 +449,9 @@ func DecodeCAP0038Revocation(ledger uint32, closedAt time.Time, txHash string, o
 	// row that actually describes reality costs nothing on the read side
 	// and needs no query change at all.
 	//
-	// LegIndex: the pool-exit legs keep indices [0, len(created)), exactly
-	// as before, so rows already written retain their primary key. The
-	// create legs are appended above that range rather than interleaved.
+	// LegIndex: the pool-exit legs take [0, len(created)) and the create
+	// legs follow above that range rather than interleaved. Both are numbered
+	// in balance-id order (createdClaimableBalances), never change order.
 	movements := make([]Movement, 0, 2*len(created))
 	for i, cb := range created {
 		movements = append(movements, Movement{
@@ -548,7 +550,9 @@ type createdClaimableBalanceRef struct {
 }
 
 // createdClaimableBalances extracts every 'created' ClaimableBalanceEntry
-// from changes — the CAP-0038 liquidation signal. Any non-'created'
+// from changes — the CAP-0038 liquidation signal — sorted by balance id.
+// The order is leg_index, part of account_movements' key, and change order
+// within an op differs between exports of the same ledger. Any non-'created'
 // claimable_balance change (a genuine ClaimClaimableBalance/
 // ClawbackClaimableBalance at the SAME op_index would be a protocol
 // impossibility — AllowTrust/SetTrustLineFlags never claim/clawback)
@@ -574,5 +578,6 @@ func createdClaimableBalances(changes []EntryChangeXDR) []createdClaimableBalanc
 			BalanceIDHex: idHex,
 		})
 	}
+	slices.SortFunc(out, func(a, b createdClaimableBalanceRef) int { return strings.Compare(a.BalanceIDHex, b.BalanceIDHex) })
 	return out
 }

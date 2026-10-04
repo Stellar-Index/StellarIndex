@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
@@ -213,6 +214,37 @@ func TestEventShapes_BlendPoolSettings(t *testing.T) {
 		if ae.AdminAction != want.action || ae.Value.String() != want.value || ae.Admin != "" {
 			t.Errorf("event %d = %+v (value %s), want %s %s", i, ae, ae.Value.String(), want.action, want.value)
 		}
+	}
+}
+
+// toggle_trading on the factory-created pool CCPPPTDW… (WASM d54d01e0…),
+// real lake bytes: ledger 64,030,690, tx 5de41f39…, op 0, event 0, body
+// Bool(false). Recognised, zero rows; a non-Bool body is malformed.
+func TestEventShapes_ToggleTradingRecognized(t *testing.T) {
+	const pool = "CCPPPTDWJIWXQUQ2CN64S5JYQ7GYWVZIT7YWUUTH75HKIZX53Z2CE3XI"
+	ev := events.Event{
+		Type:                     "contract",
+		Ledger:                   64_030_690,
+		LedgerClosedAt:           "2026-08-19T19:37:49Z",
+		ContractID:               pool,
+		TxHash:                   "5de41f395bcacc6658b420678b8bc4478c895a7d6f1fbd8fe84c19835781bc6f",
+		InSuccessfulContractCall: true,
+		Topic:                    []string{"AAAADgAAAA50b2dnbGVfdHJhZGluZwAA", "AAAADgAAAAdlbmFibGVkAA=="},
+		Value:                    "AAAAAAAAAAA=",
+	}
+	d := NewDecoder(contractid.WithSeed([]string{pool}))
+	if name, ok := dispatcher.New(d).Recognize(ev); !ok || name != SourceName {
+		t.Fatalf("Recognize = (%q, %v), want (%q, true)", name, ok, SourceName)
+	}
+	if out := decodeOK(t, d, ev); len(out) != 0 {
+		t.Errorf("Decode emitted %d events, want 0", len(out))
+	}
+	if NewDecoder().Matches(ev) {
+		t.Error("Matches = true for an unregistered emitter")
+	}
+	ev.Value = shapeEvent(t, loadShapeEvents(t), 63_295_049, 1).Value
+	if _, err := d.Decode(ev); !errors.Is(err, ErrMalformedPayload) {
+		t.Errorf("i128 body: err = %v, want ErrMalformedPayload", err)
 	}
 }
 

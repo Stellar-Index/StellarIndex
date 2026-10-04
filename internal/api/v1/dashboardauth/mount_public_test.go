@@ -22,7 +22,9 @@ var loginEntryPoints = []string{
 	"POST /v1/auth/login",
 	"POST /v1/auth/logout",
 	"POST /v1/auth/passkey/begin-login",
+	"POST /v1/auth/passkey/begin-signup",
 	"POST /v1/auth/passkey/finish-login",
+	"POST /v1/auth/passkey/finish-signup",
 	"POST /v1/auth/verify-code",
 }
 

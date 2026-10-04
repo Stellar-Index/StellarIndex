@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestEvaluateEachSource_OneFailureDoesNotWithholdLaterVerdicts (#805, #1202
@@ -23,7 +24,7 @@ func TestEvaluateEachSource_OneFailureDoesNotWithholdLaterVerdicts(t *testing.T)
 	errPhoenix := errors.New("phoenix: served floor: boom")
 
 	var evaluated []string
-	err := evaluateEachSource(context.Background(), cat, "", func(src reconSource) error {
+	err := evaluateEachSource(context.Background(), cat, "", 0, func(_ context.Context, src reconSource) error {
 		evaluated = append(evaluated, src.name)
 		switch src.name {
 		case "soroswap":
@@ -47,7 +48,7 @@ func TestEvaluateEachSource_OneFailureDoesNotWithholdLaterVerdicts(t *testing.T)
 func TestEvaluateEachSource_HonoursTheSourceFilter(t *testing.T) {
 	cat := []reconSource{{name: "soroswap"}, {name: "aquarius"}, {name: "phoenix"}}
 	var evaluated []string
-	if err := evaluateEachSource(context.Background(), cat, "aquarius", func(src reconSource) error {
+	if err := evaluateEachSource(context.Background(), cat, "aquarius", 0, func(_ context.Context, src reconSource) error {
 		evaluated = append(evaluated, src.name)
 		return nil
 	}); err != nil {
@@ -67,7 +68,7 @@ func TestEvaluateEachSource_StopsOnADoneContext(t *testing.T) {
 	defer cancel()
 
 	var evaluated []string
-	err := evaluateEachSource(ctx, cat, "", func(src reconSource) error {
+	err := evaluateEachSource(ctx, cat, "", 0, func(_ context.Context, src reconSource) error {
 		evaluated = append(evaluated, src.name)
 		cancel()
 		return nil
@@ -156,5 +157,26 @@ func TestOrderForPassCensusLastFromGenesis(t *testing.T) {
 	}
 	if want := []string{"soroswap", "sdex", "sep41_transfers", "sep41_supply"}; !slices.Equal(got, want) {
 		t.Errorf("incremental census: got %v, want %v", got, want)
+	}
+}
+
+// TestEvaluateEachSource_PerSourceBudgetDoesNotStarveLaterSources: a source that
+// outlives its own budget fails alone; the sources after it still run.
+func TestEvaluateEachSource_PerSourceBudgetDoesNotStarveLaterSources(t *testing.T) {
+	cat := []reconSource{{name: "comet"}, {name: "blend"}}
+	var evaluated []string
+	err := evaluateEachSource(context.Background(), cat, "", 20*time.Millisecond, func(ctx context.Context, src reconSource) error {
+		evaluated = append(evaluated, src.name)
+		if src.name == "comet" {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		return nil
+	})
+	if !slices.Equal(evaluated, []string{"comet", "blend"}) {
+		t.Errorf("evaluated %v, want blend to run after comet timed out", evaluated)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want comet's deadline reported (no fake verdict)", err)
 	}
 }

@@ -141,8 +141,10 @@ restamp.
    session, and retry, rather than letting one park.
 3. **A migration applied against live traffic.** Migrations auto-deploy
    (`deploy.yml` syncs and applies), so a DDL migration can land mid-day.
-4. **The TimescaleDB compression policy's own proc** compressing a chunk
-   a long reader is scanning.
+4. **A TimescaleDB compression policy's own proc** compressing a chunk
+   a long reader is scanning. The `trades` job (`trades_compression_policy`)
+   asks under a 5 s `lock_timeout` and so cannot head a convoy; the other
+   hypertables' built-in policies still can.
 5. **An idle-in-transaction session** holding a lock nobody expects.
    `state = 'idle in transaction'` on the head of the chain is the tell.
 

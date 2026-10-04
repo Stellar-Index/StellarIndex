@@ -120,13 +120,17 @@ func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	assetFilter, ok := parsePoolAssetFilter(w, r)
+	if !ok {
+		return
+	}
 
 	// 10s ceiling: two PK-prefix batched lake lookups (~fast) + one
 	// registry scan; generous margin over the observed cost.
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	pairs, ok := s.poolReservesPairs(ctx, w, r, poolFilter)
+	pairs, ok := s.poolReservesPairs(ctx, w, r, poolFilter, assetFilter)
 	if !ok {
 		return
 	}
@@ -195,10 +199,70 @@ func parsePoolReservesQuery(w http.ResponseWriter, r *http.Request) (poolFilter 
 	return poolFilter, true
 }
 
+// poolAssetFilter is a parsed ?asset= on the AMM reserve listings: every
+// form the asset trades under, so a pool keyed on any alias matches.
+type poolAssetFilter struct {
+	contracts map[string]struct{} // Soroban token forms (SEP-41 / SAC C-strkeys)
+	classic   map[string]struct{} // CAP-38 reserve forms ("native" / "CODE-ISSUER")
+}
+
+func newPoolAssetFilter(asset canonical.Asset) *poolAssetFilter {
+	f := &poolAssetFilter{contracts: map[string]struct{}{}, classic: map[string]struct{}{}}
+	for _, a := range canonical.AssetAliases(asset) {
+		switch a.Type {
+		case canonical.AssetSoroban:
+			f.contracts[a.ContractID] = struct{}{}
+		case canonical.AssetNative, canonical.AssetClassic:
+			f.classic[a.String()] = struct{}{}
+			// The SAC derives from (code, issuer), so a pair over it matches
+			// even when no sac_wrappers entry registers the alias.
+			if sac, err := a.SacContractID(); err == nil {
+				f.contracts[sac] = struct{}{}
+			}
+		case canonical.AssetFiat, canonical.AssetCrypto, canonical.AssetRWA, canonical.AssetOracleRaw:
+			// Off-chain identities never hold an AMM reserve.
+		}
+	}
+	return f
+}
+
+func (f *poolAssetFilter) hasContract(c string) bool {
+	_, ok := f.contracts[c]
+	return ok
+}
+
+func (f *poolAssetFilter) hasClassic(a string) bool {
+	_, ok := f.classic[a]
+	return ok
+}
+
+// parsePoolAssetFilter validates ?asset= (a canonical asset id) and refuses
+// it beside ?pool=. nil when absent; ok=false after a problem+json write.
+func parsePoolAssetFilter(w http.ResponseWriter, r *http.Request) (*poolAssetFilter, bool) {
+	raw := r.URL.Query().Get("asset")
+	if raw == "" {
+		return nil, true
+	}
+	if r.URL.Query().Get("pool") != "" {
+		writeProblem(w, r, "https://api.stellarindex.io/errors/conflicting-filters",
+			"Conflicting filters", http.StatusBadRequest,
+			"asset and pool are different filter shapes; pick one.")
+		return nil, false
+	}
+	asset, err := canonical.ParseAsset(raw)
+	if err != nil {
+		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-asset-id",
+			"Invalid asset", http.StatusBadRequest,
+			"asset must be a canonical asset_id (e.g. 'native', 'USDC-G…', a C-strkey); got "+raw+" ("+err.Error()+")")
+		return nil, false
+	}
+	return newPoolAssetFilter(asset), true
+}
+
 // poolReservesPairs loads the Soroswap pair registry and applies the
-// optional single-pool filter. ok=false after a problem+json write
-// (registry failure, or an unregistered pool → honest 404).
-func (s *Server) poolReservesPairs(ctx context.Context, w http.ResponseWriter, r *http.Request, poolFilter string) ([]string, bool) {
+// optional single-pool or asset filter. ok=false after a problem+json
+// write (registry failure, or an unregistered pool → honest 404).
+func (s *Server) poolReservesPairs(ctx context.Context, w http.ResponseWriter, r *http.Request, poolFilter string, assetFilter *poolAssetFilter) ([]string, bool) {
 	registry, err := s.soroswapPairs.LoadSoroswapPairRegistry(ctx)
 	if err != nil {
 		if !clientAborted(r, err) {
@@ -211,6 +275,9 @@ func (s *Server) poolReservesPairs(ctx context.Context, w http.ResponseWriter, r
 	pairs := make([]string, 0, len(registry))
 	for _, p := range registry {
 		if poolFilter != "" && p.PairStrkey != poolFilter {
+			continue
+		}
+		if assetFilter != nil && !assetFilter.hasContract(p.Token0Strkey) && !assetFilter.hasContract(p.Token1Strkey) {
 			continue
 		}
 		pairs = append(pairs, p.PairStrkey)

@@ -21,8 +21,9 @@
 //   - Archive integrity + WASM tracking (internal/ops/archive):
 //     `verify-archive`, `archive-completeness`, `cross-region-check`,
 //     `cross-region-monitor`, `trim-galexie-archive`,
-//     `rehydrate-galexie-archive`, `wasm-history`,
-//     `wasm-history-merge-jsonl`, `extract-wasm-from-galexie`.
+//     `rehydrate-galexie-archive`, `galexie-mirror-verify`, `wasm-history`,
+//     `wasm-history-merge-jsonl`, `extract-wasm-from-galexie`,
+//     `compare-entry-changes`.
 //   - Soroban discovery (internal/ops/discovery): `discovery`.
 //   - Supply (internal/ops/supply): `supply`.
 //   - Diagnostics (internal/ops/diagnostics): `rpc-probe`,
@@ -35,7 +36,8 @@
 //     `compute-completeness`, `verify-served-values`, `verify-usd-volume`,
 //     `usd-volume-restamp`, `sdex-claim-audit`, `classic-movements-backfill`,
 //     `projected-rebuild`, `reconcile-balances`, `verify-contiguity`,
-//     `verify-hashchain`, `verify-lake`, `wasm-drift`.
+//     `verify-hashchain`, `verify-lake`, `verify-network-state`,
+//     `wasm-drift`.
 //   - Doc generation: `docs-config` (regenerates the config
 //     reference from struct tags; called by `make docs-config`).
 //   - Billing/usage recovery: `usage-rollup-backfill` (re-folds the
@@ -163,9 +165,11 @@ var subcommands = map[string]func(args []string) error{
 	"cross-region-monitor":      archive.Run,
 	"trim-galexie-archive":      archive.Run,
 	"rehydrate-galexie-archive": archive.Run,
+	"galexie-mirror-verify":     archive.Run,
 	"wasm-history":              archive.Run,
 	"wasm-history-merge-jsonl":  archive.Run,
 	"extract-wasm-from-galexie": archive.Run,
+	"compare-entry-changes":     archive.Run,
 
 	"discovery": discovery.Run,
 
@@ -203,6 +207,7 @@ var subcommands = map[string]func(args []string) error{
 	"verify-contiguity":          chops.Run,
 	"verify-hashchain":           chops.Run,
 	"verify-lake":                chops.Run,
+	"verify-network-state":       chops.Run,
 	"wasm-drift":                 chops.Run,
 }
 
@@ -1328,6 +1333,26 @@ Subcommands:
                           different shape; run it separately. Example:
                             stellarindex-ops verify-lake \
                               -ch-addr 127.0.0.1:9300
+  verify-network-state [-config PATH] [-ch-addr H:P] [-archive URL] [-checkpoint N] [-checks hotarchive,lumens] [-textfile PATH]
+                          Compares the lake's derived current state with
+                          state the network publishes; run daily by
+                          verify-network-state.timer. (1) hotarchive:
+                          every archived entry in the history archive's
+                          hot-archive buckets at a checkpoint (default the
+                          newest at or below the lake tip) must match
+                          ledger_entries_current — a protocol upgrade can
+                          rewrite these with no ledger-meta change.
+                          (2) lumens: native XLM in accounts, claimable
+                          balances, liquidity pools and native-SAC
+                          balances plus fee_pool must equal total_coins
+                          exactly. Keys absent from the lake or changed
+                          after the checkpoint are reported, not counted.
+                          Needs a loadable -config (network passphrase +
+                          archive URL). Exit code = hot-archive mismatches
+                          (+1 if nothing was comparable) + 1 for a lumen
+                          residual (capped at 255). Example:
+                            stellarindex-ops verify-network-state \
+                              -config /etc/stellarindex.toml
   wasm-drift [-config PATH] [-ch-addr H:P] [-source NAME] [-textfile PATH]
                           Every contract of a gated source that has an
                           audit log (curated set + factories + children
@@ -1384,7 +1409,7 @@ Subcommands:
                           (reflector/redstone), cctp/rozo/defindex, blend's
                           four tables (re-derive bucketed by EventKind), and
                           sdex (lake ops re-derive). Seeds soroswap pairs via RPC.
-  compute-completeness -config PATH [-to N] [-source S] [-ch -pass]
+  compute-completeness -config PATH [-to N] [-allow-frozen-cursor] [-source S] [-ch -pass]
                           ADR-0033 Phase 6: compute the per-source
                           completeness WATERMARK (substrate continuity +
                           hash chain ∧ projection reconciliation) and a
@@ -1504,7 +1529,7 @@ Subcommands:
                           QUOTE leg is not USD-pegged, recomputes
                           usd_volume = base_amount/1e7 x XLM/USD-at-ts by
                           calling the store's own
-                          tradeUSDVolumeViaXLMBaseAnchor with the installed
+                          usdVolumeViaXLMBaseAnchor with the installed
                           VWAPUSDFXResolver — the same function InsertTrade
                           calls. Repairs the pre-fd1860bd class (#372):
                           XLM-base trades valued QUOTE-side through the
@@ -1681,6 +1706,29 @@ Subcommands:
                               missing_in_cold counter).
                           Refuses to run if cold tier is not configured
                           (cfg.Storage.ColdTieringEnabled() == false).
+  galexie-mirror-verify -config PATH [-bucket B] [-from N] [-to N] [-parallel N] [-max-report N] [-textfile-output PATH]
+                          Read-only. Compare every object of the local
+                          Galexie mirror (storage.s3_bucket_archive)
+                          with the same key on the upstream dataset
+                          (storage.s3_cold_*) by ETag and size, per
+                          partition present on both sides. Prints one
+                          MISMATCH line per differing object with its
+                          partition and ledger; cause is
+                          upstream-rewritten (upstream modified after
+                          our copy), local-differs, or local-only.
+                          Exits non-zero on any mismatch or listing
+                          error. galexie-archive-fill checks presence
+                          only, so this is what sees a re-export.
+  compare-entry-changes -config PATH -from N -to N [-bucket NAME] [-window N]
+                          Read-only. Extract the ledger_entry_changes rows
+                          for [-from, -to] from our galexie export
+                          (storage.s3_bucket_archive, or -bucket) and from
+                          the cold tier (the AWS public export), exactly as
+                          the lake writer would, and compare them position
+                          by position. Prints a JSON report (row counts,
+                          difference count, first 20 differences); exits 1
+                          on any difference. -window (default 100) bounds
+                          the ledgers held in memory per export.
   mint-key -config PATH -identifier ID -label LABEL -reason TEXT [-actor NAME] [-tier T [-confirm-operator]] [-scopes S,..] [-rate-limit-per-min N] [-expires-in DUR]
                           Issue a fresh API key directly via the
                           Redis API-key store. Operator-only path

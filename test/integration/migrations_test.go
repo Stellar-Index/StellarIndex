@@ -185,7 +185,19 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	// policy was in fact removed as drift on 2026-06-10). Assert
 	// compression is present and retention is absent — F-1334 flipped
 	// these from the old (now-invalid) assert-attached.
-	assertPolicyAttached(t, db, ctx, "trades", "policy_compression")
+	// trades compresses through 0205's custom job, which the jobs view
+	// attaches to no hypertable; the built-in policy it replaced is gone.
+	var tradesCompressionJobs int
+	if err := db.QueryRowContext(ctx, `
+        SELECT count(*) FROM timescaledb_information.jobs
+        WHERE proc_name = 'trades_compression_policy' AND scheduled
+          AND config->>'compress_after' IS NOT NULL`).Scan(&tradesCompressionJobs); err != nil {
+		t.Fatalf("check trades_compression_policy job: %v", err)
+	}
+	if tradesCompressionJobs != 1 {
+		t.Errorf("expected one scheduled trades_compression_policy job, got %d", tradesCompressionJobs)
+	}
+	assertPolicyAbsent(t, db, ctx, "trades", "policy_compression")
 	assertPolicyAbsent(t, db, ctx, "trades", "policy_retention")
 	assertPolicyAttached(t, db, ctx, "oracle_updates", "policy_compression")
 	assertPolicyAbsent(t, db, ctx, "oracle_updates", "policy_retention")
@@ -248,6 +260,14 @@ func TestMigrationsRoundTrip(t *testing.T) {
 
 	// 0196 — trades.tx_index, the post-insert apply-order tag.
 	assertColumnType(t, db, ctx, "trades", "tx_index", "integer")
+
+	// 0203 — sushiswap_v3_position_events: hypertable, compression, no
+	// retention, bigint generation from creation.
+	assertHypertableExists(t, db, ctx, "sushiswap_v3_position_events")
+	assertCompressionEnabled(t, db, ctx, "sushiswap_v3_position_events", true)
+	assertPolicyAttached(t, db, ctx, "sushiswap_v3_position_events", "policy_compression")
+	assertPolicyAbsent(t, db, ctx, "sushiswap_v3_position_events", "policy_retention")
+	assertColumnType(t, db, ctx, "sushiswap_v3_position_events", "derive_generation", "bigint")
 
 	// ─── Down: roll everything back ─────────────────────────────
 	// 0191's down refuses (LOUD) while any trades row has a zero leg;

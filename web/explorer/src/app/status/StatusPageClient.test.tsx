@@ -891,4 +891,14 @@ describe('StatusPageClient incident history postmortem link', () => {
     });
     await screen.findByText(/Read full postmortem/i);
   });
+
+  it('bounds the /v1/incidents request with an abort signal', async () => {
+    renderWithSeed({});
+    await screen.findByText('partial pricing outage');
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const call = fetchMock.mock.calls.find(([u]) =>
+      String(u).includes('/v1/incidents'),
+    );
+    expect(call?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
 });

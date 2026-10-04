@@ -1,11 +1,13 @@
 ---
 title: Runbook — Galexie archive off-site mirror (off-site-backup-plan.md §1)
-last_verified: 2026-09-28
+last_verified: 2026-10-03
 status: draft
 severity: P3
 ---
 
 # Runbook — `stellarindex_galexie_archive_mirror_stale`
+
+> **Retired 2026-10-02.** The raw archive is not mirrored off-site; it is re-pulled from SDF's public bucket (ADR-0043 §2 amendment 2026-08-29). With `galexie_archive_mirror_enabled: false` (the default) ansible removes the units, script and `galexie_archive_mirror.prom`, so the metric is absent and this alert cannot fire on that host. The rest of this page applies only to a host that re-enables the mirror.
 
 ## At a glance
 

@@ -1711,7 +1711,7 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	if !m.available && !m.contractCensus.available && len(m.members) == 0 && len(m.contracts) == 0 {
 		view.Summary.Basis = rwaBasisUnavailable
 		view.Funnel = rwaFunnelUnavailable()
-		writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
+		writeEnvelope(w, Envelope{Data: view, Flags: Flags{Degraded: m.readFailed}})
 		return
 	}
 
@@ -1797,7 +1797,7 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	// can say which of its rows the verified set already carries and can
 	// never feed a figure back into the totals above.
 	curatedDegraded := s.attachRWACurated(vctx, &view, now)
-	writeEnvelope(w, Envelope{Data: view, Flags: Flags{Stale: degraded || curatedDegraded}})
+	writeEnvelope(w, Envelope{Data: view, Flags: Flags{Stale: degraded || curatedDegraded, Degraded: degraded || curatedDegraded || m.readFailed}})
 }
 
 // rwaVerifiedContractRows values the verified contract arm. A valuation

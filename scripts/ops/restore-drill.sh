@@ -27,7 +27,8 @@
 #   DRILL_REPO=2 bash scripts/ops/restore-drill.sh    # prove the OFFSITE copy (restore-drill-offsite.timer)
 #   DRILL_CH_WINDOW=100000 bash scripts/ops/restore-drill.sh  # + CH re-derive sample
 #
-# Exit code: number of failed verification checks; 2 for a precondition
+# Exit code: 1 if any verification check failed (the count is in the
+# evidence log and the failures metric), else 0; 2 for a precondition
 # refusal (wrong user, missing tool, too little free space, or a
 # drill-script/binary flag drift — see the CH preflight below). A
 # precondition refusal is deliberately NOT counted as a verification
@@ -227,8 +228,23 @@ DATA_DIR="$DRILL_ROOT/pgdata-$(date +%Y%m%d-%H%M%S)"
 # that must not linger. Post-restore failures (recovery, verification)
 # are different: there the datadir IS the evidence, and is kept.
 restore_in_progress=0
+evidence_recorded=0
+drill_stage="startup"
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via the EXIT trap below
 cleanup() {
+  local rc=$?
+  # Any exit that did not go through record_evidence (an unguarded psql,
+  # tee or command substitution dying under `set -e`) is still a drill
+  # that ran: count it and record it rather than leave the old metric ageing.
+  if [[ "$evidence_recorded" -eq 0 ]]; then
+    [[ "$rc" -ne 0 ]] || rc=1
+    fail_count=$((fail_count + 1))
+    drill_aborted_at="${drill_stage} (unexpected exit, status $rc)"
+    note "FAIL  unexpected exit during $drill_stage (status $rc) — recording the run"
+    record_evidence
+    emit_metric
+    rc=1
+  fi
   if [[ -f "$DATA_DIR/postmaster.pid" ]]; then
     sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA_DIR" stop -m immediate || true
   fi
@@ -240,6 +256,7 @@ cleanup() {
   else
     echo "restore-drill: KEEPING $DATA_DIR for diagnosis (failures=$fail_count); delete it manually" >&2
   fi
+  exit "$rc"
 }
 trap cleanup EXIT
 
@@ -262,6 +279,7 @@ trap cleanup EXIT
 # run" and "ran and found a problem" must not share a signal.
 drill_aborted_at=""
 record_evidence() {
+  evidence_recorded=1
   local evidence_file="$LOG_DIR/restore-drills.md"
   if mkdir -p "$LOG_DIR" 2>/dev/null && {
         echo "## $(date -u +%F) restore drill (repo${DRILL_REPO})"
@@ -397,8 +415,8 @@ emit_metric() {
   # remove. A withheld line leaves its series absent, and both staleness
   # alerts already read absence.
   #
-  # This never changes the drill's exit code: `exit "$fail_count"` is
-  # the count of FAILED CHECKS OF THE BACKUP, and a metric-writer fault
+  # This never changes the drill's exit code: `exit "$(failure_exit_code)"` is
+  # the verdict on FAILED CHECKS OF THE BACKUP, and a metric-writer fault
   # is not a fact about the backup (the same reasoning that made the
   # lock a refusal rather than a counted failure). The tally gauge and
   # the journal carry it instead.
@@ -472,18 +490,22 @@ emit_metric() {
   return 0
 }
 
+# A raw count would collide with the refusal code at exactly 2 failures.
+failure_exit_code() { if [[ "$fail_count" -gt 0 ]]; then echo 1; else echo 0; fi; }
+
 # abort_drill <stage>: a stage the rest of the drill cannot proceed
 # without has failed. Record it (evidence + metric) and exit with the
-# failure count — never a bare `exit` from mid-drill.
+# failure code — never a bare `exit` from mid-drill.
 abort_drill() {
   drill_aborted_at="$1"
   note "aborting at $drill_aborted_at — recording the run before exit"
   record_evidence
   emit_metric
-  exit "$fail_count"
+  exit "$(failure_exit_code)"
 }
 
 # ─── phase 1: restore ───────────────────────────────────────────────
+drill_stage="pg_restore"
 note "restoring stanza=$STANZA repo=$DRILL_REPO into $DATA_DIR …"
 mkdir -p "$DATA_DIR" && chown postgres:postgres "$DATA_DIR" && chmod 700 "$DATA_DIR"
 restore_started=$(date +%s)
@@ -500,6 +522,7 @@ else
 fi
 
 # ─── phase 2: start scratch instance + recover ──────────────────────
+drill_stage="pg_start"
 # Recovery target: end of archived WAL. Disposable instance — no
 # archive_command, loopback only, alternate port.
 # Debian layout: the live cluster's postgresql.conf + pg_hba.conf live
@@ -567,6 +590,7 @@ qlive() {
 }
 
 # ─── phase 3: verification ──────────────────────────────────────────
+drill_stage="verification"
 # 3a. The restored DB answers and has the core tables.
 tables=$(q "SELECT count(*) FROM information_schema.tables WHERE table_name IN ('trades','oracle_updates','ledger_ingest_log','completeness_snapshots')")
 check "core_tables" "$([[ "$tables" == "4" ]] && echo 1 || echo 0)" "found $tables/4 core tables"
@@ -647,6 +671,7 @@ live_rows=$(qlive "SELECT count(*) FROM trades WHERE ledger BETWEEN $window_lo A
 check "trades_window_match" "$([[ "$restored_rows" == "$live_rows" ]] && echo 1 || echo 0)" "trades[$window_lo,$window_hi]: restored=$restored_rows live=$live_rows"
 
 # ─── phase 4 (optional): ClickHouse re-derive sample ────────────────
+drill_stage="ch_rederive"
 # Proves the ADR-0043 §2.2 "lake is re-derivable" claim + measures RTO.
 #
 # WHY DRY-RUN rather than the ADR's "scratch database": clickhouse.Open
@@ -699,4 +724,4 @@ record_evidence
 emit_metric
 
 note "done: $fail_count failure(s)"
-exit "$fail_count"
+exit "$(failure_exit_code)"

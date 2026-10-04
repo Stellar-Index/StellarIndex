@@ -46,4 +46,18 @@ describe('LivePrice (RLT-386)', () => {
     expect(await screen.findByText('$0.250000')).toBeInTheDocument();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
+
+  it('bounds the live price request with an abort signal', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({}),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<LivePrice assetId="native" initial="$0.1000" />);
+
+    await screen.findByRole('status');
+    expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+  });
 });

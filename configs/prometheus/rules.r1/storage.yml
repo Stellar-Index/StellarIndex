@@ -1134,6 +1134,44 @@ groups:
             Per-check triage is in the runbook; `journalctl -u verify-lake -n 300`
             holds the gap / deficiency / SHORT lines of the last run.
 
+      - alert: stellarindex_network_state_verify_stale
+        expr: |
+          (time() - stellarindex_network_state_verify_last_run_unix) > 172800
+          or
+          (
+            stellarindex_ch_schema_snapshot_last_success_unix
+            unless on (instance)
+            max_over_time(stellarindex_network_state_verify_last_run_unix[2d])
+          )
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/network-state-verify.md
+          summary: "verify-network-state has not completed a run on {{ $labels.instance }} in 2 days"
+          description: |
+            Timer not running, history archive unreachable, or every run
+            crashed before its verdict —
+            `systemctl status verify-network-state.timer verify-network-state.service`,
+            `journalctl -u verify-network-state --since -50h`.
+
+      - alert: stellarindex_network_state_verify_failed
+        expr: max by (instance, check) (stellarindex_network_state_verify_failures) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/network-state-verify.md
+          summary: "verify-network-state found {{ $value }} {{ $labels.check }} failure(s) on {{ $labels.instance }}"
+          description: |
+            The lake's derived state disagrees with the network's. Per-check
+            triage is in the runbook; `journalctl -u verify-network-state -n 300`
+            holds the MISMATCH sample and the lumen residual of the last run.
+
       # wasm-drift (internal/ops/chops/wasm_drift.go): a gated contract
       # running a hash its audit log never string-checked. No never-ran
       # arm: the timer is not deployed everywhere yet.

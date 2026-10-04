@@ -450,6 +450,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/assets/{asset_id}/supply/flows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Daily mint / burn / clawback series for one token.
+         * @description The token's supply-changing events from the ClickHouse
+         *     `supply_flows` lake (the same log `/v1/assets/{asset_id}/supply`
+         *     sums), bucketed by the UTC day their ledger closed, over the
+         *     token's whole recorded history in ascending order. Each day
+         *     carries the per-kind sums and `net` = mint − burn − clawback.
+         *     Amounts are base-unit decimal strings (ADR-0003); clients apply
+         *     per-asset decimals for display.
+         *
+         *     A day with no flows has no row: the log records every event that
+         *     can move supply, so a missing day means supply did not change
+         *     that day. `history_incomplete` is true when the running net dips
+         *     below zero on some day — earlier mints are missing from the lake,
+         *     so the series must not be cumulated into a supply level.
+         *
+         *     Resolution matches `/supply`: a Soroban contract id (`C…`) is used
+         *     directly and a classic asset (`CODE-ISSUER`) resolves to its
+         *     derived Stellar-Asset-Contract. XLM has no mint/burn log (its
+         *     supply is the ledger header's `total_coins`), so `native` / `XLM`
+         *     returns 404, as do ids with no contract (`fiat:*`).
+         *
+         *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the
+         *     read is fresh to; `flags.stale` fires when the watermark's close
+         *     time trails now by more than 300s.
+         */
+        get: operations["getAssetSupplyFlows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/assets/{asset_id}/holders": {
         parameters: {
             query?: never;
@@ -552,6 +594,24 @@ export interface paths {
          *        rather than a direct trade. Same fallback fires on
          *        `/v1/price/tip`, `/v1/price/batch`,
          *        `/v1/oracle/lastprice`, and `/v1/oracle/x_last_price`.
+         *     5. USD-anchored cross for a non-fiat asset in a non-USD fiat
+         *        (ADR-0051): the asset's USD price × the USD→CCY fixing bound
+         *        at the USD bucket's end, `flags.triangulated=true`, with
+         *        `fx_rate`, `fx_as_of` and `usd_leg` on the row.
+         *
+         *     Basis rule (ADR-0053): when step 1 finds a direct fiat book
+         *     (e.g. `native/fiat:CHF`) served by a single venue, and the
+         *     step-5 derivation is fresh and rests on a USD leg from at least
+         *     two venues, the derivation is served instead — one exchange's
+         *     book is not allowed to stand in for the market when the
+         *     aggregated USD price can anchor it. A multi-venue fiat book is
+         *     always served as observed, and a derivation that misses,
+         *     withholds or is stale leaves the direct book in place.
+         *     `/v1/price/batch` and `/v1/oracle/x_last_price` apply the same
+         *     rule (`/v1/oracle/lastprice` is USD-quoted, so it never applies
+         *     there). A row the rule serves omits `confidence`,
+         *     `confidence_factors` and the composite and divergence flags:
+         *     they are keyed on the pair and describe the displaced book.
          *
          *     Returns 404 only when every path above misses — with one
          *     deliberate exception: the **thin-market substance gate**. When
@@ -794,7 +854,11 @@ export interface paths {
         };
         /**
          * Raw per-source observations (ADR-0018 Surface 3).
-         * @description Lowest-level surface per ADR-0018: returns the most-recent
+         * @description On-chain sources only: centralised-exchange trade rows are never
+         *     served here (exchange redistribution terms); their prices reach
+         *     you only in aggregate, via `/v1/vwap`.
+         *
+         *     Lowest-level surface per ADR-0018: returns the most-recent
          *     trade from each source that has ever traded the (asset, quote)
          *     pair. No aggregation, no chaining, no smoothing — purely
          *     "what each venue last published".
@@ -858,6 +922,7 @@ export interface paths {
          *     clamp 1–60 s — independent of tip's `window_seconds` because
          *     observations does not aggregate).
          *
+         *     - On-chain sources only, as on `/v1/observations`.
          *     - First event fires synchronously on connect; data may be
          *       an empty array (the pair has no observations yet — same
          *       200/empty contract as the request endpoint, NOT 404).
@@ -979,7 +1044,11 @@ export interface paths {
         };
         /**
          * Raw trade history for a pair in a time window.
-         * @description Returns per-trade records ordered (ts, ledger, tx_hash, op_index, source)
+         * @description On-chain sources only: centralised-exchange trade rows are never
+         *     served here (exchange redistribution terms); their prices reach
+         *     you only in aggregate, via `/v1/vwap`.
+         *
+         *     Returns per-trade records ordered (ts, ledger, tx_hash, op_index, source)
          *     ascending. Cursor paginates across the full-PK tuple; truncating
          *     the cursor at (ts, ledger) would drop rows sharing those
          *     values (high-volume ledgers).
@@ -2962,7 +3031,8 @@ export interface paths {
          *        `anchor_asset_type` in `definition.anchor_classes`),
          *        `oracle_rwa_feed` (an independent oracle publishes a
          *        net-asset-value feed for an instrument of this code, per
-         *        ADR-0028), or `sep1_isin_declaration` (the bound entry's
+         *        ADR-0028, or for exactly this code and issuer on the
+         *        hand-vetted fund-NAV list), or `sep1_isin_declaration` (the bound entry's
          *        `anchor_asset` is a well-formed ISIN). The oracle arm is
          *        keyed on the CODE, so it is admissible only after
          *        requirement 3 has bound the issuer.
@@ -3437,9 +3507,10 @@ export interface paths {
          *     held to the admin-write contract: the `X-Reason` header is
          *     required (400 without it) and the mint is recorded as a
          *     `key.mint` audit row, exactly as `POST /v1/admin/keys`.
-         *     Customer-tier callers need no header. A `/v1/signup` key's
-         *     email-verification stamp carries over to the child, so rotated
-         *     keys keep working under `signup_require_email_verification`.
+         *     Customer-tier callers need no header. A key minted by the retired
+         *     `/v1/signup` carries its email-verification stamp over to the
+         *     child, so rotated keys keep working under
+         *     `signup_require_email_verification`.
          *     Only `apikey` and `operator` callers may mint; a SEP-10 token
          *     gets 403.
          */
@@ -3750,8 +3821,8 @@ export interface paths {
          *     can later raise a specific account's limits (the partner
          *     path) via the operator override endpoints.
          *
-         *     Abuse posture: rides the same per-IP signup throttle as
-         *     `POST /v1/signup` (shared budget, default 5/hour/IP → 429),
+         *     Abuse posture: rides the per-IP signup throttle
+         *     (default 5/hour/IP → 429),
          *     underneath the global anonymous rate limit. The
          *     `Content-Type: application/json` header is REQUIRED — not
          *     merely validated when present — because a header-less POST is
@@ -3777,18 +3848,13 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Self-service signup — mint a first API key by email.
-         * @description Public, anonymous-tier endpoint. Hit it once with an email
-         *     + optional label and get back a freshly-minted API key for
-         *     the free tier (1000 req/min). Prefer `POST /v1/register` for
-         *     machine onboarding — it creates a real platform account and
-         *     doesn't require an email. Idempotent on the email:
-         *     a second call for the same email returns 409 with a pointer
-         *     to the existing key (recover access via support, or rotate
-         *     via /v1/account/keys once authenticated).
-         *
-         *     Already-authenticated callers receive 400 — they should
-         *     rotate keys via POST /v1/account/keys instead.
+         * Retired - use POST /v1/register.
+         * @deprecated
+         * @description Retired. Always answers `410 Gone` with the same body for every
+         *     request: the body is never read, so the response cannot reveal
+         *     whether an email address already has a key. Use
+         *     `POST /v1/register` to obtain an API key; keys minted here
+         *     earlier keep working.
          */
         post: operations["signup"];
         delete?: never;
@@ -3805,36 +3871,24 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Confirmation page for the emailed signup-verification link.
-         * @description The link in the verification email. Renders an HTML page
-         *     with a single "Confirm email" button that submits the token
-         *     to `POST /v1/signup/verify`; it changes nothing on its own.
-         *
-         *     Mail-security scanners (Safe Links, Mimecast, Proofpoint)
-         *     fetch every emailed link, so a link that consumed the token
-         *     would let the scanner prove ownership of the mailbox on
-         *     behalf of whoever signed up with the address. Only the
-         *     deliberate POST verifies. The page is served `no-store`,
-         *     `Referrer-Policy: no-referrer`, and with a CSP that only
-         *     lets its form submit back to this origin.
+         * Retired - signup email verification.
+         * @deprecated
+         * @description Retired. Always answers `410 Gone` with the same body for every
+         *     request: the body is never read, so the response cannot reveal
+         *     whether an email address already has a key. Use
+         *     `POST /v1/register` to obtain an API key; keys minted here
+         *     earlier keep working.
          */
         get: operations["verifySignupPage"];
         put?: never;
         /**
-         * Confirm email ownership for a signup-issued API key.
-         * @description F-1218 (codex audit-2026-05-12): closes the email-
-         *     ownership-proof loop on `POST /v1/signup`. The signup
-         *     handler issues a single-use token and emails a link to
-         *     `GET /v1/signup/verify`; that page's button submits the
-         *     token here, which consumes it and flags the key minted at
-         *     signup as email-verified (what the default-on
-         *     `signup_require_email_verification` gate checks).
-         *
-         *     The token is read from the form body only, never the query
-         *     string. Single-use semantics via Redis GETDEL — a second
-         *     submit returns 404, the same shape as a forged or expired
-         *     token. Token TTL defaults to 24h to match the dashboard
-         *     magic-link convention.
+         * Retired - signup email verification.
+         * @deprecated
+         * @description Retired. Always answers `410 Gone` with the same body for every
+         *     request: the body is never read, so the response cannot reveal
+         *     whether an email address already has a key. Use
+         *     `POST /v1/register` to obtain an API key; keys minted here
+         *     earlier keep working.
          */
         post: operations["verifySignup"];
         delete?: never;
@@ -4356,6 +4410,69 @@ export interface paths {
          *     probe which credentials exist.
          */
         post: operations["finishPasskeyLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passkey/begin-signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — begin creating an account with a passkey and no email.
+         * @description Anonymous. Returns the WebAuthn credential-creation options for
+         *     `navigator.credentials.create()` for a brand-new user; no email
+         *     is asked for or stored. Resident key and `userVerification:
+         *     required`, as for `/auth/passkey/begin-register`.
+         *
+         *     Nothing is created until `/auth/passkey/finish-signup`
+         *     succeeds. Sets the same signed, single-use, 5-minute ceremony
+         *     cookie, purpose-bound to sign-up.
+         *
+         *     An account created this way has no email, so there is no
+         *     recovery path: losing every copy of its passkeys loses the
+         *     account. Add a second passkey from the settings page.
+         *
+         *     Capped per client IP (IPv6: per /64) at 10 calls per hour per
+         *     API instance; past the cap the call returns 429 with
+         *     `Retry-After` and issues no challenge.
+         */
+        post: operations["beginPasskeySignup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passkey/finish-signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — finish passkey sign-up; creates the account and mints the session cookie.
+         * @description Anonymous. Verifies the attestation against the sign-up
+         *     ceremony cookie's challenge, spends the challenge, then creates
+         *     the account, its owner user and the credential, sets the same
+         *     session cookies as `/auth/passkey/finish-login`, and returns
+         *     `{status:"ok"}`. The user has an undeliverable placeholder
+         *     address; no mail is ever sent to it.
+         *
+         *     Every verification failure, including a replayed or expired
+         *     ceremony, returns the same generic 400.
+         */
+        post: operations["finishPasskeySignup"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6128,9 +6245,12 @@ export interface components {
              *       - shares: an exact current count of a protocol's own
              *         share/LP token, minted/burned 1:1 with the summed events
              *         (Blend Backstop, Phoenix stake, DeFindex vault shares).
-             *       - stateful_current: the protocol's own most-recently
-             *         PUBLISHED figure (sorocredit's latest statement amount),
-             *         not a delta sum this endpoint computed.
+             *       - stateful_current_unconfirmed_unit: the protocol's own
+             *         most-recently PUBLISHED figure (sorocredit's latest
+             *         statement amount), not a delta sum this endpoint computed.
+             *         The statement's unit/scale is not contract-source-confirmed:
+             *         the raw on-chain integer is served unscaled, so do not
+             *         assume 7-decimal USDC base units.
              *       - signed_delta_sum_unconfirmed_unit: a sum of signed
              *         per-event deltas whose unit is not contract-source-
              *         confirmed (Aquarius gauge position_update — see
@@ -6149,7 +6269,7 @@ export interface components {
              *         position); amount is "".
              * @enum {string}
              */
-            amount_semantics: "net_underlying_at_event_time" | "shares" | "stateful_current" | "signed_delta_sum_unconfirmed_unit" | "superseded_by_auction" | "not_yet_published";
+            amount_semantics: "net_underlying_at_event_time" | "shares" | "stateful_current_unconfirmed_unit" | "signed_delta_sum_unconfirmed_unit" | "superseded_by_auction" | "not_yet_published";
             /** @description The most recent contributing event's ledger + close time. */
             last_activity: {
                 ledger: number;
@@ -7385,10 +7505,12 @@ export interface components {
          *       quote we hold no market for is answered by composing the
          *       asset's USD price with the USD→CCY foreign-exchange rate
          *       (ADR-0051) — the local-currency path, which is how the
-         *       ~130 currencies beyond USD/EUR/GBP resolve at all. An
-         *       OBSERVED market always wins over a derived value, so
-         *       `triangulated: false` on a fiat quote means real trades
-         *       backed it. Derived values credit both legs in `sources`
+         *       ~130 currencies beyond USD/EUR/GBP resolve at all. A
+         *       multi-venue OBSERVED market always wins over a derived
+         *       value; a single-venue fiat book yields to the derivation
+         *       when a multi-venue USD leg anchors it (ADR-0053). Either way
+         *       `triangulated: false` on a fiat quote means real trades in
+         *       that quote backed it. Derived values credit both legs in `sources`
          *       (the USD leg's venues plus the FX feed), and the FX leg is
          *       a DAILY fix while `observed_at` reports the USD leg's own
          *       (much fresher) timestamp — fine for display, not a
@@ -8804,10 +8926,9 @@ export interface components {
              *     liquidity-pool reserves and SAC-held balances are absent by
              *     construction — measured across the served set on 2026-09-15
              *     that was 89.5% of EURMTL, 73.3% of PYUSD, 64.5% of SHX and
-             *     15.4% of USDC. `contract_storage_balances` misses TIME:
-             *     Soroban state expiry archives contract-data entries, and an
-             *     archived balance is real, restorable, and not a ledger entry
-             *     right now.
+             *     15.4% of USDC. `contract_storage_balances` misses balance
+             *     entries the lake's current-state projection never captured,
+             *     such as one dormant since before its coverage began.
              */
             circulating_supply_lower_bound?: boolean;
             /**
@@ -10421,6 +10542,34 @@ export interface components {
              */
             supply_basis?: "lake_flows" | "served";
         };
+        /** @description Banded trust score with the factor breakdown behind it, on `/v1/assets/{asset_id}` only. Output-only: no price, rank or gate reads it. A factor with no evidence is `unknown` with null points and is excluded from the score; it is never scored as zero. A scam-class issuer directory flag forces score 0, and a ticker collision caps the score below the medium threshold (band `low`). The formula is versioned. */
+        AssetTrust: {
+            /** @description Version of the weights and thresholds that produced `score`. */
+            formula_version: number;
+            /** @description Weight-averaged points of the known factors; null when no factor has evidence. */
+            score: number | null;
+            /**
+             * @description high >= 75, medium >= 40, low below; unknown when score is null.
+             * @enum {string}
+             */
+            band: "high" | "medium" | "low" | "unknown";
+            /** @description Share of total factor weight that had evidence. */
+            coverage_pct: number;
+            factors: {
+                /** @enum {string} */
+                id: "issuer_reputation" | "ticker_collision" | "sep1_attestation" | "market_substance" | "supply_data";
+                /** @enum {string} */
+                band: "high" | "medium" | "low" | "unknown";
+                /** @description Null when band is unknown. */
+                points: number | null;
+                /** @description Weight in the score; weights sum to 100. */
+                weight: number;
+                /** @description Data source the evidence was read from. */
+                source: string;
+                /** @description Machine-readable description of what was observed. */
+                observed: string;
+            }[];
+        };
         Asset: {
             /**
              * @description Wire-shape discriminator for the /v1/assets/{asset_id} oneOf (ADR-0042). Always "stellar_asset" on this schema. See `Asset.type` for the separate protocol/class discriminator (native/classic/soroban/fiat/global/external) — `kind` says which SHAPE this payload is, `type` says which Stellar asset CLASS within that shape.
@@ -10535,6 +10684,7 @@ export interface components {
             issuer_behaviour?: components["schemas"]["AssetIssuerBehaviour"];
             listing_reference?: components["schemas"]["AssetListingReference"];
             listing_valuation?: components["schemas"]["AssetListingValuation"];
+            trust?: components["schemas"]["AssetTrust"];
             /**
              * @description Which ADR-0011 policy produced the supply numbers, and on
              *     LISTING rows additionally which ARM answered — three can,
@@ -10564,10 +10714,9 @@ export interface components {
              *     reports for the same asset.
              *     `contract_storage_balances` sums the per-holder Balance
              *     entries out of a contract's own storage, for a token whose
-             *     event log is empty. Also a lower bound, but blind to TIME
-             *     rather than to domains: Soroban state expiry archives
-             *     contract-data entries, so a real and restorable balance can
-             *     be invisible to it.
+             *     event log is empty. Also a lower bound, but blind to
+             *     uncaptured entries rather than to domains: a balance entry
+             *     the lake's current-state projection never captured is absent.
              *
              *     Surfaced so consumers can decide how much to trust the
              *     absolute value: `issuer_exclusion`/`admin_exclusion` are
@@ -11039,11 +11188,15 @@ export interface components {
              * @enum {string}
              */
             source: "mint_burn_flows" | "ledger_total_coins" | "contract_storage_balances";
-            /** @description True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only balances that are ledger entries right now, and Soroban state expiry archives contract-data entries, so a real and restorable balance can be invisible to it. Omitted when false. */
+            /** @description True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only the balance entries the lake's current-state projection captured, so an entry dormant since before its coverage began is absent. Omitted when false. */
             circulating_supply_lower_bound?: boolean;
-            /** @description Number of per-holder balance entries summed. Only present for source=contract_storage_balances. */
+            /** @description Number of per-holder balance entries summed. Only present for source=contract_storage_balances. A temporary entry whose TTL lapsed has been deleted by the network and is not counted. */
             balance_entries?: number;
-            /** @description Whether every cross-check the contract itself published agreed with what was summed — its own TotalSupply against the sum, and its own HolderCount against the number of entries visible. False means the contract reports more holders (or a larger total) than the lake can show, which is what an archived balance looks like; the figure is still served, but as a floor. Only present for source=contract_storage_balances; absent means the contract offered no cross-checks, which is not the same as a failed one. */
+            /** @description How many of balance_entries are persistent entries whose TTL had lapsed at the lake tip. They are archived, not destroyed — still owned and restorable — so they stay in total_supply. Only present for source=contract_storage_balances, and only when non-zero. */
+            archived_balance_entries?: number;
+            /** @description Decimal string: the part of total_supply held in archived_balance_entries, in the token's smallest unit. Present exactly when archived_balance_entries is. */
+            archived_balance_total?: string;
+            /** @description Whether every cross-check the contract itself published agreed with what was summed — its own TotalSupply against the sum, and its own HolderCount against the number of entries visible. False means the contract reports more holders (or a larger total) than the lake can show, which is what an entry the lake never captured looks like; the figure is still served, but as a floor. Only present for source=contract_storage_balances; absent means the contract offered no cross-checks, which is not the same as a failed one. */
             supply_consistent?: boolean;
             /** @description The scale the CONTRACT ITSELF declares, read from its instance storage (METADATA or Config, either spelling). Only present for source=contract_storage_balances. OMITTED when the chain declares no scale — a consumer must not substitute a default, because a wrong exponent is a published money figure wrong by a power of ten. */
             decimals?: number;
@@ -11055,6 +11208,43 @@ export interface components {
         };
         AssetSupplyEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["AssetSupply"];
+        };
+        AssetSupplyFlows: {
+            asset_id: string;
+            /** @description The contract the supply_flows log is keyed by. */
+            contract_id: string;
+            days: components["schemas"]["AssetSupplyFlowDay"][];
+            /**
+             * @description True when the running mint − burn − clawback dips below zero:
+             *     earlier mints are missing from the lake, so do not cumulate
+             *     the series into a supply level.
+             */
+            history_incomplete: boolean;
+            /**
+             * Format: int64
+             * @description Lake watermark the read is fresh to; omitted when no watermark reader is wired.
+             */
+            as_of_ledger?: number;
+        };
+        AssetSupplyFlowDay: {
+            /**
+             * Format: date
+             * @description UTC day the flows' ledgers closed.
+             */
+            day: string;
+            /** @description Σ minted, base units (decimal string). */
+            mint: string;
+            /** @description Σ burned, base units (decimal string). */
+            burn: string;
+            /** @description Σ clawed back, base units (decimal string). */
+            clawback: string;
+            /** @description mint − burn − clawback; signed decimal string. */
+            net: string;
+            /**
+             * Format: int64
+             * @description Events behind the day's sums.
+             */
+            flows: number;
         };
         Price: {
             asset_id: string;
@@ -11436,6 +11626,21 @@ export interface components {
                  *     its cap. Omitted when false.
                  */
                 market_cap_low_liquidity?: boolean;
+                /**
+                 * @description True when an unbounded read (`timeframe=all`) hit the
+                 *     50 000-bucket response cap, so `points` holds the
+                 *     OLDEST slice of this pair's history and stops short of
+                 *     the present. Request a coarser `granularity` to see
+                 *     the whole span. Omitted when false.
+                 */
+                row_cap_truncated?: boolean;
+                /**
+                 * Format: date-time
+                 * @description Last bucket of the earliest source read that hit the row
+                 *     cap; the series is incomplete after it. Only present when
+                 *     `row_cap_truncated=true`.
+                 */
+                data_ends_at?: string;
             };
         };
         TradeRow: {
@@ -11775,6 +11980,52 @@ export interface components {
              *     closed boundary per ADR-0015.
              */
             clamped: boolean;
+            breakdown?: components["schemas"]["VWAPBreakdown"];
+        };
+        /**
+         * @description Present only with `breakdown=source`. Volumes are in the same units
+         *     as the response's `base_volume` / `quote_volume` (see their
+         *     `*_decimals`), so a bucket's sources sum to the bucket. Computed
+         *     from the same trades as the headline price: when `truncated` is
+         *     true the fetch cap was hit and the breakdown covers only the
+         *     newest trades of the window, a lower bound rather than the whole.
+         */
+        VWAPBreakdown: {
+            /** @description Bucket width asked for; null when the whole window is one bucket. */
+            interval: string | null;
+            truncated: boolean;
+            /** @description Ascending by `start`; only buckets holding at least one fetched trade. */
+            buckets: {
+                /**
+                 * Format: date-time
+                 * @description UTC-aligned bucket start (not clamped to the window).
+                 */
+                start: string;
+                /** Format: date-time */
+                end: string;
+                /** @description Σ post-filter quote volume of the bucket. */
+                quote_volume: string;
+                /** @description Post-filter trades in the bucket. */
+                trade_count: number;
+                /** @description Ordered by quote volume descending, then name. */
+                sources: {
+                    source: string;
+                    /** @description This source's VWAP in the bucket; null when the outlier filter left it no trades. */
+                    price: string | null;
+                    base_volume: string;
+                    quote_volume: string;
+                    /** @description Post-filter trades. */
+                    trade_count: number;
+                    /**
+                     * @description This source's post-filter quote volume over the bucket's
+                     *     total, scale-normalised across venues, floored to 10
+                     *     decimal places (weights sum to 1 to that precision).
+                     */
+                    weight: string;
+                    /** @description Trades of this source in the bucket the `outlier_sigma` filter removed; 0 when sigma is 0. */
+                    outliers_excluded: number;
+                }[];
+            }[];
         };
         VWAPEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["VWAPResult"];
@@ -12425,6 +12676,11 @@ export interface components {
             month_to_date?: number;
             /** @description Extension member on a `price-withheld` 404 from `/v1/price`, `/v1/price/at` and `/v1/price/changes`, for a thin-market reason (`substance`, `upstream_leg`, `unattributed`) only: the measurement the price was withheld on. Absent otherwise. */
             substance?: components["schemas"]["SubstanceEvidence"];
+            /**
+             * @description Extension member on every `price-withheld` 404: why the price was withheld; a superset of the `price_withheld_reason` values on asset rows (the price SSE stream's withheld event carries it too). Branch on this, not on `title`. Absent on every other problem.
+             * @enum {string}
+             */
+            reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "manipulation_guard" | "fx_leg_unavailable";
         };
     };
     responses: {
@@ -13781,6 +14037,68 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    getAssetSupplyFlows: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
+                 *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
+                 *     validated per SEP-23. The handler is strict — short symbols
+                 *     like `XLM` or `USDC` are NOT accepted here; use `native` or
+                 *     the full `<code>-<G…>` form.
+                 * @example native
+                 */
+                asset_id: components["parameters"]["AssetIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Daily supply flows, ascending by day. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *         "days": [
+                     *           {
+                     *             "day": "2026-09-01",
+                     *             "mint": "25000000000000",
+                     *             "burn": "4000000000000",
+                     *             "clawback": "0",
+                     *             "net": "21000000000000",
+                     *             "flows": 412
+                     *           }
+                     *         ],
+                     *         "history_incomplete": false,
+                     *         "as_of_ledger": 63340102
+                     *       },
+                     *       "as_of": "2026-09-02T00:00:05.000000000Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: components["schemas"]["AssetSupplyFlows"];
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     getAssetHolders: {
         parameters: {
             query?: {
@@ -14428,7 +14746,7 @@ export interface operations {
                  * @example fiat:USD
                  */
                 quote?: components["parameters"]["Quote"];
-                /** @description Restrict to one on-chain source's or CEX venue's most-recent trade (0/1 row). A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`. */
+                /** @description Restrict to one on-chain source's most-recent trade (0/1 row). Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /**
                  * @description `latest` collapses to the single most-recent trade across
@@ -14509,7 +14827,7 @@ export interface operations {
                  * @example fiat:USD
                  */
                 quote?: components["parameters"]["Quote"];
-                /** @description Restrict to one on-chain source's or CEX venue's most-recent trade. A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`. */
+                /** @description Restrict to one on-chain source's most-recent trade. Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /**
                  * @description `latest` collapses to the single most-recent trade across
@@ -14645,6 +14963,8 @@ export interface operations {
                  */
                 to?: components["parameters"]["To"];
                 limit?: number;
+                /** @description Restrict the feed to trades written by one on-chain source. An off-chain source (CEX venue or data vendor) returns 400 `off-chain-source-filter`; an unregistered name returns 400 `unknown-source`. `coverage_from` on an empty page still describes the pair across all sources. */
+                source?: string;
                 /**
                  * @description Opaque pagination token echoed from a prior response's
                  *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
@@ -15138,6 +15458,20 @@ export interface operations {
                 to?: components["parameters"]["To"];
                 /** @description Drop trades > N σ from window mean. 0 disables (default). */
                 outlier_sigma?: number;
+                /**
+                 * @description Opt in to a per-source, per-bucket breakdown (`data.breakdown`):
+                 *     each venue's VWAP, base/quote volume, trade count, weight in
+                 *     this endpoint's VWAP, and how many of its trades the
+                 *     `outlier_sigma` filter excluded. Omitted, the response is
+                 *     unchanged.
+                 */
+                breakdown?: "source";
+                /**
+                 * @description Bucket width for `breakdown=source`, UTC-aligned (same ladder as
+                 *     `/v1/ohlc`). Omitted, the whole window is one bucket. 400
+                 *     without `breakdown=source`.
+                 */
+                interval?: "1m" | "5m" | "15m" | "30m" | "1h" | "2h" | "4h" | "12h" | "1d" | "3d" | "1w" | "2w" | "1mo";
             };
             header?: never;
             path?: never;
@@ -15516,6 +15850,15 @@ export interface operations {
                  *     limit.
                  */
                 source?: "soroswap";
+                /**
+                 * @description Optional. A canonical asset id (`native`, `CODE-ISSUER`, a
+                 *     `C…` contract). Restricts the response to pools holding the
+                 *     asset on either side under any of its alias forms: a classic
+                 *     asset or XLM matches pairs over its Stellar-Asset-Contract.
+                 *     An asset with no Soroswap pair returns an empty list. 400
+                 *     when malformed or combined with `pool`.
+                 */
+                asset?: string;
             };
             header?: never;
             path?: never;
@@ -15629,6 +15972,15 @@ export interface operations {
                  *     top-ranked pools to return. 1-100, default 25.
                  */
                 limit?: number;
+                /**
+                 * @description Optional (listing only). A canonical asset id (`native`,
+                 *     `CODE-ISSUER`, or a SAC `C…` contract the alias registry maps
+                 *     to its classic form — XLM's SAC always). Restricts the ranked listing to pools holding
+                 *     the asset on either side, drawn from every captured native
+                 *     pool rather than the global top 100. 400 when malformed or
+                 *     combined with `pool`.
+                 */
+                asset?: string;
             };
             header?: never;
             path?: never;
@@ -21163,7 +21515,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Per-IP registration throttle exhausted (shared with /v1/signup). */
+            /** @description Per-IP registration throttle exhausted. */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -21190,87 +21542,10 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "email": "alice@example.com",
-                 *       "label": "production-api-1"
-                 *     }
-                 */
-                "application/json": {
-                    /** Format: email */
-                    email: string;
-                    label?: string;
-                };
-            };
-        };
+        requestBody?: never;
         responses: {
-            /** @description Account created — plaintext key shown **once**. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "data": {
-                     *         "plaintext": "re_live_4f9c1d8b3a7e2f1c9d4b8a6e3f2c1d9b8a7e6f5d4c3b2a1f",
-                     *         "key_id": "k_8f3a2c1b9e7d4f6a",
-                     *         "key_prefix": "re_live_4f9c1d8b",
-                     *         "identifier": "signup-3d4f9a2c1e8b7f6d",
-                     *         "label": "production-api-1",
-                     *         "tier": "apikey",
-                     *         "rate_limit_per_min": 1000,
-                     *         "email_verification_sent": false
-                     *       },
-                     *       "as_of": "2026-05-05T14:35:42.881Z",
-                     *       "flags": {
-                     *         "stale": false,
-                     *         "reduced_redundancy": false,
-                     *         "triangulated": false,
-                     *         "divergence_warning": false
-                     *       }
-                     *     }
-                     */
-                    "application/json": components["schemas"]["EnvelopeMeta"] & {
-                        data?: {
-                            /** @description Bearer token. Show ONCE; unrecoverable. */
-                            plaintext: string;
-                            key_id: string;
-                            /** @description Non-secret leading fragment of the key, safe to display/log for correlation. Omitted when the store does not record one. */
-                            key_prefix?: string;
-                            identifier: string;
-                            label?: string;
-                            /** @enum {string} */
-                            tier: "apikey";
-                            rate_limit_per_min: number;
-                            /** @description True when the deployment is wired for email-ownership verification and a verification link was sent. False on deployments without a verifier/emailer — the key authenticates immediately. */
-                            email_verification_sent: boolean;
-                        };
-                    };
-                };
-            };
-            /** @description Missing or invalid email, body too large, or already authenticated. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Email already has an account. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description AccountStore not configured (Redis unavailable). */
-            503: {
+            /** @description Endpoint retired; the detail points at `POST /v1/register`. */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21282,36 +21557,15 @@ export interface operations {
     };
     verifySignupPage: {
         parameters: {
-            query: {
-                /** @description The plaintext token from the verification email. */
-                token: string;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Confirmation page (does not consume the token). */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
-                };
-            };
-            /** @description Missing `?token=` query parameter. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description SignupVerifier not configured (Redis unavailable). */
-            503: {
+            /** @description Endpoint retired; the detail points at `POST /v1/register`. */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21328,76 +21582,10 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": {
-                    /** @description The plaintext token from the verification email. */
-                    token: string;
-                };
-            };
-        };
+        requestBody?: never;
         responses: {
-            /** @description Token consumed; email ownership confirmed. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "data": {
-                     *         "verified": true,
-                     *         "key_id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
-                     *         "detail": "email ownership confirmed; the API key minted at signup is now flagged as verified"
-                     *       },
-                     *       "as_of": "2026-07-03T09:00:00Z",
-                     *       "flags": {
-                     *         "stale": false,
-                     *         "reduced_redundancy": false,
-                     *         "triangulated": false,
-                     *         "divergence_warning": false,
-                     *         "divergence_checked": false
-                     *       }
-                     *     }
-                     */
-                    "application/json": components["schemas"]["EnvelopeMeta"] & {
-                        data?: {
-                            verified: boolean;
-                            key_id?: string;
-                            detail?: string;
-                        };
-                    };
-                };
-            };
-            /** @description Missing `token` form field, or an unreadable / oversized body. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Unknown / consumed / expired token. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Verification store error. */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description SignupVerifier not configured (Redis unavailable). */
-            503: {
+            /** @description Endpoint retired; the detail points at `POST /v1/register`. */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22890,6 +23078,115 @@ export interface operations {
              *     the ceremony's freshness could not be established. The
              *     sign-in is refused rather than granted on trust; email-code
              *     sign-in is unaffected.
+             */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    beginPasskeySignup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description WebAuthn creation options. */
+            200: {
+                headers: {
+                    /** @description Signed ceremony cookie; challenge valid 5 minutes, single-use. */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Cross-site write blocked (`cross-site-request-blocked`). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    finishPasskeySignup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Display-only label; defaults to "Passkey". */
+                    name?: string;
+                    /**
+                     * @description The serialized `PublicKeyCredential` attestation
+                     *     from `navigator.credentials.create()`.
+                     */
+                    credential: Record<string, never>;
+                };
+            };
+        };
+        responses: {
+            /** @description Account created and authenticated; session cookie set. */
+            200: {
+                headers: {
+                    /**
+                     * @description `__Host-stellarindex_session` (HttpOnly, Secure) and its
+                     *     JS-readable presence flag `stellarindex_session_present`.
+                     */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "status": "ok"
+                     *     }
+                     */
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "ok";
+                    };
+                };
+            };
+            /** @description Verification failed (generic — modes are indistinguishable). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Cross-site write blocked (`cross-site-request-blocked`). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description The single-use challenge store or the account store could
+             *     not be reached; nothing was granted.
              */
             500: {
                 headers: {
@@ -25016,7 +25313,7 @@ export interface operations {
                      *               "USDC"
                      *             ],
                      *             "amount": "480000000",
-                     *             "amount_semantics": "stateful_current",
+                     *             "amount_semantics": "stateful_current_unconfirmed_unit",
                      *             "last_activity": {
                      *               "ledger": 63316350,
                      *               "time": "2026-07-10T21:40:11Z"
