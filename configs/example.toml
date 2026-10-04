@@ -257,7 +257,7 @@ backfill_from_ledger  = 0                # 0 = resume from persisted cursor
 
   # ClassExchange — CEX trade streams. No auth, no API keys.
   # Default pair sets cover the highest-liquidity XLM + BTC + ETH
-  # markets; per-venue pair overrides are a future config surface.
+  # markets; per-venue pair lists are code (pairs.go, binance pairs.yaml), not config.
   [external.binance]
   enabled = false   # WS aggTrade — XLMUSDT / BTCUSDT / ETHUSDT / XLMBTC
   # poll_interval = ""   # accepted but unused: this connector streams over WebSocket
