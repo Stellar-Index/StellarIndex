@@ -22,7 +22,8 @@
 //     `verify-archive`, `archive-completeness`, `cross-region-check`,
 //     `cross-region-monitor`, `trim-galexie-archive`,
 //     `rehydrate-galexie-archive`, `galexie-mirror-verify`, `wasm-history`,
-//     `wasm-history-merge-jsonl`, `extract-wasm-from-galexie`.
+//     `wasm-history-merge-jsonl`, `extract-wasm-from-galexie`,
+//     `compare-entry-changes`.
 //   - Soroban discovery (internal/ops/discovery): `discovery`.
 //   - Supply (internal/ops/supply): `supply`.
 //   - Diagnostics (internal/ops/diagnostics): `rpc-probe`,
@@ -167,6 +168,7 @@ var subcommands = map[string]func(args []string) error{
 	"wasm-history":              archive.Run,
 	"wasm-history-merge-jsonl":  archive.Run,
 	"extract-wasm-from-galexie": archive.Run,
+	"compare-entry-changes":     archive.Run,
 
 	"discovery": discovery.Run,
 
@@ -1695,6 +1697,16 @@ Subcommands:
                           Exits non-zero on any mismatch or listing
                           error. galexie-archive-fill checks presence
                           only, so this is what sees a re-export.
+  compare-entry-changes -config PATH -from N -to N [-bucket NAME] [-window N]
+                          Read-only. Extract the ledger_entry_changes rows
+                          for [-from, -to] from our galexie export
+                          (storage.s3_bucket_archive, or -bucket) and from
+                          the cold tier (the AWS public export), exactly as
+                          the lake writer would, and compare them position
+                          by position. Prints a JSON report (row counts,
+                          difference count, first 20 differences); exits 1
+                          on any difference. -window (default 100) bounds
+                          the ledgers held in memory per export.
   mint-key -config PATH -identifier ID -label LABEL -reason TEXT [-actor NAME] [-tier T [-confirm-operator]] [-scopes S,..] [-rate-limit-per-min N] [-expires-in DUR]
                           Issue a fresh API key directly via the
                           Redis API-key store. Operator-only path

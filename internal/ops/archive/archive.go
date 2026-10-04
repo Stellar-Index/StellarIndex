@@ -5,7 +5,8 @@
 // history subcommands: `verify-archive`, `archive-completeness`,
 // `cross-region-check`, `cross-region-monitor`, `trim-galexie-archive`,
 // `rehydrate-galexie-archive`, `galexie-mirror-verify`, `wasm-history`,
-// `wasm-history-merge-jsonl`, `extract-wasm-from-galexie`.
+// `wasm-history-merge-jsonl`, `extract-wasm-from-galexie`,
+// `compare-entry-changes`.
 //
 // wasm-history/extract-wasm-from-galexie live here rather than in
 // internal/ops/discovery (discovery groups Soroban discovery / WASM
@@ -59,6 +60,8 @@ func Run(args []string) error {
 		return wasmHistoryMergeJSONL(args[1:])
 	case "extract-wasm-from-galexie":
 		return extractWasmFromGalexie(args[1:])
+	case "compare-entry-changes":
+		return compareEntryChanges(args[1:])
 	default:
 		return fmt.Errorf("internal/ops/archive: unknown subcommand %q", args[0])
 	}
