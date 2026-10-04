@@ -33,21 +33,11 @@ type usdLegReader struct {
 	usdPriceFor string // asset id that has a fiat:USD price
 	price       string
 	withheld    bool // the USD leg is withheld by policy
-	// directPairs lets a test supply a real observed market, to prove
-	// the derived layer does not shadow one.
-	directPairs map[string]string
 }
 
 func (r *usdLegReader) LatestPrice(
 	_ context.Context, a, q canonical.Asset,
 ) (v1.PriceSnapshot, []string, bool, error) {
-	key := a.String() + "/" + q.String()
-	if p, ok := r.directPairs[key]; ok {
-		return v1.PriceSnapshot{
-			AssetID: a.String(), Quote: q.String(),
-			Price: p, PriceType: "vwap",
-		}, []string{"binance"}, false, nil
-	}
 	if a.String() == r.usdPriceFor && q.String() == "fiat:USD" {
 		if r.withheld {
 			return v1.PriceSnapshot{}, nil, false, v1.ErrPriceWithheld
@@ -138,37 +128,6 @@ func TestPriceWithheldUSDLegIsNotLaunderedThroughFX(t *testing.T) {
 		t.Errorf("the withheld verdict must propagate through the derivation, so "+
 			"the customer is told we hold a price and decline to publish it — not "+
 			"that none exists. Body: %s", body)
-	}
-}
-
-// TestPriceDerivedFiatDoesNotShadowARealMarket pins the ordering. XLM
-// is quoted directly in EUR by the CEX feeds; that observed print must
-// win over usd_price × rate_usd[EUR]. Deriving on top of a real market
-// would replace measured data with an estimate.
-func TestPriceDerivedFiatDoesNotShadowARealMarket(t *testing.T) {
-	reader := &usdLegReader{
-		usdPriceFor: "native", price: xlmUSDPrice,
-		directPairs: map[string]string{"native/fiat:EUR": "0.15312172801139768016"},
-	}
-	currencies := &stubCurrenciesReader{
-		snap: &v1.CurrenciesSnapshot{
-			Currencies: []v1.CurrencyEntry{{Ticker: "EUR", RateUSD: 0.86}},
-		},
-	}
-	srv := v1.New(v1.Options{Prices: reader, Currencies: currencies})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:EUR")
-	body, _ := readAll(resp)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200. Body: %s", resp.StatusCode, body)
-	}
-	if !strings.Contains(body, "0.15312172801139768016") {
-		t.Errorf("the OBSERVED EUR market must win over the derived cross "+
-			"(0.17794… × 0.86 = 0.1530…): %s", body)
-	}
-	if strings.Contains(body, `"triangulated":true`) {
-		t.Errorf("a directly observed market must not be flagged triangulated: %s", body)
 	}
 }
 

@@ -1,6 +1,6 @@
 ---
 title: Local-currency pricing
-last_verified: 2026-09-28
+last_verified: 2026-10-03
 status: current
 ---
 
@@ -31,10 +31,17 @@ trade on Binance, Bitstamp and Coinbase; GBP trades on Bitstamp too
 (Binance has no XLM/GBP product). Every other currency, AUD, CAD and
 CHF included, is derived.
 
-Where a market exists, **you get the market** — the derivation never
-overrides an observed print. So `XLM/EUR` is a real volume-weighted
-average of real trades, not `XLM/USD × USD→EUR`. Only currencies
-with no market at all are derived.
+Where a market backed by two or more venues exists, **you get the
+market**. So `XLM/EUR` is a real volume-weighted average of real
+trades, not `XLM/USD × USD→EUR`.
+
+Where the only direct market is **one venue's** book, `/v1/price`,
+`/v1/price/batch` and `/v1/oracle/x_last_price` serve the derivation instead, provided its USD leg
+comes from at least two venues and neither leg is stale. One exchange's
+book is weaker evidence than the aggregated USD price converted at an
+FX fixing. If the derivation cannot be formed, the single-venue book is
+served as before. Operators can turn this off with
+`pricing_guard.disable_fiat_basis`.
 
 You can tell which you received:
 
@@ -131,4 +138,6 @@ there.
 ## Design record
 
 The decision, the alternatives, and why USD is the anchor:
-[ADR-0051](../adr/0051-usd-anchored-fiat-derivation.md).
+[ADR-0051](../adr/0051-usd-anchored-fiat-derivation.md); when a
+single-venue book yields to the derivation:
+[ADR-0053](../adr/0053-fiat-price-basis-rule.md).

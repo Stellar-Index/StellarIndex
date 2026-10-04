@@ -53,6 +53,20 @@ elevated CPU/IO weight, and `stellarindex_galexie_catchup_refused`
 pages if the core ever refuses catchup again. One heavy job at a
 time remains the rule.
 
+**Timer units.** `restore-drill` and `restore-drill-offsite` run under the
+wrapper (`HEAVY_JOB_CLASS=scheduled`, `SuccessExitStatus=75` for a lock
+skip). The drill refuses up front unless pool free space covers the restore
+plus the watchdog's 300 GiB floor, so the watchdog does not kill an admitted
+drill. Other timer units deliberately run bare:
+
+| Unit | Why not wrapped |
+|---|---|
+| `ch-lake-backup` | The ClickHouse server owns the `BACKUP … ASYNC` and writes it off-host; a watchdog stop would kill only the polling script and orphan the backup. The script refuses a concurrent backup itself. |
+| `zfs-snapshot` | It is the pool min-free guard and prunes snapshots to free space; a low-pool watchdog would stop the job that relieves it. Snapshot create/destroy is metadata-only. |
+| `ch-schema-snapshot`, `ch-schema-drift`, `galexie-archive-tip-lag`, `galexie-archive-contiguity`, `memory-mappings` | Megabyte-scale probes or dumps, already `Nice`d and time-bounded; a lock skip or watchdog stop would only blind the staleness alerts. |
+| `stellar-core-auto-upgrade` | Runs `apt-get`; a watchdog kill mid-dpkg can leave packages half-configured. Bounded by its own timeout and rollback. |
+| Non-root services in `14-stellarindex-services.yml` | The wrapper's memory cap and disk watchdog are inactive for non-root callers (only the lock applies); each self-guards. |
+
 ---
 
 ### "Cut a release"

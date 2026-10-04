@@ -27,7 +27,8 @@ describe('pegBadgeCurrency — AGENTS.md (code, issuer) rule', () => {
     // look-alike wearing the verified ticker.
     const collision = {
       verified_slug: 'usdc',
-      verified_asset_id: 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      verified_asset_id:
+        'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
       verified_name: 'USD Coin',
       note: 'This asset shares a ticker with a verified currency but is not issued by it.',
     };
@@ -37,5 +38,31 @@ describe('pegBadgeCurrency — AGENTS.md (code, issuer) rule', () => {
   it('leaves unpegged codes alone regardless of warning presence', async () => {
     const { pegBadgeCurrency } = await import('./page');
     expect(pegBadgeCurrency('XLM', undefined)).toBeNull();
+  });
+
+  it('does NOT badge pegged-looking codes the catalogue has no verified issuer for', async () => {
+    const { pegBadgeCurrency } = await import('./page');
+    for (const code of [
+      'DAI',
+      'BUSD',
+      'TUSD',
+      'USDP',
+      'USDT',
+      'EUROC',
+      'EUROB',
+      'MXNe',
+      'BRZ',
+      'GBPC',
+      'AUDD',
+      'NGNT',
+    ]) {
+      expect(pegBadgeCurrency(code, undefined), code).toBeNull();
+    }
+  });
+
+  it('still badges every catalogue-vouched peg', async () => {
+    const { pegBadgeCurrency } = await import('./page');
+    expect(pegBadgeCurrency('PYUSD', undefined)).toBe('USD');
+    expect(pegBadgeCurrency('EURC', undefined)).toBe('EUR');
   });
 });

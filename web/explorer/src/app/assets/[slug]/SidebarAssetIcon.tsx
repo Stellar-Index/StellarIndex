@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 
-import { isSafePublicImageUrl } from '@/lib/safe-domain';
+import { iconProxySrc, isSafePublicImageUrl } from '@/lib/safe-domain';
 
 // SidebarAssetIcon — the asset-detail sidebar avatar. Renders the SEP-1
 // icon when it's a well-formed https URL and the image actually loads;
@@ -27,7 +27,7 @@ export function SidebarAssetIcon({
     return (
       // eslint-disable-next-line @next/next/no-img-element -- remote SEP-1 icons; next/image needs a domain allowlist we can't enumerate under static export
       <img
-        src={image!}
+        src={iconProxySrc(image!)}
         alt=""
         width={36}
         height={36}

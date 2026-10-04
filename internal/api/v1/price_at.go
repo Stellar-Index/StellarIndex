@@ -171,7 +171,7 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 		"https://api.stellarindex.io/errors/price-not-found",
 		"No price at requested time", http.StatusNotFound,
 		"no closed bucket within "+priceAtMaxLookback.String()+" before "+ts.Format(time.RFC3339)+" for "+asset.String()+" / "+quote.String(),
-		coverageFrom, outside, nil)
+		coverageFrom, outside, nil, "")
 }
 
 // resolvePriceAt is the direct alias walk, then the stablecoin
@@ -186,7 +186,7 @@ func (s *Server) resolvePriceAt(
 	}
 	fbSnap, fbFound, fbWithheld, err := s.lookupPriceAtStablecoinFallback(ctx, asset, quote, ts)
 	if err != nil || fbFound {
-		return fbSnap, Flags{Triangulated: true}, fbFound, nil, err
+		return fbSnap, Flags{Triangulated: true, ProxyDeviation: fbFound && s.proxyDeviation(ctx, ts)}, fbFound, nil, err
 	}
 	if withheld == nil {
 		withheld = fbWithheld

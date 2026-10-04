@@ -56,7 +56,16 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 # run's verdict to restore_drill_repo2.prom with repo="2" on every series
 # — the series stellarindex_restore_drill_offsite_stale reads.
 Environment=DRILL_REPO=2
-ExecStart=/usr/local/bin/restore-drill.sh
+# 75 = run-heavy-job.sh skipped this fire (lock held): not a failure.
+SuccessExitStatus=75
+# Queue behind another heavy job (host-wide and scheduled locks) for up to
+# 12h instead of skipping the fire; TimeoutStartSec below covers wait + run.
+Environment=HEAVY_JOB_LOCK_WAIT=43200
+Environment=HEAVY_JOB_CLASS=scheduled
+# A stop must let the script's EXIT trap shut down the scratch Postgres and
+# remove its data dir before SIGKILL.
+Environment=HEAVY_JOB_STOP_TIMEOUT=15min
+ExecStart=/usr/local/sbin/run-heavy-job.sh restore-drill-offsite /usr/local/bin/restore-drill.sh
 # The script itself requires root (drops to postgres via sudo -u for
 # the actual pg/pgbackrest operations) — see its own EUID check.
 User=root
@@ -75,7 +84,8 @@ IOSchedulingPriority=7
 # ~47 min measured for the restore alone; WAL replay and the archive
 # drain come on top, as for repo1. Same 4h ceiling so a wedged S3 pull
 # still fails and frees the next tick instead of running forever.
-TimeoutStartSec=4h
+# Whole seconds: the 43200 s lock wait + 4h for the run itself.
+TimeoutStartSec=57600
 
 # Hardening — identical to restore-drill.service.j2, for the same reasons
 # recorded there (BDR-04): ProtectSystem=full leaves /var, /srv and /run

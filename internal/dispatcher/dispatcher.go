@@ -61,6 +61,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical/discovery"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/entrywalk"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
@@ -87,6 +88,23 @@ type Decoder interface {
 	Name() string
 	Matches(ev events.Event) bool
 	Decode(ev events.Event) ([]consumer.Event, error)
+}
+
+// Drainer is an OPTIONAL interface a stateful [Decoder] implements to flush
+// correlation groups still buffered when a bounded stream ends. Without it a
+// group that only an age sweep or a later event would emit (a pre-upgrade
+// phoenix swap, a soroswap swap with no following sync) is lost with the
+// range's last events. Drain also empties the buffers.
+type Drainer interface {
+	Drain() []consumer.Event
+}
+
+// Drain flushes dec if it is a [Drainer]; any other value yields nil.
+func Drain(dec any) []consumer.Event {
+	if dr, ok := dec.(Drainer); ok {
+		return dr.Drain()
+	}
+	return nil
 }
 
 // StateWriteKeyConsumer is an OPTIONAL interface a [Decoder]
@@ -351,6 +369,9 @@ type LedgerEntryChangeDecoder interface {
 //	2  ledger-wide three-phase walk (all fees, all apply-phase, all
 //	   post-apply fees), failed txs included — C2-023/C2-040/C2-032/R-A01-1,
 //	   audit-2026-07-23.
+//	3  each LedgerEntryChanges block walked in entrywalk.Canonical (ledger
+//	   key) order instead of export order, which stellar-core leaves to
+//	   hash-map iteration and so differs between exports of one ledger.
 //
 // The state-archival eviction phase (Q119, 2026-09-19) did NOT bump this.
 // It APPENDS its changes after every phase-1..3 change in the ledger, so
@@ -377,7 +398,7 @@ type LedgerEntryChangeDecoder interface {
 //     legacy row: delete the range and reproject.
 //
 // Procedure: docs/operations/runbooks/entry-walk-renumbering.md.
-const EntryWalkVersion = 2
+const EntryWalkVersion = 3
 
 type LedgerEntryChangeContext struct {
 	Ledger   uint32
@@ -533,6 +554,11 @@ type Dispatcher struct {
 	// not be read, so none of their state-archival evictions reached the
 	// entry decoders — each evicted balance then stays served as live.
 	evictedKeysUnreadable int
+
+	// ledgerUpgradeEntries counts upgrade entries (protocol version, base
+	// reserve, config settings, ...) seen in closed ledgers. No decoder
+	// reads them; the count makes a protocol change visible.
+	ledgerUpgradeEntries int
 
 	// uncorroboratedCalls is the per-source count of ContractCall
 	// invocations an [ExecutionCorroborationRequirer] decoder MATCHED
@@ -726,6 +752,10 @@ type Stats struct {
 	// EvictedKeysUnreadable counts ledgers whose evicted-key list failed
 	// to read; every eviction in them is missing from the served state.
 	EvictedKeysUnreadable int
+	// LedgerUpgradeEntries counts ledger-upgrade entries seen. They are
+	// observed, not decoded: a non-zero delta marks a network-wide
+	// parameter change (protocol, base reserve, Soroban config).
+	LedgerUpgradeEntries int
 	// UncorroboratedCalls is the per-source count of oracle-class
 	// ContractCall invocations dropped before Decode because they were
 	// only DECLARED in the auth tree, never executed (W8.4a). Non-zero on
@@ -761,6 +791,7 @@ func (d *Dispatcher) Stats() Stats {
 	txEventReadErrs := d.txEventReadErrors
 	entryMetaUnsup := d.entryMetaUnsupported
 	evictedUnreadable := d.evictedKeysUnreadable
+	upgradeEntries := d.ledgerUpgradeEntries
 	d.statsMu.Unlock()
 
 	orphanCopied := map[string]int{}
@@ -794,6 +825,7 @@ func (d *Dispatcher) Stats() Stats {
 		TxEventReadErrors:     txEventReadErrs,
 		EntryMetaUnsupported:  entryMetaUnsup,
 		EvictedKeysUnreadable: evictedUnreadable,
+		LedgerUpgradeEntries:  upgradeEntries,
 		UncorroboratedCalls:   uncorrCopied,
 	}
 }
@@ -873,6 +905,8 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 		outputs = append(outputs,
 			d.walkLedgerEntryChanges(lcm, txs, ledgerSeq, parsedClosedAt)...)
 	}
+	// Outside the guard: upgrades are observed even with no entry decoders.
+	d.noteLedgerUpgrades(lcm.UpgradesProcessing(), ledgerSeq)
 
 	for i := range txs {
 		tx := txs[i]
@@ -1136,7 +1170,9 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 // LEDGER UPGRADES (the SDK's 4th state, upgradeChangesState) are deliberately
 // NOT walked: they are not transaction-scoped, carry no TxHash, and no
 // LedgerEntryChangeDecoder consumes them today. The lake walker makes the
-// identical choice, so the two stay in step.
+// identical choice, so the two stay in step. They are COUNTED and logged
+// per ledger by [ProcessLedger] ([noteLedgerUpgrades]), whether or not any
+// entry decoder is registered, so a network parameter change is visible.
 //
 // IntraLedgerSeq is the per-ledger monotonic position, advanced for every
 // walked change (matched or not) so relative order is preserved; gaps from
@@ -1204,9 +1240,7 @@ func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []inges
 	// OpIndex is -1 to distinguish from per-op changes.
 	for i := range txs {
 		dispatch := dispatchFor(entryChangeTxHash(&txs[i]))
-		for j := range txs[i].FeeChanges {
-			outputs = append(outputs, dispatch(-1, txs[i].FeeChanges[j])...)
-		}
+		outputs = append(outputs, walkChangeSet(txs[i].FeeChanges, -1, dispatch)...)
 	}
 	// ── Phase 2: the apply phase for every tx, in the same order.
 	for i := range txs {
@@ -1240,9 +1274,7 @@ func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []inges
 	// tx-level change, like the fee phase it mirrors.
 	for i := range txs {
 		dispatch := dispatchFor(entryChangeTxHash(&txs[i]))
-		for j := range txs[i].PostTxApplyFeeChanges {
-			outputs = append(outputs, dispatch(-1, txs[i].PostTxApplyFeeChanges[j])...)
-		}
+		outputs = append(outputs, walkChangeSet(txs[i].PostTxApplyFeeChanges, -1, dispatch)...)
 	}
 	// ── Phase 4: the ledger's STATE-ARCHIVAL EVICTIONS. Not
 	// transaction-scoped, so empty TxHash and OpIndex -1 like the fee
@@ -1250,6 +1282,22 @@ func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []inges
 	// after every transaction has applied. See [walkEvictedKeys].
 	outputs = append(outputs, d.walkEvictedKeys(lcm, ledgerSeq, dispatchFor(""))...)
 	return outputs
+}
+
+// noteLedgerUpgrades counts and logs a ledger's upgrade entries. It never
+// dispatches them: no decoder consumes upgrade changes.
+func (d *Dispatcher) noteLedgerUpgrades(ups []xdr.UpgradeEntryMeta, ledgerSeq uint32) {
+	if len(ups) == 0 {
+		return
+	}
+	types := make([]string, len(ups))
+	for i := range ups {
+		types[i] = ups[i].Upgrade.Type.String()
+	}
+	d.statsMu.Lock()
+	d.ledgerUpgradeEntries += len(ups)
+	d.statsMu.Unlock()
+	d.log().Info("dispatcher: ledger carries upgrades", "ledger", ledgerSeq, "types", types)
 }
 
 // walkEvictedKeys dispatches one synthetic Removed change per ledger key
@@ -1277,19 +1325,9 @@ func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []inges
 // Keys of entry types no decoder watches (the paired TTL keys, contract
 // code) fall out at each decoder's Matches — same as any unmatched change.
 //
-// KNOWN DIVERGENCE FROM THE LAKE, and it is deliberate: the lake walker
-// (clickhouse.extractEntryChanges) mirrors phases 1-3 and has no eviction
-// phase, so from here the live observers see an eviction the lake does not.
-// The live path is the writer of the served supply components, so fixing it
-// first is what stops the drift; until the lake walker grows the same phase,
-// stellar.ledger_entries_current keeps an archived entry's last write as its
-// current version and every reader of it that does not apply a liveness
-// filter of its own reads that as live. The lake readers that COULD
-// reinstate a supply component already carry one — the SAC seed drops
-// positively-archived keys through clickhouse.ClassifyTTLLiveness (v0.21.4),
-// as do the pool-state readers — and a seed row lands at the entry's
-// last-write ledger, BELOW the eviction ledger, so it cannot displace a live
-// eviction row on read either way.
+// The lake walker (clickhouse.extractLedgerEntryChanges) records the same
+// phase as `removed` rows at the same positions; entry_walk_parity_test.go
+// pins the two together.
 //
 // An LCM whose evicted keys cannot be read yields none. The SDK panics
 // rather than erroring on an unknown version, and ProcessLedger has already
@@ -1332,9 +1370,12 @@ func entryChangeTxHash(tx *ingest.LedgerTransaction) string {
 }
 
 // walkChangeSet dispatches each LedgerEntryChange in the slice
-// at the given opIndex (-1 for tx-level / fee-meta blocks).
+// at the given opIndex (-1 for tx-level / fee-meta blocks), in
+// entrywalk.Canonical order so IntraLedgerSeq does not depend on which
+// export the ledger was read from.
 func walkChangeSet(changes []xdr.LedgerEntryChange, opIdx int, dispatch func(int, xdr.LedgerEntryChange) []consumer.Event) []consumer.Event {
 	var outs []consumer.Event
+	changes = entrywalk.Canonical(changes)
 	for i := range changes {
 		outs = append(outs, dispatch(opIdx, changes[i])...)
 	}

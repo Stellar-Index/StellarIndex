@@ -78,6 +78,20 @@ func TestOracleStalenessBudget_DefaultsToTenResolutions(t *testing.T) {
 	}
 }
 
+// TestOracleStalenessBudget_HeartbeatIsNotMultiplied pins that a
+// heartbeat source tickets shortly after its heartbeat, not 10× it.
+func TestOracleStalenessBudget_HeartbeatIsNotMultiplied(t *testing.T) {
+	obs.SetOracleStalenessOverrides(nil)
+	obs.DeclareOracleHeartbeat("test-heartbeat-source", 86400)
+
+	if got := obs.OracleStalenessBudget("test-heartbeat-source", "crypto:XLM"); got != 86400+7200 {
+		t.Errorf("heartbeat budget = %v, want 93600 (24h + 2h grace)", got)
+	}
+	if got := gaugeChildren(t, obs.OracleResolutionSeconds)["source=test-heartbeat-source"]; got != 86400 {
+		t.Errorf("resolution gauge = %v, want 86400", got)
+	}
+}
+
 // TestOracleStalenessBudget_OverrideAppliesToOnePairOnly is the
 // blast-radius case. An override is a claim about ONE asset; it must
 // not reach the asset next to it, and it must not reach the same asset
@@ -184,28 +198,5 @@ func TestRecordOracleUpdate_EveryAgeHasABudget(t *testing.T) {
 	}
 	if got := budgets["asset=crypto:DAI,source=test-pairing"]; got != 32400 {
 		t.Errorf("budget gauge for the overridden asset = %v, want 32400", got)
-	}
-}
-
-// TestOracleStalenessBudget_RedstoneHasNoPerAssetOverrideMechanism
-// documents Q096/T096: a source declaring RedStone's real 24h
-// heartbeat resolution gets a 10x default budget of 10 days before
-// stellarindex_oracle_stale tickets, and [obs.OracleStalenessOverride]
-// only keys on an exact (source, asset) pair — there is no way to
-// tighten the DEFAULT for an entire source (as opposed to widening
-// one named asset, the DAI case above). Fixing this needs a
-// source-level override or a per-source multiplier, which is a
-// config-schema decision owned by internal/config (OracleConfig /
-// validateStalenessOverrides), outside this package's fence. This
-// test pins the current (unfixed) behaviour as reproduction evidence.
-func TestOracleStalenessBudget_RedstoneHasNoPerAssetOverrideMechanism(t *testing.T) {
-	obs.DeclareOracleResolution("redstone", 24*60*60)
-	obs.SetOracleStalenessOverrides(nil)
-	t.Cleanup(func() { obs.SetOracleStalenessOverrides(nil) })
-
-	const tenDaysSeconds = 10 * 24 * 60 * 60
-	if got := obs.OracleStalenessBudget("redstone", "rwa:BENJI"); got != tenDaysSeconds {
-		t.Fatalf("redstone default staleness budget = %v, want %v (10x the declared 24h resolution) "+
-			"— no per-asset override exists for any RedStone feed to tighten this", got, float64(tenDaysSeconds))
 	}
 }

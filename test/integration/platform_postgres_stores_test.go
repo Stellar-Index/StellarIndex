@@ -885,7 +885,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 			AccountID:  acct.ID,
 			Name:       "ops-slack",
 			URL:        "https://hooks.slack.example/services/T/B/X",
-			SecretHash: hash[:],
+			SigningKey: hash[:],
 			Events: []string{
 				string(platform.WebhookEventIncidentSEV1),
 				string(platform.WebhookEventAnomalyFreeze),
@@ -1056,7 +1056,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 					AccountID:  acct.ID,
 					Name:       fmt.Sprintf("hook-%d", i),
 					URL:        fmt.Sprintf("https://hooks.example/%d", i),
-					SecretHash: hash[:],
+					SigningKey: hash[:],
 					Events:     []string{string(platform.WebhookEventAnomalyFreeze)},
 					Enabled:    true,
 				}, cap_)

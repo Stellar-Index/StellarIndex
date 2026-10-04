@@ -177,6 +177,27 @@ export async function finishPasskeyLogin(
   });
 }
 
+/** POST /v1/auth/passkey/begin-signup — creation options for an email-less new account. */
+export async function beginPasskeySignup(): Promise<unknown> {
+  return accountFetch<unknown>('/auth/passkey/begin-signup', {
+    method: 'POST',
+  });
+}
+
+/**
+ * POST /v1/auth/passkey/finish-signup — create the account; the session
+ * cookie rides the response. Throws ApiError (400) on any failure.
+ */
+export async function finishPasskeySignup(
+  name: string,
+  credential: Record<string, unknown>,
+): Promise<void> {
+  await accountFetch<{ status: string }>('/auth/passkey/finish-signup', {
+    method: 'POST',
+    body: { name, credential },
+  });
+}
+
 /** POST /v1/auth/passkey/begin-register — creation options (session-gated). */
 export async function beginPasskeyRegister(): Promise<unknown> {
   return accountFetch<unknown>('/auth/passkey/begin-register', {
@@ -426,6 +447,24 @@ export async function updateDashboardWebhook(
   return accountFetch<DashboardWebhook>(
     `/dashboard/webhooks/${encodeURIComponent(id)}`,
     { method: 'PATCH', body },
+  );
+}
+
+export type RotateWebhookSecretResponse =
+  components['schemas']['RotateWebhookSecretResponse'];
+
+/**
+ * POST /v1/dashboard/webhooks/{id}/rotate-secret — replace the signing
+ * secret in place (shown once); the old one keeps signing until
+ * `previous_secret_expires_at`. Idempotency-keyed so a retry never
+ * rotates twice.
+ */
+export async function rotateDashboardWebhookSecret(
+  id: string,
+): Promise<RotateWebhookSecretResponse> {
+  return idempotentCreate<RotateWebhookSecretResponse>(
+    `/dashboard/webhooks/${encodeURIComponent(id)}/rotate-secret`,
+    {},
   );
 }
 

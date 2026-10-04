@@ -705,7 +705,7 @@ const tvlLegPriceReadFailed = "price_read_failed"
 // ok=false when the leg cannot be priced honestly.
 //
 // The math mirrors the trades.usd_volume insert path exactly
-// (timescale.tradeUSDVolumeViaXLMBaseAnchor / baseAnchorEligible):
+// (timescale.usdVolumeViaXLMBaseAnchor / baseAnchorEligible):
 // USDPriceAt returns a RAW prices_1m ratio chain anchored against a
 // 7-decimal asset (native XLM or a classic USD peg), so for A raw
 // units at raw rate R the identity
