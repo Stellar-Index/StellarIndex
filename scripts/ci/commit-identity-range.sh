@@ -27,11 +27,11 @@
 # forgotten, so the pair is repeated before each of the three collectors
 # rather than given once up front.
 #
-# Env: EVENT, BEFORE, SHA, BASE_SHA, BASE_REF, HEAD_SHA, GITHUB_REF_NAME (all as set
+# Env: EVENT, BEFORE, SHA, BASE_SHA, BASE_REF, HEAD_SHA, DEFAULT_BRANCH, GITHUB_REF_NAME (all as set
 # by the workflow's `env:` block). Prints the range as space-separated
 # `git log` arguments — consume it unquoted, e.g. `git log $range`.
 set -euo pipefail
-cd "$(dirname "$0")/../.." || exit 1
+cd "${RANGE_REPO:-$(dirname "$0")/../..}" || exit 1
 
 EVENT="${EVENT:-}"
 BEFORE="${BEFORE:-}"
@@ -39,6 +39,7 @@ SHA="${SHA:-}"
 BASE_SHA="${BASE_SHA:-}"
 BASE_REF="${BASE_REF:-}"
 HEAD_SHA="${HEAD_SHA:-}"
+DEFAULT_BRANCH="${DEFAULT_BRANCH:-}"
 
 if [ "$EVENT" = pull_request ]; then
   # base.sha goes stale once the base branch moves; also exclude its tip.
@@ -52,6 +53,14 @@ fi
 
 if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
   && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+  # A feature branch that merged the default branch carries commits already
+  # on it (e.g. a bot commit); judge only what the branch adds. Pushes to the
+  # default branch itself stay on the full before..after range.
+  if [ -n "$DEFAULT_BRANCH" ] && [ "${GITHUB_REF_NAME:-}" != "$DEFAULT_BRANCH" ] \
+    && git rev-parse --verify -q "origin/${DEFAULT_BRANCH}^{commit}" >/dev/null; then
+    echo "${BEFORE}..${SHA} --not origin/${DEFAULT_BRANCH}"
+    exit 0
+  fi
   echo "${BEFORE}..${SHA}"
   exit 0
 fi
