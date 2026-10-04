@@ -418,8 +418,26 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 		if err != nil || indexed {
 			return nil, err
 		}
+		// A genesis-complete index makes the miss authoritative: the
+		// timeline is read from ledger 1, so skip the key_xdr scan.
+		if r.instanceGenesisCovers(ctx, 1) {
+			return nil, nil
+		}
 	}
 	return r.contractCodeHistoryLegacy(ctx, cidHash)
+}
+
+const instanceGenesisWatermarkQuery = `SELECT max(thru_ledger) FROM stellar.entry_history_watermark WHERE name = ?`
+
+// instanceGenesisCovers reports whether ch-instance-backfill recorded a
+// genesis-complete watermark at or above ledger. Absent, unreadable or lower
+// all answer false, so the caller keeps its scan.
+func (r *ExplorerReader) instanceGenesisCovers(ctx context.Context, ledger uint32) bool {
+	var wm uint32
+	if err := r.conn.QueryRow(ctx, instanceGenesisWatermarkQuery, ContractInstanceChangesTable).Scan(&wm); err != nil {
+		return false
+	}
+	return wm > 0 && ledger <= wm
 }
 
 // contractInInstanceIndexQuery names only the primary-key prefix, so it
