@@ -120,3 +120,31 @@ func TestReadContractSidecars_CancelledContext(t *testing.T) {
 		t.Fatalf("cancelled reads must report failure: %+v", s)
 	}
 }
+
+type panicDirectory struct{ DirectoryReader }
+
+func (panicDirectory) DirectoryEntryByAddress(context.Context, string) (timescale.DirectoryEntry, bool, error) {
+	panic("directory reader bug")
+}
+
+// One panicking read must degrade only its own field and not kill the process.
+func TestReadContractSidecars_PanicDegradesOneRead(t *testing.T) {
+	b := newBarrier(3) // the three healthy reads
+	h := &Handler{
+		Logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Reader:            sidecarReader{b: b},
+		Directory:         panicDirectory{},
+		ProtocolContracts: sidecarContracts{b: b},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	s := h.readContractSidecars(ctx, "CX")
+
+	if s.dirOK || s.directory != nil {
+		t.Fatalf("panicking directory read must report unavailable: %+v", s)
+	}
+	if s.protocol != "blend" || s.activity == nil || !s.instOK {
+		t.Fatalf("healthy reads must be unaffected: %+v", s)
+	}
+}

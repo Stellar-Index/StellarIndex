@@ -11,6 +11,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // ContractEventView is one event in the contract-activity view.
@@ -196,10 +197,24 @@ type contractSidecars struct {
 func (h *Handler) readContractSidecars(ctx context.Context, cid string) contractSidecars {
 	var s contractSidecars
 	var wg sync.WaitGroup
-	wg.Go(func() { s.protocol = h.contractAttribution(ctx)[cid] })
-	wg.Go(func() { s.directory, s.dirOK = h.directoryFor(ctx, cid) })
-	wg.Go(func() { s.activity = h.contractActivityCard(ctx, cid) })
-	wg.Go(func() { s.inst, s.instOK = h.contractInstanceState(ctx, cid) })
+	// A panic in a request-spawned goroutine would kill the process, so each
+	// read recovers, reports, and leaves its field at the failure value.
+	run := func(name string, fn func(), onPanic func()) {
+		wg.Go(func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					worker.Report(h.Logger, "explorer-contract-"+name, rec)
+					onPanic()
+				}
+			}()
+			fn()
+		})
+	}
+	run("attribution", func() { s.protocol = h.contractAttribution(ctx)[cid] }, func() { s.protocol = "" })
+	run("directory", func() { s.directory, s.dirOK = h.directoryFor(ctx, cid) }, func() { s.directory, s.dirOK = nil, false })
+	run("activity", func() { s.activity = h.contractActivityCard(ctx, cid) }, func() { s.activity = nil })
+	run("instance", func() { s.inst, s.instOK = h.contractInstanceState(ctx, cid) },
+		func() { s.inst, s.instOK = clickhouse.ContractInstanceState{}, false })
 	wg.Wait()
 	return s
 }
