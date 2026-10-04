@@ -40,7 +40,9 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 Environment=DRILL_CH_WINDOW=100000
 # 75 = run-heavy-job.sh skipped this fire (lock held): not a failure.
 SuccessExitStatus=75
-# Timer-fired: shares run-heavy-job.sh's host-wide lock, never refused by it.
+# Queue behind another heavy job (host-wide and scheduled locks) for up to
+# 12h instead of skipping the fire; TimeoutStartSec below covers wait + run.
+Environment=HEAVY_JOB_LOCK_WAIT=43200
 Environment=HEAVY_JOB_CLASS=scheduled
 # A stop must let the script's EXIT trap shut down the scratch Postgres and
 # remove its data dir before SIGKILL.
@@ -66,7 +68,8 @@ IOSchedulingPriority=7
 # hours on a busy ingest DB (script's own PG_START_TIMEOUT default);
 # cap generously above that so a genuinely wedged drill still fails
 # and frees the next tick instead of running forever.
-TimeoutStartSec=4h
+# Whole seconds: the 43200 s lock wait + 4h for the run itself.
+TimeoutStartSec=57600
 
 # Hardening — ProtectSystem=full (not strict): /usr, /boot and /etc are
 # read-only but /var stays WRITABLE, so with no extra ReadWritePaths the
