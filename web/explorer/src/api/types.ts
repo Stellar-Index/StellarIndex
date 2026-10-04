@@ -11170,7 +11170,7 @@ export interface components {
             asset_id: string;
             /** @description The contract (Soroban token or classic SAC) supply is keyed by. Omitted for native XLM. */
             contract_id?: string;
-            /** @description Decimal string. mint − burn − clawback (or the ledger total_coins for native). Never a JSON number (ADR-0003). */
+            /** @description Decimal string. mint − burn − clawback (or the ledger total_coins for native). Never a JSON number (ADR-0003). For source=mint_burn_flows this is a figure derived from the event log, not one the issuer publishes; supply_basis says which log. */
             total_supply: string;
             /** @description Decimal string: Σ mint. Omitted for native. */
             mint_total?: string;
@@ -11188,6 +11188,11 @@ export interface components {
              * @enum {string}
              */
             source: "mint_burn_flows" | "ledger_total_coins" | "contract_storage_balances";
+            /**
+             * @description Which event log a source=mint_burn_flows total_supply was summed from, in the vocabulary Asset.supply_basis uses. `sep41_lake_flows`: the requested Soroban contract's own mint/burn/clawback events. `classic_lake_flows`: a classic CODE-ISSUER asset's net over its derived Stellar Asset Contract's unified (CAP-67) mint/burn/clawback events. That is a derived reading, not an issuer-authoritative supply, and an UPPER reading rather than a certified one: it is only as complete as the replayed flow history, and a replayed historical mint with no matching burn inflates it. It is not a lower bound either. Omitted for every other source.
+             * @enum {string}
+             */
+            supply_basis?: "sep41_lake_flows" | "classic_lake_flows";
             /** @description True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only the balance entries the lake's current-state projection captured, so an entry dormant since before its coverage began is absent. Omitted when false. */
             circulating_supply_lower_bound?: boolean;
             /** @description Number of per-holder balance entries summed. Only present for source=contract_storage_balances. A temporary entry whose TTL lapsed has been deleted by the network and is not counted. */

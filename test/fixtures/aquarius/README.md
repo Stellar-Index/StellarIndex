@@ -64,5 +64,7 @@ keys (seen in Soroswap / Reflector).
   under the same `<wasm_hash>/` directory and extend the
   real_fixture_test dispatcher.
 - **WASM hash not yet resolved.** Fixtures currently land under
-  `v2-2026-04-23/` (semantic-tag + date). Relabel when the ops CLI
-  lands a `resolve-wasm` subcommand.
+  `v2-2026-04-23/` (tag + date), not a hash directory. Resolve it from the lake
+  with the query in the "Resolving the WASM hash" section of
+  [test/fixtures/reflector/README.md](../reflector/README.md), using
+  the fixtures' `contract_id` and the capture ledger, then relabel.

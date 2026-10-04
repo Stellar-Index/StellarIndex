@@ -144,7 +144,7 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	res.Truncated = len(trades) == maxTrades
 	res.Clamped = clamped
 	res.Substance = s.thinMarketEvidence(ctx, base, quote, "twap")
-	writeJSON(w, res, Flags{Triangulated: triangulated, ThinMarket: res.Substance != nil})
+	writeJSON(w, res, Flags{Triangulated: triangulated, ThinMarket: res.Substance != nil, ProxyDeviation: triangulated && s.proxyDeviation(ctx, to)})
 }
 
 // computeTWAP filters trades at sigma and time-weights the survivors
