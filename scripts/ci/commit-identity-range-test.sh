@@ -96,6 +96,38 @@ check() { # <name> <expect: nonempty|empty>
 mkrepo
 check "new branch under fetch-depth:0, detached HEAD: the branch's own commit is still checked" nonempty
 
+# PR whose base.sha is older than the base branch tip: main gained a commit
+# after the PR branched and the PR merged it in; that commit is not the PR's own.
+mkrepo_pr() {
+  mkrepo
+  (
+    cd "$TMP/repo" || exit 1
+    git rev-parse main > "$TMP/stale_base"
+    git checkout -q main
+    printf 'moved\n' > other.txt
+    git add -A
+    git commit -qm "landed on main after the PR branched"
+    git rev-parse HEAD > "$TMP/main_tip"
+    git update-ref refs/remotes/origin/main "$(cat "$TMP/main_tip")"
+    git checkout -q feature-x
+    git merge -q --no-ff -m "merge main into PR" main
+    git rev-parse HEAD > "$TMP/pr_head"
+    git checkout -q "$(cat "$TMP/pr_head")"
+  )
+}
+
+mkrepo_pr
+# shellcheck disable=SC2086
+pr_out="$(cd "$TMP/repo" && range="$(EVENT=pull_request BASE_SHA="$(cat "$TMP/stale_base")" \
+  BASE_REF=main HEAD_SHA="$(cat "$TMP/pr_head")" "$GATE")" && git log $range --format='%H')"
+if grep -qF "$(cat "$TMP/new_sha")" <<<"$pr_out" && ! grep -qF "$(cat "$TMP/main_tip")" <<<"$pr_out"; then
+  printf '  ok   %s\n' "PR with stale base.sha: base-branch commit excluded, PR commit included"
+  pass=$((pass + 1))
+else
+  printf '  FAIL PR with stale base.sha (got: %s)\n' "$pr_out"
+  fail=$((fail + 1))
+fi
+
 echo
 echo "commit-identity-range-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,21 @@ const (
 	RoleMember  Role = "member"  // can mint own keys; can't invite or change billing
 	RoleViewer  Role = "viewer"  // read-only
 )
+
+// placeholderEmailDomain is an RFC 2606 reserved TLD: mail to it can
+// never be delivered, so a placeholder address cannot reach a stranger.
+const placeholderEmailDomain = "@passkey.invalid"
+
+// PlaceholderEmail is the unique, undeliverable address stored for a user who
+// signed up with a passkey and gave no email (users.email is NOT NULL, unique).
+func PlaceholderEmail(userID uuid.UUID) string {
+	return "passkey-" + userID.String() + placeholderEmailDomain
+}
+
+// IsPlaceholderEmail reports whether email came from [PlaceholderEmail].
+func IsPlaceholderEmail(email string) bool {
+	return strings.HasSuffix(strings.ToLower(email), placeholderEmailDomain)
+}
 
 // User is a human with a dashboard login. v1 attaches each user
 // to exactly one account; multi-org migrates via a memberships

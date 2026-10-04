@@ -158,9 +158,12 @@ Unit tests in `decode_test.go` cover:
   factory events explicitly excluded)
 - `Decoder.Name()` + per-event `EventKind()` / `Source()`
 
-Real-mainnet fixtures land alongside the WASM audit (Task #45)
-when we have a captured `new_auction` / `fill_auction` payload to
-golden against.
+Money-market, emission and admin bodies are positional tuples; their
+field order is pinned by synthetic distinct-value tests in
+`decode_money_market_test.go` (all position kinds, claim, emission
+update, update_pool). Real-lake goldens exist only for the V1 events
+in `v1_pool_factory_test.go`; a captured V2 payload per event replaces
+the synthetic frame when one is available.
 
 ## Failure modes
 

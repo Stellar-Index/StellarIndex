@@ -7,6 +7,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/entrywalk"
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
@@ -43,6 +44,11 @@ import (
 //     the LCM's evicted-keys list) as `removed` rows, mirroring
 //     dispatcher.walkEvictedKeys. An evicted entry appears in no tx's meta,
 //     so without it ledger_entries_current keeps its last write as live.
+//
+// Within each LedgerEntryChanges block the changes are walked in
+// entrywalk.Canonical order (by ledger key), not as the export lists them:
+// stellar-core's block order is hash-map order and differs between exports of
+// the same ledger, so only a canonical order makes a re-extract reproducible.
 //
 // Change positions within a tx keep their existing shape: fee-meta +
 // TxChangesBefore/After at op_index -1, per-operation changes at their
@@ -81,9 +87,7 @@ func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransactio
 	// op_index -1 marks tx-level changes.
 	for i := range txs {
 		emit := emitterFor(i)
-		for j := range txs[i].FeeChanges {
-			emit(-1, txs[i].FeeChanges[j])
-		}
+		emitChangeSet(txs[i].FeeChanges, -1, emit)
 	}
 	// ── Phase 2: the apply phase for every tx, in the same order.
 	for i := range txs {
@@ -115,9 +119,7 @@ func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransactio
 	// fee phase it mirrors.
 	for i := range txs {
 		emit := emitterFor(i)
-		for j := range txs[i].PostTxApplyFeeChanges {
-			emit(-1, txs[i].PostTxApplyFeeChanges[j])
-		}
+		emitChangeSet(txs[i].PostTxApplyFeeChanges, -1, emit)
 	}
 	// ── Phase 4: evictions, last because core evicts at ledger close after
 	// every tx has applied. Appended, so phase 1-3 positions are unchanged.
@@ -126,9 +128,16 @@ func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransactio
 
 // emitEvictions appends one `removed` row per evicted key: no tx, so empty
 // tx_hash and op_index -1, with change_index counting within that group.
+// A persistent entry or contract code is archived, not deleted (it moves to
+// the hot archive and stays restorable), so its last live row stays current;
+// it still takes its walk position so later rows match the dispatcher's.
 func emitEvictions(ext *LedgerExtract, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time, intraSeq uint32) {
 	var changeIdx uint32
 	for i := range evicted {
+		if isArchivedOnEviction(evicted[i]) {
+			intraSeq++
+			continue
+		}
 		row, ok := entryChangeRow(seq, closeTime, "", -1, changeIdx, xdr.LedgerEntryChange{
 			Type:    xdr.LedgerEntryChangeTypeLedgerEntryRemoved,
 			Removed: &evicted[i],
@@ -143,7 +152,18 @@ func emitEvictions(ext *LedgerExtract, evicted []xdr.LedgerKey, seq uint32, clos
 	}
 }
 
+func isArchivedOnEviction(k xdr.LedgerKey) bool {
+	switch k.Type {
+	case xdr.LedgerEntryTypeContractCode:
+		return true
+	case xdr.LedgerEntryTypeContractData:
+		return k.ContractData != nil && k.ContractData.Durability == xdr.ContractDataDurabilityPersistent
+	}
+	return false
+}
+
 func emitChangeSet(changes []xdr.LedgerEntryChange, opIdx int, emit func(int, xdr.LedgerEntryChange)) {
+	changes = entrywalk.Canonical(changes)
 	for i := range changes {
 		emit(opIdx, changes[i])
 	}

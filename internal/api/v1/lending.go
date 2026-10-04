@@ -188,11 +188,13 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 	// on-chain ResConfig storage entry is usually uncaptured. Best-effort:
 	// a failure here just means APY is omitted, not a failed response.
 	configs, err := s.lending.BlendReserveConfigs(ctx, pool)
+	var configsFailed bool
 	if err != nil {
 		if clientAborted(r, err) {
 			return
 		}
 		s.logger.Warn("BlendReserveConfigs failed", "err", err, "pool", pool)
+		configsFailed = true
 		configs = nil
 	}
 	states, err := s.explorer.BlendPoolReserves(ctx, pool, version, assets, configs)
@@ -237,7 +239,7 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 	// reads carry.
 	wmLedger, stale, _ := s.lakeWatermark(ctx)
 	out.AsOfLedger = wmLedger
-	writeJSON(w, out, Flags{Stale: stale})
+	writeJSON(w, out, Flags{Stale: stale, Degraded: configsFailed})
 }
 
 // reservesTVLUSD sums the priced reserves' supplied USD in reserve order.

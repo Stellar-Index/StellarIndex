@@ -350,9 +350,11 @@ func (s *evictionSpy) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consume
 
 // TestEntryWalkParity_EvictedKeysAreRecordedByBothWalkers: an entry whose TTL
 // lapses is reported only in the LCM's evicted-keys list, never in tx meta.
-// The lake must record it as a `removed` row at the eviction ledger, at the
-// same position the live dispatcher walks it, or ledger_entries_current keeps
-// the entry's last write as live.
+// The lake must record a deleted (temporary) entry as a `removed` row at the
+// eviction ledger, at the same position the live dispatcher walks it, or
+// ledger_entries_current keeps the entry's last write as live. A persistent
+// entry or contract code is archived, not deleted, so the lake writes no row
+// and its last live value stays current.
 func TestEntryWalkParity_EvictedKeysAreRecordedByBothWalkers(t *testing.T) {
 	const ledger = 4713
 	lcm := buildParityLedger(t, ledger, []parityTx{
@@ -367,8 +369,15 @@ func TestEntryWalkParity_EvictedKeysAreRecordedByBothWalkers(t *testing.T) {
 			Durability: xdr.ContractDataDurabilityTemporary,
 		},
 	}
+	persistentKey := dataKey
+	persistentKey.ContractData = &xdr.LedgerKeyContractData{
+		Contract:   dataKey.ContractData.Contract,
+		Key:        xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance},
+		Durability: xdr.ContractDataDurabilityPersistent,
+	}
+	codeKey := xdr.LedgerKey{Type: xdr.LedgerEntryTypeContractCode, ContractCode: &xdr.LedgerKeyContractCode{Hash: xdr.Hash{0xE3}}}
 	ttlKey := xdr.LedgerKey{Type: xdr.LedgerEntryTypeTtl, Ttl: &xdr.LedgerKeyTtl{KeyHash: xdr.Hash{0xE2}}}
-	lcm.V2.EvictedKeys = []xdr.LedgerKey{dataKey, ttlKey}
+	lcm.V2.EvictedKeys = []xdr.LedgerKey{persistentKey, dataKey, codeKey, ttlKey}
 
 	spy := &evictionSpy{}
 	d := dispatcher.New()
@@ -396,14 +405,28 @@ func TestEntryWalkParity_EvictedKeysAreRecordedByBothWalkers(t *testing.T) {
 		lake = append(lake, walkStep{Seq: row.IntraLedgerSeq, TxHash: row.TxHash, OpIndex: row.OpIndex, KeyXDR: row.KeyXDR})
 	}
 
-	if len(spy.steps) != 2 || len(lake) != 2 {
-		t.Fatalf("evicted keys walked: dispatcher %d, lake %d, want 2 each\n  dispatcher: %v\n  lake:       %v",
-			len(spy.steps), len(lake), spy.steps, lake)
+	archived := map[string]bool{}
+	for _, k := range []xdr.LedgerKey{persistentKey, codeKey} {
+		raw, err := k.MarshalBinary()
+		if err != nil {
+			t.Fatalf("marshal archived key: %v", err)
+		}
+		archived[base64.StdEncoding.EncodeToString(raw)] = true
 	}
-	for i := range spy.steps {
-		if spy.steps[i] != lake[i] {
+	var deleted []walkStep
+	for _, st := range spy.steps {
+		if !archived[st.KeyXDR] {
+			deleted = append(deleted, st)
+		}
+	}
+	if len(spy.steps) != 4 || len(deleted) != 2 || len(lake) != 2 {
+		t.Fatalf("evicted keys walked: dispatcher %d (%d deleted), lake %d, want 4 (2) and 2\n  dispatcher: %v\n  lake:       %v",
+			len(spy.steps), len(deleted), len(lake), spy.steps, lake)
+	}
+	for i := range deleted {
+		if deleted[i] != lake[i] {
 			t.Errorf("eviction step %d differs:\n  dispatcher: %s key=%s\n  lake:       %s key=%s",
-				i, spy.steps[i], spy.steps[i].KeyXDR, lake[i], lake[i].KeyXDR)
+				i, deleted[i], deleted[i].KeyXDR, lake[i], lake[i].KeyXDR)
 		}
 	}
 

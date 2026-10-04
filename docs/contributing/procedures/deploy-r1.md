@@ -15,12 +15,19 @@ deploying anything he hasn't asked to ship.
 gh workflow run deploy.yml \
   -f region=r1 \
   -f version=vX.Y.Z \
-  -f binaries=stellarindex-indexer,stellarindex-aggregator,stellarindex-api
+  -f config_acknowledged=true
 ```
 
-Include `stellarindex-ops`/`stellarindex-migrate`/`stellarindex-sla-probe`
-when the release changed them — r1's ops binary has drifted
-out-of-band before; deploying it keeps timer units honest.
+Omit `binaries`: the default is the full set, filtered through
+`scripts/dev/region-binaries.tsv`, and r1 runs all six (indexer, aggregator,
+api, sla-probe, ops, migrate). Naming fewer is refused unless the omitted
+ones are already on that version. This also keeps r1's ops binary, which has
+drifted out-of-band before, current.
+
+`config_acknowledged=true` asserts you have applied (or will apply) any
+config the release changed; without it the config-apply gate fails the job
+for a release that touched config. See
+[deploy-workflow.md](../../operations/deploy-workflow.md).
 
 ## What the workflow does (know before you press)
 

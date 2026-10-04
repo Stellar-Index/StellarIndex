@@ -73,7 +73,8 @@ func TestSinkBufferCapUnboundedByDefault(t *testing.T) {
 // value (see the Conn doc comment on hand-implementing it).
 type fakeOrderConn struct {
 	driver.Conn
-	tables []string
+	tables  []string
+	queries []string
 
 	// failTable, when set, makes that table's batch fail: at PrepareBatch if
 	// failAtPrepare, otherwise at Send. It models a partial flush.
@@ -86,6 +87,7 @@ var errInjected = errors.New("injected clickhouse failure")
 func (c *fakeOrderConn) PrepareBatch(_ context.Context, query string, _ ...driver.PrepareBatchOption) (driver.Batch, error) {
 	table := tableFromInsert(query)
 	c.tables = append(c.tables, table)
+	c.queries = append(c.queries, query)
 	if table == c.failTable {
 		if c.failAtPrepare {
 			return nil, errInjected

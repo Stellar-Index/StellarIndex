@@ -85,7 +85,7 @@
 // pricing (Price, PriceAt, PriceChanges, PriceTip, PriceBatch, Chart, History,
 // HistorySinceInception, OHLC, OHLCSeries, VWAP, TWAP, Observations), market
 // data (Markets, Pair, Pools, LendingPools), the asset catalogue
-// (Assets, Asset, AssetMetadata, Issuers, Issuer, SACWrappers),
+// (Assets, Asset, AssetMetadata, AssetSupplyFlows, Issuers, Issuer, SACWrappers),
 // real-world assets (RWAAssets, RWAHistory, RWAPremiumHistory),
 // aggregate snapshots (NetworkStats, Sources, Aggregators, Methodology,
 // ChangeSummary), incidents + status surfaces (Incidents, Status,

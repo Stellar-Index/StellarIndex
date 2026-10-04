@@ -85,12 +85,12 @@ func truncContract(c string) string {
 // Best-effort and empty-safe: a nil reader, a read error, or a pool with no
 // resolvable tokens leaves that row's pair fields absent — the roster always
 // renders. The symbol resolver is shared across the roster so shared tokens
-// resolve once.
-func (s *Server) enrichContractTokens(ctx context.Context, meta ProtocolMeta, contracts []ProtocolContractView) {
+// resolve once. Reports false when the pool-token read failed.
+func (s *Server) enrichContractTokens(ctx context.Context, meta ProtocolMeta, contracts []ProtocolContractView) (ok bool) {
 	if len(contracts) == 0 {
-		return
+		return true
 	}
-	poolTokens := s.poolTokenMap(ctx, meta.Name)
+	poolTokens, ok := s.poolTokenMap(ctx, meta.Name)
 	resolver := s.newTokenSymbolResolver()
 	for i := range contracts {
 		c := &contracts[i]
@@ -106,21 +106,23 @@ func (s *Server) enrichContractTokens(ctx context.Context, meta ProtocolMeta, co
 		c.TokenSymbols = syms
 		c.Pair = strings.Join(syms, "/")
 	}
+	return ok
 }
 
 // poolTokenMap loads the source's pool→tokens map, degrading to nil (roster
-// still renders, just without pairs) on a nil reader or read error. soroswap
-// returns nil here — its rows carry token0/token1 directly.
-func (s *Server) poolTokenMap(ctx context.Context, source string) map[string][]string {
+// still renders, just without pairs) on a nil reader or read error; ok is
+// false only for the read error. soroswap returns nil here — its rows carry
+// token0/token1 directly.
+func (s *Server) poolTokenMap(ctx context.Context, source string) (m map[string][]string, ok bool) {
 	if source == "soroswap" || s.protocolPoolTokens == nil {
-		return nil
+		return nil, true
 	}
 	m, err := s.protocolPoolTokens.PoolTokens(ctx, source)
 	if err != nil {
 		s.logger.Warn("protocol pool-tokens read failed", "source", source, "err", err)
-		return nil
+		return nil, false
 	}
-	return m
+	return m, true
 }
 
 // rawPoolTokens returns the ordered raw token contract C-strkeys for one

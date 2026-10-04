@@ -111,7 +111,8 @@
 # /external/assets/{slug}. /assets/{slug} used to render a duplicate
 # (AM-16 split identity, canonicalized but still served); the route no
 # longer exports fiat slugs and these 301s catch old links + indexes.
-# Trailing-slash form only (next.js trailingSlash 308s the bare form).
+# Trailing-slash form only; the bare form is redirected by
+# functions/assets/[[path]].js (static export has no server to normalise it).
 /assets/us-dollar/  /external/assets/us-dollar/  301
 /assets/euro/  /external/assets/euro/  301
 /assets/british-pound/  /external/assets/british-pound/  301
@@ -171,8 +172,9 @@
 # half). The Next page does permanentRedirect, but under static export
 # that ships an __next_error__ shell that only redirects after JS
 # hydration — crawlers and no-JS agents saw a 200 error shell. This
-# rule makes it a real HTTP 301. Trailing-slash form only (next.js
-# trailingSlash 308s the bare form first, same as /currencies rules).
+# rule makes it a real HTTP 301. Both forms are listed: static export has no
+# server to normalise one onto the other.
+/protocols/sdex   /sdex/  301
 /protocols/sdex/  /sdex/  301
 
 # Restructure (SEO plan D5) — singular category + /external aliases resolve to

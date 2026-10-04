@@ -1,6 +1,7 @@
 package controlwiring
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -87,6 +88,10 @@ func TestNoLegacyIssueReferences(t *testing.T) {
 				return nil
 			}
 			b, err := os.ReadFile(p) //nolint:gosec // repo-relative, test-only
+			if errors.Is(err, fs.ErrNotExist) {
+				// Another verify lane's fixture, deleted between ReadDir and here.
+				return nil
+			}
 			if err != nil {
 				return err
 			}

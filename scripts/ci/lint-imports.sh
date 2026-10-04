@@ -134,6 +134,7 @@ RULES = [
             "internal/sources/sdex/",           # SDEX decodes non-SCVal xdr (classic ops) (PR 165c)
             "internal/sources/classicmovements/", # ADR-0047: reconstructs pre-P23 classic movements (Payment/CreateAccount) from raw xdr.Operation/OperationResult — same non-SCVal classic-op category as sdex
             "internal/sdexclaim/",              # shared ClaimAtom count/amount helpers (dispatcher + clickhouse); xdr.ClaimAtom only
+            "internal/entrywalk/",              # canonical LedgerEntryChange order shared by the dispatcher walk and the clickhouse extract; ledger keys only, no SCVal decoding
             "internal/sources/accounts/",       # AccountEntry observer reads ledger-meta deltas (ADR-0021)
             "internal/sources/trustlines/",     # TrustlineEntry observer reads ledger-meta deltas (ADR-0022)
             "internal/sources/claimable_balances/", # ClaimableBalance observer reads ledger-meta deltas (ADR-0022)
