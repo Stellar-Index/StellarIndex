@@ -1078,6 +1078,8 @@
     - compute-completeness-sdex.timer
     - verify-lake.service
     - verify-lake.timer
+    - verify-network-state.service
+    - verify-network-state.timer
     - data-freshness.service
     - data-freshness.timer
     - ch-supply.service
@@ -1129,6 +1131,7 @@
     - compute-completeness.timer
     - compute-completeness-sdex.timer
     - verify-lake.timer
+    - verify-network-state.timer
     - data-freshness.timer
     - ch-supply.timer
     - issuer-flags.timer
@@ -1664,9 +1667,9 @@
 # lock, the 20G MemoryMax scope and the disk watchdog. The lock name is
 # its own (`verify-archive-tier-d`), not tier A/B's `verify-archive`: a
 # multi-hour tier-A bootstrap walk would otherwise swallow the weekly
-# fork check with a "skipping this fire" exit 75. Sunday 10:23 keeps it
+# fork check with a "skipping this fire" exit 75. Sunday 16:23 keeps it
 # clear of the nightly heavy band (02:17 archive-completeness through
-# 06:00 ch-supply, incl. tier A 03:23 and tier B 04:37). Both pinned by
+# verify-network-state 13:47 + 2h, incl. tier A 03:23 and tier B 04:37). Both pinned by
 # scripts/ci/verify-archive-tier-d-test.sh.
 #
 # Gated on verify_archive_tier_d_enabled (defaults/main.yml): Tier D
@@ -1690,7 +1693,7 @@
     cron_file: stellarindex-verify-archive-tier-d
     user: root
     minute: "23"
-    hour: "10"
+    hour: "16"
     weekday: "0"   # Sunday, after the nightly heavy-job band
     state: "{{ 'present' if (verify_archive_tier_d_enabled | bool) else 'absent' }}"
     # The -ops file is read VERBATIM (systemd EnvironmentFile syntax is not

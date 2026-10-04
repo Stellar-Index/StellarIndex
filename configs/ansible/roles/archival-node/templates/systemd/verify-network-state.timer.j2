@@ -1,0 +1,21 @@
+# systemd timer: daily verify-network-state run.
+#
+# Rendered by Ansible. Companion to verify-network-state.service.
+#
+# Time slot: 13:47 UTC + up to 10 min jitter — after verify-lake (08:17) has
+# hit its 4h ceiling, so the two full-table lake reads do not overlap. Daily
+# matches the 48h threshold of stellarindex_network_state_verify_stale.
+# Persistent=true: if the box was off at 13:47, fire on next boot.
+
+[Unit]
+Description=Daily verify-network-state reconciliation run
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/network-state-verify.md
+
+[Timer]
+OnCalendar=*-*-* 13:47:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+Unit=verify-network-state.service
+
+[Install]
+WantedBy=timers.target

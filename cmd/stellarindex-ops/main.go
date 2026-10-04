@@ -36,7 +36,8 @@
 //     `compute-completeness`, `verify-served-values`, `verify-usd-volume`,
 //     `usd-volume-restamp`, `sdex-claim-audit`, `classic-movements-backfill`,
 //     `projected-rebuild`, `reconcile-balances`, `verify-contiguity`,
-//     `verify-hashchain`, `verify-lake`, `wasm-drift`.
+//     `verify-hashchain`, `verify-lake`, `verify-network-state`,
+//     `wasm-drift`.
 //   - Doc generation: `docs-config` (regenerates the config
 //     reference from struct tags; called by `make docs-config`).
 //   - Billing/usage recovery: `usage-rollup-backfill` (re-folds the
@@ -206,6 +207,7 @@ var subcommands = map[string]func(args []string) error{
 	"verify-contiguity":          chops.Run,
 	"verify-hashchain":           chops.Run,
 	"verify-lake":                chops.Run,
+	"verify-network-state":       chops.Run,
 	"wasm-drift":                 chops.Run,
 }
 
@@ -1331,6 +1333,26 @@ Subcommands:
                           different shape; run it separately. Example:
                             stellarindex-ops verify-lake \
                               -ch-addr 127.0.0.1:9300
+  verify-network-state [-config PATH] [-ch-addr H:P] [-archive URL] [-checkpoint N] [-checks hotarchive,lumens] [-textfile PATH]
+                          Compares the lake's derived current state with
+                          state the network publishes; run daily by
+                          verify-network-state.timer. (1) hotarchive:
+                          every archived entry in the history archive's
+                          hot-archive buckets at a checkpoint (default the
+                          newest at or below the lake tip) must match
+                          ledger_entries_current — a protocol upgrade can
+                          rewrite these with no ledger-meta change.
+                          (2) lumens: native XLM in accounts, claimable
+                          balances, liquidity pools and native-SAC
+                          balances plus fee_pool must equal total_coins
+                          exactly. Keys absent from the lake or changed
+                          after the checkpoint are reported, not counted.
+                          Needs a loadable -config (network passphrase +
+                          archive URL). Exit code = hot-archive mismatches
+                          (+1 if nothing was comparable) + 1 for a lumen
+                          residual (capped at 255). Example:
+                            stellarindex-ops verify-network-state \
+                              -config /etc/stellarindex.toml
   wasm-drift [-config PATH] [-ch-addr H:P] [-source NAME] [-textfile PATH]
                           Every contract of a gated source that has an
                           audit log (curated set + factories + children

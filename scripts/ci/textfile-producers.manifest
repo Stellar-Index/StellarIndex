@@ -72,3 +72,4 @@ internal/ops/opsutil/job_heartbeat.go                                     operat
 internal/supply/textfile.go                                               operator-supplied                  internal/supply/textfile_test.go
 internal/ops/ingest/curated_rwa_sync.go                                    operator-supplied                  internal/ops/ingest/curated_rwa_sync_test.go
 internal/ops/ingest/directory_sync.go                                      directory_sync.prom                internal/ops/ingest/directory_sync_test.go
+internal/ops/chops/verify_network_state.go                                  network_state_verify.prom           internal/ops/chops/verify_network_state_test.go
