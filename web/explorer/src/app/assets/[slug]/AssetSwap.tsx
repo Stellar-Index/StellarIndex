@@ -11,7 +11,7 @@ import { useCoins, coinSlug } from '@/api/hooks';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { formatRelative, formatSubunitPrice } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { isSafePublicImageUrl } from '@/lib/safe-domain';
+import { iconProxySrc, isSafePublicImageUrl } from '@/lib/safe-domain';
 import { useDialog } from '@/lib/useDialog';
 import { fetchPriceBatchChunked, isPriceableAssetId } from '@/lib/price-batch';
 
@@ -485,7 +485,7 @@ function TokenIcon({ token, size = 22 }: { token: SwapToken; size?: number }) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={token.image}
+        src={iconProxySrc(token.image)}
         alt=""
         style={dim}
         onError={() => setBroken(true)}

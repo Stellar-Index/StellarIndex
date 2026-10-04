@@ -286,8 +286,8 @@ func unverifiedSources(audited []string, snaps []timescale.CompletenessSnapshot,
 	return out
 }
 
-// coverageVerdictStaleLedgers bounds how far the LIVE ingest frontier
-// may run past a verdict's tip_ledger before the verdict stops being a
+// coverageVerdictStaleLedgers bounds how far the network tip may run
+// past a verdict's tip_ledger before the verdict stops being a
 // claim about the CURRENT chain.
 //
 // The deployed audit is daily (compute-completeness.timer, 05:30 UTC
@@ -302,7 +302,7 @@ const coverageVerdictStaleLedgers uint32 = 34560
 // two-hour grace flags a missed run the morning it fails, without
 // flagging the ordinary gap between yesterday's run and today's. It
 // also decides alone when no CursorsReader or ledgerstream cursor is
-// available, or when the live tip is frozen alongside a stalled audit.
+// available.
 const coverageVerdictStaleAge = 26 * time.Hour
 
 // coverageVerdictEvidenceStaleAge bounds the age of the evidence behind a
@@ -477,13 +477,13 @@ func recognitionAxisView(sn timescale.CompletenessSnapshot) *RecognitionAxisView
 // to say the response is below the surface's baseline contract, which
 // is what `flags.stale` means per ADR-0018):
 //
-//   - LEDGER GAP: the live ingest frontier has advanced more than
-//     [coverageVerdictStaleLedgers] past the verdict's own tip. This is
-//     an apples-to-apples comparison: compute-completeness resolves its
-//     `tip` from the SAME ledgerstream cursor
-//     (internal/ops/chops/compute_completeness.go), so the difference
-//     is exactly "how many ledgers have closed since this verdict was
-//     computed".
+//   - LEDGER GAP: the network tip has provably run more than
+//     [coverageVerdictStaleLedgers] past the verdict's own tip. The
+//     network tip is the ledgerstream cursor extrapolated by wall-clock
+//     time since it last advanced ([completeness.NetworkTipLowerBound]),
+//     not the bare cursor: compute-completeness resolves its `tip` from
+//     that cursor, so a frozen cursor would otherwise always agree with
+//     the verdict it produced.
 //   - VERDICT AGE: computed_at older than [coverageVerdictStaleAge], or
 //     absent entirely (an unknown-age verdict cannot be claimed fresh).
 //   - EVIDENCE AGE: a source claiming projection_ok whose
@@ -514,8 +514,9 @@ func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.Co
 	if haveTip && now.Sub(time.Time(live.IngestedAt)) > coverageIngestStallAge {
 		return true
 	}
+	netTip := completeness.NetworkTipLowerBound(live.LatestLedger, time.Time(live.IngestedAt), now)
 	for _, sn := range snaps {
-		if haveTip && live.LatestLedger > sn.Tip && live.LatestLedger-sn.Tip > coverageVerdictStaleLedgers {
+		if haveTip && netTip > sn.Tip && netTip-sn.Tip > coverageVerdictStaleLedgers {
 			return true
 		}
 		if sn.ComputedAt.IsZero() || now.Sub(sn.ComputedAt) > coverageVerdictStaleAge {

@@ -13,8 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -1408,6 +1411,7 @@ func TestPrice_FreezeErrorIsBestEffort(t *testing.T) {
 			"native/fiat:USD": {"sdex", "soroswap"},
 		},
 	}
+	before := testutil.ToFloat64(obs.APIFreezeLookupFailuresTotal)
 	frz := &stubFrozenLooker{err: errors.New("redis exploded")}
 	srv := v1.New(v1.Options{Prices: reader, Freeze: frz})
 	ts := startHTTPTest(t, srv.Handler())
@@ -1419,6 +1423,9 @@ func TestPrice_FreezeErrorIsBestEffort(t *testing.T) {
 	body, _ := readAll(resp)
 	if strings.Contains(body, `"frozen":true`) {
 		t.Errorf("frozen should default false on lookup error: %s", body)
+	}
+	if got := testutil.ToFloat64(obs.APIFreezeLookupFailuresTotal) - before; frz.calls == 0 || got != float64(frz.calls) {
+		t.Errorf("freeze lookup failure counter delta = %v, want %d (one per failed lookup)", got, frz.calls)
 	}
 }
 

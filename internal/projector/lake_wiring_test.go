@@ -14,13 +14,15 @@ import (
 type fakeLake struct {
 	wm, lakeMin uint32
 	wmFrom      []uint32
+	wmTo        []uint32
 	minCalls    int
 	closed      bool
 	wmErr       error
 }
 
-func (f *fakeLake) ContiguousWatermark(_ context.Context, from uint32) (uint32, error) {
+func (f *fakeLake) ContiguousWatermark(_ context.Context, from, to uint32) (uint32, error) {
 	f.wmFrom = append(f.wmFrom, from)
+	f.wmTo = append(f.wmTo, to)
 	return f.wm, f.wmErr
 }
 
@@ -143,5 +145,19 @@ func TestSourceLakeOpenFailureDoesNotLatch(t *testing.T) {
 	}
 	if want := []uint32{101}; !slices.Equal(fake.wmFrom, want) {
 		t.Fatalf("watermark reads = %v, want %v", fake.wmFrom, want)
+	}
+}
+
+// TestCycleBoundsWatermarkToBatchWindow: a cycle asks the lake watermark about
+// one batch window past its cursor, not the whole lake up to the tip.
+func TestCycleBoundsWatermarkToBatchWindow(t *testing.T) {
+	p := newLakeProjector(&fakeStore{projectorCursor: 100, haveCursor: true, tipLedger: 500})
+	fake := &fakeLake{wm: 100}
+	lake := &sourceLake{open: func(context.Context) (lakeReader, error) { return fake, nil }}
+
+	cycleN(p, 1, lake)
+
+	if want := []uint32{101 + BatchLimit}; !slices.Equal(fake.wmTo, want) {
+		t.Fatalf("watermark scan bound = %v, want %v", fake.wmTo, want)
 	}
 }

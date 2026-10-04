@@ -20,9 +20,9 @@ pubnet, both curated in `events.go`:
 | earnUSDC | `CCL3WITW…` | native USDC |
 | earnXLM  | `CC6TRAPQ…` | native XLM |
 
-Four of the twelve emitted symbols produce rows — `deposit`, `withdraw`,
+Four of the fourteen emitted symbols produce rows — `deposit`, `withdraw`,
 `transfer` (the vault's own share token), `deployed_assets_changed`. The
-other eight (custody mirror, governance, allowance) are recognised,
+other ten (custody mirror, governance, allowance) are recognised,
 gated, and decode to **zero rows with no error** so the ADR-0033
 re-derive counts their ledgers as expected-zero.
 

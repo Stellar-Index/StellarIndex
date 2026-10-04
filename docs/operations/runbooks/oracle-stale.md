@@ -69,7 +69,8 @@ Key signals:
 ## First, rule out a budget that never matched the asset (this alert's main false positive)
 
 The threshold is the pair's `stellarindex_oracle_staleness_budget_seconds`,
-which unless overridden is `10 × stellarindex_oracle_resolution_seconds` —
+which unless overridden is `10 × stellarindex_oracle_resolution_seconds`
+(heartbeat sources such as RedStone instead default to heartbeat + 2 h = 26 h) —
 and that resolution comes from a **hard-coded constant per source**
 (`DefaultResolutionSeconds` in each `internal/sources/<oracle>/events.go`
 for the on-chain oracles; for a poller, its `OracleResolution` in

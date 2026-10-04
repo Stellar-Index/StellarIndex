@@ -137,7 +137,7 @@ two counts and are corrected here; see the note at the end of this list):
 
 - **Reference**: OpenAPI-generated reference (`docs/reference/api`).
 - **Self-service onboarding**: `docs/getting-started.md` leads with the
-  ≤1-min path — `POST /v1/signup` (email → usable `sip_…` key, no Stellar
+  ≤1-min path — `POST /v1/register` (no email needed → usable `sip_…` key, no Stellar
   wallet needed), then the SEP-10 account-bound path as the advanced
   option.
 - **E2E walkthrough (verified 2026-06-13 on r1):** `POST /v1/signup`

@@ -6,6 +6,7 @@ package chops
 import (
 	"context"
 	"reflect"
+	"slices"
 	"sort"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 )
 
@@ -296,7 +298,7 @@ func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
 			optedIn[src.name] = true
 		}
 	}
-	for _, name := range []string{"aquarius", "phoenix", "soroswap", "sushiswap_v3"} {
+	for _, name := range []string{"aquarius", "phoenix", "soroswap", "sushiswap_v3", "blend"} {
 		if !optedIn[name] {
 			t.Errorf("source %q must opt into the -ch gated prefilter (it streams the whole lake otherwise)", name)
 		}
@@ -305,7 +307,34 @@ func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
 		t.Errorf("defindex must NOT opt into the gated prefilter — its decode correlates events across contracts in the same tx, which a contract-id prefilter would break")
 	}
 	// Sanity: the opt-in stays narrow — exactly the identity-gated AMMs.
-	if len(optedIn) != 4 {
-		t.Errorf("gated-prefilter opt-in set = %v, want exactly {aquarius, phoenix, soroswap, sushiswap_v3}", optedIn)
+	if len(optedIn) != 5 {
+		t.Errorf("gated-prefilter opt-in set = %v, want exactly {aquarius, phoenix, soroswap, sushiswap_v3, blend}", optedIn)
+	}
+}
+
+// blend is identity-gated (deploy only from a factory, everything else only
+// from a registered pool), so its prefilter is factories ∪ pools. The
+// catalogue must carry both factories and the deploy topic so gatedPrefilter's
+// walk picks up pools deployed after any static snapshot.
+func TestCatalogue_BlendReDeriveIsContractScoped(t *testing.T) {
+	cat, _, err := buildReconciliationCatalogue(config.Config{})
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	src := catalogueSource(t, cat, "blend")
+	if src.newGatedDec == nil {
+		t.Fatal("blend has no newGatedDec: its re-derive streams the whole lake")
+	}
+	if len(src.contractIDs) != 0 {
+		t.Errorf("blend carries a static contractIDs %v: it would miss pools deployed after the snapshot", src.contractIDs)
+	}
+	pf, _, err := gatedPrefilter(context.Background(), countingEventStreamer{}, src, src.genesis+10)
+	if err != nil {
+		t.Fatalf("gatedPrefilter: %v", err)
+	}
+	for _, f := range blend.MainnetPoolFactories {
+		if !slices.Contains(pf, f) {
+			t.Errorf("blend prefilter omits factory %s", f)
+		}
 	}
 }

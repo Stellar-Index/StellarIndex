@@ -140,6 +140,10 @@ func TestUSDVolumeGenerationAwareNullPreservation(t *testing.T) {
 		t.Fatalf("InstallUSDVolumeResolution: %v", err)
 	}
 	store.SetDeriveGeneration(5)
+	// Honest NULL = the re-derive legitimately finds no price (not-found,
+	// nil error). A resolver ERROR is refused in re-derive mode instead.
+	res.fail = false
+	delete(res.prices, quote.String())
 	trC := mkIntegrationTrade(source, nonce, ts, pair, 1_000_000_000, 25_000_000)
 	if err := store.InsertTrade(ctx, trC); err != nil {
 		t.Fatalf("InsertTrade (writer C, gen-5 honest NULL): %v", err)

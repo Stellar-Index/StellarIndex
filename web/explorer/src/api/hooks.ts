@@ -1083,21 +1083,29 @@ type TradeHistoryEnvelope = {
  * useHistory — fetches recent trades for a (base, quote) pair from
  * `/v1/history`. Limit caps at 1000 server-side; the showcase
  * History tab requests 100 by default. Pagination cursor is left
- * on the envelope but not consumed yet.
+ * on the envelope but not consumed yet. `opts.source` restricts the feed to
+ * one source; `opts.windowSec` sets `from` to that far back from now.
  */
 export function useHistory(
   base: string | undefined,
   quote: string,
   limit = 100,
+  opts?: { source?: string; windowSec?: number },
 ) {
+  const source = opts?.source;
+  const windowSec = opts?.windowSec;
   return useQuery<TradeRow[]>({
-    queryKey: ['/v1/history', base, quote, limit],
+    queryKey: ['/v1/history', base, quote, limit, source, windowSec],
     enabled: !!base,
     queryFn: async () => {
       const env = await apiGet<TradeHistoryEnvelope>('/v1/history', {
         base: base ?? '',
         quote,
         limit,
+        ...(source ? { source } : {}),
+        ...(windowSec
+          ? { from: new Date(Date.now() - windowSec * 1000).toISOString() }
+          : {}),
       });
       return env.data ?? [];
     },

@@ -48,3 +48,25 @@ func sourceFilterOK(w http.ResponseWriter, r *http.Request, source string) bool 
 	}
 	return true
 }
+
+// rawTradeSourceFilterOK is sourceFilterOK for the raw-trade routes
+// (/v1/history, /v1/observations and its stream): they serve on-chain
+// sources only, so an exchange venue is refused as well as a data vendor.
+// Exchange trade rows are not redistributable; /v1/vwap serves their
+// aggregate instead.
+func rawTradeSourceFilterOK(w http.ResponseWriter, r *http.Request, source string) bool {
+	if source == "" {
+		return true
+	}
+	if _, ok := external.Registry[source]; !ok {
+		return sourceFilterOK(w, r, source)
+	}
+	if !external.IsOnChain(source) {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/off-chain-source-filter",
+			"Off-chain source cannot be selected", http.StatusBadRequest,
+			"source="+source+" is not an on-chain source; this route serves on-chain trades only (exchange and vendor data are not served as raw rows). Omit source, or select an on-chain source (see /v1/sources). Exchange prices are available in aggregate via /v1/vwap.")
+		return false
+	}
+	return true
+}
