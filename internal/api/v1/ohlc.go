@@ -522,6 +522,10 @@ func parseWindowDuration(s string) (time.Duration, error) {
 		if err != nil {
 			return 0, fmt.Errorf("invalid day count %q: %w", s, err)
 		}
+		const maxDays = int(math.MaxInt64 / int64(24*time.Hour))
+		if days > maxDays || days < -maxDays {
+			return 0, fmt.Errorf("day count %q out of range", s)
+		}
 		return time.Duration(days) * 24 * time.Hour, nil
 	}
 	return time.ParseDuration(s)
