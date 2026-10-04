@@ -972,6 +972,11 @@ archive_completeness_enabled: "{{ (stellar_network | default('pubnet')) == 'pubn
 # correct before anyone writes an inventory line.
 verify_served_values_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
 
+# galexie-mirror-verify compares the local mirror with the upstream dataset
+# named by storage.s3_cold_*; with no upstream configured there is nothing
+# to compare against and every run would fail.
+galexie_mirror_verify_enabled: "{{ (stellarindex_s3_cold_bucket_archive | default('')) != '' }}"
+
 # listing-sync caches CoinGecko's Stellar platform→address map, and every
 # address in it is a PUBNET asset: on a test net the table can corroborate
 # nothing, and the keyless fetch is answered 403 from a datacenter address.

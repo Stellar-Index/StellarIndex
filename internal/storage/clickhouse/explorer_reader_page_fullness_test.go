@@ -58,7 +58,7 @@ func emittedAccountQuery(t *testing.T, call func(*ExplorerReader) error) string 
 
 func TestAccountTransactions_KeysetMergeDedupesBeforeItsLimit(t *testing.T) {
 	q := emittedAccountQuery(t, func(r *ExplorerReader) error {
-		_, err := r.AccountTransactions(context.Background(), "GTEST", 50, ExplorerCursor{})
+		_, err := r.accountTransactionsExact(context.Background(), "GTEST", 50, ExplorerCursor{})
 		return err
 	})
 	merge := keysetMergeStage(t, q)
@@ -127,7 +127,7 @@ func firstN(keys []opKey, n int) []opKey {
 func TestAccountTransactions_PageIsShortOnlyAtEndOfHistory(t *testing.T) {
 	const limit = 5
 	q := emittedAccountQuery(t, func(r *ExplorerReader) error {
-		_, err := r.AccountTransactions(context.Background(), "GTEST", limit, ExplorerCursor{})
+		_, err := r.accountTransactionsExact(context.Background(), "GTEST", limit, ExplorerCursor{})
 		return err
 	})
 	mergeDedupes := strings.Contains(keysetMergeStage(t, q), "LIMIT 1 BY ledger_seq, tx_index LIMIT ?")
