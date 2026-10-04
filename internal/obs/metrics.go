@@ -70,6 +70,7 @@ func registerAppMetrics() {
 		FXFixingsFetchErrorsTotal,
 		FXFixingsBarsRefusedTotal,
 		ExternalDustDroppedTotal,
+		ExternalBadTimestampDroppedTotal,
 		ExternalPollerRefusedEntriesTotal,
 		CEXStreamDisconnectTotal, CEXStreamLastTradeUnix,
 		DiscoveryDroppedHitsTotal,
@@ -1540,6 +1541,18 @@ var ExternalDustDroppedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_external_dust_dropped_total",
 		Help: "Streamed CEX trades dropped at ingest as sub-$0.001 dust, by source.",
+	},
+	[]string{"source"},
+)
+
+// ExternalBadTimestampDroppedTotal — per-source counter of CEX trades
+// dropped because the vendor timestamp was implausible (ahead of the
+// local clock beyond the skew allowance, or before the Stellar network
+// existed), as a unit mismatch would produce.
+var ExternalBadTimestampDroppedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_external_bad_timestamp_dropped_total",
+		Help: "CEX trades dropped at ingest for an implausible vendor timestamp, by source.",
 	},
 	[]string{"source"},
 )
