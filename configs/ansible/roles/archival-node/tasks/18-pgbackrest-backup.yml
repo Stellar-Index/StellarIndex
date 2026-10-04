@@ -584,76 +584,8 @@
 # apply. An `unknown` stamp is not a silent pass — the check reports
 # stellarindex_ch_schema_drift_intent_verified 0 and says in the log that
 # its verdict is unvouched.
-- name: Resolve the repo provenance of the Tier-1 lake DDL
-  ansible.builtin.shell:
-    executable: /bin/bash
-    chdir: "{{ playbook_dir }}/../../.."
-    cmd: |
-      set -u
-      # REFUSE rather than degrade. Both values below are unavailable in
-      # a SHALLOW checkout — `git describe --tags` finds no tags, and
-      # `git log -1 -- <path>` returns the tip commit instead of the
-      # file's own because the history is one commit deep. Falling back
-      # to "unknown" and to a plausible-but-wrong sha is what let a
-      # shallow CI checkout ship a DIFFERENT intent file from the one an
-      # operator ships, so the drift check compared one stamp against
-      # another and reported drift that did not exist, weekly, for eight
-      # weeks, with nothing in the output pointing at the checkout.
-      # A stamp that cannot be derived must stop the run, not guess.
-      if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
-        echo "provenance: shallow repository — cannot derive the intent stamp. Check out with fetch-depth: 0 and fetch-tags: true." >&2
-        exit 1
-      fi
-      rel="$(git describe --tags --abbrev=0 2>/dev/null)"
-      # --abbrev=12 is REQUIRED, not cosmetic. `%h` honours core.abbrev,
-      # which defaults to "auto": git picks the length from the
-      # repository's OBJECT COUNT, so the same commit renders 9
-      # characters in a developer clone and 8 on a CI runner whose clone
-      # packs differently. The stamp then differs by one character
-      # between the file CI ships and the file an operator ships, the
-      # drift verdict compares them, and reports drift on a byte that
-      # names the same commit. Observed exactly that on 2026-09-10:
-      #   -- Intent-Schema-Commit: 01fa1106d (2026-09-09)   (r1)
-      #   -- Intent-Schema-Commit: 01fa1106 (2026-09-09)    (CI)
-      # Pin the width and the value is identical everywhere.
-      sha="$(git log -1 --abbrev=12 --format='%h (%cs)' -- deploy/clickhouse/tier1_schema.sql 2>/dev/null)"
-      if [ -z "$rel" ] || [ -z "$sha" ]; then
-        echo "provenance: no tag reachable, or no history for tier1_schema.sql — refusing to stamp an intent file that would not match an operator's." >&2
-        exit 1
-      fi
-      printf '%s\n' "$rel"
-      printf '%s\n' "$sha"
-  delegate_to: localhost
-  become: false
-  run_once: true
-  changed_when: false
-  check_mode: false
-  failed_when: false
-  register: ch_schema_drift_provenance
-  when: ch_schema_drift_enabled | default(true)
-  tags: [ch-schema-drift]
-
-- name: Ship the repo's Tier-1 lake DDL as the drift check's intent side
-  ansible.builtin.copy:
-    # `content:` rather than `src:` so the provenance header and the DDL
-    # land as ONE file with one checksum. A sidecar provenance file could
-    # be shipped while the DDL beside it was not, which is the same
-    # two-things-that-can-disagree shape this stamp exists to remove.
-    content: |
-      -- ch-schema-drift intent provenance — written by ansible at ship time.
-      -- Do not edit by hand: re-apply the archival-node role instead.
-      -- Read by configs/ansible/roles/archival-node/files/ch-schema-drift.sh,
-      -- which refuses to render a verdict when Intent-Version predates the
-      -- release this host is running (docs/operations/runbooks/ch-schema-restore.md).
-      -- Intent-Version: {{ (ch_schema_drift_provenance.stdout_lines | default(['unknown', 'unknown']))[0] | default('unknown') }}
-      -- Intent-Schema-Commit: {{ (ch_schema_drift_provenance.stdout_lines | default(['unknown', 'unknown']))[1] | default('unknown') }}
-      -- Source: deploy/clickhouse/tier1_schema.sql
-      {{ lookup('file', playbook_dir + '/../../../deploy/clickhouse/tier1_schema.sql') }}
-    dest: "{{ ch_schema_drift_intent | default('/usr/local/share/stellarindex/tier1_schema.sql') }}"
-    owner: root
-    group: root
-    mode: "0644"
-  when: ch_schema_drift_enabled | default(true)
+- name: Ship the stamped Tier-1 lake DDL as the drift check's intent side
+  ansible.builtin.import_tasks: ../../../tasks/ship-ch-schema-intent.yml
   tags: [ch-schema-drift]
 
 - name: Install ClickHouse schema-drift systemd units

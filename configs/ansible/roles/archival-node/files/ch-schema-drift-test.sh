@@ -608,7 +608,8 @@ fi
 # compares them.
 defaults_yml="$here/../defaults/main.yml"
 unit_j2="$here/../templates/systemd/ch-schema-drift.service.j2"
-ship_task="$here/../tasks/18-pgbackrest-backup.yml"
+role_tasks="$here/../tasks/18-pgbackrest-backup.yml"
+ship_task="$here/../../../tasks/ship-ch-schema-intent.yml"
 
 # jinja_default <file> — the literal inside `default('…')` on the line
 # that reads ch_schema_drift_intent. Anchored on the variable name so a
@@ -1106,7 +1107,7 @@ if [[ "$ship_writes" -ge 1 && "$script_reads" -ge 1 ]] \
   ok "$name"
 else
   bad "$name" \
-"18-pgbackrest-backup.yml '-- Intent-Version:' lines : $ship_writes (want >= 1)
+"ship-ch-schema-intent.yml '-- Intent-Version:' lines : $ship_writes (want >= 1)
 ch-schema-drift.sh 'Intent-Version' references       : $script_reads (want >= 1)
 The ship task must render the stamp AND the DDL into one file (the
 lookup('file', …) that inlines deploy/clickhouse/tier1_schema.sql); a
@@ -1119,13 +1120,13 @@ fi
 # tag: a targeted apply that re-ships the intent but skips the units — or
 # vice versa — leaves the host half-converged and the check still red.
 name="every ch-schema-drift task carries the tag its refusal message names"
-tagged="$(grep -c '^  tags: \[ch-schema-drift\]$' "$ship_task")"
-if [[ "$tagged" -eq 6 ]] && grep -qF -- "--tags ch-schema-drift" "$drift"; then
-  ok "$name (6 tasks tagged)"
+tagged="$(grep -c '^  tags: \[ch-schema-drift\]$' "$role_tasks")"
+if [[ "$tagged" -eq 5 ]] && grep -qF -- "--tags ch-schema-drift" "$drift"; then
+  ok "$name (5 tasks tagged)"
 else
   bad "$name" \
-"tasks tagged ch-schema-drift in 18-pgbackrest-backup.yml : $tagged (want 6:
-install script, share dir, resolve provenance, ship DDL, units, timer)
+"tasks tagged ch-schema-drift in 18-pgbackrest-backup.yml : $tagged (want 5:
+install script, share dir, import of the ship-intent tasks, units, timer)
 The NOT CONVERGED message prints that tag as the fix; a tag that selects
 only part of the family is a runbook step that half-works."
 fi
