@@ -352,3 +352,31 @@ func TestComputeAcceleration(t *testing.T) {
 		})
 	}
 }
+
+func TestExtremes_BeyondFloat64NotDropped(t *testing.T) {
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	series := []TimedValue{
+		{At: now.Add(-2 * time.Hour), Value: "1e400"},
+		{At: now.Add(-1 * time.Hour), Value: "3e400"},
+		{At: now, Value: "2e400"},
+	}
+	ath, _, atl, _, ok := extremes(series, series[2])
+	if !ok || ath != "3e400" || atl != "1e400" {
+		t.Errorf("ath=%q atl=%q ok=%v, want 3e400/1e400/true", ath, atl, ok)
+	}
+}
+
+func TestExtremes_BandEdgesInclusive(t *testing.T) {
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	vals := []string{"1", "1", "1", "1000", "0.001", "1001", "0.00099"}
+	var series []TimedValue
+	for i, v := range vals {
+		series = append(series, TimedValue{At: now.Add(time.Duration(i-len(vals)) * time.Hour), Value: v})
+	}
+	cur := TimedValue{At: now, Value: "1"}
+	series = append(series, cur)
+	ath, _, atl, _, ok := extremes(series, cur)
+	if !ok || ath != "1000" || atl != "0.001" {
+		t.Errorf("ath=%q atl=%q ok=%v, want 1000/0.001/true", ath, atl, ok)
+	}
+}

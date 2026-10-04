@@ -324,17 +324,22 @@ const minPointsForBand = 3
 // sink's GREATEST/LEAST keep the stored extremes. A zero mid-series must
 // not become the ATL ([100,5,0,90] has ATL 5).
 func extremes(series []TimedValue, current TimedValue) (athValue string, athAt time.Time, atlValue string, atlAt time.Time, ok bool) {
-	pts, floats := positivePoints(series)
-	lo, hi := 0.0, math.Inf(1)
-	if len(floats) >= minPointsForBand {
-		sort.Float64s(floats)
-		med := floats[(len(floats)-1)/2]
-		lo, hi = med/extremeBand, med*extremeBand
+	pts := positivePoints(series)
+	var lo, hi *big.Rat
+	if len(pts) >= minPointsForBand {
+		vals := make([]*big.Rat, len(pts))
+		for i, q := range pts {
+			vals[i] = q.v
+		}
+		sort.Slice(vals, func(i, j int) bool { return vals[i].Cmp(vals[j]) < 0 })
+		med := vals[(len(vals)-1)/2]
+		band := new(big.Rat).SetInt64(extremeBand)
+		lo, hi = new(big.Rat).Quo(med, band), new(big.Rat).Mul(med, band)
 	}
 	var athRat, atlRat *big.Rat
 	currentIn := false
 	for _, q := range pts {
-		if f, _ := q.v.Float64(); f < lo || f > hi { // i128:ok outlier-band compare only; the served ATH/ATL stays the exact string
+		if hi != nil && (q.v.Cmp(lo) < 0 || q.v.Cmp(hi) > 0) {
 			continue
 		}
 		if q.p.At.Equal(current.At) && q.p.Value == current.Value {
@@ -355,24 +360,18 @@ type ratPoint struct {
 	p TimedValue
 }
 
-// positivePoints keeps the parseable, strictly positive, float64-finite
-// points with their exact value, plus those values as float64 for banding.
-func positivePoints(series []TimedValue) ([]ratPoint, []float64) {
+// positivePoints keeps the parseable, strictly positive points with their
+// exact value.
+func positivePoints(series []TimedValue) []ratPoint {
 	pts := make([]ratPoint, 0, len(series))
-	floats := make([]float64, 0, len(series))
 	for _, p := range series {
 		v, ok := new(big.Rat).SetString(p.Value)
 		if !ok || v.Sign() <= 0 {
 			continue
 		}
-		f, _ := v.Float64() // i128:ok banding input for the ATH/ATL outlier filter, never served
-		if math.IsInf(f, 0) || f <= 0 {
-			continue
-		}
 		pts = append(pts, ratPoint{v, p})
-		floats = append(floats, f)
 	}
-	return pts, floats
+	return pts
 }
 
 // valueAt returns the most-recent observation whose timestamp is
