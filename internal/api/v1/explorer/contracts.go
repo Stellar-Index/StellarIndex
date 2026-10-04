@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -153,15 +154,15 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := ContractDetailView{ContractID: cid, Events: make([]ContractEventView, len(rows))}
-	out.Protocol = h.contractAttribution(ctx)[cid]
-	var dirOK bool
-	out.Directory, dirOK = h.directoryFor(ctx, cid)
-	out.DirectoryUnavailable = !dirOK
-	out.Activity = h.contractActivityCard(ctx, cid)
+	side := h.readContractSidecars(ctx, cid)
+	out.Protocol = side.protocol
+	out.Directory = side.directory
+	out.DirectoryUnavailable = !side.dirOK
+	out.Activity = side.activity
 	for i, e := range rows {
 		out.Events[i] = contractEventView(e)
 	}
-	instOK := h.setContractLiveness(ctx, &out)
+	instOK := h.setContractLiveness(ctx, &out, side.inst, side.instOK)
 	apiDegraded := out.DirectoryUnavailable || !instOK
 	// Only emit a cursor on a full page — a short page is the last page, so a
 	// cursor there just costs the client one empty round-trip.
@@ -175,6 +176,32 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	_, stale, _ := h.lakeTip(ctx)
 	h.writeJSONAt(w, out, stale, apiDegraded, time.Time{})
+}
+
+// contractSidecars are the per-contract reads that decorate the event page.
+// Each is independent and best-effort; failures are reported per field.
+type contractSidecars struct {
+	protocol  string
+	directory *DirectoryInfoV
+	dirOK     bool
+	activity  *ContractActivityV
+	inst      clickhouse.ContractInstanceState
+	instOK    bool
+}
+
+// readContractSidecars runs the four independent reads concurrently, so a
+// cold page costs the slowest read rather than their sum. Each goroutine
+// writes only its own fields; all share ctx, so the request deadline and
+// cancellation bound every one of them.
+func (h *Handler) readContractSidecars(ctx context.Context, cid string) contractSidecars {
+	var s contractSidecars
+	var wg sync.WaitGroup
+	wg.Go(func() { s.protocol = h.contractAttribution(ctx)[cid] })
+	wg.Go(func() { s.directory, s.dirOK = h.directoryFor(ctx, cid) })
+	wg.Go(func() { s.activity = h.contractActivityCard(ctx, cid) })
+	wg.Go(func() { s.inst, s.instOK = h.contractInstanceState(ctx, cid) })
+	wg.Wait()
+	return s
 }
 
 // contractActivityCard is the 30-day liveness card, nil when the activity
@@ -197,9 +224,8 @@ func (h *Handler) contractActivityCard(ctx context.Context, cid string) *Contrac
 
 // setContractLiveness fills Exists and TTL. Exists is claimed false only on
 // a successful instance read that found nothing and no other lake evidence.
-// It reports whether the instance read succeeded.
-func (h *Handler) setContractLiveness(ctx context.Context, out *ContractDetailView) bool {
-	st, ok := h.contractInstanceState(ctx, out.ContractID)
+// st/ok are the instance read's result; it reports ok back.
+func (h *Handler) setContractLiveness(ctx context.Context, out *ContractDetailView, st clickhouse.ContractInstanceState, ok bool) bool {
 	if ok {
 		out.TTL = h.contractTTL(ctx, st.LiveUntil)
 	}
