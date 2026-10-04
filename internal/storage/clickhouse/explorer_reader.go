@@ -2707,6 +2707,17 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 	if err != nil {
 		return nil, err
 	}
+	if ledgers != nil && len(out) < limit {
+		// A short page from the bounded read cannot be told apart from a
+		// walk truncated by a partial contract_active_ledgers backfill
+		// (the probe is table-global), and a short page ends pagination.
+		// Re-read from contract_events, the source of truth.
+		ledgers = nil
+		out, raw, err = r.contractEventsScan(ctx, contractEventsRecentQuery(cur.IsSet(), false), contractID, limit, fetch, cur, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if len(out) < limit && raw == fetch {
 		// Duplicate storm: the over-fetch was ALL consumed and dedup still
 		// couldn't fill the page — the only case where a short page would

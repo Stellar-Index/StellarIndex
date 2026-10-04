@@ -223,6 +223,7 @@ func TestSubcommandDispatch_LeafHandlersSeeTheirFlags(t *testing.T) {
 		{"emit-incident", []string{"emit-incident", "-config", "/nonexistent.toml", "-slug", "s", "-event", "sev1"}},
 		{"usage-rollup-backfill", []string{"usage-rollup-backfill", "-config", "/nonexistent.toml", "-from", "2026-07-19"}},
 		{"freeze-unfreeze", []string{"freeze-unfreeze", "-config", "/nonexistent.toml", "-list"}},
+		{"change-summary-reset", []string{"change-summary-reset", "-config", "/nonexistent.toml", "-entity-type", "coin", "-entity-id", "crypto:XLM"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.verb, func(t *testing.T) {
