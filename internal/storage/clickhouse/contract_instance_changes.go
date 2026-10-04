@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
@@ -88,4 +89,84 @@ func BackfillContractInstanceChangesInto(ctx context.Context, addr, table string
 		func(ctx context.Context, conn driver.Conn, lo, hi uint32) error {
 			return conn.Exec(ctx, q, lo, hi)
 		}, logf)
+}
+
+// InstanceBackfillStart is the state a genesis watermark must be proven
+// against, read BEFORE the backfill runs.
+type InstanceBackfillStart struct {
+	// RawMaxLedger is max(ledger_seq) over stellar.ledgers, holes included.
+	RawMaxLedger uint32
+	// MVExists is whether the table's materialized view (<table>_mv) existed,
+	// i.e. ingest after the DDL is already captured without the backfill.
+	MVExists bool
+	// MVUUID and MVModified identify the view, so a drop or recreate during
+	// the run is visible; MVAge is its metadata age by the server's clock.
+	MVUUID     string
+	MVModified time.Time
+	MVAge      time.Duration
+}
+
+// ReadInstanceBackfillStart reads InstanceBackfillStart for the table.
+func ReadInstanceBackfillStart(ctx context.Context, addr, table string) (InstanceBackfillStart, error) {
+	var st InstanceBackfillStart
+	if table != ContractInstanceChangesTable && table != ContractInstanceChangesV2Table {
+		return st, fmt.Errorf("clickhouse: instance-changes start state: table %q is not %s or %s",
+			table, ContractInstanceChangesTable, ContractInstanceChangesV2Table)
+	}
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return st, err
+	}
+	defer func() { _ = conn.Close() }()
+	if err := conn.QueryRow(ctx, `SELECT max(ledger_seq) FROM stellar.ledgers`).Scan(&st.RawMaxLedger); err != nil {
+		return st, fmt.Errorf("clickhouse: instance-changes start state: lake tip: %w", err)
+	}
+	var (
+		mvs uint64
+		now time.Time
+	)
+	if err := conn.QueryRow(ctx, `SELECT count(), toString(any(uuid)), any(metadata_modification_time), now()
+		FROM system.tables WHERE database = 'stellar' AND name = ?`,
+		table+"_mv").Scan(&mvs, &st.MVUUID, &st.MVModified, &now); err != nil {
+		return st, fmt.Errorf("clickhouse: instance-changes start state: view lookup: %w", err)
+	}
+	st.MVExists = mvs > 0
+	st.MVAge = now.Sub(st.MVModified)
+	return st, nil
+}
+
+// SetContractInstanceChangesGenesisWatermark records that the named
+// instance-timeline table is complete from the lake's first ledger through
+// `thru`, in the shared name-keyed entry_history_watermark table. Readers use
+// it to trust a per-contract miss instead of scanning ledger_entry_changes.
+// Call only after a backfill proven complete (see chops.runInstanceBackfill).
+// A thru at or below the stored mark records nothing: the table is a
+// ReplacingMergeTree, so a later, lower row would win after a merge.
+func SetContractInstanceChangesGenesisWatermark(ctx context.Context, addr, table string, thru uint32) error {
+	if table != ContractInstanceChangesTable && table != ContractInstanceChangesV2Table {
+		return fmt.Errorf("clickhouse: instance-changes watermark: table %q is not %s or %s",
+			table, ContractInstanceChangesTable, ContractInstanceChangesV2Table)
+	}
+	if thru == 0 {
+		return fmt.Errorf("clickhouse: instance-changes watermark: thru must be > 0")
+	}
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	var stored uint32
+	if err := conn.QueryRow(ctx, instanceGenesisWatermarkQuery, table).Scan(&stored); err != nil {
+		if !isSchemaAbsent(err) {
+			return fmt.Errorf("clickhouse: read %s genesis watermark: %w", table, err)
+		}
+	}
+	if thru <= stored {
+		return nil
+	}
+	const q = `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES (?, ?)`
+	if err := conn.Exec(ctx, q, table, thru); err != nil {
+		return fmt.Errorf("clickhouse: set %s genesis watermark %d: %w", table, thru, err)
+	}
+	return nil
 }

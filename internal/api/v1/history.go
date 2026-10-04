@@ -937,7 +937,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 		series.DataEndsAt = &last
 	}
 	series.markDiscontinuity()
-	writeJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded})
+	writeJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded})
 }
 
 // tradesInRangeAfterWithAliases reads one page of raw trades UNIONED

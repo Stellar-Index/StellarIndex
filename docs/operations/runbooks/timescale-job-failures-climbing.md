@@ -166,6 +166,16 @@ If it is a CAGG refresh, `stellarindex_timescale_cagg_stale` will follow
 once retries stop covering it; that ticket is the customer-impact signal
 and takes priority over this one.
 
+## After a TimescaleDB upgrade
+
+`trades_compression_policy` (migration 0205) is a custom job that calls the
+internal `_timescaledb_functions.policy_compression(job_id, config)` so it can
+set `lock_timeout`. That signature is not a public API: an upgrade that
+changes it turns the job into repeated failures. Before upgrading, check the
+release notes for `policy_compression`, and after, `CALL run_job(<id>)` once
+by hand. If the signature changed, update the job body in a new migration or
+drop the custom job and re-add the built-in `add_compression_policy`.
+
 ## When NOT to act
 
 - **A short burst after a restart or a heavy one-shot job** is expected —

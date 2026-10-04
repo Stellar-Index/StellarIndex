@@ -84,6 +84,10 @@ func ExtractLedger(lcm xdr.LedgerCloseMeta, passphrase string) (LedgerExtract, e
 	for i := range txs {
 		extractTx(&ext, txs[i], seq, closeTime)
 	}
+	// An unreadable tx still exists on-chain: count it so stored tx_count
+	// exceeds the transactions rows and the gate fails rather than agreeing
+	// on the smaller number.
+	ext.Ledger.TxCount += uint32(ext.TxReadErrors)
 	// An unreadable list is counted, not fatal: the rest of the ledger still
 	// lands, but every dropped eviction leaves a lapsed entry reading as live.
 	evicted, err := lcm.EvictedLedgerKeys()

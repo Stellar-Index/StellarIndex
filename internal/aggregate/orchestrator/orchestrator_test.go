@@ -1579,38 +1579,66 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 		}
 	})
 
-	t.Run("non-USD pair: filter exempt", func(t *testing.T) {
-		// XLM/EUR — quote is fiat:EUR, NOT fiat:USD. Threshold should
-		// not apply; thin window publishes.
+	// A non-USD fiat window is held to the same USD floor at the FX snap:
+	// it never publishes on volume a fiat:USD window would be refused for,
+	// and with no admissible FX rate the floor is unverifiable, so it drops.
+	t.Run("non-USD fiat pair: floor applied at the FX rate", func(t *testing.T) {
+		gbp, _ := canonical.NewFiatAsset("GBP")
 		eur, _ := canonical.NewFiatAsset("EUR")
-		eurPair, _ := canonical.NewPair(xlm, eur)
-		thinTrade := canonical.Trade{
-			Source:      "exchangeratesapi",
-			Ledger:      0,
-			TxHash:      "0000000000000000000000000000000000000000000000000000000000000000",
-			Timestamp:   time.Now(),
-			Pair:        eurPair,
-			BaseAmount:  canonical.NewAmount(big.NewInt(100_000_000)),
-			QuoteAmount: canonical.NewAmount(big.NewInt(100_000)),
-		}
-		store := &mockStore{trades: []canonical.Trade{thinTrade}}
-		rdb, mr := newTestRedis(t)
-		orch := New(store, rdb, Config{
-			Pairs:        []canonical.Pair{eurPair},
-			Windows:      []time.Duration{5 * time.Minute},
-			MinUSDVolume: 10_000,
-		})
+		fresh := time.Now().Add(-time.Hour)
+		for _, tc := range []struct {
+			name    string
+			quote   canonical.Asset
+			amount  int64 // quote units at exchangeratesapi's 1e6 scale
+			fx      *fakeFXStore
+			publish bool
+		}{
+			// £9,000 is below a $10k floor read as dollars, but is $11,250 at 1.25.
+			{"GBP above floor after conversion", gbp, 9_000_000_000, &fakeFXStore{quote: big.NewRat(125, 100), observedAt: fresh, source: "massive"}, true},
+			// €9,500 at 1.05 = $9,975: one EUR window a USD window of $9,975 would be refused for.
+			{"EUR below floor after conversion", eur, 9_500_000_000, &fakeFXStore{quote: big.NewRat(105, 100), observedAt: fresh, source: "massive"}, false},
+			{"EUR dust", eur, 100_000, &fakeFXStore{quote: big.NewRat(108, 100), observedAt: fresh, source: "massive"}, false},
+			{"no FX store: fail-closed", eur, 100_000_000_000, nil, false},
+			{"no FX quote: fail-closed", eur, 100_000_000_000, &fakeFXStore{}, false},
+			{"stale FX quote: fail-closed", gbp, 100_000_000_000, &fakeFXStore{quote: big.NewRat(125, 100), observedAt: time.Now().Add(-100 * time.Hour), source: "massive"}, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				fiatPair, _ := canonical.NewPair(xlm, tc.quote)
+				trade := mkFXTrade(big.NewInt(tc.amount), time.Now())
+				trade.Pair = fiatPair
+				store := &mockStore{trades: []canonical.Trade{trade}}
+				rdb, mr := newTestRedis(t)
+				cfg := Config{
+					Pairs:        []canonical.Pair{fiatPair},
+					Windows:      []time.Duration{5 * time.Minute},
+					MinUSDVolume: 10_000,
+				}
+				if tc.fx != nil {
+					cfg.FXStore = tc.fx
+				}
+				orch := New(store, rdb, cfg)
 
-		nextBucket(orch)
-		if err := orch.Tick(context.Background()); err != nil {
-			t.Fatalf("Tick: %v", err)
-		}
-		if orch.Stats().VWAPWrites != 1 {
-			t.Errorf("VWAPWrites = %d, want 1 (non-USD pair exempt from MinUSDVolume)", orch.Stats().VWAPWrites)
-		}
-		key := "vwap:" + xlm.String() + ":" + eur.String() + ":300"
-		if !mr.Exists(key) {
-			t.Errorf("key %q missing — non-USD pair should publish", key)
+				nextBucket(orch)
+				if err := orch.Tick(context.Background()); err != nil {
+					t.Fatalf("Tick: %v", err)
+				}
+				key := "vwap:" + xlm.String() + ":" + tc.quote.String() + ":300"
+				if got := mr.Exists(key); got != tc.publish {
+					t.Errorf("published=%v, want %v (VWAPWrites=%d)", got, tc.publish, orch.Stats().VWAPWrites)
+				}
+				if tc.fx != nil {
+					if len(tc.fx.calls) == 0 {
+						t.Fatal("FX store never asked for a rate")
+					}
+					usd, _ := canonical.NewFiatAsset("USD")
+					wantLeg, _ := canonical.NewPair(tc.quote, usd)
+					for _, c := range tc.fx.calls {
+						if c.pair.String() != wantLeg.String() {
+							t.Errorf("FX leg requested = %s, want quote->USD %s", c.pair, wantLeg)
+						}
+					}
+				}
+			})
 		}
 	})
 

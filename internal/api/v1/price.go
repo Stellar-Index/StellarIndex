@@ -483,6 +483,10 @@ type PriceSnapshot struct {
 	// Zero for last_trade.
 	WindowSeconds int `json:"window_seconds,omitempty"`
 
+	// ProxyDeviation carries the proxy_deviation envelope flag from a
+	// reader that does not return Flags (the tip fallbacks); never on the wire.
+	ProxyDeviation bool `json:"-"`
+
 	// FXRate is the USD→quote fixing a closed USD-anchored cross converted
 	// at: the vendor bar's exact close, quote units per 1 USD.
 	FXRate string `json:"fx_rate,omitempty"`
@@ -1079,7 +1083,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	if governing.IsZero() {
 		governing = asset
 	}
-	flags := Flags{Stale: stale, Triangulated: triangulated}
+	flags := Flags{Stale: stale, Triangulated: triangulated, ProxyDeviation: triangulated && s.proxyDeviation(r.Context(), time.Now().UTC())}
 	// Surface the router's composite-quality signals (diverged /
 	// rerouted) that the aggregator persists to
 	// cachekeys.VWAPCompositeMeta for this pair — a no-op only when
@@ -3732,6 +3736,7 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 	}
 
 	env := batchEnvelope(ids, results)
+	env.Flags.ProxyDeviation = env.Flags.Triangulated && s.proxyDeviation(r.Context(), time.Now().UTC())
 	env.Flags.Degraded = env.Flags.Degraded || batchDegraded(results)
 	writeEnvelope(w, env)
 }
