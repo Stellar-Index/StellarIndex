@@ -98,6 +98,8 @@ WHERE entry_type = 'contract_data'
   AND substring(tryBase64Decode(entry_xdr), 57, 4) = unhex('00000013');
 
 -- ── Step 2: backfill v2 to genesis (a binary that has the -table flag).
+-- Start it at least 10 minutes after Step 1: the run refuses to mark a view
+-- younger than that, and without the mark the feature never turns on.
 -- -to defaults to the lake tip at start; the Step-1 MV already holds
 -- everything after it, and overlap collapses in the RMT (same key):
 --
@@ -142,8 +144,10 @@ WHERE entry_type = 'contract_data'
 --
 -- Recreate the canonical MV by applying
 -- deploy/clickhouse/contract_instance_changes.sql (its CREATE TABLE is now a
--- no-op; its CREATE MATERIALIZED VIEW targets the renamed v2). Then close the
--- DDL gap — idempotent, so overlap is harmless:
+-- no-op; its CREATE MATERIALIZED VIEW targets the renamed v2). Wait 10 minutes,
+-- so every ledger written before the view has its stellar.ledgers row (Sink.Flush
+-- writes it last) and the gap-close reaches it. Then close the DDL gap —
+-- idempotent, so overlap is harmless:
 --
 --   /usr/local/bin/stellarindex-ops ch-instance-backfill \
 --     -ch-addr 127.0.0.1:9300 -from <T - 1000> -write
