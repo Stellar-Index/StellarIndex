@@ -12,6 +12,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 type fakeTokenSupply struct {
@@ -240,6 +241,46 @@ func TestAssetSupply_ClassicDerivedSAC(t *testing.T) {
 	got := decodeSupply(t, rec.Body.Bytes())
 	if got.ContractID != derived || got.TotalSupply != "42" {
 		t.Errorf("unexpected body: %+v", got)
+	}
+}
+
+// TestAssetSupply_ClassicSACNetIsLabelledDerived pins that a classic asset's
+// derived-SAC event net never reaches the wire as a bare total_supply: it
+// carries supply_basis=classic_lake_flows, so it cannot be read as an
+// issuer-authoritative figure or confused with a Soroban token's own log. It is
+// not a floor either, so the lower-bound flag stays off.
+func TestAssetSupply_ClassicSACNetIsLabelledDerived(t *testing.T) {
+	cases := []struct {
+		assetID   string
+		wantBasis supply.Basis
+	}{
+		{"AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA", supply.BasisClassicLakeFlows},
+		{supplyContractID, supply.BasisSEP41LakeFlows},
+	}
+	for _, tc := range cases {
+		t.Run(tc.assetID, func(t *testing.T) {
+			f := &fakeTokenSupply{supply: clickhouse.TokenSupply{
+				Total: big.NewInt(42), Mint: big.NewInt(42), Burn: big.NewInt(0), Clawback: big.NewInt(0),
+				FlowCount: 1,
+			}}
+			rec := serveSupply(t, f, nil, tc.assetID)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("got %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+			}
+			var body struct {
+				Data map[string]json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if got := string(body.Data["supply_basis"]); got != `"`+tc.wantBasis.String()+`"` {
+				t.Errorf("supply_basis = %s, want %q: total_supply %s is served with no basis",
+					got, tc.wantBasis, body.Data["total_supply"])
+			}
+			if _, set := body.Data["circulating_supply_lower_bound"]; set {
+				t.Error("circulating_supply_lower_bound set on an event-flow net, which is not a floor")
+			}
+		})
 	}
 }
 
