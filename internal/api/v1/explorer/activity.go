@@ -146,7 +146,7 @@ func (h *Handler) AccountActivity(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	h.writeJSONAt(w, out, degraded, degraded, asOf)
+	h.writeJSONAt(w, out, degraded, degraded || out.CoverageNote != "", asOf)
 }
 
 // computeAccountActivity runs the four segment reads. Each segment
