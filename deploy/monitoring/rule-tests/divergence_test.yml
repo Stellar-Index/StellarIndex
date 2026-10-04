@@ -153,7 +153,8 @@ tests:
               description: |
                 reflector-dex hasn't published a price for XLM
                 in longer than that pair's staleness budget (default 10× the
-                source's declared resolution; per-asset overrides live in
+                source's declared resolution, or heartbeat + 2 h for heartbeat
+                sources such as RedStone; per-asset overrides live in
                 [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
                 or a signal of oracle failure — check the oracle's own status page.
 
@@ -208,7 +209,8 @@ tests:
               description: |
                 reflector-dex hasn't published a price for XLM
                 in longer than that pair's staleness budget (default 10× the
-                source's declared resolution; per-asset overrides live in
+                source's declared resolution, or heartbeat + 2 h for heartbeat
+                sources such as RedStone; per-asset overrides live in
                 [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
                 or a signal of oracle failure — check the oracle's own status page.
 
@@ -259,7 +261,8 @@ tests:
               description: |
                 reflector-dex hasn't published a price for XLM
                 in longer than that pair's staleness budget (default 10× the
-                source's declared resolution; per-asset overrides live in
+                source's declared resolution, or heartbeat + 2 h for heartbeat
+                sources such as RedStone; per-asset overrides live in
                 [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
                 or a signal of oracle failure — check the oracle's own status page.
           - exp_labels:
@@ -276,7 +279,8 @@ tests:
               description: |
                 reflector-dex hasn't published a price for XLM
                 in longer than that pair's staleness budget (default 10× the
-                source's declared resolution; per-asset overrides live in
+                source's declared resolution, or heartbeat + 2 h for heartbeat
+                sources such as RedStone; per-asset overrides live in
                 [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
                 or a signal of oracle failure — check the oracle's own status page.
 
@@ -324,7 +328,8 @@ tests:
               description: |
                 reflector-cex hasn't published a price for crypto:XLM
                 in longer than that pair's staleness budget (default 10× the
-                source's declared resolution; per-asset overrides live in
+                source's declared resolution, or heartbeat + 2 h for heartbeat
+                sources such as RedStone; per-asset overrides live in
                 [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
                 or a signal of oracle failure — check the oracle's own status page.
 
@@ -392,7 +397,8 @@ tests:
               description: |
                 reflector-cex hasn't published a price for crypto:DAI
                 in longer than that pair's staleness budget (default 10× the
-                source's declared resolution; per-asset overrides live in
+                source's declared resolution, or heartbeat + 2 h for heartbeat
+                sources such as RedStone; per-asset overrides live in
                 [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
                 or a signal of oracle failure — check the oracle's own status page.
 

@@ -187,7 +187,7 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 			}
 			decoders = append(decoders,
 				redstone.NewDecoder(oracle.Redstone.AdapterContract))
-			obs.DeclareOracleResolution(redstone.SourceName, redstone.DefaultResolutionSeconds)
+			obs.DeclareOracleHeartbeat(redstone.SourceName, redstone.DefaultResolutionSeconds)
 		case band.SourceName:
 			if oracle.Band.StandardReferenceContract == "" {
 				return nil, fmt.Errorf(

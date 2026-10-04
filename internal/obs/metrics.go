@@ -3388,8 +3388,8 @@ var OracleResolutionSeconds = prometheus.NewGaugeVec(
 // Staleness is a per-ASSET property even though cadence is per-source:
 // a peg asset publishes only when it moves, so a quiet stablecoin
 // breaches its source's cadence budget while the oracle is working
-// perfectly. Default is OracleStaleBudgetMultiplier × the source's
-// declared resolution; operators widen single pairs via
+// perfectly. Default is the source's declared budget
+// (OracleStaleBudgetMultiplier × resolution, or heartbeat + grace); operators widen single pairs via
 // [SetOracleStalenessOverrides].
 var OracleStalenessBudgetSeconds = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
