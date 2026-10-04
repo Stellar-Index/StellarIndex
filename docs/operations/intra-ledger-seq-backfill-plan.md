@@ -47,7 +47,7 @@ of the Phase-0 entry-changes backfill, to be confirmed in scoping).
 `intra_ledger_seq` is a per-LEDGER position across the three-phase
 ledger-wide walk (all fee changes → all apply-phase meta → all P23
 post-apply refunds — `internal/storage/clickhouse/extract_entry_changes.go`,
-mirroring `dispatcher.walkLedgerEntryChanges`, `EntryWalkVersion = 2`). It
+mirroring `dispatcher.walkLedgerEntryChanges`, `EntryWalkVersion = 3`). It
 CANNOT be reconstructed from existing columns (`change_index` is
 per-transaction and phases interleave across txs), so the repair is a
 re-derive from tx meta per ledger: re-run **`stellarindex-ops ch-backfill

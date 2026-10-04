@@ -79,6 +79,16 @@ import (
 // "wrong region", NoSuchBucket, AccessDenied) are preserved
 // verbatim.
 func NewColdDataStore(ctx context.Context, storage config.StorageConfig) (datastore.DataStore, error) {
+	client, err := NewColdS3Client(storage)
+	if err != nil {
+		return nil, err
+	}
+	return datastore.FromS3Client(ctx, client, storage.S3ColdBucketArchive)
+}
+
+// NewColdS3Client returns the cold tier's raw *s3.Client, for callers
+// that need object metadata (ETag, Last-Modified) the DataStore hides.
+func NewColdS3Client(storage config.StorageConfig) (*s3.Client, error) {
 	if storage.S3ColdBucketArchive == "" {
 		return nil, fmt.Errorf("cold datastore: storage.s3_cold_bucket_archive is empty (cold tiering disabled)")
 	}
@@ -95,11 +105,7 @@ func NewColdDataStore(ctx context.Context, storage config.StorageConfig) (datast
 	if storage.S3ColdEndpoint == "" {
 		return nil, fmt.Errorf("cold datastore: storage.s3_cold_endpoint is empty (required when s3_cold_bucket_archive is set)")
 	}
-	client, err := newColdS3Client(storage)
-	if err != nil {
-		return nil, err
-	}
-	return datastore.FromS3Client(ctx, client, storage.S3ColdBucketArchive)
+	return newColdS3Client(storage)
 }
 
 // newColdS3Client builds the cold tier's *s3.Client from a

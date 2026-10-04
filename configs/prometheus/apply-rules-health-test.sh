@@ -35,10 +35,12 @@ sed -n '/^rules_with_health() {/,/^}/p' "$SCRIPT" > "$FN_FILE"
 
 FIXTURE="$TMP/rules.json"
 cat >"$FIXTURE" <<'EOF'
-{"data":{"groups":[{"rules":[
+{"data":{"groups":[{"interval":30,"rules":[
   {"name":"StillSettling","health":"unknown"},
   {"name":"BadExpression","health":"err"},
   {"name":"Fine","health":"ok"}
+]},{"interval":900,"rules":[
+  {"name":"SlowGroupFirstEval","health":"unknown"}
 ]}]}}
 EOF
 
@@ -69,12 +71,23 @@ RUNNER="$TMP/run.sh"
 {
   cat "$FN_FILE"
   # shellcheck disable=SC2016  # $1 is literal — expanded when run.sh runs, not now
-  printf 'rules_with_health "$1" < %q\n' "$FIXTURE"
+  printf 'rules_with_health "$@" < %q\n' "$FIXTURE"
 } > "$RUNNER"
 
 unknown_out="$(bash "$RUNNER" unknown 2>"$TMP/unknown.err")"
 expect_contains 'unknown health is reported, not swallowed' "$unknown_out" 'StillSettling'
 expect_empty 'no stderr from the python invocation (no SyntaxError)' "$(cat "$TMP/unknown.err")"
+
+expect_contains 'without a cap, a slow group unknown rule is reported' "$unknown_out" 'SlowGroupFirstEval'
+capped_out="$(bash "$RUNNER" unknown 60 2>"$TMP/capped.err")"
+expect_contains 'with a cap, a fast group unknown rule is still reported' "$capped_out" 'StillSettling'
+if grep -q 'SlowGroupFirstEval' <<<"$capped_out"; then
+  echo "FAIL: a group slower than the cap was polled for its first evaluation" >&2
+  fail=$((fail + 1))
+else
+  echo "ok: a group slower than the cap is not polled"
+  pass=$((pass + 1))
+fi
 
 err_out="$(bash "$RUNNER" err 2>"$TMP/err.err")"
 expect_contains 'err health is reported' "$err_out" 'BadExpression'

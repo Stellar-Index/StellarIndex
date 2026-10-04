@@ -410,9 +410,16 @@ func plausibleTradeTime(ts, now time.Time) bool {
 	return !ts.Before(minTradeTime) && !ts.After(now.Add(maxTradeFutureSkew))
 }
 
+// shutdownDrainGrace bounds how long forwardTrades keeps pushing already-
+// buffered trades to the sink after ctx is cancelled, so a stalled consumer
+// cannot hold up shutdown.
+const shutdownDrainGrace = 2 * time.Second
+
 // forwardTrades drains one streamer's channel into the shared sink,
-// wrapping each trade as a TradeEvent. Returns when the source
-// channel closes (streamer shutdown) or ctx is cancelled.
+// wrapping each trade as a TradeEvent. Returns when the source channel
+// closes (streamer shutdown) or ctx is cancelled; on cancel it first
+// flushes trades already buffered in the channel (live CEX streams have no
+// backfill), within shutdownDrainGrace.
 func forwardTrades(
 	ctx context.Context,
 	source string,
@@ -423,6 +430,7 @@ func forwardTrades(
 	for {
 		select {
 		case <-ctx.Done():
+			flushBuffered(ctx, source, in, sink)
 			return
 		case trade, ok := <-in:
 			if !ok {
@@ -430,27 +438,61 @@ func forwardTrades(
 					"source", source)
 				return
 			}
-			// Drop sub-$0.001 dust fills — see minStreamQuoteUnits. They
-			// carry no meaningful price (integer-quantised round-fraction
-			// ratios) and corrupt the OHLC high/low if ingested. The
-			// floor is resolved per QUOTE ASSET so the threshold means
-			// the same $0.001 on XLM/BTC as on XLM/USDT (C2-016).
-			if trade.QuoteAmount.Cmp(minStreamQuoteUnits(trade.Pair.Quote)) < 0 {
-				obs.ExternalDustDroppedTotal.WithLabelValues(source).Inc()
-				continue
-			}
-			if !plausibleTradeTime(trade.Timestamp, time.Now()) {
-				obs.ExternalBadTimestampDroppedTotal.WithLabelValues(source).Inc()
-				logger.Warn("dropping trade with implausible timestamp",
-					"source", source, "timestamp", trade.Timestamp)
-				continue
-			}
-			obs.CEXStreamLastTradeUnix.WithLabelValues(source).Set(float64(time.Now().Unix()))
-			select {
-			case <-ctx.Done():
+			if !forwardTrade(ctx, source, trade, sink) {
+				flushBuffered(ctx, source, in, sink)
 				return
-			case sink <- TradeEvent{Trade: trade}:
 			}
+		}
+	}
+}
+
+// forwardTrade applies the dust and timestamp filters and sends one trade to the sink. It
+// returns false when ctx was cancelled before the send completed.
+func forwardTrade(ctx context.Context, source string, trade canonical.Trade, sink chan<- consumer.Event) bool {
+	// Drop sub-$0.001 dust fills — see minStreamQuoteUnits. They
+	// carry no meaningful price (integer-quantised round-fraction
+	// ratios) and corrupt the OHLC high/low if ingested. The
+	// floor is resolved per QUOTE ASSET so the threshold means
+	// the same $0.001 on XLM/BTC as on XLM/USDT (C2-016).
+	if trade.QuoteAmount.Cmp(minStreamQuoteUnits(trade.Pair.Quote)) < 0 {
+		obs.ExternalDustDroppedTotal.WithLabelValues(source).Inc()
+		return true
+	}
+	if !plausibleTradeTime(trade.Timestamp, time.Now()) {
+		obs.ExternalBadTimestampDroppedTotal.WithLabelValues(source).Inc()
+		slog.Warn("dropping trade with implausible timestamp",
+			"source", source, "timestamp", trade.Timestamp)
+		return true
+	}
+	obs.CEXStreamLastTradeUnix.WithLabelValues(source).Set(float64(time.Now().Unix()))
+	ev := TradeEvent{Trade: trade}
+	select {
+	case sink <- ev:
+		return true
+	case <-ctx.Done():
+	}
+	// The trade is already off the streamer channel: give the sink one
+	// bounded chance to take it rather than losing it to the cancel.
+	select {
+	case sink <- ev:
+	case <-time.After(shutdownDrainGrace):
+	}
+	return false
+}
+
+// flushBuffered forwards whatever is already queued in in, without waiting
+// for more, until the channel is empty/closed or shutdownDrainGrace elapses.
+func flushBuffered(ctx context.Context, source string, in <-chan canonical.Trade, sink chan<- consumer.Event) {
+	grace, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownDrainGrace)
+	defer cancel()
+	for {
+		select {
+		case trade, ok := <-in:
+			if !ok || !forwardTrade(grace, source, trade, sink) {
+				return
+			}
+		default:
+			return
 		}
 	}
 }

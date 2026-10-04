@@ -24,6 +24,7 @@ const (
 // *customerwebhook.Fanout satisfies it.
 type webhookPublisher interface {
 	Publish(ctx context.Context, eventType platform.WebhookEventType, payload []byte) (customerwebhook.PublishResult, error)
+	PublishOnce(ctx context.Context, eventType platform.WebhookEventType, eventKey string, payload []byte) (customerwebhook.PublishResult, error)
 }
 
 // anomalyFreezeHook fans an `anomaly.freeze` out to subscribed customers.
@@ -66,11 +67,11 @@ func anomalyFreezeHook(logger *slog.Logger, pub webhookPublisher, gates pricingg
 // /v1/price withholds is not delivered, for the same reason as
 // [anomalyFreezeHook].
 func divergenceFiringHook(logger *slog.Logger, pub webhookPublisher, gates pricingguard.Gate) divergence.WarningHook {
-	return func(ctx context.Context, pair canonical.Pair, cached divergence.CachedResult) {
+	return func(ctx context.Context, pair canonical.Pair, cached divergence.CachedResult) error {
 		if gates.PriceWithheld(ctx, pair.Base, pair.Quote, divergenceWebhookGateSurface) {
 			logger.Info("divergence.firing webhook withheld: pair's price is withheld by pricing_guard",
 				"pair", pair.String())
-			return
+			return nil
 		}
 		payload := customerwebhook.MarshalPayload(logger, divergenceFiringWebhookPayload{
 			Event:         string(platform.WebhookEventDivergenceFiring),
@@ -83,16 +84,25 @@ func divergenceFiringHook(logger *slog.Logger, pub webhookPublisher, gates prici
 			At:            cached.ComputedAt.Format(time.RFC3339Nano),
 		})
 		if payload == nil {
-			return
+			return nil
 		}
 		// The divergence run is durable, the customer's copy is
 		// not, so a lost fan-out is an ERROR line rather than silence.
-		res, ferr := pub.Publish(ctx, platform.WebhookEventDivergenceFiring, payload)
+		// Keyed on the episode so a retry after a partial failure only
+		// enqueues the subscribers it missed.
+		since := cached.FiringSince
+		if since.IsZero() {
+			since = cached.ComputedAt
+		}
+		key := pair.String() + "|" + since.UTC().Format(time.RFC3339Nano)
+		res, ferr := pub.PublishOnce(ctx, platform.WebhookEventDivergenceFiring, key, payload)
 		if ferr != nil {
 			logger.Error("customer-webhook fan-out lost a divergence.firing event",
 				"err", ferr, "pair", pair.String(),
 				"subscribers", res.Subscribers, "enqueued", res.Enqueued,
 				"failed", res.Failed)
+			return ferr
 		}
+		return nil
 	}
 }

@@ -66,8 +66,8 @@ func TestRecentOperations_FirstPageIsBoundedToTheTailWindow(t *testing.T) {
 	if got, want := args[0], uint32(recentLedgersTailWindow); got != want {
 		t.Errorf("window arg = %v (%T), want %v", got, got, want)
 	}
-	if got, want := args[1], 50; got != want {
-		t.Errorf("limit arg = %v, want %v", got, want)
+	if got, want := args[1], windowRows(50, windowFactorKeys); got != want {
+		t.Errorf("row-budget arg = %v, want the dedup window %v", got, want)
 	}
 }
 
@@ -97,7 +97,7 @@ func TestRecentOperations_CursorPageIsBoundedBelowTheCursor(t *testing.T) {
 		t.Fatalf("cursor page carries no tail-window lower bound (this is the #444 defect):\n%s", q)
 	}
 	args := conn.args[0]
-	want := []any{cur.Ledger, cur.Ledger, cur.A, cur.B, cur.Ledger - uint32(recentLedgersTailWindow), 25}
+	want := []any{cur.Ledger, cur.Ledger, cur.A, cur.B, cur.Ledger - uint32(recentLedgersTailWindow), windowRows(25, windowFactorKeys)}
 	if len(args) != len(want) {
 		t.Fatalf("cursor args = %v, want %v", args, want)
 	}
@@ -165,11 +165,11 @@ func TestRecentOperations_ShortBoundedPageFallsBackToTheUnboundedRead(t *testing
 	if strings.Contains(conn.queries[1], "WHERE") {
 		t.Errorf("fallback query must carry no predicate at all on a first page:\n%s", conn.queries[1])
 	}
-	// The fallback keeps every construct the bounded arm has — losing the
-	// DAT-10 dedup or the thread pin on this arm reintroduces those classes
-	// on exactly the reads that are already the expensive ones.
-	if !strings.Contains(conn.queries[1], "LIMIT 1 BY ledger_seq, tx_index, op_index") {
-		t.Errorf("fallback query lost its DAT-10 dedup:\n%s", conn.queries[1])
+	// The thread pin must survive on the unbounded arm — it is already the
+	// expensive read. Dedup is done in Go on the window, so the SQL must stay
+	// free of LIMIT 1 BY (it defeats read-in-order early exit).
+	if strings.Contains(conn.queries[1], "LIMIT 1 BY") {
+		t.Errorf("windowed fallback carries LIMIT 1 BY:\n%s", conn.queries[1])
 	}
 	requireScanSettings(t, "RecentOperations fallback", conn.queries[1])
 }
@@ -202,7 +202,7 @@ func TestRecentOperations_ShortCursorPageFallsBackKeepingItsCursorClause(t *test
 	if strings.Contains(fb, "AND ledger_seq >= ?") {
 		t.Fatalf("fallback still carries the window bound; it is not a fallback:\n%s", fb)
 	}
-	want := []any{cur.Ledger, cur.Ledger, cur.A, cur.B, 20}
+	want := []any{cur.Ledger, cur.Ledger, cur.A, cur.B, windowRows(20, windowFactorKeys)}
 	if len(fbArgs) != len(want) {
 		t.Fatalf("fallback args = %v, want %v", fbArgs, want)
 	}

@@ -40,10 +40,10 @@ func TestCustomerWebhookRotateSecretKeepsQueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get pre-0200 webhook: %v", err)
 	}
-	if before.PreviousSecret != nil || !before.PreviousSecretExpiresAt.IsZero() {
-		t.Fatalf("pre-0200 webhook reads previous = (%x, %v), want none", before.PreviousSecret, before.PreviousSecretExpiresAt)
+	if before.PreviousSigningKey != nil || !before.PreviousSecretExpiresAt.IsZero() {
+		t.Fatalf("pre-0200 webhook reads previous = (%x, %v), want none", before.PreviousSigningKey, before.PreviousSecretExpiresAt)
 	}
-	oldKey := before.SecretHash
+	oldKey := before.SigningKey
 
 	queued := uuid.New()
 	if err := webhooks.EnqueueDelivery(ctx, platform.WebhookDelivery{
@@ -61,11 +61,11 @@ func TestCustomerWebhookRotateSecretKeepsQueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get after rotate: %v", err)
 	}
-	if string(after.SecretHash) != string(newKey) {
-		t.Errorf("secret_hash = %q, want the new key", after.SecretHash)
+	if string(after.SigningKey) != string(newKey) {
+		t.Errorf("secret_hash = %q, want the new key", after.SigningKey)
 	}
-	if string(after.PreviousSecret) != string(oldKey) || !after.PreviousSecretExpiresAt.Equal(expiry) {
-		t.Errorf("previous = (%x, %v), want the old key %x until %v", after.PreviousSecret, after.PreviousSecretExpiresAt, oldKey, expiry)
+	if string(after.PreviousSigningKey) != string(oldKey) || !after.PreviousSecretExpiresAt.Equal(expiry) {
+		t.Errorf("previous = (%x, %v), want the old key %x until %v", after.PreviousSigningKey, after.PreviousSecretExpiresAt, oldKey, expiry)
 	}
 	deliveries, err := webhooks.ListDeliveries(ctx, hookID, 10)
 	if err != nil {
@@ -79,8 +79,8 @@ func TestCustomerWebhookRotateSecretKeepsQueue(t *testing.T) {
 	if err := webhooks.RotateWebhookSecret(ctx, hookID, []byte("wsec_third"), expiry); err != nil {
 		t.Fatalf("second rotate: %v", err)
 	}
-	if got, _ := webhooks.GetWebhook(ctx, hookID); string(got.PreviousSecret) != string(newKey) {
-		t.Errorf("previous after second rotate = %q, want %q", got.PreviousSecret, newKey)
+	if got, _ := webhooks.GetWebhook(ctx, hookID); string(got.PreviousSigningKey) != string(newKey) {
+		t.Errorf("previous after second rotate = %q, want %q", got.PreviousSigningKey, newKey)
 	}
 
 	if err := webhooks.RotateWebhookSecret(ctx, uuid.New(), newKey, expiry); !errors.Is(err, platform.ErrNotFound) {

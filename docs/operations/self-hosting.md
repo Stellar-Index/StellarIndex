@@ -251,7 +251,7 @@ change). At minimum, edit:
   start when nothing answers.
 - `[api] external_base_url` — **your own** public `/v1` root, e.g.
   `https://api.example.com/v1`. When an email sender is configured, the
-  `/v1/signup` verification link is built from this value and nothing
+  sign-in and verification links are built from this value and nothing
   else (the request's `Host` header is client-controlled and is never
   used). Leaving the upstream default `https://api.stellarindex.io/v1`
   emails your users' live verification tokens to our host, where they

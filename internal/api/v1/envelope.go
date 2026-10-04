@@ -226,6 +226,9 @@ type Problem struct {
 	// Substance is the measurement behind a thin-market price-withheld
 	// verdict; absent on every other problem.
 	Substance *SubstanceEvidence `json:"substance,omitempty"`
+	// Reason is the machine-readable [PriceWithheldReason] on a
+	// price-withheld problem, the same enum SSE and asset rows carry.
+	Reason PriceWithheldReason `json:"reason,omitempty"`
 }
 
 // writeJSON writes the Envelope + 200. The convention everywhere in
@@ -286,7 +289,7 @@ func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 // covers the BLANKET middleware deadline only; an error path holding the
 // error from a handler's OWN budget must call writeProblemErr instead.
 func writeProblem(w http.ResponseWriter, r *http.Request, typeURL, title string, status int, detail string) {
-	writeProblemCoverage(w, r, typeURL, title, status, detail, nil, false, nil)
+	writeProblemCoverage(w, r, typeURL, title, status, detail, nil, false, nil, "")
 }
 
 // writeProblemCoverage is [writeProblem] carrying the coverage-floor
@@ -299,6 +302,7 @@ func writeProblemCoverage(
 	w http.ResponseWriter, r *http.Request,
 	typeURL, title string, status int, detail string,
 	coverageFrom *time.Time, outsideCoverage bool, substance *SubstanceEvidence,
+	reason PriceWithheldReason,
 ) {
 	if status == http.StatusInternalServerError && requestDeadlineExpired(r) {
 		typeURL, title, status, detail = requestTimeoutType, requestTimeoutTitle,
@@ -314,6 +318,7 @@ func writeProblemCoverage(
 		CoverageFrom:    wireTimePtr(coverageFrom),
 		OutsideCoverage: outsideCoverage,
 		Substance:       substance,
+		Reason:          reason,
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	// Errors override the cache-control middleware's per-route

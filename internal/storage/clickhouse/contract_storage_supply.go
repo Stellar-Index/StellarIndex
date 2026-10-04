@@ -69,13 +69,25 @@ type ContractStorageSupply struct {
 	// instance storage publishes one under `HolderCount`. nil when it does not.
 	//
 	// Compared against BalanceEntries it is the completeness check that matters
-	// most for this basis: state expiry makes an archived balance entry
-	// invisible to us, and a contract that says it has twelve holders while we
-	// can see ten is telling us we are missing two.
+	// most for this basis: a balance entry the lake's current-state projection
+	// never captured is absent from the sum, and a contract that says it has
+	// twelve holders while we can see ten is telling us we are missing two.
 	DeclaredHolders *uint32
+
+	// ArchivedEntries and ArchivedTotal are the part of BalanceEntries and Total
+	// held in PERSISTENT balance entries whose TTL had lapsed at the lake tip.
+	// They stay in the sum: an archived persistent balance is still owned and
+	// restorable, and the contract's own TotalSupply and HolderCount count it.
+	// ArchivedTotal is nil when ArchivedEntries is zero.
+	ArchivedEntries int
+	ArchivedTotal   *big.Int
 
 	// AsOfLedger is the highest ledger any summed entry was last written at.
 	AsOfLedger uint32
+
+	// balances holds every decoded balance until [ContractStorageSupply.settle]
+	// has judged it against its TTL.
+	balances []heldBalance
 
 	// isSAC records that the instance entry named a Stellar Asset Contract,
 	// and sawInstance that an instance entry was decoded at all. Unexported so
@@ -255,22 +267,33 @@ type ContractStorageSupplyReader interface {
 //	USTBL    (CARUUX2F…)   3,621,637,634,835
 //	deJTRSY  (CBI7UCH5…)   8,763,619,974,700,234,898,508,352
 //
+// # State expiry
+//
+// The lake never records an eviction: an entry whose TTL lapsed keeps its
+// last-known row in ledger_entries_current exactly as if it were live. Every
+// summed balance is therefore judged against its stellar.ttl_live_until row at
+// the lake tip. A lapsed TEMPORARY balance has been deleted by the network and
+// is dropped. A lapsed PERSISTENT balance has been archived, not destroyed — it
+// is still owned, restorable, and counted by the contract's own TotalSupply —
+// so it stays in Total and is disclosed through ArchivedEntries/ArchivedTotal.
+// A key with no TTL row is kept: only a proven lapse justifies dropping one.
+//
 // # What this reading is blind to
 //
-// It sees only balances that exist as ledger entries NOW. Soroban state expiry
-// archives contract-data entries, and an archived balance is invisible here
-// while remaining real and restorable. The figure is therefore a LOWER BOUND,
-// and a different kind of lower bound from the classic trustline sum: that one
-// is blind to whole holding DOMAINS, this one is blind to TIME. Callers must
-// carry the bound onto the wire.
+// It sees only balance entries the lake's current-state projection captured.
+// An entry dormant since before that projection's coverage began is absent,
+// and nothing in the sum says so. The figure is therefore a LOWER BOUND, and
+// callers must carry the bound onto the wire; the contract's own HolderCount,
+// where it publishes one, is the check that exposes the gap.
 //
 // # Refusals
 //
 // Returns [ErrStorageSupplyIsStellarAsset] for a SAC and
-// [ErrStorageSupplyTooManyEntries] above the entry cap. A contract that simply
-// holds no balances returns a zero Total with BalanceEntries == 0 and no error;
-// the caller distinguishes that from a refusal and must not publish it as a
-// supply.
+// [ErrStorageSupplyTooManyEntries] above the entry cap, and fails when the TTL
+// lookup cannot run: an unjudged sum could include deleted balances. A contract
+// that simply holds no balances returns a zero Total with BalanceEntries == 0
+// and no error; the caller distinguishes that from a refusal and must not
+// publish it as a supply.
 func (r *ExplorerReader) ContractStorageSupply(ctx context.Context, contractID string) (ContractStorageSupply, error) {
 	prefix, err := contractDataKeyPrefix(contractID)
 	if err != nil {
@@ -310,7 +333,67 @@ func (r *ExplorerReader) ContractStorageSupply(ctx context.Context, contractID s
 			"%w: %s (no contract instance entry captured, so the Stellar-Asset-Contract check could not be run)",
 			ErrStorageSupplyNoInstance, contractID)
 	}
+	if err := r.settleLapsedBalances(ctx, &out); err != nil {
+		return ContractStorageSupply{}, err
+	}
 	return out, nil
+}
+
+// heldBalance is one decoded balance entry awaiting its TTL verdict.
+type heldBalance struct {
+	keyB64    string
+	amount    *big.Int
+	ledger    uint32
+	temporary bool
+}
+
+// settleLapsedBalances reads every summed balance's live_until and the lake tip
+// it is judged at, then hands both to [ContractStorageSupply.settle].
+func (r *ExplorerReader) settleLapsedBalances(ctx context.Context, s *ContractStorageSupply) error {
+	if len(s.balances) == 0 {
+		return nil
+	}
+	tip, err := r.LakeTipLedger(ctx)
+	if err != nil {
+		return fmt.Errorf("clickhouse: contract storage supply %s: %w", s.ContractID, err)
+	}
+	keys := make([]string, len(s.balances))
+	for i, b := range s.balances {
+		keys[i] = b.keyB64
+	}
+	liveUntil, err := resolveTTLLiveUntil(ctx, r.conn, keys)
+	if err != nil {
+		return fmt.Errorf("clickhouse: contract storage supply %s: %w", s.ContractID, err)
+	}
+	s.settle(liveUntil, tip)
+	return nil
+}
+
+// settle re-derives the sum from the held balances under their TTL verdicts at
+// tip: a lapsed temporary balance is dropped, a lapsed persistent one is kept
+// and counted as archived. A live_until below the entry's own last write is
+// stale TTL data (a write needs a live entry), so that key is kept as live.
+func (s *ContractStorageSupply) settle(liveUntil map[string]uint32, tip uint32) {
+	s.Total, s.BalanceEntries, s.AsOfLedger = new(big.Int), 0, 0
+	s.ArchivedEntries, s.ArchivedTotal = 0, nil
+	archived := new(big.Int)
+	for _, b := range s.balances {
+		lu, ok := liveUntil[b.keyB64]
+		lapsed := ok && lu >= b.ledger && TTLVerdictAt(lu, tip) == TTLArchived
+		if lapsed && b.temporary {
+			continue
+		}
+		s.Total.Add(s.Total, b.amount)
+		s.BalanceEntries++
+		s.AsOfLedger = max(s.AsOfLedger, b.ledger)
+		if lapsed {
+			s.ArchivedEntries++
+			archived.Add(archived, b.amount)
+		}
+	}
+	if s.ArchivedEntries > 0 {
+		s.ArchivedTotal = archived
+	}
 }
 
 // storageRow is one query row held back, undecoded, until the SAC check has run.
@@ -417,6 +500,10 @@ func (s *ContractStorageSupply) apply(keyB64, entryB64 string, ledger uint32) er
 	if ledger > s.AsOfLedger {
 		s.AsOfLedger = ledger
 	}
+	s.balances = append(s.balances, heldBalance{
+		keyB64: keyB64, amount: amount, ledger: ledger,
+		temporary: cd.Durability == xdr.ContractDataDurabilityTemporary,
+	})
 	return nil
 }
 

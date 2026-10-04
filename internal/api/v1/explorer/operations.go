@@ -526,14 +526,15 @@ func (h *Handler) ledgerOperations(w http.ResponseWriter, r *http.Request, seq u
 	// from "truncated at limit", so read the ledger header's exact op
 	// count — the same shape LedgerTransactions already gives its route. A
 	// header-read hiccup only loses this metadata, not the served page.
-	if hdr, found, herr := h.Reader.LedgerBySeq(ctx, seq); herr != nil {
+	hdr, found, herr := h.Reader.LedgerBySeq(ctx, seq)
+	if herr != nil {
 		h.Logger.Warn("explorer LedgerBySeq (operations total) failed", "err", herr, "seq", seq)
 	} else if found {
 		out.Total = hdr.OpCount
 		out.Truncated = hdr.OpCount > uint32(len(rows))
 	}
 	_, stale, _ := h.lakeTip(ctx)
-	h.WriteJSON(w, out, stale)
+	h.writeJSONAt(w, out, stale, out.CoverageNote != "" || herr != nil, time.Time{})
 }
 
 // operationsResponseByteBudget is a conservative placeholder ceiling on the
@@ -706,7 +707,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 				"Internal error", http.StatusInternalServerError, "")
 			return
 		}
-		h.writeJSONAt(w, sliceOperationsView(view, limit), degraded, degraded || view.opTypeStatsStale, asOf)
+		h.writeJSONAt(w, sliceOperationsView(view, limit), degraded, degraded || view.opTypeStatsStale || view.CoverageNote != "", asOf)
 		return
 	}
 
@@ -741,7 +742,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, stale, _ := h.lakeTip(ctx)
-	h.WriteJSON(w, out, stale)
+	h.writeJSONAt(w, out, stale, out.CoverageNote != "", time.Time{})
 }
 
 // opsDirCached serves the cached max-page first-page view. A fresh entry is

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
@@ -86,6 +87,51 @@ func txDetailBody(t *testing.T, resultsErr, eventsErr error) map[string]any {
 		t.Fatalf("unmarshalling captured body: %v", err)
 	}
 	return out
+}
+
+// A failed sub-read must also drop the route's shared-cache band, or a CDN
+// replays the partial tx for the band's whole s-maxage after the read recovers.
+func TestTxDetail_FailedSubReadDropsCacheBand(t *testing.T) {
+	const band = "public, max-age=60, s-maxage=300"
+	readErr := errors.New("clickhouse read failed")
+	for _, tc := range []struct {
+		name                  string
+		resultsErr, eventsErr error
+		want                  string
+	}{
+		{"both reads succeed", nil, nil, band},
+		{"results read fails", readErr, nil, "no-store"},
+		{"events read fails", nil, readErr, "no-store"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &Handler{
+				Reader:        &txCoverageReader{capReader: &capReader{probe: &deadlineProbe{}}, resultsErr: tc.resultsErr, eventsErr: tc.eventsErr},
+				Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+				ClientAborted: func(*http.Request, error) bool { return false },
+				WriteProblem: func(w http.ResponseWriter, _ *http.Request, _, _ string, status int, _ string) {
+					w.WriteHeader(status)
+				},
+				WriteJSON: func(w http.ResponseWriter, _ any, _ bool) { w.WriteHeader(http.StatusOK) },
+				WriteJSONAt: func(w http.ResponseWriter, _ any, _, degraded bool, _ time.Time) {
+					if degraded {
+						w.Header().Set("Cache-Control", "no-store")
+					}
+					w.WriteHeader(http.StatusOK)
+				},
+			}
+			r := httptest.NewRequest(http.MethodGet, "/v1/tx/"+validTestTxHash, nil)
+			r.SetPathValue("hash", validTestTxHash)
+			rec := httptest.NewRecorder()
+			rec.Header().Set("Cache-Control", band)
+			h.TxDetail(rec, r)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != tc.want {
+				t.Errorf("Cache-Control = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
 
 // TestTxDetail_FailedSubReadSurfacesCoverageNote is the W1.2 regression guard: a

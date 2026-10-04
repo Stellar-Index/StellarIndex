@@ -1,0 +1,126 @@
+---
+# promtool unit tests for the verify-network-state alerts in deploy/monitoring/rules/storage.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/network-state-verify_test.yml
+#
+# verify-network-state.timer runs daily and writes network_state_verify.prom
+# only after every requested check completed, so a crashed run leaves
+# last_run_unix to age.
+
+rule_files:
+  - ../rules/storage.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ═══ stellarindex_network_state_verify_stale ════════════════════════════
+
+  # (RED) a lake host that has never produced a verdict.
+  - interval: 1m
+    name: a lake host with no verify-network-state verdict tickets stale
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+60x180'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_network_state_verify_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/network-state-verify.md
+              summary: "verify-network-state has not completed a run on r1:9100 in 2 days"
+              description: |
+                Timer not running, history archive unreachable, or every run
+                crashed before its verdict —
+                `systemctl status verify-network-state.timer verify-network-state.service`,
+                `journalctl -u verify-network-state --since -50h`.
+
+  # (GREEN) a run that completed recently.
+  - interval: 1m
+    name: a fresh verify-network-state run does not ticket stale
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+60x180'
+      - series: 'stellarindex_network_state_verify_last_run_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+60x180'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_network_state_verify_stale
+        exp_alerts: []
+
+  # (RED) the last completed run is 49 h old: silent at 47 h, fires past
+  # 48 h + for.
+  - interval: 1m
+    name: a verify-network-state run older than 48h tickets stale
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+60x3060'
+      - series: 'stellarindex_network_state_verify_last_run_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0x3060'
+    alert_rule_test:
+      - eval_time: 47h
+        alertname: stellarindex_network_state_verify_stale
+        exp_alerts: []
+      - eval_time: 50h
+        alertname: stellarindex_network_state_verify_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/network-state-verify.md
+              summary: "verify-network-state has not completed a run on r1:9100 in 2 days"
+              description: |
+                Timer not running, history archive unreachable, or every run
+                crashed before its verdict —
+                `systemctl status verify-network-state.timer verify-network-state.service`,
+                `journalctl -u verify-network-state --since -50h`.
+
+  # ═══ stellarindex_network_state_verify_failed ═══════════════════════════
+
+  # (RED) the hot archive holds amended entries the lake never saw.
+  - interval: 1m
+    name: a verify-network-state hot_archive mismatch tickets
+    input_series:
+      - series: 'stellarindex_network_state_verify_failures{job="node_exporter", instance="r1:9100", check="hot_archive"}'
+        values: '394x10'
+      - series: 'stellarindex_network_state_verify_failures{job="node_exporter", instance="r1:9100", check="lumens"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_network_state_verify_failed
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9100
+              check: hot_archive
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/network-state-verify.md
+              summary: "verify-network-state found 394 hot_archive failure(s) on r1:9100"
+              description: |
+                The lake's derived state disagrees with the network's. Per-check
+                triage is in the runbook; `journalctl -u verify-network-state -n 300`
+                holds the MISMATCH sample and the lumen residual of the last run.
+
+  # (GREEN) both checks clean.
+  - interval: 1m
+    name: an all-zero verify-network-state verdict does not ticket
+    input_series:
+      - series: 'stellarindex_network_state_verify_failures{job="node_exporter", instance="r1:9100", check="hot_archive"}'
+        values: '0x10'
+      - series: 'stellarindex_network_state_verify_failures{job="node_exporter", instance="r1:9100", check="lumens"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_network_state_verify_failed
+        exp_alerts: []

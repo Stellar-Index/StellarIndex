@@ -410,6 +410,31 @@ func TestHandleCoverageVerdicts_StaleWhenVerdictTrailsLiveTip(t *testing.T) {
 	}
 }
 
+// A frozen ledgerstream cursor agrees with the verdict computed against
+// it, so comparing the two can never fire. The cursor last advanced 72h
+// ago: the network has closed at least 43200 ledgers since (at the 6 s
+// slowest cadence), past the 34560 bound, while the nightly audit keeps
+// computed_at fresh. The response must carry flags.stale = true.
+func TestHandleCoverageVerdicts_StaleWhenCursorFrozenButNetworkAdvances(t *testing.T) {
+	srv := v1.New(v1.Options{
+		CompletenessReader: &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{{
+			Source: "blend", Genesis: 51_499_546, Tip: 63_000_000, Watermark: 63_000_000,
+			CoveragePct: 1, Complete: true, LakeComplete: true,
+			SubstrateOK: true, RecognitionOK: true, ProjectionOK: true,
+			ComputedAt: time.Now().UTC().Add(-5 * time.Minute),
+		}}},
+		Cursors: &stubCursorsReader{rows: []timescale.Cursor{
+			mkCursor("ledgerstream", "", 63_000_000, 72*time.Hour),
+		}},
+	})
+	ts := httpTestServer(t, srv)
+
+	if !coverageStaleFlag(t, ts.URL) {
+		t.Error("flags.stale = false, want true: the cursor equals the verdict's tip but has " +
+			"not advanced for 72h — the network tip is at least 43200 ledgers past it")
+	}
+}
+
 // A verdict computed against a tip the live cursor has barely moved
 // past is CURRENT — the flag must not fire. Guards the fix against
 // over-flagging every response (which would make flags.stale useless

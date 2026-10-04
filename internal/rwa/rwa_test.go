@@ -213,3 +213,19 @@ func TestCouldQualify_KeepsAnISINDeclaredEntryWithNoClass(t *testing.T) {
 		t.Error("type other with no anchor asset and no oracle code must still be filtered")
 	}
 }
+
+func TestQualify_FundNAVBindingAdmitsOnlyItsOwnIssuer(t *testing.T) {
+	const lngvIssuer = "GAHOGWBAWNIKESGNNW7Y7JU5KL54HIEHJGY6Y5QLY6YR3J7WZIDHLC6D"
+	c := Candidate{Code: "LNGV", Issuer: lngvIssuer, BoundSep1: true, DirectoryTags: []string{"issuer"}}
+	if v := Qualify(c); !v.InSet || v.Basis != BasisOracleFeed {
+		t.Fatalf("bound LNGV refused: %+v", v)
+	}
+	c.Issuer = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
+	if v := Qualify(c); v.InSet || v.Reject != RejectNoInstrumentClaim {
+		t.Fatalf("LNGV under another issuer admitted: %+v", v)
+	}
+	c.Issuer, c.DirectoryTags = lngvIssuer, nil
+	if v := Qualify(c); v.InSet || v.Reject != RejectNoRecognition {
+		t.Fatalf("unrecognised LNGV admitted: %+v", v)
+	}
+}

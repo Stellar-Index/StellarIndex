@@ -450,7 +450,12 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 	t0 := time.Now().Add(-time.Second)
 	legacyID := uuid.NewString()
 	_ = legacyPage(clickhouse.Context(ctx, clickhouse.WithQueryID(legacyID)), limit, chstore.ExplorerCursor{})
-	if _, err := er.AccountOperations(ctx, hot, limit, chstore.ExplorerCursor{}); err != nil {
+	// The reader issues several statements per page (two windowed key arms and
+	// the hydration), so its cost is the SUM over every statement it ran,
+	// found through the log_comment this context stamps on each of them.
+	readerTag := uuid.NewString()
+	readerCtx := clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"log_comment": readerTag}))
+	if _, err := er.AccountOperations(readerCtx, hot, limit, chstore.ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountOperations read_rows page: %v", err)
 	}
 	mustExec(`SYSTEM FLUSH LOGS`)
@@ -465,10 +470,14 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 		return rr
 	}
 	legacyRead := readRows(`query_id = ?`, legacyID)
-	// The reader's page query is the newest finished query that hydrates
-	// body_xdr for the hot account (the watermark probe carries neither).
-	readerRead := readRows(`query_id != ? AND query LIKE '%body_xdr%' AND query LIKE ? AND query NOT LIKE '%system.query_log%'`,
-		legacyID, "%"+hot+"%")
+	var readerRead uint64
+	if err := raw.QueryRow(ctx, `SELECT sum(read_rows) FROM system.query_log
+		WHERE type = 'QueryFinish' AND event_time >= ? AND log_comment = ?`, t0, readerTag).Scan(&readerRead); err != nil {
+		t.Fatalf("query_log (reader statements): %v", err)
+	}
+	if readerRead == 0 {
+		t.Fatal("no reader statement found in query_log — the log_comment tag did not reach the server")
+	}
 	t.Logf("read_rows: legacy=%d reader=%d (fixture: %d hot op keys, one per 8192-row granule; page %d)",
 		legacyRead, readerRead, len(opsSeen), limit)
 	if legacyRead < uint64(n/stride)*4096 {

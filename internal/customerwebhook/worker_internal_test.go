@@ -345,7 +345,7 @@ func TestTick_PanicInOneDeliveryDoesNotStopTheBatch(t *testing.T) {
 	goodDeliveryID := uuid.New()
 	store := &panicOnOneStore{
 		webhooks: map[uuid.UUID]platform.CustomerWebhook{
-			goodID: {ID: goodID, URL: ts.URL, SecretHash: []byte("secret"), Enabled: true},
+			goodID: {ID: goodID, URL: ts.URL, SigningKey: []byte("secret"), Enabled: true},
 		},
 		panicOn: badID,
 		pending: []platform.WebhookDelivery{
