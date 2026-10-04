@@ -3905,7 +3905,7 @@ var AggregatorDroppedWindowsTotal = prometheus.NewCounterVec(
 var AggregatorMinUSDVolumeUnvaluableTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_min_usd_volume_unvaluable_total",
-		Help: "Windows DROPPED fail-closed because min_usd_volume is set but the target pair's on-chain quote asset has no recognised USD peg (floor unverifiable), labelled by pair.",
+		Help: "Windows DROPPED fail-closed because min_usd_volume is set but the floor is unverifiable (on-chain quote asset has no recognised USD peg, or a EUR/GBP target has no usable FX rate), labelled by pair.",
 	},
 	[]string{"pair"},
 )

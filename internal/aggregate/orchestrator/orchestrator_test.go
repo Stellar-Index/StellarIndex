@@ -1626,6 +1626,18 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 				if got := mr.Exists(key); got != tc.publish {
 					t.Errorf("published=%v, want %v (VWAPWrites=%d)", got, tc.publish, orch.Stats().VWAPWrites)
 				}
+				if tc.fx != nil {
+					if len(tc.fx.calls) == 0 {
+						t.Fatal("FX store never asked for a rate")
+					}
+					usd, _ := canonical.NewFiatAsset("USD")
+					wantLeg, _ := canonical.NewPair(tc.quote, usd)
+					for _, c := range tc.fx.calls {
+						if c.pair.String() != wantLeg.String() {
+							t.Errorf("FX leg requested = %s, want quote->USD %s", c.pair, wantLeg)
+						}
+					}
+				}
 			})
 		}
 	})
