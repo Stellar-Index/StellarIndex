@@ -744,10 +744,8 @@ func (m MetadataConfig) HomeDomainFor(issuer string) (string, bool) {
 // sub-struct; disabled by default so fresh deployments don't
 // attempt network egress until the operator opts in.
 //
-// Pair lists are hardcoded per venue for v1 (see venue package's
-// DefaultPairs). A future PR adds per-venue pair override YAML once
-// the fleet stabilises; deferred to keep config surface narrow
-// until operators actually ask for it.
+// Pair lists are code, not config (see venue package's DefaultPairs);
+// changing one is a pairs.go / pairs.yaml edit.
 type ExternalConfig struct {
 	Binance           ExternalStreamerConfig      `toml:"binance"          doc:"Binance spot WebSocket aggTrade streamer. Pair list: internal/sources/external/binance/pairs.yaml."`
 	Kraken            ExternalStreamerConfig      `toml:"kraken"           doc:"Kraken v2 WebSocket trade streamer. Pair list: internal/sources/external/kraken/pairs.go."`
@@ -1423,6 +1421,7 @@ type AggregateConfig struct {
 	DivergenceMinIntervalSeconds int                        `toml:"divergence_min_interval_seconds" doc:"Minimum wall-clock seconds between divergence-refresh passes. Tick still fires at interval_seconds, but the divergence pass is skipped if elapsed < this value. Default 300s burns ~10× less of the CMC monthly-quota than every-tick refreshes (F-0030 follow-up); the div:<base>/<quote> key TTL is sized from this cadence plus a worst-case pass, so it stays populated between passes at any value. Set to 0 to refresh every tick (legacy)." default:"300"`
 	MaxTradesPerWindow           int                        `toml:"max_trades_per_window" doc:"Per-(pair, window) cap on TradesInRange row count to bound a runaway scan. 0 falls back to the library default (10000)." default:"10000"`
 	DisableClassFilter           bool                       `toml:"disable_class_filter" doc:"Disable the default ClassExchange-only VWAP filter so every fetched trade contributes regardless of source class. Off by default — see internal/sources/external/registry.go for class semantics." default:"false"`
+	ExcludedSources              []string                   `toml:"excluded_sources" doc:"Source names whose already-stored trades are dropped from every aggregator VWAP window at read time (before the class filter). The read-side kill-switch: [external.<venue>] enabled=false only stops NEW ingest, this removes the source's existing rows from the computed price without a purge. The prices_1m continuous aggregate is not source-filtered." default:"[]"`
 	EnableStablecoinFiatProxy    bool                       `toml:"enable_stablecoin_fiat_proxy" doc:"Expand fiat-denominated target pairs to include stablecoin backers (XLM/fiat:USD also pulls XLM/USDT/USDC/DAI/PYUSD/USDP and collapses onto the target). Off by default — N+1 TradesInRange calls per (pair, window)." default:"false"`
 	Pairs                        []string                   `toml:"pairs" doc:"Aggregator coverage set as canonical pair strings (\"crypto:XLM/fiat:USD\", \"native/USDC-G…\"). Empty leaves the binary's built-in default (XLM/BTC/ETH × USD/EUR/GBP). Each entry is parsed via canonical.ParseAsset on both sides; an unparseable entry fails Validate." default:"[]"`
 	Windows                      []string                   `toml:"windows" doc:"Per-window cadences as Go time.Duration strings (\"5m\", \"1h\", \"24h\"). Empty leaves the orchestrator's built-in default ([5m, 1h, 24h])." default:"[]"`

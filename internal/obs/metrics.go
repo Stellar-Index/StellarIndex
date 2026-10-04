@@ -356,6 +356,9 @@ func registerAppMetricsTail() {
 		PricelessCoverageCheckRunsTotal,
 		PricelessCoverageCheckLastSuccessUnix,
 
+		ChangeSummaryPassesTotal,
+		ChangeSummaryLastSuccessUnix,
+
 		NotifySendsTotal,
 
 		DEXTradeNonstandardDecimalsTotal,
@@ -2760,6 +2763,29 @@ var PricelessCoverageCheckLastSuccessUnix = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_priceless_coverage_check_last_success_unix",
 		Help: "Unix seconds of the most recent successful priceless-popular coverage-check sweep.",
+	},
+)
+
+// ChangeSummaryPassesTotal — per-pass outcome counter for the explorer
+// delta-strip worker (internal/aggregate/changesummary). `ok` = every
+// entity upserted; `partial` = some failed, some upserted; `failed` = no
+// entity upserted (the table is going stale).
+var ChangeSummaryPassesTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_change_summary_passes_total",
+		Help: "change_summary_5m refresh pass outcomes (ok|partial|failed).",
+	},
+	[]string{"outcome"},
+)
+
+// ChangeSummaryLastSuccessUnix — unix seconds of the last pass that
+// upserted at least one entity, seeded at worker start so a worker that
+// never succeeds still goes stale. `time() - this` powers
+// stellarindex_change_summary_stale.
+var ChangeSummaryLastSuccessUnix = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_change_summary_last_success_unix",
+		Help: "Unix seconds of the last change_summary_5m refresh pass that upserted at least one entity; seeded at worker start, 0 when the worker is not running.",
 	},
 )
 

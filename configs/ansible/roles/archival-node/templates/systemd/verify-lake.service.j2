@@ -20,8 +20,11 @@ Environment=CONFIG_PATH=/etc/stellarindex.toml
 Environment=CH_ADDR=127.0.0.1:9300
 Environment=FROM=2
 Environment=TEXTFILE=/var/lib/node_exporter/textfile_collector/lake_verify.prom
-# 75 = run-heavy-job lock skip; a real failure count is carried by lake_verify.prom and `stellarindex_lake_verify_failed`, not the exit code.
+# 75 = run-heavy-job lock skip (a lock was held); a real failure count is carried by lake_verify.prom and `stellarindex_lake_verify_failed`, not the exit code.
 SuccessExitStatus=75
+# Queue behind another heavy job (host-wide and scheduled locks) for up to
+# 12h instead of skipping the fire; TimeoutStartSec below covers wait + run.
+Environment=HEAVY_JOB_LOCK_WAIT=43200
 Environment=HEAVY_JOB_CLASS=scheduled
 EnvironmentFile=-/etc/default/verify-lake
 EnvironmentFile=-/etc/default/stellarindex
@@ -46,7 +49,7 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 
 # Genesis-to-tip in 1M-ledger windows, same order of work as compute-completeness's substrate pass.
-TimeoutStartSec=4h
+TimeoutStartSec=57600
 
 [Install]
 WantedBy=multi-user.target

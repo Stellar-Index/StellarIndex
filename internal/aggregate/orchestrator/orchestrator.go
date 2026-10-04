@@ -473,6 +473,12 @@ type Config struct {
 	// release that hadn't yet introduced class filtering.
 	DisableClassFilter bool
 
+	// ExcludedSources drops every stored trade from the named sources
+	// at read time, before the class filter, so an operator can remove
+	// a misbehaving source from VWAP without purging history. Applies
+	// even when DisableClassFilter is set.
+	ExcludedSources []string
+
 	// Phase2Thresholds tunes the ADR-0019 Phase 2 freeze condition
 	// (3-signal AND on confidence + z + source count). Zero-value
 	// fields fall back to the [Default*] package constants — an
@@ -1433,6 +1439,7 @@ func (o *Orchestrator) decideBucket(
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s %v: %w", pair.String(), window, err)
 	}
+	trades = dropExcludedSources(pair, trades, o.cfg.ExcludedSources)
 	preFilter := len(trades)
 	if !o.cfg.DisableClassFilter {
 		trades = filterForVWAP(trades)
@@ -2618,6 +2625,28 @@ func dropUnpriceable(pair canonical.Pair, trades []canonical.Trade) []canonical.
 	}
 	if dropped := len(trades) - len(out); dropped > 0 {
 		obs.AggregatorDroppedTradesTotal.WithLabelValues("unpriceable", pair.String()).Add(float64(dropped))
+	}
+	return out
+}
+
+// dropExcludedSources returns trades minus those from any source in
+// excluded, preserving order in a fresh slice.
+func dropExcludedSources(pair canonical.Pair, trades []canonical.Trade, excluded []string) []canonical.Trade {
+	if len(excluded) == 0 {
+		return trades
+	}
+	skip := make(map[string]struct{}, len(excluded))
+	for _, s := range excluded {
+		skip[s] = struct{}{}
+	}
+	out := make([]canonical.Trade, 0, len(trades))
+	for _, t := range trades {
+		if _, drop := skip[t.Source]; !drop {
+			out = append(out, t)
+		}
+	}
+	if dropped := len(trades) - len(out); dropped > 0 {
+		obs.AggregatorDroppedTradesTotal.WithLabelValues("excluded_source", pair.String()).Add(float64(dropped))
 	}
 	return out
 }

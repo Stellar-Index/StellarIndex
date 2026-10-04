@@ -257,7 +257,7 @@ backfill_from_ledger  = 0                # 0 = resume from persisted cursor
 
   # ClassExchange — CEX trade streams. No auth, no API keys.
   # Default pair sets cover the highest-liquidity XLM + BTC + ETH
-  # markets; per-venue pair overrides are a future config surface.
+  # markets; per-venue pair lists are code (pairs.go, binance pairs.yaml), not config.
   [external.binance]
   enabled = false   # WS aggTrade — XLMUSDT / BTCUSDT / ETHUSDT / XLMBTC
   # poll_interval = ""   # accepted but unused: this connector streams over WebSocket
@@ -376,6 +376,7 @@ max_trades_per_window        = 10000
 max_hops                     = 3       # router route length cap (LEGS); 0 = default (3), accepted range [2,4]
 min_route_confidence         = 0.0     # weakest-link confidence floor [0,1] a route must clear to set a confident cross; 0 = disabled (pre-router behaviour)
 disable_class_filter         = false   # default: only ClassExchange sources contribute to VWAP
+excluded_sources             = []      # read-time kill-switch: drop these sources' stored trades from VWAP (enabled=false only stops new ingest)
 enable_stablecoin_fiat_proxy = false   # opt-in: expand XLM/fiat:USD to also pull XLM/USDT/USDC/DAI/PYUSD/USDP and collapse onto the target
 # Operator-override coverage set. Empty = built-in default (XLM/BTC/ETH × USD/EUR/GBP).
 # Format: "<base>/<quote>" using the canonical asset wire form
