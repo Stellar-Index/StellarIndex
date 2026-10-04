@@ -128,9 +128,16 @@ func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransactio
 
 // emitEvictions appends one `removed` row per evicted key: no tx, so empty
 // tx_hash and op_index -1, with change_index counting within that group.
+// A persistent entry or contract code is archived, not deleted (it moves to
+// the hot archive and stays restorable), so its last live row stays current;
+// it still takes its walk position so later rows match the dispatcher's.
 func emitEvictions(ext *LedgerExtract, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time, intraSeq uint32) {
 	var changeIdx uint32
 	for i := range evicted {
+		if isArchivedOnEviction(evicted[i]) {
+			intraSeq++
+			continue
+		}
 		row, ok := entryChangeRow(seq, closeTime, "", -1, changeIdx, xdr.LedgerEntryChange{
 			Type:    xdr.LedgerEntryChangeTypeLedgerEntryRemoved,
 			Removed: &evicted[i],
@@ -143,6 +150,16 @@ func emitEvictions(ext *LedgerExtract, evicted []xdr.LedgerKey, seq uint32, clos
 		changeIdx++
 		intraSeq++
 	}
+}
+
+func isArchivedOnEviction(k xdr.LedgerKey) bool {
+	switch k.Type {
+	case xdr.LedgerEntryTypeContractCode:
+		return true
+	case xdr.LedgerEntryTypeContractData:
+		return k.ContractData != nil && k.ContractData.Durability == xdr.ContractDataDurabilityPersistent
+	}
+	return false
 }
 
 func emitChangeSet(changes []xdr.LedgerEntryChange, opIdx int, emit func(int, xdr.LedgerEntryChange)) {
