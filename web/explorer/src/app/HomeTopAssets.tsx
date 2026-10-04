@@ -24,7 +24,7 @@ import {
   TR,
 } from '@/components/ui';
 import { formatCompact, formatPriceSmall } from '@/lib/format';
-import { isSafePublicImageUrl } from '@/lib/safe-domain';
+import { iconProxySrc, isSafePublicImageUrl } from '@/lib/safe-domain';
 import { demoteFlaggedLast } from '@/lib/directory-tags';
 import { ScamBadge } from '@/components/ScamBadge';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -383,7 +383,7 @@ function AssetIcon({
     return (
       // eslint-disable-next-line @next/next/no-img-element -- remote SEP-1 icons; next/image needs a domain allowlist we can't enumerate under static export
       <img
-        src={image!}
+        src={iconProxySrc(image!)}
         alt=""
         aria-hidden
         width={24}

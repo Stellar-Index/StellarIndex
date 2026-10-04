@@ -1,0 +1,3 @@
+BEGIN;
+DROP TABLE IF EXISTS sushiswap_v3_pools;
+COMMIT;

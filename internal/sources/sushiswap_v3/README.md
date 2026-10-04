@@ -48,11 +48,10 @@ carried; nothing floats them.
 
 ## Scope
 
-`swap` → `trades` is the whole projected surface today. `mint`, `burn`,
-`collect`, `init`, `upgraded` and `migrated` are gated and recognized,
-and project zero rows. A V3 position is `(owner, tick_lower,
-tick_upper)` and wants a table of its own rather than a reserve-shaped
-liquidity row; that table is the natural next increment.
+`swap` → `trades` and `mint` / `burn` / `collect` →
+`sushiswap_v3_position_events` (a position is `(owner, tick_lower,
+tick_upper)`, not a reserve row) are the projected surface. `init`,
+`upgraded` and `migrated` are gated and recognized, and project zero rows.
 
 ## Replay
 

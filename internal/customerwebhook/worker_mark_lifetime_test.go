@@ -104,7 +104,7 @@ func newLifetimeStore(url string) *ctxHonouringStore {
 		lookupDelay: 20 * time.Millisecond,
 		webhook: platform.CustomerWebhook{
 			ID: webhookID, URL: url, Enabled: true,
-			SecretHash: []byte("0123456789abcdef0123456789abcdef"), // gitleaks:allow — test fixture, not a credential
+			SigningKey: []byte("0123456789abcdef0123456789abcdef"), // gitleaks:allow — test fixture, not a credential
 		},
 		pending: []platform.WebhookDelivery{{
 			ID: uuid.New(), WebhookID: webhookID,

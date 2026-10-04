@@ -3,6 +3,7 @@ package explorer
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -181,5 +182,5 @@ func (h *Handler) AccountOperations(w http.ResponseWriter, r *http.Request) {
 	if asOfOK {
 		out.AsOfLedger = asOf
 	}
-	h.WriteJSON(w, out, stale)
+	h.writeJSONAt(w, out, stale, out.CoverageNote != "", time.Time{})
 }

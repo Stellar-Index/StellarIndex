@@ -137,6 +137,17 @@ func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail
 	}
 }
 
+// anyDirectoryUnchecked reports whether any row's pricing was withheld because
+// its directory read failed, not on a verdict.
+func anyDirectoryUnchecked(rows []AssetDetail) bool {
+	for i := range rows {
+		if rows[i].issuerDirectoryUnchecked {
+			return true
+		}
+	}
+	return false
+}
+
 // withholdUncheckedIssuerPricing marks a row whose directory lookup failed
 // and withholds its dollar figures: an unanswered read is not "no tags".
 func withholdUncheckedIssuerPricing(d *AssetDetail) {
@@ -215,6 +226,8 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	// to produce.
 	d.ListingReference = nil
 	d.ListingValuation = nil
+	// global_market.price_usd is a dollar price for this row too.
+	d.GlobalMarket = nil
 }
 
 // withholdPriceSeriesWhenUnpriced drops every derived PRICE-OVER-TIME

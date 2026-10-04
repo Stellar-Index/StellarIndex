@@ -53,6 +53,7 @@ var handlerSpecFieldPairs = []struct {
 	omit   []string
 }{
 	{"Asset", reflect.TypeOf(AssetDetail{}), nil},
+	{"AssetMetadata", reflect.TypeOf(AssetMetadata{}), nil},
 	{"AssetSupply", reflect.TypeOf(AssetSupply{}), nil},
 	{"TradeRow", reflect.TypeOf(TradeRow{}), nil},
 	{"OHLCBar", reflect.TypeOf(OHLCBar{}), nil},

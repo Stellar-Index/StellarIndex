@@ -3,6 +3,7 @@ package divergence_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -183,8 +184,9 @@ func TestRefreshPair_OnWarningHookFiresOnlyAfterPersistence(t *testing.T) {
 	svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{
 		Threshold:            5.0,
 		MinSourcesForWarning: 2,
-		OnWarningFired: func(_ context.Context, _ canonical.Pair, _ divergence.CachedResult) {
+		OnWarningFired: func(_ context.Context, _ canonical.Pair, _ divergence.CachedResult) error {
 			fired++
+			return nil
 		},
 	})
 	pair := xlmUSD(t)
@@ -220,8 +222,9 @@ func TestRefreshPair_BelowQuorumTickFreezesWarning(t *testing.T) {
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
 		Threshold:            5.0,
 		MinSourcesForWarning: 2,
-		OnWarningFired: func(_ context.Context, _ canonical.Pair, _ divergence.CachedResult) {
+		OnWarningFired: func(_ context.Context, _ canonical.Pair, _ divergence.CachedResult) error {
 			fired++
+			return nil
 		},
 	})
 	ctx := context.Background()
@@ -294,8 +297,9 @@ func TestRefreshPair_RestartKeepsPublishedWarning(t *testing.T) {
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
 		Threshold:            5.0,
 		MinSourcesForWarning: 2,
-		OnWarningFired: func(context.Context, canonical.Pair, divergence.CachedResult) {
+		OnWarningFired: func(context.Context, canonical.Pair, divergence.CachedResult) error {
 			firstHooks++
+			return nil
 		},
 	})
 	pair := xlmUSD(t)
@@ -308,8 +312,9 @@ func TestRefreshPair_RestartKeepsPublishedWarning(t *testing.T) {
 			readDivergence(t, rdb, pair).WarningFired, firstHooks)
 	}
 
-	restarted := restartedService(t, refs, rdb, func(context.Context, canonical.Pair, divergence.CachedResult) {
+	restarted := restartedService(t, refs, rdb, func(context.Context, canonical.Pair, divergence.CachedResult) error {
 		secondHooks++
+		return nil
 	})
 	t1 := t0.Add(41 * time.Minute)
 	_ = restarted.RefreshPair(ctx, pair, 1.00, t1)
@@ -412,8 +417,9 @@ func TestRefreshPair_GapDoesNotMatureStreak(t *testing.T) {
 	svc, rdb, _ := newTestService(t, depeggedRefs(), divergence.ServiceOptions{
 		Threshold:            5.0,
 		MinSourcesForWarning: 2,
-		OnWarningFired: func(context.Context, canonical.Pair, divergence.CachedResult) {
+		OnWarningFired: func(context.Context, canonical.Pair, divergence.CachedResult) error {
 			fired++
+			return nil
 		},
 	})
 	ctx := context.Background()
@@ -465,8 +471,9 @@ func TestRefreshPair_PublishedWarningSurvivesGap(t *testing.T) {
 	svc, rdb, _ := newTestService(t, depeggedRefs(), divergence.ServiceOptions{
 		Threshold:            5.0,
 		MinSourcesForWarning: 2,
-		OnWarningFired: func(context.Context, canonical.Pair, divergence.CachedResult) {
+		OnWarningFired: func(context.Context, canonical.Pair, divergence.CachedResult) error {
 			fired++
+			return nil
 		},
 	})
 	ctx := context.Background()
@@ -478,5 +485,79 @@ func TestRefreshPair_PublishedWarningSurvivesGap(t *testing.T) {
 	if !readDivergence(t, rdb, pair).WarningFired || fired != 1 {
 		t.Errorf("published warning after a gap: WarningFired=%v hooks=%d, want true and 1",
 			readDivergence(t, rdb, pair).WarningFired, fired)
+	}
+}
+
+// failFirstHook errors on its first call and succeeds afterwards.
+func failFirstHook(calls *int) divergence.WarningHook {
+	return func(context.Context, canonical.Pair, divergence.CachedResult) error {
+		*calls++
+		if *calls == 1 {
+			return errors.New("transient")
+		}
+		return nil
+	}
+}
+
+// A failed hook delivery is retry state only: a following below-quorum tick
+// must still carry the published verdict (true) forward, and the retry
+// happens on the next evaluated firing refresh.
+func TestRefreshPair_HookErrorKeepsVerdictThroughBelowQuorum(t *testing.T) {
+	flaky := &stubReference{name: "chainlink", price: 1.00}
+	refs := []divergence.Reference{&stubReference{name: "coingecko", price: 1.00}, flaky}
+	var calls int
+	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+		OnWarningFired:       failFirstHook(&calls),
+	})
+	ctx := context.Background()
+	pair := xlmUSD(t)
+	t0 := time.Now()
+	step := divergence.DefaultWarningPersistence + time.Minute
+
+	_ = svc.RefreshPair(ctx, pair, 1.10, t0)
+	_ = svc.RefreshPair(ctx, pair, 1.10, t0.Add(step))
+	if calls != 1 || !readDivergence(t, rdb, pair).WarningFired {
+		t.Fatalf("setup: hooks=%d WarningFired=%v, want 1 failed hook on a firing pair",
+			calls, readDivergence(t, rdb, pair).WarningFired)
+	}
+
+	flaky.err = divergence.ErrPriceUnavailable
+	_ = svc.RefreshPair(ctx, pair, 1.10, t0.Add(step+time.Minute))
+	if !readDivergence(t, rdb, pair).WarningFired {
+		t.Fatal("below-quorum tick after a failed hook rewrote WarningFired to false for a diverging pair")
+	}
+
+	flaky.err = nil
+	_ = svc.RefreshPair(ctx, pair, 1.10, t0.Add(step+2*time.Minute))
+	if calls != 2 || !readDivergence(t, rdb, pair).WarningFired {
+		t.Errorf("after recovery: hooks=%d WarningFired=%v, want the hook retried once and the verdict kept",
+			calls, readDivergence(t, rdb, pair).WarningFired)
+	}
+}
+
+// A failed hook delivery must not make the next refresh after an evaluation
+// gap look like a fresh, unpublished streak: the verdict stays true and the
+// hook is retried.
+func TestRefreshPair_HookErrorKeepsVerdictThroughGap(t *testing.T) {
+	var calls int
+	svc, rdb, _ := newTestService(t, depeggedRefs(), divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+		OnWarningFired:       failFirstHook(&calls),
+	})
+	ctx := context.Background()
+	pair := xlmUSD(t)
+	t0 := time.Now()
+	_ = svc.RefreshPair(ctx, pair, 1.00, t0)
+	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(divergence.DefaultWarningPersistence+time.Minute))
+	if calls != 1 {
+		t.Fatalf("setup: hooks=%d, want 1 failed hook", calls)
+	}
+
+	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(3*time.Hour))
+	if got := readDivergence(t, rdb, pair); !got.WarningFired || calls != 2 {
+		t.Errorf("refresh after a gap: WarningFired=%v hooks=%d, want true and the hook retried (2)", got.WarningFired, calls)
 	}
 }

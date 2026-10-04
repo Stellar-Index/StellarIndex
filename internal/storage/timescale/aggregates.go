@@ -330,6 +330,13 @@ func flooredDirTWAP(rows []dirTWAP) []dirTWAP {
 // would round the inverted leg to whatever scale Postgres picked for that
 // division BEFORE it was ever weighted (ADR-0003).
 //
+// The inversion acts on the stored window average avg(q), so a flipped leg
+// contributes 1/avg(q): the harmonic mean of its minute prices in the
+// requested orientation, not their time-average avg(1/q). The Jensen gap is
+// ≈ the squared coefficient of variation of those minute prices within the
+// bucket, second-order for 1h/1d. The exact form would need the CAGGs to
+// store avg(1/twap); the bound does not justify a rebuild.
+//
 // This replaces a TRADE-COUNT-weighted mean of {twap, 1/twap_flipped}.
 // Trade count is the weight 0081 exists to reject: count-weighting the
 // DIRECTION merge is exact only in the degenerate case where each
@@ -1296,7 +1303,7 @@ const closedVWAP1mAtOrBeforeQuery = `
 // (ADR-0015) — the open bucket is excluded. Returns
 // [sql.ErrNoRows] when no closed bucket exists at-or-before t
 // (e.g. the pair was first traded < 24h ago, or the prices_1m
-// retention horizon (30 d) elided the row), and also when the
+// retention horizon (90 d) elided the row), and also when the
 // bucket's VWAP will not parse as a positive rational — an
 // unusable anchor is reported as absent rather than propagated into
 // a percentage.

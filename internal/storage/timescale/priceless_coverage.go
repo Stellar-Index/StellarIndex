@@ -14,7 +14,7 @@ import (
 // pure classifier turns these into a fire/no-fire verdict — this struct
 // carries only the measured signals, never the thresholds.
 type AssetCoverageSignals struct {
-	// AssetID is the trades base_asset (canonical asset_id) the signals
+	// AssetID is the trades base or quote asset (canonical asset_id) the signals
 	// are grouped on — the directory row this coverage gap would page for.
 	AssetID string
 	// HasPriceUSD reports whether a servable USD/XLM-proxy price exists for
@@ -76,7 +76,25 @@ type AssetCoverageSignals struct {
 const coverageQuoteProxies = usdProxyQuotes + `,
 	` + xlmQuotes
 
-// popularPricelessCandidatesSQL extracts, per trades base_asset that has
+// pricelessTradeLegs is the trailing-7d priced trade set seen from each
+// asset's side: one row per (trade, leg). Sources that store swap direction
+// (aquarius) can leave an asset on the QUOTE leg only, so enumerating base_asset
+// alone would never surface it. The proxy quotes are skipped on the quote leg:
+// they are seeded into the priced set, so they can never be candidates.
+const pricelessTradeLegs = `(
+  SELECT base_asset AS asset_id, ts, usd_volume, maker, taker
+    FROM trades
+   WHERE ts >= now() - INTERVAL '7 days'
+     AND usd_volume IS NOT NULL
+  UNION ALL
+  SELECT quote_asset, ts, usd_volume, maker, taker
+    FROM trades
+   WHERE ts >= now() - INTERVAL '7 days'
+     AND usd_volume IS NOT NULL
+     AND quote_asset NOT IN (` + coverageQuoteProxies + `)
+  ) legs`
+
+// popularPricelessCandidatesSQL extracts, per trades asset (either leg) that has
 // ANY priced volume in the trailing 7 days, the signal set the tripwire
 // classifies. It PRE-FILTERS to priceless assets above a coarse RAW-volume
 // floor ($1 / 1 trade) so the (small) candidate set the worker classifies
@@ -118,32 +136,27 @@ const coverageQuoteProxies = usdProxyQuotes + `,
 // DefaultSweepTimeout (5 min) and the 10-minute cadence.
 const popularPricelessCandidatesSQL = `
 WITH vol7d AS (
-  SELECT base_asset AS asset_id,
+  SELECT asset_id,
          SUM(usd_volume)::double precision AS vol_7d,
          COUNT(*)                          AS trades_7d
-    FROM trades
-   WHERE ts >= now() - INTERVAL '7 days'
-     AND usd_volume IS NOT NULL
-   GROUP BY base_asset
+    FROM ` + pricelessTradeLegs + `
+   GROUP BY asset_id
 ),
 vol24h AS (
-  SELECT base_asset AS asset_id,
+  SELECT asset_id,
          SUM(usd_volume)::double precision AS vol_24h
-    FROM trades
+    FROM ` + pricelessTradeLegs + `
    WHERE ts >= now() - INTERVAL '24 hours'
-     AND usd_volume IS NOT NULL
-   GROUP BY base_asset
+   GROUP BY asset_id
 ),
 actor_key AS (
-  SELECT base_asset AS asset_id,
+  SELECT asset_id,
          LEAST(COALESCE(maker, taker), COALESCE(taker, maker))    AS actor_lo,
          GREATEST(COALESCE(maker, taker), COALESCE(taker, maker)) AS actor_hi,
          SUM(usd_volume) AS pv,
          COUNT(*)        AS trades
-    FROM trades
-   WHERE ts >= now() - INTERVAL '7 days'
-     AND usd_volume IS NOT NULL
-     AND (maker IS NOT NULL OR taker IS NOT NULL)
+    FROM ` + pricelessTradeLegs + `
+   WHERE (maker IS NOT NULL OR taker IS NOT NULL)
    GROUP BY 1, 2, 3
 ),
 -- The top pair's trade COUNT must come from the same row as its volume
@@ -202,7 +215,7 @@ top_pair AS (
 `
 
 // PopularPricelessCandidates returns the coverage-signal set for every
-// priceless trades base_asset with priced 7d volume — the input the
+// priceless trades asset (either leg) with priced 7d volume — the input the
 // priceless-popular tripwire classifies. Priced assets are excluded in
 // SQL (they are not coverage gaps); everything else the classifier judges.
 func (s *Store) PopularPricelessCandidates(ctx context.Context) ([]AssetCoverageSignals, error) {

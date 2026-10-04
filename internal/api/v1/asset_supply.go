@@ -74,17 +74,23 @@ type AssetSupply struct {
 	// rather than the figure itself, and the consumer must not present it as an
 	// exact supply.
 	//
-	// It is set for "contract_storage_balances": that reading sees only
-	// balances that exist as ledger entries right now, and Soroban state expiry
-	// archives contract-data entries, so a real and restorable balance can be
-	// invisible to it. Where the contract publishes its own holder count,
-	// SupplyConsistent reports whether the two agreed — a disagreement is what
-	// an archived balance looks like from here.
+	// It is set for "contract_storage_balances": that reading sees only the
+	// balance entries the lake's current-state projection captured, so an entry
+	// dormant since before its coverage began is absent. Where the contract
+	// publishes its own holder count, SupplyConsistent reports whether the two
+	// agreed — a disagreement is what a missing entry looks like from here.
 	CirculatingSupplyLowerBound bool `json:"circulating_supply_lower_bound,omitempty"`
 
 	// BalanceEntries is how many per-holder balance entries were summed.
 	// Only set for "contract_storage_balances".
 	BalanceEntries int `json:"balance_entries,omitempty"`
+
+	// ArchivedBalanceEntries and ArchivedBalanceTotal are the part of
+	// BalanceEntries and TotalSupply held in persistent entries whose TTL had
+	// lapsed at the lake tip: archived, still owned and restorable, so counted.
+	// Only set for "contract_storage_balances", and only when non-zero.
+	ArchivedBalanceEntries int     `json:"archived_balance_entries,omitempty"`
+	ArchivedBalanceTotal   *string `json:"archived_balance_total,omitempty"`
 
 	// SupplyConsistent, when non-nil, reports whether every cross-check the
 	// contract itself published agreed with what we summed — its own
@@ -190,8 +196,8 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 	}
 	// A token with NO flows at all is the one case the event log cannot speak
 	// to: supply_flows scans a contract it has never seen to zeros, and zero is
-	// a claim ("fully burned") rather than an absence of one. Before publishing
-	// that claim, ask the contract's own storage.
+	// a claim ("fully burned") rather than an absence of one. Ask the contract's
+	// own storage; if it declines too, there is no reading to publish.
 	//
 	// Gated on FlowCount == 0 rather than on a magnitude comparison, so the two
 	// readings can never both contribute to one figure — they measure the same
@@ -202,6 +208,10 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, resp, Flags{Stale: storageStale})
 			return
 		}
+		writeProblem(w, r, "https://api.stellarindex.io/errors/supply-incomplete",
+			"Supply not available", http.StatusNotFound,
+			"No supply flows are recorded for this contract and its storage offers no balance reading, so a total supply isn't available for it.")
+		return
 	}
 
 	mint, burn, clawback := sup.Mint.String(), sup.Burn.String(), sup.Clawback.String()
@@ -229,8 +239,8 @@ type ContractStorageSupplyReader interface {
 
 // storageSupplyResponse builds the storage-derived answer for a token the event
 // log has nothing to say about. ok=false means "no defensible answer" and the
-// caller falls back to the event reading (which, for a token with no flows, is
-// the zero it has always published).
+// caller answers 404, since a flowless token's event reading is an unfounded
+// zero.
 //
 // Every refusal below is silent to the client by design: this path is a
 // fallback, and a fallback that turns a 200 into a 502 because its own optional
@@ -263,6 +273,10 @@ func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID 
 		Source:                      string(supply.BasisContractStorageBalances),
 		CirculatingSupplyLowerBound: true,
 		BalanceEntries:              st.BalanceEntries,
+	}
+	if st.ArchivedEntries > 0 && st.ArchivedTotal != nil {
+		archived := st.ArchivedTotal.String()
+		resp.ArchivedBalanceEntries, resp.ArchivedBalanceTotal = st.ArchivedEntries, &archived
 	}
 	if st.HasSelfChecks() {
 		consistent := st.SelfConsistent()

@@ -207,7 +207,7 @@ groups:
       # 50 peer archives and compares their checkpoint hashes against
       # ours — the failure mode Tier A/B cannot see (our own mirror can
       # agree with itself while disagreeing with the network). Installed
-      # as a root CRON entry (Sunday 10:23 UTC), not a systemd unit, so
+      # as a root CRON entry (Sunday 16:23 UTC), not a systemd unit, so
       # there is no node_systemd_unit_state series to pair a "run failed"
       # alert off of the way Tier A/B do — staleness on
       # stellarindex_verify_archive_last_success_unix{tier="peers"} is
@@ -247,7 +247,7 @@ groups:
           summary: "verify-archive Tier D (multi-peer fork-detection) has recorded no success in >8d (weekly cron, Sunday)"
           description: |
             The weekly multi-peer fork-detection sweep (`-tier peers`,
-            stellarindex-verify-archive-tier-d cron, Sunday 10:23 UTC) has
+            stellarindex-verify-archive-tier-d cron, Sunday 16:23 UTC) has
             not recorded a clean exit in over 8 days — one missed weekly
             cycle plus slack — or has never recorded one. Either the cron
             entry isn't installed (check verify_archive_tier_d_enabled in

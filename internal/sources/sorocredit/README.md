@@ -165,7 +165,7 @@ doctrine). **Never** a bespoke `sorocredit-backfill` subcommand.
   settlements, never liquidations. Amounts are base units, not USD.
 - `GET /v1/accounts/{g_strkey}/positions` — one `credit` position per
   owned position (`basis: stateful`, `amount_semantics:
-  stateful_current`: the latest published statement amount), read by
+  stateful_current_unconfirmed_unit`: the latest published statement amount, raw and unscaled — its unit is not contract-confirmed), read by
   `CreditPositionsByOwner` in `internal/storage/timescale/positions.go`.
 - `GET /v1/accounts/{g_strkey}/activity` — `defi_actions` carries a
   `sorocredit` `position_opened` count (`credit_positions.owner`;

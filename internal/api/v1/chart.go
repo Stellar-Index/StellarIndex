@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
@@ -42,6 +43,13 @@ type ChartSeries struct {
 	// withheld (empty points) for the reason /v1/assets/{id} withholds
 	// market_cap_usd and raises the same-named flag.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
+	// RowCapTruncated: the read hit historyMaxPoints, so Points holds the
+	// OLDEST slice of the history and stops short of the present. Only
+	// reachable for an unbounded window (timeframe=all); bounded ones are
+	// coarsened to a grid that fits. DataEndsAt is the last bucket of the
+	// earliest capped source; the series is incomplete after it.
+	RowCapTruncated bool      `json:"row_cap_truncated,omitempty"`
+	DataEndsAt      *WireTime `json:"data_ends_at,omitempty"`
 }
 
 // markDiscontinuity stamps the interior-gap signal onto a series that is
@@ -252,6 +260,10 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 	var from time.Time
 	if tf.Duration > 0 {
 		from = time.Now().Add(-tf.Duration).UTC()
+	} else if !middleware.ChargeRateLimit(w, r, sinceInceptionCost(gran)) {
+		// timeframe=all has no window to coarsen against, so its read is
+		// priced by grain like /v1/history/since-inception.
+		return
 	}
 
 	// Dispatch to specialised handlers when the request shape calls
@@ -345,6 +357,8 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 			series.RequestedFrom = wireTimePtr(&requested)
 		}
 	}
+
+	series.markRowCap(walk)
 
 	s.writeChartSeries(w, r, pair, series, walk)
 }
@@ -611,6 +625,7 @@ func (s *Server) handleChartTWAP(
 			series.RequestedFrom = wireTimePtr(&requested)
 		}
 	}
+	series.markRowCap(walk)
 	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded})
 }
 
@@ -1110,6 +1125,35 @@ type chartWalkResult struct {
 	// flags.stale, which is exactly that flag's documented meaning
 	// ("below this surface's documented baseline contract").
 	degraded bool
+	// cappedAt is the last bucket of the earliest source read that hit
+	// historyMaxPoints on an unbounded window; the served series is
+	// incomplete after it. Zero when no read was capped.
+	cappedAt time.Time
+}
+
+// noteCap records a source read that filled the row cap, judged on the
+// raw read before any merge so a union of uncapped sources never trips it.
+func (r *chartWalkResult) noteCap(win chartWindow, points []HistoryPoint, limit int) {
+	if !win.from.IsZero() || limit != historyMaxPoints || len(points) != limit {
+		return
+	}
+	r.mergeCap(points[len(points)-1].Bucket)
+}
+
+func (r *chartWalkResult) mergeCap(at time.Time) {
+	if !at.IsZero() && (r.cappedAt.IsZero() || at.Before(r.cappedAt)) {
+		r.cappedAt = at
+	}
+}
+
+// markRowCap stamps the row-cap truncation signal onto a series.
+func (s *ChartSeries) markRowCap(res chartWalkResult) {
+	if res.cappedAt.IsZero() {
+		return
+	}
+	s.RowCapTruncated = true
+	end := WireTime(res.cappedAt)
+	s.DataEndsAt = &end
 }
 
 // chartRead fetches up to `limit` of one source pair's closed buckets in
@@ -1265,6 +1309,7 @@ func (w *chartWalk) step(ctx context.Context, sp canonical.Pair, class chartSour
 			w.res.degraded = true
 			return true, nil //nolint:nilerr // a proxy failure is never the answer — see above
 		}
+		w.res.noteCap(w.win, points, historyMaxPoints)
 		w.claim(sp, points)
 		return true, nil
 	}
@@ -1296,6 +1341,7 @@ func (w *chartWalk) fill(ctx context.Context, sp canonical.Pair, spans []chartSp
 		if !ok {
 			return cont
 		}
+		w.res.noteCap(w.win, points, historyMaxPoints)
 		w.claim(sp, points)
 	}
 	return true
@@ -1729,7 +1775,7 @@ func (s *Server) fiatSeriesThroughXLM(
 	// A leg that stopped short makes the PRODUCT short (or empty): the
 	// cross emits only buckets present on both, so carry each leg's
 	// degradation out even when the cross comes back empty.
-	res := chartWalkResult{degraded: assetRes.degraded}
+	res := chartWalkResult{degraded: assetRes.degraded, cappedAt: assetRes.cappedAt}
 	if len(assetPts) == 0 {
 		return nil, res, nil
 	}
@@ -1738,6 +1784,8 @@ func (s *Server) fiatSeriesThroughXLM(
 		return nil, chartWalkResult{}, err
 	}
 	res.degraded = res.degraded || xlmRes.degraded
+	res.mergeCap(assetRes.cappedAt)
+	res.mergeCap(xlmRes.cappedAt)
 	if len(xlmPts) == 0 {
 		return nil, res, nil
 	}
@@ -2266,6 +2314,9 @@ func (s *Server) handleChartMarketCapCrypto(
 			series.DataStartsAt = &startsAt
 			series.RequestedFrom = wireTimePtr(&requested)
 		}
+	}
+	if !refused {
+		series.markRowCap(walk)
 	}
 	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded || supplyStale})
 }

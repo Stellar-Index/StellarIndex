@@ -211,6 +211,7 @@ func (s *Server) sep40Serve(asset, quote canonical.Asset, rd sep40Read, held fro
 		Stale:         rd.stale,
 		Triangulated:  rd.triangulated,
 		Frozen:        frozen,
+		Degraded:      frozen,
 		FrozenChecked: held.checked,
 		SingleSource:  frozen,
 	}
@@ -524,6 +525,15 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
+	}
+
+	// The ADR-0053 basis rule, as on /v1/price, so both closed surfaces
+	// serve one number for the pair.
+	if !viaFallback {
+		if basis, ok := s.preferUSDAnchoredBasis(ctx, base, quote, snapshot, sources); ok {
+			snapshot, sources, served, triangulated, stale = basis.snap, basis.sources, basis.served, true, basis.stale
+			viaFallback = true
+		}
 	}
 
 	// Freeze, then the shared tail — see handleOracleLastPrice.

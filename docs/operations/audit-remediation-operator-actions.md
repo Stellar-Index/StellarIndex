@@ -213,10 +213,11 @@ exactly that rather than looking like drift.
   Actions secret is a copy, not a backup (write-only once set).
 
 ## MinIO credential hygiene (2026-07-25)
-- [ ] **Rotate MinIO root** (`minio_root_user` / `minio_root_password`, still named
-  `ratesengine-admin`) — the credentials appeared in plaintext in an agent session
+- [x] **Rotate MinIO root — DONE** (root is now `stellarindex-admin` since 2026-07-27;
+  verified 2026-09-28 that the old access key is rejected and the stored old secret
+  differs from the live one). The credentials appeared in plaintext in an agent session
   transcript on 2026-07-25. Rotating restarts MinIO and **invalidates the Prometheus
-  bearer token** (the 2026-07-03 incident); regenerate it in the same window. Steps:
+  bearer token** (the 2026-07-03 incident). Record:
   [credential-rotation.md §MinIO identity inventory](credential-rotation.md).
 - [x] **Repair the `galexie-archive-writer` identity — DONE 2026-09-30.** Its vault
   var and `/etc/default/galexie-backfill` always existed but the MinIO user, policy,

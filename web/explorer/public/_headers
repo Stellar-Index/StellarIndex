@@ -64,14 +64,9 @@
   # X-Frame-Options: DENY above, which browsers honour precisely
   # BECAUSE no CSP frame-ancestors is present to supersede it.
   #
-  # ── img-src allows https: (site-audit S43) ──
-  # Asset icons are issuer-hosted (centre.io, aqua.network,
-  # stronghold.co, …) and the API serves them as absolute URLs.
-  # `img-src 'self' data:` blocked 28 of 28 off-origin icons, i.e.
-  # every asset icon on the site, while looking like sparse data.
-  # TODO: proxy/cache icons same-origin and narrow this back to
-  # 'self' — that also removes the issuer-IP-leak and availability
-  # dependency this widening accepts.
+  # ── img-src is same-origin ──
+  # Issuer-hosted asset icons load through the /icon Pages Function
+  # (functions/icon.js), so the browser never contacts issuer hosts.
   #
   # F-0054 (audit-2026-05-26): an earlier revision permitted
   # http://localhost:3000 in connect-src as a dev-convenience —
@@ -79,7 +74,7 @@
   # against a local API. The Next dev server doesn't read _headers
   # at all (it serves no production headers), so production
   # leakage is the only effect. Removed.
-  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.stellarindex.io https://api.testnet.stellarindex.io https://api.futurenet.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.stellarindex.io https://api.testnet.stellarindex.io https://api.futurenet.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'
 
 # Fingerprinted Next.js assets — far-future cache. CF Pages already
 # does this by default but the explicit header doubles as
@@ -112,4 +107,4 @@
   # rules. (The parent's HSTS also reaches these responses; an
   # identical duplicate is harmless, unlike the CSP case above.)
   Strict-Transport-Security: max-age=31536000; includeSubDomains
-  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.stellarindex.io https://api.testnet.stellarindex.io https://api.futurenet.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors *; form-action 'self'
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.stellarindex.io https://api.testnet.stellarindex.io https://api.futurenet.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors *; form-action 'self'
