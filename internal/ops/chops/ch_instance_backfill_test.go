@@ -4,29 +4,40 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 func TestRunInstanceBackfill_GenesisWatermark(t *testing.T) {
-	origB, origS := backfillInstanceChanges, setInstanceGenesisMark
-	t.Cleanup(func() { backfillInstanceChanges, setInstanceGenesisMark = origB, origS })
+	origB, origS, origR := backfillInstanceChanges, setInstanceGenesisMark, readInstanceStart
+	t.Cleanup(func() { backfillInstanceChanges, setInstanceGenesisMark, readInstanceStart = origB, origS, origR })
 	logf := func(string, ...any) {}
 
+	good := clickhouse.InstanceBackfillStart{RawMaxLedger: 500, MVExists: true}
 	tests := []struct {
 		name     string
-		from     uint32
+		from, to uint32
+		start    clickhouse.InstanceBackfillStart
+		startErr error
 		backfill error
 		wantMark bool
 		wantErr  bool
-		wantThru uint32
 	}{
-		{"complete genesis run", 2, nil, true, false, 500},
-		{"partial run above genesis", 1000, nil, false, false, 0},
-		{"failed run", 2, errors.New("boom"), false, true, 0},
+		{name: "complete genesis run", from: 2, start: good, wantMark: true},
+		{name: "partial run above genesis", from: 1000, start: good},
+		{name: "explicit -to", from: 2, to: 500, start: good},
+		{name: "hole below the raw tip", from: 2, start: clickhouse.InstanceBackfillStart{RawMaxLedger: 900, MVExists: true}},
+		{name: "no materialized view", from: 2, start: clickhouse.InstanceBackfillStart{RawMaxLedger: 500}},
+		{name: "start state unreadable", from: 2, startErr: errors.New("down")},
+		{name: "failed run", from: 2, start: good, backfill: errors.New("boom"), wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var gotThru uint32
 			marked := false
+			readInstanceStart = func(context.Context, string, string) (clickhouse.InstanceBackfillStart, error) {
+				return tc.start, tc.startErr
+			}
 			backfillInstanceChanges = func(context.Context, string, string, uint32, uint32, uint32, func(string, ...any)) error {
 				return tc.backfill
 			}
@@ -34,12 +45,12 @@ func TestRunInstanceBackfill_GenesisWatermark(t *testing.T) {
 				marked, gotThru = true, thru
 				return nil
 			}
-			err := runInstanceBackfill(context.Background(), "addr", "contract_instance_changes", tc.from, 500, 100, logf)
+			err := runInstanceBackfill(context.Background(), "addr", "contract_instance_changes", tc.from, tc.to, 500, 100, logf)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
-			if marked != tc.wantMark || gotThru != tc.wantThru {
-				t.Fatalf("marked=%v thru=%d, want marked=%v thru=%d", marked, gotThru, tc.wantMark, tc.wantThru)
+			if marked != tc.wantMark || (marked && gotThru != 500) {
+				t.Fatalf("marked=%v thru=%d, want marked=%v thru=500", marked, gotThru, tc.wantMark)
 			}
 		})
 	}

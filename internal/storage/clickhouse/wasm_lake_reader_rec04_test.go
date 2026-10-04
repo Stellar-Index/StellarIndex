@@ -180,7 +180,7 @@ func TestContractCodeHistory_GenesisWatermark(t *testing.T) {
 					return nil, nil
 				}
 			}
-			r := &ExplorerReader{conn: conn}
+			r := newExplorerReader(conn)
 			if _, err := r.ContractCodeHistory(context.Background(), testContractID); err != nil {
 				t.Fatal(err)
 			}
@@ -194,7 +194,7 @@ func TestContractCodeHistory_GenesisWatermark(t *testing.T) {
 func TestInstanceGenesisCovers_Below(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(string) (driver.Rows, error) { return &stubRows{data: [][]any{{uint32(100)}}}, nil }
-	r := &ExplorerReader{conn: conn}
+	r := newExplorerReader(conn)
 	if !r.instanceGenesisCovers(context.Background(), 100) {
 		t.Error("ledger at watermark must be covered")
 	}

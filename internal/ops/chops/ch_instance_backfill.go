@@ -63,7 +63,7 @@ func chInstanceBackfill(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "ch-instance-backfill: filling stellar.%s for ledgers %d..%d (window %d) on %s\n",
 		*table, *from, last, *window, *chAddr)
-	return runInstanceBackfill(ctx, *chAddr, *table, uint32(*from), last, uint32(*window),
+	return runInstanceBackfill(ctx, *chAddr, *table, uint32(*from), uint32(*to), last, uint32(*window),
 		func(format string, a ...any) {
 			fmt.Fprintf(os.Stderr, "ch-instance-backfill: "+format+"\n", a...)
 		})
@@ -77,22 +77,37 @@ const instanceGenesisFrom = 2
 var (
 	backfillInstanceChanges = clickhouse.BackfillContractInstanceChangesInto
 	setInstanceGenesisMark  = clickhouse.SetContractInstanceChangesGenesisWatermark
+	readInstanceStart       = clickhouse.ReadInstanceBackfillStart
 )
 
-// runInstanceBackfill fills [from, last] and, only when the run started at
-// genesis and finished without error, records the genesis watermark through
-// last. A partial or failed run records nothing.
-func runInstanceBackfill(ctx context.Context, addr, table string, from, last, window uint32, logf func(string, ...any)) error {
+// runInstanceBackfill fills [from, last] and records the genesis watermark
+// through last only when that claim is provable; otherwise it records nothing
+// and the reader keeps its scan (a wrong "no history" is worse than a slow
+// one). The table's only sources are this backfill and its view, so the mark
+// needs: a genesis start, no explicit -to, the view already live before the
+// run, and a contiguous tip equal to the raw lake tip at start (no hole below
+// ledgers that predate the view).
+func runInstanceBackfill(ctx context.Context, addr, table string, from, toFlag, last, window uint32, logf func(string, ...any)) error {
+	start, startErr := readInstanceStart(ctx, addr, table)
 	if err := backfillInstanceChanges(ctx, addr, table, from, last, window, logf); err != nil {
 		return err
 	}
-	if from > instanceGenesisFrom {
-		logf("not recording a genesis watermark: run started at %d, not genesis", from)
-		return nil
+	switch {
+	case from > instanceGenesisFrom:
+		logf("no genesis watermark: run started at %d, not genesis", from)
+	case toFlag != 0:
+		logf("no genesis watermark: explicit -to %d", toFlag)
+	case startErr != nil:
+		logf("no genesis watermark: start state unreadable: %v", startErr)
+	case !start.MVExists:
+		logf("no genesis watermark: %s_mv did not exist before the run, so ledgers after %d are uncovered", table, last)
+	case last != start.RawMaxLedger:
+		logf("no genesis watermark: contiguous tip %d is below the raw lake tip %d (a hole)", last, start.RawMaxLedger)
+	default:
+		if err := setInstanceGenesisMark(ctx, addr, table, last); err != nil {
+			return fmt.Errorf("record genesis watermark %d: %w", last, err)
+		}
+		logf("genesis watermark recorded through ledger %d", last)
 	}
-	if err := setInstanceGenesisMark(ctx, addr, table, last); err != nil {
-		return fmt.Errorf("record genesis watermark %d: %w", last, err)
-	}
-	logf("genesis watermark recorded through ledger %d", last)
 	return nil
 }

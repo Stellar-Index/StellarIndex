@@ -427,6 +427,7 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 	return r.contractCodeHistoryLegacy(ctx, cidHash)
 }
 
+// instanceGenesisWatermarkQuery is shared by the reader and the writer.
 const instanceGenesisWatermarkQuery = `SELECT max(thru_ledger) FROM stellar.entry_history_watermark WHERE name = ?`
 
 // instanceGenesisCovers reports whether ch-instance-backfill recorded a

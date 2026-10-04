@@ -124,6 +124,11 @@ WHERE entry_type = 'contract_data'
 -- source INSERT (i.e. blocks ingest). Note the tip, then:
 --
 --   SELECT max(ledger_seq) FROM stellar.ledgers;           -- call it T
+--   -- The canonical genesis watermark describes the OLD table and its MV; the
+--   -- readers skip the ledger_entry_changes scan under it. Remove it before the
+--   -- MV drop opens the gap, and keep it removed until the gap-close finishes:
+--   ALTER TABLE stellar.entry_history_watermark DELETE
+--     WHERE name = 'contract_instance_changes' SETTINGS mutations_sync = 2;
 --   DROP VIEW IF EXISTS stellar.contract_instance_changes_mv;
 --   DROP VIEW IF EXISTS stellar.contract_instance_changes_v2_mv;
 --   RENAME TABLE stellar.contract_instance_changes    TO stellar.contract_instance_changes_old,
@@ -136,6 +141,15 @@ WHERE entry_type = 'contract_data'
 --
 --   /usr/local/bin/stellarindex-ops ch-instance-backfill \
 --     -ch-addr 127.0.0.1:9300 -from <T - 1000> -write
+--
+-- Only after the gap-close run has FINISHED, publish v2's genesis watermark
+-- (written by the Step 2 run) under the canonical name the readers consult.
+-- Skip it if Step 2 printed "no genesis watermark" (nothing to copy):
+--
+--   INSERT INTO stellar.entry_history_watermark (name, thru_ledger)
+--     SELECT 'contract_instance_changes', max(thru_ledger)
+--     FROM stellar.entry_history_watermark
+--     WHERE name = 'contract_instance_changes_v2' HAVING max(thru_ledger) > 0;
 --
 -- Restart stellarindex-api: its key-shape probe latches the old-shape
 -- verdict for the process lifetime, and until restarted it keeps reading in
