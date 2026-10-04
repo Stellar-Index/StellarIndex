@@ -2459,7 +2459,9 @@ label, or the directory's demote-adjusted order stops moving. Sustained
 unreachable, or migration 0149 missing on this deployment). The rollup keeps
 its last-good rows, so the label goes stale, not blank. Informational
 severity: `volume_character` is analytics-only — pricing, verification, and
-the raw `volume_24h_usd` chain fact are unaffected.
+the raw `volume_24h_usd` chain fact are unaffected. Alert:
+`stellarindex_asset_character_rollup_failing` (6h cadence, so it keys on a
+13h window: errors with no `ok` sweep).
 
 ### `stellarindex_asset_character_rollup_sweep_duration_seconds`
 

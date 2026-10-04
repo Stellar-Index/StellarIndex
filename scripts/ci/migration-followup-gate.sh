@@ -87,6 +87,9 @@ n=$(printf '%s' "$FOLLOWUPS" | grep -c . || true)
   echo "Release **${VERSION}** adds migrations over **${PREV}** that leave data empty until"
   echo "these commands run. Run each on the host, in order, once the deploy finishes:"
   echo ""
+  echo "Do not run a \`projected-rebuild\` for a source these migrations empty while they apply:"
+  echo "it can checkpoint a window before the rows go, and \`-resume\` then skips that window."
+  echo ""
   echo '```'
   printf '%s' "$FOLLOWUPS"
   echo '```'
@@ -98,6 +101,6 @@ if [ "$ACK" = "true" ]; then
   exit 0
 fi
 
-echo "::error::Release ${VERSION} adds ${n} required migration follow-up(s) over ${PREV}: the data they name serves empty from the moment the migration applies until each command runs. Nothing has been deployed yet. Re-run the deploy with -f followups_acknowledged=true once you are ready to run them straight after it:"
+echo "::error::Release ${VERSION} adds ${n} required migration follow-up(s) over ${PREV}: the data they name serves empty from the moment the migration applies until each command runs. Nothing has been deployed yet. Re-run the deploy with -f followups_acknowledged=true once you are ready to run them straight after it, and with no projected-rebuild of an emptied source running (it can checkpoint a window before the rows go, and -resume then skips it):"
 printf '%s' "$FOLLOWUPS" | sed 's/^/    /'
 exit 1
