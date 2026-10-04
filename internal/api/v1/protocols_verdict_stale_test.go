@@ -48,7 +48,8 @@ func TestProtocols_StaleWhenRepublishedVerdictIsOld(t *testing.T) {
 		Source: "blend", Genesis: 51_499_546, Tip: 63_000_000, Watermark: 63_000_000,
 		CoveragePct: 1, Complete: true, LakeComplete: true,
 		SubstrateOK: true, RecognitionOK: true, ProjectionOK: true,
-		ComputedAt: time.Now().UTC().Add(-30 * time.Hour),
+		ComputedAt:            time.Now().UTC().Add(-30 * time.Hour),
+		ProjectionEvidencedAt: time.Now().UTC().Add(-30 * time.Hour),
 	}}
 	old := httpTestServer(t, v1.New(v1.Options{CompletenessReader: &stubCompletenessReader{snaps: snaps}}))
 	for _, path := range []string{"/v1/protocols", "/v1/protocols/blend"} {

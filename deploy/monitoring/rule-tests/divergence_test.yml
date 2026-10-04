@@ -4,13 +4,9 @@
 #
 #   promtool test rules deploy/monitoring/rule-tests/divergence_test.yml
 #
-# The two price-divergence alerts are INERT in production (F-1329:
-# stellarindex_our_price / stellarindex_reference_price have no
-# Prometheus producer — divergence values live in PG + Redis). That is
-# precisely why they are tested here: promtool proves the EXPR fires on
-# synthetic series, so the rules' logic is known-good the day a producer
-# lands, and any threshold edit to a dormant rule is still caught.
-#
+# The two price-divergence alerts select the bounded
+# stellarindex_divergence_max_abs_fraction gauge (worst gap per reference).
+
 # Deliberately lives OUTSIDE `deploy/monitoring/rules/` — everything in
 # that directory is globbed by `promtool check rules`,
 # lint-rule-structure.py and lint-metric-refs.sh, all of which require a
@@ -22,84 +18,87 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
-  # ══ stellarindex_price_divergence_warning (INERT, F-1329) ═════════
-  # ── firing: 6% off reference crosses the 5% warning line only ─────
+  # ══ stellarindex_price_divergence_warning / _critical ═════════════
+  # ── firing: a 6% gap held 10m warns but is not critical ───────────
   - interval: 1m
     name: a six percent divergence warns but is not critical
     input_series:
-      - series: 'stellarindex_our_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
-        values: '106+0x10'
-      - series: 'stellarindex_reference_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
-        values: '100+0x10'
+      - series: 'stellarindex_divergence_max_abs_fraction{job="stellarindex_aggregator",instance="r1:9102",reference="coingecko"}'
+        values: '0.06+0x20'
     alert_rule_test:
-      - eval_time: 5m
+      - eval_time: 15m
         alertname: stellarindex_price_divergence_warning
         exp_alerts:
           - exp_labels:
               job: stellarindex_aggregator
               instance: r1:9102
-              asset: XLM
-              reference_source: coingecko
+              reference: coingecko
               severity: informational
               team: stellarindex
               component: divergence
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
-              summary: "XLM 6% off reference"
+              summary: "coingecko 6% off our price on its worst pair"
               description: |
-                Our aggregated price for XLM differs from reference
-                (coingecko) by > 5 % sustained 2 min.
-                Normal during rapid market moves; investigate if sustained.
-      - eval_time: 5m
+                Our price differs from reference coingecko by > 5 %
+                on at least one pair, sustained 10 min. Normal during rapid
+                market moves; stellarindex_divergence_pairs_over{threshold="5pct"}
+                counts the pairs, divergence_observations names them.
+      - eval_time: 15m
         alertname: stellarindex_price_divergence_critical
         exp_alerts: []
 
-  # ── near-threshold: 4% off stays silent ───────────────────────────
+  # ── near-threshold: 4% stays silent ───────────────────────────────
   - interval: 1m
     name: a four percent divergence raises nothing
     input_series:
-      - series: 'stellarindex_our_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
-        values: '104+0x10'
-      - series: 'stellarindex_reference_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
-        values: '100+0x10'
+      - series: 'stellarindex_divergence_max_abs_fraction{job="stellarindex_aggregator",instance="r1:9102",reference="coingecko"}'
+        values: '0.04+0x20'
     alert_rule_test:
-      - eval_time: 5m
+      - eval_time: 15m
         alertname: stellarindex_price_divergence_warning
         exp_alerts: []
-      - eval_time: 5m
+      - eval_time: 15m
         alertname: stellarindex_price_divergence_critical
         exp_alerts: []
 
-  # ══ stellarindex_price_divergence_critical (INERT, F-1329) ════════
-  # ── firing: 15% off trips both tiers; abs() catches the low side ──
-  # The price is BELOW reference here, so this also pins the abs()
-  # in the expr — a one-sided comparator would miss an undershoot.
+  # ── a short spike (VWAP lag on a fast move) does not page ─────────
   - interval: 1m
-    name: a fifteen percent undershoot is critical
+    name: a five minute spike clears before the for window
     input_series:
-      - series: 'stellarindex_our_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
-        values: '85+0x10'
-      - series: 'stellarindex_reference_price{job="stellarindex_aggregator",instance="r1:9102",asset="XLM",reference_source="coingecko"}'
-        values: '100+0x10'
+      - series: 'stellarindex_divergence_max_abs_fraction{job="stellarindex_aggregator",instance="r1:9102",reference="coingecko"}'
+        values: '0.15x5 0x15'
     alert_rule_test:
-      - eval_time: 5m
+      - eval_time: 15m
+        alertname: stellarindex_price_divergence_critical
+        exp_alerts: []
+
+  # ── firing: 15% trips both tiers ──────────────────────────────────
+  - interval: 1m
+    name: a fifteen percent divergence is critical
+    input_series:
+      - series: 'stellarindex_divergence_max_abs_fraction{job="stellarindex_aggregator",instance="r1:9102",reference="coingecko"}'
+        values: '0.15+0x20'
+    alert_rule_test:
+      - eval_time: 15m
         alertname: stellarindex_price_divergence_critical
         exp_alerts:
           - exp_labels:
               job: stellarindex_aggregator
               instance: r1:9102
-              asset: XLM
-              reference_source: coingecko
+              reference: coingecko
               severity: ticket
               team: stellarindex
               component: divergence
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
-              summary: "XLM 15% off reference (critical)"
+              summary: "coingecko 15% off our price on its worst pair (critical)"
               description: |
-                Divergence > 10 % from reference sustained 2 min. This is usually
-                a bad ingest (wrong decimals, stale source contributing) rather
-                than a real market move.
+                Divergence > 10 % from reference coingecko on at
+                least one pair, sustained 10 min. This is usually a bad ingest
+                (wrong decimals, stale source contributing) rather than a real
+                market move. stellarindex_divergence_pairs_over{threshold="10pct"}
+                counts the pairs, divergence_observations names them.
 
   # ══ stellarindex_oracle_stale ═════════════════════════════════════
   # Every case below carries a
@@ -154,7 +153,8 @@ tests:
               description: |
                 reflector-dex hasn't published a price for XLM
                 in longer than that pair's staleness budget (default 10× the
-                source's declared resolution; per-asset overrides live in
+                source's declared resolution, or heartbeat + 2 h for heartbeat
+                sources such as RedStone; per-asset overrides live in
                 [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
                 or a signal of oracle failure — check the oracle's own status page.
 
@@ -209,7 +209,8 @@ tests:
               description: |
                 reflector-dex hasn't published a price for XLM
                 in longer than that pair's staleness budget (default 10× the
-                source's declared resolution; per-asset overrides live in
+                source's declared resolution, or heartbeat + 2 h for heartbeat
+                sources such as RedStone; per-asset overrides live in
                 [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
                 or a signal of oracle failure — check the oracle's own status page.
 
@@ -260,7 +261,8 @@ tests:
               description: |
                 reflector-dex hasn't published a price for XLM
                 in longer than that pair's staleness budget (default 10× the
-                source's declared resolution; per-asset overrides live in
+                source's declared resolution, or heartbeat + 2 h for heartbeat
+                sources such as RedStone; per-asset overrides live in
                 [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
                 or a signal of oracle failure — check the oracle's own status page.
           - exp_labels:
@@ -277,7 +279,8 @@ tests:
               description: |
                 reflector-dex hasn't published a price for XLM
                 in longer than that pair's staleness budget (default 10× the
-                source's declared resolution; per-asset overrides live in
+                source's declared resolution, or heartbeat + 2 h for heartbeat
+                sources such as RedStone; per-asset overrides live in
                 [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
                 or a signal of oracle failure — check the oracle's own status page.
 
@@ -325,7 +328,8 @@ tests:
               description: |
                 reflector-cex hasn't published a price for crypto:XLM
                 in longer than that pair's staleness budget (default 10× the
-                source's declared resolution; per-asset overrides live in
+                source's declared resolution, or heartbeat + 2 h for heartbeat
+                sources such as RedStone; per-asset overrides live in
                 [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
                 or a signal of oracle failure — check the oracle's own status page.
 
@@ -393,7 +397,8 @@ tests:
               description: |
                 reflector-cex hasn't published a price for crypto:DAI
                 in longer than that pair's staleness budget (default 10× the
-                source's declared resolution; per-asset overrides live in
+                source's declared resolution, or heartbeat + 2 h for heartbeat
+                sources such as RedStone; per-asset overrides live in
                 [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
                 or a signal of oracle failure — check the oracle's own status page.
 

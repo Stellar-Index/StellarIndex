@@ -150,7 +150,8 @@ hasn't moved more than 0.2% in either direction. The decoder
 publishes
 `DefaultResolutionSeconds = 24 * 60 * 60` as the
 `stellarindex_oracle_resolution_seconds` gauge so the
-`oracle-stale` alert (which fires at `> 10× resolution`) has the
+`oracle-stale` alert (whose RedStone budget is the 26 h heartbeat, via
+`obs.DeclareOracleHeartbeat`) has the
 correct threshold for a quiet feed.
 
 ### Q6 — `i128` everywhere — but the price is `U256`

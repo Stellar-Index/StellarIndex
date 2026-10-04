@@ -344,13 +344,13 @@ func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clic
 // the request context was the failure (route-sweep 2026-07-29): the
 // day-window FINAL GROUP BY shared the directory's 8s budget and dragged
 // the whole /v1/operations page into its 503 class every 5 minutes.
-func (h *Handler) resolveOpTypeStats() []OpTypeStatV {
+func (h *Handler) resolveOpTypeStats() (stats []OpTypeStatV, fresh bool) {
 	cached, fresh := h.opTypeStats.get()
 	if fresh {
-		return cached
+		return cached, true
 	}
 	h.refreshOpTypeStats() //nolint:contextcheck // intentional detach — the aggregate must never share a request deadline (see refreshOpTypeStats)
-	return cached          // stale (or nil on a cold process — panel appears next request)
+	return cached, false   // stale (or nil on a cold process — panel appears next request)
 }
 
 // PrewarmOpTypeStats primes the trailing-24h op-type breakdown so a cold
@@ -433,6 +433,9 @@ type OperationsView struct {
 	// Zero/false on the no-cursor directory arm, which pages instead.
 	Total     uint32 `json:"total,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
+	// opTypeStatsStale records that OpTypeStats was stale or absent when the
+	// page was assembled, so a cached copy still serves as degraded.
+	opTypeStatsStale bool
 }
 
 // OpTypeStatV is one op-type's count in the trailing-24h window.
@@ -523,14 +526,15 @@ func (h *Handler) ledgerOperations(w http.ResponseWriter, r *http.Request, seq u
 	// from "truncated at limit", so read the ledger header's exact op
 	// count — the same shape LedgerTransactions already gives its route. A
 	// header-read hiccup only loses this metadata, not the served page.
-	if hdr, found, herr := h.Reader.LedgerBySeq(ctx, seq); herr != nil {
+	hdr, found, herr := h.Reader.LedgerBySeq(ctx, seq)
+	if herr != nil {
 		h.Logger.Warn("explorer LedgerBySeq (operations total) failed", "err", herr, "seq", seq)
 	} else if found {
 		out.Total = hdr.OpCount
 		out.Truncated = hdr.OpCount > uint32(len(rows))
 	}
 	_, stale, _ := h.lakeTip(ctx)
-	h.WriteJSON(w, out, stale)
+	h.writeJSONAt(w, out, stale, out.CoverageNote != "" || herr != nil, time.Time{})
 }
 
 // operationsResponseByteBudget is a conservative placeholder ceiling on the
@@ -661,7 +665,7 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 			out.Buckets[i].FeePoolAdjustment = feePoolAdjustment(out.Buckets[i].Day, buckets[i-1].ProtocolVersion, b.ProtocolVersion)
 		}
 	}
-	h.writeJSONAt(w, out, degraded, asOf)
+	h.writeJSONAt(w, out, degraded, degraded, asOf)
 }
 
 // operationsDirectory serves GET /v1/operations: network-wide
@@ -703,7 +707,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 				"Internal error", http.StatusInternalServerError, "")
 			return
 		}
-		h.writeJSONAt(w, sliceOperationsView(view, limit), degraded, asOf)
+		h.writeJSONAt(w, sliceOperationsView(view, limit), degraded, degraded || view.opTypeStatsStale || view.CoverageNote != "", asOf)
 		return
 	}
 
@@ -738,7 +742,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, stale, _ := h.lakeTip(ctx)
-	h.WriteJSON(w, out, stale)
+	h.writeJSONAt(w, out, stale, out.CoverageNote != "", time.Time{})
 }
 
 // opsDirCached serves the cached max-page first-page view. A fresh entry is
@@ -814,7 +818,9 @@ func (h *Handler) buildOperationsDirectory(ctx context.Context, limit int, cur c
 	// fail the listing (only attached on the first page to keep paging
 	// responses lean).
 	if !cur.IsSet() {
-		out.OpTypeStats = h.resolveOpTypeStats() //nolint:contextcheck // intentional detach — the 24h aggregate must never share a request deadline (see resolveOpTypeStats)
+		var fresh bool
+		out.OpTypeStats, fresh = h.resolveOpTypeStats() //nolint:contextcheck // intentional detach — the 24h aggregate must never share a request deadline (see resolveOpTypeStats)
+		out.opTypeStatsStale = !fresh
 	}
 	return out, nil
 }

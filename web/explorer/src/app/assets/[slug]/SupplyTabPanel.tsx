@@ -10,6 +10,7 @@ import { FreshnessMarker } from '@/components/primitives';
 import { formatBaseUnits, formatCompact, scaleBaseUnits } from '@/lib/format';
 import { type Envelope } from '../../explorer-shared';
 import { SupplyFlowsBar, buildSupplyFlowRows } from './SupplyFlowsBar';
+import { CurrencyDeclarations } from './CurrencyDeclarations';
 
 // Lazy-load the chart (~155 KB lightweight-charts) — only the supply
 // tab needs it, and only when there's market-cap history to draw.
@@ -174,6 +175,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
           )}
         </>
       )}
+      <CurrencyDeclarations asset={a} />
     </Panel>
   );
 }

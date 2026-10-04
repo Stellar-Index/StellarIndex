@@ -10,8 +10,16 @@
 // /markets, /accounts, /contracts, /issuers, /ledgers, /transactions
 // (S-022 / S1b): pre-rendered slugs keep their SEO, everything else
 // hydrates from the API via the /assets/shell/ client view.
-import { shellFallback } from '../_shared/shellFallback.js';
+import { FIAT_ASSET_SLUGS } from '../_shared/fiatAssetSlugs.js';
+import { permanentRedirect, shellFallback } from '../_shared/shellFallback.js';
 
 export async function onRequest(context) {
+  // _redirects only matches the trailing-slash form of a fiat slug; the bare
+  // form reaches this Function, so send it to the same canonical page.
+  const url = new URL(context.request.url);
+  const bare = url.pathname.match(/^\/assets\/([^/]+)$/);
+  if (bare && FIAT_ASSET_SLUGS.has(bare[1])) {
+    return permanentRedirect(`/external/assets/${bare[1]}/${url.search}`);
+  }
   return shellFallback(context, '/assets/shell/');
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"math/big"
 	"reflect"
 	"strings"
 	"testing"
@@ -217,5 +218,48 @@ func TestUSDPriceAt_AnchorsAndOffChainAssetsAreNotGated(t *testing.T) {
 		if len(conn.stmts) != 1 {
 			t.Errorf("%s: issued %d statements, want 1 — no substance read", asset, len(conn.stmts))
 		}
+	}
+}
+
+// A substance-refused trade is labelled "thin" while usd_volume stays NULL;
+// a leg with no market at all stays "no".
+func TestUsdLabel_ThinVersusNoMarket(t *testing.T) {
+	at := time.Date(2026, 9, 21, 12, 34, 0, 0, time.UTC)
+	base, err := canonical.NewClassicAsset("AAA", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(script ...scriptedResult) (*string, string) {
+		r, _ := substanceTestResolver(t, at.Add(time.Minute), script...)
+		tr := canonical.Trade{
+			Source: "sdex", Timestamp: at,
+			Pair:        canonical.Pair{Base: base, Quote: substanceTestAsset(t, "USDX")},
+			BaseAmount:  canonical.NewAmount(big.NewInt(10_000_000)),
+			QuoteAmount: canonical.NewAmount(big.NewInt(10_000_000)),
+		}
+		v, err := tradeUSDVolumeChecked(context.Background(), tr, nil, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v, (&Store{usdVolumeFXResolver: r}).usdLabel(tr, v)
+	}
+
+	v, label := run(
+		directHit(at.Add(-time.Minute), "1.00000000"), measured("4.8", 48, 56400),
+		xlmLegHit(at.Add(-time.Hour), "4"), directHit(at.Add(-time.Minute), "0.25"), measured("20", 2, 3600),
+		scriptedResult{cols: []string{"bucket", "vwap"}}, xlmLegMiss(), // tier 4 prices the base leg: no market
+	)
+	if v != nil || label != "thin" {
+		t.Errorf("thin market: usd_volume=%v label=%q, want nil/thin", v, label)
+	}
+
+	v, label = run(
+		scriptedResult{cols: []string{"bucket", "vwap"}},
+		xlmLegMiss(),
+		scriptedResult{cols: []string{"bucket", "vwap"}},
+		xlmLegMiss(),
+	)
+	if v != nil || label != "no" {
+		t.Errorf("no market: usd_volume=%v label=%q, want nil/no", v, label)
 	}
 }

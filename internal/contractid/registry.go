@@ -49,7 +49,13 @@ type Registry struct {
 	set       map[string]struct{} // discovered children (factory descendants)
 	factories map[string]struct{} // trust roots (hard-coded, verified)
 	hook      func(childID, factoryID string, firstLedger uint32)
+	attrs     map[string]Attrs // per-child metadata (e.g. token identities)
+	attrHook  func(childID, factoryID string, firstLedger uint32, attrs Attrs)
 }
+
+// Attrs is optional per-child metadata a decoder persists beside the child id
+// (a pool's token identities, say). Values are opaque strings to the registry.
+type Attrs map[string]string
 
 // New constructs a Registry, applying any options (WithFactories, WithSeed,
 // WithHook).
@@ -57,6 +63,7 @@ func New(opts ...Option) *Registry {
 	r := &Registry{
 		set:       make(map[string]struct{}),
 		factories: make(map[string]struct{}),
+		attrs:     make(map[string]Attrs),
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -105,6 +112,27 @@ func WithSeed(childIDs []string) Option {
 // not). The hook is invoked WITHOUT the registry lock held.
 func WithHook(fn func(childID, factoryID string, firstLedger uint32)) Option {
 	return func(r *Registry) { r.hook = fn }
+}
+
+// WithAttrSeed pre-loads children together with their durable attributes. Like
+// [WithSeed] it fires no hook and admits each child into the gate.
+func WithAttrSeed(seed map[string]Attrs) Option {
+	return func(r *Registry) {
+		for id, a := range seed {
+			if id == "" {
+				continue
+			}
+			r.set[id] = struct{}{}
+			r.attrs[id] = a
+		}
+	}
+}
+
+// WithAttrHook installs the callback [Registry.SeedWithAttrs] fires to persist
+// a child's attributes. Same constraints as [WithHook]: cheap, and invoked
+// without the registry lock held.
+func WithAttrHook(fn func(childID, factoryID string, firstLedger uint32, attrs Attrs)) Option {
+	return func(r *Registry) { r.attrHook = fn }
 }
 
 // Has reports whether contractID is a registered factory descendant.
@@ -199,6 +227,33 @@ func (r *Registry) Seed(childID, factoryID string, firstLedger uint32) {
 	if hook != nil {
 		hook(childID, factoryID, firstLedger)
 	}
+}
+
+// SeedWithAttrs is [Registry.Seed] plus the child's attributes, which are
+// retained in memory and passed to the attribute hook (if any).
+func (r *Registry) SeedWithAttrs(childID, factoryID string, firstLedger uint32, attrs Attrs) {
+	if childID == "" {
+		return
+	}
+	r.mu.Lock()
+	r.attrs[childID] = attrs
+	hook := r.attrHook
+	r.mu.Unlock()
+	r.Seed(childID, factoryID, firstLedger)
+	if hook != nil {
+		hook(childID, factoryID, firstLedger, attrs)
+	}
+}
+
+// AllAttrs returns a copy of every child's retained attributes.
+func (r *Registry) AllAttrs() map[string]Attrs {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make(map[string]Attrs, len(r.attrs))
+	for id, a := range r.attrs {
+		out[id] = a
+	}
+	return out
 }
 
 // Len returns the number of registered children. Operator/test visibility.

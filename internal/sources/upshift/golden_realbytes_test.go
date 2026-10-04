@@ -598,3 +598,53 @@ func TestGolden_zeroEventAddressIsNotRegistered(t *testing.T) {
 		t.Errorf("Matches = true for the zero-event address %s", zeroEventAddr)
 	}
 }
+
+// TestGolden_earnUSDCVaultPauseRecognized pins the vault_paused /
+// vault_unpaused pair, first emitted 2026-10-01 by the audited WASM
+// 4b3d9f6b… (no upgrade). Before classify knew them they were the
+// recognition gap behind stellarindex_source_recognition_failing.
+//
+//	vault_paused    ledger 64,715,361  tx f135613062f48155d9567a8618f9975f6c346163c84d269d4aefc6fca92823cb  op 0 ev 0
+//	vault_unpaused  ledger 64,716,975  tx 6606b0f3ff8eaf2da089d4154aee30eedc46aab3183dfe0665203a7adb00dfe0  op 0 ev 0
+//	topics          [Symbol(kind), Address(G…)]
+//	data            Map{} (empty)
+func TestGolden_earnUSDCVaultPauseRecognized(t *testing.T) {
+	t.Parallel()
+
+	const caller = "AAAAEgAAAAAAAAAA8NeuH3g4KoqFFxgjLa9YVjSgRwF/PVx2Sd0FvgOjf+o="
+	for _, tc := range []struct {
+		kind, topic0, tx, closedAt string
+		ledger                     uint32
+	}{
+		{
+			EventVaultPaused, "AAAADwAAAAx2YXVsdF9wYXVzZWQ=",
+			"f135613062f48155d9567a8618f9975f6c346163c84d269d4aefc6fca92823cb", "2026-10-01T13:49:47Z", 64715361,
+		},
+		{
+			EventVaultUnpaused, "AAAADwAAAA52YXVsdF91bnBhdXNlZAAA",
+			"6606b0f3ff8eaf2da089d4154aee30eedc46aab3183dfe0665203a7adb00dfe0", "2026-10-01T16:04:17Z", 64716975,
+		},
+	} {
+		ev := events.Event{
+			Type:           "contract",
+			ContractID:     MainnetVaultEarnUSDC,
+			Ledger:         tc.ledger,
+			LedgerClosedAt: tc.closedAt,
+			TxHash:         tc.tx,
+			Topic:          []string{tc.topic0, caller},
+			Value:          "AAAAEQAAAAEAAAAA",
+		}
+		if got := classify(&ev); got != tc.kind {
+			t.Errorf("%s: classify = %q", tc.kind, got)
+		}
+		d := NewDecoder()
+		if !d.Matches(ev) {
+			t.Errorf("%s: Matches = false for the real vault event", tc.kind)
+			continue
+		}
+		out, err := d.Decode(ev)
+		if err != nil || len(out) != 0 {
+			t.Errorf("%s: Decode = (%d events, %v), want (0, nil)", tc.kind, len(out), err)
+		}
+	}
+}

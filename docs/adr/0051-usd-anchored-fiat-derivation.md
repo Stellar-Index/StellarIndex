@@ -1,10 +1,10 @@
 ---
 adr: 0051
 title: USD-anchored derivation of local-currency prices
-status: Accepted
+status: Superseded
 date: 2026-08-31
 supersedes: []
-superseded_by: null
+superseded_by: [0053]
 ---
 
 # ADR-0051: USD-anchored derivation of local-currency prices

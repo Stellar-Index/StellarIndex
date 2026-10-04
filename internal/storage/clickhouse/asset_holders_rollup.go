@@ -219,21 +219,29 @@ type holdersRollupConn interface {
 // nothing to compare against and is skipped rather than treated as a shrink.
 func holdersRollupShrinkGuard(ctx context.Context, conn holdersRollupConn) error {
 	for _, pair := range holdersRollupShrinkGuardTables {
-		staging, live := pair[0], pair[1]
-		var stagingCount, liveCount uint64
-		if err := conn.QueryRow(ctx, "SELECT count() FROM "+staging).Scan(&stagingCount); err != nil {
-			return fmt.Errorf("clickhouse: holders rollup shrink guard: count %s: %w", staging, err)
+		if err := shrinkGuardCompare(ctx, conn, pair[0], pair[1]); err != nil {
+			return err
 		}
-		if err := conn.QueryRow(ctx, "SELECT count() FROM "+live).Scan(&liveCount); err != nil {
-			return fmt.Errorf("clickhouse: holders rollup shrink guard: count %s: %w", live, err)
-		}
-		if liveCount == 0 {
-			continue
-		}
-		if float64(stagingCount) < float64(liveCount)*holdersRollupShrinkGuardMinRatio {
-			return fmt.Errorf("clickhouse: holders rollup shrink guard: %s has %d row(s), down from %d live in %s (floor %.0f%% of live) — refusing to publish, previous cycle stays live",
-				staging, stagingCount, liveCount, live, holdersRollupShrinkGuardMinRatio*100)
-		}
+	}
+	return nil
+}
+
+// shrinkGuardCompare applies holdersRollupShrinkGuardMinRatio to one staging
+// arm against the row set it would replace; live is counted as a FROM clause.
+func shrinkGuardCompare(ctx context.Context, conn holdersRollupConn, staging, live string) error {
+	var stagingCount, liveCount uint64
+	if err := conn.QueryRow(ctx, "SELECT count() FROM "+staging).Scan(&stagingCount); err != nil {
+		return fmt.Errorf("clickhouse: holders rollup shrink guard: count %s: %w", staging, err)
+	}
+	if err := conn.QueryRow(ctx, "SELECT count() FROM "+live).Scan(&liveCount); err != nil {
+		return fmt.Errorf("clickhouse: holders rollup shrink guard: count %s: %w", live, err)
+	}
+	if liveCount == 0 {
+		return nil
+	}
+	if float64(stagingCount) < float64(liveCount)*holdersRollupShrinkGuardMinRatio {
+		return fmt.Errorf("clickhouse: holders rollup shrink guard: %s has %d row(s), down from %d live in %s (floor %.0f%% of live) — refusing to publish, previous cycle stays live",
+			staging, stagingCount, liveCount, live, holdersRollupShrinkGuardMinRatio*100)
 	}
 	return nil
 }
@@ -249,13 +257,21 @@ func RunHoldersRollup(ctx context.Context, addr string, logf func(format string,
 }
 
 // runHoldersRollupSteps runs the fills, then holdersRollupShrinkGuard, then
-// the swap, against an already-open connection — split out from
-// RunHoldersRollup so the cycle is drivable in a test without dialing
-// ClickHouse. holdersRollupShrinkGuard runs after every staging arm is
-// filled and before the swap, so a broken cycle errors out with the
+// the swap, then the daily snapshot, against an already-open connection —
+// split out from RunHoldersRollup so the cycle is drivable in a test without
+// dialing ClickHouse. holdersRollupShrinkGuard runs after every staging arm
+// is filled and before the swap, so a broken cycle errors out with the
 // previous cycle left live rather than publishing a degraded board.
 func runHoldersRollupSteps(ctx context.Context, conn holdersRollupConn, logf func(format string, args ...any)) error {
-	stmts := holdersRollupStatements(time.Now())
+	cycleAt := time.Now()
+	if err := runHoldersRollupSwap(ctx, conn, cycleAt, logf); err != nil {
+		return err
+	}
+	return runAssetStatsSnapshot(ctx, conn, cycleAt, logf)
+}
+
+func runHoldersRollupSwap(ctx context.Context, conn holdersRollupConn, cycleAt time.Time, logf func(format string, args ...any)) error {
+	stmts := holdersRollupStatements(cycleAt)
 	total := len(stmts)
 	fill, exchange := stmts[:total-1], stmts[total-1]
 	for i, stmt := range fill {

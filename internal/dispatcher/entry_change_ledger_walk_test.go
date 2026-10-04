@@ -293,3 +293,51 @@ func TestProcessLedger_FailedTxStillSkipsPriceSignal(t *testing.T) {
 		t.Errorf("entry decoder saw %d changes, want 1 (the failed tx's committed fee debit)", len(spy.seen))
 	}
 }
+
+// TestProcessLedger_BlockOrderDoesNotChangePositions: stellar-core lists a
+// block's keys in hash-map order, so two exports of one ledger can disagree on
+// it. Each key's IntraLedgerSeq must not depend on which export was read, or a
+// re-derive from the other export renumbers what the guards compare.
+func TestProcessLedger_BlockOrderDoesNotChangePositions(t *testing.T) {
+	change := func(seed byte, balance int64) xdr.LedgerEntryChange {
+		id, err := xdr.NewAccountId(xdr.PublicKeyTypePublicKeyTypeEd25519, xdr.Uint256{seed})
+		if err != nil {
+			t.Fatalf("NewAccountId: %v", err)
+		}
+		return xdr.LedgerEntryChange{
+			Type: xdr.LedgerEntryChangeTypeLedgerEntryUpdated,
+			Updated: &xdr.LedgerEntry{Data: xdr.LedgerEntryData{
+				Type:    xdr.LedgerEntryTypeAccount,
+				Account: &xdr.AccountEntry{AccountId: id, Balance: xdr.Int64(balance)},
+			}},
+		}
+	}
+	positions := func(block []xdr.LedgerEntryChange) map[int64]uint32 {
+		env, proc := mkEntryWalkTx(t, 0x55, true, nil, block)
+		spy := &entryChangeSpy{}
+		d := New()
+		d.AddEntryDecoder(spy)
+		lcm := mkEntryWalkLedger(4244, []xdr.TransactionEnvelope{env}, []xdr.TransactionResultMeta{proc})
+		if _, err := d.ProcessLedger(lcm, testPassphrase); err != nil {
+			t.Fatalf("ProcessLedger: %v", err)
+		}
+		out := make(map[int64]uint32, len(spy.seen))
+		for _, ctx := range spy.seen {
+			out[int64(ctx.Change.Updated.Data.Account.Balance)] = ctx.IntraLedgerSeq
+		}
+		return out
+	}
+
+	a, b, c := change(0x0A, 1), change(0x0B, 2), change(0x0C, 3)
+	one := positions([]xdr.LedgerEntryChange{a, b, c})
+	two := positions([]xdr.LedgerEntryChange{c, a, b})
+	if len(one) != 3 {
+		t.Fatalf("expected 3 walked changes, got %v", one)
+	}
+	for bal, seq := range one {
+		if two[bal] != seq {
+			t.Errorf("change %d: IntraLedgerSeq %d from one export order, %d from another — positions must not depend on the export",
+				bal, seq, two[bal])
+		}
+	}
+}

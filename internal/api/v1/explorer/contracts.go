@@ -161,7 +161,8 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 	for i, e := range rows {
 		out.Events[i] = contractEventView(e)
 	}
-	h.setContractLiveness(ctx, &out)
+	instOK := h.setContractLiveness(ctx, &out)
+	apiDegraded := out.DirectoryUnavailable || !instOK
 	// Only emit a cursor on a full page — a short page is the last page, so a
 	// cursor there just costs the client one empty round-trip.
 	if n := len(rows); n == limit {
@@ -169,11 +170,11 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 		out.NextCursor = fmt.Sprintf("%d.%s.%d.%d", last.Seq, last.TxHash, last.OpIndex, last.EventIndex)
 	}
 	if !cur.IsSet() {
-		h.writeJSONAt(w, out, degraded, asOf)
+		h.writeJSONAt(w, out, degraded, degraded || apiDegraded, asOf)
 		return
 	}
 	_, stale, _ := h.lakeTip(ctx)
-	h.WriteJSON(w, out, stale)
+	h.writeJSONAt(w, out, stale, apiDegraded, time.Time{})
 }
 
 // contractActivityCard is the 30-day liveness card, nil when the activity
@@ -196,7 +197,8 @@ func (h *Handler) contractActivityCard(ctx context.Context, cid string) *Contrac
 
 // setContractLiveness fills Exists and TTL. Exists is claimed false only on
 // a successful instance read that found nothing and no other lake evidence.
-func (h *Handler) setContractLiveness(ctx context.Context, out *ContractDetailView) {
+// It reports whether the instance read succeeded.
+func (h *Handler) setContractLiveness(ctx context.Context, out *ContractDetailView) bool {
 	st, ok := h.contractInstanceState(ctx, out.ContractID)
 	if ok {
 		out.TTL = h.contractTTL(ctx, st.LiveUntil)
@@ -208,9 +210,10 @@ func (h *Handler) setContractLiveness(ctx context.Context, out *ContractDetailVi
 	case h.IsKnownSAC != nil && h.IsKnownSAC(out.ContractID):
 		exists = true
 	case !ok:
-		return
+		return false
 	}
 	out.Exists = &exists
+	return ok
 }
 
 // contractInstanceState reads the instance evidence through the shared
