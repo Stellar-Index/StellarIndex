@@ -27,7 +27,7 @@
 # forgotten, so the pair is repeated before each of the three collectors
 # rather than given once up front.
 #
-# Env: EVENT, BEFORE, SHA, BASE_SHA, HEAD_SHA, GITHUB_REF_NAME (all as set
+# Env: EVENT, BEFORE, SHA, BASE_SHA, BASE_REF, HEAD_SHA, GITHUB_REF_NAME (all as set
 # by the workflow's `env:` block). Prints the range as space-separated
 # `git log` arguments — consume it unquoted, e.g. `git log $range`.
 set -euo pipefail
@@ -37,10 +37,16 @@ EVENT="${EVENT:-}"
 BEFORE="${BEFORE:-}"
 SHA="${SHA:-}"
 BASE_SHA="${BASE_SHA:-}"
+BASE_REF="${BASE_REF:-}"
 HEAD_SHA="${HEAD_SHA:-}"
 
 if [ "$EVENT" = pull_request ]; then
-  echo "${BASE_SHA}..${HEAD_SHA}"
+  # base.sha goes stale once the base branch moves; also exclude its tip.
+  excl="$BASE_SHA"
+  if [ -n "$BASE_REF" ] && git rev-parse --verify -q "origin/${BASE_REF}^{commit}" >/dev/null; then
+    excl="$BASE_SHA origin/${BASE_REF}"
+  fi
+  echo "${HEAD_SHA} --not ${excl}"
   exit 0
 fi
 
