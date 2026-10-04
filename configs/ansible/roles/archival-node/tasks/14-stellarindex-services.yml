@@ -1076,6 +1076,8 @@
     - compute-completeness.timer
     - compute-completeness-sdex.service
     - compute-completeness-sdex.timer
+    - compute-completeness-sep41.service
+    - compute-completeness-sep41.timer
     - verify-lake.service
     - verify-lake.timer
     - verify-network-state.service
@@ -1130,6 +1132,7 @@
     - census-rollup.timer
     - compute-completeness.timer
     - compute-completeness-sdex.timer
+    - compute-completeness-sep41.timer
     - verify-lake.timer
     - verify-network-state.timer
     - data-freshness.timer
