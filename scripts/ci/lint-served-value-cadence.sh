@@ -59,8 +59,8 @@
 # by promtool in deploy/monitoring/rule-tests/served-values_test.yml.
 #
 # The same five assertions cover every textfile harness listed in
-# configure_job below — today verify-served-values, supply verify-rollup and
-# verify-lake, which shipped in the same alerted-but-unscheduled state.
+# configure_job below — today verify-served-values, supply verify-rollup,
+# verify-lake and verify-network-state.
 #
 # Usage: lint-served-value-cadence.sh [repo-root]
 #   CADENCE_JOBS (space-separated) narrows the job list; the self-test uses it
@@ -103,6 +103,15 @@ configure_job() {
       SUBCMD="stellarindex-ops verify-lake"
       ENABLED_VAR=""
       STALE_ALERT="stellarindex_lake_verify_stale"
+      RULE_FILES=(
+        "deploy/monitoring/rules/storage.yml"
+        "configs/prometheus/rules.r1/storage.yml"
+      ) ;;
+    verify-network-state)
+      UNIT="verify-network-state"
+      SUBCMD="stellarindex-ops verify-network-state"
+      ENABLED_VAR=""
+      STALE_ALERT="stellarindex_network_state_verify_stale"
       RULE_FILES=(
         "deploy/monitoring/rules/storage.yml"
         "configs/prometheus/rules.r1/storage.yml"
@@ -330,7 +339,7 @@ echo "lint-served-value-cadence: OK — $UNIT rendered, enabled and scheduled" \
      "in ${#RULE_FILES[@]} rule tree(s)"
 }
 
-for job in ${CADENCE_JOBS:-served-values supply-verify-rollup verify-lake}; do
+for job in ${CADENCE_JOBS:-served-values supply-verify-rollup verify-lake verify-network-state}; do
   configure_job "$job"
   check_job
 done

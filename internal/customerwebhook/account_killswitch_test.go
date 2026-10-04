@@ -83,7 +83,7 @@ func killSwitchFixture(
 		ID:         webhookID,
 		AccountID:  uuid.New(),
 		URL:        ts.URL,
-		SecretHash: []byte("test-secret-bytes"),
+		SigningKey: []byte("test-secret-bytes"),
 		Enabled:    true,
 	})
 	deliveryID := uuid.New()

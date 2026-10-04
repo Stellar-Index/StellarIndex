@@ -42,6 +42,7 @@ import { IssuerPanel } from './IssuerPanel';
 import { LiquidityTabPanel } from './LiquidityTabPanel';
 import { HoldersTabPanel } from './HoldersTabPanel';
 import { MarketsTabPanel } from './MarketsTabPanel';
+import { AssetOrderBookPanel } from './AssetOrderBookPanel';
 import { AssetOraclesPanel } from './AssetOraclesPanel';
 import { HistoryTabPanel } from './HistoryTabPanel';
 import { SupplyTabPanel } from './SupplyTabPanel';
@@ -1039,7 +1040,12 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
                 <OverviewBody coin={coin} detail={detail} price={price} />
               }
               chart={<ChartPanel assetID={coin.asset_id} />}
-              markets={<MarketsTabPanel assetID={coin.asset_id} />}
+              markets={
+                <div className="space-y-6">
+                  <MarketsTabPanel assetID={coin.asset_id} />
+                  <AssetOrderBookPanel assetID={coin.asset_id} />
+                </div>
+              }
               history={
                 <HistoryTabPanel
                   assetID={coin.asset_id}

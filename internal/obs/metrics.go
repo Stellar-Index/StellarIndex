@@ -223,6 +223,7 @@ func registerFreezeLifecycleMetrics() {
 		AnomalyFreezeRecoveredTotal,
 		AnomalyFreezeLadderRehydratedTotal,
 		AnomalyFreezeLadderWriteFailuresTotal,
+		APIFreezeLookupFailuresTotal,
 		AnomalyFreezeRecoverySweepsTotal,
 
 		// Composite-reference corroboration of the phase-2 verdict
@@ -3123,7 +3124,7 @@ var OracleStreamRowsUnparsedTotal = prometheus.NewCounterVec(
 var TradeInsertsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_trade_inserts_total",
-		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no|unroutable; unroutable = unpriced trade whose two classic legs share one issuer, excluded from the coverage alerts). Counts attempts, not unique-row inserts — on-conflict dedupe AND generation-guarded corrective updates are both invisible to this counter.",
+		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no|unroutable|thin; unroutable = unpriced trade whose two classic legs share one issuer, thin = unpriced because the only candidate rate came from a market below the substance floor; both excluded from the coverage alerts). Counts attempts, not unique-row inserts — on-conflict dedupe AND generation-guarded corrective updates are both invisible to this counter.",
 	},
 	[]string{"source", "usd_volume_populated"},
 )
@@ -3387,8 +3388,8 @@ var OracleResolutionSeconds = prometheus.NewGaugeVec(
 // Staleness is a per-ASSET property even though cadence is per-source:
 // a peg asset publishes only when it moves, so a quiet stablecoin
 // breaches its source's cadence budget while the oracle is working
-// perfectly. Default is OracleStaleBudgetMultiplier × the source's
-// declared resolution; operators widen single pairs via
+// perfectly. Default is the source's declared budget
+// (OracleStaleBudgetMultiplier × resolution, or heartbeat + grace); operators widen single pairs via
 // [SetOracleStalenessOverrides].
 var OracleStalenessBudgetSeconds = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
@@ -3619,10 +3620,12 @@ var APIStreamHubTopicsReapedTotal = prometheus.NewCounter(prometheus.CounterOpts
 //   - network_error  — TCP/TLS/timeout error, scheduled for retry
 //   - webhook_missing — GetWebhook returned ErrNotFound mid-flight
 //   - disabled       — webhook.Enabled=false, silently terminated
-//   - no_secret      — the webhook's signing secret is empty (terminal)
+//   - no_secret      — the signing secret is empty, or fails to unseal
+//     under the configured seal key (terminal)
 //   - build_error    — http.NewRequestWithContext failed (malformed URL)
 //   - list_error     — ListPendingDeliveries failed (db transport)
-//   - lookup_error   — GetWebhook failed for a non-NotFound reason
+//   - lookup_error   — GetWebhook failed for a non-NotFound reason,
+//     including a sealed key with no seal key configured (retried)
 //   - mark_error     — Mark{Delivered,AttemptFailed} failed
 //
 // All twelve are pre-seeded in [seedBoundedLabelSeries] (#368 M6):
@@ -4434,6 +4437,18 @@ var AnomalyFreezeLadderWriteFailuresTotal = prometheus.NewCounterVec(
 		Help: "Durable freeze-ladder writes that did not land, by call site (mark_hold|clear). Sustained non-zero = the Redis-flush protection is inert.",
 	},
 	[]string{"op"},
+)
+
+// APIFreezeLookupFailuresTotal — counter of API-side freeze-marker reads
+// that returned an error (Redis outage, timeout), excluding client aborts.
+// The response carries frozen_checked=false for each, but nothing else
+// surfaces a degraded freeze read; sustained non-zero means price responses
+// are being served without a freeze verdict.
+var APIFreezeLookupFailuresTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_api_freeze_lookup_failures_total",
+		Help: "API freeze-marker lookups that failed (client aborts excluded). Sustained non-zero = price responses are served with frozen_checked=false.",
+	},
 )
 
 // AnomalyFreezeRecoverySweepsTotal — counter of recovery-worker

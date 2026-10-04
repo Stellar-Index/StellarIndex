@@ -30,8 +30,8 @@ func deliverWithKeys(t *testing.T, current, previous []byte, expiresAt time.Time
 	store := newFakeStore()
 	webhookID := uuid.New()
 	store.addWebhook(platform.CustomerWebhook{
-		ID: webhookID, URL: ts.URL, SecretHash: current, Enabled: true,
-		PreviousSecret: previous, PreviousSecretExpiresAt: expiresAt,
+		ID: webhookID, URL: ts.URL, SigningKey: current, Enabled: true,
+		PreviousSigningKey: previous, PreviousSecretExpiresAt: expiresAt,
 	})
 	deliveryID := uuid.New()
 	payload := []byte(`{"event":"incident.sev1"}`)

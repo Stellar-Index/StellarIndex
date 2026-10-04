@@ -17,6 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
@@ -369,9 +370,12 @@ func writePriceWithheldProblem(w http.ResponseWriter, r *http.Request, asset, qu
 // never carries the numbers; the `substance` member does.
 func writePriceWithheldProblemEvidence(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset, reason PriceWithheldReason, ev *SubstanceEvidence) {
 	title, detail := priceWithheldWording(asset.String()+" / "+quote.String(), reason)
+	if reason == "" {
+		reason = PriceWithheldUnattributed
+	}
 	writeProblemCoverage(w, r,
 		"https://api.stellarindex.io/errors/price-withheld",
-		title, http.StatusNotFound, detail, nil, false, ev)
+		title, http.StatusNotFound, detail, nil, false, ev, reason)
 }
 
 func priceWithheldWording(pair string, reason PriceWithheldReason) (title, detail string) {
@@ -534,6 +538,11 @@ type PriceSnapshot struct {
 	// usdLeg is set only on an ADR-0051 cross
 	// ([Server.tryUSDAnchoredFiatCross]); see [usdLegFacts].
 	usdLeg *usdLegFacts
+
+	// displacedBook marks an ADR-0053 basis serve: the pair's own book was
+	// read and replaced, so its pair-keyed confidence and flags describe a
+	// value that is not on the wire.
+	displacedBook bool
 }
 
 // USDLeg is the USD price a derived fiat price was converted from.
@@ -907,6 +916,12 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snapshot, sources, stale, served, triangulated, viaFallback := ps.snap, ps.sources, ps.stale, ps.served, ps.triangulated, ps.viaFallback
+	if !viaFallback {
+		if basis, ok := s.preferUSDAnchoredBasis(r.Context(), asset, quote, snapshot, sources); ok {
+			snapshot, sources, served, triangulated, stale = basis.snap, basis.sources, basis.served, true, basis.stale
+			viaFallback = true
+		}
+	}
 
 	// A frozen pair serves the value the freeze is HOLDING, never the
 	// one just read — see [Server.resolveFrozenServe]. The held value
@@ -921,6 +936,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	frozen := held.outcome == frozenServeHeld
 	frozenChecked := held.checked
 	if frozen {
+		held.snapshot.displacedBook = snapshot.displacedBook
 		snapshot, sources, triangulated = held.snapshot, held.sources, held.triangulated
 		stale, viaFallback = true, true
 		served = held.pairBase
@@ -1049,8 +1065,10 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	// surfaces don't carry it. Best-effort: cache misses + read
 	// errors leave the snapshot's Confidence/ConfidenceFactors
 	// fields nil, and the response ships cleanly without them. Skipped
-	// on a substituted snapshot — see [Server.attachConfidence] (RNC27).
-	if !snapshot.Substituted {
+	// on a substituted snapshot — see [Server.attachConfidence] (RNC27) —
+	// and on a displaced book, whose pair keys describe the replaced value.
+	pairKeyed := !snapshot.Substituted && !snapshot.displacedBook
+	if pairKeyed {
 		s.attachConfidence(r, &snapshot, asset, quote, heldWindow(frozen, snapshot, confidenceLookupWindow))
 	}
 
@@ -1070,7 +1088,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	// still tracks the chain even when a real closed bucket wins.
 	// Best-effort. Skipped on a substituted snapshot — see
 	// [Server.attachCompositeFlags] (RNC27).
-	if !snapshot.Substituted {
+	if pairKeyed {
 		s.attachCompositeFlags(r, &flags, governing, quote, heldWindow(frozen, snapshot, triangulationLookupWindow), false)
 	}
 	flags.Frozen = frozen
@@ -1097,7 +1115,9 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	default:
 		flags.SingleSource = marketSingleSource(snapshot, sources)
 	}
-	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), governing, quote, 0)
+	if pairKeyed {
+		flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), governing, quote, 0)
+	}
 	if adm.Admitted() && snapshot.Price != "" {
 		capThinConfidence(&snapshot)
 		flags.ThinMarket = true
@@ -1615,9 +1635,8 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 		return fallbackResult{snap: snap, sources: srcs, triangulated: true, ok: true, stale: true}
 	}
 	// Last, the fiat crosses: fiat/fiat, or the USD-anchored cross for a
-	// NON-fiat asset quoted in a fiat we have no market for (ADR-0051), so
-	// any directly observed market — including the CEX-quoted EUR and GBP
-	// pairs — always wins over a derived value.
+	// NON-fiat asset quoted in a fiat we have no market for (ADR-0051). A
+	// direct book that exists is weighed by [Server.preferUSDAnchoredBasis].
 	var cross fallbackResult
 	if asset.Type == canonical.AssetFiat {
 		cross = s.closedFiatCross(ctx, asset, quote)
@@ -1717,6 +1736,27 @@ func (s *Server) closedUSDAnchoredFiatCross(ctx context.Context, asset, quote ca
 	}
 }
 
+// basisMinUSDVenues is how many distinct venues the USD leg needs before
+// it may displace a single-venue fiat book (ADR-0053).
+const basisMinUSDVenues = 2
+
+// preferUSDAnchoredBasis is the ADR-0053 basis rule for a directly read
+// non-fiat/fiat snapshot: a single-venue book yields to the USD-anchored
+// derivation when that derivation is fresh and rests on a multi-venue USD
+// leg. ok=false keeps the direct market — including every case where the
+// derivation misses, withholds or fails, so the rule never costs a price.
+func (s *Server) preferUSDAnchoredBasis(ctx context.Context, asset, quote canonical.Asset, direct PriceSnapshot, directSources []string) (fallbackResult, bool) {
+	if s.fiatBasisDisabled || !marketSingleSource(direct, directSources) {
+		return fallbackResult{}, false
+	}
+	cross := s.closedUSDAnchoredFiatCross(ctx, asset, quote)
+	if !cross.ok || cross.stale || cross.snap.usdLeg == nil || len(cross.snap.usdLeg.sources) < basisMinUSDVenues {
+		return fallbackResult{}, false
+	}
+	cross.snap.displacedBook = true
+	return cross, true
+}
+
 // convertAtFixing composes a USD price with a bound fixing in exact
 // rationals (invariant 1) and stamps the fixing on the wire. observed_at
 // stays the USD leg's: the fixing's own time is fx_as_of.
@@ -1809,10 +1849,9 @@ func (s *Server) closedFiatCross(ctx context.Context, asset, quote canonical.Ass
 // the answer are on the box and fresh. [tryFiatCrossRate] does not
 // cover it: that one requires BOTH sides to be fiat.
 //
-// Ordering matters and is asserted by
-// TestPriceDerivedFiatDoesNotShadowARealMarket. This runs LAST in
-// [Server.priceFallback], so an observed market always beats a derived
-// value. XLM/EUR is a real CEX print and stays one.
+// This is the tip's arm; the closed surfaces use
+// [Server.closedUSDAnchoredFiatCross], which also backs the ADR-0053
+// basis rule on /v1/price, /v1/price/batch and /v1/oracle/x_last_price.
 //
 // Returns ok=false when:
 //   - asset is itself fiat (that is [tryFiatCrossRate]'s job),
@@ -2987,6 +3026,7 @@ func (s *Server) lookupFrozen(r *http.Request, asset, quote canonical.Asset) (fr
 	frozen, err := s.freeze.FrozenForPair(r.Context(), asset, quote)
 	if err != nil {
 		if !clientAborted(r, err) {
+			obs.APIFreezeLookupFailuresTotal.Inc()
 			s.logger.Warn("freeze lookup failed",
 				"err", err,
 				"asset", asset.String(),
@@ -3465,7 +3505,10 @@ type batchRowResult struct {
 	// thin: served under include_thin from a market below the substance
 	// floor; such a row carries no change_24h_pct.
 	thin bool
-	fail *batchRowFailure
+	// readFailed qualifies a skip: the row was dropped because a read
+	// failed, not because the asset has no price.
+	readFailed bool
+	fail       *batchRowFailure
 }
 
 // batchRowFailure means the whole batch must abort with a
@@ -3570,11 +3613,12 @@ func (s *Server) readBatchRow(ctx context.Context, r *http.Request, asset, quote
 				asset: asset, ok: true,
 			}, fserved, quote)
 		}
-		if fb.err != nil && !clientAborted(r, fb.err) {
+		readFailed := fb.err != nil && !clientAborted(r, fb.err)
+		if readFailed {
 			s.logger.Warn("batch: fx fixing read failed", "err", fb.err, "asset", asset.String())
 		}
 		// A failed FX read omits the row without listing it as withheld.
-		return batchRowResult{skip: true, withheld: fb.withheld != "", withheldReason: fb.withheld} // omit, do not 404 the batch
+		return batchRowResult{skip: true, withheld: fb.withheld != "", withheldReason: fb.withheld, readFailed: readFailed} // omit, do not 404 the batch
 	}
 	if err != nil {
 		if clientAborted(r, err) {
@@ -3590,6 +3634,13 @@ func (s *Server) readBatchRow(ctx context.Context, r *http.Request, asset, quote
 			typ:    "https://api.stellarindex.io/errors/internal",
 			title:  "Internal error",
 		}}
+	}
+	if basis, ok := s.preferUSDAnchoredBasis(ctx, asset, quote, snap, sources); ok {
+		basis.snap.Change24hPct = s.batchChange24h(ctx, asset, quote, basis.snap.Price)
+		return s.holdFrozenBatchRow(r, batchRowResult{
+			snap: basis.snap, sources: basis.sources, stale: basis.stale, triangulated: true,
+			asset: asset, ok: true,
+		}, basis.served, quote)
 	}
 	// dex-nonstandard-decimals forward normalization: this branch is the
 	// raw closed-1m-bucket read (readPriceWithAliases succeeded directly,
@@ -3680,7 +3731,21 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 		}
 	}
 
-	writeEnvelope(w, batchEnvelope(ids, results))
+	env := batchEnvelope(ids, results)
+	env.Flags.Degraded = env.Flags.Degraded || batchDegraded(results)
+	writeEnvelope(w, env)
+}
+
+// batchDegraded reports a row dropped by a failed read or a recovered
+// worker panic (a zero result) rather than by a genuine miss.
+func batchDegraded(results []batchRowResult) bool {
+	for i := range results {
+		r := &results[i]
+		if r.readFailed || (!r.ok && !r.skip && r.fail == nil) {
+			return true
+		}
+	}
+	return false
 }
 
 // batchEnvelope folds the per-id results (index-aligned with ids) into
