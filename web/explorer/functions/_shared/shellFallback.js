@@ -64,6 +64,14 @@ function withSecurityHeaders(response, variant) {
   });
 }
 
+// Real HTTP 301 carrying the same security headers as the shell responses.
+export function permanentRedirect(location) {
+  return withSecurityHeaders(
+    new Response(null, { status: 301, headers: { Location: location } }),
+    'default',
+  );
+}
+
 export async function shellFallback(context, shellPath) {
   const { request, env } = context;
   const url = new URL(request.url);
