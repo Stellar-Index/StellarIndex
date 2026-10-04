@@ -136,8 +136,8 @@ func SciDecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error)
 // the true value and never above it. Unlike ordinary rounding error
 // that averages out, a truncation bias is systematic and one-signed:
 // it accumulates in the same direction across every poll of every
-// inverted pair, on both FX venues that call this (ECB and
-// exchangeratesapi). At DefaultDecimals the per-rate
+// inverted pair, on every venue that calls this (ECB,
+// exchangeratesapi and Chainlink). At DefaultDecimals the per-rate
 // error is at most 1 ulp, so this is a small bias rather than a
 // visible mispricing — but it is a free correction and a biased
 // estimator has no business in the money path (ADR-0003: exact

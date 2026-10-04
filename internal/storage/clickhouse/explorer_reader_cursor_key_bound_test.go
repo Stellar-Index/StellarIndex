@@ -48,11 +48,9 @@ func TestKeysetCursors_LeadingKeyBoundBindsCursorLedger(t *testing.T) {
 		if _, err := (&ExplorerReader{conn: conn}).AccountTransactions(ctx, "GTEST", limit, cur); err != nil {
 			t.Fatalf("AccountTransactions: %v", err)
 		}
-		assertBinds(t, conn, []any{
-			"GTEST", cur.Ledger, cur.Ledger, cur.A, limit,
-			"GTEST", cur.Ledger, cur.Ledger, cur.A, limit,
-			limit, limit,
-		})
+		// An empty window proves an exhausted arm, so the last query is the
+		// windowed participant arm.
+		assertBinds(t, conn, []any{"GTEST", cur.Ledger, cur.Ledger, cur.A, windowRows(limit, windowFactorTxArm)})
 	})
 	t.Run("contract events", func(t *testing.T) {
 		conn := &stubConn{respond: empty}
@@ -69,7 +67,7 @@ func TestKeysetCursors_LeadingKeyBoundBindsCursorLedger(t *testing.T) {
 		if _, err := (&ExplorerReader{conn: conn}).AccountMovements(ctx, "GTEST", limit, cur, filter); err != nil {
 			t.Fatalf("AccountMovements: %v", err)
 		}
-		assertBinds(t, conn, []any{"GTEST", "k", filter.MaxLedger, cur.Ledger, cur.Ledger, cur.TxHash, cur.OpIndex, cur.LegIndex, limit})
+		assertBinds(t, conn, []any{"GTEST", "k", filter.MaxLedger, cur.Ledger, cur.Ledger, cur.TxHash, cur.OpIndex, cur.LegIndex, windowRows(limit, windowFactorKeys)})
 	})
 }
 

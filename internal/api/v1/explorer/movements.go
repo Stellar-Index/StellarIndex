@@ -247,7 +247,7 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 
 	chCur := clickhouse.AccountMovementCursor{Ledger: cur.Ledger, TxHash: cur.TxHash, OpIndex: cur.OpIndex, LegIndex: cur.LegIndex}
 
-	wm, ok := h.movementsWatermark(ctx, w, r, cur)
+	wm, wmFailed, ok := h.movementsWatermark(ctx, w, r, cur)
 	if !ok {
 		return
 	}
@@ -293,7 +293,7 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		// every subsequent page reuses it (W1-chrollup-2).
 		out.NextCursor = encodeMovementCursor(merged[len(merged)-1], wm)
 	}
-	h.WriteJSON(w, out, h.movementsStale(ctx, wm))
+	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed, time.Time{})
 }
 
 // movementsWatermark resolves the cap67 archive watermark that splits this
@@ -312,23 +312,24 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 // A read error fails closed to wm=0 (W1-chrollup-1): the static P23
 // boundary keeps the arms disjoint even against a fully populated archive,
 // and the wm==0 coverage note discloses the reduced post-P23 scope. A pin
-// cannot be validated then, so it is not trusted either.
-func (h *Handler) movementsWatermark(ctx context.Context, w http.ResponseWriter, r *http.Request, cur movementCursorParts) (uint32, bool) {
+// cannot be validated then, so it is not trusted either. failed reports that
+// read error, which the caller serves as a degraded 200.
+func (h *Handler) movementsWatermark(ctx context.Context, w http.ResponseWriter, r *http.Request, cur movementCursorParts) (wm uint32, failed, ok bool) {
 	liveWM, err := h.Reader.Cap67MovementsWatermark(ctx)
 	if err != nil {
 		h.Logger.Warn("cap67 movements watermark read failed — failing closed to the static P23 boundary", "err", err)
-		return 0, true
+		return 0, true, true
 	}
 	if !cur.HasPinnedWatermark {
-		return postP23Boundary(liveWM), true
+		return postP23Boundary(liveWM), false, true
 	}
 	if cur.PinnedWatermark > liveWM {
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-cursor",
 			"Invalid cursor", http.StatusBadRequest,
 			"cursor is ahead of the movement archive boundary; restart pagination without a cursor")
-		return 0, false
+		return 0, false, false
 	}
-	return postP23Boundary(cur.PinnedWatermark), true
+	return postP23Boundary(cur.PinnedWatermark), false, true
 }
 
 // postP23Boundary folds a watermark below the P23 floor to 0: it covers no

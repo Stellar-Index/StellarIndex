@@ -2,6 +2,7 @@ package v1_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -56,10 +57,48 @@ func (s *stubPositionsReader) AquariusGaugeByUser(context.Context, string) ([]ti
 // stubPoolTokensReader is a canned explorerpkg.PoolTokensReader.
 type stubPoolTokensReader struct {
 	bySource map[string]map[string][]string
+	err      error
 }
 
 func (s *stubPoolTokensReader) PoolTokens(_ context.Context, source string) (map[string][]string, error) {
-	return s.bySource[source], nil
+	return s.bySource[source], s.err
+}
+
+// A failed pool-token read leaves the positions complete but unlabelled, so
+// the 200 is marked degraded (Cache-Control forced to bare no-store).
+func TestExplorer_AccountPositions_LabelReadFailureMarksDegraded(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	reader := func() *stubPositionsReader {
+		return &stubPositionsReader{blend: []timescale.BlendPositionFold{{
+			Pool: "CPOOL1", Asset: "CUSDC1",
+			HasSupplyLeg: true, SupplyNet: "5000000", SupplyLastActivity: now, SupplyLastLedger: 100,
+		}}}
+	}
+	for _, tc := range []struct {
+		name   string
+		tokens *stubPoolTokensReader
+		want   func(string) bool
+	}{
+		{
+			"healthy", &stubPoolTokensReader{bySource: map[string]map[string][]string{"blend": {"CPOOL1": {"CUSDC1"}}}},
+			func(cc string) bool { return cc != "no-store" },
+		},
+		{
+			"pool tokens read failed", &stubPoolTokensReader{err: errors.New("pool tokens broke")},
+			func(cc string) bool { return cc == "no-store" },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := v1.New(v1.Options{Positions: reader(), ProtocolPoolTokens: tc.tokens})
+			resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/accounts/"+testG+"/positions")
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d", resp.StatusCode)
+			}
+			if cc := resp.Header.Get("Cache-Control"); !tc.want(cc) {
+				t.Errorf("Cache-Control = %q", cc)
+			}
+		})
+	}
 }
 
 // TestExplorer_AccountPositions_Fold pins the per-protocol fold ->
@@ -196,7 +235,7 @@ func TestExplorer_AccountPositions_Fold(t *testing.T) {
 	}
 
 	credit, ok := byKindVenue["sorocredit/credit/CCOLLAT1"]
-	if !ok || credit.Amount != "900000" || credit.AmountSemantics != "stateful_current" || credit.Basis != "stateful" {
+	if !ok || credit.Amount != "900000" || credit.AmountSemantics != "stateful_current_unconfirmed_unit" || credit.Basis != "stateful" {
 		t.Errorf("sorocredit open position = %+v (ok=%v)", credit, ok)
 	}
 	if len(credit.Assets) != 1 || credit.Assets[0] != "USDC" {

@@ -9,9 +9,10 @@
 The canonical asset_id format is `<class>:<id>` — e.g.
 `crypto:XLM`, `fiat:USD`, or `<code>-<issuer>` for a classic asset,
 e.g. `USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`.
-`native` and `XLM` are accepted spellings of the native Stellar asset;
-`crypto:XLM` is a SEPARATE off-chain reference id (a global ticker),
-not an alias for it.
+`native` and `XLM` are accepted spellings of the native Stellar asset.
+`native`, `crypto:XLM` and XLM's SAC contract address are the SAME asset:
+read endpoints fall back across all three, though each is a distinct
+venue population in the underlying data.
 
 ## Public surfaces
 

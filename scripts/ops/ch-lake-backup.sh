@@ -107,8 +107,14 @@ plan_next() {
 
 # Starts the BACKUP asynchronously and polls system.backups until it
 # settles; a multi-TiB full outlives any sane HTTP request. Sets `bytes`.
+# The query's memory counter drifts upward with bytes written (14 GiB claimed at
+# 5.3 TiB while server RSS was 5 GiB), so any per-query cap kills a full lake
+# backup. Real memory is bounded by the upload buffers instead:
+# 16 threads x (4 in flight + 1) x 32 MiB ~= 2.5 GiB, under max_server_memory_usage.
+BACKUP_MEMORY_SETTINGS="max_memory_usage = 0, s3_strict_upload_part_size = 33554432, s3_max_inflight_parts_for_one_file = 4"
+
 run_backup() {
-  local path="$1" base="${2:-}" settings="max_backup_bandwidth = $MAX_BANDWIDTH" id row status
+  local path="$1" base="${2:-}" settings="max_backup_bandwidth = $MAX_BANDWIDTH, $BACKUP_MEMORY_SETTINGS" id row status
   [[ -n "$base" ]] && settings="$settings, base_backup = $(disk_ref "$base")"
   id="$(ch "BACKUP DATABASE \`$CH_DATABASE\` TO $(disk_ref "$path") SETTINGS $settings ASYNC FORMAT TabSeparated" | cut -f1)" || {
     note "BACKUP was refused for $(disk_ref "$path")"

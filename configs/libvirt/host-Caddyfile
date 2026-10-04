@@ -22,10 +22,54 @@
 {
 	# ACME account contact (Let's Encrypt expiry/issue notices).
 	email ops@stellarindex.io
+
+	# The default logger also carries reverse_proxy runtime warnings and
+	# unmatched-host traffic, both of which embed the raw request (query
+	# string, Referer, Location). A site-level `log` replaces it for that
+	# site, so the same filter is repeated in the (edge) snippet below.
+	log {
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp "[?].*" "?<redacted>"
+				request>headers>X-Api-Key delete
+				request>headers>Referer delete
+				request>headers>X-Reason delete
+				resp_headers>Location delete
+			}
+		}
+	}
+}
+
+# Shared by every site block. Mirrors the access-log filter and response
+# headers of the production edge (archival-node Caddyfile.j2).
+(edge) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		# `?` keeps the API's own no-referrer policy where it sets one.
+		?Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp "[?].*" "?<redacted>"
+				request>headers>X-Api-Key delete
+				request>headers>Referer delete
+				request>headers>X-Reason delete
+				resp_headers>Location delete
+			}
+		}
+	}
 }
 
 # ── Testnet API (LIVE) ────────────────────────────────────────────────────
 api.testnet.stellarindex.io {
+	import edge
 	reverse_proxy 192.168.122.10:3000 {
 		flush_interval -1
 	}
@@ -35,6 +79,7 @@ api.testnet.stellarindex.io {
 # The cert provisions now (grey domain); requests 502 until the futurenet VM
 # is up. Kept here so the target state is codified and ready.
 api.futurenet.stellarindex.io {
+	import edge
 	reverse_proxy 192.168.122.20:3000 {
 		flush_interval -1
 	}
@@ -43,5 +88,5 @@ api.futurenet.stellarindex.io {
 # ── Explorer app domains (Phase 5) ────────────────────────────────────────
 # testnet.stellarindex.io / futurenet.stellarindex.io are Cloudflare-proxied
 # (orange) and serve the Next.js explorer. Add their site blocks when the
-# explorer is deployed to each VM, using tls with a Cloudflare Origin-CA cert
+# explorer is deployed to each VM (with `import edge`), using tls with a Cloudflare Origin-CA cert
 # (orange domains can't complete HTTP-01 here). Intentionally omitted for now.

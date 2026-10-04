@@ -108,12 +108,12 @@ func TestHandleLiquidityPools_CarriedForwardListingIsNoStore(t *testing.T) {
 func TestFillNativeLPListing_LastGoodAfterFailureIsDegraded(t *testing.T) {
 	reader := &lpCacheReader{}
 	s := newLPCacheServer(reader)
-	if _, degraded, err := s.fillNativeLPListing(context.Background()); err != nil || degraded {
+	if _, _, degraded, err := s.fillNativeLPListing(context.Background()); err != nil || degraded {
 		t.Fatalf("first fill: degraded=%v err=%v, want a fresh listing", degraded, err)
 	}
 	reader.fail.Store(true)
 	backdateLPEntry(s, 2*nativeLPListingTTL)
-	rows, degraded, err := s.fillNativeLPListing(context.Background())
+	rows, _, degraded, err := s.fillNativeLPListing(context.Background())
 	if err != nil || len(rows) != 1 || !degraded {
 		t.Fatalf("failed rescan: rows=%d degraded=%v err=%v, want the last-good row marked degraded", len(rows), degraded, err)
 	}

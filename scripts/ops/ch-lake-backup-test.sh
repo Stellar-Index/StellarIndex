@@ -91,6 +91,11 @@ reset
 run; rc=$?
 expect_rc 0 "full exits 0"
 last_is_full "full has no base_backup"
+if [[ "$(last_query)" == *"max_memory_usage = 0, s3_strict_upload_part_size = 33554432, s3_max_inflight_parts_for_one_file = 4"* ]]; then
+  ok "BACKUP lifts the drifting per-query cap and bounds upload buffers"
+else
+  bad "BACKUP lifts the drifting per-query cap and bounds upload buffers"
+fi
 if grep -Eq "TO Disk\('si_lake_backup', 'stellar/[0-9]{8}T[0-9]{6}Z/[0-9]{8}T[0-9]{6}Z-full'\)" "$TMP/queries"; then
   ok "full targets <db>/<chain>/<stamp>-full on the configured disk"
 else
