@@ -1,0 +1,51 @@
+# systemd unit: daily derived-state vs network-state reconciliation
+# (verify-network-state).
+#
+# Rendered by Ansible. Compares ledger_entries_current with the history
+# archive's hot-archive buckets, and checks lumen conservation against the
+# tip header's total_coins. Verdict lands in network_state_verify.prom
+# (stellarindex_network_state_verify_*).
+
+[Unit]
+Description=Stellar Index — verify-network-state: lake state vs hot archive + lumen conservation (daily)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/network-state-verify.md
+After=network-online.target clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# Defaults. Operators override via /etc/default/verify-network-state.
+Environment=CONFIG_PATH=/etc/stellarindex.toml
+Environment=CH_ADDR=127.0.0.1:9300
+Environment=TEXTFILE=/var/lib/node_exporter/textfile_collector/network_state_verify.prom
+# 75 = run-heavy-job lock skip; a real failure count is carried by network_state_verify.prom and `stellarindex_network_state_verify_failed`, not the exit code.
+SuccessExitStatus=75
+Environment=HEAVY_JOB_CLASS=scheduled
+EnvironmentFile=-/etc/default/verify-network-state
+EnvironmentFile=-/etc/default/stellarindex
+EnvironmentFile=-/etc/default/stellarindex-ops
+
+# The history archive URL and network come from CONFIG_PATH; -checkpoint stays
+# auto (newest checkpoint both the lake and the archive have reached).
+ExecStart=/usr/local/sbin/run-heavy-job.sh verify-network-state /usr/local/bin/stellarindex-ops verify-network-state \
+  -config ${CONFIG_PATH} \
+  -ch-addr ${CH_ADDR} \
+  -textfile ${TEXTFILE}
+
+User=stellarindex
+Group=stellarindex
+
+# Read-only ClickHouse queries plus history-archive downloads; the only write is the textfile.
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# One FINAL pass over ledger_entries_current plus the hot-archive bucket download.
+TimeoutStartSec=4h
+
+[Install]
+WantedBy=multi-user.target

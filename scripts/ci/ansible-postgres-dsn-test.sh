@@ -84,7 +84,7 @@ render() { # render <creds-json> -> prints the DSN line's value, or nothing
   sed -n 's/^STELLARINDEX_POSTGRES_DSN=//p' "$TMP/stellarindex.env"
 }
 
-COMMON='"region_deployment": "testnet", "vault_stellarindex_reader_secret_key": "x", "vault_dashboard_code_secret": "x"'
+COMMON='"region_deployment": "testnet", "vault_stellarindex_reader_secret_key": "x", "vault_dashboard_code_secret": "x", "vault_webhook_seal_key": "x"'
 HOSTILE_USER='si:ro@le/x'
 HOSTILE_PASS='ab/cd#ef@gh?ij:kl%mn+op=qr/'
 HOSTILE_DB='stellar/index'

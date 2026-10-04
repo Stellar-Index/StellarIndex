@@ -620,7 +620,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 		aquarius.RewardsEvent, aquarius.AdminEvent, aquarius.FeeEvent, aquarius.KillEvent,
 		phoenix.TradeEvent, phoenix.LiquidityEvent, phoenix.StakeEvent, phoenix.InitializeEvent, phoenix.AdminEvent,
 		comet.TradeEvent, comet.LiquidityEvent,
-		sushiswap_v3.TradeEvent,
+		sushiswap_v3.TradeEvent, sushiswap_v3.PositionEvent,
 		reflector.UpdateEvent, redstone.UpdateEvent,
 		blend.NewAuctionEvent, blend.FillAuctionEvent, blend.DeleteAuctionEvent,
 		blend.PositionEvent, blend.EmissionEvent, blend.AdminEvent,
@@ -1022,6 +1022,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		return persistTrade(ctx, logger, store, e.Trade)
 	case sushiswap_v3.TradeEvent:
 		return persistTrade(ctx, logger, store, e.Trade)
+	case sushiswap_v3.PositionEvent:
+		return persistSushiswapV3Position(ctx, logger, store, e)
 	case comet.LiquidityEvent:
 		return persistCometLiquidity(ctx, logger, store, e)
 	case upshift.Event:
@@ -2411,6 +2413,49 @@ func persistSoroswapLiquidity(ctx context.Context, logger *slog.Logger, store *t
 		"contract_id", e.ContractID, "ledger", e.Ledger, "action", e.Action,
 		"amount_0", e.Amount0.String(), "amount_1", e.Amount1.String(),
 		"liquidity", e.Liquidity.String(), "provider", e.To)
+	return nil
+}
+
+func persistSushiswapV3Position(ctx context.Context, logger *slog.Logger, store *timescale.Store, e sushiswap_v3.PositionEvent) error {
+	const table = "sushiswap_v3_position_events"
+	txHash, err := timescale.DecodeSoroswapTxHash(e.TxHash)
+	if err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(sushiswap_v3.SourceName, table).Inc()
+		logger.Error("decode sushiswap_v3 position tx_hash failed",
+			"contract_id", e.ContractID, "ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return err
+	}
+	row := timescale.SushiswapV3PositionEvent{
+		Pool:            e.ContractID,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          txHash,
+		OpIndex:         int16(e.OpIndex),
+		EventIndex:      int16(e.EventIndex),
+		Action:          e.Action,
+		Owner:           e.Owner,
+		Sender:          e.Sender,
+		Recipient:       e.Recipient,
+		Token0:          e.Token0,
+		Token1:          e.Token1,
+		TickLower:       e.TickLower,
+		TickUpper:       e.TickUpper,
+		Amount0:         e.Amount0.String(),
+		Amount1:         e.Amount1.String(),
+	}
+	if e.Action != sushiswap_v3.EventCollect {
+		row.Liquidity = e.Liquidity.String()
+	}
+	if err := store.InsertSushiswapV3PositionEvent(ctx, row); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(sushiswap_v3.SourceName, table).Inc()
+		logger.Error("insert sushiswap_v3 position event failed",
+			"contract_id", e.ContractID, "ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return err
+	}
+	bumpEntryCount(ctx, logger, store, sushiswap_v3.SourceName)
+	logger.Debug("sushiswap_v3 position event ingested",
+		"contract_id", e.ContractID, "ledger", e.Ledger, "action", e.Action,
+		"amount_0", row.Amount0, "amount_1", row.Amount1, "owner", e.Owner)
 	return nil
 }
 

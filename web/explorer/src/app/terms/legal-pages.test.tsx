@@ -155,9 +155,10 @@ describe('legal pages', () => {
       /a country code where the request carries one \(empty in production\)/,
     );
     expect(body).not.toMatch(/CF-IPCountry|our CDN attaches/);
-    // Client error beacon (functions/client-errors.js) and issuer icon hosts.
+    // Client error beacon (functions/client-errors.js) and the issuer icon proxy.
     expect(body).toMatch(/sends an error report/);
-    expect(body).toMatch(/your browser fetches it from that host directly/);
+    expect(body).toMatch(/loads them from our own .*\/icon.* endpoint/);
+    expect(body).toMatch(/does not see your IP address/);
     expect(body).toMatch(
       /the names of the parameters it used, and the values of a fixed list of enumerated or numeric ones \(for example limit and order_by\); any other parameter is reduced to its name, so free-text and identifying values are never logged/,
     );

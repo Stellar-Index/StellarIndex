@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 
-import { isSafeHomeDomain, isSafePublicImageUrl } from './safe-domain';
+import {
+  iconProxySrc,
+  isSafeHomeDomain,
+  isSafePublicImageUrl,
+} from './safe-domain';
 
 describe('isSafeHomeDomain', () => {
   it('accepts a normal registrable domain', () => {
@@ -67,5 +71,13 @@ describe('isSafePublicImageUrl', () => {
     expect(isSafePublicImageUrl('')).toBe(false);
     expect(isSafePublicImageUrl(null)).toBe(false);
     expect(isSafePublicImageUrl(undefined)).toBe(false);
+  });
+});
+
+describe('iconProxySrc', () => {
+  it('routes through the same-origin proxy with the URL encoded', () => {
+    expect(iconProxySrc('https://centre.io/a.png?x=1&y=2')).toBe(
+      '/icon?u=https%3A%2F%2Fcentre.io%2Fa.png%3Fx%3D1%26y%3D2',
+    );
   });
 });

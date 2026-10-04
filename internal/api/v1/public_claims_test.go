@@ -133,7 +133,7 @@ func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 				"100,000 ceiling above no longer applies",
 			},
 			required: []string{
-				"| Free | `POST /v1/signup` (every registered account's default) | **1,000** | **" + thousands(platform.TierFree.MaxRateLimitPerMin()) + "** |",
+				"| Free | `POST /v1/register` (every registered account's default) | **1,000** | **" + thousands(platform.TierFree.MaxRateLimitPerMin()) + "** |",
 				"| Partner | staff-set `tier` on `PATCH /v1/admin/accounts/{id}` | **1,000** | **" + thousands(platform.TierPartner.MaxRateLimitPerMin()) + "** |",
 				"is an account-wide **floor**",
 				"It can only raise a limit, never lower one",

@@ -126,6 +126,22 @@ func NewCachedHistoryReader(upstream HistoryReader, ttl time.Duration) *CachedHi
 // Matches coins/markets refresh budgets (the proven ba0374697 pattern).
 const historyRefreshBudget = 30 * time.Second
 
+// TradesInRangeAfterFromSource forwards to the upstream when it supports the
+// single-source read; it is never cached. Errors otherwise so a caller that
+// skipped the [SourceHistoryReader] check cannot silently get unfiltered rows.
+func (c *CachedHistoryReader) TradesInRangeAfterFromSource(
+	ctx context.Context, pair canonical.Pair, source string,
+	from, to, afterTs time.Time, afterLedger uint32,
+	afterTxHash, afterSource string, afterOpIndex uint32, limit int,
+) ([]canonical.Trade, error) {
+	sr, ok := c.HistoryReader.(SourceHistoryReader)
+	if !ok {
+		return nil, errors.New("history: upstream reader cannot filter by source")
+	}
+	return sr.TradesInRangeAfterFromSource(ctx, pair, source, from, to,
+		afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
+}
+
 // LatestTradePerSource is the one cached method. See type doc.
 // evictIfFullLocked drops the oldest-filled entry when the map is at
 // capacity. Caller must hold c.mu.
@@ -156,10 +172,19 @@ func (c *CachedHistoryReader) evictIfFullLocked() {
 	}
 }
 
+type freshHistoryKey struct{}
+
+// withFreshHistory marks ctx so [CachedHistoryReader.LatestTradePerSource]
+// reads through to the store. A caller that stamps its own as_of=now (the
+// observations stream) must not re-emit a cached trade as current.
+func withFreshHistory(ctx context.Context) context.Context {
+	return context.WithValue(ctx, freshHistoryKey{}, true)
+}
+
 func (c *CachedHistoryReader) LatestTradePerSource(
 	ctx context.Context, pair canonical.Pair, sourceFilter string,
 ) ([]canonical.Trade, error) {
-	if c.ttl <= 0 {
+	if fresh, _ := ctx.Value(freshHistoryKey{}).(bool); fresh || c.ttl <= 0 {
 		return c.HistoryReader.LatestTradePerSource(ctx, pair, sourceFilter)
 	}
 	key := pair.Base.String() + "|" + pair.Quote.String() + "|" + sourceFilter

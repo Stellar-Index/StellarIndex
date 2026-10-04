@@ -79,6 +79,25 @@ func TestExplorer_ContractDetail_InstanceReadFailureOmitsExists(t *testing.T) {
 	}
 }
 
+// A body missing its liveness verdict must not be pinned by a shared cache.
+func TestExplorer_ContractDetail_InstanceReadFailureIsUncacheable(t *testing.T) {
+	healthy := livenessServer(t, &stubExplorerReader{})
+	if _, resp := getContractLiveness(t, healthy+"/v1/contracts/"+wasmTestCID); !strings.HasPrefix(resp.Header.Get("Cache-Control"), "public") {
+		t.Fatalf("healthy Cache-Control = %q, want the route's public band", resp.Header.Get("Cache-Control"))
+	}
+	// Exists is settled by the event, but TTL is not: the read still failed.
+	failed := livenessServer(t, &stubExplorerReader{
+		instanceErr: errors.New("ch down"),
+		contractEvents: []clickhouse.ContractActivityRow{
+			{Seq: 63_000_000, CloseTime: time.Unix(0, 0), TxHash: "ab", EventType: "contract", Topic0Sym: "transfer"},
+		},
+	})
+	_, resp := getContractLiveness(t, failed+"/v1/contracts/"+wasmTestCID)
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("degraded Cache-Control = %q, want no-store", cc)
+	}
+}
+
 func TestExplorer_ContractDetail_TTLState(t *testing.T) {
 	cases := []struct {
 		name      string

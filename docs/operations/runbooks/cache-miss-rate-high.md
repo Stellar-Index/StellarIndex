@@ -55,6 +55,13 @@ severity: P2
 - [ ] Step 2 — Cut a release + deploy. Cache observability fixes don't backport — operator needs to deploy a binary that ships both the fixed prewarm AND the metric.
 - [ ] Verification: `(rate(...{result="miss"}[5m]) / rate(...[5m])) < 0.1` within 1 cycle — ≤ 60 s post-deploy on r1 for the LIGHT tier only (markets/pools/coins/native); the `sources_stats` family warms on the 5-min heavy tier, so allow up to 5 min there.
 
+## Refresh failures (`stellarindex_api_cache_refresh_failing`)
+
+`result="refresh_error"` counts background SWR refreshes that failed; the cache keeps serving the last good value with `flags.stale`, so only this alert shows it to operators. Fires when failures persist in every 15 min window for 30 min.
+
+1. The `{cache, op}` labels name the wrapper (see the list above). Grep the API log for the refresh error of that op.
+2. The cause is the upstream read (Postgres/ClickHouse timeout, missing relation after a migration, statement cancel). Fix that, not the cache; the next refresh clears the alert.
+
 ## Known false-positive patterns
 
 - **Cold start.** Right after a binary restart, the cache is empty for the first prewarm cycle. Both prewarm and user requests miss. The alert's `for: 10m` window covers this, but a long boot delay can trip it.

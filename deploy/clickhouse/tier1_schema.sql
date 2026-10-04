@@ -431,11 +431,11 @@ ORDER BY (contract_id, ledger_seq, tx_hash, op_index, event_index);
 -- retry-looped, starving the live sink for hours. uniqCombined(17) hashes
 -- the SAME natural key into a bounded HyperLogLog-family sketch (~10-96KB
 -- per state regardless of cardinality — measured, not theoretical; see
--- the redesign doc), so it (a) still dedupes duplicate/retried natural
--- keys exactly at the cardinalities this table actually sees, avoiding
--- the same overcount SummingMergeTree would have caused, while (b)
--- merging in bounded memory. Accuracy loss is ~0.1-0.5% at the
--- cardinalities measured (500K-4M uniques/state) — this table is a
+-- the redesign doc), so it (a) still collapses duplicate/retried natural
+-- keys to one — a re-insert never inflates the count, avoiding the
+-- overcount SummingMergeTree would have caused — while (b) merging in
+-- bounded memory. The distinct count itself is an estimate: ~0.1-0.5%
+-- error at the cardinalities measured (500K-4M uniques/state) — this table is a
 -- dashboard pre-aggregation (explorer's compact-formatted "events · 24h" /
 -- event-breakdown charts), never the ADR-0033 completeness oracle, so the
 -- tradeoff is one-sided: it fixes an active production fuse for
@@ -656,9 +656,9 @@ WHERE inner_tx_hash != '';
 -- migration 0105's `attributes jsonb` remainder 1:1 (balance_id, claimants,
 -- send_asset/send_amount, dest_asset/dest_amount, pool_id, revocation, …) — read via
 -- JSONExtractString/JSONExtract at query time, never a SQL predicate target
--- in the hot path here (FindClaimableBalanceCreates' balance_id lookup is the
--- one exception, backed by idx_cb_balance_id below — see that function's doc
--- comment for the 2026-07-12 full-scan finding that motivated it).
+-- in the hot path here. FindClaimableBalanceCreates' balance_id lookup is an
+-- external-table semijoin run with use_skip_indexes=0, so idx_cb_balance_id
+-- below does not back it (no current reader uses it).
 CREATE TABLE IF NOT EXISTS stellar.account_movements
 (
     address           String,
@@ -675,12 +675,9 @@ CREATE TABLE IF NOT EXISTS stellar.account_movements
     amount            Int128,
     attributes        String DEFAULT '{}',
     ingested_at       DateTime DEFAULT now(),
-    -- 2026-07-12 finding: classic-movements-backfill's Phase-3 claimable-balance
-    -- fallback (clickhouse.FindClaimableBalanceCreates) was a 6.5s full scan of
-    -- 973M rows PER lookup during the claimable-balance-bot era (ledgers
-    -- ~34M-40M, thousands of refs per window) before this index existed; the
-    -- bloom skip-index brought a single lookup to ~84ms (~77x). Only prunes when
-    -- the WHERE predicate is textually IDENTICAL to this expression.
+    -- Added for the removed single-ref balance_id lookup; the current batched
+    -- lookup runs with use_skip_indexes=0. Only prunes when the WHERE predicate
+    -- is textually IDENTICAL to this expression.
     INDEX idx_cb_balance_id JSONExtractString(attributes, 'balance_id') TYPE bloom_filter(0.01) GRANULARITY 4
 )
 ENGINE = ReplacingMergeTree(ingested_at)

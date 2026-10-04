@@ -42,6 +42,7 @@ import { IssuerPanel } from './IssuerPanel';
 import { LiquidityTabPanel } from './LiquidityTabPanel';
 import { HoldersTabPanel } from './HoldersTabPanel';
 import { MarketsTabPanel } from './MarketsTabPanel';
+import { AssetOrderBookPanel } from './AssetOrderBookPanel';
 import { AssetOraclesPanel } from './AssetOraclesPanel';
 import { HistoryTabPanel } from './HistoryTabPanel';
 import { SupplyTabPanel } from './SupplyTabPanel';
@@ -1039,7 +1040,12 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
                 <OverviewBody coin={coin} detail={detail} price={price} />
               }
               chart={<ChartPanel assetID={coin.asset_id} />}
-              markets={<MarketsTabPanel assetID={coin.asset_id} />}
+              markets={
+                <div className="space-y-6">
+                  <MarketsTabPanel assetID={coin.asset_id} />
+                  <AssetOrderBookPanel assetID={coin.asset_id} />
+                </div>
+              }
               history={
                 <HistoryTabPanel
                   assetID={coin.asset_id}
@@ -1476,37 +1482,19 @@ function athDrawdown(
 // ChangePctLabel renders a signed percentage with emerald-up /
 // rose-down / slate-zero colour. Accepts the wire-format string
 // (e.g. "+1.27", "-0.05", "0.00") and the window label.
-// peggedTo recognises the well-known stablecoins on Stellar by
-// asset code and returns the fiat they're soft-pegged to. Used to
-// suppress the meaningless change pills (a 0.00% / 0.05% pill on
-// USDC tells the reader nothing — "Pegged to USD" is honest).
-//
-// Codes are case-sensitive on Stellar (alphanum4 / alphanum12);
-// pegs not on this list still show change pills as before.
+// peggedTo returns the fiat a verified-catalogue stablecoin is pegged to,
+// used to suppress the meaningless change pills (a 0.05% pill on USDC
+// tells the reader nothing). Only codes whose issuer the catalogue
+// vouches for (internal/currency/data/seed.yaml) belong here: for any
+// other code nothing proves the issuer, and a badge on a bare code would
+// hide an impersonator's real price movement.
 function peggedTo(code: string): string | null {
   switch (code) {
     case 'USDC':
-    case 'USDT':
     case 'PYUSD':
-    case 'DAI':
-    case 'BUSD':
-    case 'TUSD':
-    case 'USDP':
       return 'USD';
     case 'EURC':
-    case 'EUROC':
-    case 'EUROB':
       return 'EUR';
-    case 'MXNe':
-      return 'MXN';
-    case 'BRZ':
-      return 'BRL';
-    case 'GBPC':
-      return 'GBP';
-    case 'AUDD':
-      return 'AUD';
-    case 'NGNT':
-      return 'NGN';
     default:
       return null;
   }
