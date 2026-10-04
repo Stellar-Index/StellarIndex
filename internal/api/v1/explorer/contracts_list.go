@@ -112,7 +112,7 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 			Protocol:   attribution[c.ContractID],
 		}
 	}
-	h.writeJSONAt(w, out, degraded, asOf)
+	h.writeJSONAt(w, out, degraded, degraded, asOf)
 }
 
 // ContractEdge is one edge of a contract's interaction map.
@@ -245,7 +245,7 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 			Protocol:   attribution[e.ContractID],
 		}
 	}
-	h.writeJSONAt(w, out, degraded, asOf)
+	h.writeJSONAt(w, out, degraded, degraded, asOf)
 }
 
 // ContractCodeVersionV is one entry in a contract's code-upgrade timeline.
@@ -316,7 +316,7 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 	for i, ver := range versions {
 		out.Versions[i] = ContractCodeVersionV{Ledger: ver.Ledger, CloseTime: ver.CloseTime.UTC().Format(time.RFC3339), WasmHash: ver.WasmHash}
 	}
-	h.writeJSONAt(w, out, degraded, asOf)
+	h.writeJSONAt(w, out, degraded, degraded, asOf)
 }
 
 // windowFloorLedger returns the ledger sequence closest to `days` days

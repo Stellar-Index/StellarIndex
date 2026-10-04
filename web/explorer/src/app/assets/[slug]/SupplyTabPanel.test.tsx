@@ -6,6 +6,10 @@ const supplyQuery = vi.hoisted(() => ({
   data: undefined as unknown,
 }));
 
+const assetExtra = vi.hoisted(() => ({
+  fields: {} as Record<string, unknown>,
+}));
+
 vi.mock('@/api/client', async () => {
   const actual =
     await vi.importActual<typeof import('@/api/client')>('@/api/client');
@@ -24,6 +28,7 @@ vi.mock('@/api/hooks', async () => {
           code: 'USDC',
           decimals: 7,
           circulating_supply: '1000000000',
+          ...assetExtra.fields,
         },
         flags: { reduced_redundancy: true },
       },
@@ -152,5 +157,23 @@ describe('SupplyTabPanel on-chain supply', () => {
     supplyQuery.data = undefined;
     renderPanel();
     expect(screen.getByText('Reduced redundancy')).toBeInTheDocument();
+  });
+
+  it('labels an issuer-declared max beside the circulating basis', () => {
+    supplyQuery.data = undefined;
+    assetExtra.fields = {
+      max_supply: '5000000000',
+      supply_basis: 'issuer_exclusion',
+      max_supply_basis: 'sep1_declared_max',
+    };
+    try {
+      renderPanel();
+      expect(
+        screen.getByText('Issuer-declared in stellar.toml'),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/issuer_exclusion/)).toBeInTheDocument();
+    } finally {
+      assetExtra.fields = {};
+    }
   });
 });

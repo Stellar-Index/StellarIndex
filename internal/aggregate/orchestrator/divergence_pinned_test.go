@@ -57,8 +57,9 @@ func pinnedDivergenceRig(t *testing.T) (*Orchestrator, *redis.Client, canonical.
 		MinSourcesForWarning: 2,
 		WarningPersistence:   5 * time.Minute,
 		Logger:               silentLogger(),
-		OnWarningFired: func(context.Context, canonical.Pair, divergence.CachedResult) {
+		OnWarningFired: func(context.Context, canonical.Pair, divergence.CachedResult) error {
 			hooks.Add(1)
+			return nil
 		},
 	})
 	if err != nil {

@@ -93,7 +93,7 @@ type VolumeReader interface {
 
 // SorobanVolumeReader is OPTIONALLY implemented by the wired
 // [VolumeReader] to provide the XLM-anchored 24h USD volume for
-// pure-Soroban SEP-41 assets (#37). The plain Volume24hUSDForAsset only
+// pure-Soroban SEP-41 assets (fce3e2eef). The plain Volume24hUSDForAsset only
 // sees the insert-time `usd_volume` column — populated when a trade's
 // quote is a USD-pegged classic — so a Soroban token that trades against
 // XLM or another SEP-41 token reports a bogus "0". This variant keeps the
@@ -126,8 +126,8 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// AssetDetail fields (volume/change/price each write one field;
 	// the snapshot writes none), so they run concurrently here and
 	// the cold cost collapses to the slowest single read. Every
-	// populate* helper is individually best-effort — a failure logs
-	// and leaves its field null — so no error plumbing is needed.
+	// populate* helper is individually best-effort — a failure logs,
+	// leaves its field null and is folded into detail.f2ReadFailed.
 	//
 	// IMPORTANT: pass asset.String() to populateVolume24h — the
 	// canonical wire form trades.base_asset stores — NOT
@@ -139,6 +139,9 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 		snap             supply.Supply
 		haveSnap         bool
 		priceSourceCount int
+		volFailed        bool
+		changeFailed     bool
+		supplyFailed     bool
 		wg               sync.WaitGroup
 	)
 	run := func(fn func()) {
@@ -163,8 +166,8 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 			fn()
 		}()
 	}
-	run(func() { s.populateVolume24h(ctx, detail, asset) })
-	run(func() { s.populateChange24h(ctx, detail, asset) })
+	run(func() { volFailed = s.populateVolume24h(ctx, detail, asset) })
+	run(func() { changeFailed = s.populateChange24h(ctx, detail, asset) })
 	// F-1271: inline price_usd independent of supply availability so
 	// wallet UIs that just want the price don't pay a second /v1/price
 	// RT. populateMarketCap (phase 2) re-uses detail.PriceUSD, plus the
@@ -174,7 +177,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// asset has a supply key — off-chain assets (fiat / crypto-pure)
 	// have no snapshot, matching the pre-parallelisation early-return.
 	if s.supply != nil && keyErr == nil {
-		run(func() { snap, haveSnap = s.fetchSupplySnapshot(ctx, key) })
+		run(func() { snap, haveSnap, supplyFailed = s.fetchSupplySnapshot(ctx, key) })
 	}
 	wg.Wait()
 
@@ -219,8 +222,10 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 				Basis:             supply.BasisSEP41LakeFlows,
 			}
 			haveSnap = true
+			supplyFailed = false
 		}
 	}
+	detail.f2ReadFailed = volFailed || changeFailed || supplyFailed
 
 	// ADR-0011 max_supply precedence, step 2 — the SEP-1 declared
 	// max. Step 1 (operator override) surfaces as snap.MaxSupply
@@ -229,11 +234,10 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// declaration. applySep1Overlay (which runs before applyF2Fields
 	// in handleAssetGet) stamped those fields on detail in DISPLAY
 	// units; the resolver scales them to raw units by
-	// detail.Decimals. An applied overlay relabels
-	// supply_basis="sep1_declared_max" so consumers can see the cap
+	// detail.Decimals. An applied overlay sets
+	// max_supply_basis="sep1_declared_max" so consumers can see the cap
 	// (and the FDV derived from it) is issuer-self-declared, not
-	// on-chain enforced. Wired 2026-07-05 — previously supply.Overlay
-	// had zero callers (F-1354 / D2-03).
+	// on-chain enforced; supply_basis keeps naming the circulating policy.
 	if haveSnap && snap.MaxSupply == nil {
 		overlaid, applied, err := supply.Overlay(ctx, snap, asset, sep1DeclaredMaxResolver{detail: detail})
 		if err != nil {
@@ -263,12 +267,12 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 // trades never populate), so when the reader exposes the XLM-anchored
 // [SorobanVolumeReader] variant we use it — it values the XLM-legged
 // trades through the on-chain XLM/USD VWAP on top of any USD-pegged legs
-// (#37). A Soroban lookup ERROR falls back to the plain reader so a
+// (fce3e2eef). A Soroban lookup ERROR falls back to the plain reader so a
 // transient failure of the richer path can't zero out a figure the plain
-// path could still supply.
-func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
+// path could still supply. Reports whether the plain read failed.
+func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
 	if s.volume == nil {
-		return
+		return false
 	}
 	assetKey := asset.String()
 	if asset.Type == canonical.AssetSoroban {
@@ -276,7 +280,7 @@ func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, ass
 			v, err := sv.SorobanVolume24hUSDForAsset(ctx, assetKey)
 			if err == nil {
 				detail.VolumeUSD24h = &v
-				return
+				return false
 			}
 			if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				s.logger.Warn("soroban volume_24h_usd lookup failed; falling back to plain reader",
@@ -290,26 +294,28 @@ func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, ass
 		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.logger.Warn("volume_24h_usd lookup failed", "err", err, "asset_key", assetKey)
 		}
-		return
+		return true
 	}
 	detail.VolumeUSD24h = &v
+	return false
 }
 
 // fetchSupplySnapshot wraps the SupplyLooker call with the
 // best-effort error policy: ErrSupplyNotFound is silent, real
-// errors are logged at WARN, client-cancel doesn't log.
-func (s *Server) fetchSupplySnapshot(ctx context.Context, key string) (supply.Supply, bool) {
+// errors are logged at WARN and reported as failed, client-cancel
+// doesn't log.
+func (s *Server) fetchSupplySnapshot(ctx context.Context, key string) (snap supply.Supply, ok, failed bool) {
 	snap, err := s.supply.LatestSupply(ctx, key)
 	if errors.Is(err, ErrSupplyNotFound) {
-		return supply.Supply{}, false
+		return supply.Supply{}, false, false
 	}
 	if err != nil {
 		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.logger.Warn("supply lookup failed", "err", err, "asset_key", key)
 		}
-		return supply.Supply{}, false
+		return supply.Supply{}, false, true
 	}
-	return snap, true
+	return snap, true, false
 }
 
 // populateSupplyFields sets the raw supply integers + basis on
@@ -327,6 +333,10 @@ func populateSupplyFields(detail *AssetDetail, snap supply.Supply) {
 	if snap.MaxSupply != nil {
 		v := snap.MaxSupply.String()
 		detail.MaxSupply = &v
+		if snap.MaxSupplyBasis != "" {
+			b := string(snap.MaxSupplyBasis)
+			detail.MaxSupplyBasis = &b
+		}
 	}
 	if snap.Basis != "" {
 		v := string(snap.Basis)
@@ -382,6 +392,56 @@ func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asse
 	priceCopy := l.price
 	detail.PriceUSD = &priceCopy
 	return l.sources
+}
+
+// assetDetailCacheKey keys the opt-in apart: its body can carry a thin
+// price the default body must never replay.
+func assetDetailCacheKey(asset canonical.Asset, includeThin bool) string {
+	if includeThin {
+		return asset.String() + "|thin"
+	}
+	return asset.String()
+}
+
+// clearThinWhenUnpriced drops the thin markers from a detail a later
+// suppressor unpriced, so no response is flagged thin without a price.
+func clearThinWhenUnpriced(d *AssetDetail) {
+	if d.PriceUSD == nil {
+		d.ThinMarket = false
+		d.Substance = nil
+	}
+}
+
+// thinDetailPricePass is the detail's opted-in second pass: re-read the
+// price with the request's thin legs released, after pass 1 left it
+// withheld on measured evidence. It runs only the price producers, never
+// applyF2Fields, so no market cap, FDV or change derives from a thin
+// price. "unattributed" is excluded because on detail it labels the
+// issuer suppression, which no thin release may override.
+func (s *Server) thinDetailPricePass(ctx context.Context, detail *AssetDetail, asset canonical.Asset, off *ThinAdmission) {
+	if detail.PriceUSD != nil || off.Evidence() == nil {
+		return
+	}
+	switch detail.PriceWithheldReason {
+	case "", PriceWithheldSubstance, PriceWithheldUpstreamLeg:
+	default:
+		return
+	}
+	onCtx, on := WithThinAdmission(ctx, asset, defaultPriceQuote, true)
+	trial := *detail
+	trial.PriceWithheldReason = ""
+	s.populatePriceUSD(onCtx, &trial, asset)
+	s.fillTransitivePrice(onCtx, &trial, asset, asset.String())
+	if trial.PriceUSD == nil {
+		return
+	}
+	detail.PriceUSD = trial.PriceUSD
+	detail.PriceBasis = trial.PriceBasis
+	detail.PriceWithheldReason = ""
+	if on.Admitted() {
+		detail.ThinMarket = true
+		detail.Substance = substanceEvidenceWire(on.Evidence())
+	}
 }
 
 // marketCapRefused is the pre-figure half of the valuation guards shared by
@@ -526,7 +586,7 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 // the handler's tryStablecoinFiatProxy fallback at the reader-call
 // level: when the literal lookup misses, walk the operator's
 // usd_pegged_classic_assets and rewrite asset/fiat:USD to
-// asset/<peg>. Same shape as the handler-side fallback in #1217;
+// asset/<peg>. Same shape as the handler-side fallback in 6505934b5;
 // here it lives at the F2-population layer where the handler's
 // priceFallback isn't reachable (the supply / change-24h paths
 // bypass the /v1/price handler entirely).
@@ -591,7 +651,7 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 		return usdPriceLookup{price: snap.Price, sources: len(sources)}
 	}
 	// Read-time stablecoin-fiat proxy fallback (matches the
-	// handler-side fix in #1217 / tryStablecoinFiatProxy). Already
+	// handler-side fix in 6505934b5 / tryStablecoinFiatProxy). Already
 	// decimals-normalized inside tryStablecoinFiatProxy — do NOT re-apply.
 	proxy, proxySources, ok, withheld := s.tryStablecoinFiatProxy(ctx, asset, defaultPriceQuote)
 	if ok && proxy.Price != "" {
@@ -614,33 +674,35 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 // market_cap uses — pricing USD-against-USD over time is
 // meaningless, lookupUSDPrice already returns ("", false) for
 // that case, and the early-return below kicks in without logging.
-func (s *Server) populateChange24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
+// Reports whether the 24h-ago read failed.
+func (s *Server) populateChange24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
 	if s.change24h == nil {
-		return
+		return false
 	}
 	currStr, ok := s.lookupUSDPrice(ctx, asset)
 	if !ok {
-		return
+		return false
 	}
 	thenStr, err := s.change24h.USDPrice24hAgo(ctx, asset)
 	if errors.Is(err, ErrChange24hUnavailable) {
 		// Asset first traded < 24h ago, or retention pruned the row.
 		// Silent — feature unavailable for this asset.
-		return
+		return false
 	}
 	if err != nil {
 		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.logger.Warn("change_24h_pct lookup failed", "err", err, "asset", asset.String())
 		}
-		return
+		return true
 	}
 	pct, err := pctChange(currStr, thenStr)
 	if err != nil {
 		s.logger.Warn("change_24h_pct compute failed",
 			"err", err, "asset", asset.String(), "now", currStr, "then", thenStr)
-		return
+		return false
 	}
 	detail.Change24hPct = &pct
+	return false
 }
 
 // pctChange returns `(now - then) / then * 100` as a signed decimal

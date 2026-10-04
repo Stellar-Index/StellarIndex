@@ -21,7 +21,7 @@ import (
 // evaluated in SQL. This file is the ESTIMATED-tier counterpart for the
 // one estimated tier whose input is not authorable by a counterparty: the
 // XLM-base anchor (`usd_volume = base_amount/1e7 x XLM/USD at ts`,
-// [tradeUSDVolumeViaXLMBaseAnchor]).
+// [usdVolumeViaXLMBaseAnchor]).
 //
 // The population it exists for (issue #372, triage G9 2026-09-02): every
 // on-chain DEX trade with an XLM BASE leg, with a non-USD-pegged quote,
@@ -99,7 +99,7 @@ import (
 //
 //  1. THE VALUE COMES FROM THE LIVE FUNCTION. Each candidate row is
 //     rebuilt into the [canonical.Trade] the decoder produced and handed
-//     to [tradeUSDVolumeViaXLMBaseAnchor] — the same function
+//     to [usdVolumeViaXLMBaseAnchor] — the same function
 //     [Store.InsertTrade] calls, with the store's installed
 //     [VWAPUSDFXResolver] and [USDVolumeQuoteSpec]. There is no second
 //     spelling of the waterfall to drift against (the reimplementation
@@ -175,7 +175,7 @@ type XLMBaseRestampParams struct {
 }
 
 // XLMBaseRestampRow is one row the re-derive would rewrite: its primary
-// key, what is stored now, and the value [tradeUSDVolumeViaXLMBaseAnchor]
+// key, what is stored now, and the value [usdVolumeViaXLMBaseAnchor]
 // produces for it today.
 type XLMBaseRestampRow struct {
 	Source  string
@@ -359,7 +359,7 @@ const (
 //
 // `anchor` is injected rather than called directly so the decision rules
 // are testable without a live prices_1m; production passes a closure over
-// [tradeUSDVolumeViaXLMBaseAnchor] with the store's real resolver, so the
+// [usdVolumeViaXLMBaseAnchor] with the store's real resolver, so the
 // number that reaches the column is the number the live insert path
 // computes for the same row.
 func xlmBaseRestampDecide(

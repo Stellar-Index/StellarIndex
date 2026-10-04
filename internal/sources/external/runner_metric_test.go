@@ -120,6 +120,59 @@ func TestRunPoller_EmptyResultIsNotSuccess(t *testing.T) {
 	}
 }
 
+// A skip while the poller is backing off a throttle proves nothing about the
+// upstream, so it must not refresh the staleness clock; a plain skip still does.
+func TestRunPoller_ThrottleCooldownDoesNotRefreshStaleness(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		cooldown time.Duration
+		wantSet  bool
+	}{
+		{"cooldown", time.Hour, false},
+		{"plain_skip", 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := "metric-test-throttle-" + tc.name
+			p := &throttledPoller{
+				scriptedPoller: scriptedPoller{
+					name:     source,
+					interval: 50 * time.Millisecond,
+					returns:  []scriptedReturn{{}},
+				},
+				cooldown: tc.cooldown,
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
+			sink := make(chan consumer.Event, 4)
+			wait, err := Run(ctx, nil, []PollerSpec{{Poller: p, Pairs: []canonical.Pair{newTestPair(t)}}}, sink, nil)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			time.Sleep(150 * time.Millisecond)
+			cancel()
+			wait()
+
+			if got := readPollsCounter(t, source, "skipped"); got == 0 {
+				t.Error(`outcome="skipped" not counted`)
+			}
+			var pb dto.Metric
+			if err := obs.ExternalPollerLastSuccessUnix.WithLabelValues(source).Write(&pb); err != nil {
+				t.Fatalf("write gauge: %v", err)
+			}
+			if set := pb.GetGauge().GetValue() != 0; set != tc.wantSet {
+				t.Errorf("last_success set = %v, want %v", set, tc.wantSet)
+			}
+		})
+	}
+}
+
+type throttledPoller struct {
+	scriptedPoller
+	cooldown time.Duration
+}
+
+func (t *throttledPoller) CooldownRemaining() time.Duration { return t.cooldown }
+
 // scriptedReturn is one PollOnce return value; scriptedPoller cycles
 // through a slice of these and repeats the last forever.
 type scriptedReturn struct {

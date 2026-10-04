@@ -24,6 +24,8 @@ severity: P3
   is `0` (no off-site disk configured) or `1` (configured, but no run has
   succeeded in 96 h).
 - `systemctl status ch-lake-backup.service` shows a failed or long-running run.
+  An unconfigured host fails every run on purpose (`no BACKUP_DISK configured`
+  in the journal): a run that copied nothing never reports success.
 
 ## Quick diagnosis (≤ 5 min)
 

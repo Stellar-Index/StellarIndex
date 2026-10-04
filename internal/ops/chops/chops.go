@@ -42,13 +42,16 @@ import (
 // every internal/ops/* package post-split. args[0] is the subcommand
 // verb (one of the twenty this package owns); args[1:] are its flags.
 //
-// Split across two dispatch helpers by ROLE — the data-mutating tools and
+// Split across dispatch helpers by ROLE — the data-mutating tools and
 // the verifiers. The split is what keeps each switch under the gocyclo
 // ceiling as verbs accumulate, and the boundary is a real one: a `ch-*` /
 // `*-backfill` / `*-rebuild` verb rewrites lake or served DATA, while
 // nothing in the verifier half touches trade/event rows at all.
 func Run(args []string) error {
 	if fn, ok := lakeMutatorVerb(args[0]); ok {
+		return fn(args[1:])
+	}
+	if fn, ok := historyDeriveVerb(args[0]); ok {
 		return fn(args[1:])
 	}
 	if fn, ok := verifierVerb(args[0]); ok {
@@ -85,8 +88,6 @@ func lakeMutatorVerb(verb string) (func([]string) error, bool) {
 		return chInstanceBackfill, true
 	case "ch-census-rollup":
 		return chCensusRollup, true
-	case "ch-cap67-movements":
-		return chCap67Movements, true
 	case "ch-holders-rollup":
 		return chHoldersRollup, true
 	case "ch-creators-rollup":
@@ -99,12 +100,25 @@ func lakeMutatorVerb(verb string) (func([]string) error, bool) {
 		return chParticipantBackfill, true
 	case "ch-recognition":
 		return chRecognition, true
-	case "classic-movements-backfill":
-		return classicMovementsBackfill, true
 	case "projected-rebuild":
 		return projectedRebuild, true
 	case "usd-volume-restamp":
 		return usdVolumeRestamp, true
+	default:
+		return nil, false
+	}
+}
+
+// historyDeriveVerb resolves the lake → per-account/per-asset history derives,
+// split from lakeMutatorVerb to keep each switch under the gocyclo ceiling.
+func historyDeriveVerb(verb string) (func([]string) error, bool) {
+	switch verb {
+	case "ch-cap67-movements":
+		return chCap67Movements, true
+	case "ch-entry-history":
+		return chEntryHistory, true
+	case "classic-movements-backfill":
+		return classicMovementsBackfill, true
 	default:
 		return nil, false
 	}

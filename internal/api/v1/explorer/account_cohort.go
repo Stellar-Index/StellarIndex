@@ -244,7 +244,8 @@ func (h *Handler) AccountGraphCohort(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, stale, _ := h.LakeWatermark(ctx)
-	h.WriteJSON(w, h.accountCohortView(ctx, cohort), stale)
+	view := h.accountCohortView(ctx, cohort)
+	h.writeJSONAt(w, view, stale, view.Valuation.Degraded, time.Time{})
 }
 
 func (h *Handler) accountCohortView(ctx context.Context, c clickhouse.AccountCohort) AccountCohortView {

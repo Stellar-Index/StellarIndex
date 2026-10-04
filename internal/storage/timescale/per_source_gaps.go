@@ -370,7 +370,7 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// trips this well before a natural quiet stretch would.
 	{Source: "aquarius-rewards", CanonicalSource: "aquarius", Table: "aquarius_rewards_events", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 100000},
 	// aquarius-admin: the governance/upgrade admin surface (ROADMAP
-	// #89, migration 0100) — router-scoped, operator-triggered
+	// ROADMAP #89, migration 0100) — router-scoped, operator-triggered
 	// actions (upgrades, ownership transfers, emergency mode). Rare by
 	// design (apply_upgrade: 706 lifetime across the whole protocol
 	// history is the DENSEST of the eight kinds); wide override
@@ -474,6 +474,10 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// swap); every later gap is under 9,400. 100k leaves 3x headroom over
 	// the observed envelope.
 	{Source: "sushiswap_v3", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'sushiswap_v3'", Genesis: 61_487_379, MinGapSizeOverride: 100000},
+	// sushiswap_v3-positions: mint/burn/collect are sparse (~5.8k events over
+	// ~2.8M ledgers), so a large override keeps a quiet stretch from reading
+	// as a decoder outage.
+	{Source: "sushiswap_v3-positions", CanonicalSource: "sushiswap_v3", Table: "sushiswap_v3_position_events", LedgerColumn: "ledger", Genesis: 61_487_379, MinGapSizeOverride: 700000},
 	// upshift: the vaults write their own hypertable, not `trades` — they
 	// publish no price. Institutional deposit flow is genuinely sparse:
 	// measured over every row-producing event in both vaults' history, the

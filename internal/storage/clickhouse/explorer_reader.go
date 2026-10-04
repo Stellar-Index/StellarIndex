@@ -256,6 +256,11 @@ type ExplorerReader struct {
 	// bloom-skip-index scan, exactly as before the index existed.
 	txIndexProbe schemaProbe
 
+	// txCoverageProbe probes stellar.tx_hash_index_coverage, the marker
+	// ch-txindex-backfill writes once a genesis→tip run finishes. Without a
+	// row the index is not proof of coverage, so a miss must not be a 404.
+	txCoverageProbe schemaProbe
+
 	// contractLedgersProbe probes stellar.contract_active_ledgers (the
 	// per-(contract, ledger) activity index,
 	// deploy/clickhouse/contract_active_ledgers.sql). Present + non-empty
@@ -334,11 +339,11 @@ type ExplorerReader struct {
 	// "no asset has holders".
 	holdersRollupProbe schemaProbe
 
-	// cap67 movements watermark cache (see Cap67MovementsWatermark in
+	// cap67 movements coverage cache (see Cap67MovementsWatermark in
 	// cap67_movements.go). cap67WMErr/At negatively cache a failed read;
 	// cap67WMFlight is non-nil while one read is in flight.
 	cap67WMMu     sync.Mutex
-	cap67WM       uint32
+	cap67Cov      Cap67Coverage
 	cap67WMAt     time.Time
 	cap67WMErr    error
 	cap67WMErrAt  time.Time
@@ -495,6 +500,7 @@ func newExplorerReader(conn driver.Conn) *ExplorerReader {
 	return &ExplorerReader{
 		conn:                     conn,
 		txIndexProbe:             schemaProbe{name: "tx_hash_index"},
+		txCoverageProbe:          schemaProbe{name: "tx_hash_index_coverage"},
 		contractLedgersProbe:     schemaProbe{name: "contract_active_ledgers"},
 		instanceChangesProbe:     schemaProbe{name: "contract_instance_changes"},
 		instanceKeyProbe:         schemaProbe{name: "contract_instance_changes_tx_key"},
@@ -1374,7 +1380,9 @@ func (c ContractEventsCursor) IsSet() bool { return c.Ledger > 0 }
 func accountTransactionsQuery(hasCursor bool) string {
 	cursorClause := ""
 	if hasCursor {
-		cursorClause = ` AND (ledger_seq, tx_index) < (?, ?)`
+		// Redundant leading-key bound: KeyCondition does not prune on a tuple
+		// comparison, so without it a deep page reads every row above the cursor.
+		cursorClause = ` AND ledger_seq <= ? AND (ledger_seq, tx_index) < (?, ?)`
 	}
 	// TWO-PHASE (sub-second audit 2026-08-13): resolve the KEYSET in the
 	// union, then hydrate the wide columns ONCE over the surviving ≤limit
@@ -1465,7 +1473,7 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 	}
 	var cursorArgs []any
 	if cur.IsSet() {
-		cursorArgs = []any{cur.Ledger, cur.A}
+		cursorArgs = []any{cur.Ledger, cur.Ledger, cur.A}
 	}
 	q := accountTransactionsQuery(cur.IsSet())
 	args := []any{account}
@@ -1545,7 +1553,8 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 func accountOperationsQuery(hasCursor, hasBound bool) string {
 	cursorClause := ""
 	if hasCursor {
-		cursorClause = ` AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
+		// Redundant leading-key bound — see accountTransactionsQuery.
+		cursorClause = ` AND ledger_seq <= ? AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
 	}
 	boundClause := ""
 	if hasBound {
@@ -1626,7 +1635,7 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	}
 	var cursorArgs []any
 	if cur.IsSet() {
-		cursorArgs = []any{cur.Ledger, cur.A, cur.B}
+		cursorArgs = []any{cur.Ledger, cur.Ledger, cur.A, cur.B}
 	}
 	// The activity watermark bounds each arm's resolve (`ledger_seq <= ?`)
 	// so a long-idle account's page stops at its real last activity —
@@ -1745,41 +1754,25 @@ func (r *ExplorerReader) AccountOperationTypeCounts(ctx context.Context, account
 // bloom prunes granules but cannot seek). found=false only after the scan
 // also comes up empty.
 //
-// KNOWN RESIDUAL GAP (F106, 2026-09 reverification, NEEDS-COORDINATION):
-// non-emptiness rules out TOTAL index loss but not PARTIAL coverage — a
-// freshly (re)created tx_hash_index on a lake that already has history
-// goes non-empty after the very first live transaction (the MV writes
-// synchronously) while every row for that lake's EXISTING history is
-// still missing, so a miss against it is wrongly authoritative until the
-// one-time backfill catches up. Closing this needs either a genuine
-// coverage signal — ruled out here: a naive count(tx_hash_index) vs
-// count(stellar.transactions) comparison over-counts asymmetrically,
-// because stellar.transactions is a duplicate-bearing ReplacingMergeTree
-// (live-sink retries) while the one-time backfill inserts FINAL-deduped
-// rows into tx_hash_index (see [txHashIndexBackfillQuery]), so a healthy
-// fully-backfilled deployment would never reach parity and the fast path
-// would degrade to the scan forever — or a backfill-completion marker
-// written by stellarindex-ops ch-txindex-backfill
-// (internal/ops/chops/ch_txindex_backfill.go) once a run finishes, which
-// this package cannot land alone. tier1_schema.sql's comment above
-// CREATE TABLE stellar.tx_hash_index is corrected to state this file's
-// actual contract; it no longer claims a scan fallback on every miss.
+// Non-emptiness alone is not coverage: a freshly (re)created index goes
+// non-empty on the first live transaction while its history is still
+// missing. The fast path therefore also requires the completion marker
+// (stellar.tx_hash_index_coverage) written by ch-txindex-backfill; a count
+// comparison cannot stand in for it because stellar.transactions is
+// duplicate-bearing while the backfill inserts FINAL-deduped rows (see
+// [txHashIndexBackfillQuery]).
 func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (TxSummary, bool, error) {
-	if r.txHashIndexAvailable(ctx) {
+	if r.txHashIndexAvailable(ctx) && r.txHashIndexCovered(ctx) {
 		tx, found, indexHit, err := r.txByHashIndexed(ctx, hash)
 		switch {
 		case err == nil && found:
 			return tx, true, nil
 		case err == nil && !indexHit:
-			// The INDEX had no row — authoritative absence (2026-07-30
-			// account-filter class audit): tx_hash_index covers
-			// genesis→tip (20.78B rows from ledger 3, verified on r1 —
-			// the old "pre-backfill history" caveat is stale; that
-			// backfill completed). Falling through to the scan here
-			// turned every unknown/garbage hash into an unauthenticated
-			// bloom probe over the full 10.5B-row transactions table —
-			// the same non-sort-key filter disease as the account-
-			// history arms, plus a free DoS lever.
+			// The INDEX had no row — authoritative absence, because the
+			// coverage marker above vouches that the index spans
+			// genesis→tip. Falling through to the scan here would turn
+			// every unknown/garbage hash into an unauthenticated bloom
+			// probe over the full transactions table (a free DoS lever).
 			return TxSummary{}, false, nil
 		}
 		// Index-path error, or an index/base INCONSISTENCY (index row
@@ -1813,6 +1806,14 @@ func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (Tx
 func (r *ExplorerReader) txHashIndexAvailable(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.txIndexProbe,
 		`SELECT ledger_seq FROM stellar.tx_hash_index LIMIT 1`, true)
+}
+
+// txHashIndexCovered reports whether ch-txindex-backfill has recorded a
+// completed genesis→tip run. A non-empty index without it would turn every
+// historical hash into a wrong 404, so the scan path answers until it exists.
+func (r *ExplorerReader) txHashIndexCovered(ctx context.Context) bool {
+	return r.probeSchema(ctx, &r.txCoverageProbe,
+		`SELECT covered_to FROM stellar.tx_hash_index_coverage LIMIT 1`, true)
 }
 
 // contractLedgersIndexAvailable reports whether
@@ -2375,6 +2376,12 @@ type ContractActivityRow struct {
 	DataDisplay   string
 }
 
+// contractEventsCursorClause is the keyset predicate both contract-events
+// shapes share. contract_events is ORDER BY (ledger_seq, …) and KeyCondition
+// does not prune on a tuple comparison, so the redundant `ledger_seq <= ?`
+// is what stops a deep page reading every granule above the cursor.
+const contractEventsCursorClause = ` AND ledger_seq <= ? AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)`
+
 // contractEventsRecentQuery builds ContractEventsRecent's fast-path SQL.
 //
 // It deliberately carries neither FINAL nor `LIMIT 1 BY`: FINAL defeats the
@@ -2400,7 +2407,7 @@ func contractEventsRecentQuery(hasCursor, hasLedgerSet bool) string {
 	if hasCursor {
 		// Full row-identity tuple — see ContractEventsCursor: the 3-part
 		// (ledger_seq, op_index, event_index) predicate skipped tied rows.
-		q += ` AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)`
+		q += contractEventsCursorClause
 	}
 	if hasLedgerSet {
 		// Active-ledger bound from contract_active_ledgers — prunes the
@@ -2422,7 +2429,7 @@ func contractEventsRecentDedupQuery(hasCursor, hasLedgerSet bool) string {
 			topics_xdr, data_xdr
 		FROM stellar.contract_events WHERE contract_id = ?`
 	if hasCursor {
-		q += ` AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)`
+		q += contractEventsCursorClause
 	}
 	if hasLedgerSet {
 		q += ` AND ledger_seq IN (?)`
@@ -2500,7 +2507,7 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 func (r *ExplorerReader) contractEventsScan(ctx context.Context, q, contractID string, keep, fetch int, cur ContractEventsCursor, ledgers []uint32) ([]ContractActivityRow, int, error) {
 	args := []any{contractID}
 	if cur.IsSet() {
-		args = append(args, cur.Ledger, cur.TxHash, cur.OpIndex, cur.EventIndex)
+		args = append(args, cur.Ledger, cur.Ledger, cur.TxHash, cur.OpIndex, cur.EventIndex)
 	}
 	if ledgers != nil {
 		args = append(args, ledgers)

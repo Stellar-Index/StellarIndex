@@ -54,8 +54,6 @@ JINJA_EXPR = re.compile(r"\{\{(.*?)\}\}", re.S)
 # predates this lint. They are the same class as backup-restore-7 and are
 # tracked for burn-down; new entries are not accepted.
 GRANDFATHERED = {
-    "archival-node/tasks/09-minio.yml::Template MinIO environment file":
-        "minio_root_password — pre-lint; needs diff: false",
     "haproxy/tasks/04-keepalived-configure.yml::render /etc/keepalived/keepalived.conf":
         "keepalived_vrrp_password — pre-lint; needs diff: false",
     "patroni/tasks/03-etcd-configure.yml::render /etc/default/etcd":

@@ -342,11 +342,11 @@ sees why it was rejected.
 
 **Reclaim:** ~50-150 GB est. (trades is already 1.42x compressed; tighter compression marginally improves it.)
 
-**Touchpoints affected:** Job 1000 was disabled to stop decompress-on-write storms during heavy backfills (`feedback_reenable_trades_compression`). Re-enabling it after #38 finishes is the documented next-step regardless of any other move.
+**Touchpoints affected:** Job 1000 was disabled to stop decompress-on-write storms during heavy backfills (`feedback_reenable_trades_compression`). Re-enabling it after task #38 finishes is the documented next-step regardless of any other move.
 
 **Risk:** Slow CPU burn during re-compression cycle; no data risk.
 
-**Decision status:** Will happen anyway when #38 finishes. Independent of the strategic trim question.
+**Decision status:** Will happen anyway when task #38 finishes. Independent of the strategic trim question.
 
 ### Move G: Decode-then-trim — ship classic-supply observers + run them + then Move D
 
@@ -375,7 +375,7 @@ gone from local storage and are read from `aws-public-blockchain`.
 | Combo | Reclaim | Sequence | External dep added? | Notes |
 |---|---|---|---|---|
 | **A alone** | ~7.1 TB | One operation, ~minutes (snapshot) + 7 days observation | No (only contingent SDF DR) | Pool 93% → ~43%. Multi-year runway. Best operator-stance fit. |
-| **A + F** | ~7.2-7.3 TB | A first, F after #38 ends | No | F happens regardless once backfills end. |
+| **A + F** | ~7.2-7.3 TB | A first, F after task #38 ends | No | F happens regardless once backfills end. |
 | **A + D** | ~10-10.5 TB | A first, D over weeks | **Yes — aws-public-blockchain for cold reads** | Skip unless A+F isn't enough. |
 | **G alone** | ~4 TB | Weeks of observer work then D | No | Self-sufficient + mission-aligned. Slow. |
 | **A + G** | ~11 TB | A this week, G over months | No | Best long-term composition. |
@@ -409,7 +409,7 @@ operator's stated constraints:
 | Reversibility window | ✓ 7 days (ZFS snapshot) | partial (re-mirror slow) | low | low (pool destroy) |
 | Operational risk | low (rm + observe) | medium | high | medium-high |
 
-**After Move A lands, the gated tasks (#5, #14, #30, #35) become safe to run.** Move F happens opportunistically when #38 finishes. Move G is the long-term self-sufficiency play that can proceed without urgency in parallel.
+**After Move A lands, the gated tasks (#5, #14, #30, #35) become safe to run.** Move F happens opportunistically when task #38 finishes. Move G is the long-term self-sufficiency play that can proceed without urgency in parallel.
 
 ---
 

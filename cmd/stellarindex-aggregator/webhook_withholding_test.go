@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -28,6 +29,15 @@ import (
 type recordingPublisher struct {
 	events   []platform.WebhookEventType
 	payloads [][]byte
+	keys     []string
+	err      error
+}
+
+func (p *recordingPublisher) PublishOnce(_ context.Context, ev platform.WebhookEventType, key string, payload []byte) (customerwebhook.PublishResult, error) {
+	p.keys = append(p.keys, key)
+	p.events = append(p.events, ev)
+	p.payloads = append(p.payloads, payload)
+	return customerwebhook.PublishResult{}, p.err
 }
 
 func (p *recordingPublisher) Publish(_ context.Context, ev platform.WebhookEventType, payload []byte) (customerwebhook.PublishResult, error) {
@@ -131,11 +141,40 @@ func TestDivergenceFiringHook_WithholdsFlaggedIssuer(t *testing.T) {
 			}
 			pub := &recordingPublisher{}
 			hook := divergenceFiringHook(discardLogger(), pub, flaggedWithholding())
-			hook(context.Background(), pair, divergence.CachedResult{OurPrice: 0.42, Median: 0.3, ComputedAt: time.Now()})
+			if err := hook(context.Background(), pair, divergence.CachedResult{OurPrice: 0.42, Median: 0.3, ComputedAt: time.Now()}); err != nil {
+				t.Fatalf("withheld hook returned %v, want nil", err)
+			}
 			if len(pub.payloads) != 0 {
 				t.Fatalf("divergence.firing delivered %s for a directory-flagged issuer's market", pub.payloads[0])
 			}
 		})
+	}
+}
+
+// A lost fan-out must surface as an error so the divergence worker
+// releases its edge latch and retries the episode.
+func TestDivergenceFiringHook_FanoutFailureIsReturned(t *testing.T) {
+	_, native := webhookGatePairs(t)
+	usd, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := canonical.NewPair(native, usd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boom := errors.New("enqueue failed")
+	pub := &recordingPublisher{err: boom}
+	hook := divergenceFiringHook(discardLogger(), pub, flaggedWithholding())
+	since := time.Unix(1700000000, 0)
+	cached := divergence.CachedResult{OurPrice: 0.42, Median: 0.3, ComputedAt: since.Add(time.Minute), FiringSince: since}
+	if got := hook(context.Background(), pair, cached); !errors.Is(got, boom) {
+		t.Fatalf("hook err = %v, want %v", got, boom)
+	}
+	cached.ComputedAt = since.Add(2 * time.Minute)
+	_ = hook(context.Background(), pair, cached)
+	if len(pub.keys) != 2 || pub.keys[0] != pub.keys[1] {
+		t.Fatalf("event keys = %v, want one stable key per episode", pub.keys)
 	}
 }
 
@@ -151,7 +190,9 @@ func TestDivergenceFiringHook_UnflaggedPairStillDelivers(t *testing.T) {
 	}
 	pub := &recordingPublisher{}
 	hook := divergenceFiringHook(discardLogger(), pub, flaggedWithholding())
-	hook(context.Background(), pair, divergence.CachedResult{OurPrice: 0.42, Median: 0.3, ComputedAt: time.Now()})
+	if err := hook(context.Background(), pair, divergence.CachedResult{OurPrice: 0.42, Median: 0.3, ComputedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
 	if len(pub.payloads) != 1 || pub.events[0] != platform.WebhookEventDivergenceFiring {
 		t.Fatalf("got %d deliveries (%v), want one divergence.firing", len(pub.payloads), pub.events)
 	}
@@ -216,7 +257,7 @@ func webhookPublishAndGate(body *ast.BlockStmt) (publishes, gated bool) {
 		switch sel.Sel.Name {
 		case "PriceWithheld", "PriceWithholding", "PriceWithholdingAt":
 			gated = true
-		case "Publish":
+		case "Publish", "PublishOnce":
 			for _, arg := range call.Args {
 				if a, ok := arg.(*ast.SelectorExpr); ok && strings.HasPrefix(a.Sel.Name, "WebhookEvent") {
 					publishes = true

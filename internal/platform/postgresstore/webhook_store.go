@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,11 +23,23 @@ import (
 // incident callbacks. The delivery worker that drains the queue
 // is a follow-up; this commit lands the store half so the wire is
 // end-to-end-ready.
-type WebhookStore struct{ s *Store }
+type WebhookStore struct {
+	s      *Store
+	sealer *platform.WebhookKeySealer
+}
 
-// NewWebhookStore returns the Postgres-backed implementation.
+// NewWebhookStore returns the Postgres-backed implementation without a
+// sealer: new signing keys are stored raw and a sealed key cannot be
+// read back. The list reads, which never carry a key, are unaffected.
 func NewWebhookStore(s *Store) *WebhookStore {
 	return &WebhookStore{s: s}
+}
+
+// NewSealingWebhookStore is [NewWebhookStore] that seals signing keys on
+// write and unseals them in [WebhookStore.GetWebhook]. A nil sealer is
+// the same as NewWebhookStore.
+func NewSealingWebhookStore(s *Store, sealer *platform.WebhookKeySealer) *WebhookStore {
+	return &WebhookStore{s: s, sealer: sealer}
 }
 
 // Compile-time interface conformance.
@@ -98,16 +111,22 @@ func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWeb
 		     WHERE account_id = $1
 		)
 		INSERT INTO customer_webhooks
-		    (account_id, name, url, secret_hash, events, enabled)
-		SELECT $1, $2, $3, $4, $5, $6
+		    (id, account_id, name, url, secret_hash, signing_key_sealed, events, enabled)
+		SELECT $8, $1, $2, $3, $4, $9, $5, $6
 		  FROM current_count
 		 WHERE current_count.n < $7
 		RETURNING id, created_at, updated_at
 	`
+	// The id is minted here because the sealed key is bound to it.
+	id := uuid.New()
+	var raw, sealed any = w.SigningKey, nil
+	if c.sealer != nil {
+		raw, sealed = nil, c.sealer.Seal(id, w.SigningKey)
+	}
 	events := w.Events
 	row := tx.QueryRowContext(ctx, q,
-		w.AccountID, w.Name, w.URL, w.SecretHash,
-		events, w.Enabled, maxPerAccount,
+		w.AccountID, w.Name, w.URL, raw,
+		events, w.Enabled, maxPerAccount, id, sealed,
 	)
 	if err := row.Scan(&w.ID, &w.CreatedAt, &w.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -125,8 +144,8 @@ func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWeb
 // registered, ordered by CreatedAt desc.
 func (c *WebhookStore) ListWebhooksForAccount(ctx context.Context, accountID uuid.UUID) ([]platform.CustomerWebhook, error) {
 	const q = `
-		SELECT id, account_id, name, url, secret_hash, events, enabled,
-		       created_at, updated_at
+		SELECT id, account_id, name, url, events, enabled,
+		       created_at, updated_at, previous_secret_expires_at
 		  FROM customer_webhooks
 		 WHERE account_id = $1
 		 ORDER BY created_at DESC
@@ -167,8 +186,8 @@ func (c *WebhookStore) ListWebhooksForAccount(ctx context.Context, accountID uui
 // side's "active authenticates, everything else does not".
 func (c *WebhookStore) ListWebhooksSubscribedTo(ctx context.Context, eventType platform.WebhookEventType) ([]platform.CustomerWebhook, error) {
 	const q = `
-		SELECT id, account_id, name, url, secret_hash, events, enabled,
-		       created_at, updated_at
+		SELECT id, account_id, name, url, events, enabled,
+		       created_at, updated_at, previous_secret_expires_at
 		  FROM customer_webhooks
 		 WHERE enabled = TRUE
 		   AND $1 = ANY(events)
@@ -196,24 +215,140 @@ func (c *WebhookStore) ListWebhooksSubscribedTo(ctx context.Context, eventType p
 	return out, nil
 }
 
-// GetWebhook returns one row by ID. ErrNotFound when absent.
+// GetWebhook returns one row by ID with its signing key unsealed.
+// ErrNotFound when absent. When the key is sealed and this store has no
+// sealer, or the sealed bytes do not open, it returns the row without
+// SigningKey and an error wrapping [platform.ErrWebhookKeyUnsealable].
 func (c *WebhookStore) GetWebhook(ctx context.Context, id uuid.UUID) (platform.CustomerWebhook, error) {
 	const q = `
-		SELECT id, account_id, name, url, secret_hash, events, enabled,
-		       created_at, updated_at
+		SELECT id, account_id, name, url, events, enabled,
+		       created_at, updated_at, previous_secret_expires_at,
+		       secret_hash, signing_key_sealed,
+		       previous_secret, previous_signing_key_sealed
 		  FROM customer_webhooks
 		 WHERE id = $1
 	`
+	var raw, sealed, prevRaw, prevSealed []byte
 	row := c.s.db.QueryRowContext(ctx, q, id)
-	w, err := scanWebhookRow(row)
+	w, err := scanWebhookRow(row, &raw, &sealed, &prevRaw, &prevSealed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return platform.CustomerWebhook{}, platform.ErrNotFound
 	}
-	return w, err
+	if err != nil {
+		return platform.CustomerWebhook{}, err
+	}
+	if w.SigningKey, err = c.openSigningKey(w.ID, raw, sealed); err != nil {
+		return w, fmt.Errorf("postgresstore: GetWebhook: %w", err)
+	}
+	// An expired previous key is never opened, and one that fails to open
+	// is dropped: it must not take the current key down with it.
+	if time.Now().Before(w.PreviousSecretExpiresAt) {
+		if w.PreviousSigningKey, err = c.openSigningKey(w.ID, prevRaw, prevSealed); err != nil {
+			slog.Warn("webhook previous signing key unopenable, dropped",
+				"webhook_id", w.ID, "error", err)
+			w.PreviousSigningKey = nil
+		}
+	}
+	return w, nil
+}
+
+func (c *WebhookStore) openSigningKey(id uuid.UUID, raw, sealed []byte) ([]byte, error) {
+	if sealed == nil {
+		return raw, nil
+	}
+	if c.sealer == nil {
+		return nil, fmt.Errorf("webhook %s: key is sealed: %w", id, platform.ErrWebhookSealKeyMissing)
+	}
+	return c.sealer.Open(id, sealed)
+}
+
+// SealLegacySigningKeys seals every signing key still stored raw, the
+// current and the previous (rotation) key alike, and clears the raw copy,
+// returning how many keys it sealed. Each key is a compare-and-swap on
+// its raw value, so concurrent runs, a racing rotation and a racing
+// delete are safe.
+func (c *WebhookStore) SealLegacySigningKeys(ctx context.Context) (int, error) {
+	if c.sealer == nil {
+		return 0, errors.New("postgresstore: SealLegacySigningKeys: no seal key configured")
+	}
+	todo, err := c.rawSigningKeys(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("postgresstore: SealLegacySigningKeys: %w", err)
+	}
+	sealed := 0
+	for _, l := range todo {
+		if l.raw != nil {
+			n, err := c.sealRawKey(ctx, `
+				UPDATE customer_webhooks
+				   SET signing_key_sealed = $2, secret_hash = NULL
+				 WHERE id = $1 AND signing_key_sealed IS NULL AND secret_hash = $3`, l.id, l.raw)
+			if err != nil {
+				return sealed, err
+			}
+			sealed += n
+		}
+		if l.previous != nil {
+			n, err := c.sealRawKey(ctx, `
+				UPDATE customer_webhooks
+				   SET previous_signing_key_sealed = $2, previous_secret = NULL
+				 WHERE id = $1 AND previous_signing_key_sealed IS NULL AND previous_secret = $3`, l.id, l.previous)
+			if err != nil {
+				return sealed, err
+			}
+			sealed += n
+		}
+	}
+	return sealed, nil
+}
+
+// sealRawKey runs one compare-and-swap UPDATE taking ($1 id, $2 sealed,
+// $3 raw) and returns the rows it changed.
+func (c *WebhookStore) sealRawKey(ctx context.Context, q string, id uuid.UUID, raw []byte) (int, error) {
+	res, err := c.s.db.ExecContext(ctx, q, id, c.sealer.Seal(id, raw), raw)
+	if err != nil {
+		return 0, fmt.Errorf("postgresstore: SealLegacySigningKeys %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("postgresstore: SealLegacySigningKeys %s rows affected: %w", id, err)
+	}
+	return int(n), nil
+}
+
+type rawSigningKey struct {
+	id       uuid.UUID
+	raw      []byte
+	previous []byte
+}
+
+// rawSigningKeys reads every webhook holding a current or previous key
+// raw. The rows are drained before any UPDATE so the sweep holds one
+// connection at a time.
+func (c *WebhookStore) rawSigningKeys(ctx context.Context) ([]rawSigningKey, error) {
+	rows, err := c.s.db.QueryContext(ctx, `
+		SELECT id,
+		       CASE WHEN signing_key_sealed IS NULL THEN secret_hash END,
+		       CASE WHEN previous_signing_key_sealed IS NULL THEN previous_secret END
+		  FROM customer_webhooks
+		 WHERE (signing_key_sealed IS NULL AND secret_hash IS NOT NULL)
+		    OR (previous_signing_key_sealed IS NULL AND previous_secret IS NOT NULL)`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []rawSigningKey
+	for rows.Next() {
+		var k rawSigningKey
+		if err := rows.Scan(&k.id, &k.raw, &k.previous); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
 }
 
 // UpdateWebhook persists name / url / events / enabled changes.
-// SecretHash + AccountID are immutable post-create.
+// SigningKey + AccountID are immutable post-create.
 func (c *WebhookStore) UpdateWebhook(ctx context.Context, w platform.CustomerWebhook) error {
 	if w.ID == uuid.Nil {
 		return errors.New("postgresstore: UpdateWebhook: ID is empty")
@@ -600,18 +735,24 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanWebhookRow(s rowScanner) (platform.CustomerWebhook, error) {
+// scanWebhookRow scans the key-free webhook columns, then any extra
+// trailing columns into extra.
+func scanWebhookRow(s rowScanner, extra ...any) (platform.CustomerWebhook, error) {
 	var (
-		w      platform.CustomerWebhook
-		events []string
+		w              platform.CustomerWebhook
+		events         []string
+		previousExpiry sql.NullTime
 	)
-	if err := s.Scan(
-		&w.ID, &w.AccountID, &w.Name, &w.URL, &w.SecretHash,
+	dest := append([]any{
+		&w.ID, &w.AccountID, &w.Name, &w.URL,
 		pgarray.Strings(&events), &w.Enabled, &w.CreatedAt, &w.UpdatedAt,
-	); err != nil {
+		&previousExpiry,
+	}, extra...)
+	if err := s.Scan(dest...); err != nil {
 		return platform.CustomerWebhook{}, fmt.Errorf("postgresstore: scan webhook: %w", err)
 	}
 	w.Events = events
+	w.PreviousSecretExpiresAt = previousExpiry.Time
 	return w, nil
 }
 
@@ -644,35 +785,67 @@ func scanDeliveryRow(s rowScanner) (platform.WebhookDelivery, error) {
 
 // ─── Dashboard-flow surfaces (extends EnqueueDelivery/MarkDelivered) ─────
 
-// RotateWebhookSecret replaces the signing secret. Returns the new
-// plaintext.
+// RotateWebhookSecret makes newSecret the signing key in place and moves
+// the outgoing key into the previous slot, under a row lock. The row is
+// never deleted, so its queued deliveries and delivery log survive.
 //
-// At-rest model: the bytes ARE persisted as the canonical
-// `customer_webhooks.secret_hash` bytea — the delivery worker
-// reads them back to sign future requests, identical to the
-// create path. The field name is a historical misnomer
-// (originally promised hash-only persistence, the implementation
-// always stored the live HMAC key); see
-// [platform.CustomerWebhook] for the full at-rest discussion
-// including the F-1244 (codex audit-2026-05-13) reconciliation.
-//
-// Customer-facing visibility: the plaintext is returned by this
-// call exactly once and never served back through any
-// subsequent read. That one-time-visibility property is what
-// "shown once" referred to in the prior docstring; it is NOT
-// the same as "never persisted to disk", and the prior
-// conflation of the two was the gap F-1244 closed.
-//
-// Stub: today returns "" + a not-implemented error. Customers
-// rotate by deleting + recreating the webhook (which already
-// works via the create path), so the in-place rotation surface
-// isn't on the critical path. The interface seam stays here so
-// the v2 dashboard can plug in-place rotation without
-// re-shaping the store boundary.
-func (c *WebhookStore) RotateWebhookSecret(ctx context.Context, id uuid.UUID) (string, error) {
-	_ = ctx
-	_ = id
-	return "", errors.New("postgresstore: RotateWebhookSecret not yet implemented (dashboard rotates by delete + recreate today; the v2 in-place path lands when the dashboard CRUD UI ships it)")
+// Both keys are stored the way create stores one: with a sealer, sealed
+// and with both raw columns cleared (an outgoing key still held raw is
+// sealed on the way); without one, raw. A store without a sealer refuses
+// a sealed row rather than writing a pair it could not read back.
+func (c *WebhookStore) RotateWebhookSecret(ctx context.Context, id uuid.UUID, newSecret []byte, previousExpiresAt time.Time) error {
+	if len(newSecret) == 0 {
+		return errors.New("postgresstore: RotateWebhookSecret: newSecret is empty")
+	}
+	if previousExpiresAt.IsZero() {
+		return errors.New("postgresstore: RotateWebhookSecret: previousExpiresAt is zero")
+	}
+	tx, err := c.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("postgresstore: RotateWebhookSecret %s: begin: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var raw, sealed []byte
+	err = tx.QueryRowContext(ctx, `
+		SELECT secret_hash, signing_key_sealed
+		  FROM customer_webhooks
+		 WHERE id = $1
+		   FOR UPDATE`, id).Scan(&raw, &sealed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return platform.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("postgresstore: RotateWebhookSecret %s: %w", id, err)
+	}
+
+	var curRaw, curSealed, prevRaw, prevSealed any
+	switch {
+	case c.sealer != nil && sealed != nil:
+		curSealed, prevSealed = c.sealer.Seal(id, newSecret), sealed
+	case c.sealer != nil:
+		curSealed, prevSealed = c.sealer.Seal(id, newSecret), c.sealer.Seal(id, raw)
+	case sealed != nil:
+		return fmt.Errorf("postgresstore: RotateWebhookSecret %s: key is sealed: %w", id, platform.ErrWebhookSealKeyMissing)
+	default:
+		curRaw, prevRaw = newSecret, raw
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE customer_webhooks
+		   SET secret_hash                 = $2,
+		       signing_key_sealed          = $3,
+		       previous_secret             = $4,
+		       previous_signing_key_sealed = $5,
+		       previous_secret_expires_at  = $6,
+		       updated_at                  = now()
+		 WHERE id = $1`,
+		id, curRaw, curSealed, prevRaw, prevSealed, previousExpiresAt); err != nil {
+		return fmt.Errorf("postgresstore: RotateWebhookSecret %s: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("postgresstore: RotateWebhookSecret %s: commit: %w", id, err)
+	}
+	return nil
 }
 
 // AppendDelivery records one delivery attempt. Returns the

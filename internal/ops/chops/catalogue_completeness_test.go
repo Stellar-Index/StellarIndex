@@ -190,10 +190,10 @@ var projRoutes = []projRoute{
 	{typeName: "comet.LiquidityEvent", table: "comet_liquidity", kind: "comet.liquidity", disp: reconciledByKind},
 
 	// ── sushiswap_v3 ──
-	// One kind, one table. The position / lifecycle events (mint, burn,
-	// collect, init, upgraded, migrated) are gated and recognized but emit no
-	// consumer.Event at all, so they have no persist arm and need no route.
+	// The pool lifecycle events (init, upgraded, migrated) are gated and
+	// recognized but emit no consumer.Event, so they need no route.
 	{typeName: "sushiswap_v3.TradeEvent", table: "trades", kind: "sushiswap_v3.trade", disp: reconciledByKind},
+	{typeName: "sushiswap_v3.PositionEvent", table: "sushiswap_v3_position_events", kind: "sushiswap_v3.position", disp: reconciledByKind},
 
 	// ── upshift ──
 	// One consumer.Event carrying all four decoded kinds (the
@@ -535,8 +535,8 @@ func TestCatalogue_DeclaredKindsMatchDecoderOutput(t *testing.T) {
 		// DFeesEvent.EventKind().
 		{defindex.DFeesEvent{}, "defindex.vault.dfees", "defindex_fees"},
 		{defindex.AdminEvent{}, "defindex.vault.admin", "defindex_admin_events"},
-		// sushiswap_v3: the source's only emitted kind.
 		{sushiswap_v3.TradeEvent{}, "sushiswap_v3.trade", "trades"},
+		{sushiswap_v3.PositionEvent{}, "sushiswap_v3.position", "sushiswap_v3_position_events"},
 		// upshift: one kind covers deposit / withdraw / share transfer /
 		// deployed-assets change — the row's event_kind column
 		// discriminates them, the wire EventKind does not.

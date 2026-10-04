@@ -805,7 +805,9 @@ func accountMovementsQuery(filter AccountMovementFilter, hasCursor bool) string 
 		sb.WriteString(" AND ledger <= ?")
 	}
 	if hasCursor {
-		sb.WriteString(" AND (ledger, tx_hash, op_index, leg_index) < (?, ?, ?, ?)")
+		// The leading `ledger <= ?` is implied by the tuple but is what lets the
+		// primary index cut the range at the cursor; a tuple alone is not pruned.
+		sb.WriteString(" AND ledger <= ? AND (ledger, tx_hash, op_index, leg_index) < (?, ?, ?, ?)")
 	}
 	// LIMIT 1 BY = the DAT-10 read-time dedup the sibling account readers
 	// (AccountTransactions / AccountOperations) already carry: an un-merged
@@ -863,7 +865,7 @@ func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, l
 		args = append(args, filter.MaxLedger)
 	}
 	if cur.IsSet() {
-		args = append(args, cur.Ledger, cur.TxHash, cur.OpIndex, cur.LegIndex)
+		args = append(args, cur.Ledger, cur.Ledger, cur.TxHash, cur.OpIndex, cur.LegIndex)
 	}
 	args = append(args, limit)
 

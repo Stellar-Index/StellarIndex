@@ -122,3 +122,27 @@ func TestIdempotency_FailedOriginalReleasesClaim(t *testing.T) {
 		}
 	}
 }
+
+// A key reused on a different route must run that route's handler, not
+// replay the first route's response (rotate webhook X, then Y, same key).
+func TestIdempotency_SameKeyOnDifferentPathRunsHandler(t *testing.T) {
+	var runs atomic.Int32
+	h := Idempotency(NewIdempotencyStore(time.Minute), func(*http.Request) string { return "acct-1" })(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			runs.Add(1)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(r.URL.Path))
+		}))
+	for _, path := range []string{"/v1/dashboard/webhooks/x/rotate-secret", "/v1/dashboard/webhooks/y/rotate-secret"} {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.Header.Set(IdempotencyKeyHeader, "shared-key")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if got := w.Body.String(); got != path {
+			t.Fatalf("POST %s: body = %q (replayed another route's response)", path, got)
+		}
+	}
+	if n := runs.Load(); n != 2 {
+		t.Fatalf("handler runs = %d, want 2", n)
+	}
+}

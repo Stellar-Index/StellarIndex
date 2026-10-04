@@ -92,7 +92,11 @@ groups:
         # arm aggregates without `by`, so there is no label set to carry.
         # "unroutable" (unpriced, both classic legs from one issuer) has no
         # independent market to price it, so a wash burst on one issuer's
-        # own pairs must not read as a coverage regression.
+        # own pairs must not read as a coverage regression. "thin" (unpriced
+        # because every candidate rate came from a market below the #2101
+        # substance floor) is a refused valuation, not a missing one, and is
+        # excluded the same way; its volume stays visible as the `thin`
+        # series of the same counter.
         expr: |
           (
             (
@@ -100,7 +104,7 @@ groups:
               or vector(0)
             )
             /
-            sum (increase(stellarindex_trade_inserts_total{source=~"sdex|soroswap|aquarius|phoenix|comet",usd_volume_populated!="unroutable"}[6h]))
+            sum (increase(stellarindex_trade_inserts_total{source=~"sdex|soroswap|aquarius|phoenix|comet",usd_volume_populated!~"unroutable|thin"}[6h]))
           ) < 0.995
         for: 1h
         labels:
@@ -134,7 +138,9 @@ groups:
 
             A residual of obscure tokenised assets (gold/equity wrappers) and pure
             SEP-41/SEP-41 pairs is EXPECTED and is not a regression. Unpriced trades
-            whose two classic legs share one issuer are labelled unroutable and are
-            outside this ratio.
+            whose two classic legs share one issuer are labelled unroutable, and trades
+            whose only candidate rate came from a market below the substance floor are
+            labelled thin; both are outside this ratio. Watch the thin series
+            (usd_volume_populated="thin") for a market that should have cleared the floor.
 
             Plan + measurements: docs/operations/usd-volume-coverage-plan.md
