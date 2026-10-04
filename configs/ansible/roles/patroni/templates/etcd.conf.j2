@@ -1,21 +1,34 @@
 {# Render-time config — managed by ansible (patroni role). #}
 {# `etcd` reads this from /etc/default/etcd via the systemd unit's #}
 {# EnvironmentFile= directive. #}
+{% set _scheme = 'https' if etcd_tls_enabled else 'http' %}
 ETCD_NAME="{{ inventory_hostname }}"
 ETCD_DATA_DIR="{{ etcd_data_dir }}"
 
-ETCD_LISTEN_PEER_URLS="http://{{ ansible_host }}:{{ etcd_peer_port }}"
-ETCD_LISTEN_CLIENT_URLS="http://{{ ansible_host }}:{{ etcd_client_port }},http://127.0.0.1:{{ etcd_client_port }}"
+ETCD_LISTEN_PEER_URLS="{{ _scheme }}://{{ ansible_host }}:{{ etcd_peer_port }}"
+ETCD_LISTEN_CLIENT_URLS="{{ _scheme }}://{{ ansible_host }}:{{ etcd_client_port }},{{ _scheme }}://127.0.0.1:{{ etcd_client_port }}"
 
-ETCD_INITIAL_ADVERTISE_PEER_URLS="http://{{ ansible_host }}:{{ etcd_peer_port }}"
-ETCD_ADVERTISE_CLIENT_URLS="http://{{ ansible_host }}:{{ etcd_client_port }}"
+ETCD_INITIAL_ADVERTISE_PEER_URLS="{{ _scheme }}://{{ ansible_host }}:{{ etcd_peer_port }}"
+ETCD_ADVERTISE_CLIENT_URLS="{{ _scheme }}://{{ ansible_host }}:{{ etcd_client_port }}"
 
 ETCD_INITIAL_CLUSTER_TOKEN="{{ etcd_cluster_token }}"
-ETCD_INITIAL_CLUSTER="{% for host in groups['postgres_cluster'] %}{{ host }}=http://{{ hostvars[host].ansible_host }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}"
+ETCD_INITIAL_CLUSTER="{% for host in groups['postgres_cluster'] %}{{ host }}={{ _scheme }}://{{ hostvars[host].ansible_host }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}"
 ETCD_INITIAL_CLUSTER_STATE="new"
 
 ETCD_HEARTBEAT_INTERVAL="{{ etcd_heartbeat_interval }}"
 ETCD_ELECTION_TIMEOUT="{{ etcd_election_timeout }}"
+{% if etcd_tls_enabled %}
+
+# TLS with mutual client-cert auth on both the client and peer ports.
+ETCD_CERT_FILE="{{ etcd_tls_dir }}/server.pem"
+ETCD_KEY_FILE="{{ etcd_tls_dir }}/server-key.pem"
+ETCD_TRUSTED_CA_FILE="{{ etcd_tls_dir }}/ca.pem"
+ETCD_CLIENT_CERT_AUTH="true"
+ETCD_PEER_CERT_FILE="{{ etcd_tls_dir }}/server.pem"
+ETCD_PEER_KEY_FILE="{{ etcd_tls_dir }}/server-key.pem"
+ETCD_PEER_TRUSTED_CA_FILE="{{ etcd_tls_dir }}/ca.pem"
+ETCD_PEER_CLIENT_CERT_AUTH="true"
+{% endif %}
 
 # Logging
 ETCD_LOGGER="zap"

@@ -53,7 +53,7 @@ import (
 // SQL) — it is READ-HEAVY and MUST run under run-heavy-job.sh on r1.
 //
 // -full-history (incident 2026-07-06 PHO/BLND VERDICT follow-up, ROADMAP
-// #14). The default source, stellar.ledger_entries_current, is fed by a
+// ROADMAP #14). The default source, stellar.ledger_entries_current, is fed by a
 // ClickHouse materialized view that only processes rows inserted AFTER
 // the MV was created (~ledger 62,000,000) — a Balance entry dormant
 // since before that floor is invisible to it even though it has always
@@ -213,8 +213,9 @@ func (r sacSeedRun) seed(ctx context.Context, progress *seedProgress) error {
 			IsRemoval:  seed.IsRemoval,
 			// The seed is the authoritative reconstructed FINAL state for its
 			// ledger (latest lake entry), so it sits at the top of the
-			// intra-ledger order — a live per-ledger change can never
-			// overwrite it, a re-seed stays corrective (audit-2026-07-16 C2-6).
+			// intra-ledger order — unbeatable within its walk_version (a
+			// stamped re-derive under a higher version replaces it), so a live
+			// per-ledger change can't overwrite it and a re-seed stays corrective.
 			IntraLedgerSeq: timescale.SeedIntraLedgerSeq,
 		})
 	})

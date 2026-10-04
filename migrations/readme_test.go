@@ -37,6 +37,28 @@ func TestReadmeStripeDeadLetterClaimNotesTombstone(t *testing.T) {
 	}
 }
 
+// TestReadmeMarksUnwiredPlatformTables keeps the 0026/0027 rows from
+// describing tables with no writer as live capabilities.
+func TestReadmeMarksUnwiredPlatformTables(t *testing.T) {
+	raw := readReadme(t)
+
+	row26 := extractRow(t, raw, "0026")
+	if !strings.Contains(row26, "`sdex_offer_events` (**unwired**") {
+		t.Error("0026's row must mark sdex_offer_events as **unwired**")
+	}
+	row27 := extractRow(t, raw, "0027")
+	idx := strings.Index(row27, "Unwired tables")
+	if idx == -1 {
+		t.Fatal("0027's row must carry the Unwired tables note")
+	}
+	note := row27[idx:]
+	for _, name := range []string{"subscriptions", "stripe_event_log", "api_usage_events"} {
+		if !strings.Contains(note, name) {
+			t.Errorf("0027's Unwired tables note must name %s", name)
+		}
+	}
+}
+
 func extractRow(t *testing.T, raw, id string) string {
 	t.Helper()
 	marker := "| " + id + " |"

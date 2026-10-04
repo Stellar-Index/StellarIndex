@@ -15,6 +15,7 @@ import { hrefFor } from '@/lib/hrefFor';
 import type { components, paths } from '@/api/types';
 import { API_BASE_URL, timeoutSignal } from '@/api/client';
 import { CURRENT_NETWORK } from '@/lib/networks';
+import { pollWhileVisible } from '@/lib/live/visiblePoll';
 import { useStatus } from '@/api/hooks';
 import BackupsPanel from './BackupsPanel';
 import {
@@ -630,14 +631,14 @@ export default function StatusPageClient({
     for (const r of REGIONS) {
       pollRegion(r);
     }
-    const id = setInterval(() => {
+    const stop = pollWhileVisible(() => {
       for (const r of REGIONS) {
         pollRegion(r);
       }
     }, POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      stop();
     };
   }, []);
 
@@ -675,13 +676,13 @@ export default function StatusPageClient({
     // initializer above — nothing to paint here.
     runTier('hot');
     runTier('warm');
-    const hotId = setInterval(() => runTier('hot'), POLL_INTERVAL_MS);
-    const warmId = setInterval(() => runTier('warm'), WARM_PROBE_MS);
+    const stopHot = pollWhileVisible(() => runTier('hot'), POLL_INTERVAL_MS);
+    const stopWarm = pollWhileVisible(() => runTier('warm'), WARM_PROBE_MS);
 
     return () => {
       cancelled = true;
-      clearInterval(hotId);
-      clearInterval(warmId);
+      stopHot();
+      stopWarm();
     };
   }, []);
 
@@ -1004,10 +1005,10 @@ function StatusNotices() {
       }
     }
     poll();
-    const id = setInterval(poll, POLL_INTERVAL_MS);
+    const stop = pollWhileVisible(poll, POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      stop();
     };
   }, []);
 

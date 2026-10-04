@@ -287,8 +287,8 @@ func Stream(
 		case ledgerRange.Bounded() && ledgerRange.To() == ledgerRange.From():
 			// The SDK's ingest.ApplyLedgerMetadata rejects a bounded
 			// range of exactly one ledger (producer.go: `To() <=
-			// From()`) even though the SDK exports SingleLedgerRange.
-			// Walk it with our own backend loop instead — this is
+			// From()`) even though the SDK exports SingleLedgerRange
+			// (stellar/go-stellar-sdk#6018). Walk it with our own backend loop instead — this is
 			// ch-live-catchup's tip-extend case whenever the timer
 			// fires exactly one ledger behind the galexie tip.
 			obs.LedgerstreamStreamPathTotal.WithLabelValues("hot_single_ledger").Inc()

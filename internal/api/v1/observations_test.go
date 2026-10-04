@@ -396,7 +396,7 @@ func (h *observationsCallTracker) OHLCSeries(_ context.Context, _ canonical.Pair
 func TestObservations_FiatUSDQuoteReachesStorage(t *testing.T) {
 	hist := &observationsCallTracker{
 		rows: []canonical.Trade{
-			mkObservationTrade("coinbase", time.Unix(1_772_000_000, 0).UTC(), 100, 18),
+			mkObservationTrade("sdex", time.Unix(1_772_000_000, 0).UTC(), 100, 18),
 		},
 	}
 	srv := v1.New(v1.Options{History: hist})
@@ -413,8 +413,8 @@ func TestObservations_FiatUSDQuoteReachesStorage(t *testing.T) {
 	if strings.Contains(body, `"data":[]`) {
 		t.Fatalf("fiat:USD returned an empty array despite a stored observation: %s", body)
 	}
-	if !strings.Contains(body, `"source":"coinbase"`) {
-		t.Errorf("coinbase observation missing from the fiat:USD response: %s", body)
+	if !strings.Contains(body, `"source":"sdex"`) {
+		t.Errorf("sdex observation missing from the fiat:USD response: %s", body)
 	}
 }
 
@@ -486,7 +486,7 @@ func TestObservations_AliasFanIn(t *testing.T) {
 	cryptoXLM, _ := canonical.ParseAsset("crypto:XLM")
 	native, _ := canonical.ParseAsset("native")
 
-	cexTrade := mkObservationTrade("kraken", now.Add(-3*time.Second), 1, 100)
+	cexTrade := mkObservationTrade("soroswap", now.Add(-3*time.Second), 1, 100)
 	cexTrade.Pair, _ = canonical.NewPair(cryptoXLM, usdt)
 	sdexTrade := mkObservationTrade("sdex", now.Add(-1*time.Second), 1, 105)
 	sdexTrade.Pair, _ = canonical.NewPair(native, usdt)
@@ -503,7 +503,7 @@ func TestObservations_AliasFanIn(t *testing.T) {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
 	body, _ := readAll(resp)
-	for _, want := range []string{`"source":"sdex"`, `"source":"kraken"`} {
+	for _, want := range []string{`"source":"sdex"`, `"source":"soroswap"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q — alias spelling not scanned: %s", want, body)
 		}
@@ -601,5 +601,32 @@ func TestObservations_DivergenceCheckedStructurallyFalse(t *testing.T) {
 	}
 	if len(div.askedSpellings()) != 0 {
 		t.Errorf("observations consulted the divergence looker for %v; the raw surface carries no verdict by design", div.askedSpellings())
+	}
+}
+
+// TestObservations_ExcludesExchangeRows: exchange trade rows are not
+// redistributable, so a CEX row that reaches the handler (a reader that
+// ignores the storage-side filter) is dropped before the response.
+func TestObservations_ExcludesExchangeRows(t *testing.T) {
+	ts := time.Unix(1_772_000_000, 0).UTC()
+	hist := &observationsCallTracker{rows: []canonical.Trade{
+		mkObservationTrade("binance", ts, 100, 18),
+		mkObservationTrade("kraken", ts, 100, 19),
+		mkObservationTrade("sdex", ts, 100, 20),
+	}}
+	tsv := startHTTPTest(t, v1.New(v1.Options{History: hist}).Handler())
+
+	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	for _, cex := range []string{"binance", "kraken"} {
+		if strings.Contains(body, `"source":"`+cex+`"`) {
+			t.Errorf("exchange row %s served raw: %s", cex, body)
+		}
+	}
+	if !strings.Contains(body, `"source":"sdex"`) {
+		t.Errorf("on-chain row missing: %s", body)
 	}
 }

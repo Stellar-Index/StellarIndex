@@ -160,6 +160,61 @@ func TestProcessLedger_NoEvictionsEmitsNothingExtra(t *testing.T) {
 	}
 }
 
+// TestProcessLedger_UpgradesAreCountedAndLogged pins that a ledger's
+// upgrade entries are observed (counted, logged with the ledger) without
+// reaching any entry decoder.
+func TestProcessLedger_UpgradesAreCountedAndLogged(t *testing.T) {
+	env, proc := mkEntryWalkTx(t, 0x56, true, nil, []xdr.LedgerEntryChange{accountBalanceChange(1000)})
+	lcm := mkEntryWalkLedger(4245,
+		[]xdr.TransactionEnvelope{env},
+		[]xdr.TransactionResultMeta{proc})
+	ver, reserve := xdr.Uint32(30), xdr.Uint32(5000000)
+	lcm.V1.UpgradesProcessing = []xdr.UpgradeEntryMeta{
+		{Upgrade: xdr.LedgerUpgrade{Type: xdr.LedgerUpgradeTypeLedgerUpgradeVersion, NewLedgerVersion: &ver}},
+		{Upgrade: xdr.LedgerUpgrade{Type: xdr.LedgerUpgradeTypeLedgerUpgradeBaseReserve, NewBaseReserve: &reserve}},
+	}
+
+	var buf bytes.Buffer
+	spy := &entryChangeSpy{}
+	d := New()
+	d.SetLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+	d.AddEntryDecoder(spy)
+
+	if _, err := d.ProcessLedger(lcm, testPassphrase); err != nil {
+		t.Fatalf("ProcessLedger: %v", err)
+	}
+	if got := d.Stats().LedgerUpgradeEntries; got != 2 {
+		t.Errorf("Stats().LedgerUpgradeEntries = %d, want 2", got)
+	}
+	if log := buf.String(); !strings.Contains(log, "ledger=4245") || !strings.Contains(log, "LedgerUpgradeVersion") {
+		t.Errorf("want an upgrade log naming ledger 4245 and its types, got %q", log)
+	}
+	if len(spy.seen) != 1 {
+		t.Errorf("decoders saw %d changes, want only the 1 transaction change", len(spy.seen))
+	}
+}
+
+// TestProcessLedger_UpgradesCountedWithoutEntryDecoders pins that upgrade
+// observation does not depend on any entry decoder being registered.
+func TestProcessLedger_UpgradesCountedWithoutEntryDecoders(t *testing.T) {
+	env, proc := mkEntryWalkTx(t, 0x57, true, nil, []xdr.LedgerEntryChange{accountBalanceChange(1000)})
+	lcm := mkEntryWalkLedger(4246,
+		[]xdr.TransactionEnvelope{env},
+		[]xdr.TransactionResultMeta{proc})
+	ver := xdr.Uint32(30)
+	lcm.V1.UpgradesProcessing = []xdr.UpgradeEntryMeta{
+		{Upgrade: xdr.LedgerUpgrade{Type: xdr.LedgerUpgradeTypeLedgerUpgradeVersion, NewLedgerVersion: &ver}},
+	}
+
+	d := New()
+	if _, err := d.ProcessLedger(lcm, testPassphrase); err != nil {
+		t.Fatalf("ProcessLedger: %v", err)
+	}
+	if got := d.Stats().LedgerUpgradeEntries; got != 1 {
+		t.Errorf("Stats().LedgerUpgradeEntries = %d, want 1", got)
+	}
+}
+
 // failingEvictedKeys is an evicted-key source whose read fails, the shape a
 // future SDK would take if it started erroring instead of panicking.
 type failingEvictedKeys struct{}

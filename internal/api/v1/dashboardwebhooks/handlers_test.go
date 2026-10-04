@@ -123,8 +123,17 @@ func (s *fakeStore) UpdateWebhook(_ context.Context, w platform.CustomerWebhook)
 	return nil
 }
 
-func (s *fakeStore) RotateWebhookSecret(_ context.Context, _ uuid.UUID) (string, error) {
-	return "", errors.New("not implemented")
+func (s *fakeStore) RotateWebhookSecret(_ context.Context, id uuid.UUID, newSecret []byte, previousExpiresAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w, ok := s.webhooks[id]
+	if !ok {
+		return platform.ErrNotFound
+	}
+	w.PreviousSigningKey, w.PreviousSecretExpiresAt = w.SigningKey, previousExpiresAt
+	w.SigningKey = newSecret
+	s.webhooks[id] = w
+	return nil
 }
 
 func (s *fakeStore) DeleteWebhook(_ context.Context, id uuid.UUID) error {
@@ -547,7 +556,7 @@ func TestHandleUpdate_HappyPath(t *testing.T) {
 		AccountID:  sc.Account.ID,
 		Name:       "before",
 		URL:        "https://before.example/hook",
-		SecretHash: originalSecret,
+		SigningKey: originalSecret,
 		Events:     []string{"incident.sev1"},
 		Enabled:    true,
 	}
@@ -571,8 +580,8 @@ func TestHandleUpdate_HappyPath(t *testing.T) {
 	if got.Enabled {
 		t.Errorf("Enabled should be false after update")
 	}
-	if string(got.SecretHash) != string(originalSecret) {
-		t.Errorf("SecretHash mutated: got %q, want %q", got.SecretHash, originalSecret)
+	if string(got.SigningKey) != string(originalSecret) {
+		t.Errorf("SigningKey mutated: got %q, want %q", got.SigningKey, originalSecret)
 	}
 	if got.AccountID != sc.Account.ID {
 		t.Errorf("AccountID mutated: got %v, want %v", got.AccountID, sc.Account.ID)
@@ -928,5 +937,67 @@ func TestDTOs_TimestampsRenderUTC(t *testing.T) {
 				t.Errorf("DTO %s: want %s, got %s", field, want, body)
 			}
 		}
+	}
+}
+
+// unsealableStore is fakeStore whose GetWebhook behaves like the Postgres
+// store with a missing or wrong seal key: the row comes back without its
+// signing key, beside an ErrWebhookKeyUnsealable.
+type unsealableStore struct{ *fakeStore }
+
+func (s unsealableStore) GetWebhook(ctx context.Context, id uuid.UUID) (platform.CustomerWebhook, error) {
+	w, err := s.fakeStore.GetWebhook(ctx, id)
+	if err != nil {
+		return w, err
+	}
+	w.SigningKey = nil
+	return w, platform.ErrWebhookSealKeyMissing
+}
+
+// An unopenable signing key must not block the owner from editing or
+// deleting the webhook: delete + recreate is the recovery from a lost
+// seal key.
+func TestHandlers_EditAndDeleteDoNotNeedSigningKey(t *testing.T) {
+	store := newFakeStore()
+	sc := dashboardauth.SessionContext{
+		Session: platform.Session{ID: uuid.New(), UserID: uuid.New()},
+		User:    platform.User{ID: uuid.New(), Email: "owner@example.com", Role: platform.RoleOwner},
+		Account: platform.Account{ID: uuid.New(), Slug: "example", Tier: platform.TierFree, Status: platform.AccountActive},
+	}
+	sc.User.AccountID = sc.Account.ID
+	mine := uuid.New()
+	store.webhooks[mine] = platform.CustomerWebhook{
+		ID: mine, AccountID: sc.Account.ID, Name: "before",
+		URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
+	}
+	h, err := NewHandlers(Config{
+		Webhooks: unsealableStore{store},
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Now:      func() time.Time { return time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatalf("NewHandlers: %v", err)
+	}
+
+	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/webhooks/"+mine.String(), updateRequest{Name: strPtr("renamed")}, sc)
+	req.SetPathValue("id", mine.String())
+	w := httptest.NewRecorder()
+	h.HandleUpdate(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if got := store.webhooks[mine].Name; got != "renamed" {
+		t.Errorf("PATCH stored name %q, want renamed", got)
+	}
+
+	req = sessionReq(t, http.MethodDelete, "/v1/dashboard/webhooks/"+mine.String(), nil, sc)
+	req.SetPathValue("id", mine.String())
+	w = httptest.NewRecorder()
+	h.HandleDelete(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("DELETE status = %d, want 204; body=%s", w.Code, w.Body.String())
+	}
+	if _, ok := store.webhooks[mine]; ok {
+		t.Error("DELETE left the webhook in place")
 	}
 }

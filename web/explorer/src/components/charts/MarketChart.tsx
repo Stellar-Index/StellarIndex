@@ -4,7 +4,8 @@ import { useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
-import { API_BASE_URL } from '@/api/client';
+import { API_BASE_URL, timeoutSignal } from '@/api/client';
+import { useHistory, useSources, type Source } from '@/api/hooks';
 import { Button, Segmented } from '@/components/ui';
 import {
   isFrameStale,
@@ -210,6 +211,7 @@ export function MarketChart({
   defaultTimeframe = '7d',
   liveTip = false,
   volatilityBand = false,
+  sourceOverlay = false,
 }: {
   base: string;
   quote: string;
@@ -226,6 +228,8 @@ export function MarketChart({
   liveTip?: boolean;
   /** Offer a trailing high/low envelope (1h/4h/24h) over the candles. */
   volatilityBand?: boolean;
+  /** Offer a picker that layers one source's trades over the candles. */
+  sourceOverlay?: boolean;
 }) {
   const [winKey, setWinKey] = useState<Win>(defaultTimeframe);
   const win = WINDOWS.find((w) => w.key === winKey) ?? WINDOWS[1];
@@ -246,6 +250,21 @@ export function MarketChart({
       BAND_WINDOWS.find((b) => b.key === bandKey && b.sec > grainSec)) ||
     null;
 
+  const [overlaySource, setOverlaySource] = useState('');
+  const overlayTrades = useHistory(
+    overlaySource ? base : undefined,
+    quote,
+    1000,
+    { source: overlaySource, windowSec: win.spanSec },
+  );
+  const overlay = useMemo(
+    () =>
+      overlaySource && sourceOverlay
+        ? overlayPoints(overlayTrades.data ?? [])
+        : null,
+    [overlaySource, sourceOverlay, overlayTrades.data],
+  );
+
   const selectWindow = (key: Win) => {
     const next = WINDOWS.find((w) => w.key === key);
     setWinKey(key);
@@ -260,7 +279,7 @@ export function MarketChart({
     queryKey: ['/v1/ohlc', base, quote, activeGrain, limit],
     queryFn: async ({ signal }) => {
       const url = `${API_BASE_URL}/v1/ohlc?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&interval=${activeGrain}&limit=${limit}`;
-      const r = await fetch(url, { signal });
+      const r = await fetch(url, { signal: timeoutSignal(undefined, signal) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const env = (await r.json()) as { data?: { intervals?: OHLCBar[] } };
       return env.data?.intervals ?? [];
@@ -332,6 +351,13 @@ export function MarketChart({
             onChange={setBandKey}
           />
         )}
+        {sourceOverlay && (
+          <SourceOverlayPicker
+            value={overlaySource}
+            onChange={setOverlaySource}
+            failed={!!overlaySource && overlayTrades.isError}
+          />
+        )}
         <span className="text-ink-faint ml-auto font-mono tracking-wider uppercase">
           {baseLabel} / {quoteLabel}
         </span>
@@ -390,7 +416,8 @@ export function MarketChart({
             height={height}
             livePrice={livePrice}
             band={band}
-            ariaLabel={`${baseLabel}/${quoteLabel} OHLC candlestick chart with volume, ${activeGrain} candles${activeBand ? `, ${activeBand.key} high/low band` : ''}`}
+            overlay={overlay}
+            ariaLabel={`${baseLabel}/${quoteLabel} OHLC candlestick chart with volume, ${activeGrain} candles${activeBand ? `, ${activeBand.key} high/low band` : ''}${overlaySource ? `, ${overlaySource} trades overlaid` : ''}`}
           />
           {coverageNote && (
             <p className="text-ink-faint font-mono text-[11px]">
@@ -400,6 +427,66 @@ export function MarketChart({
         </>
       )}
     </div>
+  );
+}
+
+type HistoryTrade = NonNullable<ReturnType<typeof useHistory>['data']>[number];
+
+// Plots the served decimal price; rows without one (zero-amount legs) are skipped.
+export function overlayPoints(
+  rows: readonly HistoryTrade[],
+): { time: number; value: number }[] {
+  const out: { time: number; value: number }[] = [];
+  for (const r of rows) {
+    const value = Number(r.price);
+    const time = Date.parse(r.ts) / 1000;
+    if (
+      r.price &&
+      Number.isFinite(value) &&
+      value > 0 &&
+      Number.isFinite(time)
+    ) {
+      out.push({ time, value });
+    }
+  }
+  return out;
+}
+
+// /v1/history serves on-chain trades only, so CEX venues are not offered.
+export function selectableSources(sources: readonly Source[] | undefined) {
+  return (sources ?? []).filter((s) => s.selectable && s.on_chain);
+}
+
+function SourceOverlayPicker({
+  value,
+  onChange,
+  failed,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  failed: boolean;
+}) {
+  const { data } = useSources();
+  const options = selectableSources(data);
+  if (options.length === 0) return null;
+  return (
+    <label className="text-ink-muted flex items-center gap-2 font-mono">
+      Overlay trades
+      <select
+        aria-label="Overlay trades from one source"
+        className="bg-surface border-border text-ink rounded border px-2 py-1"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">None</option>
+        {options.map((s) => (
+          <option key={s.name} value={s.name}>
+            {s.name}
+          </option>
+        ))}
+      </select>
+      {failed && <span role="status">Overlay unavailable</span>}
+    </label>
   );
 }
 

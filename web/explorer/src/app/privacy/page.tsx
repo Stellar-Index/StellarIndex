@@ -205,12 +205,13 @@ export default function PrivacyPage() {
             },
           ]}
         />
-        {/* source: internal/api/v1/signup.go (unsalted SHA-256 of the lowercased address), internal/auth/signup_tracker.go */}
+        {/* source: internal/api/v1/signup.go (retired endpoint; hashes minted before retirement remain in Redis) */}
         <p>
-          An API key can also be requested without a dashboard account through{' '}
-          <code>POST /v1/signup</code>. For that we store a SHA-256 hash of the
-          email address you give, with no expiry, so the same address cannot
-          request a second key. An unsalted hash of an email is still personal
+          Before <code>POST /v1/signup</code> was retired, an API key could be
+          requested without a dashboard account. For those keys we hold a
+          SHA-256 hash of the email address given, with no expiry. New keys are
+          issued through <code>POST /v1/register</code>, which keys nothing on
+          an email. An unsalted hash of an email is still personal
           data — it can be reversed by guessing the address — and we treat it as
           such. Such a key is not part of an account, so the export and erasure
           in section 8 do not cover it; ask us by email.
@@ -364,7 +365,7 @@ export default function PrivacyPage() {
             },
             {
               term: 'Signup email hash',
-              def: 'The POST /v1/signup email hash has no expiry; email us to have it deleted.',
+              def: 'The email hash kept from the retired POST /v1/signup has no expiry; email us to have it deleted.',
             },
             {
               term: 'Audit log',
@@ -475,8 +476,8 @@ export default function PrivacyPage() {
           and audit log — as a JSON download, and{' '}
           <code>DELETE /v1/dashboard/account</code> erases it; you type the
           account slug back to confirm. The export does not include cache
-          counters, expired sign-in tokens, or the <code>POST /v1/signup</code>{' '}
-          email hash; ask us by email for those. The explorer has no button for
+          counters, expired sign-in tokens, or the email hash kept from the retired{' '}
+          <code>POST /v1/signup</code>; ask us by email for those. The explorer has no button for
           either yet.
         </p>
         {/* source: internal/platform/postgresstore/account_erasure.go, internal/accounterasure/eraser.go */}

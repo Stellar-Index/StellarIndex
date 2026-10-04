@@ -10,6 +10,7 @@ import { FreshnessMarker } from '@/components/primitives';
 import { formatBaseUnits, formatCompact, scaleBaseUnits } from '@/lib/format';
 import { type Envelope } from '../../explorer-shared';
 import { SupplyFlowsBar, buildSupplyFlowRows } from './SupplyFlowsBar';
+import { CurrencyDeclarations } from './CurrencyDeclarations';
 
 // Lazy-load the chart (~155 KB lightweight-charts) — only the supply
 // tab needs it, and only when there's market-cap history to draw.
@@ -118,7 +119,13 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
             <Metric
               label="Max"
               value={max != null ? formatCompact(max) : '—'}
-              sublabel={a.is_unlimited === true ? 'Unlimited' : ''}
+              sublabel={
+                a.is_unlimited === true
+                  ? 'Unlimited'
+                  : a.max_supply_basis === 'sep1_declared_max'
+                    ? 'Issuer-declared in stellar.toml'
+                    : ''
+              }
             />
           </div>
 
@@ -168,6 +175,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
           )}
         </>
       )}
+      <CurrencyDeclarations asset={a} />
     </Panel>
   );
 }

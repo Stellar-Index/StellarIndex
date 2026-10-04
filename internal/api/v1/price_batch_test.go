@@ -211,7 +211,7 @@ func TestPriceBatch_RedisFallbackForRewrittenPair(t *testing.T) {
 
 // TestPriceBatch_StablecoinFallback exercises the X / fiat:USD →
 // X / <USD-pegged classic> retry inside fetchBatchRow. Mirrors the
-// /v1/price behaviour shipped in #1217 / tryStablecoinFiatProxy.
+// /v1/price behaviour shipped in 6505934b5 / tryStablecoinFiatProxy.
 //
 // Pre-2026-05-10 the batch path inlined only the Redis-VWAP and
 // fiat-cross-rate fallbacks, so an asset_id whose only price came

@@ -7,7 +7,7 @@ import (
 
 // TestCountRecentEventsBySource_readsRollup asserts the read path is a
 // keyed-on-PK lookup against protocol_events_24h — NOT the inline
-// multi-table census that the 2026-07-06 latency fix (#43) moved to the
+// multi-table census that the 2026-07-06 latency fix (78dff337b) moved to the
 // aggregator worker. If this regresses (someone re-inlines the census)
 // the /v1/protocols cold latency comes back.
 func TestCountRecentEventsBySource_readsRollup(t *testing.T) {

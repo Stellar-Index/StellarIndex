@@ -184,6 +184,7 @@ var subcommands = map[string]func(args []string) error{
 	"ch-instance-backfill":         chops.Run,
 	"ch-census-rollup":             chops.Run,
 	"ch-cap67-movements":           chops.Run,
+	"ch-entry-history":             chops.Run,
 	"ch-holders-rollup":            chops.Run,
 	"ch-creators-rollup":           chops.Run,
 	"ch-sponsors-rollup":           chops.Run,
@@ -332,6 +333,13 @@ Subcommands:
                           A one-shot run exits non-zero when more transfer
                           events failed to decode than -max-decode-errors
                           (default 0); -follow logs them per window.
+  ch-entry-history -ch-addr ADDR [-from N] [-to N] [-window N] [-floor-ledger N] [-max-decode-errors N] [-write]
+                          One decode pass of stellar.ledger_entry_changes
+                          (classic entries) into the account-keyed
+                          stellar.account_entry_changes and asset-keyed
+                          stellar.asset_entry_changes. Resumes from
+                          stellar.entry_history_watermark. Without -write it
+                          reports rows and field bytes per entry type.
   ch-holders-rollup -ch-addr ADDR [-write]
                           Recompute every asset's top-500 holders board +
                           holder count into staging and atomically exchange
@@ -702,8 +710,8 @@ Subcommands:
   discovery list -config PATH [-since DUR] [-limit N]
                           List SEP-41 contracts auto-detected from the
                           event stream (the dispatcher's discovery
-                          hook from #225 + the indexer wire-up from
-                          #230 populate discovered_assets in
+                          hook from 526b520f0 + the indexer wire-up from
+                          2c2e4e55b populate discovered_assets in
                           production). Output is one row per
                           contract: contract_id, first_seen_at,
                           first_seen_event, event_count. Ordered by
@@ -1378,7 +1386,7 @@ Subcommands:
                           (reflector/redstone), cctp/rozo/defindex, blend's
                           four tables (re-derive bucketed by EventKind), and
                           sdex (lake ops re-derive). Seeds soroswap pairs via RPC.
-  compute-completeness -config PATH [-to N] [-source S] [-ch -pass]
+  compute-completeness -config PATH [-to N] [-allow-frozen-cursor] [-source S] [-ch -pass]
                           ADR-0033 Phase 6: compute the per-source
                           completeness WATERMARK (substrate continuity +
                           hash chain ∧ projection reconciliation) and a
@@ -1498,7 +1506,7 @@ Subcommands:
                           QUOTE leg is not USD-pegged, recomputes
                           usd_volume = base_amount/1e7 x XLM/USD-at-ts by
                           calling the store's own
-                          tradeUSDVolumeViaXLMBaseAnchor with the installed
+                          usdVolumeViaXLMBaseAnchor with the installed
                           VWAPUSDFXResolver — the same function InsertTrade
                           calls. Repairs the pre-fd1860bd class (#372):
                           XLM-base trades valued QUOTE-side through the

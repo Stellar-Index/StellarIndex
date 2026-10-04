@@ -69,6 +69,12 @@ func TestClickHouseFeeBumpRoundTrip(t *testing.T) {
 		}
 	}
 
+	// Index-path authority needs the coverage marker; without it the reader
+	// answers from the bloom scan and these assertions would not test the index.
+	t.Cleanup(func() { _ = conn.Exec(context.Background(), `TRUNCATE TABLE stellar.tx_hash_index_coverage`) })
+	if err := chstore.MarkTxHashIndexCovered(ctx, addr, ledger, ledger); err != nil {
+		t.Fatalf("mark coverage (mv): %v", err)
+	}
 	er, err := chstore.NewExplorerReader(ctx, addr)
 	if err != nil {
 		t.Fatalf("new explorer reader: %v", err)
@@ -91,6 +97,9 @@ func TestClickHouseFeeBumpRoundTrip(t *testing.T) {
 	}
 	if err := chstore.BackfillTxHashIndex(ctx, addr, ledger, ledger, 1, t.Logf); err != nil {
 		t.Fatalf("backfill tx_hash_index: %v", err)
+	}
+	if err := chstore.MarkTxHashIndexCovered(ctx, addr, ledger, ledger); err != nil {
+		t.Fatalf("mark coverage (backfill): %v", err)
 	}
 	var indexed uint64
 	if err := conn.QueryRow(ctx, `SELECT count() FROM stellar.tx_hash_index FINAL WHERE tx_hash IN (?, ?)`,

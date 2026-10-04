@@ -111,7 +111,10 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
             >
               <X className="h-5 w-5" />
             </button>
-            <SidebarNav onNavigate={() => setDrawer(false)} />
+            <SidebarNav
+              onNavigate={() => setDrawer(false)}
+              searchShortcut={false}
+            />
           </div>
         </div>
       )}

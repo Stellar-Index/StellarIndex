@@ -396,7 +396,7 @@ func TestBuildDashboardBundle_ExposesUserStoreForSessionRetention(t *testing.T) 
 func TestBuildWebhookHandlers_ConstructsAndReturnsItsStore(t *testing.T) {
 	t.Parallel()
 
-	store, h, err := buildWebhookHandlers((*sql.DB)(nil), discardLogger())
+	store, h, err := buildWebhookHandlers((*sql.DB)(nil), nil, discardLogger())
 	if err != nil {
 		t.Fatalf("buildWebhookHandlers: %v", err)
 	}

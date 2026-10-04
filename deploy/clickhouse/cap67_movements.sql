@@ -16,6 +16,8 @@
 -- CAP-67 transfer events for EVERY asset (native XLM included —
 -- deliberately unwatched by the Postgres sep41_transfers projection).
 --
+-- Rows named cap67_movements_supply_from / _supply_thru bound the range also
+-- derived with mint, burn and clawback (read with min / max respectively).
 -- One row, replaced on every completed window. The API's movements
 -- handler floors its Postgres tail arm at this watermark, so the two
 -- arms stay gap-free and double-count-free at any derive progress.

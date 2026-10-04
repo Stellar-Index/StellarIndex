@@ -645,6 +645,14 @@ function AssetRow({
                   pegged
                 </span>
               )}
+              {coin.price_basis === 'global_market' && (
+                <span
+                  className="text-ink-muted ml-1 font-sans text-[10px] tracking-wider uppercase"
+                  title="Global cross-venue price of this vetted token — not a Stellar market price"
+                >
+                  global
+                </span>
+              )}
             </span>
           ) : (
             <Dash />

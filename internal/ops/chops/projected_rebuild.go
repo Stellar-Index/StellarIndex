@@ -543,6 +543,18 @@ func applyProjectedEvent(
 		counters.decodeErrors.Add(1)
 		return 0, 0
 	}
+	return writeProjectedOutputs(ctx, opts, logger, counters, outs)
+}
+
+// writeProjectedOutputs counts and (in -write mode) persists decoded outputs;
+// see [applyProjectedEvent] for the returned counts.
+func writeProjectedOutputs(
+	ctx context.Context,
+	opts ProjectedRebuildOptions,
+	logger *slog.Logger,
+	counters *projectedRebuildCounters,
+	outs []consumer.Event,
+) (emitted, insertErrs int64) {
 	for _, out := range outs {
 		emitted++
 		counters.addKind(out.EventKind())
@@ -754,6 +766,12 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 	runErr := g.Wait()
 	stopProgress()
 	progressWG.Wait()
+	if runErr == nil {
+		// Groups still open at the range end have no later event to flush them.
+		emitted, insertErrs := writeProjectedOutputs(ctx, opts, logger, counters, dispatcher.Drain(opts.Source.Decoder))
+		counters.eventsEmitted.Add(emitted)
+		counters.insertErrors.Add(insertErrs)
+	}
 
 	result.WindowsProcessed = int(counters.windowsDone.Load())
 	result.LedgersCovered = counters.completedLedgers.Load()

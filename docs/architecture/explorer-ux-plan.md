@@ -24,7 +24,7 @@ verified data, and every fact on every page links to the API call that
 produced it. Three lenses over one dataset:
 
 1. **Prices** — what is anything worth? (Stellar assets + global
-   crypto/fiat/RWA we already ingest: CEX feeds, 516 Chainlink feeds,
+   crypto/fiat/RWA we already ingest: CEX feeds, operator-curated Chainlink feeds,
    ECB FX, RedStone RWA.)
 2. **Protocols** — what is happening in Stellar DeFi? (Per-protocol
    deep dives backed by our per-source tables + the ADR-0035 verified

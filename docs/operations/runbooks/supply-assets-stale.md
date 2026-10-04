@@ -96,8 +96,11 @@ whether a projector tail rebuild is pending.
   fixed this way in CS-102 (`e21fa3d0` classic, `3f26b8db` SEP-41, `aa0d08c2`
   XLM). A regression here most likely means a new supply path was added with
   the old per-entity shape.
-- **Unseeded SAC wrapper (`missing_baseline`)** → preview, then seed. The
-  command is idempotent and changes nothing without `-write`:
+- **Unseeded SAC wrapper (`missing_baseline`)** → the aggregator seeds a newly
+  watched wrapper itself on its first refresh (retrying every 10 min; failures
+  log `genesis baseline auto-seed failed`, usually an unreachable lake). If it
+  persists, preview, then seed by hand. The command is idempotent and changes
+  nothing without `-write`:
 
   ```sh
   stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml

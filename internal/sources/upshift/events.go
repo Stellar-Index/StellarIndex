@@ -110,8 +110,10 @@
 //     name the custodian's internal wallet topology (one subaccount
 //     today) and report the same movement a second time; decoding them
 //     into the same table would double-count deployed capital.
-//   - subaccount_added / admin_set / operator_set — governance. No
-//     economic state.
+//   - subaccount_added / admin_set / operator_set / vault_paused /
+//     vault_unpaused — governance. No economic state. The pause pair
+//     (topic[1] the caller address, body an empty Map) was first emitted
+//     at 64,715,361 by the same audited WASM 4b3d9f6b….
 //   - approve — a SEP-41 allowance, not a balance change. The vault's
 //     share-token audit trail (`transfer` + `approve`) has a home of
 //     its own in internal/sources/sep41_transfers whenever an operator
@@ -120,7 +122,7 @@
 //     (it reassigns the claim without minting or burning) and the two
 //     sources write different tables, so there is no double write.
 //
-// All eight are still RECOGNIZED by [classify] and gated by
+// All ten are still RECOGNIZED by [classify] and gated by
 // [Decoder.Matches]: they decode to ZERO rows with no error, so the
 // ADR-0033 re-derive counts their ledgers as expected-zero instead of
 // going blind on them.
@@ -274,6 +276,8 @@ const (
 	EventSubaccountAdded         = "subaccount_added"
 	EventAdminSet                = "admin_set"
 	EventOperatorSet             = "operator_set"
+	EventVaultPaused             = "vault_paused"
+	EventVaultUnpaused           = "vault_unpaused"
 )
 
 // Pre-encoded base64 SCVal Symbol blobs, for byte-equality matching on
@@ -292,6 +296,8 @@ var (
 	TopicSymbolSubaccountAdded       = scval.MustEncodeSymbol(EventSubaccountAdded)
 	TopicSymbolAdminSet              = scval.MustEncodeSymbol(EventAdminSet)
 	TopicSymbolOperatorSet           = scval.MustEncodeSymbol(EventOperatorSet)
+	TopicSymbolVaultPaused           = scval.MustEncodeSymbol(EventVaultPaused)
+	TopicSymbolVaultUnpaused         = scval.MustEncodeSymbol(EventVaultUnpaused)
 )
 
 // Decoder errors. ErrMalformedPayload is INDETERMINATE — a body that

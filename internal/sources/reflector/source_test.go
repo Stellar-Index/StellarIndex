@@ -391,7 +391,7 @@ func TestDecodeUpdate_refusesWrongTopic(t *testing.T) {
 	}
 }
 
-func TestDecodeUpdate_emptyPricesError(t *testing.T) {
+func TestDecodeUpdate_emptyPricesIsNoOp(t *testing.T) {
 	prev, prevTS := decodeUpdateBody, decodeUpdateTimestamp
 	defer func() { decodeUpdateBody, decodeUpdateTimestamp = prev, prevTS }()
 	decodeUpdateTimestamp = func(_ string) (uint64, error) { return 0, nil }
@@ -403,9 +403,9 @@ func TestDecodeUpdate_emptyPricesError(t *testing.T) {
 		Topic:      []string{TopicSymbolReflector, TopicSymbolUpdate, "ts"},
 		ContractID: dexContractID,
 	}
-	_, err := decodeUpdate(e, VariantDEX, DefaultDecimals, "", time.Now())
-	if !errors.Is(err, ErrEmptyPrices) {
-		t.Errorf("expected ErrEmptyPrices, got %v", err)
+	updates, err := decodeUpdate(e, VariantDEX, DefaultDecimals, "", time.Now())
+	if err != nil || updates != nil {
+		t.Errorf("empty on-wire vector: got (%v, %v), want (nil, nil) no-op", updates, err)
 	}
 }
 

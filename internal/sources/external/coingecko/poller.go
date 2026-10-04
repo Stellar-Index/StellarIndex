@@ -397,6 +397,10 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	return nil, updates, nil
 }
 
+// CooldownRemaining reports the throttle cooldown still pending, so the
+// runner can tell a cooldown skip from a healthy "nothing new" poll.
+func (p *Poller) CooldownRemaining() time.Duration { return p.cooldownRemaining() }
+
 // cooldownRemaining returns how much longer the poller must wait
 // before hitting the venue again. Zero (or negative) means polling
 // is allowed. Lock-protected so the runner + tests can read state
