@@ -334,7 +334,7 @@ func extremes(series []TimedValue, current TimedValue) (athValue string, athAt t
 	var athRat, atlRat *big.Rat
 	currentIn := false
 	for _, q := range pts {
-		if f, _ := q.v.Float64(); f < lo || f > hi {
+		if f, _ := q.v.Float64(); f < lo || f > hi { // i128:ok outlier-band compare only; the served ATH/ATL stays the exact string
 			continue
 		}
 		if q.p.At.Equal(current.At) && q.p.Value == current.Value {
@@ -365,7 +365,7 @@ func positivePoints(series []TimedValue) ([]ratPoint, []float64) {
 		if !ok || v.Sign() <= 0 {
 			continue
 		}
-		f, _ := v.Float64()
+		f, _ := v.Float64() // i128:ok banding input for the ATH/ATL outlier filter, never served
 		if math.IsInf(f, 0) || f <= 0 {
 			continue
 		}
