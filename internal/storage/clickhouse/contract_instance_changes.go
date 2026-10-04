@@ -89,3 +89,28 @@ func BackfillContractInstanceChangesInto(ctx context.Context, addr, table string
 			return conn.Exec(ctx, q, lo, hi)
 		}, logf)
 }
+
+// SetContractInstanceChangesGenesisWatermark records that the named
+// instance-timeline table is complete from the lake's first ledger through
+// `thru`, in the shared name-keyed entry_history_watermark table. Readers use
+// it to trust a per-contract miss instead of scanning ledger_entry_changes.
+// Call only after a backfill that started at genesis returned cleanly.
+func SetContractInstanceChangesGenesisWatermark(ctx context.Context, addr, table string, thru uint32) error {
+	if table != ContractInstanceChangesTable && table != ContractInstanceChangesV2Table {
+		return fmt.Errorf("clickhouse: instance-changes watermark: table %q is not %s or %s",
+			table, ContractInstanceChangesTable, ContractInstanceChangesV2Table)
+	}
+	if thru == 0 {
+		return fmt.Errorf("clickhouse: instance-changes watermark: thru must be > 0")
+	}
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	const q = `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES (?, ?)`
+	if err := conn.Exec(ctx, q, table, thru); err != nil {
+		return fmt.Errorf("clickhouse: set %s genesis watermark %d: %w", table, thru, err)
+	}
+	return nil
+}

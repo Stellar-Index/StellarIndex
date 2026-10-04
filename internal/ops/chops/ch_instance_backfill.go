@@ -1,6 +1,7 @@
 package chops
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -62,8 +63,36 @@ func chInstanceBackfill(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "ch-instance-backfill: filling stellar.%s for ledgers %d..%d (window %d) on %s\n",
 		*table, *from, last, *window, *chAddr)
-	return clickhouse.BackfillContractInstanceChangesInto(ctx, *chAddr, *table, uint32(*from), last, uint32(*window),
+	return runInstanceBackfill(ctx, *chAddr, *table, uint32(*from), last, uint32(*window),
 		func(format string, a ...any) {
 			fmt.Fprintf(os.Stderr, "ch-instance-backfill: "+format+"\n", a...)
 		})
+}
+
+// instanceGenesisFrom is the highest -from that still counts as a genesis
+// start (ledger 1 is never in a lake; the flag defaults to 2).
+const instanceGenesisFrom = 2
+
+// Seams so the watermark decision is testable without a live lake.
+var (
+	backfillInstanceChanges = clickhouse.BackfillContractInstanceChangesInto
+	setInstanceGenesisMark  = clickhouse.SetContractInstanceChangesGenesisWatermark
+)
+
+// runInstanceBackfill fills [from, last] and, only when the run started at
+// genesis and finished without error, records the genesis watermark through
+// last. A partial or failed run records nothing.
+func runInstanceBackfill(ctx context.Context, addr, table string, from, last, window uint32, logf func(string, ...any)) error {
+	if err := backfillInstanceChanges(ctx, addr, table, from, last, window, logf); err != nil {
+		return err
+	}
+	if from > instanceGenesisFrom {
+		logf("not recording a genesis watermark: run started at %d, not genesis", from)
+		return nil
+	}
+	if err := setInstanceGenesisMark(ctx, addr, table, last); err != nil {
+		return fmt.Errorf("record genesis watermark %d: %w", last, err)
+	}
+	logf("genesis watermark recorded through ledger %d", last)
+	return nil
 }
