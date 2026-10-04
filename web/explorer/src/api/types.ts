@@ -7611,7 +7611,7 @@ export interface components {
             /** @default false */
             single_source: boolean;
             /**
-             * @description True when the request opted in with `include_thin=true` and a served price comes from a market below the substance floor. Key any low-confidence marker on this flag, never on `confidence`.
+             * @description True when the request opted in with `include_thin=true` and a served price comes from a market below the substance floor, or when /v1/vwap or /v1/twap (which serve such a market by default) computed from one. Key any low-confidence marker on this flag, never on `confidence`.
              * @default false
              */
             thin_market: boolean;
@@ -11981,6 +11981,8 @@ export interface components {
              */
             clamped: boolean;
             breakdown?: components["schemas"]["VWAPBreakdown"];
+            /** @description Present only when the pair is below the substance floor that /v1/price withholds on (`flags.thin_market` is then true). The measurement is the pair's live trailing window, not the requested one; this endpoint still serves the price. */
+            substance?: components["schemas"]["SubstanceEvidence"];
         };
         /**
          * @description Present only with `breakdown=source`. Volumes are in the same units
@@ -12056,6 +12058,8 @@ export interface components {
             truncated: boolean;
             /** @description See VWAPResult.clamped. */
             clamped: boolean;
+            /** @description See VWAPResult.substance. */
+            substance?: components["schemas"]["SubstanceEvidence"];
         };
         TWAPEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["TWAPResult"];

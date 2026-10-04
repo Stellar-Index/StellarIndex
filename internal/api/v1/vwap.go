@@ -62,6 +62,9 @@ type VWAPResult struct {
 	Clamped bool `json:"clamped"`
 	// Breakdown is present only for ?breakdown=source.
 	Breakdown *VWAPBreakdown `json:"breakdown,omitempty"`
+	// Substance is present when the pair is below the substance floor
+	// /v1/price withholds on; flags.thin_market is then true.
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
 // handleVWAP serves GET /v1/vwap?base=...&quote=...&from=...&to=...&outlier_sigma=...
@@ -200,6 +203,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// the aggregator's shortest-window VWAP now, and this value is computed
 	// here from raw trades over a caller-chosen [from, to), so the verdict
 	// never saw it — the same reason /v1/price/at carries none.
+	substance := s.thinMarketEvidence(ctx, base, quote, "vwap")
 	writeJSON(w, VWAPResult{
 		From:                WireTime(from),
 		To:                  WireTime(to),
@@ -213,7 +217,29 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		Truncated:           pre == maxTrades,
 		Clamped:             clamped,
 		Breakdown:           s.vwapBreakdown(breakdown, pair, fetched, trades, from, to, pre == maxTrades),
-	}, Flags{Triangulated: triangulated, ProxyDeviation: triangulated && s.proxyDeviation(ctx, to)})
+		Substance:           substance,
+	}, Flags{
+		Triangulated:   triangulated,
+		ProxyDeviation: triangulated && s.proxyDeviation(ctx, to),
+		ThinMarket:     substance != nil,
+	})
+}
+
+// thinMarketEvidence is the live substance measurement behind
+// flags.thin_market on /v1/vwap and /v1/twap, or nil when the pair clears
+// the floor (or no gate is wired). These raw-trade surfaces serve a thin
+// market (ADR-0018), so the verdict is admitted rather than withheld; the
+// scam half already ran, hence the nil scam gate.
+func (s *Server) thinMarketEvidence(ctx context.Context, base, quote canonical.Asset, surface string) *SubstanceEvidence {
+	if s.substance == nil {
+		return nil
+	}
+	admCtx, adm := WithThinAdmission(ctx, base, quote, true)
+	withheldBy(admCtx, s.substance, nil, base, quote, surface)
+	if !adm.Admitted() {
+		return nil
+	}
+	return substanceEvidenceWire(adm.Evidence())
 }
 
 // parseVWAPParams parses ?outlier_sigma= then ?breakdown= / ?interval=.
