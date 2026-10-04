@@ -164,30 +164,8 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	outliersFiltered := pre - len(trades)
 
 	price, err := aggregate.VWAP(trades)
-	if errors.Is(err, aggregate.ErrNoTrades) {
-		// Distinguish two failure modes — the wire message drives
-		// client behaviour (retry with different window vs retry
-		// with different sigma), so misleading it is a bug.
-		if pre > 0 {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/all-filtered",
-				"All trades filtered as outliers", http.StatusUnprocessableEntity,
-				fmt.Sprintf("outlier_sigma=%v removed all %d trades in window; relax the threshold or omit outlier_sigma",
-					sigma, pre))
-			return
-		}
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/no-trades",
-			"No trades in window", http.StatusNotFound,
-			"no trades observed for "+pair.Base.String()+"/"+pair.Quote.String()+
-				" between "+from.Format(time.RFC3339)+" and "+to.Format(time.RFC3339))
-		return
-	}
 	if err != nil {
-		s.logger.Error("VWAP failed", "err", err)
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/internal",
-			"Internal error", http.StatusInternalServerError, "")
+		s.writeVWAPError(w, r, err, pair, from, to, pre, sigma)
 		return
 	}
 
@@ -223,6 +201,33 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		ProxyDeviation: triangulated && s.proxyDeviation(ctx, to),
 		ThinMarket:     substance != nil,
 	})
+}
+
+// writeVWAPError maps an aggregate.VWAP failure to its problem+json.
+func (s *Server) writeVWAPError(w http.ResponseWriter, r *http.Request, err error, pair canonical.Pair, from, to time.Time, pre int, sigma float64) {
+	if !errors.Is(err, aggregate.ErrNoTrades) {
+		s.logger.Error("VWAP failed", "err", err)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
+	// Distinguish two failure modes — the wire message drives
+	// client behaviour (retry with different window vs retry
+	// with different sigma), so misleading it is a bug.
+	if pre > 0 {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/all-filtered",
+			"All trades filtered as outliers", http.StatusUnprocessableEntity,
+			fmt.Sprintf("outlier_sigma=%v removed all %d trades in window; relax the threshold or omit outlier_sigma",
+				sigma, pre))
+		return
+	}
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/no-trades",
+		"No trades in window", http.StatusNotFound,
+		"no trades observed for "+pair.Base.String()+"/"+pair.Quote.String()+
+			" between "+from.Format(time.RFC3339)+" and "+to.Format(time.RFC3339))
 }
 
 // thinMarketEvidence is the live substance measurement behind
