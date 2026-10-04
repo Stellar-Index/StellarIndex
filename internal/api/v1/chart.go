@@ -626,7 +626,7 @@ func (s *Server) handleChartTWAP(
 		}
 	}
 	series.markRowCap(walk)
-	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded})
+	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded})
 }
 
 // handleChartFiat serves /v1/chart for fiat:fiat pairs out of the
@@ -703,7 +703,7 @@ func (s *Server) handleChartFiat(
 		}
 		s.logger.Warn("chart fiat fx_quotes fetch failed",
 			"ticker", ticker, "err", err)
-		writeChartJSON(w, series, Flags{Stale: true})
+		writeChartJSON(w, series, Flags{Stale: true, Degraded: true})
 		return
 	}
 
@@ -777,7 +777,7 @@ func (s *Server) handleChartFiatCross(
 		}
 		s.logger.Warn("chart fiat-cross fx_quotes fetch failed",
 			"ticker", pair.Base.Code, "err", err)
-		writeChartJSON(w, series, Flags{Stale: true})
+		writeChartJSON(w, series, Flags{Stale: true, Degraded: true})
 		return
 	}
 	quotePts, err := s.fxHistory.ListFXHistory(fxCtx, pair.Quote.Code, queryFrom, to)
@@ -791,7 +791,7 @@ func (s *Server) handleChartFiatCross(
 		}
 		s.logger.Warn("chart fiat-cross fx_quotes fetch failed",
 			"ticker", pair.Quote.Code, "err", err)
-		writeChartJSON(w, series, Flags{Stale: true})
+		writeChartJSON(w, series, Flags{Stale: true, Degraded: true})
 		return
 	}
 
@@ -2144,7 +2144,7 @@ func (s *Server) marketCapReadFailed(w http.ResponseWriter, r *http.Request, ctx
 		return
 	}
 	s.logger.Warn(msg, append(kv, "err", err)...)
-	writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true})
+	writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true, Degraded: true})
 }
 
 // writeMarketCapTimeout answers a market-cap read that blew its
@@ -2247,7 +2247,7 @@ func (s *Server) handleChartMarketCapCrypto(
 		}
 		s.logger.Warn("market_cap crypto: price history failed",
 			"asset", pair.Base.String(), "err", err)
-		writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true})
+		writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true, Degraded: true})
 		return
 	}
 	// The price leg is already normalised per SOURCE pair inside the walk
@@ -2287,7 +2287,7 @@ func (s *Server) handleChartMarketCapCrypto(
 		}
 		s.logger.Warn("market_cap crypto: supply history failed",
 			"asset_key", supplyKey, "err", err)
-		writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true})
+		writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true, Degraded: true})
 		return
 	}
 
@@ -2317,7 +2317,7 @@ func (s *Server) handleChartMarketCapCrypto(
 	if !refused {
 		series.markRowCap(walk)
 	}
-	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded || supplyStale})
+	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded || supplyStale, Degraded: walk.degraded})
 }
 
 // marketCapSeriesRefused applies the detail page's valuation guards

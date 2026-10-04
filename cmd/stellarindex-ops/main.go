@@ -123,6 +123,7 @@ var subcommands = map[string]func(args []string) error{
 	"usage-rollup-backfill": leaf(usageRollupBackfill),
 	"freeze-unfreeze":       leaf(freezeUnfreeze),
 	"account-erase":         leaf(accountErase),
+	"change-summary-reset":  leaf(changeSummaryReset),
 
 	"rpc-probe":             diagnostics.Run,
 	"verify-decoders":       diagnostics.Run,
@@ -1841,6 +1842,17 @@ Subcommands:
                           Example:
                             stellarindex-ops freeze-unfreeze \
                               -config /etc/stellarindex.toml -list
+  change-summary-reset -config PATH -entity-type T -entity-id ID [-write]
+                          Delete one change_summary_5m row. The
+                          upsert ratchets ath/atl for good, so a
+                          bad stored extreme is only cleared by
+                          removing the row; the aggregator rebuilds
+                          it from the trailing 30 days within 5
+                          minutes. Dry-run unless -write.
+                          Example:
+                            stellarindex-ops change-summary-reset \
+                              -config /etc/stellarindex.toml \
+                              -entity-type coin -entity-id crypto:XLM -write
   version                 Print version + build date.
   help                    This help.
 `
