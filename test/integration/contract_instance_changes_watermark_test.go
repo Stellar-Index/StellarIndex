@@ -91,3 +91,26 @@ func TestContractInstanceGenesisWatermark_RoundTrip(t *testing.T) {
 		t.Fatalf("mark rows = %d (%v), want 1: a lower thru must record nothing", rows, err)
 	}
 }
+
+// The mark is gated on the view's identity and age from system.tables; run
+// that lookup for real against a table with a view and one without.
+func TestContractInstanceGenesisWatermark_StartState(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	st, err := chstore.ReadInstanceBackfillStart(ctx, addr, chstore.ContractInstanceChangesTable)
+	if err != nil {
+		t.Fatalf("ReadInstanceBackfillStart: %v", err)
+	}
+	if !st.MVExists || st.MVUUID == "" || st.MVModified.IsZero() || st.MVAge < 0 {
+		t.Fatalf("start state = %+v, want the canonical view's identity and age", st)
+	}
+	again, err := chstore.ReadInstanceBackfillStart(ctx, addr, chstore.ContractInstanceChangesTable)
+	if err != nil || again.MVUUID != st.MVUUID || !again.MVModified.Equal(st.MVModified) {
+		t.Fatalf("re-read = %+v (%v), want the same view identity as %+v", again, err, st)
+	}
+	v2, err := chstore.ReadInstanceBackfillStart(ctx, addr, chstore.ContractInstanceChangesV2Table)
+	if err != nil || v2.MVExists {
+		t.Fatalf("v2 start state = %+v (%v), want no view", v2, err)
+	}
+}

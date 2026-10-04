@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
@@ -98,6 +99,11 @@ type InstanceBackfillStart struct {
 	// MVExists is whether the table's materialized view (<table>_mv) existed,
 	// i.e. ingest after the DDL is already captured without the backfill.
 	MVExists bool
+	// MVUUID and MVModified identify the view, so a drop or recreate during
+	// the run is visible; MVAge is its metadata age by the server's clock.
+	MVUUID     string
+	MVModified time.Time
+	MVAge      time.Duration
 }
 
 // ReadInstanceBackfillStart reads InstanceBackfillStart for the table.
@@ -115,12 +121,17 @@ func ReadInstanceBackfillStart(ctx context.Context, addr, table string) (Instanc
 	if err := conn.QueryRow(ctx, `SELECT max(ledger_seq) FROM stellar.ledgers`).Scan(&st.RawMaxLedger); err != nil {
 		return st, fmt.Errorf("clickhouse: instance-changes start state: lake tip: %w", err)
 	}
-	var mvs uint64
-	if err := conn.QueryRow(ctx, `SELECT count() FROM system.tables WHERE database = 'stellar' AND name = ?`,
-		table+"_mv").Scan(&mvs); err != nil {
+	var (
+		mvs uint64
+		now time.Time
+	)
+	if err := conn.QueryRow(ctx, `SELECT count(), toString(any(uuid)), any(metadata_modification_time), now()
+		FROM system.tables WHERE database = 'stellar' AND name = ?`,
+		table+"_mv").Scan(&mvs, &st.MVUUID, &st.MVModified, &now); err != nil {
 		return st, fmt.Errorf("clickhouse: instance-changes start state: view lookup: %w", err)
 	}
 	st.MVExists = mvs > 0
+	st.MVAge = now.Sub(st.MVModified)
 	return st, nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -48,50 +49,66 @@ func chInstanceBackfill(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	last, err := resolveBackfillTop(ctx, *chAddr, uint32(*from), uint32(*to))
-	if err != nil {
-		return err
-	}
-	if last < uint32(*from) {
-		return fmt.Errorf("-to (%d) is below -from (%d)", last, *from)
-	}
-
-	if !gate.Banner() {
-		fmt.Fprintf(os.Stderr, "ch-instance-backfill: would fill stellar.%s for ledgers %d..%d (window %d) on %s\n",
-			*table, *from, last, *window, *chAddr)
-		return nil
-	}
-	fmt.Fprintf(os.Stderr, "ch-instance-backfill: filling stellar.%s for ledgers %d..%d (window %d) on %s\n",
-		*table, *from, last, *window, *chAddr)
-	return runInstanceBackfill(ctx, *chAddr, *table, uint32(*from), uint32(*to), last, uint32(*window),
+	return runInstanceBackfill(ctx, *chAddr, *table, uint32(*from), uint32(*to), uint32(*window),
+		func(last uint32) bool {
+			if !gate.Banner() {
+				fmt.Fprintf(os.Stderr, "ch-instance-backfill: would fill stellar.%s for ledgers %d..%d (window %d) on %s\n",
+					*table, *from, last, *window, *chAddr)
+				return false
+			}
+			fmt.Fprintf(os.Stderr, "ch-instance-backfill: filling stellar.%s for ledgers %d..%d (window %d) on %s\n",
+				*table, *from, last, *window, *chAddr)
+			return true
+		},
 		func(format string, a ...any) {
 			fmt.Fprintf(os.Stderr, "ch-instance-backfill: "+format+"\n", a...)
 		})
 }
 
 // instanceGenesisFrom is the highest -from that still counts as a genesis
-// start (ledger 1 is never in a lake; the flag defaults to 2).
+// start (ledger 1 is never in a lake; the flag defaults to 2). A resumed -from N
+// run never marks: nothing proves an earlier run filled [2, N), so re-run from 2.
 const instanceGenesisFrom = 2
+
+// instanceMVSettle is how long the view must have existed before the run. Sink
+// writes stellar.ledgers last, so a view born mid-flush can miss a ledger the
+// backfill's tip does not yet include.
+const instanceMVSettle = 10 * time.Minute
 
 // Seams so the watermark decision is testable without a live lake.
 var (
 	backfillInstanceChanges = clickhouse.BackfillContractInstanceChangesInto
 	setInstanceGenesisMark  = clickhouse.SetContractInstanceChangesGenesisWatermark
 	readInstanceStart       = clickhouse.ReadInstanceBackfillStart
+	resolveInstanceTop      = resolveBackfillTop
 )
 
 // runInstanceBackfill fills [from, last] and records the genesis watermark
 // through last only when that claim is provable; otherwise it records nothing
 // and the reader keeps its scan (a wrong "no history" is worse than a slow
 // one). The table's only sources are this backfill and its view, so the mark
-// needs: a genesis start, no explicit -to, the view already live before the
-// run, and a contiguous tip equal to the raw lake tip at start (no hole below
-// ledgers that predate the view).
-func runInstanceBackfill(ctx context.Context, addr, table string, from, toFlag, last, window uint32, logf func(string, ...any)) error {
+// needs: a genesis start, no explicit -to, the same settled view before and
+// after the run, and a contiguous tip at or above the raw lake tip read first
+// (no hole below ledgers that predate the view). confirm gets the resolved top
+// and reports whether to write.
+func runInstanceBackfill(ctx context.Context, addr, table string, from, toFlag, window uint32,
+	confirm func(last uint32) bool, logf func(string, ...any),
+) error {
 	start, startErr := readInstanceStart(ctx, addr, table)
+	last, err := resolveInstanceTop(ctx, addr, from, toFlag)
+	if err != nil {
+		return err
+	}
+	if last < from {
+		return fmt.Errorf("-to (%d) is below -from (%d)", last, from)
+	}
+	if !confirm(last) {
+		return nil
+	}
 	if err := backfillInstanceChanges(ctx, addr, table, from, last, window, logf); err != nil {
 		return err
 	}
+	end, endErr := readInstanceStart(ctx, addr, table)
 	switch {
 	case from > instanceGenesisFrom:
 		logf("no genesis watermark: run started at %d, not genesis", from)
@@ -101,8 +118,14 @@ func runInstanceBackfill(ctx context.Context, addr, table string, from, toFlag, 
 		logf("no genesis watermark: start state unreadable: %v", startErr)
 	case !start.MVExists:
 		logf("no genesis watermark: %s_mv did not exist before the run, so ledgers after %d are uncovered", table, last)
-	case last != start.RawMaxLedger:
+	case start.MVAge < instanceMVSettle:
+		logf("no genesis watermark: %s_mv is %s old, under the %s settle margin", table, start.MVAge, instanceMVSettle)
+	case last < start.RawMaxLedger:
 		logf("no genesis watermark: contiguous tip %d is below the raw lake tip %d (a hole)", last, start.RawMaxLedger)
+	case endErr != nil:
+		logf("no genesis watermark: end state unreadable: %v", endErr)
+	case !end.MVExists || end.MVUUID != start.MVUUID || !end.MVModified.Equal(start.MVModified):
+		logf("no genesis watermark: %s_mv was dropped or recreated during the run", table)
 	default:
 		if err := setInstanceGenesisMark(ctx, addr, table, last); err != nil {
 			return fmt.Errorf("record genesis watermark %d: %w", last, err)

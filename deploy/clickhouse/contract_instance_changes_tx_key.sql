@@ -55,6 +55,12 @@
 -- insert from this moment, so Step 2 only has to cover history. Both
 -- statements are the canonical DDL with the v2 names — a unit test
 -- (contract_instance_changes_key_test.go) pins them in lockstep. ──────────
+--
+-- First drop any v2 genesis watermark a previous attempt left, so Step 4
+-- cannot publish a mark this attempt's Step 2 did not earn:
+--
+--   ALTER TABLE stellar.entry_history_watermark DELETE
+--     WHERE name = 'contract_instance_changes_v2' SETTINGS mutations_sync = 2;
 
 CREATE TABLE IF NOT EXISTS stellar.contract_instance_changes_v2
 (
@@ -160,7 +166,20 @@ WHERE entry_type = 'contract_data'
 --
 -- ── ROLLBACK ────────────────────────────────────────────────────────────────
 -- Before Step 4: DROP VIEW stellar.contract_instance_changes_v2_mv, then
--- DROP TABLE stellar.contract_instance_changes_v2. After Step 4 the previous
--- binary still reads the new table (it names only columns v2 kept); to
--- restore the old TABLE, drop the canonical MV, reverse the RENAME, and
--- recreate the MV from the previous release's contract_instance_changes.sql.
+-- DROP TABLE stellar.contract_instance_changes_v2, then delete the v2 mark
+-- (the Step 1 ALTER). After Step 4 the previous binary still reads the new
+-- table (it names only columns v2 kept); to restore the old TABLE, first
+-- remove both marks — the canonical one now describes v2, and the old table
+-- missed every instance write since Step 4:
+--
+--   ALTER TABLE stellar.entry_history_watermark DELETE
+--     WHERE name IN ('contract_instance_changes', 'contract_instance_changes_v2')
+--     SETTINGS mutations_sync = 2;
+--
+-- Then drop the canonical MV, reverse the RENAME, recreate the MV from the
+-- previous release's contract_instance_changes.sql, and close the gap since
+-- Step 4's T with the PREVIOUS release's binary (it writes the old columns;
+-- -from above genesis records no mark):
+--
+--   /usr/local/bin/stellarindex-ops ch-instance-backfill \
+--     -ch-addr 127.0.0.1:9300 -from <T - 1000> -write
