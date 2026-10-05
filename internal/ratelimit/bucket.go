@@ -340,7 +340,14 @@ func (b *Bucket) Charge(ctx context.Context, key string, cost, limit int) (Resul
 		return b.localCharge(key, cost, effectiveMax, minute), nil
 	}
 
-	rlKey := b.redisKey(key, minute)
+	// url.QueryEscape the caller-supplied key before concatenating
+	// with ":<minute>". Callers pass things like IPv6 addresses (which
+	// contain `:`), future API-key strings, SEP-10 account IDs; any
+	// `:` in the key would make two distinct keys collide on the same
+	// Redis slot — a silent cross-client rate-limit smear. Escaping
+	// all RFC 3986 reserved chars also hardens against injection of
+	// exotic control bytes. Still human-readable in Redis for ops.
+	rlKey := b.keyPrefix + url.QueryEscape(key) + ":" + strconv.FormatInt(minute, 10)
 	// Double-window TTL so keys drain naturally. Floor-at-1 guards
 	// sub-second windows — Redis treats EXPIRE 0 as "no expiry",
 	// which would leak keys forever for any window < 500ms. 1s
@@ -394,9 +401,22 @@ func (b *Bucket) Charge(ctx context.Context, key string, cost, limit int) (Resul
 	if remaining < 0 {
 		remaining = 0
 	}
+	// RetryAfter is "time until caller can succeed". That's the
+	// REMAINING SECONDS IN THE CURRENT WINDOW, not the Redis-side
+	// key TTL (which is 2× window for drain purposes). Computing
+	// on the Go side instead of reading ttl from Lua means the
+	// client's Retry-After header doesn't sit at a drain-padded
+	// value that's up to 60× longer than the actual reset. Floor
+	// at 1s so the HTTP header is never zero on a denial.
 	var retryAfter time.Duration
 	if !allowed {
-		retryAfter = b.windowRemaining(b.nowFn(), minute)
+		windowSec := int64(b.window.Seconds())
+		elapsed := b.nowFn().Unix() - minute*windowSec
+		remainingSec := windowSec - elapsed
+		if remainingSec < 1 {
+			remainingSec = 1
+		}
+		retryAfter = time.Duration(remainingSec) * time.Second
 	}
 	_ = retryTTL // intentionally unused — kept on the wire for debug
 	return Result{
@@ -405,54 +425,6 @@ func (b *Bucket) Charge(ctx context.Context, key string, cost, limit int) (Resul
 		RetryAfter: retryAfter,
 		Count:      int(count),
 	}, nil
-}
-
-// Peek reports key's standing in the current window without spending a
-// token: Allowed and Count are what the window's latest Take returned
-// (an untouched key is allowed with Count 0). It is advisory, for a
-// caller that wants to refuse work before doing it, so an error leaves
-// the fail-closed dwell clock alone and the caller should fail open;
-// the Take that follows still applies the full failure policy.
-func (b *Bucket) Peek(ctx context.Context, key string) (Result, error) {
-	now := b.nowFn()
-	minute := now.Unix() / int64(b.window.Seconds())
-	var count int
-	if b.local != nil {
-		count = b.local.peek(key, minute)
-	} else {
-		n, err := b.rdb.Get(ctx, b.redisKey(key, minute)).Int()
-		if err != nil && !errors.Is(err, redis.Nil) {
-			return Result{}, fmt.Errorf("ratelimit: peek: %w", err)
-		}
-		count = n
-	}
-	res := Result{Allowed: count <= b.max, Remaining: max(b.max-count, 0), Count: count}
-	if !res.Allowed {
-		res.RetryAfter = b.windowRemaining(now, minute)
-	}
-	return res, nil
-}
-
-// redisKey is key's counter for window minute. The caller-supplied key
-// is url.QueryEscape'd: callers pass IPv6 addresses (which contain
-// `:`), API-key strings and SEP-10 account IDs, and a `:` in the key
-// would let two distinct keys collide on one counter — a silent
-// cross-client rate-limit smear. Escaping all RFC 3986 reserved chars
-// also keeps exotic control bytes out. Still human-readable for ops.
-func (b *Bucket) redisKey(key string, minute int64) string {
-	return b.keyPrefix + url.QueryEscape(key) + ":" + strconv.FormatInt(minute, 10)
-}
-
-// windowRemaining is the time left in window minute at now, floored at
-// 1s so a denial's Retry-After is never zero. It is the time until the
-// counter resets, not the Redis key TTL (padded to 2x window for drain).
-func (b *Bucket) windowRemaining(now time.Time, minute int64) time.Duration {
-	windowSec := int64(b.window.Seconds())
-	remainingSec := windowSec - (now.Unix() - minute*windowSec)
-	if remainingSec < 1 {
-		remainingSec = 1
-	}
-	return time.Duration(remainingSec) * time.Second
 }
 
 // clampCost normalises a caller-computed cost into [1, effectiveMax].
@@ -500,7 +472,13 @@ func (b *Bucket) localCharge(key string, cost, effectiveMax int, minute int64) R
 
 	var retryAfter time.Duration
 	if !allowed {
-		retryAfter = b.windowRemaining(now, minute)
+		windowSec := int64(b.window.Seconds())
+		elapsed := now.Unix() - minute*windowSec
+		remainingSec := windowSec - elapsed
+		if remainingSec < 1 {
+			remainingSec = 1
+		}
+		retryAfter = time.Duration(remainingSec) * time.Second
 	}
 
 	return Result{

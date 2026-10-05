@@ -76,12 +76,8 @@ type AuthOptions struct {
 	// that gap: every credential FAILURE consumes a token on each
 	// dimension (see takeFailedAuth), and
 	// over the budget the middleware returns 429 instead of the auth
-	// error. Once one IP has failed past the budget with one credential,
-	// repeating that credential from that IP is refused BEFORE the
-	// validator runs (see failedAuthCredSpent), so a throttled caller
-	// replaying a credential costs no lookup. Successful auth and
-	// anonymous passes never touch the buckets, so a valid key is never
-	// refused, even from an IP that is over budget.
+	// error. Successful auth and anonymous passes never touch it, so the
+	// Auth-before-RateLimit ordering for VALID requests is preserved.
 	// Nil disables the failed-auth throttle (e.g. auth_mode=none, which
 	// never produces a credential failure anyway).
 	FailedAuthLimiter *ratelimit.Bucket
@@ -122,13 +118,6 @@ func Auth(opts AuthOptions) Middleware {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if opts.FailedAuthLimiter != nil {
-				if throttled, retryAfter := failedAuthCredSpent(r, mode, opts.FailedAuthLimiter); throttled { //nolint:contextcheck // detaches via throttleContext(r), as takeFailedAuth does
-					obs.FailedAuthTotal.WithLabelValues(obs.FailedAuthThrottled).Inc()
-					writeAuthThrottleProblem(w, retryAfter)
-					return
-				}
-			}
 			subject, err := authenticate(r, mode, opts)
 			if err != nil {
 				rejectAuth(w, r, mode, opts, err) //nolint:contextcheck // takeFailedAuth intentionally detaches via throttleContext(r) — see its doc (REL-06 F059/Q153)
@@ -157,65 +146,6 @@ func rejectAuth(w http.ResponseWriter, r *http.Request, mode AuthMode, opts Auth
 		obs.FailedAuthTotal.WithLabelValues(obs.FailedAuthRejected).Inc()
 	}
 	writeAuthError(w, err)
-}
-
-// presentedCredential returns the credential r carries that
-// [authenticate] would hand to a validator under mode, or "".
-func presentedCredential(r *http.Request, mode AuthMode) string {
-	switch mode {
-	case AuthModeAPIKey, AuthModeAPIKeyOptional:
-		return bearerOrXKey(r)
-	case AuthModeSEP10:
-		return bearerOnly(r)
-	default:
-		return ""
-	}
-}
-
-// failedAuthCredKey is the failed-auth bucket for one presented
-// credential from one client IP, or "" when r presents none. Keyed on a
-// hash of the whole credential, so only a caller holding a credential can
-// fill its bucket, and a valid credential never fails into one. The IP
-// is the suffix so the in-process store's per-/48 cap still groups it.
-func failedAuthCredKey(r *http.Request, mode AuthMode, ip string) string {
-	cred := presentedCredential(r, mode)
-	if cred == "" {
-		return ""
-	}
-	h := sha256.Sum256([]byte(cred))
-	return "failauth-cred:" + hex.EncodeToString(h[:8]) + ":" + ip
-}
-
-// failedAuthCredSpent reports, without spending a token, whether r's
-// (client IP, credential) pair has already failed past the budget this
-// window. Checked before the credential lookup so a caller replaying a
-// refused credential costs no validator work. It is deliberately not the
-// IP-wide bucket: on a shared NAT, CGNAT or IPv6 /64 one guesser would
-// then lock every valid key behind that address out without a lookup.
-// A limiter error fails open; takeFailedAuth applies the fail-closed
-// policy if the credential then fails.
-func failedAuthCredSpent(r *http.Request, mode AuthMode, limiter *ratelimit.Bucket) (throttled bool, retryAfter int) {
-	key := failedAuthCredKey(r, mode, failedAuthIP(r))
-	if key == "" {
-		return false, 0
-	}
-	ctx, cancel := throttleContext(r)
-	defer cancel()
-	res, err := limiter.Peek(ctx, key)
-	if err != nil || res.Allowed {
-		return false, 0
-	}
-	return true, max(int(res.RetryAfter.Seconds()), 1)
-}
-
-// failedAuthIP is r's failed-auth IP dimension. No resolvable IP
-// collapses into one shared bucket rather than skipping the throttle
-// (fail-closed for the throttle itself).
-func failedAuthIP(r *http.Request) string {
-	if ip := remoteIPPrefixFor(r); ip != "" {
-		return ip
-	}
-	return "unknown"
 }
 
 // isUnauthenticatedInfraPath reports whether a path is operational
@@ -349,28 +279,23 @@ func isCredentialRejection(err error) bool {
 //     [failedAuthKeyPrefix]), which bounds guessing aimed at ONE key
 //     from many IPs — rotating addresses resets only the IP dimension.
 //
-// It also counts the (IP, credential) pair ("failauth-cred:"; see
-// [failedAuthCredKey]) for the pre-lookup gate. It is taken first so the
-// IP's refusal cannot skip it, and never decides this status: the pair
-// never fails more often than its IP.
-//
 // Only credential FAILURES reach here, so a caller filling a victim's
 // key-prefix bucket can 429 other bad guesses at that prefix but never
-// the victim's valid key. These key spaces are disjoint from the main
+// the victim's valid key. Both key spaces are disjoint from the main
 // per-IP request limiter's.
 func takeFailedAuth(r *http.Request, mode AuthMode, limiter *ratelimit.Bucket) (throttled bool, retryAfter int) {
-	ip := failedAuthIP(r)
+	ip := remoteIPPrefixFor(r)
+	if ip == "" {
+		// No resolvable IP → collapse into one shared bucket rather than
+		// skip the throttle (fail-closed for the throttle itself).
+		ip = "unknown"
+	}
 	// Detach from the request's cancellation — see [throttleContext]:
 	// ratelimit.Bucket cannot tell a client abort from a Redis outage,
 	// so a caller that RSTs mid-take must not arm the fail-closed dwell
 	// clock for these shared buckets (REL-06 F059 / Q153).
 	takeCtx, takeCancel := throttleContext(r)
 	defer takeCancel()
-	if key := failedAuthCredKey(r, mode, ip); key != "" {
-		// A count for the pre-lookup gate only; the IP take below owns
-		// the status and the outage policy, so its error is not ours.
-		_, _ = limiter.Take(takeCtx, key)
-	}
 	if throttled, ra := takeFailedAuthBucket(takeCtx, limiter, "failauth:"+ip); throttled {
 		return true, ra
 	}

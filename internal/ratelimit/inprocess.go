@@ -144,18 +144,6 @@ func (s *localStore) take(key string, window int64, limit int, now time.Time, wi
 	return e.count, e.count <= limit
 }
 
-// peek returns key's count for window without changing it. A key not
-// tracked under its own name (never seen, or folded into a shared /48 or
-// overflow bucket) reads as 0: peek is advisory and take still enforces.
-func (s *localStore) peek(key string, window int64) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if e, ok := s.entries[key]; ok && e.window == window {
-		return e.count
-	}
-	return 0
-}
-
 // admitLocked picks the bucket an untracked key is counted against: its
 // own, its /48's shared bucket once that /48 has used its per-window
 // allowance, or [localOverflowKey] once the map is full. Caller holds s.mu.
