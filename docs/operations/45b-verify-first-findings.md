@@ -72,7 +72,7 @@ when next touched.
   `supply_flows` is written live. Remaining: an incremental MV for the
   token_supply rollup and the snapshot-shape integration (classic↔SAC
   asset_key mapping, XLM total_coins) per
-  `docs/architecture/clickhouse-supply-from-ch.md`.
+  `docs/architecture/storage-considerations.md#supply-flows-in-the-lake`.
 - **SEP-1 trust-chain signature verification**: issuer↔toml `org_verified` is
   enforced; SIGNING_KEY verification is absent, reserved for a future ADR
   (`internal/metadata/doc.go`), post-launch.

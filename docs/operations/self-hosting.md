@@ -261,9 +261,7 @@ The indexer dials the **native protocol** port (`storage.clickhouse_addr`,
 default `127.0.0.1:9300`, not 8123 HTTP); if you pick another `<tcp_port>`,
 set `storage.clickhouse_addr` to match. Tiering and what is populated:
 [ADR-0034](../adr/0034-tiered-clickhouse-architecture.md),
-[`clickhouse-migration-plan.md`](../architecture/clickhouse-migration-plan.md)
-(`ledger_entry_changes` is schema'd, not yet written; see its "Accepted
-exclusion").
+[`storage-considerations.md`](../architecture/storage-considerations.md).
 
 The reference `stellarindex-api` unit is `After=clickhouse-server.service`
 (ordering only; a no-op for remote/Docker ClickHouse). Before listening, the

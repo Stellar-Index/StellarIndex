@@ -9,7 +9,7 @@
 -- fresh-host apply set is declared in
 -- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
 --
--- Tier-1 raw lake schema (ADR-0034 / docs/architecture/clickhouse-migration-plan.md §5).
+-- Tier-1 raw lake schema (ADR-0034 / docs/architecture/storage-considerations.md §Tier-1 lake schema).
 -- Structural, decoder-INDEPENDENT decode of every ledger; raw XDR blobs retained
 -- so any protocol decoder (event / op / contract-call / ledger-entry-change) can
 -- run from ClickHouse without re-touching galexie.

@@ -28,7 +28,7 @@ type MintBurnFlow struct {
 // uniform V4 meta these include CAP-67 classic-asset issuance/destruction back
 // to genesis AND SEP-41 token mint/burn/clawback — so Σ over all history gives
 // total supply for EVERY token (baseline = 0 at asset/contract genesis), per
-// docs/architecture/clickhouse-supply-from-ch.md.
+// docs/architecture/storage-considerations.md#supply-flows-in-the-lake.
 //
 // useFinal toggles FINAL: with it, ReplacingMergeTree parts dedup at read time
 // (correct, but the all-history merge over 12 B rows is ~40× slower). Without

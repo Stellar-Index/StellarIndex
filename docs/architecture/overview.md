@@ -26,8 +26,8 @@ rational arithmetic (ADR-0003). Everything is served through a public
 | Off-chain ingest | CEX/FX connectors (`internal/sources/external`) → the same event channel | [add-cex-connector](../contributing/procedures/add-cex-connector.md) |
 | Re-derive / replay | CH lake → the same decoders → served tier | [ingest-pipeline.md § The replay decision rule](ingest-pipeline.md#the-replay-decision-rule) |
 | Aggregation | trades → outlier filter → class gating → VWAP → freeze/confidence → Redis + CAGGs | [aggregation-plan.md](aggregation-plan.md) |
-| Verification | lake substrate + recognition + per-ledger projection reconcile → `completeness_snapshots` | ADR-0033, ADR-0041 |
-| Serving | Timescale CAGGs + Redis + CH explorer reads → `internal/api/v1` → REST/SSE | ADR-0015, ADR-0018 |
+| Verification | lake substrate + recognition + per-ledger projection reconcile → `completeness_snapshots` → `/v1/coverage` | [coverage-matrix.md](coverage-matrix.md#completeness-what-v1coverage-publishes), ADR-0033, ADR-0041 |
+| Serving | Timescale CAGGs + Redis + CH explorer reads → `internal/api/v1` → REST/SSE | [storage-considerations.md](storage-considerations.md), [SLOs](coverage-matrix.md#service-objectives-and-their-proof), ADR-0015, ADR-0018 |
 
 ## Where truth lives
 
@@ -93,6 +93,7 @@ package's `doc.go`.
 1. `AGENTS.md`: the rules, invariants and traps.
 2. This page.
 3. [ingest-pipeline.md](ingest-pipeline.md): the binding ingest rules.
-4. ADR-0033 and ADR-0034: the trust story.
+4. ADR-0033 and ADR-0034: the trust story; [storage-considerations.md](storage-considerations.md)
+   and [coverage-matrix.md](coverage-matrix.md) apply them.
 5. `docs/engineering-standards.md`: the policy you are bound by.
 6. The `doc.go` of the package you are touching.
