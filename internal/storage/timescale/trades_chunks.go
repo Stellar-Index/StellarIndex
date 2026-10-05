@@ -357,73 +357,107 @@ func (t *lockTally) String() string {
 // than the one this fixes. `live` is the caller's own context: once it is
 // done, no retry that would repeat work starts.
 func (s *Store) execUnderBoundedLockWait(ctx, live context.Context, p lockWaitPolicy, query string, c TradeChunk) error {
-	t := lockTally{start: time.Now()}
-	giveUp := func(why string, err error) error {
-		return fmt.Errorf("gave up on the chunk's locks (%s) %s; %s per request, %s between attempts: something else holds a "+
-			"conflicting lock — identify it with pg_blocking_pids() and see docs/operations/runbooks/pg-lock-convoy.md: %w",
-			why, &t, p.wait, p.drain, err)
-	}
-	// mayWait: another cheap wait fits the budget, and once the caller has
-	// gone, the wall clock as well.
-	mayWait := func() bool {
-		if live.Err() != nil && time.Since(t.start)+p.drain >= p.budget {
-			return false
-		}
-		return t.charged+p.drain < p.budget
-	}
+	r := &lockRetry{t: lockTally{start: time.Now()}, p: p, live: live}
 	for {
 		holder, err := s.longLockHolder(ctx, c)
 		if err != nil {
 			return err
 		}
 		if holder != "" {
-			t.holderWaits++
-			t.lastHolder = holder
-			if !mayWait() {
-				return giveUp(fmt.Sprintf("the %s budget is spent", p.budget), errLongLockHolder)
-			}
-			if err := t.drain(ctx, p.drain); err != nil {
-				return fmt.Errorf("stopped waiting for the chunk's locks %s: %w", &t, err)
+			if err := r.waitOutHolder(ctx, holder); err != nil {
+				return err
 			}
 			continue
 		}
-
-		t.attemptsMade++
-		began := time.Now()
-		stmtElapsed, inStatement, err := s.chunkLockAttempt(ctx, p.wait, query, c)
-		if err == nil {
-			return nil
-		}
-		if !isLockNotAvailable(err) {
+		if done, err := s.retryAttempt(ctx, r, query, c); done {
 			return err
 		}
-		// A refusal inside the statement ended a wait of at most p.wait;
-		// the rest of the statement's time was work.
-		var work time.Duration
-		if inStatement {
-			work = stmtElapsed - min(stmtElapsed, p.wait)
-		}
-		t.charged += time.Since(began) - work
-		t.workLost += work
-		if inStatement {
-			t.late++
-			switch remaining := p.budget - time.Since(t.start); {
-			case live.Err() != nil:
-				return giveUp("the caller has stopped, so the work is not repeated", err)
-			case stmtElapsed+p.drain > remaining:
-				return giveUp(fmt.Sprintf("another %s attempt does not fit the %s left of the %s budget",
-					stmtElapsed.Round(time.Second), remaining.Round(time.Second), p.budget), err)
-			}
-		} else {
-			t.cheap++
-			if !mayWait() {
-				return giveUp(fmt.Sprintf("the %s budget is spent", p.budget), err)
-			}
-		}
-		if err := t.drain(ctx, p.drain); err != nil {
-			return fmt.Errorf("stopped waiting for the chunk's locks %s: %w", &t, err)
+		if err := r.drainAfterRefusal(ctx); err != nil {
+			return err
 		}
 	}
+}
+
+// lockRetry is the state of one execUnderBoundedLockWait call.
+type lockRetry struct {
+	t    lockTally
+	p    lockWaitPolicy
+	live context.Context
+}
+
+func (r *lockRetry) giveUp(why string, err error) error {
+	return fmt.Errorf("gave up on the chunk's locks (%s) %s; %s per request, %s between attempts: something else holds a "+
+		"conflicting lock — identify it with pg_blocking_pids() and see docs/operations/runbooks/pg-lock-convoy.md: %w",
+		why, &r.t, r.p.wait, r.p.drain, err)
+}
+
+// mayWait: another cheap wait fits the budget, and once the caller has
+// gone, the wall clock as well.
+func (r *lockRetry) mayWait() bool {
+	if r.live.Err() != nil && time.Since(r.t.start)+r.p.drain >= r.p.budget {
+		return false
+	}
+	return r.t.charged+r.p.drain < r.p.budget
+}
+
+func (r *lockRetry) budgetSpent(err error) error {
+	return r.giveUp(fmt.Sprintf("the %s budget is spent", r.p.budget), err)
+}
+
+func (r *lockRetry) drainAfterRefusal(ctx context.Context) error {
+	if err := r.t.drain(ctx, r.p.drain); err != nil {
+		return fmt.Errorf("stopped waiting for the chunk's locks %s: %w", &r.t, err)
+	}
+	return nil
+}
+
+// waitOutHolder charges one wait on a long-running lock holder.
+func (r *lockRetry) waitOutHolder(ctx context.Context, holder string) error {
+	r.t.holderWaits++
+	r.t.lastHolder = holder
+	if !r.mayWait() {
+		return r.budgetSpent(errLongLockHolder)
+	}
+	return r.drainAfterRefusal(ctx)
+}
+
+// retryAttempt runs one attempt. done is true when the call must return
+// err (nil on success); false means a lock refusal was charged and the
+// caller should drain and retry.
+func (s *Store) retryAttempt(ctx context.Context, r *lockRetry, query string, c TradeChunk) (done bool, err error) {
+	r.t.attemptsMade++
+	began := time.Now()
+	stmtElapsed, inStatement, err := s.chunkLockAttempt(ctx, r.p.wait, query, c)
+	if err == nil {
+		return true, nil
+	}
+	if !isLockNotAvailable(err) {
+		return true, err
+	}
+	// A refusal inside the statement ended a wait of at most p.wait;
+	// the rest of the statement's time was work.
+	var work time.Duration
+	if inStatement {
+		work = stmtElapsed - min(stmtElapsed, r.p.wait)
+	}
+	r.t.charged += time.Since(began) - work
+	r.t.workLost += work
+	if !inStatement {
+		r.t.cheap++
+		if !r.mayWait() {
+			return true, r.budgetSpent(err)
+		}
+		return false, nil
+	}
+	r.t.late++
+	switch remaining := r.p.budget - time.Since(r.t.start); {
+	case r.live.Err() != nil:
+		return true, r.giveUp("the caller has stopped, so the work is not repeated", err)
+	case stmtElapsed+r.p.drain > remaining:
+		return true, r.giveUp(fmt.Sprintf("another %s attempt does not fit the %s left of the %s budget",
+			stmtElapsed.Round(time.Second), remaining.Round(time.Second), r.p.budget), err)
+	}
+	return false, nil
 }
 
 // drain waits d with no request pending and charges what it took.
