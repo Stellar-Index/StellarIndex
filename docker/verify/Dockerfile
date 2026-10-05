@@ -3,12 +3,12 @@
 # Base images pinned by immutable digest (supply-chain, DEP-low), matching the
 # six stellarindex-*.Dockerfiles pinned in 5ed7ac728. The tag stays in the
 # reference for readability only — the digest is what buildkit pulls. Both
-# are multi-platform index digests resolved 2026-09-25 via the registry's
+# are multi-platform index digests resolved 2026-10-05 via the registry's
 # manifest-list endpoint; refresh by hand with the same lookup and update
 # this file when the tag moves.
-FROM node:26-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS node
+FROM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS node
 
-FROM golang:1.26.8-trixie@sha256:bdca99a00bc16590cb1a0bb4e698f5fc5d6a64e4d5eef13d9f18a0ee08e5fa65
+FROM golang:1.27.1-trixie@sha256:3b77fc618ec235a1ab412de7737f120dd507c57e8d87de4cbb7994fb94275ed5
 
 ARG TARGETARCH
 ARG GOFUMPT_VERSION=v0.8.0
