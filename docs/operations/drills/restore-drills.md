@@ -1,244 +1,82 @@
 ---
 title: Restore-drill evidence log
-last_verified: 2026-09-17
+last_verified: 2026-10-05
 status: snapshot of the on-box log
 ---
 
 # Restore-drill evidence log
 
-> **This file is not the live log. The evidence lives on r1 at
-> `/var/lib/stellarindex/restore-drills/restore-drills.md`.**
->
-> Since BDR-03 (2026-08-14) `scripts/ops/restore-drill.sh` appends every
-> run's evidence to `$RESTORE_DRILL_LOG_DIR/restore-drills.md`, which
-> defaults to `/var/lib/stellarindex/restore-drills/` on the box — not to
-> this file. Everything below is a hand-copied, dated snapshot; the table
-> at the bottom is the most recent copy and says when it was taken. If the
-> two disagree, the on-box file is right.
->
-> **How to read it.** One block per run, appended in order, in the shape
-> `record_evidence()` writes:
->
-> ```text
-> ## YYYY-MM-DD restore drill (repoN)
-> - restore: <s>s; tip lag <n> ledgers; hash-chain breaks: <n>; trades window match: <restored>=<live>
-> - CH re-derive (dry-run, fetch+decode only): <window> ledgers in <s>s from <bucket>; lake rows in window: <n>   (only with DRILL_CH_WINDOW)
-> - note: <DRILL_LOG_NOTE>   (only when DRILL_LOG_NOTE is set)
-> - failures: <n>
-> ```
->
-> `repo1` is the local pgBackRest copy, `repo2` the encrypted off-site
-> copy. A run that stopped before verification writes `- ABORTED at
-> <phase>` in place of the restore line. `failures: 0` is a pass; the two
-> checks that would catch a corrupt or partial copy are `hash-chain
-> breaks: 0` and an exact `trades window match`. To look:
->
-> ```bash
-> ssh root@136.243.90.96 'tail -n 30 /var/lib/stellarindex/restore-drills/restore-drills.md'
-> ssh root@136.243.90.96 'grep -c "^## " /var/lib/stellarindex/restore-drills/restore-drills.md'   # runs recorded
-> ```
->
-> Two timers write it: `restore-drill.timer` (repo1, first Saturday of the
-> month, 04:00 UTC) and `restore-drill-offsite.timer` (repo2, the 15th,
-> 04:00 UTC). Freshness is alerted on, not read from this file:
-> [`restore-drill-stale`](../runbooks/restore-drill-stale.md),
-> [`restore-drill-offsite-stale`](../runbooks/restore-drill-offsite-stale.md),
-> [`restore-drill-failed`](../runbooks/restore-drill-failed.md).
+> **This file is a snapshot, not the live log.** The evidence lives on r1 at
+> `/var/lib/stellarindex/restore-drills/restore-drills.md`. Since BDR-03 (2026-08-14)
+> `scripts/ops/restore-drill.sh` appends each run to `$RESTORE_DRILL_LOG_DIR/restore-drills.md`
+> (default that path), not to this file. If the two disagree, the on-box file is right.
 
-One entry per drill (ADR-0043 §3; CS-110: "a backup that has never
-been restored is a hope, not a backup"). The 2026-07-03 series below
-predates the on-box log and was reconstructed from
-`/var/log/restore-drill-*.log`; every later run is copied from the on-box
-file.
+ADR-0043 §3; CS-110: "a backup that has never been restored is a hope, not a backup".
+
+## Reading the on-box log
+
+One block per run, in the shape `record_evidence()` writes:
+
+```text
+## YYYY-MM-DD restore drill (repoN)
+- restore: <s>s; tip lag <n> ledgers; hash-chain breaks: <n>; trades window match: <restored>=<live>
+- CH re-derive (dry-run, fetch+decode only): <window> ledgers in <s>s from <bucket>; lake rows in window: <n>   (only with DRILL_CH_WINDOW)
+- note: <DRILL_LOG_NOTE>   (only when DRILL_LOG_NOTE is set)
+- failures: <n>
+```
+
+`repo1` is the local pgBackRest copy, `repo2` the encrypted off-site copy. A run that stopped early writes
+`- ABORTED at <phase>` instead of the restore line. `failures: 0` is a pass; the two checks that catch a corrupt or
+partial copy are `hash-chain breaks: 0` and an exact `trades window match`.
+
+```bash
+ssh root@136.243.90.96 'tail -n 30 /var/lib/stellarindex/restore-drills/restore-drills.md'
+ssh root@136.243.90.96 'grep -c "^## " /var/lib/stellarindex/restore-drills/restore-drills.md'   # runs recorded
+```
+
+Schedule: `restore-drill.timer` (repo1, first Saturday of the month, 04:00 UTC) and `restore-drill-offsite.timer`
+(`DRILL_REPO=2`, the 15th, 04:00 UTC). Freshness is alerted, not read from this file:
+[restore-drill-stale](../runbooks/restore-drill-stale.md), [restore-drill-offsite-stale](../runbooks/restore-drill-offsite-stale.md),
+[restore-drill-failed](../runbooks/restore-drill-failed.md).
 
 ## Procedures this log is evidence for
 
 | Layer | What restores it | Runbook |
 | ----- | ---------------- | ------- |
-| Postgres (served tier) | `pgbackrest restore` into a scratch datadir, driven by `scripts/ops/restore-drill.sh` phases 1–3 | `runbooks/backup-failed.md` |
-| ClickHouse **schema + state** | replay `schema.sql` from the daily §2.1 snapshot, then re-derive the data | **`runbooks/ch-schema-restore.md`** — the snapshot → `CREATE` path, step by step |
+| Postgres (served tier) | `pgbackrest restore` into a scratch datadir, `scripts/ops/restore-drill.sh` phases 1-3 | `runbooks/backup-failed.md` |
+| ClickHouse **schema + state** | replay `schema.sql` from the daily §2.1 snapshot, then re-derive the data | `runbooks/ch-schema-restore.md` |
 | ClickHouse **data** | `ch-full-backfill.sh` against `galexie-archive`, bounded by `ch-backfill-done-windows.txt` from the same snapshot | `runbooks/ch-schema-restore.md` §"Restore path" |
 
-The ClickHouse half of a restore is **schema first, data second**, and
-the schema does not come from `deploy/clickhouse/tier1_schema.sql` — that
-is the founding DDL, since outgrown by indexes, MVs and compression
-policies. It comes from the daily snapshot
-(`scripts/ops/ch-schema-snapshot.sh`, ADR-0043 §2.1). A drill that
-restores Postgres and assumes the lake schema is in the repo is drilling
-half the system.
+Schema comes first and from the daily snapshot (`scripts/ops/ch-schema-snapshot.sh`, ADR-0043 §2.1), not from
+`deploy/clickhouse/tier1_schema.sql` (founding DDL, outgrown by indexes, MVs and compression policies).
 
-### CH re-derive stage (phase 4), and its honest limit
+### CH re-derive stage (phase 4) and its limit
 
-`DRILL_CH_WINDOW=100000` adds the ADR-0043 §2.2 re-derive sample. It runs
-`ch-backfill -dry-run`: every galexie object is fetched and fully decoded
-(`clickhouse.ExtractLedger`), and nothing is written. There is no
-scratch-database mode to use — `clickhouse.Open` pins the `stellar`
-database — and re-deriving into the live lake would add ReplacingMergeTree
-duplicates to a capacity-blocked pool every drill. So the RTO figure this
-log records is **fetch+decode throughput**, which is the multi-week part
-of a rebuild; the ClickHouse INSERT path is exercised continuously by live
-ingest and is not the bottleneck. The stage additionally reconciles the
-window against the live lake (`ch_lake_window_complete`).
+`DRILL_CH_WINDOW=100000` adds the ADR-0043 §2.2 sample: `ch-backfill -dry-run` fetches and fully decodes every galexie object
+(`clickhouse.ExtractLedger`) and writes nothing (`clickhouse.Open` pins the `stellar` database, and re-deriving into the live lake
+would add ReplacingMergeTree duplicates). The RTO figure it records is therefore **fetch+decode throughput**, the multi-week part of
+a rebuild; the INSERT path is exercised by live ingest. It also reconciles the window against the live lake (`ch_lake_window_complete`).
+Before 2026-07-25 it had never run (it passed `-database drill_scratch`, a flag `ch-backfill` never declared). The drill now preflights
+its own invocation against the binary and exits 2 on drift; `scripts/ops/restore-drill-test.sh` pins that in CI and
+`scripts/ops/restore-drill-run-test.sh` drives the abort paths (capacity refusal, restore failure, recovery failure).
 
-Before 2026-07-25 this stage had **never run**: it passed `-database
-drill_scratch`, a flag `ch-backfill` has never declared, so
-`flag.ContinueOnError` rejected the invocation at parse time and the
-failure was recorded as a generic re-derive failure under `| tail -5`.
-The drill now preflights its own invocation against the binary and
-refuses to start (exit 2, precondition) on drift;
-`scripts/ops/restore-drill-test.sh` pins the same contract in CI;
-`scripts/ops/restore-drill-run-test.sh` drives the script through its
-abort paths (capacity refusal, restore failure, recovery failure) with
-shimmed host tools and pins evidence + metric on every path.
+## First drill series, 2026-07-03 (repo1)
 
-## 2026-07-03 restore drill (repo1) — first drill series
+Five runs, each failing one layer deeper; every mode is now encoded in the script:
 
-The first-ever drill took **five runs**, each failing one layer
-deeper — every failure mode is now encoded in the script, which is
-exactly the value CS-110 promised:
+1. Production-sized config: restored `postgresql.auto.conf` carries live sizing (tens-of-GB `shared_buffers`) a second instance cannot allocate. Fix: scratch overrides.
+2. Debian layout: `postgresql.conf`/`pg_hba.conf` live under `/etc/postgresql`, not PGDATA, so `pg_ctl` dies pre-recovery. Fix: synthesized minimal config + loopback-trust hba.
+3. WAL replay needs real time: `pg_ctl -w -t 600` timed out during healthy replay (~21 h of WAL via `archive-get`). Fix: `PG_START_TIMEOUT` default 2 h.
+4. With `hot_standby=on`, recovery aborts unless `max_connections`, `max_worker_processes`, `max_wal_senders`, `max_prepared_transactions`, `max_locks_per_transaction` are >= the primary's (downsizing had cut `max_connections` 200 to 20). Fix: read all five from the live primary and mirror.
 
-1. **Production-sized config**: the restored `postgresql.auto.conf`
-   carries live sizing (tens-of-GB `shared_buffers`); a second
-   instance beside the live DB can't allocate it. → scratch overrides
-   (memory downsized).
-2. **Debian config layout**: the cluster's `postgresql.conf` /
-   `pg_hba.conf` live under `/etc/postgresql`, NOT in PGDATA — the
-   restored datadir has neither and `pg_ctl` dies pre-recovery. →
-   synthesized minimal config + loopback-trust hba.
-3. **WAL replay needs real time**: `pg_ctl -w -t 600` timed out while
-   recovery was healthily replaying ~21h of WAL through
-   `archive-get` (daily-diff schedule × busy ingest DB). →
-   `PG_START_TIMEOUT` default 2h.
-4. **Replay-enforced GUCs**: with `hot_standby=on`, recovery ABORTS
-   ("insufficient parameter settings") unless
-   `max_connections`/`max_worker_processes`/`max_wal_senders`/
-   `max_prepared_transactions`/`max_locks_per_transaction` are ≥ the
-   primary's — the downsizing pass had cut `max_connections` 200→20.
-   → the five GUCs are now read from the live primary and mirrored.
+Runs 1-4: `pg_restore` OK each time (848-888 s for the ~273 GB set); `pg_start` failed per the modes above.
+**Run 5 PASS, 0 failures:** `pg_restore` 871 s; 4/4 core tables; restored tip 63,302,295 vs live 63,302,535 (240 ledgers, ~20 min of
+unarchived WAL); 0 chain breaks in the 100k tail; trades[63202295,63252295] 5,770,426 = 5,770,426. RTO evidence: ~15 min restore + WAL
+replay (scales with time since the last differential).
 
-Runs 1–4: `pg_restore` OK every time (848–888s for the ~273GB set,
-repo1); `pg_start` failed per the modes above.
+## All runs since 2026-08-16 (copied from the on-box log; last copy 2026-09-17)
 
-**Run 5 — PASS, 0 failures (2026-07-03, repo1, agent-run):**
-
-- `pg_restore`: 871s
-- `pg_start`: recovery to consistency complete (WAL replay via
-  archive-get; scratch instance on :5499)
-- `core_tables`: 4/4
-- `tip_lag`: restored tip 63,302,295 vs live 63,302,535 — **240
-  ledgers (~20 min)** of WAL not yet archived; WAL archiving healthy
-- `hash_chain_sample`: 0 chain breaks in the restored 100k tail
-- `trades_window_match`: trades[63202295,63252295] restored
-  5,770,426 = live 5,770,426 — exact
-
-CS-110's answer: the repo1 backup restores, recovers, and matches the
-live database bit-for-bit on an immutable window. RTO evidence:
-~15 min restore + WAL replay (scales with time-since-last-diff).
-
----
-
-## Runs 6-9 — reconciled from r1 on 2026-09-03
-
-**This log was stale by construction, and that is the finding.** BDR-03
-moved the drill's evidence write to `/var/lib/stellarindex/restore-drills/`
-ON THE BOX, so the in-repo copy stopped at Run 5 while four more passing
-runs accumulated where nobody reading the repository would ever see them.
-Anyone opening this file between July and now concluded the drill had not
-run since 2026-07-03. It had, four times.
-
-| run | date | repo | restore | tip lag | hash-chain breaks | trades window | failures |
-|---|---|---|---|---|---|---|---|
-| 6 | 2026-08-16 | repo1 | 496 s | 12,527 ledgers | 0 | 2,891,421 = 2,891,421 | 1 |
-| 7 | 2026-08-19 | repo1 | 532 s | 13,392 ledgers | 0 | 5,416,797 = 5,416,797 | 1 |
-| 8 | 2026-08-19 | repo1 | 539 s | 206 ledgers | 0 | 5,905,148 = 5,905,148 | **0** |
-| 9 | 2026-08-24 | repo1 | 535 s | 17 ledgers | 0 | 4,601,258 = 4,601,258 | **0** |
-
-Restore time is stable at 496-539 s across all four. Every run had **zero
-hash-chain breaks** and an **exact** trades-window match, which are the two
-checks that would catch a corrupt or partial copy — so the failures in runs
-6 and 7 are not data-integrity failures. The tip lag tells that story: 12.5k
-and 13.4k ledgers behind on the two runs that failed a check, against 206
-and 17 on the two that passed. That is WAL that had not yet been archived
-when the drill ran, not a bad backup.
-
-**Reconciling this file is not the fix.** It will go stale again the next
-time the drill runs, for exactly the same reason. Either the drill should
-write its evidence back into the repository, or this file should stop
-pretending to be the log and instead point at the on-box path as the
-authority. Until one of those happens, treat
-`/var/lib/stellarindex/restore-drills/restore-drills.md` on r1 as the truth
-and this file as a snapshot of it.
-
----
-
-## Run 10 — 2026-09-03 — **the OFF-SITE copy, restored for the first time. 0 failures.**
-
-Every run before this one was `repo1`, the LOCAL copy. `repo2` — encrypted,
-S3 `eu-central-1` — is the copy that matters when the site is gone, and
-until today it had never been restored. A backup that has never been
-restored is a hope, not a backup, and that was the whole point of CS-110.
-
-| check | result |
-|---|---|
-| `pg_restore` | **OK — 2,813 s (47 min)** from repo2 |
-| `pg_start` | OK — scratch instance up on :5499, recovery complete |
-| `core_tables` | OK — 4 of 4 |
-| `wal_drain` | OK — replay reached `1C85/50286000` |
-| `tip_lag` | OK — restored tip 64,250,568 against live 64,250,585: **17 ledgers**, about 85 seconds |
-| `hash_chain_sample` | OK — **0 chain breaks** in the restored 100k tail |
-| `trades_window_match` | OK — trades[64150568, 64200568] restored **2,726,303 = 2,726,303** live, exact |
-| **failures** | **0** |
-
-Run under `run-heavy-job.sh` (singleton lock, 20 GB memory cap,
-deprioritised CPU and I/O), non-destructive throughout, on a dedicated ZFS
-dataset with 4.9 TB free against a 1,038 GB requirement.
-
-### The number this drill existed to produce
-
-**Off-site RTO is ~47 minutes of restore, against ~9 minutes from the
-local copy** (runs 6-9 were 496-539 s). The difference is bandwidth: 269 GB
-of compressed repository — a 242.6 GB full plus a 26.6 GB differential —
-pulled from S3 to Hetzner, expanding to 788 GB on disk. Roughly **$24 of
-AWS egress** for the drill.
-
-That gap belongs in the disaster-recovery plan. Any RTO commitment quoting
-the ~15-minute figure from the repo1 drills is quoting the wrong copy: in
-the disaster where the local repository is also gone, the honest number is
-**an hour**, plus WAL replay.
-
-### What it proves
-
-The encrypted off-site copy restores, recovers to consistency, and matches
-the live database **exactly** on an immutable window — zero hash-chain
-breaks and a byte-exact trades count 50,000 ledgers wide. The 17-ledger tip
-lag is WAL not yet archived at the moment the drill ran, not a defect; it is
-the tightest of any drill so far.
-
-### Still outstanding (as written on 2026-09-03; see the 2026-09-17 note)
-
-The drill wrote its evidence to `/var/lib/stellarindex/restore-drills/`
-on the box, as BDR-03 arranged, and this file is again a hand-copied
-snapshot of it. That is the staleness described above and it has not been
-fixed — only reconciled. The `restore-drill.timer` is monthly and defaults
-to `repo1`, so **nothing schedules an off-site drill**; today's was manual.
-One of the two should change.
-
-**2026-09-17 note:** the second of those two has since changed —
-`restore-drill-offsite.timer` (`DRILL_REPO=2`, the 15th, 04:00 UTC) is
-applied on r1 and produced the 2026-09-15 repo2 run in the table below,
-and `restore-drill.timer` produced the 2026-09-05 repo1 run. The first has
-not: this file remains a snapshot, which is what the banner at the top now
-says out loud.
-
----
-
-## Drill runs since 2026-07-01 — copied from the on-box log on 2026-09-17
-
-Read from `/var/lib/stellarindex/restore-drills/restore-drills.md` on r1
-(seven entries; the file begins at the first post-BDR-03 run, so the
-2026-07-03 series above is not in it). `restore` is the `pg_restore`
-wall-clock; the CH column is the phase-4 re-derive sample, which only the
-local Saturday drill requests.
+`restore` is `pg_restore` wall-clock; the CH column is the phase-4 sample, requested only by the local Saturday drill.
 
 | date | repo | restore | tip lag | hash-chain breaks | trades window (restored = live) | CH re-derive (dry-run) | failures |
 |---|---|---|---|---|---|---|---|
@@ -247,18 +85,19 @@ local Saturday drill requests.
 | 2026-08-19 | repo1 | 539 s | 206 ledgers | 0 | 5,905,148 = 5,905,148 | — | **0** |
 | 2026-08-24 | repo1 | 535 s | 17 ledgers | 0 | 4,601,258 = 4,601,258 | — | **0** |
 | 2026-09-03 | repo2 | 2,813 s (47 min) | 17 ledgers | 0 | 2,726,303 = 2,726,303 | — | **0** |
-| 2026-09-05 | repo1 | 607 s | 3 ledgers | 0 | 2,888,781 = 2,888,781 | 100,000 ledgers in 1,893 s from `galexie-archive`; 100,000 lake rows in window | **0** |
+| 2026-09-05 | repo1 | 607 s | 3 ledgers | 0 | 2,888,781 = 2,888,781 | 100,000 ledgers in 1,893 s (~53 ledgers/s) from `galexie-archive`; 100,000 lake rows in window | **0** |
 | 2026-09-15 | repo2 | 2,925 s (49 min) | 68 ledgers | 0 | 5,225,239 = 5,225,239 | — | **0** |
 
-Two things the newer rows add to the picture above:
+- The two failures (08-16, 08-19) had zero chain breaks and exact trades matches; the large tip lag (12.5k and 13.4k ledgers) was WAL not yet archived, not a bad backup.
+- **Local RTO:** ~9-10 min (496-607 s over five scheduled runs; manual 2026-07-03 run 871 s).
+- **Off-site RTO (the site-gone case): ~47-49 min of restore plus WAL replay**, reproducible (2,813 s then 2,925 s). Cause: 269 GB of compressed
+  repository (242.6 GB full + 26.6 GB differential, 788 GB on disk) pulled from S3 `eu-central-1` to Hetzner; ~$24 AWS egress per drill.
+  Never quote the ~15 min repo1 figure for a disaster where the local repository is gone.
+- 2026-09-03 repo2 run was the first off-site restore; manual, under `run-heavy-job.sh` (singleton lock, 20 GB memory cap, deprioritised CPU/IO), non-destructive,
+  on a dedicated ZFS dataset (4.9 TB free vs 1,038 GB required).
 
-- **The off-site RTO is reproducible.** The second repo2 restore took
-  2,925 s against 2,813 s for the first — the ~47-49 minute figure is the
-  number to quote for the site-gone case, not the ~9-10 minutes of a
-  repo1 restore (496-607 s across five scheduled runs; the manual 2026-07-03 Run 5 took 871 s).
-- **The CH re-derive stage has now run on a scheduled drill.** 100,000
-  ledgers fetched and decoded from `galexie-archive` in 1,893 s (~53
-  ledgers/s), and the lake held all 100,000 in the window. That is the
-  first recorded phase-4 figure; before 2026-07-25 the stage had never
-  executed (see the section on its honest limit above).
+## Still outstanding
 
+- This file goes stale by construction: the drill writes only on the box, so the in-repo copy has been twice reconciled by hand (2026-09-03, 2026-09-17).
+  Either the drill writes evidence back to the repo or this file stays an explicit snapshot (current choice). Open inventory item INV-0987.
+- The ClickHouse leg is not in the monthly off-site drill; blocked on a CH lake backup target (INV-0987).

@@ -131,7 +131,7 @@ in status comms** — it explains why a consumer might see a
 warning flag without a corresponding price disruption. Template:
 "Affected pairs may show elevated `flags.divergence_warning`; price
 is still served correctly from remaining sources." See
-[drills/2026-04-sev2-soroswap-decode-regression.md](../drills/2026-04-sev2-soroswap-decode-regression.md)
+[the 2026-04-30 SEV-2 drill](../drills/README.md#drill-log)
 for the canonical exercise of this pattern.
 
 ## Related

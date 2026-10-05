@@ -61,7 +61,7 @@ curl -sS https://api.stellarindex.io/v1/readyz | jq '.checks[] | select(.name=="
 
 The 2026-04 SEV-1 tabletop drill found this ordering shaved
 ~1 min off detection vs the older "metric → readyz" path
-(see [drills/2026-04-sev1-timescale-failover.md](../drills/2026-04-sev1-timescale-failover.md)
+(see [drill log](../drills/README.md#drill-log)
 — a pre-launch tabletop that assumed a Patroni replica; historical only).
 
 **Step 2 — confirm on r1 (unit, exporter signal, direct psql):**
