@@ -178,7 +178,7 @@ Doesn't add evidence beyond Tier B (same upstream source), but:
 - Surfaces GCS requester-pays / egress issues before an actual DR
   event.
 
-Command (planned): `stellarindex-ops verify-archive -tier sdf-sample --samples 1000`. Deferred pending public-read confirmation on the SDF bucket.
+Command: `stellarindex-ops verify-archive -tier sdf-sample -from N -to M -sdf-samples 1000`. Targets the AWS public dataset (`storage.s3_cold_*`), compares ETag + size (equal ETags are equal bytes for single-part uploads), needs an explicit `-to`, and is not part of `-tier all`. No timer yet.
 
 Caveat: SDF's galexie bucket may not retain to genesis; check
 coverage before relying on it.
