@@ -215,7 +215,7 @@ func run(cfgPath string, dryRun bool) error {
 	// resolve classic↔SAC pairs from [supply].sac_wrappers through it,
 	// SAC form LAST. Fail-closed on a malformed wrapper — silently
 	// dropped, it becomes under-counted volume.
-	if err := installCanonicalNetwork(cfg); err != nil {
+	if err := canonical.InstallNetwork(cfg.Stellar.Passphrase(), cfg.Supply.SACWrappers); err != nil {
 		return err
 	}
 

@@ -24,11 +24,6 @@ type OracleRef = domain.MEVOracleRef
 // [OracleRef] doc for why this is an alias.
 type AuctionFill = domain.MEVAuctionFill
 
-// xlmSAC is the native-XLM Stellar Asset Contract id — the same asset
-// as "native" under a different identity (Soroban venues emit the SAC
-// id, SDEX emits "native").
-const xlmSAC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
-
 // sdexOpIndexStride is internal/sources/sdex's opIndexFanoutStride: sdex
 // stores op_index = operation index × 1024 + claim-atom index. Pinned
 // against that constant by TestSDEXOpIndexStrideMatchesSource.
@@ -85,7 +80,7 @@ func (r OpRef) sortKey() (op, sub uint32) {
 // normAsset collapses the native-XLM SAC onto "native" so pair
 // grouping and oracle-asset matching see one XLM identity.
 func normAsset(a string) string {
-	if a == xlmSAC {
+	if a == canonical.NativeSACContractID() {
 		return "native"
 	}
 	return a

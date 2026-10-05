@@ -915,7 +915,7 @@ func (v *tvlValuer) notePassFailure(err error) error {
 // markets live — same rule as the trade-insert path), everything else
 // as a Soroban contract asset.
 func tvlAssetForToken(token string) (canonical.Asset, bool) {
-	if token == canonical.XLMSacContractID {
+	if token == canonical.NativeSACContractID() {
 		return canonical.NativeAsset(), true
 	}
 	a, err := canonical.NewSorobanAsset(token)

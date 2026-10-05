@@ -19,8 +19,8 @@ func TestXLMSacContractID_MatchesDerivation(t *testing.T) {
 		t.Errorf("XLMSacContractID = %q, want the derivation %q", XLMSacContractID, derived)
 	}
 	// orientation.go's ranking must key off the same literal.
-	if nativeSAC != XLMSacContractID {
-		t.Errorf("nativeSAC = %q, want XLMSacContractID %q", nativeSAC, XLMSacContractID)
+	if NativeSACContractID() != XLMSacContractID {
+		t.Errorf("NativeSACContractID() = %q, want XLMSacContractID %q", NativeSACContractID(), XLMSacContractID)
 	}
 }
 
