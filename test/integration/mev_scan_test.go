@@ -101,14 +101,14 @@ func TestStorage_MEVFillScanCarriesPositionAssets(t *testing.T) {
 	withData := blend.FillAuctionEvent{
 		Pool: pool, AuctionType: 0, User: mevIntegrationAccount, Filler: mevIntegrationAccount,
 		FillPercent: big.NewInt(100),
-		Data: blend.AuctionData{
+		Data: &blend.AuctionData{
 			Bid: []blend.AssetAmount{amt(usdcC)},
 			Lot: []blend.AssetAmount{amt(xlm), amt(usdcC)},
 		},
 		Ledger: 52_500_001, TxHash: txA, Timestamp: ts,
 	}
 	bare := withData
-	bare.Data = blend.AuctionData{}
+	bare.Data = &blend.AuctionData{}
 	bare.Ledger, bare.TxHash = 52_500_002, txB
 	for _, e := range []blend.FillAuctionEvent{withData, bare} {
 		if err := store.InsertBlendFillAuction(ctx, e); err != nil {
