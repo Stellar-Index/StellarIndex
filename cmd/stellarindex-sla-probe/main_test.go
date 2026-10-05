@@ -69,7 +69,7 @@ func TestRunProbe_PassPath(t *testing.T) {
 	// + an observed_at near now (so freshness < 30s).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"observed_at":"` + time.Now().UTC().Format(time.RFC3339) + `","price":"1.0"}}`))
+		_, _ = w.Write([]byte(`{"data":{"observed_at":"` + time.Now().UTC().Format(time.RFC3339) + `","price":"1.0","window_seconds":5}}`))
 	}))
 	defer srv.Close()
 
@@ -192,7 +192,7 @@ func TestHit_ParsesObservedAt(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &http.Client{Timeout: time.Second}
-	_, failure, observed := hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"})
+	_, failure, observed, _ := hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"})
 	if failure != "" {
 		t.Fatalf("hit returned not-ok: %s", failure)
 	}
@@ -207,7 +207,7 @@ func TestHit_NoObservedAt(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &http.Client{Timeout: time.Second}
-	_, failure, observed := hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"})
+	_, failure, observed, _ := hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"})
 	if failure != "" {
 		t.Fatalf("hit returned not-ok on 200: %s", failure)
 	}
@@ -224,7 +224,7 @@ func TestHit_AttachesAuthorizationWhenAPIKeySet(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &http.Client{Timeout: time.Second}
-	_, failure, _ := hit(context.Background(), c, srv.URL, "sip_test_xyz", endpoint{Path: "/x"})
+	_, failure, _, _ := hit(context.Background(), c, srv.URL, "sip_test_xyz", endpoint{Path: "/x"})
 	if failure != "" {
 		t.Fatal("hit returned not-ok")
 	}
@@ -241,7 +241,7 @@ func TestHit_OmitsAuthorizationWhenAPIKeyEmpty(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &http.Client{Timeout: time.Second}
-	_, _, _ = hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"})
+	_, _, _, _ = hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"})
 	if sawAuth != "" {
 		t.Errorf("Authorization = %q, want empty (no key passed)", sawAuth)
 	}
@@ -281,6 +281,9 @@ func TestPairEndpoints_BuildsExpected(t *testing.T) {
 			// the run-level target (no override).
 			if e.FreshTarget != 0 {
 				t.Errorf("price-tip: FreshTarget=%v want 0 (run-level SLA target)", e.FreshTarget)
+			}
+			if e.FallbackFreshTarget != defaultClosedBucketFreshTarget {
+				t.Errorf("price-tip: FallbackFreshTarget=%v want %v", e.FallbackFreshTarget, defaultClosedBucketFreshTarget)
 			}
 		}
 	}
@@ -424,7 +427,7 @@ func TestRunProbe_FreshnessMeasuredAtSampleTime(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":{"observed_at":"` +
-			time.Now().UTC().Format(time.RFC3339Nano) + `","price":"1.0"}}`))
+			time.Now().UTC().Format(time.RFC3339Nano) + `","price":"1.0","window_seconds":5}}`))
 	}))
 	defer srv.Close()
 
@@ -701,7 +704,7 @@ func TestHit_OracleWithReadingsIsASuccess(t *testing.T) {
 	if oracle.Name != "oracle-latest" {
 		t.Fatalf("last pair endpoint = %q, want oracle-latest", oracle.Name)
 	}
-	if _, failure, _ := hit(context.Background(), &http.Client{Timeout: time.Second}, srv.URL, "", oracle); failure != "" {
+	if _, failure, _, _ := hit(context.Background(), &http.Client{Timeout: time.Second}, srv.URL, "", oracle); failure != "" {
 		t.Error("an oracle response with one reading was rejected")
 	}
 }
@@ -729,7 +732,7 @@ func TestRunProbe_MultiPairDoesNotMergeSamples(t *testing.T) {
 		} else {
 			observedAt = time.Now().UTC()
 		}
-		_, _ = w.Write([]byte(`{"data":{"observed_at":"` + observedAt.Format(time.RFC3339Nano) + `","price":"1.0"}}`))
+		_, _ = w.Write([]byte(`{"data":{"observed_at":"` + observedAt.Format(time.RFC3339Nano) + `","price":"1.0","window_seconds":5}}`))
 	}))
 	defer srv.Close()
 
@@ -916,12 +919,53 @@ func TestHit_ClassifiesFailures(t *testing.T) {
 		{endpoint{Path: "/404"}, "4xx"},
 		{endpoint{Path: "/x", WantData: true}, "body"},
 	} {
-		if _, got, _ := hit(context.Background(), c, srv.URL, "", tc.ep); got != tc.want {
+		if _, got, _, _ := hit(context.Background(), c, srv.URL, "", tc.ep); got != tc.want {
 			t.Errorf("%s: failure = %q, want %q", tc.ep.Path, got, tc.want)
 		}
 	}
 	srv.Close()
-	if _, got, _ := hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"}); got != "conn" {
+	if _, got, _, _ := hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"}); got != "conn" {
 		t.Errorf("closed server: failure = %q, want conn", got)
+	}
+}
+
+// TestPriceTip_FallbackFreshnessIsSeparate pins the split: a tip
+// response served from the closed bucket (no window_seconds) is
+// structurally 61-150 s old and passes at 95 s, while a trade-window
+// response (window_seconds > 0) is still held to the 30 s target.
+func TestPriceTip_FallbackFreshnessIsSeparate(t *testing.T) {
+	tip := pairEndpoints("native", "fiat:USD", defaultClosedBucketFreshTarget)[1]
+	if tip.Name != "price-tip" {
+		t.Fatalf("pair endpoint 1 = %q, want price-tip", tip.Name)
+	}
+	sla := slaTargets{P95MS: 1000, P99MS: 1000, FreshnessSec: 30, AvailabilityPct: 99.0}
+	now := time.Now()
+	run := func(window int, age time.Duration) []string {
+		var extra string
+		if window > 0 {
+			extra = fmt.Sprintf(`,"window_seconds":%d`, window)
+		}
+		body := fmt.Sprintf(`{"data":{"observed_at":%q%s}}`, now.Add(-age).UTC().Format(time.RFC3339Nano), extra)
+		observed, fallback, ok := checkBody(tip, []byte(body))
+		if !ok {
+			t.Fatalf("checkBody rejected %s", body)
+		}
+		st := aggregateEndpointStats(tip, []probeSample{{
+			latency: time.Millisecond, ok: true,
+			observedAt: observed, receivedAt: now, fallback: fallback,
+		}})
+		return endpointFailures(st, sla)
+	}
+	if got := run(30, 40*time.Second); len(got) != 1 {
+		t.Errorf("window response at 40s must fail the 30s target, got %v", got)
+	}
+	if got := run(30, 20*time.Second); len(got) != 0 {
+		t.Errorf("window response at 20s must pass, got %v", got)
+	}
+	if got := run(0, 95*time.Second); len(got) != 0 {
+		t.Errorf("fallback response at 95s must pass, got %v", got)
+	}
+	if got := run(0, 200*time.Second); len(got) != 1 {
+		t.Errorf("fallback response at 200s must fail the 150s bound, got %v", got)
 	}
 }
