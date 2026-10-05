@@ -300,6 +300,34 @@
         # host), so they are deliberately left unguarded.
         - not (ansible_check_mode and pgbackrest_exporter_unit is changed)
 
+# Converge the other way: an exporter installed before the gate above
+# existed keeps running (and crash-loops with no repo to watch) once
+# backups are disabled. The binary is left in place.
+- name: Remove pgbackrest_exporter where backups are disabled
+  when: not (pgbackrest_backup_enabled | default(true) | bool)
+  block:
+    - name: Stop + disable pgbackrest_exporter
+      ansible.builtin.systemd:
+        name: pgbackrest_exporter.service
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove pgbackrest_exporter unit file and drop-ins
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/pgbackrest_exporter.service
+        - /etc/systemd/system/pgbackrest_exporter.service.d
+      notify: Reload systemd
+
+    - name: Clear the failed state left by earlier exporter crashes
+      ansible.builtin.command:
+        cmd: systemctl reset-failed pgbackrest_exporter.service
+      changed_when: false
+      failed_when: false
+
 # ── Group D: MinIO Prometheus bearer token ─────────────────────
 #
 # Procedure per docs/operations/runbooks/minio-metrics-403.md: a
