@@ -1,14 +1,14 @@
 // Binary stellarindex-ops is the admin CLI for operational tasks
 // that don't belong in the long-running binaries. Subcommand
 // implementations live in internal/ops/{ingest,archive,discovery,
-// supply,diagnostics,chops,incident,usage,keys} (one package per rough bucket; chops
+// supply,diagnostics,chops,incident,usage,keys,accounts} (one package per rough bucket; chops
 // covers the ADR-0033/ADR-0034 ClickHouse-lake tools — named chops,
 // not clickhouse, to avoid shadowing internal/storage/clickhouse in
 // every file there) plus internal/ops/opsutil (helpers shared across
 // more than one of those packages). main.go is only the dispatch
 // table + the handful of subcommands too small or too miscellaneous
 // to warrant their own package (docs-config;
-// mint-key and upgrade-key live in internal/ops/keys, emit-incident lives in internal/ops/incident, usage-rollup-backfill
+// mint-key and upgrade-key live in internal/ops/keys, freeze-unfreeze and account-erase in internal/ops/accounts, emit-incident lives in internal/ops/incident, usage-rollup-backfill
 // and change-summary-reset in internal/ops/usage).
 //
 //   - Ingest / backfill (internal/ops/ingest): `backfill`,
@@ -61,6 +61,7 @@ import (
 	"os"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/accounts"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/archive"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/chops"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/diagnostics"
@@ -125,8 +126,8 @@ var subcommands = map[string]func(args []string) error{
 	"upgrade-key":           leaf(keys.Upgrade),
 	"emit-incident":         leaf(incident.Emit),
 	"usage-rollup-backfill": leaf(usage.RollupBackfill),
-	"freeze-unfreeze":       leaf(freezeUnfreeze),
-	"account-erase":         leaf(accountErase),
+	"freeze-unfreeze":       leaf(accounts.FreezeUnfreeze),
+	"account-erase":         leaf(accounts.Erase),
 	"change-summary-reset":  leaf(usage.ChangeSummaryReset),
 
 	"rpc-probe":             diagnostics.Run,
