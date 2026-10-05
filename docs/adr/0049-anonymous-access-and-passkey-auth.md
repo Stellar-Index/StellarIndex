@@ -9,112 +9,35 @@ superseded_by: null
 
 # ADR-0049: Anonymous access, open self-service registration, and passkey auth (no payment surface)
 
-> **Retroactive record (audit-2026-08-14 D-L1).** The auth-model pivot below
-> already SHIPPED (open `/v1/register`, WebAuthn passkeys, no billing/Stripe
-> surface) but never had an ADR, so the decision-record surface stopped
-> describing auth. This ADR reconstructs the decision and its threat model
-> from the shipped code so future contributors have the "why". It is marked
-> `Proposed` rather than `Accepted` because the RATIONALE and the accepted
-> risk envelope are reconstructed, not authored by the decision-maker —
-> the operator should ratify (or correct) the threat model below and then
-> move it to `Accepted`. The code, not this doc, is authoritative on what
-> ships today.
-
-> **Amendment (2026-10-02, ratification).** Moved to `Accepted`. The
-> maintainer accepted this access model as the documented basis for
-> dropping the Stripe reconcile (v1 launch plan, decision D9). The text
-> below is kept as written. Two "known open edges" in Consequences no
-> longer match the code, so the ratified risk envelope is:
-> - the signup IP throttle fails open only for the first
->   `DefaultSignupThrottleDwellTime` (30 s) of continuous Redis errors.
->   After that, `CheckIP` returns `ErrThrottleUnavailable` and signup
->   returns 503 (`internal/auth/signup_ip_throttle.go`,
->   `internal/api/v1/signup.go`);
-> - expired `magic_link_tokens` rows are deleted by
->   `internal/magiclinkreaper` (48 h past expiry), which is wired in
->   `cmd/stellarindex-api/main.go`.
-
 ## Context
 
-The v1 product serves a public data API (prices, supply, explorer). The
-account/auth surface was pivoted to a self-service, no-payments model:
-
-- **No payment surface.** There is no Stripe/billing integration in the
-  tree; accounts carry a free-tier limits block (`RegisterLimits`,
-  `internal/api/v1/register.go`), not a paid plan. Metering is by API-key
-  `MonthlyQuota` (enforced on both the Postgres and the default Redis
-  validator — see `middleware.MonthlyQuota` wiring in
-  `cmd/stellarindex-api/main.go`), not by charge.
-- **Open self-service registration.** `POST /v1/register` mints an account
-  + first API key anonymously (`internal/api/v1/register.go`); it is a
-  create-only surface (`RegisterAccountCreator`) guarded by a required
-  `Content-Type: application/json` gate (`internal/api/v1/csrf.go`, which
-  forces a CORS preflight on any cross-site browser POST; the Origin-based
-  `middleware.RequireSameSiteWrite` is deliberately not mounted because
-  legitimate API callers send no Origin) and the shared signup IP throttle
-  (`internal/auth/signup_ip_throttle.go`), not by prior authentication.
-- **Passkeys as the account credential.** WebAuthn credentials
-  (`internal/platform/webauthncredential.go`,
-  `internal/api/v1/dashboardauth/passkey.go`) with a ceremony guard
-  (`internal/auth/passkey_ceremony_guard.go`) back dashboard sign-in, plus
-  passwordless magic-link login (`dashboardauth/handlers.go`).
-
-  > **Amendment (2026-09-28, GH-767).** The ceremony guard cited above
-  > is only its Redis adapter. The `PasskeyCeremonyGuard` interface and
-  > the in-process guard live in
-  > `internal/api/v1/dashboardauth/passkey_ceremony_guard.go`.
-
-Recording this now matters because, absent a decision record, a future
-contributor cannot tell whether open registration and the removed payment
-coupling are intentional invariants or accidents — and might re-introduce
-billing coupling or silently tighten/loosen registration against unstated
-intent (the exact drift D-L1 flags).
+The v1 product is a public data API, and the auth model was pivoted to self-service with no payments.
+The model shipped without a record, so open registration and the missing billing coupling could be mistaken for accidents.
 
 ## Decision
 
-The v1 auth model is: **anonymous-by-default read access; open, unauthenticated
-self-service `/v1/register` that mints a free-tier account + API key; API-key
-metering (not payment) for quota; and WebAuthn passkeys + magic-link for the
-dashboard account surface. There is no payment/billing surface in v1.**
+1. **Anonymous reads.** Read routes work without a key under the anonymous rate-limit class, counted per client IP; an authenticated key gets its own bucket (`middleware.RateLimitBySubject`).
+2. **Open registration.** `POST /v1/register` mints an account and a first API key with no prior authentication (`internal/api/v1/register.go`). It is create-only, requires `Content-Type: application/json` (`internal/api/v1/csrf.go`, which forces a CORS preflight on cross-site browser POSTs; the Origin-based `RequireSameSiteWrite` is deliberately not mounted because API callers send no Origin), and passes the shared signup IP throttle (`internal/auth/signup_ip_throttle.go`).
+3. **Throttle failure mode.** The IP throttle fails open only for the first `DefaultSignupThrottleDwellTime` (30 s) of continuous Redis errors; after that `CheckIP` returns `ErrThrottleUnavailable` and signup returns 503.
+4. **Metering is by quota, not charge.** Accounts carry a free-tier `RegisterLimits` block, enforced as API-key `MonthlyQuota` on both the Postgres and Redis validators.
+5. **Orphan cleanup.** A registration whose validator mirror write failed is suspended with a `signup-race:` reason and reclaimed by `internal/signupreaper`. Expired `magic_link_tokens` are deleted 48 h past expiry by `internal/magiclinkreaper`.
+6. **Dashboard credentials are WebAuthn passkeys plus passwordless magic-link login** (`internal/api/v1/dashboardauth/`, `internal/platform/webauthncredential.go`). The `PasskeyCeremonyGuard` interface and its in-process guard live in `dashboardauth/passkey_ceremony_guard.go`; `internal/auth/passkey_ceremony_guard.go` is its Redis adapter.
+7. **No payment or billing surface in v1.** A paid tier is a new ADR that supersedes this one.
+
+## Invariant
+
+- `POST /v1/register` rejects a non-JSON content type: `TestRegister_RequiresContentType` in `internal/api/v1/register_test.go`.
+- Signup fails closed with 503 once the throttle's Redis dwell is exceeded: `TestRegister_ThrottleUnavailableFailsClosedAndCounts` in `internal/api/v1/register_test.go`.
+- A registration whose mirror write fails leaves an orphan the reaper can reclaim, never a 200: `TestRegister_MirrorFailureSuspendsOrphanForReaper` in `internal/api/v1/register_test.go`.
+- The signup reaper is bound to the Postgres account store, not the dashboard bundle: `TestRun_SignupReaperBindsToThePostgresAccountStoreNotTheDashboardBundle` in `cmd/stellarindex-api/signup_reaper_wiring_test.go`.
 
 ## Consequences
 
-- **Positive:** Zero-friction onboarding for a public data product; no PCI /
-  payment-processor surface to secure; passkeys avoid a password store.
-- **Negative / accepted risk envelope (to be ratified):** an open
-  key-minting endpoint is an abuse surface. It is bounded today by the
-  JSON Content-Type gate + signup IP throttle + free-tier `MonthlyQuota`, and
-  register-path orphans (PG account/key written, validator mirror failed)
-  are marked `signup-race:` for the `signupreaper` to reclaim
-  (`internal/api/v1/register.go`, `internal/signupreaper`). Known open edges
-  the operator should weigh when ratifying: the throttle's local fallback
-  fails open per-instance during a Redis outage, and magic-link tokens have
-  their own retention/reaper considerations (tracked separately in the
-  2026-08-14 audit). Loss of the Postgres auth data (accounts, keys,
-  sessions, passkeys) is non-re-derivable — see ADR-0043 / the backup-DR
-  findings.
-- **Operational impact:** no payment ops; abuse response leans on rate
-  limits + key revocation + the reaper rather than chargebacks.
-- **Downstream design impact:** any future paid tier is a NEW decision that
-  supersedes this ADR; do not re-add billing coupling without one.
+- Onboarding has no friction, no PCI scope and no password store.
+- Open key minting is an abuse surface, bounded by the content-type gate, the IP throttle and free-tier quota; response is rate limits and key revocation, not chargebacks.
+- Accounts, keys, sessions and passkeys in Postgres cannot be re-derived from the chain, so their durability rests on the Postgres backup of ADR-0043.
+- Invite-gated registration, a dormant payment integration and passwords were rejected for v1; revisit gating if abuse exceeds the rate-limit envelope.
 
-## Alternatives considered
+## Evidence
 
-1. **Authenticated-only / invite-gated registration** — rejected for v1: it
-   defeats the zero-friction goal for a public data API; revisit if abuse
-   exceeds the rate-limit envelope.
-2. **Retain a payment/billing surface** — rejected for v1: no paid plan
-   shipped, and carrying a dormant payment integration is unnecessary attack
-   surface and compliance load.
-3. **Passwords instead of passkeys** — rejected: passwords add a credential
-   store to protect; passkeys + magic-link avoid it.
-
-## References
-
-- Related ADRs: ADR-0042 (v1 wire shape), ADR-0043 (backup/restore — auth
-  data durability), ADR-0018 (adjacent API-surface decision).
-- Code: `internal/api/v1/register.go`, `internal/api/v1/csrf.go`,
-  `internal/auth/signup_ip_throttle.go`,
-  `internal/api/v1/dashboardauth/passkey.go`,
-  `internal/platform/webauthncredential.go`, `internal/signupreaper`.
-- Origin: audit-2026-08-14 finding D-L1 (missing auth-pivot ADR).
+`internal/api/v1/register.go`, `internal/api/v1/csrf.go`, `internal/auth/signup_ip_throttle.go`, `internal/signupreaper`, `internal/magiclinkreaper`, wiring in `cmd/stellarindex-api/main.go`.

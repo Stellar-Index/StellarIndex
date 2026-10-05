@@ -7,7 +7,7 @@ severity: P1
 
 # Off-site (S3) backup plan
 
-> **§1 retired 2026-10-02.** The raw Galexie archive is not backed up off-site: it is a copy of SDF's public dataset (`s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`) and is re-pulled from there (ADR-0043 §2 amendment 2026-08-29). Off-site copies are the ClickHouse lake and Postgres, on B2 (Postgres) and BX41 (lake). Wherever this doc calls the archive "critical", "irreplaceable" or the source of truth for off-site purposes, read it as superseded; the mirror is disabled by default (`galexie_archive_mirror_enabled`).
+> **§1 retired 2026-10-02.** The raw Galexie archive is not backed up off-site: it is a copy of SDF's public dataset (`s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`) and is re-pulled from there (ADR-0043 §2). Off-site copies are the ClickHouse lake and Postgres, on B2 (Postgres) and BX41 (lake). Wherever this doc calls the archive "critical", "irreplaceable" or the source of truth for off-site purposes, read it as superseded; the mirror is disabled by default (`galexie_archive_mirror_enabled`).
 
 > ♻️ **Refined by ADR-0050 / [`../architecture/multi-region-ha.md`](../architecture/multi-region-ha.md) §5 (2026-08-21).** The plan adopts this doc's core (off-site is a P1 SPOF fix) and resolves its RTO argument: it keeps **two** off-site artifacts — the raw archive (crown-jewel source of truth) *and* a copy of the derived lake (fast-RTO restore). Its Cloudflare R2 provider choice and its 2026-08 sizes are superseded by [§Provider](#provider) and the table below.
 
@@ -81,7 +81,7 @@ upgraded, WAL archiving to both repos, first repo2 full taken by hand).
 > textfile metrics. A hand-run `pgbackrest --stanza=stellarindex backup`
 > only refreshes repo1; add `--repo=2` for the off-site copy.
 
-This also lets us safely prune repo1 (local) diffs (the deferred Phase A step) now that repo2 exists. **Not yet true on r1**: repo2 ships lean (1 full + 7-day diffs, #298 / ADR-0043 §1 amendment), shallower than repo1's 2 fulls, and repo1 pruning has not happened — so repo2 is not currently the deep-retention tier it was meant to become. That statement only holds once repo1's diffs are actually pruned; until then repo1 stays the deeper copy.
+This also lets us safely prune repo1 (local) diffs (the deferred Phase A step) now that repo2 exists. **Not yet true on r1**: repo2 ships lean (1 full + 7-day diffs, #298 / ADR-0043 §1), shallower than repo1's 2 fulls, and repo1 pruning has not happened — so repo2 is not currently the deep-retention tier it was meant to become. That statement only holds once repo1's diffs are actually pruned; until then repo1 stays the deeper copy.
 
 ### 3. Config / vault / secrets → encrypted tarball (high)
 Small, high-value, non-re-derivable. A daily job tars `/etc/stellarindex*`, `/etc/pgbackrest*`, systemd units, the ansible vault, and CH/PG DDL snapshots; `age`/`gpg`-encrypts; uploads to S3. Codify as a systemd timer in the archival-node role.
@@ -162,7 +162,7 @@ and `schema.sql` in the §2.1 daily snapshot
 (`scripts/ops/ch-schema-snapshot.sh`, shipped 2026-07-25). §2.1 is the
 tail insurance that was worth buying.
 
-**ADR-0043 amendment (landed 2026-09-24, §2.3):**
+**ADR-0043 §2.3 (landed 2026-09-24):**
 
 > **§2.3 amended 2026-07-25.** Tail insurance is satisfied without a
 > ClickHouse data push. galexie-archive is filled from

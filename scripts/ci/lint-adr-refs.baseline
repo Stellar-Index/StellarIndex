@@ -39,15 +39,3 @@
 0039-soroban-contract-state-reader.md
 0040-completing-contract-gating.md
 0041-ingest-durability-semantics.md
-0042-v1-wire-shape.md
-0043-backup-and-restore-strategy.md
-0044-explorer-edge-rendering.md
-0045-sep40-oracle-read-adapter.md
-0046-mad-outlier-filter.md
-0047-pre-p23-classic-movement-reconstruction.md
-0048-serve-by-query-shape.md
-0049-anonymous-access-and-passkey-auth.md
-0050-multi-region-ha-architecture.md
-0051-usd-anchored-fiat-derivation.md
-0052-contract-call-tree-routing.md
-0053-fiat-price-basis-rule.md

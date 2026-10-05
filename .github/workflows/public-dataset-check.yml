@@ -1,7 +1,7 @@
 name: public-dataset-check
 
 # AWS Public Blockchain dataset drift tripwire (backup-restore-6,
-# audit 2026-08-29; ADR-0043 amendment 2026-08-29).
+# audit 2026-08-29; ADR-0043 §2).
 #
 # r1's own galexie-archive was capacity-trimmed below ledger 49,984,000
 # on 2026-07-26 (ADR-0027 hot floor), so the "second independent
@@ -109,7 +109,7 @@ jobs:
           gh label create "$ISSUE_LABEL" --color B60205 \
             --description "aws-public-blockchain pubnet dataset no longer matches ADR-0043's assumptions" 2>/dev/null || true
 
-          body="$(printf '%s\n\n---\n_Auto-managed by the public-dataset-check workflow (run %s). This dataset is the only copy of ledgers [64000, 49983999] we can reach (ADR-0043 amendment 2026-08-29; r1 trimmed them 2026-07-26). Closes automatically when the dataset is intact again. If the drift is permanent, execute the one-time cross-region copy option in ADR-0043._\n' \
+          body="$(printf '%s\n\n---\n_Auto-managed by the public-dataset-check workflow (run %s). This dataset is the only copy of ledgers [64000, 49983999] we can reach (ADR-0043 §2; r1 trimmed them 2026-07-26). Closes automatically when the dataset is intact again. If the drift is permanent, execute the one-time cross-region copy option in ADR-0043._\n' \
             "$REPORT" "${GITHUB_RUN_ID:-?}")"
 
           existing="$(gh issue list --label "$ISSUE_LABEL" --state open \

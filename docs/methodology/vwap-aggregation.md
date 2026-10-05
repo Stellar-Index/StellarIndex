@@ -237,9 +237,9 @@ reconcile them.
 a price below the centre is mirrored to `centre²/p` before it is
 compared, so the acceptance band is `[centre²/(centre + σ·s), centre + σ·s]`
 with `s = 1.4826·MAD`. Its lower edge is always strictly positive, and a
-½× print is exactly as outlying as a 2× one. The scale `s` is still the
-MAD of prices, not ADR-0046 §1's MAD of log prices, so the band's width
-is set in price units even though its shape is symmetric.
+½× print is exactly as outlying as a 2× one. The scale `s` is the
+MAD of prices (not of log prices), so the band's width is set in price
+units even though its shape is symmetric (ADR-0046 §1).
 
 ## Triangulation — implied cross-pairs
 
