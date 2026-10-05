@@ -269,6 +269,50 @@ tests:
                 SEV-2 incident. Follow the runbook to restart and verify
                 the exporter.
 
+  - interval: 1m
+    name: pgbackrest target vanished on a host that has backup metrics (r1) fires exporter_down
+    input_series:
+      - series: 'stellarindex_pgbackrest_backup_last_rc{repo="1",instance="pg1:9100",job="node"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: stellarindex_pgbackrest_exporter_down
+        exp_alerts:
+          - exp_labels:
+              job: pgbackrest_exporter
+              severity: page
+              team: stellarindex
+              component: monitoring
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
+              summary: "pgbackrest_exporter scrape target is down — cascade-blind for any alert that depends on it"
+              description: |
+                The pgbackrest_exporter Prometheus scrape target has been
+                down for 2+ minutes. While it is down,
+                `stellarindex_timescale_backup_failed` and
+                `stellarindex_timescale_backup_none_24h`
+                (`deploy/monitoring/rules/storage.yml`) are silently
+                blind — both depend on
+                `pgbackrest_backup_since_last_completion_seconds`, which
+                only this exporter publishes. A 24h RPO breach during
+                exporter downtime would not surface until the exporter came
+                back. (An exporter that is UP but has no stanza to report
+                is the sibling gap, owned by
+                `stellarindex_pgbackrest_backup_metrics_absent`.)
+                This is the F-0085 blindness pattern from the 2026-05-10
+                SEV-2 incident. Follow the runbook to restart and verify
+                the exporter.
+
+  - interval: 1m
+    name: no pgbackrest target and no backup metrics (backups intentionally off) stays silent
+    input_series:
+      - series: 'up{job="node",instance="pg1:9100"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: stellarindex_pgbackrest_exporter_down
+        exp_alerts: []
+
   # ── stellarindex_minio_exporter_down ─────────────────────────────
   - interval: 1m
     name: minio scrape target down for 2m fires exporter_down
