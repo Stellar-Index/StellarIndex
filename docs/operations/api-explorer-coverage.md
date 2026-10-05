@@ -41,10 +41,10 @@ level 3. The chain to `/` is what matters, not the hop count.
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **138** |
+| Paths in the OpenAPI contract | **139** |
 | Level 3 — reachable | **111** |
 | Level 2 — consumed but unreachable | **0** |
-| Level 1 — not consumed | **23** |
+| Level 1 — not consumed | **24** |
 | Deliberately excluded (operational) | **4** |
 
 Re-derived against the repo on 2026-09-24: the endpoint table, these
@@ -186,6 +186,7 @@ page carries.
 | `/aggregators` | GET | 3 | app/aggregators/RoutedVolumePanel.tsx | /aggregators |
 | `/sac-wrappers` | GET | 3 | hooks.ts:useSACWrappers | /accounts, /anomalies, /assets/[slug], /contracts, /dexes +6 |
 | `/rwa/assets` | GET | 3 | app/rwa/RWAView.tsx | /rwa |
+| `/stablecoins` | GET | 1 | — | — |
 | `/rwa/history` | GET | 3 | app/rwa/RWAHistoryPanel.tsx | /rwa |
 | `/rwa/premium` | GET | 3 | app/rwa/RWAPremiumPanel.tsx | /rwa |
 | `/pairs` | GET | 1 | — | — |
@@ -257,7 +258,7 @@ page carries.
 | `/accounts/{g_strkey}/graph/cohort` | GET | 3 | app/insights/AccountRelationCohort.tsx | /insights/creators/[address], /insights/sponsors/[address] |
 | `/search` | GET | 3 | components/nav/SearchModal.tsx | global nav chrome; /, /accounts, /accounts/[g] |
 
-## Level 1 — the 23 stranded endpoints
+## Level 1 — the 24 stranded endpoints
 
 Every one of these was probed live on 2026-09-09. **All 19 exist and
 answer** — none 404s at the route level. This is served data with no
