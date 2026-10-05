@@ -266,7 +266,7 @@ Most endpoints from §10 of the data-inventory doc. Each is a thin handler over 
 
 | # | Ticket group | Endpoints | Est |
 |---|---|---|---|
-| 5.1 | Asset endpoints (originally planned as `/v1/coins`; unified into `/v1/assets` per [coins-to-assets-migration.md](coins-to-assets-migration.md)) | `/v1/assets`, `/v1/assets/{id}`, `/v1/assets/{id}/{metadata,stats,supply/history,supply/breakdown,sep41-events,trustlines/history,holders/history,events,protocols}` | M |
+| 5.1 | Asset endpoints (originally planned as `/v1/coins`; unified into `/v1/assets` per [supply-pipeline.md § Asset identity](supply-pipeline.md#asset-identity)) | `/v1/assets`, `/v1/assets/{id}`, `/v1/assets/{id}/{metadata,stats,supply/history,supply/breakdown,sep41-events,trustlines/history,holders/history,events,protocols}` | M |
 | 5.2 | Pair / market endpoints | `/v1/pairs`, `/v1/pairs/{base}/{quote}/{venues,spread,liquidity-flow}`, `/v1/markets/heatmap` | M |
 | 5.3 | Aggregation transparency | `/v1/price/{base}/{quote}/sources`, `/v1/price/{base}/{quote}/why` | M |
 | 5.4 | Source endpoints | `/v1/sources?include=health`, `/v1/sources/{name}/{health,race,reliability,weight-history,wasm-history}` | M |

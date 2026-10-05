@@ -572,8 +572,8 @@ type AssetDetail struct {
 	// "someone issued their own USDC on Stellar" surface. Nil for
 	// the verified asset itself and for any code not claimed by a
 	// verified currency. Pairs with `Flags.UnverifiedTickerCollision`
-	// on the envelope. See R-018 /
-	// docs/architecture/multi-network-assets-migration.md.
+	// on the envelope. See
+	// docs/architecture/supply-pipeline.md#asset-identity.
 	UnverifiedWarning *UnverifiedWarning `json:"unverified_warning,omitempty"`
 
 	// UnverifiedTickerCollision is the LISTING-row trust signal on

@@ -42,7 +42,8 @@ The drift is **real but shallow and entirely in the application/presentation
 layer.** Four independent audits converged on the same conclusion:
 
 - There is **one** root-cause epicentre: the **R-018 multi-network-asset
-  model** (`docs/architecture/multi-network-assets-migration.md`, 2026-05-11),
+  model** (`multi-network-assets-migration.md`, 2026-05-11; deleted, surviving
+  decisions in [supply-pipeline.md § Asset identity](supply-pipeline.md#asset-identity)),
   which models a verified currency as "this ticker, on these N blockchains."
 - That model is **mostly deferred / unbuilt.** The only *shipped* artifacts
   are (a) an embedded YAML catalogue with non-Stellar coins + `networks[]`
@@ -171,12 +172,12 @@ for pricing. Grouped by artifact, with the auditor's verdict.
   asset-class filter (all pricing).
 
 ### 3g. Docs / positioning
-- `multi-network-assets-migration.md` — mark superseded; remove "until we
+- `multi-network-assets-migration.md` (since folded into supply-pipeline.md) — mark superseded; remove "until we
   light up indexing on that chain"; reframe `networks[]` as identity/reference
   anchoring, not a multi-chain-indexing roadmap.
 - AGENTS.md "comprehensive blockchain explorer" → "comprehensive **Stellar**
   explorer (classic/native + Soroban)" (match README's clearer phrasing).
-- `explorer-ux-plan.md`, `coins-to-assets-migration.md` — track the re-scope
+- `explorer-ux-plan.md`, `coins-to-assets-migration.md` (since folded into supply-pipeline.md) — track the re-scope
   (keep all "price anything" pricing language).
 - **Do NOT touch** ADRs 0036/0037/0038 (immutable accept-only; their
   framing is Stellar-correct anyway).
@@ -253,7 +254,7 @@ deliberately sequenced after the UI stops consuming the fields.
 
 ### Tier 4 — docs / positioning sweep
 - **T4.1** Reword AGENTS.md / README / migration docs per §3g; mark
-  `multi-network-assets-migration.md` superseded; CHANGELOG entry.
+  `multi-network-assets-migration.md` (since folded into supply-pipeline.md) superseded; CHANGELOG entry.
 
 ### Optional follow-up
 - Consider a short ADR ("Stellar-only explorer scope; reference-price assets
