@@ -53,7 +53,7 @@ func TestSweepAbandonedRegistrations(t *testing.T) {
 	})
 	t.Run("KeepsLiveRedisOnlyKey", func(t *testing.T) {
 		e, st, rdb, _ := newRig(t)
-		mint(t, rdb, st.plan.Slug)
+		mint(ctx, t, rdb, st.plan.Slug)
 		n, err := e.SweepAbandonedRegistrations(ctx, &fakeLister{ids: []uuid.UUID{st.plan.AccountID}}, cutoff)
 		if err != nil || n != 0 || len(st.requests) != 0 {
 			t.Fatalf("erased = %d, err = %v, erase calls = %d; want 0, nil, 0", n, err, len(st.requests))
