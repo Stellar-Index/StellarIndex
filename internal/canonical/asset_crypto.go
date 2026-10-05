@@ -18,8 +18,8 @@ package canonical
 // NOT Equal() under canonical.Asset.
 
 // knownCryptoCodes is the allow-list of recognized crypto tickers.
-// Extension is a one-line amendment to ADR-0014 (never a superseding
-// ADR). Codes chosen from mainnet Reflector CEX oracle traffic
+// Extension is a one-line change here (ADR-0014 needs no
+// amendment). Codes chosen from mainnet Reflector CEX oracle traffic
 // observed 2026-04-23 plus the largest-cap global crypto assets that
 // are likely to appear.
 var knownCryptoCodes = map[string]struct{}{

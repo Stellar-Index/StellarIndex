@@ -3,12 +3,8 @@
 
 package canonical
 
-// This file is the REAL exhaustive-switch guard ADR-0010 asked for
-// and never got ("CI check (TODO(#0)) to assert switch-coverage
-// exhaustiveness would be tidy; Go 1.21+ has analyzers/exhaustive
-// that can enforce it" / "Go's exhaustive linter (if/when we enable
-// it) will flag them automatically" — docs/adr/0010-off-chain-fiat-
-// representation.md). ROADMAP #48.
+// This file is the exhaustive-switch guard named in ADR-0010's Invariant
+// (docs/adr/0010-off-chain-fiat-representation.md). ROADMAP #48.
 //
 // We DID already enable golangci-lint's `exhaustive` linter repo-wide
 // (.golangci.yml) — but scoped to `default-signifies-exhaustive:
