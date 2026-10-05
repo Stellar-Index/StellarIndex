@@ -316,6 +316,9 @@ func TestStatusNotices_ListErrorMarksStale(t *testing.T) {
 	if env.Data.Count != 0 || len(env.Data.Notices) != 0 {
 		t.Errorf("data = %+v, want empty", env.Data)
 	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q on a failed ListActive read, want no-store", cc)
+	}
 	if !env.Flags.Stale {
 		t.Error("flags.stale = false on a failed ListActive read; want true — a caller can't tell a real empty list from a failed one")
 	}

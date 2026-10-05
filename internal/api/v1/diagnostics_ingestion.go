@@ -546,7 +546,7 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 // real error instead of zero-valued success on storage failure.
 func ingestionFlags(snap IngestionDiagnostics) Flags {
 	stale := snap.degraded || snap.Ledger.LatestLedger == 0
-	return Flags{Stale: stale}
+	return Flags{Stale: stale, Degraded: snap.degraded}
 }
 
 // ingestionSnapshotEntry wraps a computed IngestionDiagnostics for

@@ -431,7 +431,7 @@ func (s *Server) handleRWAPremiumHistory(w http.ResponseWriter, r *http.Request)
 	// what keeps the account from having to lie about one of them.
 	view.Members = len(hist.members)
 	view.Coverage = rwaPremiumCoverage(view.Series, hist.setAssets)
-	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(hist.builtAt), Flags: Flags{Stale: hist.stale}})
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(hist.builtAt), Flags: Flags{Stale: hist.stale, Degraded: hist.stale}})
 }
 
 // parseRWAPremiumParams validates `timeframe`. The window vocabulary is
