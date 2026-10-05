@@ -3888,6 +3888,7 @@ func convertHistoryPoints(rows []timescale.HistoryPoint) []v1.HistoryPoint {
 			Bucket:    row.Bucket,
 			VWAP:      row.VWAP,
 			VolumeUSD: row.VolumeUSD,
+			Sources:   row.Sources,
 		}
 	}
 	return out

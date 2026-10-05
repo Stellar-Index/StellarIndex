@@ -21,6 +21,7 @@ import (
 	externalbitstamp "github.com/Stellar-Index/StellarIndex/internal/sources/external/bitstamp"
 	externalcoinbase "github.com/Stellar-Index/StellarIndex/internal/sources/external/coinbase"
 	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
+	externalpoloniex "github.com/Stellar-Index/StellarIndex/internal/sources/external/poloniex"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -47,7 +48,7 @@ const externalInsertBudget = 12 * time.Hour
 func backfillExternal(args []string) error {
 	fs := flag.NewFlagSet("backfill-external", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
-	source := fs.String("source", "", "Venue: binance | kraken | bitstamp | coinbase (required)")
+	source := fs.String("source", "", "Venue: binance | kraken | bitstamp | coinbase | poloniex_via_btc (required)")
 	pairSym := fs.String("pair", "", "Venue-native symbol, e.g. XLMUSDT / XLM/USD / xlmusd / XLM-USD (required)")
 	fromStr := fs.String("from", "", "Start time, RFC 3339 (required, e.g. 2024-01-01T00:00:00Z)")
 	toStr := fs.String("to", "", "End time, RFC 3339 (required, e.g. 2024-12-31T00:00:00Z)")
@@ -76,6 +77,11 @@ func backfillExternal(args []string) error {
 	}
 	if !from.Before(to) {
 		return fmt.Errorf("-from %v must be before -to %v", from, to)
+	}
+	if *source == externalpoloniex.SourceName {
+		if err := externalpoloniex.CheckRange(from, to); err != nil {
+			return err
+		}
 	}
 	granularity, err := time.ParseDuration(*granStr)
 	if err != nil {
@@ -636,8 +642,39 @@ func buildBackfiller(source, symbol string) (external.Backfiller, canonical.Pair
 			return nil, canonical.Pair{}, unknownPairError(source, symbol, pm)
 		}
 		return externalcoinbase.NewStreamer(pm), pair, nil
+	case externalpoloniex.SourceName:
+		return buildPoloniexBackfiller(symbol)
 	}
-	return nil, canonical.Pair{}, fmt.Errorf("unknown -source %q (supported: binance, kraken, bitstamp, coinbase)", source)
+	return nil, canonical.Pair{}, fmt.Errorf("unknown -source %q (supported: binance, kraken, bitstamp, coinbase, poloniex_via_btc)", source)
+}
+
+// buildPoloniexBackfiller wires the XLM/BTC x BTC/USD derivation. The BTC
+// leg is Bitstamp's daily BTC/USD, which reaches back before 2015.
+func buildPoloniexBackfiller(symbol string) (external.Backfiller, canonical.Pair, error) {
+	xlm, err := canonical.NewCryptoAsset("XLM")
+	if err != nil {
+		return nil, canonical.Pair{}, err
+	}
+	usd, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		return nil, canonical.Pair{}, err
+	}
+	pair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		return nil, canonical.Pair{}, err
+	}
+	if symbol != "XLM/USD" {
+		return nil, canonical.Pair{}, fmt.Errorf("-source %s supports only -pair XLM/USD, got %q", externalpoloniex.SourceName, symbol)
+	}
+	pm, err := externalbitstamp.DefaultPairs()
+	if err != nil {
+		return nil, canonical.Pair{}, fmt.Errorf("bitstamp pairs: %w", err)
+	}
+	btcPair, ok := pm["btcusd"]
+	if !ok {
+		return nil, canonical.Pair{}, unknownPairError(externalbitstamp.SourceName, "btcusd", pm)
+	}
+	return &externalpoloniex.Backfiller{BTCLeg: externalbitstamp.NewStreamer(pm), BTCPair: btcPair}, pair, nil
 }
 
 // unknownPairError prints the configured set so the operator can

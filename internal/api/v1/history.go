@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/big"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -157,8 +158,9 @@ type HistoryReader interface {
 // reader returns rich types and the handler does the marshalling.
 type HistoryPoint struct {
 	Bucket    time.Time
-	VWAP      string  // NUMERIC text — pass-through, no float round-trip
-	VolumeUSD *string // null when the bucket's underlying trades had no usd_volume
+	VWAP      string   // NUMERIC text — pass-through, no float round-trip
+	VolumeUSD *string  // null when the bucket's underlying trades had no usd_volume
+	Sources   []string // venues behind the bucket; nil for TWAP and FX points
 }
 
 // ErrUnknownGranularity is what HistoryReader.HistoryPoints returns
@@ -723,6 +725,30 @@ type HistoryPointWire struct {
 	T    WireTime `json:"t"`
 	P    string   `json:"p"`
 	VUSD *string  `json:"v_usd,omitempty"`
+
+	// Sources is set only on a point that includes a venue outside the
+	// VWAP (a derived series such as poloniex_via_btc), so such a point
+	// is never read as a fill-derived VWAP. Omitted on an ordinary point.
+	Sources []string `json:"sources,omitempty"`
+}
+
+// historyWirePoint renders a reader point, carrying provenance only
+// when a non-VWAP venue contributed.
+func historyWirePoint(p HistoryPoint) HistoryPointWire {
+	return HistoryPointWire{T: WireTime(p.Bucket), P: p.VWAP, VUSD: p.VolumeUSD, Sources: nonVWAPSources(p.Sources)}
+}
+
+// nonVWAPSources returns the sorted venues in srcs that are registered
+// with IncludeInVWAP=false, or nil when there are none.
+func nonVWAPSources(srcs []string) []string {
+	var out []string
+	for _, s := range srcs {
+		if md, ok := external.Registry[s]; ok && !md.IncludeInVWAP {
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 const (
@@ -921,7 +947,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 
 	wire := make([]HistoryPointWire, len(points))
 	for i, p := range points {
-		wire[i] = HistoryPointWire{T: WireTime(p.Bucket), P: p.VWAP, VUSD: p.VolumeUSD}
+		wire[i] = historyWirePoint(p)
 	}
 
 	series := HistorySeries{

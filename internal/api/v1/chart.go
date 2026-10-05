@@ -328,7 +328,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 
 	wire := make([]HistoryPointWire, len(points))
 	for i, p := range points {
-		wire[i] = HistoryPointWire{T: WireTime(p.Bucket), P: p.VWAP, VUSD: p.VolumeUSD}
+		wire[i] = historyWirePoint(p)
 	}
 
 	series := ChartSeries{
@@ -605,7 +605,7 @@ func (s *Server) handleChartTWAP(
 
 	wire := make([]HistoryPointWire, len(points))
 	for i, p := range points {
-		wire[i] = HistoryPointWire{T: WireTime(p.Bucket), P: p.VWAP, VUSD: p.VolumeUSD}
+		wire[i] = historyWirePoint(p)
 	}
 
 	series := ChartSeries{
@@ -1856,6 +1856,7 @@ func crossSeriesThroughPivot(basePts, pivotPts []HistoryPoint) []HistoryPoint {
 				Bucket:    b.Bucket,
 				VWAP:      crossed,
 				VolumeUSD: b.VolumeUSD,
+				Sources:   unionSources(b.Sources, p.Sources),
 			})
 		}
 	}
