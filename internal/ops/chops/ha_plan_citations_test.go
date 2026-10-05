@@ -114,8 +114,6 @@ func TestAggregatorTopologyDocsMatchInstanceLock(t *testing.T) {
 		{"ha-plan.md", "(leader-elected via Redis)"},
 		{"ha-plan.md", "Standby acquires leadership"},
 		{"ha-plan.md", "no lock acquisition"},
-		{"ADR-0008", "still describes the two-instance design as a target"},
-		{"ADR-0008", "remains a design target"},
 	}
 	for _, s := range stale {
 		if strings.Contains(docs[s.doc], s.text) {
@@ -126,6 +124,7 @@ func TestAggregatorTopologyDocsMatchInstanceLock(t *testing.T) {
 	required := []struct{ doc, text string }{
 		{"ha-plan.md", "hashtext('instance:stellarindex-aggregator')"},
 		{"ha-plan.md", "| Aggregator process |"},
+		{"ADR-0008", "hashtext('instance:stellarindex-aggregator')"},
 		{"ADR-0008", "not part of Phase 1"},
 	}
 	for _, r := range required {
