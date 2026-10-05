@@ -2822,7 +2822,8 @@ Pre-seeded on the `sweep` op.
 ### `stellarindex_notify_sends_total`
 
 Counter, labels `template` (`magic-link` / `signup-verify` /
-`passkey-changed` / `account-erased`), `result` (`sent` / `failed`).
+`passkey-changed` / `account-erased`), `result` (`sent` / `failed` / `suppressed`; the last is a send withheld
+for a configured bounced address, never counted as a failure).
 
 Transactional-email sends through `internal/notify` (the Resend client).
 Before this counter, `internal/notify` had **zero** prometheus visibility,
