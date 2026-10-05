@@ -3,6 +3,7 @@ package sep10_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -97,9 +98,13 @@ func TestRedisReplayGuard_DistinctHashesIndependentSlots(t *testing.T) {
 // Redis surfaces as an error distinct from auth.ErrUnauthorized, on
 // both halves of the protocol.
 func TestRedisReplayGuard_StoreErrorIsNotAReplay(t *testing.T) {
-	g, mr := newTestReplayGuard(t)
+	// A closed miniredis frees its TCP port, and a concurrently running
+	// test package can bind it while go-redis retries the refused dial;
+	// a socket path in a private temp dir can never be served by anyone.
+	rdb := redis.NewClient(&redis.Options{Network: "unix", Addr: filepath.Join(t.TempDir(), "absent.sock")})
+	t.Cleanup(func() { _ = rdb.Close() })
+	g := sep10.NewRedisReplayGuard(rdb)
 	ctx := context.Background()
-	mr.Close()
 
 	if err := g.Reserve(ctx, "h", time.Minute); err == nil || errors.Is(err, auth.ErrUnauthorized) {
 		t.Fatalf("reserve on dead store: want non-replay error, got %v", err)
