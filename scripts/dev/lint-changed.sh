@@ -367,6 +367,11 @@ if [ "${#md_files[@]}" -gt 0 ]; then
     add_step "lint-doc-links" "scoped to ${#md_files[@]} file(s)" "$ci_dir/lint-doc-links.sh" "${md_files[@]}"
     defer "lint-docs" "${#md_files[@]} .md file(s) changed; lint-docs (~20 s, no file list) runs in scripts/dev/verify.sh"
 fi
+for f in ${md_files[@]+"${md_files[@]}"}; do
+    case "$f" in docs/adr/*|AGENTS.md)
+        add_step "lint-adr-refs" "an ADR or AGENTS.md changed" "$ci_dir/lint-adr-refs.sh"; break ;;
+    esac
+done
 
 # 3. Workflows: the pinning policy, actionlint, zizmor — all scoped.
 if [ "${#wf_files[@]}" -gt 0 ]; then
