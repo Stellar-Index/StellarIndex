@@ -26,6 +26,9 @@ severity: P3
 - `systemctl status ch-lake-backup.service` shows a failed or long-running run.
   An unconfigured host fails every run on purpose (`no BACKUP_DISK configured`
   in the journal): a run that copied nothing never reports success.
+  A host with no off-site target by design (the test nets) sets
+  `ch_lake_backup_enabled: false`; the role then removes the timer, units and
+  textfile, and the alert cannot fire for it.
 
 ## Quick diagnosis (≤ 5 min)
 

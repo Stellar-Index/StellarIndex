@@ -388,6 +388,37 @@
     - not (ansible_check_mode and ch_lake_backup_units is changed)
   tags: [ch-lake-backup]
 
+- name: Remove the ClickHouse lake backup where it is disabled
+  when: not (ch_lake_backup_enabled | default(true) | bool)
+  tags: [ch-lake-backup]
+  block:
+    - name: Stop + disable ch-lake-backup timer and service
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - ch-lake-backup.timer
+        - ch-lake-backup.service
+      failed_when: false
+
+    - name: Remove ch-lake-backup unit files, script and textfile
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/ch-lake-backup.timer
+        - /etc/systemd/system/ch-lake-backup.service
+        - /usr/local/bin/ch-lake-backup.sh
+        - /var/lib/node_exporter/textfile_collector/ch_lake_backup.prom
+      notify: Reload systemd
+
+    - name: Clear the failed state left by earlier lake-backup runs
+      ansible.builtin.command:
+        cmd: systemctl reset-failed ch-lake-backup.service
+      changed_when: false
+      failed_when: false
+
 # ─── Galexie archive off-site mirror (retired by default; see defaults) ──
 # Landed inert, ahead of its off-site target, the same precedent
 # ADR-0043's lake backup and the ZFS local snapshot set: the units install
