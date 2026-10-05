@@ -61,7 +61,7 @@ func NewWebhookKeySealer(secret []byte) (*WebhookKeySealer, error) {
 func (s *WebhookKeySealer) Seal(id uuid.UUID, signingKey []byte) []byte {
 	out := make([]byte, 1, 1+len(signingKey)+s.aead.Overhead())
 	out[0] = webhookKeySealVersion
-	return s.aead.Seal(out, nil, signingKey, id[:])
+	return s.aead.Seal(out, nil, signingKey, id[:]) //nolint:gosec // G407: NewGCMWithRandomNonce requires a nil nonce and prepends a fresh random one per Seal
 }
 
 // Open reverses [WebhookKeySealer.Seal] for the same webhook id.

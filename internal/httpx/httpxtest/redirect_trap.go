@@ -43,7 +43,7 @@ func NewRedirectTrap(t testing.TB, header string) *RedirectTrap {
 		if r.Header.Get(header) != "" {
 			trap.originSawKey.Store(true)
 		}
-		http.Redirect(w, r, elsewhere.URL+r.URL.RequestURI(), http.StatusFound)
+		http.Redirect(w, r, elsewhere.URL+r.URL.RequestURI(), http.StatusFound) //nolint:gosec // G710: test fixture; the off-origin redirect to its own server is the point
 	}))
 	t.Cleanup(origin.Close)
 	trap.URL = origin.URL
