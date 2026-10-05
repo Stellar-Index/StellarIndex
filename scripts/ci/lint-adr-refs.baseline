@@ -9,11 +9,6 @@
 0016-per-region-storage-strategy.md
 0017-archive-completeness-invariants.md
 0018-api-consistency-surfaces.md
-0019-anomaly-response-and-confidence-scoring.md
-0020-chart-api-contract.md
-0021-account-entry-observer.md
-0022-classic-supply-observers.md
-0023-sep41-supply-observer.md
 0024-redis-ha-via-sentinel.md
 0025-caddy-cloudflare-trusted-proxy.md
 0026-stablecoin-fiat-proxy-late-binding.md
