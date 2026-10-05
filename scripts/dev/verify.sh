@@ -397,6 +397,9 @@ echo "=== rederive-from driver tests ===" && bash scripts/ops/rederive-from-test
 echo "=== Replay-plan tripwire ===" && ./scripts/ci/lint-replay-plan.sh
 echo "=== External channels ===" && ./scripts/ci/lint-external-channels.sh
 echo "=== External channels self-test ===" && ./scripts/ci/lint-external-channels-test.sh
+echo "=== Doc-pinned tests self-test ===" && ./scripts/ci/doc-pinned-tests-test.sh
+# CI runs it only on go=false diffs; the full suite above already covers it here, so just list.
+echo "=== Doc-pinned tests ===" && { [ -z "${BASE_SHA:-}" ] || ./scripts/ci/doc-pinned-tests.sh --list "$BASE_SHA"; }
 echo "=== OpenAPI URLs (query discipline + served hosts) ===" && go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
 echo "=== PK discriminators ===" && go run ./scripts/ci/lint-pk-discriminators
 echo "=== derive_generation guard (INV-3) ===" && go run ./scripts/ci/lint-derive-generation-guard

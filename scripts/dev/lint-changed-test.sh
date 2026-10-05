@@ -228,9 +228,10 @@ put "$R" CHANGELOG.md '# changelog'
 git -C "$R" add -A
 out="$(cd "$R" && "$DISPATCH" --staged --plan 2>&1)"; rc=$?
 expect_exit "md-only: plans cleanly" 0 "$rc"
-expect_has "md-only: lint-doc-links, lint-migration-commands and lint-repo-budget, one deferral — never reads as fully linted" "lint-changed: plan — 3 lint(s) over 2 changed file(s), 1 deferred" "$out"
+expect_has "md-only: lint-doc-links, doc-pinned-tests, lint-migration-commands and lint-repo-budget, one deferral — never reads as fully linted" "lint-changed: plan — 4 lint(s) over 2 changed file(s), 1 deferred" "$out"
 expect_has "md-only: a docs/ runbook selects lint-migration-commands (it scans runbooks for a NULL-start refresh)" "plan  lint-migration-commands:" "$out"
 expect_has "md-only: lint-doc-links scoped to both changed files" "lint-doc-links.sh CHANGELOG.md docs/a.md" "$out"
+expect_has "md-only: doc-pinned-tests scoped to both changed files" "doc-pinned-tests.sh --files CHANGELOG.md docs/a.md" "$out"
 expect_has "md-only: lint-docs still names the file count and itself" "skip  lint-docs: 2 .md file(s) changed; lint-docs" "$out"
 
 R="$TMP/opsonly"; new_repo "$R"

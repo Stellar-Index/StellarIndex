@@ -61,7 +61,9 @@
 #                            against the whole tree; ~0.1-0.3 s/file). It
 #                            used to cost ~22 s regardless of arguments,
 #                            because it took none; scripts/ci/lint_doc_links.py
-#                            now accepts a file list. lint-docs still takes
+#                            now accepts a file list. doc-pinned-tests runs the
+#                            Go tests that name a changed .md (CI skips them
+#                            on docs-only PRs). lint-docs still takes
 #                            no file list and stays deferred to
 #                            scripts/dev/verify.sh (64 s over the tree).
 #
@@ -365,6 +367,7 @@ fi
 #     still deferred to verify.sh.
 if [ "${#md_files[@]}" -gt 0 ]; then
     add_step "lint-doc-links" "scoped to ${#md_files[@]} file(s)" "$ci_dir/lint-doc-links.sh" "${md_files[@]}"
+    add_step "doc-pinned-tests" "Go tests naming a changed .md" bash "$ci_dir/doc-pinned-tests.sh" --files "${md_files[@]}"
     defer "lint-docs" "${#md_files[@]} .md file(s) changed; lint-docs (~20 s, no file list) runs in scripts/dev/verify.sh"
 fi
 for f in ${md_files[@]+"${md_files[@]}"}; do
