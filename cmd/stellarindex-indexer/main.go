@@ -845,7 +845,7 @@ func run(cfgPath string, dryRun bool) error {
 		}()
 
 		hashdbVerifyStop, hashdbVerifyDone := startHashDBVerifier(
-			rootCtx, cfg.HashDB, hashdbVerifyDB, liveCfg,
+			rootCtx, cfg.HashDB, hashdbVerifyDB, liveCfg, archiveCfg,
 			&hashdbLastAppended, logger.With("component", "hashdb-verify"),
 		)
 		defer func() {
@@ -2573,6 +2573,7 @@ func startHashDBVerifier(
 	hcfg config.HashDBConfig,
 	verifyDB *hashdb.DB,
 	lsCfg ledgerstream.Config,
+	archiveCfg ledgerstream.Config,
 	lastAppended *atomic.Uint32,
 	logger *slog.Logger,
 ) (context.CancelFunc, <-chan struct{}) {
@@ -2615,7 +2616,7 @@ func startHashDBVerifier(
 		for {
 			select {
 			case <-ticker.C:
-				hashDBVerifySweep(ctx, logger, verifyDB, lsCfg, lastAppended, window, seenDrifted)
+				hashDBVerifySweep(ctx, logger, verifyDB, lsCfg, archiveCfg, lastAppended, window, seenDrifted, time.Now().UnixNano())
 			case <-ctx.Done():
 				return
 			}
@@ -2635,38 +2636,6 @@ func startHashDBVerifier(
 // stream itself reached the end without erroring.
 func hashDBSweepComplete(res archivecompleteness.HashDBVerifyResult, observed int, from, to uint32) bool {
 	return observed == int(to-from)+1 && res.Verified > 0
-}
-
-// hashDBVerifySweep runs one verify pass and records its outcome.
-// Split out of startHashDBVerifier so the ticker-plumbing and the
-// actual-work are independently readable (matches the
-// RunRoutedViaTagger / sweep() split in internal/pipeline/routedvia.go).
-func hashDBVerifySweep(
-	ctx context.Context,
-	logger *slog.Logger,
-	verifyDB *hashdb.DB,
-	lsCfg ledgerstream.Config,
-	lastAppended *atomic.Uint32,
-	window uint32,
-	seenDrifted map[uint32]struct{},
-) {
-	tip := lastAppended.Load()
-	if tip <= hashDBVerifySafetyMargin {
-		// Fresh region bring-up, or restart hasn't accumulated enough
-		// new appends yet — nothing durable to check.
-		return
-	}
-	to := tip - hashDBVerifySafetyMargin
-
-	from := verifyDB.StartLedger()
-	if to > window && to-window+1 > from {
-		from = to - window + 1
-	}
-	if from > to {
-		return
-	}
-
-	hashDBVerifyPass(ctx, logger, verifyDB, lsCfg, from, to, seenDrifted)
 }
 
 // hashDBVerifyPass runs one bounded ADR-0016 verify pass over an explicit
