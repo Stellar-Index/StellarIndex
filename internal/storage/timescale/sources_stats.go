@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // SourceStats is the per-source 24h activity row.
@@ -41,7 +43,7 @@ type SourceStats struct {
 // total — separate piece of work to wire per-token oracles.
 func (s *Store) GetSourceStats(ctx context.Context) ([]SourceStats, error) {
 	q := sourceStatsQuery()
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.db.QueryContext(ctx, q, canonical.NativeSACContractID())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetSourceStats: %w", err)
 	}
@@ -72,7 +74,7 @@ func (s *Store) GetSourceStats(ctx context.Context) ([]SourceStats, error) {
 // the same market in both directions has its markets_24h inflated by
 // one per flipped pair.
 func sourceStatsQuery() string {
-	canonBase, canonQuote, _ := canonOrientSQL()
+	canonBase, canonQuote, _ := canonOrientSQL(1)
 	return `
 		WITH xlm_usd AS (
 		  ` + xlmUSDVolumeSelect + `
@@ -106,9 +108,9 @@ func sourceStatsQuery() string {
 		             CASE
 		               WHEN usd_volume IS NOT NULL
 		                 THEN usd_volume::numeric
-		               WHEN base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		               WHEN ` + xlmNativeAssetIn("base_asset", 1) + `
 		                 THEN (base_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
-		               WHEN quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		               WHEN ` + xlmNativeAssetIn("quote_asset", 1) + `
 		                 THEN (quote_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
 		               ELSE NULL
 		             END
@@ -245,9 +247,9 @@ const (
 		         CASE
 		           WHEN usd_volume IS NOT NULL
 		             THEN usd_volume::numeric
-		           WHEN base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		           WHEN base_asset IN ('native', $3::text)
 		             THEN (base_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
-		           WHEN quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		           WHEN quote_asset IN ('native', $3::text)
 		             THEN (quote_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
 		           ELSE NULL
 		         END
@@ -281,9 +283,9 @@ const (
 		         CASE
 		           WHEN usd_volume IS NOT NULL
 		             THEN usd_volume::numeric
-		           WHEN base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		           WHEN base_asset IN ('native', $2::text)
 		             THEN (base_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
-		           WHEN quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		           WHEN quote_asset IN ('native', $2::text)
 		             THEN (quote_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
 		           ELSE NULL
 		         END
@@ -311,7 +313,7 @@ const (
 // `native` and `crypto:XLM` legs both count); pass a single-element
 // slice for a single form.
 func (s *Store) PairSourceStats(ctx context.Context, base, quote []string) ([]SourceStats, error) {
-	return s.scanSourceStats(ctx, pairSourceStatsQuery, base, quote)
+	return s.scanSourceStats(ctx, pairSourceStatsQuery, base, quote, canonical.NativeSACContractID())
 }
 
 // AssetSourceStats returns trailing-24h per-source USD volume + trade
@@ -322,7 +324,7 @@ func (s *Store) PairSourceStats(ctx context.Context, base, quote []string) ([]So
 // asset is the full set of canonical FORMS to match (see
 // PairSourceStats) so a multi-form asset's legs aggregate together.
 func (s *Store) AssetSourceStats(ctx context.Context, asset []string) ([]SourceStats, error) {
-	return s.scanSourceStats(ctx, assetSourceStatsQuery, asset)
+	return s.scanSourceStats(ctx, assetSourceStatsQuery, asset, canonical.NativeSACContractID())
 }
 
 // scanSourceStats runs a (static) per-source-breakdown query with the

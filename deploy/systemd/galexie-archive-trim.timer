@@ -1,4 +1,4 @@
-# systemd timer: monthly galexie-archive trim per ADR-0027 §5
+# systemd timer: monthly galexie-archive trim per ADR-0027 §Decision
 # Monthly trim cadence.
 #
 # 1st of each month at 03:17 UTC. The off-:00 minute keeps the run

@@ -190,8 +190,8 @@ fi
 # Step 5b — SLA-proof freshness and verdict.
 #
 # Refuses the cut if the newest docs/operations/sla-proof-<YYYY-MM-DD>.md
-# report — the procedure's dated evidence, NOT sla-proof-procedure.md or
-# sla-proof-template.md, which are the recipe and the blank form — is
+# report — the procedure's dated evidence, NOT sla-proof-procedure.md,
+# which is the recipe — is
 # missing, older than the procedure's window, or recorded a breach.
 # `NOT PROVEN` is a real report about a real measurement gap and is
 # allowed to pass; `FAIL` means the SLA was measured and breached, and a

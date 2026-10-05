@@ -1,4 +1,4 @@
-# systemd service: monthly galexie-archive trim per ADR-0027 §Trim
+# systemd service: monthly galexie-archive trim per ADR-0027 §Decision
 # operator.
 #
 # Rendered by Ansible. Do not edit by hand — regenerate via
@@ -21,7 +21,7 @@
 # `systemctl enable --now galexie-archive-trim.timer`.
 
 [Unit]
-Description=Stellar Index — monthly galexie-archive trim (ADR-0027 §Trim operator)
+Description=Stellar Index — monthly galexie-archive trim (ADR-0027 §Decision)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/adr/0027-lcm-cache-tiering.md
 After=network-online.target postgresql.service stellarindex-indexer.service
 Wants=network-online.target

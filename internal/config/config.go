@@ -1230,7 +1230,7 @@ type StorageConfig struct {
 
 // ColdTieringEnabled reports whether the cold-tier read path
 // should be wired up. The flag is the presence/absence of the
-// cold-bucket field — ADR-0027 §Step 1 "LCM_TIER_ENABLED=false"
+// cold-bucket field — ADR-0027 §Decision "LCM_TIER_ENABLED=false"
 // in its terms — so unset is the safe default for every
 // pre-ADR-0027 deployment.
 func (s StorageConfig) ColdTieringEnabled() bool {

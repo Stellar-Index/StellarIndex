@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // NetworkStats is the aggregate counts powering the home network
@@ -55,7 +57,7 @@ func (s *Store) GetNetworkStats(ctx context.Context) (NetworkStats, error) {
 		out    NetworkStats
 		volStr sql.NullString
 	)
-	if err := s.db.QueryRowContext(ctx, q, liveCursorSources).Scan(
+	if err := s.db.QueryRowContext(ctx, q, liveCursorSources, canonical.NativeSACContractID()).Scan(
 		&volStr,
 		&out.MarketsCount24h,
 		&out.AssetsIndexed,
@@ -76,7 +78,7 @@ func (s *Store) GetNetworkStats(ctx context.Context) (NetworkStats, error) {
 // Without this, a market that prices_1m recorded in both directions is
 // counted twice.
 func networkStatsQuery() string {
-	canonBase, canonQuote, _ := canonOrientSQL()
+	canonBase, canonQuote, _ := canonOrientSQL(2)
 	return `
 		SELECT
 		  (SELECT SUM(volume_usd)::text FROM prices_1m

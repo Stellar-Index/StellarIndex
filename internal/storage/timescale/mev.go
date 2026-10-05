@@ -33,7 +33,7 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
 	// quote XLM/token and carry NULL usd_volume — summed to ~$0, so the
 	// MEV feed showed "$0" notionals on real multi-leg cycles (audit
 	// 2026-06-19). Token/token legs with no XLM side stay '' (no USD
-	// basis). 'CAS3J7…' is the native-XLM SAC.
+	// basis. $3 is the network's native-XLM SAC.
 	const q = `
         WITH xlm_usd AS (
           ` + xlmUSDVolumeSelect + `
@@ -45,9 +45,9 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
                COALESCE((COALESCE(
                  usd_volume,
                  CASE
-                   WHEN base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+                   WHEN base_asset IN ('native', $3::text)
                      THEN (base_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
-                   WHEN quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+                   WHEN quote_asset IN ('native', $3::text)
                      THEN (quote_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
                    ELSE NULL
                  END
@@ -59,7 +59,7 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
          ORDER BY ledger DESC, tx_hash DESC, op_index DESC
          LIMIT $2
     `
-	rows, err := s.db.QueryContext(ctx, q, since.UTC(), limit)
+	rows, err := s.db.QueryContext(ctx, q, since.UTC(), limit, canonical.NativeSACContractID())
 	if err != nil {
 		return nil, nil, fmt.Errorf("timescale: TradesForArbScan: %w", err)
 	}

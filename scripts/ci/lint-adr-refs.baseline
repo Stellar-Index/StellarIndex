@@ -1,10 +1,2 @@
 # ADRs not yet on docs/adr/_template.md. Shrink-only: each ADR-rewrite PR removes its
 # lines, and lint-adr-refs fails on an entry that already conforms. Empty when W1 ends.
-0024-redis-ha-via-sentinel.md
-0025-caddy-cloudflare-trusted-proxy.md
-0026-stablecoin-fiat-proxy-late-binding.md
-0027-lcm-cache-tiering.md
-0028-rwa-asset-representation.md
-0029-soroban-events-landing-zone.md
-0030-per-source-coverage-invariant.md
-0031-data-derived-coverage-signal.md

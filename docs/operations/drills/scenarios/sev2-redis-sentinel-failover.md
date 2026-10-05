@@ -144,10 +144,10 @@ Score `pass` / `partial` / `fail`. Aim for ≥ 80% pass.
   Action item template: "Add classification flowchart to
   redis-fanout-broken.md."
 
-- **Team waits for `cache-01` to fail back.** ADR-0024 says
-  Sentinel-driven failover is one-way until manual ops decide
-  otherwise. Action item template: "Reinforce ADR-0024 §
-  'fail-forward only' in the runbook + roleplay."
+- **Team waits for `cache-01` to fail back.** Sentinel-driven
+  failover is one-way until manual ops decide otherwise. Action
+  item template: "Reinforce the fail-forward-only rule in the
+  runbook + roleplay."
 
 - **`flags.frozen` reading post-failover.** If the freeze
   marker TTL was longer than the failover window, the new
@@ -166,7 +166,7 @@ Score `pass` / `partial` / `fail`. Aim for ≥ 80% pass.
   path. Promotes to SEV-1 mid-drill.
 - **Sentinel split-brain variant.** Network partition between
   the two Sentinel hosts. Tests the runbook's split-brain
-  resolution + ADR-0024 §"three-node minimum" justification.
+  resolution + ADR-0024 §Decision (three cache hosts, quorum=2) justification.
 
 ## Pairs with
 

@@ -112,7 +112,7 @@ service-account*.json
 /test/chaos/reports/*
 !/test/chaos/reports/.gitkeep
 # Launch-cut + monthly chaos runs are committed per
-# docs/operations/chaos-wave1-runbook.md §"Recording the run".
+# docs/operations/chaos-wave1-runbook.md §"Record the run".
 !/test/chaos/reports/2026-*/
 !/test/chaos/reports/2027-*/
 !/test/chaos/reports/2028-*/

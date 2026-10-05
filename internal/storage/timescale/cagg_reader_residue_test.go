@@ -53,7 +53,7 @@ var untiedNewestRE = regexp.MustCompile(`ORDER BY last_trade_at DESC NULLS LAST\
 // both stored orientations routinely share last_trade_at, so the pick
 // must not fall to scan order. Every fold goes through canonLastPriceSQL.
 func TestCanonLastPriceIsTieBroken(t *testing.T) {
-	_, _, flipped := canonOrientSQL()
+	_, _, flipped := canonOrientSQL(1)
 	if !strings.Contains(canonLastPriceSQL(flipped), "ORDER BY last_trade_at DESC NULLS LAST, "+flipped+")") {
 		t.Errorf("canonLastPriceSQL must break a last_trade_at tie on the orientation")
 	}

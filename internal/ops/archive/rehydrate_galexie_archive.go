@@ -18,7 +18,7 @@ import (
 
 // ─── stellarindex-ops rehydrate-galexie-archive ──────────────────
 //
-// Per ADR-0027 §Step 2: a non-destructive operator that re-copies
+// Per ADR-0027 §Decision: a non-destructive operator that re-copies
 // LCM files from the cold tier (aws-public-blockchain, the AWS
 // Open Data Sponsorship bucket) back into the hot tier (local
 // galexie-archive MinIO bucket) for a given ledger range.
