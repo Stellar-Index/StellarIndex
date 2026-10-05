@@ -154,13 +154,8 @@ func (u OracleUpdate) Validate() error {
 	if u.Price.Sign() <= 0 {
 		return fmt.Errorf("%w: price must be positive, got %s", ErrInvalidOracle, u.Price)
 	}
-	if u.PublishedPrice != nil {
-		if u.PublishedPrice.Sign() <= 0 {
-			return fmt.Errorf("%w: published_price must be positive, got %s", ErrInvalidOracle, u.PublishedPrice)
-		}
-		if limit := maxOraclePriceRaw(u.Decimals); u.PublishedPrice.BigInt().Cmp(limit) > 0 {
-			return fmt.Errorf("%w: published_price %s at %d decimals exceeds 10^%d units", ErrInvalidOracle, u.PublishedPrice, u.Decimals, maxOraclePriceWholeExp)
-		}
+	if err := u.validatePublishedPrice(); err != nil {
+		return err
 	}
 	if u.Decimals > 38 {
 		return fmt.Errorf("%w: decimals %d exceeds NUMERIC precision limit (38)", ErrInvalidOracle, u.Decimals)
@@ -174,6 +169,25 @@ func (u OracleUpdate) Validate() error {
 	if math.IsNaN(u.Confidence) || u.Confidence < 0 || u.Confidence > 1 {
 		return fmt.Errorf("%w: confidence %f out of [0,1]", ErrInvalidOracle, u.Confidence)
 	}
+	return u.validateAttribution()
+}
+
+// validatePublishedPrice checks the optional as-published price.
+func (u OracleUpdate) validatePublishedPrice() error {
+	if u.PublishedPrice == nil {
+		return nil
+	}
+	if u.PublishedPrice.Sign() <= 0 {
+		return fmt.Errorf("%w: published_price must be positive, got %s", ErrInvalidOracle, u.PublishedPrice)
+	}
+	if limit := maxOraclePriceRaw(u.Decimals); u.PublishedPrice.BigInt().Cmp(limit) > 0 {
+		return fmt.Errorf("%w: published_price %s at %d decimals exceeds 10^%d units", ErrInvalidOracle, u.PublishedPrice, u.Decimals, maxOraclePriceWholeExp)
+	}
+	return nil
+}
+
+// validateAttribution checks the optional observer and contract id.
+func (u OracleUpdate) validateAttribution() error {
 	// Observer is optional (off-chain sources synthesise it empty).
 	// When present it may be any address a Soroban `Address` argument
 	// decodes to: attribution must never be the reason a price is lost.
