@@ -20,7 +20,7 @@ const (
 	rwaDeJTRSYSupply = "8763619974700234898508352"
 )
 
-// TestRWADeRWA_AdmittedByContractNeverByCode pins INV-2045: the deRWA
+// TestRWADeRWA_AdmittedByContractNeverByCode: the deRWA
 // tokens reach /v1/rwa/assets keyed on their exact contract address, and
 // a different contract wearing the same code never does.
 func TestRWADeRWA_AdmittedByContractNeverByCode(t *testing.T) {
