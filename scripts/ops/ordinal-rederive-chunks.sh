@@ -40,13 +40,16 @@ OPS="${OPS:-/usr/local/bin/stellarindex-ops}"
 BAND_END="${BAND_END:-63550000}"
 CHUNK="${CHUNK:-110000}"
 START="${START:-63000000}"
+# r1 has no live seam, so without -bucket ch-backfill reads the trimmed live
+# bucket and the first historical chunk finds zero ledgers (INV-1313).
+BUCKET="${BUCKET:-galexie-archive}"
 
 for (( lo=START; lo<BAND_END; lo+=CHUNK )); do
   hi=$(( lo + CHUNK ))
   [ "$hi" -gt "$BAND_END" ] && hi=$BAND_END
   echo "=== chunk [$lo,$hi) $(date -u +%H:%M:%SZ) ==="
   "$OPS" ch-backfill -write -config "$CONFIG" -ch-addr "$CH_ADDR" \
-        -from "$lo" -to "$hi" -parallel 3 -flush-every 100
+        -bucket "$BUCKET" -from "$lo" -to "$hi" -parallel 3 -flush-every 100
   rc=$?
   if [ "$rc" -ne 0 ]; then
     echo "CHUNK [$lo,$hi) FAILED rc=$rc — stopping so the failure is visible"

@@ -20,11 +20,12 @@ trap 'rm -rf "$TMP"' EXIT
 FAKE_OPS="$TMP/fake-ops"
 cat > "$FAKE_OPS" <<'EOF'
 #!/usr/bin/env bash
+echo "$@" > "$ARGS_FILE"
 exit 7
 EOF
 chmod +x "$FAKE_OPS"
 
-OUT="$(OPS="$FAKE_OPS" CONFIG_PATH="$TMP/none.toml" START=63000000 \
+OUT="$(ARGS_FILE="$TMP/args" OPS="$FAKE_OPS" CONFIG_PATH="$TMP/none.toml" START=63000000 \
   BAND_END=63000001 CHUNK=110000 bash "$SCRIPT" 2>&1)"
 STATUS=$?
 
@@ -45,6 +46,24 @@ if grep -q 'FAILED rc=7' <<<"$OUT"; then
 else
   echo "FAIL: expected 'FAILED rc=7' in output, got:"
   echo "$OUT"
+  fail=$((fail + 1))
+fi
+
+if grep -q -- '-bucket galexie-archive ' "$TMP/args"; then
+  echo "PASS: default passes -bucket galexie-archive"
+  pass=$((pass + 1))
+else
+  echo "FAIL: expected '-bucket galexie-archive', got: $(cat "$TMP/args")"
+  fail=$((fail + 1))
+fi
+
+BUCKET=custom-bucket ARGS_FILE="$TMP/args2" OPS="$FAKE_OPS" CONFIG_PATH="$TMP/none.toml" \
+  START=63000000 BAND_END=63000001 CHUNK=110000 bash "$SCRIPT" >/dev/null 2>&1
+if grep -q -- '-bucket custom-bucket ' "$TMP/args2"; then
+  echo "PASS: BUCKET override is passed"
+  pass=$((pass + 1))
+else
+  echo "FAIL: expected '-bucket custom-bucket', got: $(cat "$TMP/args2")"
   fail=$((fail + 1))
 fi
 
