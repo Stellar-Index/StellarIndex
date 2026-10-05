@@ -894,14 +894,14 @@ func TestResumeChunkPathEnforcesSourcePolicy(t *testing.T) {
 	t.Run("withdrawn attestation", func(t *testing.T) {
 		withdrawBackfillSafe(t, "sdex")
 		opts := backfillOpts{from: 100, to: 200, sources: []string{"sdex"}}
-		_, _, err := buildChunkDispatcher(context.Background(), logger, opts, config.Config{}, nil, false)
+		_, _, err := buildChunkDispatcher(context.Background(), logger, opts, config.Config{}, nil, nil, false)
 		if err == nil || !strings.Contains(err.Error(), "not BackfillSafe") {
 			t.Fatalf("want BackfillSafe refusal, got %v", err)
 		}
 	})
 	t.Run("projector-owned source", func(t *testing.T) {
 		opts := backfillOpts{from: 100, to: 200, sources: []string{"aquarius"}}
-		_, _, err := buildChunkDispatcher(context.Background(), logger, opts, config.Config{}, nil, false)
+		_, _, err := buildChunkDispatcher(context.Background(), logger, opts, config.Config{}, nil, nil, false)
 		if err == nil || !strings.Contains(err.Error(), "written only by the projector") {
 			t.Fatalf("want projector-owned refusal, got %v", err)
 		}
@@ -971,7 +971,7 @@ func TestBackfillChunkGate_UnreachableLakeRefusesPerWASMSource(t *testing.T) {
 	var cfg config.Config
 	cfg.Storage.ClickHouseAddr = "127.0.0.1:1"
 	opts := backfillOpts{from: 60_000_000, to: 60_100_000, sources: []string{"band"}}
-	_, _, err := buildChunkDispatcher(context.Background(), logger, opts, cfg, nil, false)
+	_, _, err := buildChunkDispatcher(context.Background(), logger, opts, cfg, nil, nil, false)
 	if err == nil || !strings.Contains(err.Error(), "wasm replay gate") {
 		t.Fatalf("err = %v, want a wasm replay gate refusal", err)
 	}
@@ -988,7 +988,7 @@ func TestBackfillChunkGate_OncePerRun(t *testing.T) {
 	runs := 0
 	_ = opts.wasmGate.check(func() error { runs++; return verdict })
 	for range 3 {
-		_, _, err := buildChunkDispatcher(context.Background(), logger, opts, cfg, nil, false)
+		_, _, err := buildChunkDispatcher(context.Background(), logger, opts, cfg, nil, nil, false)
 		if !errors.Is(err, verdict) {
 			t.Fatalf("chunk err = %v, want the run's memoised verdict", err)
 		}
