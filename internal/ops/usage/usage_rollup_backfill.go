@@ -1,4 +1,4 @@
-package main
+package usage
 
 import (
 	"context"
@@ -21,7 +21,7 @@ import (
 // package speaks (Redis key suffix, DetailRow.Date, RollupRow.Day).
 const usageRollupDateLayout = "2006-01-02"
 
-// usageRollupBackfill re-folds the Redis per-endpoint usage counters
+// RollupBackfill re-folds the Redis per-endpoint usage counters
 // into the `usage_daily` Timescale hypertable for an operator-chosen
 // UTC date range.
 //
@@ -49,7 +49,7 @@ const usageRollupDateLayout = "2006-01-02"
 // live worker's Sweep runs, so the rows this writes are byte-identical
 // to the rows the worker would have written rather than a second
 // implementation of the grouping that could drift.
-func usageRollupBackfill(args []string) error {
+func RollupBackfill(args []string) error {
 	fs := flag.NewFlagSet("usage-rollup-backfill", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	fromStr := fs.String("from", "", "First UTC day to re-fold, YYYY-MM-DD (required)")
@@ -143,7 +143,7 @@ func usageRollupDays(fromStr, toStr string, now time.Time) ([]time.Time, error) 
 }
 
 // runUsageRollupBackfill folds each day in turn and prints a per-day
-// tally to stderr plus a summary line. Split from usageRollupBackfill
+// tally to stderr plus a summary line. Split from RollupBackfill
 // so the flag/dependency wiring above stays readable.
 func runUsageRollupBackfill(
 	ctx context.Context,

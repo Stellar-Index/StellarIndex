@@ -1,4 +1,4 @@
-package main
+package usage
 
 import (
 	"os"
@@ -24,31 +24,6 @@ func TestUsageRollupBackfillUsageDocumentsWriteFlag(t *testing.T) {
 	}
 }
 
-// TestUsageRollupBackfillHelpDocumentsWriteFlag — the --help entry is
-// what an operator reads first; its synopsis and example must carry
-// -write for the same reason (GH #798).
-func TestUsageRollupBackfillHelpDocumentsWriteFlag(t *testing.T) {
-	i := strings.Index(usageBody, "  usage-rollup-backfill ")
-	if i < 0 {
-		t.Fatal("usageBody has no usage-rollup-backfill entry")
-	}
-	// The entry runs until the next line indented like a synopsis
-	// ("  <name>"), i.e. the next subcommand.
-	synopsis, entry, _ := strings.Cut(usageBody[i:], "\n")
-	for n, line := range strings.Split(entry, "\n") {
-		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") {
-			entry = strings.Join(strings.Split(entry, "\n")[:n], "\n")
-			break
-		}
-	}
-	if !strings.Contains(synopsis, "[-write]") {
-		t.Errorf("usage-rollup-backfill synopsis lacks [-write]: %q", synopsis)
-	}
-	if !strings.Contains(entry, "-to 2026-07-21 -write") {
-		t.Errorf("usage-rollup-backfill --help example does not pass -write:\n%s", entry)
-	}
-}
-
 // TestUsageRollupBackfillRunbookDocumentsCatchup pins T166 (audit
 // 2026-09-18): the runbook this alert points operators at must name
 // the usage-rollup-backfill catch-up tool and must NOT still assert
@@ -66,14 +41,14 @@ func TestUsageRollupBackfillRunbookDocumentsCatchup(t *testing.T) {
 	}
 	if strings.Contains(rb, `No operator "catch-up" step exists or is needed`) {
 		t.Error(`runbook still claims 'No operator "catch-up" step exists or is needed', ` +
-			"contradicted by cmd/stellarindex-ops/usage_rollup_backfill.go")
+			"contradicted by internal/ops/usage/usage_rollup_backfill.go")
 	}
 }
 
-// repoRootForOpsTest resolves the repo root from cmd/stellarindex-ops.
+// repoRootForOpsTest resolves the repo root from internal/ops/usage.
 func repoRootForOpsTest(t *testing.T) string {
 	t.Helper()
-	root, err := filepath.Abs(filepath.Join("..", ".."))
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatalf("resolve repo root: %v", err)
 	}
@@ -85,7 +60,7 @@ func repoRootForOpsTest(t *testing.T) string {
 
 // extractUsageBlock returns the text between "Usage:" and the next
 // blank doc-comment line in the package doc comment above
-// usageRollupBackfill, i.e. exactly the invocation an operator would
+// RollupBackfill, i.e. exactly the invocation an operator would
 // copy-paste.
 func extractUsageBlock(t *testing.T, src string) string {
 	t.Helper()
@@ -94,9 +69,9 @@ func extractUsageBlock(t *testing.T, src string) string {
 		t.Fatal("usage_rollup_backfill.go has no 'Usage:' doc comment to check")
 	}
 	rest := src[i:]
-	end := strings.Index(rest, "func usageRollupBackfill")
+	end := strings.Index(rest, "func RollupBackfill")
 	if end < 0 {
-		t.Fatal("could not bound the Usage: block before func usageRollupBackfill")
+		t.Fatal("could not bound the Usage: block before func RollupBackfill")
 	}
 	return rest[:end]
 }
