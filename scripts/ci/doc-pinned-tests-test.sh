@@ -13,7 +13,7 @@ check() { # check <name> <condition-as-test-args>...
     if "$@"; then echo "ok   $name"; else echo "FAIL $name"; fail=1; fi
 }
 
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via check
 has() { case "$2" in *"$1"*) return 0 ;; esac; return 1; }
 
 # Subshell + unset: a hook-provided GIT_DIR must not point git at the real repo.
