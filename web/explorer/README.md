@@ -8,14 +8,11 @@ settings, price alerts and staff admin under `/dashboard/*`
 consolidated here on 2026-06-17. (`/accounts/*` is the Stellar
 account explorer, not the customer account.)
 
-The original [implementation plan](../../docs/architecture/explorer-implementation-plan.md)
-called this Phase 0 scaffolding through Phase 7 panels; reality
-shipped well past that — the explorer now serves 50+ routes
-(asset detail, market browser, anomalies / divergences /
-diagnostics surfaces, embed widgets, blog, dev portal, etc.) and
-the verified-currency catalogue work (R-018 phases 1.1-1.5).
-The implementation plan is preserved as a record of the original
-phasing.
+The explorer serves 50+ routes (asset detail, market browser, anomalies /
+divergences / diagnostics surfaces, embed widgets, blog, dev portal, etc.)
+and the verified-currency catalogue work (R-018 phases 1.1-1.5). What each
+page serves, from which endpoint, and the open gaps:
+[explorer-data-inventory.md](../../docs/architecture/explorer-data-inventory.md).
 
 ## Stack
 

@@ -176,7 +176,7 @@ for pricing. Grouped by artifact, with the auditor's verdict.
   anchoring, not a multi-chain-indexing roadmap.
 - AGENTS.md "comprehensive blockchain explorer" → "comprehensive **Stellar**
   explorer (classic/native + Soroban)" (match README's clearer phrasing).
-- `explorer-ux-plan.md`, `coins-to-assets-migration.md` — track the re-scope
+- `explorer-data-inventory.md`, `coins-to-assets-migration.md` — track the re-scope
   (keep all "price anything" pricing language).
 - **Do NOT touch** ADRs 0036/0037/0038 (immutable accept-only; their
   framing is Stellar-correct anyway).

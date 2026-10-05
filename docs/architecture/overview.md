@@ -27,7 +27,7 @@ rational arithmetic (ADR-0003). Everything is served through a public
 | Re-derive / replay | CH lake → the same decoders → served tier | [ingest-pipeline.md § The replay decision rule](ingest-pipeline.md#the-replay-decision-rule) |
 | Aggregation | trades → outlier filter → class gating → VWAP → freeze/confidence → Redis + CAGGs | [aggregation-plan.md](aggregation-plan.md) |
 | Verification | lake substrate + recognition + per-ledger projection reconcile → `completeness_snapshots` | ADR-0033, ADR-0041 |
-| Serving | Timescale CAGGs + Redis + CH explorer reads → `internal/api/v1` → REST/SSE | ADR-0015, ADR-0018 |
+| Serving | Timescale CAGGs + Redis + CH explorer reads → `internal/api/v1` → REST/SSE; explorer pages in `web/explorer/` | ADR-0015, ADR-0018, [explorer-data-inventory.md](explorer-data-inventory.md) |
 
 ## Where truth lives
 
