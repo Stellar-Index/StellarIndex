@@ -528,13 +528,15 @@ inferred from a dashboard is a fabricated identity for a financial
 instrument. It shipped **empty** until the first such source was in
 hand, which was correct for a set with no verified members.
 
-It now holds ten bindings from two issuers, in three classes. Nine are
-Spiko funds. Five are tokenized T-Bill money-market funds — EUTBL,
+It now holds twelve bindings from three issuers, in three classes. Nine
+are Spiko funds. Five are tokenized T-Bill money-market funds — EUTBL,
 USTBL, UKTBL and the two EUR share classes — classed `bond`. Four are the
 share classes of a tokenized overnight swap fund — eurSAFO, SAFO,
 gbpSAFO, chfSAFO — classed `fund`. The tenth is Matrixdock Gold (XAUm),
-one token per troy ounce of vaulted gold, classed `commodity`. All ten
-are bound to their exact mainnet contract addresses.
+one token per troy ounce of vaulted gold, classed `commodity`. The last
+two are Centrifuge's deRWA tokens deJTRSY and deJAAA, wrappers of the
+Janus Henderson Anemoy Treasury and AAA CLO funds, both classed `bond`.
+All twelve are bound to their exact mainnet contract addresses.
 
 The Spiko addresses come from the issuer's own deployment manifest,
 reached only through `spiko.io`:
@@ -554,6 +556,13 @@ deployment. Its deployed code is additionally source-verified — the
 on-chain WASM hash reproduces from the issuer's published contract
 repository — which says more than a metadata match does: the code
 executing at the address is built from published source.
+
+The deJTRSY and deJAAA addresses come from the issuer's own SEP-1 file
+at `centrifuge.io`, whose `[[CURRENCIES]]` entries name each exact
+contract. The underlying JTRSY and JAAA contracts the same file names
+are not bound: the deRWA tokens wrap the same funds, and binding both
+before measuring what backs the wrapper risks counting one holding
+twice.
 
 #### The class follows the instrument, not the issuer
 
