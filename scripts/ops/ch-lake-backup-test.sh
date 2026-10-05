@@ -11,9 +11,14 @@
 #   4. an old chain is removed only AFTER a new full succeeded, and a prune
 #      failure keeps it on record rather than forgetting it;
 #   5. a base that vanished from the disk resets the chain instead of
-#      failing every night forever.
+#      failing every night forever;
+#   6. a failed full's partial upload is swept as an orphan, but never the
+#      current chain, a retained one, a newer one, a foreign name, anything
+#      outside the database directory, or anything at all when the listing
+#      or the running-backup check cannot be trusted.
 #
-# ClickHouse is a fake `curl` on PATH and clickhouse-disks a logging stub;
+# ClickHouse is a fake `curl` on PATH and clickhouse-disks a stub over a
+# directory standing in for the backup disk;
 # ch-lake-backup-roundtrip-test.sh runs the same script against a real
 # ClickHouse. Run: bash scripts/ops/ch-lake-backup-test.sh
 set -uo pipefail
@@ -33,6 +38,7 @@ expect_rc() { if [[ "$rc" -eq "$1" ]]; then ok "$2"; else bad "$2 (rc=$rc)"; fi;
 PROM="$TMP/tf/ch_lake_backup.prom"
 prom_has() { if grep -qx -- "$1" "$PROM" 2>/dev/null; then ok "$2"; else bad "$2"; fi; }
 prom_stamped() { if grep -q '^stellarindex_ch_lake_backup_last_success_unix [0-9]' "$PROM" 2>/dev/null; then ok "$1"; else bad "$1"; fi; }
+prom_full() { if grep -q '^stellarindex_ch_lake_backup_last_full_unix [0-9]' "$PROM" 2>/dev/null; then ok "$1"; else bad "$1"; fi; }
 prom_unstamped() { if grep -q last_success_unix "$PROM" 2>/dev/null; then bad "$1"; else ok "$1"; fi; }
 last_query() { tail -n1 "$TMP/queries"; }
 last_is_full() { local q; q="$(last_query)"; if [[ "$q" == *base_backup* ]]; then bad "$1"; else ok "$1"; fi; }
@@ -51,9 +57,16 @@ while [[ $# -gt 0 ]]; do
   if [[ "$1" == "--data-binary" ]]; then q="$2"; shift 2; else shift; fi
 done
 case "$q" in
-  *"status = 'CREATING_BACKUP'"*) echo "${MOCK_RUNNING:-}" ;;
+  *"status = 'CREATING_BACKUP'"*)
+    # The first call is the start-of-run check; MOCK_SWEEP_RUNNING answers
+    # the later one (op id, or "fail" for an unreachable server).
+    n=$(( $(cat "$MOCK_DISK.calls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$MOCK_DISK.calls"
+    if [[ "$n" -eq 1 && "${MOCK_START_FAIL:-}" == 1 ]]; then exit 22; fi
+    if [[ "$n" -gt 1 && "${MOCK_SWEEP_RUNNING:-}" == fail ]]; then exit 22; fi
+    if [[ "$n" -gt 1 ]]; then echo "${MOCK_SWEEP_RUNNING:-}"; else echo "${MOCK_RUNNING:-}"; fi ;;
   "BACKUP DATABASE"*)
     printf '%s\n' "$q" >> "$MOCK_LOG"
+    mkdir -p "$MOCK_DISK/$(sed -E "s/.* TO Disk\('[^']*', '([^']*)'\).*/\1/" <<<"$q")"
     printf 'op-1\tCREATING_BACKUP\n' ;;
   *"FROM system.backups WHERE id"*) printf '%b\n' "${MOCK_STATUS-BACKUP_CREATED\t4096\t12\t}" ;;
   *) echo "" ;;
@@ -61,18 +74,41 @@ esac
 STUB
 cat > "$TMP/bin/disks" <<'STUB'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$MOCK_PRUNE_LOG"
-exit "${MOCK_PRUNE_RC:-0}"
+q="$4" # --disk <name> --query <q>
+case "$q" in
+  "ls "*)
+    printf '%s\n' "$*" >> "$MOCK_LS_LOG"
+    [[ -n "${MOCK_LS_RC:-}" ]] && exit "$MOCK_LS_RC"
+    if [[ -n "${MOCK_LS+set}" ]]; then printf '%s' "$MOCK_LS"; exit 0; fi
+    ls "$MOCK_DISK/${q#ls }" 2>/dev/null; exit 0 ;;  # like clickhouse-disks: a missing dir lists empty
+  "remove -r "*)
+    printf '%s\n' "$*" >> "$MOCK_PRUNE_LOG"
+    [[ "${MOCK_PRUNE_RC:-0}" -eq 0 ]] || exit "$MOCK_PRUNE_RC"
+    rm -rf "${MOCK_DISK:?}/${q#remove -r }" ;;
+  *) exit 64 ;;
+esac
 STUB
+# macOS has no flock(1); the shim answers "held" only when MOCK_LOCK_HELD=1.
+if ! command -v flock >/dev/null 2>&1; then
+  cat > "$TMP/bin/flock" <<'STUB'
+#!/usr/bin/env bash
+[[ "${MOCK_LOCK_HELD:-}" != 1 ]]
+STUB
+  chmod +x "$TMP/bin/flock"
+fi
 chmod +x "$TMP/bin/curl" "$TMP/bin/disks"
 
 run() {
+  rm -f "$TMP/disk.calls"
   PATH="$TMP/bin:$PATH" MOCK_LOG="$TMP/queries" MOCK_PRUNE_LOG="$TMP/prunes" \
+    MOCK_LS_LOG="$TMP/lists" MOCK_DISK="$TMP/disk" \
     STATE_DIR="$TMP/state" TEXTFILE_DIR="$TMP/tf" POLL_SECONDS=0 \
     CH_DISKS_CMD="$TMP/bin/disks" BACKUP_DISK="${DISK-si_lake_backup}" \
     bash "$SCRIPT" 2>"$TMP/stderr"
 }
-reset() { rm -rf "$TMP/state" "$TMP/tf" "$TMP/queries" "$TMP/prunes"; }
+reset() { rm -rf "$TMP/state" "$TMP/tf" "$TMP/queries" "$TMP/prunes" "$TMP/lists" "$TMP/disk"; }
+on_disk() { if [[ -d "$TMP/disk/$1" ]]; then ok "$2"; else bad "$2"; fi; }
+off_disk() { if [[ -d "$TMP/disk/$1" ]]; then bad "$2"; else ok "$2"; fi; }
 age_chain() { # make the current chain's full look $1 days old
   local ts=$(( $(date -u +%s) - $1 * 86400 ))
   awk -v ts="$ts" 'BEGIN{FS=OFS="\t"} NR==1{$1=ts} {print}' "$TMP/state/chain" > "$TMP/c" && mv "$TMP/c" "$TMP/state/chain"
@@ -156,6 +192,11 @@ fi
 chains_count 1 "only one chain remains on record"
 off_record "$old_chain" "the removed chain is off the record"
 prom_has "stellarindex_ch_lake_backup_chain_length 1" "new chain length 1"
+fulls="$(grep -v base_backup "$TMP/queries" | sed -n "s/.*TO Disk('si_lake_backup', 'stellar\/\([^/]*\)\/.*/\1/p")"
+failed_full="$(tail -n2 <<<"$fulls")"
+failed_full="${failed_full%%$'\n'*}"
+off_disk "stellar/$failed_full" "the failed full's partial upload is swept as an orphan"
+prom_has "stellarindex_ch_lake_backup_orphans_removed 1" "reports one orphan removed"
 
 echo "5. prune failure is loud and forgets nothing"
 old_chain="$(cat "$TMP/state/chains")"
@@ -180,6 +221,99 @@ printf 'garbage\n' > "$TMP/state/chain"
 sleep 1
 run
 last_is_full "malformed state takes a full"
+
+echo "8. the orphan sweep deletes only unrecorded older chains, and only when it can trust what it sees"
+reset
+mkdir -p "$TMP/disk/stellar/20200101T000000Z/20200101T000000Z-full" "$TMP/disk/stellar/29990101T000000Z" \
+  "$TMP/disk/stellar/not-a-chain" "$TMP/disk/elsewhere/20200101T000000Z"
+run; rc=$?
+expect_rc 0 "first full with orphans present exits 0"
+cur="$(cat "$TMP/state/chains")"
+off_disk "stellar/20200101T000000Z" "an older unrecorded chain is removed"
+on_disk "stellar/$cur" "the chain just created is kept"
+on_disk "stellar/29990101T000000Z" "a chain newer than the current one is kept (could be in flight)"
+on_disk "stellar/not-a-chain" "a name this script never mints is kept"
+on_disk "elsewhere/20200101T000000Z" "nothing outside the database directory is touched"
+prom_has "stellarindex_ch_lake_backup_orphans_removed 1" "one orphan removed"
+prom_full "last_full_unix emitted"
+prom_has "stellarindex_ch_lake_backup_full_interval_days 28" "full interval emitted"
+sleep 1
+run
+if [[ "$(grep -c . "$TMP/lists")" -eq 1 ]]; then ok "an incremental after a clean sweep does not list the disk"; else bad "an incremental after a clean sweep does not list the disk"; fi
+age_chain 30
+sleep 1
+RETAIN_CHAINS=2 run; rc=$?
+expect_rc 0 "second full with RETAIN_CHAINS=2 exits 0"
+on_disk "stellar/$cur" "a retained chain is kept"
+chains_count 2 "both chains on record"
+cur="$(tail -n1 "$TMP/state/chains")"
+MOCK_STATUS='BACKUP_FAILED\t0\t0\tboom' run
+prom_full "a failed run still reports the recorded full"
+mkdir -p "$TMP/disk/stellar/20200102T000000Z"
+sweep_case() { # $1 label; env set by caller; forces a sweep via a missing sweep record
+  rm -f "$TMP/state/swept"; sleep 1
+  run; rc=$?
+  expect_rc 2 "$1: the backup counts but the run exits 2"
+  on_disk "stellar/20200102T000000Z" "$1: nothing deleted"
+  prom_stamped "$1: the backup itself still stamps success"
+}
+MOCK_LS_RC=1 sweep_case "listing error"
+MOCK_LS="" sweep_case "empty listing"
+MOCK_LS="20200102T000000Z" sweep_case "listing without the current chain"
+MOCK_SWEEP_RUNNING=op-9 sweep_case "a backup in flight at sweep time"
+MOCK_SWEEP_RUNNING=fail sweep_case "running-backup check unreachable"
+MOCK_PRUNE_RC=1 sweep_case "removal failure"
+if [[ -e "$TMP/state/swept" ]]; then bad "a failed sweep leaves no sweep record"; else ok "a failed sweep leaves no sweep record"; fi
+sleep 1
+run; rc=$?
+expect_rc 0 "the next incremental retries the sweep and exits 0"
+off_disk "stellar/20200102T000000Z" "the retried sweep removes the orphan"
+on_disk "stellar/$cur" "the current chain survives every case"
+if [[ -e "$TMP/state/swept" ]]; then ok "a clean sweep is recorded"; else bad "a clean sweep is recorded"; fi
+
+echo "9. the run lock and the fail-closed start check"
+reset
+mkdir -p "$TMP/state"
+holder=""
+if command -v flock >/dev/null 2>&1; then
+  ( exec 9>"$TMP/state/lock"; flock -n 9 || exit 1; sleep 30 ) &
+  holder=$!
+  sleep 1
+fi
+MOCK_LOCK_HELD=1 run; rc=$?
+[[ -n "$holder" ]] && { kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null; }
+if [[ "$rc" -ne 0 ]]; then ok "a held lock exits non-zero"; else bad "a held lock exits non-zero"; fi
+file_empty "$TMP/queries" "a held lock issues no BACKUP"
+prom_unstamped "a held lock stamps nothing"
+reset
+MOCK_START_FAIL=1 run; rc=$?
+if [[ "$rc" -ne 0 ]]; then ok "an unreadable system.backups exits non-zero"; else bad "an unreadable system.backups exits non-zero"; fi
+file_empty "$TMP/queries" "an unreadable system.backups issues no BACKUP"
+if grep -q "cannot read system.backups" "$TMP/stderr"; then ok "the refusal is logged"; else bad "the refusal is logged"; fi
+
+echo "10. the sweep refuses when the current chain is not on record"
+reset
+mkdir -p "$TMP/disk/stellar/20200101T000000Z"
+run
+cur="$(cat "$TMP/state/chains")"
+off_disk "stellar/20200101T000000Z" "setup: the sweep removed the orphan on a trusted record"
+mkdir -p "$TMP/disk/stellar/20200102T000000Z"
+rm -f "$TMP/state/swept"
+echo "20190101T000000Z" > "$TMP/state/chains"
+sleep 1
+run; rc=$?
+expect_rc 2 "an untrusted record exits 2"
+on_disk "stellar/20200102T000000Z" "nothing deleted when the current chain is not on record"
+on_disk "stellar/$cur" "the current chain is kept"
+
+echo "11. only timestamp-named folders under the database directory are deletable"
+reset
+mkdir -p "$TMP/disk/stellar/20200101T000000Z" "$TMP/disk/stellar/lake-manual-copy"   "$TMP/disk/stellar/20200101T000000" "$TMP/disk/stellar/x20200101T000000Zx"
+run
+off_disk "stellar/20200101T000000Z" "the timestamp-named orphan is removed"
+on_disk "stellar/lake-manual-copy" "a non-timestamp folder is never deleted"
+on_disk "stellar/20200101T000000" "a near-miss name without the Z is never deleted"
+on_disk "stellar/x20200101T000000Zx" "a name merely containing a timestamp is never deleted"
 
 echo
 echo "ch-lake-backup-test: $pass passed, $fail failed"

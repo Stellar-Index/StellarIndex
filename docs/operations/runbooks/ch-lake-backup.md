@@ -11,7 +11,7 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_ch_lake_backup_stale` (no successful lake backup in 96 h, or none inside 96 h on a host that has a lake — including a host with no backup disk configured; per host, carries `instance`) |
+| Alert | `stellarindex_ch_lake_backup_stale` (no successful lake backup in 96 h, or none inside 96 h on a host that has a lake — including a host with no backup disk configured; or no confirmed full on record for 72 h; or the recorded full older than `FULL_INTERVAL_DAYS` + 4 d; per host, carries `instance`) |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/storage.yml` and `configs/prometheus/rules.r1/storage.yml` |
 | Producer | `scripts/ops/ch-lake-backup.sh` via `ch-lake-backup.timer` (daily, 04:10 UTC) |
@@ -22,7 +22,10 @@ severity: P3
 
 - The ticket names a host. `stellarindex_ch_lake_backup_configured{instance="<host>:9100"}`
   is `0` (no off-site disk configured) or `1` (configured, but no run has
-  succeeded in 96 h).
+  succeeded in 96 h, no full has ever been confirmed, or
+  `stellarindex_ch_lake_backup_last_full_unix` is older than
+  `stellarindex_ch_lake_backup_full_interval_days` + 4 d because every new
+  full fails).
 - `systemctl status ch-lake-backup.service` shows a failed or long-running run.
   An unconfigured host fails every run on purpose (`no BACKUP_DISK configured`
   in the journal): a run that copied nothing never reports success.
@@ -58,6 +61,14 @@ clickhouse-client --port 9300 -q "SELECT name, type FROM system.disks"   # si_la
   (logged as `PRUNE FAILED`). It stays on record and the next full retries;
   remove it by hand if the bucket's quota is the issue:
   `clickhouse-disks -C /etc/clickhouse-server/config.xml --disk si_lake_backup --query "remove -r stellar/<chain>"`.
+  Exit 2 with `SWEEP SKIPPED` or `ORPHAN REMOVAL FAILED` is the orphan
+  sweep: a failed full leaves its partial upload under `stellar/<stamp>/`
+  and never reaches the chain record, so after each confirmed full (and on
+  the first success with no `swept` file in the state dir) the script
+  deletes every older chain directory not on record. It deletes nothing
+  when the listing lacks the chain just written, the running-backup check
+  fails, or a backup is in flight; the next successful run retries.
+  `stellarindex_ch_lake_backup_orphans_removed` counts what a sweep removed.
 
 ## Restore
 
@@ -103,3 +114,4 @@ server's reason.
 ## Changelog
 
 - 2026-09-23 — created with the backup job.
+- 2026-10-05 — orphan sweep for failed fulls; the alert also watches the full's age.

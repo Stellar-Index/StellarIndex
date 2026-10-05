@@ -30,7 +30,7 @@ import (
 // is the statement's own `ts` bound, without which the UPDATE names the
 // hypertable and every one of its 258 compressed chunks is a result
 // relation whatever this file decompressed — see
-// [Store.applyXLMBaseRestampBatch] and the 2026-09-06 measurement in
+// [Store.applyXLMBaseRestampBatch] and the "Chunk mode" section of
 // docs/operations/usd-volume-rederive-2026-08.md.
 //
 // The remedy is to invert the order: decompress the chunk ONCE, run the

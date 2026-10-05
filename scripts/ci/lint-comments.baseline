@@ -3172,7 +3172,6 @@ internal/storage/timescale/trades_bulk.go	INV-6
 internal/storage/timescale/trades_chunks.go	2026-01-01
 internal/storage/timescale/trades_chunks.go	2026-08
 internal/storage/timescale/trades_chunks.go	2026-09-03
-internal/storage/timescale/trades_chunks.go	2026-09-06
 internal/storage/timescale/trades_chunks.go	2026-09-10
 internal/storage/timescale/trades_chunks.go	2026-09-10
 internal/storage/timescale/transitive_price.go	2026-08-27

@@ -176,7 +176,7 @@ has open, on a context that survives cancellation, and the largest
 names its own bound on its launch line**
 (`HEAVY_JOB_STOP_TIMEOUT=2h`, in
 [../usd-volume-rederive-2026-08.md](../usd-volume-rederive-2026-08.md)
-Step 6) rather than every other job inheriting a multi-hour stop it will
+"Chunk mode") rather than every other job inheriting a multi-hour stop it will
 never use. The 2 h there is a budget, not a measurement: 160 GB at
 ~22 MB/s, and no `compress_chunk` rate has been measured on r1. SIGTERM
 is still immediate — a job that exits on it promptly is not slowed, and
@@ -340,7 +340,7 @@ record why, because the range is then knowingly un-backfilled.
 - [ch-schema-restore](ch-schema-restore.md) — ADR-0043's lake-protection
   story, which the re-derive path depends on.
 - [../usd-volume-rederive-2026-08.md](../usd-volume-rederive-2026-08.md)
-  Step 6, chunk mode — the job whose SIGTERM cleanup sized the stop
+  "Chunk mode" — the job whose SIGTERM cleanup sized the stop
   bound, and the state to repair when a run is killed through it.
 
 ## Changelog

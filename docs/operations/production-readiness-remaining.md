@@ -10,9 +10,8 @@ status: superseded — see v1-launch-plan.md
 > Open items were re-verified and absorbed there; several rows here are
 > stale-resolved (trim done, D2 done, deploys landed). Mine for detail only.
 
-Companion to `production-readiness-master-plan-2026-07-18.md` (which holds the
-phase narrative). This file is the **exhaustive checklist**, including the
-horizontal-scale roadmap (R2/R3/R4) that the phase doc only gestures at.
+This file is the **exhaustive checklist**, including the horizontal-scale
+roadmap (R2/R3/R4). The campaign phase narrative it once accompanied was removed.
 
 Status key: ⬜ to-do · 🔵 in-flight · ✅ done · 🏗️ large project · 🟠 needs an
 operator decision · ⛔ ruled out

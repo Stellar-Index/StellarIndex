@@ -4,7 +4,8 @@
 # backups it takes restore: full, then an incremental on top of it, then
 # DROP DATABASE and RESTORE from the incremental must give back every row,
 # byte-identical by content hash. A third run past the full interval must
-# start a new chain and remove the old one from the backup disk.
+# start a new chain, remove the old one from the backup disk, and sweep the
+# leftover of a failed full that never reached the chain record.
 #
 # The backup disk here is a local disk; production declares an s3_plain disk
 # with the same name (configs/ansible/.../clickhouse-lake-backup-disk.xml.j2).
@@ -24,6 +25,11 @@ TMP="$(mktemp -d)"
 name="ch-lake-backup-rt-$$"
 cleanup() { docker rm -f "$name" >/dev/null 2>&1; rm -rf "$TMP"; }
 trap cleanup EXIT
+# macOS has no flock(1); this test runs one backup at a time, so a no-op is faithful.
+if ! command -v flock >/dev/null 2>&1; then
+  mkdir -p "$TMP/bin"; printf '#!/bin/sh\nexit 0\n' > "$TMP/bin/flock"; chmod +x "$TMP/bin/flock"
+  export PATH="$TMP/bin:$PATH"
+fi
 
 cat > "$TMP/si-lake-backup.xml" <<'EOF'
 <clickhouse>
@@ -51,8 +57,8 @@ ok()  { printf '  ok   %s\n' "$1"; pass=$((pass + 1)); }
 bad() { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
 q() { curl -sSf "$CH" --data-binary "$1"; }
 fingerprint() {
-  q "SELECT 'ledgers', count(), sum(cityHash64(*)) FROM stellar.ledgers
-     UNION ALL SELECT 'ops', count(), sum(cityHash64(*)) FROM stellar.operations
+  q "SELECT * FROM (SELECT 'ledgers', count(), sum(cityHash64(*)) FROM stellar.ledgers
+     UNION ALL SELECT 'ops', count(), sum(cityHash64(*)) FROM stellar.operations)
      ORDER BY 1 FORMAT TabSeparated"
 }
 backup() {
@@ -102,12 +108,14 @@ fi
 echo "4. a new chain retires the old one"
 ts=$(( $(date -u +%s) - 30 * 86400 ))
 awk -v ts="$ts" 'BEGIN{FS=OFS="\t"} NR==1{$1=ts} {print}' "$TMP/state/chain" > "$TMP/c" && mv "$TMP/c" "$TMP/state/chain"
+orphan=20200101T000000Z
+docker exec "$name" sh -c "mkdir -p /backups/stellar/$orphan/$orphan-full && echo partial > /backups/stellar/$orphan/$orphan-full/data.bin && chown -R clickhouse /backups"
 sleep 1
 if backup; then ok "new full exits 0"; else bad "new full exits 0"; fi
 on_disk="$(docker exec "$name" ls /backups/stellar)"
 new_chain="$(cut -f2 "$TMP/state/chain" | cut -d/ -f2)"
-if ! grep -qx "$first_chain" <<<"$on_disk" && grep -qx "$new_chain" <<<"$on_disk"; then
-  ok "old chain $first_chain removed, new chain $new_chain present"
+if ! grep -qx "$first_chain" <<<"$on_disk" && ! grep -qx "$orphan" <<<"$on_disk" && grep -qx "$new_chain" <<<"$on_disk"; then
+  ok "old chain $first_chain and orphan $orphan removed, new chain $new_chain present"
 else
   bad "chains on disk after the new full: $(tr '\n' ' ' <<<"$on_disk")"
 fi

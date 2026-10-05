@@ -282,7 +282,7 @@ so trimming 78% of the partitions reclaimed 22% of the estimate. Any
 future "trim old data" estimate on this archive should assume the same
 shape. Full execution record, including the 48h cold-availability soak
 and the ZFS snapshot that held the space until destroy:
-`docs/operations/production-readiness-master-plan-2026-07-18.md`.
+the git history of the removed `docs/operations/production-readiness-master-plan-2026-07-18.md`.
 
 **The steady-state dependency is taken and formally accepted.**
 ADR-0043 §2: `[64000, 49983999]` (~50M ledgers, ~2.3 TiB) is now

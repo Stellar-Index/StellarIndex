@@ -1320,10 +1320,10 @@ func TestXLMBaseChunkRestamp_StopsWhenTheChunkIsRecompressedUnderneath(t *testin
 // ─── the acceptance line the runbook quotes ──────────────────────────────
 
 // TestXLMBaseRestampSummary_AcceptanceLineForTheRunbookWindow pins the
-// exact acceptance command the tool prints for the #372 window the
-// runbook recommends (Step 6, chunk mode): -day is the LAST day and -days
-// counts back from it, so [2026-01-01, 2026-07-21] is 202 days ending on
-// 07-21. The runbook quotes this line byte-for-byte.
+// exact acceptance command the tool prints for the #372 window;
+// the runbook's Acceptance line describes the `-day`/`-days` shape
+// generically. -day is the LAST day and -days counts
+// back from it, so that window is 202 days ending on 07-21.
 func TestXLMBaseRestampSummary_AcceptanceLineForTheRunbookWindow(t *testing.T) {
 	t.Parallel()
 	opts, _, _ := chunkTestOptions(true)
