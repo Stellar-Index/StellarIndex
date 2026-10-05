@@ -33,7 +33,7 @@ func TestRealRepo_IsClean(t *testing.T) {
 		t.Fatalf("expected a clean repo, got %d failure(s):\n  %s",
 			len(failures), strings.Join(failures, "\n  "))
 	}
-	for _, want := range []string{"4 of 4 checks passed", "verify:false", "golangci.v2.11.jsonschema.json"} {
+	for _, want := range []string{"4 of 4 checks passed", "verify:false", "golangci.v2.14.jsonschema.json"} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("summary %q missing %q", summary, want)
 		}
@@ -81,12 +81,12 @@ func TestRealRepo_VendoredSchemaMatchesPin(t *testing.T) {
 }
 
 // TestValidateConfig_CatchesUnknownKeys is the non-vacuity proof for check 4:
-// golangci-lint's own loader ACCEPTS these configs (verified against v2.11.4
+// golangci-lint's own loader ACCEPTS these configs (verified against v2.14.0
 // — `golangci-lint linters --config` exits 0 with a top-level `runn:` block),
 // so the schema check is the only thing standing between a typo and a lint
 // rule that quietly stops applying.
 func TestValidateConfig_CatchesUnknownKeys(t *testing.T) {
-	schema := mustReadFile(t, filepath.Join(repoPaths().schemaDir, "golangci.v2.11.jsonschema.json"))
+	schema := mustReadFile(t, filepath.Join(repoPaths().schemaDir, "golangci.v2.14.jsonschema.json"))
 
 	cases := map[string]struct {
 		config string
@@ -126,7 +126,7 @@ func TestValidateConfig_CatchesUnknownKeys(t *testing.T) {
 // not come at the cost of false positives on the config we actually ship.
 func TestValidateConfig_AcceptsTheRealConfig(t *testing.T) {
 	p := repoPaths()
-	schema := mustReadFile(t, filepath.Join(p.schemaDir, "golangci.v2.11.jsonschema.json"))
+	schema := mustReadFile(t, filepath.Join(p.schemaDir, "golangci.v2.14.jsonschema.json"))
 	violations, err := validateConfig(p.config, schema)
 	if err != nil {
 		t.Fatalf("validateConfig: %v", err)
@@ -139,14 +139,14 @@ func TestValidateConfig_AcceptsTheRealConfig(t *testing.T) {
 // TestRun_ActionWithoutVerifyFalseFails — a workflow that leaves the action's
 // networked verify on is exactly the #317 defect, and must fail the lint.
 func TestRun_ActionWithoutVerifyFalseFails(t *testing.T) {
-	failures := runFixture(t, workflowYAML("          args: --timeout=5m\n"), "GOLANGCI_LINT_VERSION := v2.11.4\n")
+	failures := runFixture(t, workflowYAML("          args: --timeout=5m\n"), "GOLANGCI_LINT_VERSION := v2.14.0\n")
 	assertFailureMentions(t, failures, "verify: false")
 }
 
 // TestRun_QuotedFalseIsAccepted — `verify: 'false'` is the same input to the
 // action, and must not be reported as a failure.
 func TestRun_QuotedFalseIsAccepted(t *testing.T) {
-	failures := runFixture(t, workflowYAML("          verify: 'false'\n"), "GOLANGCI_LINT_VERSION := v2.11.4\n")
+	failures := runFixture(t, workflowYAML("          verify: 'false'\n"), "GOLANGCI_LINT_VERSION := v2.14.0\n")
 	if len(failures) > 0 {
 		t.Errorf("quoted 'false' should satisfy the check, got: %s", strings.Join(failures, "; "))
 	}
@@ -161,7 +161,7 @@ func TestRun_SecondWorkflowAdoptingTheActionIsCaught(t *testing.T) {
 	p.ciYML = writeFile(t, "ci.yml", workflowYAML("          verify: false\n"))
 	dir := filepath.Dir(p.ciYML)
 	p.workflowGlob = filepath.Join(dir, "*.yml")
-	p.makefile = writeFile(t, "Makefile", "GOLANGCI_LINT_VERSION := v2.11.4\n")
+	p.makefile = writeFile(t, "Makefile", "GOLANGCI_LINT_VERSION := v2.14.0\n")
 	if err := os.WriteFile(filepath.Join(dir, "nightly.yml"),
 		[]byte(workflowYAML("          args: --timeout=5m\n")), 0o600); err != nil {
 		t.Fatalf("write second workflow: %v", err)
@@ -178,8 +178,8 @@ func TestRun_SecondWorkflowAdoptingTheActionIsCaught(t *testing.T) {
 // TestRun_NoActionStepIsNotVacuous — if the action is renamed away, the lint
 // must say so rather than report a clean run it did not verify.
 func TestRun_NoActionStepIsNotVacuous(t *testing.T) {
-	wf := "env:\n  GOLANGCI_LINT_VERSION: v2.11.4\njobs:\n  lint:\n    steps:\n      - name: go vet\n        run: go vet ./...\n"
-	failures := runFixture(t, wf, "GOLANGCI_LINT_VERSION := v2.11.4\n")
+	wf := "env:\n  GOLANGCI_LINT_VERSION: v2.14.0\njobs:\n  lint:\n    steps:\n      - name: go vet\n        run: go vet ./...\n"
+	failures := runFixture(t, wf, "GOLANGCI_LINT_VERSION := v2.14.0\n")
 	assertFailureMentions(t, failures, "must not pass vacuously")
 }
 
@@ -194,13 +194,13 @@ func TestRun_VersionPinDriftFails(t *testing.T) {
 // TestRun_MissingVendoredSchemaFails — bumping the pin without re-vendoring
 // must fail loudly instead of validating against a stale schema.
 func TestRun_MissingVendoredSchemaFails(t *testing.T) {
-	wf := strings.Replace(workflowYAML("          verify: false\n"), "v2.11.4", "v2.99.0", 1)
+	wf := strings.Replace(workflowYAML("          verify: false\n"), "v2.14.0", "v2.99.0", 1)
 	failures := runFixture(t, wf, "GOLANGCI_LINT_VERSION := v2.99.0\n")
 	assertFailureMentions(t, failures, "no vendored schema for v2.99")
 }
 
 func TestMinorVersion(t *testing.T) {
-	cases := map[string]string{"v2.11.4": "v2.11", "2.11.4": "v2.11", "v2.11": "v2.11"}
+	cases := map[string]string{"v2.14.0": "v2.14", "2.14.0": "v2.14", "v2.14": "v2.14"}
 	for in, want := range cases {
 		got, err := minorVersion(in)
 		if err != nil {
@@ -218,9 +218,9 @@ func TestMinorVersion(t *testing.T) {
 // workflowYAML builds a minimal ci.yml whose golangci-lint-action step
 // carries the supplied `with:` line.
 func workflowYAML(withLine string) string {
-	return "env:\n  GOLANGCI_LINT_VERSION: v2.11.4\njobs:\n  lint:\n    steps:\n" +
+	return "env:\n  GOLANGCI_LINT_VERSION: v2.14.0\njobs:\n  lint:\n    steps:\n" +
 		"      - name: golangci-lint\n        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a\n" +
-		"        with:\n          version: v2.11.4\n" + withLine
+		"        with:\n          version: v2.14.0\n" + withLine
 }
 
 // runFixture runs the whole lint against fixture ci.yml/Makefile files, the

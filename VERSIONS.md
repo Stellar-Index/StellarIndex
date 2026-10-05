@@ -87,8 +87,8 @@ Install-time tooling pinned by this repo snapshot:
 ```
 mvdan.cc/gofumpt                  v0.8.0
 golang.org/x/tools/cmd/goimports  v0.42.0
-github.com/golangci/golangci-lint/v2/cmd/golangci-lint v2.11.4
-golang.org/x/vuln/cmd/govulncheck v1.1.4
+github.com/golangci/golangci-lint/v2/cmd/golangci-lint v2.14.0
+golang.org/x/vuln/cmd/govulncheck v1.8.0
 gitleaks                          v8.21.2
 ```
 
