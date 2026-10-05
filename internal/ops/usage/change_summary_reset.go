@@ -1,4 +1,4 @@
-package main
+package usage
 
 import (
 	"database/sql"
@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// changeSummaryReset deletes one change_summary_5m row. The upsert ratchets
+// ChangeSummaryReset deletes one change_summary_5m row. The upsert ratchets
 // ath/atl with GREATEST/LEAST, so a bad extreme already stored can only be
 // cleared by removing the row; the aggregator's change-summary worker
 // recreates it from the trailing 30 days on its next pass (≤5 min).
@@ -22,7 +22,7 @@ import (
 //	  -entity-type coin -entity-id crypto:XLM -write
 //
 // Dry-run unless -write. Safe to re-run: deleting an absent row is a no-op.
-func changeSummaryReset(args []string) error {
+func ChangeSummaryReset(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("change-summary-reset")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	entityType := fs.String("entity-type", "", "change_summary_5m entity_type, e.g. coin | pair (required)")
