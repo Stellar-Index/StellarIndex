@@ -35,6 +35,8 @@ Keep `test/chaos/reports/<timestamp>/` (per-scenario logs), the runner's final
 summary table, and a `RETRO.md` there: what the runbook missed, surprises, PRs
 the run motivated.
 
+Wave 1 closes when all 3 scenarios pass, the retro is free of real bugs, and the reports directory is committed.
+
 ## Verdicts
 
 - Pass: scenario exits 0 (each `scenarios/0X-*.sh` asserts its own bar).
