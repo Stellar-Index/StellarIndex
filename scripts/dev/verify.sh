@@ -549,6 +549,8 @@ lane_a() { # doc lints
     echo "=== Alerts catalogue ===" && python3 ./scripts/ci/lint-alerts-catalog.py
     echo "=== Doc links ===" && ./scripts/ci/lint-doc-links.sh
     echo "=== Doc links self-test ===" && ./scripts/ci/lint-doc-links-test.sh
+    echo "=== ADR refs ===" && ./scripts/ci/lint-adr-refs.sh
+    echo "=== ADR refs self-test ===" && ./scripts/ci/lint-adr-refs-test.sh
 }
 
 lane_b() { # Go build/vet/unit tests

@@ -1,24 +1,18 @@
 # Architecture Decision Records
 
 Every significant architectural choice in Stellar Index is captured
-here as an **ADR** — a numbered, dated, immutable record.
+here as an **ADR** — a numbered, dated record whose decision is immutable.
 
 ## Rules
 
-1. **Immutable, with clearly-marked amendments.** Once an ADR is
-   `Accepted`, its original Context/Decision/Consequences/Alternatives
-   text is never rewritten or deleted. Typo fixes and formatting are
-   allowed; rationale is not. When new information corrects or
-   updates the ADR's description of reality without reversing the
-   decision itself (a factual drift, an implementation detail that
-   shipped differently, a scoped correction), append a dated
-   `> **Amendment (YYYY-MM-DD, finding/ref)**` blockquote — at the top
-   of the doc, or inline at the specific section it corrects — stating
-   the correction and explicitly preserving the original text as the
-   historical record (see ADR-0011, ADR-0019, ADR-0033, ADR-0040,
-   ADR-0047, ADR-0048 for the established pattern). Amendments do not
-   need a new ADR number. If the DECISION itself changes (not just its
-   description), that is rule 2, not an amendment.
+1. **Decision and Invariant immutable, body editable.** Once an ADR is
+   `Accepted` and on the template, its Decision and Invariant sections
+   do not change meaning; `lint-adr-refs` hashes them into
+   `decision-hashes.txt` and fails on an edit (whitespace reflow is
+   allowed). Context, Consequences and Evidence are kept current in
+   place. A correction to how the decision is described is folded into
+   Decision when the ADR is rewritten onto the template, not appended
+   as a dated amendment. If the decision itself changes, that is rule 2.
 2. **Supersede, don't rewrite.** If a decision changes, write a new
    ADR that supersedes the old one, and add one line to the old ADR's
    metadata:
@@ -47,7 +41,13 @@ here as an **ADR** — a numbered, dated, immutable record.
 
 ## Template
 
-See [_template.md](_template.md) for the boilerplate.
+[_template.md](_template.md): Context (at most 3 lines), Decision, Invariant,
+Consequences, Evidence, in that order and no other sections. At most 150
+lines per ADR, median at most 60. `scripts/ci/lint-adr-refs.sh` enforces this
+for every ADR not listed in `scripts/ci/lint-adr-refs.baseline` (the ADRs not
+yet rewritten; the list only shrinks), and checks that every `ADR-NNNN` and
+"AGENTS.md invariant N" citation in the tree resolves. A new or rewritten
+Accepted ADR records its hash with `scripts/ci/lint-adr-refs.sh --record`.
 
 ## Index
 

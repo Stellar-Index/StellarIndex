@@ -113,13 +113,14 @@ const (
 // ledger; without a bound the comparison silently pits an hours-old
 // total against a fresh one.
 //
-// 1000 ledgers (~1.4h at 5s close times) is
-// [DefaultStaleComponentLedgers] — the lag this package already
-// declares acceptable for a supply component. Reusing it makes the two
-// freshness defences agree rather than each picking its own number,
-// and it is comfortably wider than the 5m aggregator refresh cadence
-// that produces both sides, so steady state never trips it.
-const CrossCheckLedgerTolerance uint32 = DefaultStaleComponentLedgers
+// 1000 ledgers (~1.4h at 5s close times) is comfortably wider than the
+// 5m aggregator refresh cadence that produces both sides, so steady
+// state never trips it. It bounds snapshot-ledger ALIGNMENT, not
+// component age, so it is deliberately its own constant: the
+// configurable stale-component thresholds (supply.stale_component_ledgers
+// and its per-asset overrides) gate each snapshot's components and do
+// not move it.
+const CrossCheckLedgerTolerance uint32 = 1000
 
 // ledgerGap returns |a − b| for two ledger sequences without the
 // uint32 underflow a bare subtraction would produce.

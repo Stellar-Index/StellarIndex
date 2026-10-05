@@ -4,6 +4,9 @@
 package cctp
 
 import (
+	"encoding/binary"
+	"encoding/hex"
+	"math/big"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
@@ -182,5 +185,51 @@ func TestDecodeMessageReceived_RealMainnetFixture(t *testing.T) {
 	}
 	if got != want {
 		t.Errorf("MessageReceived mismatch\n got: %+v\nwant: %+v", got, want)
+	}
+}
+
+// TestDepositForBurnAmount_IsCanonicalSixDecimals pins the outbound scale the
+// served CCTP sums divide by 1e6 (protocol_bespoke_cctp.go): the burn's amount
+// must equal the BurnMessage amount the same tx sends cross-chain, which the
+// destination (domain 6, Base, 6-decimal USDC) mints 1:1. A 7-decimal local
+// SAC amount here would be 10x the message amount.
+func TestDepositForBurnAmount_IsCanonicalSixDecimals(t *testing.T) {
+	t.Parallel()
+	burnEv, msgEv := realDepositForBurn, realMessageSent
+	burn, err := DecodeDepositForBurn(&burnEv)
+	if err != nil {
+		t.Fatalf("DecodeDepositForBurn: %v", err)
+	}
+	sent, err := DecodeMessageSent(&msgEv)
+	if err != nil {
+		t.Fatalf("DecodeMessageSent: %v", err)
+	}
+	if burn.TxHash != sent.TxHash || burn.OpIndex != sent.OpIndex {
+		t.Fatalf("fixtures are not the same op: burn %s/%d, message %s/%d", burn.TxHash, burn.OpIndex, sent.TxHash, sent.OpIndex)
+	}
+	msg, err := hex.DecodeString(sent.Message)
+	if err != nil {
+		t.Fatalf("message hex: %v", err)
+	}
+	// CCTP v2 message: 148-byte header (version, source/destination domain at
+	// [4:8]/[8:12]), then BurnMessage: version(4) burnToken(32)
+	// mintRecipient(32) amount(32, big-endian uint256).
+	const header, amountOff = 148, 148 + 4 + 32 + 32
+	if len(msg) < amountOff+32 {
+		t.Fatalf("message too short: %d bytes", len(msg))
+	}
+	if src, dst := binary.BigEndian.Uint32(msg[4:8]), binary.BigEndian.Uint32(msg[8:12]); src != 27 || dst != burn.DestinationDomain {
+		t.Fatalf("message domains = %d->%d, want 27->%d", src, dst, burn.DestinationDomain)
+	}
+	if got, want := hex.EncodeToString(msg[header+4+32:amountOff]), burn.MintRecipient; got != want {
+		t.Fatalf("BurnMessage mintRecipient = %s, want %s (not the same transfer)", got, want)
+	}
+	wire := new(big.Int).SetBytes(msg[amountOff : amountOff+32])
+	amt, ok := new(big.Int).SetString(burn.Amount, 10)
+	if !ok {
+		t.Fatalf("DepositForBurn.Amount %q is not an integer", burn.Amount)
+	}
+	if amt.Cmp(wire) != 0 {
+		t.Fatalf("deposit_for_burn amount %s != BurnMessage amount %s: outbound sums are not at the canonical 6-decimal scale", amt, wire)
 	}
 }

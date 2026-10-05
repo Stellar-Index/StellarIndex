@@ -880,6 +880,15 @@ enabled = false
 # reserve_balances_as_of   = "2026-07-02"
 # reserve_balances_max_age = "168h"
 #
+# stale_component_ledgers (F-1236) — global stale-component threshold
+# in ledgers; 0 disables the gate.
+# stale_component_ledgers = 1000
+#
+# max_dormant_component_ledgers (R-002) — how long an unchanged
+# component ledger counts as a dormant asset before the gate treats it
+# as a stalled observer; 0 makes dormancy unbounded.
+# max_dormant_component_ledgers = 17280
+#
 # Tables go last: an uncommented key below a [table] header belongs to
 # that table, not to [supply].
 # [supply.reserve_balances_stroops]

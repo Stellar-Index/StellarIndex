@@ -73,7 +73,7 @@ func TestSupplyRefresherOptions_PerAssetOverrideReachesGate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cfg := config.Config{}
+			cfg := config.Default() // the 1000-ledger global gate must be in force
 			cfg.Supply.StaleComponentLedgersByAsset = map[string]uint32{tc.configKey: 5000}
 			opts, err := supplyRefresherOptions(cfg, assetKey)
 			if err != nil {
@@ -108,5 +108,60 @@ func TestSupplyRefresherOptions_RejectsUnresolvableKey(t *testing.T) {
 	cfg.Supply.StaleComponentLedgersByAsset = map[string]uint32{"PHO_NOT_A_KEY": 5000}
 	if _, err := supplyRefresherOptions(cfg, "XLM"); err == nil {
 		t.Fatal("supplyRefresherOptions accepted an unparseable key; want error")
+	}
+}
+
+// tickSupplyGate runs ticks of a Refresher built from cfg's options against
+// a fixed tip and component ledger, returning the last outcome kind.
+func tickSupplyGate(t *testing.T, cfg config.Config, tip, component uint32, ticks int) supply.OutcomeKind {
+	t.Helper()
+	opts, err := supplyRefresherOptions(cfg, "XLM")
+	if err != nil {
+		t.Fatalf("supplyRefresherOptions: %v", err)
+	}
+	r := supply.NewRefresher(
+		stubSupplyLedgers{ledger: tip, observedAt: time.Unix(1_770_000_000, 0).UTC()},
+		stubSupplyComputer{out: supply.Supply{
+			AssetKey:           "XLM",
+			TotalSupply:        big.NewInt(1_000_000),
+			CirculatingSupply:  big.NewInt(900_000),
+			Basis:              supply.BasisXLMSDFReserveExclusion,
+			MinComponentLedger: component,
+		}},
+		&stubSupplyInserter{},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		opts...,
+	)
+	var kind supply.OutcomeKind
+	for i := 0; i < ticks; i++ {
+		kind = r.Tick(context.Background()).Kind
+	}
+	return kind
+}
+
+// The global [supply] stale_component_ledgers key must reach the gate:
+// a 1190-ledger lag is stale under the 1000 default and OK at 5000.
+func TestSupplyRefresherOptions_GlobalStaleThresholdReachesGate(t *testing.T) {
+	cfg := config.Default()
+	if got := tickSupplyGate(t, cfg, 50_001_500, 50_000_310, 1); got != supply.OutcomeKindStaleComponent {
+		t.Fatalf("default config: tick kind = %s, want %s", got, supply.OutcomeKindStaleComponent)
+	}
+	cfg.Supply.StaleComponentLedgers = 5000
+	if got := tickSupplyGate(t, cfg, 50_001_500, 50_000_310, 1); got != supply.OutcomeKindOK {
+		t.Fatalf("stale_component_ledgers=5000: tick kind = %s, want %s", got, supply.OutcomeKindOK)
+	}
+}
+
+// The [supply] max_dormant_component_ledgers key must reach the gate: an
+// unchanged component ledger 20000 behind the tip is past the 17280
+// default horizon (stalled observer) but dormant once the horizon is 0.
+func TestSupplyRefresherOptions_DormancyHorizonReachesGate(t *testing.T) {
+	cfg := config.Default()
+	if got := tickSupplyGate(t, cfg, 50_020_000, 50_000_000, 2); got != supply.OutcomeKindStaleComponent {
+		t.Fatalf("default horizon: second tick kind = %s, want %s", got, supply.OutcomeKindStaleComponent)
+	}
+	cfg.Supply.MaxDormantComponentLedgers = 0
+	if got := tickSupplyGate(t, cfg, 50_020_000, 50_000_000, 2); got != supply.OutcomeKindDormant {
+		t.Fatalf("max_dormant_component_ledgers=0: second tick kind = %s, want %s", got, supply.OutcomeKindDormant)
 	}
 }
