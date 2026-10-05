@@ -38,14 +38,17 @@ The verdict is two-axis (ADR-0034):
 - `projection_verified_from` is the floor of the projection claim: the
   source's genesis, or the lowest served row where the served tier is a
   declared working-set window (pubnet `sdex` publishes `genesis_ledger`
-  2 with a served tier from ~61.6M). Read `complete` together with it.
+  2 with a served tier measured from `projection_verified_from` = 61,249,957 on 2026-10-05). Read `complete` together with it.
 - Tallies: `complete_sources` / `total_sources` (served axis) and
   `lake_complete_sources` (lake axis).
 - A source anchored to pubnet contracts is `not_applicable` on a test
   net: listed with a reason and excluded from every total.
-- `flags.stale` is set when the verdict is old, the live `ledgerstream`
-  cursor has not been written for 10 minutes, or the cursor trails the
-  verdict too far. `coverage = 1` means verified to where ingest
+- `flags.stale` has four triggers (`coverage_verdicts.go`): verdict
+  `computed_at` older than 26 h (or absent); the network tip (cursor
+  extrapolated by wall clock) more than 34,560 ledgers past a verdict's
+  tip; a `projection_ok` source whose `projection_evidenced_at` is older
+  than 246 h (7 d carry age + 3 x 26 h) or unknown; the `ledgerstream`
+  cursor unwritten for 10 minutes. `coverage = 1` means verified to where ingest
   stopped, not to the network tip.
 - External CEX/FX sources have no on-chain substrate. Their signal is
   freshness and liveness, reported separately and never folded into the
@@ -171,7 +174,7 @@ Status: ✅ verified live, ⚠ shipped with a caveat, ❌ gap (launch blocker), 
 | S4.3 | Per-pair configurable min USD volume | `aggregate.min_usd_volume` in `config` | 📦 |
 | S4.4 | TWAP fallback below volume threshold | `/v1/twap` | ✅ |
 | S5.1 | Live event ingest | Galexie/MinIO → `ledgerstream` → `dispatcher` → `sources/*` | ✅ |
-| S5.2 | ≤ 30 s price staleness | `cmd/stellarindex-sla-probe`; `/v1/price/tip` (see [Freshness](#freshness-what-the-30-s-sla-means)) | ✅ |
+| S5.2 | ≤ 30 s price staleness | `cmd/stellarindex-sla-probe`; `/v1/price/tip` (see [Freshness](#freshness-what-the-30-s-sla-means)); pager `stellarindex_sla_probe_freshness_breach` ([runbook](../operations/runbooks/sla-probe-freshness-breach.md)) | ✅ |
 | S5.3 | SSE streaming | `api/streaming`; `/v1/{price,price/tip,observations}/stream` | ✅ |
 | S5.4 | Degradation flags (`stale`, `reduced_redundancy`, `triangulated`, `divergence_warning`) | `api/envelope` | ✅ |
 | S6.1 | Since-inception backfill | `stellarindex-ops backfill`; `/v1/history/since-inception` starts 2021-02-01, not 2015 (intent unconfirmed) | ✅ |
@@ -184,7 +187,7 @@ Status: ✅ verified live, ⚠ shipped with a caveat, ❌ gap (launch blocker), 
 | S8.1 | `usd_volume` per trade | `canonical.Trade`, migrations/0001; CAGG `volume_usd` | ✅ |
 | S8.2 | FX anchor for USD conversion | `sources/external/{forex,exchangeratesapi}`, `aggregate/stablecoin.go` (USDC/USDT→USD at compute time) | ✅ |
 | S9.1 | ≥ 99.9 % availability (published SLA; 99.99 % was the design target) | ADR-0008 HA plan + sla-probe; needs ≥ 30 days off-host measurement; r1 single-region | ⚠ |
-| S9.2 | p95 ≤ 200 ms, p99 ≤ 500 ms | ADR-0009, Redis, sla-probe; PROVEN sla-proof report missing | ✅ |
+| S9.2 | p95 ≤ 200 ms, p99 ≤ 500 ms | ADR-0009, Redis, sla-probe; no PROVEN sla-proof report yet (latest, 2026-10-04, is NOT PROVEN) | ⚠ |
 | S9.3 | ≥ 1000 req/min per client | `ratelimit` | ✅ |
 | S9.4 | Defined degradation when prices unavailable | `divergence/{coingecko,chainlink}.go`; `flags.divergence_warning` | ✅ |
 | S10.1 | Apache-2.0, fully open | `LICENSE` | 📦 |
@@ -222,9 +225,9 @@ Supply runs for operator-watched assets (XLM always; classic/SEP-41 via `[supply
 | ID | Requirement | Mechanism | Status |
 |---|---|---|---|
 | F3.1 | API p95 ≤ 200 ms | `api` + sla-probe `_p95_breach` alert | ✅ |
-| F3.2 | API p99 ≤ 500 ms | sla-probe; `_unit_failed_alert` umbrella | ✅ |
+| F3.2 | API p99 ≤ 500 ms | sla-probe `stellarindex_sla_probe_p99_breach` alert (`deploy/monitoring/rules/sla-probe.yml`) | ✅ |
 | F3.3 | Responsiveness ≥ 99.9 % | ADR-0008 + sla-probe; needs ≥ 30 days + multi-region | ⚠ |
-| F3.4 | Price freshness ≤ 30 s | `dispatcher` + sla-probe; as S5.2 | ✅ |
+| F3.4 | Price freshness ≤ 30 s | `dispatcher` + sla-probe `stellarindex_sla_probe_freshness_breach` pager ([runbook](../operations/runbooks/sla-probe-freshness-breach.md)); as S5.2 | ✅ |
 | F3.5 | SEV-1 detect ≤ 15 min / respond ≤ 30 min | `docs/operations/sev-playbook.md`, runbooks, drills | ⚠ |
 | F3.6 | SEV-2 detect ≤ 30 min / respond ≤ 60 min | same playbook | ⚠ |
 
@@ -274,7 +277,7 @@ Supply runs for operator-watched assets (XLM always; classic/SEP-41 via `[supply
 | X2.3 | `/v1/observations`: raw per-source data | `observations.go`; `/v1/history` on a triangulated pair still returns silent `[]` with `triangulated=false` | ✅ |
 | X2.4 | Query params must not change the consistency contract | OpenAPI lint + per-handler `reject*TierParams` tests | 📦 |
 | X2.5 | Forex factor snap rule for chained-fiat consistency | `triangulate.go::legPrice`, `FXQuoteAtOrBefore`, `FXSources` | 📦 |
-| X2.6 | Streaming per surface | `price_stream.go`, `price_tip_stream.go`, `observations_stream.go`, `api/streaming`; tip-stream `observed_at` minute-bucketed (~99 s lag), fix in-tree | ⚠ |
+| X2.6 | Streaming per surface | `price_stream.go`, `price_tip_stream.go`, `observations_stream.go`, `api/streaming`; tip-stream `observed_at` minute-bucketing fixed and deployed (`8fde6c84`; live `native` stream `observed_at` 4 s old on 2026-10-05) | ✅ |
 | X2.7 | Per-surface `flags.stale` semantics | `envelope.go`; `/v1/price` sets true on degradation, tip and observations always false | ✅ |
 
 #### X3. Anomaly response and confidence scoring (ADR-0019)
@@ -308,6 +311,7 @@ Every outstanding item is launch-blocking except ⏳ ones. Tracking: `docs/opera
 **Open, implementation pending**
 
 - Validation, S9.2 p95 ≤ 200 ms proof report: generator `scripts/ops/sla-proof-from-probe.sh` runs and writes `docs/operations/sla-proof-*.md`, but every report's verdict is NOT PROVEN (an endpoint misses its latency or availability target). Done when a report reads PROVEN (`docs/operations/sla-proof-procedure.md`).
+- F-D, SEP-10 challenge returns 503 on r1 ("server signing seed isn't configured"; carry-over since 2026-05-10, R-009). Operator config step, not a code gap; inventory INV-2677. Code-true, production-false.
 - Validation, #19 chaos suite Wave 2 (Patroni promotion, Sentinel failover, HAProxy VIP flip) in `test/chaos`. Wave 1 (dev-stack smoke, `scenarios/01–04`) shipped. Needs an HA topology; r1 is single-node, so post-launch.
 
 **Watch (post-launch only, explicitly accepted)**
