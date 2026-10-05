@@ -20,6 +20,33 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.105.0] — 2026-10-05
+
+33 commits since v0.104.0. No migrations, no `pkg/*` break.
+
+### Added
+
+- **api:** `GET /v1/stablecoins` (#2351).
+- **wasmaudit:** every Soroban replay is gated on per-WASM-hash audits (#2354).
+- **rwa:** Centrifuge deRWA tokens deJTRSY and deJAAA bound by contract id (#2378).
+- **ops:** `verify-archive` Tier C (`-tier sdf-sample`) cross-checks sampled ledgers against SDF's dataset (#2361).
+- **ansible:** ClickHouse `ops_monitor`/`ops_admin` users and root-only client credential files (#2380).
+
+### Fixed
+
+- **deploy:** the asset-character roll is cancelled before migrate (#2385).
+- **blend:** V1 pool `new_auction`, `fill_auction` and `bad_debt` decoded (#2356).
+- **api:** carried-forward and partial 200s on status notices, RWA history and ingestion diagnostics are no-store (#2362); no cache refresh starts after the loop's context is cancelled (#2381).
+- **sla-probe:** tip fallback responses held to the closed-bucket freshness bound (#2383).
+- **monitoring:** `textfile_producer_stale` deferred for lock-gated producers while the heavy lock is held (#2359); tiingo gets the daily-feed freshness threshold (#2371).
+- **ops:** lake backup disabled on the test nets (#2365); `config-assertions` false failures on the test nets stopped (#2369, #2373).
+- **ansible:** `pgbackrest_exporter` config read access, telemetry path and per-host scrape/removal fixed (#2364, #2360, #2366, #2370).
+- **smoke:** price and verified-asset checks skipped on test nets (#2384).
+
+### Changed
+
+- Go bumped to 1.27.1 and Node to 24 LTS (#2357).
+
 ## [v0.104.0] — 2026-10-05
 
 41 commits since v0.103.0. Two migrations (0206, 0207). No `pkg/*` break.
@@ -109,35 +136,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 ### Performance
 
 - **explorer:** account/recent readers are windowed to keep read-in-order (#2191).
-
-## [v0.100.0] — 2026-10-04
-
-16 commits since v0.99.0. No migrations, no `pkg/*` break. One API retirement
-under Changed (`POST /v1/signup`).
-
-### Added
-
-- **api:** USD anchor served over a single-venue fiat book (#2186); asset-scoped
-  pool reserves, supply flows and order book (#2190); opt-in per-source
-  breakdown on `/v1/vwap` (#2313).
-- **history:** `source` filter on `/v1/history` and the explorer overlay (#2166).
-- **auth:** email-less passkey signup (#2162).
-
-### Changed
-
-- **api:** `/v1/history` and `/v1/observations` serve on-chain trades only
-  (#2312). `POST /v1/signup` is retired and answers 410 Gone, closing an
-  email-existence oracle (#2310).
-- **monitoring:** substance-refused trades are labelled "thin" and excluded
-  from the USD coverage ratio (#2317).
-
-### Fixed
-
-- **api:** the remaining degraded exits are marked no-store (#2318).
-- **chops:** a frozen ledgerstream cursor is refused as the verdict tip (#2153).
-- **timescale:** re-derive writes fail on a USD-volume resolver error (#2159).
-- **rwa:** hand-vetted fund-NAV bindings are admitted to RWA membership (#2314).
-- **ops:** the per-query memory cap no longer kills the lake backup (#2315);
-  `apply-rules` no longer fails on rule groups slower than the verify window
-  (#2311); `external_poller_stale` stops firing hourly on Tiingo (#2316);
-  `no_log` on the MinIO env template task (#2309).
