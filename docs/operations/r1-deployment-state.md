@@ -14,6 +14,8 @@ status: historical snapshot
 > [deployed-versions.md](deployed-versions.md). Bringing up a new node:
 > [archival-node-bringup.md](archival-node-bringup.md).
 
+The 2026-05-12 snapshot of firing alerts was removed; recover it from git history of this file.
+
 Hetzner FSN1 dedicated; public IP is in `configs/ansible/inventory/r1.yml`
 (gitignored).
 

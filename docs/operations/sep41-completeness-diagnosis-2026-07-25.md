@@ -198,7 +198,7 @@ Re-run Q1. `complete=true` means the latch was the whole story: restart the time
 
 **Step 3, repair only after step 2 names a range; never speculatively.**
 
-- Truncate-boundary hole (Q4): additive re-derive of exactly the missing range, no TRUNCATE. SEP-41 is a
+- Truncate-boundary hole (Q4): additive re-derive, no TRUNCATE. SEP-41 is a
   projected source (invariant 7), so replay through the projector; `ch-rebuild -sep41` would be a second writer
   and `ch-rebuild -write` refuses a range the live projector is inside:
 
@@ -207,9 +207,11 @@ Re-run Q1. `complete=true` means the latch was the whole story: restart the time
   stellarindex-ops projector-replay -config /etc/stellarindex.toml -source sep41_supply -from <hole_start> -write
   ```
 
-  Check the exact source names and range handling in `stellarindex-ops help` and
-  [ingest-pipeline.md](../architecture/ingest-pipeline.md#the-replay-decision-rule) first; the supply
-  fold checkpoint in `sep41_supply_rollup` must be reset by the write so the aggregator re-folds (the KALE 2x bug).
+  `projector-replay` has no `-to` flag: it rewinds the cursor to `<hole_start>` and the projector re-walks from
+  there to tip, not just the hole. Check source names in `stellarindex-ops help` and
+  [ingest-pipeline.md](../architecture/ingest-pipeline.md#the-replay-decision-rule) first. Replaying
+  `sep41_supply` resets the `sep41_supply_rollup` fold automatically (`internal/ops/ingest/projector.go`,
+  `resetSEP41RollupAfterReplay`), so the aggregator re-folds (the KALE 2x bug); no manual reset.
   See [`sep41-mint-recovery.md`](sep41-mint-recovery.md).
 - Un-watched surplus (Q3): code defect. Give the two `reconTarget`s in
   `internal/ops/chops/reconciliation_catalogue.go` a `whereFilter` scoping served rows to the watched set

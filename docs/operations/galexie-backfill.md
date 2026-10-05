@@ -274,30 +274,16 @@ gets respawned), wait for orphan `mc cp` workers to drain, then run `galexie-arc
   `first-live-ledger` → tip (append-only); the indexer reads both.
 - `galexie-writer` keeps write on `galexie-live`; `galexie-backfill-writer` is **deleted** once the job exits clean.
 
-## BLOCKER on test nets — captive-core carries the PUBNET validator set
+## RESOLVED — test-net captive-core used the PUBNET validator set
 
-Do not run `scan-and-fill --start 2` on testnet or futurenet until fixed.
+Found 2026-08-27 (futurenet backfill died at exit 3; testnet fetched PUBNET checkpoints).
+Fixed: `stellar-core.cfg.j2` emits `[[HOME_DOMAINS]]` / `[[VALIDATORS]]` only when
+`stellar_network == 'pubnet'` (21039639e, #203), and
+`configs/ansible/roles/archival-node/tasks/07-galexie.yml:682` removes the pubnet-only
+`galexie-archive-fill` from non-pubnet networks. Live `galexie.toml` was never affected
+(no `captive_core_toml_path`).
 
-- **futurenet**: dies in seconds with `Could not prepare captive core ledger backend:
-  Error fast-forwarding to 2: stellar core exited unexpectedly: exit status 3`.
-- **testnet**: appears to work but downloads PUBNET checkpoints
-  (`bootes-history.publicnode.org`, `archive.v5.stellar.lobstr.co`,
-  `stellar-full-history1.bdnodes.net`, `history.stellar.org/prd/core-live/…`)
-  under a testnet passphrase; it can only end in garbage.
-- **Cause**: the rendered `/etc/stellar/captive-core-galexie-backfill.cfg` has the
-  right `NETWORK_PASSPHRASE`, but its `[[HOME_DOMAINS]]` / `[[VALIDATORS]]` blocks and
-  each validator's `HISTORY="curl -sf …"` URL come from `stellar_home_domains` /
-  `stellar_validators` in `roles/archival-node/defaults/main.yml` (pubnet), and
-  neither `inventory/testnet.yml` nor `inventory/futurenet.yml` overrides them.
-  `stellar_history_archive_urls` is network-keyed ("MUST track stellar_network") but
-  that guard never reached the validator list.
-- **Live ingestion is unaffected**: live `galexie.toml` has no
-  `captive_core_toml_path`, so galexie's per-network preset (correct
-  `sdf_testnet_1/2/3` and `core_testnet_00{1,2,3}`) applies; only
-  `galexie-backfill.toml` sets it.
-- **Fix**: add per-network `stellar_home_domains` + `stellar_validators` to the test-net
-  inventories, or make the template select by `stellar_network`; minimum is pointing at
-  `core_testnet_001` / `core_futurenet_001` from `stellar_history_archive_urls`. Then:
+Test-net backfill:
 
 ```sh
 systemd-run --unit=galexie-backfill --property=User=galexie \
@@ -310,12 +296,6 @@ systemd-run --unit=galexie-backfill --property=User=galexie \
 ```
 
 Check early that the *"Selected archive …"* log lines name the right network's archives.
-
-Also open on the testnet VM: `galexie-archive-fill.service` fails hourly because it
-mirrors the pubnet AWS bucket, which has no testnet equivalent. It must not be
-enabled on test nets (one of 8 failed units there, with `pgbackrest-backup`,
-`archive-completeness`, `verify-archive-tier-a/b`, `config-assertions`, and the
-stellar-core / aggregator units lean test nets deliberately do not run).
 
 ## Second hazard — MinIO credential drift on any `--tags galexie` run
 
@@ -366,5 +346,7 @@ mc admin user list local     # does $K appear as an ACCESS KEY (col 2)?
 >
 > If absent, reconcile FIRST, then run `--tags galexie`.
 
-Real fix (not done): make the MinIO user names and the galexie env template read the
-same variable, align the regions' vault values, and stop naming a user after a policy.
+Real fix, partly done: the MinIO user tasks (`09-minio.yml`) and the env templates
+(`galexie.env.j2`, `07-galexie.yml`) already read the same variables
+(`galexie_s3_access_key`, `galexie_archive_s3_access_key`). Still open: align each
+region's vault values with the live MinIO users, and stop naming a user after a policy.

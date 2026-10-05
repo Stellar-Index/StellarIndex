@@ -266,6 +266,8 @@ Assessed separately from reachability. Defects found and fixed:
 
 Already right: `robots.ts` disallows `/dev/`, `/embed/`, `/auth/`, `/dashboard`, `/signin`, `/signup`, with per-network origin and sitemap URL; all 82 content pages have title and description; canonicals complete on every indexable page; JSON-LD only on `/assets/[slug]` and `/markets/[pair]`, always through `serializeJsonLd`; the sitemap filters through `routeAvailable`. 27 pages are noindex (auth and dashboard surfaces, iframe widgets, design-system reference, unbounded per-entity shells); a noindex URL must not appear in the sitemap. The per-page metadata matrix is enforced by `crawl-surface.test.ts`.
 
+The per-page sitemap/noindex table was removed; `web/explorer/src/app/crawl-surface.test.ts` and `web/explorer/src/lib/route-reachability.test.ts` re-derive it.
+
 ## Deliberately excluded
 
 | Surface | Why excluded |
