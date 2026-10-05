@@ -25,6 +25,7 @@ rational arithmetic (ADR-0003). Everything is served through a public
 | On-chain ingest | Galexie MinIO → `ledgerstream` → `dispatcher` → decoders → sink / projector → Timescale, plus the CH lake dual-sink | [ingest-pipeline.md](ingest-pipeline.md) |
 | Off-chain ingest | CEX/FX connectors (`internal/sources/external`) → the same event channel | [add-cex-connector](../contributing/procedures/add-cex-connector.md) |
 | Re-derive / replay | CH lake → the same decoders → served tier | [ingest-pipeline.md § The replay decision rule](ingest-pipeline.md#the-replay-decision-rule) |
+| Supply | `[supply]` observers → `supply.Refresher` (3 algorithms) → `asset_supply_history` → `/v1/assets/{id}` F2 fields; cross-check + lumen conservation | [supply-pipeline.md](supply-pipeline.md) |
 | Aggregation | trades → outlier filter → class gating → VWAP → freeze/confidence → Redis + CAGGs | [aggregation-plan.md](aggregation-plan.md) |
 | Verification | lake substrate + recognition + per-ledger projection reconcile → `completeness_snapshots` → `/v1/coverage` | [coverage-matrix.md](coverage-matrix.md#completeness-what-v1coverage-publishes), ADR-0033, ADR-0041 |
 | Serving | Timescale CAGGs + Redis + CH explorer reads → `internal/api/v1` → REST/SSE | [storage-considerations.md](storage-considerations.md), [SLOs](coverage-matrix.md#service-objectives-and-their-proof), ADR-0015, ADR-0018 |

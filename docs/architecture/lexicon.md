@@ -100,6 +100,6 @@ package plural/singular mix (`events`/`incidents` vs
 
 - [engineering-standards.md](../engineering-standards.md) — the "Go
   idioms" section (D6 companion to this doc).
-- `docs/architecture/coins-to-assets-migration.md` — the completed
-  `/v1/coins` → `/v1/assets` HTTP migration (the wire side is done;
+- [supply-pipeline.md § Asset identity](supply-pipeline.md#asset-identity) — the
+  `/v1/assets` contract left by the completed `/v1/coins` migration (the wire side is done;
   this lexicon tracks the surviving internal vocabulary).
