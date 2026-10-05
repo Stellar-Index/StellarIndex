@@ -138,6 +138,7 @@ jobs:
       go: ${{ steps.resolve.outputs.go }}
       web: ${{ steps.resolve.outputs.web }}
       ansible: ${{ steps.resolve.outputs.ansible }}
+      base: ${{ steps.base.outputs.resolved }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -751,6 +752,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+          # doc-pinned-tests diffs against the preflight base.
+          fetch-depth: 0
       - name: lint-docs
         # Single script covers: doc freshness (90-day warn, 180-day
         # fail on frontmatter-dated docs), config/API/metrics
@@ -810,6 +813,32 @@ jobs:
         run: ./scripts/ci/lint-external-channels.sh
       - name: lint-external-channels self-test
         run: ./scripts/ci/lint-external-channels-test.sh
+      # Go before the self-test and the selection: both call `go list`.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: doc-pinned-tests self-test
+        run: ./scripts/ci/doc-pinned-tests-test.sh
+      # Go tests read markdown at test time (29 packages), but a docs-only PR
+      # sets go=false and skips the `test` job (#2440 went green and broke
+      # main). Run only the packages whose tests name a changed .md; when
+      # go=true the `test` job already covers them.
+      - name: Select Go tests that pin a changed doc
+        id: doc_pinned
+        if: needs.preflight.outputs.go != 'true' && needs.preflight.outputs.base != ''
+        env:
+          BASE: ${{ needs.preflight.outputs.base }}
+        run: |
+          set -euo pipefail
+          pkgs="$(bash scripts/ci/doc-pinned-tests.sh --list "$BASE")"
+          printf 'doc-pinned packages: %s\n' "${pkgs:-none}"
+          echo "any=${pkgs:+true}" >> "$GITHUB_OUTPUT"
+      - name: Run Go tests that pin a changed doc
+        if: steps.doc_pinned.outputs.any == 'true'
+        env:
+          BASE: ${{ needs.preflight.outputs.base }}
+        run: bash scripts/ci/doc-pinned-tests.sh "$BASE"
 
   workflow-security:
     name: workflow static analysis (zizmor)
