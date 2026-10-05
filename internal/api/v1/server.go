@@ -24,6 +24,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
+	"github.com/Stellar-Index/StellarIndex/internal/holds"
 	"github.com/Stellar-Index/StellarIndex/internal/incidents"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
@@ -268,6 +269,8 @@ type Server struct {
 	assetListings       assetListingCache
 	contractCatalogue   ContractCatalogueReader
 	lakeWatermarkReader LakeWatermarkReader
+	// holds is the operator under-review list (SetHolds).
+	holds atomic.Pointer[[]holds.Hold]
 	// Cached lake watermark (ADR-0041 D4) — see lakeWatermark() in
 	// lake_watermark.go. Refreshed at most every lakeWatermarkTTL.
 	// lakeWMMu guards the cached entry ONLY and is never held across the
@@ -2412,7 +2415,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/interactions", s.explorerHandler.ContractInteractions)
 	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/code-history", s.explorerHandler.ContractCodeHistory)
 	s.mux.HandleFunc("GET /v1/accounts", s.explorerHandler.AccountsList)
-	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}", s.explorerHandler.AccountState)
+	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}", s.underReview(s.explorerHandler.AccountState))
 	s.mux.HandleFunc("GET /v1/directory", s.explorerHandler.DirectoryLookup)
 	s.mux.HandleFunc("GET /v1/accounts/stats", s.explorerHandler.AccountsStats)
 	// Account-creator league table (#351). A literal segment, so it wins
@@ -2483,13 +2486,13 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// listing the static path first keeps the precedence obvious
 	// to anyone reading the mount order.
 	s.mux.HandleFunc("GET /v1/assets/verified", s.handleAssetsVerified)
-	s.mux.HandleFunc("GET /v1/assets/{asset_id}", s.handleAssetGet)
+	s.mux.HandleFunc("GET /v1/assets/{asset_id}", s.underReview(s.handleAssetGet))
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/metadata", s.handleAssetMetadata)
 	// Live per-token supply from the decode-at-ingest supply_flows lake
 	// (ADR-0034).
-	s.mux.HandleFunc("GET /v1/assets/{asset_id}/supply", s.handleAssetSupply)
-	s.mux.HandleFunc("GET /v1/assets/{asset_id}/supply/flows", s.handleAssetSupplyFlows)
-	s.mux.HandleFunc("GET /v1/assets/{asset_id}/holders", s.explorerHandler.AssetHolders)
+	s.mux.HandleFunc("GET /v1/assets/{asset_id}/supply", s.underReview(s.handleAssetSupply))
+	s.mux.HandleFunc("GET /v1/assets/{asset_id}/supply/flows", s.underReview(s.handleAssetSupplyFlows))
+	s.mux.HandleFunc("GET /v1/assets/{asset_id}/holders", s.underReview(s.explorerHandler.AssetHolders))
 
 	// Current price — last-trade fallback today; VWAP path when
 	// the aggregator ships.
