@@ -11,7 +11,9 @@ ExecStart=/usr/local/bin/config-assertions.sh
 # is `full` (not `strict`) to keep /var and /root writable: the probe
 # writes its node_exporter textfile-collector output under /var and mc
 # uses HOME=/root. Hardening mirrors the archive-completeness root oneshot.
-User=root
+# No User=root (root is the default): together with NoNewPrivileges and
+# ProtectKernelTunables it makes setuid() fail with EPERM, so `runuser -u
+# postgres` in query_pg fails and every live Postgres check reads FAIL.
 NoNewPrivileges=true
 ProtectSystem=full
 PrivateTmp=true
