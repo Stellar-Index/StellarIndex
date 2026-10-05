@@ -142,6 +142,15 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Refuse before the DB pre-flight when no producer could be minted;
+	// the hub-less path has no producer registry to consult.
+	if s.hub != nil {
+		if outcome := s.tipProducerPrecheck(r, asset, quote, window); outcome != tipProducerAdmitted {
+			s.writeTipProducerRefused(w, r, outcome, asset, quote, window)
+			return
+		}
+	}
+
 	// First synchronous compute — gives us a chance to return 404
 	// before switching the response into SSE mode (where it's too
 	// late to set a non-200 status code).
