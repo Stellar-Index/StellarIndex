@@ -645,11 +645,12 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// cover it. -from can never skip past it. A deferred window is not
 		// reconciled at all, so no claim covers it.
 		dirtyWin, hasDirty := dirtyWindows[src.name]
-		projFrom, deferDirty := projectionPlan(src, *pass, priorProj[src.name], priorWatermark[src.name], *fromLedger, dirtyWin, hasDirty)
+		projFrom, deferDirty := projectionPlan(src, *pass, priorProj[src.name], priorWatermark[src.name], *fromLedger, srW.Ledger, dirtyWin, hasDirty)
 		if *useCH {
-			if deferDirty {
-				w = deferredDirtyWatermark(srW, dirtyWin)
-			} else if srW.Ledger >= projFrom {
+			switch {
+			case deferDirty:
+				// Detail is written by the window disposition below.
+			case srW.Ledger >= projFrom:
 				streamer := clickhouse.ReconcileEventStreamer{Addr: *chAddr, NeedOpArgs: src.needsOpArgs, NeedStateWriteKeys: src.needsStateWriteKeys}
 				scopes, servedMins, servedFrom, runFrom, serr := projectionScopes(ctx, store, src, genesis, projFrom, srW.Ledger)
 				if serr != nil {
@@ -707,7 +708,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				if projOK && !evidencedNow {
 					detail = append(detail, carriedEvidenceDetail(evidencedAt))
 				}
-			} else {
+			default:
 				detail = append(detail, "projection: not evaluated (earlier claim failed at genesis)")
 			}
 			// Coverage = substrate∧recognition (proven data capture). complete
@@ -716,9 +717,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			// axis can never be stronger than the lake axis it sits on, so an
 			// unproven substrate claim (C4-057) gates it too — that is what
 			// lakeComplete already carries.
-			if !deferDirty {
-				w = combineWatermark(srW, lakeComplete && projOK)
-			}
+			w = servedAxisVerdict(srW, lakeComplete && projOK, deferDirty, dirtyWin)
 		} else {
 			// Legacy Postgres path: strict per-ledger projection pins the watermark.
 			if srW.Ledger >= genesis {

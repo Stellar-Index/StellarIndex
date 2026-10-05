@@ -2005,7 +2005,7 @@ func TestEventCensusLoss(t *testing.T) {
 }
 
 // TestProjectionPlan_DefersOnlyOutlastsPassSourcesInAPass: a -pass must not
-// reconcile sdex/sep41 over a backfill-sized window — their own
+// reconcile sdex/sep41 over a window wider than the pass can re-check — their own
 // timers re-prove it — while every other source, and their own -source runs,
 // still lower the floor over the window.
 func TestProjectionPlan_DefersOnlyOutlastsPassSourcesInAPass(t *testing.T) {
@@ -2026,12 +2026,12 @@ func TestProjectionPlan_DefersOnlyOutlastsPassSourcesInAPass(t *testing.T) {
 		{sdex, false, 1_000, false},
 		{sep41, false, 1_000, false},
 	} {
-		from, deferred := projectionPlan(tc.src, tc.pass, cleanPrior, 5_000, 4_000, win, true)
+		from, deferred := projectionPlan(tc.src, tc.pass, cleanPrior, 5_000, 4_000, 50_000, win, true)
 		if deferred != tc.wantDefer || (!deferred && from != tc.wantFrom) {
 			t.Errorf("projectionPlan(%s, pass=%v) = (%d, %v), want (%d, %v)", tc.src.name, tc.pass, from, deferred, tc.wantFrom, tc.wantDefer)
 		}
 	}
-	if _, deferred := projectionPlan(sdex, true, cleanPrior, 5_000, 0, win, false); deferred {
+	if _, deferred := projectionPlan(sdex, true, cleanPrior, 5_000, 0, 50_000, win, false); deferred {
 		t.Error("no pending window must never defer")
 	}
 }
@@ -2060,10 +2060,10 @@ func TestDeferredDirtyWindow_WithholdsComplete(t *testing.T) {
 // otherwise earns.
 func TestDeferredDirtyWindow_NextPassKeepsDeferring(t *testing.T) {
 	sdex := reconSource{name: "sdex", genesis: 2, census: true}
-	win := timescale.ProjectionDirtyWindow{Source: "sdex", From: 6_000, To: 7_000}
-	w := deferredDirtyWatermark(completeness.ComputeWatermark(2, 10_000, nil), win)
+	win := timescale.ProjectionDirtyWindow{Source: "sdex", From: 60_000, To: 70_000}
+	w := deferredDirtyWatermark(completeness.ComputeWatermark(2, 100_000, nil), win)
 	published := timescale.CompletenessSnapshot{
-		Source: "sdex", Genesis: 2, Tip: 10_000,
+		Source: "sdex", Genesis: 2, Tip: 100_000,
 		Watermark: w.Ledger, CoveragePct: w.CoveragePct, Complete: w.Complete,
 		LakeComplete: true, FirstProblem: w.FirstProblem,
 		SubstrateOK: true, RecognitionOK: true, ProjectionOK: false,
@@ -2072,10 +2072,76 @@ func TestDeferredDirtyWindow_NextPassKeepsDeferring(t *testing.T) {
 		t.Fatalf("a deferred window is pending, not a found problem: %+v", published)
 	}
 	prior, _, _, priorWM := buildPriorVerdicts([]timescale.CompletenessSnapshot{published})
-	if _, deferred := projectionPlan(sdex, true, prior["sdex"], priorWM["sdex"], 0, win, true); !deferred {
+	if _, deferred := projectionPlan(sdex, true, prior["sdex"], priorWM["sdex"], 0, 100_100, win, true); !deferred {
 		t.Fatal("the next pass reconciled sdex from genesis instead of deferring the still-pending window")
 	}
-	if again := deferredDirtyWatermark(completeness.ComputeWatermark(2, 10_100, nil), win); again.Complete || again.Ledger != w.Ledger {
+	if again := deferredDirtyWatermark(completeness.ComputeWatermark(2, 100_100, nil), win); again.Complete || again.Ledger != w.Ledger {
 		t.Errorf("next pass republished %+v, want the same capped, incomplete verdict", again)
+	}
+}
+
+// TestProjectionPlan_FittingWindowIsRechecked: a recent ch-rebuild -sdex or
+// sep41 projector-replay window fits the nightly pass, so the pass re-checks it
+// from its bottom and can clear it the same night.
+func TestProjectionPlan_FittingWindowIsRechecked(t *testing.T) {
+	sdex := reconSource{name: "sdex", genesis: 2, census: true}
+	sep41 := reconSource{name: "sep41_transfers", genesis: 2, reproofOutlastsPass: "heavy"}
+	cleanPrior := priorProjection{known: true, ok: true, tip: 99_000, verifiedFrom: 2}
+	const hi = 100_000
+	for _, tc := range []struct {
+		src reconSource
+		win timescale.ProjectionDirtyWindow
+	}{
+		{sdex, timescale.ProjectionDirtyWindow{From: 95_000, To: 96_000, Reason: timescale.CHRebuildWriteReason(95_000, 96_000)}},
+		{sep41, timescale.ProjectionDirtyWindow{From: 97_500, To: hi, Reason: timescale.ProjectorReplayReason(97_500, hi)}},
+		{sdex, timescale.ProjectionDirtyWindow{From: hi - passDirtySpanLedgers, To: hi - passDirtySpanLedgers}},
+	} {
+		from, deferred := projectionPlan(tc.src, true, cleanPrior, 99_000, 0, hi, tc.win, true)
+		if deferred || from != tc.win.From {
+			t.Errorf("%s window %+v: projectionPlan = (%d, deferred=%v), want re-checked from %d", tc.src.name, tc.win, from, deferred, tc.win.From)
+		}
+		if !dirtyWindowSatisfied(tc.win, true, from, tc.src.genesis, hi) {
+			t.Errorf("%s window %+v: a clean run from %d must clear it", tc.src.name, tc.win, from)
+		}
+	}
+}
+
+// TestProjectionPlan_BackfillSizedWindowIsDeferred: a window whose re-check
+// from its bottom outruns the pass is deferred, whatever its Reason says — a
+// widened window keeps only its last writer's Reason.
+func TestProjectionPlan_BackfillSizedWindowIsDeferred(t *testing.T) {
+	sdex := reconSource{name: "sdex", genesis: 2, census: true}
+	cleanPrior := priorProjection{known: true, ok: true, tip: 60_000_000, verifiedFrom: 2}
+	const hi = 60_000_000
+	for _, win := range []timescale.ProjectionDirtyWindow{
+		{From: 1_000_000, To: 1_040_000, Reason: timescale.BackfillWriteReason(1_000_000, 1_040_000)},
+		{From: 1_000_000, To: hi, Reason: timescale.CHRebuildWriteReason(59_999_000, hi)},
+		{From: hi - passDirtySpanLedgers - 1, To: hi},
+	} {
+		from, deferred := projectionPlan(sdex, true, cleanPrior, hi, 0, hi, win, true)
+		if !deferred || from != hi {
+			t.Errorf("window %+v: projectionPlan = (%d, deferred=%v), want deferred at the incremental floor %d", win, from, deferred, hi)
+		}
+	}
+}
+
+// TestServedAxisVerdict_DeferredNeverAboveWindow: whatever the lake and the
+// reconcile said, a deferred window withholds complete and holds the
+// watermark at or below window.From-1.
+func TestServedAxisVerdict_DeferredNeverAboveWindow(t *testing.T) {
+	srW := completeness.ComputeWatermark(2, 100_000, nil)
+	for _, from := range []uint32{0, 2, 3, 50_000, 100_000} {
+		win := timescale.ProjectionDirtyWindow{From: from, To: 100_000}
+		got := servedAxisVerdict(srW, true, true, win)
+		limit := max(from, srW.Genesis) - 1
+		if got.Complete || got.Ledger > limit {
+			t.Errorf("deferred window from %d: %+v, want complete=false and watermark <= %d", from, got, limit)
+		}
+	}
+	if got := servedAxisVerdict(srW, true, false, timescale.ProjectionDirtyWindow{From: 50_000, To: 60_000}); got != combineWatermark(srW, true) {
+		t.Errorf("not deferred: %+v, want the combined verdict", got)
+	}
+	if got := servedAxisVerdict(srW, false, false, timescale.ProjectionDirtyWindow{}); got.Complete {
+		t.Errorf("a failing served claim published complete: %+v", got)
 	}
 }
