@@ -82,7 +82,7 @@ return **401** in a DR region until control-plane replication lands.
 > `ha-plan.md` §8's total-loss row — not a restore. Do not plan a
 > recovery around an off-site copy — see
 > `docs/architecture/ha-plan.md` §8 and
-> `docs/operations/off-site-backup-plan.md` (status: proposed).
+> `docs/operations/off-site-backup-plan.md`.
 
 ---
 

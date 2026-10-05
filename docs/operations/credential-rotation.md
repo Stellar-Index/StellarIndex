@@ -1,32 +1,21 @@
 ---
 title: Credential rotation runbook
-last_verified: 2026-09-28
+last_verified: 2026-10-05
 status: current
 ---
 
 # Credential rotation runbook
 
-Procedure for rotating the load-bearing service credentials on an
-archival node (r1 today; the same shape applies to R2/R3 once they
-run their own MinIO). Born from the 2026-07-03 incident follow-up
-(`docs/audit-2026-07-03-site/REGISTER.md`'s same-day note): a MinIO
-root-password rotation invalidated the Prometheus scrape bearer
-token and nobody had written down "when you rotate MinIO, also do
-X" — the fix was applied by hand with no runbook and no drift guard.
-This doc is that missing writedown; §MinIO below is the first
-credential family covered. Extend it with a new `##` section per
-credential family as they get their own rotation procedure (Postgres
-password, SEP-10 signing seed, webhook HMAC secrets, etc. are not
-yet written up here).
+Rotating the load-bearing service credentials on an archival node (r1 today; R2/R3 the
+same once they run their own MinIO). Only the MinIO family is written up; add a `##`
+section per family (Postgres password, SEP-10 signing seed, webhook HMAC secrets) as
+each gets a procedure.
 
-All secrets referenced below live **ansible-vault encrypted** in
-`configs/ansible/inventory/<region>.secrets.yml` (`r1.secrets.yml`
-for r1). That file is deliberately **not tracked in the repo** (the
-2026-07-03 exposure response decided an encrypted vault in a public
-repo is still an offline-bruteforce target) — CI materializes it
-from the `ANSIBLE_VAULT_FILE_B64` GitHub Actions secret for the
-`ansible-drift.yml` workflow, and operators keep their own local
-copy for interactive `ansible-playbook` runs. Edit it with:
+Secrets live **ansible-vault encrypted** in
+`configs/ansible/inventory/<region>.secrets.yml` (`r1.secrets.yml` for r1). The file is
+**not tracked** (an encrypted vault in a public repo is still an offline-bruteforce
+target): CI materializes it from the `ANSIBLE_VAULT_FILE_B64` Actions secret for
+`ansible-drift.yml`; operators keep a local copy.
 
 ```sh
 cd configs/ansible
@@ -35,41 +24,33 @@ ansible-vault edit inventory/r1.secrets.yml   # needs the vault password
 
 ## MinIO
 
-r1 runs a single-node MinIO (`configs/ansible/roles/archival-node/tasks/09-minio.yml`)
-backing Galexie's S3-compatible target. Four identities matter:
+Single-node MinIO (`configs/ansible/roles/archival-node/tasks/09-minio.yml`) backs
+Galexie's S3 target.
 
 | Identity | Vault variable(s) | Scope | Consumed by |
 |---|---|---|---|
-| MinIO root | `minio_root_user` / `minio_root_password` | full admin | the ansible role's own `mc alias set local ...` bootstrap step (09-minio.yml); not used by any running service |
-| `galexie-writer` | `galexie_s3_access_key` / `galexie_s3_secret_key` | write-only, `galexie-live` bucket (policy `galexie-writer.json`) | `galexie.service` via `/etc/default/galexie` |
-| `galexie-archive-writer` | `galexie_archive_s3_access_key` (fixed literal `"galexie-archive-writer"` in `defaults/main.yml`, not vaulted) / `galexie_archive_s3_secret_key` (vaulted) | write (no delete), `galexie-archive` bucket — policy `galexie-archive-writer.json`, **ansible-managed only since 2026-07-25**, see §MinIO identity inventory | the one-shot archive-backfill galexie instance via `/etc/default/galexie-backfill`; the rehydrate procedure in [lcm-cache-tiering.md](lcm-cache-tiering.md) |
-| `stellarindex-reader` (**"the ops user"**) | `stellarindex_reader_access_key` (fixed literal `"stellarindex-reader"`, not vaulted) / `stellarindex_reader_secret_key` → aliased in `defaults/main.yml` to `vault_stellarindex_reader_secret_key` (renamed 2026-07-03 drift audit) | read-only, both `galexie-live` + `galexie-archive` | the indexer/aggregator/api's `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (ledgerstream reader path) via **`/etc/default/stellarindex`** — templated by `14-stellarindex-services.yml` under tag `stellarindex`; and `stellarindex-ops verify-archive` / the heavy-job wrapper via `/etc/default/stellarindex-ops` — templated by `09-minio.yml` under tag `minio`. **Two files, two tags** |
-| `stellarindex-archive-trimmer` | `stellarindex_archive_trimmer_access_key` (fixed literal `"stellarindex-archive-trimmer"`, not vaulted) / `stellarindex_archive_trimmer_secret_key` → aliased to `vault_stellarindex_archive_trimmer_secret_key` | List + **Delete**, `galexie-archive` bucket only (policy `stellarindex-archive-trimmer.json`) — the only identity with delete on this bucket | `galexie-archive-trim.service`'s raw delete client via `/etc/default/galexie-archive-trim` — templated by `14-stellarindex-services.yml`, loaded after (and overriding) `/etc/default/stellarindex-ops` so the unit's read path still uses `stellarindex-reader` |
+| MinIO root | `minio_root_user` / `minio_root_password` | full admin | the role's `mc alias set local ...` bootstrap; no running service |
+| `galexie-writer` | `galexie_s3_access_key` / `galexie_s3_secret_key` | write-only, `galexie-live` (policy `galexie-writer.json`) | `galexie.service` via `/etc/default/galexie` |
+| `galexie-archive-writer` | `galexie_archive_s3_access_key` (fixed literal in `defaults/main.yml`, not vaulted) / `galexie_archive_s3_secret_key` | write (no delete), `galexie-archive` (policy `galexie-archive-writer.json`) | archive-backfill galexie via `/etc/default/galexie-backfill`; `galexie-archive-fill` via `/etc/default/galexie-archive-fill`; the rehydrate procedure in [lcm-cache-tiering.md](lcm-cache-tiering.md) |
+| `stellarindex-reader` ("the ops user") | `stellarindex_reader_access_key` (fixed literal) / `stellarindex_reader_secret_key` → `vault_stellarindex_reader_secret_key` | read-only, `galexie-live` + `galexie-archive` | indexer/aggregator/api `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` via **`/etc/default/stellarindex`** (`14-stellarindex-services.yml`, tag `stellarindex`); `stellarindex-ops verify-archive` + the heavy-job wrapper via `/etc/default/stellarindex-ops` (`09-minio.yml`, tag `minio`). **Two files, two tags** |
+| `stellarindex-archive-trimmer` | `stellarindex_archive_trimmer_access_key` (fixed literal) / `stellarindex_archive_trimmer_secret_key` → `vault_stellarindex_archive_trimmer_secret_key` | List + **Delete**, `galexie-archive` only (policy `stellarindex-archive-trimmer.json`) — the only identity with delete there | `galexie-archive-trim.service` via `/etc/default/galexie-archive-trim` (`14-stellarindex-services.yml`), loaded after `/etc/default/stellarindex-ops` so its read path stays `stellarindex-reader` |
 
-Only the **access key** for `galexie-writer` is vault-sourced (the
-identity itself, not just its secret) — `galexie-archive-writer` and
-`stellarindex-reader` use fixed, non-secret access-key literals with
-only the secret key vaulted. Don't assume a uniform naming scheme;
-check `configs/ansible/roles/archival-node/defaults/main.yml` (search
-`← vault`) before scripting against these.
+Naming is not uniform: only `galexie-writer`'s access key is vaulted. Check
+`configs/ansible/roles/archival-node/defaults/main.yml` (search `← vault`) before
+scripting against these.
 
 ### Regenerating the galexie-writer (or archive-writer / ops-user) secret
 
-1. **Generate a new secret.** `openssl rand -hex 32` (or `-base64
-   32`) — anything MinIO's `mc admin user add` accepts. Avoid `/`
-   and `+`-heavy base64 if you'll ever hand-paste it into a URL;
-   hex is the safer default here.
-2. **Update the vault.**
+1. **Generate:** `openssl rand -hex 32` (hex avoids `/` and `+` if it is ever pasted into a URL).
+2. **Update the vault:**
    ```sh
    cd configs/ansible
    ansible-vault edit inventory/r1.secrets.yml
-   # bump the relevant var:
    #   galexie_s3_secret_key: "<new secret>"              (galexie-writer)
    #   galexie_archive_s3_secret_key: "<new secret>"       (archive-writer)
    #   vault_stellarindex_reader_secret_key: "<new secret>" (ops user)
    ```
-3. **Dry-run, then apply — `minio,galexie,stellarindex` together, never
-   a subset.**
+3. **Dry-run, then apply `minio,galexie,stellarindex` together — never a subset:**
    ```sh
    ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
      --tags minio,galexie,stellarindex --check --diff
@@ -77,11 +58,9 @@ check `configs/ansible/roles/archival-node/defaults/main.yml` (search
      --tags minio,galexie,stellarindex -e galexie_restart_ack=true
    ```
 
-   > ⚠️ **Any subset of those three tags causes a self-inflicted
-   > outage.** `09-minio.yml`'s `mc admin user add` **does** rotate the
-   > secret server-side the moment the `minio` tag runs, so MinIO starts
-   > rejecting the old one immediately — while every consumer still
-   > holds it in an env file that only its OWN tag re-renders:
+   > ⚠️ **A subset is a self-inflicted outage.** The `minio` tag's `mc admin user add`
+   > rotates the secret server-side immediately, while each consumer's env file is
+   > re-rendered only by its own tag:
    >
    > | Consumer | Credential file | Rendered by | Tag |
    > |---|---|---|---|
@@ -90,89 +69,40 @@ check `configs/ansible/roles/archival-node/defaults/main.yml` (search
    > | **`stellarindex-indexer` / `-aggregator` / `-api`** | **`/etc/default/stellarindex`** | `14-stellarindex-services.yml` | **`stellarindex`** |
    > | `verify-archive`, `ch-live-catchup`, `run-heavy-job.sh`, interactive ops | `/etc/default/stellarindex-ops` | `09-minio.yml` | `minio` |
    >
-   > A `minio`-only run strands galexie; a `minio,galexie` run strands
-   > the three long-running services (the row this doc got wrong until
-   > 2026-09-02 — it named `/etc/default/stellarindex-ops` as the
-   > services' credential file, which it is not: the units carry
-   > `EnvironmentFile=/etc/default/stellarindex`,
-   > `templates/systemd/stellarindex-indexer.service.j2:30`). The
-   > symptom is ledgerstream `SignatureDoesNotMatch` and ingest stops —
-   > during a credential rotation, when an operator is least likely to
-   > read it as their own doing.
-   >
-   > The `stellarindex` tag is safe to add to a config apply: the
-   > binary build/install tasks are gated behind
-   > `manage_stellarindex_binaries` (default `false`) and the migration
-   > apply behind `stellarindex_apply_migrations` (default `false`)
-   > — `14-stellarindex-services.yml:46,62,107,197`. It is the same
-   > surface the weekly `ansible-drift.yml` applies untagged.
-   >
-   > `-e galexie_restart_ack=true` is required for the galexie restart
-   > to actually happen; without it the role renders the change and
-   > deliberately leaves the restart to a second, acknowledged run.
+   > `minio` alone strands galexie; `minio,galexie` strands the three services
+   > (ledgerstream `SignatureDoesNotMatch`, ingest stops). The `stellarindex` tag is safe
+   > in a config apply: binary build/install is gated on `manage_stellarindex_binaries`
+   > and migrations on `stellarindex_apply_migrations` (both default `false`).
+   > `-e galexie_restart_ack=true` is required for the galexie restart; without it the
+   > role renders and leaves the restart to a second, acknowledged run.
 
-4. **Let the handlers do the restarts — do NOT restart by hand.**
-   With all three tags in the run, every consumer is re-rendered and
-   restarted by the role itself:
-   - `/etc/default/galexie` (galexie-writer) — rendered under
-     `galexie`; has a `notify: Restart galexie` handler, so **galexie
-     restarts automatically** (given `galexie_restart_ack=true`).
-   - `/etc/default/galexie-backfill` / `-archive-fill`
-     (archive-writer) — rendered under `galexie`; **no restart
-     handler** (one-shot instances, normally not running); nothing to
-     restart in steady state.
-   - `/etc/default/stellarindex` (ops user / `stellarindex-reader`) —
-     rendered under `stellarindex` and notifies **`Restart
-     stellarindex-indexer` / `-aggregator` / `-api`**
-     (`14-stellarindex-services.yml:213-231`), so the three services
-     pick the new secret up on that same run.
-   - `/etc/default/stellarindex-ops` (ops user) — rendered under
-     `minio`; read fresh by each one-shot, nothing to restart.
+4. **Let the handlers restart — do NOT restart by hand.** With all three tags:
+   - `/etc/default/galexie` → `Restart galexie` handler (given `galexie_restart_ack=true`).
+   - `/etc/default/galexie-backfill` / `-archive-fill` → no handler (one-shots).
+   - `/etc/default/stellarindex` → `Restart stellarindex-indexer` / `-aggregator` / `-api`.
+   - `/etc/default/stellarindex-ops` → read fresh by each one-shot.
 
-   > ⚠️ **A manual `systemctl restart stellarindex-*` before the
-   > `stellarindex` tag has run re-reads the OLD secret** and puts all
-   > three services back into `SignatureDoesNotMatch` — the previous
-   > version of this step prescribed exactly that. If you have already
-   > done it, re-run step 3 with the full tag list; the handlers will
-   > restart them on the new file.
+   > ⚠️ A manual `systemctl restart stellarindex-*` before the `stellarindex` tag has run
+   > re-reads the OLD secret. If done, re-run step 3 with the full tag list.
 
-5. **Verify.** `mc admin info local` (root creds) should show the
-   user with the new secret's fingerprint; `journalctl -u galexie -n
-   50` should show continued successful uploads with no
-   `SignatureDoesNotMatch`; `/usr/local/bin/config-assertions.sh`
-   should print no `FAIL galexie_writer_creds_valid` (see below).
-6. **Rotating MinIO root no longer touches the Prometheus scrape
-   bearer token** — see the next subsection for why (it moved off a
-   root-signed JWT to an independent service-account secret after
-   the 2026-07-03 incident, where root got rotated,
-   `/etc/prometheus/minio.token` kept signing with the old root
-   creds, and `minio_exporter_down` fired).
+5. **Verify:** `mc admin info local` (root creds) shows the user; `journalctl -u galexie -n 50`
+   shows uploads with no `SignatureDoesNotMatch`; `/usr/local/bin/config-assertions.sh`
+   prints no `FAIL galexie_writer_creds_valid`.
 
 ### Prometheus bearer-token regen (INV-0981/INV-1144 — now codified)
 
-Codified since Group D of
-`configs/ansible/roles/archival-node/tasks/16-prometheus-exporters.yml`:
-a `prometheus-read` MinIO policy scoped to `admin:Prometheus`, and a
-service account under MinIO root carrying it (the procedure in
-[runbooks/minio-metrics-403.md](runbooks/minio-metrics-403.md)).
-`mc admin user svcacct add` prints the generated secret key **once**,
-on creation, which the task writes to
-`/etc/prometheus/minio.token` (`prometheus:prometheus`, `0400`) and
-notifies `Restart prometheus`. A normal apply is a no-op once the file
-exists — the task is gated on the file's absence, because re-running
-`svcacct add` would mint a NEW secret and invalidate the one already
-in use.
+`configs/ansible/roles/archival-node/tasks/16-prometheus-exporters.yml` (Group D) creates a
+`prometheus-read` MinIO policy scoped to `admin:Prometheus` and a service account under root
+carrying it (procedure: [runbooks/minio-metrics-403.md](runbooks/minio-metrics-403.md)).
+`mc admin user svcacct add` prints the secret **once**; the task writes it to
+`/etc/prometheus/minio.token` (`prometheus:prometheus`, `0400`) and notifies
+`Restart prometheus`. The task is gated on the file's absence, because re-running
+`svcacct add` mints a new secret and invalidates the live one.
 
-Because the token belongs to a **service account**, not root itself,
-rotating the MinIO root password (the section above) no longer
-invalidates it — the 2026-07-03 incident (root rotated,
-`/etc/prometheus/minio.token` kept signing with the old root creds,
-`minio_exporter_down` fired) was specific to the older
-`mc admin prometheus generate` JWT, which this procedure replaced.
-Root rotation needs no follow-up here.
+The token belongs to a service account, so **rotating MinIO root does not invalidate it**
+(the old `mc admin prometheus generate` root-signed JWT did, firing `minio_exporter_down`).
 
-**To rotate the scrape token itself** (suspected leak, not a root
-rotation):
+To rotate the scrape token itself (suspected leak):
 
 ```sh
 ssh root@136.243.90.96
@@ -180,98 +110,56 @@ mc admin user svcacct rm local <the-access-key-shown-by-svcacct-info>
 rm -f /etc/prometheus/minio.token
 ```
 
-then re-run the `exporters` tag (`ansible-playbook -i inventory/r1.yml
-playbooks/archival-node.yml --tags exporters`) — Group D lives in
-`16-prometheus-exporters.yml`, not `09-minio.yml`, so `--tags minio`
-alone would not reach it — to mint a new one and restart Prometheus
-onto it.
+then `ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags exporters`
+(`--tags minio` does not reach Group D) to mint a new one and restart Prometheus.
 
-See [runbooks/exporter-down.md](runbooks/exporter-down.md#per-exporter-notes)
-for the day-to-day symptom (`minio_exporter_down`) and
-[runbooks/minio-metrics-403.md](runbooks/minio-metrics-403.md) for
-the companion 403 case. `scripts/ops/config-assertions.sh`'s
-`minio_prometheus_token_present` check (hourly) catches a missing,
-emptied, or wrong-owner file — stat only, it never reads the token —
-the same backstop pattern as `galexie_writer_creds_valid` above.
+Symptoms: `minio_exporter_down` in
+[runbooks/exporter-down.md](runbooks/exporter-down.md#per-exporter-notes); the 403 case in
+[runbooks/minio-metrics-403.md](runbooks/minio-metrics-403.md). The hourly
+`minio_prometheus_token_present` check in `scripts/ops/config-assertions.sh` catches a
+missing, empty or wrong-owner file (stat only; never reads the token).
 
 ### The `SignatureDoesNotMatch` drift symptom
 
-If galexie, the indexer, `stellarindex-ops verify-archive`, or any
-other MinIO client on r1 starts logging `SignatureDoesNotMatch`,
-suspect a **credential-file/live-user drift**, not a MinIO outage:
-the server is up and answering — it's just rejecting requests
-signed with a key it doesn't recognise (or with the AWS SigV4
-region/endpoint fields absent, which produces the same symptom —
-see the note in `09-minio.yml`'s `/etc/default/stellarindex-ops`
-template and `feedback_minio_cred_drift`). This happens whenever
-one side of a rotation moves without the other:
+Any MinIO client on r1 logging `SignatureDoesNotMatch` means **credential-file/live-user
+drift**, not an outage. Causes:
 
-- The vault secret was updated but the apply ran with a PARTIAL tag
-  list, so one of the four credential files still has the old secret
-  (`minio` renders `/etc/default/stellarindex-ops`, `galexie` renders
-  `/etc/default/galexie*`, `stellarindex` renders
-  `/etc/default/stellarindex` — see the table in step 3).
-- The right tag ran but the consumer was restarted BEFORE it, so the
-  process is still holding the pre-rotation value it read from
-  `EnvironmentFile=` at start.
-- The MinIO user was rotated by hand (`mc admin user add ...`
-  run directly on the host, bypassing ansible) without updating the
-  vault — the next `--tags minio` re-apply would silently revert it,
-  or a rebuild would ship the old secret.
-- `AWS_ENDPOINT_URL` / `AWS_REGION` are missing from the rendered env
-  file — the AWS SDK then signs for AWS proper instead of the local
-  MinIO endpoint, which MinIO also rejects as `SignatureDoesNotMatch`
-  (a real drift found live on 2026-07-03; see
-  `configs/ansible/roles/archival-node/tasks/09-minio.yml`'s
-  `/etc/default/stellarindex-ops` template comment).
+- Vault updated but the apply ran a PARTIAL tag list (see the step 3 table).
+- The right tag ran but the consumer was restarted before it, so it holds the old
+  `EnvironmentFile=` value.
+- The MinIO user was rotated by hand (`mc admin user add ...` on the host) without updating
+  the vault — the next `--tags minio` reverts it.
+- `AWS_ENDPOINT_URL` / `AWS_REGION` missing from the rendered env file — the SDK signs for
+  AWS proper, which MinIO also rejects (see the `/etc/default/stellarindex-ops` template
+  comment in `09-minio.yml`).
 
-Diagnosis: `journalctl -u galexie -n 200 --no-pager | grep -i
-signature`; confirm which identity is failing (galexie-writer vs
-ops-user) from the unit; compare `/etc/default/galexie` (or
-`/etc/default/stellarindex-ops`) against what the vault currently
-holds (`ansible-vault view inventory/r1.secrets.yml`) — a mismatch
-means re-run step 3 with the full `minio,galexie,stellarindex` tag
-list and let the handlers restart the affected services.
+Diagnosis: `journalctl -u galexie -n 200 --no-pager | grep -i signature`; identify the
+failing identity from the unit; compare `/etc/default/galexie` (or
+`/etc/default/stellarindex-ops`) with the vault via `ansible-vault view inventory/r1.secrets.yml`
+(never paste or redirect its output into a log or transcript). On mismatch re-run step 3
+with the full tag list.
 
 ### Config-assertion backstop
 
-`scripts/ops/config-assertions.sh`'s `galexie_writer_creds_valid`
-check (hourly, `config-assertions.timer`) catches the galexie-writer
-half of this drift automatically: it re-signs a real `mc ls` request
-against the live MinIO server using whatever creds are currently in
-`/etc/default/galexie`, so a rotation that only landed on one side
-fails within the hour instead of waiting for galexie's own upload
-loop to notice. See
-[runbooks/config-assertion-failed.md](runbooks/config-assertion-failed.md).
-This check is deliberately functional (auth-probe), not a content
-diff — MinIO never exposes a stored secret to compare against, so
-"does this credential still work" is the only thing that can be
-asserted without either leaking the secret or maintaining a second
-copy of it outside the vault.
+`galexie_writer_creds_valid` in `scripts/ops/config-assertions.sh` (hourly,
+`config-assertions.timer`) re-signs a real `mc ls` with the creds in `/etc/default/galexie`,
+so a one-sided rotation fails within the hour
+([runbooks/config-assertion-failed.md](runbooks/config-assertion-failed.md)). It is an
+auth-probe, not a diff: MinIO never exposes a stored secret. There is no equivalent check
+for `stellarindex-reader` or `galexie-archive-writer`; both would use the same `MC_HOST_*`
+auth-probe pattern.
 
-There is currently no equivalent assertion for the
-`stellarindex-reader` (ops-user) or `galexie-archive-writer`
-credentials — both would follow the same `MC_HOST_*` auth-probe
-pattern against their respective bucket if added.
-
-### MinIO identity inventory + credential hygiene (2026-07-25)
-
-Three findings from the 2026-07-25 rehydrate proof, and what each
-needs. **All three need an operator on the host; none of them can be
-finished from the repository.**
+### MinIO identity inventory
 
 | Identity | Intended authority | Codified? | State |
 | --- | --- | --- | --- |
-| MinIO root (`minio_root_user`, still named `ratesengine-admin` from the pre-rename era) | full admin. Bootstrap + `mc admin` only; **no service should ever run as this** | env file + `local` alias | ✅ the 2026-07-25 exposure is closed: root is now `stellarindex-admin` (since 2026-07-27); verified 2026-09-28 that the old access key is rejected and the stored old secret differs from the live one. The hourly archive-fill job no longer uses it (it writes as `galexie-archive-writer`); only its operator-run `PARTIALS` delete does |
-| `galexie-writer` | write on `galexie-live` | ✅ policy + user + attach | healthy; hourly auth-probe backstop |
-| `galexie-archive-writer` | write (no delete) on `galexie-archive` | ✅ **as of 2026-07-25** — previously the vault var and the env file existed but no MinIO user, policy, or attach was ever created | the `archivewriter` mc alias fails `SignatureDoesNotMatch`; repaired by the next `--tags minio` apply, which re-syncs the secret from vault |
-| `stellarindex-reader` | read-only on both buckets | ✅ policy + user + attach | codified policy grants **no** `s3:DeleteObject`, but the 2026-07-25 live test observed this identity successfully DELETING from `galexie-archive` — i.e. the live policy has drifted from the codified one. Verify with `mc admin policy info local stellarindex-reader` and re-apply if it disagrees |
+| MinIO root (`minio_root_user`, now `stellarindex-admin`) | full admin; bootstrap + `mc admin` only, no service runs as it | env file + `local` alias | rotated; old access key rejected. Used only by the operator-run `PARTIALS` delete |
+| `galexie-writer` | write on `galexie-live` | policy + user + attach | healthy; hourly auth-probe |
+| `galexie-archive-writer` | write (no delete) on `galexie-archive` | policy + user + attach | repaired; `mc ls archivewriter/galexie-archive/` lists |
+| `stellarindex-reader` | read-only on both buckets | policy + user + attach | live policy grants no `s3:DeleteObject`, matching the codified one. Re-check with `mc admin policy info local stellarindex-reader` |
 
-**1. Rotate MinIO root.** Its credentials appeared in plaintext in an
-agent session transcript on 2026-07-25. Treat as compromised even
-though the endpoint is bound to `127.0.0.1` and the firewall exposes
-:9000 only to `internal_cidrs` — the transcript is the wider blast
-radius, not the port.
+**Rotating MinIO root.** Treat any transcript exposure as compromise, even though the
+endpoint binds `127.0.0.1` and :9000 is open only to `internal_cidrs`.
 
 ```sh
 cd configs/ansible
@@ -280,46 +168,25 @@ ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags minio --
 ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags minio
 ```
 
-Root lives in `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` in
-`/etc/default/minio`, so this **restarts MinIO** (the `Restart minio`
-handler) — a short write outage for galexie. Then, in the same window:
+Root lives in `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` in `/etc/default/minio`, so the
+`Restart minio` handler restarts MinIO (short galexie write outage). Then re-point every
+operator's `local` alias (`mc alias set local http://127.0.0.1:9000 <new root> <new secret>`;
+the role does root's). The hourly `galexie-archive-fill.timer` is unaffected.
 
-- regenerate the Prometheus bearer token (§Prometheus bearer-token
-  regen above) — root rotation always invalidates it, this is the
-  2026-07-03 incident;
-- re-point the `local` mc alias: `mc alias set local
-  http://127.0.0.1:9000 <new root> <new secret>` (the ansible task does
-  this, but any operator's own `~/.mc/config.json` needs it too);
-- the hourly `galexie-archive-fill.timer` run is unaffected — it
-  authenticates via `archivewriter`; only an operator run with
-  `PARTIALS=…` uses `local`, for its delete.
-
-Take the opportunity to rename the user off `ratesengine-admin` while
-you are creating a new one; the old brand name in an admin credential
-is a small but free thing to retire.
-
-**2. `archivewriter` — fixed, not removed.** The choice was
-fix-or-remove; fix won, because the archive genuinely needs a write
-identity that isn't root. `09-minio.yml` now renders
-`galexie-archive-writer.json` (Put/Get/List + multipart on
-`galexie-archive`, deliberately **no** `s3:DeleteObject`), creates the
-user from the vaulted secret, and attaches the policy. `mc admin user
-add` rewrites the secret of an existing user, so the drifted alias is
-repaired by applying `--tags minio`. Afterwards, re-point the operator
-alias and prove it:
+**`archivewriter` alias.** `09-minio.yml` renders `galexie-archive-writer.json`
+(Put/Get/List + multipart on `galexie-archive`, no `s3:DeleteObject`), creates the user from
+the vaulted secret and attaches the policy; `mc admin user add` rewrites an existing user's
+secret, so `--tags minio` repairs drift. Prove it:
 
 ```sh
 mc alias set archivewriter http://127.0.0.1:9000 galexie-archive-writer <vaulted secret>
 mc ls archivewriter/galexie-archive/ | head        # must list, not 403
 ```
 
-**3. The hourly fill job writes as `galexie-archive-writer`.**
-`galexie-archive-fill.sh` lists and mirrors through `ARCHIVE_DEST`
-(`archivewriter/galexie-archive`, set in `/etc/default/galexie-archive-fill`;
-`--tags minio` persists the alias for root) and exits 1 if it cannot
-list it. The writer grants no delete, so the only delete — the
-operator-run `PARTIALS=…` sweep — goes through `ARCHIVE_DELETE_ALIAS`
-(`local`, same file), and the run stops before deleting if that alias is
+**Fill job identity.** `galexie-archive-fill.sh` lists and mirrors through `ARCHIVE_DEST`
+(`archivewriter/galexie-archive`, set in `/etc/default/galexie-archive-fill`) and exits 1 if
+it cannot list it. The only delete, the operator-run `PARTIALS=…` sweep, goes through
+`ARCHIVE_DELETE_ALIAS` (`local`, same file); the run stops before deleting if that alias is
 not configured. After deploying, confirm one full timer cycle.
 
 ## Related

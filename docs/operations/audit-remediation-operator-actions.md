@@ -1,191 +1,103 @@
 ---
 title: Audit remediation — items requiring operator (human) action
-last_verified: 2026-09-23
+last_verified: 2026-10-05
 status: living — populated as remediation proceeds
 ---
 
 # Operator-action register (audit remediation 2026-07)
 
-Everything the two audits (correctness/security 2026-06-30 + maintainability
-2026-07-01) surfaced that an agent **cannot** safely do alone — because it needs a
-GitHub/cloud/vendor account, a secret, a legal decision, prod infra, or a
-judgment call that's yours. The code-side fixes are being applied separately;
-these wait for you.
+Findings from the correctness/security and maintainability audits that need an
+account, a secret, a legal call, prod infra or an owner decision. Code-side fixes
+are in the commit log; closed items are dropped from this page.
 
-> **⚠️ Before running any ansible playbook against r1:** read
-> [r1-ansible-drift-2026-07-03](r1-ansible-drift-2026-07-03.md) — the
-> 2026-07-03 audit found live-only hand fixes a render would erase
-> (some since codified) and codified-only "fixes" that were never live.
-> Always `--check --diff` first. The hourly `config-assertions.timer`
-> alerts on regressions of the load-bearing subset.
+> **Before any ansible playbook against r1:** read
+> [r1-ansible-drift-2026-07-03](r1-ansible-drift-2026-07-03.md) and always run
+> `--check --diff` first. The hourly `config-assertions.timer` alerts on
+> regressions of the load-bearing subset.
 
 ## Repo / CI settings (highest leverage — one setting unlocks every guard)
-- [ ] **Branch-protect `main` + require status checks** (CS-097) — NOT DONE, re-verified
-  2026-09-23: `GET /repos/Stellar-Index/StellarIndex/branches/main/protection` returns
-  404 ("Branch not protected") and `GET .../rulesets` returns `[]` — the two rulesets
-  this entry previously claimed (`main-integrity`, `main-required-checks`) do not exist
-  on the live repo. `GET .../actions/permissions` also shows `allowed_actions: "all"`,
-  `sha_pinning_required: false`, contradicting the "configured via the GitHub admin UI"
-  claim in `scripts/ci/lint-actions-pinning.sh`'s header comment (fixed alongside this
-  entry). Either this was never actually applied, or it was applied and then reverted
-  outside the repo — the 2026-07-02 `[x]` was wrong either way. **Action needed:**
-  1. GitHub → Settings → Rules → Rulesets: recreate `main-integrity` (block force-push
-     + deletion for everyone, no bypass) and `main-required-checks` (require the core
-     CI jobs as status checks; repository admins may bypass so the direct-push-to-main
-     workflow keeps working).
-  2. GitHub → Settings → Actions → General: set "Allow \<owner\> actions and reusable
-     workflows" + "Require actions to be pinned to a full-length commit SHA" (or
-     equivalent `allowed_actions=selected` + `sha_pinning_required=true` via
-     `gh api --method PUT repos/Stellar-Index/StellarIndex/actions/permissions`).
-  3. Re-run the two `gh api` calls above and confirm they no longer 404/return empty
-     before checking this box again.
-  CS-098's self-editable-allowlist bypass is still closed by
-  `scripts/ci/lint-baseline-growth.sh` (baselines are shrink-only; growth needs an
-  explicit `Baseline-Growth:` commit trailer) — that part is unaffected by this gap.
+- [ ] **Branch-protect `main` + require status checks** (CS-097) — NOT DONE. Live state:
+  `GET /repos/Stellar-Index/StellarIndex/branches/main/protection` returns 404 and
+  `GET .../rulesets` returns `[]` (no `main-integrity` / `main-required-checks`);
+  `GET .../actions/permissions` shows `allowed_actions: "all"`, `sha_pinning_required: false`.
+  1. Settings → Rules → Rulesets: create `main-integrity` (block force-push + deletion,
+     no bypass) and `main-required-checks` (core CI jobs as required checks; admins may
+     bypass).
+  2. Settings → Actions → General: allow owner actions + require full-SHA pinning, or
+     `allowed_actions=selected` + `sha_pinning_required=true` via
+     `gh api --method PUT repos/Stellar-Index/StellarIndex/actions/permissions`.
+  3. Re-run the `gh api` calls; tick only when they no longer 404/return empty.
+  Pinned by `scripts/ci/audit-remediation-operator-actions-test.sh`. CS-098 is unaffected:
+  `scripts/ci/lint-baseline-growth.sh` keeps baselines shrink-only (growth needs a
+  `Baseline-Growth:` commit trailer).
 
 ## Accounts / secrets (launch-blocking, operator-only)
 - [ ] **Buy CoinGecko Pro** → set `COINGECKO_API_KEY` on r1 + restart indexer (P0-3).
-- [ ] **Create Healthchecks.io account + Discord webhooks** → paste `DISCORD_WEBHOOK_URL_PAGES`/
-  `_ALERTS` + the 4× `HEALTHCHECKS_URL_*` into r1 env files; rerun `pre-launch-check.sh`.
-- [x] **Rotate the postgres_exporter DSN password — DONE 2026-09-29.** The DSN in
-  `/etc/default/prometheus-postgres-exporter` now carries no password: the exporter
-  connects over the local socket with peer auth as user `postgres_exporter`.
+- [ ] **Create Healthchecks.io account + Discord webhooks** → set `DISCORD_WEBHOOK_URL_PAGES`/
+  `_ALERTS` + the 4× `HEALTHCHECKS_URL_*` in r1 env files; rerun `pre-launch-check.sh`.
 - [ ] **Relocate + rotate the GCP service-account key** (CS-001) — `rates-engine-data-
-  validation-*.json` sits in the repo working tree (gitignored, not committed). Move it
+  validation-*.json` sits in the repo working tree (gitignored, never committed). Move it
   out of the repo dir; rotate if it was ever shared; confirm the SA is still used.
 
 ## Set config values (code is ready; values are yours)
-- [x] **`sdf_reserve_accounts` — DONE 2026-07-02 (agent, with evidence).** The 16
-  accounts from SDF's own dashboard source (stellar/dashboard common/lumens.js:
-  escrows, direct development, growth, product+innovation, assets+liquidity,
-  network upgrade reserve) + lake-read balances; the sum matches SDF's published
-  mandate+upgradeReserve to 4e-13. Live result: served circulating 33.99B vs
-  SDF 33.98B (rel_err 0.0003 — the residual is the protocol fee pool, ~0.03%,
-  not an account). verify-served-values pins it green continuously.
 - [ ] **Re-raise `min_usd_volume` to the 10000 default** once CEX/CoinGecko data flows
-  (currently 0 to serve on-chain-only micro-volume; CS-040 makes the gate scale-correct).
+  (0 today to serve on-chain-only micro-volume; CS-040 makes the gate scale-correct).
 
-## r1 migration to non-root services (CS-118/CS-119) — ordered, no-surprise
-The Ansible role now creates the `stellarindex` system user (04-users.yml) and
-runs the app daemons + timer oneshots as `User=stellarindex` (hardened units
-ported from `deploy/systemd/`). Applying `--tags users,minio,observability,stellarindex`
-to r1 does most of this, but the RUNNING host needs the ownership flips done in
-order so nothing restarts onto files it can't read. By hand (or verify the role
-did each step):
+## r1 migration to non-root services (CS-118/CS-119)
+The role creates the `stellarindex` user (`04-users.yml`) and runs daemons + timer
+oneshots as `User=stellarindex`. `--tags users,minio,observability,stellarindex` does most
+of it; on the running host do the ownership flips in this order:
 
-1. **Create the user/group** (idempotent):
-   `useradd --system --shell /usr/sbin/nologin --home-dir /var/lib/stellarindex --no-create-home stellarindex || true`
-2. **Stop the daemons** (timer oneshots: just confirm none is mid-run via
-   `systemctl list-units 'stellarindex-*' '*completeness*' 'ch-supply*' 'sep1-*' 'data-freshness*' 'supply-snapshot*' 'verify-archive-*'`):
-   `systemctl stop stellarindex-api stellarindex-aggregator stellarindex-indexer`
-3. **Chown state + env files** (binaries in `/usr/local/bin` STAY root:root 0755 —
-   world-exec, root-owned is correct for non-root services):
+1. `useradd --system --shell /usr/sbin/nologin --home-dir /var/lib/stellarindex --no-create-home stellarindex || true`
+2. Confirm no oneshot is mid-run
+   (`systemctl list-units 'stellarindex-*' '*completeness*' 'ch-supply*' 'sep1-*' 'data-freshness*' 'supply-snapshot*' 'verify-archive-*'`),
+   then `systemctl stop stellarindex-api stellarindex-aggregator stellarindex-indexer`
+3. Chown state + env files (binaries in `/usr/local/bin` stay root:root 0755):
    - `chown -R stellarindex:stellarindex /var/lib/stellarindex`
    - `chown -R stellarindex:stellarindex /var/lib/node_exporter/textfile_collector`
    - `chgrp stellarindex /etc/default/stellarindex /etc/default/stellarindex-ops && chmod 0640 /etc/default/stellarindex /etc/default/stellarindex-ops`
-4. **Install the new unit files** (ansible `--tags stellarindex`, or copy the
-   rendered units) then `systemctl daemon-reload`.
-5. **Start + verify**:
-   `systemctl start stellarindex-indexer stellarindex-aggregator stellarindex-api`,
-   confirm `ps -o user= -p $(systemctl show -p MainPID --value stellarindex-api)`
-   says `stellarindex` (per unit), then `bash scripts/dev/r1-smoke.sh`.
-6. **Rollback** if anything misbehaves: reinstall the previous unit files
-   (root ones), `daemon-reload`, start — the chowns are backwards-compatible
-   (root reads everything).
+4. Install the units (`--tags stellarindex`), `systemctl daemon-reload`.
+5. `systemctl start stellarindex-indexer stellarindex-aggregator stellarindex-api`; check
+   `ps -o user= -p $(systemctl show -p MainPID --value stellarindex-api)` says
+   `stellarindex` (per unit); `bash scripts/dev/r1-smoke.sh`.
+6. Rollback: reinstall the root units, `daemon-reload`, start (the chowns are
+   backwards-compatible).
 
-Note: `archive-completeness.service` intentionally stays `User=root`. Its
-`ExecStart` runs under `run-heavy-job.sh`, which creates the `MemoryMax=20G`
-scope and the disk watchdog only for a root caller; as a non-root unit the job
-would run with neither (see the unit template comment).
+`archive-completeness.service` stays `User=root`: `run-heavy-job.sh` creates the
+`MemoryMax=20G` scope and disk watchdog only for a root caller.
 
-## Classic supply under-read (found 2026-07-02 by verify-served-values)
-The trustline/claimable/LP observers matched their watched set in
-CODE:ISSUER form while the config (correctly, per its docs) supplies
-CODE-ISSUER — so all three observed NOTHING since they shipped and every
-classic asset's served supply degraded to its SAC-held slice (USDC read
-40M vs ~266M; lake supply_flows cross-check: net SAC flows 272.9M vs
-Stellar Expert 265.9M, i.e. the lake is right and the served tier was
-missing the classic trustline component entirely). Code fix landed
-(supply.CanonicalizeWatchedClassic); your half, in order:
-- [x] Deploy — DONE 2026-07-02 (v0.7.0): all five observers wired; trustlines
-  observed 6,260 events in the first 45 seconds.
-- [x] **Historical state seed — DONE 2026-07-03 (agent).** Full checkpoint
-  state-snapshot (48M entries) into the lake, then 2.69M trustline rows
-  seeded into `trustline_observations` for the 8 watched assets from
-  `ledger_entries_current FINAL`.
-- [x] **verify-served-values: ALL GREEN 2026-07-03** — xlm_total 4e-7,
-  xlm_circulating 3e-4, usdc_total 1.3e-3 (served 272.84M vs SE 272.49M).
-
-## Disaster recovery (CS-110/111/112 — design + tooling shipped, ADR-0043; your half:)
-- [ ] **Provision the offsite bucket for `repo2`** (Hetzner Storage Box or Backblaze B2,
-  ~1.1 TB for 4 fulls at today's 273 GB compressed) → set the `pgbackrest_repo2_*`
-  vars + cipher pass in vault, flip `pgbackrest_manage_conf: true` after reviewing
-  the rendered `pgbackrest.conf` diff, run `stanza-upgrade` + a first full to repo2.
-- [ ] **Run `scripts/ops/restore-drill.sh` by hand twice** (once `DRILL_REPO=1`, once
-  `=2` when repo2 exists; add `DRILL_CH_WINDOW=100000` on one run to measure the CH
-  re-derive RTO — that stage had **never run** before 2026-07-25: it passed a
-  `-database` flag `ch-backfill` has never had, so it died at flag-parse every time).
-  Commit the appended `docs/operations/drills/restore-drills.md` entries; then enable
-  the timer — it is now **monthly** (first Saturday 04:00 UTC), matching ADR-0043
-  §1/§3; the template had shipped weekly.
-- [x] **CH lake DDL/state snapshot** (ADR-0043 §2.1) — SHIPPED 2026-07-25:
-  `scripts/ops/ch-schema-snapshot.sh` + `ch-schema-snapshot.timer` (daily,
-  enabled by default) + `stellarindex_ch_schema_snapshot_stale` /
-  `_offsite_stale` alerts + the snapshot→`CREATE` restore path in
-  [runbooks/ch-schema-restore.md](runbooks/ch-schema-restore.md). Before this
-  the ClickHouse lake had **no backup of any kind and no alert that said so**.
-- [ ] **Point the schema snapshot offsite** — `ch_schema_snapshot_mc_target` is empty
-  and `ch_schema_snapshot_offsite_ack: true` is set in `inventory/r1.yml`, so the
-  daily snapshot currently lands only on the pool it protects. The ack buys nothing
-  on pubnet any more: since 2026-09-04 the role refuses the backup surface
-  (`--tags backup`) without a target, reports the gap on every full run, and
-  `stellarindex_ch_schema_snapshot_offsite_stale` tickets r1 by name until a push
-  lands. The procedure, verification and expected transients are
-  [v1-launch-plan](v1-launch-plan.md) row 1.12; drop the ack in the same edit.
-  **Interim, do this now and repeat after any DDL change / at least monthly** —
-  the public repo is a valid off-box copy (it does not clear the alert):
-  `OUT_DIR=deploy/clickhouse/schema-snapshot TEXTFILE_DIR=/dev/null scripts/ops/ch-schema-snapshot.sh`
+## Disaster recovery (CS-110/111/112 — ADR-0043; your half:)
+- [ ] **Provision the offsite bucket for `repo2`** → set the `pgbackrest_repo2_*` vars +
+  cipher pass in vault, flip `pgbackrest_manage_conf: true` after reviewing the rendered
+  `pgbackrest.conf` diff, run `stanza-upgrade` + a first full to repo2.
+- [ ] **Run `scripts/ops/restore-drill.sh` by hand twice** (`DRILL_REPO=1`, then `=2` once
+  repo2 exists; add `DRILL_CH_WINDOW=100000` on one run to measure the CH re-derive RTO).
+  Commit the appended `docs/operations/drills/restore-drills.md` entries, then enable the
+  timer (monthly, first Saturday 04:00 UTC).
+- [ ] **Point the CH schema snapshot offsite** — `ch_schema_snapshot_mc_target` is empty
+  and `ch_schema_snapshot_offsite_ack: true` is set in `inventory/r1.yml`, so the daily
+  snapshot lands only on the pool it protects. The role refuses `--tags backup` without a
+  target and `stellarindex_ch_schema_snapshot_offsite_stale` tickets r1 until a push
+  lands. Procedure: [v1-launch-plan](v1-launch-plan.md) row 1.12; drop the ack in the same
+  edit. Interim (after any DDL change, at least monthly; does not clear the alert):
+  `OUT_DIR=deploy/clickhouse/schema-snapshot TEXTFILE_DIR=/dev/null scripts/ops/ch-schema-snapshot.sh`,
   then commit the result.
-- [x] **CH lake "tail insurance"** (ADR-0043 §2.3) — ASSESSED 2026-07-25, **do not
-  implement as written**; the ADR's premise no longer holds (galexie-archive is filled
-  from aws-public-blockchain, not from galexie-live, so recent raw LCM is off-box the
-  moment it is published, and the newest ledgers are the ones the public history
-  archives are most certain to serve). Derivation, cost/benefit and the ADR amendment
-  text: [off-site-backup-plan.md](off-site-backup-plan.md) §"ADR-0043 §2.3 tail
-  insurance amendment". Landed 2026-09-24 in `docs/adr/0043-backup-and-restore-strategy.md`
-  §2.3 — no further operator action.
-- [x] **Postgres repo2 retention vs. ADR-0043 §1** — the shipped lean retention
-  (1 full + 7-day diffs, #298) never matched the ADR's "repo2 keeps 4 fulls" text, and
-  the role comment cited the unrelated §2 amendment as its authority. Landed 2026-09-24:
-  ADR-0043 §1 records the actual retention and recovery horizon;
-  `configs/ansible/roles/archival-node/defaults/main.yml` comment corrected to cite it.
-  No config change — the lean retention (#298) was a deliberate cost call, this closes
-  the doc/deployment gap only.
-- [ ] **Full-CH-backup decision** — still waits on the drill's measured re-derive
-  throughput, deliberately. The drill's CH stage is now runnable (it never was — see
-  the drill log entry for 2026-07-25).
-- [ ] **Encrypt pgBackRest repo1** (F4-F2) — repo1 is `cipher-type=none` today: a
-  plaintext copy of the whole DB (API keys, Stripe ids) on local disk, and inside any
-  ZFS send of that dataset. The role now renders `repo1-cipher-type=aes-256-cbc` when
-  `pgbackrest_repo1_cipher_pass` is set and refuses a silently-unencrypted repo1
-  otherwise — but **pgbackrest cannot re-encrypt an existing repo**, so this needs a
-  `stanza-delete` + `stanza-create` + full backup, which discards repo1's backup
-  history. Do repo2 first so the box is never without a restorable copy. Full
-  procedure, key custody, and the RPO window:
+- [ ] **Full-CH-backup decision** — waits on the drill's measured re-derive throughput.
+- [ ] **Encrypt pgBackRest repo1** (F4-F2) — repo1 is `cipher-type=none`: a plaintext DB
+  copy (API keys, Stripe ids) on local disk and in any ZFS send. The role renders
+  `repo1-cipher-type=aes-256-cbc` when `pgbackrest_repo1_cipher_pass` is set and refuses an
+  unencrypted repo1 otherwise. pgbackrest cannot re-encrypt in place: `stanza-delete` +
+  `stanza-create` + full backup discards repo1's history, so do repo2 first. Procedure:
   [pgbackrest-encryption.md](pgbackrest-encryption.md).
 
-## `R1_INVENTORY_B64` — DO THIS BEFORE MERGING (C6-041, 2026-07-26)
+## `R1_INVENTORY_B64` — DO THIS BEFORE MERGING (C6-041)
 
-`configs/ansible/inventory/r1.yml` is no longer tracked. It was publishing r1's
-public IP, `allowed_ssh_cidrs: 0.0.0.0/0`, the disk serials and the operator SSH
-pubkey to a **public** repository, and re-publishing every topology change on
-every commit. `.github/workflows/ansible-drift.yml` now materializes it from an
-Actions secret, the same pattern it already used for the encrypted vault — so
-**the drift guard is RED until the secret exists**, and its failure message says
-exactly that rather than looking like drift.
+`configs/ansible/inventory/r1.yml` is untracked (it published r1's IP,
+`allowed_ssh_cidrs: 0.0.0.0/0`, disk serials and the operator SSH pubkey).
+`.github/workflows/ansible-drift.yml` materializes it from an Actions secret, so the
+drift guard is RED until the secret exists.
 
-- [ ] **Create the `R1_INVENTORY_B64` Actions secret**, from a machine holding the
-  working-tree copy (the untracking deliberately leaves your local file in place):
+- [ ] **Create the `R1_INVENTORY_B64` Actions secret** from the working-tree copy:
 
   ```bash
   base64 -w0 configs/ansible/inventory/r1.yml    # macOS: base64 -i configs/ansible/inventory/r1.yml
@@ -193,139 +105,59 @@ exactly that rather than looking like drift.
   #   Name: R1_INVENTORY_B64
   ```
 
-  Then re-run `ansible-drift` (`workflow_dispatch`) and confirm it gets past the
-  new "Inventory" step. Note it will still fail at "Vault password" until
-  `ANSIBLE_VAULT_PASSWORD` / `ANSIBLE_VAULT_FILE_B64` are also restored (CID-24,
-  still open) — three secrets, one green run.
+  Re-run `ansible-drift` (`workflow_dispatch`) and confirm it passes the "Inventory" step.
+  It still fails at "Vault password" until `ANSIBLE_VAULT_PASSWORD` /
+  `ANSIBLE_VAULT_FILE_B64` are restored (CID-24) — three secrets, one green run.
 
-- [ ] **Treat the historical contents as public.** Untracking stops the leak
-  growing; it does not undo it. Every past revision is readable from any clone via
-  `git log -p -- configs/ansible/inventory/r1.yml`. Concretely: the IP and the
-  world-open SSH surface are already-known facts, so mitigate by narrowing
-  `allowed_ssh_cidrs` (the open C6-018/C6-028/C6-060/C6-092 items), not by hiding
-  the file; and anything credential-shaped that ever appeared in it needs
-  ROTATION per [credential-rotation.md](credential-rotation.md). A history rewrite
-  is NOT recommended for a public repo with forks/clones — it invalidates every
-  downstream ref while the old objects survive in those clones anyway.
+- [ ] **Treat the historical contents as public** — every revision is readable via
+  `git log -p -- configs/ansible/inventory/r1.yml`. Mitigate the SSH surface by narrowing
+  `allowed_ssh_cidrs` (C6-018/C6-028/C6-060/C6-092); rotate anything credential-shaped
+  that ever appeared in it per [credential-rotation.md](credential-rotation.md). Do not
+  rewrite history: forks and clones keep the old objects anyway.
 
-- [ ] **Keep a second copy of `r1.yml` outside the repo.** It is now the only
-  authoritative copy on your machine and is no longer protected by git. The
-  Actions secret is a copy, not a backup (write-only once set).
+- [ ] **Keep a second copy of `r1.yml` outside the repo.** The Actions secret is
+  write-only, not a backup.
 
-## MinIO credential hygiene (2026-07-25)
-- [x] **Rotate MinIO root — DONE** (root is now `stellarindex-admin` since 2026-07-27;
-  verified 2026-09-28 that the old access key is rejected and the stored old secret
-  differs from the live one). The credentials appeared in plaintext in an agent session
-  transcript on 2026-07-25. Rotating restarts MinIO and **invalidates the Prometheus
-  bearer token** (the 2026-07-03 incident). Record:
-  [credential-rotation.md §MinIO identity inventory](credential-rotation.md).
-- [x] **Repair the `galexie-archive-writer` identity — DONE 2026-09-30.** Its vault
-  var and `/etc/default/galexie-backfill` always existed but the MinIO user, policy,
-  and attach never did, so the `archivewriter` alias failed `SignatureDoesNotMatch`.
-  The MinIO user `galexie-archive-writer` now exists with policy
-  `galexie-archive-writer` (Put/Get/List/multipart on `galexie-archive` only, no
-  `s3:DeleteObject`), and `mc ls archivewriter/galexie-archive/` lists.
-- [x] **Verify the `stellarindex-reader` live policy — DONE 2026-09-30.** The live
-  policy grants no `s3:DeleteObject`, matching the codified one.
-- [ ] **Deploy `galexie-archive-fill` off the root (`local`) alias** — done in code: the
-  fill reads and mirrors through `ARCHIVE_DEST` (`archivewriter/galexie-archive`, the
-  identity repaired above) and fails fast if it cannot list it; only an operator run with
-  `PARTIALS=…` deletes, via `ARCHIVE_DELETE_ALIAS` (`local`). Remaining: apply
-  `--tags archive-fill` and confirm one full timer cycle succeeds.
+## MinIO credential hygiene
+Identity record: [credential-rotation.md §MinIO identity inventory](credential-rotation.md#minio-identity-inventory).
+- [ ] **Deploy `galexie-archive-fill` off the root (`local`) alias** — code done: the fill
+  reads and mirrors through `ARCHIVE_DEST` (`archivewriter/galexie-archive`) and fails fast
+  if it cannot list it; only an operator run with `PARTIALS=…` deletes, via
+  `ARCHIVE_DELETE_ALIAS` (`local`). Remaining: apply `--tags archive-fill` and confirm one
+  full timer cycle succeeds.
 
 ## Supply cross-check P3 on BLND / EURC / KALE / PHO (E4/N-F3)
-- [x] **Run `supply seed-sac-balances -full-history` — DONE 2026-07-29 (38/38
-  assets).** Algorithm 2's `SACWrapped` addend missed dormant pool-held balances last
-  written below the ~62M `ledger_entries_current` MV floor; the reader that closes it
-  (`StreamSACBalanceSeedsFullHistory`) shipped 2026-07-10. Verify per-asset via
-  `sac_balance_seed_provenance` (`source='full_history'`). `min_ledger_seen` is not a
-  success signal: archived balances are tombstoned, so the floor it reports is tip −
-  2,073,600 ledgers, not a ledger well below 62,000,000.
-  Triage + queries: [runbooks/supply-cross-check-divergence.md](runbooks/supply-cross-check-divergence.md).
+- [x] `supply seed-sac-balances -full-history` ran for all 38 assets. Verify per asset via
+  `sac_balance_seed_provenance` (`source='full_history'`); `min_ledger_seen` is not a
+  success signal (archived balances are tombstoned, so it reports tip − 2,073,600).
+  Record per-asset outcomes of
+  [runbooks/supply-cross-check-divergence.md](runbooks/supply-cross-check-divergence.md) here.
 
 ## Multi-region / HA (gated on hosts existing — P3)
 - [ ] Provision R2 (AWS) + R3 (Vultr); then the `redis-sentinel`/patroni/bringup roles run.
 - [ ] **Patroni REST auth** (CS-122) — set `patroni_rest_basic_auth_user/password` in vault
-  before Patroni deploys. The role now FAILS the play if they're empty and listens on
-  the private interface (`ansible_host`), not 0.0.0.0 — so the only operator action
-  left is choosing the credentials.
+  before Patroni deploys. The role fails the play if they are empty and listens on
+  `ansible_host`, not 0.0.0.0.
 - [ ] Narrow `allowed_ssh_cidrs` from `0.0.0.0/0` once a stable admin range exists.
 - [ ] Optional: Cloudflare orange-cloud in front of `api.` (WAF/L7).
-
-## Decoder contract-gating (CS-026) — comet is the last open case
-The mechanism exists (`contractid.Registry` seeded from the `protocol_contracts`
-table + hard-coded factories, gated `Matches()`). Code-side, five of six are now
-gated (`blend`, `soroswap`, `phoenix` 2026-07-02, `aquarius` + `defindex`
-2026-07-05); only `comet` remains (gate *design* needed, not data). The
-per-source operator halves (re-derive + verdict watch) are tracked below:
-- [x] **phoenix** — GATED code-side 2026-07-02 (curated-set registry: the
-      page's 11 pools + 3 stake contracts are the in-code seed; the factory's
-      creation events predate the lake so the seed is the trust root). Your
-      half per ADR-0040 §2: deploy → lake re-derive (`projector-replay
-      -source phoenix -from 51572016`; foreign-emitter rows, if any existed,
-      surface as per-ledger projection mismatches) → one green
-      `compute-completeness -ch -source phoenix` cycle. Team confirmation of
-      the pool list is now ratification, not a blocker.
-- [x] **defindex** — GATED code-side 2026-07-05 via the ADR-0040 §3
-      enumeration (the 2026-07-02 blocker was executed, not waited out):
-      every one of the 110 lake emitters was classified against four
-      independent proofs (first-event-inside-a-factory-create-tx ×71;
-      listed-in-a-create-body ×16 strategies; team-published WASM hash —
-      `mainnet.contracts.json` names both `ae3409a4…468b` and
-      `11329c24…988`, exactly the two hashes the lake shows; team Dune
-      registry). 101 verified → in-code seed (`defindex.MainnetGatedSet`);
-      **9 emitters with NO proof are excluded + flagged**
-      (docs/protocols/defindex.md "Verification 2026-07-05"; 155 events,
-      0.13%). Your half per ADR-0040 §2: deploy → `projector-replay
-      -source defindex -from 57056338` → delete the flagged contracts'
-      `defindex_flows` rows (exact SQL on the protocol page) → one green
-      `compute-completeness -ch -source defindex` cycle. NOTE: new vaults
-      DO NOT self-register (create event omits the address) — a new vault
-      fail-closes into a recognition gap; unblock = verify provenance then
-      `INSERT INTO protocol_contracts` (no redeploy needed).
-- [x] **cctp `mint_and_forward` catch-up — DONE 2026-07-03 (agent).** The
-      rollout found TWO more gating layers (migration 0038's SQL CHECK +
-      the storage enum) → migration 0070 + v0.7.1 patch release + replay;
-      1,577 historical rows persisted, all five event types live.
-- [x] **aquarius** — GATED code-side 2026-07-05 (router-anchored): the
-      canonical router's `add_pool` events in the lake announce EXACTLY
-      the 332 pools the protocol's own registry API serves (byte-identical
-      sets, docs/protocols/aquarius.md "Verification 2026-07-05") — the
-      router is the trust root, the 332 are the in-code seed, and live
-      `add_pool` events self-register future pools blend-style. **Excluded
-      + flagged: a parallel router deployment `CA7RQDMM…` (same router
-      WASM, 72 pools, 1,302 trades, NOT in the registry API), a
-      foreign-WASM look-alike `CCPHUHQY…` (7 pools, 187 trades), and 8
-      pre-genesis rehearsal pools (35 trades).** Your half: deploy →
-      `projector-replay -source aquarius -from 52728375` → delete the
-      ~1,524 foreign `trades` rows (exact recipe on the protocol page) →
-      one green `compute-completeness -ch -source aquarius` cycle.
-- [ ] **comet** — has NO factory namespace (shared `("POOL",…)` topic). Decide the
-      gate design: a curated pool allowlist OR a WASM-hash gate (only decode
-      contracts whose code-hash matches the Balancer-v1 Comet WASM). Needs the
-      WASM hash + a design call.
-Once comet's allowlist/WASM-hash set is confirmed, wiring the gate is the same
-small mechanical change (add to `gatedSources`, make the decoder
-contractid-aware, gate `Matches()` on `reg.Has(contractID)`).
 
 ## Legal / vendor (before commercial launch — CS-115/116)
 - [ ] **Vendor-ToS review of raw CEX data redistribution** — `/v1/history` and
   `/v1/observations?source=<cex>` serve per-trade source-attributed records (data-vendor
   `source=` filters return 400; exchange venues stay selectable by owner decision);
   Binance/Kraken/Coinbase terms generally prohibit this. Blended outputs
-  (`/v1/price|vwap|…`) are defensible. Decide whether those source-attributed
-  surfaces stay for restricted venues.
+  (`/v1/price|vwap|…`) are defensible. Decide whether the source-attributed surfaces stay
+  for restricted venues.
 - [ ] **External security review** booking (P2-3).
-- [ ] Confirm CoinGecko Pro redistribution terms at purchase. (`github.com/xdrpp/goxdr`, pulled in
-  via `txnbuild`, is dual GPL-3/Apache-2.0; we take it under Apache-2.0.)
+- [ ] Confirm CoinGecko Pro redistribution terms at purchase. (`github.com/xdrpp/goxdr`, via
+  `txnbuild`, is dual GPL-3/Apache-2.0; we take it under Apache-2.0.)
 
 ## Launch cutover (operator/DNS — P2-5/P2-6)
-- [ ] DNS flip finalization, public rate-limit tier, announcement, 24h watch (endpoints are
-  already DNS+TLS live; this is the go-live decision + comms).
+- [ ] DNS flip finalization, public rate-limit tier, announcement, 24h watch (endpoints
+  are already DNS+TLS live; this is the go-live decision + comms).
 
 ---
-_Each item cross-references its CS-###/finding in
+_CS-### ids refer to
 https://github.com/Stellar-Index/StellarIndex/tree/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/audit-2026-06-30
-or
-https://github.com/Stellar-Index/StellarIndex/tree/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/maintainability-audit-2026-07-01.
-Code-side fixes tracked in the commit log._
+and
+https://github.com/Stellar-Index/StellarIndex/tree/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/maintainability-audit-2026-07-01._

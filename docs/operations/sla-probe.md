@@ -6,75 +6,39 @@ status: living procedure
 
 # SLA probe — periodic per-endpoint evidence trail
 
-Operational companion to the executable SLA-evidence CLI shipped in
-763b80254 (`cmd/stellarindex-sla-probe`). This doc covers:
-
-- What the probe is + why it runs continuously
-- Daily cron via `configs/healthchecks/stellarindex-sla-probe.{service,timer}`
-- The SLA targets the probe verifies against
-- Textfile-collector integration + the four shipped alerts
+Operator guide for `cmd/stellarindex-sla-probe`, run every 15 min by
+`configs/healthchecks/stellarindex-sla-probe.{service,timer}`.
 
 ## Purpose
 
-The API is bound to four SLA targets:
+| Metric          | Target           |
+| --------------- | ---------------- |
+| p95 latency     | ≤ 200 ms         |
+| p99 latency     | ≤ 500 ms         |
+| Availability    | ≥ 99.9 %         |
+| Price freshness | ≤ 30 s staleness |
 
-| Metric                   | Target           | Source            |
-| ------------------------ | ---------------- | ----------------- |
-| p95 latency              | ≤ 200 ms         | service SLA       |
-| p99 latency              | ≤ 500 ms         | service SLA       |
-| Availability             | ≥ 99.9 %         | service SLA       |
-| Price freshness          | ≤ 30 s staleness | service SLA       |
+Defaults live in `cmd/stellarindex-sla-probe/main.go::default*Target`;
+flags override them for a deployment with a different contract.
 
-The ≤ 30 s freshness target binds `/v1/price/tip`, the rolling-window
-surface. `/v1/price` serves the last **closed** one-minute bucket
-(ADR-0015), so its `observed_at` is 30–150 s old by construction; the
-probe holds it to a separate structural bound
-(`defaultClosedBucketFreshTarget = 150s`,
-`cmd/stellarindex-sla-probe/main.go`) whose breach means the
-closed-bucket pipeline has fallen behind its design, not that the
-service SLA is violated.
-
-Freshness is measured **at the instant each sample's response was
-received**, not at the end of the run. That is a 2026-09-05 fix: the
-probe used to compute `time.Since(observed_at)` during aggregation,
-which runs once after the whole run, so every sample was charged the
-distance from its own request to the end of the run — a median bias of
-`duration / 2`. On r1 (`SLA_PROBE_DURATION=30s`) the series read
-`{endpoint="price"} 116.698`, `{endpoint="price-tip"} 14.841` while the
-live API served a tip `observed_at` that was sub-second old; at the
-`SLA_PROBE_DURATION=120s` this doc's wrapper recommends for
-memory-pressured hosts the bias would have been ~60 s and
-`stellarindex_sla_probe_freshness_breach` would have paged permanently
-on a healthy tip.
-
-The per-run freshness figure is the **stalest** response in the run, not
-the median: the 30 s promise is per response, and a median passes a run
-in which 49 % of reads broke it.
-
-A 2xx only counts as a success when its body can carry the measurement.
-`/price` and `/price/tip` must return a parseable `data.observed_at`,
-and `/oracle/latest` must return a non-empty `data`. Otherwise the
-sample is a failure: a response-shape change that stops `observed_at`
-parsing, or an oracle outage answered with `{"data":[]}`, fails the run
-(`unit_failed`, then `stellarindex_sla_probe_stale`) instead of silently
-dropping the freshness series or reading 100 % available.
-
-The SLA probe drives synthetic load against the deployed API,
-measures per-endpoint p50/p95/p99 latency over its successful
-responses, parses `observed_at` on the price endpoints to compute
-freshness, and tallies 2xx vs non-2xx for availability. A failed
-request counts against availability and never enters the latency
-percentiles. The run deadline stops new requests but never cancels one
-in flight: each request runs to completion or to its own timeout
-(10 s, or the run duration if shorter) and is counted either way, so a
-hung API reads as failures, not as a run with no samples. Each run emits a JSON report and exits
-with code 0 (pass) or 1 (any SLA violated).
-
-The systemd timer runs the probe every 15 minutes — tight enough
-to pinpoint a SEV-2 latency-spike window (the SEV-2 detection
-requirement is ≤ 30 min after the incident begins) but loose
-enough that the probe itself doesn't dominate the anonymous-tier
-rate budget.
+- The 30 s freshness target binds `/v1/price/tip`. `/v1/price` serves the
+  last **closed** one-minute bucket (ADR-0015), 30–150 s old by
+  construction, so it is held to `defaultClosedBucketFreshTarget = 150s`;
+  a breach there means the closed-bucket pipeline is behind, not an SLA
+  violation.
+- Freshness is measured when each response is received, and the per-run
+  figure is the **stalest** response, not the median.
+- A 2xx is a success only if the body carries the measurement: `/price`
+  and `/price/tip` need a parseable `data.observed_at`; `/oracle/latest`
+  needs non-empty `data`. Otherwise the sample fails (`unit_failed`, then
+  `stellarindex_sla_probe_stale`).
+- Latency percentiles (p50/p95/p99) use successful responses only; every
+  failure counts against availability. The run deadline stops new
+  requests but never cancels one in flight: each runs to completion or
+  its own timeout (10 s, or the run duration if shorter), so a hung API
+  reads as failures.
+- Exit 0 = pass, 1 = any SLA violated. The 15-min cadence meets the SEV-2
+  detection requirement (≤ 30 min) without eating the rate budget.
 
 ## Operator wiring
 
@@ -84,87 +48,61 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now stellarindex-sla-probe.timer
 ```
 
-Override defaults via `/etc/default/stellarindex-healthchecks`. These
-are the only variables `configs/healthchecks/sla-probe.sh` reads; the
-wrapper always requests a JSON report and passes no other flags:
+`configs/healthchecks/sla-probe.sh` reads only these from
+`/etc/default/stellarindex-healthchecks`; it always requests a JSON
+report and passes no other flags:
 
 ```sh
-SLA_PROBE_BASE_URL=http://localhost:3000/v1  # default (see the note below)
+SLA_PROBE_BASE_URL=http://localhost:3000/v1  # default (see below)
 SLA_PROBE_DURATION=30s                       # default; 120s smooths percentiles on a memory-pressured single-instance host
 SLA_PROBE_CONCURRENCY=1                      # default
 SLA_PROBE_PAIR=native,fiat:USD               # default; exactly one asset,quote pair
 SLA_PROBE_TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/sla_probe.prom  # default; empty disables the metrics
 STELLARINDEX_PROBE_API_KEY=sip_…              # vault-minted key; required (see below)
+HEALTHCHECKS_URL_SLA_PROBE=…                 # ping URL
 ```
 
-> **What the default target means.** `SLA_PROBE_BASE_URL` defaults to
-> `http://localhost:3000/v1` — both in
-> `configs/healthchecks/sla-probe.sh` and in the binary's own
-> `-base-url` flag — and R1 runs it unset. The probe therefore measures
-> the API process's **own listener**, bypassing Caddy, TLS, DNS and the
-> network. That is the right scope for latency (it isolates application
-> time, which is what a code regression moves) and the **wrong** scope
-> for availability: this probe cannot see a reverse-proxy failure, an
-> expired certificate, a DNS fault or a DC-network outage. Point it at
-> `https://api.stellarindex.io/v1` from a host **outside** the
-> deployment to get an edge measurement; running it against the public
-> URL from R1 itself still hairpins through the box's own stack and is
-> not an independent signal. Until an off-host probe exists, the
-> availability row above is an objective, not a measurement — say so
-> anywhere it is published.
+> **The default target is the API's own listener.** `localhost:3000/v1`
+> (wrapper and binary `-base-url` default; R1 runs it unset) bypasses
+> Caddy, TLS, DNS and the network. Right for latency (isolates
+> application time); **wrong** for availability: it cannot see a proxy
+> failure, expired certificate, DNS fault or DC-network outage. Pointing
+> it at the public URL from R1 still hairpins through the box. Until an
+> off-host probe exists, the availability row is an objective, not a
+> measurement — say so anywhere it is published.
+
+To probe more pairs, run the binary directly with repeated `-pair` flags;
+each repeats the chart, price and oracle-latest probes for that pair.
 
 ### Why an API key is required
 
-Without `STELLARINDEX_PROBE_API_KEY` set, the probe hits the
-anonymous-tier rate limit — `[api].anon_rate_limit_per_min`, whose
-shipped default is 60/min (R1 sets 6,000). Even paced at the default
-100 req/s the probe issues far more than 60 requests a minute, so
-every non-`/healthz` endpoint reads as mostly unavailable and the
-verdict comes back `fail` for reasons unrelated to actual SLA
-compliance. Mint a load-test API key from the operator vault (same
-class as `STELLARINDEX_LOAD_API_KEY` for the k6 weekly) and set it
-in `/etc/default/stellarindex-healthchecks` before enabling the timer. The probe
-sends it as `Authorization: Bearer <key>` on every request — the
-key never appears on the systemd unit's command line.
+Without `STELLARINDEX_PROBE_API_KEY`, the probe hits
+`[api].anon_rate_limit_per_min` (shipped default 60/min; R1 sets 6,000),
+every non-`/healthz` endpoint reads as unavailable, and the verdict fails
+for reasons unrelated to the SLA. Mint a load-test key from the operator
+vault (same class as `STELLARINDEX_LOAD_API_KEY` for the k6 weekly) and
+set it before enabling the timer. It is sent as
+`Authorization: Bearer <key>`, never on the unit's command line.
 
 The key does not lift the limit where `[api].key_rate_limit_per_min`
-equals the anonymous limit (R1: both 6,000). What keeps a run under it
-is the binary's `-max-rps` pacing, shared by all workers: the default
-100 req/s × 30 s = 3,000 requests, half of a 6,000/min budget, leaving
-room for the smoke runner on the same limit. `-max-rps 0` removes the
-cap; unpaced, a fast API answers ~35 req/s per endpoint and a 30 s run
-crosses 6,000 requests, so the 429s fail availability. The wrapper does
-not pass `-max-rps`, so the binary default applies. A rate-limited run
-names the cause: each endpoint's `failed_by_status` counts failures by
-`429`, `4xx`, `5xx`, `timeout`, `conn` or `body` (a 2xx that broke the
-response contract), and the availability reason carries the dominant
-one, e.g. `price: availability=51.80% < target 99.90% (429 x 848)`.
+equals the anonymous one (R1: both 6,000). The binary's `-max-rps`
+pacing (default 100 req/s, shared by all workers; the wrapper does not
+pass it) keeps a 30 s run at 3,000 requests, half the budget, leaving
+room for the smoke runner. `-max-rps 0` removes the cap; unpaced, a 30 s
+run crosses 6,000 and the 429s fail availability.
 
-The defaults exercise XLM/USD as the smoke-test pair. The wrapper
-probes exactly one pair (`SLA_PROBE_PAIR`); to track additional
-asset/quote combinations, run the binary directly with repeated
-`-pair` flags — each repeats the per-endpoint probe across the
-chart, price, and oracle-latest surfaces for that pair.
+Each endpoint's `failed_by_status` counts failures by `429`, `4xx`,
+`5xx`, `timeout`, `conn` or `body` (2xx that broke the contract); the
+availability reason names the dominant one, e.g.
+`price: availability=51.80% < target 99.90% (429 x 848)`.
 
 ## Which number is the latency SLO
 
 **Read `stellarindex_sla_probe_latency_ms`, not a quantile over
-`http_request_duration_seconds`.** They measure different things and
-they disagree by orders of magnitude. Both are correct.
-
-The served histogram is the only view of *real customer traffic*, and
-its p50/p95 are meaningful. Its **p99 is not**, at current volume.
-Production runs around **0.08 rps** — roughly 24 requests in a
-5-minute window — so `histogram_quantile(0.99, …)` over that window is
-computed from well under a hundred samples. In practice it reports the
-single slowest request and calls it a percentile. One cold cache miss
-moves it by seconds.
-
-That is not a hypothetical. On 2026-09-01 the served p99 read 2,140 ms
-while the probe measured `/price` at **19 ms p95** and `/assets` at
-**13 ms p95** — both an order of magnitude inside the 200 ms target,
-verdict `pass`, availability 100%. The gap was entirely cold-cache
-first-hits landing in a nearly-empty sample window.
+`http_request_duration_seconds`.** At ~0.08 rps of real traffic
+(~24 requests per 5 min), the served p99 is effectively the single
+slowest request; one cold cache miss moves it by seconds. The probe
+drives ~150 samples per endpoint per 30 s run against a fixed basket.
 
 | question | query |
 |---|---|
@@ -173,19 +111,14 @@ first-hits landing in a nearly-empty sample window.
 | What do real users see, typically? | `histogram_quantile(0.5\|0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))` |
 | What was the slowest real request? | the served p99 — read it as a **max**, not a percentile |
 
-The probe fixes the sample-size problem by construction: it drives
-~150 samples per endpoint over 30s against a fixed basket, so its
-percentiles are computed from enough data to mean something. Its
-metrics live in their own namespace, so probe traffic never pollutes
-the customer-traffic histogram — keep it that way. Synthetic load
-emitted into `http_request_duration_seconds` would, at this traffic
-level, become 99%+ of the samples and the dashboard would then be
-describing the prober rather than the customers.
+Probe metrics stay in their own namespace. Never emit synthetic load into
+`http_request_duration_seconds`: at this volume it would be 99%+ of the
+samples.
 
 ### A latency-less probe file usually means a restart, not a broken probe
 
-If `sla_probe.prom` carries no `stellarindex_sla_probe_latency_ms` line
-for an endpoint, check `stellarindex_sla_probe_availability_pct` **first**:
+If `sla_probe.prom` has no `stellarindex_sla_probe_latency_ms` line for
+an endpoint, check availability first:
 
 ```sh
 grep -E "availability_pct|unit_failed" \
@@ -193,81 +126,48 @@ grep -E "availability_pct|unit_failed" \
 stat -c %y /var/lib/node_exporter/textfile_collector/sla_probe.prom
 ```
 
-Availability `0.000` with `unit_failed 1` means every request failed —
-so there were no successful samples to compute a latency from, and the
-probe emits none rather than a `0.000` that would read as a fast API. The
-overwhelmingly common cause is that the run landed during a deploy
-while the API was restarting. Compare the file's mtime against the
-deploy window before investigating the probe itself. The values stay
-on the last run's result until the next tick (every 15 min), so a
-mid-deploy failure looks current for up to a quarter of an hour.
-
-The alert rules already tolerate this: `for: 30m` against a 15-minute
-cadence needs two consecutive bad runs, so a single deploy-window
-failure does not page.
+Availability `0.000` with `unit_failed 1` means every request failed, so
+no latency is emitted (rather than a misleading `0.000`). Usually the run
+landed in a deploy's API restart: compare the mtime with the deploy
+window. Values persist until the next tick (≤ 15 min). The alerts'
+`for: 30m` needs two consecutive bad runs, so one deploy-window failure
+does not page.
 
 ## Reading the output
-
-Each run logs its JSON report to the systemd journal:
 
 ```sh
 sudo journalctl -u stellarindex-sla-probe.service -n 100 --output=cat | jq .
 ```
 
-Key fields:
-
 ```json
 {
   "base_url": "http://localhost:3000/v1",
-  "started_at": "2026-04-30T12:00:00Z",
-  "duration_sec": 30.0,
-  "concurrency": 1,
-  "max_rps": 100,
-  "sla": {
-    "p95_ms": 200,
-    "p99_ms": 500,
-    "freshness_sec": 30,
-    "availability_pct": 99.9
-  },
+  "duration_sec": 30.0, "concurrency": 1, "max_rps": 100,
+  "sla": {"p95_ms": 200, "p99_ms": 500, "freshness_sec": 30, "availability_pct": 99.9},
   "per_endpoint": [
-    {
-      "endpoint": "price",
-      "path": "/price",
-      "samples": 120,
-      "successes": 120,
-      "availability_pct": 100.0,
-      "latency_ms": {
-        "p50": 12.0, "p95": 45.0, "p99": 78.0,
-        "max": 102.0, "mean": 18.0
-      },
-      "observed_at_fresh_sec": 1.5
-    }
-    // … one entry per endpoint
+    {"endpoint": "price", "path": "/price", "samples": 120, "successes": 120,
+     "availability_pct": 100.0,
+     "latency_ms": {"p50": 12.0, "p95": 45.0, "p99": 78.0, "max": 102.0, "mean": 18.0},
+     "observed_at_fresh_sec": 1.5}
   ],
   "verdict": "pass",
   "failed_reasons": []
 }
 ```
 
-A `verdict` of `fail` carries the reasons in `failed_reasons` —
-e.g. `["price: p95=215.3ms > target 200.0ms"]`. The Healthchecks
-wrapper at `/opt/stellarindex/healthchecks/sla-probe.sh` reports the
-breach through three channels (F-1313, codex audit-2026-05-13):
-1. POSTs the full JSON report body to `${HEALTHCHECKS_URL_SLA_PROBE}/fail`.
-2. Writes `stellarindex_sla_probe_unit_failed 1` to the textfile-collector,
-   which Prometheus surfaces as the `stellarindex_sla_probe_unit_failed_alert`.
-3. The probe binary's stdout JSON lands in journald (`journalctl -u
-   stellarindex-sla-probe.service`).
+A `fail` verdict lists reasons, e.g. `["price: p95=215.3ms > target 200.0ms"]`.
+The wrapper (`/opt/stellarindex/healthchecks/sla-probe.sh`) reports a
+breach on three channels:
 
-The wrapper itself **exits 0** even on probe failure so the timer's
-"completed successfully" path stays clean for systemd; the breach is
-detected via Healthchecks/Prometheus/journald, not systemd unit state.
-`systemctl is-failed` will NOT report the breach — use the three channels
-above.
+1. POSTs the JSON report to `${HEALTHCHECKS_URL_SLA_PROBE}/fail`.
+2. Writes `stellarindex_sla_probe_unit_failed 1` to the textfile
+   (→ `stellarindex_sla_probe_unit_failed_alert`).
+3. The report lands in journald.
+
+The wrapper **always exits 0**, so `systemctl is-failed` will NOT show a
+breach; a missing or non-executable probe binary is also pinged as a fail.
 
 ## Pre-flight: spot-check from the operator's laptop
-
-Before enabling the timer, run a single probe directly:
 
 ```sh
 stellarindex-sla-probe \
@@ -277,30 +177,15 @@ stellarindex-sla-probe \
   -report-format text
 ```
 
-The text-format output is easier to scan during ad-hoc triage.
-A clean dry-run with `verdict: pass` confirms the endpoint set,
-the rate-limit headroom, and the freshness path all work end-to-
-end before the cron starts hitting them. Run from a laptop this
-*is* an edge measurement — TLS, DNS, Caddy and the network are all
-in the path — which the scheduled on-host run is not.
+`verdict: pass` confirms the endpoint set, rate-limit headroom and
+freshness path before enabling the timer. From a laptop this *is* an
+edge measurement (TLS, DNS, Caddy, network), which the on-host run is not.
 
 ## Textfile-collector integration
 
-`-textfile-output PATH` writes a Prometheus textfile after each
-run so node_exporter can scrape per-endpoint p50/p95/p99 latency,
-availability, freshness, and a pass/fail gauge. Operator wiring:
-
-```sh
-# /etc/default/stellarindex-healthchecks
-TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/sla_probe.prom
-```
-
-The systemd service writes to that path via the
-`<path>.tmp`-then-rename atomic protocol; node_exporter skips
-files whose name ends in `.tmp` so a partial write never appears
-in a scrape.
-
-### Metric set
+`-textfile-output PATH` (wrapper: `SLA_PROBE_TEXTFILE_OUTPUT`) writes via
+`<path>.tmp`-then-rename; node_exporter skips `.tmp` files, so a partial
+write never scrapes.
 
 ```
 stellarindex_sla_probe_latency_ms{endpoint=,quantile=}      gauge   ms
@@ -314,22 +199,14 @@ stellarindex_sla_probe_last_pass_timestamp                  gauge   unix; only o
 
 ### Alerts
 
-Six alerts in `deploy/monitoring/rules/sla-probe.yml`, each with a
-runbook under `docs/operations/runbooks/sla-probe-*.md`:
+`deploy/monitoring/rules/sla-probe.yml`; runbooks under
+`docs/operations/runbooks/sla-probe-*.md`.
 
 | Alert | Condition | Severity |
 |-------|-----------|----------|
-| `stellarindex_sla_probe_p95_breach` | per-endpoint p95 > 200 ms sustained 30 min | **P2** page |
-| `stellarindex_sla_probe_p99_breach` | per-endpoint p99 > 500 ms sustained 30 min | **P2** page |
-| `stellarindex_sla_probe_availability_breach` | per-endpoint availability < 99.9 % sustained 30 min | **P2** page |
-| `stellarindex_sla_probe_freshness_breach` | `price` freshness > 150 s (the ADR-0015 closed-bucket bound), every other endpoint > 30 s (the pricing SLA), sustained 30 min | **P2** page |
-| `stellarindex_sla_probe_unit_failed_alert` | overall verdict gauge = 1 sustained 30 min | P3 ticket |
-| `stellarindex_sla_probe_stale` | `last_pass_timestamp` older than 90 min (6× 15-min cadence) | **P2** page |
-
-## SLA targets in code
-
-The probe's `slaTargets` struct mirrors the table at the top of
-this doc. Defaults are baked in
-(`cmd/stellarindex-sla-probe/main.go::default*Target`); operators
-can tune them via flags if their deployment carries a different
-contract (e.g. an internal staging environment with looser bars).
+| `stellarindex_sla_probe_p95_breach` | per-endpoint p95 > 200 ms for 30 min | **P2** page |
+| `stellarindex_sla_probe_p99_breach` | per-endpoint p99 > 500 ms for 30 min | **P2** page |
+| `stellarindex_sla_probe_availability_breach` | per-endpoint availability < 99.9 % for 30 min | **P2** page |
+| `stellarindex_sla_probe_freshness_breach` | `price` > 150 s (ADR-0015 closed-bucket bound), every other endpoint > 30 s, for 30 min | **P2** page |
+| `stellarindex_sla_probe_unit_failed_alert` | verdict gauge = 1 for 30 min | P3 ticket |
+| `stellarindex_sla_probe_stale` | `last_pass_timestamp` older than 90 min (6× cadence) or absent | **P2** page |
