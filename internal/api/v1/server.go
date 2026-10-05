@@ -2640,6 +2640,9 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// anything. #352.
 	s.mux.HandleFunc("GET /v1/rwa/assets", s.handleRWAAssets)
 	s.mux.HandleFunc("GET /v1/rwa/history", s.handleRWAHistory)
+	// The hand-vetted stablecoin set (catalogue class=stablecoin with a
+	// Stellar issuer) with supply and USD value; the total is a lower bound.
+	s.mux.HandleFunc("GET /v1/stablecoins", s.handleStablecoins)
 	// The premium/discount to net asset value over time — the same
 	// measurement `premium.pct` publishes point-in-time, as a daily
 	// series. A ratio of two SAMPLED observations, so unlike the value

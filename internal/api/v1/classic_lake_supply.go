@@ -576,6 +576,9 @@ func (s *Server) PrewarmClassicLakeSupply(ctx context.Context, opts []timescale.
 	for assetID, contractID := range s.rwaClassicPrewarmSet(ctx) {
 		wanted[assetID] = contractID
 	}
+	for assetID, contractID := range s.stablecoinPrewarmSet() {
+		wanted[assetID] = contractID
+	}
 	if len(wanted) == 0 {
 		return
 	}

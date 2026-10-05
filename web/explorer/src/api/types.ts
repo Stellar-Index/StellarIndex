@@ -3107,6 +3107,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stablecoins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The hand-vetted Stellar stablecoin set with circulating supply and USD value.
+         * @description The catalogue's `class: stablecoin` entries that carry a Stellar
+         *     issuer, each keyed by `(code, issuer)` with its Stellar Asset
+         *     Contract address. Membership is hand-vetted in the verified-currency
+         *     catalogue and is never derived from an aggregator; this surface adds
+         *     no issuer of its own. Methodology: docs/methodology/stablecoins.md.
+         *
+         *     VALUATION. Supply and price come from the same reads `/assets` and
+         *     `/rwa/assets` use (supply preference chain, substance gate, dust
+         *     guard). The price is the REAL served pair price: it is never
+         *     coerced to the peg, so a depeg shows. `supply_usd` is
+         *     `circulating_supply / 10^decimals * price_usd`, rounded to cents,
+         *     in exact rational arithmetic; every amount is a decimal string.
+         *     Each row's `valuation_status` is `published`, `supply_unavailable`,
+         *     `price_unavailable`, `withheld` (a guard declined the figure) or
+         *     `not_observed`.
+         *
+         *     TOTAL. `total.supply_usd` sums the published per-asset
+         *     `supply_usd` strings of USD-pegged, non-yield-bearing members, so a
+         *     reader re-adding the rows reaches the same figure. It is ABSENT, not
+         *     `"0.00"`, when none is valued. `total.lower_bound` is true whenever
+         *     the figure is less than the value of every stablecoin on Stellar:
+         *     a set member is unvalued or not summed, a supply is itself a floor,
+         *     or `excluded` is non-empty. `excluded` names catalogue stablecoins
+         *     outside the set (USDT has no Tether-native Stellar issuer);
+         *     `total.not_summed` names set members left out of the total: non-USD
+         *     pegs (`non_usd_peg`), yield-bearing wrappers
+         *     (`yield_bearing_wrapper`) and unmapped pegs (`peg_unmapped`).
+         *     `by_peg` keeps pegs apart and totals every valued member of a peg,
+         *     including those `not_summed`.
+         *
+         *     No query parameters. Served with `public, max-age=30`.
+         */
+        get: operations["listStablecoins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rwa/history": {
         parameters: {
             query?: never;
@@ -8327,6 +8377,58 @@ export interface components {
              *     this sums to the view's `assets`.
              */
             assets_unmeasured: number;
+        };
+        StablecoinsView: {
+            total: components["schemas"]["StablecoinTotal"];
+            by_peg: components["schemas"]["StablecoinPegTotal"][];
+            /** @description Catalogue stablecoins outside the set, with the reason. */
+            excluded: components["schemas"]["StablecoinExclusion"][];
+            /** @description The set, ordered by `supply_usd` descending; unvalued rows sort last. */
+            assets: components["schemas"]["StablecoinAsset"][];
+        };
+        StablecoinTotal: {
+            /** @description Decimal string. Absent, never "0.00", when no summed member is valued. */
+            supply_usd?: string;
+            assets: number;
+            assets_valued: number;
+            assets_unvalued: number;
+            /** @description Set members left out of `supply_usd`. */
+            not_summed: components["schemas"]["StablecoinExclusion"][];
+            /** @description True when the total is less than the value of every Stellar stablecoin. */
+            lower_bound: boolean;
+            basis: string;
+        };
+        StablecoinPegTotal: {
+            /** @description ISO currency the asset tracks, or `unknown`. */
+            peg: string;
+            /** @description Decimal string over the peg's valued members; absent when none is valued. */
+            supply_usd?: string;
+            assets: number;
+        };
+        StablecoinExclusion: {
+            ticker: string;
+            /** @enum {string} */
+            reason: "no_stellar_issuer" | "non_usd_peg" | "yield_bearing_wrapper" | "peg_unmapped";
+        };
+        StablecoinAsset: {
+            asset_id: string;
+            code: string;
+            issuer: string;
+            /** @description The asset's Stellar Asset Contract address. */
+            contract_id?: string;
+            ticker: string;
+            peg: string;
+            yield_bearing?: boolean;
+            /** @description Decimal string in the asset's smallest unit. */
+            circulating_supply?: string;
+            decimals: number;
+            supply_basis?: string;
+            circulating_supply_lower_bound?: boolean;
+            /** @description The served pair price; never normalised to the peg. */
+            price_usd?: string;
+            supply_usd?: string;
+            /** @enum {string} */
+            valuation_status: "published" | "supply_unavailable" | "price_unavailable" | "withheld" | "not_observed";
         };
         /**
          * @description The tokenized-real-world-asset set, its aggregates, and the rule
@@ -20163,6 +20265,95 @@ export interface operations {
                     };
                 };
             };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listStablecoins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stablecoin set, its per-asset valuation and a lower-bound total. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "total": {
+                     *           "supply_usd": "118059162072206.13",
+                     *           "assets": 5,
+                     *           "assets_valued": 4,
+                     *           "assets_unvalued": 1,
+                     *           "not_summed": [
+                     *             {
+                     *               "ticker": "EURC",
+                     *               "reason": "non_usd_peg"
+                     *             },
+                     *             {
+                     *               "ticker": "yUSDC",
+                     *               "reason": "yield_bearing_wrapper"
+                     *             }
+                     *           ],
+                     *           "lower_bound": true,
+                     *           "basis": "Circulating supply of the catalogue's hand-vetted Stellar stablecoins, valued at the served USD price; only USD-pegged, non-yield-bearing members are summed"
+                     *         },
+                     *         "by_peg": [
+                     *           {
+                     *             "peg": "EUR",
+                     *             "supply_usd": "108.00",
+                     *             "assets": 1
+                     *           },
+                     *           {
+                     *             "peg": "USD",
+                     *             "supply_usd": "118059162072207.18",
+                     *             "assets": 4
+                     *           }
+                     *         ],
+                     *         "excluded": [
+                     *           {
+                     *             "ticker": "USDT",
+                     *             "reason": "no_stellar_issuer"
+                     *           }
+                     *         ],
+                     *         "assets": [
+                     *           {
+                     *             "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "code": "USDC",
+                     *             "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "ticker": "USDC",
+                     *             "peg": "USD",
+                     *             "circulating_supply": "1180591620717411303424",
+                     *             "decimals": 7,
+                     *             "supply_basis": "issuer_exclusion",
+                     *             "price_usd": "1",
+                     *             "supply_usd": "118059162071741.13",
+                     *             "valuation_status": "published"
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-10-05T12:00:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: components["schemas"]["StablecoinsView"];
+                    };
+                };
+            };
+            429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };
     };
