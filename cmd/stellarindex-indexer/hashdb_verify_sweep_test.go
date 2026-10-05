@@ -3,9 +3,17 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
+	"path/filepath"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/archivecompleteness"
+	"github.com/Stellar-Index/StellarIndex/internal/hashdb"
+	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // TestClassifyHashDBVerifySweep_DriftSurvivesShutdownCancel is T128:
@@ -134,5 +142,57 @@ func TestCountNewDrift_ExcessBeyondCapCountsRaw(t *testing.T) {
 	}
 	if got := countNewDrift(res, seen); got != 5 {
 		t.Fatalf("countNewDrift(capped) = %d, want 5 (2 identified + 3 excess)", got)
+	}
+}
+
+func TestPickHashDBHistorySlice(t *testing.T) {
+	t.Run("no history", func(t *testing.T) {
+		for _, c := range [][2]uint32{{100, 100}, {100, 50}} {
+			if _, _, ok := pickHashDBHistorySlice(c[0], c[1], 1000, 1); ok {
+				t.Fatalf("start=%d recentFrom=%d: want no slice", c[0], c[1])
+			}
+		}
+		if _, _, ok := pickHashDBHistorySlice(100, 5000, 0, 1); ok {
+			t.Fatal("n=0: want no slice")
+		}
+	})
+	t.Run("history smaller than n returns all of it", func(t *testing.T) {
+		from, to, ok := pickHashDBHistorySlice(100, 150, 1000, 7)
+		if !ok || from != 100 || to != 149 {
+			t.Fatalf("got %d..%d ok=%v, want 100..149", from, to, ok)
+		}
+	})
+	t.Run("bounds hold over many seeds", func(t *testing.T) {
+		const start, recentFrom, n = 1000, 9000, 1000
+		for seed := uint64(0); seed < 5000; seed++ {
+			from, to, ok := pickHashDBHistorySlice(start, recentFrom, n, seed)
+			if !ok || from < start || to >= recentFrom || to-from+1 != n {
+				t.Fatalf("seed %d: got %d..%d ok=%v", seed, from, to, ok)
+			}
+			if f2, t2, _ := pickHashDBHistorySlice(start, recentFrom, n, seed); f2 != from || t2 != to {
+				t.Fatalf("seed %d not reproducible", seed)
+			}
+		}
+	})
+}
+
+// A failing pass must count under the window it ran for, so the
+// history slice's errors stay visible apart from the recent window's.
+func TestHashDBVerifyPass_CountsUnderWindowLabel(t *testing.T) {
+	db, err := hashdb.Create(filepath.Join(t.TempDir(), "h.db"), 1)
+	if err != nil {
+		t.Fatalf("hashdb.Create: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, window := range []string{hashDBWindowRecent, hashDBWindowHistory} {
+		c := obs.HashdbVerifyRunsTotal.WithLabelValues("error", window)
+		before := testutil.ToFloat64(c)
+		// Empty ledgerstream.Config: Stream fails before any read.
+		hashDBVerifyPass(context.Background(), logger, db, ledgerstream.Config{}, 10, 20, nil, window)
+		if got := testutil.ToFloat64(c) - before; got != 1 {
+			t.Errorf("window=%s: error counter delta = %v, want 1", window, got)
+		}
 	}
 }

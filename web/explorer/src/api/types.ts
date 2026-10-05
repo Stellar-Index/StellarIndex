@@ -11045,9 +11045,8 @@ export interface components {
              *     assets (native / Soroban / fiat), and for any code that
              *     no verified currency claims on Stellar. Always null on
              *     testnet and futurenet, where the verified issuers (pubnet
-             *     accounts) do not exist. See R-018 /
-             *     docs/architecture/multi-network-assets-migration.md
-             *     Phase 1.1.
+             *     accounts) do not exist. See
+             *     docs/architecture/supply-pipeline.md#asset-identity.
              */
             unverified_warning?: components["schemas"]["UnverifiedWarning"] | null;
             /**

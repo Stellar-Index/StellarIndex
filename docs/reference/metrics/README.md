@@ -1687,7 +1687,9 @@ worth investigating on its own.
 
 ### `stellarindex_hashdb_verify_runs_total`
 
-Counter, label `outcome` (`ok` / `drift` / `error`).
+Counter, labels `outcome` (`ok` / `drift` / `error`) and `window`
+(`recent` = trailing window, `history` = random older slice from the
+archive bucket).
 
 Per-sweep outcome of the ADR-0016 hashdb drift detector's periodic
 verify side: every `[hashdb].verify_interval_minutes` (default 60),

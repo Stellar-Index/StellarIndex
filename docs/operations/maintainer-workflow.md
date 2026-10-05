@@ -41,7 +41,30 @@ again. One heavy job at a time.
 **Timer units.** `restore-drill` and `restore-drill-offsite` run under the
 wrapper (`HEAVY_JOB_CLASS=scheduled`, `SuccessExitStatus=75` for a lock
 skip). The drill refuses up front unless pool free space covers the restore
-plus the watchdog's 300 GiB floor. Other timer units deliberately run bare:
+plus the watchdog's 300 GiB floor.
+
+**Timer units behind an operator job.** A scheduled unit with
+`HEAVY_JOB_LOCK_WAIT` queues behind an operator heavy job; if the operator
+job outlasts the wait (a multi-day lake backup), the fire is **deferred**:
+exit 75, nothing ran, the journal says `deferring <name> (scheduled): an
+operator heavy job holds … after waiting Ns`, and the unit is not `failed`.
+A planned long job therefore does not page through every daily unit it
+blocks. Persistent deferral is still caught, by each job's output staleness
+alert rather than by `stellarindex_systemd_unit_failed`:
+
+| Unit | Alert that fires if deferral persists |
+|---|---|
+| `asset-registry-backfill` | `stellarindex_textfile_producer_stale` on `ops_job_asset_registry_backfill.prom` (24h; held off only while the heavy lock is under 72h old) |
+| `verify-lake` | `stellarindex_lake_verify_stale` (last run > 48h) |
+| `compute-completeness` | `stellarindex_data_source_stale{domain="verdict"}` (newest `completeness_snapshots.computed_at` > 36h) |
+| `ch-supply` | `stellarindex_data_source_stale{domain="sep41_supply"}` (`supply_flows` > 1h behind; ch-supply is the gap-fill behind the live writer) |
+
+A wait that runs out behind another *scheduled* job is still a loud
+failure (exit 1): two timers blocking each other for hours is a fault.
+Before a long operator job, check that its runtime fits inside these
+bounds, or accept the staleness pages as the true cost of running it.
+
+Other timer units deliberately run bare:
 
 | Unit | Why not wrapped |
 |---|---|

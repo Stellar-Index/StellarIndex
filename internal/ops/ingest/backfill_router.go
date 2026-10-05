@@ -15,6 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/wasmaudit"
 )
 
 // backfillRouter walks Galexie ledger metadata for a range and
@@ -77,6 +78,10 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 		return fmt.Errorf("storage open: %w", err)
 	}
 	defer func() { _ = store.Close() }()
+	// Before routerWriteStart, so a refused range records no dirty window.
+	if err := wasmaudit.GateReplay(ctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts, []string{soroswap_router.SourceName}, uint32(*from), uint32(*to)); err != nil {
+		return err
+	}
 	// Re-derive path (INV-3 / migration 0110): stamp a positive
 	// derive_generation so a corrected router re-walk (fixed decoder / amount
 	// scaling) UPDATEs the stored soroswap_router_swaps rows in place —
@@ -260,17 +265,11 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 // routerCursorSource keys backfill-router's per-range resume cursor.
 const routerCursorSource = "backfill-router"
 
-// routerStartStore is the slice of the store [routerWriteStart] needs.
-type routerStartStore interface {
-	dirtyWindowRecorder
-	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
-}
-
 // routerWriteStart resolves the ledger a backfill-router run starts at
 // (resuming from its range cursor) and, for a -write run with ledgers left to
 // walk, records the dirty window over [from, to] before the first insert.
 // done reports a range whose cursor is already at or past to.
-func routerWriteStart(ctx context.Context, store routerStartStore, cfg config.Config, from, to uint32, resume, write bool) (start uint32, done bool, err error) {
+func routerWriteStart(ctx context.Context, store dirtyWindowRecorder, cfg config.Config, from, to uint32, resume, write bool) (start uint32, done bool, err error) {
 	start = from
 	if resume {
 		prior, gerr := store.GetCursor(ctx, routerCursorSource, opsutil.RangeCursorKey(from, to))

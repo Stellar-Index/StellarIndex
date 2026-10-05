@@ -564,8 +564,8 @@
       #   scheduled (every timer/cron launcher, pinned by
       #     scripts/ci/run-heavy-job-test.sh) takes it shared, so an
       #     operator job cannot start beside one, and waits for an operator
-      #     job to finish (HEAVY_JOB_LOCK_WAIT) or, without a wait, defers
-      #     with exit 75. Scheduled jobs are also serialised against each
+      #     job to finish (HEAVY_JOB_LOCK_WAIT), deferring with exit 75 when
+      #     there is no wait or it runs out. Scheduled jobs are also serialised against each
       #     other by a second lock taken exclusive, with the same rule.
       # The files are pre-created root:root 0644 by tmpfiles.d (task
       # above). If the host-wide one cannot be opened the wrapper cannot
@@ -590,20 +590,21 @@
         fi
       elif [ "$CLASS" = scheduled ]; then
         # A launcher that set HEAVY_JOB_LOCK_WAIT queues here too, so an
-        # overlap delays a daily/monthly job instead of dropping the fire,
-        # and fails loud when the wait runs out; without it, defer (exit 75).
-        # One deadline covers all three waits: each gets what is left.
+        # overlap delays a daily/monthly job instead of dropping the fire.
+        # An operator job outlasting the wait (a multi-day lake backup) is
+        # planned work, so that defers (exit 75) too: each job's own output
+        # staleness alert, not a unit failure, says when deferral has gone
+        # on too long. Scheduled jobs blocking each other that long is a
+        # fault and fails loud. One deadline covers all three waits.
         SCHED_LOCK="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy-scheduled.lock"
         lock_file_prep "$SCHED_LOCK"
         lock_left() { local l=$((LOCK_WAIT - ($(date +%s) - WAIT_START))); [ "$l" -ge 1 ] || l=1; echo "$l"; }
         FLOCK_MODE=(-n)
         [ -n "$LOCK_WAIT" ] && FLOCK_MODE=(-w "$(lock_left)")
         if ! flock "${FLOCK_MODE[@]}" -s 8; then
-          if [ -n "$LOCK_WAIT" ]; then
-            echo "run-heavy-job: ${NAME} FAILED to start: an operator heavy job held ${GLOBAL_LOCK} for the whole ${LOCK_WAIT}s wait (see what holds it: fuser -v ${GLOBAL_LOCK})" >&2
-            exit 1
-          fi
-          echo "run-heavy-job: deferring ${NAME} (scheduled): an operator heavy job holds ${GLOBAL_LOCK} — one heavy job at a time. Nothing ran (exit 75); the next fire retries. See what holds it: fuser -v ${GLOBAL_LOCK}" >&2
+          WAITED=""
+          [ -n "$LOCK_WAIT" ] && WAITED=" after waiting ${LOCK_WAIT}s"
+          echo "run-heavy-job: deferring ${NAME} (scheduled): an operator heavy job holds ${GLOBAL_LOCK}${WAITED} — one heavy job at a time. Nothing ran (exit 75); the next fire retries. See what holds it: fuser -v ${GLOBAL_LOCK}" >&2
           exit 75
         fi
         if exec 7<"$SCHED_LOCK"; then

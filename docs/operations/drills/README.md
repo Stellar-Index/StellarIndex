@@ -90,5 +90,5 @@ postmortem ([sev-playbook.md §6](../sev-playbook.md)), shorter.
 ## References
 
 [sev-playbook.md](../sev-playbook.md) (the procedure drills exercise);
-[Coverage matrix #20](../../architecture/coverage-matrix.md);
+[Coverage matrix F3.5–F3.6](../../architecture/coverage-matrix.md);
 [SRE workbook, postmortem culture](https://sre.google/workbook/postmortem-culture/).

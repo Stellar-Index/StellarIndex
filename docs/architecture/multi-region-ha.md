@@ -134,7 +134,7 @@ all stand as the design for when it resumes.
 | CH replication | **none** — all plain/Replacing MergeTree, no Replicated/Distributed, single `default` Local disk | `system.disks`, `system.storage_policies` |
 | Postgres/Timescale (pricing) | **459 GiB** physical / ~1.0 TiB logical (ext4). **Standalone primary**, zero replicas/slots/publications | `pg_database_size`, `pg_stat_replication` |
 | Raw galexie-archive (the INPUT) | **2.49 TiB on R1 MinIO — NOT full history** (gap-scan 2026-08-21): genesis chunk `[0, 63999]` + `[49984000 → tip]` only; `[64000, 49983999]` (~50M ledgers, ~2.3 TiB) was capacity-trimmed (`ARCHIVE_FROM=49984000`) and exists locally **only via the `aws-public-blockchain` cold tier** (ADR-0027) | partition gap-scan |
-| Pricing SLO today | p95 **68 ms** / p99 **98 ms** (k6) — ~3–5× under budget | slos-and-guarantees.md |
+| Pricing SLO today | p95 **68 ms** / p99 **98 ms** (k6) — ~3–5× under budget | [coverage-matrix.md](coverage-matrix.md#service-objectives-and-their-proof) |
 | CH on `/readyz` | **non-critical** — CH down ⇒ `degraded` (200), pricing serves, ~21 lake routes 503 | `clickhouseChecker.Critical()=false` |
 | Explorer | separate Next.js app, **migrating to edge SSR** (ADR-0044, accepted) | `web/explorer/` |
 | Off-site backup | **none** at measurement — pgBackRest 920 GiB on the *same* ZFS pool; no CH data backup. Postgres `repo2` has since shipped; current state in §7 | `pgbackrest.conf`, ADR-0043 |

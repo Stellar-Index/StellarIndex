@@ -149,6 +149,13 @@ sudo systemctl start compute-completeness-sdex.service   # or compute-completene
 A window that fits the pass (re-check from `F` within a day of ledgers) is
 re-checked and cleared by the next nightly run, with no action.
 
+The exception is a `backfill -write [F,T]` window on a projected source (not
+sdex, band or soroswap-router). A `backfill -source soroban-events` landed raw
+events behind that source's projector cursor while the projector read Postgres
+`soroban_events`, and nothing re-projects them on its own. The backfill logged
+the command; run it after the backfill finishes:
+`stellarindex-ops projector-replay -config PATH -source <X> -from F`.
+
 ## Root cause analysis
 
 A served<>lake divergence: dropped rows (a decoder bug fixed forward-only, e.g.

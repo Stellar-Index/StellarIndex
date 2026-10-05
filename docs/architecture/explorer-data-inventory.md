@@ -15,7 +15,7 @@ The explorer is `web/explorer/` (stellarindex.io, Cloudflare Pages). The API con
 
 Section numbers are cited from migrations and Go comments (§3, §6.1, §7, §9.1, §9.6, §11); keep them stable.
 
-The plan was written against a `/coins/*` tree. That tree never shipped: routes are `/assets/*` and there is no `/v1/coins` (see [coins-to-assets-migration.md](coins-to-assets-migration.md)); `/coins` and `/coins/` 301 to `/assets` in `web/explorer/public/_redirects`. Every `/v1/coins...` path in the old plan maps to `/v1/assets...` or is a gap below.
+The plan was written against a `/coins/*` tree. That tree never shipped: routes are `/assets/*` and there is no `/v1/coins` (see [supply-pipeline.md § Asset identity](supply-pipeline.md#asset-identity)); `/coins` and `/coins/` 301 to `/assets` in `web/explorer/public/_redirects`. Every `/v1/coins...` path in the old plan maps to `/v1/assets...` or is a gap below.
 
 ## 1. Mission
 

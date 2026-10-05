@@ -1,495 +1,353 @@
 ---
-title: Supply pipeline — three-algorithm derivation, per-asset refresh
-last_verified: 2026-07-24
+title: Supply pipeline and asset identity
+last_verified: 2026-10-05
 status: binding
 ---
 
 # Supply pipeline
 
-**Every supply value on `/v1/assets/{id}` flows through one path,
-parameterised by one of three algorithms keyed on the asset class:**
+Every supply value on `/v1/assets/{id}` comes from one path, parameterised
+by one of three algorithms keyed on asset class. Ingest mechanics (dispatcher
+hooks, sink, replay) are in [ingest-pipeline.md](ingest-pipeline.md); the
+system map is [overview.md](overview.md). Every amount here is
+`canonical.Amount` / `*big.Int` in Go, `NUMERIC` in Postgres and a decimal
+string in JSON (ADR-0003, AGENTS.md invariant 1).
 
 ```
-operator config: [supply] sdf_reserve_accounts /
-                          watched_classic_assets /
-                          watched_sep41_contracts /
-                          sac_wrappers
-                                │
-                                ▼
-                     one supply.Refresher per asset
-                                │
-                                ▼
-                  (Algorithm 1)  (Algorithm 2)  (Algorithm 3)
-                  XLMComputer    ClassicComputer SEP41Computer
-                  ▼              ▼               ▼
-                  (reads)        (reads)         (reads)
-   ┌──────────────────────┐  ┌────────────────┐ ┌─────────────────┐
-   │ account_observations │  │ trustline_obs  │ │ sep41_supply_   │
-   │  (XLM balances of    │  │ claimable_obs  │ │  events         │
-   │   SDF reserves)      │  │ lp_reserve_obs │ │  (mint / burn / │
-   │                      │  │ sac_balance_obs│ │   clawback)     │
-   └──────────────────────┘  └────────────────┘ └─────────────────┘
-                                │
-                                ▼
-                     supply.Supply struct
-                                │
-                                ▼
-                     Store.InsertSupply
-                                │
-                                ▼
-                  asset_supply_history (hypertable)
-                                │
-                                ▼
-                     Store.LatestSupply
-                                │
-                                ▼
-                     /v1/assets/{id} F2 fields:
-                       total_supply
-                       circulating_supply
-                       max_supply
-                       market_cap_usd  (× current price)
-                       fdv_usd         (× current price)
-                       supply_basis
+[supply] sdf_reserve_accounts / watched_classic_assets / watched_sep41_contracts / sac_wrappers
+        → one supply.Refresher per asset
+        → XLMComputer (alg 1) | ClassicComputer (alg 2) | SEP41Computer (alg 3)
+            reads: account_observations | trustline/claimable/lp_reserve/sac_balance obs | sep41_supply_events
+        → supply.Supply → Store.InsertSupply → asset_supply_history (hypertable)
+        → Store.LatestSupply → /v1/assets/{id} F2 fields: total_supply, circulating_supply,
+          max_supply, market_cap_usd (× price), fdv_usd (× price), supply_basis
 ```
 
-## The three algorithms (per ADR-0011)
+## The three algorithms (ADR-0011)
 
-| Algorithm | Asset class       | Total derivation                              | ADR        |
-|-----------|-------------------|-----------------------------------------------|------------|
-| 1         | Native XLM        | frozen 50,001,806,812 × 10⁷ stroops          | ADR-0011 §1 |
-| 2         | Classic credit    | Σ trustline + Σ claimable + Σ LP + Σ SAC     | ADR-0011 §2 |
-| 3         | SEP-41 Soroban    | Σ mint − Σ burn − Σ clawback over lifetime   | ADR-0011 §3 |
+| Algorithm | Asset class | Total derivation | ADR |
+|---|---|---|---|
+| 1 | Native XLM | frozen 50,001,806,812 × 10⁷ stroops | ADR-0011 §1 |
+| 2 | Classic credit | Σ trustline + Σ claimable + Σ LP + Σ SAC | ADR-0011 §2 |
+| 3 | SEP-41 Soroban | Σ mint − Σ burn − Σ clawback over lifetime | ADR-0011 §3 |
 
-**Circulating** (per ADR-0011) is `total − issuer/admin balance −
-Σ operator-locked-set balances` for all three. The locked-set is
-operator-curated via `supply.Policy.PerAsset`.
+**Circulating** = `total − issuer/admin balance − Σ operator-locked-set
+balances` for all three; the locked set is operator-curated via
+`supply.Policy.PerAsset`.
 
-**Max supply** is `total` for hard-capped assets (XLM), nil
-otherwise unless the operator supplies an override or the SEP-1
-declaration overlay populates it. The overlay (`supply.Overlay`,
-wired 2026-07-05) applies at the API **serving** layer, not at
-snapshot-compute time: when the stored snapshot has no max, the
-`/v1/assets/{id}` handler scales the issuer's stellar.toml
-`max_number` / `fixed_number` (display units → raw units by asset
-decimals; blocked by `is_unlimited = true`) and labels the result
-`max_supply_basis: "sep1_declared_max"` so consumers can see the cap is
-issuer-self-declared; `supply_basis` keeps naming the circulating
-policy. `asset_supply_history` rows never carry declared values.
+**Max supply** is `total` for hard-capped assets (XLM), else nil unless the
+operator overrides it or the SEP-1 overlay (`supply.Overlay`) fills it. The
+overlay applies at the API **serving** layer, not at snapshot time: when the
+stored snapshot has no max, the `/v1/assets/{id}` handler scales the issuer's
+stellar.toml `max_number` / `fixed_number` (display → raw units by asset
+decimals; blocked by `is_unlimited = true`) and labels it
+`max_supply_basis: "sep1_declared_max"`; `supply_basis` keeps naming the
+circulating policy. `asset_supply_history` rows never carry declared values.
 
 ## The six observers
 
-Every component the algorithms read is sourced from one of six
-LCM-stream observers. Each plugs into the dispatcher's hooks
-without changing dispatcher source — they're pure additive
-sources per the ingest-pipeline contract:
-
 | Observer | Hook | Watched-set config | Backs |
-|----------|------|--------------------|-------|
-| `internal/sources/accounts` | `LedgerEntryChangeDecoder` | `[supply] sdf_reserve_accounts` (the SDF reserve list only — every entry is subtracted from circulating supply) | Algorithm 1; the metadata overlay reads the same rows but has no watched-set key of its own |
-| `internal/sources/trustlines` | `LedgerEntryChangeDecoder` | `[supply] watched_classic_assets` | Algorithm 2 trustline component |
-| `internal/sources/claimable_balances` | `LedgerEntryChangeDecoder` | `[supply] watched_classic_assets` | Algorithm 2 claimable component |
-| `internal/sources/liquidity_pools` | `LedgerEntryChangeDecoder` | `[supply] watched_classic_assets` | Algorithm 2 LP-reserve component |
-| `internal/sources/sac_balances` | `LedgerEntryChangeDecoder` | `[supply.sac_wrappers]` (contract→asset_key map) | Algorithm 2 SAC component + Algorithm 3 locked-set lookups |
-| `internal/sources/sep41_supply` | `Decoder` (events) | `[supply] watched_sep41_contracts` | Algorithm 3 mint/burn/clawback running sum |
+|---|---|---|---|
+| `internal/sources/accounts` | `LedgerEntryChangeDecoder` | `[supply] sdf_reserve_accounts` (every entry is subtracted from circulating) | Algorithm 1; the metadata overlay reads the same rows but has no watched-set key |
+| `internal/sources/trustlines` | `LedgerEntryChangeDecoder` | `[supply] watched_classic_assets` | Alg 2 trustline component |
+| `internal/sources/claimable_balances` | `LedgerEntryChangeDecoder` | `[supply] watched_classic_assets` | Alg 2 claimable component |
+| `internal/sources/liquidity_pools` | `LedgerEntryChangeDecoder` | `[supply] watched_classic_assets` | Alg 2 LP-reserve component |
+| `internal/sources/sac_balances` | `LedgerEntryChangeDecoder` | `[supply.sac_wrappers]` (contract → asset_key) | Alg 2 SAC component + Alg 3 locked-set lookups |
+| `internal/sources/sep41_supply` | `Decoder` (events) | `[supply] watched_sep41_contracts` | Alg 3 mint/burn/clawback running sum |
 
-The first five are LCM ledger-entry observers (ADR-0021 +
-ADR-0022). The sixth is an event-stream observer (ADR-0023) — it
-classifies topics and accumulates amounts rather than reading
-state.
+The first five read ledger-entry state (ADR-0021, ADR-0022); `sep41_supply`
+classifies events and accumulates amounts (ADR-0023). Registration is opt-in:
+`pipeline.RegisterSupplyEntryDecoders` attaches the five entry observers when
+their watched set is non-empty, `pipeline.RegisterSupplyEventDecoders`
+attaches `sep41_supply` when `watched_sep41_contracts` is. Empty watched set →
+observer skipped → no behaviour change.
 
-All six observers are now wired into the indexer's dispatcher
-(L2.12a closed via PRs #411 / #412 / #413). Registration is
-opt-in per the corresponding `[supply]` watched-set —
-`pipeline.RegisterSupplyEntryDecoders` handles the five
-`LedgerEntryChangeDecoder`s (accounts / trustlines /
-claimable_balances / liquidity_pools / sac_balances) keyed off
-`sdf_reserve_accounts` / `watched_classic_assets` /
-`[supply.sac_wrappers]`, and `pipeline.RegisterSupplyEventDecoders`
-attaches sep41_supply when `watched_sep41_contracts` is non-empty.
-Empty watched-set → observer skipped → no behaviour change. With
-any watched-set populated, the corresponding hypertable starts
-filling on every matching ledger close.
+### Removals (`IsRemoval`)
+
+A removed ledger entry is written as an `is_removal = true` row with a zero
+balance, never dropped. The `Sum*AtOrBefore` readers
+(`internal/storage/timescale/classic_supply_observations.go`) take each
+entity's latest row at or before the ledger and exclude it when that row is a
+removal, so a closed trustline, claimed balance or withdrawn pool stops
+counting. A removed claimable balance or LP entry carries no asset in its key;
+`claimable_balances` and `liquidity_pools` resolve it from the same-ledger
+STATE pre-image (`dispatcher_adapter.go` memo), and an unattributable removal
+is a decode error, not a silent drop. Pinned by
+`internal/sources/{claimable_balances,liquidity_pools}/removal_supply_test.go`
+([45b findings](../operations/45b-verify-first-findings.md#gated--larger-items)).
 
 ## The chained-fallback reader pattern
 
-Per ADR-0021, the supply readers compose a "live LCM-derived
-reader" with an "operator-static fallback" so the system works
-during observer bootstrap:
+Per ADR-0021, each reader composes a live LCM-derived reader with an
+operator-static fallback so the system works during observer bootstrap:
 
 ```
-supply.Refresher.Tick()
-    │
-    ▼
-supply.<Algorithm>Computer.Compute(asset, ledger, observedAt)
-    │
-    ▼
-supply.<Algorithm>SupplyReader.Read(asset, locked, ledger)
-    │
-    ▼
-chain reader:
-    1. try live: query account_observations / trustline_observations / etc.
-    2. on ErrNoObservation: fall through to operator-static config
-       (reserve_balances_stroops / per-asset locked-set / etc.)
-    3. otherwise: bubble error
+supply.Refresher.Tick() → <Algorithm>Computer.Compute(asset, ledger, observedAt)
+  → <Algorithm>SupplyReader.Read(asset, locked, ledger) → chain reader:
+      1. live: account_observations / trustline_observations / …
+      2. on ErrNoObservation: operator-static config (reserve_balances_stroops / per-asset locked set)
+      3. otherwise: bubble the error
 ```
 
-For Algorithm 1 (XLM) specifically: `supplyAggregatorChainReader`
-in `cmd/stellarindex-aggregator/main.go` wraps
-`supply.LCMReserveBalanceReader` (live) with
-`supply.ConfigReserveBalanceReader` (static). When the
-AccountEntry observer hasn't backfilled the SDF reserves yet,
-the static config produces the answer; once the observer covers
-the live set, the static config can be left stale (the live
-reader wins).
+For XLM, `supply.NewChainedReserveBalanceReader` (`cmd/stellarindex-aggregator/main.go`)
+wraps `supply.LCMReserveBalanceReader` (live) with
+`supply.ConfigReserveBalanceReader` (static); once the observer covers the
+reserves the live reader wins and the static map may go stale.
 
-Bootstrap caveat: the live observer only writes when an account
-CHANGES — a dormant reserve account never emits a
-`LedgerEntryChange`, so the chain would stay on the static map
-indefinitely. `stellarindex-ops supply seed-observations` closes
-that: a one-shot, idempotent seed of each
-`[supply] sdf_reserve_accounts` entry's latest AccountEntry from
-the lake's `ledger_entries_current` projection (ADR-0034), at the
-account's true last-modified ledger. Later live observations
-supersede seeded rows via the reader's at-or-before-ledger
-ordering.
+Bootstrap caveat: the live observer writes only when an account CHANGES, so a
+dormant reserve account would keep the chain on the static map forever.
+`stellarindex-ops supply seed-observations` fixes that: a one-shot, idempotent
+seed of each `[supply] sdf_reserve_accounts` entry's latest AccountEntry from
+the lake's `ledger_entries_current` (ADR-0034), at the account's true
+last-modified ledger. Later live rows supersede it via at-or-before ordering.
 
-For Algorithms 2 + 3: similar pattern, but the static fallback
-is per-component (operators populate
-`reserve_balances_stroops` for XLM analogues; they DON'T
-typically maintain manual trustline-component snapshots, so the
-classic / SEP-41 paths require the observer to be backfilled).
+For Algorithms 2 and 3 the static fallback exists per component, but operators
+do not maintain manual trustline snapshots, so those paths need the observer
+backfilled (or seeded: `supply seed-claimable-balances`,
+`supply seed-sac-balances`; trustlines are seeded from ledger 31.8M).
 
-## Two refresh paths (operator choice)
+## Two refresh paths
 
-Per ADR-0011 / ADR-0021 / Task #57, operators have two paths to
-write `asset_supply_history` rows:
+### A. systemd timer
 
-### A. systemd-timer driven
-
-`stellarindex-ops supply snapshot` subcommand, fired by
-`deploy/systemd/supply-snapshot.timer` daily at 04:42 UTC. Per
-[supply-snapshot runbook](../operations/supply-snapshot.md).
-
-XLM only at v1; the CLI rejects classic + SEP-41 with a "use
-the goroutine path" message.
-
-Metrics: `stellarindex_supply_snapshot_*` textfile-emitted via
-`internal/supply/textfile.go`. Alerts in
+`stellarindex-ops supply snapshot`, fired by
+`deploy/systemd/supply-snapshot.timer` daily at 04:42 UTC
+([runbook](../operations/supply-snapshot.md)). XLM only; the CLI rejects
+classic and SEP-41 with a "use the goroutine path" message. Metrics
+`stellarindex_supply_snapshot_*` are textfile-emitted via
+`internal/supply/textfile.go`; alerts in
 `deploy/monitoring/rules/supply-snapshot.yml`.
 
-### B. Aggregator-resident goroutine
+### B. Aggregator goroutine
 
-`[supply] aggregator_refresh_enabled = true` runs a
-`supply.Refresher` goroutine per watched asset inside
-`stellarindex-aggregator`. One goroutine per
-`(XLM | classic asset | SEP-41 contract)` on the
-`aggregator_refresh_cadence` (default 5m).
-
-Covers all three algorithms. Per-tick outcome counter
-`stellarindex_aggregator_supply_refresh_total{asset_key, outcome}`
-labels by both asset and outcome so operators can chart per-
-asset bootstrap progress + isolate failure modes per asset.
-Alerts in `deploy/monitoring/rules/supply-refresh.yml`.
+`[supply] aggregator_refresh_enabled = true` runs one `supply.Refresher` per
+watched asset (XLM | classic asset | SEP-41 contract) inside
+`stellarindex-aggregator` on `aggregator_refresh_cadence` (default 5m). Covers
+all three algorithms. Per-tick counter
+`stellarindex_aggregator_supply_refresh_total{asset_key, outcome}`; alerts in
+`deploy/monitoring/rules/supply-refresh.yml`.
 
 ### Choice rules
 
-- Classic + SEP-41 supply requires path B (the CLI doesn't
-  support those assets).
-- XLM supply works on either path. Path A is simpler (no
-  aggregator dependency); path B is preferred when the LCM
-  observer has backfilled (per-cadence freshness vs. per-day).
-
-The two paths are mutually exclusive at the operator level —
-write idempotency makes a double-fire correctness-safe (the
-`asset_supply_history_asset_ledger_idx` unique constraint upserts,
-and a row is replaced only by a write with an equal or higher
-`derive_generation`, migration 0109), but operators should disable
-one when flipping to the other to avoid redundant work.
+- Classic and SEP-41 supply require path B.
+- XLM works on either. A is simpler (no aggregator dependency); B is preferred
+  once the observer has backfilled (per-cadence vs per-day freshness).
+- Run one path, not both. A double fire is correctness-safe — the
+  `asset_supply_history_asset_ledger_idx` unique constraint upserts, and a row
+  is replaced only by an equal or higher `derive_generation` (migration
+  0109) — but it is redundant work.
 
 ### Corrective re-derive and `supply_1d`
 
-`supply snapshot` stamps a positive `derive_generation`, so a run
-with `-ledger N` re-derives that ledger's row in place. The
-market-cap-over-time chart reads the `supply_1d` continuous
-aggregate (`DailyCirculatingSupply`), not the hypertable, and that
-aggregate's refresh policy (migration 0066) looks back only 7 days.
-When the snapshot's UTC day is more than 6 days old,
-`persistSnapshot` (`internal/ops/supply/supply.go`) refreshes
-`supply_1d` over that day padded by a day each side. A failed
-refresh fails the run non-zero: the row is written but not served,
-and nothing else will fold it in, so re-run the same `-ledger`
-snapshot (the upsert is idempotent) until its refresh succeeds. The
-aggregator path (B) writes at the latest known ledger only, inside
-the policy window.
+`supply snapshot` stamps a positive `derive_generation`, so `-ledger N`
+re-derives that ledger's row in place. The market-cap-over-time chart reads the
+`supply_1d` continuous aggregate (`DailyCirculatingSupply`), whose refresh
+policy (migration 0066) looks back only 7 days. When the snapshot's UTC day is
+more than 6 days old, `persistSnapshot` (`internal/ops/supply/supply.go`)
+refreshes `supply_1d` over that day ± 1 day. A failed refresh fails the run
+non-zero: the row is written but not served and nothing else folds it in, so
+re-run the same `-ledger` snapshot (idempotent) until the refresh succeeds.
+Path B writes at the latest ledger only, inside the policy window.
 
 ## Cross-check between Algorithm 2 and Algorithm 3
 
-A SAC-wrapped classic asset's supply is observable two ways: as a
-classic credit (Algorithm 2 — sums trustline + claimable + LP-reserve
-+ SAC-wrapped contract balances) and as a SEP-41 token (Algorithm 3 —
-sums mint − burn − clawback events on the SAC contract). Both observe
-the same underlying ledger state through different lenses, but they
-are NOT the same quantity for a partially-wrapped classic asset —
-Algorithm 2's total includes classic-held supply that never touched
-the SAC at all (e.g. AQUA: Algorithm 2 ≈ 86.4B, Algorithm 3 ≈ 0).
+A SAC-wrapped classic asset is observable as a classic credit (Alg 2: trustline
++ claimable + LP + SAC balances) and as a SEP-41 token (Alg 3: SAC mint − burn
+− clawback). These are NOT the same quantity for a partially wrapped asset: Alg
+2 includes classic-held supply that never touched the SAC (AQUA: Alg 2 ≈
+86.4B, Alg 3 ≈ 0). ADR-0011's original "agree within 1 stroop" equality,
+applied to every pair, produced 8 standing false positives on exactly this
+shape — a monitoring category error; served supply was always correct. The
+compare is therefore `supply.WrapClass`-aware:
 
-**2026-07-08 fix (BACKLOG #59):** applying ADR-0011's original
-"agree within 1 stroop" equality compare unconditionally produced 8
-standing false positives on exactly this shape of asset — a
-monitoring category error, not indexer corruption (served supply was
-always correct). The compare is now `internal/supply.WrapClass`-aware
-per pair:
-
-- **`WrapClassPartial`** (the default): `supply.CrossCheckSubsetBound`
-  computes two legs instead of an equality.
-  - *Leg 1, over-mint* — `max(0, sac_total − classic_total)` — is
-    reported as `OverMintStroops` for triage only and never pages. It
-    compares the SAC's cumulative net mint with the classic
-    outstanding supply, which legitimately diverges when wrapped units
-    are later retired classically (BLND) or a one-time SAC mint is
+- **`WrapClassPartial`** (default) — `supply.CrossCheckSubsetBound` computes
+  two legs:
+  - *Over-mint* `max(0, sac_total − classic_total)`, reported as
+    `OverMintStroops` for triage only, never pages. It legitimately diverges
+    when wrapped units are retired classically (BLND) or a one-time SAC mint is
     distributed classic-side (PHO).
-  - *Leg 2, escrow-exceeds-minted* — `max(0, SACWrapped − sac_total)`
-    — is the leg that feeds the divergence gauge. Algorithm 2's
-    `SACWrapped` component (the ledger-entry sum of SAC balances) and
-    Algorithm 3's `total_supply` (the event-derived net mint) observe
-    the same escrowed amount through independent data paths, and every
-    escrowed unit got there by a mint, so escrow above net mint means
-    mints the indexer never captured or burns it double-counted.
-- **`WrapClassFull`** (operator-attested via
-  `[supply].fully_wrapped_sacs`; none configured as of 2026-07-08):
-  keeps the ORIGINAL ADR-0011 equality compare, for a pair the
-  operator has confirmed is 100% SAC-represented. The equality already
-  implies the escrow bound, so leg 2 is not evaluated separately.
+  - *Escrow-exceeds-minted* `max(0, SACWrapped − sac_total)` feeds the
+    divergence gauge. Alg 2's `SACWrapped` (ledger-entry sum of SAC balances)
+    and Alg 3's `total_supply` (event-derived net mint) see the same escrow
+    through independent paths, and every escrowed unit got there by a mint, so
+    escrow above net mint means missed mints or double-counted burns.
+- **`WrapClassFull`** (operator-attested via `[supply].fully_wrapped_sacs`) —
+  keeps the equality compare for a pair confirmed 100% SAC-represented; the
+  equality implies the escrow bound, so leg 2 is not evaluated separately.
 
-Leg 2 reads `SACWrapped` from the persisted classic snapshot, not
-from a second query. `ClassicComputer.Compute` still folds `SACWrapped`
-into `TotalSupply`, and additionally carries it out as
-`Supply.SACWrappedStroops`, persisted in
-`asset_supply_history.sac_wrapped_stroops` (migration 0117). Reading it
-off the same row keeps the component at the snapshot's own ledger;
-querying `ClassicSupplyStore.SumSACBalancesAtOrBefore` from the
-refresher instead would compare a component taken at an unrelated
-ledger and open a second read path to the same number.
+Leg 2 reads `SACWrapped` from the persisted classic snapshot:
+`ClassicComputer.Compute` folds it into `TotalSupply` and also carries it as
+`Supply.SACWrappedStroops` → `asset_supply_history.sac_wrapped_stroops`
+(migration 0117). Querying `ClassicSupplyStore.SumSACBalancesAtOrBefore` from
+the refresher instead would compare a component taken at an unrelated ledger
+and open a second read path to the same number. The column is NULL for a
+pre-0117 row and for an asset with no `sac_balance_observations` row at or
+before the snapshot ledger, and is **never defaulted to zero**: `0 ≤ sac_total`
+holds vacuously, so a zero would publish a check that verified nothing. Leg 2
+is an upper bound on escrow, not proof escrow was fully observed — an
+under-counted `SACWrapped` (the dormant case below) passes quietly.
 
-The column is NULL — and `SACWrappedStroops` nil — for a row written
-before migration 0117 and for an asset with no observed SAC balance
-(no `sac_balance_observations` row at or before the snapshot's
-ledger). It is never defaulted to zero:
-`0 ≤ sac_total` holds vacuously, so a zero would publish a check that
-verified nothing. Such a pair reports the `unchecked` outcome and its
-gauge series is cleared (`supply audit -cross-check` prints
-`UNCHECKED` for the same state). Leg 2 is an upper bound on escrow,
-not proof that escrow was fully observed: an under-counted
-`SACWrapped` (the dormant pool-balance case below) sits under
-`sac_total` and passes quietly.
+`supply.CrossCheckRefresher` (`internal/supply/crosscheck_refresher.go`, wired
+in `cmd/stellarindex-aggregator/main.go::buildCrossCheckRefresher`) ticks on
+`aggregator_refresh_cadence`. Pairs are derived at boot from the intersection
+of `[supply].sac_wrappers`, `[supply].watched_classic_assets` and
+`[supply].watched_sep41_contracts`; a pair is `WrapClassFull` when its SAC is in
+`[supply].fully_wrapped_sacs`, else `WrapClassPartial`. Each tick reads both
+sides' `Store.LatestSupply`, runs `supply.CrossCheckForClass` (→
+`supply.CrossCheck` or `supply.CrossCheckSubsetBound`) and emits:
 
-The aggregator's `supply.CrossCheckRefresher`
-(`internal/supply/crosscheck_refresher.go`, wired in
-`cmd/stellarindex-aggregator/main.go::buildCrossCheckRefresher`) ticks
-on the same `aggregator_refresh_cadence` as the per-asset supply
-refreshers above. Pairs are derived at boot from the ∩ of:
+- `stellarindex_supply_cross_check_divergence_stroops{classic_key,wrap_class}`
+  — the divergence on within/over outcomes; deleted on every other outcome, so
+  never stale.
+- `stellarindex_supply_cross_check_total{outcome,wrap_class}`.
 
-- `[supply].sac_wrappers` (operator-declared classic↔SAC mapping)
-- `[supply].watched_classic_assets` (Algorithm 2 watched-set)
-- `[supply].watched_sep41_contracts` (Algorithm 3 watched-set)
-
-...with each pair's `WrapClass` set to `WrapClassFull` when its SAC
-contract id is also listed in `[supply].fully_wrapped_sacs`, else the
-safe default `WrapClassPartial`.
-
-Per tick, for each pair the refresher reads the latest snapshot for
-both the classic and the SAC sides via `Store.LatestSupply`, runs
-`supply.CrossCheckForClass` (dispatches to `supply.CrossCheck` for
-`WrapClassFull` or `supply.CrossCheckSubsetBound` for
-`WrapClassPartial`), and emits:
-
-- `stellarindex_supply_cross_check_divergence_stroops{classic_key,wrap_class}` —
-  gauge holding the stroop divergence on within/over outcomes (meaning
-  depends on `wrap_class` — see above). The pair's series is deleted
-  on the other outcomes, so it is never a stale reading.
-- `stellarindex_supply_cross_check_total{outcome,wrap_class}` —
-  counter labelled by `within | over | missing_snapshot | read_error |
-  misaligned | unchecked`.
-
-The supply.yml alert (`stellarindex_supply_cross_check_divergence`)
-fires when the gauge stays > 1 for ≥ 5 min — unchanged expression;
-the false positives are fixed in what the gauge value MEANS, not in
-the alert condition. Runbook:
-[`supply-cross-check-divergence`](../operations/runbooks/supply-cross-check-divergence.md).
-
-Empty pair-set is a no-op — operators that haven't declared any
-SAC-wrapper pairs (e.g. an SEP-41-only deployment with no classic
-side) get no gauge updates and no alerting noise.
+Alert `stellarindex_supply_cross_check_divergence` (`deploy/monitoring/rules/supply.yml`) fires when the gauge stays
+> 1 for ≥ 5 min ([runbook](../operations/runbooks/supply-cross-check-divergence.md)).
+An empty pair set is a no-op.
 
 ### Dormant contract-held SAC balances (the current-state coverage floor)
 
-**2026-07-10 fix.** Even after the `WrapClassPartial` subset-bound fix
-above, four pairs kept alerting `over` in the `sac_total > classic_total`
-direction: **BLND, EURC, KALE, PHO**. Per the subset-bound invariant that
-is impossible under correct accounting — `SACWrapped` is one of
-Algorithm 2's own non-negative addends — so it meant Algorithm 2's
-`SumSACBalancesAtOrBefore` component really was under-counting these
-four assets' true SAC-wrapped total, not a monitoring artefact.
+Four pairs — **BLND, EURC, KALE, PHO** — kept alerting `over` with
+`sac_total > classic_total` after the subset-bound fix, which is impossible
+under correct accounting: Alg 2 was under-counting. Alg 3 was verified
+stroop-exact against the lake and stellar.expert. The gap: Phoenix / Blend
+**pool contracts** received the SAC token via ordinary SEP-41 `transfer`
+before the `sac_balances` observer's window opened and before
+`ledger_entries_current` existed, and those `Vec(Symbol("Balance"),
+Address(pool))` entries on the **SAC's own** storage have been dormant since.
+A hypothesis that the balances lived in pool-internal accounting (needing a
+protocol-specific, upgrade-brittle reader) was refuted by rollup-vs-lake
+reconciliation; no pool-internal reader is needed.
 
-**Root cause (incident 2026-07-06, "PHO/BLND VERDICT").** Algorithm 3
-(SAC lifetime Σmint−burn−clawback) was independently verified correct to
-the stroop for both assets against the raw ClickHouse lake and
-stellar.expert. The gap was 100% on the Algorithm 2 side:
-`sac_balance_observations` (migration 0014) never captured a Balance
-entry for these assets' largest holders — Phoenix / Blend **pool
-contracts** that received the SAC-wrapped token via an ordinary SEP-41
-`transfer` long before either (a) the live `sac_balances` observer's
-watch window opened, or (b) the ClickHouse `ledger_entries_current`
-current-state projection existed to backstop it via
-`supply seed-sac-balances`. The pool's balance entry has been dormant
-(no further writes to that storage key) ever since, so nothing ever told
-either the live observer or the current-state-backed seed it was there.
+The default seed (`supply seed-sac-balances` →
+`clickhouse.StreamSACBalanceSeeds`) scans `stellar.ledger_entries_current`, a
+materialized view fed by `stellar.ledger_entries_current_mv`. An MV processes
+only rows inserted after it was created, so rows ch-backfilled into
+`ledger_entry_changes` below ~ledger 62,000,000 never reached it: the
+current-state **projection** has a floor even though the append-log substrate
+is complete to genesis (ADR-0034).
 
-An earlier hypothesis (see the git history on this file / on
-`internal/supply/crosscheck.go`) guessed these balances instead lived in
-Phoenix/Blend's own **internal accounting** — non-standard
-`contract_data` keys private to the pool contract, needing a new,
-protocol-specific, upgrade-brittle reader (candidate mechanism (b) in
-the original investigation). That hypothesis did not survive the final
-verdict: rollup-vs-lake reconciliation traced the shortfall to ordinary
-`Vec(Symbol("Balance"), Address(pool))` entries on the **SAC's own**
-storage — mechanism (a), the exact shape `sac_balance_observations`
-already models for every other holder. No pool-internal reader was
-needed.
+Fix: `clickhouse.StreamSACBalanceSeedsFullHistory`
+(`internal/storage/clickhouse/sac_balance_seed.go`) reads
+`stellar.ledger_entry_changes` with
+`ORDER BY key_xdr, ledger_seq DESC LIMIT 1 BY key_xdr` and reuses the same row
+decoder (`sacBalanceSeedFromRow`), so only the read location differs. It is far
+heavier than the default: **run it under `run-heavy-job.sh` on r1**, for the
+small `[supply.sac_wrappers]` set only, never as a routine job.
 
-**Why the existing bootstrap seed wasn't enough.** `supply
-seed-sac-balances`'s default read is
-`clickhouse.StreamSACBalanceSeeds`, which scans
-`stellar.ledger_entries_current` — a ClickHouse MATERIALIZED VIEW fed by
-`stellar.ledger_entries_current_mv`. Standard ClickHouse MV semantics: a
-materialized view only processes rows INSERTed into its source table
-(`ledger_entry_changes`) **after the MV was created**. Rows that were
-ch-backfilled into `ledger_entry_changes` for ledgers before the MV
-existed (~ledger 62,000,000) never triggered it, so
-`ledger_entries_current` has a coverage floor — the current-state
-**projection** is incomplete below ~62M even though the raw append-log
-substrate (`ledger_entry_changes`) is complete to genesis per ADR-0034's
-"100% coverage" guarantee (ledgers contiguous + hash-chained). A Balance
-entry dormant since before the floor is invisible to the default seed
-for the same reason it's invisible to the live observer.
+```sh
+stellarindex-ops supply seed-sac-balances -config PATH -full-history -dry-run   # preview
+stellarindex-ops supply seed-sac-balances -config PATH -full-history -write
+# prints: SEED  <contract> <asset_key>  holders=N  sum=<stroops>
+```
 
-**The fix: `clickhouse.StreamSACBalanceSeedsFullHistory`.** A second
-reader (`internal/storage/clickhouse/sac_balance_seed.go`) queries
-`stellar.ledger_entry_changes` directly with
-`ORDER BY key_xdr, ledger_seq DESC LIMIT 1 BY key_xdr` — a server-side
-reduction to "latest write per storage key" computed over the complete
-append-log, reproducing exactly what `ledger_entries_current` would hold
-if it had been backfilled for that key. It reuses the same row decoder
-(`sacBalanceSeedFromRow`) as the current-state path, so the two sources
-are byte-identical in what they extract — only WHERE they read from
-differs. Because `ledger_entry_changes` holds every historical write
-(not just latest-per-key), this scan is substantially heavier than the
-default and **MUST run under `run-heavy-job.sh` on r1**, reserved for
-the small `[supply.sac_wrappers]` watched set — never a routine job.
+The next Alg 2 tick picks the recovered balances up; nothing between the
+hypertable and the API changes.
 
-Operator surface: `stellarindex-ops supply seed-sac-balances
--config PATH -full-history -write` (drop `-write` — or add `-dry-run`
-— first to preview, per the fail-closed convention). Output rows are unchanged in shape (`SEED  <contract>
-<asset_key>  holders=N  sum=<stroops>`) but `sum` now includes the
-recovered pool-held balances, so `total_supply` / `circulating_supply`
-in the next Algorithm 2 refresher tick — and hence the next
-`supply_cross_check_divergence` gauge sample — reflects them
-immediately once `sac_balance_observations` is repopulated; no code
-path between the hypertable and the served API needed to change.
+**Provenance** (`sac_balance_seed_provenance`, migration 0102; not a
+hypertable, PK `contract_id`). Each non-dry-run pass upserts `source`
+(`current_state` | `full_history`), `holders_seeded`, `min_ledger_seen` /
+`max_ledger_seen` (the holders' own last-modified ledgers) and, since migration
+0183, `holders_retracted` and `lake_verified_through`. A `full_history` row is
+stamped only after the walk proved `stellar.ledgers` contiguous and hash-linked
+through `lake_verified_through`; one with that column NULL predates the check
+and the TTL-archival filter and is not evidence. On a verified row,
+`min_ledger_seen` well below 62,000,000 proves the floor gap was reached. The
+table is audit-only — never read by `ClassicSupplyAt` /
+`SumSACBalancesAtOrBefore` / `Supply` — and separates "never full-history
+seeded" from "seeded and still diverging".
 
-**Provenance (`sac_balance_seed_provenance`, migration 0102).** Every
-non-dry-run pass upserts one row per watched contract recording `source`
-(`current_state` | `full_history`), `holders_seeded`, and
-`min_ledger_seen` / `max_ledger_seen` — the ledger range of the holders'
-own last-modified ledgers, not the ledger the scan ran at — plus, since
-migration 0183, `holders_retracted` and `lake_verified_through`. A
-`full_history` row is stamped only when the walk proved
-`stellar.ledgers` contiguous and hash-linked through
-`lake_verified_through` before emitting anything; a `full_history` row
-with that column NULL predates the check and the TTL-archival filter and
-is not evidence. On a verified row, `min_ledger_seen` well below
-62,000,000 is direct evidence the floor gap was actually reached for
-that contract. This table is a pure audit trail — it is
-never read by `ClassicSupplyAt` / `SumSACBalancesAtOrBefore` / the
-computed `Supply` — its purpose is letting an operator (or a future
-`supply_cross_check_divergence` downgrade decision, see
-`notes/ROADMAP.md` §2 "Supply cross-check downgrade" — a local,
-gitignored working note, not present on a fresh clone) distinguish
-"this pair's divergence is expected — never full-history seeded" from
-"actually anomalous — already full-history seeded and still diverging".
-
-**Operator post-deploy verification.**
+Post-seed verification:
 
 ```sql
--- 1. Confirm the full-history pass reached below the current-state
---    floor for each of the four affected contracts (min_ledger_seen
---    should be well under 62,000,000 for at least the dominant holder).
-SELECT contract_id, asset_key, source, holders_seeded,
-       min_ledger_seen, max_ledger_seen, seeded_at
+SELECT contract_id, asset_key, source, holders_seeded, min_ledger_seen, max_ledger_seen, seeded_at
   FROM sac_balance_seed_provenance
- WHERE asset_key LIKE 'BLND:%' OR asset_key LIKE 'EURC:%'
-    OR asset_key LIKE 'KALE:%' OR asset_key LIKE 'PHO:%'
+ WHERE asset_key LIKE 'BLND:%' OR asset_key LIKE 'EURC:%' OR asset_key LIKE 'KALE:%' OR asset_key LIKE 'PHO:%'
  ORDER BY asset_key;
 
--- 2. Confirm Algorithm 2's SAC component now covers the pool-held
---    balance (compare against the pre-seed sum from `supply
---    seed-sac-balances -full-history -dry-run`'s printed summary).
-SELECT asset_key, count(DISTINCT holder) AS holders,
-       sum(balance_stroops) AS sac_wrapped_stroops
+SELECT asset_key, count(DISTINCT holder) AS holders, sum(balance_stroops) AS sac_wrapped_stroops
   FROM sac_balance_observations
- WHERE asset_key LIKE 'BLND:%' OR asset_key LIKE 'EURC:%'
-    OR asset_key LIKE 'KALE:%' OR asset_key LIKE 'PHO:%'
+ WHERE asset_key LIKE 'BLND:%' OR asset_key LIKE 'EURC:%' OR asset_key LIKE 'KALE:%' OR asset_key LIKE 'PHO:%'
  GROUP BY asset_key;
 ```
 
 ```sh
-# 3. Confirm the cross-check converges — run per asset once the
-#    aggregator's next refresher tick has written a fresh Algorithm 2
-#    snapshot (aggregator_refresh_cadence, default 5m):
+# after the next refresher tick; repeat per pair. Expect "status: WITHIN TOLERANCE".
+# The CLI dispatches on wrap class like the refresher and prints the wrap_class it applied.
 stellarindex-ops supply audit BLND-GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY \
   -config PATH -cross-check CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY
-# repeat for EURC / KALE / PHO's own classic/SAC pair. "status: WITHIN
-# TOLERANCE" confirms the fix landed. The CLI dispatches on wrap class
-# exactly as the aggregator's refresher does (corrected 2026-08-03 — it
-# previously ran strict equality unconditionally, which every
-# partially-wrapped pair fails by construction); the printed
-# `wrap_class` line tells you which invariant was applied.
-```
-
-```
-# 4. Confirm the alert clears (or the gauge drops to the expected
-#    residual, if any wrap fraction remains genuinely partial):
-stellarindex_supply_cross_check_divergence_stroops{classic_key=~"BLND.*|EURC.*|KALE.*|PHO.*"}
+# then: stellarindex_supply_cross_check_divergence_stroops{classic_key=~"BLND.*|EURC.*|KALE.*|PHO.*"}
 ```
 
 ### LP reserve history cutoff
 
-`lp_reserve_observations` starts at ledger 63,300,828, when the observer
-was deployed. It was never seeded from history, and that is an accepted
-limit, not a pending fix. Two consequences follow:
+`lp_reserve_observations` starts at ledger 63,300,828 (observer deploy) and was
+never seeded from history — an accepted limit, not a pending fix. So Alg 2's LP
+component is absent for any `as_of` below 63,300,828, and a pool unchanged since
+then is missing from the current total. That is small because every swap or
+deposit re-observes its pool: on 2026-07-27 AQUA's LP total was 516,524,268
+across 1,072 pools vs Horizon's 517,261,343 across 1,303 (−0.14%; the 231
+missing pools were dust). Claimable balances differ — written once, never
+changed, so the live window missed most — hence `supply seed-claimable-balances`.
+If a dormant-pool audit ever shows a material gap, build an LP seed of the same
+shape: read the lake's `liquidity_pool` entries and upsert through the live
+observer's SQL.
 
-- Algorithm 2's LP component is absent for any supply computed `as_of` a
-  ledger below 63,300,828.
-- A pool whose reserves have not changed since before that ledger is
-  missing from the current total.
+## SEP-41 / SAC-wrapper lifetime supply (pre-Soroban genesis baseline)
 
-The second is small because every swap or deposit re-observes its pool.
-On 2026-07-27, AQUA's latest-per-pool LP total was 516,524,268 across
-1,072 pools, against Horizon's 517,261,343 across 1,303 pools: −0.14%,
-and the 231 missing pools were dust. Claimable balances differ: a
-balance is written once and then never changes, so the live window
-missed most of them. They therefore have a seed
-(`supply seed-claimable-balances`). Trustlines are seeded from ledger
-31.8M and are unaffected.
+`sep41_supply_events` covers only the Soroban era `[50457424, tip]`. A SAC
+wrapper whose classic asset was issued before Soroban (VELO, AQUA, yXLM, …)
+reads `Σburn > Σmint` over that window → negative total → rejected. Migration
+0088 seeds each watched contract's pre-Soroban per-kind opening balance into
+`sep41_supply_rollup` (`genesis_mint_total` / `genesis_burn_total` /
+`genesis_clawback_total`, bounded by `genesis_baseline_ledger`) from the lake's
+`stellar.supply_flows`. The reader serves
+`genesis(ledger < 50457424, CH) ⊕ soroban(ledger ≥ 50457424, PG)` — a disjoint
+partition, so a Soroban-only token gets a zero baseline and is unchanged.
 
-If a dormant-pool audit ever shows a material gap, build an LP seed on
-the same shape: read the lake's `liquidity_pool` entries and upsert
-through the live observer's SQL.
+We deliberately do **not** re-point the per-tick read at ClickHouse (migration
+0085's rationale): the lake is network-wide and map/muxed-variant aware while
+the PG observer is watched-set-gated and bare-i128, so their Soroban-era
+per-contract totals can legitimately differ. CH supplies only the slice PG has
+no data for.
 
-## Per-class storage tables (live-data side)
+```sh
+stellarindex-ops supply seed-sep41-genesis -config PATH -write   # no -write = preview; idempotent
+```
 
-| Table | Migration | Identity | Holders columns |
-|-------|-----------|----------|-----------------|
+Re-run after any lake re-derive below the boundary. Each write also rebuilds
+the contract's rollup fold under the seeded floor in the same transaction,
+which repairs a contract the aggregator folded at floor 0 before its first seed
+(that fold would count the pre-boundary band twice). The fold never drops back
+to `last_ledger = 0`, so serving stays on its checkpoint path. Rebuilds run one
+contract at a time and hold the contract's rollup row; an aggregator pass that
+hits it yields after a 10 s `lock_timeout` (an `error` outcome on
+`stellarindex_sep41_supply_rollup_advances_total`) and retries next cadence. A
+seed that finds the row held fails the same way — re-run it.
+
+The pre-Soroban `contract_events` / `supply_flows` rows are replay-derived (a
+post-P23 captive core synthesised CAP-67 events for older classic history):
+on-chain-faithful but core-version-dependent, so the baseline is a
+point-in-time capture; `genesis_baseline_ledger` + `genesis_seeded_at` make a
+re-seed auditable (ADR-0033).
+
+## Lumen conservation
+
+`stellarindex-ops verify-network-state` (daily, `verify-network-state.timer`)
+check `lumens`: native XLM in accounts, claimable balances, liquidity pools and
+native-SAC balances, plus `fee_pool`, must equal the ledger header's
+`total_coins` exactly (`NetworkStateReader.LumenConservation`,
+`internal/storage/clickhouse/network_state.go`; residual = held + fee_pool −
+total_coins). It reads `ledger_entries_current` at the newest committed ledger
+and rolls newer keys back to their pre-image so concurrent ingest cannot tear
+the sum. A non-zero residual adds 1 to the exit code; alerts
+`stellarindex_network_state_verify_failed` / `_stale`
+(`deploy/monitoring/rules/storage.yml`).
+
+## Storage tables
+
+| Table | Migration | Identity | Columns |
+|---|---|---|---|
 | `asset_supply_history` | 0005 | `(asset_key, ledger_sequence)` | total / circulating / max / basis |
 | `account_observations` | 0010 | `(account_id, ledger, observed_at)` | balance_stroops / home_domain / flags / seq_num / is_removal |
 | `trustline_observations` | 0011 | `(account_id, asset_key, ledger, observed_at)` | balance_stroops / is_removal |
@@ -498,193 +356,152 @@ through the live observer's SQL.
 | `sac_balance_observations` | 0014 | `(contract_id, holder, ledger, observed_at)` | asset_key / balance_stroops / is_removal |
 | `sep41_supply_events` | 0015 | `(contract_id, ledger, tx_hash, op_index, observed_at)` | event_kind / amount / counterparty |
 
-All hypertables on `observed_at`, 7-day chunks, compression
-segment-by the most-common reader-query column. PK convention
-drags `observed_at` into the key per Timescale's partition-
-column-in-PK rule.
-
-`sac_balance_seed_provenance` (migration 0102) is NOT a hypertable — a
-small one-row-per-watched-contract audit table (PK `contract_id`,
-mirrors `sep41_supply_rollup`'s shape) recording each
-`supply seed-sac-balances` pass's `source` / `holders_seeded` /
-`min_ledger_seen` / `max_ledger_seen`. See "Dormant contract-held SAC
-balances" above.
+All are hypertables on `observed_at`, 7-day chunks, compression segment-by the
+most common reader column; `observed_at` is in the PK per Timescale's
+partition-column rule.
 
 ## Reader contracts
 
-Each algorithm has a `<X>SupplyReader` interface in
-`internal/supply/`; the production impl is `Storage<X>SupplyReader`
-composing the storage primitives:
-
 | Reader | Composes |
-|--------|----------|
-| `XLMComputer.reader` (`ReserveBalanceReader`) | `LCMReserveBalanceReader` (account_observations) + `ConfigReserveBalanceReader` (operator-static) |
-| `StorageClassicSupplyReader` | 4 × `Sum*BalancesAtOrBefore` + 2 × per-entity lookups (`TrustlineBalanceForAccountAtOrBefore`, `SACBalanceForContractAtOrBefore`) |
-| `StorageSEP41SupplyReader` | `SEP41KindTotalsAtOrBefore` + `SACBalanceForContractAtOrBefore` (for locked-set lookups via shared SAC observer storage) |
+|---|---|
+| `XLMComputer.reader` (`ReserveBalanceReader`) | `LCMReserveBalanceReader` (account_observations) + `ConfigReserveBalanceReader` (static) |
+| `StorageClassicSupplyReader` | 4 × `Sum*BalancesAtOrBefore` + `TrustlineBalanceForAccountAtOrBefore`, `SACBalanceForContractAtOrBefore` |
+| `StorageSEP41SupplyReader` | `SEP41KindTotalsAtOrBefore` + `SACBalanceForContractAtOrBefore` (locked-set lookups) |
 
-Each reader returns a `<X>SupplyComponents` struct that the
-matching `<X>Computer` reduces to a `Supply` snapshot.
+Each returns a `<X>SupplyComponents` struct that the matching `<X>Computer`
+reduces to a `Supply`.
 
 ## API surface
 
-`/v1/assets/{id}` reads from `asset_supply_history` via
-`Store.LatestSupply`; the F2 fields (`total_supply` /
-`circulating_supply` / `max_supply` / `market_cap_usd` /
-`fdv_usd` / `supply_basis`) populate when a row exists, stay
-JSON null when no snapshot has been written (per ADR-0011 "we
-don't fabricate"). The handler does NOT consult observer state
-directly — the snapshot table is the API source of truth. Two
-serving-time refinements sit on top of it:
+`/v1/assets/{id}` reads `asset_supply_history` via `Store.LatestSupply`; the F2
+fields are JSON null when no snapshot exists (ADR-0011: we don't fabricate).
+The handler never reads observer state directly. Three serving-time refinements:
 
-- **SEP-41 lake fallback** — a Soroban token with no observer
-  snapshot (i.e. not on the watched-set, the common case) serves
-  the lake-derived Σmint−Σburn−Σclawback total
-  (`supply_basis: "sep41_lake_flows"`, total == circulating).
-- **SEP-1 max_supply overlay** — a snapshot with no max picks up
-  the issuer's stellar.toml declaration
-  (`max_supply_basis: "sep1_declared_max"`, see "Max supply" above).
+- **SEP-41 lake fallback** — a Soroban token with no observer snapshot (not on
+  the watched set, the common case) serves the lake-derived
+  Σmint−Σburn−Σclawback (`supply_basis: "sep41_lake_flows"`, total ==
+  circulating).
+- **Classic lake fallback** (`classic_lake_supply.go`, `higherClassicSupply`)
+  — a classic asset serves the higher of the lake-derived flows
+  (`supply_basis: "classic_lake_flows"`) and the trustline sum
+  (`classic_trustline_sum`, blind to three holding domains).
+- **Contract storage balances** (`asset_supply.go`) — Σ of a contract's
+  per-holder balance entries (`contract_storage_balances`).
+- `classic_trustline_sum` and `contract_storage_balances` are lower bounds:
+  `Basis.LowerBound()` (`internal/supply/supply.go`) sets
+  `circulating_supply_lower_bound`.
+- **SEP-1 max_supply overlay** — see "Max supply" above.
 
-## Failure modes (per outcome label)
+## Failure modes
 
-The aggregator-refresh metric labels each tick with one of:
+Aggregator-refresh outcomes:
 
-| Outcome | Means | Operator action |
-|---------|-------|-----------------|
-| `ok` | Snapshot written | none — steady state |
-| `no_ledger` | No chain position to stamp the snapshot at: no `ledgerstream` cursor, or no `stellar.ledgers` row in the 512 ledgers below it (the window the lake lookup reads, and the whole range the clamp would accept) | wait for the indexer's first cursor; otherwise check the CH sink — the ordinary seconds-long cursor-ahead-of-lake lead is clamped away, so this means the lake is empty, gapped, or stalled |
-| `no_observation` | Live reader has no row + static fallback empty | bootstrap window — wait for backfill OR populate static config |
-| `missing_baseline` | SEP-41 total went negative AND the contract's pre-Soroban genesis baseline hasn't been seeded (a SAC-wrapper issued before Soroban, reading Σburn > Σmint over the Soroban-era-only window) | run `stellarindex-ops supply seed-sep41-genesis -write` (idempotent; rebuilds each contract's fold, one contract at a time — see below). Benign — excluded from `error_dominant` |
-| `compute_error` | Algorithm returned non-OK for a genuine reason (e.g. SEP-41 total negative **after** the genesis baseline is seeded — physically impossible) | code bug or upstream data inconsistency; check logs + roll back if recent deploy |
-| `write_error` | `InsertSupply` failed | storage layer down; route to `pg-conns-saturated` runbook |
+| Outcome | Means | Action |
+|---|---|---|
+| `ok` | snapshot written | none |
+| `no_ledger` | no `ledgerstream` cursor, or no `stellar.ledgers` row in the 512 ledgers below it (the lookup window and the clamp's whole range) | wait for the first cursor; else check the CH sink — the normal cursor-ahead-of-lake lead is clamped away, so this means the lake is empty, gapped or stalled |
+| `no_observation` | live reader has no row and static fallback is empty | bootstrap — wait for backfill or populate static config |
+| `missing_baseline` | SEP-41 total negative and the pre-Soroban genesis baseline is not seeded | `stellarindex-ops supply seed-sep41-genesis -write`; benign, excluded from `error_dominant` |
+| `compute_error` | genuine non-OK (e.g. negative SEP-41 total **after** the baseline is seeded) | code bug or upstream inconsistency; check logs, roll back a recent deploy |
+| `write_error` | `InsertSupply` failed | storage down; `pg-conns-saturated` runbook |
+| `stale_component` | a component observation lags the snapshot ledger past the threshold and moved since last tick, or stayed frozen past `DefaultMaxDormantComponentLedgers` | rejected; check the lagging observer |
+| `missing_freshness` | strict mode and `MinComponentLedger == 0` (no freshness anchor) | rejected rather than published unanchored; check the observer |
+| `dormant` | component lags but is unchanged tick-over-tick; the last observation is re-stamped (snapshot inserted) | benign per asset; many assets dormant together means a producer stalled (`stellarindex_aggregator_supply_refresh_dormant_fleet`) |
+| `static_reserve` | snapshot inserted, but reserves came from the static map, not the live observer | not benign: counts toward `error_dominant`; seed with `supply seed-observations` |
 
-Sustained non-`ok` (excluding the benign `dormant` + `missing_baseline`)
-for ≥ 30 min triggers
-`stellarindex_aggregator_supply_refresh_error_dominant`; no `ok`
-in ≥ 30 min triggers `_stalled`.
+Sustained non-`ok` (excluding benign `dormant` and `missing_baseline`) for
+≥ 30 min fires `stellarindex_aggregator_supply_refresh_error_dominant`; no `ok`
+in ≥ 30 min fires `stellarindex_aggregator_supply_refresh_stalled`.
 
-### SEP-41 / SAC-wrapper lifetime supply (pre-Soroban genesis baseline)
+Cross-check outcomes (`wrap_class` = `partial_wrap` | `full_wrap`):
 
-Algorithm 3 sums `sep41_supply_events` (Postgres), which the supply
-observer fills only over the **Soroban era** `[50457424, tip]` —
-contract events don't exist below the protocol-20 activation ledger.
-A classic asset's SAC wrapper (VELO, AQUA, yXLM, LIBRE, ACT, MBC,
-XAU, BTC, GQX, …) was largely **issued before Soroban existed**, so
-over the Soroban-era-only window it reads `Σburn > Σmint` → negative
-derived total → the negative-total guard rejects it (incident
-2026-07-06).
+| Outcome | Means | Action |
+|---|---|---|
+| `within` | divergence ≤ 1 stroop (`partial_wrap`: `SACWrapped ≤ sac_total + 1`; `full_wrap`: `\|classic_total − sac_total\| ≤ 1`) | none |
+| `over` | divergence > 1 stroop | `supply-cross-check-divergence` runbook |
+| `missing_snapshot` | a side has no `asset_supply_history` row yet | normal on first tick |
+| `read_error` | transient storage read failure | `pg-conns-saturated` / `timescale-primary-down` runbooks |
+| `misaligned` | snapshots > 1000 ledgers apart (one refresher stalled) | `supply-refresh-stalled` for the stale side |
+| `unchecked` | `partial_wrap` pair whose classic snapshot has no `sac_wrapped_stroops`; leg 2 skipped, gauge cleared (`supply audit -cross-check` prints `UNCHECKED`) | no alert; to check it, `supply seed-sac-balances` (`-full-history` for dormant holders) then `supply audit -cross-check` |
 
-The fix (migration 0088) seeds each watched contract's pre-Soroban
-per-kind **opening balance** into `sep41_supply_rollup`
-(`genesis_mint_total` / `genesis_burn_total` / `genesis_clawback_total`,
-bounded by `genesis_baseline_ledger`) from the certified ClickHouse
-lake (`stellar.supply_flows`, ADR-0034). The reader serves
-`genesis(ledger < 50457424, CH) ⊕ soroban(ledger ≥ 50457424, PG)`, a
-**disjoint ledger partition** — so lifetime total comes out correct +
-positive, and a Soroban-only token (no pre-genesis flows) gets a zero
-baseline and its served number is **unchanged** (no double-count). We
-deliberately do **not** re-point the per-tick read at ClickHouse
-(migration 0085's rationale): the CH lake is network-wide +
-map/muxed-variant aware while the PG observer is watched-set-gated +
-bare-i128, so their Soroban-era per-contract totals can legitimately
-differ — CH is used only for the pre-Soroban slice PG has no data for.
+`missing_snapshot`, `read_error` or `misaligned` sustained over an hour fires
+`stellarindex_supply_cross_check_unevaluable`
+([runbook](../operations/runbooks/supply-cross-check-unevaluable.md)), because
+the divergence alert cannot fire for a pair it is not evaluating.
 
-Operator step: `stellarindex-ops supply seed-sep41-genesis -config PATH -write`
-(fail-closed: without `-write` it only previews; idempotent — re-run
-after any lake re-derive below the boundary).
+## Asset identity
 
-Each write also rebuilds the contract's rollup fold under the seeded
-floor in the same transaction, so re-running with the same inputs
-converges on the same row. The rebuild is what repairs a contract the
-aggregator folded at floor 0 before its first seed: that fold holds the
-pre-boundary band, which the baseline would otherwise count a second
-time. Because the fold never drops back to `last_ledger = 0`, the
-serving read stays on its checkpoint path throughout. Each rebuild is
-one floored aggregate over that contract's Soroban-era events, run one
-contract at a time. It holds the contract's rollup row while it runs;
-an aggregator pass that reaches the row yields after a 10 s
-`lock_timeout` (an `error` outcome on
-`stellarindex_sep41_supply_rollup_advances_total`) and retries on the
-next cadence. A seed that finds the row held by a pass fails the same
-way. Re-run it.
+- An asset is keyed on `(code, issuer)`, a SAC contract id, or `native` —
+  never on code alone, which is an impersonation vector. XLM has three
+  identities (`native`, `crypto:XLM`, its SAC); every asset-id read path loops
+  `canonical.AssetAliases`. Evidence: [domain-traps.md](domain-traps.md).
+- `/v1/assets` is the one asset surface. `/v1/coins` and `/v1/currencies` were
+  removed; every served entity is an asset with an `asset_class`
+  (`fiat`, `stablecoin`, `crypto`, …) from the verified-currency catalogue.
+  Stablecoin is distinct from fiat so a depeg stays visible.
+- `/v1/assets/{slug}` returns `GlobalAssetView` for a catalogue slug and
+  `AssetDetail` for a canonical asset id (wire shapes in domain-traps.md).
+  Friendly slugs resolve **only** for catalogue entries and are never
+  generated from observed codes — that is the ticker-collision phishing
+  surface.
+- The catalogue (`internal/currency/data/seed.yaml`) is hand-vetted and is
+  never auto-populated from CoinGecko / CMC; adding a currency is a code
+  change. A CoinGecko augmentation worker was planned and dropped for that
+  reason. Non-Stellar entries (BTC, ETH, …) are `reference_only`: pricing
+  references, not browseable assets. The cross-chain `networks[]` model was
+  removed ([stellar-focus-refactor-plan.md](stellar-focus-refactor-plan.md)).
+  `internal/canonical/asset_fiat.go` stays the source of truth for allowed
+  fiat codes; the catalogue refers to fiat by ISO code.
+- `CoinGeckoIDs()` feeds the CoinGecko poller's `TickerToID`, and
+  `aggregatorPairsFromCatalogue` feeds the aggregator pairs
+  (`cmd/stellarindex-indexer/main.go`), so adding a currency with a
+  `coingecko_id` widens polling. Aggregator prices live in `oracle_updates`;
+  there is no `aggregator_prices` table.
+- **Ticker-collision warning.** An asset whose code matches a verified ticker
+  but whose issuer is not the verified one gets
+  `flags.unverified_ticker_collision: true` and an `unverified_warning`
+  pointing at the verified asset. It is independent of the scam-issuer
+  registry; both can fire on one asset.
+- **Global price** (`aggregate.ComputeGlobalPrice`) walks three tiers and
+  reports `price_authority` + `price_sources` (`class` is the wire field;
+  `asset_class` is only the query parameter): `vwap_native` (our `prices_1m` VWAP,
+  wins at `trade_count >= VWAPMinTradeCount`, default 5), `aggregator_avg`
+  (mean of fresh `Class:Aggregator` observations, `MaxAggregatorAge` default
+  10m; aggregators never feed VWAP, to avoid double counting), then
+  `triangulated` (Redis implied VWAPs). A storage error short-circuits — only
+  "no rows" falls to the next tier, so a transient failure never silently
+  degrades the authority. A cross-chain ticker-bucketed VWAP was not built: it
+  needs per-trade FX-anchor conversion and only means something once
+  non-Stellar trades are ingested. `price_authority` has three more values
+  outside that walk: `reference_rate` (fiat, via `fiatUSDPriceFor`, not
+  `ComputeGlobalPrice`), `identity` (USD) and `onchain_listing` (fallback for
+  a Stellar-only token, `assets_global.go`).
 
-**Provenance (ADR-0033 substrate reproducibility).** The pre-Soroban
-`contract_events` / `supply_flows` rows are **replay-derived**: a
-post-P23 captive core synthesized the CAP-67 unified asset events for
-classic history that predates them. They are legitimate,
-on-chain-faithful data — but the exact event enumeration is
-**core-version-dependent**, so the seeded baseline is a point-in-time
-capture. `genesis_baseline_ledger` + `genesis_seeded_at` record the
-boundary and capture time so a re-seed is auditable.
+## Open items
 
-The cross-check refresher emits its own per-outcome counter, also
-labelled by `wrap_class` (`partial_wrap` | `full_wrap` — 2026-07-08,
-BACKLOG #59; see "Cross-check between Algorithm 2 and Algorithm 3"
-above for what each class checks):
-
-| Outcome | Means | Operator action |
-|---------|-------|-----------------|
-| `within` | Both snapshots loaded; divergence ≤ 1 stroop (`partial_wrap`: leg 2, `SACWrapped ≤ sac_total + 1` — the escrow excess is at most 1 stroop; `full_wrap`: `\|classic_total − sac_total\| ≤ 1`) | none — steady state |
-| `over` | Both snapshots loaded; divergence > 1 stroop | follow `supply-cross-check-divergence` runbook |
-| `missing_snapshot` | One/both sides have no row in `asset_supply_history` yet | bootstrap window — no action unless sustained past first refresh of each side |
-| `read_error` | Transient storage read failure | check `pg-conns-saturated` / `timescale-primary-down` runbooks |
-| `misaligned` | Both snapshots loaded but > 1000 ledgers apart — one side's refresher stalled | follow `supply-refresh-stalled` for the stale side |
-| `unchecked` | Both snapshots loaded, `partial_wrap` pair, but the classic snapshot has no `sac_wrapped_stroops` (pre-0117 row, or no `sac_balance_observations` row at or before its ledger), so leg 2 is not evaluated and the gauge series is cleared | no alert fires (`stellarindex_supply_cross_check_unevaluable` excludes `unchecked`); if the pair should be checked, seed its SAC balances (`supply seed-sac-balances`, with `-full-history` for dormant holders) and confirm with `supply audit -cross-check` |
-
-A brief `missing_snapshot` is the normal first-tick warmup state and is
-not escalated. Any of `missing_snapshot`, `read_error` or `misaligned`
-sustained for over an hour fires
-`stellarindex_supply_cross_check_unevaluable` (runbook:
-[`supply-cross-check-unevaluable`](../operations/runbooks/supply-cross-check-unevaluable.md)),
-because the divergence alert cannot fire for a pair it is not
-evaluating.
+| Item | Inventory |
+|---|---|
+| `GlobalAssetView` has only `market_cap_usd` / `circulating_supply` (no ath / atl / change_24h_pct), and fills them for fiat only; crypto and stablecoin rely on the per-asset F2 fields | INV-1119 (blocked) |
+| The lake wrote persistent `contract_data` / `contract_code` evictions as `removed`; `emitEvictions` (`internal/storage/clickhouse/extract_entry_changes.go`) now keeps an archived entry current, since it stays restorable from the hot archive. Already-written lake rows still need repair, and current-state reads (seeds, lumen conservation) inherit the error until then | INV-2532 (in progress) |
+| Lumen conservation residual +119,100,885,352 stroops at ledger 64,767,268: the lake holds 11,910 XLM the network does not count. Candidate causes (evictions, a non-native SAC leak, the CAP-76 rule) are undiagnosed | INV-2533 (open) |
 
 ## ADR map
 
-- [ADR-0011](../adr/0011-supply-algorithm.md) — three-algorithm
-  spec
-- [ADR-0021](../adr/0021-account-entry-observer.md) —
-  AccountEntry observer for live home-domain + reserve balances
-- [ADR-0022](../adr/0022-classic-supply-observers.md) —
-  Trustline / Claimable / LP / SAC observers
-- [ADR-0023](../adr/0023-sep41-supply-observer.md) — SEP-41
-  supply event observer
-- [ADR-0003](../adr/0003-i128-no-truncation.md) — i128 / NUMERIC
-  end-to-end (every amount in this pipeline)
-- [ADR-0006](../adr/0006-timescaledb-for-price-time-series.md) —
-  TimescaleDB storage, the hypertable convention
-- [ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md) —
-  why the API serves CLOSED snapshots only
+[ADR-0011](../adr/0011-supply-algorithm.md) three algorithms ·
+[ADR-0021](../adr/0021-account-entry-observer.md) AccountEntry observer ·
+[ADR-0022](../adr/0022-classic-supply-observers.md) trustline / claimable / LP / SAC observers ·
+[ADR-0023](../adr/0023-sep41-supply-observer.md) SEP-41 observer ·
+[ADR-0003](../adr/0003-i128-no-truncation.md) i128 / NUMERIC end to end ·
+[ADR-0006](../adr/0006-timescaledb-for-price-time-series.md) hypertable convention ·
+[ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md) closed snapshots only.
 
-## Repo map
+## Code map
 
-```
-internal/sources/{accounts,trustlines,claimable_balances,liquidity_pools,sac_balances,sep41_supply}/
-        ↓ (LedgerEntryChange or events.Event hooks)
-internal/dispatcher/             (4 hooks: Decoder, OpDecoder, ContractCallDecoder, LedgerEntryChangeDecoder)
-        ↓ (consumer.Event)
-internal/pipeline/sink.go        (type-switch routing)
-        ↓
-internal/storage/timescale/      (Insert{Supply, AccountObservation, TrustlineObservation, …}, Sum*, Latest*)
-        ↓
-internal/supply/                 (XLMComputer, ClassicComputer, SEP41Computer, Refresher, CrossCheckRefresher, chained readers)
-        ↓
-cmd/stellarindex-aggregator/      (buildSupplyRefreshers + buildCrossCheckRefresher; runSupplyRefresh + runCrossCheckRefresh — one goroutine per asset, plus one for cross-check)
-        ↓
-internal/api/v1/assets_f2.go     (populateMarketCap, F2 field rendering)
-        ↓
-GET /v1/assets/{id}              (asset_supply_history via Store.LatestSupply)
-```
-
-## When to update this doc
-
-Add a row, update a table, or extend the diagram when:
-
-- A new algorithm class lands (no current candidates; the
-  three above cover all on-chain Stellar supply types).
-- A new observer plugs in (e.g. operator-watched-set expansion
-  to issuer accounts triggering SEP-1 metadata refresh).
-- A new operator-config knob materially changes the data flow.
-- An ADR in the ADR map above supersedes another.
-
-The matrix in `coverage-matrix.md` is the row-by-row tracker;
-this doc is the architecture-level overview.
+`internal/sources/{accounts,trustlines,claimable_balances,liquidity_pools,sac_balances,sep41_supply}/`
+→ `internal/dispatcher/` → `internal/pipeline/sink.go` →
+`internal/storage/timescale/` → `internal/supply/` (computers, `Refresher`,
+`CrossCheckRefresher`, chained readers) → `cmd/stellarindex-aggregator/`
+(`buildSupplyRefreshers`, `buildCrossCheckRefresher`) →
+`internal/api/v1/assets_f2.go` (`populateMarketCap`) → `GET /v1/assets/{id}`.
+Row-by-row coverage lives in [coverage-matrix.md](coverage-matrix.md); disk
+and lake trade-offs in [storage-considerations.md](storage-considerations.md).
