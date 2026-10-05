@@ -643,11 +643,10 @@ clickhouse_live_daemon_password: "{{ vault_clickhouse_live_daemon_password | def
 # ops_monitor (read-only probes, normal priority) and ops_admin (root
 # shells and ansible's own clickhouse-client tasks, via
 # /root/.clickhouse-client/config.xml). Each flag also renders that
-# user's root-only client credential files. Defaults FALSE for the same
+# user's client credential files. Defaults FALSE for the same
 # ansible-drift reason as ops_batch above: enabling asserts a vault
 # password. Passwords must be alphanumeric (`openssl rand -hex 32`): the
 # netrc format splits on whitespace and the client XML is not escaped.
-# ops_admin is PERMANENT once it has run DDL — see the task file.
 clickhouse_ops_monitor_profile_enabled: false
 clickhouse_ops_monitor_user: "ops_monitor"
 # clickhouse_ops_monitor_password ← ansible-vault, vault_clickhouse_ops_monitor_password

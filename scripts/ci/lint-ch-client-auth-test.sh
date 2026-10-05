@@ -19,12 +19,10 @@ check() { # name, command...
   local name="$1"; shift
   if "$@"; then echo "ok   $name"; else echo "FAIL $name"; fail=1; fi
 }
-# shellcheck disable=SC2329  # invoked indirectly via check
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via check
 has() { grep -q -- "$1" <<<"$out"; }
-# shellcheck disable=SC2329  # invoked indirectly via check
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via check
 lacks() { ! has "$1"; }
-# shellcheck disable=SC2329  # invoked indirectly via check
-real_scanned() { [ "$rc" -eq 0 ] && grep -qE ' in [1-9][0-9]* installed' <<<"$real"; }
 
 mkdir -p "$TMP/configs/ansible/roles/fake/tasks" "$TMP/configs/ansible/roles/fake/files" \
   "$TMP/configs/ansible/playbooks" "$TMP/scripts/ops"
@@ -111,6 +109,8 @@ set +e
 real="$(cd "$REPO_ROOT" && python3 "$LINT")"
 rc=$?
 set -e
-check "real tree scans installed scripts" real_scanned
+scanned=0
+if [ "$rc" -eq 0 ] && grep -qE ' in [1-9][0-9]* installed' <<<"$real"; then scanned=1; fi
+check "real tree scans installed scripts" [ "$scanned" -eq 1 ]
 
 exit "$fail"

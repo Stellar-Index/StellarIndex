@@ -466,6 +466,8 @@
   # parsed — the whole defect being fixed was a config that looked right
   # and was silently inert. No --port here ON PURPOSE: this asserts the
   # operator's bare-command path, which is the one that broke.
+  # AUTHENTICATION_FAILED here means root's client config and users.d/ops-admin.xml
+  # disagree (a killed run); repair with --tags clickhouse-ops-admin-profile.
   ansible.builtin.command:
     cmd: clickhouse-client -q "SELECT 1"
   register: ch_client_probe
