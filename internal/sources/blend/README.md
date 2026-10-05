@@ -214,6 +214,14 @@ helper V2's `new_auction`/`fill_auction` use) since the `AuctionData`
 Map shape is identical. Real-lake-bytes golden tests:
 `v1_pool_factory_test.go`.
 
+The V1 pools (WASM `baf978f1…`) also emit `new_auction`,
+`fill_auction` and `bad_debt` in V1 shapes. `decode_v1_pool.go` decodes
+them, and dispatch picks the decoder from the topic shape. They land in
+`blend_auctions` and `blend_emissions`, because the auction type is in
+the topic. Shapes and evidence:
+[wasm-audits/blend.md](../../../docs/operations/wasm-audits/blend.md).
+Goldens: `v1_pool_auction_test.go`.
+
 Historical replay from the source genesis (`FactoryGenesisLedger`,
 51,499,546 — 369 ledgers before the V1 factory's first deploy at
 51,499,915) via `projector-replay -source blend -from 51499546` has
