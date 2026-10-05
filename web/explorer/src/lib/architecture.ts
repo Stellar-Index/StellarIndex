@@ -45,11 +45,6 @@ const CURATED: { slug: string; description: string }[] = [
       'Three-domain supply derivation: XLM hard-coded, classic from ledger entries, SEP-41 from event sums. Per-asset refresh cadence. ADR-0011 in full.',
   },
   {
-    slug: 'contract-schema-evolution',
-    description:
-      'Soroban DeFi contracts upgrade in place, and event schemas can change with them. How decoders stay correct across WASM versions, including for backfill.',
-  },
-  {
     slug: 'oracle-manipulation-defense',
     description:
       'Attack catalogue and the defensive layers we run, the SEP-40 serve surface, and how a new on-chain oracle is discovered and onboarded.',

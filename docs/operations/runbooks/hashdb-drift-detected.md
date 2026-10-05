@@ -150,7 +150,7 @@ what we first saw). First re-run the verify command above.
 
 ## Companion alert: `hashdb_verify_failing`
 
-Same rule file, `stellarindex_hashdb_verify_runs_total{outcome="error"}`
+Same rule file, `stellarindex_hashdb_verify_runs_total{window="recent",outcome="error"}`
 dominating `{outcome=~"ok|drift"}` over 6h, sustained 30 min. This
 means the periodic verify sweep ITSELF can't complete — the detector
 has gone blind, as opposed to having found something. Common causes:
@@ -288,3 +288,17 @@ ledger(s) before detection.
 - 2026-10-05 — drift adjudication rewritten at header level (SDF holds no LCM); torn-record note (INV-2593, INV-2592).
 - 2026-07-09 — initial draft alongside wiring hashdb into production
   (ADR-0016, ROADMAP #46). Founding case: ledger 63332650.
+
+## Companion alert: `hashdb_history_verify_failing`
+
+Same rule file. Each sweep also re-verifies a random 1000-ledger slice
+of pre-window history from the archive bucket
+(`window="history"` on `stellarindex_hashdb_verify_runs_total`). This
+fires when that slice had at least one `error` and no `ok`/`drift` run
+over 6h (6 hourly sweeps), sustained 30 min. `hashdb_verify_failing`
+cannot see it: the healthy recent window's ok runs outweigh the history
+errors. Find the failing slice in the indexer log (`slice=history`,
+with `seed`, `from`, `to`), then re-run it:
+`stellarindex-indexer -verify-hashdb-from FROM -verify-hashdb-to TO`.
+Usual causes: the archive bucket is unreachable or missing objects for
+that range, or no ledger in the slice has a recorded baseline.

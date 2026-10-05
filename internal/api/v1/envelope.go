@@ -166,8 +166,8 @@ type Flags struct {
 	// ticker but its issuer doesn't match the verified entry — i.e.
 	// someone issued their own "USDC" on Stellar. The matching
 	// `unverified_warning` payload on the AssetDetail body carries
-	// the pointer to the verified asset. See R-018 /
-	// docs/architecture/multi-network-assets-migration.md.
+	// the pointer to the verified asset. See
+	// docs/architecture/supply-pipeline.md#asset-identity.
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
 	// FiltersIgnored names the row-narrowing query parameters the
 	// response did NOT apply, spelled as the caller sent them

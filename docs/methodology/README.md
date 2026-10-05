@@ -29,7 +29,7 @@ Related, non-public references:
 
 - `docs/architecture/aggregation-plan.md` — the internal binding spec
   (policy chain, config surface, metrics, alerts).
-- `docs/architecture/freshness-definition.md` — the two-contract
+- `docs/architecture/coverage-matrix.md#freshness-what-the-30-s-sla-means` — the two-contract
   freshness design.
 - [Per-protocol verification pages](../protocols/README.md) — which
   sources feed the exchange class, and the contract-identity gating

@@ -120,9 +120,60 @@ tests:
     input_series:
       - series: 'stellarindex_hashdb_append_total{outcome="ok",instance="r1:9101",job="stellarindex_indexer"}'
         values: '0+1x400'
-      - series: 'stellarindex_hashdb_verify_runs_total{outcome="ok",instance="r1:9101",job="stellarindex_indexer"}'
+      - series: 'stellarindex_hashdb_verify_runs_total{outcome="ok",window="recent",instance="r1:9101",job="stellarindex_indexer"}'
         values: '0+1x400'
     alert_rule_test:
       - eval_time: 400m
         alertname: stellarindex_hashdb_verify_stale
+        exp_alerts: []
+
+  # ── history slice errors every sweep while the recent window stays
+  # healthy: verify_failing's recent-window ratio is green, so the
+  # history rule must fire on its own ───────────────────────────────
+  - interval: 60m
+    name: history slice erroring with no ok run trips history_verify_failing
+    input_series:
+      - series: 'stellarindex_hashdb_verify_runs_total{outcome="error",window="history",instance="r1:9101",job="stellarindex_indexer"}'
+        values: '0+1x12'
+      - series: 'stellarindex_hashdb_verify_runs_total{outcome="ok",window="history",instance="r1:9101",job="stellarindex_indexer"}'
+        values: '0+0x12'
+      - series: 'stellarindex_hashdb_verify_runs_total{outcome="ok",window="recent",instance="r1:9101",job="stellarindex_indexer"}'
+        values: '0+1x12'
+    alert_rule_test:
+      - eval_time: 10h
+        alertname: stellarindex_hashdb_history_verify_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: hashdb
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb-drift-detected.md
+              summary: "hashdb history-slice verify has errored with no clean run in 6h (P3)"
+              description: |
+                Every sweep re-verifies a random slice of pre-window history
+                from the archive bucket, besides the recent window. Over the
+                last 6h (6 hourly sweeps) that slice recorded at least one
+                error and no ok/drift run, for 30+ min sustained. The recent
+                window can stay healthy and hide this: its ok runs mask the
+                history errors in stellarindex_hashdb_verify_failing, so
+                this rule watches window="history" alone. Check the indexer's
+                "hashdb verify sweep failed" / "incomplete" WARN lines
+                carrying slice=history (they name the seed and range), then
+                the runbook.
+      - eval_time: 10h
+        alertname: stellarindex_hashdb_verify_failing
+        exp_alerts: []
+
+  # ── history slice errors once but also completes ok in the window ──
+  - interval: 60m
+    name: history slice with an ok run in window stays quiet
+    input_series:
+      - series: 'stellarindex_hashdb_verify_runs_total{outcome="error",window="history",instance="r1:9101",job="stellarindex_indexer"}'
+        values: '0+1x12'
+      - series: 'stellarindex_hashdb_verify_runs_total{outcome="ok",window="history",instance="r1:9101",job="stellarindex_indexer"}'
+        values: '0+1x12'
+    alert_rule_test:
+      - eval_time: 10h
+        alertname: stellarindex_hashdb_history_verify_failing
         exp_alerts: []

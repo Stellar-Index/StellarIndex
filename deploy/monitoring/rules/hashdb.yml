@@ -80,11 +80,11 @@ groups:
 
       - alert: stellarindex_hashdb_verify_failing
         expr: |
-          sum(rate(stellarindex_hashdb_verify_runs_total{outcome="error"}[6h]))
+          sum(rate(stellarindex_hashdb_verify_runs_total{window="recent",outcome="error"}[6h]))
             >
-          sum(rate(stellarindex_hashdb_verify_runs_total{outcome=~"ok|drift"}[6h]))
+          sum(rate(stellarindex_hashdb_verify_runs_total{window="recent",outcome=~"ok|drift"}[6h]))
           and
-          sum(rate(stellarindex_hashdb_verify_runs_total{outcome=~"error|ok|drift"}[6h])) > 0
+          sum(rate(stellarindex_hashdb_verify_runs_total{window="recent",outcome=~"error|ok|drift"}[6h])) > 0
         for: 30m
         labels:
           severity: ticket
@@ -102,6 +102,31 @@ groups:
             means drift (if any is happening) is going unnoticed. Check the
             indexer's "hashdb verify sweep failed" WARN log lines, then the
             runbook.
+
+      - alert: stellarindex_hashdb_history_verify_failing
+        expr: |
+          sum(increase(stellarindex_hashdb_verify_runs_total{window="history",outcome="error"}[6h])) > 0
+          unless
+          sum(increase(stellarindex_hashdb_verify_runs_total{window="history",outcome=~"ok|drift"}[6h])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: hashdb
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb-drift-detected.md
+          summary: "hashdb history-slice verify has errored with no clean run in 6h (P3)"
+          description: |
+            Every sweep re-verifies a random slice of pre-window history
+            from the archive bucket, besides the recent window. Over the
+            last 6h (6 hourly sweeps) that slice recorded at least one
+            error and no ok/drift run, for 30+ min sustained. The recent
+            window can stay healthy and hide this: its ok runs mask the
+            history errors in stellarindex_hashdb_verify_failing, so
+            this rule watches window="history" alone. Check the indexer's
+            "hashdb verify sweep failed" / "incomplete" WARN lines
+            carrying slice=history (they name the seed and range), then
+            the runbook.
 
       - alert: stellarindex_hashdb_verify_stale
         expr: |

@@ -356,6 +356,9 @@ func buildChunkDispatcher(
 	if err := recordBackfillDirtyWindows(ctx, rec, cfg, opts); err != nil {
 		return nil, nil, err
 	}
+	if err := recordRawBackfillProjectorWindows(ctx, logger, rec, cfg, opts); err != nil {
+		return nil, nil, err
+	}
 	realSources := filterOutSorobanEventsPseudo(opts.sources)
 	if err := opts.wasmGate.check(func() error {
 		return wasmaudit.GateReplay(ctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts, realSources, opts.from, opts.to)
@@ -1130,9 +1133,10 @@ func filterOutSorobanEventsPseudo(sources []string) []string {
 }
 
 // dirtyWindowRecorder is the slice of the store that records a projection
-// dirty window (migration 0125).
+// dirty window (migration 0125) and reads the cursor it is measured against.
 type dirtyWindowRecorder interface {
 	RecordProjectionDirtyWindow(ctx context.Context, w timescale.ProjectionDirtyWindow) error
+	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
 }
 
 // recordBackfillDirtyWindows records a dirty window over [opts.from, opts.to]
@@ -1155,6 +1159,44 @@ func recordBackfillDirtyWindows(ctx context.Context, rec dirtyWindowRecorder, cf
 		}); err != nil {
 			return fmt.Errorf("record dirty window for %s before writing (refusing to backfill): %w", src, err)
 		}
+	}
+	return nil
+}
+
+// recordRawBackfillProjectorWindows covers a soroban-events backfill landing
+// raw rows for a projected source while the projector tails Postgres
+// soroban_events: the projector never reads behind its cursor, so rows landed
+// at or below it stay unprojected until a projector-replay rewinds it. The
+// backfill must not project them itself (invariant [7]); it records a dirty
+// window over the FULL [from,to] and names the replay that closes it. The
+// cursor is read once, before an hours-long backfill, so it cannot say which
+// rows will land behind it; a source whose cursor is still below from gets a
+// window it may not need, which only a completeness verdict clears (the
+// projector's forward pass does not).
+func recordRawBackfillProjectorWindows(ctx context.Context, logger *slog.Logger, store dirtyWindowRecorder, cfg config.Config, opts backfillOpts) error {
+	if opts.dryRun || cfg.Storage.ClickHouseProjectorSource || !hasSorobanEventsPseudo(opts.sources) {
+		return nil
+	}
+	for _, src := range completeness.AuditedSources(cfg) {
+		if !projector.IsProjectedSource(src, cfg.Oracle, cfg.Supply.WatchedSEP41Contracts) {
+			continue
+		}
+		cur, err := store.GetCursor(ctx, "projector", src)
+		if errors.Is(err, timescale.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read projector cursor for %s (refusing to backfill raw events it may never project): %w", src, err)
+		}
+		if err := store.RecordProjectionDirtyWindow(ctx, timescale.ProjectionDirtyWindow{
+			Source: src, From: opts.from, To: opts.to,
+			Reason: timescale.BackfillWriteReason(opts.from, opts.to),
+		}); err != nil {
+			return fmt.Errorf("record dirty window for %s before writing (refusing to backfill): %w", src, err)
+		}
+		logger.Warn("soroban-events backfill may land at or below the projector cursor; the projector will not re-project it on its own — after this backfill completes, run the replay command",
+			"source", src, "projector_cursor", cur.LastLedger, "unprojected_from", opts.from, "unprojected_to", opts.to,
+			"command", fmt.Sprintf("stellarindex-ops projector-replay -config %s -source %s -from %d", opts.cfgPath, src, opts.from))
 	}
 	return nil
 }
