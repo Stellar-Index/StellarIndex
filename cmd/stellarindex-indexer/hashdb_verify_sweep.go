@@ -17,6 +17,10 @@ const (
 	// seek into the archive bucket. Without it, history older than the
 	// window (~28h) is never re-verified after the live pass scrolls past it.
 	hashDBVerifyHistorySliceLedgers = uint32(1000)
+
+	// Values of the stellarindex_hashdb_verify_runs_total "window" label.
+	hashDBWindowRecent  = "recent"
+	hashDBWindowHistory = "history"
 )
 
 // pickHashDBHistorySlice chooses a seeded random slice of up to n ledgers
@@ -67,7 +71,7 @@ func hashDBVerifySweep(
 		return
 	}
 
-	hashDBVerifyPass(ctx, logger, verifyDB, lsCfg, from, to, seenDrifted)
+	hashDBVerifyPass(ctx, logger, verifyDB, lsCfg, from, to, seenDrifted, hashDBWindowRecent)
 
 	// History older than the window is no longer in the live bucket, so
 	// the slice reads from the archive bucket. The seed and bounds ride on
@@ -76,6 +80,6 @@ func hashDBVerifySweep(
 	if hFrom, hTo, ok := pickHashDBHistorySlice(verifyDB.StartLedger(), from, hashDBVerifyHistorySliceLedgers, uint64(seed)); ok && ctx.Err() == nil {
 		hl := logger.With("slice", "history", "seed", seed)
 		hl.Info("hashdb verify history slice", "from", hFrom, "to", hTo)
-		hashDBVerifyPass(ctx, hl, verifyDB, archiveCfg, hFrom, hTo, seenDrifted)
+		hashDBVerifyPass(ctx, hl, verifyDB, archiveCfg, hFrom, hTo, seenDrifted, hashDBWindowHistory)
 	}
 }

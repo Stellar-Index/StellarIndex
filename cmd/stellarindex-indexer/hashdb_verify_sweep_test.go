@@ -3,9 +3,17 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
+	"path/filepath"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/archivecompleteness"
+	"github.com/Stellar-Index/StellarIndex/internal/hashdb"
+	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // TestClassifyHashDBVerifySweep_DriftSurvivesShutdownCancel is T128:
@@ -166,4 +174,25 @@ func TestPickHashDBHistorySlice(t *testing.T) {
 			}
 		}
 	})
+}
+
+// A failing pass must count under the window it ran for, so the
+// history slice's errors stay visible apart from the recent window's.
+func TestHashDBVerifyPass_CountsUnderWindowLabel(t *testing.T) {
+	db, err := hashdb.Create(filepath.Join(t.TempDir(), "h.db"), 1)
+	if err != nil {
+		t.Fatalf("hashdb.Create: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, window := range []string{hashDBWindowRecent, hashDBWindowHistory} {
+		c := obs.HashdbVerifyRunsTotal.WithLabelValues("error", window)
+		before := testutil.ToFloat64(c)
+		// Empty ledgerstream.Config: Stream fails before any read.
+		hashDBVerifyPass(context.Background(), logger, db, ledgerstream.Config{}, 10, 20, nil, window)
+		if got := testutil.ToFloat64(c) - before; got != 1 {
+			t.Errorf("window=%s: error counter delta = %v, want 1", window, got)
+		}
+	}
 }

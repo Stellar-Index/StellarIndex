@@ -576,11 +576,14 @@ func seedBoundedLabelSeries() {
 	// decision, see docs/reference/metrics/README.md) read a real zero
 	// (not "no data") on a freshly-enabled region before the first
 	// tick / first ledger.
-	for _, outcome := range []string{"ok", "error"} {
-		HashdbAppendTotal.WithLabelValues(outcome)
-		HashdbVerifyRunsTotal.WithLabelValues(outcome)
+	for _, outcome := range []string{"ok", "error", "drift"} {
+		if outcome != "drift" {
+			HashdbAppendTotal.WithLabelValues(outcome)
+		}
+		for _, window := range []string{"recent", "history"} {
+			HashdbVerifyRunsTotal.WithLabelValues(outcome, window)
+		}
 	}
-	HashdbVerifyRunsTotal.WithLabelValues("drift")
 	seedLedgerstreamTierSeries()
 	// ADR-0019 freeze-lifecycle release modes. Bounded set of two;
 	// `operator` in particular is the one an on-call reads as "the
@@ -5445,7 +5448,7 @@ var HashdbAppendDurationSeconds = prometheus.NewHistogramVec(
 )
 
 // HashdbVerifyRunsTotal — per-outcome counter for the indexer's
-// periodic hashdb verify sweep (re-reads a trailing window from the
+// periodic hashdb verify sweep; `window` is recent|history (re-reads a trailing window from the
 // same galexie bucket and compares against hashdb; see
 // internal/archivecompleteness.HashDBWindowVerifier). Labels:
 //
@@ -5457,18 +5460,16 @@ var HashdbAppendDurationSeconds = prometheus.NewHistogramVec(
 //     Missing/OutOfRange never compared anything and is `error`, not
 //     `ok`).
 //   - `drift` — the sweep completed and found at least one drifted
-//     ledger. See HashdbDriftTotal for the per-ledger drift count
-//     this alerts on.
+//     ledger (per-ledger count: HashdbDriftTotal).
 //   - `error` — the sweep itself failed (datastore read error,
 //     hashdb I/O error) before it could finish comparing the window.
-//     Distinct from `drift`: this means "we don't know", not "we
-//     found a mismatch".
+//     Distinct from `drift`: "we don't know", not "found a mismatch".
 var HashdbVerifyRunsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_hashdb_verify_runs_total",
-		Help: "Indexer periodic hashdb verify-sweep outcomes, labelled by outcome (ok|drift|error).",
+		Help: "Indexer periodic hashdb verify-sweep outcomes, labelled by outcome (ok|drift|error) and window (recent|history).",
 	},
-	[]string{"outcome"},
+	[]string{"outcome", "window"},
 )
 
 // HashdbVerifyRunDurationSeconds — latency histogram for one full
