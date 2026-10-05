@@ -33,7 +33,12 @@ import (
 // so re-flowing a paragraph doesn't fail the guard; the load-bearing
 // tokens are the exponent and the weight sum.
 
-const adr0019Path = "../../../docs/adr/0019-anomaly-response-and-confidence-scoring.md"
+const (
+	adr0019Path = "../../../docs/adr/0019-anomaly-response-and-confidence-scoring.md"
+	// The formulas, factor constants and bootstrap gate live here; ADR-0019
+	// links to it for them.
+	adr0019DetailPath = "../../../docs/architecture/anomaly-freeze-and-confidence.md"
+)
 
 // squashWhitespace collapses every run of whitespace (spaces,
 // newlines, markdown line-wrapping, Go comment `//` prefixes) to a
@@ -61,7 +66,7 @@ func readSquashed(t *testing.T, path string) string {
 // correction, per the docs/adr/README.md "supersede/amend, don't
 // rewrite" rule.
 func TestADR0019PinsTheNormalisedCombiner(t *testing.T) {
-	adr := readSquashed(t, adr0019Path)
+	adr := readSquashed(t, adr0019DetailPath)
 
 	// The normalising exponent, applied over the sum of all seven
 	// per-factor weights (w_tri included — #1217).
@@ -71,7 +76,7 @@ func TestADR0019PinsTheNormalisedCombiner(t *testing.T) {
 		t.Errorf("ADR-0019 does not spell the normalisation exponent "+
 			"`^ (1 / (w_z + w_src + w_div + w_liq + w_xoracle + w_tri + w_qual))` — "+
 			"a six-term exponent omits score.go's triangulation weight, which is NOT "+
-			"what confidence.Compute ships whenever a pair triangulates (see %s)", adr0019Path)
+			"what confidence.Compute ships whenever a pair triangulates (see %s)", adr0019DetailPath)
 	}
 
 	// The generic restatement that ties the ADR to score.go's own
@@ -97,14 +102,13 @@ func TestADR0019PinsTheNormalisedCombiner(t *testing.T) {
 // fails if the amendment is dropped or the constants drift away from
 // it, which is the same class of silent doc/code divergence R-003 was.
 func TestADR0019PinsTheShippedFactorSet(t *testing.T) {
-	adr := readSquashed(t, adr0019Path)
+	adr := readSquashed(t, adr0019DetailPath)
 
 	// The ceiling constant, stated in the form an operator can match
 	// against internal/aggregate/confidence/factors.go.
-	if !strings.Contains(adr, "$100K → $1,000,000") {
-		t.Error("ADR-0019 does not record the liquidity_factor ceiling change " +
-			"($100K → $1,000,000); its factor-shape bullet still describes a " +
-			"ceiling the code has not used since 2026-07-25")
+	if !strings.Contains(adr, "a $1,000,000 ceiling") && !strings.Contains(adr, "**$1,000,000** ceiling") {
+		t.Error("ADR-0019 detail page does not state the liquidity_factor ceiling " +
+			"($1,000,000)")
 	}
 	// The measurement that justifies it — a number, not an adjective,
 	// so a future re-tune has to argue with the evidence.
@@ -122,8 +126,7 @@ func TestADR0019PinsTheShippedFactorSet(t *testing.T) {
 			"(weight 0), not merely neutral, when no composite exists — the property " +
 			"that keeps every un-triangulated pair's score unchanged")
 	}
-	if !strings.Contains(adr, "does not feed `source_count`") &&
-		!strings.Contains(adr, "does **not** feed `source_count`") {
+	if !strings.Contains(adr, "never feeds `source_count`") {
 		t.Error("ADR-0019 does not state that a composite is excluded from " +
 			"source_count — the freeze AND's independence leg depends on it")
 	}
@@ -135,7 +138,7 @@ func TestADR0019PinsTheShippedFactorSet(t *testing.T) {
 // [confidence.BootstrapReengageDensityDays]. The 2026-09-28 amendment
 // records both; this fails if it is dropped or a constant moves away from it.
 func TestADR0019PinsTheBootstrapDensityGate(t *testing.T) {
-	adr := readSquashed(t, adr0019Path)
+	adr := readSquashed(t, adr0019DetailPath)
 	gate := strconv.FormatFloat(confidence.BootstrapDensityDays, 'f', -1, 64)
 	if !strings.Contains(adr, "`BootstrapDensityDays` = "+gate) {
 		t.Errorf("ADR-0019 does not state the shipped bootstrap density gate (%s days-equivalent)", gate)
@@ -144,10 +147,18 @@ func TestADR0019PinsTheBootstrapDensityGate(t *testing.T) {
 	if !strings.Contains(adr, "`BootstrapReengageDensityDays` = "+reengage) {
 		t.Errorf("ADR-0019 does not state the bootstrap gate's hysteresis edge (%s days-equivalent)", reengage)
 	}
-	unquoted := strings.ReplaceAll(adr, " > ", " ")
-	if !strings.Contains(unquoted, "`baseline_age_days` and `bootstrap_capped` now ship") {
-		t.Error("ADR-0019 does not record that baseline_age_days and bootstrap_capped are served; " +
-			"its 2026-09-27 amendment still says baseline_age_days does not exist")
+	if !strings.Contains(adr, "`baseline_age_days` and `bootstrap_capped`.") {
+		t.Error("ADR-0019 detail page does not record that baseline_age_days and bootstrap_capped are served")
+	}
+}
+
+// TestADR0019PinsTheFreezeCondition — the freeze AND is the decision itself,
+// so it is pinned in the ADR's own Decision section.
+func TestADR0019PinsTheFreezeCondition(t *testing.T) {
+	adr := readSquashed(t, adr0019Path)
+	if !strings.Contains(adr, "confidence < 0.45 AND z_score > 5.0 AND source_count <= 1") {
+		t.Error("ADR-0019 does not state the three-signal freeze condition " +
+			"`confidence < 0.45 AND z_score > 5.0 AND source_count <= 1`")
 	}
 }
 
