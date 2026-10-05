@@ -232,7 +232,7 @@ func runVerifyHashDBRange(ctx context.Context, cfgPath string, from, to uint32) 
 	// startHashDBVerifier's recurring overlapping sweep — see
 	// countNewDrift's doc for why the periodic path needs one and this
 	// one-off path doesn't.
-	outcome := hashDBVerifyPass(ctx, logger, verifyDB, archiveCfg, from, to, nil)
+	outcome := hashDBVerifyPass(ctx, logger, verifyDB, archiveCfg, from, to, nil, hashDBWindowRecent)
 	if outcome != sweepOutcomeOK {
 		return fmt.Errorf("verify-hashdb-range: sweep did not complete cleanly (outcome=%d) — see log for detail", outcome)
 	}
@@ -845,7 +845,7 @@ func run(cfgPath string, dryRun bool) error {
 		}()
 
 		hashdbVerifyStop, hashdbVerifyDone := startHashDBVerifier(
-			rootCtx, cfg.HashDB, hashdbVerifyDB, liveCfg,
+			rootCtx, cfg.HashDB, hashdbVerifyDB, liveCfg, archiveCfg,
 			&hashdbLastAppended, logger.With("component", "hashdb-verify"),
 		)
 		defer func() {
@@ -2573,6 +2573,7 @@ func startHashDBVerifier(
 	hcfg config.HashDBConfig,
 	verifyDB *hashdb.DB,
 	lsCfg ledgerstream.Config,
+	archiveCfg ledgerstream.Config,
 	lastAppended *atomic.Uint32,
 	logger *slog.Logger,
 ) (context.CancelFunc, <-chan struct{}) {
@@ -2615,7 +2616,7 @@ func startHashDBVerifier(
 		for {
 			select {
 			case <-ticker.C:
-				hashDBVerifySweep(ctx, logger, verifyDB, lsCfg, lastAppended, window, seenDrifted)
+				hashDBVerifySweep(ctx, logger, verifyDB, lsCfg, archiveCfg, lastAppended, window, seenDrifted, time.Now().UnixNano())
 			case <-ctx.Done():
 				return
 			}
@@ -2637,39 +2638,8 @@ func hashDBSweepComplete(res archivecompleteness.HashDBVerifyResult, observed in
 	return observed == int(to-from)+1 && res.Verified > 0
 }
 
-// hashDBVerifySweep runs one verify pass and records its outcome.
-// Split out of startHashDBVerifier so the ticker-plumbing and the
-// actual-work are independently readable (matches the
-// RunRoutedViaTagger / sweep() split in internal/pipeline/routedvia.go).
-func hashDBVerifySweep(
-	ctx context.Context,
-	logger *slog.Logger,
-	verifyDB *hashdb.DB,
-	lsCfg ledgerstream.Config,
-	lastAppended *atomic.Uint32,
-	window uint32,
-	seenDrifted map[uint32]struct{},
-) {
-	tip := lastAppended.Load()
-	if tip <= hashDBVerifySafetyMargin {
-		// Fresh region bring-up, or restart hasn't accumulated enough
-		// new appends yet — nothing durable to check.
-		return
-	}
-	to := tip - hashDBVerifySafetyMargin
-
-	from := verifyDB.StartLedger()
-	if to > window && to-window+1 > from {
-		from = to - window + 1
-	}
-	if from > to {
-		return
-	}
-
-	hashDBVerifyPass(ctx, logger, verifyDB, lsCfg, from, to, seenDrifted)
-}
-
-// hashDBVerifyPass runs one bounded ADR-0016 verify pass over an explicit
+// hashDBVerifyPass (window: hashDBWindowRecent|hashDBWindowHistory, the
+// runs-counter label) runs one bounded ADR-0016 verify pass over an explicit
 // [from, to] ledger range and records/logs its outcome. Split out of
 // hashDBVerifySweep (T122) so the same pass can run either off the live
 // tip's trailing window (hashDBVerifySweep's job) OR over an
@@ -2713,6 +2683,7 @@ func hashDBVerifyPass(
 	lsCfg ledgerstream.Config,
 	from, to uint32,
 	seenDrifted map[uint32]struct{},
+	window string,
 ) hashDBVerifySweepOutcome {
 	// Stream STRICT: the shared live-tail config tolerates
 	// trailing-missing objects (a live reader racing galexie's upload
@@ -2750,7 +2721,7 @@ func hashDBVerifyPass(
 		// a shutdown cancel) mid-walk, drift already tallied is the
 		// signal this detector exists for; an error or cancel must
 		// not suppress it.
-		obs.HashdbVerifyRunsTotal.WithLabelValues("drift").Inc()
+		obs.HashdbVerifyRunsTotal.WithLabelValues("drift", window).Inc()
 		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("drift").Observe(dur)
 		obs.HashdbDriftTotal.Add(float64(countNewDrift(res, seenDrifted)))
 		// Loud: this is the ledger-63332650-class incident — see
@@ -2763,7 +2734,7 @@ func hashDBVerifyPass(
 			"stream_err", streamErr,
 		)
 	case sweepOutcomeError:
-		obs.HashdbVerifyRunsTotal.WithLabelValues("error").Inc()
+		obs.HashdbVerifyRunsTotal.WithLabelValues("error", window).Inc()
 		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("error").Observe(dur)
 		logger.Warn("hashdb verify sweep failed", "from", from, "to", to, "err", streamErr)
 	case sweepOutcomeIncomplete:
@@ -2772,13 +2743,13 @@ func hashDBVerifyPass(
 		// without erroring, and "we couldn't check everything" must
 		// not read as clean.
 		observed := res.Verified + res.Drifted + res.Missing + res.OutOfRange
-		obs.HashdbVerifyRunsTotal.WithLabelValues("error").Inc()
+		obs.HashdbVerifyRunsTotal.WithLabelValues("error", window).Inc()
 		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("error").Observe(dur)
 		logger.Warn("hashdb verify sweep incomplete — stream ended early without error, or no ledger in the window had a recorded baseline to compare against",
 			"from", from, "to", to, "observed", observed, "expected", int(to-from)+1, "verified", res.Verified,
 		)
 	default: // sweepOutcomeOK
-		obs.HashdbVerifyRunsTotal.WithLabelValues("ok").Inc()
+		obs.HashdbVerifyRunsTotal.WithLabelValues("ok", window).Inc()
 		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("ok").Observe(dur)
 		logger.Info("hashdb verify sweep clean",
 			"from", from, "to", to,
