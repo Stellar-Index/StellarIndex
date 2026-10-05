@@ -100,7 +100,7 @@ func (s *Server) handleStatusNotices(w http.ResponseWriter, r *http.Request) {
 		// active notices" — flags.stale marks it a failed read so a caller
 		// can tell "nothing to announce" from "couldn't ask" (RLT-465).
 		s.logger.Warn("status notices list failed; returning empty", "err", err)
-		writeJSON(w, StatusNoticesList{Notices: []StatusNotice{}, Count: 0}, Flags{Stale: true})
+		writeJSON(w, StatusNoticesList{Notices: []StatusNotice{}, Count: 0}, Flags{Stale: true, Degraded: true})
 		return
 	}
 	views := statusNoticeViews(rows)
