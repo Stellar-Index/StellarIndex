@@ -212,6 +212,9 @@ that bound the DELETE:
 diffs it against the served tables per source, as a read-only check.
 It runs soroswap unseeded, so a soroswap mismatch there is the tool,
 not the data.
+`ch-reproject` buckets re-derived output per source (applying each
+source's `contractIDs` prefilter); otherwise the three reflector variants
+merge.
 
 ## The replay decision rule
 
@@ -273,6 +276,8 @@ movement events). A new factory can run beside the old one for months.
   caught by `stellarindex-ops wasm-drift`; history is enumerated from
   Galexie by `wasm-history`, `wasm-history-merge-jsonl` and
   `extract-wasm-from-galexie`.
+- Aquarius has an `UPGRADE_DELAY = 259200s` (3 days) governance window
+  with an emergency-mode bypass, so an upgrade can land with no notice.
 - Per-connector WASM inventories are the audit logs and
   [decoder-wasm-matrix.md](../operations/wasm-audits/decoder-wasm-matrix.md);
   decoder upgrade notes live in `internal/sources/<venue>/README.md`.
