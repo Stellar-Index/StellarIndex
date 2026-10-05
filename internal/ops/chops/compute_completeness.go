@@ -2063,10 +2063,9 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chAd
 // used let a real drop in ledger L net against a phantom overcount
 // elsewhere in the scope and report complete=true. Sources whose
 // served `ledger` keying can differ from the re-derive's event
-// ledger (the oracle sources — legacy backfill vintages keyed
-// oracle_updates.ledger by the ORACLE TIMESTAMP's ledger) opt out
-// via reconSource.aggregateReconcile, keep the totals compare, and
-// accept the documented netting residual. Returns Σ|per-ledger Δ|
+// ledger over a fixed historical span opt out via
+// reconSource.aggregate, keep the totals compare up to its boundary, and
+// accept the documented netting residual there. Returns Σ|per-ledger Δ|
 // across targets (0 = clean); the name keeps its historical
 // "Aggregate" for grep continuity with older run logs.
 //
@@ -2571,35 +2570,36 @@ func absDiff(a, b int) int {
 // projectionDelta compares one target's re-derived expected counts
 // against its served counts, both keyed by ledger.
 //
-// Default is STRICT PER-LEDGER via completeness.ReconcileCounts —
-// CS-084: comparing window totals lets a real drop in ledger L net
-// against a phantom overcount elsewhere in the window and report
-// complete=true; the per-ledger maps were already computed on both
-// sides, only the comparison used to collapse them. Sources with a
-// non-empty aggregateReconcile keep the totals compare for the
-// keying reason their catalogue entry documents, and accept that
-// netting residual.
+// Default is STRICT PER-LEDGER: a window-totals compare lets a real
+// drop in ledger L net against a phantom elsewhere. A source with an aggregate
+// waiver nets only up to its boundary; a waiver with no boundary reconciles
+// strict, because netting without the bound that justifies it hides a live
+// drop.
 //
 // Returns Σ|per-ledger Δ| (0 = clean) and a human detail string.
 func projectionDelta(src reconSource, table string, expected, actual map[uint32]int, lo, hi uint32) (int, string) {
-	if src.aggregateReconcile == "" {
-		return strictPerLedgerDelta(table, expected, actual, lo, hi)
-	}
-	b := src.vintageBoundary
+	w := src.aggregate
 	switch {
-	case b == 0 || hi <= b:
-		// No boundary, or the whole window is pre-boundary vintage → keep the
-		// documented full-window aggregate (accept the netting residual).
+	case w == nil:
+		return strictPerLedgerDelta(table, expected, actual, lo, hi)
+	case w.boundary == 0:
+		d, detail := strictPerLedgerDelta(table, expected, actual, lo, hi)
+		if d != 0 {
+			detail += " (aggregate waiver without boundary — reconciled strict)"
+		}
+		return d, detail
+	case hi <= w.boundary:
+		// The whole window is pre-boundary vintage: accept the netting residual.
 		return aggregateDelta(src, table, expected, actual, lo, hi)
-	case lo > b:
-		// The whole window is POST-boundary: the served ledger keys 1:1 with
-		// the re-derive again, so the netting justification is gone — reconcile
-		// strict per-ledger (W1-flowcompleteness-3 / #15).
+	case lo > w.boundary:
+		// The whole window is post-boundary: the served ledger keys 1:1 with
+		// the re-derive, so reconcile strict per-ledger.
 		return strictPerLedgerDelta(table, expected, actual, lo, hi)
 	default:
-		// The window straddles the boundary: aggregate (netting) up to it,
-		// strict per-ledger above it, so a real post-boundary drop can no
-		// longer net against a pre-boundary phantom.
+		// The window straddles the boundary: aggregate up to it, strict above
+		// it, so a real post-boundary drop cannot net against a pre-boundary
+		// phantom.
+		b := w.boundary
 		preD, preDetail := aggregateDelta(src, table,
 			countsAtOrBelow(expected, b), countsAtOrBelow(actual, b), lo, b)
 		postD, postDetail := strictPerLedgerDelta(table,
@@ -2609,13 +2609,13 @@ func projectionDelta(src reconSource, table string, expected, actual map[uint32]
 }
 
 // aggregateDelta compares WINDOW TOTALS (the CS-084 netting compare) — used for
-// an aggregateReconcile source's pre-vintage span, where the served ledger can
+// an aggregate-waiver source's pre-vintage span, where the served ledger can
 // legitimately differ from the re-derive's event ledger.
 func aggregateDelta(src reconSource, table string, expected, actual map[uint32]int, lo, hi uint32) (int, string) {
 	e, a := sumCounts(expected), sumCounts(actual)
 	if d := absDiff(e, a); d != 0 {
 		return d, fmt.Sprintf("%s: expected=%d served=%d Δ=%d [%d,%d] (aggregate compare — %s)",
-			table, e, a, d, lo, hi, src.aggregateReconcile)
+			table, e, a, d, lo, hi, src.aggregate.reason)
 	}
 	return 0, ""
 }
