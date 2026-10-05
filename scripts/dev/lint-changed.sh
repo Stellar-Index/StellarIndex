@@ -452,6 +452,7 @@ if [ "${#go_files[@]}" -gt 0 ]; then
     add_step "check-deprecations" "whole tree (takes no file list)" "$ci_dir/check-deprecations.sh"
     add_step "lint-i128" "whole tree (takes no file list)" "$ci_dir/lint-i128.sh"
     add_step "lint-imports" "whole tree (takes no file list)" "$ci_dir/lint-imports.sh"
+    add_step "lint-comments" "whole tree (takes no file list)" "$ci_dir/lint-comments.sh"
     # The typographic-quote scan, whole tree even though it ACCEPTS a file
     # list: scoped to the changed files it would exit 2 ("refusing to pass
     # vacuously") on a diff that only touches generated or vendored Go —

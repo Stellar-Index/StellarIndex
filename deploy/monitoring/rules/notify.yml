@@ -84,6 +84,30 @@ groups:
 
             Runbook: docs/operations/runbooks/notify-send-failure.md
 
+      # Any failed send in the last hour. The ratio rule is NaN when a
+      # template has no attempts and needs >50% failures; the sustained rule
+      # needs failures in every 15m window for 1h. A rare failure (a handful
+      # a day) trips neither, yet each one is a user without their login or
+      # confirmation email. Counter children are pre-seeded, so increase()
+      # sees a lone failure.
+      - alert: stellarindex_notify_send_failed
+        expr: sum by (template) (increase(stellarindex_notify_sends_total{result="failed"}[1h])) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: notify
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+          summary: "Transactional email ({{ $labels.template }}) had {{ $value | humanize }} failed send(s) in the last hour"
+          description: |
+            At least one {{ $labels.template }} email send failed in the
+            last hour. Rare failures stay under the ratio and sustained
+            alerts, so this is the only signal for them. A user did not get
+            their magic link or confirmation email.
+
+            Runbook: docs/operations/runbooks/notify-send-failure.md
+
       # Q268/RLT-324: the ratio rule only pages once failures cross 50% of
       # a template's traffic. A high-volume template failing a sustained
       # ~20-40% of sends never crosses that bar but still means a steady

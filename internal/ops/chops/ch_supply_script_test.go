@@ -86,7 +86,7 @@ func chSupplyScriptBody(t *testing.T) string {
 		t.Fatal("run-ch-supply.sh has no CH() helper; this harness's extraction point moved")
 	}
 	head := s[:i]
-	for _, v := range []string{"PSQL=", "DSN=", "OPS=", "CONFIG=", "CHADDR=", "CHUNK=", "MEMGUARD="} {
+	for _, v := range []string{"PSQL=", "DSN=", "OPS=", "CONFIG=", "CHADDR=", "CHUNK=", "MEMGUARD=", "CH_NETRC="} {
 		if !strings.Contains(head, "\n"+v) {
 			t.Fatalf("run-ch-supply.sh no longer assigns %s before CH(); the harness preamble would shadow nothing", v)
 		}
@@ -117,7 +117,7 @@ func runCHSupplyScript(t *testing.T, env map[string]string) chSupplyRun {
 	preamble := "set -uo pipefail\n" +
 		"PSQL=" + filepath.Join(bin, "psql") + "\nDSN=postgres://stub-host/stubdb\n" +
 		"OPS=" + filepath.Join(bin, "stellarindex-ops") + "\nCONFIG=/stub.toml\nCHADDR=127.0.0.1:9300\n" +
-		"CHUNK=25000\nMEMGUARD=6442450944\n"
+		"CHUNK=25000\nMEMGUARD=6442450944\nCH_NETRC=/dev/null\n"
 	script := filepath.Join(dir, "run-ch-supply.sh")
 	if err := os.WriteFile(script, []byte(preamble+chSupplyScriptBody(t)), 0o600); err != nil {
 		t.Fatal(err)

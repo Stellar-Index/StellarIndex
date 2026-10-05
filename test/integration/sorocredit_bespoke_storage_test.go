@@ -15,12 +15,13 @@ import (
 // Reused public strkeys (contract / account ids — public identifiers, not
 // secrets) for the sorocredit fixtures.
 const (
-	credCollateralA = "CAB6MICC2WKRT372U3FRPKGGVB5R3FDJSMWSLPF2UJNJPYMBZ76RQVYE"
-	credCollateralB = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
-	credOwnerA      = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-	credOwnerB      = "GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO"
-	credSettler     = "GBGQNZAZ54NZWZA7KGOTOZYCXEYIQGOUJK7L6EM7EJD7AQRBKO7VSXJP"
-	credDebtAsset   = "CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG"
+	credCollateralA    = "CAB6MICC2WKRT372U3FRPKGGVB5R3FDJSMWSLPF2UJNJPYMBZ76RQVYE"
+	credCollateralB    = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
+	credOwnerA         = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	credOwnerB         = "GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO"
+	credSettler        = "GBGQNZAZ54NZWZA7KGOTOZYCXEYIQGOUJK7L6EM7EJD7AQRBKO7VSXJP"
+	credDebtAsset      = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75" // mainnet USDC SAC
+	credOtherDebtAsset = "CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG"
 )
 
 // TestCreditWindowAnalyticsAndBespoke exercises the READ side of the
@@ -68,7 +69,9 @@ func TestCreditWindowAnalyticsAndBespoke(t *testing.T) {
 	setAmt2 := big.NewInt(5_000_000)
 	wdAmt := big.NewInt(250_000)
 	wantStmtVol := new(big.Int).Add(stmtAmt1, stmtAmt2)
-	wantSetVol := new(big.Int).Add(setAmt1, setAmt2)
+	setAmtOther := big.NewInt(7_000_000)
+	setAmtMultiLeg := big.NewInt(3_000_000)
+	wantSetVol := new(big.Int).Add(new(big.Int).Add(setAmt1, setAmt2), setAmtMultiLeg)
 
 	// Position A — opened, never withdrawn (stays "open" in the window).
 	// Position B — opened AND cashed out via a Withdrawal (not "open").
@@ -93,6 +96,10 @@ func TestCreditWindowAnalyticsAndBespoke(t *testing.T) {
 	for _, se := range []timescale.CreditSettlement{
 		{CollateralContract: credCollateralA, PositionUUID: "uuid-A", StatementUUID: "stmt-1", SettlerAccount: credSettler, DebtAsset: credDebtAsset, SettledAmount: setAmt1.String(), Ledger: 61_700_020, LedgerCloseTime: base.Add(4 * time.Minute), TxHash: pad64("c", 0), OpIndex: 0, EventIndex: 0},
 		{CollateralContract: credCollateralB, PositionUUID: "uuid-B", StatementUUID: "stmt-2", SettlerAccount: credSettler, DebtAsset: credDebtAsset, SettledAmount: setAmt2.String(), Ledger: 61_700_021, LedgerCloseTime: base.Add(5 * time.Minute), TxHash: pad64("c", 1), OpIndex: 0, EventIndex: 0},
+		// A non-USDC primary leg must not join the USDC-unit sum.
+		{CollateralContract: credCollateralB, PositionUUID: "uuid-B", StatementUUID: "stmt-3", SettlerAccount: credSettler, DebtAsset: credOtherDebtAsset, SettledAmount: setAmtOther.String(), Ledger: 61_700_022, LedgerCloseTime: base.Add(5 * time.Minute), TxHash: pad64("c", 2), OpIndex: 0, EventIndex: 0},
+		// A USDC leg 0 with extra legs is summed, but only partially.
+		{CollateralContract: credCollateralA, PositionUUID: "uuid-A", StatementUUID: "stmt-4", SettlerAccount: credSettler, DebtAsset: credDebtAsset, SettledAmount: setAmtMultiLeg.String(), Attributes: map[string]any{"debt_legs": 2}, Ledger: 61_700_023, LedgerCloseTime: base.Add(5 * time.Minute), TxHash: pad64("c", 3), OpIndex: 0, EventIndex: 0},
 	} {
 		if err := store.InsertCreditSettlement(ctx, se); err != nil {
 			t.Fatalf("InsertCreditSettlement %s: %v", se.PositionUUID, err)
@@ -129,11 +136,14 @@ func TestCreditWindowAnalyticsAndBespoke(t *testing.T) {
 	if a.StatementVolume.BigInt().Cmp(wantStmtVol) != 0 {
 		t.Errorf("StatementVolume = %s, want %s — i128/NUMERIC lost precision", a.StatementVolume, wantStmtVol)
 	}
-	if a.Settlements != 2 {
-		t.Errorf("Settlements = %d, want 2", a.Settlements)
+	if a.Settlements != 4 {
+		t.Errorf("Settlements = %d, want 4", a.Settlements)
 	}
 	if a.SettlementVolume.BigInt().Cmp(wantSetVol) != 0 {
-		t.Errorf("SettlementVolume = %s, want %s — i128/NUMERIC lost precision", a.SettlementVolume, wantSetVol)
+		t.Errorf("SettlementVolume = %s, want %s (USDC primary legs only, i128 exact)", a.SettlementVolume, wantSetVol)
+	}
+	if a.SettlementsNotFullySummed != 2 {
+		t.Errorf("SettlementsNotFullySummed = %d, want 2 (one non-USDC leg, one multi-leg)", a.SettlementsNotFullySummed)
 	}
 	if a.Withdrawals != 1 {
 		t.Errorf("Withdrawals = %d, want 1", a.Withdrawals)
@@ -148,20 +158,23 @@ func TestCreditWindowAnalyticsAndBespoke(t *testing.T) {
 	}
 	kpis := map[string]string{}
 	for _, k := range blk.KPIs {
+		if strings.HasPrefix(k.Label, "Settlement volume") && !strings.HasPrefix(k.Hint, "LOWER BOUND:") {
+			t.Errorf("settlement volume hint = %q, want a LOWER BOUND (2 settlements not fully summed)", k.Hint)
+		}
 		// key on the label prefix before the window suffix
 		kpis[k.Label] = k.Value
 	}
 	assertKPI(t, kpis, "Positions opened (90d)", "2")
 	assertKPI(t, kpis, "Open positions (90d)", "1")
-	assertKPI(t, kpis, "Scheduled settlements (90d)", "2")
+	assertKPI(t, kpis, "Scheduled settlements (90d)", "4")
 	assertKPI(t, kpis, "Settlement volume (90d)", wantSetVol.String())
 
 	var hasSettleTable bool
 	for _, tb := range blk.Tables {
 		if tb.Title == "Recent scheduled settlements" {
 			hasSettleTable = true
-			if len(tb.Rows) != 2 {
-				t.Errorf("recent-settlements rows = %d, want 2", len(tb.Rows))
+			if len(tb.Rows) != 4 {
+				t.Errorf("recent-settlements rows = %d, want 4", len(tb.Rows))
 			}
 		}
 	}

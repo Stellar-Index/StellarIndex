@@ -95,7 +95,7 @@ covers 95% of dev workflows. Defer until churn shows it's needed.
 
 Server-issued, opaque random session **token** stored in:
 - HttpOnly + Secure + SameSite=Lax cookie on `stellarindex.io`
-- 30-day rolling expiry; touched on every authenticated request
+- 30-day fixed expiry (`expires_at` set at login, never extended); each authenticated request only updates `last_seen_at`
 
 The cookie carries a high-entropy random token; the table stores only
 `sha256(token)` (`token_hash`), so a read of the `sessions` table is not

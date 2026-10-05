@@ -37,12 +37,18 @@ a blank page.
 
 ## Edit-then-commit cycle
 
-After every customer-comms send, copy the actual sent text
-back into a dated postmortem-style doc under
+After a broadcast send (incident, maintenance, launch,
+rollback), copy the actual sent text into a dated doc under
 `docs/operations/comms-log/YYYY-MM-DD-<slug>.md` (create the
 directory on first use). Keeps an audit trail of what was
-actually said vs. the template — useful if a customer
-references the message in a future support request.
+actually said vs. the template.
+
+**NEVER commit a sent `onboarding-email.md`.** It contains the
+customer's API key and name, and this repo is public. Keep
+per-customer sends out of git entirely (the support mailbox is the
+audit trail). Before committing any comms-log entry, confirm it
+contains no `{{api_key}}` value, key-shaped string, or customer
+name.
 
 ## Cross-references
 

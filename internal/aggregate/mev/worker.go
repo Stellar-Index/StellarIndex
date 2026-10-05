@@ -92,7 +92,10 @@ func storedFrom(c Candidate) (StoredEvent, error) {
 		return StoredEvent{}, err
 	}
 	txs := c.TxHashes
-	if txs == nil {
+	if len(txs) == 0 {
+		if c.TxHash == "" {
+			return StoredEvent{}, fmt.Errorf("mev: %s candidate names no transaction", c.Kind)
+		}
 		txs = []string{c.TxHash}
 	}
 	accts := c.Accounts
@@ -258,7 +261,7 @@ func (w *Worker) RunOnce(ctx context.Context, now time.Time) (detected, inserted
 	for _, c := range cands {
 		ev, mErr := storedFrom(c)
 		if mErr != nil {
-			w.logger.Warn("mev: skip candidate (marshal)", "tx", c.TxHash, "err", mErr)
+			w.logger.Warn("mev: skip candidate", "tx", c.TxHash, "err", mErr)
 			continue
 		}
 		ok, iErr := w.sink.InsertMEVEvent(ctx, ev)

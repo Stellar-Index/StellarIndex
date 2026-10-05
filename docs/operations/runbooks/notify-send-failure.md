@@ -80,6 +80,14 @@ ssh <api-host> 'journalctl -u stellarindex-api --since "30 min ago" --no-pager \
   failure in an otherwise-empty window can briefly spike the ratio. The
   `for: 15m` dwell absorbs one-off blips — a sustained firing is real.
 
+## `stellarindex_notify_send_failed` — any failed send in 1h
+
+Fires on one failed send (`increase(...{result="failed"}[1h]) > 0`, `for: 0m`)
+and clears an hour later. It exists for rare failures the ratio and
+sustained alerts cannot see. Read the call-site log for the mapped error
+class (see Quick diagnosis); a lone `ErrTransient` is a retried blip, a
+repeating `ErrProviderRejected` is a bad address or key.
+
 ## `stellarindex_notify_send_rate_high` — sent volume above 300/h
 
 The opposite failure: mail is going out, too much of it. The login throttles

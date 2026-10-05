@@ -372,6 +372,181 @@ func assertDownRefused(t *testing.T, ctx context.Context, db *sql.DB, dsn string
 	}
 }
 
+// TestEventIndexDownsRefuseWithDuplicates pins that every down which
+// narrows a primary key (0053-0060, 0112) refuses while two rows differ
+// only in the column its up added, instead of failing mid-down on ADD
+// PRIMARY KEY or collapsing them. One container walks the versions in
+// ascending order; each case cleans its rows before the next up.
+func TestEventIndexDownsRefuseWithDuplicates(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+
+	const (
+		h  = `repeat('a', 64)`
+		ts = `'2026-01-01T00:00:00Z'`
+	)
+	cases := []struct {
+		version uint
+		file    string
+		table   string
+		insert  string
+	}{
+		{53, "0053_blend_pk_granularity.down.sql", "blend_positions", `INSERT INTO blend_positions
+			(pool, ledger, tx_hash, op_index, ledger_close_time, event_kind, asset, user_address, token_amount, b_or_d_amount)
+			VALUES ('P', 1, ` + h + `, 0, ` + ts + `, 'supply', 'A1', 'U', 1, 1),
+			       ('P', 1, ` + h + `, 0, ` + ts + `, 'supply', 'A2', 'U', 1, 1)`},
+		{53, "0053_blend_pk_granularity.down.sql", "blend_emissions", `INSERT INTO blend_emissions
+			(pool, ledger, tx_hash, op_index, ledger_close_time, event_kind, event_index)
+			VALUES ('P', 1, ` + h + `, 0, ` + ts + `, 'gulp', 0), ('P', 1, ` + h + `, 0, ` + ts + `, 'gulp', 1)`},
+		{53, "0053_blend_pk_granularity.down.sql", "blend_admin", `INSERT INTO blend_admin
+			(contract_id, ledger, tx_hash, op_index, ledger_close_time, event_kind, event_index)
+			VALUES ('C', 1, ` + h + `, 0, ` + ts + `, 'set_admin', 0), ('C', 1, ` + h + `, 0, ` + ts + `, 'set_admin', 1)`},
+		{54, "0054_blend_positions_event_index.down.sql", "blend_positions", `INSERT INTO blend_positions
+			(pool, ledger, tx_hash, op_index, ledger_close_time, event_kind, asset, user_address, token_amount, b_or_d_amount, event_index)
+			VALUES ('P', 1, ` + h + `, 0, ` + ts + `, 'supply', 'A', 'U', 1, 1, 0),
+			       ('P', 1, ` + h + `, 0, ` + ts + `, 'supply', 'A', 'U', 1, 1, 1)`},
+		{55, "0055_defindex_flows_event_index.down.sql", "defindex_flows", `INSERT INTO defindex_flows
+			(ledger, ledger_close_time, tx_hash, op_index, contract_id, layer, direction, actor, event_index)
+			VALUES (1, ` + ts + `, 'h', 0, 'C', 'vault', 'deposit', 'X', 0),
+			       (1, ` + ts + `, 'h', 0, 'C', 'vault', 'deposit', 'X', 1)`},
+		{56, "0056_soroswap_router_swaps_call_sig.down.sql", "soroswap_router_swaps", `INSERT INTO soroswap_router_swaps
+			(ledger, ledger_close_time, tx_hash, op_index, contract_id, function_name, recipient, path, amount_in, amount_out, call_sig)
+			VALUES (1, ` + ts + `, 'h', 0, 'C', 'swap_exact_tokens_for_tokens', 'R', ARRAY['a','b'], 1, 1, 'sig0'),
+			       (1, ` + ts + `, 'h', 0, 'C', 'swap_exact_tokens_for_tokens', 'R', ARRAY['a','b'], 1, 1, 'sig1')`},
+		{57, "0057_sep41_supply_events_event_index.down.sql", "sep41_supply_events", `INSERT INTO sep41_supply_events
+			(contract_id, ledger, tx_hash, op_index, observed_at, event_kind, amount, event_index)
+			VALUES ('C', 1, ` + h + `, 0, ` + ts + `, 'mint', 1, 0), ('C', 1, ` + h + `, 0, ` + ts + `, 'mint', 1, 1)`},
+		{58, "0058_blend_auctions_event_index.down.sql", "blend_auctions", `INSERT INTO blend_auctions
+			(pool, auction_type, user_address, ledger, tx_hash, op_index, ts, event_kind, event_index)
+			VALUES ('P', 0, 'U', 1, ` + h + `, 0, ` + ts + `, 'new', 0), ('P', 0, 'U', 1, ` + h + `, 0, ` + ts + `, 'new', 1)`},
+		{59, "0059_comet_liquidity_event_index.down.sql", "comet_liquidity", `INSERT INTO comet_liquidity
+			(contract_id, ledger, ledger_close_time, tx_hash, op_index, event_kind, direction, caller, token, amount, event_index)
+			VALUES ('C', 1, ` + ts + `, ` + h + `, 0, 'deposit', 'add', 'X', 'T', 1, 0),
+			       ('C', 1, ` + ts + `, ` + h + `, 0, 'deposit', 'add', 'X', 'T', 1, 1)`},
+		{60, "0060_phoenix_event_index.down.sql", "phoenix_liquidity", `INSERT INTO phoenix_liquidity
+			(pool, ledger, ledger_close_time, tx_hash, op_index, action, sender, amount_a, amount_b, event_index)
+			VALUES ('P', 1, ` + ts + `, 'h', 0, 'provide_liquidity', 'S', 1, 1, 0),
+			       ('P', 1, ` + ts + `, 'h', 0, 'provide_liquidity', 'S', 1, 1, 1)`},
+		{60, "0060_phoenix_event_index.down.sql", "phoenix_stake_events", `INSERT INTO phoenix_stake_events
+			(stake_contract, ledger, ledger_close_time, tx_hash, op_index, action, user_addr, lp_token, amount, event_index)
+			VALUES ('C', 1, ` + ts + `, 'h', 0, 'bond', 'U', 'L', 1, 0),
+			       ('C', 1, ` + ts + `, 'h', 0, 'bond', 'U', 'L', 1, 1)`},
+		{112, "0112_cctp_rozo_event_index.down.sql", "cctp_events", `INSERT INTO cctp_events
+			(contract_id, ledger, tx_hash, op_index, ts, event_type, event_index)
+			VALUES ('C', 1, ` + h + `, 0, ` + ts + `, 'deposit_for_burn', 0), ('C', 1, ` + h + `, 0, ` + ts + `, 'deposit_for_burn', 1)`},
+		{112, "0112_cctp_rozo_event_index.down.sql", "rozo_events", `INSERT INTO rozo_events
+			(contract_id, ledger, tx_hash, op_index, ts, event_type, amount, destination, event_index)
+			VALUES ('C', 1, ` + h + `, 0, ` + ts + `, 'payment', 1, 'D', 0), ('C', 1, ` + h + `, 0, ` + ts + `, 'payment', 1, 'D', 1)`},
+	}
+	var applied uint
+	for _, c := range cases {
+		t.Run(strings.TrimSuffix(c.file, ".down.sql")+"/"+c.table, func(t *testing.T) {
+			if c.version != applied { // Migrate to the current version returns ErrNoChange
+				applyMigrationsUpTo(t, dsn, c.version)
+				applied = c.version
+			}
+			if _, err := db.ExecContext(ctx, c.insert); err != nil {
+				t.Fatalf("insert duplicate pair into %s: %v", c.table, err)
+			}
+			assertDownRefusedWithRows(t, ctx, db, dsn, c.version, c.file, c.table, 2)
+			if _, err := db.ExecContext(ctx, `DELETE FROM `+c.table); err != nil {
+				t.Fatalf("clean %s: %v", c.table, err)
+			}
+		})
+	}
+}
+
+// assertDownRefusedWithRows migrates `from` -> from-1, requires the named
+// down file's guard to refuse, requires `table` to still hold `rows`
+// rows, then forces the version back to `from`.
+func assertDownRefusedWithRows(t *testing.T, ctx context.Context, db *sql.DB, dsn string, from uint, file, table string, rows int) {
+	t.Helper()
+	_, thisFile, _, _ := runtime.Caller(0)
+	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
+	m, err := migrate.New("file://"+migrationsDir, dsn)
+	if err != nil {
+		t.Fatalf("migrate.New: %v", err)
+	}
+	err = m.Migrate(from - 1)
+	_, _ = m.Close()
+	if err == nil || !strings.Contains(err.Error(), file) || !strings.Contains(err.Error(), "LOUD") {
+		t.Fatalf("migrate %d -> %d with duplicate %s rows: err = %v, want the %s guard to refuse", from, from-1, table, err, file)
+	}
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&n); err != nil {
+		t.Fatalf("count %s rows: %v", table, err)
+	}
+	if n != rows {
+		t.Fatalf("%s rows after refused down = %d, want %d", table, n, rows)
+	}
+	f, err := migrate.New("file://"+migrationsDir, dsn)
+	if err != nil {
+		t.Fatalf("migrate.New: %v", err)
+	}
+	defer func() { _, _ = f.Close() }()
+	if err := f.Force(int(from)); err != nil {
+		t.Fatalf("force %d: %v", from, err)
+	}
+}
+
+// TestMigration0112DownOnCompressedChunks pins that 0112's down, which has
+// no decompress prelude, still succeeds on compressed chunks (r1 compresses
+// both tables) and keeps the rows (#1172 item 8).
+func TestMigration0112DownOnCompressedChunks(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+
+	applyMigrationsUpTo(t, dsn, 112)
+	for _, q := range []string{
+		`INSERT INTO cctp_events (contract_id, ledger, tx_hash, op_index, ts, event_type)
+		 VALUES ('C', 1, repeat('a', 64), 0, '2026-01-01T00:00:00Z', 'deposit_for_burn')`,
+		`INSERT INTO rozo_events (contract_id, ledger, tx_hash, op_index, ts, event_type, amount, destination)
+		 VALUES ('C', 1, repeat('a', 64), 0, '2026-01-01T00:00:00Z', 'payment', 1, 'D')`,
+	} {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+	for _, tbl := range []string{"cctp_events", "rozo_events"} {
+		if _, err := db.ExecContext(ctx, `SELECT compress_chunk(c) FROM show_chunks('`+tbl+`') c`); err != nil {
+			t.Fatalf("compress %s: %v", tbl, err)
+		}
+		var n int
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM timescaledb_information.chunks
+			WHERE hypertable_name = $1 AND is_compressed`, tbl).Scan(&n); err != nil {
+			t.Fatalf("count compressed %s chunks: %v", tbl, err)
+		}
+		if n < 1 {
+			t.Fatalf("%s has no compressed chunk; the test would not exercise compressed chunks", tbl)
+		}
+	}
+
+	if err := applyMigrationsUpToErr(dsn, 111); err != nil {
+		t.Fatalf("migrate 112 -> 111 with compressed chunks: %v", err)
+	}
+	for _, tbl := range []string{"cctp_events", "rozo_events"} {
+		var n int
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM `+tbl).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", tbl, err)
+		}
+		if n != 1 {
+			t.Fatalf("%s rows after down = %d, want 1", tbl, n)
+		}
+	}
+}
+
 // TestMigration0004DownRestoresCompression pins GH-1162: 0004's down
 // disabled compression on `trades` and named the compression policy
 // (0001) as the recovery — but that policy only SCHEDULES a job against

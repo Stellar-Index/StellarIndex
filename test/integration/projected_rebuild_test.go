@@ -224,7 +224,7 @@ func seedRozoPayment(t *testing.T, ctx context.Context, chAddr, contractID strin
 			InSuccessfulCall: 1,
 		}},
 	}
-	if err := sink.Add(ctx, ext); err != nil {
+	if err := sink.Add(ctx, withEventTxs(ext)); err != nil {
 		t.Fatalf("sink add (ledger %d): %v", ledger, err)
 	}
 	if err := sink.Flush(ctx); err != nil {

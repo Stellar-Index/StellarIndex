@@ -106,12 +106,31 @@ func seedSoroswapPairs(args []string) error {
 	dec := soroswap.NewDecoder(soroswap.WithPairUpsertHook(seeder.seed))
 
 	rpc := stellarrpc.New(endpoint, stellarrpc.WithTimeout(60*time.Second))
-	count, err := dec.SeedFromFactoryRPC(ctx, rpc, cfg.Oracle.Soroswap.FactoryContract)
-	if err != nil {
-		return fmt.Errorf("rpc seed: %w (in-memory: %d, inserted: %d, failed: %d)",
-			err, count, seeder.inserted.Load(), seeder.failed.Load())
+	for _, factory := range soroswapFactoriesToSeed(cfg.Oracle.Soroswap.FactoryContract) {
+		count, err := dec.SeedFromFactoryRPC(ctx, rpc, factory)
+		if err != nil {
+			return fmt.Errorf("rpc seed factory %s: %w (in-memory: %d, inserted: %d, failed: %d)",
+				factory, err, count, seeder.inserted.Load(), seeder.failed.Load())
+		}
 	}
 	return seeder.finish()
+}
+
+// soroswapFactoriesToSeed returns the configured factory first, then — when
+// it is a mainnet factory — the rest of soroswap.MainnetFactories, so the
+// early launch-era factories' pairs are registered too. A non-mainnet
+// (testnet) factory is seeded alone.
+func soroswapFactoriesToSeed(configured string) []string {
+	out := []string{configured}
+	if !soroswap.IsMainnetFactory(configured) {
+		return out
+	}
+	for _, f := range soroswap.MainnetFactories {
+		if f != configured {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // soroswapPairSeedStore is the slice of *timescale.Store the seed path uses.
