@@ -570,20 +570,8 @@ func seedBoundedLabelSeries() {
 	for _, outcome := range []string{"ok", "divergent", "no_reference", "refresh_error"} {
 		SupplyDivergenceTotal.WithLabelValues(outcome)
 	}
-	// hashdb append/verify outcomes — bounded, well-known label sets so
-	// the hashdb_verify_failing alert expr and ad-hoc append-error-rate
-	// charts (no alert exists on the append counter — a documented
-	// decision, see docs/reference/metrics/README.md) read a real zero
-	// (not "no data") on a freshly-enabled region before the first
-	// tick / first ledger.
-	for _, outcome := range []string{"ok", "error", "drift"} {
-		if outcome != "drift" {
-			HashdbAppendTotal.WithLabelValues(outcome)
-		}
-		for _, window := range []string{"recent", "history"} {
-			HashdbVerifyRunsTotal.WithLabelValues(outcome, window)
-		}
-	}
+	// hashdb outcomes seeded so alerts read zero, not "no data".
+	seedHashdbSeries()
 	seedLedgerstreamTierSeries()
 	// ADR-0019 freeze-lifecycle release modes. Bounded set of two;
 	// `operator` in particular is the one an on-call reads as "the
@@ -663,6 +651,18 @@ func seedBoundedLabelSeries() {
 	}
 
 	seedBoundedLabelSeriesTail()
+}
+
+// seedHashdbSeries pre-registers hashdb append and verify (outcome x window) series.
+func seedHashdbSeries() {
+	for _, outcome := range []string{"ok", "error", "drift"} {
+		if outcome != "drift" {
+			HashdbAppendTotal.WithLabelValues(outcome)
+		}
+		for _, window := range []string{"recent", "history"} {
+			HashdbVerifyRunsTotal.WithLabelValues(outcome, window)
+		}
+	}
 }
 
 // seedBoundedLabelSeriesTail continues seedBoundedLabelSeries — split
