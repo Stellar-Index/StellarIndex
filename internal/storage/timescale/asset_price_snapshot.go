@@ -340,14 +340,15 @@ const usdQuotePref = `array_position(ARRAY['fiat:USD',
 	'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
 	'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75'], quote_asset)`
 
-// xlmFormPrefOpen ranks XLM's two on-chain forms the same way, classic
-// first; close it with the column holding the XLM form.
-const xlmFormPrefOpen = `array_position(ARRAY[` + xlmQuotes + `], `
-
-// xlmFormPrefOpenBound is [xlmFormPrefOpen] with the SAC bound at $n.
-func xlmFormPrefOpenBound(n int) string {
-	return `array_position(ARRAY[` + xlmQuotesBound(n) + `], `
-}
+// xlmFormPrefOpenBound2 ranks XLM's two on-chain forms the same way, classic
+// first, with the SAC bound at $2; close it with the column holding the XLM
+// form. Bound3/Bound4 bind $3/$4. Constants (not a helper) so the SQL vars
+// that splice them stay compile-time constants.
+const (
+	xlmFormPrefOpenBound2 = `array_position(ARRAY['native', $2::text], `
+	xlmFormPrefOpenBound3 = `array_position(ARRAY['native', $3::text], `
+	xlmFormPrefOpenBound4 = `array_position(ARRAY['native', $4::text], `
+)
 
 // xlmUSDNewest orders an XLM/USD scalar pick: newest bucket, then
 // [usdQuotePref] so a same-minute USDC and fiat:USD print resolve stably.

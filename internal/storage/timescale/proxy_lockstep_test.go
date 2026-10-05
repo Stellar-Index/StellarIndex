@@ -125,3 +125,19 @@ func TestProxyQuoteLists_Lockstep(t *testing.T) {
 		t.Error("priced_direct lacks the inverted XLM arm")
 	}
 }
+
+func TestXLMQuotesBoundConsts(t *testing.T) {
+	for n, c := range map[int][2]string{
+		1: {xlmQuotesBound1, ""},
+		2: {xlmQuotesBound2, xlmFormPrefOpenBound2},
+		3: {xlmQuotesBound3, xlmFormPrefOpenBound3},
+		4: {xlmQuotesBound4, xlmFormPrefOpenBound4},
+	} {
+		if c[0] != xlmQuotesBound(n) {
+			t.Errorf("xlmQuotesBound%d = %q, want %q", n, c[0], xlmQuotesBound(n))
+		}
+		if want := "array_position(ARRAY[" + xlmQuotesBound(n) + "], "; c[1] != "" && c[1] != want {
+			t.Errorf("xlmFormPrefOpenBound%d = %q, want %q", n, c[1], want)
+		}
+	}
+}

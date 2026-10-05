@@ -116,7 +116,7 @@ func (s *Store) TransitiveUSDPriceCandidates(ctx context.Context, assetID string
 // to a package constant so the function body stays under the funlen
 // threshold (same convention as getNativeAssetSQL). $1 = asset_id,
 // $2 = candidate limit, $3 = the network's native-XLM SAC.
-var transitiveUSDPriceSQL = `
+const transitiveUSDPriceSQL = `
 WITH xlm_usd AS (
     SELECT vwap
       FROM prices_1m
@@ -153,7 +153,7 @@ hop_usd AS (
     SELECT h.hop,
            h.hop_vol,
            COALESCE(
-             CASE WHEN h.hop IN (` + xlmQuotesBound(3) + `)
+             CASE WHEN h.hop IN (` + xlmQuotesBound3 + `)
                   THEN (SELECT vwap FROM xlm_usd)
              END,
              (SELECT p.vwap FROM prices_1m p
@@ -166,19 +166,19 @@ hop_usd AS (
              (SELECT e.v FROM (
                 (SELECT p.vwap AS v, p.bucket, 1 AS pref FROM prices_1m p
                   WHERE p.base_asset = h.hop
-                    AND p.quote_asset IN (` + xlmQuotesBound(3) + `)
+                    AND p.quote_asset IN (` + xlmQuotesBound3 + `)
                     AND p.bucket <= now() - INTERVAL '1 minute'
                     AND p.bucket >= now() - INTERVAL '24 hours'
                     AND p.vwap IS NOT NULL
-                  ORDER BY p.bucket DESC, ` + xlmFormPrefOpenBound(3) + `p.quote_asset) LIMIT 1)
+                  ORDER BY p.bucket DESC, ` + xlmFormPrefOpenBound3 + `p.quote_asset) LIMIT 1)
                 UNION ALL
                 (SELECT 1 / NULLIF(p.vwap, 0), p.bucket, 2 FROM prices_1m p
-                  WHERE p.base_asset IN (` + xlmQuotesBound(3) + `)
+                  WHERE p.base_asset IN (` + xlmQuotesBound3 + `)
                     AND p.quote_asset = h.hop
                     AND p.bucket <= now() - INTERVAL '1 minute'
                     AND p.bucket >= now() - INTERVAL '24 hours'
                     AND p.vwap IS NOT NULL
-                  ORDER BY p.bucket DESC, ` + xlmFormPrefOpenBound(3) + `p.base_asset) LIMIT 1)
+                  ORDER BY p.bucket DESC, ` + xlmFormPrefOpenBound3 + `p.base_asset) LIMIT 1)
               ) e
               WHERE e.v IS NOT NULL
               ORDER BY e.bucket DESC, e.pref LIMIT 1)

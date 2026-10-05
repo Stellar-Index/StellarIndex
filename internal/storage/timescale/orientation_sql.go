@@ -21,6 +21,15 @@ func nativeSACParam(n int) string { return fmt.Sprintf("$%d::text", n) }
 // xlmQuotesBound is [xlmQuotes] with the SAC bound at $n.
 func xlmQuotesBound(n int) string { return "'native', " + nativeSACParam(n) }
 
+// Constant forms of [xlmQuotesBound] for the SQL that must stay compile-time
+// constant; TestXLMQuotesBoundConsts pins them to the helper.
+const (
+	xlmQuotesBound1 = "'native', $1::text"
+	xlmQuotesBound2 = "'native', $2::text"
+	xlmQuotesBound3 = "'native', $3::text"
+	xlmQuotesBound4 = "'native', $4::text"
+)
+
 // xlmNativeAssetIn renders `col IN ('native', $n::text)`.
 func xlmNativeAssetIn(col string, n int) string {
 	return col + " IN (" + xlmQuotesBound(n) + ")"
