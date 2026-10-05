@@ -18,7 +18,7 @@ import (
 // the decoder Seeds into the registry; every other event is honored from
 // the trust root OR a registered child.
 //
-// COVERAGE NOTE: in practice ALL seven event types are emitted by the
+// COVERAGE NOTE: in practice ALL eight event types are emitted by the
 // trust root and the child contracts emit NOTHING (verified against the
 // r1 lake 2026-07-07). So the child branch (Has) never fires today and
 // the trust-root check (IsFactory) is what actually gates. The childgate
@@ -48,7 +48,7 @@ var _ dispatcher.Decoder = (*Decoder)(nil)
 func (*Decoder) Name() string { return SourceName }
 
 // Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY,
-// not the topic symbol (ADR-0035): the seven symbols are distinctive but
+// not the topic symbol (ADR-0035): the eight symbols are distinctive but
 // two other mainnet contracts emit them, so a non-trust-root emitter must
 // NOT be attributed to this source.
 //
