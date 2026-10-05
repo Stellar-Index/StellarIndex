@@ -175,7 +175,7 @@ func TestFreezeWindowLadders_Migration0163(t *testing.T) {
 	}
 
 	// ── the operator override's durable half still sticks ──────────────
-	if err := sink.MarkRecovered(ctx, asset, quote); err != nil {
+	if err := sink.MarkRecovered(ctx, asset, quote, "operator:test"); err != nil {
 		t.Fatalf("MarkRecovered: %v", err)
 	}
 	if _, _, ok, lerr := sink.LoadWindowLadders(ctx, asset, quote); lerr != nil || ok {

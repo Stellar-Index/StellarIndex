@@ -106,7 +106,7 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 
 	for sinceSec < endSec {
 		q := url.Values{}
-		q.Set("pair", symbol)
+		q.Set("pair", restPair(symbol))
 		q.Set("interval", strconv.Itoa(interval))
 		if sinceSec > 0 {
 			q.Set("since", strconv.FormatInt(sinceSec, 10))
@@ -356,4 +356,10 @@ func granularityToMinutes(d time.Duration) (int, error) {
 		return 21600, nil
 	}
 	return 0, fmt.Errorf("kraken.Backfill: unsupported granularity %v (supported: 1m/5m/15m/30m/1h/4h/1d/1w/15d)", d)
+}
+
+// restPair converts a WS-format symbol ("XLM/USD") to the slashless altname
+// the REST endpoints take ("XLMUSD").
+func restPair(symbol string) string {
+	return strings.ReplaceAll(symbol, "/", "")
 }

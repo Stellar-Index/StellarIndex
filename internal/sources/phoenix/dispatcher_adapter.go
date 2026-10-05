@@ -282,6 +282,7 @@ func tradeOrNoOp(trade canonical.Trade, err error) ([]consumer.Event, error) {
 
 func (d *Decoder) decodeSwapEvent(ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {
 	completed, evicted, err := d.buf.absorb(ev, fieldTopic, closedAt)
+	d.evictedOrphans += d.buf.takeOtherEvicted()
 	out := d.rescueEvicted(evicted)
 	if err == nil && completed != nil {
 		var cur []consumer.Event
@@ -483,7 +484,9 @@ func decodeInitializeEvent(ev *events.Event, fieldTopic string, closedAt time.Ti
 func decodeAdminEvent(ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {
 	slug, ok := adminActionByTopic[fieldTopic]
 	if !ok {
-		return nil, fmt.Errorf("%w: admin unrecognised rotation-phrase topic", ErrMalformedPayload)
+		// Recognised-not-projected: the raw event is in the soroban_events
+		// landing zone (ADR-0029); an unknown phrase must not fail ingest.
+		return nil, nil
 	}
 	// Best-effort admin address: parse the body as an Address when it is
 	// one; tolerate a void / other-shaped body (empty Admin).

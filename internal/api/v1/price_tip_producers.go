@@ -379,16 +379,7 @@ func overBudget(lim, held, cost int) bool {
 // can consume one more slot of the shared pool, so the global bounds are
 // reached by many callers rather than by one.
 func (r *tipProducerRegistry) admitLocked(caller string, ticks int) tipProducerOutcome {
-	attributed := caller != unattributedTipCaller
-	var outcome tipProducerOutcome
-	switch {
-	case attributed && overBudget(r.callerLimit(), r.minted[caller], 1):
-		outcome = tipProducerAtCallerQuota
-	case attributed && overBudget(r.callerTickLimit(), r.mintedTicks[caller], ticks):
-		outcome = tipProducerAtCallerRateBudget
-	default:
-		outcome = r.makeRoomLocked(ticks)
-	}
+	victims, outcome := r.planAdmitLocked(caller, ticks)
 	if outcome != tipProducerAdmitted {
 		r.refused++
 		if outcome.callerRefusal() {
@@ -396,16 +387,46 @@ func (r *tipProducerRegistry) admitLocked(caller string, ticks int) tipProducerO
 		}
 		return refuseTipProducer(outcome)
 	}
+	for _, key := range victims {
+		r.removeLocked(key, r.active[key])
+	}
 	return outcome
 }
 
-// makeRoomLocked fits a new producer costing ticks under the global
+// planAdmitLocked is the side-effect-free half of admitLocked: the verdict
+// and the lingering producers that would be evicted to reach it.
+func (r *tipProducerRegistry) planAdmitLocked(caller string, ticks int) ([]tipProducerKey, tipProducerOutcome) {
+	attributed := caller != unattributedTipCaller
+	switch {
+	case attributed && overBudget(r.callerLimit(), r.minted[caller], 1):
+		return nil, tipProducerAtCallerQuota
+	case attributed && overBudget(r.callerTickLimit(), r.mintedTicks[caller], ticks):
+		return nil, tipProducerAtCallerRateBudget
+	}
+	return r.planRoomLocked(ticks)
+}
+
+// wouldAdmit reports, without reserving anything or counting a refusal,
+// whether acquireFor would now admit caller on key. The stream handler
+// asks it before its DB pre-flight so a refusal costs no reads; the real
+// acquire stays authoritative.
+func (r *tipProducerRegistry) wouldAdmit(key tipProducerKey, caller string) tipProducerOutcome {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, running := r.active[key]; running {
+		return tipProducerAdmitted
+	}
+	_, outcome := r.planAdmitLocked(caller, tipTicksPerMinute(key.window))
+	return outcome
+}
+
+// planRoomLocked fits a new producer costing ticks under the global
 // bounds, evicting the longest-idle lingering producers when that is
 // what it takes. A lingering entry is a reconnect optimisation serving
 // nobody; letting it refuse a real viewer made the ceiling bound past
 // demand, not current demand. Subscribed producers are never evicted,
 // and nothing is evicted unless the eviction actually makes room.
-func (r *tipProducerRegistry) makeRoomLocked(ticks int) tipProducerOutcome {
+func (r *tipProducerRegistry) planRoomLocked(ticks int) ([]tipProducerKey, tipProducerOutcome) {
 	slots, held := len(r.active), r.ticks
 	fits := func() bool {
 		return !overBudget(r.limit(), slots, 1) && !overBudget(r.tickLimit(), held, ticks)
@@ -423,14 +444,11 @@ func (r *tipProducerRegistry) makeRoomLocked(ticks int) tipProducerOutcome {
 	}
 	switch {
 	case overBudget(r.limit(), slots, 1):
-		return tipProducerAtGlobalCeiling
+		return nil, tipProducerAtGlobalCeiling
 	case overBudget(r.tickLimit(), held, ticks):
-		return tipProducerAtGlobalRateBudget
+		return nil, tipProducerAtGlobalRateBudget
 	}
-	for _, key := range victims {
-		r.removeLocked(key, r.active[key])
-	}
-	return tipProducerAdmitted
+	return victims, tipProducerAdmitted
 }
 
 // lingeringLocked lists the keys of zero-subscriber entries, longest idle
@@ -810,4 +828,11 @@ func (s *Server) runSharedTipProducer(ctx context.Context, key tipProducerKey, a
 			emit()
 		}
 	}
+}
+
+// tipProducerPrecheck is the cheap refusal gate run before the stream's
+// DB pre-flight; see [tipProducerRegistry.wouldAdmit].
+func (s *Server) tipProducerPrecheck(req *http.Request, asset, quote canonical.Asset, window int) tipProducerOutcome {
+	key := tipProducerKey{asset: asset.String(), quote: quote.String(), window: window}
+	return s.tipProducers.wouldAdmit(key, tipProducerCaller(req))
 }

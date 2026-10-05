@@ -2219,8 +2219,8 @@ func expectedProjection(ctx context.Context, chStreamer completeness.EventStream
 //     the factory's creation events on a THROWAWAY decoder — a superset of the
 //     children the real stream will self-seed in [lo,hi]. The throwaway keeps
 //     src.dec's just-in-time in-stream seeding UNDISTURBED, so ordering-
-//     sensitive edge cases (a pool created and traded in the same ledger with
-//     adverse tx_hash sort order) resolve byte-identically to the unfiltered
+//     sensitive edge cases (a pool created and traded in the same ledger)
+//     resolve byte-identically to the unfiltered
 //     stream — the prefilter only ever ADDS contract rows to the read; Matches()
 //     is still the final per-event gate.
 //

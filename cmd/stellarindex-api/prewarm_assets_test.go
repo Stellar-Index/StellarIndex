@@ -139,11 +139,18 @@ func TestCatalogueFillPrewarmOptionsMirrorsTheUnifiedHandler(t *testing.T) {
 		got[o.Limit] = true
 	}
 
-	// userLimit 50 → remaining 5 → Limit 6.
-	// userLimit 100 (the explorer's default landing-page load) →
-	//   remaining 55 → Limit 56.
-	// userLimit 500 → remaining 455 → Limit 456.
-	want := map[int]bool{6: true, 56: true, 456: true}
+	// Expected keys are derived from the production limit set and handler
+	// overfetch, so a change to either moves the guard with it.
+	want := map[int]bool{}
+	for _, userLimit := range assetListingPrewarmLimits {
+		if remaining := userLimit - catalogueLen; remaining > 0 {
+			want[remaining+v1.AssetsListOverfetchBy] = true
+		}
+	}
+	if len(want) == 0 {
+		t.Fatalf("catalogueLen %d outgrew every prewarm limit %v; the guard checks nothing",
+			catalogueLen, assetListingPrewarmLimits)
+	}
 	if len(got) != len(want) {
 		t.Fatalf("catalogueFillPrewarmOptions(%d) = %v, want exactly Limits %v",
 			catalogueLen, opts, want)
@@ -154,11 +161,14 @@ func TestCatalogueFillPrewarmOptionsMirrorsTheUnifiedHandler(t *testing.T) {
 				catalogueLen, opts, l)
 		}
 	}
-	// userLimit 1/5/10 never reach the classic phase (the catalogue alone
-	// covers them) — Limit 2/6/11 (the DIRECT handler's own overfetch
-	// keys, from a different function) must not appear here.
-	for _, l := range []int{2, 11} {
-		if got[l] {
+	// A userLimit the catalogue alone covers never reaches the classic
+	// phase — the DIRECT handler's own userLimit+overfetch key (from a
+	// different function) must not appear here.
+	for _, userLimit := range assetListingPrewarmLimits {
+		if userLimit > catalogueLen {
+			continue
+		}
+		if l := userLimit + v1.AssetsListOverfetchBy; got[l] && !want[l] {
 			t.Fatalf("catalogueFillPrewarmOptions(%d) = %v warms Limit %d, "+
 				"but the catalogue alone satisfies that userLimit — the classic "+
 				"phase is never reached, so this is a phantom slot", catalogueLen, opts, l)

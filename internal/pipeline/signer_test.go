@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -84,4 +85,82 @@ func TestRunSignerTagger_SkipsLakeWhenNothingUntagged(t *testing.T) {
 	go RunSignerTagger(ctx, slog.Default(), lake, store, 5*time.Millisecond, time.Minute)
 	time.Sleep(60 * time.Millisecond) // let several sweeps run
 	cancel()
+}
+
+// A trade whose tx is absent from the lake pins the untagged minimum; once
+// its clamped slice yields nothing new the sweep must move past it instead
+// of re-reading the same slice until the lookback expires.
+func TestRunSignerTagger_SkipsPastUntaggableLedger(t *testing.T) {
+	const first, last = uint32(100), uint32(400)
+	var mu sync.Mutex
+	tagged := map[uint32]bool{}
+	var maxRead uint32
+
+	lake := &fakeLakeFn{fn: func(lo, hi uint32) []clickhouse.TxSigner {
+		mu.Lock()
+		defer mu.Unlock()
+		maxRead = max(maxRead, hi)
+		var out []clickhouse.TxSigner
+		for l := lo; l <= hi; l++ {
+			if l != first { // ledger `first` has no lake row
+				out = append(out, clickhouse.TxSigner{Ledger: l, TxHash: "h", Signer: "G"})
+			}
+		}
+		return out
+	}}
+	store := &statefulTagger{mu: &mu, tagged: tagged, first: first, last: last}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go RunSignerTagger(ctx, slog.Default(), lake, store, 5*time.Millisecond, time.Hour)
+
+	deadline := time.After(3 * time.Second)
+	for {
+		mu.Lock()
+		done := tagged[last]
+		mu.Unlock()
+		if done {
+			return
+		}
+		select {
+		case <-deadline:
+			mu.Lock()
+			defer mu.Unlock()
+			t.Fatalf("wedged on the untaggable ledger: highest ledger read = %d, want >= %d", maxRead, last)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+type fakeLakeFn struct {
+	fn func(lo, hi uint32) []clickhouse.TxSigner
+}
+
+func (f *fakeLakeFn) TxSignersForLedgerRange(_ context.Context, lo, hi uint32) ([]clickhouse.TxSigner, error) {
+	return f.fn(lo, hi), nil
+}
+
+// statefulTagger's lowest untagged ledger is always `first`, which the lake
+// never has a row for.
+type statefulTagger struct {
+	mu          *sync.Mutex
+	tagged      map[uint32]bool
+	first, last uint32
+}
+
+func (s *statefulTagger) UntaggedAMMSignerLedgerRange(_ context.Context, _, _ time.Time) (uint32, uint32, bool, error) {
+	return s.first, s.last, true, nil
+}
+
+func (s *statefulTagger) TagTradesSigner(_ context.Context, _, _ time.Time, tags []timescale.SignerTag) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int64
+	for _, tg := range tags {
+		if !s.tagged[tg.Ledger] {
+			s.tagged[tg.Ledger] = true
+			n++
+		}
+	}
+	return n, nil
 }

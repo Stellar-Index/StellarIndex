@@ -63,7 +63,7 @@ The table, column, EventType, and reconciliation kind are all named
 ## Gating (ADR-0035)
 
 Single trust root: the main contract. `Matches()` gates on **contract
-identity**, not topic symbol — the seven symbols are distinctive but
+identity**, not topic symbol — the eight symbols are distinctive but
 **two other mainnet contracts emit them** (~159 events total, lake
 2026-07-07), and those must be rejected.
 
@@ -74,7 +74,7 @@ identity**, not topic symbol — the seven symbols are distinctive but
 - every other event matches from the trust root **or** a registered child
   (`Has`).
 
-**Coverage note:** in practice ALL seven event types are emitted by the
+**Coverage note:** in practice ALL eight event types are emitted by the
 trust root and the child contracts emit **nothing** (verified). So the
 child branch never fires today — the trust-root check is what actually
 gates. The childgate is **forward-compat defense-in-depth** for a future
@@ -107,11 +107,11 @@ Schemas were reverse-engineered from real lake fixtures (2026-07-07),
 [`docs/operations/wasm-audits/sorocredit.md`](../../../docs/operations/wasm-audits/sorocredit.md):
 the main contract has run a **single** instance WASM (`84a88013…810ea`,
 set at deploy) with no executable change in the dense-coverage window
-`[62.0M→tip]`, and **all 7 event types have one invariant on-wire
+`[62.0M→tip]`, and **all 8 event types have one invariant on-wire
 schema across the contract's whole life** (`NewCollateralContract`
 structurally identical from its first occurrence 61,624,053 through
-63,363,505, spanning the sparse early window). `BackfillSafe` is
-therefore **true** in `external.Registry`, safe **from genesis
+63,363,505, spanning the sparse early window). `BackfillPerWASM` is
+therefore the policy in `external.Registry`, safe **from genesis
 (61,620,822)**. Historical re-derive:
 `stellarindex-ops projector-replay -source sorocredit -from 61620822`
 (under the heavy-job wrapper).
@@ -130,11 +130,11 @@ therefore **true** in `external.Registry`, safe **from genesis
 - `internal/pipeline/sink.go` — `IsProjectedEvent` arm +
   `persistSoroCreditEvent` routes by `EventType` to the four tables.
 - `internal/projector/registry.go` — `buildSource` registers the source
-  with a `Topic0Syms` prefilter (the seven distinctive symbols); the
+  with a `Topic0Syms` prefilter (the eight distinctive symbols); the
   projector is the **sole writer** (ADR-0031/0032).
 - `internal/config/validate.go` — `KnownSources` includes `sorocredit`.
 - `internal/sources/external/registry.go` — `Metadata{Class: lending,
-  IncludeInVWAP: false, BackfillSafe: true}`.
+  IncludeInVWAP: false, Backfill: BackfillPerWASM}`.
 - `internal/storage/timescale/per_source_gaps.go` — four gap targets
   (`sorocredit-{positions,statements,settlements,events}`).
 - `internal/ops/chops/reconciliation_catalogue.go` — a `reconSource`

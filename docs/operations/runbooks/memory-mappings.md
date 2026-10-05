@@ -78,9 +78,9 @@ ssh r1 'awk "{print \$6}" /proc/<pid>/maps | grep -c ^$'   # anonymous count
 
 # 4. If file-backed, the obvious ClickHouse-side quantities to read.
 #    These are candidates to MEASURE, not causes to assume.
-ssh r1 'clickhouse-client -q "SELECT count() AS parts, sum(rows) FROM system.parts WHERE active"'
-ssh r1 'clickhouse-client -q "SELECT * FROM system.asynchronous_metrics WHERE metric LIKE \"%Mmap%\" OR metric LIKE \"%OpenFile%\""'
-ssh r1 'clickhouse-client -q "SELECT name, value FROM system.settings WHERE name IN (\"mmap_cache_size\",\"min_bytes_to_use_mmap_io\",\"local_filesystem_read_method\")"'
+ssh r1 'clickhouse-client --port 9300 -q "SELECT count() AS parts, sum(rows) FROM system.parts WHERE active"'
+ssh r1 'clickhouse-client --port 9300 -q "SELECT * FROM system.asynchronous_metrics WHERE metric LIKE \"%Mmap%\" OR metric LIKE \"%OpenFile%\""'
+ssh r1 'clickhouse-client --port 9300 -q "SELECT name, value FROM system.settings WHERE name IN (\"mmap_cache_size\",\"min_bytes_to_use_mmap_io\",\"local_filesystem_read_method\")"'
 ```
 
 ## Mitigation (≤ 15 min)

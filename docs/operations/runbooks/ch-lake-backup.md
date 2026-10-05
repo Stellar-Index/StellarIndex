@@ -35,9 +35,9 @@ severity: P3
 ```bash
 journalctl -u ch-lake-backup.service -n 100 --no-pager
 cat /var/lib/stellarindex/ch-lake-backup/chain    # <unix>\t<path>, the full first
-clickhouse-client -q "SELECT name, status, error, start_time, end_time,
+clickhouse-client --port 9300 -q "SELECT name, status, error, start_time, end_time,
   formatReadableSize(compressed_size) FROM system.backups ORDER BY start_time DESC LIMIT 5"
-clickhouse-client -q "SELECT name, type FROM system.disks"   # si_lake_backup present?
+clickhouse-client --port 9300 -q "SELECT name, type FROM system.disks"   # si_lake_backup present?
 ```
 
 ## Mitigation (≤ 15 min)
@@ -69,7 +69,7 @@ itself, so every earlier link of the chain must still be on the disk.
 # On the restoring host: ClickHouse installed and si-lake-backup.xml
 # rendered (apply the role with the same ch_lake_backup_* vars).
 clickhouse-disks -C /etc/clickhouse-server/config.xml --disk si_lake_backup --query "list stellar"
-clickhouse-client -q "RESTORE DATABASE stellar FROM Disk('si_lake_backup', 'stellar/<chain>/<newest-link>')"
+clickhouse-client --port 9300 -q "RESTORE DATABASE stellar FROM Disk('si_lake_backup', 'stellar/<chain>/<newest-link>')"
 ```
 
 Then bring the lake from the backup's point in time to the tip with

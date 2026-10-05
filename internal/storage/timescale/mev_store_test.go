@@ -319,6 +319,23 @@ func TestBlendFillsForMEVScan_ValuesArgsAndLiquidationOnlyFilter(t *testing.T) {
 
 // ─── InsertMEVEvent ───────────────────────────────────────────────────
 
+// 0021's CHECK (array_length(tx_hashes, 1) > 0) admits '{}', so the store
+// refuses an event with no tx hash before any statement is sent.
+func TestInsertMEVEvent_RejectsEmptyTxHashes(t *testing.T) {
+	store, conn := newScriptedStore(t)
+	for _, hashes := range [][]string{nil, {}} {
+		_, err := store.InsertMEVEvent(context.Background(), domain.MEVStoredEvent{
+			Kind: "sandwich", TxHashes: hashes, DedupKey: "k", DetailJSON: []byte(`{}`),
+		})
+		if err == nil {
+			t.Errorf("TxHashes=%#v: want an error, got nil", hashes)
+		}
+	}
+	if len(conn.stmts) != 0 {
+		t.Errorf("issued %d statements, want 0", len(conn.stmts))
+	}
+}
+
 // TestInsertMEVEvent_ArgsAndIdempotency: the detector re-scans an
 // overlapping window every tick, so the write must be idempotent on
 // dedup_key and must report whether the row was NEW — the worker's

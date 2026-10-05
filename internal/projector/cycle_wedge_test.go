@@ -794,7 +794,7 @@ func TestCycle_AdjacentDuplicateRowsDecodeOnce(t *testing.T) {
 // canonical.ErrI128Overflow is one of valueShapeSentinels, so before this it
 // was skipped and counted as an ordinary outcome="sink_permanent" drop —
 // indistinguishable from a bad on-chain value, and outcome="sink_permanent"
-// had no rule at all. ADR-0003 §Operational impact promises the opposite:
+// had no rule at all. ADR-0003 §Consequences promises the opposite:
 // "any observed errors.Is(err, canonical.ErrI128Overflow) in production fires
 // a SEV-1. It indicates an int64 sneaking in somewhere" — our bug, on an
 // amount path, so every value that path touched is suspect.
