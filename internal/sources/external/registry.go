@@ -24,29 +24,24 @@ import (
 // not wired today; if an operator needs them, that's a future
 // follow-up rather than a missing surface.
 //
-// BackfillSafe is default-false for on-chain Soroban sources: a
-// `update_contract` upgrade can change event body schemas, so a
-// current-version decoder cannot be trusted on historical ledgers
-// without a per-WASM-hash audit. Flip to true per-source as the audit
-// (`stellarindex-ops wasm-history`) confirms the decoder handles every
-// version that ran for the replay range. Off-chain sources and SDEX
-// are BackfillSafe=true unconditionally — no on-chain WASM dependency.
+// Backfill is BackfillPerWASM for on-chain Soroban sources: a replay is
+// admitted only over a range whose every active WASM hash is in
+// internal/wasmaudit/audited_wasm.json (an `update_contract` upgrade can
+// change event body schemas). Off-chain sources and SDEX are
+// BackfillNoWASM; BackfillUnsafe refuses outright.
 var Registry = map[string]Metadata{
 	// ─── On-chain exchanges (dispatcher-path; listed here so the
 	// aggregator has a single lookup table) ──────────────────────
-	"soroswap": {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; see docs/operations/wasm-audits/soroswap.md */},
-	"aquarius": {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; 313 pools, 3 unique WASMs, shared-emitter topology. See docs/operations/wasm-audits/aquarius.md */},
-	"phoenix":  {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; 11 pools, 2 unique WASM hashes, both contain 8 expected swap-field strings. Byte presence isn't runtime uniformity: the pre-upgrade pool WASM only actually emitted 7 of the 8 fields (no ActualReceived) for ledgers 51,019,036-53,134,167 — see phoenix/decode.go's RawSwap.Decodable doc for the reduced-field recovery path. See docs/operations/wasm-audits/phoenix.md */},
-	"comet":    {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; only known mainnet pool is Blend backstop CAS3FL6T..., WASM 8abc2891... verified. See docs/operations/wasm-audits/comet.md */},
-	"sdex":     {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true},
-	// SushiSwap V3 — concentrated liquidity. BackfillSafe stays FALSE
-	// until a WASM audit page exists: the pools have been through two
-	// factory-driven upgrades (ledgers 61,594,973 and 62,898,378) and the
-	// audit is what records that the decoder handles every version that
-	// ran for a replay range. The swap bodies are field-identical across
-	// both, verified over all 97,349 swaps in history, so the audit is
-	// expected to confirm rather than change anything.
-	"sushiswap_v3": {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: false},
+	"soroswap": {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-04-29; see docs/operations/wasm-audits/soroswap.md */},
+	"aquarius": {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-04-29; 313 pools, 3 unique WASMs, shared-emitter topology. See docs/operations/wasm-audits/aquarius.md */},
+	"phoenix":  {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-04-29; 11 pools, 2 unique WASM hashes, both contain 8 expected swap-field strings. Byte presence isn't runtime uniformity: the pre-upgrade pool WASM only actually emitted 7 of the 8 fields (no ActualReceived) for ledgers 51,019,036-53,134,167 — see phoenix/decode.go's RawSwap.Decodable doc for the reduced-field recovery path. See docs/operations/wasm-audits/phoenix.md */},
+	"comet":    {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-04-29; only known mainnet pool is Blend backstop CAS3FL6T..., WASM 8abc2891... verified. See docs/operations/wasm-audits/comet.md */},
+	"sdex":     {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillNoWASM},
+	// SushiSwap V3 — concentrated liquidity. The pools have been through
+	// two factory-driven upgrades (ledgers 61,594,973 and 62,898,378); the
+	// per-WASM gate admits a range only where every version is audited
+	// (docs/operations/wasm-audits/sushiswap_v3.md).
+	"sushiswap_v3": {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM},
 
 	// Upshift tokenized vaults (earnUSDC, earnXLM) — ClassRouter for the
 	// same reason DeFindex is: an aggregator vault takes a deposit and
@@ -57,20 +52,20 @@ var Registry = map[string]Metadata{
 	// oracle path, not this one). AmountDecimals is deliberately left
 	// unset: a vault event carries `assets` and `shares` on DIFFERENT
 	// scales, so a single per-source decimals value would be wrong for one
-	// of them. BackfillSafe stays FALSE until a WASM audit page exists —
+	// of them. Backfill stays Unsafe until a WASM audit page exists —
 	// the default for on-chain Soroban sources.
-	"upshift": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: false},
+	"upshift": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillUnsafe},
 
 	// ─── On-chain oracles ────────────────────────────────────────
 	// Excluded from VWAP by default — they publish already-aggregated
 	// derived prices with their own governance and methodology. Reported
 	// alongside for transparency. Operator opts one in per-source via
 	// config if they want oracle-inclusive aggregation.
-	"reflector-dex": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: 5 * time.Minute, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; v2 disassembly confirms compat. See docs/operations/wasm-audits/reflector.md */},
-	"reflector-cex": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: 5 * time.Minute, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; v2 disassembly confirms compat. See docs/operations/wasm-audits/reflector.md */},
-	"reflector-fx":  {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: 5 * time.Minute, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; see docs/operations/wasm-audits/reflector.md */},
-	"redstone":      {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: 24 * time.Hour, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; see docs/operations/wasm-audits/redstone.md */},
-	"band":          {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: time.Hour, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; see docs/operations/wasm-audits/band.md */},
+	"reflector-dex": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: 5 * time.Minute, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-04-29; v2 disassembly confirms compat. See docs/operations/wasm-audits/reflector.md */},
+	"reflector-cex": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: 5 * time.Minute, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-04-29; v2 disassembly confirms compat. See docs/operations/wasm-audits/reflector.md */},
+	"reflector-fx":  {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: 5 * time.Minute, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-04-29; see docs/operations/wasm-audits/reflector.md */},
+	"redstone":      {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: 24 * time.Hour, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-04-29; see docs/operations/wasm-audits/redstone.md */},
+	"band":          {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: time.Hour, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-04-29; see docs/operations/wasm-audits/band.md */},
 
 	// ─── On-chain lending protocols ─────────────────────────────
 	// Auction events surface stress-prices during liquidations; we
@@ -78,7 +73,7 @@ var Registry = map[string]Metadata{
 	// they DO NOT contribute to VWAP. See
 	// docs/discovery/dexes-amms/blend.md and the blend source
 	// package README for the full extraction scope.
-	"blend": {Class: ClassLending, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-05-02; 11 contracts (9 pools + backstop + factory), 3 unique WASMs, no mid-life upgrades observed in 5h4m walk over [50457424, 62249727]. See docs/operations/wasm-audits/blend.md §"Phase 2 results". */},
+	"blend": {Class: ClassLending, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-05-02; 11 contracts (9 pools + backstop + factory), 3 unique WASMs, no mid-life upgrades observed in 5h4m walk over [50457424, 62249727]. See docs/operations/wasm-audits/blend.md §"Phase 2 results". */},
 	// blend_emitter — protocol-emissions plumbing (mints/distributes
 	// BLND to backstops), same family as `blend`. No published price,
 	// never VWAP. Audited 2026-07-10 directly against the ClickHouse
@@ -90,13 +85,13 @@ var Registry = map[string]Metadata{
 	// package doc's "3 observed WASM uploads" was NOT corroborated by
 	// the lake for 2 of 3 claimed ledgers — see
 	// docs/operations/wasm-audits/blend_emitter.md.
-	"blend_emitter": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-07-10; see docs/operations/wasm-audits/blend_emitter.md */},
+	"blend_emitter": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-07-10; see docs/operations/wasm-audits/blend_emitter.md */},
 	// sorocredit — an unbranded consumer-USDC credit / CDP protocol
 	// (single main contract CCG5EWFY…). Credit positions / statements /
 	// scheduled-settlements — no published price, never VWAP. Its
 	// "Liquidation" events are SCHEDULED SETTLEMENTS, not distress — see
 	// internal/sources/sorocredit/README.md.
-	"sorocredit": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-07-07 (lake-direct, ADR-0034): single instance WASM 84a88013…810ea set at deploy (ledger 61,620,824), zero executable changes in the dense-coverage window [62.0M→tip]; all 7 event types have one invariant on-wire schema across the contract's whole life (NewCollateralContract structurally identical 61,624,053→63,363,505, spanning the sparse early window). Safe from genesis 61,620,822. See docs/operations/wasm-audits/sorocredit.md */},
+	"sorocredit": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-07-07 (lake-direct, ADR-0034): single instance WASM 84a88013…810ea set at deploy (ledger 61,620,824), zero executable changes in the dense-coverage window [62.0M→tip]; all 7 event types have one invariant on-wire schema across the contract's whole life (NewCollateralContract structurally identical 61,624,053→63,363,505, spanning the sparse early window). Safe from genesis 61,620,822. See docs/operations/wasm-audits/sorocredit.md */},
 
 	// ─── On-chain routers + aggregator vaults ────────────────────
 	// Excluded from VWAP — these don't emit independent trades; they
@@ -108,36 +103,36 @@ var Registry = map[string]Metadata{
 	// aggregator_exposures table 0025 also created never got the
 	// exposure ticker that would have written it, and migration 0152
 	// dropped it (#358) — vault exposure is not persisted today.
-	"soroswap-router": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-05-19; r1 wasm-history walk: single hash 4c3db3eb...07 over the contract's entire life [50746272→tip], zero mid-life upgrades; both swap_exact_tokens_for_tokens + swap_tokens_for_exact_tokens exports verified present; ContractCallDecoder (router emits no events). See docs/operations/wasm-audits/soroswap-router.md */},
-	"defindex":        {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-05-19; decoder re-derived to the real on-chain schema ("BlendStrategy",deposit|withdraw){from,amount}, topic-dispatched across all emitters (the tag-1.0.0 "DeFindexVault" schema was fiction; deployed WASM 11329c24...988 is Blend strategy code). Live-verified post-rc.58 deploy: indexer emitting `defindex strategy flow` log lines against real traffic (9 in 90min sample). wasm2wat data-section scan of the deployed bytes confirmed all required symbols present (BlendStrategy/deposit/withdraw/from/amount). See docs/operations/wasm-audits/defindex.md */},
+	"soroswap-router": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-05-19; r1 wasm-history walk: single hash 4c3db3eb...07 over the contract's entire life [50746272→tip], zero mid-life upgrades; both swap_exact_tokens_for_tokens + swap_tokens_for_exact_tokens exports verified present; ContractCallDecoder (router emits no events). See docs/operations/wasm-audits/soroswap-router.md */},
+	"defindex":        {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-05-19; decoder re-derived to the real on-chain schema ("BlendStrategy",deposit|withdraw){from,amount}, topic-dispatched across all emitters (the tag-1.0.0 "DeFindexVault" schema was fiction; deployed WASM 11329c24...988 is Blend strategy code). Live-verified post-rc.58 deploy: indexer emitting `defindex strategy flow` log lines against real traffic (9 in 90min sample). wasm2wat data-section scan of the deployed bytes confirmed all required symbols present (BlendStrategy/deposit/withdraw/from/amount). See docs/operations/wasm-audits/defindex.md */},
 
 	// ─── Cross-chain bridges (flow coverage; excluded from VWAP) ─
 	// Bridges move tokens across chains — they publish no prices and
 	// emit no trades, so they never contribute to VWAP. Captured for
 	// the granular-coverage mission: CCTP's deposit_for_burn /
 	// mint_and_withdraw are USDC supply exits / entries beyond the
-	// classic trustline mint/burn channel. BackfillSafe is TRUE — the
+	// classic trustline mint/burn channel. Backfill is PerWASM — the
 	// required WASM-history audit LANDED 2026-05-26 (see
 	// docs/operations/wasm-audits/cctp.md and the per-field citation
 	// below): zero WASM upgrades observed, single-deploy confirmed. See
 	// docs/architecture/cctp-stellar-coverage.md. (This block previously
 	// said "stays false until the audit lands"; the audit has landed —
 	// corrected 2026-08-03.)
-	"cctp": {Class: ClassBridge, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-05-26 via wasm-history walk [60M, 62.64M] across all 3 mainnet contracts (TokenMessengerMinter, MessageTransmitter, CctpForwarder): zero WASM upgrades observed, ranges=null per /tmp/wasm-history-bridges.json. Single-deploy 2026-04-16 confirmed via stellar.expert. See docs/operations/wasm-audits/cctp.md. */},
+	"cctp": {Class: ClassBridge, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-05-26 via wasm-history walk [60M, 62.64M] across all 3 mainnet contracts (TokenMessengerMinter, MessageTransmitter, CctpForwarder): zero WASM upgrades observed, ranges=null per /tmp/wasm-history-bridges.json. Single-deploy 2026-04-16 confirmed via stellar.expert. See docs/operations/wasm-audits/cctp.md. */},
 	// Rozo v1 intent-bridge — same bridge semantics. payment / flush
 	// events from the three live v1 Payment contracts. Audited
 	// 2026-05-26 alongside CCTP — same walk.
-	"rozo": {Class: ClassBridge, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-05-26 via wasm-history walk [60M, 62.64M] across the original 3 mainnet payment contracts: zero WASM upgrades observed, ranges=null. Single WASM hash b56aedeaf80c3d4b... shared across all three contracts per stellar.expert (2026-01-18 + 2026-03-24 deploys). A 4th contract admitted 2026-07-09 (internal/sources/rozo.MainnetPaymentContracts) carries the SAME wasm hash per direct lake lookup, so it's covered by this finding without a separate walk. See docs/operations/wasm-audits/rozo.md. */},
+	"rozo": {Class: ClassBridge, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited 2026-05-26 via wasm-history walk [60M, 62.64M] across the original 3 mainnet payment contracts: zero WASM upgrades observed, ranges=null. Single WASM hash b56aedeaf80c3d4b... shared across all three contracts per stellar.expert (2026-01-18 + 2026-03-24 deploys). A 4th contract admitted 2026-07-09 (internal/sources/rozo.MainnetPaymentContracts) carries the SAME wasm hash per direct lake lookup, so it's covered by this finding without a separate walk. See docs/operations/wasm-audits/rozo.md. */},
 
 	// ─── Off-chain centralised exchanges (this package's scope) ─
-	"binance":  {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true},
-	"kraken":   {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true /* implemented, but 720-interval cap: ~30d at 1h */, BackfillSafe: true},
-	"bitstamp": {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true},
+	"binance":  {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillNoWASM},
+	"kraken":   {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true /* implemented, but 720-interval cap: ~30d at 1h */, Backfill: BackfillNoWASM},
+	"bitstamp": {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillNoWASM},
 	// Poloniex XLM/BTC crossed with a USD-quoted BTC leg: history-only daily
 	// bars for the span before any USD venue listed XLM. A derived close is
 	// not a fill, so the live aggregator never counts it toward VWAP.
-	"poloniex_via_btc": {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true},
-	"coinbase":         {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true},
+	"poloniex_via_btc": {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillNoWASM},
+	"coinbase":         {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillNoWASM},
 
 	// ─── Institutional FX feeds ──────────────────────────────────
 	// `massive` is the ACTIVE fiat-FX feed (massive.com — the same vendor
@@ -168,36 +163,36 @@ var Registry = map[string]Metadata{
 	// OracleResolution is a trading day: an FX rate legitimately holds
 	// through the ~48 h weekend close, which a minute cadence would ticket
 	// every Saturday.
-	"massive":          {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6},
-	"exchangeratesapi": {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
+	"massive":          {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6},
+	"exchangeratesapi": {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 
 	// ─── Aggregators (divergence signal; excluded from VWAP) ─────
-	"coingecko":     {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true, OracleResolution: 5 * time.Minute},
-	"coinmarketcap": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, BackfillAvailable: true, BackfillSafe: true, OracleResolution: time.Minute},
-	"cryptocompare": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, BackfillAvailable: true, BackfillSafe: true, OracleResolution: time.Minute},
+	"coingecko":     {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: 5 * time.Minute},
+	"coinmarketcap": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: time.Minute},
+	"cryptocompare": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: time.Minute},
 
 	// ─── Sovereign daily anchors (sanity check only) ─────────────
 	// ECB publishes once per TARGET business day, hence a 24 h resolution.
 	// SubclassFX because the forex worker's ECB standby writes fx_quotes
 	// as "ecb"; without it the FX-snap class check refuses every standby row.
-	"ecb": {Class: ClassAuthoritySanity, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
+	"ecb": {Class: ClassAuthoritySanity, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 
 	// ─── Off-chain oracles (Chainlink via EVM RPC) ───────────────
 	// Chainlink is on Ethereum mainnet, not Stellar; we read it via
 	// JSON-RPC against AggregatorV3 contracts. Class=ClassOracle
-	// because it's a price publisher (not raw trades). BackfillSafe
-	// is true — off-chain HTTPS source, no on-chain Soroban WASM
+	// because it's a price publisher (not raw trades). Backfill
+	// is NoWASM — off-chain HTTPS source, no on-chain Soroban WASM
 	// dependency to audit. Backfill via eth_getLogs walks
 	// AnswerUpdated events. See internal/sources/external/chainlink/.
 	// OracleResolution is 24 h: Timestamp is the round's updatedAt, and
 	// the slowest feeds (FX) heartbeat daily and pause over the weekend.
-	"chainlink": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false /* Alchemy free tier covers 516-feed scale */, BackfillAvailable: true, BackfillSafe: true, OracleResolution: 24 * time.Hour},
+	"chainlink": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false /* Alchemy free tier covers 516-feed scale */, BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: 24 * time.Hour},
 
 	// Tiingo publishes registered funds' daily NAV. Rows are `raw:<TICKER>`,
 	// read only by the RWA reference surface through the curated fund
 	// bindings in internal/rwa — never a VWAP input or a pair leg, hence
 	// weight 0. OracleResolution is 24 h: one NAV per business day.
-	"tiingo": {Class: ClassOracle, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: false, BackfillSafe: true, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
+	"tiingo": {Class: ClassOracle, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: false, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 }
 
 // Lookup returns metadata for a source, with a safe fallback for
@@ -212,8 +207,8 @@ func Lookup(source string) Metadata {
 	return Metadata{
 		Class:         ClassExchange,
 		DefaultWeight: 100,
-		IncludeInVWAP: false, // fail-closed — see doc above
-		BackfillSafe:  false, // fail-closed — unknown sources cannot backfill
+		IncludeInVWAP: false,          // fail-closed — see doc above
+		Backfill:      BackfillUnsafe, // fail-closed — unknown sources cannot backfill
 	}
 }
 
@@ -236,14 +231,10 @@ func IncludeInVWAP(source string) bool {
 	return Lookup(source).IncludeInVWAP
 }
 
-// BackfillSafe reports whether the source's decoder is currently
-// authorised to run against historical ledger ranges. The
-// `stellarindex-ops backfill` command refuses to enqueue a source
-// against a historical range when this returns false — the audit must
-// land first to avoid decoding old WASM-event bodies with a current-
-// only decoder. See [Metadata.BackfillSafe] for the policy detail.
+// BackfillSafe reports whether the source's policy admits any replay.
+// A BackfillPerWASM source is further gated per range by internal/wasmaudit.
 func BackfillSafe(source string) bool {
-	return Lookup(source).BackfillSafe
+	return Lookup(source).BackfillSafe()
 }
 
 // replayAuditCoveredBy maps a PROJECTED source that deliberately has no
@@ -289,13 +280,26 @@ var replayStandardSchemaSources = map[string]struct{}{
 // replayStandardSchemaSources). Every other name — including one nobody
 // has registered — gets BackfillSafe's own answer, which is fail-closed.
 func ReplayBackfillSafe(source string) bool {
-	if _, ok := replayStandardSchemaSources[source]; ok {
+	if ReplayExempt(source) {
 		return true
 	}
+	return BackfillSafe(ReplayAuditSubject(source))
+}
+
+// ReplayExempt reports a standard-schema source (the sep41 pair) that the
+// per-protocol WASM audit does not apply to.
+func ReplayExempt(source string) bool {
+	_, ok := replayStandardSchemaSources[source]
+	return ok
+}
+
+// ReplayAuditSubject is the Registry source whose WASM audit covers a
+// projector source name (blend_backstop -> blend; every other name maps to itself).
+func ReplayAuditSubject(source string) string {
 	if coveredBy, ok := replayAuditCoveredBy[source]; ok {
-		source = coveredBy
+		return coveredBy
 	}
-	return BackfillSafe(source)
+	return source
 }
 
 // UnsafeReplaySources filters `sources` to those [ReplayBackfillSafe]

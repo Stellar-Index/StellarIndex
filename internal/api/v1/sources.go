@@ -290,7 +290,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 			IncludeInVWAP:     md.IncludeInVWAP,
 			Paid:              md.Paid,
 			BackfillAvailable: md.BackfillAvailable,
-			BackfillSafe:      md.BackfillSafe,
+			BackfillSafe:      md.BackfillSafe(),
 			DefaultWeight:     md.DefaultWeight,
 			OnChain:           external.IsOnChain(name),
 			Selectable:        sourceSelectable(name),

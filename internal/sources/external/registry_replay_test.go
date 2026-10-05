@@ -16,7 +16,7 @@ func TestReplayBackfillSafe(t *testing.T) {
 		why    string
 	}{
 		{"aquarius", true, "registered and attested"},
-		{"sushiswap_v3", false, "registered, audit pending"},
+		{"sushiswap_v3", true, "registered, BackfillPerWASM"},
 		{"upshift", false, "registered, audit pending"},
 		{"blend_backstop", true, "no row of its own; covered by blend's attestation"},
 		{"sep41_supply", true, "standard-schema source"},
@@ -62,7 +62,7 @@ func TestReplayNamespaceMapsAreConsistentWithRegistry(t *testing.T) {
 func TestUnsafeReplaySources(t *testing.T) {
 	t.Parallel()
 	got := UnsafeReplaySources([]string{"aquarius", "upshift", "blend_backstop", "typo", "sushiswap_v3"})
-	want := []string{"upshift", "typo", "sushiswap_v3"}
+	want := []string{"upshift", "typo"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("UnsafeReplaySources = %v, want %v", got, want)
 	}

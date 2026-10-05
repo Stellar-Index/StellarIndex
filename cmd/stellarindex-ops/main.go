@@ -876,9 +876,11 @@ Subcommands:
                           auto-roll on the inserted rows. Refuses to
                           run any source that isn't BackfillSafe in
                           internal/sources/external/registry.go — for
-                          on-chain Soroban sources that means the
-                          per-WASM-hash audit (stellarindex-ops
-                          wasm-history) must land first per AGENTS.md
+                          on-chain Soroban sources: audit each WASM hash
+                          under docs/operations/wasm-audits/, add it to
+                          internal/wasmaudit/audited_wasm.json and set
+                          Backfill: BackfillPerWASM in registry.go in the
+                          same PR, per AGENTS.md
                           "Soroban DeFi contracts upgrade in place".
                           Also refuses projector-owned sources (AGENTS.md
                           invariant [7]); re-derive those with
@@ -1359,7 +1361,7 @@ Subcommands:
                           audit log (curated set + factories + children
                           walked from the lake's creation events) must
                           run a WASM hash in the embedded audited-hash
-                          manifest (internal/ops/chops/audited_wasm.json).
+                          manifest (internal/wasmaudit/audited_wasm.json).
                           A hash absent from it is drift; a SAC or a
                           contract with no lake instance entry is
                           reported, not drift; a gated source with no

@@ -30,6 +30,9 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Core rows → `canonical.Trade`, `Price`, `OracleUpdate`
 - Clamp a raw on-chain u64 timestamp (sentinel/overflow-safe) → `canonical.SafeUnixSeconds(raw, closedAt)` / `SafeUnixMillis` — never cast u64→int64 then range-check (wrap-negative slips a future-only guard)
 
+## Stablecoin supply / USD value
+- Hand-vetted Stellar stablecoin set + valuation → `GET /v1/stablecoins`, `(*Server).handleStablecoins` (`internal/api/v1/stablecoins.go`; reuses `rwaListingRows`)
+
 ## SCVal / i128 decoding — `internal/scval`
 - Parse XDR SCVal → `scval.Parse(b64)`, `ParseBytes(raw)`
 - i128/u128/u256 → amount → `AsAmountFromI128`/`AsAmountFromU128`/`AsAmountFromU256` (never `int64(parts.Lo)`)

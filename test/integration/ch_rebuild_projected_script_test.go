@@ -149,7 +149,7 @@ func TestChRebuildProjectedScript_DeleteSQLOnRealPostgres(t *testing.T) {
 		why    string
 	}{
 		{"aquarius", lo + 20, "another source's trades — this run never re-derives them"},
-		{"sushiswap_v3", lo + 30, "not BackfillSafe: ch-rebuild refuses to rewrite it (RLT-380)"},
+		{"sushiswap_v3", lo + 30, "not in the script's default SRC: it has no DELETE map for it (RLT-380)"},
 		{"sdex", lo + 40, "op-derived, never in scope"},
 		{"soroswap", hi + 10, "outside the window"},
 	} {

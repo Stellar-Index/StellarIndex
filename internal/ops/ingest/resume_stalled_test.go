@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"reflect"
@@ -874,11 +875,11 @@ func TestNewDataGapGateContext_HasDeadline(t *testing.T) {
 func withdrawBackfillSafe(t *testing.T, source string) {
 	t.Helper()
 	orig, ok := external.Registry[source]
-	if !ok || !orig.BackfillSafe {
+	if !ok || !orig.BackfillSafe() {
 		t.Fatalf("fixture: %q must be a registered BackfillSafe source", source)
 	}
 	m := orig
-	m.BackfillSafe = false
+	m.Backfill = external.BackfillUnsafe
 	external.Registry[source] = m
 	t.Cleanup(func() { external.Registry[source] = orig })
 }
@@ -959,5 +960,40 @@ func TestRunResumeForCursorContainsChunkPanic(t *testing.T) {
 		if n := strings.Count(err.Error(), "panic:"); n != len(chunks) {
 			t.Fatalf("%d chunk(s): want %d contained panics, got %d: %v", len(chunks), len(chunks), n, err)
 		}
+	}
+}
+
+// TestBackfillChunkGate_UnreachableLakeRefusesPerWASMSource: the chunk path
+// every backfill and resume-stalled run takes refuses a BackfillPerWASM
+// source (band) whose lake cannot be read.
+func TestBackfillChunkGate_UnreachableLakeRefusesPerWASMSource(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var cfg config.Config
+	cfg.Storage.ClickHouseAddr = "127.0.0.1:1"
+	opts := backfillOpts{from: 60_000_000, to: 60_100_000, sources: []string{"band"}}
+	_, _, err := buildChunkDispatcher(context.Background(), logger, opts, cfg, nil, false)
+	if err == nil || !strings.Contains(err.Error(), "wasm replay gate") {
+		t.Fatalf("err = %v, want a wasm replay gate refusal", err)
+	}
+}
+
+// TestBackfillChunkGate_OncePerRun: chunks sharing a run's opts reuse its
+// one gate verdict instead of re-walking the lake per chunk.
+func TestBackfillChunkGate_OncePerRun(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var cfg config.Config
+	cfg.Storage.ClickHouseAddr = "127.0.0.1:1"
+	verdict := errors.New("run verdict")
+	opts := backfillOpts{from: 60_000_000, to: 60_100_000, sources: []string{"band"}, wasmGate: &replayGateOnce{}}
+	runs := 0
+	_ = opts.wasmGate.check(func() error { runs++; return verdict })
+	for range 3 {
+		_, _, err := buildChunkDispatcher(context.Background(), logger, opts, cfg, nil, false)
+		if !errors.Is(err, verdict) {
+			t.Fatalf("chunk err = %v, want the run's memoised verdict", err)
+		}
+	}
+	if runs != 1 {
+		t.Fatalf("gate ran %d times, want 1", runs)
 	}
 }

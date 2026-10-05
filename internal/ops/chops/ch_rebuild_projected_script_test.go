@@ -588,7 +588,7 @@ func TestCHRebuild_PreflightWithoutWriteIsRefused(t *testing.T) {
 
 func TestCHRebuild_PreflightRunsTheNamedSourceGate(t *testing.T) {
 	t.Parallel()
-	err := chRebuild(chRebuildArgs(t, "-write", "-preflight", "-sources", "aquarius,sushiswap_v3"))
+	err := chRebuild(chRebuildArgs(t, "-write", "-preflight", "-sources", "aquarius,upshift"))
 	if err == nil || !strings.Contains(err.Error(), "not BackfillSafe") {
 		t.Fatalf("-write -preflight over an unaudited source was not refused by the BackfillSafe gate: %v", err)
 	}

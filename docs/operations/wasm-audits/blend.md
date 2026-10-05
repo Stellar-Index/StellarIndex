@@ -533,3 +533,22 @@ for all 3,678 BadDebt and Interest `new_auction` events in ledgers
 57.0M to 62.7M. Dispatch is by topic arity for `new_auction` and
 `bad_debt` (2 topics means V1), and by the type of `fill_auction`
 topic[1] (Address means V1, u32 means V2).
+
+## Backstop V1 WASM — unaudited, replays refused (2026-10-05)
+
+The decision above covers Backstop V2 only: the Phase-2 walk saw one
+backstop WASM, `c1f4502a…`. The `blend_backstop` decoder also admits the
+V1 backstop `CAO3AGAMZVRMHITL36EJ2VZQWKYRPWMQAPDQD5YEOF3GIF7T44U4JAL3`,
+whose only WASM is
+`62f61b32fff99f7eec052a8e573c367759f161c481a5caf0e76a10ae4617c3b4`
+(`stellar.contract_instance_changes` FINAL, ledgers 51,499,492–51,499,549,
+read 2026-10-05). No audit attests that hash: V1 has no published source,
+and the decoder's V1 shapes are pinned against lake bytes only
+(`internal/sources/blend_backstop/README.md` §Provenance).
+
+So `62f61b32…` is not in `internal/wasmaudit/audited_wasm.json`, and the
+per-WASM replay gate refuses every `blend_backstop` replay that reaches
+ledger 51,499,492: the V1 contract is in the decoder's contract set and
+its WASM is active from there on, whether or not V1 emits in the range. Adding the hash needs a
+Phase-3 review of the V1 WASM bytes against every V1 event shape
+`decode.go` reads, recorded here in the same PR.

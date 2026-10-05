@@ -1188,7 +1188,7 @@ groups:
           description: |
             The decoder was audited against other bytes. String-check the new
             hash, record it in the source's audit log, then add it to
-            internal/ops/chops/audited_wasm.json.
+            internal/wasmaudit/audited_wasm.json.
 
       - alert: stellarindex_wasm_drift_stale
         expr: (time() - stellarindex_wasm_drift_last_run_unix) > 172800
