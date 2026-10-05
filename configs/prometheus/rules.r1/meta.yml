@@ -240,7 +240,11 @@ groups:
         expr: |
           up{job="pgbackrest_exporter"} == 0
           OR
-          absent_over_time(up{job="pgbackrest_exporter"}[5m]) == 1
+          (
+            absent_over_time(up{job="pgbackrest_exporter"}[5m]) == 1
+            and on ()
+            count(stellarindex_pgbackrest_backup_last_rc) > 0
+          )
         for: 2m
         labels:
           severity: page
