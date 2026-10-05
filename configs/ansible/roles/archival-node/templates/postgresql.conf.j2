@@ -170,6 +170,17 @@ wal_recycle               = off
 max_wal_size              = {{ postgres_max_wal_size | default('2GB') }}
 min_wal_size              = {{ postgres_min_wal_size | default('512MB') }}
 
+# WAL archiving feeds pgBackRest's point-in-time recovery between backups.
+# Gated on the same flag as the backup timer: with archive_mode on and no
+# pgbackrest binary or stanza, every archive_command fails and Postgres
+# keeps every WAL segment until pg_wal fills. archive_mode is
+# postmaster-level (restart); archive_command and archive_timeout are SIGHUP.
+{% if pgbackrest_backup_enabled | default(true) | bool %}
+archive_mode              = on
+archive_command           = 'pgbackrest --stanza=stellarindex archive-push %p'
+archive_timeout           = 0
+{% endif %}
+
 # ─── Planner ────────────────────────────────────────────────────────
 random_page_cost          = 1.1     # NVMe
 effective_io_concurrency  = 200

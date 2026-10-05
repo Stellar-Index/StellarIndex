@@ -24,8 +24,8 @@ func TestAssetVolumeCharacterRollupSQL_Shape(t *testing.T) {
 		"LEFT JOIN alias_map bm ON bm.form = t.base_asset",
 		"LEFT JOIN alias_map qm ON qm.form = t.quote_asset",
 		"UNION ALL",
-		// Trailing window bound + interval param.
-		"t.ts >= now() - $1::interval",
+		// Trailing window as a literal so the planner excludes older chunks.
+		"t.ts >= now() - interval '{{WINDOW}}'",
 		// UNORDERED account pair so a round-trip folds to one pair.
 		"GROUP BY asset_id, LEAST(COALESCE(maker, taker), taker), GREATEST(COALESCE(maker, taker), taker)",
 		// Self-cross share.
@@ -47,6 +47,9 @@ func TestAssetVolumeCharacterRollupSQL_Shape(t *testing.T) {
 		if !strings.Contains(q, m) {
 			t.Errorf("assetVolumeCharacterRollupSQLTemplate missing %q", m)
 		}
+	}
+	if strings.Contains(q, "::interval") {
+		t.Errorf("template binds the window as a parameter; chunk exclusion needs a literal")
 	}
 	// The %-carrying LIKE patterns must survive templating untouched — the
 	// sentinel is replaced by strings.Replace, never fmt.Sprintf.
@@ -154,19 +157,19 @@ func TestRefreshAssetVolumeCharacter_zeroRowPassKeepsLastGood(t *testing.T) {
 // TestRollAssetVolumeCharacter_RestoresCapturedStatementTimeout proves the
 // pinned connection's PRIOR statement_timeout (whatever an [OpenBackground]
 // connector's session backstop set it to — REC-08) is captured before this
-// call's own 25min override and restored — via set_config with the
+// call's own assetVolumeCharacterRollTimeout override and restored — via set_config with the
 // captured value, not a bare RESET — before the connection goes back to
 // the pool. Without the capture/restore, a later query landing on the
-// same pooled connection would silently inherit this call's 25min bound
+// same pooled connection would silently inherit this call's assetVolumeCharacterRollTimeout (45min) bound
 // (or the server default) instead of the operator's configured backstop.
 func TestRollAssetVolumeCharacter_RestoresCapturedStatementTimeout(t *testing.T) {
 	t.Parallel()
 
-	const priorBackstop = "2m" // distinct from both the server default and this call's own 25min
+	const priorBackstop = "2m" // distinct from both the server default and this call's own assetVolumeCharacterRollTimeout (45min)
 	store, script := newScriptedStore(t,
 		scriptedResult{}, // SET max_parallel_workers_per_gather
 		scriptedResult{cols: []string{"current_setting"}, rows: [][]driver.Value{{priorBackstop}}}, // captured
-		scriptedResult{}, // SET statement_timeout = 25min
+		scriptedResult{}, // SET statement_timeout = assetVolumeCharacterRollTimeout (45min)
 		scriptedResult{cols: []string{
 			"asset_id", "total", "total_numeric", "makers", "takers",
 			"top_pair", "self_cross", "issuer_side", "market_styled",
@@ -203,7 +206,7 @@ func TestRollAssetVolumeCharacter_FailedRestoreFailsTheCall(t *testing.T) {
 	store, _ := newScriptedStore(t,
 		scriptedResult{}, // SET max_parallel_workers_per_gather
 		scriptedResult{cols: []string{"current_setting"}, rows: [][]driver.Value{{"2m"}}},
-		scriptedResult{}, // SET statement_timeout = 25min
+		scriptedResult{}, // SET statement_timeout = assetVolumeCharacterRollTimeout (45min)
 		scriptedResult{cols: []string{
 			"asset_id", "total", "total_numeric", "makers", "takers",
 			"top_pair", "self_cross", "issuer_side", "market_styled",

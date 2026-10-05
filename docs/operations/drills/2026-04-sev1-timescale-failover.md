@@ -92,7 +92,7 @@ narrated the response). T+0 = trigger injection at 14:32 UTC.
 - **Patroni absence makes failover path slow under stress.**
   Confirmed by the drill — fix-in-place was chosen partly
   because the manual `pg_basebackup` flip is operator-knowledge
-  today. The `infra/patroni` ansible role landed under PR #344
+  today. The `infra/patroni` ansible role landed under commit 965eed22e
   (closing this gap) but the Patroni-driven failover hasn't
   been drilled against a real Patroni cluster yet — added as a
   follow-up scenario.
@@ -101,6 +101,11 @@ narrated the response). T+0 = trigger injection at 14:32 UTC.
   against staging — first-time muscle memory. Action: include
   a quarterly chaos drill where we actually run the command on
   staging.
+- **The T+18:00 mitigation is no longer sanctioned.**
+  [`runbooks/db-disk-full.md`](../runbooks/db-disk-full.md) now
+  forbids `drop_chunks` on data tables; disk relief is pool-level
+  via [`runbooks/zfs-pool-full.md`](../runbooks/zfs-pool-full.md).
+  The timeline above records what was practised, not what to do.
 
 ## Action items
 
@@ -115,9 +120,13 @@ solo drill. A real 3-person drill should file these under the
 - [x] **Cross-link §5.3 internal-channel template from
       `timescale-primary-down.md` Mitigation** — owner the maintainer, done
       in same PR.
-- [ ] **Quarterly chaos drill that actually runs `drop_chunks` on
-      staging** — owner the maintainer, due 2026-Q3 (post-launch chaos
-      Wave 2).
+- [x] *Withdrawn:* `runbooks/db-disk-full.md` forbids `drop_chunks`
+      on data tables because it destroys served history; disk relief is
+      pool-level per `runbooks/zfs-pool-full.md`. A future disk-full
+      drill rehearses those pool-level levers on the post-launch
+      Wave 2 staging box instead. Original item: **Quarterly chaos
+      drill that actually runs `drop_chunks` on staging** — owner the
+      maintainer, due 2026-Q3 (post-launch chaos Wave 2).
 - [x] **Add Patroni-driven failover scenario script as a
       successor to `sev1-timescale-primary-failover.md`** —
       owner the maintainer, due 2026-Q3. Drafted as
@@ -135,7 +144,7 @@ solo drill. A real 3-person drill should file these under the
 | 3 | Did anyone confirm the alert against `/v1/readyz` rather than just the metric? | partial | Yes, but only after checking metrics first — runbook ordering nudges toward metric-first. Action item #1. |
 | 4 | Did the team correctly identify disk-full as the root cause within 15 min? | pass | T+05:00 root-cause; T+18:00 mitigated. |
 | 5 | Did the team decide between failover vs fix-in-place with explicit rationale? | pass | Chose fix-in-place; rationale stated (replica headroom + grace window). |
-| 6 | Did anyone reference the still-open `#11–#16 ansible roles`? | pass | Patroni absence flagged; PR #344 already closes the role itself. |
+| 6 | Did anyone reference the still-open `#11–#16 ansible roles`? | pass | Patroni absence flagged; commit 965eed22e already closes the role itself. |
 | 7 | Did the team run the customer-comms templates correctly? | pass | Used SEV-1 Initial verbatim; no §5.4 violations. |
 | 8 | Did the writeup land within 24 h with action items? | pass | This document. |
 

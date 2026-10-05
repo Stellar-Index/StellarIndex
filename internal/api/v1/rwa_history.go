@@ -386,7 +386,7 @@ func (s *Server) handleRWAHistory(w http.ResponseWriter, r *http.Request) {
 	view.Sources = hist.sources
 	view.Points, view.Truncated = rwaHistoryTotal(hist.members, hist.setAssets, from)
 	view.Groups = rwaHistoryGroups(hist, groupBy, from)
-	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(hist.builtAt), Flags: Flags{Stale: hist.stale}})
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(hist.builtAt), Flags: Flags{Stale: hist.stale, Degraded: hist.stale}})
 }
 
 // writeRWASeriesUnavailable answers an RWA series that has no assembly

@@ -84,6 +84,16 @@ describe('og function — kill-switch', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
   });
+
+  it('marks the 503 cacheable for a short window', async () => {
+    const res = await onRequest(
+      makeContext('/og/bogus-type/x', { OG_DISABLED: '1' }),
+    );
+    expect(res.status).toBe(503);
+    expect(res.headers.get('cache-control')).toBe(
+      'public, max-age=60, s-maxage=60',
+    );
+  });
 });
 
 describe('og function — type allowlist (SEC-08 / SEC-15)', () => {
@@ -511,6 +521,24 @@ describe('og function — edge cache (K060)', () => {
 
     // One live price fetch total: the second request was answered from the
     // edge cache written by the first, not by re-rendering.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares one cache entry across query strings so a varying ?x= cannot force re-renders', async () => {
+    vi.stubGlobal('caches', { default: makeFakeCache() });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ data: { price: '1.5' } }), {
+        status: 200,
+      }),
+    );
+
+    const first = makeCacheContext('/og/markets/native~usdc?x=1');
+    expect((await onRequest(first.context)).status).toBe(200);
+    await Promise.all(first.pending);
+
+    const second = makeCacheContext('/og/markets/native~usdc?x=2&y=3');
+    expect((await onRequest(second.context)).status).toBe(200);
+
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });

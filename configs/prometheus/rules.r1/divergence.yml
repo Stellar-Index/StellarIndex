@@ -8,57 +8,42 @@ groups:
     interval: 60s
     rules:
 
-      # ── INERT (F-1329) — NO PRODUCER ──────────────────────────────
-      # The two price-divergence alerts below reference
-      # `stellarindex_our_price` / `stellarindex_reference_price` as
-      # Prometheus gauges. NOTHING EXPORTS THESE AS METRICS. The
-      # divergence worker (internal/divergence/worker.go) computes
-      # our_price / ref_price / delta_pct but writes them to Postgres
-      # (divergence_observations) + the Redis div:<asset> cache and
-      # surfaces them via the API's `flags.divergence_warning` — not via
-      # the Prometheus registry. The LIVE Prometheus signal for the same
-      # failure is `stellarindex_divergence_refresh_error_dominant` below,
-      # which DOES use an emitted metric. Exposing a per-asset price gauge
-      # would add high-cardinality series and is out of scope here. These
-      # two rules are kept (the runbook + intent survive) but INERT and
-      # TRACKED in scripts/ci/lint-metric-refs.sh's KNOWN_INERT list.
+      # Fed by the bounded stellarindex_divergence_max_abs_fraction gauge
+      # (worst |ours-ref|/ref per reference, no per-asset label); the
+      # per-pair detail stays in divergence_observations. `for` outlasts the
+      # shortest-window VWAP lag against instantaneous reference quotes.
       - alert: stellarindex_price_divergence_warning
-        # INERT: stellarindex_our_price / stellarindex_reference_price have no
-        # Prometheus producer (divergence values live in PG + Redis, not the registry).
-        expr: |
-          abs(stellarindex_our_price - stellarindex_reference_price)
-            / stellarindex_reference_price > 0.05
-        for: 2m
+        expr: stellarindex_divergence_max_abs_fraction > 0.05
+        for: 10m
         labels:
           severity: informational
           team: stellarindex
           component: divergence
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
-          summary: "{{ $labels.asset }} {{ $value | humanizePercentage }} off reference"
+          summary: "{{ $labels.reference }} {{ $value | humanizePercentage }} off our price on its worst pair"
           description: |
-            Our aggregated price for {{ $labels.asset }} differs from reference
-            ({{ $labels.reference_source }}) by > 5 % sustained 2 min.
-            Normal during rapid market moves; investigate if sustained.
+            Our price differs from reference {{ $labels.reference }} by > 5 %
+            on at least one pair, sustained 10 min. Normal during rapid
+            market moves; stellarindex_divergence_pairs_over{threshold="5pct"}
+            counts the pairs, divergence_observations names them.
 
       - alert: stellarindex_price_divergence_critical
-        # INERT: see the price_divergence_warning block above — no Prometheus
-        # producer for stellarindex_our_price / stellarindex_reference_price.
-        expr: |
-          abs(stellarindex_our_price - stellarindex_reference_price)
-            / stellarindex_reference_price > 0.10
-        for: 2m
+        expr: stellarindex_divergence_max_abs_fraction > 0.10
+        for: 10m
         labels:
           severity: ticket
           team: stellarindex
           component: divergence
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
-          summary: "{{ $labels.asset }} {{ $value | humanizePercentage }} off reference (critical)"
+          summary: "{{ $labels.reference }} {{ $value | humanizePercentage }} off our price on its worst pair (critical)"
           description: |
-            Divergence > 10 % from reference sustained 2 min. This is usually
-            a bad ingest (wrong decimals, stale source contributing) rather
-            than a real market move.
+            Divergence > 10 % from reference {{ $labels.reference }} on at
+            least one pair, sustained 10 min. This is usually a bad ingest
+            (wrong decimals, stale source contributing) rather than a real
+            market move. stellarindex_divergence_pairs_over{threshold="10pct"}
+            counts the pairs, divergence_observations names them.
 
       - alert: stellarindex_oracle_stream_rows_unparsed
         # Deliberately NOT pre-seeded, unlike the divergence outcome
@@ -150,9 +135,10 @@ groups:
         # modifier here.
         #
         # The budget defaults to 10 × the source's declared resolution
-        # (obs.OracleStaleBudgetMultiplier) — exactly the threshold this
-        # expression used to compute inline — so an asset with no
-        # operator override alerts at precisely the age it always did.
+        # (obs.OracleStaleBudgetMultiplier); heartbeat sources (RedStone)
+        # default to heartbeat + 2 h instead. For the 10× default, an
+        # asset with no operator override alerts at the same age the
+        # former inline expression did.
         # Per-asset exceptions live in `[[oracle.staleness_overrides]]`,
         # because staleness is a per-ASSET property even where cadence
         # is per-source: reflector-cex crypto:DAI is a peg asset that
@@ -172,7 +158,8 @@ groups:
           description: |
             {{ $labels.source }} hasn't published a price for {{ $labels.asset }}
             in longer than that pair's staleness budget (default 10× the
-            source's declared resolution; per-asset overrides live in
+            source's declared resolution, or heartbeat + 2 h for heartbeat
+            sources such as RedStone; per-asset overrides live in
             [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
             or a signal of oracle failure — check the oracle's own status page.
       # Aggregator's divergence-cache refresh loop — `refresh_error`

@@ -13,8 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // stubPriceReader implements v1.PriceReader.
@@ -420,6 +424,35 @@ func TestPrice_TriangulatedCompositeFlags(t *testing.T) {
 		}
 		if strings.Contains(body, `"rerouted"`) {
 			t.Errorf("rerouted must be omitted when false (omitempty): %s", body)
+		}
+	})
+
+	t.Run("pivot_unverified surfaces, omitted when false", func(t *testing.T) {
+		for _, tc := range []struct {
+			meta string
+			want bool
+		}{
+			{`{"pivot_proxy_share":{"crypto:XLM/fiat:USD":1},"pivot_unverified":true}`, true},
+			{`{"pivot_proxy_share":{"crypto:XLM/fiat:USD":0.4}}`, false},
+		} {
+			looker := &stubCompositeMetaLooker{
+				value: "0.5500", isTriangulated: true, found: true,
+				metaRaw: []byte(tc.meta), metaFound: true,
+			}
+			srv := v1.New(v1.Options{Prices: &stubPriceReader{err: v1.ErrPriceNotFound}, Triangulated: looker})
+			ts := startHTTPTest(t, srv.Handler())
+
+			resp := mustGet(t, ts.URL+"/v1/price?asset=crypto:XLM&quote=fiat:EUR")
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			body, _ := readAll(resp)
+			if got := strings.Contains(body, `"pivot_unverified":true`); got != tc.want {
+				t.Errorf("meta %s: pivot_unverified present = %v, want %v: %s", tc.meta, got, tc.want, body)
+			}
+			if !tc.want && strings.Contains(body, `"pivot_unverified"`) {
+				t.Errorf("pivot_unverified must be omitted when false: %s", body)
+			}
 		}
 	})
 
@@ -1210,7 +1243,10 @@ func TestLastTradeToSnapshot(t *testing.T) {
 		QuoteAmount: canonical.NewAmount(big.NewInt(12_420_000)),
 	}
 
-	snap := v1.LastTradeToSnapshot(tr, 7)
+	snap, ok := v1.LastTradeToSnapshot(tr, 7)
+	if !ok {
+		t.Fatal("priceable trade reported not priceable")
+	}
 	if snap.AssetID != "native" {
 		t.Errorf("asset = %q", snap.AssetID)
 	}
@@ -1236,9 +1272,25 @@ func TestLastTradeToSnapshot_zeroDecimals(t *testing.T) {
 		BaseAmount:  canonical.NewAmount(big.NewInt(1_000)),
 		QuoteAmount: canonical.NewAmount(big.NewInt(12_420)),
 	}
-	snap := v1.LastTradeToSnapshot(tr, 0)
+	snap, _ := v1.LastTradeToSnapshot(tr, 0)
 	if snap.Price != "12" { // 12420 / 1000 = 12 with no decimals
 		t.Errorf("price = %q, want 12", snap.Price)
+	}
+}
+
+// A zero-leg trade has no price: the snapshot is refused, never "0".
+func TestLastTradeToSnapshot_zeroLegNotPriceable(t *testing.T) {
+	for name, legs := range map[string][2]int64{"zero quote": {5_000_000_000, 0}, "zero base": {0, 7_000_000}} {
+		tr := canonical.Trade{
+			Source: "sdex", Ledger: 1, TxHash: "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
+			Timestamp:   time.Now(),
+			Pair:        mustPair(canonical.NativeAsset(), mustClassicTest("USDC", testUSDCIssuer)),
+			BaseAmount:  canonical.NewAmount(big.NewInt(legs[0])),
+			QuoteAmount: canonical.NewAmount(big.NewInt(legs[1])),
+		}
+		if snap, ok := v1.LastTradeToSnapshot(tr, 7); ok {
+			t.Errorf("%s: got priceable snapshot %+v, want ok=false", name, snap)
+		}
 	}
 }
 
@@ -1359,6 +1411,7 @@ func TestPrice_FreezeErrorIsBestEffort(t *testing.T) {
 			"native/fiat:USD": {"sdex", "soroswap"},
 		},
 	}
+	before := testutil.ToFloat64(obs.APIFreezeLookupFailuresTotal)
 	frz := &stubFrozenLooker{err: errors.New("redis exploded")}
 	srv := v1.New(v1.Options{Prices: reader, Freeze: frz})
 	ts := startHTTPTest(t, srv.Handler())
@@ -1370,6 +1423,9 @@ func TestPrice_FreezeErrorIsBestEffort(t *testing.T) {
 	body, _ := readAll(resp)
 	if strings.Contains(body, `"frozen":true`) {
 		t.Errorf("frozen should default false on lookup error: %s", body)
+	}
+	if got := testutil.ToFloat64(obs.APIFreezeLookupFailuresTotal) - before; frz.calls == 0 || got != float64(frz.calls) {
+		t.Errorf("freeze lookup failure counter delta = %v, want %d (one per failed lookup)", got, frz.calls)
 	}
 }
 
@@ -1526,7 +1582,8 @@ func TestPrice_FiatCrossRate_EURUSD(t *testing.T) {
 			PublishedAt: now,
 		},
 	}
-	srv := v1.New(v1.Options{Prices: reader, Currencies: currencies})
+	fixings := fixingsOf(hourlyFixing("EUR", "0.92", now.Add(-timescale.FXFixingLag).Truncate(time.Hour)))
+	srv := v1.New(v1.Options{Prices: reader, Currencies: currencies, FXFixings: fixings})
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/price?asset=fiat:EUR&quote=fiat:USD")
@@ -1580,7 +1637,7 @@ func TestPrice_FiatCrossRate_NotFiatBothSides(t *testing.T) {
 // TestPrice_XLMAlias_NativeFallsThroughToCryptoXLM verifies that
 // /v1/price?asset=native&quote=fiat:USD picks up a VWAP published
 // under crypto:XLM/fiat:USD when no native/fiat:USD key exists.
-// This is the F-1308 / #87 customer-visible 39h-stale bug on
+// This is the F-1308 customer-visible 39h-stale bug on
 // 2026-05-29: SDEX writes `native`, CEX writes `crypto:XLM`; the
 // aggregator's pair-set published under crypto:XLM only, and the
 // public surface queried by `native` and missed.

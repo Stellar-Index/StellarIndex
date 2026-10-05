@@ -9,7 +9,7 @@ import (
 )
 
 // TestSorobanVolume24hUSDQueryShape guards the XLM-anchored per-asset
-// USD-volume query (#37). The load-bearing properties — a bounded 24h
+// USD-volume query (fce3e2eef). The load-bearing properties — a bounded 24h
 // window (never an unbounded walk), the USD-pegged discriminator, and the
 // XLM base+quote anchor legs — must not silently regress; a full-behaviour
 // check lives in the integration suite (TestSorobanVolume24hUSD_*).

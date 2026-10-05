@@ -39,6 +39,9 @@ type stubMarketsReader struct {
 	hourVolumes map[string]map[int]string
 	sparkErr    error
 	sparkPairs  [][2]string
+
+	// firstPairs captures the pairs passed to FirstTradeBatch.
+	firstPairs [][2]string
 }
 
 func (r *stubMarketsReader) DistinctPairsExt(_ context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
@@ -390,6 +393,63 @@ func TestMarkets_SWRStaleServeStampsHonestFlags(t *testing.T) {
 	}
 }
 
+// swrStalePoolsUpstream serves one pool on the cold fill, then errors once
+// failNow is set, so the cache serves the expired entry.
+type swrStalePoolsUpstream struct {
+	*stubMarketsReader
+	failNow atomic.Bool
+}
+
+func (u *swrStalePoolsUpstream) AllPools(ctx context.Context, f timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Pool, string, error) {
+	if u.failNow.Load() {
+		return nil, "", errors.New("swr pools refresh boom")
+	}
+	return u.stubMarketsReader.AllPools(ctx, f, cursor, limit, order)
+}
+
+// /v1/pools served from an expired cache entry whose refresh keeps failing
+// must report flags.stale=true and the rows' original fill time as as_of.
+func TestPools_SWRStaleServeStampsHonestFlags(t *testing.T) {
+	const ttl = 40 * time.Millisecond
+	up := &swrStalePoolsUpstream{
+		stubMarketsReader: &stubMarketsReader{
+			pairs: []v1.Market{{Base: "native", Quote: "fiat:USD"}},
+		},
+	}
+	srv := v1.New(v1.Options{Markets: v1.NewCachedMarketsReader(up, ttl)})
+	ts := httpTestServer(t, srv)
+
+	type envelope struct {
+		Data  []v1.Pool `json:"data"`
+		AsOf  time.Time `json:"as_of"`
+		Flags struct {
+			Stale bool `json:"stale"`
+		} `json:"flags"`
+	}
+
+	var fresh envelope
+	mustDecode(t, mustGet(t, ts.URL+"/v1/pools"), &fresh)
+	if len(fresh.Data) != 1 || fresh.Flags.Stale {
+		t.Fatalf("fresh serve: rows=%d stale=%v, want 1 row, stale=false", len(fresh.Data), fresh.Flags.Stale)
+	}
+
+	up.failNow.Store(true)
+	time.Sleep(2 * ttl)
+
+	beforeStale := time.Now()
+	var stale envelope
+	mustDecode(t, mustGet(t, ts.URL+"/v1/pools"), &stale)
+	if len(stale.Data) != 1 {
+		t.Fatalf("stale serve: got %d rows, want the old rows served (1)", len(stale.Data))
+	}
+	if !stale.Flags.Stale {
+		t.Errorf("stale serve: flags.stale = false, want true")
+	}
+	if !stale.AsOf.Equal(fresh.AsOf) || !stale.AsOf.Before(beforeStale) {
+		t.Errorf("stale serve: as_of = %v, want the original fill time %v (before %v)", stale.AsOf, fresh.AsOf, beforeStale)
+	}
+}
+
 // TestMarkets_LastTradeAtVsBucketCloseAt — F-0065 fix (2026-05-27).
 // Pins the wire contract: BOTH `last_trade_at` (minute-precise) AND
 // `bucket_close_at` (daily bucket-start) ship on every row, and they
@@ -497,15 +557,12 @@ func TestMarkets_UnknownSource400(t *testing.T) {
 }
 
 // TestMarkets_KnownSource200 — guards the inverse: a registered
-// source name passes the validation gate. We can't depend on a
-// specific name surviving registry refactors, so iterate any-one
-// from the known set ("binance" is registered for the lifetime of
-// this codebase per docs/discovery/external-refs/cex-feeds.md).
+// on-chain source passes the validation gate.
 func TestMarkets_KnownSource200(t *testing.T) {
 	srv := v1.New(v1.Options{Markets: &stubMarketsReader{}})
 	ts := httpTestServer(t, srv)
 
-	resp := mustGet(t, ts.URL+"/v1/markets?source=binance")
+	resp := mustGet(t, ts.URL+"/v1/markets?source=sdex")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -560,7 +617,7 @@ func TestMarkets_SourceAndAssetTogether400(t *testing.T) {
 	srv := v1.New(v1.Options{Markets: &stubMarketsReader{}})
 	ts := httpTestServer(t, srv)
 
-	resp := mustGet(t, ts.URL+"/v1/markets?source=binance&asset=native")
+	resp := mustGet(t, ts.URL+"/v1/markets?source=sdex&asset=native")
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
@@ -717,8 +774,58 @@ func TestPools_ValidBaseQuote200(t *testing.T) {
 	}
 }
 
-func (r *stubMarketsReader) FirstTradeBatch(_ context.Context, _ [][2]string) (map[string]time.Time, error) {
-	return map[string]time.Time{}, nil
+func (r *stubMarketsReader) FirstTradeBatch(_ context.Context, pairs [][2]string) (map[string]time.Time, error) {
+	r.firstPairs = pairs
+	out := make(map[string]time.Time, len(pairs))
+	for _, p := range pairs {
+		out[p[0]+"|"+p[1]] = time.Unix(1_600_000_000, 0).UTC().Truncate(24 * time.Hour)
+	}
+	return out, nil
+}
+
+// TestMarkets_SourceFilterOmitsPairWideEnrichments: both enrichment
+// readers are cross-venue, so a ?source= row — whose headline figures
+// are that venue's own — must not carry them.
+func TestMarkets_SourceFilterOmitsPairWideEnrichments(t *testing.T) {
+	vol := "10"
+	reader := &stubMarketsReader{
+		pairs:       []v1.Market{{Base: "native", Quote: "fiat:USD", TradeCount24h: 2, Volume24hUSD: &vol}},
+		hourVolumes: map[string]map[int]string{"native|fiat:USD": {23: "610"}},
+	}
+	srv := v1.New(v1.Options{Markets: reader})
+	ts := httpTestServer(t, srv)
+
+	var env struct {
+		Data []v1.Market `json:"data"`
+	}
+	resp := mustGet(t, ts.URL+"/v1/markets?include=sparkline,inception")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 1 || env.Data[0].VolumeHistory24h == nil || env.Data[0].FirstTradeAt == nil {
+		t.Fatalf("unfiltered: rows=%+v; want sparkline and first_trade_at attached", env.Data)
+	}
+
+	// The stub hands out its own slice, which the first request enriched in place.
+	reader.pairs = []v1.Market{{Base: "native", Quote: "fiat:USD", TradeCount24h: 2, Volume24hUSD: &vol}}
+	reader.sparkPairs, reader.firstPairs = nil, nil
+	resp = mustGet(t, ts.URL+"/v1/markets?source=sdex&include=sparkline,inception")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	env.Data = nil
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 1 {
+		t.Fatalf("got %d rows, want 1", len(env.Data))
+	}
+	if reader.sparkPairs != nil || reader.firstPairs != nil {
+		t.Errorf("source-filtered: sparkline batch=%v inception batch=%v; want neither pair-wide reader called",
+			reader.sparkPairs, reader.firstPairs)
+	}
+	if m := env.Data[0]; m.VolumeHistory24h != nil || m.FirstTradeAt != nil {
+		t.Errorf("source-filtered row carries pair-wide enrichments: history=%v first_trade_at=%v", m.VolumeHistory24h, m.FirstTradeAt)
+	}
 }
 
 // The ?asset= filter must reach SQL in its CANONICAL spelling. ParseAsset

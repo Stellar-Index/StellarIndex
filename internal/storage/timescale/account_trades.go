@@ -160,7 +160,7 @@ func accountTradesQuery(hasCursor bool) string {
 
 // tradesHorizonFailClosedWindow is the fail-CLOSED floor served on a
 // catalog lookup error: short enough that it is always inside the
-// compression policy's compress_after window (7 days on `trades`, see
+// compression policy's compress_after window (15 days on `trades`, see
 // TradesCompressionPolicy) with margin, so it can never claim a chunk
 // that might already be compressed as index-safe.
 const tradesHorizonFailClosedWindow = 24 * time.Hour

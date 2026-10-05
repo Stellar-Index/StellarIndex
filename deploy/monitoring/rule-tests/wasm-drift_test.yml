@@ -1,0 +1,95 @@
+---
+# promtool unit tests for the wasm-drift alerts in deploy/monitoring/rules/storage.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/wasm-drift_test.yml
+#
+# wasm-drift writes wasm_drift.prom only after a completed run, so a run that
+# errors leaves last_run_unix to age.
+
+rule_files:
+  - ../rules/storage.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ═══ stellarindex_wasm_drift ════════════════════════════════════════════
+
+  # (RED) one contract on an unaudited hash: silent before `for`, tickets after.
+  - interval: 1m
+    name: a drifting gated contract tickets after 1h
+    input_series:
+      - series: 'stellarindex_wasm_drift{job="node_exporter", instance="r1:9100", source="phoenix", contract="CCPPPTDWJIWXQUQ2CN64S5JYQ7GYWVZIT7YWUUTH75HKIZX53Z2CE3XI", wasm_hash="d54d01e0d09005bd7d5267ce9e913a8c52163bfeb82252545351b76e86b41561"}'
+        values: '1x120'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_wasm_drift
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: stellarindex_wasm_drift
+        exp_alerts:
+          - exp_labels:
+              source: phoenix
+              contract: CCPPPTDWJIWXQUQ2CN64S5JYQ7GYWVZIT7YWUUTH75HKIZX53Z2CE3XI
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/wasm-drift.md
+              summary: "phoenix contract CCPPPTDWJIWXQUQ2CN64S5JYQ7GYWVZIT7YWUUTH75HKIZX53Z2CE3XI runs a WASM hash no audit log has string-checked"
+              description: |
+                The decoder was audited against other bytes. String-check the new
+                hash, record it in the source's audit log, then add it to
+                internal/wasmaudit/audited_wasm.json.
+
+  # (GREEN) a clean run emits no drift series, only the counters.
+  - interval: 1m
+    name: a clean wasm-drift run does not ticket
+    input_series:
+      - series: 'stellarindex_wasm_drift_contracts_checked{job="node_exporter", instance="r1:9100", source="phoenix"}'
+        values: '31x120'
+      - series: 'stellarindex_wasm_drift_source_unaudited{job="node_exporter", instance="r1:9100", source="upshift"}'
+        values: '1x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_wasm_drift
+        exp_alerts: []
+
+  # ═══ stellarindex_wasm_drift_stale ══════════════════════════════════════
+
+  # (GREEN) a run that completed recently.
+  - interval: 1m
+    name: a fresh wasm-drift run does not ticket stale
+    input_series:
+      - series: 'stellarindex_wasm_drift_last_run_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+60x180'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_wasm_drift_stale
+        exp_alerts: []
+
+  # (RED) the last completed run is 49 h old: silent at 47 h, fires past
+  # 48 h + for.
+  - interval: 1m
+    name: a wasm-drift run older than 48h tickets stale
+    input_series:
+      - series: 'stellarindex_wasm_drift_last_run_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0x3060'
+    alert_rule_test:
+      - eval_time: 47h
+        alertname: stellarindex_wasm_drift_stale
+        exp_alerts: []
+      - eval_time: 50h
+        alertname: stellarindex_wasm_drift_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/wasm-drift.md
+              summary: "wasm-drift has not completed a run on r1:9100 in 2 days"
+              description: |
+                A run that errors writes no textfile — check the unit's journal
+                for the wasm-drift error line.

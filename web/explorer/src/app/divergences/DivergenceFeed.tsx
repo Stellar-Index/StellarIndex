@@ -9,6 +9,9 @@ import { AssetText } from '@/components/AssetLink';
 import { shortAssetText } from '@/lib/asset-label';
 import { apiGet, asExample } from '@/api/client';
 import { HBarList } from '@/components/charts/Bars';
+import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
+import { hueByIdentity } from '@/components/charts/dailyGaps';
+import type { NamedLineSeries } from '@/components/charts/LineChart';
 import type { paths } from '@/api/types';
 
 const LineChart = dynamic(
@@ -41,7 +44,9 @@ function fmtDelta(s: string): string {
   return `${n > 0 ? '+' : ''}${n.toFixed(2)}%`;
 }
 
-type Selection = { asset: string; quote: string; reference: string };
+type Selection = { asset: string; quote: string };
+
+type DivergencePair = NonNullable<DivergenceResp['pairs']>[number];
 
 export function DivergenceFeed() {
   const [selected, setSelected] = useState<Selection | null>(null);
@@ -60,29 +65,25 @@ export function DivergenceFeed() {
     refetchInterval: 30_000,
   });
 
-  const rows = q.data?.observations ?? [];
-  // Default selection: the board's widest gap (the first row — the
-  // API orders by |Δ%| desc).
+  const pairs = q.data?.pairs ?? [];
+  // Default selection: the board's widest gap (the first pair — the
+  // API orders pairs by their widest |Δ%| desc).
   const sel: Selection | null =
     selected ??
-    (rows[0]
-      ? {
-          asset: rows[0].asset_id ?? '',
-          quote: rows[0].quote_id ?? '',
-          reference: rows[0].reference ?? '',
-        }
+    (pairs[0]
+      ? { asset: pairs[0].asset_id ?? '', quote: pairs[0].quote_id ?? '' }
       : null);
 
   return (
     <>
       <DivergenceSeriesPanel sel={sel} days={days} onDays={setDays} />
 
-      <BoardBars rows={rows} />
+      <BoardBars pairs={pairs} />
 
       <Panel
         headingLevel={2}
         title="Divergence board"
-        hint="Latest comparison per (pair, reference) over the trailing 7 days — our VWAP vs each external reference, widest gap first. Choose a row's Plot control to chart its history above."
+        hint="Per pair, our VWAP beside the latest comparison against each external reference over the trailing 7 days, widest gap first. Choose a pair's Plot control to chart its history against every reference above."
         source={asExample('/v1/divergence', { limit: 100, window_days: 7 })}
         bodyClassName="space-y-3"
       >
@@ -92,14 +93,14 @@ export function DivergenceFeed() {
             The divergence board is unavailable right now.
           </p>
         )}
-        {q.data && rows.length === 0 && (
+        {q.data && pairs.length === 0 && (
           <p className="text-ink-muted text-sm">
             No cross-reference comparisons recorded in the last 7 days (the
             divergence worker writes one row per configured (pair, reference)
             per tick).
           </p>
         )}
-        {rows.length > 0 && (
+        {pairs.length > 0 && (
           // WCAG 1.4.10 Reflow: 8 columns of unbreakable mono cells scroll
           // inside the panel, not sideways across the whole page.
           <div className="overflow-x-auto">
@@ -109,16 +110,25 @@ export function DivergenceFeed() {
                   <th scope="col" className="py-1.5 pr-4 font-normal">
                     Pair
                   </th>
+                  <th
+                    scope="col"
+                    className="py-1.5 pr-4 text-right font-normal"
+                  >
+                    Our price
+                  </th>
                   <th scope="col" className="py-1.5 pr-4 font-normal">
                     Reference
                   </th>
-                  <th scope="col" className="py-1.5 pr-4 text-right font-normal">
-                    Our price
+                  <th
+                    scope="col"
+                    className="py-1.5 pr-4 text-right font-normal"
+                  >
+                    Reference price
                   </th>
-                  <th scope="col" className="py-1.5 pr-4 text-right font-normal">
-                    Reference
-                  </th>
-                  <th scope="col" className="py-1.5 pr-4 text-right font-normal">
+                  <th
+                    scope="col"
+                    className="py-1.5 pr-4 text-right font-normal"
+                  >
                     Δ%
                   </th>
                   <th scope="col" className="py-1.5 pr-4 font-normal">
@@ -130,96 +140,23 @@ export function DivergenceFeed() {
                   <th className="py-1.5 font-normal" aria-hidden />
                 </tr>
               </thead>
-              <tbody>
-                {rows.map((d) => {
-                  const firing = d.status === 'firing';
-                  const isSel =
+              {pairs.map((p) => (
+                <PairRows
+                  key={`${p.asset_id}:${p.quote_id}`}
+                  pair={p}
+                  isSel={
                     sel != null &&
-                    d.asset_id === sel.asset &&
-                    d.quote_id === sel.quote &&
-                    d.reference === sel.reference;
-                  return (
-                    <tr
-                      key={`${d.asset_id}:${d.quote_id}:${d.reference}`}
-                      onClick={() =>
-                        setSelected({
-                          asset: d.asset_id ?? '',
-                          quote: d.quote_id ?? '',
-                          reference: d.reference ?? '',
-                        })
-                      }
-                      className={`border-line/60 hover:bg-surface-muted cursor-pointer border-b last:border-0 ${
-                        isSel ? 'bg-surface-muted' : ''
-                      }`}
-                    >
-                      <td className="py-1.5 pr-4 font-mono">
-                        <AssetText canonical={d.asset_id} />
-                        <span className="text-ink-faint">/</span>
-                        <AssetText canonical={d.quote_id} />
-                      </td>
-                      <td className="py-1.5 pr-4">
-                        <code className="text-[11px]">{d.reference}</code>
-                      </td>
-                      <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
-                        {d.our_price}
-                      </td>
-                      <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
-                        {d.ref_price}
-                      </td>
-                      <td
-                        className={`py-1.5 pr-4 text-right font-mono tabular-nums ${
-                          firing ? 'text-down-strong' : 'text-ink-body'
-                        }`}
-                      >
-                        {fmtDelta(d.delta_pct ?? '')}
-                      </td>
-                      <td className="text-ink-muted py-1.5 pr-4 font-mono text-[11px]">
-                        {fmtTs(d.observed_at ?? '')}
-                      </td>
-                      <td className="py-1.5 pr-4">
-                        {firing ? (
-                          <span className="bg-down-subtle text-down-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
-                            firing
-                          </span>
-                        ) : (
-                          <span className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
-                            clear
-                          </span>
-                        )}
-                      </td>
-                      {/* The keyboard/AT path to the chart above. The row's
-                        onClick is a mouse convenience only; this native
-                        <button> is what puts series selection in the tab
-                        order and gives Enter/Space activation for free
-                        (WCAG 2.1.1). The state is aria-current, NOT a
-                        toggle state: the board is single-select, so
-                        re-activating the plotted row leaves it plotted,
-                        and a two-state toggle would misdescribe it. */}
-                      <td className="py-1.5 text-right">
-                        <button
-                          type="button"
-                          aria-current={isSel ? 'true' : 'false'}
-                          aria-label={`Plot ${shortAssetText(d.asset_id)}/${shortAssetText(d.quote_id)} vs ${d.reference} history`}
-                          onClick={() =>
-                            setSelected({
-                              asset: d.asset_id ?? '',
-                              quote: d.quote_id ?? '',
-                              reference: d.reference ?? '',
-                            })
-                          }
-                          className={`focus-visible:ring-brand-500/60 rounded-sm px-1.5 py-0.5 text-[11px] transition-colors focus-visible:ring-2 focus-visible:outline-hidden ${
-                            isSel
-                              ? 'text-brand-600 font-medium'
-                              : 'text-ink-faint hover:text-brand-600'
-                          }`}
-                        >
-                          {isSel ? 'Plotted' : 'Plot'}
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
+                    p.asset_id === sel.asset &&
+                    p.quote_id === sel.quote
+                  }
+                  onSelect={() =>
+                    setSelected({
+                      asset: p.asset_id ?? '',
+                      quote: p.quote_id ?? '',
+                    })
+                  }
+                />
+              ))}
             </table>
           </div>
         )}
@@ -228,8 +165,137 @@ export function DivergenceFeed() {
   );
 }
 
-// DivergenceSeriesPanel — the Δ% history for the selected (pair,
-// reference), from GET /v1/divergence/series. The alert threshold the
+// PairRows — one <tbody> per pair: the pair, our price and the Plot
+// control span the pair's reference rows, so a reference's price is only
+// ever read beside ours and the other references.
+function PairRows({
+  pair,
+  isSel,
+  onSelect,
+}: {
+  pair: DivergencePair;
+  isSel: boolean;
+  onSelect: () => void;
+}) {
+  const refs = pair.references ?? [];
+  const span = Math.max(refs.length, 1);
+  return (
+    <tbody
+      className={`border-line/60 hover:bg-surface-muted cursor-pointer border-b last:border-0 ${
+        isSel ? 'bg-surface-muted' : ''
+      }`}
+    >
+      {refs.map((r, i) => {
+        const firing = r.status === 'firing';
+        return (
+          <tr key={r.reference} onClick={onSelect}>
+            {i === 0 && (
+              <>
+                <td rowSpan={span} className="py-1.5 pr-4 align-top font-mono">
+                  <AssetText canonical={pair.asset_id} />
+                  <span className="text-ink-faint">/</span>
+                  <AssetText canonical={pair.quote_id} />
+                </td>
+                <td
+                  rowSpan={span}
+                  className="py-1.5 pr-4 text-right align-top font-mono tabular-nums"
+                >
+                  {pair.our_price}
+                </td>
+              </>
+            )}
+            <td className="py-1.5 pr-4">
+              <code className="text-[11px]">{r.reference}</code>
+            </td>
+            <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
+              {r.ref_price}
+            </td>
+            <td
+              className={`py-1.5 pr-4 text-right font-mono tabular-nums ${
+                firing ? 'text-down-strong' : 'text-ink-body'
+              }`}
+            >
+              {fmtDelta(r.delta_pct ?? '')}
+            </td>
+            <td className="text-ink-muted py-1.5 pr-4 font-mono text-[11px]">
+              {fmtTs(r.observed_at ?? pair.observed_at ?? '')}
+            </td>
+            <td className="py-1.5 pr-4">
+              {firing ? (
+                <span className="bg-down-subtle text-down-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
+                  firing
+                </span>
+              ) : (
+                <span className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
+                  clear
+                </span>
+              )}
+            </td>
+            {/* The keyboard/AT path to the chart above. The rows' onClick
+              is a mouse convenience only; this native <button> is what puts
+              series selection in the tab order and gives Enter/Space
+              activation for free (WCAG 2.1.1). The state is aria-current,
+              NOT a toggle state: the board is single-select, so
+              re-activating the plotted pair leaves it plotted. */}
+            {i === 0 && (
+              <td rowSpan={span} className="py-1.5 text-right align-top">
+                <button
+                  type="button"
+                  aria-current={isSel ? 'true' : 'false'}
+                  aria-label={`Plot ${shortAssetText(pair.asset_id)}/${shortAssetText(pair.quote_id)} divergence history`}
+                  onClick={onSelect}
+                  className={`focus-visible:ring-brand-500/60 rounded-sm px-1.5 py-0.5 text-[11px] transition-colors focus-visible:ring-2 focus-visible:outline-hidden ${
+                    isSel
+                      ? 'text-brand-600 font-medium'
+                      : 'text-ink-faint hover:text-brand-600'
+                  }`}
+                >
+                  {isSel ? 'Plotted' : 'Plot'}
+                </button>
+              </td>
+            )}
+          </tr>
+        );
+      })}
+    </tbody>
+  );
+}
+
+/**
+ * One Δ% line per reference over the series' shared bucket axis. A
+ * bucket a reference was not compared in is a gap (null), never joined
+ * across. Hues are assigned by reference name so a window switch never
+ * repaints a line.
+ */
+export function referenceLines(
+  points: DivergenceSeriesResp['points'] | undefined,
+): NamedLineSeries[] {
+  const pts = points ?? [];
+  const names = [
+    ...new Set(
+      pts.flatMap((p) => (p.references ?? []).map((r) => r.reference)),
+    ),
+  ].filter((n): n is NonNullable<typeof n> => n != null);
+  const hue = hueByIdentity(names, CATEGORICAL_PALETTE);
+  return names.map((name) => ({
+    label: name,
+    tone: 'brand' as const,
+    color: hue.get(name),
+    data: pts
+      .map((p) => {
+        const r = (p.references ?? []).find((x) => x.reference === name);
+        const v = r ? Number(r.delta_pct) : NaN;
+        return {
+          time: Math.floor(Date.parse(p.t ?? '') / 1000),
+          value: Number.isFinite(v) ? v : null,
+        };
+      })
+      .filter((p) => Number.isFinite(p.time)),
+  }));
+}
+
+// DivergenceSeriesPanel — the Δ% history for the selected pair against
+// every reference, from GET /v1/divergence/series. The alert threshold the
 // worker actually fires on is drawn as dashed ±threshold_pct reference
 // lines; when the API serves no threshold, no band is drawn (never
 // invented client-side). Points are last-observation-per-bucket at the
@@ -245,15 +311,11 @@ function DivergenceSeriesPanel({
 }) {
   const pair = sel ? `${sel.asset}~${sel.quote}` : '';
   const sq = useQuery<DivergenceSeriesResp>({
-    queryKey: ['/v1/divergence/series', pair, sel?.reference, days],
+    queryKey: ['/v1/divergence/series', pair, days],
     queryFn: async () => {
       const env = await apiGet<{ data: DivergenceSeriesResp }>(
         '/v1/divergence/series',
-        {
-          pair,
-          reference: sel?.reference ?? '',
-          days,
-        },
+        { pair, days },
       );
       return env.data;
     },
@@ -262,12 +324,14 @@ function DivergenceSeriesPanel({
     refetchInterval: 60_000,
   });
 
-  const points = (sq.data?.points ?? [])
-    .map((p) => ({
-      time: Math.floor(Date.parse(p.t ?? '') / 1000),
-      value: Number(p.delta_pct),
-    }))
-    .filter((p) => Number.isFinite(p.time) && Number.isFinite(p.value));
+  const lines = referenceLines(sq.data?.points).filter((l) =>
+    l.data.some((p) => p.value != null),
+  );
+  const firingRefs = new Set<string>(
+    (sq.data?.points ?? []).flatMap((p) =>
+      (p.references ?? []).filter((r) => r.firing).map((r) => r.reference),
+    ),
+  );
   const threshold = sq.data?.threshold_pct;
   const priceLines =
     threshold != null && threshold > 0
@@ -286,22 +350,16 @@ function DivergenceSeriesPanel({
       headingLevel={2}
       title={
         sel
-          ? `Δ% history — ${shortAssetText(sel.asset)}/${shortAssetText(sel.quote)} vs ${sel.reference}`
+          ? `Δ% history — ${shortAssetText(sel.asset)}/${shortAssetText(sel.quote)}`
           : 'Δ% history'
       }
       hint={
         bucketMin != null
-          ? `Our VWAP vs the reference over the trailing window, one point per ${bucketMin} min (last observation per bucket). Dashed lines mark the operator's alert threshold.`
-          : "Our VWAP vs the selected reference over the trailing window. Dashed lines mark the operator's alert threshold."
+          ? `Our VWAP vs every reference over the trailing window, one line per reference, one point per ${bucketMin} min (last observation per bucket). Dashed lines mark the operator's alert threshold.`
+          : "Our VWAP vs every reference over the trailing window, one line per reference. Dashed lines mark the operator's alert threshold."
       }
       source={
-        sel
-          ? asExample('/v1/divergence/series', {
-              pair,
-              reference: sel.reference,
-              days,
-            })
-          : undefined
+        sel ? asExample('/v1/divergence/series', { pair, days }) : undefined
       }
       bodyClassName="space-y-3"
     >
@@ -322,7 +380,7 @@ function DivergenceSeriesPanel({
       </div>
       {sel == null && (
         <p className="text-ink-muted text-sm">
-          No (pair, reference) on the board yet — nothing to plot.
+          No pair on the board yet — nothing to plot.
         </p>
       )}
       {sel != null && sq.isLoading && (
@@ -333,25 +391,45 @@ function DivergenceSeriesPanel({
           The divergence history is unavailable right now.
         </p>
       )}
-      {sel != null && sq.data && points.length === 0 && (
+      {sel != null && sq.data && lines.length === 0 && (
         <p className="text-ink-muted text-sm">
-          No observations recorded for this pair × reference in the last{' '}
+          No observations recorded for this pair in the last{' '}
           {days === 1 ? 'day' : `${days} days`}.
         </p>
       )}
-      {points.length > 0 && (
-        <LineChart
-          data={points}
-          height={260}
-          area={false}
-          timeVisible={days === 1}
-          priceLines={priceLines}
-          legend={{
-            valueLabel: 'Δ%',
-            formatValue: (n) => `${n > 0 ? '+' : ''}${n.toFixed(3)}%`,
-          }}
-          ariaLabel={`Divergence of our VWAP vs ${sel?.reference} over the last ${days} day(s), in percent`}
-        />
+      {lines.length > 0 && (
+        <>
+          <LineChart
+            data={[]}
+            series={lines}
+            height={260}
+            timeVisible={days === 1}
+            priceLines={priceLines}
+            legend={{
+              valueLabel: 'Δ%',
+              formatValue: (n) => `${n > 0 ? '+' : ''}${n.toFixed(3)}%`,
+            }}
+            ariaLabel={`Divergence of our VWAP vs ${lines.map((l) => l.label).join(', ')} over the last ${days} day(s), in percent`}
+          />
+          {/* Static legend: line identity never rests on colour alone. */}
+          <ul className="flex flex-wrap gap-x-4 gap-y-1.5">
+            {lines.map((l) => (
+              <li key={l.label} className="flex items-center gap-1.5">
+                <span
+                  aria-hidden
+                  className="h-0.5 w-3 rounded-full"
+                  style={{ backgroundColor: l.color }}
+                />
+                <span className="text-ink-body text-xs">
+                  {l.label}
+                  {firingRefs.has(l.label) && (
+                    <span className="text-down-strong"> · fired</span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </Panel>
   );
@@ -360,23 +438,26 @@ function DivergenceSeriesPanel({
 // BoardBars — the current board as signed horizontal bars, widest
 // |Δ%| first. Bar length is magnitude; sign is carried by polarity
 // color AND the signed value label (identity is never color-alone).
-function BoardBars({ rows }: { rows: DivergenceResp['observations'] }) {
-  const items = (rows ?? [])
-    .slice(0, 12)
-    .map((d) => {
-      const n = Number(d.delta_pct);
-      if (!Number.isFinite(n)) return null;
-      const label = `${shortAssetText(d.asset_id)}/${shortAssetText(d.quote_id)} · ${d.reference}`;
-      return {
-        label,
-        value: Math.abs(n),
-        display: fmtDelta(d.delta_pct ?? ''),
-        color: n >= 0 ? 'var(--color-up)' : 'var(--color-down)',
-        annotation: d.status === 'firing' ? 'firing' : undefined,
-        title: `${label}: ${fmtDelta(d.delta_pct ?? '')} (${d.status}) — click the matching board row to plot its history`,
-      };
-    })
-    .filter((x): x is NonNullable<typeof x> => x != null);
+function BoardBars({ pairs }: { pairs: DivergencePair[] }) {
+  const items = pairs
+    .flatMap((p) =>
+      (p.references ?? []).map((r) => {
+        const n = Number(r.delta_pct);
+        if (!Number.isFinite(n)) return null;
+        const label = `${shortAssetText(p.asset_id)}/${shortAssetText(p.quote_id)} · ${r.reference}`;
+        return {
+          label,
+          value: Math.abs(n),
+          display: fmtDelta(r.delta_pct ?? ''),
+          color: n >= 0 ? 'var(--color-up)' : 'var(--color-down)',
+          annotation: r.status === 'firing' ? 'firing' : undefined,
+          title: `${label}: ${fmtDelta(r.delta_pct ?? '')} (${r.status}) — choose the pair's Plot control to chart its history`,
+        };
+      }),
+    )
+    .filter((x): x is NonNullable<typeof x> => x != null)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 12);
 
   if (items.length === 0) return null;
   return (

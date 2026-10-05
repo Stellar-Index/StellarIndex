@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
@@ -21,15 +22,21 @@ import (
 // falls back to an inline buildSourceHealth (8s ceiling, soft-fails to
 // zeroed stats) right after process start.
 //
-// Unknown source → 404. The registry is static per binary, so the 404
-// set only changes on deploy.
+// Unknown source, or one that does not exist on the configured network
+// (sourcenet.Applicable) → 404, so this agrees with /v1/sources. The
+// registry is static per binary, so the 404 set only changes on deploy.
 func (s *Server) handleSourceHealth(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	detail := ""
 	if _, ok := external.Registry[name]; !ok {
+		detail = fmt.Sprintf("no registered source named %q — see /v1/sources for the catalogue", name)
+	} else if ok, _ := sourcenet.Applicable(name, s.network); !ok {
+		detail = fmt.Sprintf("source %q does not exist on network %s — see /v1/sources for the catalogue", name, s.network)
+	}
+	if detail != "" {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/source-not-found",
-			"Source not found", http.StatusNotFound,
-			fmt.Sprintf("no registered source named %q — see /v1/sources for the catalogue", name))
+			"Source not found", http.StatusNotFound, detail)
 		return
 	}
 
@@ -64,6 +71,6 @@ func (s *Server) handleSourceHealth(w http.ResponseWriter, r *http.Request) {
 		Class:         string(md.Class),
 		Subclass:      string(md.Subclass),
 		IncludeInVWAP: md.IncludeInVWAP,
-		BackfillSafe:  md.BackfillSafe,
+		BackfillSafe:  md.BackfillSafe(),
 	}, Flags{})
 }

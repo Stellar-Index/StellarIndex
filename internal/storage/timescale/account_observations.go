@@ -40,20 +40,21 @@ func (s *Store) InsertAccountObservation(ctx context.Context, o domain.AccountOb
 	if o.Balance == nil {
 		return fmt.Errorf("timescale: InsertAccountObservation: AccountID=%s Balance is nil", o.AccountID)
 	}
-	// intra_ledger_seq guards the upsert so a LATER intra-ledger change
-	// always wins regardless of which parallel PersistEvents worker commits
-	// last (audit-2026-07-16 C2-6). `<=` (not `<`) keeps a deterministic
-	// re-backfill — which re-assigns the SAME position per change —
-	// idempotent-corrective rather than a no-op.
+	// (walk_version, intra_ledger_seq) guards the upsert so a LATER
+	// intra-ledger change always wins regardless of which parallel
+	// PersistEvents worker commits last (audit-2026-07-16 C2-6), and a
+	// re-derive under a newer walk replaces an older walk's row. `<=` (not
+	// `<`) keeps a deterministic re-backfill — which re-assigns the SAME
+	// position per change — idempotent-corrective rather than a no-op.
 	const q = `
         INSERT INTO account_observations (
             account_id, ledger, observed_at,
             balance_stroops, home_domain, flags, seq_num, is_removal,
-            intra_ledger_seq
+            intra_ledger_seq, walk_version
         ) VALUES (
             $1, $2, $3,
             $4, $5, $6, $7, $8,
-            $9
+            $9, $10
         )
         ON CONFLICT (account_id, ledger, observed_at) DO UPDATE SET
             balance_stroops  = EXCLUDED.balance_stroops,
@@ -61,8 +62,10 @@ func (s *Store) InsertAccountObservation(ctx context.Context, o domain.AccountOb
             flags            = EXCLUDED.flags,
             seq_num          = EXCLUDED.seq_num,
             is_removal       = EXCLUDED.is_removal,
-            intra_ledger_seq = EXCLUDED.intra_ledger_seq
-        WHERE account_observations.intra_ledger_seq <= EXCLUDED.intra_ledger_seq
+            intra_ledger_seq = EXCLUDED.intra_ledger_seq,
+            walk_version     = EXCLUDED.walk_version
+        WHERE (account_observations.walk_version, account_observations.intra_ledger_seq)
+           <= (EXCLUDED.walk_version, EXCLUDED.intra_ledger_seq)
     `
 	// NULL = the AccountEntry carries no home_domain (the protocol has no
 	// unset-vs-empty distinction). "Never observed" is the absence of a
@@ -83,6 +86,7 @@ func (s *Store) InsertAccountObservation(ctx context.Context, o domain.AccountOb
 		o.SeqNum,
 		o.IsRemoval,
 		int64(o.IntraLedgerSeq),
+		observationWalkVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertAccountObservation %s@%d: %w", o.AccountID, o.Ledger, err)
@@ -143,6 +147,62 @@ func (s *Store) LatestAccountObservationAtOrBefore(ctx context.Context, accountI
          ORDER BY ledger DESC
          LIMIT 1
     `
+	row, err := scanAccountObservation(s.db.QueryRowContext(ctx, q, accountID, int(asOfLedger)))
+	if errors.Is(err, sql.ErrNoRows) {
+		return AccountObservation{}, ErrNotFound
+	}
+	if err != nil {
+		return AccountObservation{}, fmt.Errorf("timescale: LatestAccountObservationAtOrBefore %s@%d: %w", accountID, asOfLedger, err)
+	}
+	return row, nil
+}
+
+// LatestAccountObservationsAtOrBefore is the batch form of
+// [Store.LatestAccountObservationAtOrBefore]: one round trip for many
+// accounts. An account with no observation in scope is absent from the map.
+func (s *Store) LatestAccountObservationsAtOrBefore(ctx context.Context, accountIDs []string, asOfLedger uint32) (map[string]AccountObservation, error) {
+	out := make(map[string]AccountObservation, len(accountIDs))
+	if len(accountIDs) == 0 {
+		return out, nil
+	}
+	asOfLedger = min(asOfLedger, uint32(math.MaxInt32))
+	// Per-account LIMIT 1 keeps each probe the single read's index walk; a
+	// ledger floor would drop an issuer whose last change is old.
+	const q = `
+        SELECT o.account_id, o.ledger, o.observed_at,
+               o.balance_stroops::text, o.home_domain, o.flags, o.seq_num, o.is_removal
+          FROM unnest($1::text[]) AS a(account_id)
+         CROSS JOIN LATERAL (
+               SELECT *
+                 FROM account_observations
+                WHERE account_id = a.account_id
+                  AND ledger <= $2
+                ORDER BY ledger DESC
+                LIMIT 1
+         ) o
+    `
+	rows, err := s.db.QueryContext(ctx, q, accountIDs, int(asOfLedger))
+	if err != nil {
+		return nil, fmt.Errorf("timescale: LatestAccountObservationsAtOrBefore @%d: %w", asOfLedger, err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		row, err := scanAccountObservation(rows)
+		if err != nil {
+			return nil, fmt.Errorf("timescale: LatestAccountObservationsAtOrBefore @%d: %w", asOfLedger, err)
+		}
+		out[row.AccountID] = row
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: LatestAccountObservationsAtOrBefore @%d: %w", asOfLedger, err)
+	}
+	return out, nil
+}
+
+// scanAccountObservation scans one row in the column order both latest-
+// observation queries select. A Scan error is returned unwrapped so the
+// caller can match sql.ErrNoRows.
+func scanAccountObservation(sc interface{ Scan(dest ...any) error }) (AccountObservation, error) {
 	var (
 		row      AccountObservation
 		balRaw   string
@@ -150,7 +210,7 @@ func (s *Store) LatestAccountObservationAtOrBefore(ctx context.Context, accountI
 		flagsInt int
 		ledger   int
 	)
-	err := s.db.QueryRowContext(ctx, q, accountID, int(asOfLedger)).Scan(
+	if err := sc.Scan(
 		&row.AccountID,
 		&ledger,
 		&row.ObservedAt,
@@ -159,16 +219,12 @@ func (s *Store) LatestAccountObservationAtOrBefore(ctx context.Context, accountI
 		&flagsInt,
 		&row.SeqNum,
 		&row.IsRemoval,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return AccountObservation{}, ErrNotFound
-	}
-	if err != nil {
-		return AccountObservation{}, fmt.Errorf("timescale: LatestAccountObservationAtOrBefore %s@%d: %w", accountID, asOfLedger, err)
+	); err != nil {
+		return AccountObservation{}, err
 	}
 	bal, ok := new(big.Int).SetString(balRaw, 10)
 	if !ok {
-		return AccountObservation{}, fmt.Errorf("timescale: LatestAccountObservationAtOrBefore: parse balance %q for %s", balRaw, accountID)
+		return AccountObservation{}, fmt.Errorf("parse balance %q for %s", balRaw, row.AccountID)
 	}
 	row.Ledger = uint32(ledger)
 	row.Balance = bal

@@ -7,14 +7,13 @@ Wants=network-online.target
 Type=simple
 User=pgbackrest_exporter
 Group=pgbackrest_exporter
-# pgbackrest_exporter shells out to the `pgbackrest info --output=json`
-# CLI to read repo state. The repo path + stanza list come from
-# /etc/pgbackrest/pgbackrest.conf (provisioned by the pgbackrest role
-# once F-1294 lands); until then the exporter still starts but reports
-# zero stanzas.
+# The exporter shells out to `pgbackrest info`, which must read
+# /etc/pgbackrest/pgbackrest.conf (postgres:postgres 0640, it holds the
+# repo credentials). Without this the exporter starts but reports no stanza.
+SupplementaryGroups=postgres
 ExecStart=/usr/local/bin/pgbackrest_exporter \
   --web.listen-address=127.0.0.1:9854 \
-  --web.endpoint=/metrics \
+  --web.telemetry-path=/metrics \
   --collect.interval=600
 
 Restart=on-failure

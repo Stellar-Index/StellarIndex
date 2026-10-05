@@ -2,7 +2,9 @@ package v1_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,6 +203,10 @@ func (s *stubExplorerReader) AccountState(_ context.Context, _ string) (clickhou
 
 func (s *stubExplorerReader) Cap67MovementsWatermark(_ context.Context) (uint32, error) {
 	return s.cap67WM, nil
+}
+
+func (s *stubExplorerReader) Cap67SupplyCoverage(_ context.Context) (uint32, uint32, bool, error) {
+	return 0, 0, false, nil
 }
 
 func (s *stubExplorerReader) AccountsStats(_ context.Context) (clickhouse.AccountsStats, bool, error) {
@@ -563,6 +569,62 @@ func TestExplorer_LedgerTransactions_Truncated(t *testing.T) {
 	}
 	if !body.Data.Truncated {
 		t.Errorf("truncated = false, want true (2 of 5 returned)")
+	}
+}
+
+func TestExplorer_LedgerOperations(t *testing.T) {
+	reader := &stubExplorerReader{
+		ledgers: []clickhouse.LedgerHeader{{Seq: 64000000, OpCount: 1}},
+		ops:     []clickhouse.OpRow{{Seq: 64000000, TxHash: "tx1", OpType: "OperationTypePayment", BodyXDR: "not-valid-xdr"}},
+	}
+	base := explorerTestServer(t, reader)
+	resp := mustGet(t, base+"/v1/ledgers/64000000/operations")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body struct {
+		Data struct {
+			Ledger     uint32            `json:"ledger"`
+			Operations []json.RawMessage `json:"operations"`
+		} `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if body.Data.Ledger != 64000000 || len(body.Data.Operations) != 1 {
+		t.Errorf("ledger/operations = %d/%d, want 64000000/1", body.Data.Ledger, len(body.Data.Operations))
+	}
+	// One closed ledger's read: same band as its /transactions sibling.
+	want := mustGet(t, base+"/v1/ledgers/64000000/transactions").Header.Get("Cache-Control")
+	if got := resp.Header.Get("Cache-Control"); got != want || !strings.HasPrefix(got, "public") {
+		t.Errorf("Cache-Control = %q, want the closed-ledger band %q", got, want)
+	}
+}
+
+func TestLedgerOperations_LimitBounds(t *testing.T) {
+	base := explorerTestServer(t, &stubExplorerReader{ledgers: []clickhouse.LedgerHeader{{Seq: 42}}})
+	for q, want := range map[string]int{
+		"limit=2000": http.StatusOK,
+		"limit=2001": http.StatusBadRequest,
+		"limit=0":    http.StatusBadRequest,
+	} {
+		if resp := mustGet(t, base+"/v1/ledgers/42/operations?"+q); resp.StatusCode != want {
+			t.Errorf("%s: status = %d, want %d", q, resp.StatusCode, want)
+		}
+	}
+}
+
+func TestLedgerOperations_InvalidSeq400(t *testing.T) {
+	base := explorerTestServer(t, &stubExplorerReader{})
+	for _, seq := range []string{"abc", "4294967296"} {
+		resp := mustGet(t, base+"/v1/ledgers/"+seq+"/operations")
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("seq=%s: status = %d, want 400", seq, resp.StatusCode)
+			continue
+		}
+		var p v1.Problem
+		mustDecode(t, resp, &p)
+		if p.Type != "https://api.stellarindex.io/errors/invalid-ledger" {
+			t.Errorf("seq=%s: Type = %q, want invalid-ledger", seq, p.Type)
+		}
 	}
 }
 

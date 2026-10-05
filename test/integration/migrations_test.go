@@ -17,6 +17,8 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestMigrationsRoundTrip spins up a throwaway TimescaleDB,
@@ -125,19 +127,21 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	// migration, this test fails loudly. The canonical.Validate
 	// functions are a first line of defense — the DB CHECKs are
 	// the last. Both matter.
-	assertInsertRejected(t, db, ctx, "negative base_amount", `
-        INSERT INTO trades
-            (source, ledger, tx_hash, op_index, ts,
-             base_asset, quote_asset, base_amount, quote_amount)
-        VALUES ('t', 1, 'aa', 0, now(), 'native', 'native', -1, 1)`)
-	// Zero legs too: a one-side-zero fill has no price, so a CHECK relaxed
-	// to >= 0 would let it reach the price views.
-	assertInsertRejected(t, db, ctx, "zero base_amount", `
+	//
+	// trades.base_amount / quote_amount are the exception: 0191 drops
+	// 0001's `> 0` CHECKs so a one-side-zero SDEX fill can be stored.
+	// At full-up the row invariant (>= 0, not both zero) is Go-only —
+	// canonical.Trade.Validate on every writer — and there is no DB
+	// CHECK rejecting a negative leg. Asserting absence here keeps a
+	// future migration from quietly re-adding a CHECK the writers and
+	// the 0187 priceable filter no longer expect.
+	assertTradesAmountChecksAbsent(t, db, ctx)
+	assertInsertAccepted(t, db, ctx, "zero base_amount (one-side-zero fill)", `
         INSERT INTO trades
             (source, ledger, tx_hash, op_index, ts,
              base_asset, quote_asset, base_amount, quote_amount)
         VALUES ('t', 1, 'ab', 0, now(), 'native', 'native', 0, 1)`)
-	assertInsertRejected(t, db, ctx, "zero quote_amount", `
+	assertInsertAccepted(t, db, ctx, "zero quote_amount (one-side-zero fill)", `
         INSERT INTO trades
             (source, ledger, tx_hash, op_index, ts,
              base_asset, quote_asset, base_amount, quote_amount)
@@ -181,7 +185,19 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	// policy was in fact removed as drift on 2026-06-10). Assert
 	// compression is present and retention is absent — F-1334 flipped
 	// these from the old (now-invalid) assert-attached.
-	assertPolicyAttached(t, db, ctx, "trades", "policy_compression")
+	// trades compresses through 0205's custom job, which the jobs view
+	// attaches to no hypertable; the built-in policy it replaced is gone.
+	var tradesCompressionJobs int
+	if err := db.QueryRowContext(ctx, `
+        SELECT count(*) FROM timescaledb_information.jobs
+        WHERE proc_name = 'trades_compression_policy' AND scheduled
+          AND config->>'compress_after' IS NOT NULL`).Scan(&tradesCompressionJobs); err != nil {
+		t.Fatalf("check trades_compression_policy job: %v", err)
+	}
+	if tradesCompressionJobs != 1 {
+		t.Errorf("expected one scheduled trades_compression_policy job, got %d", tradesCompressionJobs)
+	}
+	assertPolicyAbsent(t, db, ctx, "trades", "policy_compression")
 	assertPolicyAbsent(t, db, ctx, "trades", "policy_retention")
 	assertPolicyAttached(t, db, ctx, "oracle_updates", "policy_compression")
 	assertPolicyAbsent(t, db, ctx, "oracle_updates", "policy_retention")
@@ -231,8 +247,34 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	// the 0142 lesson applied at creation time. Asserted so a future
 	// re-add of the table can't reintroduce the 2038 int4 cliff.
 	assertColumnType(t, db, ctx, "defindex_fees", "derive_generation", "bigint")
+	assertColumnType(t, db, ctx, "defindex_admin_events", "derive_generation", "bigint")
+
+	// 0193 — fx_fixings, the vendor-time FX series: hypertable, the
+	// binding index, compression, and no retention policy.
+	assertHypertableExists(t, db, ctx, "fx_fixings")
+	assertIndexExists(t, db, ctx, "fx_fixings", "fx_fixings_ticker_bar_end_idx")
+	assertCompressionEnabled(t, db, ctx, "fx_fixings", true)
+	assertPolicyAttached(t, db, ctx, "fx_fixings", "policy_compression")
+	assertPolicyAbsent(t, db, ctx, "fx_fixings", "policy_retention")
+	assertColumnType(t, db, ctx, "fx_fixings", "generation", "bigint")
+
+	// 0196 — trades.tx_index, the post-insert apply-order tag.
+	assertColumnType(t, db, ctx, "trades", "tx_index", "integer")
+
+	// 0203 — sushiswap_v3_position_events: hypertable, compression, no
+	// retention, bigint generation from creation.
+	assertHypertableExists(t, db, ctx, "sushiswap_v3_position_events")
+	assertCompressionEnabled(t, db, ctx, "sushiswap_v3_position_events", true)
+	assertPolicyAttached(t, db, ctx, "sushiswap_v3_position_events", "policy_compression")
+	assertPolicyAbsent(t, db, ctx, "sushiswap_v3_position_events", "policy_retention")
+	assertColumnType(t, db, ctx, "sushiswap_v3_position_events", "derive_generation", "bigint")
 
 	// ─── Down: roll everything back ─────────────────────────────
+	// 0191's down refuses (LOUD) while any trades row has a zero leg;
+	// the two probe rows accepted above must go first.
+	if _, err := db.ExecContext(ctx, `DELETE FROM trades WHERE base_amount = 0 OR quote_amount = 0`); err != nil {
+		t.Fatalf("delete zero-leg probe rows: %v", err)
+	}
 	if err := migrator.Down(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		t.Fatalf("migrate down: %v", err)
 	}
@@ -248,6 +290,8 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	assertTableAbsent(t, db, ctx, "ingestion_cursors")
 	assertTableAbsent(t, db, ctx, "oracle_updates")
 	assertTableAbsent(t, db, ctx, "soroban_events")
+	assertTableAbsent(t, db, ctx, "fx_fixings")
+	assertTableAbsent(t, db, ctx, "sushiswap_v3_pools")
 	for _, cagg := range []string{
 		"prices_1m", "prices_15m", "prices_1h",
 		"prices_4h", "prices_1d", "prices_1w", "prices_1mo",
@@ -606,6 +650,22 @@ func assertPolicyAbsent(t *testing.T, db *sql.DB, ctx context.Context, hypertabl
 	}
 }
 
+// assertTradesAmountChecksAbsent asserts neither of 0001's inline `> 0`
+// amount CHECKs on trades survives at full-up (0191 dropped them).
+func assertTradesAmountChecksAbsent(t *testing.T, db *sql.DB, ctx context.Context) {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(ctx, `
+        SELECT count(*) FROM pg_constraint
+        WHERE conrelid = 'trades'::regclass
+          AND conname IN ('trades_base_amount_check', 'trades_quote_amount_check')`).Scan(&n); err != nil {
+		t.Fatalf("count trades amount CHECKs: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("trades amount CHECKs present = %d, want 0 (0191 drops both; a later migration re-added one)", n)
+	}
+}
+
 // assertInsertRejected runs `stmt` and expects Postgres to refuse
 // it with a CHECK-constraint violation (SQLSTATE 23514). Passing
 // statements are a test failure — they mean a constraint was
@@ -657,7 +717,7 @@ func assertPrices1mHasRow(t *testing.T, db *sql.DB, ctx context.Context) {
 // policy must be counted (1 uncovered). The timescale-jobs probe keys on
 // the job, so this query is the only thing that sees the dropped policy.
 func TestCAGGRefreshPolicyAssertionSQL(t *testing.T) {
-	query := caggRefreshPolicyAssertionSQL(t)
+	query := configAssertionSQL(t, "CAGGS_WITHOUT_REFRESH_POLICY_SQL", "continuous_aggregates")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -706,10 +766,69 @@ func TestCAGGRefreshPolicyAssertionSQL(t *testing.T) {
 	}
 }
 
-// caggRefreshPolicyAssertionSQL returns the SQL config-assertions.sh
-// runs for caggs_have_refresh_policy, so the test executes the shipped
-// bytes rather than a copy.
-func caggRefreshPolicyAssertionSQL(t *testing.T) string {
+// TestTradesCompressionScheduledAssertionSQL executes config-assertions.sh's
+// trades_compression_policy_scheduled query against a migrated TimescaleDB:
+// a scheduled policy passes, a paused one fails, and a paused one passes
+// again only while a session holds the restamp run's advisory lock — the
+// lock a killed run's connection drops.
+func TestTradesCompressionScheduledAssertionSQL(t *testing.T) {
+	query := configAssertionSQL(t, "TRADES_COMPRESSION_SCHEDULED_SQL", "hashtext('"+timescale.USDVolumeRestampLockName+"')")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	ok := func() int {
+		t.Helper()
+		var n int
+		if err := db.QueryRowContext(ctx, query).Scan(&n); err != nil {
+			t.Fatalf("run trades_compression_policy_scheduled SQL: %v", err)
+		}
+		return n
+	}
+	p, err := store.TradesCompressionPolicy(ctx)
+	if err != nil {
+		t.Fatalf("resolve trades policy: %v", err)
+	}
+	if got := ok(); got != 1 {
+		t.Fatalf("scheduled policy: check = %d, want 1", got)
+	}
+	if err := store.SetJobScheduled(ctx, p.JobID, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := ok(); got != 0 {
+		t.Errorf("paused policy, no run holding the lock: check = %d, want 0", got)
+	}
+	release, err := store.TryUSDVolumeRestampLock(ctx)
+	if err != nil {
+		t.Fatalf("take the restamp lock: %v", err)
+	}
+	if got := ok(); got != 1 {
+		t.Errorf("paused policy under a live run's lock: check = %d, want 1", got)
+	}
+	if err := release(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := ok(); got != 0 {
+		t.Errorf("paused policy after the lock is released: check = %d, want 0", got)
+	}
+}
+
+// configAssertionSQL returns the SQL config-assertions.sh assigns to
+// the shell variable name, so a test executes the shipped bytes rather
+// than a copy. marker is a fragment the query must contain.
+func configAssertionSQL(t *testing.T, name, marker string) string {
 	t.Helper()
 	_, thisFile, _, _ := runtime.Caller(0)
 	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "scripts", "ops", "config-assertions.sh")
@@ -717,14 +836,13 @@ func caggRefreshPolicyAssertionSQL(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	const open = `CAGGS_WITHOUT_REFRESH_POLICY_SQL="`
-	_, rest, ok := strings.Cut(string(src), open)
+	_, rest, ok := strings.Cut(string(src), name+`="`)
 	if !ok {
-		t.Fatalf("%s defines no CAGGS_WITHOUT_REFRESH_POLICY_SQL", path)
+		t.Fatalf("%s defines no %s", path, name)
 	}
 	query, _, ok := strings.Cut(rest, `"`)
-	if !ok || !strings.Contains(query, "continuous_aggregates") {
-		t.Fatalf("CAGGS_WITHOUT_REFRESH_POLICY_SQL in %s is unterminated or not the aggregate census: %q", path, query)
+	if !ok || !strings.Contains(query, marker) {
+		t.Fatalf("%s in %s is unterminated or lacks %q: %q", name, path, marker, query)
 	}
 	return query
 }

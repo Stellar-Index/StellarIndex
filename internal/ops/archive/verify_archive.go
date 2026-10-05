@@ -35,19 +35,25 @@ import (
 //     ledger[N].Header.PreviousLedgerHash == ledger[N-1].Hash.
 //     Catches internal corruption, dropped ledgers, replay
 //     divergence regardless of upstream trust.
+//
 //   - Tier B (checkpoint): cross-check our LCM's hash at every
 //     64-ledger checkpoint against the canonical header-hash
 //     in the local history-archive (`ledger-XXXXXXXX.xdr.gz`).
 //     Catches single-source corruption that's still chain-link-
 //     consistent.
+//
 //   - Tier D (peers): sample checkpoints within the range and
 //     cross-compare history-XXXXXXXX.json across N tier-1
 //     validator archives. Consensus-level cryptographic
 //     agreement.
+//
 //   - Tier E (archivist): `stellar-archivist scan --verify` of the
 //     archive: re-hashes every referenced bucket and checkpoint file.
 //
-// `-tier all` runs every tier sequentially. Any tier mismatch is
+//   - Tier C (sdf-sample): ETag+size compare of N random ledgers with
+//     SDF's public dataset (verify_archive_sdf_sample.go).
+//
+// `-tier all` (A, B, D, E) runs every tier sequentially. Any tier mismatch is
 // a hard stop with the diverging ledger numbers and hashes
 // printed for diagnosis.
 //
@@ -66,13 +72,15 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 	bucketOverride := fs.String("bucket", "", "Override bucket name (default: storage.s3_bucket_archive, then s3_bucket_live)")
 	from := fs.Uint("from", 2, "First ledger to verify (inclusive, default 2 — ledger 1 has no predecessor)")
 	to := fs.Uint("to", 0, "Last ledger to verify (inclusive, 0 = unbounded/live)")
-	tier := fs.String("tier", "chain", "Verification tier: chain (A) | checkpoint (B) | peers (D) | archivist (E) | all")
+	tier := fs.String("tier", "chain", "Verification tier: chain (A) | checkpoint (B) | peers (D) | archivist (E) | sdf-sample (C) | all")
 	archiveRoot := fs.String("archive-root", "/srv/history-archive",
 		"Path to local rs-stellar-archivist mirror (used by checkpoint/peers/all tier; Tier D compares its history/ checkpoints to the peers' consensus)")
 	peerList := fs.String("peers", "",
 		"Comma-separated peer archive URLs for Tier D (empty → built-in tier-1 default set)")
 	peerSamples := fs.Int("peer-samples", 20,
 		"Number of checkpoints to sample for Tier D cross-peer diff")
+	sdfSamples := fs.Int("sdf-samples", 100,
+		"Number of random ledgers in [-from, -to] to compare with SDF's dataset for Tier C (sdf-sample; needs explicit -to, not part of -tier all)")
 	archivistBin := fs.String("archivist-bin", "stellar-archivist",
 		"Path to the stellar-archivist binary for Tier E (used in archivist/all tier); run as `<bin> scan --verify <url>`")
 	archivistURL := fs.String("archivist-url", "",
@@ -147,8 +155,9 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 	doCheckpoint := *tier == "checkpoint" || *tier == "all"
 	doPeers := *tier == "peers" || *tier == "all"
 	doArchivist := *tier == "archivist" || *tier == "all"
-	if !doChain && !doCheckpoint && !doPeers && !doArchivist {
-		return fmt.Errorf("unknown -tier %q (expected chain | checkpoint | peers | archivist | all)", *tier)
+	doSDFSample := *tier == "sdf-sample"
+	if !doChain && !doCheckpoint && !doPeers && !doArchivist && !doSDFSample {
+		return fmt.Errorf("unknown -tier %q (expected chain | checkpoint | peers | archivist | sdf-sample | all)", *tier)
 	}
 	if *cfgPath == "" {
 		return fmt.Errorf("-config is required")
@@ -392,6 +401,9 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 		if err := verifyArchiveArchivist(*archivistBin, url, *archivistTimeout); err != nil {
 			return err
 		}
+	}
+	if doSDFSample {
+		return verifyArchiveSDFSample(cfg, *bucketOverride, uint32(*from), uint32(*to), *sdfSamples)
 	}
 	return nil
 }
@@ -921,6 +933,26 @@ func peerCheckpointBounds(from, to uint32) (uint32, uint32, error) {
 	return uint32(firstCP), uint32(lastCP), nil //nolint:gosec // G115: both are <= to, which is a uint32.
 }
 
+// peerSampleCheckpoints returns evenly-spaced checkpoints in [firstCP, lastCP],
+// always including both ends even when sampleN is below 2.
+func peerSampleCheckpoints(firstCP, lastCP uint32, sampleN int) []uint32 {
+	samples := []uint32{firstCP}
+	if lastCP == firstCP {
+		return samples
+	}
+	if sampleN > 1 {
+		stride := uint32(1)
+		totalCP := (lastCP-firstCP)/64 + 1
+		if uint32(sampleN) < totalCP {
+			stride = totalCP / uint32(sampleN)
+		}
+		for seq := firstCP + stride*64; seq < lastCP; seq += stride * 64 {
+			samples = append(samples, seq)
+		}
+	}
+	return append(samples, lastCP)
+}
+
 // verifyArchivePeers samples checkpoints in [from, to] and cross-
 // compares each peer's history-XXXXXXXX.json. Any disagreement is a
 // consensus-level finding — either one peer has replayed wrong, or
@@ -975,21 +1007,7 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int, archiveRo
 		return err
 	}
 
-	// Sample evenly-spaced checkpoints. Always include first and last.
-	samples := []uint32{firstCP}
-	if lastCP != firstCP && sampleN > 1 {
-		stride := uint32(1)
-		totalCP := (lastCP-firstCP)/64 + 1
-		if uint32(sampleN) < totalCP {
-			stride = totalCP / uint32(sampleN)
-		}
-		for seq := firstCP + stride*64; seq < lastCP; seq += stride * 64 {
-			samples = append(samples, seq)
-		}
-		if samples[len(samples)-1] != lastCP {
-			samples = append(samples, lastCP)
-		}
-	}
+	samples := peerSampleCheckpoints(firstCP, lastCP, sampleN)
 
 	fmt.Fprintf(os.Stderr, "verify-archive: peer diff — %d peers × %d checkpoints in [%d,%d]\n",
 		len(peers), len(samples), firstCP, lastCP)

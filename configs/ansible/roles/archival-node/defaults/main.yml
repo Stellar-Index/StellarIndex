@@ -180,6 +180,11 @@ zfs_ashift:          12          # 4K NVMe sector alignment
 zfs_os_drives_needing_data_partition: []
 zfs_os_drives_data_partition_number: 4
 
+# ARC bounds in bytes (32 GiB / 8 GiB), matching r1's /etc/modprobe.d/zfs.conf
+# byte for byte so the first apply there reports no change.
+zfs_arc_max_bytes: 34359738368
+zfs_arc_min_bytes: 8589934592
+
 # Per-workload dataset tuning.
 #
 # recordsize is the PARSABLE byte value (131072, not "128K"): the
@@ -438,8 +443,8 @@ ch_schema_snapshot_offsite_ack: false
 # ch_lake_backup_full_interval_days, daily incrementals on top of it.
 # The units install on every host with a ClickHouse; the backup itself
 # runs only once ch_lake_backup_s3_endpoint is set. Until then the run
-# reports configured=0 and stellarindex_ch_lake_backup_stale tickets the
-# host. Restore: docs/operations/runbooks/ch-lake-backup.md.
+# reports configured=0, the unit fails, and stellarindex_ch_lake_backup_stale
+# tickets the host. Restore: docs/operations/runbooks/ch-lake-backup.md.
 ch_lake_backup_enabled: true
 ch_lake_backup_database: "stellar"
 ch_lake_backup_disk: "si_lake_backup"
@@ -458,16 +463,13 @@ ch_lake_backup_retain_chains: 1
 # lake (~2 days) off the serving path's disks. 0 = unlimited.
 ch_lake_backup_max_bandwidth: 104857600
 
-# ───── Galexie archive off-site mirror (off-site-backup-plan.md §1, NS03) ─
-# `mc mirror` of the local galexie-archive bucket to an off-site alias,
-# verified after each run with `mc mirror --dry-run`. The unit installs on
-# every host with Galexie; the mirror itself runs only once
-# galexie_archive_mirror_s3_endpoint is set. Until then the run reports
-# configured=0 and stellarindex_galexie_archive_mirror_stale tickets the
-# host. This is an inert mechanism landed ahead of its off-site target —
-# off-site-backup-plan.md §1 records the same status the ZFS local
-# snapshot and ADR-0043's lake backup shipped with.
-galexie_archive_mirror_enabled: true
+# ───── Galexie archive off-site mirror (retired 2026-10-02) ───────────────
+# The raw archive is NOT backed up off-site: it is a copy of SDF's public
+# dataset and is re-pulled from there (ADR-0043 §2 amendment 2026-08-29).
+# Off-site copies are the ClickHouse lake and Postgres on B2. false removes
+# the units, script and textfile from the host; true re-installs the mirror,
+# which then needs galexie_archive_mirror_s3_endpoint or its unit fails.
+galexie_archive_mirror_enabled: false
 # s3 endpoint INCLUDING bucket, e.g.
 # "https://<account>.r2.cloudflarestorage.com". Empty = not configured.
 galexie_archive_mirror_s3_endpoint: ""
@@ -616,6 +618,25 @@ clickhouse_ops_batch_os_thread_priority: 5
 # into the users.d drop-in at render time, plaintext only ever lands in
 # /etc/default/stellarindex-ops, mode 0640 root:stellarindex).
 clickhouse_ops_batch_password: "{{ vault_clickhouse_ops_batch_password | default('') }}"
+
+# ───── ClickHouse live-daemon identity ─────────────────────────────────
+# A named user for the indexer / aggregator / API connections that still
+# reach CH as its unauthenticated `default` user, so `default` can later
+# be locked down without cutting them off. Same `default` settings
+# profile, so the switch is priority- and limit-neutral. Defaults FALSE
+# for the same ansible-drift reason as ops_batch above: enabling asserts
+# a vault password. Flip per inventory together with that inventory's
+# vault_clickhouse_live_daemon_password. Two halves move together —
+# the CH user (--tags clickhouse-live-daemon-profile) and the env pair in
+# /etc/default/stellarindex (--tags stellarindex); the pair is rendered
+# only when both the flag and the password are set, and while it is
+# absent internal/storage/clickhouse/ops_auth.go falls back to `default`.
+clickhouse_live_daemon_profile_enabled: false
+clickhouse_live_daemon_user: "live_daemon"
+# clickhouse_live_daemon_password ← ansible-vault, vault_clickhouse_live_daemon_password
+# (SHA-256-hashed into the users.d drop-in; plaintext only in
+# /etc/default/stellarindex, mode 0640 root:stellarindex).
+clickhouse_live_daemon_password: "{{ vault_clickhouse_live_daemon_password | default('') }}"
 
 # ───── ClickHouse destructive-DDL size guard (2026-08-29 r1 audit) ─────
 # ClickHouse refuses DROP TABLE / TRUNCATE / DROP|REPLACE PARTITION on
@@ -951,6 +972,11 @@ archive_completeness_enabled: "{{ (stellar_network | default('pubnet')) == 'pubn
 # correct before anyone writes an inventory line.
 verify_served_values_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
 
+# galexie-mirror-verify compares the local mirror with the upstream dataset
+# named by storage.s3_cold_*; with no upstream configured there is nothing
+# to compare against and every run would fail.
+galexie_mirror_verify_enabled: "{{ (stellarindex_s3_cold_bucket_archive | default('')) != '' }}"
+
 # listing-sync caches CoinGecko's Stellar platform→address map, and every
 # address in it is a PUBNET asset: on a test net the table can corroborate
 # nothing, and the keyless fetch is answered 403 from a datacenter address.
@@ -1144,12 +1170,12 @@ captive_peer_port_backfill:         11727
 #   r1: writes to local MinIO at 127.0.0.1:9000 (galexie-live +
 #       galexie-archive both local).
 #   r2: galexie-live still local (region-isolated tail); galexie-
-#       archive READS from s3://aws-public-blockchain (override
-#       galexie_archive_endpoint + galexie_archive_bucket below).
+#       archive READS from s3://aws-public-blockchain (set the
+#       stellarindex_s3_cold_* knobs; there is no archive endpoint here).
 #   r3: galexie-live local; galexie-archive on Vultr Object Storage
 #       (S3-compatible, region-local Singapore endpoint).
 # ]
-galexie_version:         "galexie-v28.0.1"   # pinned — update via VERSIONS.md. Tag format: galexie-vX.Y.Z (matches Stellar protocol version). 2026-07-09: bumped 26→27 with the CAP-0071 SEV fix. 2026-08-27: bumped 27→28 for Protocol 28 — a v27 galexie cannot DECODE P28 ledger meta (observed on futurenet: "decoding LedgerCloseMetaV2: … ParallelTxExecutionStage" halted the archive backfill at ledger 92747), and mainnet crosses the P28 upgrade ledger 2026-09-16. 2026-09-13: bumped v28.0.0 -> v28.0.1 (same protocol major) ahead of that activation — the point release should be in place BEFORE the network crosses P28, not during it. Version string stamped from a real build on r1, not computed.
+galexie_version:         "galexie-v29.0.0"   # pinned — update via VERSIONS.md. Tag format: galexie-vX.Y.Z (matches Stellar protocol version). 2026-07-09: bumped 26→27 with the CAP-0071 SEV fix. 2026-08-27: bumped 27→28 for Protocol 28 — a v27 galexie cannot DECODE P28 ledger meta (observed on futurenet: "decoding LedgerCloseMetaV2: … ParallelTxExecutionStage" halted the archive backfill at ledger 92747), and mainnet crosses the P28 upgrade ledger 2026-09-16. 2026-09-13: bumped v28.0.0 -> v28.0.1 (same protocol major) ahead of that activation — the point release should be in place BEFORE the network crosses P28, not during it. 2026-10-02: bumped v28.0.1 -> v29.0.0 after mainnet activated Protocol 29 (ledger 64717645). Version string stamped from a real build on r1, not computed.
 # Drift guard (docs/operations/runbooks/stellar-stack-version-lag.md,
 # 2026-07-09). Distinct from `galexie_version` above on purpose:
 # that var is the go-install TAG; this is the literal, verbatim
@@ -1161,7 +1187,7 @@ galexie_version:         "galexie-v28.0.1"   # pinned — update via VERSIONS.md
 # crash-loop) that never got codified here is exactly the drift
 # ansible-drift.yml exists to catch. Update BOTH this value AND
 # galexie_version in the SAME PR whenever galexie is upgraded.
-galexie_expected_version_string: "stellar-galexie v0.0.0-20260827205142-72ee2a965e7e"
+galexie_expected_version_string: "stellar-galexie v0.0.0-20260924160425-c927ffc38c29"
 # Second guard: sha256 of the /usr/local/bin/galexie file itself
 # (belt-and-suspenders alongside the version-string assert above —
 # catches a same-version-string-but-different-bytes swap, e.g. a
@@ -1190,12 +1216,10 @@ galexie_expected_version_string: "stellar-galexie v0.0.0-20260827205142-72ee2a96
 # stdout, the 07-galexie.yml guard now reads either stream, so the
 # fail_msg will show you what it actually printed.
 #
-# Until a live probe against the current v28.0.1 pin is recorded here,
-# the version assert is EXPECTED RED on r1 and that red is the correct
-# signal — do not stand it down by editing the constant to match
-# whatever the box happens to report; that would codify an uncodified
-# binary, which is the drift this guard exists to catch.
-galexie_expected_binary_sha256: "3ca291300f1b646ae43a217697b9a3d112d4c9a422895292c4f9b9f57a1f9810"   # galexie-v28.0.1, 2026-09-13. Stamped from a REPRODUCIBLE build: `go install -trimpath`
+# Never stand the assert down by editing a constant to match whatever
+# the box happens to report; that would codify an uncodified binary,
+# which is the drift this guard exists to catch.
+galexie_expected_binary_sha256: "435dfd27eb248f09364c5e81067cce828960c843c3985d2674385cf8166b7f51"   # galexie-v29.0.0, 2026-10-02. Stamped from a REPRODUCIBLE build: `go install -trimpath`
 #   twice on r1 produced this sha both times. NOTE the -trimpath: without it two builds of the
 #   SAME tag differ (measured: 72d443a6... then e4bd4960...), so a sha taken from a non-trimpath
 #   build is a one-off and will fail this very assert on the next apply.
@@ -1305,6 +1329,10 @@ stellarindex_reader_access_key: "stellarindex-reader"
 # (list/verify) keeps using stellarindex-reader's creds via AWS_*.
 stellarindex_archive_trimmer_access_key: "stellarindex-archive-trimmer"
 # stellarindex_archive_trimmer_secret_key ← vault
+# The trimmer only exists where a cold tier receives what it deletes
+# (ADR-0027, pubnet). A test net has no trimmer identity in its secrets
+# file, so rendering its env file there fails the whole role apply.
+galexie_archive_trim_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
 
 # ───── Firewall ──────────────────────────────────────────────────────
 # Ports open on the public interface. Everything else rejects.
@@ -1674,7 +1702,9 @@ zfs_snapshots_enabled: true
 # renders this through zfs-snapshot.env.j2 and compares the two.
 #
 # ClickHouse merges churn ~250 GB/day of parts, so each retained day
-# pins ~250 GB; Postgres churn is small, so it keeps a week.
+# pins ~250 GB. Postgres keeps three days: its pinned churn measured
+# 0.15-0.2 TiB over a week, and pgBackRest PITR (repo1 + off-site repo2)
+# already covers a logical fault older than that.
 #
 # minio (NS03, 2026-09-19): the Galexie LCM archive — the CDP source of
 # truth the lake and the served tier are RE-DERIVED FROM, and until now
@@ -1692,7 +1722,7 @@ zfs_snapshot_datasets:
   - name: "clickhouse"
     retention_days: 3
   - name: "postgres"
-    retention_days: 7
+    retention_days: 3
   - name: "minio"
     retention_days: 7
 # Hard guardrail: below this much pool free space the job prunes the

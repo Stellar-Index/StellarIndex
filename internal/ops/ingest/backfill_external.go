@@ -21,6 +21,7 @@ import (
 	externalbitstamp "github.com/Stellar-Index/StellarIndex/internal/sources/external/bitstamp"
 	externalcoinbase "github.com/Stellar-Index/StellarIndex/internal/sources/external/coinbase"
 	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
+	externalpoloniex "github.com/Stellar-Index/StellarIndex/internal/sources/external/poloniex"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -47,12 +48,12 @@ const externalInsertBudget = 12 * time.Hour
 func backfillExternal(args []string) error {
 	fs := flag.NewFlagSet("backfill-external", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
-	source := fs.String("source", "", "Venue: binance | kraken | bitstamp | coinbase (required)")
+	source := fs.String("source", "", "Venue: binance | kraken | bitstamp | coinbase | poloniex_via_btc (required)")
 	pairSym := fs.String("pair", "", "Venue-native symbol, e.g. XLMUSDT / XLM/USD / xlmusd / XLM-USD (required)")
 	fromStr := fs.String("from", "", "Start time, RFC 3339 (required, e.g. 2024-01-01T00:00:00Z)")
 	toStr := fs.String("to", "", "End time, RFC 3339 (required, e.g. 2024-12-31T00:00:00Z)")
 	granStr := fs.String("granularity", "1h", "Candle granularity as a Go duration (1m / 15m / 1h / 4h / 1d / 1w)")
-	rawTrades := fs.Bool("raw-trades", false, "kraken only: walk the /Trades fills endpoint instead of /OHLC — the deep-history path (OHLC serves only the most recent 720 candles; board #44). Slower (rate-limited pagination) but reaches the pair's full history with exact per-fill prices.")
+	rawTrades := fs.Bool("raw-trades", false, "kraken only: walk the /Trades fills endpoint instead of /OHLC — the deep-history path (OHLC serves only the most recent 720 candles, so an older window returns none). Slower (rate-limited pagination) but reaches the pair's full history with exact per-fill prices.")
 	allowOverlap := fs.Bool("allow-overlap", false, "Write even though the trades table already holds rows for this source+pair inside [-from, -to). Rows from another path (live stream, candles vs fills) carry a different tx_hash and would be counted twice; use only to re-run or resume a window this command itself wrote. A candle run is still refused if the window holds a row it would not overwrite (e.g. one written at another -granularity).")
 	gate := opsutil.RegisterWriteGate(fs)
 	progressEvery := fs.Int("progress-every", 1000, "Print a progress line every N trades inserted")
@@ -76,6 +77,11 @@ func backfillExternal(args []string) error {
 	}
 	if !from.Before(to) {
 		return fmt.Errorf("-from %v must be before -to %v", from, to)
+	}
+	if *source == externalpoloniex.SourceName {
+		if err := externalpoloniex.CheckRange(from, to); err != nil {
+			return err
+		}
 	}
 	granularity, err := time.ParseDuration(*granStr)
 	if err != nil {
@@ -111,6 +117,10 @@ func backfillExternal(args []string) error {
 
 	t0 := time.Now()
 	trades, err := backfiller.Backfill(ctx, pair, from, to, granularity)
+	trades, dropped := dropUnsettledCandles(trades, to, time.Now())
+	if dropped > 0 {
+		fmt.Fprintf(os.Stderr, "backfill-external: dropped %d candle(s) not closed by min(-to, now)\n", dropped)
+	}
 	resumeFrom, partial := partialFetchResume(trades, err)
 	if err != nil && !partial {
 		return fmt.Errorf("backfill: %w", err)
@@ -185,6 +195,26 @@ func openBackfillStore(ctx context.Context, cfgPath string) (*timescale.Store, e
 		return nil, err
 	}
 	return store, nil
+}
+
+// dropUnsettledCandles keeps only candle trades whose bar closed before
+// min(to, now): venues return their still-open bar and bars straddling
+// -to, and each connector stamps a candle at its last instant (close-1s,
+// or close-1ms for binance). Truncating the cutoff to the second makes
+// "stamp < cutoff" mean "bar end <= cutoff" at either resolution.
+func dropUnsettledCandles(trades []canonical.Trade, to, now time.Time) ([]canonical.Trade, int) {
+	cutoff := to
+	if now.Before(cutoff) {
+		cutoff = now
+	}
+	cutoff = cutoff.Truncate(time.Second)
+	kept := trades[:0]
+	for _, tr := range trades {
+		if tr.Timestamp.Before(cutoff) {
+			kept = append(kept, tr)
+		}
+	}
+	return kept, len(trades) - len(kept)
 }
 
 // partialFetchResume reports whether a venue walk that ended early —
@@ -612,8 +642,39 @@ func buildBackfiller(source, symbol string) (external.Backfiller, canonical.Pair
 			return nil, canonical.Pair{}, unknownPairError(source, symbol, pm)
 		}
 		return externalcoinbase.NewStreamer(pm), pair, nil
+	case externalpoloniex.SourceName:
+		return buildPoloniexBackfiller(symbol)
 	}
-	return nil, canonical.Pair{}, fmt.Errorf("unknown -source %q (supported: binance, kraken, bitstamp, coinbase)", source)
+	return nil, canonical.Pair{}, fmt.Errorf("unknown -source %q (supported: binance, kraken, bitstamp, coinbase, poloniex_via_btc)", source)
+}
+
+// buildPoloniexBackfiller wires the XLM/BTC x BTC/USD derivation. The BTC
+// leg is Bitstamp's daily BTC/USD, which reaches back before 2015.
+func buildPoloniexBackfiller(symbol string) (external.Backfiller, canonical.Pair, error) {
+	xlm, err := canonical.NewCryptoAsset("XLM")
+	if err != nil {
+		return nil, canonical.Pair{}, err
+	}
+	usd, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		return nil, canonical.Pair{}, err
+	}
+	pair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		return nil, canonical.Pair{}, err
+	}
+	if symbol != "XLM/USD" {
+		return nil, canonical.Pair{}, fmt.Errorf("-source %s supports only -pair XLM/USD, got %q", externalpoloniex.SourceName, symbol)
+	}
+	pm, err := externalbitstamp.DefaultPairs()
+	if err != nil {
+		return nil, canonical.Pair{}, fmt.Errorf("bitstamp pairs: %w", err)
+	}
+	btcPair, ok := pm["btcusd"]
+	if !ok {
+		return nil, canonical.Pair{}, unknownPairError(externalbitstamp.SourceName, "btcusd", pm)
+	}
+	return &externalpoloniex.Backfiller{BTCLeg: externalbitstamp.NewStreamer(pm), BTCPair: btcPair}, pair, nil
 }
 
 // unknownPairError prints the configured set so the operator can

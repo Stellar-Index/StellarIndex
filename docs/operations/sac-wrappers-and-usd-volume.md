@@ -25,7 +25,7 @@ mapping from C-strkey to "CODE-ISSUER", three things go wrong:
    USD-pegged classic, so it skips the column.
 
 The fix is two-part: a one-line config addition for the contract
-mapping (lights up #1 + #2 + #3 for new trades), plus a
+mapping (lights up all three for new trades), plus a
 backfill SQL that retroactively prices the historical rows.
 
 ## Adding a single SAC mapping
@@ -95,7 +95,7 @@ stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
   -tier exact -fill-null -sources aquarius,soroswap,phoenix,comet \
   -from <first-day> -to <last-day>
 # apply on r1 under the heavy wrapper; add -chunks for any window older
-# than the trades compression policy's 7 days
+# than the trades compression policy's 15 days
 set -a; . /etc/default/stellarindex; set +a
 /usr/local/sbin/run-heavy-job.sh usd-sac-fill \
   /usr/local/bin/stellarindex-ops usd-volume-restamp \

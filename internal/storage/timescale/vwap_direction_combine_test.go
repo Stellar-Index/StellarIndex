@@ -252,10 +252,10 @@ func TestHistoryPoints_CombinesBothStoredDirections(t *testing.T) {
 	bucket := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 
 	script := []scriptedResult{{
-		cols: []string{"bucket", "base_asset", "vwap", "volume", "volume_usd"},
+		cols: []string{"bucket", "base_asset", "vwap", "volume", "volume_usd", "sources"},
 		rows: [][]driver.Value{
-			{bucket, pair.Base.String(), "0.5", "100", "1000.50"},
-			{bucket, pair.Quote.String(), "5", "10", "2500.25"},
+			{bucket, pair.Base.String(), "0.5", "100", "1000.50", "{sdex,poloniex_via_btc}"},
+			{bucket, pair.Quote.String(), "5", "10", "2500.25", "{sdex}"},
 		},
 	}}
 	store, conn := newScriptedStore(t, script...)
@@ -276,6 +276,9 @@ func TestHistoryPoints_CombinesBothStoredDirections(t *testing.T) {
 	if pts[0].VolumeUSD == nil || *pts[0].VolumeUSD != "3500.75" {
 		t.Errorf("served volume_usd = %v, want 3500.75 (both directions summed)", pts[0].VolumeUSD)
 	}
+	if got := strings.Join(pts[0].Sources, ","); got != "poloniex_via_btc,sdex" {
+		t.Errorf("served sources = %q, want the sorted union of both directions", got)
+	}
 	// The read must actually ASK for both orientations.
 	q := conn.statements()[0]
 	if !strings.Contains(q, "base_asset = $1 AND quote_asset = $2") ||
@@ -294,10 +297,10 @@ func TestHistoryPoints_FlippedOnlyBucketIsServed(t *testing.T) {
 	bucket := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 
 	script := []scriptedResult{{
-		cols: []string{"bucket", "base_asset", "vwap", "volume", "volume_usd"},
+		cols: []string{"bucket", "base_asset", "vwap", "volume", "volume_usd", "sources"},
 		rows: [][]driver.Value{
 			// Only the USDC/XLM orientation traded this minute.
-			{bucket, pair.Quote.String(), "4", "10", "500.00"},
+			{bucket, pair.Quote.String(), "4", "10", "500.00", "{sdex}"},
 		},
 	}}
 	store, _ := newScriptedStore(t, script...)
@@ -471,12 +474,12 @@ func TestHistoryPoints_BucketLimitCountsBuckets(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		b := base.Add(time.Duration(i) * time.Minute)
 		rows = append(rows,
-			[]driver.Value{b, pair.Base.String(), "0.5", "100", nil},
-			[]driver.Value{b, pair.Quote.String(), "5", "10", nil},
+			[]driver.Value{b, pair.Base.String(), "0.5", "100", nil, "{sdex}"},
+			[]driver.Value{b, pair.Quote.String(), "5", "10", nil, "{sdex}"},
 		)
 	}
 	script := []scriptedResult{{
-		cols: []string{"bucket", "base_asset", "vwap", "volume", "volume_usd"},
+		cols: []string{"bucket", "base_asset", "vwap", "volume", "volume_usd", "sources"},
 		rows: rows,
 	}}
 	store, _ := newScriptedStore(t, script...)

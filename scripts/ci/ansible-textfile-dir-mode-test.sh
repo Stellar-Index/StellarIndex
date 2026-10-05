@@ -3,10 +3,11 @@
 # dir's ownership and mode in every archival-node task that declares it. The
 # .prom files there feed the SLA / archive-completeness / backup alerts.
 #   - Two tasks declare the dir; if they disagree, alternate applies flip it.
-#   - Group-write (0775) exists for the units that write as non-owners via
+#   - Group-write (1775) exists for the units that write as non-owners via
 #     SupplementaryGroups=stellarindex (pgbackrest-backup as postgres; the
 #     DynamicUser sla-probe, smoke and heartbeat@ healthchecks). Dropping
 #     group-write silently loses their metrics; world-write lets anyone forge them.
+#     The sticky bit stops one group writer deleting or renaming over another's file.
 #
 # Structural only (awk/grep over the real role files) — no hosts, no ansible run.
 set -uo pipefail
@@ -14,7 +15,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 ROLE="${ROLE:-configs/ansible/roles/archival-node}"
 DIR=/var/lib/node_exporter/textfile_collector
-WANT="stellarindex:stellarindex:0775"
+WANT="stellarindex:stellarindex:1775"
 
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  ok   — $1"; }
@@ -58,7 +59,7 @@ UNIT_DIRS="$ROLE/templates/systemd configs/healthchecks"
 writers="$(grep -lE '^SupplementaryGroups=(.* )?stellarindex( |$)' \
   "$ROLE"/templates/systemd/*.service* configs/healthchecks/*.service 2>/dev/null)"
 if [ -z "$writers" ]; then
-  bad "no unit under $UNIT_DIRS joins group stellarindex — the 0775 mode has no group writer left; re-derive it in both declaring tasks together"
+  bad "no unit under $UNIT_DIRS joins group stellarindex — the 1775 mode has no group writer left; re-derive it in both declaring tasks together"
 fi
 strict_without_rw() {
   grep -qE '^ProtectSystem=strict$' "$1" &&
@@ -69,7 +70,7 @@ while IFS= read -r unit; do
   if strict_without_rw "$unit"; then
     bad "$unit: SupplementaryGroups=stellarindex under ProtectSystem=strict without ReadWritePaths=$DIR"
   else
-    ok "group writer (needs 0775): $unit"
+    ok "group writer (needs 1775): $unit"
   fi
 done <<<"$writers"
 

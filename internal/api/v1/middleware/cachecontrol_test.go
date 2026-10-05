@@ -98,6 +98,7 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// must not outlive them, while the two daily series sit behind
 		// a 10-minute assembly TTL.
 		{"/v1/rwa/assets", "public, max-age=30, s-maxage=60"},
+		{"/v1/stablecoins", "public, max-age=30, s-maxage=60"},
 		{"/v1/rwa/history", "public, max-age=60, s-maxage=300"},
 		{"/v1/rwa/premium", "public, max-age=60, s-maxage=300"},
 
@@ -443,24 +444,22 @@ func TestPolicyForPath_OperationsSharesTheLedgerListBand(t *testing.T) {
 	}
 }
 
-// TestCacheControl_OperationsBandFollowsTheHandlersMode pins the query split
-// on /v1/operations: ?ledger=<seq> reads one closed ledger and takes its
-// /v1/ledgers/{seq}/transactions sibling's band; every value the handler
-// treats as the directory keeps the directory's short band.
-func TestCacheControl_OperationsBandFollowsTheHandlersMode(t *testing.T) {
+// TestCacheControl_OperationsBandIgnoresTheQuery pins that /v1/operations is
+// banded on its path alone: the handler refuses every ?ledger= form with a
+// no-store problem, so no query value may lift the page into the
+// closed-ledger band.
+func TestCacheControl_OperationsBandIgnoresTheQuery(t *testing.T) {
 	cases := []struct {
 		target string
 		cdn    bool
 		want   string
 	}{
-		{"/v1/operations?ledger=64000000", true, policyForPath("/v1/ledgers/64000000/transactions", true)},
-		{"/v1/operations?ledger=64000000&limit=2000", false, policyForPath("/v1/ledgers/64000000/transactions", false)},
+		{"/v1/operations?ledger=64000000", true, "public, max-age=10, s-maxage=15"},
+		{"/v1/operations?ledger=64000000&limit=2000", false, "public, max-age=10"},
 		{"/v1/operations", true, "public, max-age=10, s-maxage=15"},
 		{"/v1/operations?ledger=", true, "public, max-age=10, s-maxage=15"},
 		{"/v1/operations?ledger=0", true, "public, max-age=10, s-maxage=15"},
 		{"/v1/operations?cursor=63000000.4.7", true, "public, max-age=10, s-maxage=15"},
-		// Malformed values are a 400 whose problem writer sets no-store; the
-		// band must not treat them as a ledger either way.
 		{"/v1/operations?ledger=abc", true, "public, max-age=10, s-maxage=15"},
 		{"/v1/operations?ledger=4294967296", true, "public, max-age=10, s-maxage=15"},
 		{"/v1/ledgers?ledger=64000000", true, "public, max-age=10, s-maxage=15"},

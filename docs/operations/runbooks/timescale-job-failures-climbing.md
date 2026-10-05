@@ -14,7 +14,7 @@ severity: P3
 | **Severity** | ticket — no immediate customer impact, but the safety margin is gone |
 | **Fires when** | a single TimescaleDB background job accumulates **>10 failed runs in 6h**, **3 or more in 3 days**, or failures covering **at least half the runs its `schedule_interval` gave it in 3 days** (failures × interval ≥ 36h), sustained 30m |
 | **Producer** | `timescale-jobs-probe.timer` on r1 (60s), writing `timescale_jobs.prom` into the node_exporter textfile dir. If that probe stops, or its `job_stats` query fails or returns nothing, this counter goes absent and the alert is blind rather than quiet — `stellarindex_timescale_probe_degraded` ([timescale-probe-degraded](timescale-probe-degraded.md)) is the standing signal for it. |
-| **Metric** | `stellarindex_timescale_job_failures_total{job_id,proc,hypertable}`, weighted by `stellarindex_timescale_job_schedule_interval_seconds` (same labels, same probe) |
+| **Metric** | `stellarindex_timescale_job_failures_total{job_id,proc,hypertable}`, less `stellarindex_timescale_job_concurrent_refresh_failures_6h` / `_3d`, weighted by `stellarindex_timescale_job_schedule_interval_seconds` (same labels, same probe) |
 | **Customer impact** | usually none *yet* — TimescaleDB retries on the next tick |
 
 **Why this alert exists at all.** r1 once failed **37–69 % of every CAGG
@@ -67,6 +67,20 @@ the ticket queue.
 The 3-day window is not a week on purpose: local Prometheus retains 7
 days (`local_prometheus_retention_time`), and an `increase()` window at
 the retention edge loses its left-hand samples silently.
+
+**Concurrent-refresh collisions are not counted.** A CAGG refresh policy
+that runs while something else refreshes the same window (an operator
+`projector-replay`, a backfill's own refresh) is rejected with `could not
+refresh continuous aggregate … due to a concurrent refresh`. The job body
+is fine and the next tick retries, but `total_failures` counts it, and on
+r1 one replay's six collisions held the 3-day arm red for three days. The
+probe counts those failures per job from `job_errors` over each arm's
+window (`stellarindex_timescale_job_concurrent_refresh_failures_6h` and
+`_3d`, emitted as 0 when there are none) and every arm subtracts them.
+Two limits, both on the loud side: a collision whose `job_errors` row is
+missing is still counted, and if the gauge is absent the alert falls back
+to the raw counter. A collision that never ends stops the refreshes, and
+`stellarindex_timescale_cagg_stale` reports that.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -125,6 +139,7 @@ the retention edge loses its left-hand samples silently.
    | `err_message` | Meaning | Go to |
    | --- | --- | --- |
    | `failed to start job` | **Starvation** — no background worker slot was free | §Starvation |
+   | `… due to a concurrent refresh` | A collision; already excluded from the alert, so look at the job's *other* errors | §Job body |
    | anything else (SQL error, OOM, lock timeout) | The job body genuinely failed | §Job body |
 
 ## Starvation (the known-incident shape)
@@ -150,6 +165,16 @@ Not starvation — read the error and treat it as an ordinary job failure.
 If it is a CAGG refresh, `stellarindex_timescale_cagg_stale` will follow
 once retries stop covering it; that ticket is the customer-impact signal
 and takes priority over this one.
+
+## After a TimescaleDB upgrade
+
+`trades_compression_policy` (migration 0205) is a custom job that calls the
+internal `_timescaledb_functions.policy_compression(job_id, config)` so it can
+set `lock_timeout`. That signature is not a public API: an upgrade that
+changes it turns the job into repeated failures. Before upgrading, check the
+release notes for `policy_compression`, and after, `CALL run_job(<id>)` once
+by hand. If the signature changed, update the job body in a new migration or
+drop the custom job and re-add the built-in `add_compression_policy`.
 
 ## When NOT to act
 

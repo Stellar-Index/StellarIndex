@@ -113,19 +113,20 @@ func TestAccountOperations_BoundArgsBindInsideKeyArms(t *testing.T) {
 	conn.respond = withOpsBySourceRows(func(string) (driver.Rows, error) { return &stubRows{}, nil })
 	r := &ExplorerReader{conn: conn}
 	cur := ExplorerCursor{Ledger: 63_000_000, A: 4, B: 2}
-	if _, err := r.AccountOperations(context.Background(), "GTEST", 9, cur); err != nil {
+	if _, err := r.accountOperationsExact(context.Background(), "GTEST", 9, cur, 0, false); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
 	q := conn.queries[len(conn.queries)-1]
 	args := conn.args[len(conn.args)-1]
 	// stubConn has no watermark table → unbounded path: no bound placeholder.
-	if strings.Contains(q, "ledger_seq <= ?") {
+	// The cursor carries its own `ledger_seq <= ?`; every occurrence must be that one.
+	if strings.Count(q, "ledger_seq <= ?") != strings.Count(q, "ledger_seq <= ? AND (ledger_seq, tx_index, op_index) < (?, ?, ?)") {
 		t.Fatalf("unbounded path must not carry a bound placeholder: %s", q)
 	}
 	if got, want := strings.Count(q, "?"), len(args); got != want {
 		t.Fatalf("query has %d placeholders, reader bound %d args: %v", got, want, args)
 	}
-	want := []any{"GTEST", uint32(63_000_000), uint32(4), uint32(2), 9, "GTEST", uint32(63_000_000), uint32(4), uint32(2), 9, 9, 9}
+	want := []any{"GTEST", uint32(63_000_000), uint32(63_000_000), uint32(4), uint32(2), 9, "GTEST", uint32(63_000_000), uint32(63_000_000), uint32(4), uint32(2), 9, 9, 9}
 	if len(args) != len(want) {
 		t.Fatalf("args = %v, want %v", args, want)
 	}

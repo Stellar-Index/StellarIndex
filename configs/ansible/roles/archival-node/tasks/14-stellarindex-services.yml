@@ -263,6 +263,7 @@
     owner: root
     group: root
     mode: "0644"
+  diff: false
   notify:
     - Restart stellarindex-indexer
     - Restart stellarindex-aggregator
@@ -409,6 +410,7 @@
     mode: "0644"
     content: |
       f /run/lock/stellarindex-heavy.lock 0644 root root -
+      f /run/lock/stellarindex-heavy-scheduled.lock 0644 root root -
   tags: [heavy-job-wrapper]
 
 - name: create the heavy-job host-wide lock file now
@@ -429,8 +431,9 @@
   #      Then a HOST-WIDE lock enforces "one heavy job at a time" across
   #      names: an operator launch (HEAVY_JOB_CLASS unset) is refused
   #      with exit 75 while any other heavy job holds it; timer/cron
-  #      launchers set HEAVY_JOB_CLASS=scheduled, share it and are never
-  #      refused.
+  #      launchers set HEAVY_JOB_CLASS=scheduled, share it, defer (exit 75)
+  #      while an operator job holds it, and run one scheduled job at a
+  #      time among themselves (a second lock, same exit 75 deferral).
   #   2. For root callers, wraps the command in a systemd transient
   #      scope with a hard memory budget + batch-class CPU/IO so a
   #      ballooning job gets killed before it can starve galexie/CH/PG
@@ -530,6 +533,7 @@
             echo "run-heavy-job: refusing to start ${NAME}: HEAVY_JOB_LOCK_WAIT='${LOCK_WAIT}' is not a positive whole number of seconds" >&2
             exit 2 ;;
         esac
+        WAIT_START="$(date +%s)"
         if ! flock -w "$LOCK_WAIT" 9; then
           echo "run-heavy-job: ${NAME} FAILED to start: lock ${LOCK} was still held after waiting ${LOCK_WAIT}s — another unit or manual run using the job name ${NAME} held it all that time (find it: fuser -v ${LOCK})" >&2
           exit 1
@@ -552,15 +556,15 @@
       #     refused with exit 75, payload not run, so a runbook loop
       #     reads the window as not done.
       #   scheduled (every timer/cron launcher, pinned by
-      #     scripts/ci/run-heavy-job-test.sh) takes it shared: timers
-      #     overlap one another as scheduled and are never skipped (a
-      #     multi-day operator job must not stall the lake fill or the
-      #     integrity walks), but an operator job cannot start beside
-      #     one. Beside an operator job a scheduled one warns and runs.
-      # The file is pre-created root:root 0644 by tmpfiles.d (task
-      # below). If it cannot be opened the wrapper cannot prove the host
-      # is free: a scheduled job warns and runs, an operator job is
-      # refused.
+      #     scripts/ci/run-heavy-job-test.sh) takes it shared, so an
+      #     operator job cannot start beside one, and waits for an operator
+      #     job to finish (HEAVY_JOB_LOCK_WAIT) or, without a wait, defers
+      #     with exit 75. Scheduled jobs are also serialised against each
+      #     other by a second lock taken exclusive, with the same rule.
+      # The files are pre-created root:root 0644 by tmpfiles.d (task
+      # above). If the host-wide one cannot be opened the wrapper cannot
+      # prove the host is free: a scheduled job warns and runs, an
+      # operator job is refused.
       GLOBAL_LOCK="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy.lock"
       CLASS="${HEAVY_JOB_CLASS:-exclusive}"
       case "$CLASS" in
@@ -579,8 +583,35 @@
           exit 2
         fi
       elif [ "$CLASS" = scheduled ]; then
-        if ! flock -n -s 8; then
-          echo "run-heavy-job: WARNING ${NAME} (scheduled) is starting beside an operator heavy job that holds ${GLOBAL_LOCK} — scheduled jobs are not skipped for it" >&2
+        # A launcher that set HEAVY_JOB_LOCK_WAIT queues here too, so an
+        # overlap delays a daily/monthly job instead of dropping the fire,
+        # and fails loud when the wait runs out; without it, defer (exit 75).
+        # One deadline covers all three waits: each gets what is left.
+        SCHED_LOCK="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy-scheduled.lock"
+        lock_file_prep "$SCHED_LOCK"
+        lock_left() { local l=$((LOCK_WAIT - ($(date +%s) - WAIT_START))); [ "$l" -ge 1 ] || l=1; echo "$l"; }
+        FLOCK_MODE=(-n)
+        [ -n "$LOCK_WAIT" ] && FLOCK_MODE=(-w "$(lock_left)")
+        if ! flock "${FLOCK_MODE[@]}" -s 8; then
+          if [ -n "$LOCK_WAIT" ]; then
+            echo "run-heavy-job: ${NAME} FAILED to start: an operator heavy job held ${GLOBAL_LOCK} for the whole ${LOCK_WAIT}s wait (see what holds it: fuser -v ${GLOBAL_LOCK})" >&2
+            exit 1
+          fi
+          echo "run-heavy-job: deferring ${NAME} (scheduled): an operator heavy job holds ${GLOBAL_LOCK} — one heavy job at a time. Nothing ran (exit 75); the next fire retries. See what holds it: fuser -v ${GLOBAL_LOCK}" >&2
+          exit 75
+        fi
+        if exec 7<"$SCHED_LOCK"; then
+          [ -n "$LOCK_WAIT" ] && FLOCK_MODE=(-w "$(lock_left)")
+          if ! flock "${FLOCK_MODE[@]}" -x 7; then
+            if [ -n "$LOCK_WAIT" ]; then
+              echo "run-heavy-job: ${NAME} FAILED to start: another scheduled heavy job held ${SCHED_LOCK} for the whole ${LOCK_WAIT}s wait (see what holds it: fuser -v ${SCHED_LOCK})" >&2
+              exit 1
+            fi
+            echo "run-heavy-job: deferring ${NAME} (scheduled): another scheduled heavy job holds ${SCHED_LOCK} — one heavy job at a time. Nothing ran (exit 75); the next fire retries. See what holds it: fuser -v ${SCHED_LOCK}" >&2
+            exit 75
+          fi
+        else
+          echo "run-heavy-job: WARNING ${NAME} (scheduled) could not open the scheduled lock ${SCHED_LOCK} — running WITHOUT scheduled-job serialisation. Recreate it: systemd-tmpfiles --create /etc/tmpfiles.d/stellarindex-heavy-job.conf" >&2
         fi
       elif ! flock -n -x 8; then
         echo "run-heavy-job: refusing to start ${NAME}: another heavy job holds the host-wide lock ${GLOBAL_LOCK} — one heavy job at a time. Nothing ran (exit 75). See what holds it: fuser -v ${GLOBAL_LOCK}" >&2
@@ -674,7 +705,7 @@
       if ! df --output=avail -k "$POOL_PATH" >/dev/null 2>&1; then
         echo "run-heavy-job: WARNING POOL_PATH '${POOL_PATH}' is not statable — the DATA-POOL watchdog is INACTIVE for this job (root-FS guard still active). Set HEAVY_JOB_POOL_PATH to a path on the data pool." >&2
       fi
-      # 8>&- 9>&-: the watchdog (and its `sleep`, which a kill of the
+      # 7>&- 8>&- 9>&-: the watchdog (and its `sleep`, which a kill of the
       # subshell orphans) must not hold either lock past the job, or a
       # prompt relaunch, or the next window of a runbook loop, finds it held.
       (
@@ -704,9 +735,21 @@
             *) [ "$pool_kb" -lt "$POOL_MIN_KB" ] && stop_job "data pool ${POOL_PATH} below $((POOL_MIN_KB / 1048576)) GiB (${pool_kb} KiB avail)" ;;
           esac
         done
-      ) 8>&- 9>&- &
+      ) 7>&- 8>&- 9>&- &
       WATCHDOG=$!
-      trap 'kill "$WATCHDOG" 2>/dev/null || true' EXIT
+      # Publish when this job took the host-wide lock, so the textfile
+      # staleness alert can tell "producer deferred behind a long heavy
+      # job" from "producer dead" (stellarindex_textfile_producer_stale,
+      # capped at 72h of hold). One file per job NAME; removed on exit.
+      HELD_PROM="${HEAVY_JOB_TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}/heavy_job_${NAME//[^A-Za-z0-9_]/_}.prom"
+      if [ -d "$(dirname "$HELD_PROM")" ]; then
+        {
+          echo "# HELP stellarindex_heavy_lock_held_since_unix Unix time this job took the host-wide heavy lock; present only while it is held."
+          echo "# TYPE stellarindex_heavy_lock_held_since_unix gauge"
+          echo "stellarindex_heavy_lock_held_since_unix{ops_job=\"${NAME}\"} $(date +%s)"
+        } > "${HELD_PROM}.$$" && mv "${HELD_PROM}.$$" "$HELD_PROM" || rm -f "${HELD_PROM}.$$"
+      fi
+      trap 'kill "$WATCHDOG" 2>/dev/null || true; rm -f "$HELD_PROM"' EXIT
 
       # ── Stop bound (2026-09-04) ──────────────────────────────────
       # `systemctl stop <unit>.scope` — what stop_job above runs, and
@@ -927,6 +970,9 @@
     owner: root
     group: root
     mode: "0755"
+  # Tagged with the units that call it: a `--tags ops-jobs` apply that ships
+  # the sdex unit without this driver would run a plain -pass instead.
+  tags: [ops-jobs]
 
 - name: Install data-freshness.sh watchdog (the "never get behind" textfile emit)
   # data-freshness.service runs this every 15 min: emits per-domain ingest
@@ -1026,8 +1072,9 @@
     group: root
     mode: "0600"
   no_log: true
+  when: galexie_archive_trim_enabled | bool
 
-- name: Install verify-archive-tier-a / supply-snapshot / galexie-archive-trim units
+- name: Install verify-archive-tier-a / supply-snapshot units
   ansible.builtin.template:
     src: "systemd/{{ item }}.j2"
     dest: "/etc/systemd/system/{{ item }}"
@@ -1043,8 +1090,9 @@
     # (archive_completeness_enabled).
     - supply-snapshot.service
     - supply-snapshot.timer
-    - galexie-archive-trim.service
-    - galexie-archive-trim.timer
+    # galexie-archive-trim is NOT in this loop — its delete identity is
+    # pubnet-only; installed conditionally below
+    # (galexie_archive_trim_enabled).
     - sep1-refresh.service
     - sep1-refresh.timer
     - directory-sync.service
@@ -1068,6 +1116,14 @@
     - census-rollup.timer
     - compute-completeness.service
     - compute-completeness.timer
+    - compute-completeness-sdex.service
+    - compute-completeness-sdex.timer
+    - compute-completeness-sep41.service
+    - compute-completeness-sep41.timer
+    - verify-lake.service
+    - verify-lake.timer
+    - verify-network-state.service
+    - verify-network-state.timer
     - data-freshness.service
     - data-freshness.timer
     - ch-supply.service
@@ -1117,6 +1173,10 @@
     - cohort-rollup.timer
     - census-rollup.timer
     - compute-completeness.timer
+    - compute-completeness-sdex.timer
+    - compute-completeness-sep41.timer
+    - verify-lake.timer
+    - verify-network-state.timer
     - data-freshness.timer
     - ch-supply.timer
     - issuer-flags.timer
@@ -1264,6 +1324,47 @@
         cmd: systemctl reset-failed verify-served-values.service
       changed_when: false
       failed_when: false
+
+# ── galexie-archive-trim — pubnet only ────────────────────────────────
+# See galexie_archive_trim_enabled in defaults/main.yml. The timer is
+# never enabled by the role (ADR-0027 §Sequencing, above).
+- name: Install galexie-archive-trim units (pubnet)
+  tags: [ops-jobs]
+  when: galexie_archive_trim_enabled | bool
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - galexie-archive-trim.service
+    - galexie-archive-trim.timer
+  notify: Reload systemd
+
+# Tagged alongside the install so `--tags ops-jobs` also retires the units
+# from a test net that received them before the gate existed.
+- name: Remove galexie-archive-trim where no cold tier receives the deletes
+  tags: [ops-jobs]
+  when: not (galexie_archive_trim_enabled | bool)
+  block:
+    - name: Stop + disable galexie-archive-trim timer and service
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - galexie-archive-trim.timer
+        - galexie-archive-trim.service
+      failed_when: false
+
+    - name: Remove galexie-archive-trim units + env file
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/galexie-archive-trim.service
+        - /etc/systemd/system/galexie-archive-trim.timer
+        - /etc/default/galexie-archive-trim
+      notify: Reload systemd
 
 # ── listing-sync — pubnet only ────────────────────────────────────────
 # See listing_sync_enabled in defaults/main.yml: the directory it caches
@@ -1467,6 +1568,58 @@
       changed_when: false
       failed_when: false
 
+# ── galexie-mirror-verify — mirror content vs the upstream dataset ───
+# galexie-archive-fill checks presence only, so an upstream re-export of a
+# ledger we already hold is invisible to it. Gated on an upstream being
+# configured (galexie_mirror_verify_enabled).
+- name: Install + enable galexie-mirror-verify (hosts with an upstream dataset)
+  tags: [ops-jobs]
+  when: galexie_mirror_verify_enabled | bool
+  block:
+    - name: Install galexie-mirror-verify unit + timer
+      ansible.builtin.template:
+        src: "systemd/{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - galexie-mirror-verify.service
+        - galexie-mirror-verify.timer
+      notify: Reload systemd
+      register: galexie_mirror_verify_units
+
+    - name: Enable + start galexie-mirror-verify.timer
+      ansible.builtin.systemd:
+        name: galexie-mirror-verify.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+      when:
+        # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+        - not (ansible_check_mode and galexie_mirror_verify_units is changed)
+
+- name: Remove galexie-mirror-verify where no upstream dataset is configured
+  tags: [ops-jobs]
+  when: not (galexie_mirror_verify_enabled | bool)
+  block:
+    - name: Stop + disable galexie-mirror-verify timer and service
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - galexie-mirror-verify.timer
+        - galexie-mirror-verify.service
+      failed_when: false
+
+    - name: Remove galexie-mirror-verify unit files
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - galexie-mirror-verify.timer
+        - galexie-mirror-verify.service
+      notify: Reload systemd
+
 - name: Retire the cap67-movements timer in favour of the follow daemon (5.3)
   # The follow daemon (cap67-movements.service, Type=simple, -follow) is the
   # SINGLE writer of stellar.account_movements. Stop + disable the old timer
@@ -1559,9 +1712,9 @@
 # lock, the 20G MemoryMax scope and the disk watchdog. The lock name is
 # its own (`verify-archive-tier-d`), not tier A/B's `verify-archive`: a
 # multi-hour tier-A bootstrap walk would otherwise swallow the weekly
-# fork check with a "skipping this fire" exit 75. Sunday 10:23 keeps it
+# fork check with a "skipping this fire" exit 75. Sunday 16:23 keeps it
 # clear of the nightly heavy band (02:17 archive-completeness through
-# 06:00 ch-supply, incl. tier A 03:23 and tier B 04:37). Both pinned by
+# verify-network-state 13:47 + 2h, incl. tier A 03:23 and tier B 04:37). Both pinned by
 # scripts/ci/verify-archive-tier-d-test.sh.
 #
 # Gated on verify_archive_tier_d_enabled (defaults/main.yml): Tier D
@@ -1585,7 +1738,7 @@
     cron_file: stellarindex-verify-archive-tier-d
     user: root
     minute: "23"
-    hour: "10"
+    hour: "16"
     weekday: "0"   # Sunday, after the nightly heavy-job band
     state: "{{ 'present' if (verify_archive_tier_d_enabled | bool) else 'absent' }}"
     # The -ops file is read VERBATIM (systemd EnvironmentFile syntax is not
@@ -1596,7 +1749,7 @@
     # verify-archive is silently discarded and the job reads as clean.
     job: >-
       bash -c 'set -o pipefail; while IFS= read -r l || [ -n "$l" ]; do case "$l" in [A-Za-z_]*=*) export "$l";; esac; done < /etc/default/stellarindex-ops;
-      HEAVY_JOB_CLASS=scheduled /usr/local/sbin/run-heavy-job.sh verify-archive-tier-d
+      HEAVY_JOB_CLASS=scheduled HEAVY_JOB_LOCK_WAIT=43200 /usr/local/sbin/run-heavy-job.sh verify-archive-tier-d
       /usr/local/bin/stellarindex-ops verify-archive
       -config /etc/stellarindex.toml
       -tier peers

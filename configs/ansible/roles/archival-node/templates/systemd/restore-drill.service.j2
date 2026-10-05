@@ -38,7 +38,16 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 # only, nothing written); the script emits the throughput gauges to the
 # node_exporter textfile dir when this is set.
 Environment=DRILL_CH_WINDOW=100000
-ExecStart=/usr/local/bin/restore-drill.sh
+# 75 = run-heavy-job.sh skipped this fire (lock held): not a failure.
+SuccessExitStatus=75
+# Queue behind another heavy job (host-wide and scheduled locks) for up to
+# 12h instead of skipping the fire; TimeoutStartSec below covers wait + run.
+Environment=HEAVY_JOB_LOCK_WAIT=43200
+Environment=HEAVY_JOB_CLASS=scheduled
+# A stop must let the script's EXIT trap shut down the scratch Postgres and
+# remove its data dir before SIGKILL.
+Environment=HEAVY_JOB_STOP_TIMEOUT=15min
+ExecStart=/usr/local/sbin/run-heavy-job.sh restore-drill /usr/local/bin/restore-drill.sh
 # The script itself requires root (drops to postgres via sudo -u for
 # the actual pg/pgbackrest operations) — see its own EUID check.
 User=root
@@ -59,8 +68,8 @@ IOSchedulingPriority=7
 # hours on a busy ingest DB (script's own PG_START_TIMEOUT default);
 # cap generously above that so a genuinely wedged drill still fails
 # and frees the next tick instead of running forever.
-TimeoutStartSec=4h
-RuntimeMaxSec=4h
+# Whole seconds: the 43200 s lock wait + 4h for the run itself.
+TimeoutStartSec=57600
 
 # Hardening — ProtectSystem=full (not strict): /usr, /boot and /etc are
 # read-only but /var stays WRITABLE, so with no extra ReadWritePaths the

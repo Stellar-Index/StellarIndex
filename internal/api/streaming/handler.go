@@ -215,9 +215,21 @@ func Stream(w http.ResponseWriter, r *http.Request, hub *Hub, topics []string, o
 	}
 	defer release()
 
-	ch, cancel := hub.Subscribe(topics, LastEventIDFrom(r))
+	ch, cancel, err := hub.Subscribe(topics, LastEventIDFrom(r))
+	if err != nil {
+		WriteSubscribeRefused(w)
+		return
+	}
 	defer cancel()
 	writeStream(w, r, ch, opts)
+}
+
+// WriteSubscribeRefused answers a connection whose [Hub.Subscribe]
+// failed with [ErrTopicCapacity]. Call it before any SSE header is sent.
+func WriteSubscribeRefused(w http.ResponseWriter) {
+	atomic.AddInt64(&rejectedStreams, 1)
+	obs.APISSEStreamsRejectedTotal.WithLabelValues("topic_cap").Inc()
+	http.Error(w, "too many concurrent stream topics", http.StatusServiceUnavailable)
 }
 
 // StreamFromChannel is the lower-level SSE writer: given any

@@ -32,9 +32,9 @@ on:
   # never verified from inside the repo, and a live check found it
   # false — `GET /repos/<repo>/rules/branches/main` currently returns
   # `[]` (no active rules), confirmed both authenticated and via a
-  # plain unauthenticated `curl` (the repo is public). The
-  # `branch-protection-status` job below turns this from a one-time
-  # manual check into an ongoing, visible signal on every push, since
+  # plain unauthenticated `curl` (the repo is public). A ruleset has
+  # since been configured, and the `branch-protection-status` job below
+  # fails any push run that finds main with zero active rules, since
   # nothing in this repo can configure the ruleset itself. Regardless
   # of ruleset state, this push trigger is NOT redundant: it is what
   # keeps direct pushes honest even under an admin-bypass rule — a red
@@ -60,8 +60,8 @@ permissions:
 env:
   GOFUMPT_VERSION: v0.8.0
   GOIMPORTS_VERSION: v0.42.0
-  GOLANGCI_LINT_VERSION: v2.11.4
-  GOVULNCHECK_VERSION: v1.1.4
+  GOLANGCI_LINT_VERSION: v2.14.0
+  GOVULNCHECK_VERSION: v1.8.0
   GITLEAKS_VERSION: 8.21.2
 
   # F-1294 (codex audit-2026-05-13): SHA-256 of upstream tool
@@ -116,10 +116,9 @@ jobs:
   # required check, while `integration-test`'s comment reads the
   # opposite ("a skipped required check never turns green either") and
   # is why that job runs `if: always()` and actively fails rather than
-  # letting a skip stand in for a verdict. Main currently has ZERO
-  # active branch-protection rules (verified live 2026-09-07,
-  # `GET /repos/<repo>/rules/branches/main` -> `[]`; see
-  # `branch-protection-status` below), so neither reading is exercised
+  # letting a skip stand in for a verdict. Main's active rules block
+  # deletion and force-push only — no required status checks (see
+  # `branch-protection-status` below) — so neither reading is exercised
   # today and this cannot be resolved by observation before this PR.
   # Given that, every job gated below by path class does it with a
   # STEP-level `if: needs.preflight.outputs.<class> == 'true'` on the
@@ -345,10 +344,19 @@ jobs:
               - 'internal/sources/external/binance/pairs.yaml'
               - 'internal/sources/external/forex/circulation_data.csv'
               - 'internal/currency/data/seed.yaml'
+              - 'internal/wasmaudit/audited_wasm.json'
               - 'internal/incidents/data/**'
               # testdata/ is Go's fixture convention; the clickhouse
               # package also go:embeds its .tsv/.wasm fixtures from there.
               - '**/testdata/**'
+              # The trigger-class guard (test/controlwiring/
+              # integration_pkgs_trigger_evidence_test.go) runs only in the
+              # `test` job and reads these four, so a diff confined to one of
+              # them must still run it.
+              - 'Makefile'
+              - '.github/workflows/ci.yml'
+              - 'scripts/ci/check-change-class.sh'
+              - 'scripts/ci/prepush-integration-required.sh'
             web:
               - 'web/**'
               - 'openapi/**'
@@ -763,6 +771,12 @@ jobs:
       - name: lint-agents-file self-test
         # Proves each of those five assertions can still go red.
         run: ./scripts/ci/lint-agents-file-test.sh
+      - name: lint-remote-tmp-staging
+        # No workflow may scp to a fixed /tmp path on a remote host; a
+        # predictable name there can be pre-planted before a privileged run.
+        run: ./scripts/ci/lint-remote-tmp-staging.sh
+      - name: lint-remote-tmp-staging self-test
+        run: ./scripts/ci/lint-remote-tmp-staging-test.sh
       - name: lint-doc-links
         # Every relative markdown link must resolve. A broken link in a
         # runbook is an operational defect: the operator follows the
@@ -779,6 +793,8 @@ jobs:
         run: ./scripts/dev/lint-changed-test.sh
       - name: doctor self-test
         run: ./scripts/dev/doctor-test.sh
+      - name: verify-r1-sync self-test
+        run: ./scripts/dev/verify-r1-sync-test.sh
       - name: lint-external-channels
         # A repository setting or DNS name that is switched off cannot be
         # seen from inside the tree, so three published channels shipped
@@ -871,6 +887,11 @@ jobs:
         # production and `main` is unprotected, so it must run numbering,
         # compat, immutability and commands — not compat alone.
         run: ./scripts/ci/deploy-migration-gate-coverage-test.sh
+      - name: migration follow-up gate self-test
+        # A migration that blanks data names its rebuild in a
+        # `-- REQUIRED-FOLLOWUP:` line; deploy.yml must refuse to start
+        # until those are acknowledged.
+        run: ./scripts/ci/migration-followup-gate-test.sh
       - name: deploy served-path smoke asserts readiness on every region
         # GH-910: runs the real step against stub curl/ssh — /v1/readyz
         # (not the constant-body /v1/healthz) must gate, and testnet and
@@ -892,6 +913,12 @@ jobs:
         run: |
           ./scripts/ci/check-verify-parity-test.sh
           ./scripts/ci/check-verify-parity.sh
+      - name: every scripts/ci self-test has a runner (+ self-test)
+        # A *-test.sh that no workflow or verify.sh executes stays green while
+        # the gate it covers regresses; pre-existing orphans are baselined.
+        run: |
+          ./scripts/ci/check-selftest-runners-test.sh
+          ./scripts/ci/check-selftest-runners.sh
       - name: verifier image pins (+ self-test)
         # GH-1257: check-verify-image-pins.sh only ran via scripts/dev/
         # verify.sh, so the Dockerfile ARG and docs-postman.sh's
@@ -936,6 +963,20 @@ jobs:
         # Postgres worker headroom pair and the ClickHouse drop-guard
         # ceiling, including its lockstep with the ansible role default.
         run: bash scripts/ops/config-assertions_test.sh
+      - name: rederive-from driver tests
+        # Drives the parallel re-derive driver with a fake ops binary: each
+        # window backfilled once, the seed/rebuild chain gated on a complete
+        # lake, and a failed or killed run resuming without redoing work.
+        run: bash scripts/ops/rederive-from-test.sh
+      - name: pre-launch-check heartbeat-URL tests
+        # Every Healthchecks.io URL wire-paging.md has the operator create
+        # must FAIL pre-launch-check.sh when missing: "0 failures" is that
+        # runbook's acceptance test. Stubbed host tools; runs anywhere.
+        run: bash scripts/ops/pre-launch-check-test.sh
+      - name: protocol-upgrade drill fail-closed tests
+        # Stubbed curl; pins that the drill FAILs on a mismatch, an HTTP
+        # error, a truncated list and an old protocol.
+        run: bash scripts/ops/protocol-upgrade-drill-test.sh
       - name: lint-migrations back-numbering self-test
         # GH-1164: a new migration numbered into a gap below the head is
         # invisible to `migrate up` on every deployment already past it.
@@ -1662,6 +1703,12 @@ jobs:
         # grandfathered `Coin*` vocabulary and non-canonical
         # constructor shapes. See docs/architecture/lexicon.md.
         run: ./scripts/ci/lint-lexicon.sh
+      - name: check-deprecations
+        # engineering-standards §2.4: every `// Deprecated:` names its
+        # scheduled removal version.
+        run: ./scripts/ci/check-deprecations.sh
+      - name: check-deprecations self-test
+        run: bash scripts/ci/check-deprecations-test.sh
       - name: lint-baseline-growth
         # CS-098: lint baselines/allowlists are shrink-only. Growing
         # scripts/ci/*.baseline or the KNOWN_INERT allowlist in the
@@ -1749,7 +1796,7 @@ jobs:
   monitoring-rules:
     name: prometheus rule validation
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     needs: [preflight]
     # §B: cheap — kept unconditional, same reasoning as doc-checks above.
     # Validates BOTH deploy/monitoring/rules/*.yml (multi-host) and
@@ -1849,6 +1896,7 @@ jobs:
           python3 -m pip install --quiet 'Jinja2==3.1.6' 'PyYAML==6.0.2'
           ./scripts/ci/check-alertmanager-parity.sh
           ./scripts/ci/check-alertmanager-parity-test.sh
+          bash configs/alertmanager/inhibit-rules-test.sh
       - name: validate the rules-apply script (and that it still counts alerts)
         # apply-rules.sh verifies a deploy by asserting every alert it
         # extracted from the repo actually loaded on the host. That check
@@ -2007,7 +2055,7 @@ jobs:
         run: go run ./scripts/ci/lint-derive-generation-guard
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24"
       - name: Generated API reference is in sync
         run: |
           ./scripts/dev/docs-api.sh
@@ -2084,7 +2132,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         if: needs.preflight.outputs.web == 'true'
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "pnpm"
           cache-dependency-path: web/explorer/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -2203,7 +2251,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         if: needs.preflight.outputs.web == 'true'
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "pnpm"
           cache-dependency-path: web/status/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -2379,6 +2427,12 @@ jobs:
         # Renders the shipped env template with hostile credentials.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-postgres-dsn-test.sh
+      - name: Postgres WAL archiving render test
+        # A rebuilt archival node must render archive_mode/archive_command,
+        # or pgBackRest silently loses point-in-time recovery; hosts without
+        # pgBackRest must not, or a failing archive_command fills pg_wal.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-postgres-archive-test.sh
       - name: nftables per-source SSH rate-limit test
         # Every role that renders /etc/nftables.conf must limit new SSH per
         # source address: a single shared bucket lets one scanner starve the
@@ -2404,6 +2458,16 @@ jobs:
         # it) and group-write must stay tied to its group writers.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-textfile-dir-mode-test.sh
+      - name: ZFS ARC cap render test
+        # A rebuilt ZFS host must get r1's ARC bounds, rendered byte for
+        # byte; renders the real template with a local ansible run.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-zfs-arc-cap-test.sh
+      - name: postgres log size-cap test
+        # The hourly pg-logrotate run must read a role-owned config that
+        # carries maxsize; the stock postgresql-common conffile has none.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-pg-logrotate-cap-test.sh
       - name: prometheus port var wiring test (SL19)
         # prometheus.yml.j2, prometheus.service.j2 and 06-firewall.yml
         # hardcoded literal 9090/9093 instead of referencing
@@ -2412,6 +2476,12 @@ jobs:
         # firewall pointed at the old port. Structural grep, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-prometheus-port-var-test.sh
+      - name: patroni etcd TLS render test
+        # etcd and Patroni's etcd3 client must render https with mutual cert
+        # auth by default, and the config tasks must refuse missing PEM
+        # material rather than fall back to plaintext.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-patroni-etcd-tls-test.sh
       - name: node-exporter-collectors package install test (T630)
         # The apt/nvme systemd drop-ins repoint ExecStart at
         # /usr/share/prometheus-node-exporter-collectors/{apt_info,
@@ -2451,6 +2521,11 @@ jobs:
         # Text only, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-readme-parity-test.sh
+      - name: ansible env-file secret guard self-test
+        # Every secret rendered unquoted into an /etc/default file that a
+        # shell may source must be in the preflight metacharacter guard.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-envfile-secret-guard-test.sh
       - name: ansible pubnet example checksum parity test (Q255)
         # r1/r2/r3.example.yml silently omitted minio_release_sha256 /
         # mc_release_sha256 / pgbackrest_exporter_release_sha256, unlike
@@ -2516,36 +2591,29 @@ jobs:
         run: python3 ./scripts/ci/lint-ansible-secret-diff.py
 
   branch-protection-status:
-    name: branch protection status (informational)
+    name: branch protection status
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Informational means informational: a flaked curl to the GitHub
-    # rules API must not take the whole push run red (it did on
-    # 2026-08-24, run 32751060492 — the only failed job on an
-    # otherwise-green squash).
-    continue-on-error: true
     # CID-01 (audit-2026-07-23): only meaningful on the branch itself —
     # a PR's merge-ref isn't "main", so this only runs on push-to-main.
     if: github.event_name == 'push'
     permissions: {}
     steps:
-      - name: Warn if main has no active branch-protection rules
+      - name: Fail if main has no active branch-protection rules
         # `GET /repos/<repo>/rules/branches/<branch>` is a PUBLIC,
         # unauthenticated GitHub API endpoint for a public repo — no
         # token or checkout needed, so this cannot be broken by a
-        # credential problem. Deliberately advisory (::warning::,
-        # never fails the build): ruleset configuration is a repo
-        # Setting nothing in this repo can change, and hard-failing
-        # every push to main over an org setting would just make main
-        # permanently red for everyone with merge rights rather than
-        # fix anything. See the CID-01 note on the `push:` trigger
-        # above for why the claim this replaces was wrong.
+        # credential problem. The retries absorb a transient API fault;
+        # a run that still cannot read the rules fails, because an
+        # unreadable ruleset is not evidence of a protected main.
+        env:
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          rules="$(curl -fsSL "https://api.github.com/repos/${{ github.repository }}/rules/branches/main")"
+          rules="$(curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 "https://api.github.com/repos/${REPO}/rules/branches/main")"
           count="$(printf '%s' "$rules" | jq 'length')"
           if [ "$count" -eq 0 ]; then
-            echo "::warning::main has ZERO active branch-protection rules right now (GET /repos/${{ github.repository }}/rules/branches/main returned []). Anyone with push access can force-push or delete main. Configure branch rulesets in repo Settings → Rules if this is unintentional."
-          else
-            echo "main has ${count} active branch-protection rule(s)."
+            echo "::error::main has ZERO active branch-protection rules (GET /repos/${REPO}/rules/branches/main returned []). Anyone with push access can force-push or delete main. Restore the ruleset in repo Settings → Rules."
+            exit 1
           fi
+          echo "main has ${count} active branch-protection rule(s)."

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -28,6 +29,21 @@ type VolumeBucket struct {
 	Hour       WireTime `json:"hour"`
 	VolumeUSD  string   `json:"volume_usd"`
 	TradeCount int64    `json:"trade_count"`
+}
+
+// parseSourcesInclude reads /v1/sources' `include`; either sparkline implies stats.
+func parseSourcesInclude(raw string) (stats, sparkline, sparkline7d bool) {
+	for _, f := range strings.Split(raw, ",") {
+		switch strings.TrimSpace(f) {
+		case "stats":
+			stats = true
+		case "sparkline":
+			sparkline, stats = true, true
+		case "sparkline7d":
+			sparkline7d, stats = true, true
+		}
+	}
+	return stats, sparkline, sparkline7d
 }
 
 // buildSourceVolumeHistory projects the per-(source, hour) raw buckets
@@ -105,6 +121,10 @@ type Source struct {
 	// feeds (CEX / FX / aggregators / Chainlink) don't appear as
 	// Stellar on-chain activity.
 	OnChain bool `json:"on_chain"`
+	// Selectable is true when `source=` accepts this name on the
+	// single-source routes: on-chain sources and CEX venues. False for
+	// data vendors, which those routes refuse with 400.
+	Selectable bool `json:"selectable"`
 	// Stats columns — populated only when `?include=stats` is set.
 	// 0 / "" when the source had no trades in 24h.
 	TradeCount24h   int64  `json:"trade_count_24h,omitempty"`
@@ -147,9 +167,18 @@ func sourceClassList() string {
 	return strings.Join(names, ", ")
 }
 
+// servesPubnetReference reports whether the compiled-in reference registries
+// (verified-currency catalogue, routers, off-chain feeds) describe this
+// network. They name pubnet identities only; an unknown network reads as
+// pubnet, as in sourcenet.Applicable.
+func (s *Server) servesPubnetReference() bool {
+	return s.network != sourcenet.Testnet && s.network != sourcenet.Futurenet
+}
+
 // handleSources serves GET /v1/sources.
 //
-// Returns the static external.Registry projected onto the wire
+// Returns the static external.Registry, scoped to the sources that exist
+// on the configured network (sourcenet.Applicable), projected onto the wire
 // shape, sorted by name for deterministic responses + cache-
 // friendliness behind a CDN. The whole catalogue is small enough
 // (~25 entries today) that pagination would be over-engineering.
@@ -181,26 +210,15 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 	// extra column pay the (cheap) DB hit, while everyone else
 	// keeps the all-static fast path. `include=stats,sparkline`
 	// additionally joins the per-hour 24h volume series.
-	includeFlags := strings.Split(r.URL.Query().Get("include"), ",")
-	includeStats, includeSparkline, includeSparkline7d := false, false, false
-	for _, f := range includeFlags {
-		switch strings.TrimSpace(f) {
-		case "stats":
-			includeStats = true
-		case "sparkline":
-			includeSparkline = true
-			includeStats = true // sparkline implies stats
-		case "sparkline7d":
-			includeSparkline7d = true
-			includeStats = true
-		}
-	}
+	includeStats, includeSparkline, includeSparkline7d := parseSourcesInclude(r.URL.Query().Get("include"))
 	type stats struct {
 		trades  int64
 		volume  string
 		markets int64
 	}
 	statsBySource := map[string]stats{}
+	// Any soft-failed read below ships a partial listing the next request fills.
+	partial := false
 	historyBySource := map[string][]VolumeBucket{}
 	history7dBySource := map[string][]VolumeBucket{}
 	if includeStats && s.sourcesStats != nil {
@@ -214,6 +232,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		cancel()
 		if err != nil {
 			s.logger.Warn("source stats", "err", err)
+			partial = true
 			// Soft-fail: serve the registry without stats.
 		} else {
 			for _, ss := range got {
@@ -236,6 +255,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		cancel()
 		if err != nil {
 			s.logger.Warn("source volume history", "err", err)
+			partial = true
 		} else {
 			historyBySource = buildSourceVolumeHistory(buckets, 24)
 		}
@@ -246,6 +266,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		cancel()
 		if err != nil {
 			s.logger.Warn("source volume history 7d", "err", err)
+			partial = true
 		} else {
 			history7dBySource = buildSourceVolumeHistory(buckets, 24*7)
 		}
@@ -256,6 +277,11 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		if classFilter != "" && string(md.Class) != classFilter {
 			continue
 		}
+		// The registry is compiled in for every network; a test net must
+		// not list pubnet-only venues it never ingests.
+		if ok, _ := sourcenet.Applicable(name, s.network); !ok {
+			continue
+		}
 		st := statsBySource[name]
 		out = append(out, Source{
 			Name:              name,
@@ -264,9 +290,10 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 			IncludeInVWAP:     md.IncludeInVWAP,
 			Paid:              md.Paid,
 			BackfillAvailable: md.BackfillAvailable,
-			BackfillSafe:      md.BackfillSafe,
+			BackfillSafe:      md.BackfillSafe(),
 			DefaultWeight:     md.DefaultWeight,
 			OnChain:           external.IsOnChain(name),
+			Selectable:        sourceSelectable(name),
 			TradeCount24h:     st.trades,
 			VolumeUSD24h:      st.volume,
 			MarketsCount24h:   st.markets,
@@ -275,5 +302,5 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	writeJSON(w, out, Flags{})
+	writeJSON(w, out, Flags{Degraded: partial})
 }

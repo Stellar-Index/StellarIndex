@@ -59,7 +59,7 @@ sudo -u postgres psql stellarindex -c \
 
 The worker runs one query — the trailing-24h base-OR-quote SUM over the
 `prices_1m` continuous aggregate — plus an upsert + prune, on a 2-minute
-cadence. It is the heavier of the two #43 rollups (it scans ~24h of
+cadence. It is the heavier of the two 24h rollups (78dff337b, e0fbbbc3b) (it scans ~24h of
 `prices_1m` across all pairs). A failure here with healthy `/v1/price`
 traffic almost always means the aggregator host lost Postgres
 reachability, or the served tier is under lock/IO pressure — check what
@@ -85,4 +85,4 @@ None known yet. The alert requires 30 min of continuous failures at a
 
 ## Changelog
 
-- 2026-07-06 — created with the asset-volume rollup (#43).
+- 2026-07-06 — created with the asset-volume rollup (e0fbbbc3b).

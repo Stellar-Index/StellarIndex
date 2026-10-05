@@ -322,8 +322,8 @@ func ExampleClient_Status() {
 	fmt.Printf("%s — p95=%.2fms, %d/%d sources active\n",
 		got.Data.Overall,
 		got.Data.Latency.P95Ms,
-		got.Data.Freshness.ActiveSources,
-		got.Data.Freshness.TotalSources)
+		*got.Data.Freshness.ActiveSources,
+		*got.Data.Freshness.TotalSources)
 
 	// Output: ok — p95=3.85ms, 13/17 sources active
 }
@@ -632,7 +632,11 @@ func ExampleClient_Observations() {
 		return
 	}
 	for _, row := range got.Data {
-		fmt.Printf("%s @ %s: %s\n", row.Source, row.Timestamp.Format("15:04:05Z"), row.Price)
+		price := "no price" // a zero-leg fill has a null price
+		if row.Price != nil {
+			price = *row.Price
+		}
+		fmt.Printf("%s @ %s: %s\n", row.Source, row.Timestamp.Format("15:04:05Z"), price)
 	}
 
 	// Output:
@@ -876,13 +880,11 @@ func ExampleClient_CreateKey() {
 // "un-revoke"; a new key has to be issued via CreateKey.
 //
 // keyID is the public ID returned in KeyCreated.KeyID / on each
-// row of Keys — NOT the plaintext secret. Returning the secret
-// would 400 since the route validates the path segment as a
-// key ID, not a plaintext.
+// row of Keys — NOT the plaintext secret. An unknown, already-revoked
+// or foreign key ID, and a plaintext secret, all return nil (204).
 //
-// Returns nil on success (server returns 204 No Content);
-// *APIError when the server rejects (401 = no auth, 403 =
-// caller doesn't own the key, 404 = key not found).
+// Returns *APIError for 400 (operator caller without X-Reason), 401,
+// 409 and 503; see [Client.RevokeKey].
 func ExampleClient_RevokeKey() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -1117,8 +1119,11 @@ func ExampleClient_History() {
 		return
 	}
 	for _, t := range got.Data {
+		if t.Price == nil { // a zero-leg fill has no price
+			continue
+		}
 		fmt.Printf("%s %s @ %s\n",
-			t.Source, t.Timestamp.Format("15:04:05"), t.Price)
+			t.Source, t.Timestamp.Format("15:04:05"), *t.Price)
 	}
 
 	// Output:

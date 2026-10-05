@@ -180,11 +180,8 @@ Capture for the postmortem:
 - `redis-write-blocked-disk-full.md` — the Redis cache-write
   failure class.
 - Sibling alerts `stellarindex_price_divergence_warning` /
-  `_critical` are **INERT** — nothing produces
-  `stellarindex_our_price` / `stellarindex_reference_price` as
-  Prometheus metrics (values live in Postgres + Redis; tracked in
-  `scripts/ci/lint-metric-refs.sh`'s `KNOWN_INERT` list). This
-  alert is the LIVE Prometheus signal for the divergence worker.
+  `_critical` are live: they evaluate
+  `stellarindex_divergence_max_abs_fraction`. See `price-divergence.md`.
 
 ## Changelog
 
@@ -213,4 +210,4 @@ Capture for the postmortem:
   INERT (KNOWN_INERT, no producer); `divergence-no-reference.md`
   added (no_reference outcome invisible to this alert).
 - 2026-05-02 — initial draft alongside the divergence-refresh
-  wiring (#429).
+  wiring (774df6284).

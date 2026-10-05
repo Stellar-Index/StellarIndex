@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
@@ -207,7 +208,7 @@ var gatedSources = map[string]GatedMeta{
 		// stay declared — they gate the factory's own create/n_fee events.
 		Factories:   defindex.MainnetFactories,
 		CreationSym: "create",
-		Genesis:     55_484_403, // earliest factory create event (CAVP2QLP…)
+		Genesis:     defindex.GenesisLedger,
 		CuratedSet:  defindex.MainnetGatedSet(),
 		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return defindex.NewDecoder(opts...) },
 	},
@@ -387,6 +388,11 @@ func gatedRegistryOptions(
 	withHook bool,
 ) (map[string][]contractid.Option, error) {
 	out := make(map[string][]contractid.Option, len(gatedSources))
+	sushiOpts, err := sushiswapPoolOptions(ctx, store, logger, hookCtx, withHook)
+	if err != nil {
+		return nil, err
+	}
+	extra := map[string][]contractid.Option{sushiswap_v3.SourceName: sushiOpts}
 	for source, meta := range gatedSources {
 		ids, err := store.LoadProtocolContracts(ctx, source)
 		if err != nil {
@@ -448,7 +454,68 @@ func gatedRegistryOptions(
 				"remedy", "stellarindex-ops seed-protocol-contracts -source "+source)
 		}
 
+		opts = append(opts, extra[source]...)
+
 		out[source] = opts
 	}
 	return out, nil
+}
+
+// sushiswapPoolStore is the sushiswap_v3_pools seam; *timescale.Store
+// implements it. Optional: a store without it (unit doubles) keeps the
+// protocol_contracts-only warm.
+type sushiswapPoolStore interface {
+	LoadSushiswapV3Pools(ctx context.Context) ([]timescale.SushiswapV3Pool, error)
+	UpsertSushiswapV3Pool(ctx context.Context, p timescale.SushiswapV3Pool) error
+}
+
+// sushiswapPoolOptions seeds the decoder's pool→token map from
+// sushiswap_v3_pools and, on the indexer path, persists each observed
+// pool_created so a pool admitted later keeps its token identities.
+func sushiswapPoolOptions(
+	ctx context.Context,
+	store protocolContractStore,
+	logger *slog.Logger,
+	hookCtx context.Context,
+	withHook bool,
+) ([]contractid.Option, error) {
+	ps, ok := store.(sushiswapPoolStore)
+	if !ok {
+		return nil, nil
+	}
+	rows, err := ps.LoadSushiswapV3Pools(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("gated registry warm %s pools: %w", sushiswap_v3.SourceName, err)
+	}
+	seed := make(map[string]contractid.Attrs, len(rows))
+	for _, r := range rows {
+		seed[r.PoolID] = contractid.Attrs{
+			sushiswap_v3.AttrToken0: r.Token0,
+			sushiswap_v3.AttrToken1: r.Token1,
+		}
+	}
+	logger.Info("sushiswap_v3 pool table loaded", "pools", len(seed))
+	opts := []contractid.Option{contractid.WithAttrSeed(seed)}
+	if withHook {
+		opts = append(opts, contractid.WithAttrHook(func(pool, factoryID string, ledger uint32, a contractid.Attrs) {
+			fee, ferr := strconv.ParseInt(a[sushiswap_v3.AttrFeePips], 10, 32)
+			tick, terr := strconv.ParseInt(a[sushiswap_v3.AttrTickSpacing], 10, 32)
+			if ferr != nil || terr != nil {
+				logger.Warn("sushiswap_v3_pools upsert skipped: unparseable fee/tick",
+					"pool", pool, "ledger", ledger, "fee_err", ferr, "tick_err", terr)
+				return
+			}
+			hookTimeout, cancel := context.WithTimeout(hookCtx, upsertHookTimeout)
+			defer cancel()
+			if err := ps.UpsertSushiswapV3Pool(hookTimeout, timescale.SushiswapV3Pool{
+				PoolID: pool, FactoryID: factoryID,
+				Token0: a[sushiswap_v3.AttrToken0], Token1: a[sushiswap_v3.AttrToken1],
+				FeePips: int32(fee), TickSpacing: int32(tick), CreationLedger: ledger,
+			}); err != nil {
+				logger.Warn("sushiswap_v3_pools upsert (live pool_created)",
+					"pool", pool, "factory", factoryID, "ledger", ledger, "err", err)
+			}
+		}))
+	}
+	return opts, nil
 }

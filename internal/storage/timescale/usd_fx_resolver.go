@@ -79,6 +79,15 @@ type VWAPUSDFXResolver struct {
 	// processes that write `usd_volume`.
 	pegForms []string
 
+	// pegAssets and xlmForms are the quote spelling sets the direct and the
+	// bridged market are measured over by [VWAPUSDFXResolver.substanceAllows].
+	pegAssets []canonical.Asset
+	xlmForms  []canonical.Asset
+
+	// substanceGate holds a rate for a classic or Soroban asset to the
+	// published-price substance floor of the market it came from.
+	substanceGate bool
+
 	// freshness is the maximum allowable (now - VWAP timestamp).
 	// Entries older than this return ok=false rather than letting
 	// a stale rate land in a fresh trade's usd_volume.
@@ -186,6 +195,10 @@ type VWAPUSDFXResolverOptions struct {
 	// CacheTTL bounds the in-memory cache. Default 5 min.
 	CacheTTL time.Duration
 
+	// DisableSubstanceGate skips [VWAPUSDFXResolver.substanceAllows], for
+	// tests that isolate the rate lookup itself. Production wiring never sets it.
+	DisableSubstanceGate bool
+
 	// Clock is the time source. Override in tests.
 	Clock func() time.Time
 }
@@ -226,10 +239,25 @@ func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSD
 	if err != nil {
 		return nil, err
 	}
+	// An unparseable peg form names no canonical asset, so it cannot hold
+	// a market to measure; with none left the direct market fails the gate.
+	pegAssets := make([]canonical.Asset, 0, len(pegForms))
+	for _, form := range pegForms {
+		if a, perr := canonical.ParseAsset(form); perr == nil {
+			pegAssets = append(pegAssets, a)
+		}
+	}
+	xlmSAC, err := canonical.NewSorobanAsset(nativeXLMSAC)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: VWAPUSDFXResolver: XLM SAC: %w", err)
+	}
 	return &VWAPUSDFXResolver{
 		store:           store,
 		usdPegs:         pegs,
 		pegForms:        pegForms,
+		pegAssets:       pegAssets,
+		xlmForms:        []canonical.Asset{canonical.NativeAsset(), xlmSAC},
+		substanceGate:   !opts.DisableSubstanceGate,
 		freshness:       opts.Freshness,
 		bridgeFreshness: opts.BridgeFreshness,
 		cacheTTL:        opts.CacheTTL,
@@ -310,6 +338,8 @@ func usdPegForms(classicPegs []string, sacWrappers map[string]string) ([]string,
 //   - no peg query returned a row (asset isn't traded against any
 //     covered peg in the lookup window)
 //   - the most-recent matching row is older than Freshness
+//   - the market the rate came from is below the substance floor at
+//     the trade's time ([VWAPUSDFXResolver.substanceAllows])
 //   - the resolver has no pegs configured
 //
 // Real DB errors propagate so the caller can surface them via
@@ -337,26 +367,9 @@ func (r *VWAPUSDFXResolver) USDPriceAt(ctx context.Context, asset canonical.Asse
 		return rate, true, nil
 	}
 
-	rate, observedAt, err := r.queryDB(ctx, asset, at)
+	rate, err := r.resolveRate(ctx, asset, at)
 	if err != nil {
 		return "", false, err
-	}
-	if rate != "" && !r.fresh(observedAt, at, r.freshness) {
-		// Direct market exists but its most recent VWAP is too old to
-		// price this trade. Discard it and let the bridge try — a
-		// current XLM-routed rate beats a stale direct one, and before
-		// tier 3b existed this simply returned NULL.
-		rate = ""
-	}
-	if rate == "" {
-		// Tier 3b — no usable direct <asset>/<peg> rate. Most Stellar
-		// tokens route their liquidity through XLM rather than a
-		// stablecoin, so try <asset>/XLM x XLM/USD before giving up.
-		// The bridge enforces its own (wider) freshness internally.
-		rate, err = r.bridgeViaXLM(ctx, asset, at)
-		if err != nil {
-			return "", false, err
-		}
 	}
 	if rate == "" {
 		r.storeCache(key, fxCacheEntry{rate: "", cachedAt: r.clock()})
@@ -373,6 +386,147 @@ func (r *VWAPUSDFXResolver) USDPriceAt(ctx context.Context, asset canonical.Asse
 	rate = trimNumericText(rate)
 	r.storeCache(key, fxCacheEntry{rate: rate, cachedAt: r.clock()})
 	return rate, true, nil
+}
+
+// resolveRate runs tiers 3a and 3b for a non-fiat asset and returns the
+// first rate whose market clears [VWAPUSDFXResolver.substanceAllows], or
+// "" when neither does.
+func (r *VWAPUSDFXResolver) resolveRate(ctx context.Context, asset canonical.Asset, at time.Time) (string, error) {
+	rate, observedAt, err := r.queryDB(ctx, asset, at)
+	if err != nil {
+		return "", err
+	}
+	if rate != "" && !r.fresh(observedAt, at, r.freshness) {
+		// Direct market exists but its most recent VWAP is too old to
+		// price this trade. Discard it and let the bridge try — a
+		// current XLM-routed rate beats a stale direct one, and before
+		// tier 3b existed this simply returned NULL.
+		rate = ""
+	}
+	if rate != "" {
+		ok, err := r.substanceAllows(ctx, asset, r.pegAssets, "direct", at)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return rate, nil
+		}
+	}
+	// Tier 3b — no usable direct <asset>/<peg> rate. Most Stellar
+	// tokens route their liquidity through XLM rather than a
+	// stablecoin, so try <asset>/XLM x XLM/USD before giving up.
+	// The bridge enforces its own (wider) freshness internally.
+	rate, err = r.bridgeViaXLM(ctx, asset, at)
+	if err != nil || rate == "" {
+		return "", err
+	}
+	ok, err := r.substanceAllows(ctx, asset, r.xlmForms, "xlm", at)
+	if err != nil || !ok {
+		return "", err
+	}
+	return rate, nil
+}
+
+// ThinMarketRefused reports whether asset had a candidate rate at `at` that
+// the substance gate refused and none it allowed, read from the verdicts the
+// last USDPriceAt call cached (no query). It only relabels coverage metrics;
+// usd_volume stays NULL either way.
+func (r *VWAPUSDFXResolver) ThinMarketRefused(asset canonical.Asset, at time.Time) bool {
+	if !r.substanceGate || isXLMAsset(asset) {
+		return false
+	}
+	asOf := at.UTC().Truncate(time.Hour).UnixMilli()
+	refused := false
+	for _, market := range []string{"direct", "xlm"} {
+		verdict, ok := r.lookupCache(fxCacheKey{asset: "substance:" + market + ":" + asset.String(), bucketMs: asOf})
+		if !ok {
+			continue
+		}
+		if verdict != "" {
+			return false
+		}
+		refused = true
+	}
+	return refused
+}
+
+// ─── the substance gate ──────────────────────────────────────────────
+
+// The valuation substance floor: pricingguard's default serve floor,
+// mirrored here because pricingguard imports this package. Lockstep with
+// pricingguard's own verdict is pinned by
+// TestValuationSubstanceOK_MatchesThePublishedPriceGate.
+const (
+	valuationSubstanceMinVolumeUSD = 1000           // pricingguard.DefaultSubstanceMinVolumeUSD
+	valuationSubstanceMinBuckets   = 20             // pricingguard.DefaultSubstanceMinBuckets
+	valuationSubstanceMinSpan      = 6 * time.Hour  // pricingguard.DefaultSubstanceMinSpan
+	valuationSubstanceWindow       = 24 * time.Hour // pricingguard.DefaultSubstanceWindow
+	// valuationSubstanceMinHourBuckets is pricingguard's hourGrainPolicy
+	// of the minute floor: ceil(20/60) raised to 2 by the 6h span.
+	valuationSubstanceMinHourBuckets = 2
+)
+
+// valuationSubstanceGrain is pricingguard's policyAt: minute grain while
+// prices_1m is guaranteed to hold the window, hour grain beyond.
+func valuationSubstanceGrain(age time.Duration) HistoryGranularity {
+	if age <= PriceAtMinuteRungMaxAge {
+		return Granularity1m
+	}
+	return Granularity1h
+}
+
+// valuationSubstanceOK reports whether a market measured at grain g
+// clears the valuation substance floor. Volume compares exactly (ADR-0003).
+func valuationSubstanceOK(sub MarketSubstance, g HistoryGranularity) bool {
+	minBuckets := int64(valuationSubstanceMinBuckets)
+	if g == Granularity1h {
+		minBuckets = valuationSubstanceMinHourBuckets
+	}
+	if sub.Buckets < minBuckets || time.Duration(sub.SpanSeconds)*time.Second < valuationSubstanceMinSpan {
+		return false
+	}
+	vol, ok := new(big.Rat).SetString(sub.VolumeUSD)
+	return ok && vol.Cmp(big.NewRat(valuationSubstanceMinVolumeUSD, 1)) >= 0
+}
+
+// substanceAllows reports whether the market a classic or Soroban asset's
+// rate came from — every spelling of `asset` against `quotes` — cleared
+// the published-price substance floor over the window ending at the
+// trade's hour. Without it, a market whose only trades are two wallets
+// swapping cents sets a rate that values every trade quoted in the asset,
+// however large. XLM and off-chain assets are anchors, not gated here.
+//
+// The window ends at the hour so one verdict per (market, asset, hour)
+// serves every trade in it from the rate cache; it uses only buckets that
+// closed before the trade. Measurement errors propagate uncached.
+func (r *VWAPUSDFXResolver) substanceAllows(
+	ctx context.Context, asset canonical.Asset, quotes []canonical.Asset, market string, at time.Time,
+) (bool, error) {
+	if !r.substanceGate || isXLMAsset(asset) ||
+		(asset.Type != canonical.AssetClassic && asset.Type != canonical.AssetSoroban) {
+		return true, nil
+	}
+	if len(quotes) == 0 {
+		return false, nil
+	}
+	asOf := at.UTC().Truncate(time.Hour)
+	key := fxCacheKey{asset: "substance:" + market + ":" + asset.String(), bucketMs: asOf.UnixMilli()}
+	if verdict, ok := r.lookupCache(key); ok {
+		return verdict != "", nil
+	}
+	grain := valuationSubstanceGrain(r.clock().Sub(asOf))
+	sub, err := r.store.PairMarketSubstanceAt(
+		ctx, canonical.AssetAliases(asset), quotes, asOf, valuationSubstanceWindow, grain)
+	if err != nil {
+		return false, err
+	}
+	ok := valuationSubstanceOK(sub, grain)
+	verdict := ""
+	if ok {
+		verdict = "1"
+	}
+	r.storeCache(key, fxCacheEntry{rate: verdict, cachedAt: r.clock()})
+	return ok, nil
 }
 
 // fiatUSDRateScale is the decimal scale used to render a fiat→USD
@@ -718,37 +872,7 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 		            AND bucket     >= $5`
 		args = append(args, at.UTC().Add(-r.bridgeFreshness))
 	}
-	// Each UNION branch is parenthesised: Postgres rejects a bare
-	// ORDER BY/LIMIT inside an unparenthesised union arm. The per-arm
-	// LIMIT 1 is what keeps this cheap — each side is an index-ordered
-	// walk that stops at its first qualifying bucket.
-	q := fmt.Sprintf(`
-		SELECT bucket, vwap::text, inverted
-		  FROM (
-		        (SELECT bucket, vwap, false AS inverted
-		           FROM prices_1m
-		          WHERE base_asset  = $1
-		            AND quote_asset = ANY($2)
-		            AND bucket     <= $3
-		            AND volume_usd >= $4::numeric
-		            AND vwap        > 0%[1]s
-		          ORDER BY bucket DESC
-		          LIMIT 1)
-		        UNION ALL
-		        (SELECT bucket, vwap, true AS inverted
-		           FROM prices_1m
-		          WHERE base_asset  = ANY($2)
-		            AND quote_asset = $1
-		            AND bucket     <= $3
-		            AND volume_usd >= $4::numeric
-		            AND vwap        > 0%[1]s
-		          ORDER BY bucket DESC
-		          LIMIT 1)
-		       ) legs
-		 ORDER BY bucket DESC
-		 LIMIT 1
-	`, lowerBound)
-	row := r.store.db.QueryRowContext(ctx, q, args...)
+	row := r.store.db.QueryRowContext(ctx, xlmLegQuery(lowerBound), args...)
 	var (
 		bucket   time.Time
 		vwapText string
@@ -765,6 +889,41 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 		return nil, nil
 	}
 	return vwap, nil
+}
+
+// xlmLegQuery is queryXLMLeg's SQL. Each UNION branch is parenthesised:
+// Postgres rejects a bare ORDER BY/LIMIT inside an unparenthesised union
+// arm. The per-arm LIMIT 1 keeps it cheap, an index-ordered walk that
+// stops at its first qualifying bucket. Ties on a bucket (both XLM forms
+// in one arm, or both arms) resolve to the form listed first in $2, then
+// to the stored-as-(asset, XLM) arm, never to scan order.
+func xlmLegQuery(lowerBound string) string {
+	return fmt.Sprintf(`
+		SELECT bucket, vwap::text, inverted
+		  FROM (
+		        (SELECT bucket, vwap, false AS inverted
+		           FROM prices_1m
+		          WHERE base_asset  = $1
+		            AND quote_asset = ANY($2)
+		            AND bucket     <= $3
+		            AND volume_usd >= $4::numeric
+		            AND vwap        > 0%[1]s
+		          ORDER BY bucket DESC, array_position($2::text[], quote_asset)
+		          LIMIT 1)
+		        UNION ALL
+		        (SELECT bucket, vwap, true AS inverted
+		           FROM prices_1m
+		          WHERE base_asset  = ANY($2)
+		            AND quote_asset = $1
+		            AND bucket     <= $3
+		            AND volume_usd >= $4::numeric
+		            AND vwap        > 0%[1]s
+		          ORDER BY bucket DESC, array_position($2::text[], base_asset)
+		          LIMIT 1)
+		       ) legs
+		 ORDER BY bucket DESC, inverted
+		 LIMIT 1
+	`, lowerBound)
 }
 
 // ─── tier 3a: the direct <asset>/<peg> market ────────────────────────
@@ -907,14 +1066,6 @@ func (r *VWAPUSDFXResolver) queryDB(ctx context.Context, asset canonical.Asset, 
 // lets TimescaleDB prune to the freshness window's chunks. When
 // freshness is disabled (0) we keep the unbounded scan.
 func (r *VWAPUSDFXResolver) queryDirectLeg(ctx context.Context, asset canonical.Asset, at time.Time) (string, time.Time, error) {
-	q := fmt.Sprintf(`
-		SELECT bucket, vwap::text
-		  FROM prices_1m
-		 WHERE base_asset  = $1
-		   AND quote_asset = ANY($2)
-		   AND bucket     <= $3
-		   AND vwap        > 0
-		   AND vwap * volume_priced / %d::numeric >= $4::numeric`, pegQuoteScaleDenominator)
 	args := []any{
 		asset.String(),
 		r.pegForms,
@@ -922,15 +1073,9 @@ func (r *VWAPUSDFXResolver) queryDirectLeg(ctx context.Context, asset canonical.
 		directLegMinQuoteVolume,
 	}
 	if r.freshness > 0 {
-		q += `
-		   AND bucket     >= $5`
 		args = append(args, at.UTC().Add(-r.freshness))
 	}
-	q += `
-		 ORDER BY bucket DESC
-		 LIMIT 1
-	`
-	row := r.store.db.QueryRowContext(ctx, q, args...)
+	row := r.store.db.QueryRowContext(ctx, directLegQuery(r.freshness > 0), args...)
 	var (
 		bucket time.Time
 		vwap   string
@@ -942,6 +1087,28 @@ func (r *VWAPUSDFXResolver) queryDirectLeg(ctx context.Context, asset canonical.
 		return "", time.Time{}, fmt.Errorf("timescale: VWAPUSDFXResolver query: %w", err)
 	}
 	return vwap, bucket, nil
+}
+
+// directLegQuery is queryDirectLeg's SQL; bounded adds the `$5` freshness
+// floor. Two peg forms printing in one bucket resolve to the form listed
+// first in $2 (classic before SAC), never to scan order.
+func directLegQuery(bounded bool) string {
+	q := fmt.Sprintf(`
+		SELECT bucket, vwap::text
+		  FROM prices_1m
+		 WHERE base_asset  = $1
+		   AND quote_asset = ANY($2)
+		   AND bucket     <= $3
+		   AND vwap        > 0
+		   AND vwap * volume_priced / %d::numeric >= $4::numeric`, pegQuoteScaleDenominator)
+	if bounded {
+		q += `
+		   AND bucket     >= $5`
+	}
+	return q + `
+		 ORDER BY bucket DESC, array_position($2::text[], quote_asset)
+		 LIMIT 1
+	`
 }
 
 // InstallUSDVolumeResolution wires BOTH `usd_volume` resolution tiers

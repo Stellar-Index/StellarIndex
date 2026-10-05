@@ -11,10 +11,10 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Trigger | Per-source projection is stale or missing rows for a known ledger range (e.g. post-decoder-fix re-walk). Also the runbook for `stellarindex_projector_replay_stalled` — a replay STARTED here that has stopped advancing. |
+| Trigger | Per-source projection is stale or missing rows for a known ledger range (e.g. an outage gap; a post-decoder-fix re-walk over rows a re-derive already stamped needs `projected-rebuild -write`). Also the runbook for `stellarindex_projector_replay_stalled` — a replay STARTED here that has stopped advancing. |
 | Tool | `stellarindex-ops projector-replay -source <name> -from <ledger> -write` (fail-closed: no `-write` = dry run) |
 | Typical wall time | The rewind is ≤ 5 s of SQL, but the command does **not** return then: by default it blocks until the projector has re-walked the range (≈ 1 min per 100k ledgers per source, bounded by `-wait-timeout`, default 30 min) and then re-materializes the seven `prices_*` continuous aggregates over it (its context allows a further 30 min). Run it under `tmux`/`screen`, not a bare ssh session. `-wait=false` or `-refresh-caggs=false` restore the old return-immediately behaviour and hand the refresh to you — see [After the rewind](#after-the-rewind-the-command-waits-then-refreshes-the-price-caggs). |
-| Impact | Data-safe, not load-free. The rewind only moves a cursor and the projector tails `soroban_events` (ADR-0029); `ON CONFLICT DO NOTHING` makes re-writes idempotent. The load is what follows: the projector re-walks the range (see the decompress-first pre-flight below — a replay through compressed chunks livelocks), and the post-replay refresh runs seven `refresh_continuous_aggregate` calls over the replayed time range. Each is padded to its view's minimum window (up to ~93 days for `prices_1mo`), reads `trades`, and can contend with that view's own refresh policy (Timescale rejects the loser with 55P03; the store retries within a bound). |
+| Impact | Data-safe, not load-free. The rewind only moves a cursor and the projector tails `soroban_events` (ADR-0029); the per-source writers' generation-guarded upsert makes re-writes idempotent. The load is what follows: the projector re-walks the range (see the decompress-first pre-flight below — a replay through compressed chunks livelocks), and the post-replay refresh runs seven `refresh_continuous_aggregate` calls over the replayed time range. Each is padded to its view's minimum window (up to ~93 days for `prices_1mo`), reads `trades`, and can contend with that view's own refresh policy (Timescale rejects the loser with 55P03; the store retries within a bound). |
 
 ## Before you start: is this the right tool?
 
@@ -32,6 +32,24 @@ concurrently against overlapping history for the same source).
 `projected-rebuild` exits non-zero when a run held any window
 (un-checkpointed after failed inserts — re-run to retry it) or
 permanently dropped any trade; the summary it prints says which.
+
+This holds for a migration's follow-up too: one
+written as `projector-replay -source X -from N` (0137, 0164, 0203)
+goes through `projected-rebuild` when `N` is more than about 1M ledgers
+behind the tip.
+
+`projected-rebuild -resume` (the default) skips every window that has a
+checkpoint (`ingestion_cursors`, `source = 'projected-rebuild'`,
+`sub_source = 'X:<from>-<to>'`) without checking that the table still
+holds its rows. A migration that empties a projected table therefore
+deletes that source's checkpoints in the same file (0206 did it for
+comet, cctp, rozo and sushiswap_v3; `lint-migrations.sh` pass 10
+enforces it). Do not
+run a `projected-rebuild` for that source while the migration applies:
+a window it checkpoints before the `DELETE` is skipped afterwards. If a
+table is empty over a range its checkpoints claim, delete that source's
+`projected-rebuild` rows from `ingestion_cursors` by hand, in the shape
+of 0206's `DELETE`, then re-run.
 
 ## Why this exists
 
@@ -54,8 +72,11 @@ rewind and writes nothing (pass `-write` to actually rewind the cursor).
 The projector goroutine in `stellarindex-indexer` is already
 tailing `soroban_events`; rewinding the per-source cursor makes it
 re-project the requested window on its next cycle (≤ 5 s
-projector interval). Per-source tables use ON CONFLICT DO NOTHING
-so re-writes are idempotent.
+projector interval). Per-source writers upsert guarded by
+`derive_generation <= EXCLUDED.derive_generation`, and the projector
+writes at generation 0: a replay re-writes gen-0 rows but cannot
+correct a row a re-derive (`projected-rebuild`, `ch-rebuild`) already
+stamped higher. Correct those with `projected-rebuild -write`.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -284,6 +305,9 @@ sink-side adaptive shrink converges the window automatically.
 
 ## Changelog
 
+- 2026-10-04 — INV-1848: a migration follow-up over ~1M ledgers goes
+  through `projected-rebuild`; an emptying migration clears its
+  source's rebuild checkpoints, and none may run while it applies.
 - 2026-09-18 — K006: the command no longer returns at the rewind. It
   waits for the projector to re-walk the range, then re-materializes the
   seven `prices_*` aggregates over it; `-wait`, `-refresh-caggs` and

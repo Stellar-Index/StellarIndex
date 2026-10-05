@@ -73,9 +73,12 @@ poller_test.go     — ABI decode + fixture tests
 
 ## Phase B follow-ups
 
-1. **Auto-discover all 516 ETH-mainnet feeds.** Today the operator
-   curates `feed_map`; v2 walks the official Chainlink registry
-   contract (or the published JSON catalogue) and auto-populates.
+1. **Auto-discovery of the ETH-mainnet feed catalogue — not planned.**
+   `feed_map` stays operator-curated: each feed is mapped by hand to a
+   canonical asset identity, because registry and catalogue entries are
+   tickers or ERC-20 addresses. Auto-mapping those is the code-alone
+   identity trap and would fill a curated trust surface from an
+   external catalogue. Only the Stellar-relevant feeds are in scope.
 2. **WebSocket subscription** (`eth_subscribe('logs', ...)`) instead of
    poll. Drops live RPC cost ~500x. Needs WSS endpoint + connection
    management. Most Alchemy plans cap free WSS subscriptions at 5;

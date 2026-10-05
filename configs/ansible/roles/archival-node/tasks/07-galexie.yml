@@ -456,7 +456,7 @@
     group: root
     mode: "0755"
 
-- name: Template /etc/default/galexie-archive-fill (hot floor)
+- name: Template /etc/default/galexie-archive-fill (hot floor, mc aliases)
   # Sourced by the fill script at run time. The floor tells the mirror
   # which partitions are trimmed ON PURPOSE (cold tier serves them) so
   # it stops treating them as missing — without it, trim and fill are
@@ -472,6 +472,14 @@
     mode: "0644"
     content: |
       ARCHIVE_HOT_FLOOR={{ stellarindex_archive_hot_floor }}
+      # Sourced by the script, never by systemd. Reads and the mirror go
+      # through the no-delete writer; only an operator run with PARTIALS=...
+      # deletes, as root on the same bucket. An operator-set ARCHIVE_DEST
+      # (another store) keeps its own alias for both.
+      if [ -z "${ARCHIVE_DEST:-}" ]; then
+        ARCHIVE_DEST=archivewriter/galexie-archive
+        ARCHIVE_DELETE_ALIAS="${ARCHIVE_DELETE_ALIAS:-local}"
+      fi
   tags: [galexie, archive-fill]
   when: (stellar_network | default('pubnet')) == 'pubnet'
 
@@ -498,8 +506,8 @@
     mode: "0755"
   when: (stellar_network | default('pubnet')) == 'pubnet'
 
-- name: Install galexie-archive-tip-lag metric updater (#31)
-  # Defense-in-depth for #26 — writes a Prometheus textfile gauge of
+- name: Install galexie-archive-tip-lag metric updater (538d0e752)
+  # Defense-in-depth for the 23-day archive stall — writes a Prometheus textfile gauge of
   # the ledger lag between galexie-live and galexie-archive. The
   # accompanying alert pages within hours if the hourly catch-up
   # timer silently breaks (the failure class that caused the 23-day
@@ -638,7 +646,7 @@
     # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
     - not (ansible_check_mode and galexie_unit is changed)
 
-# #26 standing fix: schedule the hardened galexie-archive-fill so the
+# Standing fix (f12289f6d): schedule the hardened galexie-archive-fill so the
 # durable full-mirror (ADR-0016) can never silently fall ~23 days
 # behind again. The script already existed and was installed; it was
 # only ever run by hand. Hourly timer → a stall is repaired within
@@ -701,8 +709,8 @@
       changed_when: false
       failed_when: false
 
-# #31 defense-in-depth: tip-lag textfile metric + alert. Pages
-# within hours if the #26 hourly catch-up timer silently breaks.
+# 538d0e752 defense-in-depth: tip-lag textfile metric + alert. Pages
+# within hours if the hourly catch-up timer silently breaks.
 - name: Install galexie-archive-tip-lag systemd service + timer
   ansible.builtin.template:
     src: "systemd/{{ item }}.j2"

@@ -16,22 +16,22 @@ dated-md docs/operations/wash-and-scam-signals-design-2026-08-25.md
 dated-md docs/operations/wasm-audits/evidence/blend_emitter/shape-verification-2026-07-10.md
 dated-md docs/operations/wasm-audits/r1-walk-2026-05-01.md
 dated-md docs/operations/wasm-audits/walker-investigation-2026-05-01.md
-go-lines cmd/stellarindex-aggregator/main.go 2998
-go-lines cmd/stellarindex-api/main.go 6147
-go-lines cmd/stellarindex-indexer/main.go 2753
-go-lines internal/aggregate/orchestrator/orchestrator.go 2750
-go-lines internal/api/v1/assets.go 5224
-go-lines internal/api/v1/chart.go 2260
-go-lines internal/api/v1/price.go 3491
-go-lines internal/api/v1/rwa.go 2628
-go-lines internal/api/v1/server.go 3613
-go-lines internal/config/config.go 2448
-go-lines internal/dispatcher/dispatcher.go 2168
-go-lines internal/obs/metrics.go 5755
-go-lines internal/ops/chops/compute_completeness.go 2582
-go-lines internal/pipeline/sink.go 2601
-go-lines internal/storage/clickhouse/explorer_reader.go 2916
-go-lines internal/storage/timescale/aggregates.go 2631
-go-lines internal/storage/timescale/asset_catalogue.go 2409
-go-lines internal/storage/timescale/trades.go 2535
-go-lines pkg/client/types.go 2240
+go-lines cmd/stellarindex-aggregator/main.go 3012
+go-lines cmd/stellarindex-api/main.go 6129
+go-lines cmd/stellarindex-indexer/main.go 2894
+go-lines internal/aggregate/orchestrator/orchestrator.go 2877
+go-lines internal/api/v1/assets.go 5444
+go-lines internal/api/v1/chart.go 2420
+go-lines internal/api/v1/price.go 3927
+go-lines internal/api/v1/rwa.go 2688
+go-lines internal/api/v1/server.go 3639
+go-lines internal/config/config.go 2494
+go-lines internal/dispatcher/dispatcher.go 2234
+go-lines internal/obs/metrics.go 5981
+go-lines internal/ops/chops/compute_completeness.go 2818
+go-lines internal/pipeline/sink.go 2684
+go-lines internal/storage/clickhouse/explorer_reader.go 3145
+go-lines internal/storage/timescale/aggregates.go 2644
+go-lines internal/storage/timescale/asset_catalogue.go 2414
+go-lines internal/storage/timescale/trades.go 2728
+go-lines pkg/client/types.go 2487

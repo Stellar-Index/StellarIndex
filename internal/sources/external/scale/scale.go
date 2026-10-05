@@ -136,8 +136,8 @@ func SciDecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error)
 // the true value and never above it. Unlike ordinary rounding error
 // that averages out, a truncation bias is systematic and one-signed:
 // it accumulates in the same direction across every poll of every
-// inverted pair, on both FX venues that call this (ECB and
-// exchangeratesapi). At DefaultDecimals the per-rate
+// inverted pair, on every venue that calls this (ECB,
+// exchangeratesapi and Chainlink). At DefaultDecimals the per-rate
 // error is at most 1 ulp, so this is a small bias rather than a
 // visible mispricing — but it is a free correction and a biased
 // estimator has no business in the money path (ADR-0003: exact
@@ -245,4 +245,12 @@ func CandleTxHash(symbol string, closeTs int64, granularity time.Duration) (stri
 	}
 	sum := sha256.Sum256(fmt.Appendf(nil, "%s-BF-%s-%020d", symbol, granularity, closeTs))
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// CandleClosed reports whether a backfilled candle whose bucket ends
+// (exclusive) at end may be emitted for a window ending at to. A candle
+// still open at now carries partial volume, and one ending past to would
+// be stamped outside the window the caller checks for overlap.
+func CandleClosed(end, to, now time.Time) bool {
+	return !end.After(to) && !end.After(now)
 }

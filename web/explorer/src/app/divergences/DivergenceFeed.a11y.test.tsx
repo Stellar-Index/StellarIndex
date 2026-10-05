@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { DivergenceFeed } from './DivergenceFeed';
+import { DivergenceFeed, referenceLines } from './DivergenceFeed';
 
 vi.mock('@/api/client', async () => {
   const actual =
@@ -12,31 +12,53 @@ vi.mock('@/api/client', async () => {
 
 import { apiGet } from '@/api/client';
 
-// Two board rows. The API orders by |Δ%| desc and the component defaults the
-// selection to row 0, so asserting on row 0 would prove nothing. Every
-// assertion below targets row 1 (AAA), which is reachable ONLY by an
-// explicit user action.
+// Two board pairs. The API orders pairs by widest |Δ%| desc and the
+// component defaults the selection to pair 0, so asserting on pair 0 would
+// prove nothing. Every assertion below targets pair 1 (AAA), which is
+// reachable ONLY by an explicit user action.
 const BOARD = {
-  observations: [
+  pairs: [
     {
       asset_id: 'BBB-GB',
       quote_id: 'USD',
-      reference: 'coingecko',
       our_price: '2.00',
-      ref_price: '1.00',
-      delta_pct: '100.00',
       observed_at: '2026-09-02T00:00:00Z',
-      status: 'firing',
+      observed_at_ledger: 0,
+      references: [
+        {
+          reference: 'coingecko',
+          ref_price: '1.00',
+          delta_pct: '100.00',
+          status: 'firing',
+          observed_at: '2026-09-02T00:00:00Z',
+          ref_observed_at: null,
+        },
+        {
+          reference: 'chainlink',
+          ref_price: '1.98',
+          delta_pct: '1.01',
+          status: 'clear',
+          observed_at: '2026-09-02T00:00:00Z',
+          ref_observed_at: null,
+        },
+      ],
     },
     {
       asset_id: 'AAA-GA',
       quote_id: 'USD',
-      reference: 'chainlink',
       our_price: '1.00',
-      ref_price: '1.01',
-      delta_pct: '-1.00',
       observed_at: '2026-09-02T00:00:00Z',
-      status: 'clear',
+      observed_at_ledger: 0,
+      references: [
+        {
+          reference: 'chainlink',
+          ref_price: '1.01',
+          delta_pct: '-1.00',
+          status: 'clear',
+          observed_at: '2026-09-02T00:00:00Z',
+          ref_observed_at: null,
+        },
+      ],
     },
   ],
 };
@@ -181,5 +203,59 @@ describe('DivergenceFeed table header cells declare their scope', () => {
     for (const h of named) {
       expect(h).toHaveAttribute('scope', 'col');
     }
+  });
+});
+
+// The owner rule: a reference's price is never served or shown on its own.
+// The board groups every reference under its pair beside our price, and
+// the history plots one line per reference rather than one chosen alone.
+describe('DivergenceFeed shows references only beside each other', () => {
+  it('lists every reference of a pair under that pair', async () => {
+    mountFeed();
+    await seriesButton('Plot BBB');
+    expect(screen.getAllByText('coingecko').length).toBeGreaterThan(0);
+    // chainlink appears under both pairs.
+    expect(screen.getAllByText('chainlink').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByRole('button', { name: /^Plot / })).toHaveLength(2);
+  });
+
+  it('requests the series by pair only, never by reference', async () => {
+    mountFeed();
+    await seriesButton('Plot BBB');
+    await waitFor(() =>
+      expect(vi.mocked(apiGet)).toHaveBeenCalledWith(
+        '/v1/divergence/series',
+        expect.anything(),
+      ),
+    );
+    for (const [path, params] of vi.mocked(apiGet).mock.calls) {
+      if (path === '/v1/divergence/series') {
+        expect(params).not.toHaveProperty('reference');
+      }
+    }
+  });
+
+  it('builds one gap-aware line per reference', () => {
+    const lines = referenceLines([
+      {
+        t: '2026-09-02T00:00:00Z',
+        our_price: '2',
+        references: [
+          { reference: 'coingecko', ref_price: '1', delta_pct: '100' },
+          { reference: 'chainlink', ref_price: '1.98', delta_pct: '1.01' },
+        ],
+      },
+      {
+        t: '2026-09-02T00:30:00Z',
+        our_price: '2',
+        references: [
+          { reference: 'chainlink', ref_price: '2', delta_pct: '0' },
+        ],
+      },
+    ]);
+    expect(lines.map((l) => l.label)).toEqual(['coingecko', 'chainlink']);
+    expect(lines[0].data.map((p) => p.value)).toEqual([100, null]);
+    expect(lines[1].data.map((p) => p.value)).toEqual([1.01, 0]);
+    expect(lines[0].color).not.toEqual(lines[1].color);
   });
 });

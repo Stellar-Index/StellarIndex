@@ -62,6 +62,28 @@ const DefaultEndpoint = "https://api.coingecko.com"
 // and Endpoint wasn't explicitly overridden.
 const ProEndpoint = "https://pro-api.coingecko.com"
 
+// ResolveEndpoint defaults an empty endpoint to [DefaultEndpoint], and moves
+// that default to [ProEndpoint] when a Pro key is set: the public host rejects it.
+func ResolveEndpoint(endpoint, apiKey string) string {
+	if endpoint == "" {
+		endpoint = DefaultEndpoint
+	}
+	if apiKey != "" && endpoint == DefaultEndpoint {
+		return ProEndpoint
+	}
+	return endpoint
+}
+
+// SetAuthHeader sets the Pro key header, else the Demo key header, else nothing.
+// The key never goes in the query: a transport *url.Error embeds the request URL.
+func SetAuthHeader(h http.Header, apiKey, demoAPIKey string) {
+	if apiKey != "" {
+		h.Set("x-cg-pro-api-key", apiKey)
+	} else if demoAPIKey != "" {
+		h.Set("x-cg-demo-api-key", demoAPIKey)
+	}
+}
+
 // SimplePricePath is the batch-price endpoint.
 const SimplePricePath = "/api/v3/simple/price"
 
@@ -259,7 +281,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	}
 
 	if len(idSet) == 0 || len(currencySet) == 0 {
-		return nil, nil, nil
+		return nil, nil, external.ErrNoApplicablePairs
 	}
 
 	ids := make([]string, 0, len(idSet))
@@ -276,33 +298,13 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	q.Set("vs_currencies", strings.Join(currencies, ","))
 	q.Set("include_last_updated_at", "true")
 
-	endpoint := p.Endpoint
-	if endpoint == "" {
-		endpoint = DefaultEndpoint
-	}
-	// A Pro key only authenticates against pro-api.coingecko.com — the
-	// public host (api.coingecko.com) rejects it. Auto-switch when a Pro
-	// key is set and the endpoint wasn't explicitly overridden, so an
-	// operator upgrading to the paid tier just sets COINGECKO_API_KEY
-	// without also having to know the host changes.
-	if p.APIKey != "" && endpoint == DefaultEndpoint {
-		endpoint = ProEndpoint
-	}
+	endpoint := ResolveEndpoint(p.Endpoint, p.APIKey)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+SimplePricePath+"?"+q.Encode(), nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	// G10-04: pass the key in a request HEADER, not the query string.
-	// A transport error's *url.Error embeds the request URL in its
-	// message; a key in the query string would leak into logs.
-	// CoinGecko accepts the Pro/Demo key via these headers (the
-	// `x_cg_*_api_key` query params still work but are the leaky form).
-	if p.APIKey != "" {
-		req.Header.Set("x-cg-pro-api-key", p.APIKey)
-	} else if p.DemoAPIKey != "" {
-		req.Header.Set("x-cg-demo-api-key", p.DemoAPIKey)
-	}
+	SetAuthHeader(req.Header, p.APIKey, p.DemoAPIKey)
 
 	client := httpx.NewKeyedClient("coingecko", 30*time.Second)
 	resp, err := client.Do(req)
@@ -394,6 +396,10 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	}
 	return nil, updates, nil
 }
+
+// CooldownRemaining reports the throttle cooldown still pending, so the
+// runner can tell a cooldown skip from a healthy "nothing new" poll.
+func (p *Poller) CooldownRemaining() time.Duration { return p.cooldownRemaining() }
 
 // cooldownRemaining returns how much longer the poller must wait
 // before hitting the venue again. Zero (or negative) means polling

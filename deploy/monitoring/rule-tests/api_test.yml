@@ -3,6 +3,7 @@
 # alerts added with their counters:
 #
 #   stellarindex_monthly_quota_fail_open      (C3-082)
+#   stellarindex_monthly_quota_fail_closed
 #   stellarindex_admin_audit_write_failing    (C3-067)
 #   stellarindex_usage_write_failing          (GH-1277)
 #
@@ -89,6 +90,52 @@ tests:
     alert_rule_test:
       - eval_time: 35m
         alertname: stellarindex_monthly_quota_fail_open
+        exp_alerts: []
+
+  # ── Sustained counter outage past the dwell window pages ─────────
+  # The gate has flipped to fail-CLOSED: the fail-open counter is flat
+  # and only the fail-closed one moves, so this is the rule that must
+  # carry a sustained outage.
+  - interval: 1m
+    name: a sustained monthly-quota fail-closed pages
+    input_series:
+      - series: 'stellarindex_monthly_quota_fail_open_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '0+0x20'
+      - series: 'stellarindex_monthly_quota_fail_closed_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '0+5x20'
+
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_monthly_quota_fail_open
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: stellarindex_monthly_quota_fail_closed
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/monthly-quota-fail-open.md
+              summary: "Monthly quota is FAILING CLOSED — metered keys are being 429'd"
+              description: |
+                The month-to-date usage counter has been unreadable for longer
+                than the fail-open dwell time, so the monthly-quota gate has
+                flipped to failing CLOSED: every request from a key with a
+                monthly cap now gets a 429 (errors/monthly-quota-unavailable)
+                whether or not the key is anywhere near its cap. Paying
+                customers are denied service until the counter answers
+                without error for the same dwell time.
+
+  - interval: 1m
+    name: a healthy quota path does not page fail-closed
+    input_series:
+      - series: 'stellarindex_monthly_quota_fail_closed_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '0+0x20'
+
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_monthly_quota_fail_closed
         exp_alerts: []
 
   # ── C3-067: ONE lost audit row tickets, labelled by surface ──────
@@ -300,6 +347,65 @@ tests:
     alert_rule_test:
       - eval_time: 60m
         alertname: stellarindex_sdex_orderbook_advance_held
+        exp_alerts: []
+
+  # ── a daily re-load failing every hourly retry tickets ───────────
+  # The book loaded before the window and advances healthily; each
+  # hourly re-load retry fails once. One load_error per hour never
+  # holds maintain_failing's rate()[15m] for 30m, so it stays silent.
+  - interval: 1m
+    name: hourly failing sdex order-book re-load tickets, maintain_failing stays silent
+    input_series:
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="load_error"}'
+        values: '0x29 1x59 2x59 3x59 4x59 5x30'
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="load_ok"}'
+        values: '1x300'
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="advance_ok"}'
+        values: '0+1x300'
+
+    alert_rule_test:
+      - eval_time: 140m
+        alertname: stellarindex_sdex_orderbook_reload_failing
+        exp_alerts: []
+      - eval_time: 270m
+        alertname: stellarindex_sdex_orderbook_reload_failing
+        exp_alerts:
+          - exp_labels:
+              instance: r1:8080
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sdex-orderbook-maintain-failing.md
+              summary: "SDEX order-book full load failing with no success for 2+ hours on r1:8080"
+              description: |
+                Every full-book load attempt on this instance for 2+ hours
+                has failed and none has succeeded. After the first load this
+                is the daily self-heal re-load, retried hourly: the old book
+                keeps serving and advancing, but changes that landed below
+                its cursor stay wrong until a re-load lands, and
+                maintain_failing cannot see errors this sparse. Check
+                ClickHouse health and the load's duration against its 30m
+                timeout first.
+      - eval_time: 270m
+        alertname: stellarindex_sdex_orderbook_maintain_failing
+        exp_alerts: []
+
+  # ── one failed re-load healed by the next retry stays silent ─────
+  - interval: 1m
+    name: single failed sdex order-book re-load healed by its retry stays silent
+    input_series:
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="load_error"}'
+        values: '0x29 1x270'
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="load_ok"}'
+        values: '1x89 2x210'
+
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_sdex_orderbook_reload_failing
+        exp_alerts: []
+      - eval_time: 240m
+        alertname: stellarindex_sdex_orderbook_reload_failing
         exp_alerts: []
 
   # ── the quarantine removal probe failing every tick tickets ──────
@@ -948,4 +1054,48 @@ tests:
     alert_rule_test:
       - eval_time: 35m
         alertname: stellarindex_usage_write_failing
+        exp_alerts: []
+
+  # ── cache refresh failures ───────────────────────────────────────
+  # One failed background refresh per minute for an hour: callers are
+  # being served an ever-older row with flags.stale set.
+  - interval: 1m
+    name: a persistently failing cache refresh tickets
+    input_series:
+      - series: 'stellarindex_api_cache_ops_total{job="stellarindex_api",instance="r1:8080",cache="markets",op="all_pools",result="refresh_error"}'
+        values: '0+1x60'
+      - series: 'stellarindex_api_cache_ops_total{job="stellarindex_api",instance="r1:8080",cache="markets",op="all_pools",result="hit"}'
+        values: '0+100x60'
+
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: stellarindex_api_cache_refresh_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              cache: markets
+              op: all_pools
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache-miss-rate-high.md
+              summary: "API cache markets/all_pools background refresh failing"
+              description: |
+                The background refresh for markets/all_pools
+                has failed in every 15 min window for 30 min. Callers are being
+                served the last good value with flags.stale set, and it keeps
+                ageing. Check the API logs for the refresh error and the
+                upstream store (Postgres / ClickHouse) for that op.
+                See the cache-miss-rate-high runbook, "Refresh failures".
+
+  # A single transient refresh failure must not ticket.
+  - interval: 1m
+    name: a single cache refresh failure is absorbed
+    input_series:
+      - series: 'stellarindex_api_cache_ops_total{job="stellarindex_api",instance="r1:8080",cache="markets",op="all_pools",result="refresh_error"}'
+        values: '0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: stellarindex_api_cache_refresh_failing
         exp_alerts: []

@@ -121,7 +121,7 @@ func TestApplyXLMBaseUSDVolumeRestamp_BatchIsPrunableToItsChunk(t *testing.T) {
 
 // TestApplyXLMBaseUSDVolumeRestamp_BatchStaysUnderTheParameterCeiling
 // pins the split: `-chunk-batch` defaults to 20,000 rows, the statement
-// binds 6 placeholders per row plus 3, and the extended query protocol
+// binds xlmBaseRestampArgsPerRow placeholders per row plus 3, and the extended query protocol
 // carries at most 65,535. An unsplit batch aborts the run mid-walk.
 func TestApplyXLMBaseUSDVolumeRestamp_BatchStaysUnderTheParameterCeiling(t *testing.T) {
 	ctx := context.Background()
@@ -151,7 +151,7 @@ func TestApplyXLMBaseUSDVolumeRestamp_BatchStaysUnderTheParameterCeiling(t *test
 	}
 	var seen int
 	for _, d := range updates {
-		seen += (len(d.args) - 3) / 6
+		seen += (len(d.args) - 3) / xlmBaseRestampArgsPerRow
 	}
 	if seen != rows {
 		t.Errorf("the split statements carry %d row(s), want %d — the batch must be divided, not truncated", seen, rows)

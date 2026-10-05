@@ -38,17 +38,7 @@ import (
 // canonical key (trades.base_asset / quote_asset form, e.g. a `C…` id).
 const sorobanVolume24hUSDQuery = `
         WITH xlm_usd AS (
-          SELECT vwap
-            FROM prices_1m
-           WHERE base_asset = 'native'
-             AND quote_asset IN (
-               'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-               'fiat:USD'
-             )
-             AND vwap IS NOT NULL
-             AND bucket >= now() - INTERVAL '24 hours'
-           ORDER BY bucket DESC
-           LIMIT 1
+          ` + xlmUSDVolumeSelect + `
         ),
         asset_trades AS (
           SELECT time_bucket('1 minute', ts) AS bucket,

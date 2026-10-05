@@ -178,11 +178,10 @@ func (InitializeEvent) Source() string { return SourceName }
 // Compile-time check.
 var _ consumer.Event = InitializeEvent{}
 
-// AdminEvent is a pool admin-rotation governance event — one of the
-// four ("XYK Pool: ", <phrase>) steps. The sink lands it in
-// phoenix_admin_events (migration 0132). Self-contained (one event →
-// one row). Admin is the address the body carries when present (0
-// occurrences on mainnet to date — built defensively).
+// AdminEvent is a pool admin-rotation step ("XYK Pool: ", <phrase>), a
+// factory config update, or a blend-pool setting change. The sink lands
+// it in phoenix_admin_events (migrations 0132, 0195). Self-contained (one
+// event → one row). Admin is the address the body carries when present.
 type AdminEvent struct {
 	Pool        string // emitting pool contract C-strkey
 	Ledger      uint32
@@ -190,8 +189,9 @@ type AdminEvent struct {
 	OpIndex     uint32
 	EventIndex  uint32
 	ObservedAt  time.Time
-	AdminAction string // AdminAction* slug (from topic[1])
-	Admin       string // admin address from the body; "" if absent
+	AdminAction string           // AdminAction* slug (from topic[1])
+	Admin       string           // admin address from the body; "" if absent
+	Value       canonical.Amount // i128 body of blend_set_min_trading_a/_b; zero otherwise
 }
 
 // EventKind implements [consumer.Event].
@@ -320,14 +320,45 @@ func (b *buffer) sweepStale(ref time.Time) []RawSwap {
 	return evicted
 }
 
-// orphans returns incomplete entries. Called after a bounded-range
-// ingest ends; incompletes indicate contract or pagination anomaly.
+// orphans returns the incomplete swap entries without mutating the buffer.
 func (b *buffer) orphans() []RawSwap {
 	out := make([]RawSwap, 0, len(b.m))
 	for _, r := range b.m {
 		out = append(out, *r)
 	}
 	return out
+}
+
+// drain empties every per-action buffer. Swap groups are returned for the
+// caller to rescue (a pre-upgrade 7-field swap never Complete()s); every
+// other open group is incomplete by construction and only counted.
+func (b *buffer) drain() (swaps []RawSwap, otherOrphans int) {
+	swaps = b.orphans()
+	clear(b.m)
+	otherOrphans = len(b.pl) + len(b.wl) + len(b.bond) + len(b.unbond) + len(b.withdrawRewards)
+	clear(b.pl)
+	clear(b.wl)
+	clear(b.bond)
+	clear(b.unbond)
+	clear(b.withdrawRewards)
+	return swaps, otherOrphans
+}
+
+// rotateOpen drops the open group at k when e would land in an already
+// filled slot as a DIFFERENT event: the first field of a second action
+// through the same contract in the same op. Overwriting in place would
+// splice the two actions into one row. The same EventIndex is a redelivery
+// and is left to overwrite idempotently. Returns the number dropped.
+func rotateOpen[R interface{ slot(string) *events.Event }](m map[groupKey]R, k groupKey, e *events.Event, fieldTopic string) int {
+	r, ok := m[k]
+	if !ok {
+		return 0
+	}
+	if prior := r.slot(fieldTopic); prior == nil || prior.EventIndex == e.EventIndex {
+		return 0
+	}
+	delete(m, k)
+	return 1
 }
 
 // size returns the in-flight swap-entry count. Used by tests.
@@ -352,6 +383,7 @@ func (b *buffer) size() int { return len(b.m) }
 func (b *buffer) absorbProvideLiquidity(e *events.Event, fieldTopic string, closedAt time.Time) (*RawProvideLiquidity, int, error) {
 	evicted := b.sweepStaleAll(closedAt)
 	k := keyOf(e)
+	evicted += rotateOpen(b.pl, k, e, fieldTopic)
 	r, ok := b.pl[k]
 	if !ok {
 		r = &RawProvideLiquidity{
@@ -373,7 +405,13 @@ func (b *buffer) absorbProvideLiquidity(e *events.Event, fieldTopic string, clos
 
 func (b *buffer) absorbWithdrawLiquidity(e *events.Event, fieldTopic string, closedAt time.Time) (*RawWithdrawLiquidity, int, error) {
 	evicted := b.sweepStaleAll(closedAt)
+	if fieldTopic == TopicSymbolWLAutoUnbonded {
+		// Optional and never stored; opening a group for it would leave a
+		// permanently empty entry that ages out as a false orphan.
+		return nil, evicted, nil
+	}
 	k := keyOf(e)
+	evicted += rotateOpen(b.wl, k, e, fieldTopic)
 	r, ok := b.wl[k]
 	if !ok {
 		r = &RawWithdrawLiquidity{
@@ -397,9 +435,10 @@ func (b *buffer) absorbStake(e *events.Event, fieldTopic string, closedAt time.T
 	evicted := b.sweepStaleAll(closedAt)
 	k := keyOf(e)
 	target := b.unbond
-	if isBond {
+	if isBond && !b.continuesEarlyUnbond(k, fieldTopic) {
 		target = b.bond
 	}
+	evicted += rotateOpen(target, k, e, fieldTopic)
 	r, ok := target[k]
 	if !ok {
 		r = &RawStake{
@@ -419,9 +458,30 @@ func (b *buffer) absorbStake(e *events.Event, fieldTopic string, closedAt time.T
 	return nil, evicted, nil
 }
 
+// continuesEarlyUnbond reports a "bond"-topic token/amount field that
+// belongs to an open unbond: the earliest stake WASMs published unbond as
+// ("unbond","user") then ("bond","token"), ("bond","amount").
+func (b *buffer) continuesEarlyUnbond(k groupKey, fieldTopic string) bool {
+	if _, open := b.bond[k]; open {
+		return false
+	}
+	u, open := b.unbond[k]
+	if !open || u.User == nil {
+		return false
+	}
+	switch fieldTopic {
+	case TopicSymbolStakeToken:
+		return u.Token == nil
+	case TopicSymbolStakeAmount:
+		return u.Amount == nil
+	}
+	return false
+}
+
 func (b *buffer) absorbWithdrawRewards(e *events.Event, fieldTopic string, closedAt time.Time) (*RawWithdrawRewards, int, error) {
 	evicted := b.sweepStaleAll(closedAt)
 	k := keyOf(e)
+	evicted += rotateOpen(b.withdrawRewards, k, e, fieldTopic)
 	r, ok := b.withdrawRewards[k]
 	if !ok {
 		r = &RawWithdrawRewards{

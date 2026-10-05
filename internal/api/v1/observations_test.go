@@ -141,6 +141,36 @@ func TestObservations_HappyPath_AllSources(t *testing.T) {
 	}
 }
 
+// A stored one-side-zero SDEX fill is served with "price": null, never
+// "0": the key stays present and the priceable neighbour is unaffected.
+func TestObservations_ZeroLegRowRendersNullPrice(t *testing.T) {
+	now := time.Unix(1745000000, 0).UTC()
+	hist := &stubHistoryReader{
+		observations: []canonical.Trade{
+			mkObservationTrade("sdex", now.Add(-1*time.Second), 5_000_000_000, 0),
+			mkObservationTrade("soroswap", now.Add(-2*time.Second), 1, 100),
+		},
+	}
+	tsv := startHTTPTest(t, v1.New(v1.Options{History: hist}).Handler())
+
+	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	for _, want := range []string{
+		`"quote_amount":"0","price":null`,
+		`"price":"100.0000000000"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, `"price":"0"`) {
+		t.Errorf("zero-leg row rendered a zero price: %s", body)
+	}
+}
+
 // TestObservations_SourceFilter — ?source=phoenix returns only that
 // source's row. Reader receives the filter so the SQL-side narrowing
 // happens (tests that the handler forwards it).
@@ -289,7 +319,7 @@ func TestObservations_EmptyDoesNotHintWhenSourceFiltered(t *testing.T) {
 	srv := v1.New(v1.Options{History: hist, Triangulated: looker})
 	tsv := startHTTPTest(t, srv.Handler())
 
-	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&quote=fiat:USD&source=binance")
+	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&quote=fiat:USD&source=sdex")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -366,7 +396,7 @@ func (h *observationsCallTracker) OHLCSeries(_ context.Context, _ canonical.Pair
 func TestObservations_FiatUSDQuoteReachesStorage(t *testing.T) {
 	hist := &observationsCallTracker{
 		rows: []canonical.Trade{
-			mkObservationTrade("coinbase", time.Unix(1_772_000_000, 0).UTC(), 100, 18),
+			mkObservationTrade("sdex", time.Unix(1_772_000_000, 0).UTC(), 100, 18),
 		},
 	}
 	srv := v1.New(v1.Options{History: hist})
@@ -383,8 +413,8 @@ func TestObservations_FiatUSDQuoteReachesStorage(t *testing.T) {
 	if strings.Contains(body, `"data":[]`) {
 		t.Fatalf("fiat:USD returned an empty array despite a stored observation: %s", body)
 	}
-	if !strings.Contains(body, `"source":"coinbase"`) {
-		t.Errorf("coinbase observation missing from the fiat:USD response: %s", body)
+	if !strings.Contains(body, `"source":"sdex"`) {
+		t.Errorf("sdex observation missing from the fiat:USD response: %s", body)
 	}
 }
 
@@ -456,7 +486,7 @@ func TestObservations_AliasFanIn(t *testing.T) {
 	cryptoXLM, _ := canonical.ParseAsset("crypto:XLM")
 	native, _ := canonical.ParseAsset("native")
 
-	cexTrade := mkObservationTrade("kraken", now.Add(-3*time.Second), 1, 100)
+	cexTrade := mkObservationTrade("soroswap", now.Add(-3*time.Second), 1, 100)
 	cexTrade.Pair, _ = canonical.NewPair(cryptoXLM, usdt)
 	sdexTrade := mkObservationTrade("sdex", now.Add(-1*time.Second), 1, 105)
 	sdexTrade.Pair, _ = canonical.NewPair(native, usdt)
@@ -473,10 +503,60 @@ func TestObservations_AliasFanIn(t *testing.T) {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
 	body, _ := readAll(resp)
-	for _, want := range []string{`"source":"sdex"`, `"source":"kraken"`} {
+	for _, want := range []string{`"source":"sdex"`, `"source":"soroswap"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q — alias spelling not scanned: %s", want, body)
 		}
+	}
+}
+
+// rendezvousHistoryReader releases its LatestTradePerSource callers only
+// once `n` of them are in flight, so alias scans issued one at a time fail.
+type rendezvousHistoryReader struct {
+	stubHistoryReader
+	n       int32
+	arrived atomic.Int32
+	all     chan struct{}
+}
+
+func (r *rendezvousHistoryReader) LatestTradePerSource(
+	ctx context.Context, pair canonical.Pair, _ string,
+) ([]canonical.Trade, error) {
+	if r.arrived.Add(1) == r.n {
+		close(r.all)
+	}
+	select {
+	case <-r.all:
+		t := mkObservationTrade("src:"+pair.String(), time.Unix(1745000000, 0).UTC(), 1, 100)
+		return []canonical.Trade{t}, nil
+	case <-time.After(2 * time.Second):
+		return nil, errors.New("alias scans ran one at a time")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// TestObservations_AliasScansRunConcurrently — an XLM pair fans out to one
+// LatestTradePerSource scan per alias spelling; run serially, a cold read
+// cost the sum of every spelling's scan (INV-0675).
+func TestObservations_AliasScansRunConcurrently(t *testing.T) {
+	native, _ := canonical.ParseAsset("native")
+	usdt, _ := canonical.ParseAsset("crypto:USDT")
+	n := len(canonical.AssetAliases(native)) * len(canonical.AssetAliases(usdt))
+	if n < 2 {
+		t.Fatalf("fixture needs an aliased pair; native/crypto:USDT has %d spellings", n)
+	}
+	hist := &rendezvousHistoryReader{n: int32(n), all: make(chan struct{})} //nolint:gosec // small alias count
+	srv := v1.New(v1.Options{History: hist})
+	tsv := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&quote=crypto:USDT")
+	body, _ := readAll(resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+	if got := strings.Count(body, `"source":"src:`); got != n {
+		t.Errorf("want one observation per alias spelling (%d), got %d: %s", n, got, body)
 	}
 }
 
@@ -521,5 +601,32 @@ func TestObservations_DivergenceCheckedStructurallyFalse(t *testing.T) {
 	}
 	if len(div.askedSpellings()) != 0 {
 		t.Errorf("observations consulted the divergence looker for %v; the raw surface carries no verdict by design", div.askedSpellings())
+	}
+}
+
+// TestObservations_ExcludesExchangeRows: exchange trade rows are not
+// redistributable, so a CEX row that reaches the handler (a reader that
+// ignores the storage-side filter) is dropped before the response.
+func TestObservations_ExcludesExchangeRows(t *testing.T) {
+	ts := time.Unix(1_772_000_000, 0).UTC()
+	hist := &observationsCallTracker{rows: []canonical.Trade{
+		mkObservationTrade("binance", ts, 100, 18),
+		mkObservationTrade("kraken", ts, 100, 19),
+		mkObservationTrade("sdex", ts, 100, 20),
+	}}
+	tsv := startHTTPTest(t, v1.New(v1.Options{History: hist}).Handler())
+
+	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	for _, cex := range []string{"binance", "kraken"} {
+		if strings.Contains(body, `"source":"`+cex+`"`) {
+			t.Errorf("exchange row %s served raw: %s", cex, body)
+		}
+	}
+	if !strings.Contains(body, `"source":"sdex"`) {
+		t.Errorf("on-chain row missing: %s", body)
 	}
 }

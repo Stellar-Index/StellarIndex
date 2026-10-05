@@ -713,5 +713,5 @@ func (s *Server) handleDiagnosticsBackups(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=60")
 	// flags.stale mirrors the roll-up so polling clients can spot a
 	// non-green document without parsing every verdict.
-	writeJSON(w, snap, Flags{Stale: snap.Freshness.Overall != freshnessOK})
+	writeJSON(w, snap, Flags{Stale: snap.Freshness.Overall != freshnessOK, Degraded: snap.SourceStatus != "ok"})
 }

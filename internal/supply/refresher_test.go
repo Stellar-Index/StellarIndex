@@ -741,3 +741,79 @@ func TestRefresher_StaleComponentBoundsAreInclusive(t *testing.T) {
 		t.Errorf("frozen one ledger past the horizon: kind=%s want %s", got, OutcomeKindStaleComponent)
 	}
 }
+
+// seqComputer returns one total per Compute call, in order.
+type seqComputer struct {
+	totals []int64
+	i      int
+}
+
+func (s *seqComputer) Compute(_ context.Context, ledger uint32, observedAt time.Time) (Supply, error) {
+	total := big.NewInt(s.totals[s.i])
+	s.i++
+	return Supply{
+		AssetKey:          "CODE:GISSUER",
+		TotalSupply:       total,
+		CirculatingSupply: new(big.Int).Set(total),
+		LedgerSequence:    ledger,
+		ObservedAt:        observedAt,
+	}, nil
+}
+
+func TestRefresher_WriteBandFlagsTenfoldMoveButStillWrites(t *testing.T) {
+	cases := []struct {
+		name   string
+		totals []int64
+		want   []string
+	}{
+		{"up just past 10x", []int64{1_000_000, 10_000_001}, []string{"", "up"}},
+		{"up just inside 10x", []int64{1_000_000, 9_999_999}, []string{"", ""}},
+		{"exactly 10x", []int64{1_000_000, 10_000_000}, []string{"", ""}},
+		{"down past 1/10", []int64{1_000_000, 99_999}, []string{"", "down"}},
+		{"exactly 1/10", []int64{1_000_000, 100_000}, []string{"", ""}},
+		{"zero previous never fires", []int64{0, 10_000_001}, []string{"", ""}},
+		{"compares against the last write", []int64{1_000_000, 10_000_001, 10_000_002}, []string{"", "up", ""}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inserter := &stubInserter{}
+			r := NewRefresher(
+				stubLedgers{ledger: 50_000_000, observedAt: time.Unix(1_770_000_000, 0).UTC()},
+				&seqComputer{totals: tc.totals},
+				inserter,
+				discardLogger(),
+			)
+			for i, want := range tc.want {
+				out := r.Tick(context.Background())
+				if out.Kind != OutcomeKindOK {
+					t.Fatalf("tick %d: kind=%s, want ok; err=%v", i, out.Kind, out.Err)
+				}
+				if out.BandBreach != want {
+					t.Errorf("tick %d: BandBreach=%q want %q", i, out.BandBreach, want)
+				}
+			}
+			if inserter.calls != len(tc.totals) {
+				t.Errorf("inserter.calls=%d want %d: a breach must not refuse the write", inserter.calls, len(tc.totals))
+			}
+		})
+	}
+}
+
+func TestRefresher_WriteBandIgnoresFailedWrite(t *testing.T) {
+	inserter := &stubInserter{}
+	r := NewRefresher(
+		stubLedgers{ledger: 50_000_000, observedAt: time.Unix(1_770_000_000, 0).UTC()},
+		&seqComputer{totals: []int64{1_000_000, 50_000_000, 10_000_001}},
+		inserter,
+		discardLogger(),
+	)
+	r.Tick(context.Background())
+	inserter.err = errors.New("boom")
+	if out := r.Tick(context.Background()); out.Kind != OutcomeKindWriteError || out.BandBreach != "" {
+		t.Fatalf("failed write: kind=%s breach=%q, want write_error with no breach", out.Kind, out.BandBreach)
+	}
+	inserter.err = nil
+	if out := r.Tick(context.Background()); out.BandBreach != "up" {
+		t.Fatalf("BandBreach=%q want up: the band compares against the last successful write", out.BandBreach)
+	}
+}

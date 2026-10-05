@@ -239,6 +239,7 @@ tests:
               severity: page
               team: stellarindex
               component: storage
+              alert_family: timescale_disk
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
               summary: "Postgres disk 5% free (SEV-1)"
@@ -267,6 +268,7 @@ tests:
               severity: ticket
               team: stellarindex
               component: storage
+              alert_family: timescale_disk
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
               summary: "Postgres disk 15% free"
@@ -309,6 +311,7 @@ tests:
               severity: page
               team: stellarindex
               component: storage
+              alert_family: node_root_disk
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-full.md
               summary: "Root filesystem on r1:9100 5% free (SEV-1)"
@@ -346,6 +349,7 @@ tests:
               severity: ticket
               team: stellarindex
               component: storage
+              alert_family: node_root_disk
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-warning.md
               summary: "Root filesystem on r1:9100 15% free"
@@ -996,6 +1000,7 @@ tests:
               severity: ticket
               team: stellarindex
               component: storage
+              alert_family: timescale_backup_age/db
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
               summary: "pgBackRest stanza db last backup 1d 2h 23m 20s ago"
@@ -1010,6 +1015,7 @@ tests:
               severity: page
               team: stellarindex
               component: storage
+              alert_family: timescale_backup_age/db
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
               summary: "No successful Postgres backup in > 24 h (SEV-1)"
@@ -1035,6 +1041,7 @@ tests:
               severity: page
               team: stellarindex
               component: storage
+              alert_family: timescale_backup_age/db
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
               summary: "No successful Postgres backup in > 24 h (SEV-1)"
@@ -1538,10 +1545,129 @@ tests:
         alertname: stellarindex_timescale_job_failures_climbing
         exp_alerts: []
 
+  # ── failures that were a concurrent CAGG refresh are discounted ──
+  # r1's prices_1m refresh failed 6 times in one hour with "could not
+  # refresh continuous aggregate due to a concurrent refresh" while an
+  # operator replay refreshed the same window, and the 3-day arm then held
+  # for three days. One shape per job:
+  #   1088  six collisions, nothing else         — quiet;
+  #   1089  six collisions plus three real ones  — the real three still fire;
+  #   1090  six failures, collision gauge absent — falls back to the raw
+  #         count, so a missing gauge can only make the alert louder;
+  #   1091  twelve collisions in an hour         — quiet on the 6h arm too.
+  - interval: 1m
+    name: concurrent-refresh failures are discounted, real ones and a missing gauge still fire
+    input_series:
+      - series: 'stellarindex_timescale_job_failures_total{job="node_exporter",instance="r1:9100",job_id="1088",proc="policy_refresh_continuous_aggregate",hypertable="prices_1m"}'
+        values: '0x600 1x10 2x10 3x10 4x10 5x10 6x3600'
+      - series: 'stellarindex_timescale_job_concurrent_refresh_failures_6h{job="node_exporter",instance="r1:9100",job_id="1088",proc="policy_refresh_continuous_aggregate",hypertable="prices_1m"}'
+        values: '0x600 1x10 2x10 3x10 4x10 5x10 6x300 0x3300'
+      - series: 'stellarindex_timescale_job_concurrent_refresh_failures_3d{job="node_exporter",instance="r1:9100",job_id="1088",proc="policy_refresh_continuous_aggregate",hypertable="prices_1m"}'
+        values: '0x600 1x10 2x10 3x10 4x10 5x10 6x3600'
+      - series: 'stellarindex_timescale_job_failures_total{job="node_exporter",instance="r1:9100",job_id="1089",proc="policy_refresh_continuous_aggregate",hypertable="prices_5m"}'
+        values: '0x600 1x10 2x10 3x10 4x10 5x10 6x60 7x60 8x60 9x3600'
+      - series: 'stellarindex_timescale_job_concurrent_refresh_failures_6h{job="node_exporter",instance="r1:9100",job_id="1089",proc="policy_refresh_continuous_aggregate",hypertable="prices_5m"}'
+        values: '0x600 1x10 2x10 3x10 4x10 5x10 6x300 0x3300'
+      - series: 'stellarindex_timescale_job_concurrent_refresh_failures_3d{job="node_exporter",instance="r1:9100",job_id="1089",proc="policy_refresh_continuous_aggregate",hypertable="prices_5m"}'
+        values: '0x600 1x10 2x10 3x10 4x10 5x10 6x3600'
+      - series: 'stellarindex_timescale_job_failures_total{job="node_exporter",instance="r1:9100",job_id="1090",proc="policy_refresh_continuous_aggregate",hypertable="prices_15m"}'
+        values: '0x600 1x10 2x10 3x10 4x10 5x10 6x3600'
+      # 1091: twelve collisions inside an hour, past the 6h arm's > 10.
+      - series: 'stellarindex_timescale_job_failures_total{job="node_exporter",instance="r1:9100",job_id="1091",proc="policy_refresh_continuous_aggregate",hypertable="prices_1h"}'
+        values: '0x60 0+1x12 12x4200'
+      - series: 'stellarindex_timescale_job_concurrent_refresh_failures_6h{job="node_exporter",instance="r1:9100",job_id="1091",proc="policy_refresh_continuous_aggregate",hypertable="prices_1h"}'
+        values: '0x60 0+1x12 12x360 0x3840'
+      - series: 'stellarindex_timescale_job_concurrent_refresh_failures_3d{job="node_exporter",instance="r1:9100",job_id="1091",proc="policy_refresh_continuous_aggregate",hypertable="prices_1h"}'
+        values: '0x60 0+1x12 12x4200'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: stellarindex_timescale_job_failures_climbing
+        exp_alerts: []
+      - eval_time: 20h
+        alertname: stellarindex_timescale_job_failures_climbing
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              job_id: "1089"
+              proc: policy_refresh_continuous_aggregate
+              hypertable: prices_5m
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-job-failures-climbing.md
+              summary: "TimescaleDB job policy_refresh_continuous_aggregate failing repeatedly (prices_5m)"
+              description: |
+                Job 1089 (policy_refresh_continuous_aggregate on
+                prices_5m) is failing repeatedly: more than 10 runs in
+                6 hours, 3 or more runs in 3 days, or at least half of the runs its
+                schedule_interval gave it in 3 days. TimescaleDB retries on the next
+                tick, so the caggs may look fresh and no staleness ticket will fire —
+                that is exactly how the 2026 background-worker starvation stayed
+                invisible.
+
+                The three arms are not redundant. This counter is per job, so a job
+                scheduled every T can accrue at most 6h/T failures and the 6h arm is
+                unreachable for anything slower than ~36 minutes — every compression
+                policy and five of the CAGG refresh policies. The 3-day count judges
+                those, but is itself unreachable once T exceeds a day; the
+                schedule_interval arm judges any T, and a job slower than 1.5 days
+                trips it on a single failed run.
+
+                Check max_parallel_workers / timescaledb.max_background_workers
+                headroom first; "failed to start job" in the job_errors view means
+                starvation, not a broken job body.
+
+                The counter above says only that policy_refresh_continuous_aggregate is
+                failing, never why. Query
+                stellarindex_timescale_job_last_failure_reason_info{job_id="1089"}
+                for the most recent job_errors.err_message text without a
+                psql round trip.
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              job_id: "1090"
+              proc: policy_refresh_continuous_aggregate
+              hypertable: prices_15m
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-job-failures-climbing.md
+              summary: "TimescaleDB job policy_refresh_continuous_aggregate failing repeatedly (prices_15m)"
+              description: |
+                Job 1090 (policy_refresh_continuous_aggregate on
+                prices_15m) is failing repeatedly: more than 10 runs in
+                6 hours, 3 or more runs in 3 days, or at least half of the runs its
+                schedule_interval gave it in 3 days. TimescaleDB retries on the next
+                tick, so the caggs may look fresh and no staleness ticket will fire —
+                that is exactly how the 2026 background-worker starvation stayed
+                invisible.
+
+                The three arms are not redundant. This counter is per job, so a job
+                scheduled every T can accrue at most 6h/T failures and the 6h arm is
+                unreachable for anything slower than ~36 minutes — every compression
+                policy and five of the CAGG refresh policies. The 3-day count judges
+                those, but is itself unreachable once T exceeds a day; the
+                schedule_interval arm judges any T, and a job slower than 1.5 days
+                trips it on a single failed run.
+
+                Check max_parallel_workers / timescaledb.max_background_workers
+                headroom first; "failed to start job" in the job_errors view means
+                starvation, not a broken job body.
+
+                The counter above says only that policy_refresh_continuous_aggregate is
+                failing, never why. Query
+                stellarindex_timescale_job_last_failure_reason_info{job_id="1090"}
+                for the most recent job_errors.err_message text without a
+                psql round trip.
+
   # ── 14d-review (2026-09-27, extended 2026-09-28): the
   # textfile_producer_stale catch-all false-fires on producer shapes with
   # no dedicated staleness alert: ops_job's pid-orphan siblings, the
-  # one-off backfill and usd-volume-restamp jobs, the monthly
+  # one-off backfill, usd-volume-restamp and per-source projected-rebuild
+  # jobs, the monthly
   # restore-drill files and the weekly Tier D verify-archive file. This pins the exclusion — and that it does NOT
   # over-exclude other ops_job primaries, which should still trip the
   # catch-all like any other producer.
@@ -1555,6 +1681,10 @@ tests:
       - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_backfill.prom",instance="r1:9100",job="node_exporter"}'
         values: '0x50600'
       - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_usd_volume_restamp.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_projected_rebuild_cctp.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_projected_rebuild_soroswap_router.prom",instance="r1:9100",job="node_exporter"}'
         values: '0x50600'
       - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_projector_replay.prom",instance="r1:9100",job="node_exporter"}'
         values: '0x50600'
@@ -1692,3 +1822,235 @@ tests:
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/restore_drill_repo2.prom
                 for 35+ days despite the monthly restore-drill timer.
                 `systemctl status restore-drill.timer restore-drill-offsite.timer`.
+
+  # Lock-gated producers (archive-completeness, verify-archive tier A,
+  # asset-registry-backfill) sit behind the host-wide heavy lock. The
+  # catch-all is suppressed for them only while the lock has been held
+  # under 72h; every other producer, and a held lock past the cap, still
+  # alerts. All mtimes are 0, i.e. 40h/100h stale at the eval times.
+  - interval: 1m
+    name: textfile_producer_stale defers lock-gated producers while the heavy lock is held 30h; non-gated still fires
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/archive_completeness.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/verify_archive_tier_a.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_asset_registry_backfill.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/some_other_producer.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'stellarindex_heavy_lock_held_since_unix{instance="r1:9100",job="node_exporter",ops_job="projector-replay"}'
+        values: '36000x6001'
+    alert_rule_test:
+      - eval_time: 40h
+        alertname: stellarindex_textfile_producer_stale
+        exp_alerts:
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/some_other_producer.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/some_other_producer.prom has not been refreshed in 24h+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/some_other_producer.prom
+                for 24+ hours. Its producing timer/cron has likely died; check
+                scripts/ci/textfile-producers.manifest for which script owns
+                this file and `systemctl status` its unit. This is a catch-all:
+                most producers should have fired their own, tighter alert long
+                before this one does.
+  # An orphaned hold file (SIGKILLed job, 100h old) beside a fresh 30h hold:
+  # the newest hold decides, so gated producers stay silent. A stale
+  # heavy_job_*.prom alone never alerts (excluded from the catch-all).
+  - interval: 1m
+    name: textfile_producer_stale ignores an orphaned 100h hold beside a fresh 30h hold, and a stale heavy_job file
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/archive_completeness.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/verify_archive_tier_b.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/lake_verify.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/network_state_verify.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/heavy_job_x.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'stellarindex_heavy_lock_held_since_unix{instance="r1:9100",job="node_exporter",ops_job="orphan"}'
+        values: '0x6001'
+      - series: 'stellarindex_heavy_lock_held_since_unix{instance="r1:9100",job="node_exporter",ops_job="fresh"}'
+        values: '252000x6001'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_textfile_producer_stale
+        exp_alerts: []
+  - interval: 1m
+    name: textfile_producer_stale alerts lock-gated producers once the lock has been held 80h
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/archive_completeness.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/verify_archive_tier_a.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_asset_registry_backfill.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/some_other_producer.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'stellarindex_heavy_lock_held_since_unix{instance="r1:9100",job="node_exporter",ops_job="projector-replay"}'
+        values: '72000x6001'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_textfile_producer_stale
+        exp_alerts:
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/archive_completeness.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/archive_completeness.prom has not been refreshed in 24h+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/archive_completeness.prom
+                for 24+ hours. Its producing timer/cron has likely died; check
+                scripts/ci/textfile-producers.manifest for which script owns
+                this file and `systemctl status` its unit. This is a catch-all:
+                most producers should have fired their own, tighter alert long
+                before this one does.
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/verify_archive_tier_a.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/verify_archive_tier_a.prom has not been refreshed in 24h+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/verify_archive_tier_a.prom
+                for 24+ hours. Its producing timer/cron has likely died; check
+                scripts/ci/textfile-producers.manifest for which script owns
+                this file and `systemctl status` its unit. This is a catch-all:
+                most producers should have fired their own, tighter alert long
+                before this one does.
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/ops_job_asset_registry_backfill.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/ops_job_asset_registry_backfill.prom has not been refreshed in 24h+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/ops_job_asset_registry_backfill.prom
+                for 24+ hours. Its producing timer/cron has likely died; check
+                scripts/ci/textfile-producers.manifest for which script owns
+                this file and `systemctl status` its unit. This is a catch-all:
+                most producers should have fired their own, tighter alert long
+                before this one does.
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/some_other_producer.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/some_other_producer.prom has not been refreshed in 24h+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/some_other_producer.prom
+                for 24+ hours. Its producing timer/cron has likely died; check
+                scripts/ci/textfile-producers.manifest for which script owns
+                this file and `systemctl status` its unit. This is a catch-all:
+                most producers should have fired their own, tighter alert long
+                before this one does.
+  - interval: 1m
+    name: textfile_producer_stale alerts lock-gated producers when no heavy lock is held
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/archive_completeness.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/verify_archive_tier_a.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_asset_registry_backfill.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/some_other_producer.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: stellarindex_textfile_producer_stale
+        exp_alerts:
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/archive_completeness.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/archive_completeness.prom has not been refreshed in 24h+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/archive_completeness.prom
+                for 24+ hours. Its producing timer/cron has likely died; check
+                scripts/ci/textfile-producers.manifest for which script owns
+                this file and `systemctl status` its unit. This is a catch-all:
+                most producers should have fired their own, tighter alert long
+                before this one does.
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/verify_archive_tier_a.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/verify_archive_tier_a.prom has not been refreshed in 24h+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/verify_archive_tier_a.prom
+                for 24+ hours. Its producing timer/cron has likely died; check
+                scripts/ci/textfile-producers.manifest for which script owns
+                this file and `systemctl status` its unit. This is a catch-all:
+                most producers should have fired their own, tighter alert long
+                before this one does.
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/ops_job_asset_registry_backfill.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/ops_job_asset_registry_backfill.prom has not been refreshed in 24h+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/ops_job_asset_registry_backfill.prom
+                for 24+ hours. Its producing timer/cron has likely died; check
+                scripts/ci/textfile-producers.manifest for which script owns
+                this file and `systemctl status` its unit. This is a catch-all:
+                most producers should have fired their own, tighter alert long
+                before this one does.
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/some_other_producer.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/some_other_producer.prom has not been refreshed in 24h+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/some_other_producer.prom
+                for 24+ hours. Its producing timer/cron has likely died; check
+                scripts/ci/textfile-producers.manifest for which script owns
+                this file and `systemctl status` its unit. This is a catch-all:
+                most producers should have fired their own, tighter alert long
+                before this one does.

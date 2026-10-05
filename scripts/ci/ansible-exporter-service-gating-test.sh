@@ -25,6 +25,23 @@ if [ ! -f "$TASKS" ]; then
   exit 1
 fi
 
+# pgbackrest_exporter 0.23.0 has --web.telemetry-path and no --web.endpoint;
+# an unknown flag crash-loops the unit on its next restart.
+PGBR_UNIT="configs/ansible/roles/archival-node/templates/systemd/pgbackrest_exporter.service.j2"
+if grep -q -- '--web\.endpoint' "$PGBR_UNIT"; then
+  bad "pgbackrest_exporter unit passes --web.endpoint, which does not exist in 0.23.0 (use --web.telemetry-path)"
+else
+  ok "pgbackrest_exporter unit does not pass the nonexistent --web.endpoint"
+fi
+
+# pgbackrest.conf is postgres:postgres 0640; without the group the exporter
+# runs but `pgbackrest info` gets EACCES and every stanza metric vanishes.
+if grep -q '^SupplementaryGroups=postgres$' "$PGBR_UNIT"; then
+  ok "pgbackrest_exporter unit can read pgbackrest.conf (SupplementaryGroups=postgres)"
+else
+  bad "pgbackrest_exporter unit lacks SupplementaryGroups=postgres; pgbackrest info cannot read pgbackrest.conf"
+fi
+
 # block_body <file> <pattern> — the top-level `- name: <pattern>` entry's
 # body (its `block:` contents), from its line to the next top-level
 # `- name:` at the same (zero) indent.
@@ -57,6 +74,18 @@ elif grep -qE '^\s*when:\s*pgbackrest_backup_enabled\s*\|\s*default\(true\)\s*\|
   ok "Group C (pgbackrest_exporter) is gated on pgbackrest_backup_enabled"
 else
   bad "Group C has no 'when: pgbackrest_backup_enabled | default(true) | bool' guard — installs/starts even with backups disabled"
+fi
+
+minio_body="$(block_body "$TASKS" "Group D — MinIO Prometheus bearer token (requires MinIO)")"
+# mc's `svcacct add --policy` takes a JSON policy FILE, not a policy name; a
+# bare name fails the mint on a fresh host.
+if [ -z "$minio_body" ]; then
+  bad "Group D (MinIO bearer token) task/block not found"
+elif policy_arg="$(grep -A1 -E '^\s*- --policy\s*$' <<<"$minio_body")" &&
+  grep -qE '^\s*- /etc/minio/policies/prometheus-read\.json\s*$' <<<"$policy_arg"; then
+  ok "Group D passes the policy file path to svcacct add --policy"
+else
+  bad "Group D's svcacct add --policy is not /etc/minio/policies/prometheus-read.json — mc reads --policy as a file path"
 fi
 
 echo "ansible-exporter-service-gating-test: $pass passed, $fail failed"

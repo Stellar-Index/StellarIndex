@@ -70,6 +70,7 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	endpoint := s.restBase() + klinesPath
 	startMs := from.UnixMilli()
 	endMs := to.UnixMilli()
+	now := time.Now()
 	var out []canonical.Trade
 
 	for startMs < endMs {
@@ -77,7 +78,8 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 		q.Set("symbol", symbol)
 		q.Set("interval", interval)
 		q.Set("startTime", strconv.FormatInt(startMs, 10))
-		q.Set("endTime", strconv.FormatInt(endMs, 10))
+		// endTime is inclusive of a candle's open time; -to is exclusive.
+		q.Set("endTime", strconv.FormatInt(endMs-1, 10))
 		q.Set("limit", strconv.Itoa(klineMaxLimit))
 
 		candles, err := fetchKlines(ctx, endpoint, q)
@@ -88,7 +90,7 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 			break
 		}
 
-		out = append(out, klinesToTrades(candles, symbol, pair, granularity)...)
+		out = append(out, klinesToTrades(candles, symbol, pair, granularity, to, now)...)
 
 		next, done, err := advanceBackfillCursor(candles, startMs, granularity)
 		if err != nil {
@@ -131,10 +133,15 @@ func (s *Streamer) resolveBackfillSymbol(pair canonical.Pair, granularity time.D
 // (not failing) any candle klineToTrade can't represent — the
 // surrounding range still produces useful output, and the caller sees
 // the gap via trade count vs expected range; backfill is a
-// best-effort op tool anyway.
-func klinesToTrades(candles []kline, symbol string, pair canonical.Pair, granularity time.Duration) []canonical.Trade {
+// best-effort op tool anyway. A candle not closed by min(to, now) is
+// dropped; see scale.CandleClosed.
+func klinesToTrades(candles []kline, symbol string, pair canonical.Pair, granularity time.Duration, to, now time.Time) []canonical.Trade {
 	out := make([]canonical.Trade, 0, len(candles))
 	for _, c := range candles {
+		openMs, ok := c.openTimeMs()
+		if !ok || !scale.CandleClosed(time.UnixMilli(openMs).Add(granularity), to, now) {
+			continue
+		}
 		trade, err := klineToTrade(c, symbol, pair, granularity)
 		if err != nil {
 			continue
@@ -144,10 +151,11 @@ func klinesToTrades(candles []kline, symbol string, pair canonical.Pair, granula
 	return out
 }
 
-// advanceBackfillCursor computes the next page's startTime: 1ms past
-// the last candle's open time. Binance returns candles with openTime <
-// endTime so we won't double-emit; the +1 is belt-and-braces in case
-// of tick repetition. done=true means the page carried no parseable
+// advanceBackfillCursor computes the next page's startTime: one interval
+// past the last candle's open time. Binance returns candles with
+// startTime <= openTime <= endTime, so the next page repeats none of
+// this one, but the last page can carry a bar past -to; the ops caller
+// drops it (dropUnsettledCandles). done=true means the page carried no parseable
 // open time and the caller should stop paginating (not an error — the
 // data collected so far is still returned). An error means the cursor
 // did not advance (a caching proxy, a venue ignoring startTime), which

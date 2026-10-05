@@ -146,6 +146,7 @@
     owner: root
     group: minio
     mode: "0640"
+  no_log: true  # the rendered file holds MINIO_ROOT_PASSWORD; --diff would print it
   notify: Restart minio
 
 - name: Install MinIO systemd unit
@@ -408,6 +409,20 @@
   changed_when: false
   failed_when: false   # mc returns non-zero if policy already attached
 
+- name: Configure archivewriter mc alias (galexie-archive-fill's identity)
+  # Persisted for root because galexie-archive-fill.sh mirrors through it;
+  # credentials on stdin, as for the `local` alias above.
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/mc
+      - alias
+      - set
+      - archivewriter
+      - "http://127.0.0.1:9000"
+    stdin: "{{ galexie_archive_s3_access_key }}\n{{ galexie_archive_s3_secret_key }}"
+  changed_when: false
+  no_log: true
+
 # ──── stellarindex-reader (read-only on both buckets) ──────────────
 # Used by stellarindex-ops verify-archive today, and by the indexer +
 # api once they have systemd units. Scoped to BOTH galexie-live and
@@ -615,6 +630,7 @@
       # carries; codified 2026-07-03.
       CHAINLINK_RPC_URL={{ vault_chainlink_rpc_url | default('') }}
       COINGECKO_DEMO_API_KEY={{ vault_coingecko_demo_api_key | default('') }}
+      COINGECKO_API_KEY={{ vault_coingecko_api_key | default('') }}
       MASSIVE_API_KEY={{ vault_massive_api_key | default('') }}
       # ClickHouse ops-batch identity (2026-08-28 r1: a ch-rebuild
       # running as CH `default` starved the aggregator's supply

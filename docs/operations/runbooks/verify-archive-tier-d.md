@@ -26,7 +26,7 @@ peer's bytes hash to a different chain than the network's signed reality,
 Tier D catches it (ADR-0016 §7.4).
 
 Tier D is installed as a weekly **cron** entry
-(`stellarindex-verify-archive-tier-d`, Sunday 10:23 UTC —
+(`stellarindex-verify-archive-tier-d`, Sunday 16:23 UTC —
 `configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`),
 not a systemd timer, so there is no `node_systemd_unit_state` series to
 alert a "run failed" pair off of. Staleness on

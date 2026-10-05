@@ -112,7 +112,10 @@ type PriceTipQuery struct {
 // `PriceSnapshot.PriceType`:
 //
 //   - "vwap" with `WindowSeconds=N` — at least one trade in the
-//     last N seconds; rolling-window VWAP.
+//     last N seconds; rolling-window VWAP. When the requested window
+//     is empty and shorter than 30s, the server retries once at 30s,
+//     so the returned `WindowSeconds` can exceed the requested one;
+//     read it from the response rather than assuming your input.
 //   - "last_trade" — window was empty; the most recent observation
 //     as-is. Caller reads `ObservedAt` to decide if it's fresh
 //     enough for their use case.
@@ -249,7 +252,7 @@ type HistoryQuery struct {
 }
 
 // HistorySinceInception fetches the full historical series for an
-// asset/quote at the chosen granularity. CAGG-served per PR #195.
+// asset/quote at the chosen granularity. CAGG-served per commit 2ecc50fbd.
 // Long-running for fine-grained granularities; pass a context with
 // an appropriate deadline.
 func (c *Client) HistorySinceInception(ctx context.Context, q HistoryQuery) (*Envelope[HistorySeries], error) {
@@ -513,6 +516,20 @@ func (c *Client) AssetMetadata(ctx context.Context, assetID string) (*Envelope[A
 	return &env, nil
 }
 
+// AssetSupplyFlows fetches the daily mint / burn / clawback series for
+// one token (GET /v1/assets/{asset_id}/supply/flows). Amounts are
+// base-unit decimal strings (ADR-0003).
+func (c *Client) AssetSupplyFlows(ctx context.Context, assetID string) (*Envelope[AssetSupplyFlows], error) {
+	if assetID == "" {
+		return nil, &APIError{Status: 400, Title: "asset_id required"}
+	}
+	var out Envelope[AssetSupplyFlows]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/assets/"+url.PathEscape(assetID)+"/supply/flows", nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // SourcesOptions filters [Client.Sources]. Class is one of the
 // canonical class strings ("exchange" / "aggregator" / "oracle" /
 // "authority_sanity" / "lending" / "router" / "bridge"); empty
@@ -628,7 +645,9 @@ type MarketsOptions struct {
 	// query param; empty omits both.
 	Include []string
 	// Source restricts the listing to markets a single registered
-	// source observed in the recency window. Mutually exclusive with
+	// on-chain source or CEX venue observed in the recency window; a data
+	// vendor (aggregator, FX, oracle) 400s `off-chain-source-filter`.
+	// Mutually exclusive with
 	// Asset — the server 400s `unknown-source` / `invalid-asset-id`
 	// rather than silently ignoring one, same posture as [PoolsQuery].
 	Source string
@@ -813,16 +832,18 @@ func (c *Client) AdminCreateKey(ctx context.Context, req AdminCreateKeyRequest) 
 
 // RevokeKey deletes the API key identified by keyID. The deletion
 // is permanent; the key cannot be reactivated. Returns nil on
-// success (204), or an *APIError when the server rejects the
-// request — typically 401 (no credentials), 403 (caller doesn't
-// own the key), 404 (key not found / already revoked), or 409
+// success (204), including when keyID is unknown, already revoked
+// or owned by another account (the server does not reveal which),
+// or an *APIError when the server rejects the request — 400
+// (operator caller without a reason), 401 (no credentials), 409
 // (keyID names the credential the request itself authenticated
-// with — revoke a different key first).
+// with — revoke a different key first), 500 (store failure), or 503
+// (account store not configured).
 //
 // keyID is the public ID returned in [KeyCreated.KeyID] / on each
-// row of [Client.Keys] — NOT the plaintext secret. Returning the
-// secret would 400 since the route validates the path segment as
-// a key ID.
+// row of [Client.Keys] — NOT the plaintext secret. Passing the
+// secret is a silent no-op (204, nil error) because the server does
+// not reveal whether a keyID exists, so callers must pass the KeyID.
 func (c *Client) RevokeKey(ctx context.Context, keyID string) error {
 	if keyID == "" {
 		return &APIError{Status: 400, Title: "keyID required"}
@@ -1026,7 +1047,8 @@ func (c *Client) NetworkStats(ctx context.Context) (*Envelope[NetworkStats], err
 
 // ObservationsQuery selects the input for [Client.Observations].
 // Asset is required; Quote defaults to fiat:USD; optional Source
-// restricts to a single source; Aggregate="latest" collapses the
+// restricts to a single on-chain source or CEX venue (a data vendor 400s
+// `off-chain-source-filter`); Aggregate="latest" collapses the
 // per-source array to a 0/1-element slice of the most-recent.
 type ObservationsQuery struct {
 	Asset     string

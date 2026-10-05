@@ -59,8 +59,8 @@
 # by promtool in deploy/monitoring/rule-tests/served-values_test.yml.
 #
 # The same five assertions cover every textfile harness listed in
-# configure_job below — today verify-served-values and supply verify-rollup,
-# which shipped in the same alerted-but-unscheduled state.
+# configure_job below — today verify-served-values, supply verify-rollup,
+# verify-lake and verify-network-state.
 #
 # Usage: lint-served-value-cadence.sh [repo-root]
 #   CADENCE_JOBS (space-separated) narrows the job list; the self-test uses it
@@ -97,6 +97,24 @@ configure_job() {
       RULE_FILES=(
         "deploy/monitoring/rules/supply-verify-rollup.yml"
         "configs/prometheus/rules.r1/supply-verify-rollup.yml"
+      ) ;;
+    verify-lake)
+      UNIT="verify-lake"
+      SUBCMD="stellarindex-ops verify-lake"
+      ENABLED_VAR=""
+      STALE_ALERT="stellarindex_lake_verify_stale"
+      RULE_FILES=(
+        "deploy/monitoring/rules/storage.yml"
+        "configs/prometheus/rules.r1/storage.yml"
+      ) ;;
+    verify-network-state)
+      UNIT="verify-network-state"
+      SUBCMD="stellarindex-ops verify-network-state"
+      ENABLED_VAR=""
+      STALE_ALERT="stellarindex_network_state_verify_stale"
+      RULE_FILES=(
+        "deploy/monitoring/rules/storage.yml"
+        "configs/prometheus/rules.r1/storage.yml"
       ) ;;
     *) die "unknown job '$1' in CADENCE_JOBS" ;;
   esac
@@ -251,6 +269,8 @@ fi
 # accepts an unconditional `true` or an `== 'pubnet'` comparison, and refuses
 # anything else rather than returning a verdict on an expression it cannot
 # evaluate.
+# Installed unconditionally; assertion 3's task shape is the whole proof.
+if [ -n "$ENABLED_VAR" ]; then
 [ -f "$DEFAULTS" ] || die "role defaults not found: $DEFAULTS"
 
 enabled_expr=$(awk -v v="$ENABLED_VAR" '
@@ -265,6 +285,7 @@ enabled_expr_ok "$job" "$enabled_expr" || die "$ENABLED_VAR in $DEFAULTS does no
     $enabled_expr
   Flipping this one default unschedules the job with every other assertion
   still green."
+fi
 
 # ── 5. cadence vs. the staleness threshold the alert carries ──────────────
 
@@ -318,7 +339,7 @@ echo "lint-served-value-cadence: OK — $UNIT rendered, enabled and scheduled" \
      "in ${#RULE_FILES[@]} rule tree(s)"
 }
 
-for job in ${CADENCE_JOBS:-served-values supply-verify-rollup}; do
+for job in ${CADENCE_JOBS:-served-values supply-verify-rollup verify-lake verify-network-state}; do
   configure_job "$job"
   check_job
 done

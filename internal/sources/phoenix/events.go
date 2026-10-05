@@ -179,6 +179,46 @@ const (
 	FieldDRAsset = "asset"
 )
 
+// ─── Stake-contract lifecycle, factory and blend-pool admin actions ──
+//
+// Every shape below was measured in the lake on a gated emitter; real
+// rows are pinned in test/fixtures/phoenix/event-shapes. Each is a
+// two-String-topic event with a single-value body, decoded without a
+// correlation buffer.
+//
+//	("create_distribution_flow", "asset")                  stake, body Address(asset)
+//	("Stake: Migration: ", "Start of migration for user: ") stake, body Address(user)
+//	("Stake: Migration: ", "Query for user completed: ")    stake, body Address(user)
+//	("Stake", "Migration for user completed and stored: ")  stake, body Address(user)
+//	("Factory", "Updated Config")                           factory, body Void
+//	("blend_pool", "set_delegate")                          pool, body Address
+//	("blend_pool", "set_min_trading_a" | "_b")              pool, body i128
+//	("toggle_trading", "enabled")                           pool, body Bool
+//
+// toggle_trading is recognised but projects no row: serving it needs an
+// admin_action slug the phoenix_admin_events CHECK does not allow yet.
+const (
+	EventActionCreateDistributionFlow = "create_distribution_flow"
+	EventActionStakeMigration         = "Stake: Migration: "
+	EventActionStake                  = "Stake"
+	EventActionFactory                = "Factory"
+	EventActionBlendPool              = "blend_pool"
+	EventActionToggleTrading          = "toggle_trading"
+
+	// StakeAction* are the phoenix_stake_events.action slugs for the
+	// stake-contract lifecycle events (migration 0195).
+	StakeActionMigrationStarted   = "migration_started"
+	StakeActionMigrationQueried   = "migration_queried"
+	StakeActionMigrationCompleted = "migration_completed"
+
+	// AdminAction* for the factory and blend-pool configuration events
+	// (phoenix_admin_events.admin_action, migration 0195).
+	AdminActionFactoryConfigUpdated = "factory_config_updated"
+	AdminActionBlendSetDelegate     = "blend_set_delegate"
+	AdminActionBlendSetMinTradingA  = "blend_set_min_trading_a"
+	AdminActionBlendSetMinTradingB  = "blend_set_min_trading_b"
+)
+
 // Mainnet contract addresses — Phase-1 verified against
 // Phoenix-Protocol-Group/phoenix-contracts `scripts/*.sh`.
 const (
@@ -249,7 +289,8 @@ var MainnetPools = []string{
 var MainnetStakeContracts = []string{
 	"CBRGNWGAC25CPLMOAMR7WBPOF5QTFA5RYXQH4DEJ4K65G2QFLTLMW7RO",
 	"CAF3UJ45ZQJP6USFUIMVMGOUETUTXEC35R2247VJYIVQBGKTKBZKNBJ3",
-	"CBBUVHCEML7UE46XXZXLTMGKFMKX7KOC2XAKI3TW6WBQBKWMSARMU3YM",
+	// CBBUVHCE… is deliberately absent: a bond-instrument contract whose WASM
+	// has none of the stake literals; it only shares the "bond" topic word.
 	// Added 2026-08-18 (phoenix projection-completeness gap): 13 genuine
 	// per-pool stake contracts the 2026-05-01 lake-activity snapshot
 	// missed. Together they landed 2,513 rows in phoenix_stake_events
@@ -267,7 +308,7 @@ var MainnetStakeContracts = []string{
 	//     pool above;
 	//   • CDOXQONPND… shares 260 transactions with curated phoenix pools
 	//     and is driven by the phoenix reward keeper CBZ7M5B3Y4WW…, which
-	//     also drives the three seeded stakes above;
+	//     also drives the seeded stakes above;
 	//   • CDEQYRWFU… (created before the lake window, like the pools) is
 	//     driven by that same keeper and emits the phoenix stake v1.1
 	//     migration events (`Stake: Migration: `, `Start of migration for
@@ -347,6 +388,34 @@ var (
 // README Q5 and docs/architecture/contract-schema-evolution.md (Soroban
 // pools upgrade in place and can change event SHAPE, not just fields).
 var TopicSymbolSwapMap = scval.MustEncodeSymbol(EventActionSwap)
+
+// The Map-schema pool WASM publishes provide_liquidity / withdraw_liquidity
+// the same way: one ScvSymbol topic, ScvMap body. Decoded by
+// decode.go::decodeProvideLiquidityMap / decodeWithdrawLiquidityMap.
+var (
+	TopicSymbolProvideLiquidityMap  = scval.MustEncodeSymbol(EventActionProvideLiquidity)
+	TopicSymbolWithdrawLiquidityMap = scval.MustEncodeSymbol(EventActionWithdrawLiquidity)
+)
+
+// Topic encodings for the stake-lifecycle, factory and blend-pool shapes
+// listed beside EventActionCreateDistributionFlow.
+var (
+	TopicCreateDistributionFlow = scval.MustEncodeString(EventActionCreateDistributionFlow)
+	TopicStakeMigration         = scval.MustEncodeString(EventActionStakeMigration)
+	TopicStake                  = scval.MustEncodeString(EventActionStake)
+	TopicFactory                = scval.MustEncodeString(EventActionFactory)
+	TopicBlendPool              = scval.MustEncodeString(EventActionBlendPool)
+	TopicToggleTrading          = scval.MustEncodeString(EventActionToggleTrading)
+
+	TopicMigrationStarted     = scval.MustEncodeString("Start of migration for user: ")
+	TopicMigrationQueried     = scval.MustEncodeString("Query for user completed: ")
+	TopicMigrationCompleted   = scval.MustEncodeString("Migration for user completed and stored: ")
+	TopicFactoryUpdatedConfig = scval.MustEncodeString("Updated Config")
+	TopicBlendSetDelegate     = scval.MustEncodeString("set_delegate")
+	TopicBlendSetMinTradingA  = scval.MustEncodeString("set_min_trading_a")
+	TopicBlendSetMinTradingB  = scval.MustEncodeString("set_min_trading_b")
+	TopicToggleTradingEnabled = scval.MustEncodeString("enabled")
+)
 
 // Liquidity-management topic[0] encodings + topic[1] field names.
 // Same ScString-discriminator reasoning as swap above: contracts

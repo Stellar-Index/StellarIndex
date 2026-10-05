@@ -121,7 +121,7 @@ func (h *Handlers) setLoginIntentCookie(w http.ResponseWriter, r *http.Request) 
 		_, _ = rand.Read(id) // never errors since Go 1.24; it crashes the program instead
 		browser = hex.EncodeToString(id)
 	}
-	c := credentialCookie(LoginIntentCookieName, browser)
+	c := credentialCookie(LoginIntentCookieName, browser) //nolint:gosec // G124: credentialCookie sets Secure, HttpOnly and SameSite=Lax
 	c.MaxAge = int(h.cfg.MagicLinkTTL / time.Second)
 	http.SetCookie(w, c)
 	return browser
@@ -132,7 +132,7 @@ func (h *Handlers) setLoginIntentCookie(w http.ResponseWriter, r *http.Request) 
 // single-use), just hygiene: a spent binding shouldn't linger in
 // the browser for the rest of the TTL.
 func (h *Handlers) clearLoginIntentCookie(w http.ResponseWriter) {
-	c := credentialCookie(LoginIntentCookieName, "")
+	c := credentialCookie(LoginIntentCookieName, "") //nolint:gosec // G124: credentialCookie sets Secure, HttpOnly and SameSite=Lax
 	c.MaxAge = -1
 	http.SetCookie(w, c)
 }
@@ -164,7 +164,7 @@ func loginDeviceMAC(secret []byte, email string, expires int64) string {
 // [notify.CanonicalRecipient] form — the form HandleLogin checks against.
 func (h *Handlers) setLoginDeviceCookie(w http.ResponseWriter, email string) {
 	expires := h.cfg.Now().Add(loginDeviceTTL).Unix()
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: HttpOnly, SameSite=Lax; Secure follows cookie_secure (default true, false only for http dev)
 		Name:     LoginDeviceCookieName,
 		Value:    strconv.FormatInt(expires, 10) + loginIntentSeparator + loginDeviceMAC(h.cfg.Generator.Secret, email, expires),
 		Path:     "/v1/auth/login",

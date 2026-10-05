@@ -110,16 +110,16 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		// state because prices_1m has no literal native/fiat:USD
 		// bucket, while /v1/price?asset=native&quote=fiat:USD succeeds
 		// via the same fallback. Caught by the 2026-05-08 prod audit.
-		var ok bool
 		viaFallback = true
-		var withheld bool
-		snapshot, sources, served, triangulated, ok, withheld = s.priceFallback(ctx, asset, defaultPriceQuote)
+		fb := s.priceFallback(ctx, asset, defaultPriceQuote)
+		snapshot, sources, served, triangulated = fb.snap, fb.sources, fb.served, fb.triangulated
+		ok := fb.ok
 		// MSP-06: a withheld verdict reached from the proxy leg must be
 		// reported as withheld, not as "no price data" — the two are
 		// different answers, and only the withheld problem names the raw
 		// surfaces where the data IS available.
-		if !ok && withheld {
-			writePriceWithheldProblem(w, r, asset, defaultPriceQuote, PriceWithheldUnattributed)
+		if !ok && (fb.withheld != "" || fb.err != nil) {
+			s.writeFallbackMiss(w, r, asset, defaultPriceQuote, fb, nil)
 			return
 		}
 		// F-1339 (G2-02): every fallback degradation is below the
@@ -127,7 +127,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		// be true — the chain itself is the staleness signal (F-1254).
 		// /v1/price does this; the SEP-40 surfaces used to force
 		// stale=false here, shipping stale data with stale=false.
-		stale = ok
+		stale = fb.stale
 		if !ok || isDeclaredPeg(snapshot) {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/price-not-found",
@@ -164,7 +164,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		writeFrozenNothingHeldProblem(w, r, asset, defaultPriceQuote)
 		return
 	}
-	out, flags, sources := s.sep40Serve(asset, defaultPriceQuote, sep40Read{
+	out, flags, sources := s.sep40Serve(ctx, asset, defaultPriceQuote, sep40Read{
 		snapshot: snapshot, sources: sources, stale: stale, triangulated: triangulated, viaFallback: viaFallback,
 	}, held)
 	writeJSON(w, out, flags, sources...)
@@ -189,7 +189,7 @@ type sep40Read struct {
 // builds the response. A held value replaces the read wholesale — value,
 // sources, triangulation — and is stale and single-sourced by
 // construction, as on /v1/price.
-func (s *Server) sep40Serve(asset, quote canonical.Asset, rd sep40Read, held frozenResolution) (SEP40Price, Flags, []string) {
+func (s *Server) sep40Serve(ctx context.Context, asset, quote canonical.Asset, rd sep40Read, held frozenResolution) (SEP40Price, Flags, []string) {
 	if held.outcome == frozenServeHeld {
 		rd = sep40Read{
 			snapshot: held.snapshot, sources: held.sources, stale: true,
@@ -208,11 +208,13 @@ func (s *Server) sep40Serve(asset, quote canonical.Asset, rd sep40Read, held fro
 	}
 	frozen := held.outcome == frozenServeHeld
 	flags := Flags{
-		Stale:         rd.stale,
-		Triangulated:  rd.triangulated,
-		Frozen:        frozen,
-		FrozenChecked: held.checked,
-		SingleSource:  frozen,
+		Stale:          rd.stale,
+		Triangulated:   rd.triangulated,
+		ProxyDeviation: rd.triangulated && s.proxyDeviation(ctx, time.Now().UTC()),
+		Frozen:         frozen,
+		Degraded:       frozen,
+		FrozenChecked:  held.checked,
+		SingleSource:   frozen,
 	}
 	return out, flags, rd.sources
 }
@@ -338,7 +340,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 
 // recentClosedWithStablecoinFallback wraps PriceReader.RecentClosedSnapshots
 // with the same X/fiat:USD → X/<peg> retry shape used in the
-// other handler-side stablecoin-proxy fallbacks (#1217 / #1218 /
+// other handler-side stablecoin-proxy fallbacks (6505934b5 / a8be130dd /
 // #1220). When the literal asset/fiat:USD lookup returns an
 // empty slice AND quote is fiat:USD AND the operator declared
 // classic USD pegs, walks the pegs and returns the first non-empty
@@ -352,7 +354,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 //
 // Without this, /v1/oracle/prices?asset=native silently returns an
 // empty data array on Stellar mainnet — same out-of-the-box failure
-// mode as /v1/oracle/lastprice had pre-#1220, just expressed as
+// mode as /v1/oracle/lastprice had pre-3aaa5c2a4, just expressed as
 // 200-empty rather than 404.
 //
 // T015: both the literal-quote read and the peg walk go through
@@ -483,19 +485,19 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		// cache → read-time stablecoin-fiat proxy → fiat-vs-fiat
 		// cross-rate. Companion to the equivalent fix on
 		// /v1/oracle/lastprice — see that handler's comment.
-		var ok bool
 		viaFallback = true
-		var withheld bool
-		snapshot, sources, served, triangulated, ok, withheld = s.priceFallback(ctx, base, quote)
+		fb := s.priceFallback(ctx, base, quote)
+		snapshot, sources, served, triangulated = fb.snap, fb.sources, fb.served, fb.triangulated
+		ok := fb.ok
 		// MSP-06, as above.
-		if !ok && withheld {
-			writePriceWithheldProblem(w, r, base, quote, PriceWithheldUnattributed)
+		if !ok && (fb.withheld != "" || fb.err != nil) {
+			s.writeFallbackMiss(w, r, base, quote, fb, nil)
 			return
 		}
 		// F-1339 (G2-02): fallback responses surface flags.stale=true
 		// — the chain itself is the staleness signal (F-1254). The
 		// SEP-40 surface used to force stale=false here.
-		stale = ok
+		stale = fb.stale
 		if !ok || isDeclaredPeg(snapshot) {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/price-not-found",
@@ -526,13 +528,22 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The ADR-0053 basis rule, as on /v1/price, so both closed surfaces
+	// serve one number for the pair.
+	if !viaFallback {
+		if basis, ok := s.preferUSDAnchoredBasis(ctx, base, quote, snapshot, sources); ok {
+			snapshot, sources, served, triangulated, stale = basis.snap, basis.sources, basis.served, true, basis.stale
+			viaFallback = true
+		}
+	}
+
 	// Freeze, then the shared tail — see handleOracleLastPrice.
 	held := s.resolveFrozenServeFor(r, snapshot, base, served, quote)
 	if held.outcome == frozenServeNothingHeld {
 		writeFrozenNothingHeldProblem(w, r, base, quote)
 		return
 	}
-	out, flags, sources := s.sep40Serve(base, quote, sep40Read{
+	out, flags, sources := s.sep40Serve(ctx, base, quote, sep40Read{
 		snapshot: snapshot, sources: sources, stale: stale, triangulated: triangulated, viaFallback: viaFallback,
 	}, held)
 	writeJSON(w, out, flags, sources...)

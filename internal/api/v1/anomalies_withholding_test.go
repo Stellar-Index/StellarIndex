@@ -47,7 +47,7 @@ func (f *withholdingDivergenceReader) ListDivergenceLatest(context.Context, int,
 	return f.latest, nil
 }
 
-func (f *withholdingDivergenceReader) ListDivergenceSeries(context.Context, string, string, string, int) ([]timescale.DivergenceSeriesPoint, error) {
+func (f *withholdingDivergenceReader) ListDivergenceSeries(context.Context, string, string, int) ([]timescale.DivergenceSeriesPoint, error) {
 	f.seriesRead = true
 	return f.points, nil
 }
@@ -118,8 +118,8 @@ func TestDivergence_OmitsWithheldMarketsOurPrice(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(got.Data.Observations) != 1 || got.Data.Observations[0].OurPrice != "100" {
-		t.Fatalf("observations = %+v, want only crypto:BTC/fiat:USD @ 100 — a flagged issuer's our_price (either leg) was served", got.Data.Observations)
+	if len(got.Data.Pairs) != 1 || got.Data.Pairs[0].OurPrice != "100" {
+		t.Fatalf("pairs = %+v, want only crypto:BTC/fiat:USD @ 100 — a flagged issuer's our_price (either leg) was served", got.Data.Pairs)
 	}
 }
 
@@ -133,7 +133,7 @@ func TestDivergenceSeries_WithheldMarketIsWithheldProblem(t *testing.T) {
 			s.divergences = reader
 			rec := httptest.NewRecorder()
 			s.handleDivergenceSeries(rec, httptest.NewRequest(http.MethodGet,
-				"/v1/divergence/series?pair="+pair+"&reference=coingecko", nil))
+				"/v1/divergence/series?pair="+pair+"", nil))
 			if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "price-withheld") {
 				t.Fatalf("status = %d body %s, want 404 price-withheld", rec.Code, rec.Body.String())
 			}
@@ -154,7 +154,7 @@ func TestDivergenceSeries_UnflaggedMarketStillServes(t *testing.T) {
 	}}
 	rec := httptest.NewRecorder()
 	s.handleDivergenceSeries(rec, httptest.NewRequest(http.MethodGet,
-		"/v1/divergence/series?pair=crypto:BTC~fiat:USD&reference=coingecko", nil))
+		"/v1/divergence/series?pair=crypto:BTC~fiat:USD", nil))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"our_price":"100"`) {
 		t.Fatalf("status = %d body %s, want 200 with our_price 100", rec.Code, rec.Body.String())
 	}

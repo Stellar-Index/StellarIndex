@@ -104,19 +104,7 @@ func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan ca
 			return nil
 		},
 		HandleFrame: func(data []byte) ([]canonical.Trade, error) {
-			trade, isTrade, err := parseFrame(data, s.PairMap)
-			var ack *subscriptionAck
-			if errors.As(err, &ack) {
-				recordSubscriptionAck(logger, ack)
-				return nil, nil
-			}
-			if err != nil {
-				return nil, err
-			}
-			if !isTrade {
-				return nil, nil
-			}
-			return []canonical.Trade{trade}, nil
+			return handleFrame(data, s.PairMap, logger)
 		},
 		// `bts:request_reconnect` must drop the connection and flow
 		// to the classifier / disconnect hook, not be skipped as a
@@ -155,6 +143,27 @@ func classifyDisconnect(err error) string {
 // attributable channel (e.g. a malformed-string bts:error carrying no
 // channel echo) so the venue cannot mint arbitrary metric labels.
 const unknownAckSymbol = "unknown"
+
+// handleFrame decodes one frame. A dust trade is a real trade below the
+// integer-scale floor, not a decode failure, so it yields no trade and no error.
+func handleFrame(data []byte, pairMap map[string]canonical.Pair, logger *slog.Logger) ([]canonical.Trade, error) {
+	trade, isTrade, err := parseFrame(data, pairMap)
+	var ack *subscriptionAck
+	if errors.As(err, &ack) {
+		recordSubscriptionAck(logger, ack)
+		return nil, nil
+	}
+	if errors.Is(err, ErrDustTrade) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !isTrade {
+		return nil, nil
+	}
+	return []canonical.Trade{trade}, nil
+}
 
 // recordSubscriptionAck flags a rejected symbol rather than dropping
 // the connection: Bitstamp answers per channel, so the other

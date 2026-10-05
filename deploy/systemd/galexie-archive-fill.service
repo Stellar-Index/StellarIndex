@@ -2,7 +2,7 @@
 #
 # Runs the hardened /usr/local/bin/galexie-archive-fill — the
 # per-partition mirror (aws-public-blockchain → local galexie-archive)
-# that the team already built but, until #26, only ever invoked by
+# that the team already built but, until f12289f6d, only ever invoked by
 # hand. galexie-archive silently fell ~23 days / ~346k ledgers behind
 # (2026-04-26 → 2026-05-19) precisely because nothing scheduled this
 # script: the live appender (galexie.service) kept galexie-live
@@ -23,7 +23,7 @@
 # service user has no mc config).
 
 [Unit]
-Description=Stellar Index — galexie-archive scheduled catch-up (#26)
+Description=Stellar Index — galexie-archive scheduled catch-up (f12289f6d)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/galexie-backfill.md
 After=network-online.target minio.service
 Wants=network-online.target
@@ -31,10 +31,11 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=root
-# 75 = run-heavy-job.sh skipped this fire (per-job lock held): not a
+# 75 = run-heavy-job.sh skipped this fire (a lock was held): not a
 # failure, but ExecMainStatus=75 keeps it distinct from a run.
 SuccessExitStatus=75
-# Timer-fired: shares run-heavy-job.sh's host-wide lock, never refused by it.
+# Hourly timer-fired: defers (exit 75) while another heavy job runs; the
+# next fire retries.
 Environment=HEAVY_JOB_CLASS=scheduled
 ExecStart=/usr/local/sbin/run-heavy-job.sh galexie-archive-fill /usr/local/bin/galexie-archive-fill
 # A routine hourly drift fills in seconds-minutes; a large catch-up

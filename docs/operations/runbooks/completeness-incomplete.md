@@ -71,6 +71,64 @@ Re-derive the flagged source from the certified lake, then re-verify:
   never re-saw the failing range, and carried the red forward every night — a
   repaired source stayed red until someone ran the command above by hand.
 
+  That re-verify can outlast the pass's deadline (`-timeout`, default `120m`):
+  on r1, sdex's served range from 61249957 is ~3.44M ledgers at ~200
+  ledgers/s ≈ 4.8 h. The pass therefore runs every from-genesis source LAST and
+  publishes the `recognition` row before the per-source loop, so only the
+  re-verifying tail is left unevaluated (named in the pass's error). To grant a
+  one-off larger budget, set `PASS_TIMEOUT` (e.g. `PASS_TIMEOUT=300m`) in the
+  `/etc/default/compute-completeness` AND raise `TimeoutStartSec` (34200 s: a 23400 s lock wait + 180 min) by as much in
+  `compute-completeness.service`, or systemd kills the pass first — or clear
+  the source by hand with the chunked `-source` re-run above.
+
+## Stale: projection evidence older than 10 d 6 h, or unknown
+
+`/v1/coverage` sets `flags.stale` when a source claiming `projection_ok` has
+`projection_evidenced_at` older than `MaxProjectionCarryAge` (7 d) plus three
+26 h audit periods, or `null`. `computed_at` cannot show this: the nightly
+`-pass` restamps it while carrying the old claim. The carry detail names the
+proof time ("the carried prefix was last reconciled in full at …", or "has no
+full-range reconcile on record").
+
+```sh
+sudo -u postgres psql -d stellarindex -c \
+ "SELECT source, projection_evidenced_at, computed_at FROM (SELECT DISTINCT ON (source) * \
+  FROM completeness_snapshots ORDER BY source, computed_at DESC) s \
+  WHERE projection_ok ORDER BY projection_evidenced_at NULLS FIRST;"
+```
+
+- **Event sources** clear on their own. Each `-pass` re-proves from genesis
+  the expired (> 7 d, or `null`) sources, oldest first, at most three per night
+  (the pass logs `re-proving expired projection evidence from genesis this
+  pass: …`). Right after migration 0201 every green source is `null`, so the
+  flag holds for about `ceil(green sources / 3)` nights. If a source stays
+  expired past that, check the pass's error for a deadline cut.
+- **`sdex` (the census) is re-proved weekly by its own timer.** Its full
+  re-proof takes ~4.8 h, longer than the pass's 120 min, so the pass never
+  re-floors it. `compute-completeness-sdex.timer` (Sunday 18:47 UTC) runs the
+  nightly driver as `-source sdex -timeout 360m` under the same
+  `run-heavy-job.sh` job name, so it never overlaps the nightly pass. Right
+  after migration 0201, sdex stays `null` until that first Sunday run. If the
+  timer failed or missed a week (`systemctl status compute-completeness-sdex`,
+  `journalctl -u compute-completeness-sdex`), re-run it off-peak and outside
+  the 05:30 UTC pass window:
+
+  ```sh
+  sudo systemctl start --no-block compute-completeness-sdex.service
+  ```
+
+  `sep41_transfers` is handled the same way by
+  `compute-completeness-sep41.timer` (Wednesday 18:47 UTC,
+  `-source sep41_transfers -timeout 360m`): the watched KALE SAC puts its
+  CAP-67 transfers in nearly every lake granule, so its from-genesis re-proof
+  overruns the pass's 45 min `-source-timeout` and the pass never forces it.
+  Re-run with `sudo systemctl start --no-block compute-completeness-sep41.service`.
+
+  The unit is the fallback to prefer: it applies the driver's tip−100 margin,
+  without which undrained ledgers read as sdex mismatches. Do not add
+  `-from`: a run that starts above the served floor carries the range below it
+  and stamps no evidence, so chunked `-from` runs cannot clear this.
+
 ## Root cause analysis
 
 A served<>lake divergence: dropped rows (a decoder bug fixed forward-only, e.g.
@@ -112,6 +170,14 @@ The `detail` column names the per-target Δ and window.
 
 ## Changelog
 
+- 2026-10-04 — `sep41_transfers` left the pass's forced re-proof;
+  `compute-completeness-sep41.timer` re-proves it weekly (Wednesday).
+
+- 2026-10-02 — added the projection-evidence stale reason (migration 0201):
+  the `-pass` re-proves up to three expired sources per night;
+  `compute-completeness-sdex.timer` re-proves `sdex` weekly.
+- 2026-09-30 — the nightly `-pass` orders from-genesis re-verifies last,
+  writes the `recognition` row first, and takes `-timeout` / `PASS_TIMEOUT`.
 - 2026-09-09 — CS-095: the nightly `-pass` now re-verifies a source whose prior
   projection verdict was failing, instead of resuming it from the lake
   watermark and carrying the red forward forever. Mitigation section updated:

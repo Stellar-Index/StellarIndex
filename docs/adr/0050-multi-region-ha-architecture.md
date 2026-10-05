@@ -60,6 +60,16 @@ Adopt the three-tier architecture detailed in `docs/architecture/multi-region-ha
   re-ingestable projection (consistent with ADR-0043, which rejects backing up the derived
   lake). Recovery/bootstrap = re-ingest from the archive.
 
+> **Durability decision amended 2026-10-02.** The raw galexie-archive is
+> no longer mirrored off-site. It is a copy of SDF's public dataset
+> (`s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`) and is
+> re-pulled from there, so its loss is a *time* exposure, not a *data*
+> exposure (ADR-0043 §2 amendment, 2026-08-29: accept the dependency, do
+> not duplicate public data into our own storage). The off-site copies are
+> the ClickHouse lake and Postgres (pgBackRest), both on Backblaze B2. The
+> "crown jewel" bullet above and `galexie-archive-mirror` are superseded;
+> the mirror is disabled by default (`galexie_archive_mirror_enabled`).
+
 Fleet cost: **~$15–18 K/yr** (single box per region). Full detail, phasing (Phase 0–4),
 per-region shapes, and the prerequisite workstreams (determinism hardening, lake-aware
 health, off-site archive DR, greenfield HA foundation, multi-region inventory/deploy) are
@@ -105,4 +115,21 @@ the measured cache-header evidence, and the cheapest-first resume sequence
 (Cloudflare -> micro-cache test -> R2 -> R3-on-evidence) are recorded in
 `docs/architecture/multi-region-ha.md` §0c. The v1.0-relevant residue is the
 single-point-of-failure exposure, tracked against ADR-0043's DR work rather than here.
+
+## Amendment — 2026-09-30: rate limit and monthly quota are per-region
+
+Both request limits count in the serving region's own Redis (`[storage] redis_addr` renders
+as `127.0.0.1:6379`), keyed per principal with no region dimension: the rate limit
+(`internal/api/v1/middleware/ratelimit.go`) and the monthly quota's month-to-date read
+(`internal/api/v1/middleware/monthly_quota.go`, via `usage.Counter`). Under active/active
+each region enforces them independently, so the effective global ceiling is **N regions ×
+the limit** — for the per-second rate limit and the monthly quota alike. Their fail-closed
+dwell is per region as well: one region's Redis outage 429s only that region's traffic.
+
+**Mitigation: open decision.** It must be taken before a second region serves authenticated
+traffic, which already waits on control-plane replication (plan §3c); until then N = 1 and
+the published limits are exact. A synchronous cross-region counter is excluded for the rate
+limit, because it puts a cross-region round trip on every request and breaks the "no SLO'd
+route crosses a region boundary" invariant. The remaining options and their trade-offs are
+in `docs/architecture/multi-region-ha.md` §3d.
 

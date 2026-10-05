@@ -55,7 +55,7 @@ func TestAccountOperations_BoundsEachUnionArm(t *testing.T) {
 	}
 	r := &ExplorerReader{conn: conn}
 
-	if _, err := r.AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
+	if _, err := r.accountOperationsExact(context.Background(), "GTEST", limit, ExplorerCursor{}, 0, false); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
 	q := conn.queries[len(conn.queries)-1]
@@ -93,7 +93,7 @@ func TestAccountTransactions_BoundsEachUnionArm(t *testing.T) {
 	}
 	r := &ExplorerReader{conn: conn}
 
-	if _, err := r.AccountTransactions(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
+	if _, err := r.accountTransactionsExact(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountTransactions: %v", err)
 	}
 	q := conn.queries[len(conn.queries)-1]
@@ -141,12 +141,12 @@ func TestAccountOperations_PerArmLimitPreservesCursorArgOrder(t *testing.T) {
 	r := &ExplorerReader{conn: conn}
 
 	cur := ExplorerCursor{Ledger: 63_000_000, A: 4, B: 2}
-	if _, err := r.AccountOperations(context.Background(), "GTEST", limit, cur); err != nil {
+	if _, err := r.accountOperationsExact(context.Background(), "GTEST", limit, cur, 0, false); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
 	want := []any{
-		"GTEST", cur.Ledger, cur.A, cur.B, limit, // arm 1: account, cursor, page size
-		"GTEST", cur.Ledger, cur.A, cur.B, limit, // arm 2: same
+		"GTEST", cur.Ledger, cur.Ledger, cur.A, cur.B, limit, // arm 1: account, leading-key bound, cursor, page size
+		"GTEST", cur.Ledger, cur.Ledger, cur.A, cur.B, limit, // arm 2: same
 		limit, // keyset merge
 		limit, // hydration pass (two-phase, 2026-08-13)
 	}
@@ -215,7 +215,7 @@ func TestUnionArmTopN_MatchesUnboundedMerge(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = withOpsBySourceRows(func(string) (driver.Rows, error) { return &stubRows{}, nil })
 	r := &ExplorerReader{conn: conn}
-	if _, err := r.AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
+	if _, err := r.accountOperationsExact(context.Background(), "GTEST", limit, ExplorerCursor{}, 0, false); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
 	args := conn.args[len(conn.args)-1]

@@ -2,11 +2,14 @@ package v1
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -158,6 +161,8 @@ type AssetDetail struct {
 	//   - "unreachable"    — a fetch WAS attempted and produced nothing
 	//     storable: a 404, a dead name, a TLS failure, or a document
 	//     that would not parse. THEIRS, and the one an issuer can act on.
+	//     Also a held payload past its attestation age whose domain is
+	//     failing now.
 	Sep1Status string `json:"sep1_status"`
 
 	// ─── SEP-1 overlay fields (populated when Sep1Status=="verified") ─
@@ -259,6 +264,10 @@ type AssetDetail struct {
 	ListingReference *AssetListingReference `json:"listing_reference,omitempty"`
 	ListingValuation *AssetListingValuation `json:"listing_valuation,omitempty"`
 
+	// Trust is the banded trust score and its factor breakdown
+	// (asset_trust.go). Detail endpoint only; never an input to pricing.
+	Trust *AssetTrust `json:"trust,omitempty"`
+
 	// DecimalsUnresolved is true when this row's `decimals` is the
 	// hardcoded default rather than a value read from the token's own
 	// on-chain metadata. INTERNAL — never serialised — because it
@@ -274,9 +283,13 @@ type AssetDetail struct {
 	// SupplyBasis identifies which ADR-0011 policy produced the
 	// supply numbers; null when no snapshot exists. Lets consumers
 	// decide how much to trust the absolute value (e.g. `override`
-	// indicates an operator curated the locked-set or SEP-1
-	// declared a max_supply).
+	// indicates an operator curated the locked-set or max_supply).
 	SupplyBasis *string `json:"supply_basis,omitempty"`
+
+	// MaxSupplyBasis names where max_supply came from when that is not
+	// the policy SupplyBasis names: `sep1_declared_max` for an issuer's
+	// stellar.toml declaration. Omitted otherwise.
+	MaxSupplyBasis *string `json:"max_supply_basis,omitempty"`
 
 	// SupplyAsOf / SupplyAsOfLedger are when, and at which ledger, the
 	// supply observation behind the supply fields was taken. Omitted when
@@ -362,13 +375,16 @@ type AssetDetail struct {
 	// proxy is disabled), or when it is withheld ([PriceWithheldReason]).
 	PriceUSD *string `json:"price_usd,omitempty"`
 
-	// PriceBasis identifies a PriceUSD that is NOT a market
-	// observation. The only value today is [priceBasisDeclaredPeg]
-	// ("declared_peg"): PriceUSD was filled from an operator-declared
-	// 1:1 fiat peg × the current fiat→USD FX rate
-	// (pricing_guard.fiat_pegged_classic_assets) because no
-	// market-derived price survived the substance gate. Absent means
-	// market-derived (the pre-existing contract, unchanged). Peg-filled
+	// PriceBasis identifies a PriceUSD that is NOT a Stellar market
+	// observation: [priceBasisGlobalMarket] ("global_market") — filled
+	// from the vetted global ticker's cross-venue price
+	// ([AssetDetail.GlobalMarket]); [priceBasisDeclaredPeg]
+	// ("declared_peg") — filled from an operator-declared 1:1 fiat peg ×
+	// the current fiat→USD FX rate (pricing_guard.fiat_pegged_classic_assets)
+	// when no global price exists either; [priceBasisTransitive]. Both
+	// fills run only when no market-derived price survived the substance
+	// gate. Absent means market-derived (the pre-existing contract,
+	// unchanged). Filled
 	// rows deliberately carry NO change pills, sparkline-backed cap, or
 	// other market-history claims — the peg fill asserts a conversion
 	// basis, not a market. Additive, omitempty — consumers that don't
@@ -379,6 +395,26 @@ type AssetDetail struct {
 	// WITHHELD, not because none exists, in the `price-withheld` 404's
 	// reason vocabulary. Never set beside a price_usd.
 	PriceWithheldReason PriceWithheldReason `json:"price_withheld_reason,omitempty"`
+
+	// GlobalMarket is the global-market reference for a classic asset the
+	// verified catalogue binds to a global ticker on its exact (code,
+	// issuer), with the Stellar price's divergence from it. Omitted for
+	// every other asset and when no fresh aggregator price exists.
+	GlobalMarket *AssetGlobalMarket `json:"global_market,omitempty"`
+
+	// IssuerBehaviour is a classic asset's issuer flags and SAC
+	// mint/burn/clawback totals. Detail path only; omitted when neither resolves.
+	IssuerBehaviour *AssetIssuerBehaviour `json:"issuer_behaviour,omitempty"`
+
+	// ThinMarket marks a price_usd served under `include_thin=true` from a
+	// market below the substance floor; no valuation or series derives from it.
+	ThinMarket bool `json:"thin_market,omitempty"`
+
+	// Substance is the measurement behind a thin price (detail only).
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
+
+	// thinFloor is the floor a listing thin row failed, for its counter.
+	thinFloor pricingguard.SubstanceFloor
 
 	// Change1hPct / Change7dPct round out the trailing-window set
 	// alongside Change24hPct. Same shape — signed percentage with
@@ -441,6 +477,9 @@ type AssetDetail struct {
 	// issuerDirectoryUnchecked: the directory read for this issuer failed,
 	// so the absence of a scam tag proves nothing and pricing is withheld.
 	issuerDirectoryUnchecked bool
+	// f2ReadFailed: a volume, 24h-change or supply read errored, so the
+	// fields it feeds (incl. market_cap_usd / fdv_usd) are missing, not absent.
+	f2ReadFailed bool
 
 	// VolumeCharacter classifies the asset's trailing-window trade
 	// volume by account structure (wash-and-scam-signals design §2):
@@ -535,6 +574,8 @@ type AssetDetail struct {
 	// "issuer didn't say" case is distinguishable from "issuer said
 	// false".
 	IsUnlimited *bool `json:"is_unlimited,omitempty"`
+
+	Sep1CurrencyAuthority
 
 	// UnverifiedWarning points at the verified Stellar-canonical
 	// asset when the requested asset uses a verified currency's
@@ -1247,6 +1288,45 @@ func (s *Server) handleAssetListFromAssets(
 		writeEnvelope(w, Envelope{Data: []AssetDetail{}, Flags: Flags{}})
 		return
 	}
+	key := assetListCacheKey(r)
+	if body, refresh, ok := s.assetListCache.lookup(key); ok {
+		if refresh {
+			s.refreshAssetListPage(r, key, filters, cursor, limit, order) //nolint:contextcheck // the refresh outlives this request on purpose; see its doc.
+		}
+		writeCachedAssetList(w, body)
+		return
+	}
+	env, rows, err := s.buildAssetListPage(r, filters, cursor, limit, order)
+	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		s.logger.Error("ListAssetsExt (assets listing) failed", "err", err)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
+	// A page built on a dead context holds whatever best-effort reads
+	// landed before cancellation; it is answered, never replayed.
+	if r.Context().Err() == nil && assetListPageCacheable(env, rows) {
+		if err := s.assetListCache.put(key, env); err != nil {
+			s.logger.Debug("assets listing render for cache failed", "err", err)
+		}
+	}
+	writeEnvelope(w, env)
+}
+
+// buildAssetListPage assembles one default-listing page: the cached row
+// set plus every per-request overlay, in their load-bearing order. It
+// returns the served rows so the caller can judge cacheability.
+func (s *Server) buildAssetListPage(
+	r *http.Request,
+	filters assetListFilters,
+	cursor string,
+	limit int,
+	order timescale.AssetsOrder,
+) (Envelope, []AssetDetail, error) {
 	// Overfetch-by-one: request limit+1 so the (limit+1)th row signals
 	// a next page. `limit` is validated to [1,500] by the caller, so the
 	// store sees at most 501 (F-1326: previously this passed `limit`
@@ -1270,14 +1350,7 @@ func (s *Server) handleAssetListFromAssets(
 	// the envelope below.
 	rows, observedAt, stale, err := s.listAssetsExtAt(r.Context(), opts)
 	if err != nil {
-		if clientAborted(r, err) {
-			return
-		}
-		s.logger.Error("ListAssetsExt (assets listing) failed", "err", err)
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/internal",
-			"Internal error", http.StatusInternalServerError, "")
-		return
+		return Envelope{}, nil, err
 	}
 	// Overfetch-by-one for cursor pagination — same shape the
 	// retired /v1/coins handler used. The +1th row determines
@@ -1291,7 +1364,7 @@ func (s *Server) handleAssetListFromAssets(
 		out = append(out, assetDetailFromAssetRow(row))
 	}
 	s.stampListingCollisions(out)
-	unmeasured := s.applySubstanceGateToListing(r.Context(), out)
+	unmeasured := s.applySubstanceGateToListing(r.Context(), out, includeThinRequested(r))
 	s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows))
 	// AFTER the gate (which would strip it) and AFTER the market-cap
 	// fill (so no valuation derives from it) — see
@@ -1311,6 +1384,7 @@ func (s *Server) handleAssetListFromAssets(
 	// Every price PRODUCER still runs above this line, so the
 	// suppression cannot be undone by one of them.
 	s.fillIssuerDirectoryTags(r.Context(), out)
+	settleListingThinRows(out)
 	// LAST among the valuation producers. It reads the outcome of every
 	// one above it — the served cap, the gated price, the dust flag, the
 	// peg basis and the directory's scam tags — to decide whether there
@@ -1330,8 +1404,9 @@ func (s *Server) handleAssetListFromAssets(
 	// came from the cache we stamp their ACTUAL observation time and,
 	// past the TTL, `flags.stale` — never now() over a boot-seeded or
 	// refresh-starved page-set. An uncached read leaves observedAt zero
-	// and writeEnvelope defaults as_of to now.
-	env := Envelope{Data: out, Flags: Flags{Stale: stale || unmeasured}}
+	// and as_of is the build time, stamped once so a cached replay
+	// carries the same as_of as the response that built it.
+	env := Envelope{Data: out, Flags: Flags{Stale: stale || unmeasured, Degraded: stale || unmeasured || anyDirectoryUnchecked(out)}, AsOf: WireTime(time.Now().UTC())}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())
 	}
@@ -1344,7 +1419,7 @@ func (s *Server) handleAssetListFromAssets(
 			Next: timescale.EncodeAssetsCursor(rows[len(rows)-1], order),
 		}
 	}
-	writeEnvelope(w, env)
+	return env, out, nil
 }
 
 // fillMarketCapsFromSupply fills market_cap (and circulating_supply) on
@@ -1458,7 +1533,7 @@ func (s *Server) fillRowMarketCap(
 	lake, broad map[string]string,
 	sourceCounts map[string]int,
 ) {
-	if row.MarketCapUSD != nil || row.PriceUSD == nil {
+	if row.MarketCapUSD != nil || row.PriceUSD == nil || row.ThinMarket {
 		return
 	}
 	circ, basis := classicSupplyReading(row.AssetID, precise, lake, broad)
@@ -1613,7 +1688,10 @@ func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDe
 // back a market cap with exactly the claim this gate exists to refuse.
 // unmeasured reports that it happened so the caller stamps flags.stale
 // — the empty price is then an outage, not a verdict on the market.
-func (s *Server) applySubstanceGateToListing(ctx context.Context, rows []AssetDetail) (unmeasured bool) {
+//
+// Under admitThin (the listing's `include_thin=true`) a measured-thin row
+// keeps price_usd flagged thin_market instead; its pills still go.
+func (s *Server) applySubstanceGateToListing(ctx context.Context, rows []AssetDetail, admitThin bool) (unmeasured bool) {
 	if s.substance == nil {
 		return false
 	}
@@ -1626,21 +1704,43 @@ func (s *Server) applySubstanceGateToListing(ctx context.Context, rows []AssetDe
 		if err != nil {
 			continue
 		}
-		allowed, measured := s.listingSubstanceVerdict(ctx, asset)
+		allowed, measured, floor := s.listingSubstanceVerdict(ctx, asset, admitThin)
 		if allowed {
 			continue
 		}
-		if measured {
+		switch {
+		case measured && admitThin:
+			row.ThinMarket = true
+			row.thinFloor = floor
+		case measured:
 			row.PriceWithheldReason = PriceWithheldSubstance
-		} else {
+			row.PriceUSD = nil
+		default:
 			unmeasured = true
+			row.PriceUSD = nil
 		}
-		row.PriceUSD = nil
 		row.Change1hPct = nil
 		row.Change24hPct = nil
 		row.Change7dPct = nil
 	}
 	return unmeasured
+}
+
+// settleListingThinRows drops the thin flag from a row a later overlay
+// unpriced and counts each row still served thin, so a peg-won or
+// scam-nulled row is never counted as a thin serve.
+func settleListingThinRows(rows []AssetDetail) {
+	for i := range rows {
+		row := &rows[i]
+		if !row.ThinMarket {
+			continue
+		}
+		if row.PriceUSD == nil {
+			row.ThinMarket = false
+			continue
+		}
+		obs.PriceServeThinAdmittedTotal.WithLabelValues("listing", string(row.thinFloor)).Inc()
+	}
 }
 
 // listingPriceAllowed is [Server.listingSubstanceVerdict] for callers
@@ -1662,8 +1762,14 @@ func (s *Server) assetPriceAllowed(ctx context.Context, asset canonical.Asset, s
 // measured is false when no backing quote cleared and at least one could
 // not be measured: the row is then unverified rather than withheld on
 // evidence.
-func (s *Server) listingSubstanceVerdict(ctx context.Context, asset canonical.Asset) (allowed, measured bool) {
-	return pricingguard.AssetSubstanceVerdict(ctx, s.substance, asset, s.usdPeggedClassics, "listing")
+// Under admitThin a thin verdict is left uncounted: the row's final fate
+// is known only after the peg fill and scam suppression.
+func (s *Server) listingSubstanceVerdict(ctx context.Context, asset canonical.Asset, admitThin bool) (allowed, measured bool, floor pricingguard.SubstanceFloor) {
+	if admitThin {
+		return pricingguard.AssetSubstanceVerdictThinServed(ctx, s.substance, asset, s.usdPeggedClassics, "listing")
+	}
+	allowed, measured = pricingguard.AssetSubstanceVerdict(ctx, s.substance, asset, s.usdPeggedClassics, "listing")
+	return allowed, measured, pricingguard.FloorNone
 }
 
 // priceBasisDeclaredPeg is the wire value [AssetDetail.PriceBasis]
@@ -1710,12 +1816,15 @@ const declaredPegFXMaxAge = 7 * 24 * time.Hour
 //     raw-history policy (history is a fact, not a claim) — the peg
 //     fill itself never fabricates history.
 func (s *Server) fillDeclaredPegPricesInListing(ctx context.Context, rows []AssetDetail) {
-	if len(s.fiatPeggedClassics) == 0 {
+	refs := s.globalMarketRefs(ctx, rows)
+	if len(s.fiatPeggedClassics) == 0 && refs == nil {
 		return
 	}
+	now := time.Now()
 	memo := make(map[string]*string, 1)
 	for i := range rows {
-		s.fillDeclaredPegPrice(ctx, &rows[i], memo)
+		s.applyGlobalMarket(&rows[i], refs, now)
+		s.fillFixedPegPrice(ctx, &rows[i], memo)
 	}
 }
 
@@ -1733,8 +1842,17 @@ func (s *Server) fillDeclaredPegPricesInListing(ctx context.Context, rows []Asse
 // memo caches fiat ticker → resolved price across calls within one
 // request ("looked up, unavailable" is a nil value); pass nil on
 // single-row paths (asset detail).
+//
+// A vetted global ticker's market price ([Server.applyGlobalMarket])
+// fills first: a fixed peg would hide a depeg the global market shows.
 func (s *Server) fillDeclaredPegPrice(ctx context.Context, row *AssetDetail, memo map[string]*string) {
-	if len(s.fiatPeggedClassics) == 0 || row.PriceUSD != nil {
+	s.applyGlobalMarket(row, s.globalMarketRefs(ctx, []AssetDetail{*row}), time.Now())
+	s.fillFixedPegPrice(ctx, row, memo)
+}
+
+// fillFixedPegPrice is the declared fiat peg × FX fill.
+func (s *Server) fillFixedPegPrice(ctx context.Context, row *AssetDetail, memo map[string]*string) {
+	if len(s.fiatPeggedClassics) == 0 || (row.PriceUSD != nil && !row.ThinMarket) {
 		return
 	}
 	fiat, ok := s.fiatPeggedClassics[row.AssetID]
@@ -1755,6 +1873,7 @@ func (s *Server) fillDeclaredPegPrice(ctx context.Context, row *AssetDetail, mem
 	row.PriceUSD = &p
 	row.PriceBasis = priceBasisDeclaredPeg
 	row.PriceWithheldReason = ""
+	row.ThinMarket = false
 }
 
 // declaredPegUSDPrice resolves 1 unit of the declared peg currency in
@@ -2557,8 +2676,7 @@ func normaliseAssetClass(raw string) string {
 //     are Stellar-asset-specific and belong on the canonical
 //     /v1/assets/{asset_id} detail route.
 //
-// Pagination via offset cursor — the result set is bounded at
-// ≤45 catalogue rows per class, so a simple offset is sufficient.
+// Paginated by writeCataloguePage.
 //
 // The class IS the query here: this listing serves its whole class and
 // narrows on none of the row filters. `filters` is taken only to name
@@ -2589,7 +2707,7 @@ func (s *Server) handleAssetListFromCatalogue(
 // assets split off /v1/assets (LC-001): fiat currencies (USD, EUR, …) and
 // reference-only coins (BTC, ETH, …) that have no Stellar issuance. An
 // optional ?asset_class=fiat|crypto|stablecoin narrows to one class. Same
-// GlobalAssetView catalogue wire shape + offset-cursor pagination as the
+// GlobalAssetView catalogue wire shape + pagination as the
 // Stellar catalogue-class listing; market_cap_usd is populated per row
 // (fiat via the fxHistory path, others null until crypto-supply lands).
 func (s *Server) handleExternalAssetList(w http.ResponseWriter, r *http.Request) {
@@ -2607,7 +2725,8 @@ func (s *Server) handleExternalAssetList(w http.ResponseWriter, r *http.Request)
 		limit = parsed
 	}
 
-	if s.verifiedCurrencies == nil {
+	// Every external row is priced by an off-chain feed no test net runs.
+	if s.verifiedCurrencies == nil || !s.servesPubnetReference() {
 		writeJSON(w, []AssetDetail{}, Flags{})
 		return
 	}
@@ -2718,34 +2837,11 @@ func catalogueRowImage(vc *currency.VerifiedCurrency, images map[string]string) 
 	return sep1ImageFor(images, se.Code, se.Issuer)
 }
 
-// parseOffsetCursor parses an offset-style pagination cursor. The
-// cursor is the integer offset emitted as pagination.next by the
-// catalogue listing paths. An empty cursor means "start at page 1".
-//
-// A non-empty, non-integer (or negative) cursor is a client error:
-// we 400 it rather than silently restarting at page 1, matching the
-// opaque-cursor markets.go pattern (G3-08/G3-10). Silently swallowing
-// it made a typo'd cursor look like a successful first page.
-//
-// Reports ok=false after writing a problem+json on parse failure.
-func parseOffsetCursor(w http.ResponseWriter, r *http.Request, cursor string) (int, bool) {
-	if cursor == "" {
-		return 0, true
-	}
-	n, err := strconv.Atoi(cursor)
-	if err != nil || n < 0 {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-cursor",
-			"Invalid cursor", http.StatusBadRequest,
-			"cursor must be the integer pagination.next value from a prior response, or omitted to start at page 1.")
-		return 0, false
-	}
-	return n, true
-}
-
-// writeCataloguePage ranks the rows by market cap, applies offset-cursor
-// pagination and writes the envelope. Catalogue paging is small (≤45 rows
-// per class) so offset is sufficient.
+// writeCataloguePage ranks the rows by market cap, paginates them and writes
+// the envelope. The cursor names the slugs already served rather than an
+// offset: caps move between requests (live FX, prices), so an offset into a
+// re-ranked list duplicates or skips rows, while "the rest, ranked now" does
+// neither. The catalogue is a few dozen rows, which bounds the cursor.
 //
 // The rows are filled (price, then the twin merge) BEFORE they are ranked
 // and sliced — see [Server.fillAndRankCatalogueRows].
@@ -2758,11 +2854,12 @@ func (s *Server) writeCataloguePage(
 	w http.ResponseWriter, r *http.Request,
 	rows []AssetDetail, limit int, cursor string, flags Flags,
 ) {
-	offset, ok := parseOffsetCursor(w, r, cursor)
+	served, ok := parseCatalogueServedCursor(w, r, cursor)
 	if !ok {
 		return
 	}
-	if offset >= len(rows) {
+	rows = dropServedCatalogueRows(rows, served)
+	if len(rows) == 0 {
 		writeJSON(w, []AssetDetail{}, flags)
 		return
 	}
@@ -2772,19 +2869,64 @@ func (s *Server) writeCataloguePage(
 	// cross-arm total is the only figure a row here can honestly carry.
 	if s.fillAndRankCatalogueRows(r.Context(), rows, assetListFilters{}) {
 		flags.Stale = true
+		flags.Degraded = true
 	}
-	end := offset + limit
-	if end > len(rows) {
-		end = len(rows)
-	}
-	page := rows[offset:end]
+	end := min(limit, len(rows))
+	page := rows[:end]
 	s.attachSparkline7dIfRequested(r, page)
+	flags.Degraded = flags.Degraded || anyDirectoryUnchecked(page)
 	env := Envelope{Data: page, Flags: flags}
 	if end < len(rows) {
-		next := strconv.Itoa(end)
-		env.Pagination = &Pagination{Next: next}
+		for _, row := range page {
+			served = append(served, row.Slug)
+		}
+		env.Pagination = &Pagination{Next: encodeCatalogueServedCursor(served)}
 	}
 	writeEnvelope(w, env)
+}
+
+// encodeCatalogueServedCursor / parseCatalogueServedCursor are the opaque
+// wire form of the catalogue listings' cursor: base64url of the served slugs
+// as a JSON array, so no slug character can be mistaken for a separator.
+func encodeCatalogueServedCursor(slugs []string) string {
+	raw, _ := json.Marshal(slugs) // a []string always marshals
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// parseCatalogueServedCursor reports ok=false after writing a problem+json
+// for a cursor this writer did not emit; an empty cursor is page 1.
+func parseCatalogueServedCursor(w http.ResponseWriter, r *http.Request, cursor string) ([]string, bool) {
+	if cursor == "" {
+		return nil, true
+	}
+	var slugs []string
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err == nil {
+		err = json.Unmarshal(raw, &slugs)
+	}
+	if err != nil || len(slugs) == 0 {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-cursor",
+			"Invalid cursor", http.StatusBadRequest,
+			"cursor must be the pagination.next value from a prior response, or omitted to start at page 1.")
+		return nil, false
+	}
+	return slugs, true
+}
+
+// dropServedCatalogueRows removes the rows a prior page served, in place.
+func dropServedCatalogueRows(rows []AssetDetail, served []string) []AssetDetail {
+	if len(served) == 0 {
+		return rows
+	}
+	seen := make(map[string]struct{}, len(served))
+	for _, slug := range served {
+		seen[slug] = struct{}{}
+	}
+	return slices.DeleteFunc(rows, func(row AssetDetail) bool {
+		_, ok := seen[row.Slug]
+		return ok
+	})
 }
 
 // fillAndRankCatalogueRows fills every row's served money — its own price,
@@ -2971,8 +3113,9 @@ func bigFloatFromOptionalString(s *string) *big.Float {
 // classic rows surface first within their phase).
 //
 // Cursor protocol — phase-prefixed:
-//   - empty cursor             → catalogue phase, offset 0.
-//   - "catalogue:<offset>"     → catalogue phase resumed at offset.
+//   - empty cursor             → catalogue phase, page 1.
+//   - "catalogue:<served>"     → catalogue phase minus the rows already
+//     served (writeCataloguePage's served-slug cursor).
 //   - "classic:<inner_cursor>" → classic phase via ListAssetsExt; the
 //     inner cursor is whatever
 //     AssetsOrderVolume24hUSDDesc emits.
@@ -3017,10 +3160,10 @@ func (s *Server) handleAssetListUnified(
 }
 
 // parseUnifiedCursor decodes the phase-prefixed cursor format. An
-// empty cursor maps to catalogue phase offset 0.
+// empty cursor maps to catalogue phase page 1.
 func parseUnifiedCursor(cursor string) (phase, inner string) {
 	if cursor == "" {
-		return "catalogue", "0"
+		return "catalogue", ""
 	}
 	if rest, ok := strings.CutPrefix(cursor, "catalogue:"); ok {
 		return "catalogue", rest
@@ -3034,9 +3177,9 @@ func parseUnifiedCursor(cursor string) (phase, inner string) {
 	return "classic", cursor
 }
 
-// serveCatalogueUnifiedPage projects the catalogue, fills and ranks it by
-// market cap, slices to the requested offset/limit, and writes the
-// envelope with the appropriate next-cursor.
+// serveCatalogueUnifiedPage projects the catalogue minus the rows already
+// served, fills and ranks the rest by market cap, slices to the limit, and
+// writes the envelope with the appropriate next-cursor.
 func (s *Server) serveCatalogueUnifiedPage(
 	w http.ResponseWriter, r *http.Request,
 	filters assetListFilters, limit int, innerCursor string,
@@ -3062,21 +3205,14 @@ func (s *Server) serveCatalogueUnifiedPage(
 	// above, because it also matches the projected name.
 	rows = filterCatalogueRowsByQuery(rows, filters.q)
 
-	// parseOffsetCursor, not a silent Atoi. The old form swallowed every
-	// malformed inner cursor — `catalogue:abc`, `catalogue:-7`, an
-	// Atoi-overflow — and silently served page 1 as though no cursor had
-	// been given, while every sibling paginated surface 400s on exactly
-	// that input (wave-D KP-4).
-	//
-	// This IS a wire-behaviour change (200 → 400 on those inputs), not a
-	// no-op, and it is in the CHANGELOG as one. It is unreachable through
-	// any shipped client: the explorer clamps `limit` to {50,100,200,500}
-	// and a `catalogue:` cursor is only emitted when limit < 11.
-	offset, ok := parseOffsetCursor(w, r, innerCursor)
+	// The same served-slug cursor as writeCataloguePage: the rank below
+	// moves between requests, so an offset into it would duplicate or skip.
+	served, ok := parseCatalogueServedCursor(w, r, innerCursor)
 	if !ok {
 		return
 	}
-	if offset >= len(rows) {
+	rows = dropServedCatalogueRows(rows, served)
+	if len(rows) == 0 {
 		// Catalogue done → transition to classic.
 		s.serveClassicUnifiedPage(w, r, filters, limit, "")
 		return
@@ -3084,15 +3220,15 @@ func (s *Server) serveCatalogueUnifiedPage(
 	// Price + AM-10 twin-stats merge, then the rank, over every catalogue
 	// row BEFORE the slice — writeCataloguePage makes the same call.
 	unmeasured := s.fillAndRankCatalogueRows(r.Context(), rows, filters)
-	end := offset + limit
-	if end > len(rows) {
-		end = len(rows)
-	}
-	page := rows[offset:end]
+	end := min(limit, len(rows))
+	page := rows[:end]
 	s.attachSparkline7dIfRequested(r, page)
-	env := Envelope{Data: page, Flags: Flags{Stale: unmeasured}}
+	env := Envelope{Data: page, Flags: Flags{Stale: unmeasured, Degraded: unmeasured || anyDirectoryUnchecked(page)}}
 	if end < len(rows) {
-		env.Pagination = &Pagination{Next: "catalogue:" + strconv.Itoa(end)}
+		for _, row := range page {
+			served = append(served, row.Slug)
+		}
+		env.Pagination = &Pagination{Next: "catalogue:" + encodeCatalogueServedCursor(served)}
 		writeEnvelope(w, env)
 		return
 	}
@@ -3142,7 +3278,7 @@ func (s *Server) serveClassicUnifiedPage(
 	if out == nil {
 		out = []AssetDetail{}
 	}
-	env := Envelope{Data: out, Flags: Flags{Stale: stale}}
+	env := Envelope{Data: out, Flags: Flags{Stale: stale, Degraded: stale || anyDirectoryUnchecked(out)}}
 	if nextInner != "" {
 		env.Pagination = &Pagination{Next: "classic:" + nextInner}
 	}
@@ -3277,7 +3413,7 @@ func (s *Server) fetchClassicUnifiedRows(
 		s.restoreOffPageContractArms(r.Context(), out, mergedAliases)
 	}
 	s.stampListingCollisions(out)
-	unmeasured := s.applySubstanceGateToListing(r.Context(), out)
+	unmeasured := s.applySubstanceGateToListing(r.Context(), out, includeThinRequested(r))
 	s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows))
 	// AFTER the gate (which would strip it) and AFTER the market-cap
 	// fill (so no valuation derives from it) — see
@@ -3297,6 +3433,7 @@ func (s *Server) fetchClassicUnifiedRows(
 	// Every price PRODUCER still runs above this line, so the
 	// suppression cannot be undone by one of them.
 	s.fillIssuerDirectoryTags(r.Context(), out)
+	settleListingThinRows(out)
 	// LAST among the valuation producers. It reads the outcome of every
 	// one above it — the served cap, the gated price, the dust flag, the
 	// peg basis and the directory's scam tags — to decide whether there
@@ -3456,13 +3593,17 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// currency overlay. Each of those costs ~50-200ms warm; together
 	// they dominate the ~700-900ms warm latency observed pre-cache
 	// (rc.63 on r1, 2026-05-21).
-	cacheKey := parsed.String()
+	includeThin := includeThinRequested(r)
+	cacheKey := assetDetailCacheKey(parsed, includeThin)
 	if entry, ok := s.assetDetailCache.get(cacheKey); ok {
 		writeCachedAssetDetail(w, entry)
 		return
 	}
+	// Every read below runs under the default record, so a withheld
+	// headline carries its substance evidence into the opt-in pass.
+	ctx, off := WithThinAdmission(r.Context(), parsed, defaultPriceQuote, false)
 
-	detail, served := s.resolveAssetDetail(w, r, parsed)
+	detail, served := s.resolveAssetDetail(w, r.WithContext(ctx), parsed)
 	if served {
 		return
 	}
@@ -3491,7 +3632,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// FDV math divides by 10^detail.Decimals. Classic + native are always
 	// 7 by protocol and are never consulted (a SAC-address request was
 	// already re-pointed at its classic identity above).
-	s.applyTokenDecimals(r.Context(), &detail, parsed)
+	s.applyTokenDecimals(ctx, &detail, parsed)
 
 	// Backfill HomeDomain when the storage row doesn't carry one
 	// (classic assets ingested before `stellarindex-ops sep1-refresh`
@@ -3506,12 +3647,12 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// `docs/review-2026-05-10.md`; on-chain-first 2026-08-06.
 	// A degraded read (deadline/error) is folded into the response's
 	// stale flag below rather than silently accepted (GH-582).
-	homeDomainDegraded := s.backfillHomeDomain(r.Context(), &detail)
+	homeDomainDegraded := s.backfillHomeDomain(ctx, &detail)
 
 	// SEP-1 overlay — reads the cached payload `sep1-refresh` cron
 	// persisted in `issuers.sep1_payload`. NO live HTTPS fetch.
 	if s.sep1Cache != nil {
-		s.applySep1Overlay(r.Context(), &detail, parsed)
+		s.applySep1Overlay(ctx, &detail, parsed)
 	} else if detail.HomeDomain != nil && *detail.HomeDomain != "" && detail.Sep1Status == "" {
 		detail.Sep1Status = "not_fetched"
 	}
@@ -3521,14 +3662,14 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// scale (the SEP-1 overlay surfaces display_decimals separately and
 	// no longer touches Decimals — F-1321), so overlay ordering no
 	// longer affects the unit math.
-	s.applyF2Fields(r.Context(), &detail, parsed)
+	s.applyF2Fields(ctx, &detail, parsed)
 
 	// Asset-catalogue overlay (R-018 final) — lifts price / top_markets
 	// / history / changes / ATH from the assetsReader catalogue
 	// so /v1/assets/{id} is a superset of /v1/coins/{slug}. Skipped
 	// for fiat:* (no asset-catalogue row); a no-op when no AssetsReader is
 	// wired or the asset has no asset-catalogue row.
-	s.applyAssetExtensionFields(r.Context(), &detail, parsed)
+	s.applyAssetExtensionFields(ctx, &detail, parsed)
 
 	// Curated third-party issuer label (account_directory, migration
 	// 0136) — additive issuer_directory_{tags,domain,name}. Runs AFTER
@@ -3536,14 +3677,14 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// its answer. A nil reader / unlisted issuer omits the fields; a
 	// lookup failure omits them AND withholds pricing (see
 	// asset_directory_tags.go).
-	s.applyIssuerDirectoryTags(r.Context(), &detail)
+	s.applyIssuerDirectoryTags(ctx, &detail)
 
 	// Volume-character overlay (design §2) — trailing-window account-
 	// structure signals + derived volume_character (market / operational /
 	// concentrated). ANALYTICS-only: reads nothing from and writes nothing
 	// to the price/gate surfaces, and never re-ranks (§4). Best-effort;
 	// omitted when no reader is wired or the lookup fails.
-	s.applyVolumeCharacter(r.Context(), &detail, parsed)
+	s.applyVolumeCharacter(ctx, &detail, parsed)
 
 	// Declared-peg price fill — mirrors the listing paths' call. Runs
 	// LAST among the price producers, so it fills only when neither the
@@ -3552,7 +3693,12 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// overlay above left a market price, and AFTER applyF2Fields so
 	// market_cap/fdv (computed there from a market PriceUSD only) never
 	// derive from the peg. See fillDeclaredPegPrice.
-	s.fillDeclaredPegPrice(r.Context(), &detail, nil)
+	// Issuer behaviour first: the fill folds it into a depeg warning.
+	s.applyIssuerBehaviour(ctx, &detail)
+	if includeThin {
+		s.thinDetailPricePass(ctx, &detail, parsed, off)
+	}
+	s.fillDeclaredPegPrice(ctx, &detail, nil)
 
 	// Scam-issuer price suppression — the payload-side twin of the
 	// reader-seam ScamGate (which withholds /v1/price etc.). Runs AFTER
@@ -3569,6 +3715,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// last bucket IS the withheld number. Runs after every producer and
 	// every suppressor, so nothing can re-publish the series below it.
 	withholdPriceSeriesWhenUnpriced(&detail)
+	clearThinWhenUnpriced(&detail)
 
 	// Listing-priced valuation — the /v1/assets/{id} twin of the listing
 	// paths' call, and in the same position: LAST, after every price
@@ -3586,7 +3733,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// 2,581,052 that exist. applyListingValuations does the lake read
 	// itself, for exactly that reason.
 	listingRows := []AssetDetail{detail}
-	s.applyListingValuations(r.Context(), listingRows)
+	s.applyListingValuations(ctx, listingRows)
 	detail = listingRows[0]
 
 	// Verified-currency overlay (R-018 Phase 1.1) — attaches the
@@ -3595,6 +3742,8 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// issuer doesn't. No-op when no catalogue is wired or the asset
 	// isn't a classic Stellar asset.
 	flags := s.verifiedCurrencyFlags(&detail, parsed)
+	// Output-only summary of the finished payload; nothing upstream reads it.
+	detail.Trust = buildAssetTrust(&detail, flags.UnverifiedTickerCollision)
 	// GH-708: every enrichment above is best-effort on r.Context() — a
 	// failure just leaves its field null, with no error plumbing back to
 	// here. So a context that died anywhere in that chain (client gone,
@@ -3604,10 +3753,9 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// routinely triggered by the API's own 30s prewarm client outrunning
 	// a slow read. Stamp it stale and skip the cache write; the request
 	// itself still gets an honest (if degraded) answer.
-	ctxDead := r.Context().Err() != nil
-	if homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || ctxDead {
-		flags.Stale = true
-	}
+	ctxDead := ctx.Err() != nil
+	flags.Stale = flags.Stale || assetDetailStale(&detail, homeDomainDegraded, ctxDead)
+	flags.Degraded = flags.Stale || detail.issuerDirectoryUnchecked
 
 	// Render to bytes once, cache them, write them. The cache check at
 	// the top of this function short-circuits subsequent requests for
@@ -3617,20 +3765,32 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 		// Marshal failure is exceedingly rare (AssetDetail is plain
 		// struct tags); fall back to writeJSON so client still gets a
 		// (potentially less-optimal) response rather than a 500.
-		s.logger.Debug("asset detail envelope render failed; falling back to direct write", "asset_id", cacheKey, "err", err)
+		s.logger.Debug("asset detail envelope render failed; falling back to direct write", "asset_id", parsed.String(), "err", err)
 		writeJSON(w, detail, flags)
 		return
 	}
-	// A failed decimals read is a transient outage, and a dead context
+	// A failed decimals, issuer-directory or F2 read is a transient outage, and a dead context
 	// means this body was assembled from whatever best-effort reads
 	// happened to land before cancellation: either way, replaying it for
 	// the whole TTL would outlive the outage. Skip the cache write, not
 	// the response — the caller who is still listening gets the (stale-
 	// flagged) body they asked for.
-	if !detail.DecimalsUnresolved && !ctxDead {
-		s.assetDetailCache.put(cacheKey, body)
+	if !transientlyDegraded(&detail, ctxDead) {
+		s.assetDetailCache.put(cacheKey, body, flags.Degraded)
 	}
-	writeCachedAssetDetail(w, &assetDetailEntry{body: body, cachedAt: time.Now()})
+	writeCachedAssetDetail(w, &assetDetailEntry{body: body, cachedAt: time.Now(), degraded: flags.Degraded})
+}
+
+// assetDetailStale reports whether detail rests on a failed, cut-short or
+// carried-forward read.
+func assetDetailStale(detail *AssetDetail, homeDomainDegraded, ctxDead bool) bool {
+	return homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.f2ReadFailed || ctxDead
+}
+
+// transientlyDegraded reports whether detail rests on a read that failed or
+// was cut short, so the body must not outlive the request in the detail cache.
+func transientlyDegraded(detail *AssetDetail, ctxDead bool) bool {
+	return detail.DecimalsUnresolved || ctxDead || detail.issuerDirectoryUnchecked || detail.f2ReadFailed
 }
 
 // resolveAssetDetail fetches the AssetDetail for parsed: from the
@@ -3893,6 +4053,13 @@ func (s *Server) lookupCatalogue(raw string) *currency.VerifiedCurrency {
 // Stellar asset 404s here (its detail lives on /v1/assets/{slug}); LC-001.
 func (s *Server) handleExternalAssetGet(w http.ResponseWriter, r *http.Request) {
 	raw := normaliseAssetIDInput(r.PathValue("slug"))
+	if !s.servesPubnetReference() {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/asset-not-found",
+			"Asset not found", http.StatusNotFound,
+			fmt.Sprintf("external assets are not served on network %s", s.network))
+		return
+	}
 	vc := s.lookupCatalogue(raw)
 	if vc == nil {
 		writeProblem(w, r,
@@ -3916,7 +4083,9 @@ func (s *Server) handleExternalAssetGet(w http.ResponseWriter, r *http.Request) 
 // from handleAssetGet so the latter stays linear-readable.
 func (s *Server) verifiedCurrencyFlags(detail *AssetDetail, asset canonical.Asset) Flags {
 	flags := Flags{}
-	if applyUnverifiedWarning(detail, asset, s.verifiedCurrencies) {
+	// The catalogue's verified issuers are pubnet accounts; on a test net
+	// every look-alike stamp would point at an asset that does not exist.
+	if s.servesPubnetReference() && applyUnverifiedWarning(detail, asset, s.verifiedCurrencies) {
 		flags.UnverifiedTickerCollision = true
 	}
 	applyFiatCodeAnchorNote(detail, asset, s.verifiedCurrencies)
@@ -3959,11 +4128,11 @@ func applyFiatCodeAnchorNote(detail *AssetDetail, asset canonical.Asset, cat *cu
 // withhold the badge from impersonators while the real verified row
 // (StellarCollision → false) keeps it.
 //
-// No-op when no catalogue is wired. Catalogue rows on the unified
-// listing carry no issuer (type=global) and are skipped — they ARE the
-// verified identities.
+// No-op when no catalogue is wired or on a test net. Catalogue rows on
+// the unified listing carry no issuer (type=global) and are skipped —
+// they ARE the verified identities.
 func (s *Server) stampListingCollisions(rows []AssetDetail) {
-	if s.verifiedCurrencies == nil {
+	if s.verifiedCurrencies == nil || !s.servesPubnetReference() {
 		return
 	}
 	for i := range rows {
@@ -4064,6 +4233,23 @@ type AssetMetadata struct {
 	FixedNumber *string `json:"fixed_number,omitempty"`
 	MaxNumber   *string `json:"max_number,omitempty"`
 	IsUnlimited *bool   `json:"is_unlimited,omitempty"`
+	Sep1CurrencyAuthority
+}
+
+// Sep1CurrencyAuthority is what the issuer's own [[CURRENCIES]] entry says
+// about the asset's standing and backing. Issuer-declared and unverified by
+// this index; set only when sep1_status is "verified".
+type Sep1CurrencyAuthority struct {
+	// CurrencyStatus is SEP-1 `status` (live, dead, test, private).
+	CurrencyStatus *string `json:"currency_status,omitempty"`
+	// IsAssetAnchored and Regulated are nil when the issuer did not say,
+	// distinct from an explicit false.
+	IsAssetAnchored        *bool   `json:"is_asset_anchored,omitempty"`
+	AttestationOfReserve   *string `json:"attestation_of_reserve,omitempty"`
+	RedemptionInstructions *string `json:"redemption_instructions,omitempty"`
+	Regulated              *bool   `json:"regulated,omitempty"`
+	ApprovalServer         *string `json:"approval_server,omitempty"`
+	ApprovalCriteria       *string `json:"approval_criteria,omitempty"`
 }
 
 // handleAssetMetadata serves GET /v1/assets/{asset_id}/metadata.
@@ -4147,6 +4333,8 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 		FixedNumber:     detail.FixedNumber,
 		MaxNumber:       detail.MaxNumber,
 		IsUnlimited:     detail.IsUnlimited,
+
+		Sep1CurrencyAuthority: detail.Sep1CurrencyAuthority,
 	}
 	writeJSON(w, out, Flags{Stale: homeDomainDegraded})
 }
@@ -4221,6 +4409,10 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 		detail.Sep1Status = s.sep1StatusForNoPayload(ctx, asset.Issuer)
 		return
 	}
+	if sep.OutlivedDomain {
+		detail.Sep1Status = "unreachable"
+		return
+	}
 
 	match := findMatchingCachedCurrency(sep, asset)
 	if match == nil {
@@ -4293,6 +4485,34 @@ func applySep1VerifiedFields(detail *AssetDetail, sep *timescale.IssuerSep1Cache
 	} else if match.Decimals > 0 {
 		dd := match.Decimals
 		detail.DisplayDecimals = &dd
+	}
+	detail.Sep1CurrencyAuthority = sep1CurrencyAuthorityFrom(match)
+}
+
+// sep1CurrencyAuthorityFrom projects the entry's standing and backing
+// declarations. The two URL fields are served only when they pass the same
+// http(s) and attribute-breakout check as the logo, since clients link them.
+func sep1CurrencyAuthorityFrom(match *timescale.IssuerSep1Currency) Sep1CurrencyAuthority {
+	nonEmpty := func(s string) *string {
+		if v := strings.TrimSpace(s); v != "" {
+			return &v
+		}
+		return nil
+	}
+	safeURL := func(s string) *string {
+		if v := strings.TrimSpace(s); isSafeImageURL(v) {
+			return &v
+		}
+		return nil
+	}
+	return Sep1CurrencyAuthority{
+		CurrencyStatus:         nonEmpty(match.Status),
+		IsAssetAnchored:        match.IsAssetAnchored,
+		AttestationOfReserve:   safeURL(match.AttestationOfReserve),
+		RedemptionInstructions: nonEmpty(match.RedemptionInstructions),
+		Regulated:              match.Regulated,
+		ApprovalServer:         safeURL(match.ApprovalServer),
+		ApprovalCriteria:       nonEmpty(match.ApprovalCriteria),
 	}
 }
 
@@ -4594,8 +4814,8 @@ func decimalFractionPlaces(v string) int {
 //     substance gate or the scam-issuer suppression withheld, so this
 //     covers both gates plus the simply-priceless rows, which have
 //     nothing to chart anyway.
-//   - not a declared peg. A peg-priced row's headline comes from the
-//     declared peg, not from its own market, so charting its market
+//   - not a declared-peg or global-market fill. Such a row's headline
+//     comes from outside its own Stellar market, so charting its market
 //     history beside that number states a provenance the price does not
 //     have — and the market being charted is the dust market the
 //     substance gate refused.
@@ -4608,7 +4828,7 @@ func priceSeriesPublishable(d *AssetDetail) bool {
 	if d == nil {
 		return false
 	}
-	return d.PriceUSD != nil && d.PriceBasis != priceBasisDeclaredPeg
+	return d.PriceUSD != nil && d.PriceBasis != priceBasisDeclaredPeg && d.PriceBasis != priceBasisGlobalMarket && !d.ThinMarket
 }
 
 // seriesAssetIDForRow resolves the asset_id whose on-chain price series
@@ -4883,7 +5103,7 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		}
 		// The classic-phase ordering: the twin's price backs the cap and the
 		// pills merged below, so a dust price must be withheld before either.
-		if s.applySubstanceGateToListing(statsCtx, twin) {
+		if s.applySubstanceGateToListing(statsCtx, twin, false) {
 			anyUnmeasured.Store(true)
 		}
 		// Same supply-derived market-cap fill the classic phase gets — the

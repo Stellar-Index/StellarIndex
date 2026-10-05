@@ -32,7 +32,7 @@ status: point-in-time audit
 >
 > | Was | Now tracked as |
 > |---|---|
-> | 7 — per-account deep trade history (CH account-keyed mirror vs accept the bounded horizon) | **W8 item 13** (`accounts/{g}/trades` windowing) — needs the decision, not just the code |
+> | 7 — per-account deep trade history (CH account-keyed mirror vs accept the bounded horizon) | **W8 item 13** (`accounts/{g}/trades` windowing) — decided: ClickHouse account-keyed `stellar.trades_by_account`; the build remains |
 > | 12 residual — r1 `[supply].sac_wrappers` for USDC/AQUA (the code shipped; the r1 config has no landing evidence, so the "53.5% of USDC volume invisible" headline is not closed) | **W2** (asset identity) + an r1 config confirm |
 > | 14 — SEP-41 genesis rollup resets (12 of 13 remain) | **W5.4** — gated on the `ops_batch` ClickHouse profile on r1 |
 > | 15 — LP reserve/trustline backfill path | **W8 item 12** — design decision outstanding |
@@ -139,8 +139,9 @@ observations alias fan-in (v0.30.0); /ledgers dead-Suspense fix
     flips 10× between requests; markets.last_price stale:false lies.**
 14. **[OWNER] SEP-41 genesis rollup resets on r1** — 13 contracts
     double-counted; EURC reset 2026-08-05, 12 remain (one psql each).
-15. **[ENG] LP reserves live-only from ledger 63.3M** — no
-    trustline/LP-reserve backfill path exists; design one.
+15. ~~**[ENG] LP reserves live-only from ledger 63.3M** — no
+    trustline/LP-reserve backfill path exists; design one.~~
+    **ACCEPTED 2026-10-02** — documented cutoff, no backfill (v1-launch-plan W8-12).
 16. **[ENG] manage_data G-address injection** — any account can inject
     an arbitrary G-address into another account's operation history for
     ~0.0001 XLM (proven live). Needs render-side provenance guard.

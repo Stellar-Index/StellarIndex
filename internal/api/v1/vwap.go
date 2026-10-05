@@ -60,6 +60,11 @@ type VWAPResult struct {
 	// the last closed boundary per ADR-0015 — the served window is
 	// narrower than the one asked for.
 	Clamped bool `json:"clamped"`
+	// Breakdown is present only for ?breakdown=source.
+	Breakdown *VWAPBreakdown `json:"breakdown,omitempty"`
+	// Substance is present when the pair is below the substance floor
+	// /v1/price withholds on; flags.thin_market is then true.
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
 // handleVWAP serves GET /v1/vwap?base=...&quote=...&from=...&to=...&outlier_sigma=...
@@ -89,38 +94,17 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Scam-issuer gate (wave-D MSP-02). /v1/vwap and /v1/twap served a
-	// flagged issuer's aggregated price at 200 while /v1/price,
-	// /v1/price/tip, /v1/price/batch, the SEP-40 oracle and the asset
-	// headline all withheld it — reproduced live against a directory-
-	// flagged issuer, 200 with a price on both. Worse, pricingguard's own
-	// package doc (scam.go) and PR #182's merged body BOTH asserted these
-	// two endpoints were covered by the reader-seam gate. They never
-	// were: the ScamGate is consumed at exactly four sites, none of them
-	// here, and no middleware does asset-level withholding.
+	// Scam-issuer gate on BOTH legs: keyed on the base alone,
+	// `?base=native&quote=<FLAGGED>` would republish a withheld market's
+	// price as its reciprocal. The fold lives in pricingguard.
 	//
-	// BOTH LEGS. It covers every quote of a flagged base (including the
-	// XLM-triangulated headline) and every base quoted IN a flagged
-	// asset: keyed on the base alone, `?base=native&quote=<FLAGGED>`
-	// republished the withheld market's price as its exact reciprocal,
-	// at 200, unauthenticated (F002). The fold lives in pricingguard —
-	// this site passes the pair and asks once.
+	// Scam only, not the substance gate: that would newly 404 every thin
+	// pair on a surface ADR-0015 positions as "compute it yourself", which
+	// is an owner decision.
 	//
-	// SCAM ONLY, deliberately not the substance gate. The scam gate is
-	// targeted (flagged issuers) and directly implements the 2026-08-25
-	// decision. The substance gate would newly 404 every THIN pair here,
-	// which is both a breaking change for existing clients and arguably
-	// wrong on principle: VWAPResult's own doc and ADR-0015 position
-	// /v1/vwap as the "narrow the window and compute it yourself" surface
-	// OPPOSITE /v1/price. That is an owner decision, not something to
-	// smuggle in with a scam fix.
-	//
-	// The gate goes in the HANDLER, not in the shared
-	// tradesInRangeWithStablecoinFallback: that helper is also the fetch
-	// behind the single-bar /v1/ohlc, and scam.go, substance.go, the
-	// config docs and the withheld problem's own guidance text all
-	// promise /v1/ohlc stays visible. Gating there would make our own
-	// error message's escape-hatch advice a lie.
+	// In the handler, not tradesInRangeWithStablecoinFallback: that helper
+	// also backs the single-bar /v1/ohlc, which the withheld problem's
+	// guidance promises stays visible.
 	if s.writeIfScamWithheld(w, r, base, quote, "vwap") {
 		return
 	}
@@ -140,7 +124,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sigma, ok := parseVWAPOutlierSigma(w, r)
+	sigma, breakdown, ok := parseVWAPParams(w, r)
 	if !ok {
 		return
 	}
@@ -173,36 +157,15 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	volumeDecimals := commonAmountScaleDecimals(trades)
 
 	pre := len(trades)
+	fetched := trades
 	if sigma > 0 {
 		trades = aggregate.FilterOutliers(trades, sigma)
 	}
 	outliersFiltered := pre - len(trades)
 
 	price, err := aggregate.VWAP(trades)
-	if errors.Is(err, aggregate.ErrNoTrades) {
-		// Distinguish two failure modes — the wire message drives
-		// client behaviour (retry with different window vs retry
-		// with different sigma), so misleading it is a bug.
-		if pre > 0 {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/all-filtered",
-				"All trades filtered as outliers", http.StatusUnprocessableEntity,
-				fmt.Sprintf("outlier_sigma=%v removed all %d trades in window; relax the threshold or omit outlier_sigma",
-					sigma, pre))
-			return
-		}
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/no-trades",
-			"No trades in window", http.StatusNotFound,
-			"no trades observed for "+pair.Base.String()+"/"+pair.Quote.String()+
-				" between "+from.Format(time.RFC3339)+" and "+to.Format(time.RFC3339))
-		return
-	}
 	if err != nil {
-		s.logger.Error("VWAP failed", "err", err)
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/internal",
-			"Internal error", http.StatusInternalServerError, "")
+		s.writeVWAPError(w, r, err, pair, from, to, pre, sigma)
 		return
 	}
 
@@ -218,6 +181,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// the aggregator's shortest-window VWAP now, and this value is computed
 	// here from raw trades over a caller-chosen [from, to), so the verdict
 	// never saw it — the same reason /v1/price/at carries none.
+	substance := s.thinMarketEvidence(ctx, base, quote, "vwap")
 	writeJSON(w, VWAPResult{
 		From:                WireTime(from),
 		To:                  WireTime(to),
@@ -230,7 +194,67 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		OutliersFiltered:    outliersFiltered,
 		Truncated:           pre == maxTrades,
 		Clamped:             clamped,
-	}, Flags{Triangulated: triangulated})
+		Breakdown:           s.vwapBreakdown(breakdown, pair, fetched, trades, from, to, pre == maxTrades),
+		Substance:           substance,
+	}, Flags{
+		Triangulated:   triangulated,
+		ProxyDeviation: triangulated && s.proxyDeviation(ctx, to),
+		ThinMarket:     substance != nil,
+	})
+}
+
+// writeVWAPError maps an aggregate.VWAP failure to its problem+json.
+func (s *Server) writeVWAPError(w http.ResponseWriter, r *http.Request, err error, pair canonical.Pair, from, to time.Time, pre int, sigma float64) {
+	if !errors.Is(err, aggregate.ErrNoTrades) {
+		s.logger.Error("VWAP failed", "err", err)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
+	// Distinguish two failure modes — the wire message drives
+	// client behaviour (retry with different window vs retry
+	// with different sigma), so misleading it is a bug.
+	if pre > 0 {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/all-filtered",
+			"All trades filtered as outliers", http.StatusUnprocessableEntity,
+			fmt.Sprintf("outlier_sigma=%v removed all %d trades in window; relax the threshold or omit outlier_sigma",
+				sigma, pre))
+		return
+	}
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/no-trades",
+		"No trades in window", http.StatusNotFound,
+		"no trades observed for "+pair.Base.String()+"/"+pair.Quote.String()+
+			" between "+from.Format(time.RFC3339)+" and "+to.Format(time.RFC3339))
+}
+
+// thinMarketEvidence is the live substance measurement behind
+// flags.thin_market on /v1/vwap and /v1/twap, or nil when the pair clears
+// the floor (or no gate is wired). These raw-trade surfaces serve a thin
+// market (ADR-0018), so the verdict is admitted rather than withheld; the
+// scam half already ran, hence the nil scam gate.
+func (s *Server) thinMarketEvidence(ctx context.Context, base, quote canonical.Asset, surface string) *SubstanceEvidence {
+	if s.substance == nil {
+		return nil
+	}
+	admCtx, adm := WithThinAdmission(ctx, base, quote, true)
+	withheldBy(admCtx, s.substance, nil, base, quote, surface)
+	if !adm.Admitted() {
+		return nil
+	}
+	return substanceEvidenceWire(adm.Evidence())
+}
+
+// parseVWAPParams parses ?outlier_sigma= then ?breakdown= / ?interval=.
+func parseVWAPParams(w http.ResponseWriter, r *http.Request) (float64, *ohlcInterval, bool) {
+	sigma, ok := parseVWAPOutlierSigma(w, r)
+	if !ok {
+		return 0, nil, false
+	}
+	breakdown, ok := parseVWAPBreakdown(w, r)
+	return sigma, breakdown, ok
 }
 
 // parseVWAPOutlierSigma parses ?outlier_sigma=, defaulting to 0 (no

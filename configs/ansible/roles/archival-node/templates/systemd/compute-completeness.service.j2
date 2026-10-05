@@ -27,11 +27,16 @@ EnvironmentFile=-/etc/default/stellarindex
 Environment=CONFIG_PATH=/etc/stellarindex.toml
 Environment=CH_ADDR=127.0.0.1:9300
 
-# 75 = run-heavy-job.sh skipped this fire (per-job lock held): not a
+# 75 = run-heavy-job.sh skipped this fire (a lock was held): not a
 # failure, but ExecMainStatus=75 keeps it distinct from a run.
 SuccessExitStatus=75
-# Timer-fired: shares run-heavy-job.sh's host-wide lock, never refused by it.
+# Queue behind another heavy job (host-wide and scheduled locks) for up to
+# 12h instead of skipping the fire; TimeoutStartSec below covers wait + run.
+Environment=HEAVY_JOB_LOCK_WAIT=43200
 Environment=HEAVY_JOB_CLASS=scheduled
+# Shares the job name with compute-completeness-sdex.service, so it queues
+# (up to that unit's 390 min run) instead of skipping a night (GH-1229); the
+# 12h wait above covers it.
 ExecStart=/usr/local/sbin/run-heavy-job.sh compute-completeness /usr/local/sbin/run-compute-completeness.sh
 
 # De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
@@ -52,7 +57,8 @@ ProtectControlGroups=true
 # One -pass call proves recognition (~60s) + substrate once, then reconciles
 # each source's new suffix — steady-state ticks finish in minutes. The first
 # pass additionally seeds any never-verified source from genesis; cap generously.
-TimeoutStartSec=180min
+# Whole seconds: the 43200 s lock wait + 180 min for the pass itself.
+TimeoutStartSec=54000
 
 [Install]
 WantedBy=multi-user.target

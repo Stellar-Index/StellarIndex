@@ -894,6 +894,10 @@ type RWAAsset struct {
 	// AnchorAsset is the off-chain instrument the issuer declared this
 	// token anchors to, verbatim.
 	AnchorAsset string `json:"anchor_asset,omitempty"`
+	// ISINCollision is present when anchor_asset is an ISIN that more
+	// than one issuer account declares. Informational only: it never
+	// changes membership, valuation or the reference.
+	ISINCollision *RWAISINCollision `json:"isin_collision,omitempty"`
 	// Valuation is the OBSERVED-MARKET-PRICE money, or the reason there
 	// is none. Unchanged by anything on the reference basis below.
 	Valuation RWAValuation `json:"valuation"`
@@ -954,6 +958,17 @@ type RWAAsset struct {
 	// from an index complete since genesis.
 	FirstSeenLedger  uint32 `json:"first_seen_ledger,omitempty"`
 	ObservationCount int64  `json:"observation_count"`
+}
+
+// RWAISINCollision reports one ISIN declared in anchor_asset by several
+// issuer accounts. A declared ISIN is a claim, not proof of holding the
+// security, so the row only says how many accounts make the same claim.
+type RWAISINCollision struct {
+	// ISIN is the declared identifier in canonical upper-case form.
+	ISIN string `json:"isin"`
+	// DeclaredByIssuers counts the distinct issuer accounts, this one
+	// included, whose issuer-bound SEP-1 declares ISIN.
+	DeclaredByIssuers int `json:"declared_by_issuers"`
 }
 
 // RWAGroupTotal is one row of the per-class breakdown.
@@ -1018,11 +1033,14 @@ type rwaMember struct {
 	name        string
 	homeDomain  string
 	anchorAsset string
-	basis       string
-	anchorClass string
-	recognition string
-	dirName     string
-	dirTags     []string
+	// isinCollision is set when anchorAsset is an ISIN another issuer
+	// account also declares.
+	isinCollision *RWAISINCollision
+	basis         string
+	anchorClass   string
+	recognition   string
+	dirName       string
+	dirTags       []string
 }
 
 // rwaMembership is one rebuild: the admitted set, the refusal tally
@@ -1262,6 +1280,7 @@ func (s *Server) admitClassicCandidates(
 ) {
 	issuers := map[string]struct{}{}
 	admitted := make(map[string]struct{}, len(bound))
+	isinDeclarers := rwaISINDeclarers(bound)
 	// Domains with a directory-recognised, unflagged account among the
 	// issuers bound on them: an account the same SEP-1 names beside one
 	// of those is recognised by its sibling (rwa.RecognitionDomainSibling).
@@ -1312,18 +1331,51 @@ func (s *Server) admitClassicCandidates(
 		}
 		admitted[key] = struct{}{}
 		out.members = append(out.members, rwaMember{
-			code:        c.Code,
-			issuer:      c.Issuer,
-			name:        c.Name,
-			homeDomain:  c.HomeDomain,
-			anchorAsset: c.AnchorAsset,
-			basis:       v.Basis,
-			anchorClass: v.AnchorClass,
-			recognition: v.Recognition,
-			dirName:     e.Name,
-			dirTags:     e.Tags,
+			code:          c.Code,
+			issuer:        c.Issuer,
+			name:          c.Name,
+			homeDomain:    c.HomeDomain,
+			anchorAsset:   c.AnchorAsset,
+			isinCollision: rwaISINCollisionOf(c.AnchorAsset, isinDeclarers),
+			basis:         v.Basis,
+			anchorClass:   v.AnchorClass,
+			recognition:   v.Recognition,
+			dirName:       e.Name,
+			dirTags:       e.Tags,
 		})
 	}
+}
+
+// rwaISINDeclarers counts, per declared ISIN, the distinct issuer
+// accounts declaring it across every bound declaration — refused ones
+// included, since a refused impostor still claims the security.
+func rwaISINDeclarers(bound []timescale.Sep1BoundCurrency) map[string]int {
+	seen := map[string]map[string]struct{}{}
+	for _, c := range bound {
+		isin, ok := rwa.CanonicalISIN(c.AnchorAsset)
+		if !ok {
+			continue
+		}
+		if seen[isin] == nil {
+			seen[isin] = map[string]struct{}{}
+		}
+		seen[isin][c.Issuer] = struct{}{}
+	}
+	out := make(map[string]int, len(seen))
+	for isin, accounts := range seen {
+		out[isin] = len(accounts)
+	}
+	return out
+}
+
+// rwaISINCollisionOf is the collision a row declaring anchorAsset
+// carries, or nil when the ISIN has a single declarer or is no ISIN.
+func rwaISINCollisionOf(anchorAsset string, declarers map[string]int) *RWAISINCollision {
+	isin, ok := rwa.CanonicalISIN(anchorAsset)
+	if !ok || declarers[isin] < 2 {
+		return nil
+	}
+	return &RWAISINCollision{ISIN: isin, DeclaredByIssuers: declarers[isin]}
 }
 
 // rwaMembershipRetryGap rate-limits rebuild ATTEMPTS, not rebuilds. A
@@ -1659,7 +1711,7 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	if !m.available && !m.contractCensus.available && len(m.members) == 0 && len(m.contracts) == 0 {
 		view.Summary.Basis = rwaBasisUnavailable
 		view.Funnel = rwaFunnelUnavailable()
-		writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
+		writeEnvelope(w, Envelope{Data: view, Flags: Flags{Degraded: m.readFailed}})
 		return
 	}
 
@@ -1745,7 +1797,7 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	// can say which of its rows the verified set already carries and can
 	// never feed a figure back into the totals above.
 	curatedDegraded := s.attachRWACurated(vctx, &view, now)
-	writeEnvelope(w, Envelope{Data: view, Flags: Flags{Stale: degraded || curatedDegraded}})
+	writeEnvelope(w, Envelope{Data: view, Flags: Flags{Stale: degraded || curatedDegraded, Degraded: degraded || curatedDegraded || m.readFailed}})
 }
 
 // rwaVerifiedContractRows values the verified contract arm. A valuation
@@ -1908,7 +1960,7 @@ func (s *Server) rwaListingRows(
 		// and each omission would show up as this page publishing a
 		// figure that page withholds, or withholding one it publishes.
 		s.stampListingCollisions(details)
-		s.applySubstanceGateToListing(ctx, details)
+		s.applySubstanceGateToListing(ctx, details, false)
 		s.fillMarketCapsFromSupply(ctx, details, assetRowSourceCounts(keep))
 		// ADDITIVE, and additive only to a raw chain fact. The step
 		// above reads a supply only when it is about to multiply it by
@@ -2039,6 +2091,7 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 			AnchorClass:         mem.anchorClass,
 			Recognition:         mem.recognition,
 			AnchorAsset:         strings.TrimSpace(mem.anchorAsset),
+			ISINCollision:       mem.isinCollision,
 			Valuation:           rwaValuationOf(d),
 			CirculatingSupply:   d.CirculatingSupply,
 			// The asset's OWN scale, carried from the listing row. The
@@ -2309,6 +2362,8 @@ func rwaSummariseReference(assets []RWAAsset) RWAReferenceSummary {
 //     about the backing at all — which is weaker in one way (nobody
 //     independent has said what is behind the token) and stronger in
 //     another (no unstated one-for-one assumption sits inside it);
+//   - a FUND NAV is a registered fund's own published daily value per
+//     share, for a token that is one share of it;
 //   - a PROSPECTUS CONSTANT NAV is the issuer's own statement of a
 //     value its fund rules prescribe, which nobody independent measured.
 //
@@ -2339,7 +2394,7 @@ func rwaReferenceProvenanceProse(provenances []string) string {
 		strings.Join(kinds, "")
 }
 
-var rwaReferenceKindCount = map[int]string{2: "TWO", 3: "THREE"}
+var rwaReferenceKindCount = map[int]string{2: "TWO", 3: "THREE", 4: "FOUR"}
 
 // rwaReferenceProvenanceProseOrder is every provenance a verified row
 // can carry into the summary total, in the order the basis describes
@@ -2350,6 +2405,11 @@ var rwaReferenceProvenanceProseOrder = []struct{ provenance, prose string }{
 		"of the BACKING is worth, multiplied by the tokens in circulation, resting on the issuer's own domain-bound " +
 		"declaration that one token is one unit of that instrument. On those rows nobody was seen paying it: it is an " +
 		"assertion about the value of the backing, and no gate on this platform can corroborate an assertion. "},
+	{RWAReferenceFundNAV, "Fund-NAV rows (`provenance: fund_nav`) are the net asset value per share a registered fund publishes daily, " +
+		"relayed by a market-data vendor, for a token bound on the exact (code, issuer) as one share of that fund, " +
+		"multiplied by the tokens in circulation. It is the fund's own statement of its value, published to the cent " +
+		"(`decimals_published: 2`) and dated the business day it was struck; nobody independent measured it. No premium " +
+		"is published against it, because half a cent of rounding is a material premium on a one-dollar share. "},
 	{RWAReferenceListingPrice, "Listing-priced rows (`provenance: listing_platform_price`) are an independent listing platform's own USD price " +
 		"for the TOKEN, bound to the exact address it was published against and never matched on a code. On a " +
 		"contract-issued row it comes from the same source that corroborated the address at C2; on a classic row it " +
@@ -2363,7 +2423,7 @@ var rwaReferenceProvenanceProseOrder = []struct{ provenance, prose string }{
 	{RWAReferenceProspectusCNAV, "Prospectus-priced rows (`provenance: prospectus_constant_nav`) are the net asset value a constant-NAV " +
 		"share class's authorised prospectus fixes, as the issuer publishes it, bound on the exact (code, issuer) and " +
 		"multiplied by the tokens in circulation. Nobody independent measured it: it is the issuer's own statement of a " +
-		"value its fund rules prescribe, used only where neither an oracle nor a usable listing price exists for the row, " +
+		"value its fund rules prescribe, used only where no oracle, fund NAV or usable listing price exists for the row, " +
 		"and served `stale: true` once the binding is past its review date. No premium is published against it, because " +
 		"it is not an independent valuation of the instrument. "},
 }

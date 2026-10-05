@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/version"
@@ -244,8 +245,9 @@ type BackfillCoverageRow struct {
 	// signal that supersedes density/gap_free as the headline.
 	// Populated by overlayCompleteness from completeness_snapshots
 	// (written by `stellarindex-ops compute-completeness`); absent when
-	// not yet computed for this source.
-	CompletenessPct float64 `json:"completeness_pct,omitempty"`
+	// not yet computed for this source. A pointer so a computed 0 is
+	// still emitted; the status page reads presence as "the audit ran".
+	CompletenessPct *float64 `json:"completeness_pct,omitempty"`
 	// CompletenessWatermark is the highest fully-verified ledger.
 	CompletenessWatermark int64 `json:"completeness_watermark,omitempty"`
 	// CompletenessComplete is true when the watermark reached tip.
@@ -329,23 +331,12 @@ var sourceGenesisLedger = map[string]int64{
 	"reflector-fx":  56_733_481, // deployed fresh on v3, no prior history (reflector.md:195)
 	"band":          50_842_736, // single stable WASM since 2024-03-19 (band.md:198)
 	"redstone":      58_758_722, // first-deploy hotfix, replaced +420 ledgers (redstone.md:179)
-	// defindex is paltalabs' yield aggregator, a separate 2025
-	// protocol. EXACT first-deploy from the 2026-05-19 r1 wasm-history
-	// walk (merged.json): factory CDKFHFJI... first observed at
-	// L57,056,338 — staggered ahead of its three vaults (CDB2WMKQ
-	// L57,056,388 / CC5CE6MW L57,056,390 / CDPWNUW7 L57,056,392),
-	// which confirms these are genuine deploy ledgers, not the walk
-	// window's lower bound. MIN across every contract the source
-	// routes = the factory = 57,056,338. (Was a provisional
-	// 51_499_545 placeholder, deliberately distinct from comet/blend
-	// while the walk was pending; #10 "exact, zero slack".) NOTE:
-	// defindex BackfillSafe stays false — the decoder↔deployed-WASM
-	// mismatch (Task #28, defindex.md) is orthogonal to genesis
-	// precision; an honest genesis here makes density read correctly,
-	// not falsely.
-	"defindex": 57_056_338,
+	// defindex: MIN across every contract the source routes, which
+	// includes the earliest of its four factories (CAVP2QLP…), not
+	// only the current CDKFHFJI… at 57,056,338.
+	"defindex": int64(defindex.GenesisLedger),
 
-	// cctp + rozo (#40 / #41) — exact deploy ledgers from the
+	// cctp + rozo (1b9a594b4 / 46e0087e8) — exact deploy ledgers from the
 	// completed WASM-history walks (docs/operations/wasm-audits/
 	// {cctp,rozo}.md). Each audit records a single one-time deploy per
 	// contract with a UTC timestamp; the genesis is the MIN across the
@@ -508,7 +499,7 @@ type SourceHealthRow struct {
 // so 15s smooths the load from a refreshing status page without
 // hiding live degradation.
 func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Request) {
-	// #16: serve from the background-refreshed snapshot when present —
+	// 4d6e7ac4f: serve from the background-refreshed snapshot when present —
 	// sub-millisecond instead of the 200-500ms inline build. Falls back
 	// to inline-build when the refresher hasn't fired yet (process just
 	// booted), or has died and gone stale, so first-request-after-restart
@@ -555,7 +546,7 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 // real error instead of zero-valued success on storage failure.
 func ingestionFlags(snap IngestionDiagnostics) Flags {
 	stale := snap.degraded || snap.Ledger.LatestLedger == 0
-	return Flags{Stale: stale}
+	return Flags{Stale: stale, Degraded: snap.degraded}
 }
 
 // ingestionSnapshotEntry wraps a computed IngestionDiagnostics for
@@ -895,7 +886,8 @@ func (s *Server) overlayCompleteness(ctx context.Context, rows *[]BackfillCovera
 			continue
 		}
 		computedAt := sn.ComputedAt
-		(*rows)[i].CompletenessPct = sn.CoveragePct
+		pct := sn.CoveragePct
+		(*rows)[i].CompletenessPct = &pct
 		(*rows)[i].CompletenessWatermark = int64(sn.Watermark)
 		(*rows)[i].CompletenessComplete = sn.Complete
 		(*rows)[i].CompletenessLakeComplete = sn.LakeComplete
@@ -1316,7 +1308,7 @@ func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
 			Class:         string(meta.Class),
 			Subclass:      string(meta.Subclass),
 			IncludeInVWAP: meta.IncludeInVWAP,
-			BackfillSafe:  meta.BackfillSafe,
+			BackfillSafe:  meta.BackfillSafe(),
 		}
 		if st, ok := statsBySource[name]; ok {
 			row.TradeCount24h = st.TradeCount24h

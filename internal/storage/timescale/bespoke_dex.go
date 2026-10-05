@@ -137,17 +137,7 @@ func dexWindowSQL(windowDays int, col string) string {
 // query strings.
 const dexXLMUSDVwapCTE = `
 		WITH xlm_usd AS (
-		  SELECT vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND vwap IS NOT NULL
-		     AND bucket >= NOW() - INTERVAL '24 hours'
-		   ORDER BY bucket DESC
-		   LIMIT 1
+		  ` + xlmUSDVolumeSelect + `
 		)`
 
 // dexHourlyValueExpr renders migration 0068's source_volume_1h read

@@ -51,6 +51,7 @@ scripts/ops/zfs-snapshot.sh                                               zfs_sn
 # one that drives the convoy/CAGG probe whose 2026-09-10 defect this gate
 # exists for.
 configs/ansible/roles/archival-node/tasks/10-observability.yml            galexie_catchup.prom,timescale_jobs.prom,stellar_stack_version.prom,stellarindex_binary_version.prom  scripts/ci/timescale-jobs-probe-test.sh
+configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml        operator-supplied                  scripts/ci/run-heavy-job-test.sh
 configs/ansible/roles/haproxy/tasks/07-monitoring.yml                     keepalived.prom                    -
 configs/ansible/roles/patroni/tasks/11-monitoring.yml                     patroni.prom                       -
 configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml              redis_sentinel.prom                -
@@ -63,9 +64,13 @@ configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml              redis_
 # second `# TYPE` for one family, rejects the file exactly as hard.
 cmd/stellarindex-sla-probe/textfile.go                                    operator-supplied                  cmd/stellarindex-sla-probe/textfile_test.go
 internal/archivecompleteness/metrics.go                                   archive_completeness.prom          internal/archivecompleteness/metrics_test.go
+internal/ops/archive/galexie_mirror_verify.go                             operator-supplied                  internal/ops/archive/galexie_mirror_verify_test.go
 internal/ops/archive/verify_archive_textfile.go                           operator-supplied                  internal/ops/archive/verify_archive_textfile_test.go
+internal/ops/chops/verify_lake.go                                         operator-supplied                  internal/ops/chops/verify_lake_test.go
 internal/ops/chops/verify_served_values.go                                served_values.prom                 internal/ops/chops/verify_served_values_test.go
+internal/ops/chops/wasm_drift.go                                          operator-supplied                  internal/ops/chops/wasm_drift_test.go
 internal/ops/opsutil/job_heartbeat.go                                     operator-supplied                  internal/ops/opsutil/job_heartbeat_test.go
 internal/supply/textfile.go                                               operator-supplied                  internal/supply/textfile_test.go
 internal/ops/ingest/curated_rwa_sync.go                                    operator-supplied                  internal/ops/ingest/curated_rwa_sync_test.go
 internal/ops/ingest/directory_sync.go                                      directory_sync.prom                internal/ops/ingest/directory_sync_test.go
+internal/ops/chops/verify_network_state.go                                  network_state_verify.prom           internal/ops/chops/verify_network_state_test.go

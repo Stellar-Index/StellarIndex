@@ -143,6 +143,9 @@ type Config struct {
 	// days, fixed: TouchSession records activity but never extends
 	// expires_at.
 	SessionTTL time.Duration
+	// SessionIdleTimeout — a session unused for this long is revoked
+	// before SessionTTL. Default [defaultSessionIdleTimeout].
+	SessionIdleTimeout time.Duration
 	// CookieSecure — Secure flag on the session-presence hint.
 	// Credential cookies are always Secure (see [credentialCookie]).
 	CookieSecure bool
@@ -164,6 +167,9 @@ type Config struct {
 	// passkeyBeginLimiter caps anonymous begin-login ceremonies per
 	// client IP; installed by validate(), never configurable off.
 	passkeyBeginLimiter *ratelimit.LocalFixedWindowCounter
+	// passkeySignupLimiter caps anonymous account-creating ceremonies per
+	// client IP; installed by validate(), never configurable off.
+	passkeySignupLimiter *ratelimit.LocalFixedWindowCounter
 	// signedInBrowserSends caps the sends [Handlers.admitSignedInBrowser]
 	// lets past a full LoginThrottle: one per address per link lifetime per
 	// instance. Installed by validate(), never configurable off.
@@ -229,6 +235,9 @@ func (c *Config) validate() error {
 	if c.passkeyBeginLimiter == nil {
 		c.passkeyBeginLimiter = ratelimit.NewLocalFixedWindowCounter(passkeyBeginLoginWindow, c.Now)
 	}
+	if c.passkeySignupLimiter == nil {
+		c.passkeySignupLimiter = ratelimit.NewLocalFixedWindowCounter(passkeySignupWindow, c.Now)
+	}
 	if c.DashboardBaseURL == "" {
 		return errors.New("dashboardauth: DashboardBaseURL is required")
 	}
@@ -243,6 +252,9 @@ func (c *Config) validate() error {
 	}
 	if c.SessionTTL == 0 {
 		c.SessionTTL = 30 * 24 * time.Hour
+	}
+	if c.SessionIdleTimeout == 0 {
+		c.SessionIdleTimeout = defaultSessionIdleTimeout
 	}
 	if c.accountActions == nil {
 		c.accountActions = ratelimit.NewLocalFixedWindowCounter(accountActionWindow, c.Now)
@@ -335,6 +347,10 @@ func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 			sameSite(http.HandlerFunc(h.HandlePasskeyBeginLogin)))
 		public.Handle(mux, "POST /v1/auth/passkey/finish-login",
 			sameSite(http.HandlerFunc(h.HandlePasskeyFinishLogin)))
+		public.Handle(mux, "POST /v1/auth/passkey/begin-signup",
+			sameSite(http.HandlerFunc(h.HandlePasskeyBeginSignup)))
+		public.Handle(mux, "POST /v1/auth/passkey/finish-signup",
+			sameSite(http.HandlerFunc(h.HandlePasskeyFinishSignup)))
 		mux.Handle("POST /v1/auth/passkey/begin-register",
 			requireSession(sameSite(http.HandlerFunc(h.HandlePasskeyBeginRegister))))
 		mux.Handle("POST /v1/auth/passkey/finish-register",
@@ -633,7 +649,7 @@ func sessionSameSite() http.SameSite {
 // is named __Host-, which browsers store only when Secure, Path=/ and
 // host-only, so no sibling host can read, overwrite or plant it.
 func credentialCookie(name, value string) *http.Cookie {
-	return &http.Cookie{
+	return &http.Cookie{ //nolint:gosec // G124: Secure and HttpOnly are literal true; sessionSameSite() is Lax
 		Name:     name,
 		Value:    value,
 		Path:     "/",
@@ -708,7 +724,7 @@ func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		next = "/"
 	}
 	dest := strings.TrimRight(h.cfg.DashboardBaseURL, "/") + next
-	http.Redirect(w, r, dest, http.StatusSeeOther)
+	http.Redirect(w, r, dest, http.StatusSeeOther) //nolint:gosec // G710: next is a single-slash path appended to the configured DashboardBaseURL, so the host is fixed
 }
 
 // verifyCodeRequest is the JSON body POST /v1/auth/verify-code accepts.
@@ -999,14 +1015,14 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 		h.cfg.Logger.Warn("cap live sessions at login", "err", err, "user_id", user.ID)
 	}
 
-	sc := credentialCookie(SessionCookieName, token)
+	sc := credentialCookie(SessionCookieName, token) //nolint:gosec // G124: credentialCookie sets Secure, HttpOnly and SameSite=Lax
 	sc.Expires = sess.ExpiresAt
 	http.SetCookie(w, sc)
 	// The JS-readable shadow of the cookie above, written in the same
 	// response so the two can never disagree about whether a session
 	// was just issued. See [SessionHintCookieName].
 	h.setSessionHintCookie(w, sess.ExpiresAt)
-	if email, err := notify.CanonicalRecipient(user.Email); err == nil {
+	if email, err := notify.CanonicalRecipient(user.Email); err == nil && !platform.IsPlaceholderEmail(email) {
 		h.setLoginDeviceCookie(w, email)
 	}
 	return nil
@@ -1080,7 +1096,7 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 // response, its presence flag: a hint left behind would send the explorer
 // back for one more 401 per page load until it expired on its own.
 func (h *Handlers) clearSessionCookies(w http.ResponseWriter) {
-	cleared := credentialCookie(SessionCookieName, "")
+	cleared := credentialCookie(SessionCookieName, "") //nolint:gosec // G124: credentialCookie sets Secure, HttpOnly and SameSite=Lax
 	cleared.MaxAge = -1
 	http.SetCookie(w, cleared)
 	h.clearSessionHintCookie(w)

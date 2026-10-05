@@ -43,8 +43,8 @@ func TestMarkets_IncludeSourceAssetQueryParams(t *testing.T) {
 		if got := q.Get("include"); got != "sparkline,inception" {
 			t.Errorf("include = %q, want %q", got, "sparkline,inception")
 		}
-		if got := q.Get("source"); got != "kraken" {
-			t.Errorf("source = %q, want %q", got, "kraken")
+		if got := q.Get("source"); got != "sdex" {
+			t.Errorf("source = %q, want %q", got, "sdex")
 		}
 		if got := q.Get("asset"); got != "native" {
 			t.Errorf("asset = %q, want %q", got, "native")
@@ -54,7 +54,7 @@ func TestMarkets_IncludeSourceAssetQueryParams(t *testing.T) {
 	})
 	_, err := c.Markets(context.Background(), client.MarketsOptions{
 		Include: []string{"sparkline", "inception"},
-		Source:  "kraken",
+		Source:  "sdex",
 		Asset:   "native",
 	})
 	if err != nil {

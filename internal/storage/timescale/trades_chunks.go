@@ -362,10 +362,11 @@ func (s *Store) TradesDataVolumePath(ctx context.Context) (string, error) {
 
 // ─── the `trades` compression policy ─────────────────────────────────────
 //
-// migrations/0001 attaches `add_compression_policy('trades', INTERVAL '7
-// days')`, a background job on a 12-hour schedule that selects every chunk
-// older than the lag whose status is not fully-compressed and calls
-// compress_chunk on it. A chunk this tool has decompressed by hand IS such
+// migrations/0205 runs the `trades` compression policy as the custom job
+// `trades_compression_policy` (the built-in policy under a lock_timeout), a
+// background job on a 12-hour schedule that selects every chunk older than
+// the lag whose status is not fully-compressed and calls compress_chunk on
+// it. A chunk this tool has decompressed by hand IS such
 // a chunk: over a multi-day run the policy's next fire would re-compress
 // the open chunk between two of the tool's batches, and the next batch
 // would then run the per-row decompression path the chunk mode exists to
@@ -389,16 +390,18 @@ type TradesCompressionPolicy struct {
 // compression policy job at all.
 var ErrNoTradesCompressionPolicy = errors.New("timescale: no compression policy job on trades")
 
-// tradesCompressionPolicySelect resolves the job by what it is (a
-// policy_compression job on the trades hypertable), never by a job id
-// that happened to be 1000 on one host. The lag is read out of the job's
-// config in seconds so the caller never parses an interval's text form.
+// tradesCompressionPolicySelect resolves the job by what it is (the
+// trades_compression_policy procedure in the schema unqualified `trades`
+// resolves to), never by a job id that happened to be 1000 on one host. A
+// custom job carries no hypertable in timescaledb_information.jobs, hence
+// the proc name. The lag is read out of the job's config in seconds so the
+// caller never parses an interval's text form.
 const tradesCompressionPolicySelect = `
 	SELECT job_id, scheduled,
 	       EXTRACT(EPOCH FROM (config->>'compress_after')::interval)::bigint AS compress_after_seconds
 	  FROM timescaledb_information.jobs
-	 WHERE proc_name = 'policy_compression'
-	   AND hypertable_name = 'trades'
+	 WHERE proc_schema = current_schema()
+	   AND proc_name = 'trades_compression_policy'
 `
 
 // TradesCompressionPolicy returns the `trades` compression policy job.

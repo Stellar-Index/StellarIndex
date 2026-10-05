@@ -35,6 +35,8 @@ interface Source {
   backfill_available: boolean;
   backfill_safe: boolean;
   default_weight?: number;
+  on_chain?: boolean;
+  selectable?: boolean;
   trade_count_24h?: number;
   volume_24h_usd?: string | null;
   markets_count_24h?: number;
@@ -160,10 +162,9 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
       </Container>
     );
   }
-  const [source, allCursors, topMarkets] = await Promise.all([
+  const [source, allCursors] = await Promise.all([
     fetchSource(name),
     fetchCursors(),
-    fetchSourceMarkets(name),
   ]);
 
   if (!source) {
@@ -201,6 +202,11 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
     return colon >= 0 ? ss.slice(colon + 1) : ss;
   };
   const cursors = allCursors.filter((c) => cursorVenue(c) === name);
+
+  // /v1/markets?source= refuses data vendors (their prices are served only
+  // blended); the API says which sources it accepts via `selectable`.
+  const selectable = source.selectable === true;
+  const topMarkets = selectable ? await fetchSourceMarkets(name) : null;
 
   // FEC A1-6: BreadcrumbList JSON-LD derives from the visible Crumb[]
   // inside Breadcrumbs below — no hand-rolled LD.
@@ -306,7 +312,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
         }
       />
 
-      <SourceTopChart source={name} sourceName={name} />
+      {selectable && <SourceTopChart source={name} sourceName={name} />}
 
       <Panel
         title="Ingest cursors"
@@ -360,97 +366,99 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
         )}
       </Panel>
 
-      <Panel
-        title="Top markets via this source"
-        subtitle={`${topMarkets ? topMarkets.length : '—'} pairs · ranked by 24h USD volume · /v1/markets?source=${name}`}
-        bodyClassName="-mx-4"
-      >
-        {!topMarkets ? (
-          <p className="text-ink-muted px-4 py-3 text-sm">
-            Market list unavailable for this build — the pair query didn&apos;t
-            answer, so this is unknown rather than empty. It refreshes on the
-            next build.
-          </p>
-        ) : topMarkets.length === 0 ? (
-          <p className="text-ink-muted px-4 py-3 text-sm">
-            No markets observed for this source in the trailing 14 days. Either
-            the venue isn&apos;t actively producing trades the indexer can
-            decode, or the cursor hasn&apos;t advanced past the recency window
-            yet.
-          </p>
-        ) : (
-          // WCAG 1.4.10 Reflow: wide mono columns scroll inside the panel
-          // instead of pushing the whole page sideways at 320px.
-          <div className="overflow-x-auto">
-            <table className="divide-line min-w-full divide-y text-sm">
-              <thead>
-                <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
-                  <th className="px-4 py-2 font-medium">Base</th>
-                  <th className="px-4 py-2 font-medium">Quote</th>
-                  <th className="px-4 py-2 text-right font-medium">
-                    Last price
-                  </th>
-                  <th className="px-4 py-2 text-right font-medium">
-                    24h volume
-                  </th>
-                  <th className="px-4 py-2 text-right font-medium">
-                    24h trades
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-line-subtle divide-y">
-                {topMarkets.map((m) => {
-                  const slug = encodeURIComponent(`${m.base}~${m.quote}`);
-                  return (
-                    <tr
-                      key={`${m.base}|${m.quote}`}
-                      className="hover:bg-surface-muted"
-                    >
-                      <td className="px-4 py-2">
-                        <Link
-                          href={`/markets/${slug}`}
-                          className="hover:text-brand-600 font-mono text-xs"
-                        >
-                          {shortAssetText(m.base)}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-2">
-                        <Link
-                          href={`/markets/${slug}`}
-                          className="hover:text-brand-600 font-mono text-xs"
-                        >
-                          {shortAssetText(m.quote)}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        {m.last_price ? (
-                          <span className="text-ink-body font-mono tabular-nums">
-                            {formatLastPrice(m.last_price)}
-                          </span>
-                        ) : (
-                          <span className="text-ink-faint">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        {m.volume_24h_usd ? (
-                          <span className="font-mono tabular-nums">
-                            ${formatCompact(Number(m.volume_24h_usd))}
-                          </span>
-                        ) : (
-                          <span className="text-ink-faint">—</span>
-                        )}
-                      </td>
-                      <td className="text-ink-muted px-4 py-2 text-right font-mono tabular-nums">
-                        {formatCompact(m.trade_count_24h)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Panel>
+      {selectable && (
+        <Panel
+          title="Top markets via this source"
+          subtitle={`${topMarkets ? topMarkets.length : '—'} pairs · ranked by 24h USD volume · /v1/markets?source=${name}`}
+          bodyClassName="-mx-4"
+        >
+          {!topMarkets ? (
+            <p className="text-ink-muted px-4 py-3 text-sm">
+              Market list unavailable for this build — the pair query
+              didn&apos;t answer, so this is unknown rather than empty. It
+              refreshes on the next build.
+            </p>
+          ) : topMarkets.length === 0 ? (
+            <p className="text-ink-muted px-4 py-3 text-sm">
+              No markets observed for this source in the trailing 14 days.
+              Either the venue isn&apos;t actively producing trades the indexer
+              can decode, or the cursor hasn&apos;t advanced past the recency
+              window yet.
+            </p>
+          ) : (
+            // WCAG 1.4.10 Reflow: wide mono columns scroll inside the panel
+            // instead of pushing the whole page sideways at 320px.
+            <div className="overflow-x-auto">
+              <table className="divide-line min-w-full divide-y text-sm">
+                <thead>
+                  <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
+                    <th className="px-4 py-2 font-medium">Base</th>
+                    <th className="px-4 py-2 font-medium">Quote</th>
+                    <th className="px-4 py-2 text-right font-medium">
+                      Last price
+                    </th>
+                    <th className="px-4 py-2 text-right font-medium">
+                      24h volume
+                    </th>
+                    <th className="px-4 py-2 text-right font-medium">
+                      24h trades
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-line-subtle divide-y">
+                  {topMarkets.map((m) => {
+                    const slug = encodeURIComponent(`${m.base}~${m.quote}`);
+                    return (
+                      <tr
+                        key={`${m.base}|${m.quote}`}
+                        className="hover:bg-surface-muted"
+                      >
+                        <td className="px-4 py-2">
+                          <Link
+                            href={`/markets/${slug}`}
+                            className="hover:text-brand-600 font-mono text-xs"
+                          >
+                            {shortAssetText(m.base)}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-2">
+                          <Link
+                            href={`/markets/${slug}`}
+                            className="hover:text-brand-600 font-mono text-xs"
+                          >
+                            {shortAssetText(m.quote)}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {m.last_price ? (
+                            <span className="text-ink-body font-mono tabular-nums">
+                              {formatLastPrice(m.last_price)}
+                            </span>
+                          ) : (
+                            <span className="text-ink-faint">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {m.volume_24h_usd ? (
+                            <span className="font-mono tabular-nums">
+                              ${formatCompact(Number(m.volume_24h_usd))}
+                            </span>
+                          ) : (
+                            <span className="text-ink-faint">—</span>
+                          )}
+                        </td>
+                        <td className="text-ink-muted px-4 py-2 text-right font-mono tabular-nums">
+                          {formatCompact(m.trade_count_24h)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+      )}
     </Container>
   );
 }

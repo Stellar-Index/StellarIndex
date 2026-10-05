@@ -13,8 +13,8 @@ Audit log for the `cctp` source's `BackfillSafe` flag. See
 
 ## Status
 
-**Approved (2026-05-26).** Source decoder + wiring landed in #40
-(commit `8448db13`); the wasm-history walk (§"WASM timeline" below)
+**Approved (2026-05-26).** Source decoder + wiring landed in
+commit `1b9a594b4`; the wasm-history walk (§"WASM timeline" below)
 found zero upgrades across all 3 mainnet contracts, and the registry
 entry was flipped to `BackfillSafe: true` in the same commit as the
 audit decision below.
@@ -37,7 +37,7 @@ output is unaffected either way.
 | Decoder file | [`internal/sources/cctp/decode.go`](../../../internal/sources/cctp/decode.go) |
 | Dispatcher hook | event-based `Decoder` (topic[0] classify; one of 26 `Event*` symbols) |
 | Package README | [`internal/sources/cctp/README.md`](../../../internal/sources/cctp/README.md) |
-| Wiring PR | #40 (commit `8448db13`) |
+| Wiring commit | `1b9a594b4` |
 
 ## Mainnet contracts
 
@@ -107,10 +107,10 @@ in `github.com/circlefin/stellar-cctp`):
   assembling a logical outbound-transfer record.
 - All amounts are i128 carried as decimal strings per ADR-0003
   (`Amount`, `MaxFee`, `FeeCollected`).
-- `CctpForwarder` (`CBZL2IH...`) is in the watchlist for
-  completeness but the v2 forwarder pattern emits no extra event
-  surface beyond `TokenMessengerMinter` / `MessageTransmitter` —
-  any forwarder-specific events surface as an audit finding.
+- `CctpForwarder` (`CBZL2IH...`) emits its own event surface:
+  `mint_and_forward` (an inbound mint relayed onward, decoded by
+  `DecodeMintAndForward` in `internal/sources/cctp/decode.go`) plus the
+  shared ownership/admin events. See the per-WASM review below.
 
 ## WASM timeline
 
@@ -145,10 +145,13 @@ variants of a single template):
   with no upgrade; decoder body-shape assumptions stable.
 - **MessageTransmitter** `99bd0ddc506ee13f…`. Events:
   `message_sent`, `message_received`. Same decoder. Single deploy.
-- **CctpForwarder** `00b1b70550f887bd…`. Forwarder semantic — no
-  additional event types beyond what the upstream contracts emit
-  per Phase 1 audit; the forwarder doesn't introduce its own
-  topic namespace.
+- **CctpForwarder**
+  `00b1b70550f887bd87835270ddee76307ced7a00aa6ad354ed744bc0544a03ac`
+  (the only WASM the contract has run: `stellar.contract_instance_changes`
+  FINAL holds that hash alone over ledgers 62,146,669–62,225,207, read
+  2026-10-05). It emits `mint_and_forward` (inbound mint relayed onward)
+  plus the shared ownership/admin events; the same decoder handles both,
+  and the ROADMAP #89b/89c topic-match audits below cover its topics.
 
 Decoder coverage matches the full event set the contracts emit —
 verified against the contracts' Rust source

@@ -37,7 +37,6 @@ ALTER TABLE stellar.contract_events
 
 ALTER TABLE stellar.ledger_entry_changes
     ADD INDEX IF NOT EXISTS idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
-    ADD INDEX IF NOT EXISTS idx_lec_asset asset TYPE bloom_filter(0.01) GRANULARITY 1,
     ADD INDEX IF NOT EXISTS idx_lec_key_xdr key_xdr TYPE bloom_filter(0.01) GRANULARITY 1;
 
 ALTER TABLE stellar.ledger_entries_current
@@ -47,12 +46,12 @@ ALTER TABLE stellar.ledger_entries_current
 ALTER TABLE stellar.account_movements
     ADD INDEX IF NOT EXISTS idx_cb_balance_id JSONExtractString(attributes, 'balance_id') TYPE bloom_filter(0.01) GRANULARITY 4;
 
--- ── Step 2: verify — expect 11 rows ──────────────────────────────────────────
+-- ── Step 2: verify — expect 10 rows ──────────────────────────────────────────
 -- SELECT table, name, type_full, granularity FROM system.data_skipping_indices
 --  WHERE database = 'stellar'
 --    AND name IN ('idx_tx_hash','idx_tx_source','idx_op_source',
 --                 'idx_contract_id','idx_ce_close_time',
---                 'idx_lec_account_id','idx_lec_asset','idx_lec_key_xdr',
+--                 'idx_lec_account_id','idx_lec_key_xdr',
 --                 'idx_lecur_account_id','idx_lecur_asset','idx_cb_balance_id')
 --  ORDER BY table, name;
 
@@ -71,3 +70,16 @@ ALTER TABLE stellar.account_movements
 --
 -- Idempotent and resumable: re-materializing a done partition is a cheap
 -- no-op. An index that already existed before Step 1 needs no Step 3.
+
+-- ── Step 4: drop idx_lec_asset from a host that still carries it ────────────
+-- No reader filters ledger_entry_changes on `asset` (asset-holder reads go
+-- through ledger_entries_current's idx_lecur_asset), so the bloom only costs
+-- disk and insert work. Until this runs, ch-schema-drift reports the index as
+-- live-only drift. It is a mutation over every part: run it under
+-- run-heavy-job.sh and let it drain before any other heavy job:
+--
+--   ALTER TABLE stellar.ledger_entry_changes DROP INDEX IF EXISTS idx_lec_asset;
+--
+--   SELECT mutation_id, parts_to_do, is_done, latest_fail_reason
+--   FROM system.mutations
+--   WHERE database = 'stellar' AND table = 'ledger_entry_changes' AND NOT is_done;

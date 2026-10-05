@@ -40,14 +40,12 @@ func DexSourceNames() []string {
 }
 
 // CexSourceNames returns every source registered with
-// Class=Exchange + Subclass=CEX, sorted for stable order. Same
-// shape and rationale as DexSourceNames — exported so the prewarm
-// goroutine in cmd/stellarindex-api can iterate the registered CEXes
-// to warm `/v1/markets?source=<name>` cache slots.
+// Class=Exchange + Subclass=CEX, sorted for stable order. Exported so the
+// prewarm in cmd/stellarindex-api can warm `/v1/markets?source=<name>`.
 func CexSourceNames() []string {
 	out := make([]string, 0, len(external.Registry))
-	for name, md := range external.Registry {
-		if md.Class == external.ClassExchange && md.Subclass == external.SubclassCEX {
+	for name := range external.Registry {
+		if isCEXVenue(name) {
 			out = append(out, name)
 		}
 	}
@@ -125,6 +123,23 @@ type marketsStaleReader interface {
 	DistinctPairsExtAt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
 	SourceMarketsAt(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
 	AssetMarketsAt(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
+}
+
+// poolsStaleReader is marketsStaleReader's /v1/pools counterpart: observedAt
+// is the served rows' fetch time and stale reports rows served from the
+// cache's stale-while-revalidate branch.
+type poolsStaleReader interface {
+	AllPoolsStale(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, time.Time, bool, error)
+}
+
+// allPools reads through poolsStaleReader when the wired reader has it; an
+// uncached read is live: zero observedAt, stale false.
+func allPools(ctx context.Context, reader MarketsReader, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, time.Time, bool, error) {
+	if sr, ok := reader.(poolsStaleReader); ok {
+		return sr.AllPoolsStale(ctx, filter, cursor, limit, order)
+	}
+	rows, next, err := reader.AllPools(ctx, filter, cursor, limit, order)
+	return rows, next, time.Time{}, false, err
 }
 
 // Pool is the wire shape for /v1/pools entries. Same fields as
@@ -318,7 +333,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	// fast 503 they can retry against a now-warm cache.
 	pCtx, pCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer pCancel()
-	rows, next, err := reader.AllPools(pCtx, filter, cursor, limit, order)
+	rows, next, observedAt, stale, err := allPools(pCtx, reader, filter, cursor, limit, order)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -349,7 +364,10 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	for i := range rows {
 		rows[i].LastPrice = s.adjustListingPriceStrings(pCtx, rows[i].Base, rows[i].Quote, rows[i].LastPrice, "pools")
 	}
-	env := Envelope{Data: rows, Flags: Flags{}}
+	env := Envelope{Data: rows, Flags: Flags{Stale: stale, Degraded: stale}}
+	if !observedAt.IsZero() {
+		env.AsOf = WireTime(observedAt.UTC())
+	}
 	if next != "" {
 		env.Pagination = &Pagination{Next: next}
 	}
@@ -394,18 +412,18 @@ type Market struct {
 	TradeCount24h int64    `json:"trade_count_24h"`
 	Volume24hUSD  *string  `json:"volume_24h_usd,omitempty"`
 	// LastPrice is the most recent quote-per-base price observed
-	// for this pair (cross-source) within the trailing 24h. Null
-	// when no recent prices_1m bucket has a non-null last_price.
+	// for this pair within the trailing 24h: across every source, or
+	// that source's own with `?source=`. Null when none was observed.
 	LastPrice *string `json:"last_price,omitempty"`
 	// VolumeHistory24h — per-hour USD-volume buckets for the
 	// trailing 24h. Populated only when the request sets
-	// `?include=sparkline`. 24 entries oldest → newest, zero-
-	// filled server-side so the wire array length is stable.
+	// `?include=sparkline` without `?source=`. 24 entries oldest →
+	// newest, zero-filled server-side so the wire array length is stable.
 	VolumeHistory24h []MarketVolumeBucket `json:"volume_history_24h,omitempty"`
 	// FirstTradeAt is the pair's first recorded daily bucket — the
 	// RFP's "since inception = first recorded trade", queryable per
-	// market (board #44). Populated only with `?include=inception`;
-	// day precision.
+	// market (board #44). Populated only with `?include=inception`
+	// without `?source=`; day precision.
 	FirstTradeAt *WireTime `json:"first_trade_at,omitempty"`
 }
 
@@ -427,8 +445,10 @@ type MarketVolumeBucket struct {
 //     The latter surfaces high-USD-volume pairs first so clients
 //     don't paginate alphabetically through ~5K dust pairs to find
 //     the ones with real activity.
-//   - source   (optional): single source name (DEX or CEX). Restricts
-//     the result to pairs that source observed in the recency window.
+//   - source   (optional): single on-chain source or CEX venue name.
+//     Restricts the result to pairs that source observed in the recency
+//     window; a data vendor (aggregator, FX, oracle) is refused
+//     (sourceFilterOK).
 //   - asset    (optional): canonical asset_id. Restricts the result
 //     to pairs where the asset appears on either side (base OR
 //     quote). Mutually exclusive with `source` — combine the two
@@ -482,21 +502,8 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	}
 
 	source := r.URL.Query().Get("source")
-	if source != "" {
-		// Validate against the in-memory registry so an unknown
-		// source name returns 400 instead of an empty page (the
-		// silent-empty-page anti-pattern: a typo in `?source=`
-		// looks identical on the wire to "this source has no
-		// trades", which sends callers chasing nonexistent data).
-		// Mirrors the same guard pattern on /v1/coins,
-		// /v1/markets cursor (commit 813ccde44), and /v1/pools.
-		if _, ok := external.Registry[source]; !ok {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/unknown-source",
-				"Unknown source", http.StatusBadRequest,
-				"source must be a registered source name (see /v1/sources for the canonical list); got "+source)
-			return
-		}
+	if !sourceFilterOK(w, r, source) {
+		return
 	}
 
 	asset := r.URL.Query().Get("asset")
@@ -644,7 +651,12 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 			includeInception = true
 		}
 	}
-	if includeInception && len(rows) > 0 {
+	// Both enrichment readers are pair-wide (every venue). Beside a
+	// ?source= row's single-venue headline they would contradict it, so omit them.
+	pairWide := source == ""
+	// A dropped enrichment is a partial page the next request fills.
+	enrichFailed := false
+	if includeInception && pairWide && len(rows) > 0 {
 		pairs := make([][2]string, len(rows))
 		for i, m := range rows {
 			pairs[i] = [2]string{m.Base, m.Quote}
@@ -653,6 +665,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		// page without inception rather than 5xx-ing a listing.
 		if firsts, fErr := reader.FirstTradeBatch(mCtx, pairs); fErr != nil {
 			s.logger.Warn("markets inception batch failed", "err", fErr)
+			enrichFailed = true
 		} else {
 			for i, m := range rows {
 				if t, ok := firsts[m.Base+"|"+m.Quote]; ok {
@@ -662,7 +675,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 			}
 		}
 	}
-	if includeSparkline && len(rows) > 0 {
+	if includeSparkline && pairWide && len(rows) > 0 {
 		pairs := make([][2]string, len(rows))
 		for i, m := range rows {
 			pairs[i] = [2]string{m.Base, m.Quote}
@@ -677,6 +690,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		// sparkline data).
 		if hist, hErr := reader.GetPairsVolumeHistory24hBatch(mCtx, pairs); hErr != nil {
 			s.logger.Warn("markets sparkline batch failed", "err", hErr)
+			enrichFailed = true
 		} else {
 			for i, m := range rows {
 				key := m.Base + "|" + m.Quote
@@ -701,7 +715,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	// zero and writeEnvelope defaults as_of to now (W8 reconciliation).
 	env := Envelope{
 		Data:  rows,
-		Flags: Flags{Stale: stale},
+		Flags: Flags{Stale: stale, Degraded: stale || enrichFailed},
 	}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())

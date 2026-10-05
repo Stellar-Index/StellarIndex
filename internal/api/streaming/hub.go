@@ -2,6 +2,7 @@ package streaming
 
 import (
 	"encoding/json"
+	"errors"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -50,17 +51,16 @@ const maxSplitReplayTopics = 8
 // leaves, without waiting out this TTL.
 const DefaultTopicIdleTTL = 15 * time.Minute
 
-// DefaultMaxTopics is the reap threshold for live topics per Hub — not
-// a hard ceiling, and deliberately so. Over it the reaper evicts
-// SUBSCRIBER-LESS topics oldest-first; a topic with a live subscriber is
-// never evicted, because dropping it would silently detach an open
-// stream from its fanout. So the topic COUNT is bounded by
-// max(DefaultMaxTopics, concurrent subscribers × their topics), and
-// concurrent subscribers are capped before Subscribe runs (see [Stream]
-// / maxConcurrentStreams).
+// DefaultMaxTopics is the topic-map ceiling per Hub. Over it the reaper
+// evicts SUBSCRIBER-LESS topics oldest-first; a topic with a live
+// subscriber is never evicted, because dropping it would silently detach
+// an open stream from its fanout. When every topic is subscribed,
+// [Hub.Subscribe] refuses to mint another with [ErrTopicCapacity], so
+// client-supplied keys can never grow the map past the ceiling. Only
+// Publish may briefly exceed it, with subscriber-less topics the next
+// sweep reclaims.
 //
-// What is bounded here is the MEMORY, which is what the count was ever
-// standing in for. The expensive part of a topic is its replay ring (an
+// The expensive part of a topic is its replay ring (an
 // empty 256-event ring reserves ~20 KiB), and that is allocated only on
 // a topic's first PUBLISH — see [topicState.buffer]. Rings therefore
 // scale with topics that actually carry events, which the reaper does
@@ -73,6 +73,11 @@ const DefaultTopicIdleTTL = 15 * time.Minute
 // Real deployments key topics by traded pair — hundreds, not thousands
 // — so 4096 leaves generous headroom for the reaper to work in.
 const DefaultMaxTopics = 4096
+
+// ErrTopicCapacity is returned by [Hub.Subscribe] when a topic it would
+// create cannot fit under the ceiling because every held topic has a
+// live subscriber. The caller should refuse the stream (503).
+var ErrTopicCapacity = errors.New("streaming: hub topic capacity exhausted")
 
 const (
 	// topicSweepGrowth reaps once this many topics have been created
@@ -133,11 +138,8 @@ type topicState struct {
 	//
 	// It is nil-until-published because the ring is by far the
 	// expensive part of a topic (an empty 256-event ring pre-allocates
-	// ~20 KiB) while the topic KEY is client-supplied and the topic
-	// count is not bounded by [Hub.maxTopics] — the reaper can only
-	// evict topics with no subscribers, so a caller holding
-	// subscriptions grows the map past the ceiling by design (dropping
-	// a subscribed topic would silently detach an open stream). Eager
+	// ~20 KiB) while the topic KEY is client-supplied and the map may
+	// hold up to [Hub.maxTopics] subscribed-but-silent topics. Eager
 	// allocation therefore made resident memory scale with
 	// concurrent-streams × alias fan-out: /v1/price/stream subscribes
 	// one connection to assetAliases(base) × assetAliases(quote) — up
@@ -298,7 +300,9 @@ func (h *Hub) Publish(topic, eventType string, data []byte) string {
 	}
 
 	var subs []*subscription
-	h.withTopic(topic, func(t *topicState) {
+	// Publish is never refused: its topics are server-chosen, and one it
+	// creates has no subscriber, so the reaper can reclaim it.
+	_ = h.withTopic(topic, false, func(t *topicState) {
 		// Draw the ID INSIDE the topic lock. Assigning it outside meant
 		// ID assignment and ring insertion were not atomic, so two
 		// concurrent publishes to one topic could enter the ring out of
@@ -357,7 +361,10 @@ func (h *Hub) Publish(topic, eventType string, data []byte) string {
 // replay starts partway through the buffer, silently to the client —
 // see the note in the loop below — but a stream_gap marker precedes it
 // so a consumer that tracks gaps can detect the loss (Refs #1035).
-func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func()) {
+//
+// It returns [ErrTopicCapacity], holding no registration, when a topic
+// it would create does not fit under the ceiling.
+func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func(), error) {
 	sub := &subscription{
 		ch:     make(chan Event, subscriberQueueDepth),
 		topics: append([]string(nil), topics...),
@@ -410,7 +417,7 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 		// ring, so queuing a whole topic's replay before the next
 		// walked the wire `id:` line backwards at the topic boundary
 		// (#1033).
-		h.withTopic(topic, func(t *topicState) {
+		err := h.withTopic(topic, true, func(t *topicState) {
 			// Replay the NEWEST events that fit, then register for live.
 			//
 			// This used to replay oldest-first and CLOSE the connection
@@ -443,14 +450,20 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 			// beyond the queue depth hits it); flagging it as a gap
 			// would fire on nearly every large resume rather than on
 			// genuine, unrecoverable loss.
-			if lastEventID != "" && oldestHeld != "" &&
-				oldestHeld > lastEventID && t.hasEvictedBuffered() {
+			// A cursor from a foreign ID space (another region whose clock
+			// is ahead) sorts above the whole ring, so replay is empty and
+			// would otherwise look like a clean resume.
+			if h.resumeGap(t, lastEventID, oldestHeld) {
 				gaps = append(gaps, newStreamGapEvent(topic, lastEventID, oldestHeld))
 			}
 			merged = append(merged, trimmed...)
 			remaining -= len(trimmed)
 			t.subs[sub] = struct{}{}
 		})
+		if err != nil {
+			cancel()
+			return nil, nil, err
+		}
 	}
 
 	sort.SliceStable(merged, func(i, j int) bool { return merged[i].ID < merged[j].ID })
@@ -465,7 +478,18 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 		}
 	}
 
-	return sub.ch, cancel
+	return sub.ch, cancel, nil
+}
+
+// resumeGap reports whether a resume at lastEventID lost events on t:
+// the ring evicted past the cursor, or the cursor is from a foreign ID
+// space. Caller holds t.mu.
+func (h *Hub) resumeGap(t *topicState, lastEventID, oldestHeld string) bool {
+	if lastEventID == "" {
+		return false
+	}
+	evictedPast := oldestHeld != "" && oldestHeld > lastEventID && t.hasEvictedBuffered()
+	return evictedPast || h.gen.Ahead(lastEventID)
 }
 
 // newStreamGapEvent builds the diagnostic marker Subscribe sends ahead
@@ -525,9 +549,14 @@ func (h *Hub) dropSubscriber(topic string, sub *subscription) bool {
 // goroutine a whole completed sweep, landing in the nanosecond window
 // between the lookup and the lock here — so it cannot spin against
 // itself.
-func (h *Hub) withTopic(name string, fn func(t *topicState)) {
+//
+// With bounded set, creating the topic may fail with [ErrTopicCapacity].
+func (h *Hub) withTopic(name string, bounded bool, fn func(t *topicState)) error {
 	for {
-		t := h.getOrCreateTopic(name)
+		t, err := h.getOrCreateTopic(name, bounded)
+		if err != nil {
+			return err
+		}
 		t.mu.Lock()
 		if t.evicted {
 			t.mu.Unlock()
@@ -536,32 +565,37 @@ func (h *Hub) withTopic(name string, fn func(t *topicState)) {
 		t.lastUsed = time.Now()
 		fn(t)
 		t.mu.Unlock()
-		return
+		return nil
 	}
 }
 
 // getOrCreateTopic returns the topicState for `name`, creating it
 // on first use. Held outside any topic lock so two concurrent
-// publishers on different topics don't serialise.
-func (h *Hub) getOrCreateTopic(name string) *topicState {
+// publishers on different topics don't serialise. With bounded set it
+// refuses, rather than grows the map past maxTopics, once a reap leaves
+// no room.
+func (h *Hub) getOrCreateTopic(name string, bounded bool) (*topicState, error) {
 	h.mu.RLock()
 	t, ok := h.topics[name]
 	h.mu.RUnlock()
 	if ok {
-		return t
+		return t, nil
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	// Double-check under write lock — another goroutine may have
 	// won the race.
 	if t, ok = h.topics[name]; ok {
-		return t
+		return t, nil
 	}
 	now := time.Now()
 	// Bound the map BEFORE inserting: the key is caller-supplied and,
 	// on the /v1/price/stream path, client-supplied — without this a
 	// stream of made-up pairs grows h.topics forever (REL-05).
 	h.maybeReapLocked(now)
+	if bounded && len(h.topics) >= h.maxTopics {
+		return nil, ErrTopicCapacity
+	}
 	// buffer is left nil: the ring is allocated on first PUBLISH, not
 	// here. See [topicState.buffer].
 	t = &topicState{
@@ -570,7 +604,7 @@ func (h *Hub) getOrCreateTopic(name string) *topicState {
 	}
 	h.topics[name] = t
 	obs.APIStreamHubTopics.Set(float64(len(h.topics)))
-	return t
+	return t, nil
 }
 
 // maybeReapLocked runs a reap pass when enough topics have been

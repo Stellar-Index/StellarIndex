@@ -20,6 +20,7 @@ cd "$(dirname "$0")/../.." || exit 1
 GATE="$PWD/scripts/ci/commit-identity-range.sh"
 
 TMP="$(mktemp -d)"
+export RANGE_REPO="$TMP/repo"
 trap 'rm -rf "$TMP"' EXIT
 
 pass=0
@@ -95,6 +96,64 @@ check() { # <name> <expect: nonempty|empty>
 
 mkrepo
 check "new branch under fetch-depth:0, detached HEAD: the branch's own commit is still checked" nonempty
+
+# PR whose base.sha is older than the base branch tip: main gained a commit
+# after the PR branched and the PR merged it in; that commit is not the PR's own.
+mkrepo_pr() {
+  mkrepo
+  (
+    cd "$TMP/repo" || exit 1
+    git rev-parse main > "$TMP/stale_base"
+    git checkout -q main
+    printf 'moved\n' > other.txt
+    git add -A
+    git commit -qm "landed on main after the PR branched"
+    git rev-parse HEAD > "$TMP/main_tip"
+    git update-ref refs/remotes/origin/main "$(cat "$TMP/main_tip")"
+    git checkout -q feature-x
+    git merge -q --no-ff -m "merge main into PR" main
+    git rev-parse HEAD > "$TMP/pr_head"
+    git checkout -q "$(cat "$TMP/pr_head")"
+  )
+}
+
+mkrepo_pr
+# shellcheck disable=SC2086
+pr_out="$(cd "$TMP/repo" && range="$(EVENT=pull_request BASE_SHA="$(cat "$TMP/stale_base")" \
+  BASE_REF=main HEAD_SHA="$(cat "$TMP/pr_head")" "$GATE")" && git log $range --format='%H')"
+if grep -qF "$(cat "$TMP/new_sha")" <<<"$pr_out" && ! grep -qF "$(cat "$TMP/main_tip")" <<<"$pr_out"; then
+  printf '  ok   %s\n' "PR with stale base.sha: base-branch commit excluded, PR commit included"
+  pass=$((pass + 1))
+else
+  printf '  FAIL PR with stale base.sha (got: %s)\n' "$pr_out"
+  fail=$((fail + 1))
+fi
+
+# Push to a feature branch that merged main: the main-side commit (before
+# the push, absent from BEFORE) must not be checked; the branch's own is.
+mkrepo_pr
+# shellcheck disable=SC2086
+push_out="$(cd "$TMP/repo" && range="$(EVENT=push BEFORE="$(cat "$TMP/new_sha")" SHA="$(cat "$TMP/pr_head")" \
+  DEFAULT_BRANCH=main GITHUB_REF_NAME=feature-x "$GATE")" && git log $range --format='%H')"
+if [ -n "$push_out" ] && ! grep -qF "$(cat "$TMP/main_tip")" <<<"$push_out"; then
+  printf '  ok   %s\n' "feature-branch push after merging main: main-side commit excluded"
+  pass=$((pass + 1))
+else
+  printf '  FAIL feature-branch push after merging main (got: %s)\n' "$push_out"
+  fail=$((fail + 1))
+fi
+
+# Push to main itself keeps the full before..after range.
+# shellcheck disable=SC2086
+main_out="$(cd "$TMP/repo" && range="$(EVENT=push BEFORE="$(cat "$TMP/stale_base")" SHA="$(cat "$TMP/main_tip")" \
+  DEFAULT_BRANCH=main GITHUB_REF_NAME=main "$GATE")" && git log $range --format='%H')"
+if grep -qF "$(cat "$TMP/main_tip")" <<<"$main_out"; then
+  printf '  ok   %s\n' "push to default branch: full range kept"
+  pass=$((pass + 1))
+else
+  printf '  FAIL push to default branch (got: %s)\n' "$main_out"
+  fail=$((fail + 1))
+fi
 
 echo
 echo "commit-identity-range-test: $pass passed, $fail failed"

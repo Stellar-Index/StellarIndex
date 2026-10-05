@@ -30,6 +30,9 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Core rows → `canonical.Trade`, `Price`, `OracleUpdate`
 - Clamp a raw on-chain u64 timestamp (sentinel/overflow-safe) → `canonical.SafeUnixSeconds(raw, closedAt)` / `SafeUnixMillis` — never cast u64→int64 then range-check (wrap-negative slips a future-only guard)
 
+## Stablecoin supply / USD value
+- Hand-vetted Stellar stablecoin set + valuation → `GET /v1/stablecoins`, `(*Server).handleStablecoins` (`internal/api/v1/stablecoins.go`; reuses `rwaListingRows`)
+
 ## SCVal / i128 decoding — `internal/scval`
 - Parse XDR SCVal → `scval.Parse(b64)`, `ParseBytes(raw)`
 - i128/u128/u256 → amount → `AsAmountFromI128`/`AsAmountFromU128`/`AsAmountFromU256` (never `int64(parts.Lo)`)
@@ -40,6 +43,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Decode classic op body → `xdrjson.DecodeOperationBody(bodyB64)`
 - Participant accounts → `xdrjson.ParticipantAccounts(bodyB64)`
 - SAC contract id for a classic asset → `xdrjson.SACContractID(assetID, passphrase)`
+- Decode a classic ledger entry to its state fields → `xdrjson.LedgerEntryFields(entry)`
 - Human names → `OpTypeName`, `MemoTypeName`, `AssetID`, `TrustLineAssetID`
 
 ## SEP-1 / stellar.toml + verified currency
@@ -47,8 +51,10 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Issuer home_domain, latest observed (watched issuers only) → `metadata.NewLCMHomeDomainResolver`, `ChainedHomeDomainLookup`
 - Verified currency → `currency.LoadEmbedded().LookupBySlug/LookupByTicker/LookupByStellarAssetID`, `.Browseable`, `.ByClass`, `.CoinGeckoIDs` (never auto-populate seed.yaml)
 
-## SSRF-guarded outbound fetch — ⚠ **DUPLICATED, needs extraction (D4 M0-2)**
-- Today: two private impls — `metadata/sep1.go` (`ssrfDialer`, `isBlocked`) AND `customerwebhook/ssrf.go` (`ssrfGuardedDialContext`, `isInternalIP`, exported `IsReservedTLD`). **Target:** a shared `internal/safehttp.GuardedTransport()`; until then reuse `customerwebhook.IsReservedTLD` — do NOT write a third copy.
+## SSRF-guarded outbound fetch — `internal/nettools`
+- Blocklist (the one list; add a range there, never at a call site) → `nettools.IsBlockedIP(ip)`, `nettools.IsReservedTLD(host)`
+- Dial pre-resolved, vetted IPs in order → `nettools.DialFirstReachable(ctx, dialer, network, ips, port)`
+- ⚠ No shared guarded `http.Transport` exists (no `internal/safehttp`). Two private `DialContext` wrappers compose the primitives above: `metadata/sep1.go` (`ssrfDialer`) and `customerwebhook/ssrf.go` (`ssrfGuardedDialContext`); `dashboardwebhooks/handlers.go` vets at registration. A new outbound fetcher builds on `nettools` — do NOT write a third wrapper without extracting one.
 
 ## Webhooks — `internal/customerwebhook`
 - Fan a domain event to customer webhooks → `NewFanout(store, logger).Publish(...)`, `MarshalPayload`
@@ -102,7 +108,9 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 
 ## Divergence / completeness / supply / incidents
 - Cross-check vs reference → `divergence.Compare`; `NewCoinGeckoReference`, `NewChainlinkReference`; `divergence.NewService(opts)`
+- CoinGecko key auth (Pro host switch + Pro/Demo header) → `coingecko.ResolveEndpoint`, `coingecko.SetAuthHeader` (`internal/sources/external/coingecko`)
 - Completeness verdict (ADR-0033) → `completeness.ComputeWatermark`, `AuditRecognition`, `ReconcileCounts`, `SumKinds` (authoritative = `completeness_snapshots`)
+- Network tip lower bound from a cursor + wall clock (catches a frozen ingest frontier) → `completeness.NetworkTipLowerBound`
 - Supply → `supply.NewClassicComputer`, `NewSEP41Computer`, `NewRefresher`, `NewCrossCheckRefresher`, reserve readers
 - Incident post-mortems → `incidents.Load(logger)`
 
@@ -119,6 +127,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Integration path decision → `scripts/ci/prepush-integration-required.sh BASE HEAD`
 
 ---
-_Maintenance: this file must stay current — D4 recommends a CI check that every non-source
-leaf package has a `doc.go`, and a Definition-of-Done line requiring "checked
-CAPABILITY-INVENTORY.md before writing new utility code."_
+_Maintenance: this file must stay current. `lint-docs.sh` fails any `internal/` or `pkg/`
+package without a package comment, and the Definition of Done
+(docs/engineering-standards.md §2.1) requires checking this file before writing new
+utility code._

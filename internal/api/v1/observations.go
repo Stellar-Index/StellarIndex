@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // handleObservations serves GET /v1/observations per ADR-0018
@@ -23,8 +22,8 @@ import (
 //
 //   - asset (required) — canonical asset id; mirrors /v1/price.
 //   - quote (optional, default fiat:USD)
-//   - source (optional) — narrow to a single source; result is then
-//     a 0- or 1-element array.
+//   - source (optional) — narrow to a single on-chain source; result is
+//     then a 0- or 1-element array. Off-chain names, exchanges included, 400 (rawTradeSourceFilterOK).
 //   - aggregate=latest (optional) — collapse to the single most-recent
 //     trade across all sources. Returns a 0- or 1-element array
 //     (preserves the array wire shape; aggregate=latest does NOT
@@ -68,20 +67,8 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	source := r.URL.Query().Get("source")
-	if source != "" {
-		// Validate against the in-memory registry so an unknown
-		// source name returns 400 instead of an empty page (the
-		// silent-empty-page anti-pattern: a typo in `?source=`
-		// looks identical on the wire to "this source has no
-		// trades for the pair", which sends callers chasing
-		// nonexistent data). Same fail-fast guard as /v1/markets.
-		if _, ok := external.Registry[source]; !ok {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/unknown-source",
-				"Unknown source", http.StatusBadRequest,
-				"source must be a registered source name (see /v1/sources for the canonical list); got "+source)
-			return
-		}
+	if !rawTradeSourceFilterOK(w, r, source) {
+		return
 	}
 
 	// aggregate is currently single-valued ("latest"); reject anything

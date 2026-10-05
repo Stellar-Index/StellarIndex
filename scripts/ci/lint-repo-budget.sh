@@ -123,7 +123,11 @@ fi
 
 # ── Added comments ──────────────────────────────────────────────────────────
 scope=""
-if [ "$mode" = staged ]; then
+if [ "$mode" = staged ] && git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+  # The index minus HEAD is the whole incoming parent, not this author's lines; CI diffs base...HEAD.
+  echo "lint-repo-budget: comment check skipped — merge in progress (CI checks base...HEAD)"
+  : > "$tmp/diff"
+elif [ "$mode" = staged ]; then
   git diff --cached -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ -- '*.go' > "$tmp/diff"
   scope="the index"
 else

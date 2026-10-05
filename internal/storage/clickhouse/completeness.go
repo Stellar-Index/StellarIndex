@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
@@ -92,9 +93,17 @@ func ContiguousWatermark(ctx context.Context, addr string, from uint32) (uint32,
 // ExplorerReader.LakeWatermark (ADR-0041 Decision 4), which already holds a
 // pooled conn and refreshes on a cache TTL, not per dial.
 func contiguousWatermarkOn(ctx context.Context, conn driver.Conn, from uint32) (uint32, error) {
+	return contiguousWatermarkUpTo(ctx, conn, from, math.MaxUint32)
+}
+
+// contiguousWatermarkUpTo is [contiguousWatermarkOn] with the gap scan bounded
+// to [from, to] and the result clamped to to, so a lagging reader pays for one
+// batch window per call instead of every ledger from `from` to the lake tip.
+func contiguousWatermarkUpTo(ctx context.Context, conn driver.Conn, from, to uint32) (uint32, error) {
 	// ch_max: highest ledger present in the lake.
 	// first_gap_start: the lowest missing ledger >= from (0 when there is none).
 	// min_present: the lowest ledger present >= from (0 when none is >= from).
+	// max_in_window: the highest ledger present in [from, to] (0 when none).
 	//
 	// first_gap_start only sees INTERIOR gaps between present ledgers >= from —
 	// leadInFrame over the DISTINCT-ledger set finds a jump nxt > ledger+1. It is
@@ -126,18 +135,31 @@ func contiguousWatermarkOn(ctx context.Context, conn driver.Conn, from uint32) (
 					       leadInFrame(ledger_seq) OVER (
 					           ORDER BY ledger_seq ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING
 					       ) AS nxt
-					FROM (SELECT DISTINCT ledger_seq FROM stellar.ledgers WHERE ledger_seq >= ?)
+					FROM (SELECT DISTINCT ledger_seq FROM stellar.ledgers WHERE ledger_seq >= ? AND ledger_seq <= ?)
 				)
 				WHERE nxt > ledger_seq + 1
 			)), 0)) AS first_gap_start,
-			toUInt64(ifNull((SELECT min(ledger_seq) FROM stellar.ledgers WHERE ledger_seq >= ?), 0)) AS min_present`
+			toUInt64(ifNull((SELECT min(ledger_seq) FROM stellar.ledgers WHERE ledger_seq >= ?), 0)) AS min_present,
+			toUInt64(ifNull((SELECT max(ledger_seq) FROM stellar.ledgers WHERE ledger_seq >= ? AND ledger_seq <= ?), 0)) AS max_in_window`
 
-	var chMax, firstGap, minPresent uint64
-	if err := conn.QueryRow(ctx, q, from, from).Scan(&chMax, &firstGap, &minPresent); err != nil {
+	var chMax, firstGap, minPresent, maxInWindow uint64
+	if err := conn.QueryRow(ctx, q, from, to, from, from, to).Scan(&chMax, &firstGap, &minPresent, &maxInWindow); err != nil {
 		return 0, fmt.Errorf("clickhouse: contiguous watermark from %d: %w", from, err)
 	}
 	// Ledger sequences are always well within uint32.
-	return watermark(from, uint32(chMax), uint32(firstGap), uint32(minPresent)), nil
+	return boundedWatermark(from, to, uint32(chMax), uint32(firstGap), uint32(minPresent), uint32(maxInWindow)), nil
+}
+
+// boundedWatermark is [watermark] for a gap scan limited to [from, to]. The
+// scan cannot see a hole that runs from inside the window past `to`, so when it
+// reports no gap but the highest ledger present in the window is below the
+// clamp, that ledger is where contiguity ends.
+func boundedWatermark(from, to, chMax, firstGap, minPresent, maxInWindow uint32) uint32 {
+	w := min(watermark(from, chMax, firstGap, minPresent), to)
+	if firstGap == 0 && maxInWindow != 0 && maxInWindow < w {
+		return maxInWindow
+	}
+	return w
 }
 
 // WatermarkReader holds one connection for repeated ContiguousWatermark and
@@ -156,9 +178,10 @@ func NewWatermarkReader(ctx context.Context, addr string) (*WatermarkReader, err
 	return &WatermarkReader{conn: conn}, nil
 }
 
-// ContiguousWatermark is [ContiguousWatermark] on the reader's connection.
-func (w *WatermarkReader) ContiguousWatermark(ctx context.Context, from uint32) (uint32, error) {
-	return contiguousWatermarkOn(ctx, w.conn, from)
+// ContiguousWatermark is [ContiguousWatermark] on the reader's connection,
+// scanning no further than ledger to and never returning above it.
+func (w *WatermarkReader) ContiguousWatermark(ctx context.Context, from, to uint32) (uint32, error) {
+	return contiguousWatermarkUpTo(ctx, w.conn, from, to)
 }
 
 // LakeMinLedger is [LakeMinLedger] on the reader's connection.
@@ -275,14 +298,19 @@ func substrateProblemOn(ctx context.Context, conn driver.Conn, addr string, from
 			WHERE nxt > ledger_seq + 1
 		)), 0))`
 	// First hash-chain break: prev_hash != the immediately-prior ledger's hash.
+	// One tuple argMax, so on an ingested_at tie between duplicate rows both
+	// hashes still come from the same row rather than being mixed across rows.
 	const chainQ = `
 		SELECT toUInt64(ifNull((SELECT min(ledger_seq) FROM (
 			SELECT ledger_seq, prev_hash,
 			       lagInFrame(ledger_hash) OVER (ORDER BY ledger_seq) AS prior_hash
 			FROM (
-				SELECT ledger_seq, argMax(ledger_hash, ingested_at) AS ledger_hash, argMax(prev_hash, ingested_at) AS prev_hash
-				FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?
-				GROUP BY ledger_seq
+				SELECT ledger_seq, hp.1 AS ledger_hash, hp.2 AS prev_hash
+				FROM (
+					SELECT ledger_seq, argMax((ledger_hash, prev_hash), ingested_at) AS hp
+					FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?
+					GROUP BY ledger_seq
+				)
 			)
 		) WHERE ledger_seq > ? AND prior_hash != '' AND prev_hash != prior_hash), 0))`
 
@@ -558,26 +586,14 @@ func eventCensusExpected(ctx context.Context, conn driver.Conn, lo, hi uint32) (
 }
 
 func eventCensusPresent(ctx context.Context, conn driver.Conn) (map[uint32]uint64, error) {
-	const q = `
-		SELECT toUInt32(partition) AS p, toUInt64(sum(rows))
-		FROM system.parts
-		WHERE database = 'stellar' AND table = 'contract_events' AND active
-		GROUP BY p`
-	rows, err := conn.Query(ctx, q)
+	m, err := rawCensusPresent(ctx, conn, "contract_events")
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: event census present: %w", err)
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	out := make(map[uint32]uint64)
-	for rows.Next() {
-		var p uint32
-		var n uint64
-		if err := rows.Scan(&p, &n); err != nil {
-			return nil, fmt.Errorf("clickhouse: scan event census present: %w", err)
-		}
-		out[p] = n
+	if m["contract_events"] == nil {
+		return map[uint32]uint64{}, nil
 	}
-	return out, rows.Err()
+	return m["contract_events"], nil
 }
 
 // censusShortfalls keeps each expected partition whose present row count falls

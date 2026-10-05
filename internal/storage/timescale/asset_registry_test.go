@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -168,5 +170,84 @@ func TestAssetRegistryDedupe_IsolatedPerStore(t *testing.T) {
 	}
 	if got := dbA.classicAssetUpserts(); got != 1 {
 		t.Errorf("db A classic_assets upserts = %d after in-window repeat, want 1 (TTL dedupe weakened)", got)
+	}
+}
+
+// A backfill batch with a lower first ledger inside the TTL window must still
+// reach the LEAST arms; a higher or equal one stays deduped.
+func TestAssetRegistryDedupe_LowerMinLedgerBypassesTTL(t *testing.T) {
+	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	ctx := context.Background()
+	now := time.Now()
+	rec := &recordingDriver{}
+	s := &Store{db: sql.OpenDB(rec)}
+
+	steps := []struct {
+		name     string
+		min, max uint32
+		upserts  int
+	}{
+		{"first", 200, 300, 1},
+		{"higher min stays deduped", 250, 260, 1},
+		{"lower min bypasses TTL", 100, 150, 2},
+		{"repeat above new min stays deduped", 120, 130, 2},
+	}
+	for _, st := range steps {
+		o := registryObservation{minLedger: st.min, maxLedger: st.max, minTs: now, maxTs: now}
+		if err := s.registerClassicAssetRange(ctx, usdc, o); err != nil {
+			t.Fatalf("%s: %v", st.name, err)
+		}
+		if got := rec.classicAssetUpserts(); got != st.upserts {
+			t.Fatalf("%s: upserts = %d, want %d", st.name, got, st.upserts)
+		}
+	}
+}
+
+func TestNoteRegistryObservation_KeepsBothEnds(t *testing.T) {
+	t0 := time.Unix(1000, 0)
+	seen := map[string]registryObservation{}
+	for _, l := range []uint32{50, 10, 90, 30} {
+		noteRegistryObservation(seen, "a", newRegistryObservation(l, t0.Add(time.Duration(l)*time.Second)))
+	}
+	got := seen["a"]
+	if got.minLedger != 10 || got.maxLedger != 90 || !got.minTs.Equal(t0.Add(10*time.Second)) || !got.maxTs.Equal(t0.Add(90*time.Second)) {
+		t.Fatalf("fold = %+v, want min 10 / max 90 with matching timestamps", got)
+	}
+}
+
+// The recording fakes ignore arity, so check the statement text directly:
+// every $N is bound, first_* take the minimum args and last_* the maximum.
+func TestUpsertClassicAssetSQL_PlaceholderBinding(t *testing.T) {
+	const nArgs = 7 // id, code, issuer, minTs, minLedger, maxTs, maxLedger
+	maxN := 0
+	for _, m := range regexp.MustCompile(`\$(\d+)`).FindAllStringSubmatch(upsertClassicAssetSQL, -1) {
+		n, _ := strconv.Atoi(m[1])
+		maxN = max(maxN, n)
+	}
+	if maxN != nArgs {
+		t.Fatalf("highest placeholder = $%d, want $%d (len(args) in registerClassicAssetRange)", maxN, nArgs)
+	}
+
+	m := regexp.MustCompile(`(?s)INSERT INTO classic_assets \((.*?)\) VALUES \((.*?)\)\s*ON CONFLICT`).
+		FindStringSubmatch(upsertClassicAssetSQL)
+	if m == nil {
+		t.Fatal("INSERT shape not matched")
+	}
+	split := strings.NewReplacer(",", " ", "\n", " ")
+	names, vals := strings.Fields(split.Replace(m[1])), strings.Fields(split.Replace(m[2]))
+	if len(names) != len(vals) {
+		t.Fatalf("%d columns vs %d values", len(names), len(vals))
+	}
+	want := map[string]string{
+		"first_seen_at": "$4", "first_seen_ledger": "$5", "last_seen_at": "$6", "last_seen_ledger": "$7",
+		"first_trade_at": "$4", "first_trade_ledger": "$5", "last_trade_at": "$6", "last_trade_ledger": "$7",
+	}
+	for i, n := range names {
+		if w, ok := want[n]; ok && vals[i] != w {
+			t.Errorf("%s binds %s, want %s", n, vals[i], w)
+		}
 	}
 }

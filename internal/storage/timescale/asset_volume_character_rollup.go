@@ -37,8 +37,10 @@ import (
 // The {{ALIAS_VALUES}} token is replaced (strings.Replace, not Sprintf —
 // the LIKE patterns carry literal % that a format verb would mangle) by the
 // alias-fold VALUES rows built from the process AliasRegistry (see
-// buildAliasMapValues). $1 is the trailing window as an interval string;
-// the alias-pair params follow from $2.
+// buildAliasMapValues); the alias-pair params start at $1. {{WINDOW}} is the
+// trailing window as an interval LITERAL: against a bind parameter the planner
+// cannot exclude chunks, so this ~23-minute roll held ACCESS SHARE on every
+// trades chunk and starved the trades compression policy.
 //
 // Every per-asset signal is reproduced exactly:
 //   - total_vol / *_vol are SUM(usd_volume::double precision) — the SAME
@@ -69,7 +71,7 @@ legs AS (
     t.usd_volume                       AS v_num
   FROM trades t
   LEFT JOIN alias_map bm ON bm.form = t.base_asset
-  WHERE t.ts >= now() - $1::interval
+  WHERE t.ts >= now() - interval '{{WINDOW}}'
     AND t.usd_volume IS NOT NULL
   UNION ALL
   SELECT
@@ -80,7 +82,7 @@ legs AS (
     t.usd_volume                       AS v_num
   FROM trades t
   LEFT JOIN alias_map qm ON qm.form = t.quote_asset
-  WHERE t.ts >= now() - $1::interval
+  WHERE t.ts >= now() - interval '{{WINDOW}}'
     AND t.usd_volume IS NOT NULL
 ),
 legs_i AS (
@@ -187,6 +189,10 @@ func volumeCharacterFromSums(totalNum string, total, topPair, selfCross, issuerS
 	return out
 }
 
+// assetVolumeCharacterRollTimeout bounds one roll; the two-scan roll measures
+// ~23 min on the full lake, so the bound leaves headroom while still guarding a wedge.
+const assetVolumeCharacterRollTimeout = "45min"
+
 // refreshAssetVolumeCharacterPrune drops assets whose priced volume lapsed
 // out of the window this pass — same one-transaction now() trick as the
 // asset_volume_24h rollup: just-upserted rows carry computed_at = now() and
@@ -241,23 +247,23 @@ func (s *Store) RefreshAssetVolumeCharacter(ctx context.Context) error {
 // from the caller's so a caller deadline that already fired doesn't also
 // fail the restore) before the connection goes back to the pool — so an
 // [OpenBackground] connector's session backstop (REC-08) isn't silently
-// replaced by this call's 25min bound for whichever later query lands on
+// replaced by this call's assetVolumeCharacterRollTimeout bound for whichever later query lands on
 // the same pooled connection. A restore that fails marks the connection
 // bad via conn.Raw(driver.ErrBadConn) rather than returning it to the pool
 // with the override still live. max_parallel_workers_per_gather has no
 // pool-level default to protect, so it keeps a bare RESET.
 func (s *Store) rollAssetVolumeCharacter(ctx context.Context) (out []assetVolumeCharacterRow, err error) {
 	window := fmt.Sprintf("%d hours", int(volumeCharacterWindow.Hours()))
-	aliasValues, aliasArgs := buildAliasMapValues(2)
+	aliasValues, args := buildAliasMapValues(1)
 	query := strings.Replace(assetVolumeCharacterRollupSQLTemplate, "{{ALIAS_VALUES}}", aliasValues, 1)
-	args := append([]any{window}, aliasArgs...)
+	query = strings.ReplaceAll(query, "{{WINDOW}}", window)
 
 	// This all-asset roll scans ~145M trades and shares the primary with the
 	// customer-facing API. Run it on a DEDICATED connection whose footprint is
 	// bounded so it can never starve serving (v0.44.1 regression fix):
 	//   - max_parallel_workers_per_gather=2 — leaves cores free for the API
 	//     rather than fanning the scan across every worker.
-	//   - statement_timeout=25min — a wedge guard: if it can't finish, it
+	//   - statement_timeout=assetVolumeCharacterRollTimeout — a wedge guard: if it can't finish, it
 	//     aborts and the last good rollup stands (the worker retries next
 	//     cycle). Session settings, not SET LOCAL, so they cover the read
 	//     that runs outside any transaction.
@@ -275,7 +281,7 @@ func (s *Store) rollAssetVolumeCharacter(ctx context.Context) (out []assetVolume
 	if err := conn.QueryRowContext(ctx, `SELECT current_setting('statement_timeout')`).Scan(&prevTimeout); err != nil {
 		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter read statement_timeout: %w", err)
 	}
-	if _, err := conn.ExecContext(ctx, "SET statement_timeout = '25min'"); err != nil {
+	if _, err := conn.ExecContext(ctx, "SET statement_timeout = '"+assetVolumeCharacterRollTimeout+"'"); err != nil {
 		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter set timeout: %w", err)
 	}
 	defer func() {

@@ -47,8 +47,9 @@ these wait for you.
 - [ ] **Buy CoinGecko Pro** → set `COINGECKO_API_KEY` on r1 + restart indexer (P0-3).
 - [ ] **Create Healthchecks.io account + Discord webhooks** → paste `DISCORD_WEBHOOK_URL_PAGES`/
   `_ALERTS` + the 4× `HEALTHCHECKS_URL_*` into r1 env files; rerun `pre-launch-check.sh`.
-- [ ] **Rotate the postgres_exporter DSN password** (leaked in earlier session output;
-  in `/etc/default/prometheus-postgres-exporter`).
+- [x] **Rotate the postgres_exporter DSN password — DONE 2026-09-29.** The DSN in
+  `/etc/default/prometheus-postgres-exporter` now carries no password: the exporter
+  connects over the local socket with peer auth as user `postgres_exporter`.
 - [ ] **Relocate + rotate the GCP service-account key** (CS-001) — `rates-engine-data-
   validation-*.json` sits in the repo working tree (gitignored, not committed). Move it
   out of the repo dir; rotate if it was ever shared; confirm the SA is still used.
@@ -92,10 +93,10 @@ did each step):
    (root ones), `daemon-reload`, start — the chowns are backwards-compatible
    (root reads everything).
 
-Note: `archive-completeness.service` intentionally stays `User=root` for now —
-its `ExecStartPre` writes `/run/archive-completeness.env` and its report lands
-in the galexie-owned `/var/lib/galexie`; follow-up is `RuntimeDirectory=` +
-report relocation (see the unit template comment).
+Note: `archive-completeness.service` intentionally stays `User=root`. Its
+`ExecStart` runs under `run-heavy-job.sh`, which creates the `MemoryMax=20G`
+scope and the disk watchdog only for a root caller; as a non-root unit the job
+would run with neither (see the unit template comment).
 
 ## Classic supply under-read (found 2026-07-02 by verify-served-values)
 The trustline/claimable/LP observers matched their watched set in
@@ -212,35 +213,34 @@ exactly that rather than looking like drift.
   Actions secret is a copy, not a backup (write-only once set).
 
 ## MinIO credential hygiene (2026-07-25)
-- [ ] **Rotate MinIO root** (`minio_root_user` / `minio_root_password`, still named
-  `ratesengine-admin`) — the credentials appeared in plaintext in an agent session
+- [x] **Rotate MinIO root — DONE** (root is now `stellarindex-admin` since 2026-07-27;
+  verified 2026-09-28 that the old access key is rejected and the stored old secret
+  differs from the live one). The credentials appeared in plaintext in an agent session
   transcript on 2026-07-25. Rotating restarts MinIO and **invalidates the Prometheus
-  bearer token** (the 2026-07-03 incident); regenerate it in the same window. Steps:
+  bearer token** (the 2026-07-03 incident). Record:
   [credential-rotation.md §MinIO identity inventory](credential-rotation.md).
-- [ ] **Apply `--tags minio` to repair the `galexie-archive-writer` identity** — its
-  vault var and `/etc/default/galexie-backfill` always existed but the MinIO user,
-  policy, and attach never did, so the `archivewriter` alias fails
-  `SignatureDoesNotMatch`. `09-minio.yml` now creates it (write-only on
-  `galexie-archive`, no delete); `mc admin user add` re-syncs the secret from vault.
-  Then re-point the alias and prove `mc ls archivewriter/galexie-archive/` lists.
-- [ ] **Verify the `stellarindex-reader` live policy** — the codified policy grants no
-  `s3:DeleteObject` but the 2026-07-25 live test observed it deleting from
-  `galexie-archive`. `mc admin policy info local stellarindex-reader`; re-apply if the
-  live policy is wider than the codified one.
-- [ ] **Move `galexie-archive-fill` off the root (`local`) alias** — the hourly mirror,
-  including its `mc rm --recursive --force` sweep, authenticates as MinIO root. Needs
-  the archive-writer identity live first, and the delete sweep separated from the
-  mirror (the writer policy grants no delete). Confirm one full timer cycle after.
+- [x] **Repair the `galexie-archive-writer` identity — DONE 2026-09-30.** Its vault
+  var and `/etc/default/galexie-backfill` always existed but the MinIO user, policy,
+  and attach never did, so the `archivewriter` alias failed `SignatureDoesNotMatch`.
+  The MinIO user `galexie-archive-writer` now exists with policy
+  `galexie-archive-writer` (Put/Get/List/multipart on `galexie-archive` only, no
+  `s3:DeleteObject`), and `mc ls archivewriter/galexie-archive/` lists.
+- [x] **Verify the `stellarindex-reader` live policy — DONE 2026-09-30.** The live
+  policy grants no `s3:DeleteObject`, matching the codified one.
+- [ ] **Deploy `galexie-archive-fill` off the root (`local`) alias** — done in code: the
+  fill reads and mirrors through `ARCHIVE_DEST` (`archivewriter/galexie-archive`, the
+  identity repaired above) and fails fast if it cannot list it; only an operator run with
+  `PARTIALS=…` deletes, via `ARCHIVE_DELETE_ALIAS` (`local`). Remaining: apply
+  `--tags archive-fill` and confirm one full timer cycle succeeds.
 
 ## Supply cross-check P3 on BLND / EURC / KALE / PHO (E4/N-F3)
-- [ ] **Run `supply seed-sac-balances -full-history`** under `run-heavy-job.sh`
-  (`-dry-run` first). The alert is CORRECT and the served `total_supply` /
-  `market_cap_usd` for those four assets are understated until this runs: Algorithm 2's
-  `SACWrapped` addend misses dormant pool-held balances last written below the ~62M
-  `ledger_entries_current` MV floor. The reader that closes it
-  (`StreamSACBalanceSeedsFullHistory`) shipped 2026-07-10; only the run is missing.
-  Verify per-asset via `sac_balance_seed_provenance` (`source='full_history'` **and**
-  `min_ledger_seen` well below 62,000,000), then confirm the gauge drops.
+- [x] **Run `supply seed-sac-balances -full-history` — DONE 2026-07-29 (38/38
+  assets).** Algorithm 2's `SACWrapped` addend missed dormant pool-held balances last
+  written below the ~62M `ledger_entries_current` MV floor; the reader that closes it
+  (`StreamSACBalanceSeedsFullHistory`) shipped 2026-07-10. Verify per-asset via
+  `sac_balance_seed_provenance` (`source='full_history'`). `min_ledger_seen` is not a
+  success signal: archived balances are tombstoned, so the floor it reports is tip −
+  2,073,600 ledgers, not a ledger well below 62,000,000.
   Triage + queries: [runbooks/supply-cross-check-divergence.md](runbooks/supply-cross-check-divergence.md).
 
 ## Multi-region / HA (gated on hosts existing — P3)
@@ -309,10 +309,12 @@ small mechanical change (add to `gatedSources`, make the decoder
 contractid-aware, gate `Matches()` on `reg.Has(contractID)`).
 
 ## Legal / vendor (before commercial launch — CS-115/116)
-- [ ] **Vendor-ToS review of raw CEX data redistribution** — `/v1/history` + `/v1/observations?
-  source=binance` re-serve raw per-trade source-attributed records; Binance/Kraken/Coinbase
-  terms generally prohibit this. Blended outputs (`/v1/price|vwap|…`) are defensible. Decide
-  whether to gate raw source-attributed endpoints for restricted venues.
+- [ ] **Vendor-ToS review of raw CEX data redistribution** — `/v1/history` and
+  `/v1/observations?source=<cex>` serve per-trade source-attributed records (data-vendor
+  `source=` filters return 400; exchange venues stay selectable by owner decision);
+  Binance/Kraken/Coinbase terms generally prohibit this. Blended outputs
+  (`/v1/price|vwap|…`) are defensible. Decide whether those source-attributed
+  surfaces stay for restricted venues.
 - [ ] **External security review** booking (P2-3).
 - [ ] Confirm CoinGecko Pro redistribution terms at purchase. (`github.com/xdrpp/goxdr`, pulled in
   via `txnbuild`, is dual GPL-3/Apache-2.0; we take it under Apache-2.0.)

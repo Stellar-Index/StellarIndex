@@ -26,6 +26,12 @@
 # re-materialization pass (a recreate WITH NO DATA that names no refresh
 # for a dropped view — the 0115/0147 down shape — is CAUGHT).
 #
+# And the follow-up marker pass: an up.sql that blanks data (unqualified
+# DELETE, TRUNCATE, CAGG recreated WITH NO DATA) with no
+# `-- REQUIRED-FOLLOWUP:` line is CAUGHT, as is a misspelled marker, and
+# so is a rebuild follow-up whose file keeps the source's projected-rebuild
+# checkpoints.
+#
 # The Postgres passes run against the real migrations/ tree in every case,
 # so this file assumes (and the first case asserts) that tree is clean.
 #
@@ -297,8 +303,8 @@ mcatches "a multi-view DROP names every view, and one missing refresh is caught"
   "names no refresh for: twap_1h"
 
 d="$(mig cagg-named 0002_recreate.up.sql <<'SQL'
---   CALL refresh_continuous_aggregate('prices_1m', NULL, now());
---   CALL refresh_continuous_aggregate('twap_1h', NULL, now());
+-- REQUIRED-FOLLOWUP: CALL refresh_continuous_aggregate('prices_1m', NULL, now());
+-- REQUIRED-FOLLOWUP: CALL refresh_continuous_aggregate('twap_1h', NULL, now());
 BEGIN;
 DROP MATERIALIZED VIEW IF EXISTS twap_1h;
 DROP MATERIALIZED VIEW IF EXISTS prices_1m;
@@ -366,6 +372,190 @@ out="$(run deploy/clickhouse)"
 case "$out" in
   *"atomicity pass inspected "[1-9]*) echo "  ok   real tree reports a non-zero atomicity file count"; pass=$((pass + 1)) ;;
   *) echo "  FAIL real tree did not report its atomicity file count"; indent "$out"; fail=$((fail + 1)) ;;
+esac
+
+echo "lint-migrations-test: priceable-division pass"
+
+d="$(mig pr-unguarded 0002_vwap.up.sql <<'SQL'
+CREATE MATERIALIZED VIEW p AS
+SELECT sum(quote_amount) / sum(base_amount) AS vwap
+  FROM trades GROUP BY 1;
+SQL
+)"
+mcatches "a division by a leg with no priceable filter is caught" "$d" \
+  "0002_vwap.up.sql:1: divides by base_amount/quote_amount without the priceable filter"
+
+d="$(mig pr-nullif 0002_twap.up.sql <<'SQL'
+SELECT avg(quote_amount / NULLIF(t.base_amount, 0)) FROM trades t;
+SQL
+)"
+mcatches "a NULLIF-wrapped, table-qualified leg divisor is still caught" "$d" \
+  "0002_twap.up.sql:1: divides by base_amount/quote_amount"
+
+d="$(mig pr-guarded 0002_vwap.up.sql <<'SQL'
+CREATE MATERIALIZED VIEW p AS
+SELECT sum(quote_amount) FILTER (WHERE base_amount > 0 AND quote_amount > 0)
+     / sum(base_amount) FILTER (WHERE base_amount > 0 AND quote_amount > 0) AS vwap
+  FROM trades GROUP BY 1;
+SQL
+)"
+clean_mig "a division under the priceable FILTER passes" "$d"
+
+d="$(mig pr-escaped 0002_vwap.up.sql <<'SQL'
+SELECT sum(quote_amount) / sum(base_amount) -- lint-priceable:ok source table has a CHECK
+  FROM pool_snapshots;
+SQL
+)"
+clean_mig "a division marked lint-priceable:ok passes" "$d"
+
+d="$(mig pr-stale-marker 0002_vol.up.sql <<'SQL'
+SELECT sum(base_amount) FROM trades; -- lint-priceable:ok nothing divides here
+SQL
+)"
+mcatches "a lint-priceable:ok marker on a statement with no leg division is stale" "$d" \
+  "stale lint-priceable:ok marker"
+
+d="$(mig pr-stale-baseline 0002_create_price_aggregates.up.sql <<'SQL'
+SELECT sum(base_amount) FROM trades;
+SQL
+)"
+mcatches "a baseline file with no unguarded division left is a stale entry" "$d" \
+  "stale priceable_baseline entry 0002_create_price_aggregates.up.sql"
+
+d="$(mig pr-baselined 0002_create_price_aggregates.up.sql <<'SQL'
+SELECT sum(quote_amount) / sum(base_amount) FROM trades;
+SQL
+)"
+clean_mig "a baselined file's unguarded division passes" "$d"
+
+out="$(run deploy/clickhouse)"
+case "$out" in
+  *"priceable-division pass inspected "[1-9]*) echo "  ok   real tree reports a non-zero priceable-division file count"; pass=$((pass + 1)) ;;
+  *) echo "  FAIL real tree did not report its priceable-division file count"; indent "$out"; fail=$((fail + 1)) ;;
+esac
+
+echo "lint-migrations-test: follow-up marker pass"
+
+d="$(mig fu-unmarked 0002_disarm.up.sql <<'SQL'
+-- Drops every row; a projector-replay must re-derive them.
+BEGIN;
+DELETE FROM cctp_events;
+COMMIT;
+SQL
+)"
+mcatches "an unqualified DELETE with no REQUIRED-FOLLOWUP line is caught (the 0164 shape)" "$d" \
+  "0002_disarm.up.sql: blanks data and declares no"
+
+d="$(mig fu-marked 0002_disarm.up.sql <<'SQL'
+-- REQUIRED-FOLLOWUP: stellarindex-ops projector-replay -config /etc/stellarindex.toml -source cctp -from 62146641 -write
+BEGIN;
+DELETE FROM cctp_events;
+DELETE FROM ingestion_cursors WHERE source = 'projected-rebuild' AND sub_source LIKE 'cctp:%';
+COMMIT;
+SQL
+)"
+clean_mig "an unqualified DELETE that names its follow-up and clears its checkpoints passes" "$d"
+
+d="$(mig fu-no-ckpt-clear 0002_disarm.up.sql <<'SQL'
+-- REQUIRED-FOLLOWUP: stellarindex-ops projector-replay -config /etc/stellarindex.toml -source cctp -from 62146641 -write
+BEGIN;
+DELETE FROM cctp_events;
+COMMIT;
+SQL
+)"
+mcatches "a rebuild follow-up whose file keeps the source's projected-rebuild checkpoints is caught" "$d" \
+  "does not delete their projected-rebuild checkpoints"
+
+d="$(mig fu-ckpt-other-source 0002_disarm.up.sql <<'SQL'
+-- REQUIRED-FOLLOWUP: stellarindex-ops projected-rebuild -config /etc/stellarindex.toml -source cctp -from 62146641 -write
+-- REQUIRED-FOLLOWUP: stellarindex-ops projected-rebuild -config /etc/stellarindex.toml -source rozo -from 60829397 -write
+BEGIN;
+DELETE FROM cctp_events;
+DELETE FROM rozo_events;
+DELETE FROM ingestion_cursors WHERE source = 'projector' AND sub_source LIKE 'cctp:%';
+DELETE FROM ingestion_cursors WHERE source = 'projected-rebuild' AND sub_source LIKE 'rozo:%';
+COMMIT;
+SQL
+)"
+mcatches "clearing another source's or the live projector's cursors does not count" "$d" \
+  "(see 0206):"$'\n'"  cctp"$'\n'"lint-migrations: follow-up marker pass"
+
+d="$(mig fu-ckpt-stale-baseline 0203_create_sushiswap_v3_position_events.up.sql <<'SQL'
+-- REQUIRED-FOLLOWUP: stellarindex-ops projector-replay -source sushiswap_v3 -from 61487379
+DELETE FROM ingestion_cursors WHERE source = 'projected-rebuild' AND sub_source LIKE 'sushiswap_v3:%';
+SQL
+)"
+mcatches "a rebuild_ckpt_baseline file that now clears its checkpoints is a stale entry" "$d" \
+  "stale rebuild_ckpt_baseline entry 0203_create_sushiswap_v3_position_events.up.sql"
+
+d="$(mig fu-do-truncate 0002_reset.up.sql <<'SQL'
+DO $$ BEGIN TRUNCATE rozo_events; END $$;
+SQL
+)"
+mcatches "a TRUNCATE inside a DO block with no marker is caught" "$d" \
+  "0002_reset.up.sql: blanks data and declares no"
+
+d="$(mig fu-cagg 0002_recreate.up.sql <<'SQL'
+--   CALL refresh_continuous_aggregate('prices_1m', NULL, now());
+BEGIN;
+DROP MATERIALIZED VIEW IF EXISTS prices_1m;
+CREATE MATERIALIZED VIEW prices_1m WITH (timescaledb.continuous) AS
+SELECT time_bucket('1 minute', ts) AS bucket FROM trades GROUP BY 1
+WITH NO DATA;
+COMMIT;
+SQL
+)"
+mcatches "a CAGG recreated WITH NO DATA whose refresh is not a marker line is caught" "$d" \
+  "0002_recreate.up.sql: blanks data and declares no"
+
+d="$(mig fu-not-blanking 0002_cleanup.up.sql <<'SQL'
+DELETE FROM trades WHERE signer IS NULL;
+CREATE TRIGGER t_no_truncate BEFORE TRUNCATE ON trades FOR EACH STATEMENT EXECUTE FUNCTION f();
+COMMENT ON FUNCTION f() IS 'Refuses UPDATE, DELETE and TRUNCATE of trades';
+SQL
+)"
+clean_mig "a WHERE-scoped DELETE and TRUNCATE named in a trigger or comment pass" "$d"
+
+d="$(mig fu-malformed 0002_cleanup.up.sql <<'SQL'
+--REQUIRED-FOLLOWUP: stellarindex-ops projector-replay -source cctp
+-- REQUIRED-FOLLOWUP:
+SELECT 1;
+SQL
+)"
+mcatches "a marker in another spelling or with no command is caught" "$d" \
+  "malformed follow-up marker"
+
+# The deploy gate matches the marker with its one space; a no-space marker
+# would pass lint yet never reach the gate.
+d="$(mig fu-no-space 0002_disarm.up.sql <<'SQL'
+-- REQUIRED-FOLLOWUP:stellarindex-ops projector-replay -source cctp -from 62146641 -write
+BEGIN;
+DELETE FROM cctp_events;
+COMMIT;
+SQL
+)"
+mcatches "a blanking migration whose marker has no space after the colon is malformed" "$d" \
+  "malformed follow-up marker"
+mcatches "a no-space marker does not count as a declared follow-up" "$d" \
+  "0002_disarm.up.sql: blanks data and declares no"
+
+d="$(mig fu-stale-baseline 0137_disarm_comet_replay_doublecount.up.sql <<'SQL'
+SELECT 1;
+SQL
+)"
+mcatches "a baseline file that no longer blanks data is a stale entry" "$d" \
+  "stale followup_baseline entry 0137_disarm_comet_replay_doublecount.up.sql"
+
+d="$(mig fu-baselined 0137_disarm_comet_replay_doublecount.up.sql <<'SQL'
+DELETE FROM comet_liquidity;
+SQL
+)"
+clean_mig "a baselined file's unmarked DELETE passes" "$d"
+
+out="$(run deploy/clickhouse)"
+case "$out" in
+  *"follow-up marker pass found "[1-9]*) echo "  ok   real tree reports a non-zero data-blanking file count"; pass=$((pass + 1)) ;;
+  *) echo "  FAIL real tree did not report its data-blanking file count"; indent "$out"; fail=$((fail + 1)) ;;
 esac
 
 echo "lint-migrations-test: register row shape"

@@ -50,6 +50,11 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
+// GatedContractSet returns the decoder's current gate — the pool-factory trust
+// roots ∪ every registered pool: exactly the contracts Matches() can accept,
+// so it is the contract-id prefilter for the -ch completeness re-derive.
+func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
+
 // Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY,
 // not topic symbol (ADR-0035, F-1347): a non-Blend contract that emits a
 // `supply`/`claim`/`set_admin`/… topic (SACs and other DeFi do) must NOT
@@ -150,13 +155,21 @@ func (d *Decoder) decodeByKind(ev events.Event) ([]consumer.Event, error) { //no
 	switch kind {
 	// ─── Auction events (legacy; blend_auctions table) ────────
 	case EventNewAuction:
-		out, err := decodeNewAuction(&ev, closedAt)
+		decode := decodeNewAuction
+		if len(ev.Topic) == v1NewAuctionTopicArity {
+			decode = decodeNewAuctionV1
+		}
+		out, err := decode(&ev, closedAt)
 		if err != nil {
 			return nil, err
 		}
 		return []consumer.Event{out}, nil
 	case EventFillAuction:
-		out, err := decodeFillAuction(&ev, closedAt)
+		decode := decodeFillAuction
+		if isV1FillAuction(&ev) {
+			decode = decodeFillAuctionV1
+		}
+		out, err := decode(&ev, closedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -210,7 +223,11 @@ func (d *Decoder) decodeByKind(ev events.Event) ([]consumer.Event, error) { //no
 		}
 		return []consumer.Event{out}, nil
 	case EventBadDebt:
-		out, err := decodeBadDebt(&ev, closedAt)
+		decode := decodeBadDebt
+		if len(ev.Topic) == v1BadDebtTopicArity {
+			decode = decodeBadDebtV1
+		}
+		out, err := decode(&ev, closedAt)
 		if err != nil {
 			return nil, err
 		}

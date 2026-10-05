@@ -1,11 +1,13 @@
 ---
 title: Off-site (S3) backup plan
-last_verified: 2026-09-29
-status: §2 (Postgres → pgBackRest repo2/S3) LIVE on r1 2026-08-29; §4 (ClickHouse lake) mechanism committed 2026-09-23, awaiting its off-site target; §1 mechanism committed 2026-09-28, awaiting its off-site target; §3 proposed; off-site targets decided 2026-09-27 (BX41 for §4, B2 for §1 + §2), accounts not yet provisioned
+last_verified: 2026-10-03
+status: §1 (Galexie archive mirror) RETIRED 2026-10-02, archive is re-pulled from SDF's public bucket; §2 (Postgres → pgBackRest repo2/S3) LIVE on r1 2026-08-29; §4 (ClickHouse lake) mechanism committed 2026-09-23, awaiting its off-site target; §3 proposed; off-site targets decided 2026-09-27 (BX41 for §4, B2 for §2), accounts not yet provisioned
 severity: P1
 ---
 
 # Off-site (S3) backup plan
+
+> **§1 retired 2026-10-02.** The raw Galexie archive is not backed up off-site: it is a copy of SDF's public dataset (`s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`) and is re-pulled from there (ADR-0043 §2 amendment 2026-08-29). Off-site copies are the ClickHouse lake and Postgres, on B2 (Postgres) and BX41 (lake). Wherever this doc calls the archive "critical", "irreplaceable" or the source of truth for off-site purposes, read it as superseded; the mirror is disabled by default (`galexie_archive_mirror_enabled`).
 
 > ♻️ **Refined by ADR-0050 / [`../architecture/multi-region-ha.md`](../architecture/multi-region-ha.md) §5 (2026-08-21).** The plan adopts this doc's core (off-site is a P1 SPOF fix) and resolves its RTO argument: it keeps **two** off-site artifacts — the raw archive (crown-jewel source of truth) *and* a copy of the derived lake (fast-RTO restore). Its Cloudflare R2 provider choice and its 2026-08 sizes are superseded by [§Provider](#provider) and the table below.
 
@@ -16,7 +18,7 @@ An earlier draft proposed skipping the CH lake (it's re-derivable from the archi
 
 | Data | Size off-site (measured on r1, 2026-09-28) | RTO if backed up | RTO if re-derived | Off-site priority |
 |---|---|---|---|---|
-| **Galexie archive (MinIO LCM)** | ≈ 3.1 TB (2.8 TiB) | hours | days–weeks / maybe impossible (pruned meta) | **🔴 CRITICAL — irreplaceable source of truth** |
+| **Galexie archive (MinIO LCM)** | ≈ 3.1 TB (2.8 TiB) | hours | days–weeks / maybe impossible (pruned meta) | **Not backed up off-site (retired 2026-10-02) — re-pull from SDF's public bucket** |
 | **ClickHouse lake** | **14.6 TiB (≈ 16.1 TB)**, growing ≈ 11 GiB/day | ~4–36 h (restore) | **~1–2 weeks** (full `ch-backfill` re-walk) | **🔴 HIGH — on the serving path; re-derive too slow** |
 | **Postgres (served money state)** | repo2 ≈ 0.5 TB (1 full + 7 d, compressed) | ~1–3 h (pgBackRest) | slow (re-project) | **🔴 HIGH — native pgBackRest→S3** |
 | **Config / vault / secrets / systemd** | < 1 GiB | minutes | impossible (secrets) | **🔴 HIGH — encrypted tarball** |
@@ -42,7 +44,7 @@ Until the BX41 and the B2 account exist, every stream except §2 stays unfunded 
 
 ### 1. Galexie archive → S3 (critical) — continuous mirror
 
-> **Status (2026-09-28, NS03): mechanism COMMITTED, not yet running on r1.** The local half already landed (2026-09-19): `data/minio` is the third dataset in the role's `zfs_snapshot_datasets` (7-day retention), after it was measured on r1 at 2.64 TB holding **zero** snapshots while the ClickHouse and Postgres datasets *derived from it* held 4 and 8. That turns a mis-aimed `mc rm --recursive` into a `zfs clone`; it does nothing for a pool or box loss, which is what this section is for — the only off-site credential on r1 was pgBackRest's (scoped to its own repo2 bucket), so §2 covered Postgres and nothing else. What shipped now: `scripts/ops/galexie-archive-mirror.sh` + `galexie-archive-mirror.timer`, installed by `18-pgbackrest-backup.yml` behind `galexie_archive_mirror_enabled`, mirroring the local `galexie-archive` bucket to an off-site `mc` alias (default tool: `mc mirror`, verified each run with a post-mirror `mc mirror --dry-run`); restore in [`runbooks/galexie-archive-mirror.md`](runbooks/galexie-archive-mirror.md). It backs nothing up until `galexie_archive_mirror_s3_endpoint` and the vault key pair are set; until then `stellarindex_galexie_archive_mirror_stale` tickets the host. When costing that spend, note the honest blast radius: the archive is **reconstructible** by re-ingesting the public Stellar history archives, so losing it is a days-to-weeks recovery with no third-party SLA — expensive and reputationally bad, not permanent. The irreplaceable-forever framing in the table above overstates it.
+> **Retired 2026-10-02 (see the banner at the top); kept for context.** **Status (2026-09-28, NS03): mechanism COMMITTED, not yet running on r1.** The local half already landed (2026-09-19): `data/minio` is the third dataset in the role's `zfs_snapshot_datasets` (7-day retention), after it was measured on r1 at 2.64 TB holding **zero** snapshots while the ClickHouse and Postgres datasets *derived from it* held 4 and 8. That turns a mis-aimed `mc rm --recursive` into a `zfs clone`; it does nothing for a pool or box loss, which is what this section is for — the only off-site credential on r1 was pgBackRest's (scoped to its own repo2 bucket), so §2 covered Postgres and nothing else. What shipped now: `scripts/ops/galexie-archive-mirror.sh` + `galexie-archive-mirror.timer`, installed by `18-pgbackrest-backup.yml` behind `galexie_archive_mirror_enabled`, mirroring the local `galexie-archive` bucket to an off-site `mc` alias (default tool: `mc mirror`, verified each run with a post-mirror `mc mirror --dry-run`); restore in [`runbooks/galexie-archive-mirror.md`](runbooks/galexie-archive-mirror.md). It backs nothing up until `galexie_archive_mirror_s3_endpoint` and the vault key pair are set; until then `stellarindex_galexie_archive_mirror_stale` tickets the host. When costing that spend, note the honest blast radius: the archive is **reconstructible** by re-ingesting the public Stellar history archives, so losing it is a days-to-weeks recovery with no third-party SLA — expensive and reputationally bad, not permanent. The irreplaceable-forever framing in the table above overstates it.
 
 The archive is **append-only** (historical LCM never changes), so an incremental mirror is cheap after the first sync.
 - Tool: `mc mirror --watch` (MinIO's native, already installed) or `rclone sync` (crypt-wrapped). Bucket→bucket, server-side where possible.
@@ -93,7 +95,7 @@ Back up the full lake so recovery is a **restore (~hours)**, not a re-walk (~wee
 
 - Tool: ClickHouse's native **`BACKUP DATABASE`** (part-level **incremental** via `base_backup` — after the first 14.6 TiB full, dailies are only the new parts ≈ 11 GiB). It takes a consistent snapshot of parts; no downtime.
 - Do the **first full backup AFTER the capacity-relief recompress** plus a `tx_hash_index` dedupe: `operations.body_xdr` and `operation_results.result_xdr` are still LZ4 on r1 ([`runbooks/phase-a-capacity-relief-2026-07-18.md`](runbooks/phase-a-capacity-relief-2026-07-18.md) Step 3b recompresses them) and `tx_hash_index` is 2× duplicated (an `OPTIMIZE … FINAL`, not in that runbook) — ≈ 2.8 TiB reclaimable across both, off every chain the BX41 stores.
-- Restore = provision CH → `RESTORE DATABASE … FROM Disk('si_lake_backup', …)` ([`runbooks/ch-lake-backup.md`](runbooks/ch-lake-backup.md#restore)) → `verify-lake`/`verify-contiguity`/`reconcile-balances` as the acceptance gate.
+- Restore = provision CH → `RESTORE DATABASE … FROM Disk('si_lake_backup', …)` ([`runbooks/ch-lake-backup.md`](runbooks/ch-lake-backup.md#restore)) → `verify-lake`/`verify-contiguity`/`reconcile-balances` as the acceptance gate. `verify-lake` also runs daily against the live lake ([`runbooks/lake-verify.md`](runbooks/lake-verify.md)), so the gate is known-green before a restore needs it.
 - **Also keep the rebuild recipe** (schema DDL, cursor/watermark, `done-windows`) — that's the *both-copies-gone* fallback: re-derive from the archive. Belt and suspenders, tiny to store.
 
 ## Cross-cutting

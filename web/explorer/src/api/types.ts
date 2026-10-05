@@ -270,6 +270,9 @@ export interface paths {
          *     Same wire shape as the catalogue rows on `/assets` (GlobalAssetView:
          *     `asset_id` = slug, `type` = "global", no issuer/contract_id).
          *     `market_cap_usd` is populated for fiat (fxHistory-backed).
+         *
+         *     Empty on testnet and futurenet, which run none of the off-chain
+         *     feeds these rows are priced from.
          */
         get: operations["listExternalAssets"];
         put?: never;
@@ -294,7 +297,8 @@ export interface paths {
          *     counterpart lives on `/assets/{asset_id}`; a Stellar-issued slug
          *     (usdc, aqua, …) returns **404** here, and a non-Stellar slug
          *     returns 404 on `/assets/{asset_id}` — each asset resolves on
-         *     exactly one path (LC-001, no redirect).
+         *     exactly one path (LC-001, no redirect). Every slug 404s on
+         *     testnet and futurenet, matching the empty `/external/assets`.
          */
         get: operations["getExternalAsset"];
         put?: never;
@@ -324,7 +328,8 @@ export interface paths {
          *     no price block — so it's a cheap directory call suitable for
          *     building a verified-currencies section on a listing page.
          *
-         *     Order matches the seed-file order (deterministic).
+         *     Order matches the seed-file order (deterministic). Empty on
+         *     testnet and futurenet: the catalogue names pubnet issuers.
          */
         get: operations["listVerifiedAssets"];
         put?: never;
@@ -445,6 +450,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/assets/{asset_id}/supply/flows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Daily mint / burn / clawback series for one token.
+         * @description The token's supply-changing events from the ClickHouse
+         *     `supply_flows` lake (the same log `/v1/assets/{asset_id}/supply`
+         *     sums), bucketed by the UTC day their ledger closed, over the
+         *     token's whole recorded history in ascending order. Each day
+         *     carries the per-kind sums and `net` = mint − burn − clawback.
+         *     Amounts are base-unit decimal strings (ADR-0003); clients apply
+         *     per-asset decimals for display.
+         *
+         *     A day with no flows has no row: the log records every event that
+         *     can move supply, so a missing day means supply did not change
+         *     that day. `history_incomplete` is true when the running net dips
+         *     below zero on some day — earlier mints are missing from the lake,
+         *     so the series must not be cumulated into a supply level.
+         *
+         *     Resolution matches `/supply`: a Soroban contract id (`C…`) is used
+         *     directly and a classic asset (`CODE-ISSUER`) resolves to its
+         *     derived Stellar-Asset-Contract. XLM has no mint/burn log (its
+         *     supply is the ledger header's `total_coins`), so `native` / `XLM`
+         *     returns 404, as do ids with no contract (`fiat:*`).
+         *
+         *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the
+         *     read is fresh to; `flags.stale` fires when the watermark's close
+         *     time trails now by more than 300s.
+         */
+        get: operations["getAssetSupplyFlows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/assets/{asset_id}/holders": {
         parameters: {
             query?: never;
@@ -462,9 +509,8 @@ export interface paths {
          *     balance, and `holder_count` is the exact number of funded accounts.
          *     `asset_id` is the canonical form (`CODE-ISSUER`, or `native`; the
          *     `crypto:XLM` alias serves the native board, echoed as
-         *     `asset: "native"`). Balances are strings (ADR-0003). Coverage grows
-         *     with the entry-change capture window; full once the Phase-C backfill
-         *     lands.
+         *     `asset: "native"`). Balances are strings (ADR-0003). Coverage tracks
+         *     the entry-change capture.
          *
          *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the read
          *     is fresh to; `flags.stale` fires when the watermark's close time
@@ -539,14 +585,33 @@ export interface paths {
          *        and the `/v1/observations` triangulation hint — except
          *        that the two SEP-40 point reads answer 404 instead of the
          *        declaration, since their shape has no `price_type` to mark it.
-         *     4. Fiat-vs-fiat cross-rate from the forex snapshot when both
-         *        sides are `fiat:` typed (e.g.
-         *        `?asset=fiat:EUR&quote=fiat:USD`). Computed as
+         *     4. Fiat-vs-fiat cross-rate when both sides are `fiat:` typed
+         *        (e.g. `?asset=fiat:EUR&quote=fiat:USD`), from the vendor FX
+         *        fixings bound to the current minute (`/v1/price/tip`: the
+         *        live forex snapshot). Computed as
          *        `rate_usd[Y] / rate_usd[X]`. Returned with
          *        `flags.triangulated=true` since the value is derived
          *        rather than a direct trade. Same fallback fires on
          *        `/v1/price/tip`, `/v1/price/batch`,
          *        `/v1/oracle/lastprice`, and `/v1/oracle/x_last_price`.
+         *     5. USD-anchored cross for a non-fiat asset in a non-USD fiat
+         *        (ADR-0051): the asset's USD price × the USD→CCY fixing bound
+         *        at the USD bucket's end, `flags.triangulated=true`, with
+         *        `fx_rate`, `fx_as_of` and `usd_leg` on the row.
+         *
+         *     Basis rule (ADR-0053): when step 1 finds a direct fiat book
+         *     (e.g. `native/fiat:CHF`) served by a single venue, and the
+         *     step-5 derivation is fresh and rests on a USD leg from at least
+         *     two venues, the derivation is served instead — one exchange's
+         *     book is not allowed to stand in for the market when the
+         *     aggregated USD price can anchor it. A multi-venue fiat book is
+         *     always served as observed, and a derivation that misses,
+         *     withholds or is stale leaves the direct book in place.
+         *     `/v1/price/batch` and `/v1/oracle/x_last_price` apply the same
+         *     rule (`/v1/oracle/lastprice` is USD-quoted, so it never applies
+         *     there). A row the rule serves omits `confidence`,
+         *     `confidence_factors` and the composite and divergence flags:
+         *     they are keyed on the pair and describe the displaced book.
          *
          *     Returns 404 only when every path above misses — with one
          *     deliberate exception: the **thin-market substance gate**. When
@@ -574,6 +639,16 @@ export interface paths {
          *     genuine miss — see that route's description),
          *     the SEP-40 oracle endpoints, and the `price_usd` enrichment on
          *     asset surfaces.
+         *
+         *     A fiat cross this route derives (fiat/fiat, or a non-fiat asset
+         *     in a fiat with no market of its own) converts at the vendor FX
+         *     fixing bound to the bucket's close, never at the live rate. When
+         *     no fixing binds within the 76 h lookback the price is withheld:
+         *     a `price-withheld` 404 titled "Price withheld — FX leg
+         *     unavailable", omitted and listed as withheld on
+         *     `/v1/price/batch`. A failed FX read is a 503
+         *     `price-unavailable`, and the batch row is omitted without being
+         *     listed. `/v1/price/tip` keeps the live rate.
          */
         get: operations["getPrice"];
         put?: never;
@@ -779,7 +854,11 @@ export interface paths {
         };
         /**
          * Raw per-source observations (ADR-0018 Surface 3).
-         * @description Lowest-level surface per ADR-0018: returns the most-recent
+         * @description On-chain sources only: centralised-exchange trade rows are never
+         *     served here (exchange redistribution terms); their prices reach
+         *     you only in aggregate, via `/v1/vwap`.
+         *
+         *     Lowest-level surface per ADR-0018: returns the most-recent
          *     trade from each source that has ever traded the (asset, quote)
          *     pair. No aggregation, no chaining, no smoothing — purely
          *     "what each venue last published".
@@ -843,6 +922,7 @@ export interface paths {
          *     clamp 1–60 s — independent of tip's `window_seconds` because
          *     observations does not aggregate).
          *
+         *     - On-chain sources only, as on `/v1/observations`.
          *     - First event fires synchronously on connect; data may be
          *       an empty array (the pair has no observations yet — same
          *       200/empty contract as the request endpoint, NOT 404).
@@ -936,10 +1016,15 @@ export interface paths {
          *       connect time — the same verdict `/v1/price` would answer
          *       404 for. The gate is re-checked on every closed bucket
          *       too: a pair withheld PARTWAY through an open connection is
-         *       not disconnected — its buckets are silently dropped and
-         *       heartbeats continue, so a client must treat prolonged
-         *       silence with no error as "possibly withheld", not "still
-         *       healthy".
+         *       not disconnected — each bucket it would have received is
+         *       replaced by a `price_withheld` event (same `id`), with data
+         *       `{"asset_id","quote","reason","as_of"}` as on
+         *       `/v1/price/tip/stream`; `as_of` is the refused bucket's.
+         *       The 60-second series also publishes one `price_withheld`
+         *       when its pair becomes withheld (or the reason changes),
+         *       and republishes the current bucket as `price_update` once
+         *       the pair is served again. Heartbeats alone therefore never
+         *       mean the price is being withheld.
          */
         get: operations["streamPrices"];
         put?: never;
@@ -959,7 +1044,11 @@ export interface paths {
         };
         /**
          * Raw trade history for a pair in a time window.
-         * @description Returns per-trade records ordered (ts, ledger, tx_hash, op_index, source)
+         * @description On-chain sources only: centralised-exchange trade rows are never
+         *     served here (exchange redistribution terms); their prices reach
+         *     you only in aggregate, via `/v1/vwap`.
+         *
+         *     Returns per-trade records ordered (ts, ledger, tx_hash, op_index, source)
          *     ascending. Cursor paginates across the full-PK tuple; truncating
          *     the cursor at (ts, ledger) would drop rows sharing those
          *     values (high-volume ledgers).
@@ -1285,6 +1374,18 @@ export interface paths {
          *        see `internal/storage/timescale/ohlc_routes.go`'s
          *        `OHLCRoutes` table, the single declaration this list must
          *        track.
+         *
+         *     **Open and close inside one ledger (both modes).** On-chain
+         *     trades carry the whole-second ledger close time and the
+         *     network's apply order is not recorded, so when several
+         *     transactions in one ledger trade the pair inside one bar,
+         *     `open` and `close` are picked by a tie-break on
+         *     `(ts, ledger, tx_hash, op_index, source)` — `tx_hash` order
+         *     between transactions, which is NOT execution order; `op_index`
+         *     order within one transaction. The bar is stable, but `open` or
+         *     `close` can be another real trade from that ledger, off by at
+         *     most the price movement inside one ledger (~5 s); `high`,
+         *     `low`, VWAP and volume are unaffected.
          */
         get: operations["getOhlc"];
         put?: never;
@@ -1374,7 +1475,8 @@ export interface paths {
          *     return MORE than one row when it publishes the asset against
          *     more than one live quote (e.g. Redstone's EUROC/EUR and
          *     EUROC/USD are two independent feeds, not the same reading
-         *     twice). Optional source filter restricts to a single source;
+         *     twice). Optional source filter restricts to a single on-chain
+         *     source (an off-chain one such as coingecko returns 400);
          *     optional quote filter restricts to a single quote.
          *
          *     Asset translation: classic Stellar identifiers map to the
@@ -1711,20 +1813,25 @@ export interface paths {
         };
         /**
          * Cross-reference divergence board (ADR-0019).
-         * @description The current divergence board: the latest comparison per
-         *     (asset, quote, reference) over the trailing window, from
-         *     `divergence_observations`. Each row is our VWAP vs one external
+         * @description The current divergence board, one entry per (asset, quote) pair:
+         *     our VWAP beside the latest comparison against each external
          *     reference (CoinGecko / Chainlink / Reflector DEX·CEX·FX /
-         *     Redstone / Band) with `delta_pct = (our − ref) / ref × 100`.
-         *     Ordered widest |delta_pct| first.
+         *     Redstone / Band) over the trailing window, from
+         *     `divergence_observations`, with
+         *     `delta_pct = (our − ref) / ref × 100` per reference. A
+         *     reference's price is served only inside its pair, beside our
+         *     price and the other references; there is no per-reference
+         *     selector. Pairs are ordered widest |delta_pct| first, and each
+         *     pair's references likewise.
          *
-         *     A row with `status: firing` breached its per-(reference, pair)
-         *     threshold at its latest observation — the signal behind
-         *     `flags.divergence_warning`. `?firing=true` restricts to those;
-         *     `?window_days=` (default 7); `?limit=` (default 100, max 500).
-         *     200 + empty payload when the reader isn't wired. A row whose
-         *     market `/v1/price` withholds is omitted: `our_price` is that
-         *     market's price.
+         *     A reference with `status: firing` breached its per-(reference,
+         *     pair) threshold at its latest observation — the signal behind
+         *     `flags.divergence_warning`. `?firing=true` keeps pairs with at
+         *     least one firing reference; `?window_days=` (default 7);
+         *     `?limit=` counts pairs (default 100, max 500). 200 + empty
+         *     payload when the reader isn't wired. A pair whose market
+         *     `/v1/price` withholds is omitted: `our_price` is that market's
+         *     price.
          */
         get: operations["getDivergenceBoard"];
         put?: never;
@@ -1743,13 +1850,17 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Δ% time-series for one (pair, reference).
+         * Δ% time-series for one pair against every reference.
          * @description The history companion to the `/v1/divergence` board: the
-         *     bucketed Δ% series for ONE (asset, quote, reference) triple
-         *     from `divergence_observations`. Each point is the LAST
-         *     observation inside its bucket (last-value downsampling — the
-         *     board semantics, not an average); `firing` is true when ANY
-         *     observation in the bucket breached its threshold, so a brief
+         *     bucketed Δ% series for ONE (asset, quote) pair against every
+         *     reference, from `divergence_observations`. Each point carries
+         *     our price beside each reference's comparison; a reference is
+         *     never served alone, so there is no `reference` selector
+         *     (passing one returns 400). Each reference's values are its LAST
+         *     observation inside the bucket (last-value downsampling — the
+         *     board semantics, not an average) and `our_price` is the
+         *     bucket's newest; a reference's `firing` is true when ANY of its
+         *     observations in the bucket breached its threshold, so a brief
          *     breach never disappears into a bucket. `bucket_seconds`
          *     reports the effective resolution (1d → 5 min, 7d → 30 min,
          *     30d → 2 h; every response is ≤ ~360 points).
@@ -1758,10 +1869,9 @@ export interface paths {
          *     (`divergence.threshold_pct`) — the band a chart shades;
          *     omitted when the deployment has none configured (draw no
          *     band). `?pair=` is `<asset_id>~<quote_id>` (the markets slug
-         *     convention); `?reference=` one of the board's reference
-         *     names; `?days=` ∈ {1, 7, 30} (default 7) — other values
+         *     convention); `?days=` ∈ {1, 7, 30} (default 7) — other values
          *     return 400, as does a leg that is not a valid asset id. 200 +
-         *     empty `points` when the reader isn't wired or the triple has no
+         *     empty `points` when the reader isn't wired or the pair has no
          *     observations in the window. 404 `price-withheld` when
          *     `/v1/price` withholds the pair's market (every point carries
          *     `our_price`).
@@ -2290,13 +2400,26 @@ export interface paths {
          *
          *     **Two floors, too.** `genesis_ledger` is the LAKE axis's floor —
          *     the first ledger the source could have data at. The SERVED axis
-         *     has its own, `projection_verified_from`: the lowest ledger the
-         *     served tier actually holds a row at. They are frequently far
-         *     apart — sdex and the oracle sources publish `genesis_ledger: 2`
-         *     against a served tier that begins around ledger 61.6M — so
+         *     has its own, `projection_verified_from`: the bottom of the range
+         *     the served claim covers. It equals `genesis_ledger` unless the
+         *     source's served tier is a declared working-set window, where it is
+         *     the lowest ledger that tier holds a row at — sdex publishes
+         *     `genesis_ledger: 2` against a served tier that begins around
+         *     ledger 61.6M — so
          *     `complete: true` with `coverage_pct: 1` is a claim over
          *     `[projection_verified_from, watermark_ledger]`, NOT over
          *     `[genesis_ledger, watermark_ledger]`. Read the two together.
+         *
+         *     **Proven vs carried.** The audit runs daily and re-reconciles only
+         *     the ledgers since its last run, carrying the prior clean projection
+         *     claim over the rest; once a claim's evidence is a week old it
+         *     re-proves that source's whole served range (a few sources per
+         *     night; `sdex`, whose full re-proof outlasts the nightly run, by a
+         *     separate weekly run). `computed_at` is when a verdict was
+         *     last restated; `projection_evidenced_at` is when the claim was last
+         *     proven end to end, and `projection_reconciled_from` is where this
+         *     run's own reconcile began. `flags.stale` is raised when a clean
+         *     claim's evidence is older than about ten days, or unknown.
          *
          *     **`sources` holds sources only.** The ADR-0033 recognition audit
          *     also produces a SYSTEM-wide census — event shapes in the lake on
@@ -2641,7 +2764,9 @@ export interface paths {
          *     cumulative fee pool and total XLM (stroop strings — the
          *     values exceed 2^53) and the protocol version in force.
          *     `fee_pool` is cumulative; daily fee burn is the delta between
-         *     consecutive COMPLETE days. Aggregated from the certified
+         *     consecutive COMPLETE days minus that day's `fee_pool_adjustment`
+         *     (present only on a day the pool was credited outside any
+         *     transaction fee, e.g. by a protocol upgrade). Aggregated from the certified
          *     `stellar.ledgers` lake (which carries the per-ledger counts),
          *     bounded to the tip so it stays partition-pruned. The
          *     time-series companion to the snapshot at `/v1/network/stats`;
@@ -2715,6 +2840,11 @@ export interface paths {
          *     `source_classes`. Operators consult this endpoint to confirm a
          *     venue is recognised before debugging an absence in /v1/markets
          *     or /v1/vwap.
+         *
+         *     Scoped to the running network: on testnet and futurenet only
+         *     sources that exist there are listed (the pubnet-anchored
+         *     protocol decoders and the off-chain price feeds are omitted).
+         *     Pubnet lists the whole registry.
          */
         get: operations["listSources"];
         put?: never;
@@ -2756,8 +2886,9 @@ export interface paths {
          *
          *     Served from a 15-second background-refreshed snapshot;
          *     `Cache-Control` is `private, no-cache` accordingly. Unknown
-         *     source names 404 (the registry is static per deploy — see
-         *     `/v1/sources` for the catalogue).
+         *     source names, and sources `/v1/sources` omits on this network,
+         *     404 (the registry is static per deploy — see `/v1/sources` for
+         *     the catalogue).
          */
         get: operations["getSourceHealth"];
         put?: never;
@@ -2790,6 +2921,9 @@ export interface paths {
          *     `kind=router` entries only — vault entries always report
          *     zero routed trades (their capital state lives on the
          *     protocol surfaces, not per-tx flow).
+         *
+         *     Empty on testnet and futurenet: every registry entry is a
+         *     pubnet contract.
          *
          *     A router call observed as a SUB-INVOCATION (some other
          *     contract called the router as part of its own authorized
@@ -2897,7 +3031,8 @@ export interface paths {
          *        `anchor_asset_type` in `definition.anchor_classes`),
          *        `oracle_rwa_feed` (an independent oracle publishes a
          *        net-asset-value feed for an instrument of this code, per
-         *        ADR-0028), or `sep1_isin_declaration` (the bound entry's
+         *        ADR-0028, or for exactly this code and issuer on the
+         *        hand-vetted fund-NAV list), or `sep1_isin_declaration` (the bound entry's
          *        `anchor_asset` is a well-formed ISIN). The oracle arm is
          *        keyed on the CODE, so it is admissible only after
          *        requirement 3 has bound the issuer.
@@ -2964,6 +3099,60 @@ export interface paths {
          *     in prose: docs/methodology/rwa-definition.md.
          */
         get: operations["listRWAAssets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stablecoins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The hand-vetted Stellar stablecoin set with circulating supply and USD value.
+         * @description The catalogue's `class: stablecoin` entries that carry a Stellar
+         *     issuer, each keyed by `(code, issuer)` with its Stellar Asset
+         *     Contract address. Membership is hand-vetted in the verified-currency
+         *     catalogue and is never derived from an aggregator; this surface adds
+         *     no issuer of its own. Methodology: docs/methodology/stablecoins.md.
+         *
+         *     VALUATION. Supply and price come from the same reads `/assets` and
+         *     `/rwa/assets` use (supply preference chain, substance gate, dust
+         *     guard). The price is the REAL served pair price: it is never
+         *     coerced to the peg, so a depeg shows. `supply_usd` is the
+         *     pipeline's own market cap (the figure `/assets` and `/rwa/assets`
+         *     publish), a decimal string rounded to cents. When the Stellar
+         *     price is withheld and a global-market or declared-peg price is
+         *     filled instead, `price_basis` says so, `supply_usd` is absent,
+         *     `valuation_status` is `withheld` and the row is not summed.
+         *     Each row's `valuation_status` is `published`, `supply_unavailable`,
+         *     `price_unavailable`, `withheld` (a guard declined the figure) or
+         *     `not_observed`.
+         *
+         *     TOTAL. `total.supply_usd` sums the published per-asset
+         *     `supply_usd` strings of USD-pegged, non-yield-bearing members, so a
+         *     reader re-adding the rows reaches the same figure. It is ABSENT, not
+         *     `"0.00"`, when none is valued. `total.lower_bound` is true whenever
+         *     the figure is less than the value of every stablecoin on Stellar:
+         *     a set member is unvalued or not summed, a supply is itself a floor,
+         *     or `excluded` is non-empty. `excluded` names catalogue stablecoins
+         *     outside the set (USDT has no Tether-native Stellar issuer);
+         *     `total.not_summed` names set members left out of the total: non-USD
+         *     pegs (`non_usd_peg`), yield-bearing wrappers
+         *     (`yield_bearing_wrapper`), unmapped pegs (`peg_unmapped`) and
+         *     members whose market cap is withheld (`market_cap_withheld`).
+         *     `by_peg` keeps pegs apart and totals every valued member of a peg,
+         *     including those `not_summed`.
+         *
+         *     No query parameters. Served with `public, max-age=30`.
+         */
+        get: operations["listStablecoins"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3145,9 +3334,13 @@ export interface paths {
          * SEP-40 lastprice-equivalent passthrough.
          * @description HTTP mirror of the SEP-40 oracle contract call
          *     `lastprice(asset) -> Option<PriceData>` — for integrators
-         *     that already speak Reflector's on-chain interface and want
-         *     the identical shape over REST. The response is
-         *     deliberately minimal (`price`, `timestamp`); the richer
+         *     that already speak Reflector's on-chain interface. It mirrors
+         *     the method name and semantics, not the wire types: on-chain
+         *     `PriceData` carries `price` as a fixed-point `i128` and
+         *     `timestamp` as `u64` seconds, while this response carries
+         *     `price` as an exact decimal string (already scaled, no
+         *     `decimals()` call needed) and `timestamp` as RFC 3339. The
+         *     response is deliberately minimal (`price`, `timestamp`); the richer
          *     source/confidence view lives on `/v1/oracle/latest` and
          *     `/v1/price`. Quote is fixed at USD, matching the on-chain
          *     contract's fixed-quote semantic — for other quotes use
@@ -3160,6 +3353,9 @@ export interface paths {
          *     XLM cross, a triangulated chain, a fiat cross-rate. 404 when
          *     the chain serves nothing, or only a declared peg (SEP-40's
          *     `None`: a declaration is not a price record).
+         *
+         *     Does not accept `include_thin`: a SEP-40 consumer never receives a
+         *     thin-market price.
          */
         get: operations["getOracleLastPrice"];
         put?: never;
@@ -3365,9 +3561,12 @@ export interface paths {
          *     held to the admin-write contract: the `X-Reason` header is
          *     required (400 without it) and the mint is recorded as a
          *     `key.mint` audit row, exactly as `POST /v1/admin/keys`.
-         *     Customer-tier callers need no header. A `/v1/signup` key's
-         *     email-verification stamp carries over to the child, so rotated
-         *     keys keep working under `signup_require_email_verification`.
+         *     Customer-tier callers need no header. A key minted by the retired
+         *     `/v1/signup` carries its email-verification stamp over to the
+         *     child, so rotated keys keep working under
+         *     `signup_require_email_verification`.
+         *     Only `apikey` and `operator` callers may mint; a SEP-10 token
+         *     gets 403.
          */
         post: operations["createAccountKey"];
         delete?: never;
@@ -3676,8 +3875,8 @@ export interface paths {
          *     can later raise a specific account's limits (the partner
          *     path) via the operator override endpoints.
          *
-         *     Abuse posture: rides the same per-IP signup throttle as
-         *     `POST /v1/signup` (shared budget, default 5/hour/IP → 429),
+         *     Abuse posture: rides the per-IP signup throttle
+         *     (default 5/hour/IP → 429),
          *     underneath the global anonymous rate limit. The
          *     `Content-Type: application/json` header is REQUIRED — not
          *     merely validated when present — because a header-less POST is
@@ -3703,18 +3902,13 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Self-service signup — mint a first API key by email.
-         * @description Public, anonymous-tier endpoint. Hit it once with an email
-         *     + optional label and get back a freshly-minted API key for
-         *     the free tier (1000 req/min). Prefer `POST /v1/register` for
-         *     machine onboarding — it creates a real platform account and
-         *     doesn't require an email. Idempotent on the email:
-         *     a second call for the same email returns 409 with a pointer
-         *     to the existing key (recover access via support, or rotate
-         *     via /v1/account/keys once authenticated).
-         *
-         *     Already-authenticated callers receive 400 — they should
-         *     rotate keys via POST /v1/account/keys instead.
+         * Retired - use POST /v1/register.
+         * @deprecated
+         * @description Retired. Always answers `410 Gone` with the same body for every
+         *     request: the body is never read, so the response cannot reveal
+         *     whether an email address already has a key. Use
+         *     `POST /v1/register` to obtain an API key; keys minted here
+         *     earlier keep working.
          */
         post: operations["signup"];
         delete?: never;
@@ -3731,36 +3925,24 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Confirmation page for the emailed signup-verification link.
-         * @description The link in the verification email. Renders an HTML page
-         *     with a single "Confirm email" button that submits the token
-         *     to `POST /v1/signup/verify`; it changes nothing on its own.
-         *
-         *     Mail-security scanners (Safe Links, Mimecast, Proofpoint)
-         *     fetch every emailed link, so a link that consumed the token
-         *     would let the scanner prove ownership of the mailbox on
-         *     behalf of whoever signed up with the address. Only the
-         *     deliberate POST verifies. The page is served `no-store`,
-         *     `Referrer-Policy: no-referrer`, and with a CSP that only
-         *     lets its form submit back to this origin.
+         * Retired - signup email verification.
+         * @deprecated
+         * @description Retired. Always answers `410 Gone` with the same body for every
+         *     request: the body is never read, so the response cannot reveal
+         *     whether an email address already has a key. Use
+         *     `POST /v1/register` to obtain an API key; keys minted here
+         *     earlier keep working.
          */
         get: operations["verifySignupPage"];
         put?: never;
         /**
-         * Confirm email ownership for a signup-issued API key.
-         * @description F-1218 (codex audit-2026-05-12): closes the email-
-         *     ownership-proof loop on `POST /v1/signup`. The signup
-         *     handler issues a single-use token and emails a link to
-         *     `GET /v1/signup/verify`; that page's button submits the
-         *     token here, which consumes it and flags the key minted at
-         *     signup as email-verified (what the default-on
-         *     `signup_require_email_verification` gate checks).
-         *
-         *     The token is read from the form body only, never the query
-         *     string. Single-use semantics via Redis GETDEL — a second
-         *     submit returns 404, the same shape as a forged or expired
-         *     token. Token TTL defaults to 24h to match the dashboard
-         *     magic-link convention.
+         * Retired - signup email verification.
+         * @deprecated
+         * @description Retired. Always answers `410 Gone` with the same body for every
+         *     request: the body is never read, so the response cannot reveal
+         *     whether an email address already has a key. Use
+         *     `POST /v1/register` to obtain an API key; keys minted here
+         *     earlier keep working.
          */
         post: operations["verifySignup"];
         delete?: never;
@@ -3938,7 +4120,10 @@ export interface paths {
         /**
          * Customer dashboard — delete a webhook.
          * @description Session-gated. Hard-deletes the registry row and cascades
-         *     to webhook_deliveries. An absent or cross-account id returns
+         *     to webhook_deliveries: queued and retrying deliveries are
+         *     dropped and the delivery log is gone. To change the signing
+         *     secret, use rotate-secret instead, which keeps both. An absent
+         *     or cross-account id returns
          *     404 (the same shape, so presence never leaks); a client
          *     retrying a delete whose response it lost should treat 404 as
          *     already deleted.
@@ -3949,10 +4134,41 @@ export interface paths {
         /**
          * Customer dashboard — update a webhook.
          * @description Session-gated. Patches name / url / events / enabled.
-         *     SecretHash is immutable; rotation lives behind a separate
-         *     endpoint when it ships.
+         *     The signing secret is not patchable; rotate it with
+         *     POST /v1/dashboard/webhooks/{id}/rotate-secret.
          */
         patch: operations["updateDashboardWebhook"];
+        trace?: never;
+    };
+    "/dashboard/webhooks/{id}/rotate-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — rotate a webhook's signing secret.
+         * @description Session-gated. Replaces the signing secret in place and returns
+         *     the new one ONCE. The webhook keeps its id, its queued and
+         *     retrying deliveries and its delivery log. For 24 hours
+         *     (`previous_secret_expires_at`) every delivery is signed with
+         *     both secrets: the new one in `X-StellarIndex-Signature` /
+         *     `X-StellarIndex-Signature-V2`, the old one in
+         *     `X-StellarIndex-Signature-Previous` /
+         *     `X-StellarIndex-Signature-V2-Previous` (see
+         *     `CreateWebhookResponse.secret`). Rotating again inside that
+         *     window ends the old secret's signing at once. Owner / admin /
+         *     member only. Send an `Idempotency-Key` so a retried request
+         *     replays the first response instead of rotating twice.
+         */
+        post: operations["rotateDashboardWebhookSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/dashboard/webhooks/{id}/deliveries": {
@@ -3987,7 +4203,7 @@ export interface paths {
         /**
          * Customer dashboard — list this account's price alerts.
          * @description Session-gated. Returns every price-threshold alert this
-         *     account has registered, newest first. BACKLOG #60.
+         *     account has registered, newest first.
          */
         get: operations["listDashboardPriceAlerts"];
         put?: never;
@@ -4254,6 +4470,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/passkey/begin-signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — begin creating an account with a passkey and no email.
+         * @description Anonymous. Returns the WebAuthn credential-creation options for
+         *     `navigator.credentials.create()` for a brand-new user; no email
+         *     is asked for or stored. Resident key and `userVerification:
+         *     required`, as for `/auth/passkey/begin-register`.
+         *
+         *     Nothing is created until `/auth/passkey/finish-signup`
+         *     succeeds. Sets the same signed, single-use, 5-minute ceremony
+         *     cookie, purpose-bound to sign-up.
+         *
+         *     An account created this way has no email, so there is no
+         *     recovery path: losing every copy of its passkeys loses the
+         *     account. Add a second passkey from the settings page.
+         *
+         *     Capped per client IP (IPv6: per /64) at 10 calls per hour per
+         *     API instance; past the cap the call returns 429 with
+         *     `Retry-After` and issues no challenge.
+         */
+        post: operations["beginPasskeySignup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passkey/finish-signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Customer dashboard — finish passkey sign-up; creates the account and mints the session cookie.
+         * @description Anonymous. Verifies the attestation against the sign-up
+         *     ceremony cookie's challenge, spends the challenge, then creates
+         *     the account, its owner user and the credential, sets the same
+         *     session cookies as `/auth/passkey/finish-login`, and returns
+         *     `{status:"ok"}`. The user has an undeliverable placeholder
+         *     address; no mail is ever sent to it.
+         *
+         *     Every verification failure, including a replayed or expired
+         *     ceremony, returns the same generic 400.
+         */
+        post: operations["finishPasskeySignup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/passkey/begin-register": {
         parameters: {
             query?: never;
@@ -4490,9 +4769,33 @@ export interface paths {
          *     A valid but empty ledger returns an empty array. `total` is the
          *     ledger's exact transaction count from its header; `truncated` is
          *     true when `total` exceeds the returned page (raise `limit` or
-         *     fetch `/v1/operations?ledger=` for the rest).
+         *     fetch `/v1/ledgers/{seq}/operations` for the rest).
          */
         get: operations["getLedgerTransactions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ledgers/{seq}/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Operations in a ledger, decoded.
+         * @description Every operation applied in ledger `seq`, each decoded from XDR
+         *     (partition-pruned). Includes the decoded body (`fields` / `raw_xdr`).
+         *     `total` is the ledger's exact operation count from its header;
+         *     `truncated` is true when `total` exceeds the returned page (raise
+         *     `limit` for the rest).
+         */
+        get: operations["getLedgerOperations"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4530,22 +4833,19 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Operations — a ledger's ops, or the network-wide recent directory.
-         * @description Two shapes on one route:
+         * Operations — the network-wide recent directory.
+         * @description The network-wide recent-operations DIRECTORY: newest first,
+         *     keyset-paged via `?cursor=<opaque>` (echo back `next_cursor`;
+         *     composite `ledger.tx_index.op_index`), plus `op_type_stats` — the
+         *     per-op-type counts over the trailing ~24h of ledgers (first page
+         *     only). `?limit=` up to 200, default 50. This is a **summary** shape:
+         *     each op carries its identity + `type` but NOT the decoded body
+         *     (`fields` / `raw_xdr` are omitted) — decoding every op's body over the
+         *     multi-billion-row lake made the directory ~10× slower. Fetch the full
+         *     decoded op from `/v1/ledgers/{seq}/operations` or `/v1/tx/{hash}`.
          *
-         *     - **`?ledger=<seq>`** — that ledger's operations, each decoded from XDR
-         *       (partition-pruned; `?limit=` up to 2000, default 500). Includes the
-         *       decoded body (`fields` / `raw_xdr`).
-         *     - **no `?ledger`** — the network-wide recent-operations DIRECTORY:
-         *       newest first, keyset-paged via `?cursor=<opaque>` (echo back
-         *       `next_cursor`; composite `ledger.tx_index.op_index`), plus
-         *       `op_type_stats` — the per-op-type counts over the trailing ~24h of
-         *       ledgers (first page only). `?limit=` up to 200, default 50. This is a
-         *       **summary** shape: each op carries its identity + `type` but NOT the
-         *       decoded body (`fields` / `raw_xdr` are omitted) — decoding every op's
-         *       body over the multi-billion-row lake made the directory ~10× slower.
-         *       Fetch the full decoded op from the per-ledger form above or
-         *       `/v1/tx/{hash}`.
+         *     A `ledger` query parameter is refused with 400: one ledger's
+         *     operations are `GET /v1/ledgers/{seq}/operations` (ADR-0018).
          */
         get: operations["listOperations"];
         put?: never;
@@ -4748,7 +5048,7 @@ export interface paths {
          *     decimals). `usd_value` is a backward-compatible
          *     alias populated only on the `usd` basis. Computed in one pass over the
          *     current-state projection (latest `ledger_entry_changes` per key, ADR-0038
-         *     Phase C); coverage tracks the entry-change capture + Phase-C backfill.
+         *     Phase C); coverage tracks the entry-change capture.
          *
          *     Freshness (ADR-0041): the ranking is a background-computed snapshot
          *     (refreshed every few minutes, served for up to 15 minutes). The
@@ -4972,9 +5272,8 @@ export interface paths {
          *     limits) and open offers.
          *
          *     `exists:false` (with HTTP 200, not 404) when the account has no live
-         *     AccountEntry in the captured ledger window — never created, merged away,
-         *     or its create predates live capture (resolves once the Phase-C backfill
-         *     lands). Balances are strings (ADR-0003).
+         *     AccountEntry in the captured entry-change history — never created,
+         *     merged away, or not yet in the capture. Balances are strings (ADR-0003).
          *
          *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the served
          *     state was fresh to WHEN IT WAS CACHED (up to 30s old), not a serve-time
@@ -5060,8 +5359,8 @@ export interface paths {
          * @description ADR-0048 D5: the ClickHouse `stellar.account_movements` movement
          *     archive (ADR-0047/0048 D2) merged, at read time, with the Postgres
          *     `sep41_transfers` "recent tail": an address's classic-asset
-         *     movements before P23 and its `transfer` movements from P23 on
-         *     (see KIND SCOPE below). Newest first, keyset-paged with
+         *     movements before P23 and its CAP-67 `transfer`, `mint`, `burn` and
+         *     `clawback` movements from P23 on (see KIND SCOPE below). Newest first, keyset-paged with
          *     `?cursor=<opaque>` (echo back `next_cursor`); the cursor is the
          *     composite `(ledger, tx_hash, op_index, leg_index)` plus the
          *     archive watermark the scroll was pinned to.
@@ -5071,7 +5370,7 @@ export interface paths {
          *     boundary (ledger 58,762,517, Whisk/CAP-67, 2025-09-03) and stamps
          *     `provenance: classic_derived`. `ch-cap67-movements` derives
          *     movements at and above P23 for EVERY asset, native XLM included,
-         *     from the lake's CAP-67 transfer events, stamps
+         *     from the lake's CAP-67 transfer, mint, burn and clawback events, stamps
          *     `provenance: cap67_derived`, and records the ledger it has
          *     completed through as its watermark. Postgres-tail rows carry
          *     `provenance: cap67_event`.
@@ -5091,12 +5390,22 @@ export interface paths {
          *     pinned above the current watermark is rejected with 400
          *     `invalid-cursor`; restart the scroll without a cursor.
          *
-         *     KIND SCOPE: from P23 on, both arms carry `transfer` movements
-         *     only. CAP-67 `mint`, `burn` and `clawback` events — every payment
-         *     to or from an asset's issuer among them — are not served after
-         *     P23, and fees and order-book fills are not served at any ledger.
-         *     A `?kind=` other than `transfer` therefore returns pre-P23 rows
-         *     only, and `coverage_note` says so.
+         *     KIND SCOPE: from P23 on, the archive arm carries CAP-67
+         *     `transfer` movements through its watermark, and `mint`, `burn` and
+         *     `clawback` over its recorded supply range only: the ledgers the
+         *     derive has covered with those kinds, which on a deployment derived
+         *     before they joined starts above P23 and moves down to it as the
+         *     derive backfills them. `coverage_note` names that range and any
+         *     post-P23 stretch still being backfilled. The Postgres tail above
+         *     the watermark carries `transfer` only.
+         *     CAP-67 reports a payment from an asset's issuer as `mint` and one
+         *     to it as `burn`; for a classic asset's SAC the issuer is the
+         *     counterparty (`mint`: issuer → holder; `burn`, `clawback`: holder
+         *     → issuer), while a custom token's supply event yields only the
+         *     holder's row. Fees and order-book fills are not served at any
+         *     ledger. A `?kind=` of `mint` or `burn` returns post-P23 archive
+         *     rows only, `clawback` both epochs, and any other kind except
+         *     `transfer` pre-P23 rows only; `coverage_note` says which.
          *
          *     SCOPE GAP (documented, not a bug): the Postgres tail only surfaces
          *     `sep41_transfers` rows with `event_kind = 'transfer'` — a pure
@@ -5705,6 +6014,11 @@ export interface components {
              * @enum {string}
              */
             scope: "all";
+            /**
+             * Format: int64
+             * @description Lake watermark (highest contiguously captured ledger) read before this page's scan; rows past it may still be arriving. A freshness marker, not a completeness claim: incoming (participant) activity is covered only where the participant index has been captured or backfilled. Absent when the watermark was unreadable.
+             */
+            as_of_ledger?: number;
         };
         /**
          * @description Operations involving an account, decoded (newest first), with an opaque
@@ -5732,6 +6046,11 @@ export interface components {
              *     every operation carries its true transaction outcome.
              */
             coverage_note?: string;
+            /**
+             * Format: int64
+             * @description Lake watermark (highest contiguously captured ledger) read before this page's scan; rows past it may still be arriving. A freshness marker, not a completeness claim: incoming (participant) activity is covered only where the participant index has been captured or backfilled. Absent when the watermark was unreadable.
+             */
+            as_of_ledger?: number;
         };
         /** @description One row in an account's movement feed (ADR-0048 D5). */
         AccountMovement: {
@@ -5752,10 +6071,10 @@ export interface components {
              *     claimable_balance_create, claimable_balance_claim,
              *     claimable_balance_clawback, liquidity_pool_deposit, or
              *     liquidity_pool_withdraw on ClickHouse pre-P23 archive rows
-             *     (`provenance: classic_derived`); transfer on ClickHouse post-P23
-             *     rows derived from the lake's CAP-67 events (`provenance:
-             *     cap67_derived`) and on Postgres post-P23 tail rows
-             *     (`provenance: cap67_event`).
+             *     (`provenance: classic_derived`); transfer, mint, burn or
+             *     clawback on ClickHouse post-P23 rows derived from the lake's
+             *     CAP-67 events (`provenance: cap67_derived`); transfer on
+             *     Postgres post-P23 tail rows (`provenance: cap67_event`).
              */
             movement_kind: string;
             /** @enum {string} */
@@ -5980,9 +6299,12 @@ export interface components {
              *       - shares: an exact current count of a protocol's own
              *         share/LP token, minted/burned 1:1 with the summed events
              *         (Blend Backstop, Phoenix stake, DeFindex vault shares).
-             *       - stateful_current: the protocol's own most-recently
-             *         PUBLISHED figure (sorocredit's latest statement amount),
-             *         not a delta sum this endpoint computed.
+             *       - stateful_current_unconfirmed_unit: the protocol's own
+             *         most-recently PUBLISHED figure (sorocredit's latest
+             *         statement amount), not a delta sum this endpoint computed.
+             *         The statement's unit/scale is not contract-source-confirmed:
+             *         the raw on-chain integer is served unscaled, so do not
+             *         assume 7-decimal USDC base units.
              *       - signed_delta_sum_unconfirmed_unit: a sum of signed
              *         per-event deltas whose unit is not contract-source-
              *         confirmed (Aquarius gauge position_update — see
@@ -6001,7 +6323,7 @@ export interface components {
              *         position); amount is "".
              * @enum {string}
              */
-            amount_semantics: "net_underlying_at_event_time" | "shares" | "stateful_current" | "signed_delta_sum_unconfirmed_unit" | "superseded_by_auction" | "not_yet_published";
+            amount_semantics: "net_underlying_at_event_time" | "shares" | "stateful_current_unconfirmed_unit" | "signed_delta_sum_unconfirmed_unit" | "superseded_by_auction" | "not_yet_published";
             /** @description The most recent contributing event's ledger + close time. */
             last_activity: {
                 ledger: number;
@@ -6861,8 +7183,8 @@ export interface components {
         /**
          * @description Customer-registered webhook endpoint backing the
          *     /v1/dashboard/webhooks surface. SecretHash is intentionally
-         *     omitted — the plaintext signing secret is returned ONCE at
-         *     create time + never again.
+         *     omitted — each plaintext signing secret is returned ONCE, at
+         *     create or rotate-secret time, and never again.
          */
         DashboardWebhook: {
             /** Format: uuid */
@@ -6949,8 +7271,33 @@ export interface components {
              *     of the same delivery. It is NOT stable across a re-emit of
              *     the same logical event, so it dedupes retries, not re-sends.
              *     Trust it only after `X-StellarIndex-Signature-V2` verifies.
+             *
+             *     ROTATION: for 24 hours after a rotate-secret call, every
+             *     delivery also carries `X-StellarIndex-Signature-Previous` and
+             *     `X-StellarIndex-Signature-V2-Previous`, built exactly as above
+             *     but with the previous secret. A receiver still holding the old
+             *     secret verifies those; once it holds the new one it verifies
+             *     the unsuffixed headers. Outside a rotation window neither
+             *     header is sent.
              */
             secret: string;
+        };
+        RotateWebhookSecretResponse: {
+            /** Format: uuid */
+            webhook_id: string;
+            /**
+             * @description The new signing secret, returned exactly once; it signs
+             *     `X-StellarIndex-Signature` and `-V2` from now on. Format:
+             *     `wsec_<64 hex chars>`.
+             */
+            secret: string;
+            /**
+             * Format: date-time
+             * @description Until this instant deliveries also carry the
+             *     `X-StellarIndex-Signature-Previous` headers signed with the
+             *     secret this call replaced.
+             */
+            previous_secret_expires_at: string;
         };
         /**
          * @description PATCH body — any subset of fields. Omitted fields keep
@@ -6989,11 +7336,15 @@ export interface components {
         };
         /**
          * @description A customer-registered price-threshold alert backing the
-         *     /v1/dashboard/price-alerts surface (BACKLOG #60). The
+         *     /v1/dashboard/price-alerts surface. The
          *     aggregator's evaluator compares each enabled alert against the
          *     latest closed 1m VWAP for its pair and, on a crossing, enqueues
          *     a `price.alert` webhook delivery to the account's subscribed
-         *     webhooks.
+         *     webhooks. An alert fires once per crossing: after a fire it
+         *     stays quiet while the condition holds and re-arms once a fresh
+         *     price (closed within 15 minutes) no longer meets it. Changing
+         *     the pair, condition or threshold, or re-enabling a disabled
+         *     alert, also re-arms it.
          */
         DashboardPriceAlert: {
             /** Format: uuid */
@@ -7009,7 +7360,7 @@ export interface components {
             condition: "above" | "below";
             /** @description Price boundary as a decimal string (never a float — ADR-0003). */
             threshold: string;
-            /** @description Minimum seconds between two fires of this alert (at least 300). */
+            /** @description Minimum seconds between two fires of this alert (at least 300). While the condition holds the alert re-fires once per cooldown. */
             cooldown_seconds: number;
             enabled: boolean;
             /**
@@ -7031,7 +7382,7 @@ export interface components {
             condition: "above" | "below";
             /** @description Positive decimal string (e.g. "0.15", "1200"). Fractions / scientific notation are rejected. */
             threshold: string;
-            /** @description Optional; defaults to 300 (5m), also the minimum. A lower value is a 400: the evaluator is level-triggered, so a shorter cooldown would re-notify every webhook on each tick the condition holds. */
+            /** @description Optional; defaults to 300 (5m), also the minimum. A lower value is a 400: it bounds re-notification when the price oscillates across the threshold, each move back re-arming the alert. */
             cooldown_seconds?: number;
             /** @description Defaults true when absent. */
             enabled?: boolean;
@@ -7046,6 +7397,7 @@ export interface components {
             /** @enum {string} */
             condition?: "above" | "below";
             threshold?: string;
+            /** @description Minimum seconds between two fires; the alert re-fires once per cooldown while its condition holds. */
             cooldown_seconds?: number;
             enabled?: boolean;
         };
@@ -7148,11 +7500,14 @@ export interface components {
             at: string;
         };
         /**
-         * @description Body of a `price.alert` webhook delivery (BACKLOG #60). Fired by
+         * @description Body of a `price.alert` webhook delivery. Fired by
          *     the aggregator's price-alert evaluator when one of the account's
          *     registered alerts crosses its threshold against the latest closed
-         *     1-minute VWAP. Unlike the operational events, this is enqueued
-         *     ONLY to the owning account's subscribed webhooks.
+         *     1-minute VWAP. Sent once per crossing: the alert re-arms only after
+         *     a fresh price no longer meets the condition, and two fires are
+         *     always at least `cooldown_seconds` apart. Unlike the operational
+         *     events, this is enqueued ONLY to the owning account's subscribed
+         *     webhooks.
          */
         PriceAlertWebhookPayload: {
             /** @enum {string} */
@@ -7172,7 +7527,7 @@ export interface components {
             condition: "above" | "below";
             /** @description The configured threshold (decimal-as-string). */
             threshold: string;
-            /** @description The closed-bucket VWAP that crossed the threshold (decimal-as-string). */
+            /** @description The closed-bucket VWAP that met the condition (decimal-as-string). */
             observed_price: string;
             /**
              * Format: date-time
@@ -7204,10 +7559,12 @@ export interface components {
          *       quote we hold no market for is answered by composing the
          *       asset's USD price with the USD→CCY foreign-exchange rate
          *       (ADR-0051) — the local-currency path, which is how the
-         *       ~130 currencies beyond USD/EUR/GBP resolve at all. An
-         *       OBSERVED market always wins over a derived value, so
-         *       `triangulated: false` on a fiat quote means real trades
-         *       backed it. Derived values credit both legs in `sources`
+         *       ~130 currencies beyond USD/EUR/GBP resolve at all. A
+         *       multi-venue OBSERVED market always wins over a derived
+         *       value; a single-venue fiat book yields to the derivation
+         *       when a multi-venue USD leg anchors it (ADR-0053). Either way
+         *       `triangulated: false` on a fiat quote means real trades in
+         *       that quote backed it. Derived values credit both legs in `sources`
          *       (the USD leg's venues plus the FX feed), and the FX leg is
          *       a DAILY fix while `observed_at` reports the USD leg's own
          *       (much fresher) timestamp — fine for display, not a
@@ -7215,12 +7572,25 @@ export interface components {
          *     - `divergence_warning` — anomaly check or cross-reference
          *       observed a meaningful divergence; treat with caution.
          *     - `frozen` — anomaly detection refused to publish the new
-         *       bucket; this response carries the previous bucket's
-         *       last-known-good value (ADR-0019). Only fires on `/v1/price`,
-         *       on `/v1/oracle/lastprice` + `/v1/oracle/x_last_price`, and on
-         *       the 60-second `/v1/price/stream` series' `price_frozen` event
-         *       (which carries no value); tip + observations surfaces ignore
-         *       freeze.
+         *       bucket; this response carries the value the freeze is
+         *       holding — the aggregator's last-known-good VWAP (ADR-0019),
+         *       never the refused bucket. A held value is served with its
+         *       own `observed_at` (when it was observed, not when it was
+         *       read, so it ages through the hold), the aggregator window
+         *       it was held at (`window_seconds` 300, 3600 or 86400, not
+         *       60), empty `sources` (on a fiat quote derived through the
+         *       USD leg per ADR-0051, the FX feed alone, and `observed_at`
+         *       is the older of the held value's and the FX rate's), and
+         *       `stale: true`, since it is below
+         *       the closed-1-minute-bucket baseline. When a pair is frozen
+         *       and no value is held, `/v1/price` and the SEP-40 point reads
+         *       answer 503 `price-unavailable` and `/v1/price/batch` omits
+         *       the row, rather than publish the refused bucket. Only fires
+         *       on `/v1/price`, `/v1/price/batch`, `/v1/oracle/lastprice` +
+         *       `/v1/oracle/x_last_price`, and on the 60-second
+         *       `/v1/price/stream` series' `price_frozen` event (which
+         *       carries no value); tip, observations and the `/v1/assets`
+         *       price columns ignore freeze.
          *     - `frozen_checked` — true only when the freeze marker was
          *       actually read (looker wired and the read succeeded). When
          *       false, `frozen` is NOT meaningful — the check never ran, so
@@ -7237,6 +7607,18 @@ export interface components {
          *       the composite SUBSTITUTED around a dry configured chain leg
          *       — the price came via an alternative path, not the documented
          *       direct chain. Omitted when false.
+         *     - `pivot_unverified` — set on a TRIANGULATED `/v1/price` response
+         *       when a leg of the composite was priced only from stablecoin
+         *       prints taken at par with USD, with no prints in the leg's own
+         *       quote asset to check a stablecoin de-peg against. Omitted when
+         *       false.
+         *     - `proxy_deviation` — set on a TRIANGULATED `/v1/price/at`,
+         *       `/v1/price/changes` or `/v1/vwap` response served through a
+         *       declared USD peg when any declared USD peg's observed
+         *       `crypto:<STABLE>/fiat:USD` price is more than 2% from $1, so the
+         *       peg-as-dollar assumption
+         *       behind the value does not hold. Omitted when false, including
+         *       when no such observation was available.
          *     - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
          *       when the asset's code matches a verified currency's
          *       Stellar ticker but the issuer doesn't. The matching
@@ -7283,6 +7665,11 @@ export interface components {
             /** @default false */
             single_source: boolean;
             /**
+             * @description True when the request opted in with `include_thin=true` and a served price comes from a market below the substance floor, or when /v1/vwap or /v1/twap (which serve such a market by default) computed from one. Key any low-confidence marker on this flag, never on `confidence`.
+             * @default false
+             */
+            thin_market: boolean;
+            /**
              * @description Set on a TRIANGULATED /v1/price response when the composite came from routes that disagreed (the aggregator's router divergence signal). Omitted when false.
              * @default false
              */
@@ -7292,6 +7679,16 @@ export interface components {
              * @default false
              */
             rerouted: boolean;
+            /**
+             * @description Set on a TRIANGULATED /v1/price response when a leg of the composite was priced only from stablecoin prints taken at par with USD, with no prints in the leg's own quote asset to check a stablecoin de-peg against. Omitted when false.
+             * @default false
+             */
+            pivot_unverified: boolean;
+            /**
+             * @description Set on a TRIANGULATED /v1/price/at, /v1/price/changes or /v1/vwap response served through a declared USD peg when any declared USD peg's observed crypto:<STABLE>/fiat:USD price is more than 2% from $1. Omitted when false, including when no observation was available.
+             * @default false
+             */
+            proxy_deviation: boolean;
             /** @default false */
             unverified_ticker_collision: boolean;
             /** @description Names of the row-narrowing query parameters this response did NOT apply, spelled as the caller sent them (`type`, `code`, `issuer`, `q`). Absent when the response applied every filter it was given — an ignored filter and a matched one otherwise produce the same 200 over the same shape, so a client re-filtering the page has nothing else to key on. Set by `/v1/assets` on the listings whose rows come from a source that cannot narrow: the class-scoped catalogue listings (`asset_class=fiat|stablecoin|crypto`), and the lean asset-catalog fallback served when no listing store is configured. */
@@ -7301,6 +7698,11 @@ export interface components {
              * @default false
              */
             outside_coverage: boolean;
+            /**
+             * @description Set on `/v1/assets/{asset_id}`, `/v1/assets/{asset_id}/supply`, `/v1/assets/{asset_id}/holders` and `/v1/accounts/{g_strkey}` when an operator hold covers the asset, contract or ledger the response is about. The figures are served unchanged; treat them as unconfirmed. The envelope's `under_review_reason` says why. Omitted when false.
+             * @default false
+             */
+            under_review: boolean;
         };
         /**
          * @description Present on list endpoints when more rows exist beyond the
@@ -7318,7 +7720,7 @@ export interface components {
              */
             next?: string;
         };
-        /** @description Every 2xx response carries these. */
+        /** @description Every 2xx JSON response carries these, except the session-cookie customer-dashboard operations: magic-link and passkey sign-in under /auth, the /dashboard operations, and POST /account/admin/lookup. Those return the bare resource object documented on each operation. The API-key /account/* operations and SEP-10 are enveloped. */
         EnvelopeMeta: {
             /** Format: date-time */
             as_of: string;
@@ -7328,6 +7730,8 @@ export interface components {
              */
             coverage_from?: string;
             sources?: string[];
+            /** @description Operator-supplied reason; present exactly when `flags.under_review` is true. */
+            under_review_reason?: string;
             flags: components["schemas"]["Flags"];
         };
         /**
@@ -7421,11 +7825,11 @@ export interface components {
                 watermark_ledger: number;
                 /**
                  * Format: int64
-                 * @description Floor of the range `complete` is a claim about — the
-                 *     lowest ledger the SERVED tier holds any row at for this
-                 *     source. It is NOT `genesis_ledger` (the sibling field on
-                 *     this same row), which is the lake axis's floor and is
-                 *     routinely much lower: sdex publishes `genesis_ledger: 2`
+                 * @description Floor of the range `complete` is a claim about —
+                 *     `genesis_ledger` (the sibling field on this same row)
+                 *     unless the source's served tier is a declared working-set
+                 *     window, where it is the lowest ledger that tier holds a
+                 *     row at and can be much higher: sdex publishes `genesis_ledger: 2`
                  *     with a served tier that begins around ledger 61.6M.
                  *     Reading `complete` against `genesis_ledger` overstates
                  *     the claim by that whole span. Omitted when the audit
@@ -7978,6 +8382,66 @@ export interface components {
              */
             assets_unmeasured: number;
         };
+        StablecoinsView: {
+            total: components["schemas"]["StablecoinTotal"];
+            by_peg: components["schemas"]["StablecoinPegTotal"][];
+            /** @description Catalogue stablecoins outside the set, with the reason. */
+            excluded: components["schemas"]["StablecoinExclusion"][];
+            /** @description The set, ordered by `supply_usd` descending; unvalued rows sort last. */
+            assets: components["schemas"]["StablecoinAsset"][];
+        };
+        StablecoinTotal: {
+            /** @description Decimal string. Absent, never "0.00", when no summed member is valued. */
+            supply_usd?: string;
+            assets: number;
+            assets_valued: number;
+            assets_unvalued: number;
+            /** @description Set members left out of `supply_usd`. */
+            not_summed: components["schemas"]["StablecoinExclusion"][];
+            /** @description True when the total is less than the value of every Stellar stablecoin. */
+            lower_bound: boolean;
+            basis: string;
+        };
+        StablecoinPegTotal: {
+            /** @description ISO currency the asset tracks, or `unknown`. */
+            peg: string;
+            /** @description Decimal string over the peg's valued members; absent when none is valued. */
+            supply_usd?: string;
+            assets: number;
+        };
+        StablecoinExclusion: {
+            ticker: string;
+            /** @enum {string} */
+            reason: "no_stellar_issuer" | "non_usd_peg" | "yield_bearing_wrapper" | "peg_unmapped";
+        };
+        StablecoinAsset: {
+            asset_id: string;
+            code: string;
+            issuer: string;
+            /** @description The asset's Stellar Asset Contract address. */
+            contract_id?: string;
+            ticker: string;
+            peg: string;
+            yield_bearing?: boolean;
+            /** @description Decimal string in the asset's smallest unit. */
+            circulating_supply?: string;
+            decimals: number;
+            supply_basis?: string;
+            circulating_supply_lower_bound?: boolean;
+            /** @description The served pair price; never normalised to the peg. */
+            price_usd?: string;
+            /**
+             * @description Present only when `price_usd` is not a direct Stellar market
+             *     observation (same values as `/assets`). Such a row carries no
+             *     `supply_usd` and is named in `total.not_summed`.
+             * @enum {string}
+             */
+            price_basis?: "global_market" | "declared_peg" | "transitive";
+            /** @description The pipeline's own market cap, as `/assets` and `/rwa/assets` publish it; absent when withheld. */
+            supply_usd?: string;
+            /** @enum {string} */
+            valuation_status: "published" | "supply_unavailable" | "price_unavailable" | "withheld" | "not_observed";
+        };
         /**
          * @description The tokenized-real-world-asset set, its aggregates, and the rule
          *     that produced it, in one document.
@@ -8382,7 +8846,7 @@ export interface components {
              *       "oracle_instrument_nav"
              *     ]
              */
-            provenances?: ("oracle_instrument_nav" | "listing_platform_price" | "prospectus_constant_nav")[];
+            provenances?: ("oracle_instrument_nav" | "fund_nav" | "listing_platform_price" | "prospectus_constant_nav")[];
             /** @description Prose statement of what was measured and, as importantly, what it is not. */
             basis: string;
         };
@@ -8540,6 +9004,7 @@ export interface components {
             anchor_class?: "stock" | "bond" | "commodity" | "realestate" | "fund";
             /** @description The off-chain instrument the issuer declared this token anchors to, verbatim. */
             anchor_asset?: string;
+            isin_collision?: components["schemas"]["RWAISINCollision"];
             valuation: components["schemas"]["RWAValuation"];
             reference_valuation: components["schemas"]["RWAReferenceValuation"];
             reference?: components["schemas"]["RWAReference"];
@@ -8582,10 +9047,9 @@ export interface components {
              *     liquidity-pool reserves and SAC-held balances are absent by
              *     construction — measured across the served set on 2026-09-15
              *     that was 89.5% of EURMTL, 73.3% of PYUSD, 64.5% of SHX and
-             *     15.4% of USDC. `contract_storage_balances` misses TIME:
-             *     Soroban state expiry archives contract-data entries, and an
-             *     archived balance is real, restorable, and not a ledger entry
-             *     right now.
+             *     15.4% of USDC. `contract_storage_balances` misses balance
+             *     entries the lake's current-state projection never captured,
+             *     such as one dormant since before its coverage began.
              */
             circulating_supply_lower_bound?: boolean;
             /**
@@ -8659,7 +9123,9 @@ export interface components {
             /**
              * @description Present ONLY when `price_usd` is not a DIRECT market
              *     observation, carried through verbatim from the same field on
-             *     `/assets`. `declared_peg`: filled from an operator-declared
+             *     `/assets`. `global_market`: filled from the vetted global
+             *     ticker's cross-venue price because no Stellar market price
+             *     survived the substance gate. `declared_peg`: filled from an operator-declared
              *     1:1 fiat peg times the current FX rate because no
              *     market-derived price survived the thin-market substance
              *     gate. `transitive`: derived through one intermediate hop,
@@ -8669,7 +9135,7 @@ export interface components {
              *     derived would be the same claim with the caveat removed.
              * @enum {string}
              */
-            price_basis?: "declared_peg" | "transitive";
+            price_basis?: "global_market" | "declared_peg" | "transitive";
             /** @description Circulating supply times the served USD price (decimal string). Present only when status is published. */
             market_cap_usd?: string;
         };
@@ -8758,6 +9224,30 @@ export interface components {
             feed: string;
         };
         /**
+         * @description Present only when `anchor_asset` is an ISIN that more than one
+         *     issuer account declares in its issuer-bound SEP-1, counting
+         *     declarations this surface refused as well as admitted ones.
+         *
+         *     A declared ISIN is the issuer's claim, not proof that it holds
+         *     the security, so this states how many accounts make the same
+         *     claim and nothing more. It is informational: it never changes
+         *     membership, `valuation`, `reference` or `premium`. A reference
+         *     priced through an ISIN comes only from a binding verified on the
+         *     exact (code, issuer), never from the declaration alone.
+         */
+        RWAISINCollision: {
+            /**
+             * @description The declared ISIN in canonical upper-case form.
+             * @example LU2900381208
+             */
+            isin: string;
+            /**
+             * @description Distinct issuer accounts, this row's included, declaring `isin`.
+             * @example 2
+             */
+            declared_by_issuers: number;
+        };
+        /**
          * @description An independent oracle's valuation of the real-world instrument an
          *     admitted token declares it anchors to.
          *
@@ -8832,7 +9322,7 @@ export interface components {
              */
             as_of: string;
             /**
-             * @description WHAT KIND of figure this is. Four are published and they are
+             * @description WHAT KIND of figure this is. Five are published and they are
              *     not the same claim, so this is mandatory on every served
              *     reference rather than defaulted.
              *
@@ -8842,6 +9332,14 @@ export interface components {
              *     rests on the issuer's own domain-bound declaration that one
              *     token is one unit of it. The five rules above govern it, and
              *     a premium may be measured against it.
+             *     `fund_nav` — the fund's own SEC-reported daily NAV per share,
+             *     relayed by Tiingo, for a token bound on the exact
+             *     `(code, issuer)` as one share of that fund. Taken only when
+             *     no oracle binding exists for the row, ahead of any listing
+             *     price or prospectus NAV. Published to the cent
+             *     (`decimals_published: 2`); `as_of` is the business day the
+             *     NAV was struck. Carries no premium: half a cent of rounding
+             *     is a material premium on a one-dollar share.
              *     `listing_platform_price` — an independent listing platform's
              *     own USD price for the TOKEN, published in the same row of
              *     that platform's own map in which it NAMES the token's
@@ -8857,8 +9355,8 @@ export interface components {
              *     `prospectus_constant_nav` — the issuer's own prescribed NAV
              *     for a share class whose fund rules fix it, bound on the
              *     exact `(code, issuer)`. Weaker than the oracle arm — nobody
-             *     independent measured it — and taken only when neither an
-             *     oracle binding nor a listing price exists for the row.
+             *     independent measured it — and taken only when no oracle
+             *     binding, fund NAV or listing price exists for the row.
              *     Carries no premium, for the same reason a listing price
              *     does not.
              *     `curator_uploaded_price` — a curator's own uploaded price
@@ -8867,7 +9365,7 @@ export interface components {
              *     whatever the curator typed. Carries no premium.
              * @enum {string}
              */
-            provenance: "oracle_instrument_nav" | "listing_platform_price" | "curator_uploaded_price" | "prospectus_constant_nav";
+            provenance: "oracle_instrument_nav" | "fund_nav" | "listing_platform_price" | "curator_uploaded_price" | "prospectus_constant_nav";
             /**
              * @description True when the reference is older than 72h — the longest
              *     ordinary gap between two strikes of a real-world instrument's
@@ -8887,6 +9385,22 @@ export interface components {
              *     binding is due for re-verification. Labelled, not withheld.
              */
             stale?: boolean;
+            /**
+             * @description The precision the publisher states the value at, when it is
+             *     coarser than `price_usd` alone suggests. Present on a
+             *     `fund_nav` reference, where it is 2: a NAV published to the
+             *     cent cannot resolve a difference smaller than half a cent.
+             * @example 2
+             */
+            decimals_published?: number;
+            /**
+             * @description True on an `oracle_instrument_nav` reference when the fund's
+             *     own published NAV for the same share is also fresh (at most
+             *     five days old) and differs from the oracle figure by more
+             *     than half a cent. The oracle figure is still the one served;
+             *     the values are never swapped. Absent when false.
+             */
+            nav_disagreement?: boolean;
         };
         /**
          * @description The token's market price measured against the oracle's valuation
@@ -8956,7 +9470,8 @@ export interface components {
              *     `reference_expired` — the bound feed's most recent observation
              *     is older than the seven-day window an active stream is defined
              *     by. Reached only when a snapshot is carried across a sustained
-             *     read failure.
+             *     read failure. On a fund-NAV-bound row, the fund's latest NAV
+             *     is older than five calendar days.
              *     `reference_not_instrument_scoped` — an oracle feed of this
              *     code exists but prices an off-chain quantity in its own unit
              *     (a troy ounce of spot metal, one fund share) rather than one
@@ -8981,9 +9496,13 @@ export interface components {
              *     reference, and it is a curator's uploaded price rather than
              *     an oracle's valuation of the instrument, so no premium may
              *     be computed against it.
+             *     `reference_is_a_fund_nav` — the row carries a fund's
+             *     published NAV, rounded to the cent, so no premium may be
+             *     computed against it: the rounding alone can be half a
+             *     percent on a one-dollar share.
              * @enum {string}
              */
-            status: "published" | "withheld_issuer_flagged" | "reference_not_bound" | "reference_contract_not_bound" | "reference_isin_mismatch" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive" | "reference_is_a_listing_price" | "reference_is_a_prospectus_nav" | "reference_is_a_curator_price";
+            status: "published" | "withheld_issuer_flagged" | "reference_not_bound" | "reference_contract_not_bound" | "reference_isin_mismatch" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive" | "reference_is_a_listing_price" | "reference_is_a_prospectus_nav" | "reference_is_a_curator_price" | "reference_is_a_fund_nav";
             /**
              * @description (market − reference) ÷ reference × 100 as a decimal string:
              *     POSITIVE when the token trades above the instrument's
@@ -9936,6 +10455,10 @@ export interface components {
                 /** @description p99 latency SLO target in milliseconds. See p95_target_ms. */
                 p99_target_ms?: number;
             };
+            /**
+             * @description The counts are omitted when their query failed (see
+             *     `freshness_status`); a served `0` is present as `0`.
+             */
             freshness?: {
                 /** Format: date-time */
                 last_aggregator_tick?: string;
@@ -9994,6 +10517,19 @@ export interface components {
              * @enum {string}
              */
             incidents_status: "ok" | "degraded" | "unknown";
+            /**
+             * @description Trust signal for the `freshness` block, so a failed count
+             *     query cannot read as a measured zero:
+             *       - "ok":       counts measured, every enabled source active.
+             *       - "degraded": counts measured, `active_sources` <
+             *                     `total_sources`. Does not by itself move
+             *                     `overall`.
+             *       - "unknown":  a freshness query FAILED, or no metrics
+             *                     backend is wired — the counts are omitted.
+             *     Always present.
+             * @enum {string}
+             */
+            freshness_status: "ok" | "degraded" | "unknown";
         };
         ActiveIncident: {
             /** @description Alertmanager `alertname` label. */
@@ -10026,6 +10562,53 @@ export interface components {
              * @description Optional. Timestamp of the most recent successful scrape.
              */
             last_seen?: string;
+        };
+        /** @description The global-market reference for a vetted same-asset token: the USD price of the global ticker the verified catalogue binds to this asset's EXACT classic (code, issuer), and how far this asset's own Stellar price sits from it. Never matched on code alone — a lookalike issuer wearing the same ticker never carries it. Present only when an aggregator published that ticker in fiat:USD within the last hour. */
+        AssetGlobalMarket: {
+            /** @description The global ticker's canonical id, e.g. "crypto:USDC". */
+            asset: string;
+            /** @description The aggregator's published USD price, verbatim as a decimal string (ADR-0003). */
+            price_usd: string;
+            /** @description The aggregator that published it. */
+            source: string;
+            /**
+             * Format: date-time
+             * @description The aggregator's own observation time for the price. A row stamped more than five minutes ahead of the server clock is never used.
+             */
+            as_of: string;
+            /** @description (Stellar price − global price) / global price × 100 as a signed decimal with two fractional digits ("+1.27", "-0.05", "0.00"). Stellar USD prices are quoted through the deployment's USD-pegged stablecoins, so a global depeg of that proxy moves this figure too. Absent when price_usd is not a Stellar market price (a global_market or declared_peg fill, or no price), and for a declared USD peg itself, whose Stellar USD price is quoted through itself and would measure the global depeg rather than a Stellar break. */
+            stellar_divergence_pct?: string;
+            /** @description True when the absolute stellar_divergence_pct exceeds the deployment's divergence threshold (divergence.threshold_pct): the Stellar market has broken from the global one. Omitted (false) otherwise. */
+            depeg_warning?: boolean;
+            /** @description Present only beside depeg_warning, on /v1/assets/{asset_id}: the issuer behaviours from `issuer_behaviour` that let the issuer move or freeze holders' balances — `auth_clawback_enabled` and `auth_revocable` from its live account flags, `clawback_observed` when the asset's clawback_total is non-zero. Omitted when none applies or the issuer's behaviour did not resolve. */
+            issuer_signals?: ("auth_clawback_enabled" | "auth_revocable" | "clawback_observed")[];
+        };
+        /** @description What a classic asset's issuer can do to holders and what it has done to supply. The four auth flags are the issuer account's CURRENT on-chain AccountEntry flags (omitted when the live entry does not resolve, e.g. a merged issuer — see /v1/issuers/{g_strkey} for the last-known record). The totals are lifetime sums over the asset's Stellar Asset Contract mint/burn/clawback log, the same figures /v1/assets/{asset_id}/supply serves; on a classic asset every mint, burn and clawback is issuer-originated. Totals are omitted when the log is empty, incompletely seeded (recorded burns exceed mints) or did not answer within two seconds. Served on /v1/assets/{asset_id} only, for classic assets. */
+        AssetIssuerBehaviour: {
+            /** @description AUTH_REQUIRED: holders need the issuer's authorisation to hold the asset. */
+            auth_required?: boolean;
+            /** @description AUTH_REVOCABLE: the issuer can revoke a holder's authorisation, freezing the balance. */
+            auth_revocable?: boolean;
+            /** @description AUTH_CLAWBACK_ENABLED: the issuer can claw back balances from trustlines created while set. */
+            auth_clawback_enabled?: boolean;
+            /** @description AUTH_IMMUTABLE: none of the flags can change and the issuer account cannot be merged. */
+            auth_immutable?: boolean;
+            /**
+             * Format: int64
+             * @description The ledger the flags are known to hold as of. Omitted when unknown.
+             */
+            flags_as_of_ledger?: number;
+            /** @description Σ mint, integer string in the asset's smallest unit (7 decimals). Never a JSON number (ADR-0003). */
+            mint_total?: string;
+            /** @description Σ burn, integer string in the asset's smallest unit. */
+            burn_total?: string;
+            /** @description Σ clawback, integer string in the asset's smallest unit. */
+            clawback_total?: string;
+            /**
+             * Format: int64
+             * @description Number of mint/burn/clawback events summed.
+             */
+            supply_flow_count?: number;
         };
         /**
          * @description An independent listing platform's own USD price for the EXACT Stellar address this asset lives at. It is NOT this index's price for the asset, and it is derived from no Stellar market — the asset's own price_usd, when there is one, sits beside it unchanged.
@@ -10080,6 +10663,34 @@ export interface components {
              */
             supply_basis?: "lake_flows" | "served";
         };
+        /** @description Banded trust score with the factor breakdown behind it, on `/v1/assets/{asset_id}` only. Output-only: no price, rank or gate reads it. A factor with no evidence is `unknown` with null points and is excluded from the score; it is never scored as zero. A scam-class issuer directory flag forces score 0, and a ticker collision caps the score below the medium threshold (band `low`). The formula is versioned. */
+        AssetTrust: {
+            /** @description Version of the weights and thresholds that produced `score`. */
+            formula_version: number;
+            /** @description Weight-averaged points of the known factors; null when no factor has evidence. */
+            score: number | null;
+            /**
+             * @description high >= 75, medium >= 40, low below; unknown when score is null.
+             * @enum {string}
+             */
+            band: "high" | "medium" | "low" | "unknown";
+            /** @description Share of total factor weight that had evidence. */
+            coverage_pct: number;
+            factors: {
+                /** @enum {string} */
+                id: "issuer_reputation" | "ticker_collision" | "sep1_attestation" | "market_substance" | "supply_data";
+                /** @enum {string} */
+                band: "high" | "medium" | "low" | "unknown";
+                /** @description Null when band is unknown. */
+                points: number | null;
+                /** @description Weight in the score; weights sum to 100. */
+                weight: number;
+                /** @description Data source the evidence was read from. */
+                source: string;
+                /** @description Machine-readable description of what was observed. */
+                observed: string;
+            }[];
+        };
         Asset: {
             /**
              * @description Wire-shape discriminator for the /v1/assets/{asset_id} oneOf (ADR-0042). Always "stellar_asset" on this schema. See `Asset.type` for the separate protocol/class discriminator (native/classic/soroban/fiat/global/external) — `kind` says which SHAPE this payload is, `type` says which Stellar asset CLASS within that shape.
@@ -10113,7 +10724,10 @@ export interface components {
              *     - unreachable:    a fetch WAS attempted and produced nothing
              *       storable — a 404, a dead name, a TLS failure, or a document
              *       that would not parse. THEIRS, and the one an issuer can act
-             *       on.
+             *       on. Also reported when a held payload is over 30 days old,
+             *       or of unrecorded age, and the issuer's domain is failing
+             *       now, so a dead domain's last document is not served as
+             *       `verified`.
              *
              *     The last two are the distinction worth reading carefully,
              *     because they were one value until 2026-09-16. An asset
@@ -10141,6 +10755,20 @@ export interface components {
             max_number?: string | null;
             /** @description Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all; false when they declared a bounded supply. */
             is_unlimited?: boolean | null;
+            /** @description SEP-1 `status` of the currency as the issuer declares it: live, dead, test or private. */
+            currency_status?: string | null;
+            /** @description SEP-1 `is_asset_anchored`. Null when the issuer did not declare it; false only when they declared false. */
+            is_asset_anchored?: boolean | null;
+            /** @description SEP-1 `attestation_of_reserve` URL. http(s) only — any other value is dropped at overlay time. */
+            attestation_of_reserve?: string | null;
+            /** @description SEP-1 `redemption_instructions`: how the issuer says the token is redeemed for its underlying. */
+            redemption_instructions?: string | null;
+            /** @description SEP-1 `regulated` (SEP-8 approval required to transact). Null when the issuer did not declare it. */
+            regulated?: boolean | null;
+            /** @description SEP-1 `approval_server` URL for a regulated asset. http(s) only — any other value is dropped at overlay time. */
+            approval_server?: string | null;
+            /** @description SEP-1 `approval_criteria`: the issuer's stated rules for approving a transaction in a regulated asset. */
+            approval_criteria?: string | null;
             /** @description Raw integer in asset's smallest unit (per ADR-0011 supply derivation). Issuer and locked-set balances are netted out only under an exclusion basis; under `classic_lake_flows`, `classic_trustline_sum` and `sep41_lake_flows` it is the un-excluded total (see supply_basis). Null when no snapshot exists. */
             circulating_supply?: string | null;
             /** @description Raw integer in asset's smallest unit. Null when no snapshot exists. */
@@ -10150,15 +10778,19 @@ export interface components {
             /** @description Current per-asset USD price as a fixed-precision decimal string — same value `/v1/price?asset=…&quote=fiat:USD` returns. Inlined so wallet UIs don't need a second round-trip. Null when no USD price can be derived, or when it is withheld — `price_withheld_reason` then says why. When `price_basis` is present the value is NOT a market observation — see that field. */
             price_usd?: string | null;
             /**
-             * @description Present ONLY when price_usd is not a DIRECT market observation. `declared_peg`: the price was filled from an operator-declared 1:1 fiat peg × the current fiat→USD FX rate (pricing_guard.fiat_pegged_classic_assets) because no market-derived price survived the thin-market substance gate — peg-priced rows deliberately carry no change pills, sparkline claim, or market_cap derived from the peg, because the fill asserts a conversion basis, not a market. `transitive`: the price was derived through ONE intermediate hop (asset→hop, hop→USD) where the asset has no direct USD or XLM market of its own; BOTH legs are independently substance-gated before the value is served, so a thin intermediate cannot reprice everything quoted against it. Note this value is served ONLY here — `/v1/price` answers for direct markets and returns no price for a transitive asset. Absent = direct market-derived (the pre-existing contract, unchanged).
+             * @description Present ONLY when price_usd is not a DIRECT market observation. `global_market`: the asset is a classic issuance the verified catalogue binds, on its exact (code, issuer), to a global ticker, no Stellar market price survived the thin-market substance gate, and price_usd is that ticker's fresh cross-venue aggregator price (see `global_market`) — it takes precedence over a declared peg, so a global depeg reaches price_usd instead of being hidden behind a fixed 1:1; like a peg fill it carries no change pills, sparkline claim or market_cap. `declared_peg`: the price was filled from an operator-declared 1:1 fiat peg × the current fiat→USD FX rate (pricing_guard.fiat_pegged_classic_assets) because no market-derived price survived the thin-market substance gate — peg-priced rows deliberately carry no change pills, sparkline claim, or market_cap derived from the peg, because the fill asserts a conversion basis, not a market. `transitive`: the price was derived through ONE intermediate hop (asset→hop, hop→USD) where the asset has no direct USD or XLM market of its own; BOTH legs are independently substance-gated before the value is served, so a thin intermediate cannot reprice everything quoted against it. Note this value is served ONLY here — `/v1/price` answers for direct markets and returns no price for a transitive asset. Absent = direct market-derived (the pre-existing contract, unchanged).
              * @enum {string}
              */
-            price_basis?: "declared_peg" | "transitive";
+            price_basis?: "global_market" | "declared_peg" | "transitive";
             /**
              * @description Present ONLY when price_usd is null because the price was WITHHELD — the market exists and the server declines to publish it — rather than never observed. `/v1/price` answers the same pair with a `price-withheld` 404, and the values are the `reason` vocabulary of `/v1/price/tip/stream`'s `price_withheld` event: `substance` (trailing market activity below the serve floor), `scam_issuer` (a directory-flagged issuer), `upstream_leg` (the stablecoin-proxy leg the USD price derives from is itself withheld), `unattributed` (withheld for a cause the server could not attribute, e.g. the issuer-directory check did not complete). market_cap_usd and fdv_usd are null with it. Absent beside a null price_usd means no price exists, or (listing rows, with flags.stale true) the thin-market gate could not measure the row.
              * @enum {string}
              */
             price_withheld_reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed";
+            /** @description True when `price_usd` was served under `include_thin=true` from a market below the substance floor. No market cap, FDV, change pill, price history or ATH derives from it. */
+            thin_market?: boolean;
+            /** @description The substance measurement behind a thin price (detail only). `substance` without `thin_market`: a declared peg or the global price won; see `price_basis`. */
+            substance?: components["schemas"]["SubstanceEvidence"];
             /** @description Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. "+1.27", "-0.05", "0.00"). Null when the asset has no current USD price or no comparison bucket ~24h ago. */
             change_24h_pct?: string | null;
             /** @description circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale. */
@@ -10169,8 +10801,11 @@ export interface components {
             market_cap_low_liquidity?: boolean;
             /** @description True when market_cap_usd and fdv_usd were deliberately REFUSED (served null) because the two decimals resolvers this response depends on disagreed for a Soroban token at request time: the lake's on-chain decimals() — which `decimals` reports and the supply divisor uses — versus the nonstandard_decimals_assets projection every price-shaped path normalises the USD price through. Either the projection carries a different value, or the lake reads non-7 and the projection has no row yet, so supply and price sit on different scales and their product is wrong by a power of ten. Not a liquidity verdict (market_cap_low_liquidity stays unset). price_usd, circulating_supply and decimals all still serve — each is a fact on its own scale; only the cross-scale product is withheld. Self-clearing: the aggregator's lockstep reconcile repairs the projection toward the lake on its next tick (runbook dex-nonstandard-decimals.md). Omitted when the resolvers agree. */
             market_cap_decimals_mismatch?: boolean;
+            global_market?: components["schemas"]["AssetGlobalMarket"];
+            issuer_behaviour?: components["schemas"]["AssetIssuerBehaviour"];
             listing_reference?: components["schemas"]["AssetListingReference"];
             listing_valuation?: components["schemas"]["AssetListingValuation"];
+            trust?: components["schemas"]["AssetTrust"];
             /**
              * @description Which ADR-0011 policy produced the supply numbers, and on
              *     LISTING rows additionally which ARM answered — three can,
@@ -10200,10 +10835,9 @@ export interface components {
              *     reports for the same asset.
              *     `contract_storage_balances` sums the per-holder Balance
              *     entries out of a contract's own storage, for a token whose
-             *     event log is empty. Also a lower bound, but blind to TIME
-             *     rather than to domains: Soroban state expiry archives
-             *     contract-data entries, so a real and restorable balance can
-             *     be invisible to it.
+             *     event log is empty. Also a lower bound, but blind to
+             *     uncaptured entries rather than to domains: a balance entry
+             *     the lake's current-state projection never captured is absent.
              *
              *     Surfaced so consumers can decide how much to trust the
              *     absolute value: `issuer_exclusion`/`admin_exclusion` are
@@ -10213,17 +10847,28 @@ export interface components {
              *     from `admin_exclusion` so the wire never claims an
              *     exclusion that did not happen; `override` indicates an
              *     operator curated the locked-set or max_supply;
-             *     `sep1_declared_max` means max_supply (and fdv_usd) come
-             *     from the issuer's own stellar.toml `[[CURRENCIES]]`
-             *     max_number/fixed_number declaration — self-declared by
-             *     the issuer, not on-chain enforced; `sep41_lake_flows` is
-             *     the lake-derived Σmint−Σburn−Σclawback event-sum served
-             *     for SEP-41 tokens outside the operator watch-list
-             *     (total == circulating; no admin exclusion). Null when no
-             *     supply snapshot is available.
+             *     `sep41_lake_flows` is the lake-derived Σmint−Σburn−Σclawback
+             *     event-sum served for SEP-41 tokens outside the operator
+             *     watch-list (total == circulating; no admin exclusion).
+             *     `sep1_declared_max` stays in this vocabulary but names a
+             *     max_supply source, not a circulating policy: it is served on
+             *     `max_supply_basis`, and `supply_basis` keeps the policy behind
+             *     total/circulating even when the max comes from SEP-1. Null
+             *     when no supply snapshot is available.
              * @enum {string|null}
              */
             supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_sdf_reserve_exclusion_static" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "sep41_total_only" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances" | "no_metadata" | null;
+            /**
+             * @description Where `max_supply` (and `fdv_usd`) came from, when that is not
+             *     the policy `supply_basis` names. `sep1_declared_max`: the
+             *     issuer's own stellar.toml `[[CURRENCIES]]`
+             *     max_number/fixed_number declaration — self-declared by the
+             *     issuer, not on-chain enforced. Omitted when max_supply is null
+             *     or comes from the supply policy itself (an operator override,
+             *     `supply_basis: override`, or native XLM's fixed total).
+             * @enum {string}
+             */
+            max_supply_basis?: "sep1_declared_max";
             /**
              * Format: date-time
              * @description When the supply observation behind total_supply /
@@ -10302,19 +10947,19 @@ export interface components {
             markets_count?: number | null;
             /** @description Trades the asset participated in over the trailing 24h. */
             trade_count_24h?: number | null;
-            /** @description 24 hourly USD-price samples (oldest first) for sparkline rendering. */
+            /** @description 24 hourly USD-price samples (oldest first) for sparkline rendering. Null on a `thin_market` row; raw series on /v1/ohlc, /v1/observations. */
             price_history_24h?: {
                 /** Format: date-time */
                 t: string;
                 p?: string | null;
             }[] | null;
-            /** @description 7 daily USD-price samples (oldest first). */
+            /** @description 7 daily USD-price samples (oldest first); also the listing `include=sparkline7d` series. Null on a `thin_market` row; raw series on /v1/ohlc, /v1/observations. */
             price_history_7d?: {
                 /** Format: date-time */
                 t: string;
                 p?: string | null;
             }[] | null;
-            /** @description All-time-high USD price + when it was set. Null when no USD-quoted history. */
+            /** @description All-time-high USD price + when it was set. Null when no USD-quoted history, and on a `thin_market` row; raw series on /v1/ohlc, /v1/observations. */
             ath?: {
                 usd: string;
                 /** Format: date-time */
@@ -10398,7 +11043,9 @@ export interface components {
              *
              *     Null for the verified asset itself, for non-classic
              *     assets (native / Soroban / fiat), and for any code that
-             *     no verified currency claims on Stellar. See R-018 /
+             *     no verified currency claims on Stellar. Always null on
+             *     testnet and futurenet, where the verified issuers (pubnet
+             *     accounts) do not exist. See R-018 /
              *     docs/architecture/multi-network-assets-migration.md
              *     Phase 1.1.
              */
@@ -10415,7 +11062,8 @@ export interface components {
              *     so only the real verified row (which carries this false)
              *     keeps the badge. The detail path stamps the richer
              *     `unverified_warning` body instead. Omitted (false) for the
-             *     verified asset and codes no verified currency claims.
+             *     verified asset, codes no verified currency claims, and every
+             *     row on testnet and futurenet.
              * @default false
              */
             unverified_ticker_collision: boolean;
@@ -10616,6 +11264,20 @@ export interface components {
             max_number?: string | null;
             /** @description Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all (no fixed_number / max_number / is_unlimited declaration); false when they did and committed to a bounded supply. */
             is_unlimited?: boolean | null;
+            /** @description SEP-1 `status` of the currency as the issuer declares it: live, dead, test or private. */
+            currency_status?: string | null;
+            /** @description SEP-1 `is_asset_anchored`. Null when the issuer did not declare it; false only when they declared false. */
+            is_asset_anchored?: boolean | null;
+            /** @description SEP-1 `attestation_of_reserve` URL. http(s) only — any other value is dropped at overlay time. */
+            attestation_of_reserve?: string | null;
+            /** @description SEP-1 `redemption_instructions`: how the issuer says the token is redeemed for its underlying. */
+            redemption_instructions?: string | null;
+            /** @description SEP-1 `regulated` (SEP-8 approval required to transact). Null when the issuer did not declare it. */
+            regulated?: boolean | null;
+            /** @description SEP-1 `approval_server` URL for a regulated asset. http(s) only — any other value is dropped at overlay time. */
+            approval_server?: string | null;
+            /** @description SEP-1 `approval_criteria`: the issuer's stated rules for approving a transaction in a regulated asset. */
+            approval_criteria?: string | null;
         };
         AssetMetadataEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["AssetMetadata"];
@@ -10629,7 +11291,7 @@ export interface components {
             asset_id: string;
             /** @description The contract (Soroban token or classic SAC) supply is keyed by. Omitted for native XLM. */
             contract_id?: string;
-            /** @description Decimal string. mint − burn − clawback (or the ledger total_coins for native). Never a JSON number (ADR-0003). */
+            /** @description Decimal string. mint − burn − clawback (or the ledger total_coins for native). Never a JSON number (ADR-0003). For source=mint_burn_flows this is a figure derived from the event log, not one the issuer publishes; supply_basis says which log. */
             total_supply: string;
             /** @description Decimal string: Σ mint. Omitted for native. */
             mint_total?: string;
@@ -10647,11 +11309,20 @@ export interface components {
              * @enum {string}
              */
             source: "mint_burn_flows" | "ledger_total_coins" | "contract_storage_balances";
-            /** @description True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only balances that are ledger entries right now, and Soroban state expiry archives contract-data entries, so a real and restorable balance can be invisible to it. Omitted when false. */
+            /**
+             * @description Which event log a source=mint_burn_flows total_supply was summed from, in the vocabulary Asset.supply_basis uses. `sep41_lake_flows`: the requested Soroban contract's own mint/burn/clawback events. `classic_lake_flows`: a classic CODE-ISSUER asset's net over its derived Stellar Asset Contract's unified (CAP-67) mint/burn/clawback events. That is a derived reading, not an issuer-authoritative supply, and an UPPER reading rather than a certified one: it is only as complete as the replayed flow history, and a replayed historical mint with no matching burn inflates it. It is not a lower bound either. Omitted for every other source.
+             * @enum {string}
+             */
+            supply_basis?: "sep41_lake_flows" | "classic_lake_flows";
+            /** @description True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only the balance entries the lake's current-state projection captured, so an entry dormant since before its coverage began is absent. Omitted when false. */
             circulating_supply_lower_bound?: boolean;
-            /** @description Number of per-holder balance entries summed. Only present for source=contract_storage_balances. */
+            /** @description Number of per-holder balance entries summed. Only present for source=contract_storage_balances. A temporary entry whose TTL lapsed has been deleted by the network and is not counted. */
             balance_entries?: number;
-            /** @description Whether every cross-check the contract itself published agreed with what was summed — its own TotalSupply against the sum, and its own HolderCount against the number of entries visible. False means the contract reports more holders (or a larger total) than the lake can show, which is what an archived balance looks like; the figure is still served, but as a floor. Only present for source=contract_storage_balances; absent means the contract offered no cross-checks, which is not the same as a failed one. */
+            /** @description How many of balance_entries are persistent entries whose TTL had lapsed at the lake tip. They are archived, not destroyed — still owned and restorable — so they stay in total_supply. Only present for source=contract_storage_balances, and only when non-zero. */
+            archived_balance_entries?: number;
+            /** @description Decimal string: the part of total_supply held in archived_balance_entries, in the token's smallest unit. Present exactly when archived_balance_entries is. */
+            archived_balance_total?: string;
+            /** @description Whether every cross-check the contract itself published agreed with what was summed — its own TotalSupply against the sum, and its own HolderCount against the number of entries visible. False means the contract reports more holders (or a larger total) than the lake can show, which is what an entry the lake never captured looks like; the figure is still served, but as a floor. Only present for source=contract_storage_balances; absent means the contract offered no cross-checks, which is not the same as a failed one. */
             supply_consistent?: boolean;
             /** @description The scale the CONTRACT ITSELF declares, read from its instance storage (METADATA or Config, either spelling). Only present for source=contract_storage_balances. OMITTED when the chain declares no scale — a consumer must not substitute a default, because a wrong exponent is a published money figure wrong by a power of ten. */
             decimals?: number;
@@ -10663,6 +11334,43 @@ export interface components {
         };
         AssetSupplyEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["AssetSupply"];
+        };
+        AssetSupplyFlows: {
+            asset_id: string;
+            /** @description The contract the supply_flows log is keyed by. */
+            contract_id: string;
+            days: components["schemas"]["AssetSupplyFlowDay"][];
+            /**
+             * @description True when the running mint − burn − clawback dips below zero:
+             *     earlier mints are missing from the lake, so do not cumulate
+             *     the series into a supply level.
+             */
+            history_incomplete: boolean;
+            /**
+             * Format: int64
+             * @description Lake watermark the read is fresh to; omitted when no watermark reader is wired.
+             */
+            as_of_ledger?: number;
+        };
+        AssetSupplyFlowDay: {
+            /**
+             * Format: date
+             * @description UTC day the flows' ledgers closed.
+             */
+            day: string;
+            /** @description Σ minted, base units (decimal string). */
+            mint: string;
+            /** @description Σ burned, base units (decimal string). */
+            burn: string;
+            /** @description Σ clawed back, base units (decimal string). */
+            clawback: string;
+            /** @description mint − burn − clawback; signed decimal string. */
+            net: string;
+            /**
+             * Format: int64
+             * @description Events behind the day's sums.
+             */
+            flows: number;
         };
         Price: {
             asset_id: string;
@@ -10704,11 +11412,33 @@ export interface components {
             observed_at: string;
             /** @description Window size for vwap/twap; omitted for last_trade. */
             window_seconds?: number;
+            /** @description Decimal string, quote units per 1 USD. Present only on a closed-surface USD-anchored fiat cross (`/v1/price`, `/v1/price/batch`, SEP-40): the vendor FX fixing the USD leg was converted at, verbatim. The fixing is the bar with the greatest close at or before the USD bucket's end minus 3 h, within the 76 h lookback, so the answer is the same whenever and wherever it is read. `/v1/price/tip` converts at the live rate and omits it. */
+            fx_rate?: string;
+            /**
+             * Format: date-time
+             * @description Close of the bound FX fixing (a vendor time). On a fiat/fiat cross, the older of the two legs' closes. Present only on a closed-surface fiat cross.
+             */
+            fx_as_of?: string;
+            /** @description Feed that published the bound FX fixing. Present only on a closed-surface USD-anchored fiat cross. */
+            fx_source?: string;
+            /**
+             * @description Grain of the bound FX fixing. `daily` before the hourly series begins for the currency; a daily fixing reports no FX staleness of its own. Present only on a closed-surface fiat cross.
+             * @enum {string}
+             */
+            fx_resolution?: "hourly" | "daily";
+            /** @description The USD price a closed-surface USD-anchored fiat cross converted: `price` × `fx_rate` equals the served price up to its rendering (15 fractional digits, more for a very small rate, trailing zeros trimmed), and `observed_at` is the served `observed_at`. */
+            usd_leg?: {
+                /** @description Decimal string. Never JSON number. */
+                price: string;
+                /** Format: date-time */
+                observed_at: string;
+                sources: string[];
+            } | null;
             /** @description Trailing-24h percentage change vs the asset's USD price ~24h ago (signed, two fractional digits — "+1.27"). Present on /v1/price/batch rows when the quote is fiat:USD and a closed comparison bucket exists; omitted otherwise. Pairs current price with 24h change in ONE bulk call for wallet portfolio screens. */
             change_24h_pct?: string | null;
             /**
              * Format: float
-             * @description Multi-factor confidence score in [0, 1] (ADR-0019).
+             * @description Multi-factor confidence score in [0, 1] (ADR-0019). Under `flags.thin_market` it is capped at a declared ceiling of 0.10, not a measurement; only on /v1/price.
              */
             confidence?: number | null;
             /** @description Per-factor decomposition of confidence (ADR-0019). */
@@ -10735,11 +11465,13 @@ export interface components {
                 triangulation_agreement?: number;
                 /** @description True only when a fresh composite existed to compare against. False means no chain is configured or the composite was stale - NOT "the composite agrees". The factor carries zero weight in the confidence score when unchecked, so unchecked pairs score exactly as they did before this factor existed. */
                 triangulation_checked?: boolean;
-                /** @description Density of the pair's 30-day volatility baseline in days-equivalent of 1-minute buckets (buckets / 1440), at most 30; negative when no usable 30-day baseline exists. This is sample density, NOT calendar age - a pair that trades in 200 minutes a day reads about 4.2 however long it has existed. The bootstrap cap releases at 28.5 (ADR-0019 amendment 2026-09-28). */
+                /** @description Density of the pair's 30-day volatility baseline in days-equivalent of 1-minute buckets (buckets / 1440), at most 30; negative when no usable 30-day baseline exists. This is sample density, NOT calendar age - a pair that trades in 200 minutes a day reads about 4.2 however long it has existed. The bootstrap cap releases at 28.5 and, once released, re-engages below 27 (ADR-0019 amendment 2026-09-28). */
                 baseline_age_days?: number;
-                /** @description True when the ADR-0019 bootstrap ceiling (0.5) bounded confidence because baseline_age_days is below 28.5 (or no baseline exists), so a confidence of 0.5 may be the cap rather than the evidence. False means the multi-factor score was served without the ceiling. */
+                /** @description True when the ADR-0019 bootstrap ceiling (0.5) bounded confidence because baseline_age_days is below 28.5 (below 27 for a pair already released, or no baseline exists), so a confidence of 0.5 may be the cap rather than the evidence. False means the multi-factor score was served without the ceiling. */
                 bootstrap_capped?: boolean;
             } | null;
+            /** @description The substance measurement behind a `flags.thin_market` price. */
+            substance?: components["schemas"]["SubstanceEvidence"];
         };
         PriceEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["Price"];
@@ -10756,6 +11488,64 @@ export interface components {
              *     nothing was withheld.
              */
             withheld?: string[];
+            /**
+             * @description Requested ids in `data` whose price comes from a market
+             *     below the substance floor, served because the request opted
+             *     in with `include_thin=true`. Input order; absent otherwise.
+             *     No `change_24h_pct` is derived for these rows.
+             */
+            thin?: string[];
+        };
+        SubstanceEvidence: {
+            /** @description The request's base asset; the market measured is the alias union of base and quote. */
+            base: string;
+            quote: string;
+            /**
+             * Format: int64
+             * @description Length of the trailing window measured.
+             */
+            window_seconds: number;
+            /**
+             * Format: date-time
+             * @description When the measurement was taken; a cached verdict can be up to a minute old.
+             */
+            measured_at: string;
+            /**
+             * Format: date-time
+             * @description Where the measured window ends, on point-in-time reads only (the requested instant, grain-truncated).
+             */
+            window_end?: string;
+            /** @description USD volume in the window (decimal string; never a JSON number). */
+            volume_usd: string;
+            /**
+             * Format: int64
+             * @description Active price buckets in the window.
+             */
+            buckets: number;
+            /**
+             * Format: int64
+             * @description Active buckets carrying a USD valuation.
+             */
+            valued_buckets: number;
+            /**
+             * Format: int64
+             * @description First-to-last active bucket span.
+             */
+            span_seconds: number;
+            /** @description The substance policy the measurement was held to. */
+            floor: {
+                /** @description Decimal string. */
+                min_volume_usd: string;
+                /** Format: int64 */
+                min_buckets: number;
+                /** Format: int64 */
+                min_span_seconds: number;
+            };
+            /**
+             * @description The first floor the measurement fails.
+             * @enum {string}
+             */
+            failed: "buckets" | "span" | "volume" | "volume_unvalued";
         };
         PriceChangeHorizon: {
             /** @description Signed percentage move of the current price vs the reference price, two fractional digits with an explicit leading "+" on gains (e.g. "+3.62", "-1.04", "0.00"). Null when unavailable. */
@@ -10773,6 +11563,8 @@ export interface components {
             available: boolean;
             /** @description True when the reference bucket exists but a serving gate refused to publish it (thin-market or scam-issuer gate, or the serving-sanity guard). Always false when available is true. */
             withheld: boolean;
+            /** @description True when this horizon's reference price comes from a market below the substance floor, served under `include_thin=true`. */
+            thin_market?: boolean;
         };
         PriceChanges: {
             asset_id: string;
@@ -10798,6 +11590,8 @@ export interface components {
             "24h": components["schemas"]["PriceChangeHorizon"];
             "7d": components["schemas"]["PriceChangeHorizon"];
             "30d": components["schemas"]["PriceChangeHorizon"];
+            /** @description The substance measurement behind a thin current price (current bucket only; a horizon carries only its flag). */
+            substance?: components["schemas"]["SubstanceEvidence"];
         };
         PriceChangesEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["PriceChanges"];
@@ -10807,6 +11601,12 @@ export interface components {
             t: string;
             p: string;
             v_usd?: string | null;
+            /**
+             * @description Present only when a venue outside the VWAP contributed to this
+             *     point (for example `poloniex_via_btc`, a derived XLM/BTC x
+             *     BTC/USD daily close). Such a point is not a fill-derived VWAP.
+             */
+            sources?: string[];
         };
         HistoryEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: {
@@ -10958,6 +11758,21 @@ export interface components {
                  *     its cap. Omitted when false.
                  */
                 market_cap_low_liquidity?: boolean;
+                /**
+                 * @description True when an unbounded read (`timeframe=all`) hit the
+                 *     50 000-bucket response cap, so `points` holds the
+                 *     OLDEST slice of this pair's history and stops short of
+                 *     the present. Request a coarser `granularity` to see
+                 *     the whole span. Omitted when false.
+                 */
+                row_cap_truncated?: boolean;
+                /**
+                 * Format: date-time
+                 * @description Last bucket of the earliest source read that hit the row
+                 *     cap; the series is incomplete after it. Only present when
+                 *     `row_cap_truncated=true`.
+                 */
+                data_ends_at?: string;
             };
         };
         TradeRow: {
@@ -10974,8 +11789,8 @@ export interface components {
             base_amount: string;
             /** @description Integer stroops, decimal string. */
             quote_amount: string;
-            /** @description quote/base, 10-digit decimal. */
-            price: string;
+            /** @description quote/base, 10-digit decimal; null (key always present) when one leg is zero, e.g. an SDEX rounding fill. */
+            price: string | null;
             /**
              * @description Smallest-unit scale for `base_amount`: divide by
              *     10^base_decimals for whole-asset units.
@@ -11191,6 +12006,14 @@ export interface components {
              */
             v_quote_decimals: number | null;
             /**
+             * @description Venues that contributed to THIS bar, sorted. Omitted when the
+             *     bar's venues are not recorded. A bar whose sources include a
+             *     derived or vendor series (for example `poloniex_via_btc`, an
+             *     XLM/BTC daily close crossed with a BTC/USD daily close) is not
+             *     a fill-derived VWAP and must not be charted or compared as one.
+             */
+            sources?: string[];
+            /**
              * Format: int64
              * @description Trade count in the bucket.
              */
@@ -11297,6 +12120,54 @@ export interface components {
              *     closed boundary per ADR-0015.
              */
             clamped: boolean;
+            breakdown?: components["schemas"]["VWAPBreakdown"];
+            /** @description Present only when the pair is below the substance floor that /v1/price withholds on (`flags.thin_market` is then true). The measurement is the pair's live trailing window, not the requested one; this endpoint still serves the price. */
+            substance?: components["schemas"]["SubstanceEvidence"];
+        };
+        /**
+         * @description Present only with `breakdown=source`. Volumes are in the same units
+         *     as the response's `base_volume` / `quote_volume` (see their
+         *     `*_decimals`), so a bucket's sources sum to the bucket. Computed
+         *     from the same trades as the headline price: when `truncated` is
+         *     true the fetch cap was hit and the breakdown covers only the
+         *     newest trades of the window, a lower bound rather than the whole.
+         */
+        VWAPBreakdown: {
+            /** @description Bucket width asked for; null when the whole window is one bucket. */
+            interval: string | null;
+            truncated: boolean;
+            /** @description Ascending by `start`; only buckets holding at least one fetched trade. */
+            buckets: {
+                /**
+                 * Format: date-time
+                 * @description UTC-aligned bucket start (not clamped to the window).
+                 */
+                start: string;
+                /** Format: date-time */
+                end: string;
+                /** @description Σ post-filter quote volume of the bucket. */
+                quote_volume: string;
+                /** @description Post-filter trades in the bucket. */
+                trade_count: number;
+                /** @description Ordered by quote volume descending, then name. */
+                sources: {
+                    source: string;
+                    /** @description This source's VWAP in the bucket; null when the outlier filter left it no trades. */
+                    price: string | null;
+                    base_volume: string;
+                    quote_volume: string;
+                    /** @description Post-filter trades. */
+                    trade_count: number;
+                    /**
+                     * @description This source's post-filter quote volume over the bucket's
+                     *     total, scale-normalised across venues, floored to 10
+                     *     decimal places (weights sum to 1 to that precision).
+                     */
+                    weight: string;
+                    /** @description Trades of this source in the bucket the `outlier_sigma` filter removed; 0 when sigma is 0. */
+                    outliers_excluded: number;
+                }[];
+            }[];
         };
         VWAPEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["VWAPResult"];
@@ -11327,6 +12198,8 @@ export interface components {
             truncated: boolean;
             /** @description See VWAPResult.clamped. */
             clamped: boolean;
+            /** @description See VWAPResult.substance. */
+            substance?: components["schemas"]["SubstanceEvidence"];
         };
         TWAPEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["TWAPResult"];
@@ -11372,14 +12245,14 @@ export interface components {
             trade_count_24h: number;
             /** @description Trailing-24h USD volume summed from prices_1m. Decimal string. Null when no USD-equivalent trades. */
             volume_24h_usd?: string | null;
-            /** @description Most recent quote-per-base price observed for this pair (cross-source) within the trailing 24h. Decimal string. Null when no recent prices_1m bucket has a non-null last_price. */
+            /** @description Most recent quote-per-base price observed for this pair within the trailing 24h: across every source, or that source's own when the request sets `?source=`. Decimal string. Null when none was observed. */
             last_price?: string | null;
             /**
              * Format: date-time
-             * @description The pair's first recorded daily bucket — "since inception = first recorded trade" (RFP), queryable per market. Present only with `?include=inception`; day precision.
+             * @description The pair's first recorded daily bucket — "since inception = first recorded trade" (RFP), queryable per market, across every source. Present only with `?include=inception` and absent when the request sets `?source=`; day precision.
              */
             first_trade_at?: string | null;
-            /** @description Per-hour USD-volume buckets for the trailing 24h, oldest → newest, zero-filled server-side (always 24 entries when present). Populated only when the request sets `?include=sparkline`; absent otherwise. */
+            /** @description Per-hour USD-volume buckets for the trailing 24h, oldest → newest, zero-filled server-side (always 24 entries when present). Summed across every source. Populated only when the request sets `?include=sparkline`; absent otherwise, and absent when the request sets `?source=`. */
             volume_history_24h?: {
                 /** Format: date-time */
                 hour: string;
@@ -11510,6 +12383,8 @@ export interface components {
             default_weight: number;
             /** @description Whether the source observes the Stellar network directly (dispatcher-path ingest) rather than reading an off-chain vendor API. `false` for CEX / FX / aggregators / Chainlink (an Ethereum oracle). The explorer's Stellar-network surfaces filter on this. */
             on_chain: boolean;
+            /** @description Whether `source=` accepts this name on the single-source routes (/v1/markets, /v1/oracle/latest, /v1/observations): on-chain sources and CEX venues. `false` for data vendors (aggregators, FX providers, Chainlink, Tiingo, sovereign anchors), which those routes refuse with 400 `off-chain-source-filter`. */
+            selectable: boolean;
             /** @description Trailing-24h trade count for this source. Populated only when the request used `?include=stats`; absent (omitted) otherwise. */
             trade_count_24h?: number;
             /** @description Trailing-24h USD volume for this source. Decimal string. Populated only with `?include=stats`; absent otherwise (empty when the source had no priced trades). */
@@ -11943,6 +12818,13 @@ export interface components {
              * @description Extension member on `monthly-quota-exceeded` 429s only. Month-to-date request count that triggered the cap. Omitted on `monthly-quota-unavailable` — the counter read failed, so there is no honest value to report.
              */
             month_to_date?: number;
+            /** @description Extension member on a `price-withheld` 404 from `/v1/price`, `/v1/price/at` and `/v1/price/changes`, for a thin-market reason (`substance`, `upstream_leg`, `unattributed`) only: the measurement the price was withheld on. Absent otherwise. */
+            substance?: components["schemas"]["SubstanceEvidence"];
+            /**
+             * @description Extension member on every `price-withheld` 404: why the price was withheld; a superset of the `price_withheld_reason` values on asset rows (the price SSE stream's withheld event carries it too). Branch on this, not on `title`. Absent on every other problem.
+             * @enum {string}
+             */
+            reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "manipulation_guard" | "fx_leg_unavailable";
         };
     };
     responses: {
@@ -12092,22 +12974,12 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
-        /** @description Server is degraded (dependency outage, startup, shutdown). */
+        /** @description Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown). */
         ServiceUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
             content: {
-                /**
-                 * @example {
-                 *       "type": "https://api.stellarindex.io/errors/account-store-unavailable",
-                 *       "title": "Account store not configured",
-                 *       "status": 503,
-                 *       "detail": "this deployment has no AccountStore wired — typically because Redis is unavailable",
-                 *       "instance": "/v1/account/keys",
-                 *       "request_id": "70c8017d79651070fd16c2c9f065d846"
-                 *     }
-                 */
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
@@ -12148,6 +13020,18 @@ export interface components {
          * @example native
          */
         AssetQuery: string;
+        /**
+         * @description Opt in to a thin-market price. When the only market behind the
+         *     price fails the trailing substance floor, the price is served
+         *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+         *     with the `substance` measurement instead of being withheld. Only
+         *     a substance verdict is released: a flagged issuer, an FX leg or
+         *     the manipulation guard still withholds. A cleared route always
+         *     wins over a thin one. Only the literal `true` opts in; any other
+         *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+         *     a catalogue slug in this version.
+         */
+        IncludeThin: boolean;
         /**
          * @description Quote-side asset. Either a canonical asset identifier (`native`,
          *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
@@ -12570,7 +13454,8 @@ export interface operations {
                      *           "ticket_count": 0,
                      *           "informational_count": 0
                      *         },
-                     *         "incidents_status": "ok"
+                     *         "incidents_status": "ok",
+                     *         "freshness_status": "degraded"
                      *       },
                      *       "as_of": "2026-05-05T15:09:00.119Z",
                      *       "flags": {
@@ -12609,6 +13494,18 @@ export interface operations {
     listAssets: {
         parameters: {
             query?: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
                 /** @description Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page). */
                 include?: string;
                 /**
@@ -12872,7 +13769,7 @@ export interface operations {
                      *         "divergence_checked": false
                      *       },
                      *       "pagination": {
-                     *         "next": "catalogue:2"
+                     *         "next": "catalogue:WyJ4bG0iLCJ1c2RjIl0"
                      *       }
                      *     }
                      */
@@ -12965,7 +13862,7 @@ export interface operations {
                      *         "divergence_checked": false
                      *       },
                      *       "pagination": {
-                     *         "next": "2"
+                     *         "next": "WyJjaGluZXNlLXl1YW4iLCJ1cy1kb2xsYXIiXQ"
                      *       }
                      *     }
                      */
@@ -13080,7 +13977,20 @@ export interface operations {
     };
     getAsset: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
+            };
             header?: never;
             path: {
                 /**
@@ -13271,6 +14181,68 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    getAssetSupplyFlows: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
+                 *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
+                 *     validated per SEP-23. The handler is strict — short symbols
+                 *     like `XLM` or `USDC` are NOT accepted here; use `native` or
+                 *     the full `<code>-<G…>` form.
+                 * @example native
+                 */
+                asset_id: components["parameters"]["AssetIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Daily supply flows, ascending by day. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *         "days": [
+                     *           {
+                     *             "day": "2026-09-01",
+                     *             "mint": "25000000000000",
+                     *             "burn": "4000000000000",
+                     *             "clawback": "0",
+                     *             "net": "21000000000000",
+                     *             "flows": 412
+                     *           }
+                     *         ],
+                     *         "history_incomplete": false,
+                     *         "as_of_ledger": 63340102
+                     *       },
+                     *       "as_of": "2026-09-02T00:00:05.000000000Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: components["schemas"]["AssetSupplyFlows"];
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     getAssetHolders: {
         parameters: {
             query?: {
@@ -13326,7 +14298,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             asset?: string;
                             /** Format: int64 */
@@ -13351,6 +14323,18 @@ export interface operations {
     getPrice: {
         parameters: {
             query: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
                 /**
                  * @description Canonical asset identifier — matches the `asset_id` on
                  *     response bodies. Query-parameter form is the shorter `asset`
@@ -13414,6 +14398,18 @@ export interface operations {
     getPriceAt: {
         parameters: {
             query: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
                 /** @description Canonical asset id (native | CODE-G... | C... | fiat:XXX). */
                 asset: string;
                 /** @description Quote asset id; default fiat:USD. */
@@ -13465,6 +14461,18 @@ export interface operations {
     getPriceChanges: {
         parameters: {
             query: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
                 /**
                  * @description Canonical asset identifier — matches the `asset_id` on
                  *     response bodies. Query-parameter form is the shorter `asset`
@@ -13692,6 +14700,18 @@ export interface operations {
         parameters: {
             query?: {
                 /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
+                /**
                  * @description Comma-separated canonical asset ids, max 100. Same strict
                  *     form as `/v1/price?asset=` — short symbols are rejected.
                  *     Required unless `pairs` is supplied instead.
@@ -13772,7 +14792,20 @@ export interface operations {
     };
     getPriceBatchBulk: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Opt in to a thin-market price. When the only market behind the
+                 *     price fails the trailing substance floor, the price is served
+                 *     flagged (`flags.thin_market`, or `thin_market` on an asset row)
+                 *     with the `substance` measurement instead of being withheld. Only
+                 *     a substance verdict is released: a flagged issuer, an FX leg or
+                 *     the manipulation guard still withholds. A cleared route always
+                 *     wins over a thin one. Only the literal `true` opts in; any other
+                 *     value is ignored. On `/assets/{asset_id}` it is also ignored for
+                 *     a catalogue slug in this version.
+                 */
+                include_thin?: components["parameters"]["IncludeThin"];
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -13857,7 +14890,7 @@ export interface operations {
                  * @example fiat:USD
                  */
                 quote?: components["parameters"]["Quote"];
-                /** @description Restrict to one source's most-recent trade (0/1 row). */
+                /** @description Restrict to one on-chain source's most-recent trade (0/1 row). Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /**
                  * @description `latest` collapses to the single most-recent trade across
@@ -13938,7 +14971,7 @@ export interface operations {
                  * @example fiat:USD
                  */
                 quote?: components["parameters"]["Quote"];
-                /** @description Restrict to one source's most-recent trade. */
+                /** @description Restrict to one on-chain source's most-recent trade. Any off-chain source (CEX venue, aggregator, FX provider, Chainlink, Tiingo, sovereign anchor) returns 400 `off-chain-source-filter`: this route serves on-chain trades only. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /**
                  * @description `latest` collapses to the single most-recent trade across
@@ -14012,7 +15045,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of price_update events. */
+            /** @description SSE stream of price_update (and price_frozen / price_withheld) events. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -14074,6 +15107,8 @@ export interface operations {
                  */
                 to?: components["parameters"]["To"];
                 limit?: number;
+                /** @description Restrict the feed to trades written by one on-chain source. An off-chain source (CEX venue or data vendor) returns 400 `off-chain-source-filter`; an unregistered name returns 400 `unknown-source`. `coverage_from` on an empty page still describes the pair across all sources. */
+                source?: string;
                 /**
                  * @description Opaque pagination token echoed from a prior response's
                  *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
@@ -14567,6 +15602,20 @@ export interface operations {
                 to?: components["parameters"]["To"];
                 /** @description Drop trades > N σ from window mean. 0 disables (default). */
                 outlier_sigma?: number;
+                /**
+                 * @description Opt in to a per-source, per-bucket breakdown (`data.breakdown`):
+                 *     each venue's VWAP, base/quote volume, trade count, weight in
+                 *     this endpoint's VWAP, and how many of its trades the
+                 *     `outlier_sigma` filter excluded. Omitted, the response is
+                 *     unchanged.
+                 */
+                breakdown?: "source";
+                /**
+                 * @description Bucket width for `breakdown=source`, UTC-aligned (same ladder as
+                 *     `/v1/ohlc`). Omitted, the whole window is one bucket. 400
+                 *     without `breakdown=source`.
+                 */
+                interval?: "1m" | "5m" | "15m" | "30m" | "1h" | "2h" | "4h" | "12h" | "1d" | "3d" | "1w" | "2w" | "1mo";
             };
             header?: never;
             path?: never;
@@ -14742,7 +15791,7 @@ export interface operations {
                  * @example native
                  */
                 asset: components["parameters"]["AssetQuery"];
-                /** @description Optional. Restrict to a single source name. */
+                /** @description Optional. Restrict to a single on-chain source (reflector-dex, reflector-cex, reflector-fx, redstone, band). A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /** @description Optional. Restrict to a single quote asset id (e.g. `fiat:USD`, `fiat:EUR`) — disambiguates a source that publishes the same base asset against more than one live quote. */
                 quote?: string;
@@ -14945,6 +15994,15 @@ export interface operations {
                  *     limit.
                  */
                 source?: "soroswap";
+                /**
+                 * @description Optional. A canonical asset id (`native`, `CODE-ISSUER`, a
+                 *     `C…` contract). Restricts the response to pools holding the
+                 *     asset on either side under any of its alias forms: a classic
+                 *     asset or XLM matches pairs over its Stellar-Asset-Contract.
+                 *     An asset with no Soroswap pair returns an empty list. 400
+                 *     when malformed or combined with `pool`.
+                 */
+                asset?: string;
             };
             header?: never;
             path?: never;
@@ -15058,6 +16116,15 @@ export interface operations {
                  *     top-ranked pools to return. 1-100, default 25.
                  */
                 limit?: number;
+                /**
+                 * @description Optional (listing only). A canonical asset id (`native`,
+                 *     `CODE-ISSUER`, or a SAC `C…` contract the alias registry maps
+                 *     to its classic form — XLM's SAC always). Restricts the ranked listing to pools holding
+                 *     the asset on either side, drawn from every captured native
+                 *     pool rather than the global top 100. 400 when malformed or
+                 *     combined with `pool`.
+                 */
+                asset?: string;
             };
             header?: never;
             path?: never;
@@ -15192,7 +16259,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             protocol?: string;
                             pool?: string;
@@ -15280,7 +16347,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             pool?: string;
                             /** @description Σ supplied_usd across priced reserves; null when none priced. A lower bound when `lower_bound` is true. */
@@ -15386,7 +16453,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             /** Format: uuid */
                             event_id?: string;
@@ -15455,7 +16522,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             firing_count?: number;
                             reason_tally?: {
@@ -15508,11 +16575,11 @@ export interface operations {
     getDivergenceBoard: {
         parameters: {
             query?: {
-                /** @description true → only rows whose latest status is firing. */
+                /** @description true → only pairs with at least one reference whose latest status is firing. */
                 firing?: boolean;
                 /** @description Trailing lookback in days for divergence rows (1-365, default 7). */
                 window_days?: number;
-                /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
+                /** @description Maximum pairs to return (1-500, default 100). Out-of-range values return 400. */
                 limit?: number;
             };
             header?: never;
@@ -15521,7 +16588,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Latest divergence per (pair, reference). */
+            /** @description Latest divergence per pair, every reference grouped beside our price. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -15530,30 +16597,31 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
-                     *         "observations": [
+                     *         "pairs": [
                      *           {
                      *             "asset_id": "crypto:BTC",
                      *             "quote_id": "fiat:USD",
-                     *             "reference": "chainlink",
+                     *             "our_price": "62543.07358731602",
                      *             "observed_at": "2026-07-03T22:37:08.896016Z",
                      *             "observed_at_ledger": 0,
-                     *             "our_price": "62543.07358731602",
-                     *             "ref_price": "62608.75585288",
-                     *             "delta_pct": "-0.10490907329051442",
-                     *             "status": "clear",
-                     *             "ref_observed_at": "2026-07-03T22:36:11Z"
-                     *           },
-                     *           {
-                     *             "asset_id": "crypto:ETH",
-                     *             "quote_id": "fiat:USD",
-                     *             "reference": "coingecko",
-                     *             "observed_at": "2026-07-03T22:37:08.90697Z",
-                     *             "observed_at_ledger": 0,
-                     *             "our_price": "1757.84660921192",
-                     *             "ref_price": "1756.21",
-                     *             "delta_pct": "0.09318983560735354",
-                     *             "status": "clear",
-                     *             "ref_observed_at": "2026-07-03T22:36:52Z"
+                     *             "references": [
+                     *               {
+                     *                 "reference": "chainlink",
+                     *                 "ref_price": "62608.75585288",
+                     *                 "delta_pct": "-0.10490907329051442",
+                     *                 "status": "clear",
+                     *                 "observed_at": "2026-07-03T22:37:08.896016Z",
+                     *                 "ref_observed_at": "2026-07-03T22:36:11Z"
+                     *               },
+                     *               {
+                     *                 "reference": "coingecko",
+                     *                 "ref_price": "62580.12",
+                     *                 "delta_pct": "-0.05920516244376781",
+                     *                 "status": "clear",
+                     *                 "observed_at": "2026-07-03T22:37:08.896016Z",
+                     *                 "ref_observed_at": "2026-07-03T22:36:52Z"
+                     *               }
+                     *             ]
                      *           }
                      *         ]
                      *       },
@@ -15567,27 +16635,38 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
-                            observations?: {
-                                asset_id?: string;
-                                quote_id?: string;
-                                /** @enum {string} */
-                                reference?: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
-                                /** Format: date-time */
-                                observed_at?: string;
-                                /** Format: int64 */
-                                observed_at_ledger?: number;
-                                our_price?: string;
-                                ref_price?: string;
-                                delta_pct?: string;
-                                /** @enum {string} */
-                                status?: "clear" | "firing";
+                            pairs: {
+                                asset_id: string;
+                                quote_id: string;
+                                /** @description Our price at `observed_at` (decimal string). */
+                                our_price: string;
                                 /**
                                  * Format: date-time
-                                 * @description When the reference observed `ref_price` (oracle round time, CoinGecko last_updated_at, on-chain ledger close). `observed_at` is the comparison time, so their difference is the reference's age when compared, at most 1h (76h for fiat/fiat FX pairs, whose quotes pause over market closes). Null on rows recorded before the reference time was stored.
+                                 * @description The pair's newest comparison time across its references.
                                  */
-                                ref_observed_at?: string | null;
+                                observed_at: string;
+                                /** Format: int64 */
+                                observed_at_ledger: number;
+                                references: {
+                                    /** @enum {string} */
+                                    reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
+                                    ref_price: string;
+                                    delta_pct: string;
+                                    /** @enum {string} */
+                                    status: "clear" | "firing";
+                                    /**
+                                     * Format: date-time
+                                     * @description When this reference was last compared. Equal to the pair's `observed_at` unless the reference missed later ticks; `delta_pct` is against our price at this time.
+                                     */
+                                    observed_at: string;
+                                    /**
+                                     * Format: date-time
+                                     * @description When the reference observed `ref_price` (oracle round time, CoinGecko last_updated_at, on-chain ledger close). `observed_at` is the comparison time, so their difference is the reference's age when compared, at most 1h (76h for fiat/fiat FX pairs, whose quotes pause over market closes). Null on rows recorded before the reference time was stored.
+                                     */
+                                    ref_observed_at: string | null;
+                                }[];
                             }[];
                         };
                     };
@@ -15601,8 +16680,6 @@ export interface operations {
             query: {
                 /** @description `<asset_id>~<quote_id>`, e.g. `crypto:BTC~fiat:USD`. */
                 pair: string;
-                /** @description External reference to plot against. */
-                reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
                 /** @description Trailing window; whitelisted to 1, 7 or 30 (default 7). */
                 days?: 1 | 7 | 30;
             };
@@ -15612,7 +16689,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Bucketed divergence series for the triple. */
+            /** @description Bucketed divergence series for the pair, every reference per point. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -15623,23 +16700,42 @@ export interface operations {
                      *       "data": {
                      *         "asset_id": "crypto:BTC",
                      *         "quote_id": "fiat:USD",
-                     *         "reference": "coingecko",
                      *         "days": 7,
                      *         "bucket_seconds": 1800,
                      *         "threshold_pct": 5,
                      *         "points": [
                      *           {
                      *             "t": "2026-07-29T12:00:00Z",
-                     *             "delta_pct": "-0.104909",
                      *             "our_price": "62543.07358731602",
-                     *             "ref_price": "62608.75585288"
+                     *             "references": [
+                     *               {
+                     *                 "reference": "chainlink",
+                     *                 "ref_price": "62580.12",
+                     *                 "delta_pct": "-0.059205"
+                     *               },
+                     *               {
+                     *                 "reference": "coingecko",
+                     *                 "ref_price": "62608.75585288",
+                     *                 "delta_pct": "-0.104909"
+                     *               }
+                     *             ]
                      *           },
                      *           {
                      *             "t": "2026-07-29T12:30:00Z",
-                     *             "delta_pct": "6.412000",
                      *             "our_price": "66623.11",
-                     *             "ref_price": "62608.75",
-                     *             "firing": true
+                     *             "references": [
+                     *               {
+                     *                 "reference": "chainlink",
+                     *                 "ref_price": "66590.40",
+                     *                 "delta_pct": "0.049121"
+                     *               },
+                     *               {
+                     *                 "reference": "coingecko",
+                     *                 "ref_price": "62608.75",
+                     *                 "delta_pct": "6.412000",
+                     *                 "firing": true
+                     *               }
+                     *             ]
                      *           }
                      *         ]
                      *       },
@@ -15653,25 +16749,28 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
-                            asset_id?: string;
-                            quote_id?: string;
-                            /** @enum {string} */
-                            reference?: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
-                            days?: number;
-                            /** @description Downsampling bucket width. Each point is the last observation inside its bucket; render the series at this resolution, not as raw ticks. */
-                            bucket_seconds?: number;
+                            asset_id: string;
+                            quote_id: string;
+                            days: number;
+                            /** @description Downsampling bucket width. Each reference's value is its last observation inside the bucket; render the series at this resolution, not as raw ticks. */
+                            bucket_seconds: number;
                             /** @description The operator's divergence alert threshold (percent) — the same number the worker fires on. Omitted when unconfigured; draw no band in that case. */
                             threshold_pct?: number;
-                            points?: {
+                            points: {
                                 /** Format: date-time */
-                                t?: string;
-                                delta_pct?: string;
-                                our_price?: string;
-                                ref_price?: string;
-                                /** @description True when ANY observation in the bucket breached its threshold at observation time. Omitted when false. */
-                                firing?: boolean;
+                                t: string;
+                                /** @description Our price at the bucket's newest observation. */
+                                our_price: string;
+                                references: {
+                                    /** @enum {string} */
+                                    reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
+                                    ref_price: string;
+                                    delta_pct: string;
+                                    /** @description True when ANY of this reference's observations in the bucket breached its threshold at observation time. Omitted when false. */
+                                    firing?: boolean;
+                                }[];
                             }[];
                         };
                     };
@@ -15773,12 +16872,20 @@ export interface operations {
                  */
                 order_by?: "pair" | "volume_24h_usd_desc";
                 /**
-                 * @description Restrict the listing to markets a single source
-                 *     observed in the recency window. Must match a
-                 *     registered source name (see `/v1/sources`); an
-                 *     unknown name returns 400 `unknown-source` rather
-                 *     than an empty 200 (avoids the silent-empty-page
-                 *     anti-pattern). Mutually exclusive with `asset`.
+                 * @description Restrict the listing to markets a single on-chain
+                 *     source or CEX venue observed in the recency window.
+                 *     Must match a registered source name (see
+                 *     `/v1/sources`); an unknown name returns 400
+                 *     `unknown-source` rather than an empty 200 (avoids
+                 *     the silent-empty-page anti-pattern), and a
+                 *     data-vendor source (aggregator, FX provider,
+                 *     oracle vendor; `selectable: false`) returns 400
+                 *     `off-chain-source-filter` — its markets are served
+                 *     only alongside other sources. Mutually exclusive
+                 *     with `asset`.
+                 *     Each row's volume, trade count and last price are
+                 *     that source's own; the pair-wide `sparkline` and
+                 *     `inception` enrichments are omitted.
                  */
                 source?: string;
                 /**
@@ -17300,6 +18407,7 @@ export interface operations {
                      *         "lake_complete_sources": 15,
                      *         "network": "pubnet",
                      *         "not_applicable_sources": [],
+                     *         "lagging_sources": [],
                      *         "total_sources": 15
                      *       },
                      *       "as_of": "2026-07-03T22:38:20.564931481Z",
@@ -17350,15 +18458,16 @@ export interface operations {
                                 tip_ledger: number;
                                 /**
                                  * Format: int64
-                                 * @description PROJECTION-axis floor: the lowest ledger the
-                                 *     SERVED tier holds any row at for this source.
-                                 *     It is the bottom of the range `projection_ok`
-                                 *     — and therefore `complete` — is a claim about;
-                                 *     below it the served tier holds nothing.
+                                 * @description PROJECTION-axis floor: the bottom of the range
+                                 *     `projection_ok` — and therefore `complete` — is
+                                 *     a claim about. It is `genesis_ledger` for every
+                                 *     source whose served tier claims full history, so
+                                 *     a never-projected prefix fails `projection_ok`.
                                  *
-                                 *     It is NOT `genesis_ledger`, which is the LAKE
-                                 *     axis's floor and is routinely ten years lower:
-                                 *     on pubnet, sdex and the oracle sources publish
+                                 *     For a source whose served tier is a declared
+                                 *     working-set window it is the lowest ledger that
+                                 *     tier holds a row at, and can sit far above
+                                 *     `genesis_ledger`: on pubnet sdex publishes
                                  *     `genesis_ledger: 2` with a served tier that
                                  *     begins around ledger 61.6M (March 2026). A
                                  *     consumer reading only
@@ -17375,6 +18484,31 @@ export interface operations {
                                  *     UNKNOWN, never "from ledger 0".
                                  */
                                 projection_verified_from?: number;
+                                /**
+                                 * Format: int64
+                                 * @description The lowest ledger the run that produced this
+                                 *     verdict reconciled ITSELF. The audit is
+                                 *     incremental: `[projection_reconciled_from,
+                                 *     watermark_ledger]` was proven at `computed_at`,
+                                 *     and anything from `projection_verified_from`
+                                 *     below it was carried from the prior verdict.
+                                 *     Omitted when not recorded.
+                                 */
+                                projection_reconciled_from?: number;
+                                /**
+                                 * Format: date-time
+                                 * @description When one audit run last reconciled the WHOLE
+                                 *     served range cleanly — the age of the oldest
+                                 *     evidence behind `projection_ok: true`.
+                                 *     `computed_at` advances on every run, including
+                                 *     one that only carried the claim forward, so it
+                                 *     is not this. `null` when no evidence is on
+                                 *     record (no clean projection claim, or a claim
+                                 *     carried from a verdict that predates this
+                                 *     field). An old or `null` value under a clean
+                                 *     claim raises `flags.stale`.
+                                 */
+                                projection_evidenced_at: string | null;
                                 /**
                                  * @description Lake-axis coverage (watermark vs tip) — see
                                  *     watermark_ledger. A FRACTION in [0,1] despite
@@ -17453,6 +18587,13 @@ export interface operations {
                             /** @description Sources the audit is expected to cover on this network that have no verdict row: their first audit never completed, or the row was cleared. Counted in `total_sources`, never in `complete_sources` or `lake_complete_sources`. Empty when every expected source has a verdict. */
                             unverified_sources: {
                                 source: string;
+                                reason: string;
+                            }[];
+                            /** @description Sources whose verdict `tip_ledger` is below the newest source verdict's tip: the latest audit run wrote no verdict for them (it stopped before reaching them, or they errored), so the totals above combine verdicts from more than one run. They still count at their earlier verdict. Empty when one run wrote every source's row. */
+                            lagging_sources: {
+                                source: string;
+                                /** Format: int64 */
+                                tip_ledger: number;
                                 reason: string;
                             }[];
                         };
@@ -18219,7 +19360,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             window_days?: number;
                             buckets?: {
@@ -18233,8 +19374,10 @@ export interface operations {
                                 ops?: number;
                                 /** Format: int64 */
                                 events?: number;
-                                /** @description Cumulative network fee pool at the day's last ledger, in stroops (decimal string — exceeds 2^53). Daily fee burn = the delta between consecutive COMPLETE days. */
+                                /** @description Cumulative network fee pool at the day's last ledger, in stroops (decimal string — exceeds 2^53). Daily fee burn = the delta between consecutive COMPLETE days minus `fee_pool_adjustment`. */
                                 fee_pool?: string;
+                                /** @description Stroops (decimal string) the fee pool changed by this day outside any transaction fee — e.g. pubnet's Protocol 24 upgrade crediting it 31879035 stroops on 2025-10-22. Subtract it from the day's fee_pool delta to get the fees burned. Omitted when the day had no such change. */
+                                fee_pool_adjustment?: string;
                                 /** @description Total XLM in existence at the day's last ledger, in stroops (decimal string — exceeds 2^53). */
                                 total_coins?: string;
                                 /** @description Protocol version in force at the day's last ledger. */
@@ -18578,7 +19721,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         /** @description SAC C-strkey → "CODE-ISSUER" or "native". */
                         data?: {
                             [key: string]: string;
@@ -19129,11 +20272,100 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data: components["schemas"]["RWAAssetsView"];
                     };
                 };
             };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listStablecoins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stablecoin set, its per-asset valuation and a lower-bound total. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "total": {
+                     *           "supply_usd": "118059162072206.13",
+                     *           "assets": 5,
+                     *           "assets_valued": 4,
+                     *           "assets_unvalued": 1,
+                     *           "not_summed": [
+                     *             {
+                     *               "ticker": "EURC",
+                     *               "reason": "non_usd_peg"
+                     *             },
+                     *             {
+                     *               "ticker": "yUSDC",
+                     *               "reason": "yield_bearing_wrapper"
+                     *             }
+                     *           ],
+                     *           "lower_bound": true,
+                     *           "basis": "Circulating supply of the catalogue's hand-vetted Stellar stablecoins, valued at the served USD price; only USD-pegged, non-yield-bearing members are summed"
+                     *         },
+                     *         "by_peg": [
+                     *           {
+                     *             "peg": "EUR",
+                     *             "supply_usd": "108.00",
+                     *             "assets": 1
+                     *           },
+                     *           {
+                     *             "peg": "USD",
+                     *             "supply_usd": "118059162072207.18",
+                     *             "assets": 4
+                     *           }
+                     *         ],
+                     *         "excluded": [
+                     *           {
+                     *             "ticker": "USDT",
+                     *             "reason": "no_stellar_issuer"
+                     *           }
+                     *         ],
+                     *         "assets": [
+                     *           {
+                     *             "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "code": "USDC",
+                     *             "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "ticker": "USDC",
+                     *             "peg": "USD",
+                     *             "circulating_supply": "1180591620717411303424",
+                     *             "decimals": 7,
+                     *             "supply_basis": "issuer_exclusion",
+                     *             "price_usd": "1",
+                     *             "supply_usd": "118059162071741.13",
+                     *             "valuation_status": "published"
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-10-05T12:00:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: components["schemas"]["StablecoinsView"];
+                    };
+                };
+            };
+            429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -19220,7 +20452,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data: components["schemas"]["RWAHistoryView"];
                     };
                 };
@@ -19351,7 +20583,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data: components["schemas"]["RWAPremiumHistoryView"];
                     };
                 };
@@ -19859,8 +21091,9 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             /**
-             * @description The caller authenticated with a SEP-10 token; API keys are
-             *     not issued to SEP-10 subjects (`key-mint-not-available`).
+             * @description Caller is not an account tier (`apikey` or `operator`):
+             *     a SEP-10 wallet token gets `key-mint-not-available`, any
+             *     other non-account credential `account-tier-required`.
              */
             403: {
                 headers: {
@@ -20515,7 +21748,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Per-IP registration throttle exhausted (shared with /v1/signup). */
+            /** @description Per-IP registration throttle exhausted. */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -20542,87 +21775,10 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "email": "alice@example.com",
-                 *       "label": "production-api-1"
-                 *     }
-                 */
-                "application/json": {
-                    /** Format: email */
-                    email: string;
-                    label?: string;
-                };
-            };
-        };
+        requestBody?: never;
         responses: {
-            /** @description Account created — plaintext key shown **once**. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "data": {
-                     *         "plaintext": "re_live_4f9c1d8b3a7e2f1c9d4b8a6e3f2c1d9b8a7e6f5d4c3b2a1f",
-                     *         "key_id": "k_8f3a2c1b9e7d4f6a",
-                     *         "key_prefix": "re_live_4f9c1d8b",
-                     *         "identifier": "signup-3d4f9a2c1e8b7f6d",
-                     *         "label": "production-api-1",
-                     *         "tier": "apikey",
-                     *         "rate_limit_per_min": 1000,
-                     *         "email_verification_sent": false
-                     *       },
-                     *       "as_of": "2026-05-05T14:35:42.881Z",
-                     *       "flags": {
-                     *         "stale": false,
-                     *         "reduced_redundancy": false,
-                     *         "triangulated": false,
-                     *         "divergence_warning": false
-                     *       }
-                     *     }
-                     */
-                    "application/json": components["schemas"]["EnvelopeMeta"] & {
-                        data?: {
-                            /** @description Bearer token. Show ONCE; unrecoverable. */
-                            plaintext: string;
-                            key_id: string;
-                            /** @description Non-secret leading fragment of the key, safe to display/log for correlation. Omitted when the store does not record one. */
-                            key_prefix?: string;
-                            identifier: string;
-                            label?: string;
-                            /** @enum {string} */
-                            tier: "apikey";
-                            rate_limit_per_min: number;
-                            /** @description True when the deployment is wired for email-ownership verification and a verification link was sent. False on deployments without a verifier/emailer — the key authenticates immediately. */
-                            email_verification_sent: boolean;
-                        };
-                    };
-                };
-            };
-            /** @description Missing or invalid email, body too large, or already authenticated. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Email already has an account. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description AccountStore not configured (Redis unavailable). */
-            503: {
+            /** @description Endpoint retired; the detail points at `POST /v1/register`. */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20634,36 +21790,15 @@ export interface operations {
     };
     verifySignupPage: {
         parameters: {
-            query: {
-                /** @description The plaintext token from the verification email. */
-                token: string;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Confirmation page (does not consume the token). */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
-                };
-            };
-            /** @description Missing `?token=` query parameter. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description SignupVerifier not configured (Redis unavailable). */
-            503: {
+            /** @description Endpoint retired; the detail points at `POST /v1/register`. */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20680,76 +21815,10 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": {
-                    /** @description The plaintext token from the verification email. */
-                    token: string;
-                };
-            };
-        };
+        requestBody?: never;
         responses: {
-            /** @description Token consumed; email ownership confirmed. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "data": {
-                     *         "verified": true,
-                     *         "key_id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
-                     *         "detail": "email ownership confirmed; the API key minted at signup is now flagged as verified"
-                     *       },
-                     *       "as_of": "2026-07-03T09:00:00Z",
-                     *       "flags": {
-                     *         "stale": false,
-                     *         "reduced_redundancy": false,
-                     *         "triangulated": false,
-                     *         "divergence_warning": false,
-                     *         "divergence_checked": false
-                     *       }
-                     *     }
-                     */
-                    "application/json": components["schemas"]["EnvelopeMeta"] & {
-                        data?: {
-                            verified: boolean;
-                            key_id?: string;
-                            detail?: string;
-                        };
-                    };
-                };
-            };
-            /** @description Missing `token` form field, or an unreadable / oversized body. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Unknown / consumed / expired token. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Verification store error. */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description SignupVerifier not configured (Redis unavailable). */
-            503: {
+            /** @description Endpoint retired; the detail points at `POST /v1/register`. */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21413,6 +22482,98 @@ export interface operations {
                 };
             };
             /** @description Another of this account's webhooks already uses this url. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    rotateDashboardWebhookSecret: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Optional client-chosen key (a UUID is ideal) that makes this
+                 *     create safe to retry. Send the SAME value when retrying a request
+                 *     whose outcome you never saw, such as a client timeout: within ten
+                 *     minutes of a successful original, the retry receives the original
+                 *     response verbatim (marked by an `Idempotency-Replayed: true`
+                 *     response header) instead of creating a second resource. A retry
+                 *     that arrives while the original is still running gets 409
+                 *     `idempotency-key-in-flight` with `Retry-After`. Only 2xx
+                 *     responses are replayed; a failed original may be retried with the
+                 *     same key. Keys are scoped to the caller, and dedup is held per API
+                 *     process, so it covers the retry window rather than surviving a
+                 *     restart. Longer than 256 bytes returns 400
+                 *     `idempotency-key-too-long`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rotated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "webhook_id": "0b6a3f2e-9c1d-4e7a-8f5b-6d2c4a1e9b0f",
+                     *       "secret": "wsec_9d2e4f7a1c6b3e8d5a2f9c4b7e1d6a3f8c5b2e9d4a7f1c6e3b8d5a2f9c4b7e1d",
+                     *       "previous_secret_expires_at": "2026-07-04T22:45:47Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["RotateWebhookSecretResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No valid session cookie. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description Role can't manage webhooks, OR the write was blocked as
+             *     cross-site: state-changing dashboard + auth requests must
+             *     carry an `Origin` (or `Referer`) matching this API or an
+             *     operator-allow-listed site (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No webhook with this id on this account (absent, already deleted, or another account's). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description A request whose `Idempotency-Key` matches one still being
+             *     processed (`idempotency-key-in-flight`, retryable per
+             *     `Retry-After`).
+             */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -22162,6 +23323,115 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    beginPasskeySignup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description WebAuthn creation options. */
+            200: {
+                headers: {
+                    /** @description Signed ceremony cookie; challenge valid 5 minutes, single-use. */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Cross-site write blocked (`cross-site-request-blocked`). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    finishPasskeySignup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Display-only label; defaults to "Passkey". */
+                    name?: string;
+                    /**
+                     * @description The serialized `PublicKeyCredential` attestation
+                     *     from `navigator.credentials.create()`.
+                     */
+                    credential: Record<string, never>;
+                };
+            };
+        };
+        responses: {
+            /** @description Account created and authenticated; session cookie set. */
+            200: {
+                headers: {
+                    /**
+                     * @description `__Host-stellarindex_session` (HttpOnly, Secure) and its
+                     *     JS-readable presence flag `stellarindex_session_present`.
+                     */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "status": "ok"
+                     *     }
+                     */
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "ok";
+                    };
+                };
+            };
+            /** @description Verification failed (generic — modes are indistinguishable). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Cross-site write blocked (`cross-site-request-blocked`). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description The single-use challenge store or the account store could
+             *     not be reached; nothing was granted.
+             */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     beginPasskeyRegistration: {
         parameters: {
             query?: never;
@@ -22522,7 +23792,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             ledgers?: components["schemas"]["Ledger"][];
                             next_before?: number;
@@ -22577,7 +23847,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["Ledger"];
                     };
                 };
@@ -22646,7 +23916,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             ledger?: number;
                             transactions?: components["schemas"]["TxSummary"][];
@@ -22658,6 +23928,98 @@ export interface operations {
                     };
                 };
             };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLedgerOperations: {
+        parameters: {
+            query?: {
+                /** @description Maximum operations to return (1-2000, default 500). */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @example 63000000 */
+                seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The ledger's operations. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "ledger": 63316166,
+                     *         "operations": [
+                     *           {
+                     *             "ledger": 63316166,
+                     *             "close_time": "2026-07-03T22:37:01Z",
+                     *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                     *             "tx_index": 0,
+                     *             "op_index": 0,
+                     *             "type": "payment",
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
+                     *             "fields": {
+                     *               "amount": "26000000000000",
+                     *               "asset": "XLM26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
+                     *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
+                     *             }
+                     *           },
+                     *           {
+                     *             "ledger": 63316166,
+                     *             "close_time": "2026-07-03T22:37:01Z",
+                     *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                     *             "tx_index": 0,
+                     *             "op_index": 1,
+                     *             "type": "payment",
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
+                     *             "fields": {
+                     *               "amount": "2600000000000",
+                     *               "asset": "XRP26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
+                     *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
+                     *             }
+                     *           }
+                     *         ],
+                     *         "total": 2,
+                     *         "truncated": false
+                     *       },
+                     *       "as_of": "2026-07-03T22:40:10.560512468Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            ledger?: number;
+                            operations?: components["schemas"]["Operation"][];
+                            /**
+                             * @description Present ONLY when the parent-transaction outcome read
+                             *     failed: operations without `transaction_successful` are
+                             *     then of UNKNOWN outcome (possibly a FAILED transaction),
+                             *     not applied. Absent = every operation carries its true
+                             *     transaction outcome.
+                             */
+                            coverage_note?: string;
+                            /** @description Exact operation count for this ledger, from its header. */
+                            total?: number;
+                            /** @description True when total exceeds the returned page. */
+                            truncated?: boolean;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
@@ -22721,7 +24083,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["TxDetail"];
                     };
                 };
@@ -22740,11 +24102,9 @@ export interface operations {
     listOperations: {
         parameters: {
             query?: {
-                /** @description Ledger sequence. Omit for the network-wide recent directory. */
-                ledger?: number;
-                /** @description Opaque keyset cursor (directory mode only). */
+                /** @description Opaque keyset cursor for the next older page. */
                 cursor?: string;
-                /** @description Page size. Mode-dependent bounds — per-ledger mode: default 500, cap 2000; directory mode: default 50, cap 200. */
+                /** @description Page size: default 50, cap 200 (400 above). */
                 limit?: number;
             };
             header?: never;
@@ -22753,7 +24113,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Decoded operations (ledger-scoped or the recent directory). */
+            /** @description The recent-operations directory page. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -22762,22 +24122,8 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
-                     *         "ledger": 63316166,
+                     *         "ledger": 0,
                      *         "operations": [
-                     *           {
-                     *             "ledger": 63316166,
-                     *             "close_time": "2026-07-03T22:37:01Z",
-                     *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
-                     *             "tx_index": 0,
-                     *             "op_index": 0,
-                     *             "type": "payment",
-                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                     *             "fields": {
-                     *               "amount": "26000000000000",
-                     *               "asset": "XLM26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
-                     *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
-                     *             }
-                     *           },
                      *           {
                      *             "ledger": 63316166,
                      *             "close_time": "2026-07-03T22:37:01Z",
@@ -22785,14 +24131,19 @@ export interface operations {
                      *             "tx_index": 0,
                      *             "op_index": 1,
                      *             "type": "payment",
-                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                     *             "fields": {
-                     *               "amount": "2600000000000",
-                     *               "asset": "XRP26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
-                     *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
-                     *             }
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP"
+                     *           },
+                     *           {
+                     *             "ledger": 63316166,
+                     *             "close_time": "2026-07-03T22:37:01Z",
+                     *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                     *             "tx_index": 0,
+                     *             "op_index": 0,
+                     *             "type": "payment",
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP"
                      *           }
-                     *         ]
+                     *         ],
+                     *         "next_cursor": "63316166.0.0"
                      *       },
                      *       "as_of": "2026-07-03T22:40:10.560512468Z",
                      *       "flags": {
@@ -22804,14 +24155,14 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
-                            /** @description The ledger (ledger-scoped mode); 0 in directory mode. */
+                            /** @description Always 0: the directory spans ledgers. */
                             ledger?: number;
                             operations?: components["schemas"]["Operation"][];
-                            /** @description Directory mode: opaque cursor for the next older page; absent on the last page. */
+                            /** @description Opaque cursor for the next older page; absent on the last page. */
                             next_cursor?: string;
-                            /** @description Directory mode, first page only: per-op-type counts over the trailing ~24h. */
+                            /** @description First page only: per-op-type counts over the trailing ~24h. */
                             op_type_stats?: {
                                 type?: string;
                                 /** Format: int64 */
@@ -22825,10 +24176,6 @@ export interface operations {
                              *     transaction outcome.
                              */
                             coverage_note?: string;
-                            /** @description Ledger-scoped mode only: the ledger's exact operation count from its header. Absent in directory mode, which pages instead. */
-                            total?: number;
-                            /** @description Ledger-scoped mode only: true when total exceeds len(operations) — the page was cut at ?limit= with no cursor to continue. Absent in directory mode. */
-                            truncated?: boolean;
                         };
                     };
                 };
@@ -22890,7 +24237,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             window_days?: number;
                             /** Format: int64 */
@@ -22973,7 +24320,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             contract_id?: string;
                             /** @description Registry protocol this contract belongs to (blend, soroswap, …) when attribution is known; absent otherwise. */
@@ -23074,7 +24421,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             /** @description C-strkey contract id (echoed). */
                             contract_id: string;
@@ -23157,7 +24504,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             contract_id?: string;
                             window_days?: number;
@@ -23217,7 +24564,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             contract_id?: string;
                             versions?: {
@@ -23285,7 +24632,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             /** @description Number of assets that contributed a USD price. 0 on the native_xlm basis. */
                             priced_assets?: number;
@@ -23362,7 +24709,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             /** @description Address → label, present addresses only; always an object, never null. */
                             entries: {
@@ -23445,7 +24792,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             totals: {
                                 /** Format: int64 */
@@ -23578,7 +24925,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             creators: {
                                 /** @description 1-based position on the board, by accounts_created descending. */
@@ -23723,7 +25070,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             sponsors: {
                                 /** @description 1-based position, by sponsorships_started descending. */
@@ -23876,7 +25223,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             account_id?: string;
                             exists?: boolean;
@@ -24006,7 +25353,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountTransactions"];
                     };
                 };
@@ -24071,7 +25418,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountOperations"];
                     };
                 };
@@ -24087,7 +25434,7 @@ export interface operations {
                 limit?: number;
                 /** @description Opaque keyset cursor from a prior response's next_cursor. */
                 cursor?: string;
-                /** @description Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind. Only `transfer` is served at and after P23 (ledger 58,762,517); any other kind returns pre-P23 rows only. */
+                /** @description Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind. At and after P23 (ledger 58,762,517) only `transfer`, `mint`, `burn` and `clawback` are served — the last three over the archive's recorded supply range only, which `coverage_note` names (from ledger N through ledger M, plus any post-P23 stretch still being backfilled); any other kind returns pre-P23 rows only. */
                 kind?: string;
                 /** @description Filter by direction. */
                 direction?: "sent" | "received" | "self";
@@ -24140,7 +25487,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountMovements"];
                     };
                 };
@@ -24199,7 +25546,7 @@ export interface operations {
                      *               "USDC"
                      *             ],
                      *             "amount": "480000000",
-                     *             "amount_semantics": "stateful_current",
+                     *             "amount_semantics": "stateful_current_unconfirmed_unit",
                      *             "last_activity": {
                      *               "ledger": 63316350,
                      *               "time": "2026-07-10T21:40:11Z"
@@ -24220,7 +25567,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountPositions"];
                     };
                 };
@@ -24284,7 +25631,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountTrades"];
                     };
                 };
@@ -24397,7 +25744,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountGraph"];
                     };
                 };
@@ -24516,7 +25863,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountGraphHistory"];
                     };
                 };
@@ -24662,12 +26009,16 @@ export interface operations {
                      *         "note": "Every figure is the cohort's own ledger footprint as of cycle.computed_at, never the root's. …"
                      *       },
                      *       "as_of": "2026-09-17T09:00:00Z",
-                     *       "stale": false,
-                     *       "divergence_warning": false,
-                     *       "divergence_checked": false
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountCohort"];
                     };
                 };
@@ -24739,7 +26090,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountActivity"];
                     };
                 };
@@ -24785,7 +26136,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             query?: string;
                             /** @enum {string} */

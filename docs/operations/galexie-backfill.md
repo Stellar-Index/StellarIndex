@@ -56,7 +56,7 @@ afterwards to prove the bytes are canonical.
 1. **Disk check** — ensure the `data` zpool has room (~2.5 TB for
    genesis-to-tip after zstd). `zfs list data/minio` + `zpool list`.
 2. **MinIO user** — `galexie-writer` is scoped to `galexie-live`
-   only (PR #156). Create `galexie-backfill-writer` with write
+   only (Task #156). Create `galexie-backfill-writer` with write
    access scoped to `galexie-archive`; revoke it after the backfill
    completes.
 3. **Captive-core config** — copy
@@ -144,7 +144,7 @@ ledger[N+1].LedgerHeader.PreviousLedgerHash`. Catches any internal
 corruption, dropped ledger, or replay divergence regardless of
 upstream trust.
 
-Command: `stellarindex-ops verify-archive -tier chain` (PR #17).
+Command: `stellarindex-ops verify-archive -tier chain` (commit d8abecac1).
 
 ### Tier B — Checkpoint anchoring against local history archive (primary, free, mandatory)
 
@@ -161,7 +161,7 @@ checkpoint hashes match at every 64th ledger, inter-checkpoint
 content is byte-identical by induction (each ledger's hash chains to
 the next).
 
-Command: `stellarindex-ops verify-archive -tier checkpoint` (PR #18).
+Command: `stellarindex-ops verify-archive -tier checkpoint` (commit a1cd9f167).
 
 ### Tier C — Byte-compare sample against SDF's GCS bucket (optional, belt-and-braces)
 
@@ -178,7 +178,7 @@ Doesn't add evidence beyond Tier B (same upstream source), but:
 - Surfaces GCS requester-pays / egress issues before an actual DR
   event.
 
-Command (planned): `stellarindex-ops verify-archive -tier sdf-sample --samples 1000`. Deferred pending public-read confirmation on the SDF bucket.
+Command: `stellarindex-ops verify-archive -tier sdf-sample -from N -to M -sdf-samples 1000`. Targets the AWS public dataset (`storage.s3_cold_*`), compares ETag + size (equal ETags are equal bytes for single-part uploads), needs an explicit `-to`, and is not part of `-tier all`. No timer yet.
 
 Caveat: SDF's galexie bucket may not retain to genesis; check
 coverage before relying on it.
@@ -201,7 +201,7 @@ agreed on those bytes via SCP consensus. Cryptographically the
 strongest evidence available short of running our own validator.
 
 Command: `stellarindex-ops verify-archive -tier peers -peer-samples
-20 -peers <url>,<url>,...` (PR #20). Defaults to a built-in
+20 -peers <url>,<url>,...` (commit 19e607ac2). Defaults to a built-in
 seven-peer set when `-peers` is empty.
 
 Cost: tiny — one HTTP GET per (checkpoint × peer). ~20 × 6 = 120
@@ -432,6 +432,13 @@ explicit override:
 ```sh
 PARTIALS="PART1 PART2 PART3" galexie-archive-fill
 ```
+
+The mirror runs as the bucket-scoped writer (`ARCHIVE_DEST`,
+`archivewriter/galexie-archive`), which cannot delete. The partials delete
+goes through `ARCHIVE_DELETE_ALIAS` (`local`, MinIO root) on the same
+bucket; if that alias is not configured the run exits 1 before deleting
+anything. An operator-set `ARCHIVE_DEST` uses its own alias for both
+unless `ARCHIVE_DELETE_ALIAS` is also set.
 
 Each entry must be a full partition name such as
 `FC42F7FF--62720000-62783999`, with no trailing slash. If any entry is

@@ -45,6 +45,23 @@ etcd_peer_port: 2380
 etcd_heartbeat_interval: 100
 etcd_election_timeout: 1000
 
+# etcd holds the leader lock, so an unauthenticated or plaintext
+# client/peer port lets anyone on the internal range trigger a
+# failover. TLS + client-cert auth is on by default; the role refuses
+# to render without the PEM material below. Supply it from vault
+# (inventory/<region>.secrets.yml); nothing is generated or stored in
+# the repo. Certificates must carry both serverAuth and clientAuth
+# EKUs and SANs for the host's ansible_host and 127.0.0.1.
+etcd_tls_enabled: true
+etcd_tls_dir: /etc/etcd
+# Required when etcd_tls_enabled (PEM contents, not paths):
+#   etcd_tls_ca_pem            CA that signed every cert below
+#   etcd_tls_cert_pem          per-host etcd server+peer certificate
+#   etcd_tls_key_pem           its private key (per-host)
+#   patroni_etcd_client_cert_pem / patroni_etcd_client_key_pem
+#                              client pair Patroni presents to etcd
+patroni_etcd_tls_dir: /etc/patroni/etcd-tls   # parent /etc/patroni exists (05)
+
 # ── Bootstrap ──────────────────────────────────────────────────
 # initdb (default) or pgbackrest (restore-from-backup; for DR
 # rebuilds).

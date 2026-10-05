@@ -5,10 +5,12 @@ import {
   CandlestickSeries,
   createChart,
   HistogramSeries,
+  LineSeries,
   LineStyle,
   type CandlestickData,
   type HistogramData,
   type IChartApi,
+  type LineData,
   type IPriceLine,
   type ISeriesApi,
   type PriceFormat,
@@ -37,6 +39,12 @@ export type CandlePoint = {
   volume?: number;
 };
 
+/** One point of a price envelope drawn as two lines over the candles. */
+export type BandPoint = { time: number; upper: number; lower: number };
+
+/** One trade from a single source, drawn as a marker over the candles. */
+export type OverlayPoint = { time: number; value: number };
+
 export type CandleChartProps = {
   data: CandlePoint[];
   height?: number;
@@ -50,6 +58,10 @@ export type CandleChartProps = {
    * the static last-close label is shown as before.
    */
   livePrice?: number | null;
+  /** Optional upper/lower envelope overlaid on the price pane. */
+  band?: BandPoint[] | null;
+  /** Optional per-source trade markers overlaid on the price pane. */
+  overlay?: OverlayPoint[] | null;
   /**
    * Text alternative for the canvas-rendered chart (WCAG 1.1.1).
    * lightweight-charts paints to a <canvas> with no DOM text, so
@@ -72,18 +84,24 @@ export function CandleChart({
   height = 360,
   className,
   livePrice,
+  band,
+  overlay,
   ariaLabel,
 }: CandleChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const bandRef = useRef<[ISeriesApi<'Line'>, ISeriesApi<'Line'>] | null>(null);
+  const overlayRef = useRef<ISeriesApi<'Line'> | null>(null);
   const priceLineRef = useRef<IPriceLine | null>(null);
   const themeRef = useRef<ChartTheme | null>(null);
 
   const hasVolume = data.some(
     (p) => p.volume != null && Number.isFinite(p.volume),
   );
+  const hasBand = !!band && band.length > 0;
+  const hasOverlay = !!overlay;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -122,6 +140,31 @@ export function CandleChart({
     });
     seriesRef.current = series;
 
+    if (hasBand) {
+      const line = () =>
+        chart.addSeries(LineSeries, {
+          color: theme.brand,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+      bandRef.current = [line(), line()];
+    }
+
+    if (hasOverlay) {
+      overlayRef.current = chart.addSeries(LineSeries, {
+        color: theme.brand,
+        lineVisible: false,
+        pointMarkersVisible: true,
+        pointMarkersRadius: 3,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+    }
+
     if (hasVolume) {
       // Volume in its own pane (index 1), below the price pane.
       const volume = chart.addSeries(
@@ -158,12 +201,14 @@ export function CandleChart({
       chartRef.current = null;
       seriesRef.current = null;
       volumeRef.current = null;
+      bandRef.current = null;
+      overlayRef.current = null;
       // The price line is owned by the disposed series; drop the handle so
       // the live-price effect recreates it against the fresh series rather
       // than calling applyOptions on a dead one.
       priceLineRef.current = null;
     };
-  }, [height, hasVolume]);
+  }, [height, hasVolume, hasBand, hasOverlay]);
 
   // Push new data on prop changes (and initial mount) without destroying the chart.
   useEffect(() => {
@@ -172,11 +217,23 @@ export function CandleChart({
     // defaults to 2 decimals, which renders XLM as a flat "$0.17" and
     // any sub-cent asset as "$0.00". Scale the axis/crosshair/legend
     // precision to the series' actual magnitude.
-    seriesRef.current?.applyOptions({ priceFormat: priceFormatFor(data) });
+    const priceFormat = priceFormatFor(data);
+    seriesRef.current?.applyOptions({ priceFormat });
     seriesRef.current?.setData(toSeries(data));
     if (theme) volumeRef.current?.setData(toVolume(data, theme));
+    if (bandRef.current && band) {
+      const [upper, lower] = bandRef.current;
+      upper.applyOptions({ priceFormat });
+      lower.applyOptions({ priceFormat });
+      upper.setData(toLine(band, 'upper'));
+      lower.setData(toLine(band, 'lower'));
+    }
+    if (overlayRef.current && overlay) {
+      overlayRef.current.applyOptions({ priceFormat });
+      overlayRef.current.setData(toOverlay(overlay));
+    }
     chartRef.current?.timeScale().fitContent();
-  }, [data]);
+  }, [data, band, overlay]);
 
   // Live current-price line (RT-2): mirror the headline's live tip onto the
   // chart's right axis so the current-price label ticks with each trade
@@ -225,7 +282,8 @@ export function CandleChart({
     } else {
       priceLineRef.current = series.createPriceLine(opts);
     }
-  }, [data, livePrice]);
+    // hasBand rebuilds the chart (and its price line) without changing livePrice.
+  }, [data, livePrice, hasBand]);
 
   return (
     <div
@@ -300,6 +358,23 @@ function toSeries(points: CandlePoint[]): CandlestickData<Time>[] {
     low: p.low,
     close: p.close,
   }));
+}
+
+function toLine(
+  points: BandPoint[],
+  edge: 'upper' | 'lower',
+): LineData<Time>[] {
+  return points.map((p) => ({ time: p.time as Time, value: p[edge] }));
+}
+
+// lightweight-charts rejects equal timestamps; several trades can land in one
+// second, so the last one wins.
+function toOverlay(points: OverlayPoint[]): LineData<Time>[] {
+  const byTime = new Map<number, number>();
+  for (const p of points) byTime.set(p.time, p.value);
+  return [...byTime.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([time, value]) => ({ time: time as Time, value }));
 }
 
 // Volume bars, tinted to the bar's direction (up when close ≥ open) at low

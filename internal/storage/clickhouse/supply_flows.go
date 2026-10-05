@@ -192,18 +192,10 @@ type SupplyReader struct {
 }
 
 // NewSupplyReader dials ClickHouse with a request-sized pool and pings it,
-// authenticating as the ops-batch user when STELLARINDEX_CLICKHOUSE_OPS_USER/
-// _PASSWORD are set (ops_auth.go) and otherwise as CH's unauthenticated
-// `default` user — the pre-ADR-0048-D4 behavior. Non-API callers keep using
-// this constructor unchanged.
+// authenticating as the environment's identity ([chAuth]). Non-API callers
+// use this constructor.
 func NewSupplyReader(ctx context.Context, addr string) (*SupplyReader, error) {
-	// Ops-batch identity from the environment (2026-08-28 r1 incident;
-	// see ops_auth.go) — CH `default` user when unset.
-	auth, err := opsAuth()
-	if err != nil {
-		return nil, err
-	}
-	return NewSupplyReaderAuth(ctx, addr, auth.Username, auth.Password)
+	return NewSupplyReaderAuth(ctx, addr, "", "")
 }
 
 // NewSupplyReaderAuth is [NewSupplyReader] with an explicit CH
@@ -211,11 +203,16 @@ func NewSupplyReader(ctx context.Context, addr string) (*SupplyReader, error) {
 // rationale as clickhouse.NewExplorerReaderAuth (see that function's doc
 // comment). The API binary wires GET /v1/assets/{id}/supply's reader through
 // this constructor with `storage.clickhouse_serving_user` /
-// `clickhouse_serving_password`.
+// `clickhouse_serving_password`. Both empty resolves the environment's
+// identity, exactly as [NewSupplyReader] does.
 func NewSupplyReaderAuth(ctx context.Context, addr, username, password string) (*SupplyReader, error) {
+	auth, err := authOrEnv(username, password)
+	if err != nil {
+		return nil, err
+	}
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr:            []string{addr},
-		Auth:            clickhouse.Auth{Database: "stellar", Username: username, Password: password},
+		Auth:            auth,
 		Settings:        clickhouse.Settings{"max_execution_time": 30},
 		DialTimeout:     10 * time.Second,
 		ReadTimeout:     30 * time.Second,
@@ -358,6 +355,9 @@ type SupplyFlowDay struct {
 	// net redemptions is negative, which is a real reading and not an
 	// error.
 	Net *big.Int
+	// Mint, Burn and Clawback are the day's unsigned per-kind sums. A kind
+	// outside the three is counted in Flows but in none of these, as in Net.
+	Mint, Burn, Clawback *big.Int
 	// Flows counts the events behind Net. A day with a zero Net and a
 	// positive Flows saw mints and burns cancel, which is a different
 	// fact from a day with no flows at all — and the latter has no row
@@ -391,6 +391,9 @@ const supplyFlowsDailyByContractsQuery = `
 			kind = 'mint',                    toInt256(amount),
 			kind IN ('burn', 'clawback'),    -toInt256(amount),
 			toInt256(0)))) AS net,
+		toString(sumIf(toInt256(amount), kind = 'mint'))     AS mint,
+		toString(sumIf(toInt256(amount), kind = 'burn'))     AS burn,
+		toString(sumIf(toInt256(amount), kind = 'clawback')) AS clawback,
 		count() AS flows
 	FROM stellar.supply_flows FINAL
 	WHERE contract_id IN (?)
@@ -440,15 +443,21 @@ func (r *SupplyReader) DailySupplyFlowsForContracts(ctx context.Context, contrac
 			contractID string
 			day        time.Time
 			netS       string
+			mintS      string
+			burnS      string
+			clawbackS  string
 			flows      uint64
 		)
-		if err := rows.Scan(&contractID, &day, &netS, &flows); err != nil {
+		if err := rows.Scan(&contractID, &day, &netS, &mintS, &burnS, &clawbackS, &flows); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan daily supply flow row: %w", err)
 		}
 		out = append(out, SupplyFlowDay{
 			ContractID: contractID,
 			Day:        day.UTC(),
 			Net:        mustBig(netS),
+			Mint:       mustBig(mintS),
+			Burn:       mustBig(burnS),
+			Clawback:   mustBig(clawbackS),
 			Flows:      flows,
 		})
 	}

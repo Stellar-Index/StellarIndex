@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -14,13 +15,15 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	externalcoingecko "github.com/Stellar-Index/StellarIndex/internal/sources/external/coingecko"
 )
 
-// CoinGeckoReference looks up prices via CoinGecko's public
-// /api/v3/simple/price endpoint. Free tier has no API key but a
-// modest rate limit (~30 req/min); the reference is best-effort —
-// transient 429s bubble up as transport failures and the caller
-// just treats this run's CoinGecko response as missing.
+// CoinGeckoReference looks up prices via CoinGecko's
+// /api/v3/simple/price endpoint, authenticating with the same Pro/Demo
+// keys as the ingest poller (keyless requests are heavily 429-throttled).
+// The reference is best-effort — transient 429s bubble up as
+// ErrPriceUnavailable and the caller treats this run's CoinGecko
+// response as missing.
 //
 // The reference batches per-tick lookups: the first LookupQuote in
 // a tick burst issues a single `/simple/price?ids=A,B,C&vs_currencies=usd,eur`
@@ -36,6 +39,9 @@ import (
 type CoinGeckoReference struct {
 	httpClient *http.Client
 	baseURL    string
+	apiKey     string
+	demoAPIKey string
+	logger     *slog.Logger
 
 	// idMap maps canonical asset_id strings to CoinGecko's own
 	// asset slugs (e.g. "native" → "stellar"). Operator-curated;
@@ -90,13 +96,22 @@ type CoinGeckoReference struct {
 
 // CoinGeckoOptions configures [NewCoinGeckoReference].
 type CoinGeckoOptions struct {
-	// HTTPClient — nil falls back to a 10s-timeout client.
+	// HTTPClient — nil falls back to a 10s-timeout client. One without a
+	// CheckRedirect is used with [httpx.KeyedSameOriginRedirect] added.
 	HTTPClient *http.Client
 
-	// BaseURL overrides the API base. Empty defaults to
-	// "https://api.coingecko.com/api/v3". Tests pass an
-	// httptest.Server URL.
+	// BaseURL overrides the API base. Empty defaults to the public host's
+	// /api/v3, or the Pro host's when APIKey is set. An explicit BaseURL
+	// always wins. Tests pass an httptest.Server URL.
 	BaseURL string
+
+	// APIKey (Pro) and DemoAPIKey are sent per
+	// [externalcoingecko.SetAuthHeader]; both empty = keyless.
+	APIKey     string
+	DemoAPIKey string
+
+	// Logger receives the per-batch HTTP-status warning. nil → slog.Default.
+	Logger *slog.Logger
 
 	// IDMap maps canonical asset_id → CoinGecko slug. At minimum
 	// the operator should provide entries for every base asset
@@ -162,15 +177,15 @@ const coinGeckoLastUpdatedKey = "last_updated_at"
 // an entry can be overridden or a new one added, but a default entry
 // cannot be removed by omission — the merge only adds/overrides keys.
 func NewCoinGeckoReference(opts CoinGeckoOptions) *CoinGeckoReference {
-	httpClient := opts.HTTPClient
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 10 * time.Second}
-	}
 	baseURL := opts.BaseURL
 	if baseURL == "" {
-		baseURL = "https://api.coingecko.com/api/v3"
+		baseURL = externalcoingecko.ResolveEndpoint("", opts.APIKey) + "/api/v3"
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 
 	idMap := defaultCoinGeckoIDMap()
 	for k, v := range opts.IDMap {
@@ -194,8 +209,11 @@ func NewCoinGeckoReference(opts CoinGeckoOptions) *CoinGeckoReference {
 	}
 
 	return &CoinGeckoReference{
-		httpClient: httpClient,
+		httpClient: keyedCoinGeckoClient("coingecko", opts.HTTPClient),
 		baseURL:    baseURL,
+		apiKey:     opts.APIKey,
+		demoAPIKey: opts.DemoAPIKey,
+		logger:     logger,
 		idMap:      idMap,
 		quoteMap:   quoteMap,
 		batchTTL:   batchTTL,
@@ -378,6 +396,7 @@ func (c *CoinGeckoReference) fetchBatch(ctx context.Context, ids, quotes []strin
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "stellarindex-divergence/0.1")
+	externalcoingecko.SetAuthHeader(req.Header, c.apiKey, c.demoAPIKey)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -389,6 +408,10 @@ func (c *CoinGeckoReference) fetchBatch(ctx context.Context, ids, quotes []strin
 		return nil, nil, fmt.Errorf("%w: coingecko rate-limited (HTTP 429)", ErrPriceUnavailable)
 	}
 	if resp.StatusCode != http.StatusOK {
+		// The Result outcome only says "error"; the status is what tells an
+		// auth failure from an outage. Path only: the query is not needed.
+		c.logger.Warn("divergence: coingecko batch fetch failed",
+			"status", resp.StatusCode, "path", req.URL.Path)
 		return nil, nil, fmt.Errorf("coingecko: HTTP %d", resp.StatusCode)
 	}
 

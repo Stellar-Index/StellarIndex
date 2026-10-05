@@ -88,19 +88,9 @@ type ContractWasmInfo struct {
 // the captured window — historical deploy-time entries are largely outside the
 // live ledger_entry_changes capture (extract.go G12-03 note).
 func (r *ExplorerReader) ContractWasm(ctx context.Context, contractID string) (ContractWasmInfo, error) {
-	dec, err := strkey.Decode(strkey.VersionByteContract, contractID)
-	if err != nil {
-		return ContractWasmInfo{}, fmt.Errorf("clickhouse: bad contract id %q: %w", contractID, err)
-	}
-	var cidHash xdr.Hash
-	copy(cidHash[:], dec)
-
-	wasmHash, ok, err := r.contractWasmHash(ctx, cidHash)
+	wasmHash, err := r.resolveContractWasmHash(ctx, contractID)
 	if err != nil {
 		return ContractWasmInfo{}, err
-	}
-	if !ok {
-		return ContractWasmInfo{}, ErrContractWasmUnresolved
 	}
 
 	info, err := r.wasmModuleView(ctx, wasmHash)
@@ -109,6 +99,35 @@ func (r *ExplorerReader) ContractWasm(ctx context.Context, contractID string) (C
 	}
 	info.ContractID = contractID
 	return info, nil
+}
+
+// ContractWasmHash is ContractWasm's first hop alone: the contract's CURRENT
+// wasm hash as lower hex, without reading or disassembling the module.
+// Returns ErrContractIsSAC / ErrContractWasmUnresolved exactly as ContractWasm.
+func (r *ExplorerReader) ContractWasmHash(ctx context.Context, contractID string) (string, error) {
+	h, err := r.resolveContractWasmHash(ctx, contractID)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h[:]), nil
+}
+
+func (r *ExplorerReader) resolveContractWasmHash(ctx context.Context, contractID string) (xdr.Hash, error) {
+	dec, err := strkey.Decode(strkey.VersionByteContract, contractID)
+	if err != nil {
+		return xdr.Hash{}, fmt.Errorf("clickhouse: bad contract id %q: %w", contractID, err)
+	}
+	var cidHash xdr.Hash
+	copy(cidHash[:], dec)
+
+	wasmHash, ok, err := r.contractWasmHash(ctx, cidHash)
+	if err != nil {
+		return xdr.Hash{}, err
+	}
+	if !ok {
+		return xdr.Hash{}, ErrContractWasmUnresolved
+	}
+	return wasmHash, nil
 }
 
 // wasmModuleFlightTimeout bounds one shared per-hash fill: the code read plus
@@ -388,13 +407,107 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 	// be served as an authoritative "never upgraded"; only a NON-EMPTY
 	// result is trusted, exactly like contractWasmHashIndexed's ok=false
 	// miss falling through to the legacy read.
+	// A contract that does have index rows (a SAC: no wasm rows) is covered,
+	// so its empty timeline is authoritative and skips the legacy scan.
 	if r.instanceChangesIndexAvailable(ctx) {
-		out, err := r.contractCodeHistoryIndexed(ctx, cidHash)
+		out, _, err := r.contractCodeHistoryIndexed(ctx, cidHash)
 		if err != nil || len(out) > 0 {
 			return out, err
 		}
+		indexed, err := r.contractInInstanceIndex(ctx, cidHash)
+		if err != nil || indexed {
+			return nil, err
+		}
+		// A genesis-complete index makes the miss authoritative: the
+		// timeline is read from ledger 1, so skip the key_xdr scan.
+		if r.instanceGenesisCovers(ctx, 1) {
+			return nil, nil
+		}
 	}
 	return r.contractCodeHistoryLegacy(ctx, cidHash)
+}
+
+// ErrInstanceHistoryIncomplete: contract_instance_changes carries no
+// genesis-complete watermark, so no timeline read from it can prove which
+// WASM ran at a historical ledger.
+var ErrInstanceHistoryIncomplete = errors.New("clickhouse: contract_instance_changes genesis watermark missing: run stellarindex-ops ch-instance-backfill to completion")
+
+// ErrCodeHistoryTruncated: the timeline hit contractCodeHistoryMaxRows,
+// which drops the OLDEST versions.
+var ErrCodeHistoryTruncated = errors.New("clickhouse: contract code history truncated at the row cap (oldest versions dropped)")
+
+// ReplayCodeHistory is ContractCodeHistory for the replay WASM gate: it reads
+// only the genesis-complete instance index and never answers an unproven
+// timeline. ErrInstanceHistoryIncomplete without the watermark, ErrContractIsSAC
+// for a SAC, ErrContractWasmUnresolved for a contract with no instance rows,
+// ErrCodeHistoryTruncated at the row cap.
+func (r *ExplorerReader) ReplayCodeHistory(ctx context.Context, contractID string) ([]ContractCodeVersion, error) {
+	dec, err := strkey.Decode(strkey.VersionByteContract, contractID)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: bad contract id %q: %w", contractID, err)
+	}
+	var cid xdr.Hash
+	copy(cid[:], dec)
+
+	wm, err := r.instanceGenesisWatermark(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: read instance genesis watermark: %w", err)
+	}
+	if wm == 0 {
+		return nil, ErrInstanceHistoryIncomplete
+	}
+	out, truncated, err := r.contractCodeHistoryIndexed(ctx, cid)
+	switch {
+	case err != nil:
+		return nil, err
+	case truncated:
+		return nil, ErrCodeHistoryTruncated
+	case len(out) > 0:
+		return out, nil
+	}
+	if _, _, err := r.contractWasmHashIndexed(ctx, cid); err != nil {
+		return nil, err // ErrContractIsSAC included
+	}
+	return nil, ErrContractWasmUnresolved
+}
+
+// instanceGenesisWatermarkQuery is shared by the reader and the writer.
+const instanceGenesisWatermarkQuery = `SELECT max(thru_ledger) FROM stellar.entry_history_watermark WHERE name = ?`
+
+// instanceGenesisWatermark is the genesis-complete thru_ledger
+// ch-instance-backfill recorded, 0 when absent.
+func (r *ExplorerReader) instanceGenesisWatermark(ctx context.Context) (uint32, error) {
+	var wm uint32
+	err := r.conn.QueryRow(ctx, instanceGenesisWatermarkQuery, ContractInstanceChangesTable).Scan(&wm)
+	return wm, err
+}
+
+// instanceGenesisCovers reports whether ch-instance-backfill recorded a
+// genesis-complete watermark at or above ledger. Absent, unreadable or lower
+// all answer false, so the caller keeps its scan.
+func (r *ExplorerReader) instanceGenesisCovers(ctx context.Context, ledger uint32) bool {
+	wm, err := r.instanceGenesisWatermark(ctx)
+	return err == nil && wm > 0 && ledger <= wm
+}
+
+// contractInInstanceIndexQuery names only the primary-key prefix, so it
+// serves both key shapes.
+const contractInInstanceIndexQuery = `SELECT 1 FROM stellar.contract_instance_changes
+		  WHERE contract_hash = ?
+		  LIMIT 1`
+
+// contractInInstanceIndex reports whether the instance index holds any row
+// for the contract, i.e. the backfill has reached it.
+func (r *ExplorerReader) contractInInstanceIndex(ctx context.Context, cid xdr.Hash) (bool, error) {
+	rows, err := r.conn.Query(ctx, contractInInstanceIndexQuery, hex.EncodeToString(cid[:]))
+	if err != nil {
+		return false, fmt.Errorf("clickhouse: instance index presence: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	if rows.Next() {
+		return true, nil
+	}
+	return false, rows.Err()
 }
 
 // contractCodeHistoryLegacy is ContractCodeHistory's scan over the changes
@@ -449,33 +562,52 @@ func (r *ExplorerReader) contractCodeHistoryLegacy(ctx context.Context, cidHash 
 
 // contractCodeHistoryIndexedQuery reads the keyed instance-executable
 // timeline (deploy/clickhouse/contract_instance_changes.sql). The
-// contract_hash predicate is the table's primary-key prefix, ascending
-// order matches the collapse loop, and the same newest-preserving cap as
-// the legacy scan bounds pathological instance-storage churn: the inner
-// select keeps the NEWEST rows, the outer re-sorts ascending.
+// contract_hash predicate is the table's primary-key prefix.
+//
+// Consecutive identical executables are collapsed SERVER-side (lagInFrame
+// over the full ordered timeline) BEFORE the cap, so the cap bounds the
+// number of executable CHANGES returned rather than raw instance writes:
+// a contract that rewrites its instance storage tens of thousands of times
+// keeps every executable it ever pointed at, including A->B->A. The cap
+// stays as a newest-preserving backstop on pathological upgrade churn: the
+// middle select keeps the NEWEST changes, the outer re-sorts ascending.
+// The window ORDER BY deliberately omits ASC so the shape stays distinct
+// from the outer re-sort.
 //
 // change_index restarts per TRANSACTION, so it cannot order two
 // transactions' writes in one ledger; intra_ledger_seq (the per-LEDGER walk
 // position) does, and change_index then only breaks ties inside one tx and
 // on legacy rows whose intra_ledger_seq is still 0.
 const contractCodeHistoryIndexedQuery = `SELECT ledger_seq, close_time, wasm_hash FROM (
-			SELECT ledger_seq, close_time, wasm_hash, intra_ledger_seq, change_index
-			FROM stellar.contract_instance_changes
-			WHERE contract_hash = ? AND is_sac = 0 AND wasm_hash != ''
+			SELECT ledger_seq, close_time, wasm_hash, intra_ledger_seq, change_index FROM (
+				SELECT ledger_seq, close_time, wasm_hash, intra_ledger_seq, change_index,
+					lagInFrame(wasm_hash, 1, '') OVER (
+						ORDER BY ledger_seq, intra_ledger_seq, change_index
+						ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS prev_hash
+				FROM stellar.contract_instance_changes
+				WHERE contract_hash = ? AND is_sac = 0 AND wasm_hash != ''
+			)
+			WHERE wasm_hash != prev_hash
 			ORDER BY ledger_seq DESC, intra_ledger_seq DESC, change_index DESC
 			LIMIT ?
-		) ORDER BY ledger_seq ASC, intra_ledger_seq ASC, change_index ASC`
+		) ORDER BY ledger_seq ASC, intra_ledger_seq ASC, change_index ASC` + explorerScanSettings
 
 // contractCodeHistoryIndexedQueryOldKey serves a table still on the
 // pre-intra_ledger_seq shape (instanceChangesTxKeyed false) until its
 // rebuild cut-over.
 const contractCodeHistoryIndexedQueryOldKey = `SELECT ledger_seq, close_time, wasm_hash FROM (
-			SELECT ledger_seq, close_time, wasm_hash, change_index
-			FROM stellar.contract_instance_changes
-			WHERE contract_hash = ? AND is_sac = 0 AND wasm_hash != ''
+			SELECT ledger_seq, close_time, wasm_hash, change_index FROM (
+				SELECT ledger_seq, close_time, wasm_hash, change_index,
+					lagInFrame(wasm_hash, 1, '') OVER (
+						ORDER BY ledger_seq, change_index
+						ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS prev_hash
+				FROM stellar.contract_instance_changes
+				WHERE contract_hash = ? AND is_sac = 0 AND wasm_hash != ''
+			)
+			WHERE wasm_hash != prev_hash
 			ORDER BY ledger_seq DESC, change_index DESC
 			LIMIT ?
-		) ORDER BY ledger_seq ASC, change_index ASC`
+		) ORDER BY ledger_seq ASC, change_index ASC` + explorerScanSettings
 
 // contractWasmHashIndexedQuery reads the ledger-final instance write; the
 // order is contractCodeHistoryIndexedQuery's, newest first.
@@ -491,30 +623,32 @@ const contractWasmHashIndexedQueryOldKey = `SELECT is_sac, wasm_hash FROM stella
 
 // contractCodeHistoryIndexed is ContractCodeHistory's fast path over the
 // keyed index: no XDR decode (the MV/backfill already extracted the
-// executable verdict), collapse of consecutive identical hashes in Go —
-// which also absorbs RMT pre-merge duplicate keys, since a duplicate row
-// carries the same hash as its neighbour.
-func (r *ExplorerReader) contractCodeHistoryIndexed(ctx context.Context, cid xdr.Hash) ([]ContractCodeVersion, error) {
+// executable verdict). The SQL collapses consecutive identical hashes; the
+// Go loop re-checks the boundary so RMT pre-merge duplicate keys, which
+// carry the same hash as their neighbour, can never surface twice.
+func (r *ExplorerReader) contractCodeHistoryIndexed(ctx context.Context, cid xdr.Hash) ([]ContractCodeVersion, bool, error) {
 	q := contractCodeHistoryIndexedQuery
 	if !r.instanceChangesTxKeyed(ctx) {
 		q = contractCodeHistoryIndexedQueryOldKey
 	}
 	rows, err := r.conn.Query(ctx, q, hex.EncodeToString(cid[:]), contractCodeHistoryMaxRows)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: contract code history (indexed): %w", err)
+		return nil, false, fmt.Errorf("clickhouse: contract code history (indexed): %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	var out []ContractCodeVersion
 	var lastHash string
+	n := 0
 	for rows.Next() {
+		n++
 		var (
 			seq       uint32
 			closeTime time.Time
 			h         string
 		)
 		if err := rows.Scan(&seq, &closeTime, &h); err != nil {
-			return nil, fmt.Errorf("clickhouse: scan code history (indexed): %w", err)
+			return nil, false, fmt.Errorf("clickhouse: scan code history (indexed): %w", err)
 		}
 		if h == lastHash {
 			continue // unchanged executable — not an upgrade
@@ -522,7 +656,7 @@ func (r *ExplorerReader) contractCodeHistoryIndexed(ctx context.Context, cid xdr
 		lastHash = h
 		out = append(out, ContractCodeVersion{Ledger: seq, CloseTime: closeTime, WasmHash: h})
 	}
-	return out, rows.Err()
+	return out, n >= contractCodeHistoryMaxRows, rows.Err()
 }
 
 // contractWasmHashIndexed resolves the current executable from the

@@ -106,6 +106,21 @@ describe('StatusPageClient measurement tiles', () => {
     expect(screen.queryByText('/ 0')).not.toBeInTheDocument();
   });
 
+  it('renders — for active sources when freshness_status is unknown', async () => {
+    mockStatus(
+      statusPayload({
+        freshness: { active_sources: 0, total_sources: 17 },
+        freshness_status: 'unknown',
+      }),
+    );
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByText('Active sources')).toBeInTheDocument(),
+    );
+    expect(screen.queryByText('/ 17')).not.toBeInTheDocument();
+  });
+
   it('renders the served measurements when they are present', async () => {
     mockStatus(
       statusPayload({
@@ -875,5 +890,15 @@ describe('StatusPageClient incident history postmortem link', () => {
       postmortem: 'docs/operations/postmortems/2026-09-19-x.md',
     });
     await screen.findByText(/Read full postmortem/i);
+  });
+
+  it('bounds the /v1/incidents request with an abort signal', async () => {
+    renderWithSeed({});
+    await screen.findByText('partial pricing outage');
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const call = fetchMock.mock.calls.find(([u]) =>
+      String(u).includes('/v1/incidents'),
+    );
+    expect(call?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 });

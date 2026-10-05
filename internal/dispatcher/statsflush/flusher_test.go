@@ -231,6 +231,41 @@ func TestFlushAt_PromotesDispatcherCountersToPrometheus(t *testing.T) {
 	}
 }
 
+// TestFlushAt_PromotesEvictedKeysUnreadable pins that a ledger whose
+// evicted-key list failed to read reaches the alertable counter and the WARN
+// exactly once, and that a second tick at the same total adds nothing.
+func TestFlushAt_PromotesEvictedKeysUnreadable(t *testing.T) {
+	before := testutil.ToFloat64(obs.DispatcherEvictedKeysUnreadableTotal)
+	src := &stubStatsSource{stats: dispatcher.Stats{EvictedKeysUnreadable: 2}}
+	var buf bytes.Buffer
+	f := New(src, &fakeStatsWriter{}, slog.New(slog.NewTextHandler(&buf, nil)), Options{Interval: 5 * time.Minute})
+
+	f.flushAt(context.Background(), time.Now())
+	f.flushAt(context.Background(), time.Now())
+
+	if got := testutil.ToFloat64(obs.DispatcherEvictedKeysUnreadableTotal) - before; got != 2 {
+		t.Errorf("DispatcherEvictedKeysUnreadableTotal delta = %v, want 2", got)
+	}
+	if n := strings.Count(buf.String(), "evicted ledger keys unreadable"); n != 1 {
+		t.Errorf("WARN emitted %d times over two ticks at the same total, want 1\nfull log: %s", n, buf.String())
+	}
+}
+
+// TestFlushAt_PromotesLedgerUpgradeEntries pins that upgrade entries reach
+// the counter once, and a second tick at the same total adds nothing.
+func TestFlushAt_PromotesLedgerUpgradeEntries(t *testing.T) {
+	before := testutil.ToFloat64(obs.DispatcherLedgerUpgradeEntriesTotal)
+	src := &stubStatsSource{stats: dispatcher.Stats{LedgerUpgradeEntries: 3}}
+	f := New(src, &fakeStatsWriter{}, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)), Options{Interval: 5 * time.Minute})
+
+	f.flushAt(context.Background(), time.Now())
+	f.flushAt(context.Background(), time.Now())
+
+	if got := testutil.ToFloat64(obs.DispatcherLedgerUpgradeEntriesTotal) - before; got != 3 {
+		t.Errorf("DispatcherLedgerUpgradeEntriesTotal delta = %v, want 3", got)
+	}
+}
+
 // TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch is the
 // regression test for T110/RLT-135: the end-of-flush snapshot used to
 // omit EntryMetaUnsupported, so f.last.EntryMetaUnsupported stayed 0

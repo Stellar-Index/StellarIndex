@@ -3,7 +3,8 @@
 # preflight-deploy.sh's config-apply baseline must be the lowest version
 # across EVERY deployed-versions sidecar on the host, exactly as
 # deploy.yml's "Capture the host's live version" step computes it —
-# not just the binaries this region's manifest currently deploys.
+# not just the binaries this region's manifest currently deploys. It also
+# pins the migration follow-up gate preview and --followups-ack.
 #
 # A binary excluded from a region's deployable set (unit disabled/masked)
 # can still carry a sidecar from an earlier deploy. Scoping the baseline
@@ -159,6 +160,34 @@ assert_contains "an outstanding decision is reported rather than a false green" 
     "$out" "DECISION NEEDED"
 if [ "$rc" -eq 0 ]; then
     echo "FAIL: exit 0 — a false green: the config drift the gate would still fail on was not reported" >&2
+    fail=1
+fi
+
+# A release adding a migration with a REQUIRED-FOLLOWUP line must block the
+# preflight exactly as deploy.yml's follow-up gate blocks the dispatch, and
+# --followups-ack must carry the acknowledgement into the printed dispatch.
+cp "$PWD/scripts/ci/migration-followup-gate.sh" "$TMP/scripts/ci/migration-followup-gate.sh"
+printf '%s\n' '-- REQUIRED-FOLLOWUP: stellarindex-ops projector-replay -source cctp -from 1 -write' \
+    'DELETE FROM cctp_events;' > "$TMP/migrations/0002_disarm.up.sql"
+git -C "$TMP" add scripts/ci/migration-followup-gate.sh migrations/0002_disarm.up.sql
+git -C "$TMP" commit -q -m v0.4.0
+git -C "$TMP" tag v0.4.0
+
+out="$(PATH="$TMP/bin:$PATH" "$TMP/scripts/dev/preflight-deploy.sh" --region testnet --version v0.4.0 2>&1)"
+assert_contains "the follow-up gate lists the declared command" \
+    "$out" "0002_disarm.up.sql: stellarindex-ops projector-replay -source cctp -from 1 -write"
+assert_contains "an unacknowledged follow-up is an outstanding decision" \
+    "$out" "DECISION NEEDED: this range declares REQUIRED-FOLLOWUP command(s)"
+if grep -qF -- "followups_acknowledged=true" <<<"$(sed -n '/^gh workflow run/,$p' <<<"$out")"; then
+    echo "FAIL: the dispatch carries followups_acknowledged without --followups-ack" >&2
+    fail=1
+fi
+
+out="$(PATH="$TMP/bin:$PATH" "$TMP/scripts/dev/preflight-deploy.sh" --region testnet --version v0.4.0 --followups-ack 2>&1)"
+assert_contains "--followups-ack puts the acknowledgement in the dispatch" \
+    "$out" "  -f followups_acknowledged=true"
+if grep -qF -- "REQUIRED-FOLLOWUP command(s) —" <<<"$out"; then
+    echo "FAIL: --followups-ack still reports the follow-up as outstanding" >&2
     fail=1
 fi
 

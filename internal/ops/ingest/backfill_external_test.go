@@ -161,7 +161,9 @@ func TestInsertBackfilledTrades_Batches(t *testing.T) {
 // still count such a row as skipped and exit non-zero.
 func TestInsertBackfilledTrades_InvalidRowIsNotSilentlyDropped(t *testing.T) {
 	trades := storableTrades(t, 3)
+	// One zero leg is an admitted fill since 0191; both zero is still invalid.
 	trades[1].BaseAmount = canonical.NewAmount(big.NewInt(0))
+	trades[1].QuoteAmount = canonical.NewAmount(big.NewInt(0))
 	store := &fakeTradeInserter{fail: map[string]error{trades[1].TxHash: canonical.ErrInvalidTrade}}
 
 	err := insertBackfilledTrades(context.Background(), store, trades, 0, io.Discard, time.Now())
@@ -424,4 +426,56 @@ func TestWalkedTo(t *testing.T) {
 	if got, want := walkedTo(to, high, true), high.Add(time.Microsecond); !got.Equal(want) {
 		t.Errorf("partial walk: %v, want %v", got, want)
 	}
+}
+
+// TestDropUnsettledCandles: a candle trade is stamped at its bar's last
+// instant, so only bars that ended by min(-to, now) may be written. The
+// venue's open bar and binance's inclusive-endTime bar (open == -to) must
+// not reach trades, at second (kraken/coinbase/bitstamp) or millisecond
+// (binance) stamp resolution.
+func TestDropUnsettledCandles(t *testing.T) {
+	to := time.Date(2026, 9, 1, 6, 0, 0, 0, time.UTC)
+	barEnd := func(open time.Time, res time.Duration) time.Time { return open.Add(time.Hour - res) }
+
+	for _, res := range []time.Duration{time.Second, time.Millisecond} {
+		t.Run(res.String(), func(t *testing.T) {
+			historical := []canonical.Trade{
+				tradeAt("04:00", barEnd(to.Add(-2*time.Hour), res)),
+				tradeAt("05:00", barEnd(to.Add(-time.Hour), res)),
+				tradeAt("06:00-open-eq-to", barEnd(to, res)),
+			}
+			got, dropped := dropUnsettledCandles(historical, to, to.Add(24*time.Hour))
+			if dropped != 1 || len(got) != 2 || got[1].TxHash != "05:00" {
+				t.Fatalf("historical -to: kept %v dropped %d, want [04:00 05:00] and 1 dropped", txHashes(got), dropped)
+			}
+
+			// -to beyond now: the bar that opened at `to` is still in progress.
+			live := []canonical.Trade{
+				tradeAt("05:00", barEnd(to.Add(-time.Hour), res)),
+				tradeAt("06:00-in-progress", barEnd(to, res)),
+			}
+			got, dropped = dropUnsettledCandles(live, to.Add(48*time.Hour), to.Add(30*time.Minute))
+			if dropped != 1 || len(got) != 1 || got[0].TxHash != "05:00" {
+				t.Fatalf("-to past now: kept %v dropped %d, want [05:00]", txHashes(got), dropped)
+			}
+
+			// A bar ending exactly at now has closed; 1ms earlier it has not.
+			bar := []canonical.Trade{tradeAt("05:00", barEnd(to.Add(-time.Hour), res))}
+			if got, _ := dropUnsettledCandles(bar, to.Add(time.Hour), to); len(got) != 1 {
+				t.Fatalf("bar ending at now was dropped")
+			}
+			bar = []canonical.Trade{tradeAt("05:00", barEnd(to.Add(-time.Hour), res))}
+			if got, _ := dropUnsettledCandles(bar, to.Add(time.Hour), to.Add(-time.Millisecond)); len(got) != 0 {
+				t.Fatalf("bar kept %v before it closed", txHashes(got))
+			}
+		})
+	}
+}
+
+func txHashes(trades []canonical.Trade) []string {
+	out := make([]string, 0, len(trades))
+	for _, tr := range trades {
+		out = append(out, tr.TxHash)
+	}
+	return out
 }

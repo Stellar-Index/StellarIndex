@@ -201,6 +201,33 @@ func TestAssetMetadata_PathPrefix(t *testing.T) {
 	}
 }
 
+// TestAssetSupplyFlows_DecodesDecimalStrings — path suffix and string
+// amounts survive a round-trip (ADR-0003).
+func TestAssetSupplyFlows_DecodesDecimalStrings(t *testing.T) {
+	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		want := "/v1/assets/USDC-GA5Z.../supply/flows"
+		if r.URL.Path != want {
+			t.Errorf("path = %q, want %q", r.URL.Path, want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"asset_id":"USDC-GA5Z...","contract_id":"CABC","days":[{"day":"2026-09-01","mint":"340282366920938463463374607431768211455","burn":"4","clawback":"0","net":"340282366920938463463374607431768211451","flows":412}],"history_incomplete":false,"as_of_ledger":63340102},"as_of":"2026-09-02T00:00:05Z","flags":{}}`))
+	})
+	got, err := c.AssetSupplyFlows(context.Background(), "USDC-GA5Z...")
+	if err != nil {
+		t.Fatalf("AssetSupplyFlows: %v", err)
+	}
+	d := got.Data
+	if len(d.Days) != 1 || d.Days[0].Mint != "340282366920938463463374607431768211455" || d.Days[0].Flows != 412 {
+		t.Errorf("days = %+v", d.Days)
+	}
+	if d.AsOfLedger == nil || *d.AsOfLedger != 63340102 || d.HistoryIncomplete {
+		t.Errorf("as_of_ledger/history_incomplete = %v/%v", d.AsOfLedger, d.HistoryIncomplete)
+	}
+	if _, err := c.AssetSupplyFlows(context.Background(), ""); err == nil {
+		t.Error("empty asset id: want error")
+	}
+}
+
 // TestMe_PathOnly — Me has no parameters; just a path round-trip.
 func TestMe_PathOnly(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -647,6 +674,38 @@ func TestHistory_HappyPath(t *testing.T) {
 	}
 }
 
+// A zero-leg row decodes "price": null to a nil Price, distinct from a
+// priced row; neither decodes to an empty string.
+func TestHistory_NullPriceDecodesToNil(t *testing.T) {
+	_, c := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": [
+				{"source":"sdex","ledger":50000000,"tx_hash":"abc","op_index":0,"ts":"2026-04-28T09:30:00Z","base_asset":"native","quote_asset":"fiat:USD","base_amount":"5000000000","quote_amount":"0","price":null},
+				{"source":"sdex","ledger":50000001,"tx_hash":"def","op_index":0,"ts":"2026-04-28T09:31:00Z","base_asset":"native","quote_asset":"fiat:USD","base_amount":"10000000","quote_amount":"700000","price":"0.0700000000"}
+			],
+			"as_of": "2026-04-28T10:00:00Z",
+			"flags": {}
+		}`))
+	})
+	got, err := c.History(context.Background(), client.HistoryRangeQuery{
+		Base: "native", Quote: "fiat:USD",
+		From: time.Date(2026, 4, 28, 9, 0, 0, 0, time.UTC), To: time.Date(2026, 4, 28, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(got.Data) != 2 {
+		t.Fatalf("len(Data) = %d, want 2", len(got.Data))
+	}
+	if got.Data[0].Price != nil {
+		t.Errorf("Data[0].Price = %q, want nil for a null price", *got.Data[0].Price)
+	}
+	if got.Data[1].Price == nil || *got.Data[1].Price != "0.0700000000" {
+		t.Errorf("Data[1].Price = %v, want 0.0700000000", got.Data[1].Price)
+	}
+}
+
 // TestHistory_PaginationCarriesCursor — cursor walks forward.
 // Pinned because the cursor field is the SDK's main value-add
 // over a hand-rolled query string for multi-page exports.
@@ -1014,9 +1073,8 @@ func TestRevokeKey_EmptyKeyID(t *testing.T) {
 	}
 }
 
-// TestRevokeKey_404 — server says the key doesn't exist (or was
-// already revoked); SDK surfaces it as *APIError so callers can
-// branch on the status without parsing the message.
+// TestRevokeKey_404 — the SDK maps an error status to *APIError so
+// callers can branch on the status without parsing the message.
 func TestRevokeKey_404(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/problem+json")
@@ -1068,8 +1126,8 @@ func TestStatus_HappyPath(t *testing.T) {
 	if got.Data.Latency.P95Ms != 89.1 {
 		t.Errorf("P95Ms = %v", got.Data.Latency.P95Ms)
 	}
-	if got.Data.Freshness.ActiveSources != 13 {
-		t.Errorf("ActiveSources = %d", got.Data.Freshness.ActiveSources)
+	if got.Data.Freshness.ActiveSources == nil || *got.Data.Freshness.ActiveSources != 13 {
+		t.Errorf("ActiveSources = %v", got.Data.Freshness.ActiveSources)
 	}
 }
 

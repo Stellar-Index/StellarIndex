@@ -196,17 +196,9 @@ func (c *CachedAssetsReader) GetAssetsPriceHistory7dBatch(ctx context.Context, a
 	})
 }
 
-// GetAssetsATHBatch — cached. ATH can change on every new high but
-// per-request cost is the same as the histories so 30s freshness
-// is plenty.
+// GetAssetsATHBatch passes through uncached: no handler serves it on a
+// hot path, so a cache would add a fetcher type for no measured win.
 func (c *CachedAssetsReader) GetAssetsATHBatch(ctx context.Context, assetIDs []string) (map[string]timescale.AssetATH, error) {
-	if c.ttl <= 0 {
-		return c.upstream.GetAssetsATHBatch(ctx, assetIDs)
-	}
-	// Pass-through for now — the upstream is fast enough that the
-	// cost / complexity tradeoff doesn't yet justify a third
-	// fetcher type. Plumbed here so an operator can flip it on
-	// without changing the interface.
 	return c.upstream.GetAssetsATHBatch(ctx, assetIDs)
 }
 
@@ -217,7 +209,7 @@ func (c *CachedAssetsReader) GetAssetsATHBatch(ctx context.Context, assetIDs []s
 // fans out ~9 of these per request and GetAssetByAssetID /
 // GetNativeAssetRow run the whole-asset-universe listAssetsBaseSelect
 // query (~13s under load), with GetAssetTradeCount24h /
-// GetAssetMarketsCount adding multi-second trades-OR scans (#24).
+// GetAssetMarketsCount adding multi-second trades-OR scans (385d564e8).
 // SWR moves all of that off the request path with zero correctness
 // loss (serve stale instantly, single-flighted background refresh).
 
@@ -528,7 +520,7 @@ func (c *CachedAssetsReader) fetchRowsAt(
 	// refresh is already running, kick exactly one in the
 	// background. Concurrent callers during the refresh also get
 	// stale — nobody ever waits on the upstream call. This is the
-	// entire fix for #22: the expiry refetch (~seconds on the
+	// entire fix for ba0374697: the expiry refetch (~seconds on the
 	// listing aggregate) must never land on a user request.
 	if ok && !e.at.IsZero() {
 		stale, staleAt := e.rows, e.at

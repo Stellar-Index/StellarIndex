@@ -200,6 +200,29 @@ own workstream** (a small, replicated/shared control-plane Postgres — logical
 replication or a managed global store — separate from the pricing/lake data path).
 Until it lands, only *anonymous* traffic fails over cleanly.
 
+### 3d. Rate limit and monthly quota — **counted per region (open decision)**
+Both limits count in the serving region's local Redis, keyed per principal with no
+region dimension: the rate limit (`internal/api/v1/middleware/ratelimit.go`) and the
+monthly quota's month-to-date read (`internal/api/v1/middleware/monthly_quota.go`).
+Active/active therefore makes the effective global ceiling **N regions × the limit**:
+a caller spread across three regions gets 3× its rate limit and 3× its monthly quota.
+The fail-closed dwell is per region too — one region's Redis outage 429s only there.
+
+With one serving region N = 1 and the published limits are exact. The mitigation is
+an **open decision** (ADR-0050 amendment), due before a second region serves
+authenticated traffic — which §3c already gates. Options:
+- **Publish the limits as per-region.** No code; the tier docs and the 429 body must
+  say "per region", or the number we publish is not the number we enforce.
+- **Configure limit ÷ N in each region.** Keeps the global ceiling, but a failover
+  that concentrates a caller on one region cuts them to 1/N of their tier exactly
+  when they need it.
+- **Reconcile the monthly quota through the replicated control plane (§3c).** Each
+  region flushes month-to-date increments there and reads the global total with
+  bounded lag; overshoot is at most N × one reconciliation interval of traffic. The
+  rate limit stays per region.
+- **Rejected for the rate limit: a synchronous cross-region counter.** It puts a
+  cross-region round trip on every request and breaks the §3a invariant.
+
 ## 4. Per-region shapes (amends ADR-0016)
 
 | | **R1 — Falkenstein (FSN1) / Hetzner** | **R2 — US / Vultr** | **R3 — Singapore / Vultr** |
@@ -220,40 +243,28 @@ proxies); provider concentration is acceptable because the *primary* (R1) stays 
 independent provider. OVH-US is the drop-in alternative if more provider diversity is
 wanted.
 
-## 5. Data durability & recovery — the raw archive is the crown jewel
+## 5. Data durability & recovery
 
-- **Source of truth = the raw galexie-archive** (≈ 3.1 TB / 2.8 TiB on R1 today; ~5 TiB
-  genesis→tip once the middle-range pull below lands). The 14.6 TiB ClickHouse lake and
-  the pricing DB are **derived projections** — re-derivable from the archive by
-  re-ingest. ADR-0043 §2.4 still backs the lake up, for RTO rather than durability.
-- **⚠️ CORRECTED (2026-08-21 gap-scan): our local archive is NOT full-history.** R1's
-  MinIO holds the genesis chunk + `[49984000, tip]` (~14M ledgers); the middle
-  `[64000, 49983999]` (~50M ledgers, ~2.3 TiB) was deliberately capacity-trimmed and is
-  reachable today **only through `aws-public-blockchain`** (ADR-0027 cold tier), with SDF
-  `history.stellar.org` as the canonical upstream. So until the off-site copy below is
-  built **including a one-time pull of that middle range**, deep-history recovery DOES
-  depend on AWS's Open Data program — the exact exposure this section exists to close.
-- **The gap:** our archive sits on R1's single ZFS pool (SPOF). **Fix: replicate it
-  off-site to provider-independent storage (Backblaze B2, decided 2026-09-27)** — cheap
-  because it's the ≈ 3.1 TB *input*, not the 14.6 TiB (≈ 16.1 TB) output. This makes us independent
-  of both AWS's Open Data program and R1's survival.
-- **Two off-site artifacts, two RTOs** — this reconciles ADR-0043 (which rejected a full
-  CH backup as the *primary* strategy) with `off-site-backup-plan.md` (which correctly
-  argued the re-derive RTO is too slow for a production API):
-  1. **Raw galexie-archive, FULL genesis→tip (~5 TiB, Backblaze B2)** — the ultimate,
-     provider-independent source of truth. Built from R1's local archive (genesis chunk +
-     [49984000, tip], ≈ 2.8 TiB) **plus a one-time pull of the capacity-trimmed middle
-     [64000, 49983999] (~2.3 TiB) from `aws-public-blockchain`**, integrity-checkable
-     against SDF checkpoints. Until that pull lands, we are NOT AWS-independent for deep
-     history (gap-scan 2026-08-21). Re-ingest from it (~1–2 week walk) is the
-     **last-resort** recovery and the region-bootstrap path.
-  2. **Derived lake backup (14.6 TiB ≈ 16.1 TB, Hetzner Storage Box BX41, decided
-     2026-09-27)** — the ADR-0043 §2.4 `ch-lake-backup` chain, a **fast-RTO restore
-     source**: restoring CH parts is hours, not the weeks a full re-ingest takes. A Storage
-     Box is not queryable object storage, so this copy does **not** double as the §3b
-     serving fallback; that needs its own S3-compatible copy when multi-region resumes.
-     Wiring constraints (no S3 API, 20 TB vs a rolling full) and the full sizing are in
-     [`off-site-backup-plan.md`](../operations/off-site-backup-plan.md#provider).
+> **Amended 2026-10-02.** The raw galexie-archive is **not** mirrored off-site; the
+> "crown jewel" framing and the two-artifact plan below are superseded. The archive is a
+> copy of SDF's public dataset (`s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`)
+> and is re-pulled from there (ADR-0043 §2 amendment 2026-08-29: accept the dependency,
+> do not duplicate public data). Off-site copies are the ClickHouse lake and Postgres on
+> B2. `galexie_archive_mirror_enabled` is false by default.
+
+- **Source of truth = the raw galexie-archive** (≈ 3.1 TB / 2.8 TiB on R1 today), re-pullable
+  from the public dataset. The 14.6 TiB ClickHouse lake and the pricing DB are **derived
+  projections** — re-derivable from the archive by re-ingest. ADR-0043 §2.4 still backs the
+  lake up, for RTO rather than durability.
+- **Local archive is NOT full-history** (2026-08-21 gap-scan): R1's MinIO holds the genesis
+  chunk + `[49984000, tip]`; the middle `[64000, 49983999]` (~2.3 TiB) was capacity-trimmed
+  and is reachable only through `aws-public-blockchain` (ADR-0027 cold tier), with SDF
+  `history.stellar.org` as the canonical upstream. Deep-history recovery therefore depends
+  on that dataset, monitored weekly by `public-dataset-check.yml`.
+- **Off-site artifacts (B2 / BX41):** Postgres via pgBackRest repo2, and the derived lake via
+  `ch-lake-backup` (Hetzner Storage Box BX41), a fast-RTO restore source: hours, not the
+  weeks a full re-ingest takes. Wiring constraints are in
+  [`off-site-backup-plan.md`](../operations/off-site-backup-plan.md#provider).
 - **Prerequisite verification:** run a completeness/gap scan on the archive
   (genesis→tip, no missing ledger ranges) before trusting it as the sole rebuild source.
 
@@ -279,15 +290,14 @@ wanted.
 
 ## 7. Prerequisite workstreams (nothing multi-region lands before these)
 
-1. **Off-site raw-archive DR** (§5) — the crown-jewel copy on Backblaze B2. Also the
-   region-bootstrap source. Fold into ADR-0043's offsite-repo2 work.
+1. **Off-site DR** (§5) — the raw-archive mirror is retired (2026-10-02); the archive is
+   re-pulled from SDF's public bucket.
    **Partly shipped (2026-08-29):** the *Postgres* half is done — pgBackRest `repo2` is an
    encrypted off-site S3 repo, backed up nightly per repo and alerted on staleness
    (`deploy/monitoring/rules/backup-offsite.yml` → `stellarindex_backup_offsite_stale`;
    the repo2 gate is `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:132`).
-   The *raw-archive / lake* half is still open: `galexie-archive-mirror` (→ B2) and
-   `ch-lake-backup` (→ BX41) are committed but back nothing up until their targets exist,
-   so ClickHouse still has no data backup.
+   The *lake* half is still open: `ch-lake-backup` (→ BX41) is committed but backs nothing
+   up until its target exists, so ClickHouse still has no data backup.
 2. **Determinism hardening** (audit §13-A) — make the served answer actually
    byte-identical where it isn't:
    - OHLC `open`/`close` — **SHIPPED**: `migrations/0147_ohlc_deterministic_tiebreak.up.sql`

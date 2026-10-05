@@ -827,7 +827,7 @@ Ordered by value per unit of risk, not by project number.
 | 5 | **Project A chunk 1**: `ch-rebuild -sdex-gaps` over one 50k-ledger window in **2022**, timed | ~1 h | The only honest input to the §2.3 range. Do not commit to the rest without it |
 | 6 | Project A, reverse-chronological: 2024→2026-03, then 2021→2024, then genesis→2021 | 9-108 days, unresolved (§2.3) | Full on-chain trade history; pins the on-chain XLM/USD floor exactly (§4.4) |
 | 7 | Provenance work (§8) before any vendor data lands | — | A vendor bar must never be indistinguishable from an on-chain VWAP |
-| 8 | External span 2015-09-30 → 2017-01-16 (475 days) | blocked — needs a negotiated licence (§9.6) plus §8's provenance work | The only remaining gap |
+| 8 | External span 2015-09-30 → 2017-01-16 (475 days) | `backfill-external -source poloniex_via_btc -pair XLM/USD -granularity 24h`: Poloniex `XLM_BTC` daily × Bitstamp `BTC/USD` daily (§9.3), stamped `poloniex_via_btc` (`IncludeInVWAP: false`), named per point in `sources` on `/v1/ohlc`, `/v1/chart` and since-inception (§8.2); the command refuses a window outside the span. **Code ready, run blocked**: Poloniex terms are unread (§9.3) and the Bitstamp BTC leg needs a signed DLA to be redistributed (§9.5; data-licensing register). Unblock = a recorded owner decision in the register | The only remaining gap |
 
 Steps 2 and 3 are independent of everything in Project A and should not
 wait for it. Step 8 is last because it is the only step that cannot be

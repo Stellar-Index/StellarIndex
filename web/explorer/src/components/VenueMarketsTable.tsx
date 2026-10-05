@@ -24,15 +24,10 @@ const PAGE_LIMIT = 100;
 
 /**
  * VenueMarketsTable — every (base, quote) pair a venue observed in the
- * trailing 14d, from /v1/markets?source= with cursor pagination.
- *
- * FEC audit A3-F8: dexes/[source]/PoolsTable and exchanges/[name]/
- * PairsTable were a 300-line whole-component fork of each other (same
- * endpoint, columns, pager, states) whose only real differences were the
- * Panel title, the pools/pairs copy nouns, and the Market type source —
- * and this exact pair had already forked-and-drifted once before
- * (LastPriceCell). One shared component; the caller supplies title +
- * rowNoun (which carries the S-023 "SDEX markets" special case).
+ * trailing 14d, from /v1/markets?source= with cursor pagination. That
+ * filter refuses data vendors, so the venue must be an on-chain source or
+ * an exchange. The caller supplies title + rowNoun ("SDEX markets" vs
+ * pools; PairsTable supplies the exchange wording).
  */
 export function VenueMarketsTable({
   source,

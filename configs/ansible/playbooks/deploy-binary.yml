@@ -20,8 +20,9 @@
 #                          (fail closed). deploy.yml sets it per region.
 #
 # Per-binary sequence:
-#   1. Resolve the running version (from --help output or version pkg)
-#      so we can stamp the backup filename meaningfully.
+#   1. Resolve the previously-deployed version from the sidecar file
+#      /var/lib/stellarindex/deployed-versions/<binary> (falling back to
+#      untracked-<UTC timestamp> when absent) to stamp the backup filename.
 #   2. Copy the new binary to /usr/local/bin/<binary>.new (atomic stage).
 #   3. Move current binary to /usr/local/bin/<binary>.prev-<running-version>.
 #   4. Atomic rename .new → live path (a single rename(2) is atomic
@@ -310,6 +311,26 @@
         loop_var: binary
 
   post_tasks:
+    - name: Check whether this host runs the ClickHouse schema-drift check
+      ansible.builtin.stat:
+        path: /usr/local/bin/ch-schema-drift.sh
+      register: ch_schema_drift_script
+
+    # The drift check refuses a verdict when the shipped intent's
+    # Intent-Version predates the release the host runs; only the ansible
+    # role stamped it, so every release left the alert firing (INV-2530).
+    - name: Re-stamp the ClickHouse schema-drift intent with this release
+      ansible.builtin.import_tasks: ../tasks/ship-ch-schema-intent.yml
+      when: ch_schema_drift_script.stat.exists
+
+    # Exit 1 (real drift) must not fail a binary deploy that is already
+    # live; the check writes its own gauges either way.
+    - name: Re-run the schema-drift check against the new intent
+      ansible.builtin.command: systemctl start ch-schema-drift.service
+      changed_when: false
+      failed_when: false
+      when: ch_schema_drift_script.stat.exists
+
     - name: Deploy summary
       ansible.builtin.debug:
         msg: >-

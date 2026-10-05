@@ -21,7 +21,7 @@ import (
 // evaluated in SQL. This file is the ESTIMATED-tier counterpart for the
 // one estimated tier whose input is not authorable by a counterparty: the
 // XLM-base anchor (`usd_volume = base_amount/1e7 x XLM/USD at ts`,
-// [tradeUSDVolumeViaXLMBaseAnchor]).
+// [usdVolumeViaXLMBaseAnchor]).
 //
 // The population it exists for (issue #372, triage G9 2026-09-02): every
 // on-chain DEX trade with an XLM BASE leg, with a non-USD-pegged quote,
@@ -99,7 +99,7 @@ import (
 //
 //  1. THE VALUE COMES FROM THE LIVE FUNCTION. Each candidate row is
 //     rebuilt into the [canonical.Trade] the decoder produced and handed
-//     to [tradeUSDVolumeViaXLMBaseAnchor] — the same function
+//     to [usdVolumeViaXLMBaseAnchor] — the same function
 //     [Store.InsertTrade] calls, with the store's installed
 //     [VWAPUSDFXResolver] and [USDVolumeQuoteSpec]. There is no second
 //     spelling of the waterfall to drift against (the reimplementation
@@ -175,7 +175,7 @@ type XLMBaseRestampParams struct {
 }
 
 // XLMBaseRestampRow is one row the re-derive would rewrite: its primary
-// key, what is stored now, and the value [tradeUSDVolumeViaXLMBaseAnchor]
+// key, what is stored now, and the value [usdVolumeViaXLMBaseAnchor]
 // produces for it today.
 type XLMBaseRestampRow struct {
 	Source  string
@@ -186,6 +186,12 @@ type XLMBaseRestampRow struct {
 
 	BaseAsset  string
 	QuoteAsset string
+
+	// BaseAmount, QuoteAmount and Generation are the row as the plan read
+	// it; the apply writes only while the row still matches them and Stored.
+	BaseAmount  string
+	QuoteAmount string
+	Generation  int64
 
 	// Stored is the current column value; nil for SQL NULL.
 	Stored *string
@@ -353,7 +359,7 @@ const (
 //
 // `anchor` is injected rather than called directly so the decision rules
 // are testable without a live prices_1m; production passes a closure over
-// [tradeUSDVolumeViaXLMBaseAnchor] with the store's real resolver, so the
+// [usdVolumeViaXLMBaseAnchor] with the store's real resolver, so the
 // number that reaches the column is the number the live insert path
 // computes for the same row.
 func xlmBaseRestampDecide(
@@ -363,9 +369,8 @@ func xlmBaseRestampDecide(
 	minRelDelta *big.Rat,
 	anchor func(canonical.Trade) *string,
 ) (XLMBaseRestampRow, xlmBaseDisposition) {
-	// The anchor cannot fail — it reads the resolver, which reports a miss
-	// as "no value" — so the shared skeleton's error return is dropped
-	// here rather than pushed onto every caller.
+	// A test seam over an infallible anchor: the planner goes through
+	// [restampDecide] directly, where a resolver read error aborts the run.
 	row2, disp, _ := restampDecide(row, spec, xlmBaseTierFor,
 		func(t canonical.Trade) (*string, error) { return anchor(t), nil }, fillNull, minRelDelta)
 	return row2, disp
@@ -391,7 +396,7 @@ func (s *Store) PlanXLMBaseUSDVolumeRestamp(ctx context.Context, p XLMBaseRestam
 		Assets:  xlmAssetForms(),
 		Gate:    xlmBaseTierFor,
 		Value: func(t canonical.Trade) (*string, error) {
-			return tradeUSDVolumeViaXLMBaseAnchorFor(ctx, t, s.usdVolumeFXResolver), nil
+			return tradeUSDVolumeViaXLMBaseAnchorFor(ctx, t, s.usdVolumeFXResolver)
 		},
 	})
 }
@@ -513,14 +518,19 @@ func (s XLMBaseRestampStats) Residual() int64 {
 const xlmBaseRestampApplyBatch = 2000
 
 // xlmBaseRestampMaxBatch caps the rows one UPDATE transaction can carry,
-// whatever the operator asked for. The statement binds 6 placeholders per
-// row plus 3 fixed ones (the generation and the two `ts` bounds), and the
+// whatever the operator asked for. The statement binds
+// [xlmBaseRestampArgsPerRow] placeholders per row plus 3 fixed ones (the generation and the two `ts` bounds), and the
 // extended query protocol carries at most 65,535 parameters — pgx refuses
 // the Exec above that, mid-run, after the rest of the walk has already
 // paid for itself. `-chunk-batch` defaults to 20,000, so an hour busy
 // enough to change more than this many rows would abort the run rather
 // than slow it; the cap turns that into one more transaction.
-const xlmBaseRestampMaxBatch = (65535 - 3) / 6
+const xlmBaseRestampMaxBatch = (65535 - 3) / xlmBaseRestampArgsPerRow
+
+// xlmBaseRestampArgsPerRow is the placeholders one row binds in the batch
+// UPDATE: its primary key, the new value, and the plan-read state the row
+// must still match.
+const xlmBaseRestampArgsPerRow = 10
 
 // ApplyXLMBaseUSDVolumeRestamp writes the plan's rows and returns how many
 // rows the database actually changed.
@@ -530,6 +540,10 @@ const xlmBaseRestampMaxBatch = (65535 - 3) / 6
 //   - the write set is the PLAN — the same slice the dry run printed. No
 //     second predicate is evaluated against the table, so a row cannot be
 //     written that the preview did not name.
+//   - each row is written only while its amounts, usd_volume and
+//     derive_generation still equal what the plan read: a row another
+//     writer moved after the plan is skipped, and surfaces as
+//     planned-vs-changed, rather than overwritten from its old state.
 //   - INV-3: each row is written only while
 //     `trades.derive_generation <= generation`, and is stamped with it, so
 //     a later live gen-0 replay cannot claw the correction back and a
@@ -650,9 +664,15 @@ func (s *Store) applyXLMBaseRestampBatch(ctx context.Context, rows []XLMBaseRest
 			values.WriteString(", ")
 		}
 		n := len(args)
-		fmt.Fprintf(&values, "($%d::text, $%d::integer, $%d::bpchar, $%d::integer, $%d::timestamptz, $%d::numeric)",
-			n+1, n+2, n+3, n+4, n+5, n+6)
-		args = append(args, r.Source, int64(r.Ledger), r.TxHash, int64(r.OpIndex), r.TS.UTC(), r.Want)
+		fmt.Fprintf(&values, "($%d::text, $%d::integer, $%d::bpchar, $%d::integer, $%d::timestamptz, $%d::numeric, "+
+			"$%d::numeric, $%d::numeric, $%d::numeric, $%d::bigint)",
+			n+1, n+2, n+3, n+4, n+5, n+6, n+7, n+8, n+9, n+10)
+		var stored any
+		if r.Stored != nil {
+			stored = *r.Stored
+		}
+		args = append(args, r.Source, int64(r.Ledger), r.TxHash, int64(r.OpIndex), r.TS.UTC(), r.Want,
+			r.BaseAmount, r.QuoteAmount, stored, r.Generation)
 	}
 	// Every fragment is code-built here; all values (the generation, the
 	// two `ts` bounds and each row's primary key + value) travel as
@@ -660,7 +680,7 @@ func (s *Store) applyXLMBaseRestampBatch(ctx context.Context, rows []XLMBaseRest
 	return s.restampTradesUSDVolume(ctx, usdVolumeRestampWrite{
 		label: "xlm-base restamp",
 		scope: fmt.Sprintf("(%d rows from %s)", len(rows), rows[0].TS.Format(time.RFC3339)),
-		rel:   `(VALUES ` + values.String() + `) AS v(source, ledger, tx_hash, op_index, ts, usd_volume)`,
+		rel:   `(VALUES ` + values.String() + `) AS v(source, ledger, tx_hash, op_index, ts, usd_volume, base_amount, quote_amount, prior_usd_volume, prior_generation)`,
 		where: `
 	       WHERE t.ts      >= $2
 	         AND t.ts      <= $3
@@ -669,7 +689,11 @@ func (s *Store) applyXLMBaseRestampBatch(ctx context.Context, rows []XLMBaseRest
 	         AND t.tx_hash  = v.tx_hash
 	         AND t.op_index = v.op_index
 	         AND t.ts       = v.ts
-	         AND t.derive_generation <= $1`,
+	         AND t.derive_generation <= $1
+	         AND t.base_amount  = v.base_amount
+	         AND t.quote_amount = v.quote_amount
+	         AND t.usd_volume IS NOT DISTINCT FROM v.prior_usd_volume
+	         AND t.derive_generation = v.prior_generation`,
 		value: "v.usd_volume",
 		gen:   "$1",
 		args:  args,

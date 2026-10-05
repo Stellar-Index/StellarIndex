@@ -27,6 +27,7 @@ RUNBOOK="docs/operations/runbooks/aggregator-class-drop-spike.md"
 SPEC="openapi/stellar-index.v1.yaml"
 EXPLORER_README="web/explorer/README.md"
 COMMS_README="deploy/comms/README.md"
+NODOC_PKG="internal/zzlintdocsfixture"
 EDITED=(CHANGELOG.md docs/architecture/coverage-matrix.md docs/remediation-2026-07-01/STATUS.md
         docs/adr/README.md docs/protocols/README.md "$RUNBOOK" "$SPEC" "$EXPLORER_README" "$COMMS_README")
 BACKUP=$(mktemp -d); OUT=$(mktemp)
@@ -39,7 +40,7 @@ cleanup() {
     if [ -f "$BACKUP/$f" ]; then cp -p "$BACKUP/$f" "$f"; fi
   done
   rm -f "$ADR_NOROW" "$ADR_STALE" "$INC_PROSE" "$INC_BOX" "$DESIGN" "$OPS_STALE" "$OPS_WARN"
-  rm -rf "$(dirname "$UNTRACKED_README")" "$BACKUP" "$OUT"
+  rm -rf "$(dirname "$UNTRACKED_README")" "$NODOC_PKG" "$BACKUP" "$OUT"
 }
 trap cleanup EXIT
 
@@ -100,8 +101,8 @@ printf '| [0098](0098-zz-lint-docs-fixture.md) | Accepted | Fixture ADR for lint
 # issue/PR (RSWP-068 #1042, RSWP-135 #1254, RSWP-086 #1108, RSWP-144 #1271,
 # RSWP-141 R-013→#1265, RSWP-146 #1347, RSWP-147 #1353, RSWP-149 #1369,
 # RSWP-128 #1231, RSWP-151 dependabot #1371/#1372, RSWP-139 #1263) or never
-# existed (RSWP-127 #1230). #1263 is a bare pattern so the 2026-05-11
-# PR-list header alone, without "R-008", is caught. docs/design/ is scanned too.
+# existed (RSWP-127 #1230). #1263 and #1270 are bare patterns so the
+# 2026-05-11 PR-list header alone, without its R-row, is caught. docs/design/ is scanned too.
 printf '(PR #1042)\n(PR #1254)\n(PR #1230)\n(#1108)\n(PR #1231)\nsupersedes dependabot #1371/#1372\n' >> CHANGELOG.md
 printf '(#1271)\nR-013 → #1265\n(PRs #1261, #1262, #1263, #1268, #1270)\n' >> docs/architecture/coverage-matrix.md
 printf 'Deferred #1347 — go-stellar-sdk v0.5->v0.6\n#1353\n#1369\n' >> docs/remediation-2026-07-01/STATUS.md
@@ -147,6 +148,12 @@ printf '\n```sh\npnpm lint               # next lint\n```\n\nMDX via `@next/mdx`
 # shellcheck disable=SC2016  # literal Markdown backticks, not a substitution
 printf -- '- [`docs/operations/sev-playbook.md`](../../docs/operations/sev-playbook.md)\n  — calls `maintenance-window.md`.\n' >> "$COMMS_README"
 
+# A package whose only comment is a build directive has no package doc;
+# its test file's doc must not count either.
+mkdir -p "$NODOC_PKG"
+printf '//go:build !zz\npackage zzlintdocsfixture\n' > "$NODOC_PKG/a.go"
+printf '// Package zzlintdocsfixture is documented only in a test file.\npackage zzlintdocsfixture\n' > "$NODOC_PKG/a_test.go"
+
 bash "$GATE" > "$OUT" 2>&1; rc=$?
 red=1; [ "$rc" -gt 0 ] && red=0
 result "the fixture tree is red (rc=$rc)" "$red"
@@ -161,6 +168,8 @@ stale "'dependabot #1371/#1372' in CHANGELOG.md is caught" 'dependabot #1371/#13
 stale "'#1271' in coverage-matrix.md is caught" '#1271\b' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:\(#1271\)$'
 stale "'R-013 → #1265' in coverage-matrix.md is caught" 'R-013.*#1265' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:R-013 → #1265$'
 stale "a bare '#1263' header citation in coverage-matrix.md is caught" '#1263\b' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:\(PRs #1261'
+stale "a bare '#1270' header citation in coverage-matrix.md is caught" '#1270\b' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:\(PRs #1261'
+stale "a bare '#1268' header citation in coverage-matrix.md is caught" '#1268\b' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:\(PRs #1261'
 stale "'Deferred #1347' in remediation STATUS.md is caught" 'Deferred #1347\b' '^ +docs/remediation-2026-07-01/STATUS\.md:[0-9]+:Deferred #1347 — go-stellar-sdk v0\.5->v0\.6$'
 stale "'#1353' in remediation STATUS.md is caught" '#1353' '^ +docs/remediation-2026-07-01/STATUS\.md:[0-9]+:#1353$'
 stale "'#1369' in remediation STATUS.md is caught" '#1369' '^ +docs/remediation-2026-07-01/STATUS\.md:[0-9]+:#1369$'
@@ -183,6 +192,8 @@ present "an explorer README naming an undeclared package is caught" "names packa
 present "an explorer README naming a missing route is caught" "names route '/account/\*' but web/explorer/src/app/account/"
 present "a comms README naming a caller that never links the template is caught" "says docs/operations/sev-playbook\.md calls 'maintenance-window\.md' but"
 absent  "rollback.md links the rollback-update template it is said to call" "calls 'rollback-update\.md'"
+present "a package with no package doc comment is caught" "Package '$NODOC_PKG' has no package doc comment"
+absent  "a documented package is not flagged" "Package 'internal/canonical' has no"
 
 if [ "$FAIL" -gt 0 ]; then echo "--- lint output ---"; grep -E 'ERROR|WARN: doc .docs/operations/zz' "$OUT"; fi
 cleanup; trap - EXIT

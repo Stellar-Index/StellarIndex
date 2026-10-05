@@ -152,7 +152,7 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 // quote-specific, never ORed across the base's other quotes, never read
 // from another alias's market).
 func (s *Server) tipFlags(ctx context.Context, snap PriceSnapshot, asset, quote canonical.Asset, sources []string) Flags {
-	flags := Flags{SingleSource: marketSingleSource(snap, sources)}
+	flags := Flags{SingleSource: marketSingleSource(snap, sources), ProxyDeviation: snap.ProxyDeviation}
 	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(ctx, asset, quote, 0)
 	return flags
 }
@@ -279,18 +279,20 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	// present) is dropped since the tip envelope has no triangulated
 	// flag — operators reading the marker for forensics use /v1/price
 	// instead.
-	if cacheSnap, cacheSources, _, _, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
+	if cacheSnap, cacheSources, _, tri, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
+		cacheSnap.ProxyDeviation = tri && s.proxyDeviation(ctx, time.Now().UTC())
 		return cacheSnap, cacheSources, true, nil
 	}
 	// Read-time stablecoin-fiat proxy: rewrites X/fiat:USD to X/<peg>
 	// at request time using the operator's
 	// [trades].usd_pegged_classic_assets allow-list. Mirrors the
-	// equivalent fallback in priceFallback (#1217). Without this
+	// equivalent fallback in priceFallback (6505934b5). Without this
 	// /v1/price/tip?asset=native&quote=fiat:USD 404s out of the box on
 	// every fresh deployment because nothing on-chain ever quotes in
 	// fiat:USD — same exact failure mode as /v1/price had.
 	proxySnap, proxySources, proxyOK, proxyWithheld := s.tryStablecoinFiatProxy(ctx, asset, quote)
 	if proxyOK {
+		proxySnap.ProxyDeviation = s.proxyDeviation(ctx, time.Now().UTC())
 		return proxySnap, proxySources, true, nil
 	}
 	// Last-resort fiat-vs-fiat cross-rate via the forex snapshot.

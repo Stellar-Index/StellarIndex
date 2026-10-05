@@ -8,6 +8,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -55,9 +56,9 @@ func registeredUSDCLedger(t *testing.T, conn *scriptedConn) int64 {
 	t.Helper()
 	for _, st := range conn.stmts {
 		if strings.Contains(st.sql, "INSERT INTO classic_assets") {
-			l, ok := st.arg(t, 5).(int)
+			l, ok := st.arg(t, 7).(int)
 			if !ok {
-				t.Fatalf("classic_assets $5 is %T, want int", st.arg(t, 5))
+				t.Fatalf("classic_assets $7 is %T, want int", st.arg(t, 7))
 			}
 			return int64(l)
 		}
@@ -126,5 +127,30 @@ func TestBatchInsertTrades_RegistryKeepsHighestLedgerAcrossSubBatches(t *testing
 	}
 	if got := registeredUSDCLedger(t, conn); got != 5500 {
 		t.Errorf("registered USDC at ledger %d, want 5500 (highest across sub-batches)", got)
+	}
+}
+
+// Callers replay a failed batch in their own order (the external retry ring
+// trims its oldest rows by position), so the insert must not reorder it.
+func TestBatchInsertTrades_LeavesCallerOrderOnFailure(t *testing.T) {
+	t.Parallel()
+	const source = "subbatch_caller_order"
+	store, _ := newScriptedStore(t,
+		scriptedResult{err: &pgconn.PgError{Code: "40P01", Message: "deadlock detected"}},
+	)
+	trades := subBatchTrades(t, source, 5)
+	slices.Reverse(trades)
+	want := make([]uint32, len(trades))
+	for i := range trades {
+		want[i] = trades[i].Ledger
+	}
+
+	if err := store.BatchInsertTrades(context.Background(), trades); err == nil {
+		t.Fatal("BatchInsertTrades: want the scripted deadlock, got nil")
+	}
+	for i := range trades {
+		if trades[i].Ledger != want[i] {
+			t.Fatalf("caller slice reordered: ledger[%d] = %d, want %d", i, trades[i].Ledger, want[i])
+		}
 	}
 }

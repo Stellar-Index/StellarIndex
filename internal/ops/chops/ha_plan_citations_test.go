@@ -46,8 +46,8 @@ func TestHAPlanFileLineCitationsResolve(t *testing.T) {
 		{
 			name:     "restore-drill timer enable task",
 			file:     "configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml",
-			line:     692,
-			lineEnd:  717,
+			line:     707,
+			lineEnd:  732,
 			contains: "name: Enable + start the restore-drill timer",
 		},
 		{

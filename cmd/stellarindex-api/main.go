@@ -48,7 +48,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"html/template"
 	"log/slog"
 	"math"
 	"math/big"
@@ -56,6 +55,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,6 +89,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/customerwebhook"
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
+	"github.com/Stellar-Index/StellarIndex/internal/holds"
 	"github.com/Stellar-Index/StellarIndex/internal/logincodereaper"
 	"github.com/Stellar-Index/StellarIndex/internal/magiclinkreaper"
 	"github.com/Stellar-Index/StellarIndex/internal/metadata"
@@ -282,6 +283,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			if err != nil {
 				return fmt.Errorf("redis: ping (%s mode): %w", mode, err)
 			}
+		} else {
+			// A rolled-back binary writes key records without indexing them;
+			// dropping `ready` makes the first lookup rebuild from the records.
+			invCtx, cancelInv := context.WithTimeout(rootCtx, 5*time.Second)
+			if err := auth.NewRedisAPIKeyStore(rdb).InvalidateKeyIndex(invCtx); err != nil {
+				logger.Warn("api-key index not invalidated at startup; lookups trust the existing index", "err", err)
+			}
+			cancelInv()
 		}
 		logger.Info("redis configured", "mode", mode)
 	}
@@ -537,49 +546,25 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		accountStore = auth.NewRedisAPIKeyStore(rdb)
 	}
 
-	// Signup tracker — keyed off email-hash → key-id so a
-	// duplicate POST /v1/signup with the same email returns 409
-	// instead of minting a second key. Redis-backed; nil leaves
-	// duplicate detection disabled (signup still works, just isn't
-	// idempotent on the email).
-	var signupTracker v1.SignupTracker
-	if rdb != nil {
-		signupTracker = auth.NewRedisSignupTracker(rdb)
-	}
-
 	// F-1232 (audit-2026-05-12): per-IP signup throttle, separate
 	// from the global rate-limit middleware. Default 5/hour/IP —
 	// tight enough to block bulk-mint, loose enough that an
 	// operator onboarding a small team through a single shared
-	// egress completes normally. Operators tune via
-	// `[api].signup_ip_max_per_window` if needed.
+	// egress completes normally. The cap is a compiled default
+	// (auth.SignupIPThrottleOptions), not a config key.
 	var signupIPThrottle v1.SignupIPThrottle
 	if rdb != nil {
 		signupIPThrottle = auth.NewRedisSignupIPThrottle(rdb, auth.SignupIPThrottleOptions{})
 	} else {
 		// NTF-08 (audit-2026-07-23): Redis-less deployments used to
-		// leave signupIPThrottle nil entirely — /v1/signup can trigger
-		// an outbound verification email per accepted request (when
-		// api.dashboard is wired, which only needs Postgres, not
-		// Redis), bounded ONLY by the global anonymous rate limit
-		// (60/min). That's up to 3,600 signup/verification emails per
-		// hour from one IP with no per-IP signup cap at all. Same
+		// leave signupIPThrottle nil entirely — /v1/register would then be
+		// bounded ONLY by the global anonymous rate limit (60/min), up
+		// to 3,600 accounts per hour from one IP. Same
 		// in-process single-instance fallback posture as the
 		// magic-link throttle just below.
 		signupIPThrottle = newInProcessSignupIPThrottle()
 		logger.Warn("signup IP throttle is in-process (single-instance fallback — no Redis); " +
 			"the per-IP signup cap is NOT shared across instances")
-	}
-
-	// F-1218 wave 42 + 43 (codex audit-2026-05-12): the email-
-	// ownership-proof verifier. Wired only when Redis is reachable;
-	// the signup handler issues a token in a future wave and the
-	// /v1/signup/verify endpoint consumes it via SignupVerifier.
-	// Redis-less deployments leave this nil and the verify endpoint
-	// returns 503 with a clear "not configured" message.
-	var signupVerifier v1.SignupVerifier
-	if rdb != nil {
-		signupVerifier = auth.NewRedisSignupVerifier(rdb)
 	}
 
 	// Divergence lookup adapter. Only wired when Redis is reachable
@@ -734,7 +719,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// 14-day-window aggregations over the trades hypertable
 	// (~450-500 ms cold), so a 60 s cache absorbs polling fan-out
 	// without delaying new-listing surfacing more than once-a-minute.
-	var assetReader v1.AssetReader = storeAssetReader{s: store, homeDomainLookup: homeDomainLookup.listing, detailHomeDomainLookup: homeDomainLookup.detail}
+	var assetReader v1.AssetReader = storeAssetReader{s: store, listingHomeDomains: homeDomainLookup.listing, detailHomeDomainLookup: homeDomainLookup.detail}
 	var marketsReader v1.MarketsReader = storeMarketsReader{s: store}
 	if rdb != nil {
 		assetReader = cachedAssetReader{
@@ -779,7 +764,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	}
 
 	// Forex shim — periodic fetch of fiat rates from massive.com.
-	// Cache is in-memory; worker installs a snapshot once per hour.
+	// Cache is in-memory; worker installs a snapshot every
+	// [external.massive] refresh_interval (default 1h).
 	// Backs /v1/currencies. Worker survives upstream failures
 	// (logs at warn) — the cache holds the prior snapshot.
 	//
@@ -789,16 +775,23 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// returns 401; a stale cache stays in place and /v1/currencies
 	// serves "warming up" until the key is provided.
 	forexCache := forex.NewCache()
+	forexInterval, clamped := cfg.External.Massive.EffectiveRefreshInterval()
+	if clamped {
+		logger.Warn("forex: external.massive.refresh_interval below floor — clamped",
+			"configured", cfg.External.Massive.RefreshInterval, "using", forexInterval)
+	}
 	forexWorker := forex.NewWorker(
 		forex.NewClient(cfg.External.Massive.APIKey),
 		forexCache,
 		logger.With("component", "forex"),
-		time.Hour,
+		forexInterval,
 	)
 	// Wire fx_quotes persistence — every refresh tick writes the
 	// latest rates + 7d history to the hypertable so /v1/currencies
 	// can serve historical charts beyond the in-memory window.
-	forexWorker = forexWorker.WithWriter(&forexQuoteWriter{store: store})
+	forexWorker = forexWorker.WithWriter(&forexQuoteWriter{store: store}).
+		WithReader(&forexQuoteWriter{store: store}).
+		WithFixingWriter(&forexQuoteWriter{store: store})
 	// Standby FX source. `massive` is a PAID feed and was the ONLY series
 	// in stellarindex_external_fx_last_quote_unix (measured 2026-08-27),
 	// so a 401/429/subscription lapse silently broke every fiat-quoted
@@ -807,6 +800,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// working days only) but rates rather than none. Only consulted when
 	// the primary fails; the source label follows the feed that served.
 	forexWorker = forexWorker.WithFallbacks(forex.ECBProvider{})
+	// Held outside the serving chain: the worker stores it and never
+	// fetches it, so enabling it spends no quota and changes no served rate.
+	if oxr := cfg.External.OpenExchangeRates; oxr.Enabled {
+		forexWorker = forexWorker.WithCorroborator(forex.OpenExchangeRatesProvider{AppID: oxr.AppID, Endpoint: oxr.Endpoint})
+	}
 
 	// F-1350: dry-run exits HERE — before the first `go` statement and
 	// before the heavy background SQL (backfill-coverage refresh,
@@ -1322,7 +1320,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Prices:      priceReader,
 		// 2m SWR cache on LatestTradePerSource only (the
 		// /v1/observations primitive — an unbounded DISTINCT ON scan
-		// over the trades hypertable, ~8s → 503; #29). All other
+		// over the trades hypertable, ~8s → 503; c5a1a0e67). All other
 		// HistoryReader methods pass through. Cold fill is detached
 		// so it outlives the handler's 8s ceiling and warms the
 		// cache for the status page's 2-min poll.
@@ -1348,25 +1346,17 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// The hour-bucket CAGG read behind /v1/rwa/premium's market
 		// leg. Uncached here for OracleHistory's reason — the handler
 		// caches the assembled series, not the read.
-		MarketHistory:       store,
-		RWAPremiumSubstance: substanceGate.Policy(),
-		Sep1Cache:           store,
-		Accounts:            accountStore,
-		PlatformAccounts:    platformAccountStore,
-		PlatformUsers:       platformUserStore,
-		RegisterAccounts:    registerAccountStore,
-		APIKeyBudgets:       apiKeyBudgets,
-		StatusNotices:       statusNoticeStore,
-		Audit:               adminAudit,
-		Signups:             signupTracker,
-		SignupIPThrottle:    signupIPThrottle,
-		SignupVerifier:      signupVerifier,
-		SignupVerifyEmailer: signupVerifyEmailerOrNil(dashboardBundle.sender, dashboardBundle.emailFrom, cfg.API.SignupRequireEmailVerification),
-		SignupVerifyBaseURL: cfg.API.ExternalBaseURL,
-		// F-1218 wave 45 (codex audit-2026-05-12): the verify
-		// handler flips the EmailVerifiedAt flag on the
-		// underlying Redis-stored API key record after Consume.
-		APIKeyEmailVerifier:  apiKeyEmailVerifierOrNil(rdb),
+		MarketHistory:        store,
+		RWAPremiumSubstance:  substanceGate.Policy(),
+		Sep1Cache:            store,
+		Accounts:             accountStore,
+		PlatformAccounts:     platformAccountStore,
+		PlatformUsers:        platformUserStore,
+		RegisterAccounts:     registerAccountStore,
+		APIKeyBudgets:        apiKeyBudgets,
+		StatusNotices:        statusNoticeStore,
+		Audit:                adminAudit,
+		SignupIPThrottle:     signupIPThrottle,
 		RequireEmailVerified: requireEmailVerifiedOrNil(cfg.API.SignupRequireEmailVerification),
 		Divergence:           divergenceLooker,
 		Substance:            substanceGate,
@@ -1465,6 +1455,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// fallbacks (T650) — the in-memory forex cache never expires on
 		// its own.
 		FXCrossMaxAgeHours: cfg.PricingGuard.FXCrossMaxAgeHours,
+		DisableFiatBasis:   cfg.PricingGuard.DisableFiatBasis,
+		FXFixings:          store,
 		FXHistory:          &fxHistoryReader{store: store},
 		SEP10:              sep10Validator,
 		Hub:                hub,
@@ -1499,7 +1491,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// `usageReader == nil` with an empty list, which is the
 		// correct "Redis absent → no usage data" shape.
 		UsageReader: usageReaderOrNil(usageCounter),
-		// Per-endpoint usage rollups (#32/#37b): reads the
+		// Per-endpoint usage rollups: reads the
 		// `usage_daily` hypertable the usage-rollup worker below
 		// maintains. The handler prefers this over UsageReader and
 		// falls back per-request when the read errors or the table
@@ -1545,6 +1537,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			AggregatorSources: external.AggregatorSources(),
 		},
 	})
+
+	if cfg.API.HoldsFile != "" {
+		bgWG.Add(1)
+		go func() {
+			defer bgWG.Done()
+			defer recoverBackgroundWorker(logger, "holds-watch")
+			holds.Watch(rootCtx, cfg.API.HoldsFile, cfg.API.HoldsReloadInterval, apiSrv.SetHolds, logger.With("component", "holds"))
+		}()
+	}
 
 	// Shared tip-stream producer ceiling. The config defaults equal the
 	// registry's built-in ones, so behaviour changes only on opt-in.
@@ -1739,7 +1740,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		logger.Info("stream publisher disabled (no pairs configured); /v1/price/stream serves heartbeats only")
 	}
 
-	// #16: background refresher for /v1/diagnostics/ingestion. Builds
+	// 4d6e7ac4f: background refresher for /v1/diagnostics/ingestion. Builds
 	// the snapshot every 15s into an atomic.Pointer that the handler
 	// serves sub-ms (the inline build was 200-500ms — fine, but the
 	// status-page tile polls every 15-30s and this turns it into a
@@ -1756,6 +1757,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		defer bgWG.Done()
 		defer recoverBackgroundWorker(logger, "ingestion-snapshot-refresh")
 		apiSrv.StartIngestionSnapshotRefresh(rootCtx)
+	}()
+
+	// Keeps stellarindex_dependency_up fresh without /v1/readyz traffic, so
+	// a dependency outage alerts even when no probe is polling.
+	bgWG.Add(1)
+	go func() {
+		defer bgWG.Done()
+		defer recoverBackgroundWorker(logger, "readiness-probe")
+		apiSrv.StartReadinessProbe(rootCtx, v1.ReadinessProbeCadence)
 	}()
 
 	httpSrv := &http.Server{
@@ -1839,7 +1849,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		logger.Info("customer-webhook delivery worker started")
 	}
 
-	// Usage-rollup worker (#32/#37b): folds the Redis per-endpoint
+	// Usage-rollup worker: folds the Redis per-endpoint
 	// detail counters (written by middleware.UsageTracker) into the
 	// `usage_daily` Timescale hypertable every 5 min so
 	// /v1/account/usage can serve per-endpoint request / error /
@@ -1963,7 +1973,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		serveErr <- nil
 	}()
 
-	// #37 full fix: HTTP self-call prewarm. Hits /v1/assets/<id> for
+	// 01e91b683 full fix: HTTP self-call prewarm. Hits /v1/assets/<id> for
 	// native + every verified currency on a 60s cadence so EVERY
 	// cache the handler touches — not just the 7 CachedAssetsReader
 	// SWR slots warmed by prewarmCaches — stays hot. Covers the F2
@@ -2220,8 +2230,8 @@ type dashboardBundle struct {
 // (F-1270) atop a fresh WebhookStore over the same Postgres the
 // delivery worker (a goroutine in main()) drains. Returns the store so
 // the bundle can thread it to the worker.
-func buildWebhookHandlers(db *sql.DB, logger *slog.Logger) (*postgresstore.WebhookStore, *dashboardwebhooks.Handlers, error) {
-	store := postgresstore.NewWebhookStore(postgresstore.New(db))
+func buildWebhookHandlers(db *sql.DB, sealer *platform.WebhookKeySealer, logger *slog.Logger) (*postgresstore.WebhookStore, *dashboardwebhooks.Handlers, error) {
+	store := postgresstore.NewSealingWebhookStore(postgresstore.New(db), sealer)
 	h, err := dashboardwebhooks.NewHandlers(dashboardwebhooks.Config{
 		Webhooks: store,
 		Logger:   logger.With("component", "dashboard-webhooks"),
@@ -2232,8 +2242,59 @@ func buildWebhookHandlers(db *sql.DB, logger *slog.Logger) (*postgresstore.Webho
 	return store, h, nil
 }
 
+// buildSealingWebhookHandlers is [buildWebhookHandlers] with the store
+// sealing signing keys when the seal secret is set, after sealing any
+// key a previous start stored raw.
+func buildSealingWebhookHandlers(cfg config.DashboardConfig, db *sql.DB, logger *slog.Logger) (*postgresstore.WebhookStore, *dashboardwebhooks.Handlers, error) {
+	sealer, err := buildWebhookKeySealer(cfg, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	store, h, err := buildWebhookHandlers(db, sealer, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	if sealer != nil {
+		sealLegacyWebhookKeys(store, logger)
+	}
+	return store, h, nil
+}
+
+// buildWebhookKeySealer reads the webhook seal secret from the env var
+// cfg names. Unset returns nil (keys stored raw); a too-short value is a
+// startup error rather than a weak key.
+func buildWebhookKeySealer(cfg config.DashboardConfig, logger *slog.Logger) (*platform.WebhookKeySealer, error) {
+	secret := os.Getenv(cfg.WebhookSealKeyEnv)
+	if secret == "" {
+		logger.Warn("webhook seal key env unset — new customer-webhook signing keys are stored unsealed, "+
+			"and deliveries to webhooks whose key is already sealed wait until it is set",
+			"env", cfg.WebhookSealKeyEnv)
+		return nil, nil
+	}
+	sealer, err := platform.NewWebhookKeySealer([]byte(secret))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", cfg.WebhookSealKeyEnv, err)
+	}
+	return sealer, nil
+}
+
+// sealLegacyWebhookKeys seals signing keys written before a seal key was
+// configured. A failure only leaves those keys raw until the next start.
+func sealLegacyWebhookKeys(store *postgresstore.WebhookStore, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	n, err := store.SealLegacySigningKeys(ctx)
+	if err != nil {
+		logger.Error("seal legacy customer-webhook signing keys", "err", err, "sealed", n)
+		return
+	}
+	if n > 0 {
+		logger.Info("sealed legacy customer-webhook signing keys", "count", n)
+	}
+}
+
 // buildPriceAlertHandlers constructs the dashboard price-alert CRUD
-// handlers (BACKLOG #60) atop the shared platform store. The evaluator
+// handlers atop the shared platform store. The evaluator
 // that checks these alerts + enqueues price.alert deliveries runs in
 // the aggregator binary (internal/pricealerts); these handlers are the
 // customer-facing registration surface.
@@ -2566,12 +2627,12 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 
 	// F-1270: dashboard webhook handlers atop the same Postgres store
 	// the delivery worker (a goroutine in main()) drains.
-	webhookStore, webhooksH, err := buildWebhookHandlers(db, logger)
+	webhookStore, webhooksH, err := buildSealingWebhookHandlers(cfg, db, logger)
 	if err != nil {
 		return dashboardBundle{}, err
 	}
 
-	// BACKLOG #60: dashboard price-alert CRUD atop the same Postgres.
+	// Dashboard price-alert CRUD atop the same Postgres.
 	priceAlertsH, err := buildPriceAlertHandlers(pg, logger)
 	if err != nil {
 		return dashboardBundle{}, err
@@ -2917,14 +2978,14 @@ func clickhouseReadyChecks(addr string, er *clickhouse.ExplorerReader, dialErr e
 // the typed boundary: the store returns canonical.Asset; the API
 // layer owns the wire-shape conversion to v1.AssetDetail.
 //
-// homeDomainLookup (listing rows) and detailHomeDomainLookup (GetAsset)
-// are the two surface lookups from newHomeDomainLookups. Each returns
-// ("", false) when no domain is known; the AssetDetail then has
-// HomeDomain==nil and the overlay handler stamps
+// listingHomeDomains (listing page) and detailHomeDomainLookup (GetAsset)
+// are the two surface lookups from newHomeDomainLookups. An issuer with
+// no known domain is absent / returns ("", false); the AssetDetail then
+// has HomeDomain==nil and the overlay handler stamps
 // sep1_status="not_fetched" for that case.
 type storeAssetReader struct {
 	s                      *timescale.Store
-	homeDomainLookup       func(ctx context.Context, issuer string) (string, bool)
+	listingHomeDomains     func(ctx context.Context, issuers []string) map[string]string
 	detailHomeDomainLookup func(ctx context.Context, issuer string) (string, bool)
 }
 
@@ -2935,14 +2996,14 @@ type storeAssetReader struct {
 // static map: detail carries only the observation layer, and static is
 // handed to v1 to consult after that read.
 type homeDomainLookups struct {
-	listing func(ctx context.Context, issuer string) (string, bool)
+	listing func(ctx context.Context, issuers []string) map[string]string
 	detail  func(ctx context.Context, issuer string) (string, bool)
 	static  func(ctx context.Context, issuer string) (string, bool)
 }
 
 func newHomeDomainLookups(live *metadata.LCMHomeDomainResolver, static func(issuer string) (string, bool), warnFn func(msg string, kv ...any)) homeDomainLookups {
 	return homeDomainLookups{
-		listing: metadata.ChainedHomeDomainLookup(live, static, warnFn),
+		listing: metadata.ChainedHomeDomainBatch(live, static, warnFn),
 		detail:  metadata.ObservedHomeDomainLookup(live, warnFn),
 		static:  metadata.StaticHomeDomainFallback(live, static, warnFn),
 	}
@@ -2960,11 +3021,33 @@ func (r storeAssetReader) ListAssets(ctx context.Context, cursor string, limit i
 	if err != nil {
 		return nil, "", err
 	}
+	return assetsToDetails(ctx, assets, r.listingHomeDomains), next, nil
+}
+
+// assetsToDetails resolves a listing page's issuer home domains in one
+// batch read, then maps each asset through assetToDetail.
+func assetsToDetails(ctx context.Context, assets []canonical.Asset, homeDomains func(ctx context.Context, issuers []string) map[string]string) []v1.AssetDetail {
+	var lookup func(ctx context.Context, issuer string) (string, bool)
+	if homeDomains != nil {
+		seen := make(map[string]bool, len(assets))
+		issuers := make([]string, 0, len(assets))
+		for _, a := range assets {
+			if a.Issuer != "" && !seen[a.Issuer] {
+				seen[a.Issuer] = true
+				issuers = append(issuers, a.Issuer)
+			}
+		}
+		domains := homeDomains(ctx, issuers)
+		lookup = func(_ context.Context, issuer string) (string, bool) {
+			d, ok := domains[issuer]
+			return d, ok
+		}
+	}
 	out := make([]v1.AssetDetail, len(assets))
 	for i, a := range assets {
-		out[i] = assetToDetail(ctx, a, r.homeDomainLookup)
+		out[i] = assetToDetail(ctx, a, lookup)
 	}
-	return out, next, nil
+	return out
 }
 
 func (r storeAssetReader) GetAsset(ctx context.Context, a canonical.Asset) (v1.AssetDetail, error) {
@@ -3667,6 +3750,10 @@ func (r storeHistoryReader) TradesInRangeAfter(ctx context.Context, pair canonic
 	return r.s.TradesInRangeAfter(ctx, pair, from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
 }
 
+func (r storeHistoryReader) TradesInRangeAfterFromSource(ctx context.Context, pair canonical.Pair, source string, from, to, afterTs time.Time, afterLedger uint32, afterTxHash, afterSource string, afterOpIndex uint32, limit int) ([]canonical.Trade, error) {
+	return r.s.TradesInRangeAfterFromSource(ctx, pair, source, from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
+}
+
 // LatestTradePerSource adapts [timescale.Store.LatestTradePerSource]
 // to the v1.HistoryReader interface. Pure passthrough: the store
 // already does the DISTINCT ON (source) work in SQL.
@@ -3801,6 +3888,7 @@ func convertHistoryPoints(rows []timescale.HistoryPoint) []v1.HistoryPoint {
 			Bucket:    row.Bucket,
 			VWAP:      row.VWAP,
 			VolumeUSD: row.VolumeUSD,
+			Sources:   row.Sources,
 		}
 	}
 	return out
@@ -3867,11 +3955,15 @@ func priceWithheld(
 	for _, opt := range opts {
 		opt(&q)
 	}
+	adm := v1.ThinAdmissionFrom(ctx)
 	gate := pricingguard.Gate{Substance: substance, Scam: scam}
-	if q.pointInTime {
-		return gate.PriceWithholdingAt(ctx, base, quote, q.at, surface)
-	}
-	return gate.PriceWithholding(ctx, base, quote, surface)
+	v := gate.Judge(ctx, base, quote, surface, pricingguard.Query{
+		PointInTime: q.pointInTime,
+		At:          q.at,
+		AdmitThin:   adm.Requested() && adm.Covers(base, quote),
+	})
+	adm.Record(base, quote, v)
+	return v.Withholding
 }
 
 // withholdingQuery is what a seam may tell the chokepoint about the
@@ -4162,7 +4254,10 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	}
 	// decimals=7 matches Stellar's default stroop scale. A future
 	// revision reads per-asset decimals from internal/metadata.
-	snap := v1.LastTradeToSnapshot(trades[0], 7)
+	snap, ok := v1.LastTradeToSnapshot(trades[0], 7)
+	if !ok {
+		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceNotFound
+	}
 	return snap, []string{trades[0].Source}, true, nil
 }
 
@@ -4274,6 +4369,7 @@ type metadataStoreLookup struct{ s accountObservationReader }
 
 type accountObservationReader interface {
 	LatestAccountObservationAtOrBefore(ctx context.Context, accountID string, asOfLedger uint32) (timescale.AccountObservation, error)
+	LatestAccountObservationsAtOrBefore(ctx context.Context, accountIDs []string, asOfLedger uint32) (map[string]timescale.AccountObservation, error)
 }
 
 func (a metadataStoreLookup) HomeDomainAtOrBefore(ctx context.Context, issuer string, asOfLedger uint32) (metadata.IssuerHomeDomain, error) {
@@ -4284,11 +4380,27 @@ func (a metadataStoreLookup) HomeDomainAtOrBefore(ctx context.Context, issuer st
 	if err != nil {
 		return metadata.IssuerHomeDomain{}, err
 	}
+	return observedHomeDomain(row), nil
+}
+
+func (a metadataStoreLookup) HomeDomainsAtOrBefore(ctx context.Context, issuers []string, asOfLedger uint32) (map[string]metadata.IssuerHomeDomain, error) {
+	rows, err := a.s.LatestAccountObservationsAtOrBefore(ctx, issuers, asOfLedger)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]metadata.IssuerHomeDomain, len(rows))
+	for issuer, row := range rows {
+		out[issuer] = observedHomeDomain(row)
+	}
+	return out, nil
+}
+
+func observedHomeDomain(row timescale.AccountObservation) metadata.IssuerHomeDomain {
 	hd := metadata.IssuerHomeDomain{Observed: true}
 	if !row.IsRemoval && row.HomeDomain != nil {
 		hd.Domain = *row.HomeDomain
 	}
-	return hd, nil
+	return hd
 }
 
 // storeVolumeReader adapts *timescale.Store to v1.VolumeReader.
@@ -4305,7 +4417,7 @@ func (r storeVolumeReader) Volume24hUSDForAsset(ctx context.Context, assetKey st
 // SorobanVolume24hUSDForAsset implements the optional
 // v1.SorobanVolumeReader — the XLM-anchored 24h USD-volume variant used
 // for pure-Soroban SEP-41 assets whose liquidity is quoted in XLM rather
-// than a USD-pegged classic (#37).
+// than a USD-pegged classic (fce3e2eef).
 func (r storeVolumeReader) SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (string, error) {
 	return r.s.SorobanVolume24hUSDForAsset(ctx, assetKey)
 }
@@ -4338,7 +4450,7 @@ var usdQuoteAsset = func() canonical.Asset {
 // adapter walks the pegs and re-runs the at-or-before lookup
 // against asset/<peg>. First non-error result wins. Without
 // this, /v1/assets/{id}.change_24h_pct silently stays null for
-// every on-chain asset (mirrors the same gap fixed in #1217 for
+// every on-chain asset (mirrors the same gap fixed in 6505934b5 for
 // the /v1/price handler).
 //
 // decimals is the confirmed non-7-decimals table. The bucket this
@@ -4792,119 +4904,6 @@ func warnOpenCORS(logger *slog.Logger, allowedOrigins []string, authMode string)
 	}
 }
 
-// signupVerifyEmailerAdapter bridges the v1.SignupVerifyEmailer
-// interface to the underlying notify.Sender + an EmailFrom
-// address. F-1218 wave 44 (codex audit-2026-05-12).
-//
-// requireVerification mirrors cfg.API.SignupRequireEmailVerification:
-// the mail must not promise a working key when RequireEmailVerified
-// 403s it until the link is clicked.
-type signupVerifyEmailerAdapter struct {
-	sender              notify.Sender
-	from                string
-	requireVerification bool
-}
-
-// signupVerifyMailData is the HTML template input; VerifyURL embeds the
-// client-supplied Host header, so it is escaped contextually.
-type signupVerifyMailData struct {
-	VerifyURL           string
-	RequireVerification bool
-}
-
-var signupVerifyHTMLTemplate = template.Must(template.New("signup_verify.html").Parse(
-	"<p>Welcome to the Stellar Index API.</p>" +
-		"<p>Click the link below to confirm your email address. " +
-		"The link is single-use and expires in 24 hours.</p>" +
-		`<p><a href="{{.VerifyURL}}">{{.VerifyURL}}</a></p>` +
-		"{{if .RequireVerification}}" +
-		"<p>The API key returned in the signup response is inactive until you " +
-		"confirm: every request made with it is rejected (HTTP 403, " +
-		"<code>signup-verify-required</code>) until you click the link above.</p>" +
-		"{{else}}" +
-		"<p>You can use the API key returned in the signup response " +
-		"immediately. Confirmation flips an <code>email_verified=true</code> " +
-		"flag on the key so the dashboard can surface it as a verified account.</p>" +
-		"{{end}}" +
-		"<p>If you didn't sign up, you can safely ignore this email.</p>"))
-
-// signupVerifyTextBody renders the plaintext body, the authoritative
-// content for screen readers and plaintext clients.
-func signupVerifyTextBody(verifyURL string, requireVerification bool) string {
-	keyStatus := "You can use the API key returned in the signup response\n" +
-		"immediately. Confirmation flips a `email_verified=true`\n" +
-		"flag on the key so the dashboard can surface it as a\n" +
-		"verified account.\n\n"
-	if requireVerification {
-		keyStatus = "The API key returned in the signup response is inactive\n" +
-			"until you confirm: every request made with it is rejected\n" +
-			"(HTTP 403, signup-verify-required) until you click the\n" +
-			"link above.\n\n"
-	}
-	return "Welcome to the Stellar Index API.\n\n" +
-		"Click the link below to confirm your email address. The\n" +
-		"link is single-use and expires in 24 hours.\n\n" +
-		verifyURL + "\n\n" +
-		keyStatus +
-		"If you didn't sign up, you can safely ignore this email.\n"
-}
-
-func (a *signupVerifyEmailerAdapter) SendSignupVerification(ctx context.Context, toEmail, verifyURL string) error {
-	if a == nil || a.sender == nil {
-		return errors.New("signupVerifyEmailer: not configured")
-	}
-	subject := "Confirm your Stellar Index signup"
-	textBody := signupVerifyTextBody(verifyURL, a.requireVerification)
-	var hb strings.Builder
-	data := signupVerifyMailData{VerifyURL: verifyURL, RequireVerification: a.requireVerification}
-	if err := signupVerifyHTMLTemplate.Execute(&hb, data); err != nil {
-		return fmt.Errorf("signupVerifyEmailer: render html body: %w", err)
-	}
-	htmlBody := hb.String()
-	msg := notify.Message{
-		From:    a.from,
-		To:      []string{toEmail},
-		Subject: subject,
-		HTML:    htmlBody,
-		Text:    textBody,
-		Tags: map[string]string{
-			"flow":   "signup-verify",
-			"source": "stellarindex-api",
-		},
-	}
-	// Instrument the mail send (task #33 / W8 recon 9c): internal/notify had
-	// zero prometheus visibility, so a Resend outage that stops signup
-	// confirmations from delivering was silent. Count sent vs failed here.
-	if err := a.sender.Send(ctx, msg); err != nil {
-		obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplateSignupVerify, obs.NotifySendResultFailed).Inc()
-		return err
-	}
-	obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplateSignupVerify, obs.NotifySendResultSent).Inc()
-	return nil
-}
-
-// apiKeyEmailVerifierOrNil returns the v1.APIKeyEmailVerifier
-// adapter when Redis is reachable; otherwise nil so the verify
-// handler skips the marker step. F-1218 wave 45 (codex audit-
-// 2026-05-12).
-func apiKeyEmailVerifierOrNil(rdb redis.UniversalClient) v1.APIKeyEmailVerifier {
-	if rdb == nil {
-		return nil
-	}
-	return &apiKeyEmailVerifierAdapter{store: auth.NewRedisAPIKeyStore(rdb)}
-}
-
-// apiKeyEmailVerifierAdapter bridges the v1.APIKeyEmailVerifier
-// interface to auth.RedisAPIKeyStore.MarkEmailVerified.
-type apiKeyEmailVerifierAdapter struct {
-	store *auth.RedisAPIKeyStore
-}
-
-func (a *apiKeyEmailVerifierAdapter) MarkEmailVerified(ctx context.Context, keyID string, at time.Time) error {
-	_, err := a.store.MarkEmailVerified(ctx, keyID, at)
-	return err
-}
-
 // requireEmailVerifiedOrNil returns the F-1218 wave 45 gate
 // middleware when the operator has opted in via
 // `cfg.API.SignupRequireEmailVerification`; nil keeps the gate
@@ -4914,32 +4913,6 @@ func requireEmailVerifiedOrNil(enabled bool) middleware.Middleware {
 		return nil
 	}
 	return middleware.RequireEmailVerified()
-}
-
-// signupVerifyEmailerOrNil returns the v1.SignupVerifyEmailer
-// when both a real sender and a non-empty EmailFrom are wired;
-// otherwise nil so the signup handler skips the email send and
-// reports `email_verification_sent: false` on the wire.
-// requireVerification selects the mail copy describing the key's state.
-func signupVerifyEmailerOrNil(sender notify.Sender, from string, requireVerification bool) v1.SignupVerifyEmailer {
-	if sender == nil || from == "" {
-		return nil
-	}
-	if notify.IsUnconfigured(sender) {
-		// No provider credential (what an empty Resend key wires since
-		// RLT-321): every Send would fail. Skip the attempt so the wire
-		// shape says `email_verification_sent: false`, as it always has
-		// for this deployment state.
-		return nil
-	}
-	if _, isNoop := sender.(*notify.NoopSender); isNoop {
-		// NoopSender accepts everything but drops the message —
-		// surfacing it as "wired" would falsely promise the
-		// customer an email. Treat as nil so the wire shape
-		// honestly says `email_verification_sent: false`.
-		return nil
-	}
-	return &signupVerifyEmailerAdapter{sender: sender, from: from, requireVerification: requireVerification}
 }
 
 // touchUsageMiddlewareOrNil returns the wired TouchUsage
@@ -5095,41 +5068,18 @@ func (a *forexAdapter) Latest() *v1.CurrenciesSnapshot {
 	}
 	rows := make([]v1.CurrencyEntry, len(snap.Currencies))
 	for i, c := range snap.Currencies {
-		row := v1.CurrencyEntry{
+		rows[i] = v1.CurrencyEntry{
 			Ticker:    c.Ticker,
 			Name:      c.Name,
 			RateUSD:   c.RateUSD,
 			UpdatedAt: c.UpdateAt,
 			Source:    c.Source,
 		}
-		// Join curated monetary-base CSV (lower-case keyed). Market
-		// cap is computed in USD-equivalent: the local-units M2
-		// divided by "1 USD = N units" rate gives "M2 in USD".
-		if entry, ok := snap.Circulation[strings.ToLower(c.Ticker)]; ok && entry.AggregateLocalUnits > 0 {
-			supply := entry.AggregateLocalUnits
-			row.CirculatingSupply = &supply
-			if c.RateUSD > 0 {
-				mcap := supply / c.RateUSD
-				row.MarketCapUSD = &mcap
-			}
-			row.CirculationAsOf = entry.AsOf.Format("2006-01-02")
-			row.CirculationSource = entry.Source
-		}
-		rows[i] = row
-	}
-	history := make(map[string][]v1.CurrencyHistoryRaw, len(snap.History7d))
-	for ticker, points := range snap.History7d {
-		out := make([]v1.CurrencyHistoryRaw, len(points))
-		for i, p := range points {
-			out[i] = v1.CurrencyHistoryRaw{Date: p.Date, RateUSD: p.RateUSD}
-		}
-		history[ticker] = out
 	}
 	return &v1.CurrenciesSnapshot{
 		Currencies:  rows,
 		PublishedAt: snap.PublishedAt,
 		FetchedAt:   snap.FetchedAt,
-		History7d:   history,
 	}
 }
 
@@ -5305,12 +5255,10 @@ func prewarmLight(
 	// ORDER MATTERS: the /v1/assets listing keys are warmed FIRST,
 	// ahead of the markets/pools work below.
 	//
-	// They used to sit after ~20 cold reads (8 DistinctPairsExt, 4+5
-	// AllPools, the per-CEX SourceMarkets loop). At seconds each on a
-	// cold start that pushed them a long way into the cycle, so a
-	// browser arriving seconds after a restart still paid the fill
-	// itself. Measured on r1 with the API up at 06:14:37, AFTER the
-	// passes were made concurrent:
+	// Behind the ~20 cold markets/pools reads (DistinctPairsExt,
+	// AllPools) at seconds each, a browser arriving seconds after a
+	// restart would pay the fill itself. Measured on r1 with the API up
+	// at 06:14:37, with the passes concurrent but assets warmed last:
 	//
 	//	06:15:01  9903 ms  /v1/assets?include=sparkline&limit=10&order_by=…
 	//	06:15:01  9905 ms  /v1/assets?limit=50
@@ -5471,14 +5419,9 @@ func prewarmLight(
 		}
 	}
 
-	// Per-CEX/source markets prewarm — the explorer's /exchanges/{name}
-	// PairsTable.tsx fires `/v1/markets?source=<src>&limit=200`
-	// (volume-desc default). Each maps to a SourceMarkets cache slot
-	// distinct from the unfiltered DistinctPairsExt warmed above, so
-	// every cold visit to /exchanges/binance, /exchanges/coinbase, etc.
-	// previously paid the full 8s ceiling (R-002). One pass per
-	// registered source on each cycle keeps the typical pageload at
-	// sub-100ms.
+	// Per-CEX markets prewarm: the explorer's /exchanges/{name} pairs table
+	// fires `/v1/markets?source=<src>&limit=200` (volume-desc default), a
+	// SourceMarkets slot distinct from the unfiltered DistinctPairsExt above.
 	for _, src := range v1.CexSourceNames() {
 		if _, _, err := markets.SourceMarkets(mkCtx, src, "", 200, timescale.MarketsOrderVolume24hDesc); err != nil {
 			logger.Debug("prewarm per-source markets failed", "source", src, "err", err)
@@ -5843,7 +5786,7 @@ func prewarmNetworkStats(ctx context.Context, logger *slog.Logger, networkStats 
 // /v1/assets/{id} fires SEVEN SWR-cached reader calls per request
 // (full fan-out at internal/api/v1/asset_catalogue_extension.go):
 //
-//	GetAssetByAssetID         — the asset-catalogue row itself (rc.61 #37 fix)
+//	GetAssetByAssetID         — the asset-catalogue row itself (rc.61 01e91b683 fix)
 //	GetAssetTopMarkets(id, 5) — top 5 markets per asset
 //	GetAssetPriceHistory24h   — 24h sparkline
 //	GetAssetPriceHistory7d    — 7d sparkline
@@ -5851,7 +5794,7 @@ func prewarmNetworkStats(ctx context.Context, logger *slog.Logger, networkStats 
 //	GetAssetTradeCount24h     — 24h trade count
 //	GetAssetATH               — all-time high
 //
-// Pre-#37 full-deferred: only GetAssetByAssetID was prewarmed; the
+// Pre-01e91b683 full-deferred: only GetAssetByAssetID was prewarmed; the
 // other SIX readers cold-filled on first hit, costing ~2s on
 // /v1/assets/USDC-GA5Z…'s first request post-restart even though
 // subsequent hits served sub-ms warm. Live-measured 2026-05-20.
@@ -5961,32 +5904,39 @@ func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenA
 	// landing). Then every verified currency.
 	targets := append([]string{"native"}, verifiedAssetIDs...)
 
+	// The explorer opts into include_thin, which is its own cache entry.
+	queries := []string{"", "?include_thin=true"}
+	warm := func(id, query string) {
+		start := time.Now()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+id+query, nil)
+		if err != nil {
+			logger.Debug("self-prewarm request build failed", "asset_id", id, "err", err)
+			return
+		}
+		// Mark as synthetic so obs.HTTPMetrics keeps these
+		// deliberately-cold warming requests out of the
+		// customer-facing latency histogram + SLO. Without this
+		// the prewarmer's own ~570ms cold misses dominate p95/p99.
+		req.Header.Set("User-Agent", "stellarindex-prewarm/1")
+		resp, err := client.Do(req)
+		elapsed := time.Since(start)
+		if err != nil {
+			if ctx.Err() == nil {
+				logger.Debug("self-prewarm GET failed", "asset_id", id, "query", query, "err", err, "elapsed", elapsed.String())
+			}
+			return
+		}
+		_ = resp.Body.Close()
+		logger.Debug("self-prewarm /v1/assets", "asset_id", id, "query", query, "status", resp.StatusCode, "elapsed", elapsed.String())
+	}
 	runPass := func() {
 		for _, id := range targets {
-			if ctx.Err() != nil {
-				return
-			}
-			start := time.Now()
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+id, nil)
-			if err != nil {
-				logger.Debug("self-prewarm request build failed", "asset_id", id, "err", err)
-				continue
-			}
-			// Mark as synthetic so obs.HTTPMetrics keeps these
-			// deliberately-cold warming requests out of the
-			// customer-facing latency histogram + SLO. Without this
-			// the prewarmer's own ~570ms cold misses dominate p95/p99.
-			req.Header.Set("User-Agent", "stellarindex-prewarm/1")
-			resp, err := client.Do(req)
-			elapsed := time.Since(start)
-			if err != nil {
-				if ctx.Err() == nil {
-					logger.Debug("self-prewarm GET failed", "asset_id", id, "err", err, "elapsed", elapsed.String())
+			for _, query := range queries {
+				if ctx.Err() != nil {
+					return
 				}
-				continue
+				warm(id, query)
 			}
-			_ = resp.Body.Close()
-			logger.Debug("self-prewarm /v1/assets", "asset_id", id, "status", resp.StatusCode, "elapsed", elapsed.String())
 		}
 	}
 
@@ -6006,9 +5956,9 @@ func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenA
 	}
 }
 
-// forexQuoteWriter adapts (*timescale.Store) to forex.FXQuoteWriter
-// (the worker can't import timescale without inverting the
-// dependency direction). Translates the per-package FXQuote shape.
+// forexQuoteWriter adapts (*timescale.Store) to forex.FXQuoteWriter and
+// forex.FXQuoteReader (the worker can't import timescale without inverting
+// the dependency direction). Translates the per-package FXQuote shape.
 type forexQuoteWriter struct{ store *timescale.Store }
 
 func (w *forexQuoteWriter) InsertFXQuoteBatch(ctx context.Context, quotes []forex.FXQuote) error {
@@ -6025,6 +5975,38 @@ func (w *forexQuoteWriter) InsertFXQuoteBatch(ctx context.Context, quotes []fore
 		}
 	}
 	return w.store.InsertFXQuoteBatch(ctx, out)
+}
+
+// InsertFXFixingBatch adapts the store's fx_fixings append to
+// forex.FXFixingWriter; the close stays the vendor's decimal text.
+func (w *forexQuoteWriter) InsertFXFixingBatch(ctx context.Context, bars []forex.FXBar) error {
+	out := make([]timescale.FXFixing, len(bars))
+	for i, b := range bars {
+		out[i] = timescale.FXFixing{
+			Ticker: b.Ticker, Grain: b.Grain, BarStart: b.BarStart, BarEnd: b.BarEnd,
+			RateUSD: b.CloseText, Source: b.Source,
+		}
+	}
+	_, err := w.store.InsertFXFixingBatch(ctx, out)
+	return err
+}
+
+// LatestFXQuotes adapts the store's NUMERIC-text read to forex.FXQuoteReader;
+// the float parse is at the forex cache boundary, which is float end to end.
+func (w *forexQuoteWriter) LatestFXQuotes(ctx context.Context, since time.Time) ([]forex.FXQuote, error) {
+	rows, err := w.store.LatestFXQuotes(ctx, since)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]forex.FXQuote, 0, len(rows))
+	for _, q := range rows {
+		rate, err := strconv.ParseFloat(q.RateUSDText, 64)
+		if err != nil {
+			return nil, fmt.Errorf("fx_quotes %s rate_usd %q: %w", q.Ticker, q.RateUSDText, err)
+		}
+		out = append(out, forex.FXQuote{Bucket: q.Bucket, Ticker: q.Ticker, RateUSD: rate, Source: q.Source})
+	}
+	return out, nil
 }
 
 // fxHistoryReader adapts (*timescale.Store) to v1.FXHistoryReader.

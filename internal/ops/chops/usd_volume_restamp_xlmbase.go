@@ -23,7 +23,7 @@ import (
 // different shape of job and carries a different set of guards:
 //
 //   - the value is computed in Go by the store's own
-//     tradeUSDVolumeViaXLMBaseAnchor — the function the live insert path
+//     usdVolumeViaXLMBaseAnchor — the function the live insert path
 //     calls — against the installed VWAPUSDFXResolver, so the restamped
 //     number and the number a re-inserted row would carry are the same
 //     number by construction, not by two implementations agreeing;
@@ -230,11 +230,11 @@ func (r *xlmBaseRestampRun) summary(cfgPath string, from, to time.Time) string {
 	fmt.Fprintf(&b, "\nusd-volume-restamp: %s %d row(s) in [%s, %s] (tier %s)\n",
 		verb, r.totals.Changed, from.Format(time.DateOnly), to.Format(time.DateOnly), r.tier)
 	if r.write && r.written != r.totals.Changed {
-		// The write set IS the plan, so these can only diverge when a
-		// concurrent writer moved a row past the generation guard between
-		// the plan and the UPDATE. That is a one-writer-contract
-		// violation, not a rounding difference — say so loudly.
-		fmt.Fprintf(&b, "WARNING: %d row(s) planned but %d row(s) changed — a concurrent writer moved rows past the derive_generation guard\n",
+		// The write set IS the plan, and the UPDATE skips a row that no
+		// longer matches what the plan read, so these diverge only when a
+		// concurrent writer moved rows between the plan and the UPDATE.
+		// That is a one-writer-contract violation — say so loudly.
+		fmt.Fprintf(&b, "WARNING: %d row(s) planned but %d row(s) changed — a concurrent writer moved rows after the plan read them; they were left as that writer set them\n",
 			r.totals.Changed, r.written)
 	}
 	b.WriteString(r.followUp(from, to))
@@ -388,7 +388,8 @@ const (
 	// decompressed chunk.
 	xlmBaseWalkFull xlmBaseWalkMode = iota
 	// xlmBaseWalkProbe is the chunk walk's read-only pre-check: plan slice
-	// by slice, fold NOTHING into the report, and stop at the first slice
+	// by slice, fold nothing into the report itself (the caller folds a
+	// clean probe's count), and stop at the first slice
 	// that would change a row. A chunk whose rows all already hold the
 	// anchor's value is probed to its end and then skipped without ever
 	// being decompressed; a chunk that needs work is found out after its

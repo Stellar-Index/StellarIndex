@@ -31,7 +31,7 @@ const SECURITY_HEADERS = {
       'accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()',
     'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
     'Content-Security-Policy':
-      "default-src 'self'; connect-src 'self' https://api.stellarindex.io https://api.testnet.stellarindex.io https://api.futurenet.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'",
+      "default-src 'self'; connect-src 'self' https://api.stellarindex.io https://api.testnet.stellarindex.io https://api.futurenet.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'",
   },
   // /embed/* is designed to be iframed by customer sites (see
   // public/_headers) — ALLOWALL + `frame-ancestors *` instead of the
@@ -44,7 +44,7 @@ const SECURITY_HEADERS = {
       'accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()',
     'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
     'Content-Security-Policy':
-      "default-src 'self'; connect-src 'self' https://api.stellarindex.io https://api.testnet.stellarindex.io https://api.futurenet.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors *; form-action 'self'",
+      "default-src 'self'; connect-src 'self' https://api.stellarindex.io https://api.testnet.stellarindex.io https://api.futurenet.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors *; form-action 'self'",
   },
 };
 
@@ -62,6 +62,14 @@ function withSecurityHeaders(response, variant) {
     statusText: response.statusText,
     headers,
   });
+}
+
+// Real HTTP 301 carrying the same security headers as the shell responses.
+export function permanentRedirect(location) {
+  return withSecurityHeaders(
+    new Response(null, { status: 301, headers: { Location: location } }),
+    'default',
+  );
 }
 
 export async function shellFallback(context, shellPath) {

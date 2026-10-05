@@ -3,9 +3,11 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
@@ -41,7 +43,8 @@ const (
 //     observations returns empty arrays not 404s, and the stream
 //     mirrors that).
 //   - Recurring events: every interval_seconds (default 5, clamp 1–60)
-//     a fresh LatestTradePerSource scan runs and an `observations_update`
+//     a fresh LatestTradePerSource scan (bypassing the SWR history cache,
+//     since each event is stamped as_of=now) runs and an `observations_update`
 //     event fires UNCONDITIONALLY (no client-side dedupe). Customers
 //     who want change-detection diff against the previous payload.
 //   - Heartbeats: every streaming.DefaultHeartbeatInterval (15 s) when
@@ -94,21 +97,8 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 	}
 
 	source := r.URL.Query().Get("source")
-	if source != "" {
-		// Same fail-fast guard the request handler applies. Without it
-		// this endpoint accepted ANY source string — returning a
-		// forever-empty 200 for a typo instead of the sibling's 400,
-		// and minting an unbounded cache key per distinct value, all
-		// with no validation whatsoever. The OpenAPI text promises
-		// "same compute logic" as /v1/observations (cold audit
-		// 2026-08-03).
-		if _, ok := external.Registry[source]; !ok {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/unknown-source",
-				"Unknown source", http.StatusBadRequest,
-				"source must be a registered source name (see /v1/sources for the canonical list); got "+source)
-			return
-		}
+	if !rawTradeSourceFilterOK(w, r, source) {
+		return
 	}
 
 	aggregate := r.URL.Query().Get("aggregate")
@@ -128,7 +118,7 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 	// Synchronous first compute. We commit to streaming here — even
 	// an empty array is a valid steady-state for this surface, so we
 	// don't 404 on emptiness (the request endpoint doesn't either).
-	first, err := s.computeObservations(r.Context(), pair, source, aggregate)
+	first, err := s.computeObservations(withFreshHistory(r.Context()), pair, source, aggregate)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -182,20 +172,38 @@ func (s *Server) computeObservations(
 	scanCtx, cancel := context.WithTimeout(ctx, observationsScanTimeout)
 	defer cancel()
 
-	var merged []canonical.Trade
-	bySource := map[string]int{}
+	var aliasPairs []canonical.Pair
 	for _, b := range assetAliases(pair.Base) {
 		for _, q := range assetAliases(pair.Quote) {
-			aliasPair, err := canonical.NewPair(b, q)
-			if err != nil {
-				continue
+			if aliasPair, err := canonical.NewPair(b, q); err == nil {
+				aliasPairs = append(aliasPairs, aliasPair)
 			}
-			trades, err := s.history.LatestTradePerSource(scanCtx, aliasPair, source)
-			if err != nil {
-				return nil, err
-			}
-			merged = mergeNewestPerSource(merged, bySource, trades)
 		}
+	}
+	// The alias scans are independent, so they run concurrently: an XLM
+	// pair's cold read costs its slowest spelling, not the sum of all of them.
+	results := make([][]canonical.Trade, len(aliasPairs))
+	errs := make([]error, len(aliasPairs))
+	var wg sync.WaitGroup
+	for i, ap := range aliasPairs {
+		wg.Go(func() {
+			results[i], errs[i] = s.history.LatestTradePerSource(scanCtx, ap, source)
+			if errs[i] != nil {
+				cancel()
+			}
+		})
+	}
+	wg.Wait()
+
+	// Merge in alias order so a same-timestamp tie resolves to the same
+	// spelling it did when the scans ran one after another.
+	var merged []canonical.Trade
+	bySource := map[string]int{}
+	for i := range aliasPairs {
+		if errs[i] != nil {
+			return nil, firstScanError(errs)
+		}
+		merged = mergeNewestPerSource(merged, bySource, results[i])
 	}
 	if aggregate == "latest" {
 		merged = collapseToLatest(merged)
@@ -203,11 +211,33 @@ func (s *Server) computeObservations(
 	return merged, nil
 }
 
+// firstScanError returns the root cause among concurrent alias scans: an
+// error that is not the cancellation a failing sibling triggered.
+func firstScanError(errs []error) error {
+	var first error
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, context.Canceled) {
+			return err
+		}
+		if first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
 // mergeNewestPerSource folds `trades` into `merged`, keeping the most
 // recent trade per source. `bySource` maps source → index in merged
 // and is mutated in place.
 func mergeNewestPerSource(merged []canonical.Trade, bySource map[string]int, trades []canonical.Trade) []canonical.Trade {
 	for _, t := range trades {
+		// Backstop for the storage-side filter: no exchange row is served raw.
+		if !external.IsOnChain(t.Source) {
+			continue
+		}
 		if i, ok := bySource[t.Source]; ok {
 			if isLater(t, merged[i]) {
 				merged[i] = t
@@ -268,7 +298,7 @@ func (s *Server) runObservationsStreamProducer(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			trades, err := s.computeObservations(ctx, pair, source, aggregate)
+			trades, err := s.computeObservations(withFreshHistory(ctx), pair, source, aggregate)
 			if err != nil {
 				if ctx.Err() == nil {
 					s.logger.Warn("computeObservations failed (stream tick) — skipping emit",

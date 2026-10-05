@@ -59,6 +59,9 @@ curl -s http://localhost:9465/metrics | grep supply_refresh_duration_seconds_cou
   problem; see the supply-refresh runbooks.
 - `ok` / `dormant` advancing → the refresher is fine and the rows ARE landing;
   re-check the query in step 1.
+- `missing_baseline` on a classic asset's SAC wrapper → its pre-Soroban
+  opening balance was never seeded, so its supply is withheld and no snapshot
+  lands. Newly watched wrappers start in this state. See Resolution.
 
 **3. If the gate is refusing, compare PRODUCER progress against the asset's own
 last activity.** This is the CS-102 shape and the most likely cause:
@@ -93,6 +96,20 @@ whether a projector tail rebuild is pending.
   fixed this way in CS-102 (`e21fa3d0` classic, `3f26b8db` SEP-41, `aa0d08c2`
   XLM). A regression here most likely means a new supply path was added with
   the old per-entity shape.
+- **Unseeded SAC wrapper (`missing_baseline`)** → the aggregator seeds a newly
+  watched wrapper itself on its first refresh (retrying every 10 min; failures
+  log `genesis baseline auto-seed failed`, usually an unreachable lake). If it
+  persists, preview, then seed by hand. The command is idempotent and changes
+  nothing without `-write`:
+
+  ```sh
+  stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml
+  stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml -write
+  ```
+
+  On r1 run it as the service user with the service environment loaded
+  (`systemd-run --wait --pipe -p User=stellarindex -p EnvironmentFile=/etc/default/stellarindex …`).
+  The next refresh pass writes a snapshot; expect `outcome="ok"` for each asset.
 - **Genuinely stalled producer** → restart/repair the writer, then run the
   relevant catch-up (`projector-replay` for projected sources).
 - **Verify recovery** with `scripts/ops/reconcile-supply-vs-horizon.sh`, which

@@ -79,6 +79,9 @@ const passkeySettingsPath = "/dashboard/settings"
 // audit row: the change has already committed.
 func (h *Handlers) notifyPasskeyChanged(r *http.Request, sc SessionContext, change notify.PasskeyChange) {
 	obs.PasskeyCredentialChangesTotal.WithLabelValues(string(change)).Inc()
+	if platform.IsPlaceholderEmail(sc.User.Email) {
+		return
+	}
 	var ip string
 	if addr := clientIP(r); addr != nil {
 		ip = addr.String()

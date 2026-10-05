@@ -21,7 +21,8 @@
 #                                              galexie-archive S3 bucket.
 #   VERIFY_ARCHIVE_FROM                         Default 2 (genesis fallback).
 #   VERIFY_ARCHIVE_WORKERS                      Default 12 (parallel chunks).
-#   VERIFY_ARCHIVE_MAX_RUNTIME                  Default 16h cap.
+#   VERIFY_ARCHIVE_MAX_RUNTIME                  Default 0 (uncapped); the
+#                                              bound is WatchdogSec liveness.
 #
 # Shares the Tier A incremental state file: verify-archive records the
 # high-water mark under a per-tier key ("chain" vs "checkpoint"), so
@@ -62,7 +63,8 @@ WatchdogSec=1h
 # discard any operator override in /etc/default/stellarindex-ops.
 Environment=VERIFY_ARCHIVE_FROM=2
 Environment=VERIFY_ARCHIVE_WORKERS=12
-Environment=VERIFY_ARCHIVE_MAX_RUNTIME=16h
+# 0 = uncapped: a mid-pass cap leaves the incremental state file unseeded.
+Environment=VERIFY_ARCHIVE_MAX_RUNTIME=0
 Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/stellarindex/verify-archive-state.json
 Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
 # P1-page export path (issue #282). The mismatch counter

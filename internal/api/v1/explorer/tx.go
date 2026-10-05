@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
@@ -116,12 +117,12 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 		eventsPartial = true
 	}
 
-	h.WriteJSON(w, TxDetailView{
+	h.writeJSONAt(w, TxDetailView{
 		TxSummaryView: txSummaryView(tx),
 		Operations:    buildTxOpViews(ops, results, tx.Successful, tx.ResultCode),
 		Events:        buildTxEventViews(events),
 		CoverageNote:  txCoverageNote(resultsPartial, eventsPartial),
-	}, stale)
+	}, stale, resultsPartial || eventsPartial, time.Time{})
 }
 
 // txNotFoundDetail keeps a behind-the-network lake from making a recent

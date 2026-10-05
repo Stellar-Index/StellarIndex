@@ -399,9 +399,27 @@ func drainUntilClosed(ch <-chan canonical.Trade) {
 	}
 }
 
+// maxTradeFutureSkew absorbs host/venue clock skew; minTradeTime is the
+// Stellar network's genesis. A trade outside [minTradeTime, now+skew] comes
+// from a unit mismatch or a vendor fault and would corrupt time-ordered data.
+const maxTradeFutureSkew = 5 * time.Minute
+
+var minTradeTime = time.Date(2015, 9, 30, 0, 0, 0, 0, time.UTC)
+
+func plausibleTradeTime(ts, now time.Time) bool {
+	return !ts.Before(minTradeTime) && !ts.After(now.Add(maxTradeFutureSkew))
+}
+
+// shutdownDrainGrace bounds how long forwardTrades keeps pushing already-
+// buffered trades to the sink after ctx is cancelled, so a stalled consumer
+// cannot hold up shutdown.
+const shutdownDrainGrace = 2 * time.Second
+
 // forwardTrades drains one streamer's channel into the shared sink,
-// wrapping each trade as a TradeEvent. Returns when the source
-// channel closes (streamer shutdown) or ctx is cancelled.
+// wrapping each trade as a TradeEvent. Returns when the source channel
+// closes (streamer shutdown) or ctx is cancelled; on cancel it first
+// flushes trades already buffered in the channel (live CEX streams have no
+// backfill), within shutdownDrainGrace.
 func forwardTrades(
 	ctx context.Context,
 	source string,
@@ -412,6 +430,7 @@ func forwardTrades(
 	for {
 		select {
 		case <-ctx.Done():
+			flushBuffered(ctx, source, in, sink)
 			return
 		case trade, ok := <-in:
 			if !ok {
@@ -419,21 +438,116 @@ func forwardTrades(
 					"source", source)
 				return
 			}
-			// Drop sub-$0.001 dust fills — see minStreamQuoteUnits. They
-			// carry no meaningful price (integer-quantised round-fraction
-			// ratios) and corrupt the OHLC high/low if ingested. The
-			// floor is resolved per QUOTE ASSET so the threshold means
-			// the same $0.001 on XLM/BTC as on XLM/USDT (C2-016).
-			if trade.QuoteAmount.Cmp(minStreamQuoteUnits(trade.Pair.Quote)) < 0 {
-				obs.ExternalDustDroppedTotal.WithLabelValues(source).Inc()
-				continue
-			}
-			obs.CEXStreamLastTradeUnix.WithLabelValues(source).Set(float64(time.Now().Unix()))
-			select {
-			case <-ctx.Done():
+			if !forwardTrade(ctx, source, trade, sink) {
+				flushBuffered(ctx, source, in, sink)
 				return
-			case sink <- TradeEvent{Trade: trade}:
 			}
+		}
+	}
+}
+
+// forwardTrade applies the dust and timestamp filters and sends one trade to the sink. It
+// returns false when ctx was cancelled before the send completed.
+func forwardTrade(ctx context.Context, source string, trade canonical.Trade, sink chan<- consumer.Event) bool {
+	// Drop sub-$0.001 dust fills — see minStreamQuoteUnits. They
+	// carry no meaningful price (integer-quantised round-fraction
+	// ratios) and corrupt the OHLC high/low if ingested. The
+	// floor is resolved per QUOTE ASSET so the threshold means
+	// the same $0.001 on XLM/BTC as on XLM/USDT (C2-016).
+	if trade.QuoteAmount.Cmp(minStreamQuoteUnits(trade.Pair.Quote)) < 0 {
+		obs.ExternalDustDroppedTotal.WithLabelValues(source).Inc()
+		return true
+	}
+	if !plausibleTradeTime(trade.Timestamp, time.Now()) {
+		obs.ExternalBadTimestampDroppedTotal.WithLabelValues(source).Inc()
+		slog.Warn("dropping trade with implausible timestamp",
+			"source", source, "timestamp", trade.Timestamp)
+		return true
+	}
+	obs.CEXStreamLastTradeUnix.WithLabelValues(source).Set(float64(time.Now().Unix()))
+	ev := TradeEvent{Trade: trade}
+	select {
+	case sink <- ev:
+		return true
+	case <-ctx.Done():
+	}
+	// The trade is already off the streamer channel: give the sink one
+	// bounded chance to take it rather than losing it to the cancel.
+	select {
+	case sink <- ev:
+	case <-time.After(shutdownDrainGrace):
+	}
+	return false
+}
+
+// flushBuffered forwards whatever is already queued in in, without waiting
+// for more, until the channel is empty/closed or shutdownDrainGrace elapses.
+func flushBuffered(ctx context.Context, source string, in <-chan canonical.Trade, sink chan<- consumer.Event) {
+	grace, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownDrainGrace)
+	defer cancel()
+	for {
+		select {
+		case trade, ok := <-in:
+			if !ok || !forwardTrade(grace, source, trade, sink) {
+				return
+			}
+		default:
+			return
+		}
+	}
+}
+
+// throttled is implemented by pollers that skip upstream calls while backing
+// off a rate limit. A skip inside that window is not proof the upstream is
+// reachable, so it must not refresh the staleness clock.
+type throttled interface {
+	CooldownRemaining() time.Duration
+}
+
+func inCooldown(p Poller) bool {
+	t, ok := p.(throttled)
+	return ok && t.CooldownRemaining() > 0
+}
+
+// pollOutcome scores one PollOnce result for the polls_total metric. Only
+// "success" and "skipped" refresh the staleness clock: (nil, nil, nil) is a
+// poller that reached upstream and found nothing new (chainlink between hourly
+// rounds; a throttle cooldown is excluded in runPoller), while non-nil but empty is an answer
+// with nothing usable in it (a renamed slug decodes to {}). "idle" is a poller
+// none of whose configured pairs it can request: config, not an upstream
+// failure, and never fresh.
+func pollOutcome(trades []canonical.Trade, updates []canonical.OracleUpdate, err error) string {
+	switch {
+	case errors.Is(err, ErrNoApplicablePairs):
+		return "idle"
+	case err != nil:
+		return "error"
+	case trades == nil && updates == nil:
+		return "skipped"
+	case len(trades) == 0 && len(updates) == 0:
+		return "empty"
+	default:
+		return "success"
+	}
+}
+
+func emitPollResults(ctx context.Context, source string, sink chan<- consumer.Event, trades []canonical.Trade, updates []canonical.OracleUpdate) {
+	for _, t := range trades {
+		if !plausibleTradeTime(t.Timestamp, time.Now()) {
+			obs.ExternalBadTimestampDroppedTotal.WithLabelValues(source).Inc()
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case sink <- TradeEvent{Trade: t}:
+		}
+	}
+	for _, u := range updates {
+		select {
+		case <-ctx.Done():
+			return
+		case sink <- UpdateEvent{Update: u}:
 		}
 	}
 }
@@ -457,49 +571,31 @@ func runPoller(
 ) {
 	name := spec.Poller.Name()
 	interval := spec.Poller.PollInterval()
+	warnedIdle := false
 
 	doPoll := func() {
 		trades, updates, err := spec.Poller.PollOnce(ctx, spec.Pairs)
-		if err != nil {
-			obs.ExternalPollerPollsTotal.WithLabelValues(name, "error").Inc()
-			logger.Warn("poller error",
-				"source", name, "err", err)
+		outcome := pollOutcome(trades, updates, err)
+		obs.ExternalPollerPollsTotal.WithLabelValues(name, outcome).Inc()
+		switch outcome {
+		case "error":
+			logger.Warn("poller error", "source", name, "err", err)
+			return
+		case "empty":
+			logger.Warn("poller reached upstream but produced no rows", "source", name)
+			return
+		case "idle":
+			if !warnedIdle {
+				logger.Warn("poller has no applicable pairs; it will never produce rows", "source", name)
+				warnedIdle = true
+			}
 			return
 		}
-		// (nil trades, nil updates, nil err) is the convention for
-		// "poller skipped this tick" — used by per-poller cooldown
-		// after rate-limit (e.g. coingecko backoff) AND by sources
-		// like chainlink that frequently see "no new round" between
-		// 1-hour feed updates. Pre-2026-06-01 this branch returned
-		// without updating LastSuccessUnix, so a healthy chainlink
-		// poller (polling every 30s, but feeds updating hourly)
-		// looked stale to `stellarindex_external_poller_stale`
-		// within ~10-15 min. The outcome counter still bumps
-		// "skipped" so operators can tell skip from success; but
-		// the timestamp bumps too because the poller is alive +
-		// reaching upstream — a skip means "we polled and there
-		// was nothing new", not "we couldn't poll."
-		if trades == nil && updates == nil {
-			obs.ExternalPollerPollsTotal.WithLabelValues(name, "skipped").Inc()
-			obs.ExternalPollerLastSuccessUnix.WithLabelValues(name).Set(float64(time.Now().Unix()))
+		if outcome == "skipped" && inCooldown(spec.Poller) {
 			return
 		}
-		obs.ExternalPollerPollsTotal.WithLabelValues(name, "success").Inc()
 		obs.ExternalPollerLastSuccessUnix.WithLabelValues(name).Set(float64(time.Now().Unix()))
-		for _, t := range trades {
-			select {
-			case <-ctx.Done():
-				return
-			case sink <- TradeEvent{Trade: t}:
-			}
-		}
-		for _, u := range updates {
-			select {
-			case <-ctx.Done():
-				return
-			case sink <- UpdateEvent{Update: u}:
-			}
-		}
+		emitPollResults(ctx, name, sink, trades, updates)
 	}
 
 	// Fire once on start, then on the ticker cadence.

@@ -155,19 +155,19 @@ func seedBlendAuctionFixture(ctx context.Context, t *testing.T, store *timescale
 	fills := []blend.FillAuctionEvent{
 		{
 			AuctionType: 0, User: liquidatedAcct, Filler: fillerAcct, FillPercent: big.NewInt(50), Ledger: 103,
-			Data: blend.AuctionData{Bid: amounts(auctionDebt, 2400), Lot: amounts(auctionCollateral, 4500)},
+			Data: &blend.AuctionData{Bid: amounts(auctionDebt, 2400), Lot: amounts(auctionCollateral, 4500)},
 		},
 		{
 			AuctionType: 0, User: liquidatedAcct, Filler: fillerAcct, FillPercent: big.NewInt(100), Ledger: 106,
-			Data: blend.AuctionData{Bid: amounts(auctionDebt, 2000), Lot: amounts(auctionCollateral, 5100)},
+			Data: &blend.AuctionData{Bid: amounts(auctionDebt, 2000), Lot: amounts(auctionCollateral, 5100)},
 		},
 		{
 			AuctionType: 2, User: backstopAcct, Filler: bystanderAcct, FillPercent: big.NewInt(100), Ledger: 107,
-			Data: blend.AuctionData{Bid: amounts(auctionBackstopLP, 70), Lot: amounts(auctionCollateral, 90)},
+			Data: &blend.AuctionData{Bid: amounts(auctionBackstopLP, 70), Lot: amounts(auctionCollateral, 90)},
 		},
 		{
 			AuctionType: 1, User: backstopAcct, Filler: badDebtFillerAcct, FillPercent: big.NewInt(100), Ledger: 108,
-			Data: blend.AuctionData{Bid: amounts(auctionDebt, 28), Lot: amounts(auctionBackstopLP, 60)},
+			Data: &blend.AuctionData{Bid: amounts(auctionDebt, 28), Lot: amounts(auctionBackstopLP, 60)},
 		},
 	}
 	for i, f := range fills {

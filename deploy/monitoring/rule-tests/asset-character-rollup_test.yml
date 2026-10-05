@@ -1,0 +1,64 @@
+# promtool unit tests for stellarindex_asset_character_rollup_failing.
+#
+#   promtool test rules deploy/monitoring/rule-tests/asset-character-rollup_test.yml
+#
+# The worker sweeps every 6h, so the rule keys on a 13h window (two
+# cadences): errors with no ok sweep fire; a single error that the next
+# sweep recovers stays silent.
+
+rule_files:
+  - ../rules/aggregator.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ok at 1h; errors at 6h and 12h with no further ok. At 10h the ok is
+  # still inside the 13h window (silent); at 20h it is not (fires).
+  - interval: 1h
+    name: two consecutive failed sweeps fire
+    input_series:
+      - series: 'stellarindex_asset_character_rollup_sweeps_total{outcome="ok"}'
+        values: '0 1x23'
+      - series: 'stellarindex_asset_character_rollup_sweeps_total{outcome="refresh_error"}'
+        values: '0x5 1x6 2x13'
+    alert_rule_test:
+      - eval_time: 10h
+        alertname: stellarindex_asset_character_rollup_failing
+        exp_alerts: []
+      - eval_time: 20h
+        alertname: stellarindex_asset_character_rollup_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/asset-character-rollup-failing.md
+              summary: "Asset-character rollup failing: errors with no successful sweep in 13h"
+              description: |
+                The aggregator's asset-volume-character rollup worker (6h
+                cadence) has recorded refresh errors and no successful sweep
+                in the last 13h. The volume_character label and signals on
+                /v1/assets and /v1/assets/{id} stop advancing (last-good
+                rows persist, not blank). Pricing, verification and the raw
+                volume_24h_usd are unaffected. Fix the failing Postgres
+                backend; the next sweep catches up.
+
+  # ok at 1h, one error at 6h, ok again at 12h: never fires.
+  - interval: 1h
+    name: a single error that recovers on the next sweep stays silent
+    input_series:
+      - series: 'stellarindex_asset_character_rollup_sweeps_total{outcome="ok"}'
+        values: '0 1x10 2x13'
+      - series: 'stellarindex_asset_character_rollup_sweeps_total{outcome="refresh_error"}'
+        values: '0x5 1x18'
+    alert_rule_test:
+      - eval_time: 9h
+        alertname: stellarindex_asset_character_rollup_failing
+        exp_alerts: []
+      - eval_time: 14h
+        alertname: stellarindex_asset_character_rollup_failing
+        exp_alerts: []
+      - eval_time: 20h
+        alertname: stellarindex_asset_character_rollup_failing
+        exp_alerts: []

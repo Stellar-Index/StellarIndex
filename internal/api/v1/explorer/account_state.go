@@ -8,8 +8,11 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // AccountsListView is the wire response for GET /v1/accounts — accounts ranked
@@ -136,7 +139,7 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Accounts[i] = row
 	}
-	h.writeJSONAt(w, out, stale || snapshotStale, snap.AsOf)
+	h.writeJSONAt(w, out, stale || snapshotStale, snapshotStale, snap.AsOf)
 }
 
 // usdPriceMap builds parallel (asset, price) arrays for wealth ranking: native
@@ -164,34 +167,83 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 // cached for 15 minutes, so the price set cannot change what the page shows.
 const usdPriceMapTTL = 10 * time.Minute
 
+// usdPriceMapEmptyTTL is shorter so a pricing outage clears quickly, yet
+// still stops every request from re-running the walk while it lasts.
+const usdPriceMapEmptyTTL = 30 * time.Second
+
+// usdPriceMapFillTimeout bounds the shared walk, which no caller can cancel.
+const usdPriceMapFillTimeout = time.Minute
+
 type usdPriceMapEntry struct {
 	assets   []string
 	prices   []string
 	cachedAt time.Time
 }
 
+func (e usdPriceMapEntry) fresh(now time.Time) bool {
+	ttl := usdPriceMapTTL
+	if len(e.assets) == 0 {
+		ttl = usdPriceMapEmptyTTL
+	}
+	return !e.cachedAt.IsZero() && now.Sub(e.cachedAt) < ttl
+}
+
 var (
-	usdPriceMapMu    sync.Mutex
-	usdPriceMapCache usdPriceMapEntry
+	usdPriceMapMu     sync.Mutex
+	usdPriceMapCache  usdPriceMapEntry
+	usdPriceMapFlight singleflight.Group
 )
 
-// usdPriceMap builds parallel (asset, price) arrays for wealth ranking,
-// memoised for [usdPriceMapTTL]. See the const's doc for why.
-func (h *Handler) usdPriceMap(ctx context.Context) (assets, prices []string) {
+func loadUSDPriceMapCache() usdPriceMapEntry {
 	usdPriceMapMu.Lock()
-	if c := usdPriceMapCache; c.assets != nil && time.Since(c.cachedAt) < usdPriceMapTTL {
-		usdPriceMapMu.Unlock()
-		return c.assets, c.prices
-	}
-	usdPriceMapMu.Unlock()
+	defer usdPriceMapMu.Unlock()
+	return usdPriceMapCache
+}
 
-	assets, prices = h.usdPriceMapUncached(ctx)
-	if len(assets) > 0 {
-		usdPriceMapMu.Lock()
-		usdPriceMapCache = usdPriceMapEntry{assets: assets, prices: prices, cachedAt: time.Now()}
-		usdPriceMapMu.Unlock()
+// usdPriceMap builds parallel (asset, price) arrays for wealth ranking,
+// memoised for [usdPriceMapTTL] with one walk in flight at a time.
+func (h *Handler) usdPriceMap(ctx context.Context) (assets, prices []string) {
+	last := loadUSDPriceMapCache()
+	if last.fresh(time.Now()) {
+		return last.assets, last.prices
 	}
-	return assets, prices
+	//nolint:contextcheck // the walk is shared by every waiter, so no single caller's cancellation may truncate it
+	ch := usdPriceMapFlight.DoChan("", func() (val any, err error) {
+		// singleflight re-raises a fill panic on a goroutine nothing can
+		// recover, so it would kill the process; fail the flight instead.
+		defer func() {
+			if rec := recover(); rec != nil {
+				worker.Report(h.Logger, "explorer-usd-price-map-fill", rec)
+				val, err = nil, errRefreshPanicked
+			}
+		}()
+		if c := loadUSDPriceMapCache(); c.fresh(time.Now()) {
+			return c, nil
+		}
+		fillCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), usdPriceMapFillTimeout)
+		defer cancel()
+		e := usdPriceMapEntry{cachedAt: time.Now()}
+		e.assets, e.prices = h.usdPriceMapUncached(fillCtx)
+		// A walk cut short by the deadline is partial; serve it but don't cache it.
+		if fillCtx.Err() == nil {
+			usdPriceMapMu.Lock()
+			usdPriceMapCache = e
+			usdPriceMapMu.Unlock()
+		}
+		return e, nil
+	})
+	select {
+	case res := <-ch:
+		e, ok := res.Val.(usdPriceMapEntry)
+		if res.Err != nil || !ok {
+			return last.assets, last.prices
+		}
+		return e.assets, e.prices
+	case <-ctx.Done():
+		// The caller's deadline bounds its wait, not the walk: serve the last
+		// entry (even expired, or none) and let the walk fill the cache.
+		return last.assets, last.prices
+	}
 }
 
 // wealthRankingInputs returns the (asset, price) arrays to rank account wealth
@@ -411,7 +463,7 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 	// snapStale: the served state came from an expired cache entry while a
 	// detached refresh runs (whale-account stale-serve, route-sweep
 	// 2026-07-30) — surfaced on the same flags.stale the watermark uses.
-	h.WriteJSON(w, out, stale || snapStale)
+	h.writeJSONAt(w, out, stale || snapStale, out.DirectoryUnavailable, time.Time{})
 }
 
 // fillAccountStateView renders a live account's state onto the wire view.
@@ -577,7 +629,7 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	for i, hh := range holders {
 		out.Holders[i] = AssetHolderV{AccountID: hh.AccountID, Balance: strconv.FormatInt(hh.Balance, 10)}
 	}
-	h.writeJSONAt(w, out, stale || degraded, asOf.at)
+	h.writeJSONAt(w, out, stale || degraded, degraded, asOf.at)
 }
 
 // PrewarmAccountsWealth primes the wealth-ranking cache so no user ever

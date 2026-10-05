@@ -9,7 +9,7 @@ import (
 
 // DefaultPairs returns the Bitstamp symbol → canonical.Pair map for
 // the default set of markets the indexer subscribes to when Bitstamp
-// is enabled without operator pair overrides.
+// is enabled.
 //
 // Bitstamp symbols are lowercase concatenated ("xlmusd" not "XLM/USD"
 // or "XLMUSD"). We normalise to that format and the channel prefix

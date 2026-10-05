@@ -108,7 +108,7 @@ These are the facts an erasure cannot reach. They were measured on r1
 | ----- | ----- | ------------ |
 | pgBackRest repo1 (local) | full database, unencrypted (`cipher-type=none`) | `repo1-retention-full=2`: up to ~15 days after the erasure |
 | pgBackRest repo2 (S3, `aes-256-cbc`) | full database | full/diff expire in ~14 days, but **WAL expiry is unset on r1** (`repo2-retention-archive-type=diff`, no `repo2-retention-archive`); the fix in `configs/ansible` `pgbackrest.conf.j2` is not applied, so WAL holding the deleted rows is kept indefinitely |
-| ZFS `auto-*` snapshots of `postgres` | full database, dataset `encryption=off` | 7 days; manual snapshots are never pruned — check `zfs list -t snapshot` |
+| ZFS `auto-*` snapshots of `postgres` | full database, dataset `encryption=off` | 3 days; manual snapshots are never pruned — check `zfs list -t snapshot` |
 | Redis RDB dump | Redis keyspace | replaced at the next `save` point (at most ~1 hour) |
 | API process memory | idempotency cache of a replayed `DELETE` response; validator account-status cache | 10 minutes; 30 seconds |
 | Loki | API logs with `account_id` (emails are masked) and Caddy access logs with client IPs | 720 hours |
@@ -135,6 +135,7 @@ half of the erasure already happened.
 
 ## Related
 
+- [`privacy-rights-requests.md`](privacy-rights-requests.md) — identity checks and every other rights request (access, correction, restriction, objection, single-member erasure)
 - [`docs/architecture/platform-spec.md` §8.3](../../architecture/platform-spec.md) — the built behaviour
 - [`migrations/0188_account_erasure.up.sql`](../../../migrations/0188_account_erasure.up.sql) — the audit exception and the slug tombstone
 - [`admin-audit-write-failing.md`](admin-audit-write-failing.md) — the audit sink the export and staff rows depend on

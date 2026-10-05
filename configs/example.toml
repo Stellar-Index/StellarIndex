@@ -257,7 +257,7 @@ backfill_from_ledger  = 0                # 0 = resume from persisted cursor
 
   # ClassExchange — CEX trade streams. No auth, no API keys.
   # Default pair sets cover the highest-liquidity XLM + BTC + ETH
-  # markets; per-venue pair overrides are a future config surface.
+  # markets; per-venue pair lists are code (pairs.go, binance pairs.yaml), not config.
   [external.binance]
   enabled = false   # WS aggTrade — XLMUSDT / BTCUSDT / ETHUSDT / XLMBTC
   # poll_interval = ""   # accepted but unused: this connector streams over WebSocket
@@ -339,11 +339,22 @@ backfill_from_ledger  = 0                # 0 = resume from persisted cursor
   #                     # Older rounds are refused and counted, never written as current.
   #                     # Omit for the pair's default (built-in budget, else 76 fiat/fiat, else 3).
 
-  # massive.com forex rates behind /v1/currencies, fetched hourly by
-  # stellarindex-api. An empty key still starts the worker, but every
-  # fetch 401s and /v1/currencies serves warming-up.
+  # massive.com forex rates behind /v1/currencies, fetched every
+  # refresh_interval by stellarindex-api. An empty key still starts the
+  # worker, but every fetch 401s and /v1/currencies serves warming-up.
   [external.massive]
   # api_key = ""    # prefer env: MASSIVE_API_KEY
+  # refresh_interval = "1h"   # forex worker poll cadence; floor 10m (clamped + logged).
+  #                           # One poll = one request to massive, plus one per standby it falls through to.
+
+  # Open Exchange Rates hourly USD-base board. Built by stellarindex-api
+  # when enabled, but NOT in the serving chain yet: the worker holds it and
+  # never fetches it. Free plan: 1,000 requests/month, hourly updates, USD
+  # base only (base/symbols params refused) — 720-744/month at a 1h poll.
+  [external.openexchangerates]
+  enabled = false
+  # app_id = ""     # prefer env: OPENEXCHANGERATES_APP_ID (sent as Authorization: Token)
+  # endpoint = ""   # empty = https://openexchangerates.org/api
 
   # Dune API, read only by the curated-rwa-sync ops command, which
   # refuses to run without a key.
@@ -365,6 +376,7 @@ max_trades_per_window        = 10000
 max_hops                     = 3       # router route length cap (LEGS); 0 = default (3), accepted range [2,4]
 min_route_confidence         = 0.0     # weakest-link confidence floor [0,1] a route must clear to set a confident cross; 0 = disabled (pre-router behaviour)
 disable_class_filter         = false   # default: only ClassExchange sources contribute to VWAP
+excluded_sources             = []      # read-time kill-switch: drop these sources' stored trades from VWAP (enabled=false only stops new ingest)
 enable_stablecoin_fiat_proxy = false   # opt-in: expand XLM/fiat:USD to also pull XLM/USDT/USDC/DAI/PYUSD/USDP and collapse onto the target
 # Operator-override coverage set. Empty = built-in default (XLM/BTC/ETH × USD/EUR/GBP).
 # Format: "<base>/<quote>" using the canonical asset wire form
@@ -412,8 +424,9 @@ fx_max_age_hours = 76    # fx_quotes buckets are daily + pause over market close
 
 # ──────────────────────────────────────────────────────────────────
 # Anomaly — ADR-0019 anomaly detection. Phase 1 (per-class thresholds)
-# + Phase 2 (per-asset MAD baseline + confidence). Both run; freeze
-# fires only when both agree. Off by default during roll-out.
+# + Phase 2 (per-asset MAD baseline + confidence). Both run; either
+# can freeze on its own and both share one freeze lifecycle. Off by
+# default during roll-out.
 # ──────────────────────────────────────────────────────────────────
 [anomaly]
 enabled = false
@@ -460,8 +473,7 @@ listen_addr              = "0.0.0.0:3000"
 # to our host. Empty or non-http(s) suppresses the verification email.
 external_base_url        = "https://api.stellarindex.io/v1"
 # auth_mode=none matches this product's default posture: a public,
-# no-auth read API for market data (see the allowed_origins rationale
-# below — same "public API" design intent). It is NOT a safe default
+# no-auth read API for market data. It is NOT a safe default
 # if you're standing this API up as an internal/private service —
 # switch to apikey / apikey_optional / sep10 in that case (audit-
 # 2026-07-23 CFG-01; see docs/operations/pre-launch-hardening.md).
@@ -486,31 +498,18 @@ status_services          = ["indexer", "aggregator"]
 archive_report_path      = "/var/lib/galexie/last-completeness-report.json"
 # allowed_origins — CORS allow-list for browser clients.
 #
-# Recommended: leave at the default ["*"] for any deployment that
-# offers Stellar Index as a public Stellar API. The
-# product's read tier is no-auth, used from customer wallets,
-# embed widgets, dashboards, and SDK consumers running in
-# arbitrary browsers — narrowing this to your own hostname
-# silently breaks every cross-origin caller (the browser blocks
-# the response without an explicit `Access-Control-Allow-Origin`
-# match).
+# Default [] = same-origin only: no cross-origin browser client can
+# read responses. A wildcard ["*"] makes every response readable by
+# every website, and scripts/ops/pre-launch-check.sh fails on it, so
+# list your own hostnames explicitly, e.g.
+#   allowed_origins = ["https://app.example.com", "https://docs.example.com"]
 #
-# When narrowing makes sense: deployments that ALSO use session-
-# cookie auth on the same hostname (the magic-link / dashboard
-# flow at /v1/auth/login + /v1/dashboard/*) — wildcard CORS plus
-# session cookies is a CSRF foothold. The credentialed surface
-# is path-narrow; the public read surface (/v1/price, /v1/assets,
-# /v1/markets, /v1/observations, /v1/oracle/*, etc.) does not
-# accept session cookies and is safe under wildcard CORS.
-#
-# If you DO narrow this, also expect:
-#   - The /embed/* widget surface to stop functioning in customer
-#     iframes (their JS can't fetch live data from this API).
-#   - Third-party SDK consumers calling from browser JS to fail
-#     with CORS errors.
-#   - The Postman + curl examples to keep working (they bypass
-#     browser-enforced CORS).
-allowed_origins          = ["*"]
+# Any origin not listed is blocked by the browser (no matching
+# `Access-Control-Allow-Origin`): customer wallets, /embed/* iframes
+# and SDK consumers in browser JS. Postman and curl bypass CORS.
+# Wildcard CORS plus session cookies (the /v1/auth/login +
+# /v1/dashboard/* flow) is a CSRF foothold; see allow_credentials.
+allowed_origins          = []
 # trusted_proxy_cidrs — empty (default) = ignore X-Forwarded-For
 # entirely and use the direct TCP peer as the client IP. Set this to
 # the CIDR(s) of YOUR reverse proxy / load-balancer tier (the hops
@@ -585,6 +584,14 @@ trusted_proxy_cidrs      = []
 # the probe.
 # tls_cert_probe_hosts = ["api.stellarindex.io", "status.stellarindex.io", "stellarindex.io"]
 
+# holds_file / holds_reload_interval — TOML file of [[hold]] entries
+# (asset, contract_id, ledger_from, ledger_to, reason; all set selectors
+# must match) that flag matching supply, balance and holder responses
+# `flags.under_review`. Re-read every interval; a missing file means no
+# holds, an invalid one keeps the previous list. Empty path disables it.
+# holds_file = "/etc/stellarindex/holds.toml"
+# holds_reload_interval = "15s"
+
 # prometheus_url — Prometheus HTTP API root backing /v1/status. Empty
 # leaves /v1/status serving an in-process surface (uptime + region).
 # prometheus_url = "http://localhost:9090"
@@ -645,6 +652,7 @@ jwt_ttl         = "1h"
 email_from             = "Stellar Index <hello@stellarindex.io>"
 resend_api_key_env     = "STELLARINDEX_RESEND_API_KEY"
 code_secret_env        = "STELLARINDEX_DASHBOARD_CODE_SECRET"
+webhook_seal_key_env   = "STELLARINDEX_WEBHOOK_SEAL_KEY"
 magic_link_ttl_minutes = 15
 session_ttl_days       = 30
 cookie_secure           = true
@@ -940,6 +948,7 @@ enabled = false
 # substance_min_span_minutes = 360    # 0 = library default
 # substance_window_hours     = 24     # 0 = library default
 # fx_cross_max_age_hours     = 76     # staleness budget for the fiat-cross-rate fallback; 0 = library default
+# disable_fiat_basis = false       # ADR-0053 kill switch — serve a single-venue fiat book instead of the USD-anchored derivation
 # [pricing_guard.fiat_pegged_classic_assets]
 # "AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU" = "AUD"
 
@@ -958,8 +967,8 @@ enabled = false
 backfill_window_days = 90
 
 # ──────────────────────────────────────────────────────────────────
-# Price alerts — customer price-threshold alert evaluator
-# (BACKLOG #60). Off by default; when enabled the aggregator sweeps
+# Price alerts — customer price-threshold alert evaluator.
+# Off by default; when enabled the aggregator sweeps
 # price_alerts against the latest closed VWAP every tick and enqueues
 # price.alert webhook deliveries. The CRUD surface mounts regardless.
 # ──────────────────────────────────────────────────────────────────
@@ -1006,3 +1015,12 @@ trace_exporter  = "none"          # only "none" is wired in this build;
                                   # it until an exporter is implemented.
 trace_sample    = 0.1             # 0.0 – 1.0; ignored in this build,
                                   # read by the future tracing rollout.
+
+# Tiingo end-of-day NAV for the bound tokenized funds (tickers come from
+# internal/rwa's fund bindings, not from config). Off by default. Free
+# tier: 50 req/h, 1,000 req/day; hourly polling of 12 tickers is 288/day.
+# The key is sent as an Authorization header; set it via TIINGO_API_KEY.
+# [external.tiingo]
+# enabled = false
+# poll_interval = "1h"
+# api_key = ""

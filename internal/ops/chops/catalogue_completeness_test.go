@@ -190,10 +190,10 @@ var projRoutes = []projRoute{
 	{typeName: "comet.LiquidityEvent", table: "comet_liquidity", kind: "comet.liquidity", disp: reconciledByKind},
 
 	// ── sushiswap_v3 ──
-	// One kind, one table. The position / lifecycle events (mint, burn,
-	// collect, init, upgraded, migrated) are gated and recognized but emit no
-	// consumer.Event at all, so they have no persist arm and need no route.
+	// The pool lifecycle events (init, upgraded, migrated) are gated and
+	// recognized but emit no consumer.Event, so they need no route.
 	{typeName: "sushiswap_v3.TradeEvent", table: "trades", kind: "sushiswap_v3.trade", disp: reconciledByKind},
+	{typeName: "sushiswap_v3.PositionEvent", table: "sushiswap_v3_position_events", kind: "sushiswap_v3.position", disp: reconciledByKind},
 
 	// ── upshift ──
 	// One consumer.Event carrying all four decoded kinds (the
@@ -233,6 +233,7 @@ var projRoutes = []projRoute{
 	{typeName: "defindex.Event", table: "defindex_flows", disp: reconciledByKind},
 	{typeName: "defindex.VaultEvent", table: "defindex_flows", disp: reconciledByKind},
 	{typeName: "defindex.DFeesEvent", table: "defindex_fees", kind: "defindex.vault.dfees", disp: reconciledByKind},
+	{typeName: "defindex.AdminEvent", table: "defindex_admin_events", kind: "defindex.vault.admin", disp: reconciledByKind},
 
 	// ── oracles ──
 	{typeName: "reflector.UpdateEvent", table: "oracle_updates", kind: "reflector.update", disp: reconciledByKind},
@@ -533,8 +534,9 @@ func TestCatalogue_DeclaredKindsMatchDecoderOutput(t *testing.T) {
 		// table — pinned so the catalogue kind string stays welded to
 		// DFeesEvent.EventKind().
 		{defindex.DFeesEvent{}, "defindex.vault.dfees", "defindex_fees"},
-		// sushiswap_v3: the source's only emitted kind.
+		{defindex.AdminEvent{}, "defindex.vault.admin", "defindex_admin_events"},
 		{sushiswap_v3.TradeEvent{}, "sushiswap_v3.trade", "trades"},
+		{sushiswap_v3.PositionEvent{}, "sushiswap_v3.position", "sushiswap_v3_position_events"},
 		// upshift: one kind covers deposit / withdraw / share transfer /
 		// deployed-assets change — the row's event_kind column
 		// discriminates them, the wire EventKind does not.

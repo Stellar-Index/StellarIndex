@@ -1,24 +1,15 @@
 ---
 # Publish the generated API reference to GitHub Pages.
 #
-# Runs on every push to main that affects either the OpenAPI source
-# or the generated output. The CI drift check in ci.yml has already
-# verified the two are in sync at PR-merge time, so this workflow
-# trusts what's in main and just publishes.
-#
-# DNS: docs.stellarindex.io is wired to the project's GitHub Pages
-# domain (set via repository CNAME after the public-flip per
-# docs/operations/public-flip.md).
+# docs.stellarindex.io is NOT served from here: it is on Cloudflare
+# Pages (project stellarindex-docs), published by Cloudflare's git
+# integration with docs-deploy.yml as the manual fallback. This
+# workflow is dispatch-only and deliberately not push-triggered, so a
+# second publisher never races the canonical one.
 
 name: api-docs
 
 on:
-  # GitHub Pages is configured AFTER the public-flip per
-  # docs/operations/public-flip.md §"Post-flip" — until then this
-  # workflow's `actions/deploy-pages` step fails on every run
-  # because Pages isn't enabled on the private repo. Run manually
-  # via workflow_dispatch when needed (and re-enable the push
-  # trigger as part of the public-flip cutover, Task #78).
   workflow_dispatch:
 
 permissions:

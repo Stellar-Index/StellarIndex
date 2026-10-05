@@ -3,11 +3,13 @@ package v1
 import (
 	"context"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/tiingo"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
@@ -127,6 +129,23 @@ const rwaReferenceStaleAfter = 72 * time.Hour
 // docs/methodology/rwa-definition.md both claim is absolute.
 const rwaReferenceMaxAge = 7 * 24 * time.Hour
 
+// rwaFundNAVMaxAge is the oldest fund NAV the fund arm serves. A NAV is
+// struck every business day and dated that day, so five calendar days
+// spans a weekend plus a holiday; an older one means the feed stopped.
+const rwaFundNAVMaxAge = 5 * 24 * time.Hour
+
+// rwaFundNAVDecimalsPublished is the precision the fund administrator
+// publishes a NAV at (the SEC-reported figure, rounded to the cent).
+const rwaFundNAVDecimalsPublished = 2
+
+// rwaNAVDisagreementTolerance is half a cent: the rounding a 2-dp NAV
+// carries, so a gap within it is not a disagreement.
+var rwaNAVDisagreementTolerance = big.NewRat(1, 200)
+
+// rwaFundNAVTicker is the (code, issuer) → fund ticker join; a variable
+// so a test can bind a pair the oracle arm also binds.
+var rwaFundNAVTicker = rwa.FundNAVTicker
+
 // rwaReferenceRefreshTimeout bounds one detached oracle-stream read,
 // mirroring oracleFetchBudget: the read must outlive whichever request
 // happened to notice the cache was cold or lapsed.
@@ -166,12 +185,14 @@ type RWAReference struct {
 	// not age, but the reading of it does, and past
 	// [rwa.ConstantNAVReviewInterval] the row says so.
 	Stale bool `json:"stale,omitempty"`
-	// Provenance names WHAT KIND of figure this is. Four are published
+	// Provenance names WHAT KIND of figure this is. Five are published
 	// and they are not the same claim, so the field is mandatory on
 	// every served reference rather than defaulted.
 	//
 	// [RWAReferenceOracleNAV] is an oracle's published valuation of the
 	// INSTRUMENT, which the token declares it anchors to one-for-one.
+	// [RWAReferenceFundNAV] is the fund's own published daily NAV per
+	// share, for a token that is one share of that fund.
 	// [RWAReferenceListingPrice] is a listing platform's aggregate of
 	// what the TOKEN trades at across the venues it tracks.
 	// [RWAReferenceProspectusCNAV] is the issuer's own prescribed NAV
@@ -183,6 +204,16 @@ type RWAReference struct {
 	// summary total describe itself with the wrong provenance, which
 	// is the exact defect the summary basis prose exists to prevent.
 	Provenance string `json:"provenance"`
+	// DecimalsPublished is the precision the publisher states the value
+	// at, when it is coarser than the wire scale suggests. Set on a
+	// [RWAReferenceFundNAV] reference: a NAV published to the cent cannot
+	// resolve a difference smaller than half a cent.
+	DecimalsPublished *int `json:"decimals_published,omitempty"`
+	// NAVDisagreement marks an oracle reference whose fund's own
+	// published NAV differs from it by more than half a cent. The oracle
+	// figure is still the one served; the flag says a second, weaker
+	// source for the same share disagrees.
+	NAVDisagreement bool `json:"nav_disagreement,omitempty"`
 }
 
 // RWAReference provenances.
@@ -229,6 +260,15 @@ const (
 	// price (positive, parseable, inside the reference bound) exists
 	// for the row.
 	RWAReferenceProspectusCNAV = "prospectus_constant_nav"
+	// RWAReferenceFundNAV — the fund's own published daily NAV per share
+	// (the SEC-reported figure, via Tiingo), bound on the exact (code,
+	// issuer) in rwa.FundNAVTicker for a token that is one share of that
+	// fund. Ranked below the oracle arm — the value is the issuer's
+	// statement, relayed by a vendor, rather than an independent oracle's
+	// publication — and above the listing arm, because it values the
+	// share rather than aggregating the token's own markets. Published to
+	// the cent, which the reference states in `decimals_published`.
+	RWAReferenceFundNAV = "fund_nav"
 )
 
 // RWAReferenceValuation is the token's circulating supply valued at the
@@ -435,6 +475,11 @@ const (
 	// computed against it. See [RWAReferenceCuratorPrice] in
 	// rwa_curated.go.
 	RWAPremiumReferenceNotOracleCurator = "reference_is_a_curator_price"
+	// RWAPremiumReferenceNotOracleFundNAV — the row carries a fund's
+	// published NAV, and no premium is computed against it: a NAV rounded
+	// to the cent carries up to half a cent of error, which on a
+	// one-dollar share is a half-percent premium the market never paid.
+	RWAPremiumReferenceNotOracleFundNAV = "reference_is_a_fund_nav"
 )
 
 // ─── snapshot ───────────────────────────────────────────────────────
@@ -462,10 +507,23 @@ type rwaReferences struct {
 	// reason rather than the weaker "no feed". Keyed the same way; the
 	// value is the quote's canonical id.
 	nonUSD map[string]string
+	// fundNAV holds the latest dollar NAV per fund ticker, from the one
+	// source the fund bindings name. Keyed by the ticker verbatim.
+	fundNAV map[string]rwaReference
+	// globalUSD holds the newest aggregator USD price per global ticker
+	// (crypto:USDC …), keyed by the canonical asset id. Read by the asset
+	// surfaces' global-market fill ([Server.applyGlobalMarket]), not here.
+	globalUSD map[string]rwaReference
 	// available is false when no oracle reader is wired or the read
 	// failed. Distinguished from "the oracles publish nothing for these
 	// instruments", which is a finding a failed read may not make.
 	available bool
+}
+
+// addSideFeed files u under fundNAV or globalUSD and reports whether
+// either claimed it, so the instrument-feed rules below never see it.
+func (r *rwaReferences) addSideFeed(u canonical.OracleUpdate) bool {
+	return rwaAddFundNAV(r.fundNAV, u) || addGlobalMarketRow(r.globalUSD, u)
 }
 
 // rwaReferenceSnapshot reduces one oracle-stream read to the references
@@ -482,9 +540,14 @@ func rwaReferenceSnapshotFrom(updates []canonical.OracleUpdate) rwaReferences {
 	out := rwaReferences{
 		byFeed:    map[string]rwaReference{},
 		nonUSD:    map[string]string{},
+		fundNAV:   map[string]rwaReference{},
+		globalUSD: map[string]rwaReference{},
 		available: true,
 	}
 	for _, u := range updates {
+		if out.addSideFeed(u) {
+			continue
+		}
 		// Namespace gate: only ADR-0028 instrument feeds. Whether any
 		// Stellar asset may be answered with one is R-0's question, asked
 		// per row against the curated binding — not here.
@@ -534,6 +597,43 @@ func rwaReferenceSnapshotFrom(updates []canonical.OracleUpdate) rwaReferences {
 		delete(out.nonUSD, feed)
 	}
 	return out
+}
+
+// rwaAddFundNAV keeps the newest dollar NAV for one fund ticker, and
+// reports whether u was a fund-NAV row at all.
+func rwaAddFundNAV(into map[string]rwaReference, u canonical.OracleUpdate) bool {
+	if u.Source != tiingo.SourceName || u.Asset.Type != canonical.AssetOracleRaw {
+		return false
+	}
+	if !isUSDQuote(u.Quote) {
+		return true
+	}
+	if prev, ok := into[u.Asset.Code]; ok && !u.Timestamp.After(prev.asOf) {
+		return true
+	}
+	into[u.Asset.Code] = rwaReference{
+		priceUSD: ratFromScaledInt(u.Price.BigInt(), u.Decimals),
+		wire:     trimScaledZeros(scaledDecimalString(u.Price.BigInt(), u.Decimals), rwaFundNAVDecimalsPublished),
+		source:   u.Source,
+		feed:     u.Asset.String(),
+		asOf:     u.Timestamp,
+	}
+	return true
+}
+
+// trimScaledZeros drops trailing fractional zeros down to minFrac places,
+// so a cent-precision NAV stored at a finer scale reads as published
+// without discarding any non-zero digit.
+func trimScaledZeros(s string, minFrac int) string {
+	dot := strings.IndexByte(s, '.')
+	if dot < 0 {
+		return s
+	}
+	end := len(s)
+	for end > dot+1+minFrac && s[end-1] == '0' {
+		end--
+	}
+	return s[:end]
 }
 
 // isUSDQuote reports whether an oracle row's denominator is the dollar.
@@ -708,6 +808,12 @@ func rwaApplyReference(
 		// and the more specific one is worth reporting: a token coded XAU
 		// is not unbound by oversight — the oracle of that name prices a
 		// troy ounce of metal, which is not a quantity any token has.
+		// A fund share's own published NAV outranks the listing and
+		// prospectus arms. With no NAV in the snapshot the row falls
+		// through to them unchanged.
+		if rwaApplyFundNAVReference(a, snap, now) {
+			return
+		}
 		notFound := RWAPremiumNotBound
 		if rwa.OffChainReferenceCode(a.Code) {
 			notFound = RWAPremiumNotInstrumentScoped
@@ -758,7 +864,8 @@ func rwaApplyReference(
 	// A read that did not answer knows nothing either way. Reporting it
 	// as an absence would publish a finding the read did not earn, and on
 	// the wire it would be indistinguishable from a genuine one. Only an
-	// oracle-bound row reads it: the unbound arm above never does.
+	// oracle-bound row is refused on it: the unbound arm above falls
+	// through to the listing arm when the read holds no fund NAV.
 	if !snap.available {
 		rwaRefuseReference(a, RWAPremiumReferenceUnavailable)
 		return
@@ -793,6 +900,7 @@ func rwaApplyReference(
 		Stale:      now.Sub(ref.asOf) > rwaReferenceStaleAfter,
 		Provenance: RWAReferenceOracleNAV,
 	}
+	a.Reference.NAVDisagreement = rwaFundNAVDisagrees(a, snap, ref.priceUSD, now)
 	// Only now, with the reference attached and its provenance on the
 	// row beside it. A supply-valued figure whose feed and vintage were
 	// not published would be a dollar total with no traceable source,
@@ -1006,6 +1114,64 @@ func rwaApplyConstantNAVReference(a *RWAAsset, b rwa.ConstantNAVBinding, now tim
 	}
 	a.ReferenceValuation = rwaReferenceValuationOf(a, rwaReference{priceUSD: price})
 	a.Premium = RWAPremium{Status: RWAPremiumReferenceNotOracleCNAV}
+}
+
+// rwaFundNAVDisagrees reports whether the fund NAV bound to this row's
+// (code, issuer), when the snapshot holds one no older than
+// [rwaFundNAVMaxAge], disagrees with the oracle value.
+func rwaFundNAVDisagrees(a *RWAAsset, snap rwaReferences, oracle *big.Rat, now time.Time) bool {
+	ticker, ok := rwaFundNAVTicker(a.Code, a.Issuer)
+	if !ok {
+		return false
+	}
+	nav, ok := snap.fundNAV[ticker]
+	if !ok || now.Sub(nav.asOf) > rwaFundNAVMaxAge {
+		return false
+	}
+	return rwaNAVDisagrees(oracle, nav.priceUSD)
+}
+
+// rwaNAVDisagrees reports whether two per-share values differ by more
+// than [rwaNAVDisagreementTolerance]; exactly half a cent agrees.
+func rwaNAVDisagrees(value, nav *big.Rat) bool {
+	if value == nil || nav == nil {
+		return false
+	}
+	diff := new(big.Rat).Sub(value, nav)
+	return diff.Abs(diff).Cmp(rwaNAVDisagreementTolerance) > 0
+}
+
+// rwaApplyFundNAVReference prices a fund-share row at its fund's published
+// NAV, reporting whether it decided the row. A bound row with no NAV in
+// the snapshot is left undecided so the lower arms can answer it; a NAV
+// past [rwaFundNAVMaxAge] is refused, as an expired oracle feed is.
+func rwaApplyFundNAVReference(a *RWAAsset, snap rwaReferences, now time.Time) bool {
+	ticker, ok := rwaFundNAVTicker(a.Code, a.Issuer)
+	if !ok {
+		return false
+	}
+	nav, ok := snap.fundNAV[ticker]
+	if !ok {
+		return false
+	}
+	if now.Sub(nav.asOf) > rwaFundNAVMaxAge {
+		rwaRefuseReference(a, RWAPremiumReferenceExpired)
+		return true
+	}
+	published := rwaFundNAVDecimalsPublished
+	a.Reference = &RWAReference{
+		PriceUSD:          nav.wire,
+		Source:            nav.source,
+		Feed:              nav.feed,
+		Quote:             "fiat:USD",
+		AsOf:              WireTime(nav.asOf),
+		Stale:             now.Sub(nav.asOf) > rwaReferenceStaleAfter,
+		Provenance:        RWAReferenceFundNAV,
+		DecimalsPublished: &published,
+	}
+	a.ReferenceValuation = rwaReferenceValuationOf(a, nav)
+	a.Premium = RWAPremium{Status: RWAPremiumReferenceNotOracleFundNAV}
+	return true
 }
 
 func rwaRefuseReference(a *RWAAsset, status string) {

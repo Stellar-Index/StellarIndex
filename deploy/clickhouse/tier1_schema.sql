@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS stellar.operations
     op_index       UInt32,
     op_type        LowCardinality(String),
     source_account String,
-    body_xdr       String,
+    body_xdr       String CODEC(ZSTD(3)),
     ingested_at    DateTime DEFAULT now(),
     -- Per-account sourced-operation lookups (GET /v1/accounts/{g}/operations);
     -- sort key is (ledger_seq, tx_index, op_index) so a source_account
@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS stellar.operation_results
     tx_hash     String,
     op_index    UInt32,
     result_code Int32,
-    result_xdr  String,
+    result_xdr  String CODEC(ZSTD(3)),
     ingested_at DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(ingested_at)
@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS stellar.contract_events
     topic_count        UInt8,
     topic_0_sym        String,
     topics_xdr         Array(String) CODEC(ZSTD(3)),
-    data_xdr           String,
+    data_xdr           String CODEC(ZSTD(3)),
     op_args_xdr        Array(String) CODEC(ZSTD(3)),
     in_successful_call UInt8,
     ingested_at        DateTime DEFAULT now(),
@@ -232,9 +232,10 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- Queryable owner + asset (ADR-0038 Phase C account-state / asset-holder
     -- reads). account_id = owning G-strkey for account-owned entries (account
     -- / trustline / offer / data); asset = canonical "CODE-ISSUER" / "native"
-    -- / "pool:<hex>" for trustlines. Empty otherwise. Bloom skip-indexes so a
-    -- WHERE account_id=? / asset=? prunes parts — the sort key is
-    -- (ledger_seq, tx_hash, …), so these predicates would otherwise full-scan.
+    -- / "pool:<hex>" for trustlines. Empty otherwise. account_id carries a
+    -- bloom skip-index so WHERE account_id=? prunes parts — the sort key is
+    -- (ledger_seq, tx_hash, …). asset has none: asset-holder reads use
+    -- ledger_entries_current's idx_lecur_asset; WHERE asset=? here scans every part.
     -- Existing rows backfill to '' until a ch re-derive repopulates them.
     account_id   String DEFAULT '',
     asset        String DEFAULT '',
@@ -272,7 +273,6 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- migrations/0120 and docs/operations/runbooks/entry-walk-renumbering.md.
     intra_ledger_seq UInt32 DEFAULT 0,
     INDEX idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
-    INDEX idx_lec_asset asset TYPE bloom_filter(0.01) GRANULARITY 1,
     -- key_xdr is not in the sort key; the bloom prunes point lookups.
     -- 0.01 as live on r1: a probe reads the whole index, so a tighter FP
     -- (bigger index) is slower, and no production reader needs it.
@@ -431,11 +431,11 @@ ORDER BY (contract_id, ledger_seq, tx_hash, op_index, event_index);
 -- retry-looped, starving the live sink for hours. uniqCombined(17) hashes
 -- the SAME natural key into a bounded HyperLogLog-family sketch (~10-96KB
 -- per state regardless of cardinality — measured, not theoretical; see
--- the redesign doc), so it (a) still dedupes duplicate/retried natural
--- keys exactly at the cardinalities this table actually sees, avoiding
--- the same overcount SummingMergeTree would have caused, while (b)
--- merging in bounded memory. Accuracy loss is ~0.1-0.5% at the
--- cardinalities measured (500K-4M uniques/state) — this table is a
+-- the redesign doc), so it (a) still collapses duplicate/retried natural
+-- keys to one — a re-insert never inflates the count, avoiding the
+-- overcount SummingMergeTree would have caused — while (b) merging in
+-- bounded memory. The distinct count itself is an estimate: ~0.1-0.5%
+-- error at the cardinalities measured (500K-4M uniques/state) — this table is a
 -- dashboard pre-aggregation (explorer's compact-formatted "events · 24h" /
 -- event-breakdown charts), never the ADR-0033 completeness oracle, so the
 -- tradeoff is one-sided: it fixes an active production fuse for
@@ -520,42 +520,41 @@ GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 -- caution in docs/operations/perf-todo.md §4):
 --
 --   stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 \
---     -from 2 -to <lake tip> -window 5000000 -write
+--     -full -window 5000000 -write
 --
--- CORRECTNESS, not just speed, depends on the backfill (2026-09
--- reverification, F106 — this comment previously said the opposite and was
--- wrong): the reader (ExplorerReader.TransactionByHash) treats a miss
--- against a NON-EMPTY index as AUTHORITATIVE absence — it does NOT fall
--- back to the bloom scan on a plain miss (2026-07-30 account-filter class
--- audit: falling back on every miss turned unknown/garbage hashes into an
--- unauthenticated multi-second scan over the full transactions table, a
--- free DoS lever). The bloom-scan fallback only ever fires on an index-path
--- ERROR, an index/base inconsistency, or an EMPTY index.
+-- CORRECTNESS, not just speed: the reader (ExplorerReader.TransactionByHash)
+-- treats an index miss as authoritative absence only when the index is
+-- non-empty AND stellar.tx_hash_index_coverage holds a marker; a plain miss
+-- never falls back to the bloom scan (that would let garbage hashes trigger
+-- a multi-second scan of the full transactions table). Without the marker,
+-- or on an index-path error or empty index, the bloom scan answers.
 --
--- A freshly (re)created tx_hash_index on a lake that already has history
--- goes non-empty after the FIRST live transaction — the MV above writes
--- synchronously — while every row for the EXISTING history is still
--- missing. Until the one-time backfill below has run to completion, a
--- lookup for any not-yet-indexed historical hash is a WRONG 404, not a
--- slow-but-correct answer. Treat the backfill as a PREREQUISITE for
--- correctness on any lake that has prior history, not as a performance
--- optimisation you can defer:
+-- A freshly (re)created index on a lake with history goes non-empty after
+-- the first live transaction while all prior history is missing; the marker
+-- keeps the reader on the bloom scan until the full backfill has completed:
 --
 --   stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 \
---     -from 2 -to <lake tip> -window 5000000 -write
+--     -full -window 5000000 -write
 --
--- KNOWN GAP (NEEDS-COORDINATION, tracked under F106): the reader's
--- availability probe only proves the index is non-empty, not that the
--- backfill above has finished — it cannot cheaply prove coverage from the
--- lake data alone (a naive row-count comparison over-counts asymmetrically:
--- stellar.transactions is duplicate-bearing under live-sink retries, while
--- a backfill run inserts FINAL-deduped rows). Closing this needs a
--- backfill-completion signal from ch-txindex-backfill itself
--- (internal/ops/chops/ch_txindex_backfill.go) that the reader can check
--- before granting a miss authority. Until that lands, a freshly
--- (re)created index on a lake with prior history MUST be backfilled to
--- completion BEFORE it is allowed to serve live traffic — do not treat
--- "the table exists and has a few rows" as sufficient.
+-- COVERAGE: the reader cannot prove coverage from the lake data (a row-count
+-- comparison over-counts: stellar.transactions is duplicate-bearing while a
+-- backfill inserts FINAL-deduped rows). It therefore requires a row in
+-- stellar.tx_hash_index_coverage, written by ch-txindex-backfill when a run
+-- over the whole history (-full: ledger 2 to the contiguous tip) completes;
+-- a partial or explicit -to run writes none. Without it the bloom scan answers.
+-- A fresh lake with no history still needs one (trivial) backfill run.
+-- Whenever tx_hash_index is dropped and recreated, TRUNCATE
+-- stellar.tx_hash_index_coverage too: a stale marker over an emptied index
+-- makes every historical hash lookup answer not-found.
+CREATE TABLE IF NOT EXISTS stellar.tx_hash_index_coverage
+(
+    covered_from UInt32,
+    covered_to   UInt32,
+    completed_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY (covered_from, covered_to);
+
 CREATE TABLE IF NOT EXISTS stellar.tx_hash_index
 (
     tx_hash     String,
@@ -657,9 +656,9 @@ WHERE inner_tx_hash != '';
 -- migration 0105's `attributes jsonb` remainder 1:1 (balance_id, claimants,
 -- send_asset/send_amount, dest_asset/dest_amount, pool_id, revocation, …) — read via
 -- JSONExtractString/JSONExtract at query time, never a SQL predicate target
--- in the hot path here (FindClaimableBalanceCreates' balance_id lookup is the
--- one exception, backed by idx_cb_balance_id below — see that function's doc
--- comment for the 2026-07-12 full-scan finding that motivated it).
+-- in the hot path here. FindClaimableBalanceCreates' balance_id lookup is an
+-- external-table semijoin run with use_skip_indexes=0, so idx_cb_balance_id
+-- below does not back it (no current reader uses it).
 CREATE TABLE IF NOT EXISTS stellar.account_movements
 (
     address           String,
@@ -676,17 +675,49 @@ CREATE TABLE IF NOT EXISTS stellar.account_movements
     amount            Int128,
     attributes        String DEFAULT '{}',
     ingested_at       DateTime DEFAULT now(),
-    -- 2026-07-12 finding: classic-movements-backfill's Phase-3 claimable-balance
-    -- fallback (clickhouse.FindClaimableBalanceCreates) was a 6.5s full scan of
-    -- 973M rows PER lookup during the claimable-balance-bot era (ledgers
-    -- ~34M-40M, thousands of refs per window) before this index existed; the
-    -- bloom skip-index brought a single lookup to ~84ms (~77x). Only prunes when
-    -- the WHERE predicate is textually IDENTICAL to this expression.
+    -- Added for the removed single-ref balance_id lookup; the current batched
+    -- lookup runs with use_skip_indexes=0. Only prunes when the WHERE predicate
+    -- is textually IDENTICAL to this expression.
     INDEX idx_cb_balance_id JSONExtractString(attributes, 'balance_id') TYPE bloom_filter(0.01) GRANULARITY 4
 )
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger, 1000000)
 ORDER BY (address, ledger, tx_hash, op_index, leg_index, direction);
+
+-- ── movements_by_asset — asset-keyed copy of account_movements (INV-2140) ──
+-- "Everything that ever moved asset X" is a scan over account_movements, whose
+-- ORDER BY leads with address. Same rows, same columns, asset-first key; the
+-- trailing address makes the sent/received pair of one movement two distinct
+-- keys so ReplacingMergeTree never collapses them. Live rows arrive through
+-- the MV; history is caught up by deploy/clickhouse/movements_by_asset.sql
+-- (partition-at-a-time INSERT..SELECT FROM account_movements FINAL, plus the
+-- DROP PARTITION note for asset-relabelling re-derives). Keep that file's DDL identical.
+CREATE TABLE IF NOT EXISTS stellar.movements_by_asset
+(
+    address           String,
+    ledger            UInt32,
+    ledger_close_time DateTime64(0, 'UTC'),
+    tx_hash           String,
+    op_index          UInt32,
+    leg_index         UInt32,
+    direction         LowCardinality(String),
+    movement_kind     LowCardinality(String),
+    provenance        LowCardinality(String),
+    asset             String,
+    counterparty      String DEFAULT '',
+    amount            Int128,
+    attributes        String DEFAULT '{}',
+    ingested_at       DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger, 1000000)
+ORDER BY (asset, ledger, tx_hash, op_index, leg_index, direction, address);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.movements_by_asset_mv
+TO stellar.movements_by_asset AS
+SELECT address, ledger, ledger_close_time, tx_hash, op_index, leg_index, direction,
+       movement_kind, provenance, asset, counterparty, amount, attributes, ingested_at
+FROM stellar.account_movements;
 
 -- ── ops_by_source: slim sourced-history projection (2026-07-30) ─────────────
 -- (source_account → ledger/tx/op keys) from BOTH stellar.operations (op-
@@ -835,6 +866,29 @@ ORDER BY asset;
 
 CREATE TABLE IF NOT EXISTS stellar.asset_holders_counts_staging
 AS stellar.asset_holders_counts;
+
+-- Per-asset daily concentration snapshot, written by the same cycle after
+-- its swap; the day is recomputed whole and swapped in by REPLACE PARTITION.
+-- Balance sums are Int128: a classic asset's per-trustline Int64 balances
+-- can sum past 2^63. gini is over positive-balance holders, NULL when none.
+CREATE TABLE IF NOT EXISTS stellar.asset_stats_daily
+(
+    day            Date,
+    asset          String,
+    holders        Int64,
+    trustlines     Int64,
+    balance_total  Int128,
+    top10_balance  Int128,
+    top100_balance Int128,
+    gini           Nullable(Float64),
+    computed_at    DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+PARTITION BY day
+ORDER BY (asset, day);
+
+CREATE TABLE IF NOT EXISTS stellar.asset_stats_daily_staging
+AS stellar.asset_stats_daily;
 
 -- ── accounts_stats rollup — see deploy/clickhouse/accounts_stats_rollup.sql ──
 CREATE TABLE IF NOT EXISTS stellar.accounts_stats
@@ -1436,3 +1490,58 @@ ENGINE = MergeTree
 -- ch-census-rollup recomputes and swaps with REPLACE PARTITION '<day>'.
 PARTITION BY day
 ORDER BY (day, contract_id);
+
+-- ── account_entry_changes / asset_entry_changes / entry_history_watermark —
+--    see deploy/clickhouse/entry_history.sql ──
+CREATE TABLE IF NOT EXISTS stellar.account_entry_changes
+(
+    account          String,
+    ledger           UInt32,
+    close_time       DateTime('UTC'),
+    tx_hash          String,
+    op_index         Int32,
+    change_index     UInt32,
+    role             LowCardinality(String),
+    intra_ledger_seq UInt32,
+    entry_type       LowCardinality(String),
+    change_type      LowCardinality(String),
+    changed          Array(LowCardinality(String)),
+    asset            String DEFAULT '',
+    balance          Int128,
+    fields           String DEFAULT '{}' CODEC(ZSTD(3)),
+    ingested_at      DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger, 1000000)
+ORDER BY (account, ledger, tx_hash, op_index, change_index, role);
+
+CREATE TABLE IF NOT EXISTS stellar.asset_entry_changes
+(
+    asset            String,
+    ledger           UInt32,
+    close_time       DateTime('UTC'),
+    tx_hash          String,
+    op_index         Int32,
+    change_index     UInt32,
+    role             LowCardinality(String),
+    intra_ledger_seq UInt32,
+    entry_type       LowCardinality(String),
+    change_type      LowCardinality(String),
+    changed          Array(LowCardinality(String)),
+    account          String DEFAULT '',
+    balance          Int128,
+    fields           String DEFAULT '{}' CODEC(ZSTD(3)),
+    ingested_at      DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger, 1000000)
+ORDER BY (asset, ledger, tx_hash, op_index, change_index, role);
+
+CREATE TABLE IF NOT EXISTS stellar.entry_history_watermark
+(
+    name        String,
+    thru_ledger UInt32,
+    updated_at  DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY name;

@@ -24,9 +24,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
+	"github.com/Stellar-Index/StellarIndex/internal/holds"
 	"github.com/Stellar-Index/StellarIndex/internal/incidents"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/version"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
@@ -90,7 +92,7 @@ type ReadyChecker interface {
 // This constant MUST equal the head under migrations/; the parity test
 // TestExpectedSchemaVersionMatchesMigrationsHead fails CI if a migration
 // is added without bumping it.
-const ExpectedSchemaVersion uint = 190
+const ExpectedSchemaVersion uint = 207
 
 // nonAtomicMigrationVersions lists migration numbers whose up.sql commits
 // mid-file, breaking golang-migrate's one-transaction-per-file guarantee
@@ -227,44 +229,39 @@ func (c closedBucketChecker) Ping(ctx context.Context) error {
 //
 // Thread-safe.
 type Server struct {
-	logger              *slog.Logger
-	network             string
-	checks              []ReadyChecker
-	assets              AssetReader
-	prices              PriceReader
-	history             HistoryReader
-	markets             MarketsReader
-	oracle              OracleReader
-	sep1Cache           Sep1CachedReader
-	accounts            AccountStore
-	accountKeyQuota     int
-	platformAccounts    PlatformAccountStore
-	platformUsers       AccountSessionRevoker
-	registerAccounts    RegisterAccountCreator
-	apiKeyBudgets       APIKeyBudgetStores
-	statusNotices       StatusNoticeStore
-	audit               AuditSink
-	signups             SignupTracker
-	signupIPThrottle    SignupIPThrottle
-	signupVerifier      SignupVerifier
-	signupVerifyEmailer SignupVerifyEmailer
-	signupVerifyBaseURL string
-	apiKeyEmailVerifier APIKeyEmailVerifier
-	divergence          DivergenceLooker
-	freeze              FrozenLooker
-	substance           PriceSubstanceGate
-	transitive          TransitivePricer
-	scam                PriceScamGate
-	supply              SupplyLooker
-	tokenSupply         TokenSupplyReader
-	storageSupply       ContractStorageSupplyReader
-	tokenDecimals       TokenDecimalsReader
-	tokenSymbol         TokenSymbolReader
-	rwaContracts        RWADirectoryContractReader
-	rwaListings         RWAListingDirectoryReader
-	listings            AssetListingDirectoryReader
-	rwaCurated          RWACuratedDirectoryReader
-	rwaCuratedSnap      rwaCuratedCache
+	logger           *slog.Logger
+	network          string
+	checks           []ReadyChecker
+	assets           AssetReader
+	prices           PriceReader
+	history          HistoryReader
+	markets          MarketsReader
+	oracle           OracleReader
+	sep1Cache        Sep1CachedReader
+	accounts         AccountStore
+	accountKeyQuota  int
+	platformAccounts PlatformAccountStore
+	platformUsers    AccountSessionRevoker
+	registerAccounts RegisterAccountCreator
+	apiKeyBudgets    APIKeyBudgetStores
+	statusNotices    StatusNoticeStore
+	audit            AuditSink
+	signupIPThrottle SignupIPThrottle
+	divergence       DivergenceLooker
+	freeze           FrozenLooker
+	substance        PriceSubstanceGate
+	transitive       TransitivePricer
+	scam             PriceScamGate
+	supply           SupplyLooker
+	tokenSupply      TokenSupplyReader
+	storageSupply    ContractStorageSupplyReader
+	tokenDecimals    TokenDecimalsReader
+	tokenSymbol      TokenSymbolReader
+	rwaContracts     RWADirectoryContractReader
+	rwaListings      RWAListingDirectoryReader
+	listings         AssetListingDirectoryReader
+	rwaCurated       RWACuratedDirectoryReader
+	rwaCuratedSnap   rwaCuratedCache
 	// assetListings memoises one read of the listing directory for the
 	// /v1/assets listing-priced valuation arm — see
 	// asset_listing_valuation.go. Not shared with rwaListings' snapshot:
@@ -272,6 +269,8 @@ type Server struct {
 	assetListings       assetListingCache
 	contractCatalogue   ContractCatalogueReader
 	lakeWatermarkReader LakeWatermarkReader
+	// holds is the operator under-review list (SetHolds).
+	holds atomic.Pointer[[]holds.Hold]
 	// Cached lake watermark (ADR-0041 D4) — see lakeWatermark() in
 	// lake_watermark.go. Refreshed at most every lakeWatermarkTTL.
 	// lakeWMMu guards the cached entry ONLY and is never held across the
@@ -288,6 +287,12 @@ type Server struct {
 	lakeWMFetched  time.Time
 	lakeWMNextTry  time.Time
 	lakeWMFlight   singleflight.Group
+	// Shared /v1/ledger/stream tip read — see ledgerStreamTip.
+	ledgerStreamMu     sync.Mutex
+	ledgerStreamView   LedgerTipView
+	ledgerStreamOK     bool
+	ledgerStreamAt     time.Time
+	ledgerStreamFlight singleflight.Group
 	// priceReadFlight coalesces concurrent readPriceWithAliasesServed
 	// calls for the same (asset, quote) pair onto one upstream read —
 	// HO-344: /v1/price, /v1/oracle/lastprice and /v1/oracle/x_last_price
@@ -306,6 +311,7 @@ type Server struct {
 	// nativeLPRefreshing admits one detached rescan at a time.
 	nativeLPMu              sync.Mutex
 	nativeLPCached          []LiquidityPoolReservesRow
+	nativeLPAll             []clickhouse.NativeLiquidityPoolState
 	nativeLPFetched         time.Time
 	nativeLPFillMu          sync.Mutex
 	nativeLPRefreshing      atomic.Bool
@@ -474,7 +480,11 @@ type Server struct {
 	// fxCrossMaxAge bounds how old the forex snapshot's matched rate may
 	// be before [Server.tryFiatCrossRate] / [Server.tryUSDAnchoredFiatCross]
 	// refuse to serve it (T650). See fxCrossStale's doc comment.
-	fxCrossMaxAge    time.Duration
+	fxCrossMaxAge time.Duration
+	// fiatBasisDisabled turns off [Server.preferUSDAnchoredBasis].
+	fiatBasisDisabled bool
+	// fxFixings binds closed-bucket FX legs; nil leaves those crosses unserved.
+	fxFixings        *fxFixingCache
 	explorer         ExplorerReader
 	issuerAuthFlags  IssuerAuthFlagsReader
 	staticHomeDomain func(ctx context.Context, issuer string) (string, bool)
@@ -650,6 +660,9 @@ type Server struct {
 	// Nil-safe: a nil cache short-circuits every method to no-op +
 	// miss. ttl=0 has the same effect at config layer.
 	assetDetailCache *assetDetailResponseCache
+	// assetListCache is the response-level cache for the default
+	// /v1/assets listing; see [assetListResponseCache].
+	assetListCache *assetListResponseCache
 	// usdPeggedClassics is the operator's allow-list of classic
 	// credit assets they declare as USD-pegged stablecoins.
 	// Mirrors trades.usd_pegged_classic_assets from config. Used
@@ -683,7 +696,7 @@ type Server struct {
 	// computed every ~15s by a background goroutine launched via
 	// [Server.StartIngestionSnapshotRefresh]. Powers
 	// /v1/diagnostics/ingestion sub-millisecond when populated
-	// (#16). Nil before the first refresh fires; handler falls back
+	// (4d6e7ac4f). Nil before the first refresh fires; handler falls back
 	// to inline-build (the legacy 200-500ms path) in that case.
 	ingestionSnapshot atomic.Pointer[ingestionSnapshotEntry]
 	mux               *http.ServeMux
@@ -763,7 +776,8 @@ type Options struct {
 	// Network is the Stellar network this deployment serves
 	// (config [stellar] network: pubnet / testnet / futurenet; empty =
 	// pubnet). /v1/coverage uses it to report which protocol sources do
-	// not exist on this network instead of counting them incomplete (#483).
+	// not exist on this network instead of counting them incomplete (#483);
+	// the reference listings use it to omit pubnet-only entries.
 	Network string
 	// ReadyChecks are polled by /readyz. Order matters only for
 	// log output (first-failed wins).
@@ -894,16 +908,8 @@ type Options struct {
 	// audit (the mutation still logs unconditionally).
 	Audit AuditSink
 
-	// Signups, when non-nil, backs POST /v1/signup's per-email
-	// duplicate check. Without it, signup still works but isn't
-	// idempotent on the email — a second signup for the same address
-	// just mints another key. Production wires a Redis-backed
-	// implementation that persists email-hash → key-id; nil makes
-	// the duplicate check a no-op (key always mints).
-	Signups SignupTracker
-
 	// SignupIPThrottle, when non-nil, applies a per-IP cap to
-	// /v1/signup separate from the global-rate-limit middleware.
+	// /v1/register separate from the global-rate-limit middleware.
 	// The global IP bucket allows 60/min anonymous; that's plenty
 	// for browsing the public surfaces but lets an attacker
 	// bulk-mint signup→key_id pairs (one signup per request, so
@@ -913,48 +919,6 @@ type Options struct {
 	// Nil keeps the legacy "trust the global rate limit alone"
 	// behaviour. F-1232 (audit-2026-05-12).
 	SignupIPThrottle SignupIPThrottle
-
-	// SignupVerifier, when non-nil, backs the email-ownership-
-	// proof flow added in F-1218 (codex audit-2026-05-12). The
-	// signup handler issues a single-use token via
-	// `Reserve(token, keyID, ttl)`; the
-	// `POST /v1/signup/verify` handler consumes it via
-	// `Consume(token)` and (in subsequent waves) flips the key
-	// to a verified state. Nil disables the verify endpoint —
-	// it returns 503 with a clear "verification not configured"
-	// message so customers don't get the silent-no-op surprise.
-	SignupVerifier SignupVerifier
-
-	// SignupVerifyEmailer, when non-nil + paired with a non-nil
-	// `SignupVerifier`, makes the signup handler issue a token,
-	// Reserve it, and email the click-through verify URL.
-	// F-1218 wave 44 (codex audit-2026-05-12). Nil keeps the
-	// signup-handler response shape unchanged (no email sent,
-	// `email_verification_sent: false` on the wire); the
-	// verifier endpoint stays a no-op until wave 44 is wired
-	// end-to-end.
-	SignupVerifyEmailer SignupVerifyEmailer
-
-	// SignupVerifyBaseURL is the base URL (e.g.
-	// "https://api.stellarindex.io/v1") the signup-verification
-	// email link is built from — normally cfg.API.ExternalBaseURL.
-	// CA2-A20-harden-5: the client-supplied Host header is
-	// untrustworthy (a forged Host lands a live token in an
-	// attacker-controlled link), so the emailed URL MUST come
-	// from operator config, not the request. Empty or not an
-	// absolute http(s) URL suppresses the verification email.
-	SignupVerifyBaseURL string
-
-	// APIKeyEmailVerifier, when non-nil, lets the
-	// `/v1/signup/verify` handler flip the `EmailVerifiedAt`
-	// timestamp on the underlying API key record after Consume.
-	// F-1218 wave 45 (codex audit-2026-05-12). Production wiring
-	// is `auth.RedisAPIKeyStore.MarkEmailVerified`. Nil disables
-	// the marker write — the verify endpoint still returns 200
-	// (the customer's click is acknowledged), but the optional
-	// `RequireEmailVerified` gate can't reflect it back into
-	// subsequent requests.
-	APIKeyEmailVerifier APIKeyEmailVerifier
 
 	// APIKeyBudgets are the credential stores a TIER CHANGE has to
 	// clamp. Wired so PATCH /v1/admin/accounts/{id} can enforce a
@@ -998,8 +962,8 @@ type Options struct {
 
 	// Scam, when non-nil, withholds the aggregated price for
 	// directory-scam-flagged issuers on the paths the server gates
-	// directly (the tip VWAP). Reader-backed paths gate inside the
-	// readers. Production impl internal/pricingguard.ScamGate.
+	// directly (tip VWAP, VWAP, TWAP, chart, history and the price
+	// stream). Reader-backed paths gate inside the readers. Production impl internal/pricingguard.ScamGate.
 	Scam PriceScamGate
 
 	// Supply, when non-nil, populates the F2 fields
@@ -1317,6 +1281,14 @@ type Options struct {
 	// identical fx_quotes staleness profile.
 	FXCrossMaxAgeHours int
 
+	// DisableFiatBasis serves a single-venue fiat book as read instead of
+	// the ADR-0053 USD-anchored derivation (pricing_guard.disable_fiat_basis).
+	DisableFiatBasis bool
+
+	// FXFixings binds the closed surfaces' FX legs to the vendor's time
+	// series (fx_fixings). Nil: closed fiat crosses are not served.
+	FXFixings FXFixingReader
+
 	// Explorer, when non-nil, backs the network-explorer endpoints
 	// (ADR-0038): /v1/ledgers, /v1/tx, /v1/operations, /v1/contracts,
 	// /v1/search — reading the certified ClickHouse lake directly.
@@ -1352,7 +1324,7 @@ type Options struct {
 	// (blend money-market, blend backstop, phoenix stake, defindex
 	// vault shares, sorocredit, aquarius gauge). timescale.Store
 	// satisfies it. Nil 503s the endpoint. Venue human labels reuse
-	// ProtocolPoolTokens (below) — the same reader the #91 protocol-
+	// ProtocolPoolTokens (below) — the same reader the a9f2e301c protocol-
 	// roster pair-label work already wired.
 	Positions explorerpkg.PositionsReader
 
@@ -1595,7 +1567,6 @@ type Options struct {
 	// 0080); the evaluator that checks the alerts and enqueues
 	// `price.alert` webhook deliveries runs in the aggregator
 	// (`internal/pricealerts`) and is orthogonal to these handlers.
-	// BACKLOG #60.
 	DashboardPriceAlerts DashboardAuthMounter
 
 	// SACWrappers is the operator-config map of SAC C-strkey →
@@ -1766,12 +1737,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		registerAccounts:        opts.RegisterAccounts,
 		apiKeyBudgets:           opts.APIKeyBudgets,
 		statusNotices:           opts.StatusNotices,
-		signups:                 opts.Signups,
 		signupIPThrottle:        opts.SignupIPThrottle,
-		signupVerifier:          opts.SignupVerifier,
-		signupVerifyEmailer:     opts.SignupVerifyEmailer,
-		signupVerifyBaseURL:     opts.SignupVerifyBaseURL,
-		apiKeyEmailVerifier:     opts.APIKeyEmailVerifier,
 		divergence:              opts.Divergence,
 		freeze:                  opts.Freeze,
 		substance:               opts.Substance,
@@ -1810,6 +1776,8 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		maxMarketCapVolumeRatio: opts.MaxMarketCapVolumeRatio,
 		currencies:              opts.Currencies,
 		fxCrossMaxAge:           fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours),
+		fiatBasisDisabled:       opts.DisableFiatBasis,
+		fxFixings:               newFXFixingCache(opts.FXFixings, logger, fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours)),
 		explorer:                opts.Explorer,
 		issuerAuthFlags:         opts.IssuerAuthFlags,
 		staticHomeDomain:        opts.StaticHomeDomain,
@@ -1867,6 +1835,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		// by construction — the cached entry IS what the handler
 		// produces (see assetDetailResponseCache doc comment).
 		assetDetailCache: newAssetDetailResponseCache(120 * time.Second),
+		assetListCache:   newAssetListResponseCache(assetListCacheTTL, assetListCacheMaxAge),
 		mux:              http.NewServeMux(),
 		publicRoutes:     middleware.NewPublicRoutes(),
 		started:          time.Now().UTC(),
@@ -2363,6 +2332,25 @@ func (s *Server) handlePublic(pattern string, h http.HandlerFunc) {
 	s.publicRoutes.Handle(s.mux, pattern, h)
 }
 
+// handleAdmin mounts an operator-only route. The operator tier and, for
+// writes, the X-Reason header are enforced here at the mount so a new
+// /v1/admin/ handler cannot ship without them; handlers keep their own
+// checks as defence in depth.
+func (s *Server) handleAdmin(pattern string, h http.HandlerFunc) {
+	_, instance, _ := strings.Cut(pattern, " ")
+	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := s.requireOperator(w, r, instance); !ok {
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if _, ok := s.requireReason(w, r); !ok {
+				return
+			}
+		}
+		h(w, r)
+	})
+}
+
 func (s *Server) mountRoutes() { //nolint:funlen // route registration is intentionally one block for grep-ability; splitting into sub-functions makes "where is /v1/X served?" harder to answer.
 	// Health / meta endpoints. Deliberately NOT behind rate-limit
 	// middleware — infra (k8s probes, load balancers) hits these.
@@ -2417,6 +2405,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/ledgers", s.explorerHandler.LedgersList)
 	s.mux.HandleFunc("GET /v1/ledgers/{seq}", s.explorerHandler.LedgerDetail)
 	s.mux.HandleFunc("GET /v1/ledgers/{seq}/transactions", s.explorerHandler.LedgerTransactions)
+	s.mux.HandleFunc("GET /v1/ledgers/{seq}/operations", s.explorerHandler.LedgerOperations)
 	s.mux.HandleFunc("GET /v1/operations", s.explorerHandler.Operations)
 	s.mux.HandleFunc("GET /v1/tx/{hash}", s.explorerHandler.TxDetail)
 	s.mux.HandleFunc("GET /v1/search", s.explorerHandler.Search)
@@ -2426,7 +2415,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/interactions", s.explorerHandler.ContractInteractions)
 	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/code-history", s.explorerHandler.ContractCodeHistory)
 	s.mux.HandleFunc("GET /v1/accounts", s.explorerHandler.AccountsList)
-	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}", s.explorerHandler.AccountState)
+	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}", s.underReview(s.explorerHandler.AccountState))
 	s.mux.HandleFunc("GET /v1/directory", s.explorerHandler.DirectoryLookup)
 	s.mux.HandleFunc("GET /v1/accounts/stats", s.explorerHandler.AccountsStats)
 	// Account-creator league table (#351). A literal segment, so it wins
@@ -2497,12 +2486,13 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// listing the static path first keeps the precedence obvious
 	// to anyone reading the mount order.
 	s.mux.HandleFunc("GET /v1/assets/verified", s.handleAssetsVerified)
-	s.mux.HandleFunc("GET /v1/assets/{asset_id}", s.handleAssetGet)
+	s.mux.HandleFunc("GET /v1/assets/{asset_id}", s.underReview(s.handleAssetGet))
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/metadata", s.handleAssetMetadata)
 	// Live per-token supply from the decode-at-ingest supply_flows lake
 	// (ADR-0034).
-	s.mux.HandleFunc("GET /v1/assets/{asset_id}/supply", s.handleAssetSupply)
-	s.mux.HandleFunc("GET /v1/assets/{asset_id}/holders", s.explorerHandler.AssetHolders)
+	s.mux.HandleFunc("GET /v1/assets/{asset_id}/supply", s.underReview(s.handleAssetSupply))
+	s.mux.HandleFunc("GET /v1/assets/{asset_id}/supply/flows", s.underReview(s.handleAssetSupplyFlows))
+	s.mux.HandleFunc("GET /v1/assets/{asset_id}/holders", s.underReview(s.explorerHandler.AssetHolders))
 
 	// Current price — last-trade fallback today; VWAP path when
 	// the aggregator ships.
@@ -2650,6 +2640,9 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// anything. #352.
 	s.mux.HandleFunc("GET /v1/rwa/assets", s.handleRWAAssets)
 	s.mux.HandleFunc("GET /v1/rwa/history", s.handleRWAHistory)
+	// The hand-vetted stablecoin set (catalogue class=stablecoin with a
+	// Stellar issuer) with supply and USD value; the total is a lower bound.
+	s.mux.HandleFunc("GET /v1/stablecoins", s.handleStablecoins)
 	// The premium/discount to net asset value over time — the same
 	// measurement `premium.pct` publishes point-in-time, as a daily
 	// series. A ratio of two SAMPLED observations, so unlike the value
@@ -2668,15 +2661,15 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 		middleware.NewIdempotencyStore(0), accountKeyIdempotencySubject,
 	)(http.HandlerFunc(s.handleAccountKeysCreate)))
 	s.mux.HandleFunc("DELETE /v1/account/keys/{keyID}", s.handleAccountKeysRevoke)
-	// Operator surface: mint a key for ANOTHER identifier. Gated on
-	// TierOperator inside the handler; audit-logged via Options.Audit.
-	s.mux.HandleFunc("POST /v1/admin/keys", s.handleAdminKeysCreate)
+	// Operator surface (handleAdmin gates tier + X-Reason at the mount):
+	// mint a key for ANOTHER identifier; audit-logged via Options.Audit.
+	s.handleAdmin("POST /v1/admin/keys", s.handleAdminKeysCreate)
 	// Operator surface: revoke ANOTHER identifier's key — the leaked-key
 	// kill switch (C3-010, audit-2026-07-23). Self-service revoke needs
 	// the customer's own credential, so before this there was no
 	// operator path to stop a compromised key. X-Reason + audit-logged
 	// "key.revoke".
-	s.mux.HandleFunc("DELETE /v1/admin/keys/{keyID}", s.handleAdminKeysRevoke)
+	s.handleAdmin("DELETE /v1/admin/keys/{keyID}", s.handleAdminKeysRevoke)
 	// Operator surface: per-account tier + status + rate-limit /
 	// monthly-quota overrides (admin Phase 1.5). Same TierOperator gate as
 	// /v1/admin/keys; PATCH additionally requires an X-Reason header and
@@ -2684,24 +2677,23 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// the next Postgres API-key validator Lookup for that account; a
 	// `status` change to suspended/closed is the account-level kill
 	// switch that same Lookup already enforces.
-	s.mux.HandleFunc("GET /v1/admin/accounts/{id}", s.handleAdminAccountGet)
-	s.mux.HandleFunc("PATCH /v1/admin/accounts/{id}", s.handleAdminAccountOverrides)
+	s.handleAdmin("GET /v1/admin/accounts/{id}", s.handleAdminAccountGet)
+	s.handleAdmin("PATCH /v1/admin/accounts/{id}", s.handleAdminAccountOverrides)
 	// Operator surface: customer-facing status banners (incident
 	// tooling, admin Phase 1.5). Create/list/resolve gated on
 	// TierOperator; create + resolve require X-Reason and audit-log.
-	s.mux.HandleFunc("GET /v1/admin/status-notices", s.handleAdminStatusNoticesList)
-	s.mux.HandleFunc("POST /v1/admin/status-notices", s.handleAdminStatusNoticeCreate)
-	s.mux.HandleFunc("POST /v1/admin/status-notices/{id}/resolve", s.handleAdminStatusNoticeResolve)
-	s.handlePublic("POST /v1/signup", s.handleSignup)
+	s.handleAdmin("GET /v1/admin/status-notices", s.handleAdminStatusNoticesList)
+	s.handleAdmin("POST /v1/admin/status-notices", s.handleAdminStatusNoticeCreate)
+	s.handleAdmin("POST /v1/admin/status-notices/{id}/resolve", s.handleAdminStatusNoticeResolve)
+	// Retired (INV-0907): same 410 for every method/body so the route
+	// can never again distinguish a known email from a new one.
+	s.handlePublic("POST /v1/signup", s.handleSignupRetired)
 	// Open registration — the curl-first agent onboarding path:
 	// creates a free-tier platform account + first API key in one
 	// unauthenticated POST. Shares /v1/signup's per-IP throttle.
 	s.handlePublic("POST /v1/register", s.handleRegister)
-	// F-1218: email-ownership proof. The emailed GET link only
-	// renders a confirmation page (link scanners fetch it); the
-	// page's POST consumes the token.
-	s.handlePublic("GET /v1/signup/verify", s.handleSignupVerifyPage)
-	s.handlePublic("POST /v1/signup/verify", s.handleSignupVerify)
+	s.handlePublic("GET /v1/signup/verify", s.handleSignupRetired)
+	s.handlePublic("POST /v1/signup/verify", s.handleSignupRetired)
 
 	// Customer-dashboard magic-link auth — POST /v1/auth/login +
 	// GET /v1/auth/callback + POST /v1/auth/logout. Mounted only
@@ -2723,7 +2715,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	if s.dashboardWebhooks != nil {
 		s.dashboardWebhooks.Mount(s.mux, s.publicRoutes)
 	}
-	// Dashboard price-alert-management routes (BACKLOG #60). Same
+	// Dashboard price-alert-management routes. Same
 	// session-cookie + Postgres-wiring gate as dashboardKeys above.
 	if s.dashboardPriceAlerts != nil {
 		s.dashboardPriceAlerts.Mount(s.mux, s.publicRoutes)
@@ -2908,6 +2900,41 @@ func (s *Server) fillReadyz(done chan struct{}) {
 	s.readyzMu.Lock()
 	s.readyzCode, s.readyzBody, s.readyzAt = code, body, time.Now()
 	s.readyzMu.Unlock()
+}
+
+// ReadinessProbeCadence is how often [Server.StartReadinessProbe] runs a
+// readiness round: one Prometheus scrape interval.
+const ReadinessProbeCadence = 15 * time.Second
+
+// StartReadinessProbe runs a readiness round every `every` until ctx ends, so
+// stellarindex_dependency_up stays current when nothing calls /v1/readyz;
+// request-driven alone, the gauge freezes at its last value and an outage
+// that begins after the last probe never reads 0.
+func (s *Server) StartReadinessProbe(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		s.probeReadyz() //nolint:contextcheck // the round is shared with queued /v1/readyz callers and carries its own 2s budget; ctx bounds only the loop.
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// probeReadyz runs one round through the /v1/readyz single-flight and cache,
+// skipping the tick when a request-driven round is already in flight.
+func (s *Server) probeReadyz() {
+	s.readyzMu.Lock()
+	if s.readyzFlight != nil {
+		s.readyzMu.Unlock()
+		return
+	}
+	done := make(chan struct{})
+	s.readyzFlight = done
+	s.readyzMu.Unlock()
+	s.fillReadyz(done)
 }
 
 // computeReadyz runs one full check round and renders the response.
@@ -3381,6 +3408,7 @@ var knownErrorSlugs = map[string]struct{}{
 	"dex-tvl-unavailable":             {},
 	"directory-timeout":               {},
 	"empty-patch":                     {},
+	"endpoint-retired":                {},
 	"explorer-unavailable":            {},
 	"forbidden":                       {},
 	"history-timeout":                 {},
@@ -3528,9 +3556,7 @@ var knownErrorSlugs = map[string]struct{}{
 	"sep41-transfers-transient":       {},
 	"sep41-transfers-unavailable":     {},
 	"signup-rate-limited":             {},
-	"signup-verify-not-found":         {},
 	"signup-verify-required":          {},
-	"signup-verify-unavailable":       {},
 	"source-not-found":                {},
 	"status-notice-create-failed":     {},
 	"status-notice-list-failed":       {},

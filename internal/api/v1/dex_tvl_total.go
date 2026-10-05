@@ -82,8 +82,10 @@ var dexTVLScopeExclusions = []DEXTVLExclusion{
 	{
 		Subject: "classic liquidity pools",
 		Reason: "Stellar's protocol-native CAP-38 constant-product pools are indexed and served " +
-			"per-pool at /v1/liquidity-pools (two-sided reserves + as_of_ledger) but are not yet " +
-			"valued into a protocol row; which protocol they attach to is an open product decision",
+			"per-pool at /v1/liquidity-pools (two-sided reserves + as_of_ledger). They belong to no " +
+			"protocol row: they are a ledger primitive, not a deployed contract or venue, and filing " +
+			"them under sdex would mix pooled reserves with order-book depth. If valued, they are " +
+			"summed as their own class, never folded into another protocol's figure",
 	},
 	{
 		Subject: "sdex",

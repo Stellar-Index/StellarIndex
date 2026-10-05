@@ -70,10 +70,12 @@ Environment=EXTRA_FLAGS=
 # -write is REQUIRED: opsutil.RegisterWriteGate defaults every ops job to
 # dry-run, so without it the timer would run, report what it would have
 # done, and persist nothing — the silent no-op shape.
-# 75 = run-heavy-job.sh skipped this fire (per-job lock held): not a
+# 75 = run-heavy-job.sh skipped this fire (a lock was held): not a
 # failure, but ExecMainStatus=75 keeps it distinct from a run.
 SuccessExitStatus=75
-# Timer-fired: shares run-heavy-job.sh's host-wide lock, never refused by it.
+# Queue behind another heavy job (host-wide and scheduled locks) for up to
+# 12h instead of skipping the fire; TimeoutStartSec below covers wait + run.
+Environment=HEAVY_JOB_LOCK_WAIT=43200
 Environment=HEAVY_JOB_CLASS=scheduled
 ExecStart=/usr/local/sbin/run-heavy-job.sh asset-registry-backfill \
   /usr/local/bin/stellarindex-ops asset-registry-backfill \
@@ -102,7 +104,7 @@ ProtectControlGroups=true
 # The binary's own -timeout caps the run and it stops CLEANLY there,
 # printing its RESUME line. Give systemd headroom above it so the
 # graceful stop is what ends the run, not a SIGKILL.
-TimeoutStartSec=7h
+TimeoutStartSec=68400
 
 # Memory: the job runs in the wrapper's transient scope, a sibling of
 # this unit, so a MemoryMax= here would bind only the wrapper shell. The

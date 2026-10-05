@@ -1,7 +1,7 @@
 ---
 title: High-Availability Infrastructure Plan
 last_verified: 2026-07-25
-status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, §8/§3.3's backup deployment status corrected 2026-07-25, audit-2026-07-23 DOC-05/DOC-06). 2026-09-02 (#361): §2 diagram, §3.4, §3.8, §6 and the §8/restore-drill "reality check" blocks corrected against code — those blocks had INVERTED (repo2 + restore drill are live). §3 still lacks a CH tier (see top amendment); cost/RTO tables NOT re-verified. 2026-09-03: §3.3's retention block no longer claims daily OHLC back to 2015 — `prices_1d` starts 2018-07-01. 2026-09-20 (HO-361): every `file:line` citation in this doc re-checked against HEAD; two had drifted from code moving underneath them (§0 availability banner's `sla-probe.sh` line, §3.3's `18-pgbackrest-backup.yml` restore-drill-enable range) and are corrected — no prose claim changed. 2026-09-24 (T639): the §2 diagram and the §5 failure-matrix aggregator row still showed the leader-elected active/standby aggregator that §3.7 had retracted; both now match §3.7 (one instance, Postgres instance lock, no standby)
+status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, §8/§3.3's backup deployment status corrected 2026-07-25, audit-2026-07-23 DOC-05/DOC-06). 2026-09-02 (#361): §2 diagram, §3.4, §3.8, §6 and the §8/restore-drill "reality check" blocks corrected against code — those blocks had INVERTED (repo2 + restore drill are live). §3.11 now covers the ClickHouse tier; cost/RTO tables NOT re-verified. 2026-09-03: §3.3's retention block no longer claims daily OHLC back to 2015 — `prices_1d` starts 2018-07-01. 2026-09-20 (HO-361): every `file:line` citation in this doc re-checked against HEAD; two had drifted from code moving underneath them (§0 availability banner's `sla-probe.sh` line, §3.3's `18-pgbackrest-backup.yml` restore-drill-enable range) and are corrected — no prose claim changed. 2026-09-24 (T639): the §2 diagram and the §5 failure-matrix aggregator row still showed the leader-elected active/standby aggregator that §3.7 had retracted; both now match §3.7 (one instance, Postgres instance lock, no standby)
 ---
 
 > ⚠️ **Multi-region content superseded by ADR-0050 / [`multi-region-ha.md`](multi-region-ha.md) (2026-08-21).** This plan's multi-region framing (and its "active/active out of scope for v1" stance) is overturned. The **single-region HA design** below (HAProxy / Patroni / Redis-Sentinel) remains current and is **Phase 1** of the multi-region plan — read it for that, not for the multi-region shape.
@@ -29,11 +29,10 @@ status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for Clic
 > **⚠️ ARCHITECTURE-STALENESS AMENDMENT (2026-07-18).** This plan predates the ADR-0034
 > **ClickHouse tier-1 lake** — now the largest store (8.6 TiB) and the primary serving
 > path. **§4.3 (storage/capacity) and §8 (backup) have been rewritten** to current
-> reality. **Still stale / TODO:** §3 (component-by-component HA) has **no ClickHouse
-> tier** — deploying the HA design as-written would leave ClickHouse a SPOF. The HA/DR
-> re-evaluation (bootstrap-from-snapshot model, R2/R3 sequencing) is in
-> `docs/operations/production-readiness-master-plan-2026-07-18.md` §6b (the campaign
-> source of truth) + `docs/operations/off-site-backup-plan.md`.
+> reality. §3.11 adds the ClickHouse tier: one instance per region, cross-region
+> failover per ADR-0050, and snapshot-restore bootstrap. The in-region lake is still a
+> SPOF by design. Background: `docs/operations/production-readiness-master-plan-2026-07-18.md`
+> §6b + `docs/operations/off-site-backup-plan.md`.
 
 # High-Availability Infrastructure Plan
 
@@ -297,7 +296,7 @@ provisioned; cloud is pay-as-you-use for DR.
   > 2026-07-27 once the galexie trim cleared the capacity condition it
   > was gated on, and its cadence is **monthly** (first Saturday, 04:00
   > UTC) per ADR-0043 §1/§3 —
-  > `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:692-717`
+  > `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:707-732`
   > carries the enable task and the dated rationale. The drill's own
   > precondition check still refuses (exit 2, uncounted) if free space
   > regresses, so it is safe under capacity pressure.
@@ -491,6 +490,42 @@ operator runbooks under
 [`docs/operations/runbooks/`](../operations/runbooks/) cite the
 specific subcommand each playbook needs (e.g. `runbooks/all-ingestion-down.md`
 references `stellarindex-ops backfill`).
+
+### 3.11 ClickHouse lake
+
+- **Topology:** **one** ClickHouse instance per region, not a cluster.
+  Every lake table uses a non-replicated MergeTree-family engine
+  (`MergeTree`, `ReplacingMergeTree`, `AggregatingMergeTree`) on a single
+  local disk; there are no `Replicated*` tables and no Keeper. Within a region
+  the lake is a single point of failure by design: ADR-0050 gets HA from
+  cross-region failover, one box per region, not from per-region
+  clusters ([`multi-region-ha.md`](multi-region-ha.md) §8).
+- **Blast radius:** the API's ClickHouse readiness check is
+  non-critical (`clickhouseChecker.Critical()` in
+  `cmd/stellarindex-api/main.go`). With ClickHouse down, `/readyz`
+  returns 200 `degraded`, pricing keeps serving from Timescale + Redis,
+  and the lake routes return 503. `GET /v1/livez/lake` is the
+  lake-specific signal. It returns 503 while ClickHouse is unreachable,
+  so a load balancer can steer lake routes away without pulling pricing
+  out of the pool.
+- **Cross-region shape:** R1 holds the full lake and is the lake
+  authority. R2 may hold a hot recent set; R3 holds none. Both proxy
+  cold reads to R1, and fall back to object storage only while R1 is
+  unreachable ([`multi-region-ha.md`](multi-region-ha.md) §3b). A lake
+  outage on R1 therefore degrades deep-history reads everywhere. It
+  does not take them down.
+- **Recovery and region bootstrap:** restore a snapshot, don't
+  re-derive. A new or rebuilt lake restores the latest backup chain
+  from `scripts/ops/ch-lake-backup.sh` (native `BACKUP DATABASE` to an
+  off-site `s3_plain` disk, ADR-0043 §2.4). It must pass `stellarindex-ops
+  verify-lake` before it serves, then follows live ingest. Re-walking
+  the archive (~1–2 weeks per region, with divergence risk) is the last
+  resort. Restore steps are in
+  [`runbooks/ch-lake-backup.md`](../operations/runbooks/ch-lake-backup.md).
+  §8 records whether the chain is running.
+- **Sequencing:** R2/R3 lakes are bootstrapped from R1's verified
+  snapshot only after R1's lake is complete and verified. A region
+  seeded from an unverified lake would carry the same gaps as R1.
 
 ---
 

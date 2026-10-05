@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
 	"time"
 
@@ -157,7 +158,7 @@ type LedgerEntryChangeRow struct {
 	// fee changes (tx-set apply order), phase 2 every tx's apply-phase meta
 	// (tx-changes-before, per-op changes in op_index/change_index order,
 	// tx-changes-after), phase 3 every tx's post-apply fee changes (P23
-	// Soroban refunds). This mirrors the SDK's canonical
+	// Soroban refunds), phase 4 the ledger's evicted keys. This mirrors the SDK's canonical
 	// ingest.LedgerChangeReader state machine and dispatcher's
 	// walkLedgerEntryChanges exactly. This doc previously described a
 	// PER-TRANSACTION order, which mis-ranked tx1's apply-phase change below
@@ -236,6 +237,18 @@ type LedgerExtract struct {
 	// a non-zero value means an archive re-derived by an old core binary
 	// or a protocol that bumped meta past V4 (cold audit 2026-08-04).
 	EntryMetaUnsupported int
+
+	// SorobanFeeMetaUnsupported counts Soroban transactions whose
+	// TransactionMeta version the charged-fee read does not handle: their
+	// soroban_*_fee columns are written as 0, indistinguishable from a
+	// zero charge. Same in-memory-only treatment as the counts above.
+	SorobanFeeMetaUnsupported int
+
+	// EvictedKeysUnreadable is 1 when the LedgerCloseMeta's evicted-keys
+	// list could not be read: this ledger's eviction rows are missing, so
+	// each evicted entry's last write stays current. Same in-memory-only
+	// treatment as the counts above.
+	EvictedKeysUnreadable int
 }
 
 // ErrBufferFull is returned by [Sink.Add] when the in-memory buffer is already
@@ -281,16 +294,15 @@ func (s *Sink) SetMaxBufferLedgers(n int) { s.maxBufferLedgers = n }
 func (s *Sink) BufferedLedgers() int { return len(s.ledgers) }
 
 // Open dials ClickHouse (native protocol) at addr (e.g. "127.0.0.1:9300")
-// against the `stellar` database, pings it, and fails if any table Flush
-// writes to is missing. flushEvery is the ledger-count threshold that
+// against the `stellar` database, pings it, and fails if any table or
+// operator-scope column Flush writes to is missing. flushEvery is the ledger-count threshold that
 // triggers an automatic Flush.
 func Open(ctx context.Context, addr string, flushEvery int) (*Sink, error) {
 	if flushEvery <= 0 {
 		flushEvery = 2000
 	}
-	// Ops-batch identity from the environment (2026-08-28 r1 incident;
-	// see ops_auth.go) — CH `default` user when unset.
-	auth, err := opsAuth()
+	// Identity from the environment; see ops_auth.go.
+	auth, err := chAuth()
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +327,7 @@ func Open(ctx context.Context, addr string, flushEvery int) (*Sink, error) {
 }
 
 // openSink dials with opts, pings, and refuses a target that lacks any table
-// Flush writes to, so a mis-pointed or un-migrated endpoint fails at startup
+// or column Flush writes to, so a mis-pointed or un-migrated endpoint fails at startup
 // rather than on the first Flush.
 func openSink(ctx context.Context, opts *clickhouse.Options, flushEvery int) (*Sink, error) {
 	addr := strings.Join(opts.Addr, ",")
@@ -340,24 +352,26 @@ var sinkTables = []string{
 	"contract_events", "ledger_entry_changes", "supply_flows", "ledgers",
 }
 
+// sinkColumns lists the columns Flush names in its INSERTs that tier1_schema.sql
+// alone may not create: databases provisioned before them need the additive
+// ALTERs in deploy/clickhouse (transactions_soroban_metering.sql,
+// transactions_fee_bump.sql, ledger_entries_current_intra_ledger_seq.sql).
+var sinkColumns = map[string][]string{
+	"transactions": {
+		"soroban_instructions", "soroban_disk_read_bytes", "soroban_write_bytes",
+		"soroban_read_entries", "soroban_write_entries", "soroban_resource_fee_bid",
+		"soroban_nonrefundable_fee", "soroban_refundable_fee", "soroban_rent_fee",
+		"inner_tx_hash", "fee_account", "fee_bump_fee", "inner_result_code",
+	},
+	"ledger_entry_changes": {"intra_ledger_seq"},
+}
+
 // checkSchema returns an error naming every sinkTables entry absent from the
-// stellar database.
+// stellar database, then every sinkColumns column absent from its table.
 func checkSchema(ctx context.Context, conn driver.Conn) error {
-	rows, err := conn.Query(ctx, `SELECT name FROM system.tables WHERE database = 'stellar'`)
+	have, err := stellarNames(ctx, conn, `SELECT name FROM system.tables WHERE database = 'stellar'`)
 	if err != nil {
-		return fmt.Errorf("schema check: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	have := make(map[string]bool)
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return fmt.Errorf("schema check: scan: %w", err)
-		}
-		have[name] = true
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("schema check: %w", err)
+		return err
 	}
 	var missing []string
 	for _, name := range sinkTables {
@@ -368,7 +382,43 @@ func checkSchema(ctx context.Context, conn driver.Conn) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("schema check: missing table(s) %s (apply deploy/clickhouse/tier1_schema.sql)", strings.Join(missing, ", "))
 	}
+	cols, err := stellarNames(ctx, conn, `SELECT concat(table, '.', name) FROM system.columns WHERE database = 'stellar' AND table IN ('transactions', 'ledger_entry_changes')`)
+	if err != nil {
+		return err
+	}
+	for table, names := range sinkColumns {
+		for _, name := range names {
+			if !cols[table+"."+name] {
+				missing = append(missing, "stellar."+table+"."+name)
+			}
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("schema check: missing column(s) %s (apply the ALTERs in deploy/clickhouse/transactions_soroban_metering.sql, transactions_fee_bump.sql and ledger_entries_current_intra_ledger_seq.sql)", strings.Join(missing, ", "))
+	}
 	return nil
+}
+
+// stellarNames runs a single-String-column query and returns the values as a set.
+func stellarNames(ctx context.Context, conn driver.Conn, query string) (map[string]bool, error) {
+	rows, err := conn.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("schema check: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	have := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("schema check: scan: %w", err)
+		}
+		have[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("schema check: %w", err)
+	}
+	return have, nil
 }
 
 // Add buffers one ledger's extract, auto-flushing when the ledger threshold

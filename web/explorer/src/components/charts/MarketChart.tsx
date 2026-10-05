@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
-import { API_BASE_URL } from '@/api/client';
-import { Segmented } from '@/components/ui';
+import { API_BASE_URL, timeoutSignal } from '@/api/client';
+import { useHistory, useSources, type Source } from '@/api/hooks';
+import { Button, Segmented } from '@/components/ui';
 import {
   isFrameStale,
   useLedgerFollow,
@@ -14,6 +15,8 @@ import {
 } from '@/lib/live/hooks';
 import type { components } from '@/api/types';
 import { scaleBaseUnits } from '@/lib/format';
+import { downloadText, toCsv } from '@/lib/export';
+import { trailingEnvelope } from './envelope';
 
 /** A tip tick drives the chart's live price line while fresher than this
  * (producer window ~5s; 30s of silence = wedged stream / backgrounded tab
@@ -86,6 +89,38 @@ const INTERVAL_SEC: Record<string, number> = {
 };
 const OHLC_CAP = 1000;
 
+const OHLC_CSV_COLUMNS = [
+  't',
+  'o',
+  'h',
+  'l',
+  'c',
+  'v_base',
+  'v_quote',
+  'v_base_decimals',
+  'v_quote_decimals',
+  'n',
+] as const;
+
+/** The served series as CSV, every value verbatim from /v1/ohlc. */
+export function ohlcCsv(bars: readonly OHLCBar[]): string {
+  return toCsv(OHLC_CSV_COLUMNS, bars);
+}
+
+export function ohlcExportName(
+  base: string,
+  quote: string,
+  interval: string,
+  bars: readonly OHLCBar[],
+  ext: 'csv' | 'json',
+): string {
+  // Asset ids carry ':' (code:issuer), which some filesystems reject.
+  const safe = (s: string) => s.replace(/[^A-Za-z0-9._-]+/g, '_');
+  const stamp = (t: string | undefined) => safe((t ?? '').replace(/[-:]/g, ''));
+  const span = `${stamp(bars[0]?.t)}-${stamp(bars[bars.length - 1]?.t)}`;
+  return `stellarindex-ohlc-${safe(base)}-${safe(quote)}-${interval}-${span}.${ext}`;
+}
+
 // Window → the granularities that make sense for it (bar count in [~24, cap]),
 // with a sensible default (the finest that's dense-but-performant). Per the
 // chart-data recon: the API accepts any grain for any window, so this offer set
@@ -146,6 +181,14 @@ const WINDOWS: {
   },
 ];
 
+// Trailing high/low envelope windows. Only windows longer than the candle are
+// offered: a one-candle envelope is just that candle's wicks.
+const BAND_WINDOWS = [
+  { key: '1h', sec: 3600 },
+  { key: '4h', sec: 14_400 },
+  { key: '24h', sec: 86_400 },
+];
+
 function limitFor(spanSec: number, interval: string): number {
   const isec = INTERVAL_SEC[interval] ?? 3600;
   return Math.min(OHLC_CAP, Math.ceil(spanSec / isec) + 2);
@@ -157,7 +200,7 @@ function limitFor(spanSec: number, interval: string): number {
  * served by GET /v1/ohlc. Two controls: a lookback **window** and an adaptive
  * **granularity** that offers every candle size usable for that window (default
  * = the finest dense one). A coverage caption surfaces when history is shorter
- * than the requested window (backfill still filling in).
+ * than the requested window.
  */
 export function MarketChart({
   base,
@@ -167,6 +210,8 @@ export function MarketChart({
   height = 380,
   defaultTimeframe = '7d',
   liveTip = false,
+  volatilityBand = false,
+  sourceOverlay = false,
 }: {
   base: string;
   quote: string;
@@ -181,6 +226,10 @@ export function MarketChart({
    * open an SSE tip connection — turn it on for single-pair/asset pages.
    */
   liveTip?: boolean;
+  /** Offer a trailing high/low envelope (1h/4h/24h) over the candles. */
+  volatilityBand?: boolean;
+  /** Offer a picker that layers one source's trades over the candles. */
+  sourceOverlay?: boolean;
 }) {
   const [winKey, setWinKey] = useState<Win>(defaultTimeframe);
   const win = WINDOWS.find((w) => w.key === winKey) ?? WINDOWS[1];
@@ -189,6 +238,32 @@ export function MarketChart({
   // to the window default (keeps the two controls consistent).
   const activeGrain = win.grains.includes(grain) ? grain : win.def;
   const limit = limitFor(win.spanSec, activeGrain);
+  const grainSec = INTERVAL_SEC[activeGrain] ?? 3600;
+  const bandOptions = volatilityBand
+    ? BAND_WINDOWS.filter((b) => b.sec > grainSec)
+    : [];
+  const [bandKey, setBandKey] = useState('off');
+  // Looked up in the module constant, not bandOptions, so the band memo below
+  // depends on a value the compiler knows is never mutated.
+  const activeBand =
+    (volatilityBand &&
+      BAND_WINDOWS.find((b) => b.key === bandKey && b.sec > grainSec)) ||
+    null;
+
+  const [overlaySource, setOverlaySource] = useState('');
+  const overlayTrades = useHistory(
+    overlaySource ? base : undefined,
+    quote,
+    1000,
+    { source: overlaySource, windowSec: win.spanSec },
+  );
+  const overlay = useMemo(
+    () =>
+      overlaySource && sourceOverlay
+        ? overlayPoints(overlayTrades.data ?? [])
+        : null,
+    [overlaySource, sourceOverlay, overlayTrades.data],
+  );
 
   const selectWindow = (key: Win) => {
     const next = WINDOWS.find((w) => w.key === key);
@@ -200,24 +275,39 @@ export function MarketChart({
   // the forming bar advances instead of freezing at page load. Prefix key
   // matches every grain/limit for this pair.
   useLedgerFollow(['/v1/ohlc', base, quote]);
-  const query = useQuery<Bar[], Error>({
+  const query = useQuery<OHLCBar[], Error>({
     queryKey: ['/v1/ohlc', base, quote, activeGrain, limit],
     queryFn: async ({ signal }) => {
       const url = `${API_BASE_URL}/v1/ohlc?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&interval=${activeGrain}&limit=${limit}`;
-      const r = await fetch(url, { signal });
+      const r = await fetch(url, { signal: timeoutSignal(undefined, signal) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const env = (await r.json()) as { data?: { intervals?: OHLCBar[] } };
-      return (env.data?.intervals ?? []).map(toChartBar);
+      return env.data?.intervals ?? [];
     },
   });
 
-  const data = query.data ?? [];
+  // Chart numbers are lossy doubles; export reads the raw strings instead.
+  const raw = query.data;
+  const data = useMemo(() => (raw ?? []).map(toChartBar), [raw]);
+  // Envelope selection runs over the served strings; only the plotted
+  // edges become doubles. Memoized: a new array would make CandleChart re-fit
+  // and reset the user's zoom on every clock tick.
+  const bandSec = activeBand?.sec;
+  const band = useMemo(
+    () =>
+      raw && bandSec
+        ? trailingEnvelope(raw, bandSec, grainSec).map((p) => ({
+            time: p.time,
+            upper: Number(p.upper),
+            lower: Number(p.lower),
+          }))
+        : null,
+    [raw, bandSec, grainSec],
+  );
   const loading = query.isLoading;
   const error = query.error ? query.error.message : null;
 
-  // Coverage: if the earliest returned bar starts well inside the requested
-  // window, history is truncated (backfill in progress) — say so honestly.
-  const coverageNote = coverage(data, win.spanSec);
+  const coverageNote = coverageCaption(data, win.spanSec);
 
   // Live current-price line: subscribe to this pair's tip stream (same
   // multiplexed source as the headline LiveAssetPrice) so the right-axis
@@ -247,9 +337,64 @@ export function MarketChart({
           value={activeGrain}
           onChange={setGrain}
         />
+        {bandOptions.length > 0 && (
+          <Segmented
+            ariaLabel="Volatility band"
+            options={[
+              { label: 'No band', value: 'off' },
+              ...bandOptions.map((b) => ({
+                label: `${b.key} band`,
+                value: b.key,
+              })),
+            ]}
+            value={activeBand?.key ?? 'off'}
+            onChange={setBandKey}
+          />
+        )}
+        {sourceOverlay && (
+          <SourceOverlayPicker
+            value={overlaySource}
+            onChange={setOverlaySource}
+            failed={!!overlaySource && overlayTrades.isError}
+          />
+        )}
         <span className="text-ink-faint ml-auto font-mono tracking-wider uppercase">
           {baseLabel} / {quoteLabel}
         </span>
+        {!error && raw && raw.length > 0 && (
+          <div
+            role="group"
+            aria-label="Download chart data"
+            className="flex items-center gap-1"
+          >
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                downloadText(
+                  ohlcExportName(base, quote, activeGrain, raw, 'csv'),
+                  'text/csv;charset=utf-8',
+                  ohlcCsv(raw),
+                )
+              }
+            >
+              CSV
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                downloadText(
+                  ohlcExportName(base, quote, activeGrain, raw, 'json'),
+                  'application/json',
+                  JSON.stringify(raw, null, 2),
+                )
+              }
+            >
+              JSON
+            </Button>
+          </div>
+        )}
       </div>
       {loading && <ChartMessage height={height}>Loading…</ChartMessage>}
       {error && !loading && (
@@ -270,7 +415,9 @@ export function MarketChart({
             data={data}
             height={height}
             livePrice={livePrice}
-            ariaLabel={`${baseLabel}/${quoteLabel} OHLC candlestick chart with volume, ${activeGrain} candles`}
+            band={band}
+            overlay={overlay}
+            ariaLabel={`${baseLabel}/${quoteLabel} OHLC candlestick chart with volume, ${activeGrain} candles${activeBand ? `, ${activeBand.key} high/low band` : ''}${overlaySource ? `, ${overlaySource} trades overlaid` : ''}`}
           />
           {coverageNote && (
             <p className="text-ink-faint font-mono text-[11px]">
@@ -283,16 +430,78 @@ export function MarketChart({
   );
 }
 
-function coverage(data: Bar[], spanSec: number): string | null {
+type HistoryTrade = NonNullable<ReturnType<typeof useHistory>['data']>[number];
+
+// Plots the served decimal price; rows without one (zero-amount legs) are skipped.
+export function overlayPoints(
+  rows: readonly HistoryTrade[],
+): { time: number; value: number }[] {
+  const out: { time: number; value: number }[] = [];
+  for (const r of rows) {
+    const value = Number(r.price);
+    const time = Date.parse(r.ts) / 1000;
+    if (
+      r.price &&
+      Number.isFinite(value) &&
+      value > 0 &&
+      Number.isFinite(time)
+    ) {
+      out.push({ time, value });
+    }
+  }
+  return out;
+}
+
+// /v1/history serves on-chain trades only, so CEX venues are not offered.
+export function selectableSources(sources: readonly Source[] | undefined) {
+  return (sources ?? []).filter((s) => s.selectable && s.on_chain);
+}
+
+function SourceOverlayPicker({
+  value,
+  onChange,
+  failed,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  failed: boolean;
+}) {
+  const { data } = useSources();
+  const options = selectableSources(data);
+  if (options.length === 0) return null;
+  return (
+    <label className="text-ink-muted flex items-center gap-2 font-mono">
+      Overlay trades
+      <select
+        aria-label="Overlay trades from one source"
+        className="bg-surface border-border text-ink rounded border px-2 py-1"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">None</option>
+        {options.map((s) => (
+          <option key={s.name} value={s.name}>
+            {s.name}
+          </option>
+        ))}
+      </select>
+      {failed && <span role="status">Overlay unavailable</span>}
+    </label>
+  );
+}
+
+// A short series has two indistinguishable causes — a young pair or history
+// not yet loaded — so the caption states the start date and claims neither.
+export function coverageCaption(data: Bar[], spanSec: number): string | null {
   if (data.length === 0) return null;
   const first = data[0].time;
   const last = data[data.length - 1].time;
   const covered = last - first;
-  // If we're missing more than ~15% of the requested span at the start, the
+  // Missing more than ~15% of the requested span at the start means the
   // series is coverage-limited rather than genuinely flat.
   if (covered < spanSec * 0.85) {
     const from = new Date(first * 1000).toISOString().slice(0, 10);
-    return `History begins ${from} — earlier data still backfilling.`;
+    return `History from ${from}.`;
   }
   return null;
 }

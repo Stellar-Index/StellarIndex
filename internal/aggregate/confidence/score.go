@@ -59,6 +59,18 @@ const BootstrapDensityDays = BootstrapDays * bootstrapDensityFraction
 // much below.
 const bootstrapDensityFraction = 0.95
 
+// BootstrapReengageDensityDays is the lower edge of the gate's
+// hysteresis band: a pair released at [BootstrapDensityDays] is
+// capped again only once its density falls below this. The band
+// absorbs a shared ingestion gap of about three days for a
+// fully-dense pair instead of the ~30 hours a single step allows, and
+// it cannot release anything: only a pair that already cleared the
+// upper gate — and so proved 28.5 calendar days of history — is held
+// inside it.
+const BootstrapReengageDensityDays = BootstrapDays * bootstrapReengageFraction
+
+const bootstrapReengageFraction = 0.90
+
 // Inputs are the raw observations a single bucket carries. The
 // orchestrator populates this from the bucket's stats + the per-
 // asset baseline; this package converts to a [Score] without any
@@ -167,6 +179,13 @@ type Inputs struct {
 	// "how old is this asset". 0 = no support (bootstrap penalty);
 	// negative means "no baseline at all" and the factor returns 0.5.
 	BaselineAgeDays float64
+
+	// BootstrapReleased is the pair's previous gate state: true when its
+	// last score cleared the bootstrap cap. It selects the hysteresis
+	// edge the density is compared against (see
+	// [BootstrapReengageDensityDays]); false, the zero value, is the
+	// conservative upper gate.
+	BootstrapReleased bool
 }
 
 // Factors holds the per-factor decomposition that ships on the
@@ -244,7 +263,8 @@ type Factors struct {
 	// BootstrapCapped disambiguates a served confidence at or below
 	// [BootstrapConfidenceCap] on the CS-087 discipline: true means the
 	// bootstrap ceiling bounded this score because BaselineAgeDays is
-	// under [BootstrapDensityDays], so the value may be the cap rather
+	// under [BootstrapDensityDays] (or, for a previously released pair,
+	// under [BootstrapReengageDensityDays]), so the value may be the cap rather
 	// than the evidence. false means the multi-factor score was served
 	// unbounded.
 	BootstrapCapped bool `json:"bootstrap_capped"`
@@ -331,7 +351,7 @@ func Compute(in Inputs, w Weights) Score {
 		TriangulationAgreement: TriangulationAgreementFactor(triangulationInput(in)),
 		BaselineQuality:        BaselineQualityFactor(in.BaselineAgeDays),
 		BaselineAgeDays:        servedBaselineAgeDays(in.BaselineAgeDays),
-		BootstrapCapped:        bootstrapCapInForce(in.BaselineAgeDays),
+		BootstrapCapped:        bootstrapCapInForce(in.BaselineAgeDays, in.BootstrapReleased),
 	}
 	// Mirrors the CrossOracleChecked branch below: a negative
 	// LiquidityUSD is the "could not value this pair in USD" sentinel,
@@ -378,7 +398,7 @@ func Compute(in Inputs, w Weights) Score {
 		weightedLog(f.BaselineQuality, w.BaselineQuality)
 
 	conf := math.Exp(logSum / totalWeight)
-	conf = applyBootstrapCap(conf, in.BaselineAgeDays)
+	conf = applyBootstrapCap(conf, in.BaselineAgeDays, in.BootstrapReleased)
 	return Score{Confidence: clamp01(conf), Factors: f}
 }
 
@@ -398,16 +418,17 @@ func triangulationInput(in Inputs) float64 {
 // applyBootstrapCap caps the final confidence at
 // [BootstrapConfidenceCap] when the baseline behind the bucket is
 // still thin (BaselineAgeDays known and below
-// [BootstrapDensityDays] — a density threshold, not a calendar one;
-// see that constant).
+// [BootstrapDensityDays], or below [BootstrapReengageDensityDays] for a
+// pair released at its previous score — density thresholds, not
+// calendar ones; see those constants).
 //
 // A negative BaselineAgeDays is the "no baseline yet" sentinel —
 // stricter than bootstrap, so we apply the cap there too. Callers
 // who pass an unknown age via NaN get no cap (the BaselineQuality
 // factor already returns 0.5 for NaN, dragging the combiner down
 // without a hard ceiling).
-func applyBootstrapCap(c, ageDays float64) float64 {
-	if !bootstrapCapInForce(ageDays) {
+func applyBootstrapCap(c, ageDays float64, released bool) float64 {
+	if !bootstrapCapInForce(ageDays, released) {
 		return c
 	}
 	if c > BootstrapConfidenceCap {
@@ -419,8 +440,14 @@ func applyBootstrapCap(c, ageDays float64) float64 {
 // bootstrapCapInForce is the one predicate behind both the ceiling in
 // [applyBootstrapCap] and [Factors.BootstrapCapped], so the served flag
 // can never disagree with the cap that was applied.
-func bootstrapCapInForce(ageDays float64) bool {
-	return !math.IsNaN(ageDays) && ageDays < BootstrapDensityDays
+func bootstrapCapInForce(ageDays float64, released bool) bool {
+	if math.IsNaN(ageDays) {
+		return false
+	}
+	if released {
+		return ageDays < BootstrapReengageDensityDays
+	}
+	return ageDays < BootstrapDensityDays
 }
 
 // servedBaselineAgeDays maps a non-finite density onto the negative

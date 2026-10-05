@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/big"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -157,8 +158,9 @@ type HistoryReader interface {
 // reader returns rich types and the handler does the marshalling.
 type HistoryPoint struct {
 	Bucket    time.Time
-	VWAP      string  // NUMERIC text — pass-through, no float round-trip
-	VolumeUSD *string // null when the bucket's underlying trades had no usd_volume
+	VWAP      string   // NUMERIC text — pass-through, no float round-trip
+	VolumeUSD *string  // null when the bucket's underlying trades had no usd_volume
+	Sources   []string // venues behind the bucket; nil for TWAP and FX points
 }
 
 // ErrUnknownGranularity is what HistoryReader.HistoryPoints returns
@@ -170,7 +172,8 @@ var ErrUnknownGranularity = fmt.Errorf("unknown granularity")
 //
 // Numeric amounts ship as decimal strings (ADR-0003). Price is a
 // pre-computed decimal for consumer convenience — the storage layer
-// never persists a derived price, so we compute at response time.
+// never persists a derived price, so we compute at response time. Price
+// is null (always present) for a stored trade with a zero leg.
 type TradeRow struct {
 	Source      string   `json:"source"`
 	Ledger      uint32   `json:"ledger"`
@@ -181,7 +184,7 @@ type TradeRow struct {
 	QuoteAsset  string   `json:"quote_asset"`
 	BaseAmount  string   `json:"base_amount"`
 	QuoteAmount string   `json:"quote_amount"`
-	Price       string   `json:"price"` // quote/base as decimal
+	Price       *string  `json:"price"` // quote/base as decimal; nil when a leg is zero
 	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each
 	// side's amount: divide base_amount by 10^base_decimals (and quote by
 	// 10^quote_decimals) to get whole-asset units.
@@ -212,6 +215,22 @@ type TradeRow struct {
 	RoutedVia string `json:"routed_via,omitempty"`
 }
 
+// SourceHistoryReader is the optional single-source variant of
+// [HistoryReader.TradesInRangeAfter]. A reader that does not implement it
+// cannot serve `?source=` on /v1/history.
+type SourceHistoryReader interface {
+	TradesInRangeAfterFromSource(
+		ctx context.Context,
+		pair canonical.Pair,
+		source string,
+		from, to, afterTs time.Time,
+		afterLedger uint32,
+		afterTxHash, afterSource string,
+		afterOpIndex uint32,
+		limit int,
+	) ([]canonical.Trade, error)
+}
+
 // tradeRowFrom converts canonical.Trade → wire shape. Price is
 // computed at `decimals` fractional digits (default 10 — generous
 // enough for sub-stroop precision without being absurd).
@@ -219,7 +238,7 @@ func tradeRowFrom(t canonical.Trade, decimals int) TradeRow {
 	if decimals <= 0 {
 		decimals = 10
 	}
-	return TradeRow{
+	row := TradeRow{
 		Source:      t.Source,
 		Ledger:      t.Ledger,
 		TxHash:      t.TxHash,
@@ -229,9 +248,12 @@ func tradeRowFrom(t canonical.Trade, decimals int) TradeRow {
 		QuoteAsset:  t.Pair.Quote.String(),
 		BaseAmount:  t.BaseAmount.String(),
 		QuoteAmount: t.QuoteAmount.String(),
-		Price:       priceRatioDecimal(t, decimals),
 		RoutedVia:   t.RoutedVia,
 	}
+	if p, ok := priceRatioDecimal(t, decimals); ok {
+		row.Price = &p
+	}
+	return row
 }
 
 // normalizeTradeRowPrices rewrites each row's Price from the RAW
@@ -254,12 +276,12 @@ func (s *Server) normalizeTradeRowPrices(rows []TradeRow, trades []canonical.Tra
 		return
 	}
 	for i := range rows {
-		b := trades[i].BaseAmount.BigInt()
-		if b.Sign() == 0 {
+		b, q := trades[i].BaseAmount.BigInt(), trades[i].QuoteAmount.BigInt()
+		if b.Sign() <= 0 || q.Sign() <= 0 {
 			continue
 		}
-		raw := new(big.Rat).SetFrac(trades[i].QuoteAmount.BigInt(), b)
-		rows[i].Price = ratToDecimal(aggregate.AdjustPrice(raw, baseDec, quoteDec), 10)
+		p := ratToDecimal(aggregate.AdjustPrice(new(big.Rat).SetFrac(q, b), baseDec, quoteDec), 10)
+		rows[i].Price = &p
 	}
 }
 
@@ -282,7 +304,24 @@ func historyTradeRows(trades []canonical.Trade, baseDec, quoteDec int) []TradeRo
 	return rows
 }
 
-// handleHistory serves GET /v1/history?base=<id>&quote=<id>&from=<rfc3339>&to=<rfc3339>&limit=<int>.
+// historySourceParam validates the optional `source` filter and that the
+// reader can honour it, writing the problem response when not.
+func historySourceParam(w http.ResponseWriter, r *http.Request, reader HistoryReader) (string, bool) {
+	source := r.URL.Query().Get("source")
+	if !rawTradeSourceFilterOK(w, r, source) {
+		return "", false
+	}
+	if _, ok := reader.(SourceHistoryReader); source != "" && !ok {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/history-unavailable",
+			"Source filter not available", http.StatusServiceUnavailable,
+			"this deployment's HistoryReader cannot filter by source")
+		return "", false
+	}
+	return source, true
+}
+
+// handleHistory serves GET /v1/history?base=<id>&quote=<id>&from=<rfc3339>&to=<rfc3339>&limit=<int>[&source=<name>].
 //
 // Defaults:
 //   - from: to - 1h (1-hour window rolling back from `to`)
@@ -316,6 +355,11 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// different reader method, HistoryPoints, used by /v1/chart), so it
 	// no longer needs the decline guard. The per-row Price field is
 	// normalized after decimals are resolved further down.
+
+	source, ok := historySourceParam(w, r, reader)
+	if !ok {
+		return
+	}
 
 	from, to, ok := parseFromTo(w, r)
 	if !ok {
@@ -370,7 +414,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// endpoint's worst-case hold.
 	hCtx, hCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer hCancel()
-	trades, next, err := s.tradesInRangeAfterWithAliases(hCtx, reader, pair,
+	trades, next, err := s.tradesInRangeAfterWithAliases(hCtx, reader, pair, source,
 		from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
 	if err != nil {
 		if clientAborted(r, err) {
@@ -681,6 +725,30 @@ type HistoryPointWire struct {
 	T    WireTime `json:"t"`
 	P    string   `json:"p"`
 	VUSD *string  `json:"v_usd,omitempty"`
+
+	// Sources is set only on a point that includes a venue outside the
+	// VWAP (a derived series such as poloniex_via_btc), so such a point
+	// is never read as a fill-derived VWAP. Omitted on an ordinary point.
+	Sources []string `json:"sources,omitempty"`
+}
+
+// historyWirePoint renders a reader point, carrying provenance only
+// when a non-VWAP venue contributed.
+func historyWirePoint(p HistoryPoint) HistoryPointWire {
+	return HistoryPointWire{T: WireTime(p.Bucket), P: p.VWAP, VUSD: p.VolumeUSD, Sources: nonVWAPSources(p.Sources)}
+}
+
+// nonVWAPSources returns the sorted venues in srcs that are registered
+// with IncludeInVWAP=false, or nil when there are none.
+func nonVWAPSources(srcs []string) []string {
+	var out []string
+	for _, s := range srcs {
+		if md, ok := external.Registry[s]; ok && !md.IncludeInVWAP {
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 const (
@@ -840,8 +908,9 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 	// first-hit gate, so `native/fiat:USD` since-inception served the
 	// identical 1,070-point series with the identical 1,919-day hole
 	// measured on /v1/chart. One definition cannot drift from itself.
-	read := func(rc context.Context, p canonical.Pair) ([]HistoryPoint, error) {
-		return s.history.HistoryPoints(rc, p, gran, historyMaxPoints)
+	// A window unbounded below is never narrowed, so the walk passes no bounds here.
+	read := func(rc context.Context, p canonical.Pair, _, _ time.Time, limit int) ([]HistoryPoint, error) {
+		return s.history.HistoryPoints(rc, p, gran, limit)
 	}
 	points, walk, err := s.chartSeriesPoints(hCtx, pair, chartWindow{gran: gran}, read)
 	if errors.Is(err, ErrUnknownGranularity) {
@@ -878,7 +947,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 
 	wire := make([]HistoryPointWire, len(points))
 	for i, p := range points {
-		wire[i] = HistoryPointWire{T: WireTime(p.Bucket), P: p.VWAP, VUSD: p.VolumeUSD}
+		wire[i] = historyWirePoint(p)
 	}
 
 	series := HistorySeries{
@@ -894,7 +963,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 		series.DataEndsAt = &last
 	}
 	series.markDiscontinuity()
-	writeJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded})
+	writeJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded})
 }
 
 // tradesInRangeAfterWithAliases reads one page of raw trades UNIONED
@@ -956,6 +1025,7 @@ func (s *Server) tradesInRangeAfterWithAliases(
 	ctx context.Context,
 	reader HistoryReader,
 	pair canonical.Pair,
+	source string,
 	from, to, afterTs time.Time,
 	afterLedger uint32,
 	afterTxHash, afterSource string,
@@ -963,6 +1033,10 @@ func (s *Server) tradesInRangeAfterWithAliases(
 	limit int,
 ) ([]canonical.Trade, *historyCursor, error) {
 	read := func(p canonical.Pair, n int) ([]canonical.Trade, error) {
+		if sr, ok := reader.(SourceHistoryReader); ok && source != "" {
+			return sr.TradesInRangeAfterFromSource(ctx, p, source, from, to,
+				afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, n)
+		}
 		return reader.TradesInRangeAfter(ctx, p, from, to,
 			afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, n)
 	}

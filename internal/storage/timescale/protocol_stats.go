@@ -10,7 +10,7 @@ import (
 // every served protocol table, each leg labelled with the logical
 // source name the API's protocol registry uses.
 //
-// Since the 2026-07-06 latency fix (#43) this no longer runs inline on
+// Since the 2026-07-06 latency fix (78dff337b) this no longer runs inline on
 // the request path — the aggregator's protoeventsrollup worker runs it
 // on a slow cadence via [Store.RefreshProtocolEventCounts] and folds
 // the result into the protocol_events_24h rollup (migration 0086), and
@@ -37,8 +37,8 @@ import (
 //   - upshift_vault_events (ledger_close_time) — 'upshift' (the vaults
 //     write no trades, so this leg is the source's whole census).
 //   - soroswap_skim_events (ledger_close_time) — added into 'soroswap'.
-//   - defindex_flows + defindex_fees (ledger_close_time) — summed as
-//     'defindex'.
+//   - defindex_flows + defindex_fees + defindex_admin_events
+//     (ledger_close_time) — summed as 'defindex'.
 //   - credit_positions + credit_statements + credit_settlements +
 //     credit_events (ledger_close_time) — summed as 'sorocredit'.
 //   - cctp_events / rozo_events (ts) — 'cctp' / 'rozo'.
@@ -92,6 +92,9 @@ const countRecentEventsQuery = `
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'defindex', count(*) FROM defindex_fees
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'defindex', count(*) FROM defindex_admin_events
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'sorocredit', count(*) FROM credit_positions
@@ -150,7 +153,7 @@ const readProtocolEventsRollup = `SELECT source, events_24h FROM protocol_events
 
 // CountRecentEventsBySource returns the trailing-24h decoded-event
 // count per logical source name, read from the protocol_events_24h
-// rollup (migration 0086, #43). Multi-table sources (blend, phoenix,
+// rollup (migration 0086, 78dff337b). Multi-table sources (blend, phoenix,
 // comet, soroswap) are summed across their tables by the worker, so
 // the caller gets one number per source. The map also carries trades'
 // off-chain sources (binance, kraken, …); protocol-scoped callers

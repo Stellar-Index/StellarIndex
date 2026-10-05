@@ -115,6 +115,13 @@ func TestContractCodeHistory_PartialIndexMissFallsBackToLegacy(t *testing.T) {
 			// been backfilled yet -> zero rows (a PARTIAL-coverage miss,
 			// invisible to the probe).
 			return &stubRows{}, nil
+		case strings.Contains(q, "SELECT 1 FROM stellar.contract_instance_changes"):
+			// Per-contract presence read: no row, the backfill has not
+			// reached this contract.
+			return &stubRows{}, nil
+		case strings.Contains(q, "stellar.entry_history_watermark"):
+			// No genesis watermark: the miss is unproven.
+			return &stubRows{}, nil
 		case strings.Contains(q, "FROM stellar.ledger_entry_changes"):
 			// Legacy changes-log scan resolves the real upgrade history.
 			legacyRead = true
@@ -136,5 +143,62 @@ func TestContractCodeHistory_PartialIndexMissFallsBackToLegacy(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].WasmHash != hex.EncodeToString(wantHash[:]) {
 		t.Fatalf("history = %+v, want one version with hash %x from the legacy scan", got, wantHash)
+	}
+}
+
+// TestContractCodeHistory_GenesisWatermark: an index miss skips the
+// ledger_entry_changes scan only when a genesis watermark covers ledger 1.
+func TestContractCodeHistory_GenesisWatermark(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		wm       [][]any
+		wantScan bool
+	}{
+		{"present and covering", [][]any{{uint32(500)}}, false},
+		{"absent", nil, true},
+		{"zero (below any ledger)", [][]any{{uint32(0)}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var scanned bool
+			conn := &stubConn{}
+			conn.respond = func(q string) (driver.Rows, error) {
+				switch {
+				case strings.Contains(q, "SELECT tx_hash, intra_ledger_seq FROM stellar.contract_instance_changes"):
+					return &stubRows{}, nil
+				case strings.Contains(q, "SELECT ledger_seq FROM"):
+					return &stubRows{data: [][]any{{uint32(1)}}}, nil
+				case strings.Contains(q, "SELECT ledger_seq, close_time, wasm_hash FROM ("),
+					strings.Contains(q, "SELECT 1 FROM stellar.contract_instance_changes"):
+					return &stubRows{}, nil
+				case strings.Contains(q, "stellar.entry_history_watermark"):
+					return &stubRows{data: tc.wm}, nil
+				case strings.Contains(q, "FROM stellar.ledger_entry_changes"):
+					scanned = true
+					return &stubRows{}, nil
+				default:
+					t.Fatalf("unexpected query: %s", q)
+					return nil, nil
+				}
+			}
+			r := newExplorerReader(conn)
+			if _, err := r.ContractCodeHistory(context.Background(), testContractID); err != nil {
+				t.Fatal(err)
+			}
+			if scanned != tc.wantScan {
+				t.Fatalf("legacy scan = %v, want %v", scanned, tc.wantScan)
+			}
+		})
+	}
+}
+
+func TestInstanceGenesisCovers_Below(t *testing.T) {
+	conn := &stubConn{}
+	conn.respond = func(string) (driver.Rows, error) { return &stubRows{data: [][]any{{uint32(100)}}}, nil }
+	r := newExplorerReader(conn)
+	if !r.instanceGenesisCovers(context.Background(), 100) {
+		t.Error("ledger at watermark must be covered")
+	}
+	if r.instanceGenesisCovers(context.Background(), 101) {
+		t.Error("ledger above watermark must not be covered")
 	}
 }

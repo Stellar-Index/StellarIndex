@@ -34,6 +34,7 @@ package external
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -163,31 +164,12 @@ type Metadata struct {
 	// here (30-day cap at 1h is too shallow to matter); Binance and
 	// Bitstamp would be true.
 	BackfillAvailable bool
-	// BackfillSafe reports whether this source's decoder is safe to
-	// run during a backfill against historical ledgers.
-	//
-	// For on-chain Soroban sources (soroswap, aquarius, phoenix, …)
-	// "safe" means the decoder has been audited against every WASM
-	// version that ran for the replay range — Soroban contracts can
-	// `update_contract` in place without changing their address, so
-	// event body schemas can vary across the same contract over time.
-	// Live ingest only ever sees current WASM; backfill sees every
-	// prior version. Decoding old events with a current-only decoder
-	// produces silently wrong trades. See AGENTS.md "Soroban DeFi
-	// contracts upgrade in place" + docs/architecture/contract-
-	// schema-evolution.md for the full picture.
-	//
-	// For off-chain sources (CEX/FX/aggregator/oracle-via-API)
-	// BackfillSafe is always true: their backfill hits a vendor REST
-	// endpoint whose schema we control via the connector code, not a
-	// historical on-chain artifact. SDEX is also true (classic
-	// Stellar, no WASM upgrades).
-	//
-	// This flag gates `stellarindex-ops backfill` from running a
-	// source against historical ranges before its decoder has been
-	// audited. Default-false for on-chain Soroban sources; flip to
-	// true per-source as `wasm-history` audits land.
-	BackfillSafe bool
+	// Backfill is the source's replay policy for historical ranges
+	// (backfill, projector-replay, ch-rebuild -write, projected-rebuild).
+	// Soroban contracts upgrade in place, so a current decoder is trusted
+	// on a range only when every WASM version active in it is audited. The
+	// zero value refuses.
+	Backfill BackfillPolicy
 
 	// AmountDecimals is the smallest-unit scale of the amounts this
 	// source stamps on canonical.Trade (Quote/BaseAmount): 8 for the
@@ -318,8 +300,30 @@ func (UpdateEvent) EventKind() string { return "external.update" }
 // Source implements [consumer.Event].
 func (e UpdateEvent) Source() string { return e.Update.Source }
 
+// ErrNoApplicablePairs is returned by a poller whose configured pairs map to
+// nothing it can request. The runner scores it "idle", never success.
+var ErrNoApplicablePairs = errors.New("external: no configured pair applies to this poller")
+
 // Compile-time checks.
 var (
 	_ consumer.Event = TradeEvent{}
 	_ consumer.Event = UpdateEvent{}
 )
+
+// BackfillPolicy is how a re-derive path decides a source may decode history.
+type BackfillPolicy uint8
+
+const (
+	// BackfillUnsafe refuses every replay (zero value, fail-closed).
+	BackfillUnsafe BackfillPolicy = iota
+	// BackfillNoWASM: no Soroban WASM behind the decoder (off-chain
+	// vendors, SDEX), so history decodes like live.
+	BackfillNoWASM
+	// BackfillPerWASM: a replay is admitted only when every WASM hash its
+	// contracts ran in the range is in internal/wasmaudit/audited_wasm.json.
+	BackfillPerWASM
+)
+
+// BackfillSafe reports whether any replay can be admitted. PerWASM sources
+// are further gated per range by internal/wasmaudit.
+func (m Metadata) BackfillSafe() bool { return m.Backfill != BackfillUnsafe }

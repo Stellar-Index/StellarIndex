@@ -145,23 +145,23 @@ func (s *Store) LedgerRangeToOracleTimeRange(ctx context.Context, fromLedger, to
 // range has no new trades, so the no-op buckets are nearly free.
 var TradesCAGGs = []CAGGSpec{
 	// Must lead: twap_1h / twap_1d are materialised FROM this one.
-	{Name: "prices_1m", MinWindow: 2 * time.Minute},
-	{Name: "prices_15m", MinWindow: 30 * time.Minute},
-	{Name: "prices_1h", MinWindow: 3 * time.Hour},
-	{Name: "prices_4h", MinWindow: 12 * time.Hour},
-	{Name: "prices_1d", MinWindow: 3 * 24 * time.Hour},
-	{Name: "prices_1w", MinWindow: 3 * 7 * 24 * time.Hour},
+	{Name: "prices_1m", MinWindow: 2 * time.Minute, Bucket: time.Minute},
+	{Name: "prices_15m", MinWindow: 30 * time.Minute, Bucket: 15 * time.Minute},
+	{Name: "prices_1h", MinWindow: 3 * time.Hour, Bucket: time.Hour},
+	{Name: "prices_4h", MinWindow: 12 * time.Hour, Bucket: 4 * time.Hour},
+	{Name: "prices_1d", MinWindow: 3 * 24 * time.Hour, Bucket: 24 * time.Hour},
+	{Name: "prices_1w", MinWindow: 3 * 7 * 24 * time.Hour, Bucket: 7 * 24 * time.Hour},
 	// 1mo CAGG uses calendar months, not 30-day windows. Padding
 	// to ~93 days (3 calendar months) trivially clears the
 	// "must span >= 2 buckets" minimum without depending on month
 	// arithmetic at the storage seam.
-	{Name: "prices_1mo", MinWindow: 93 * 24 * time.Hour},
-	{Name: "dex_volume_by_pair_1d", MinWindow: 3 * 24 * time.Hour},
-	{Name: "source_volume_1h", MinWindow: 3 * time.Hour},
-	{Name: "pools_per_source_1h", MinWindow: 3 * time.Hour},
+	{Name: "prices_1mo", MinWindow: 93 * 24 * time.Hour, Bucket: MonthBucket},
+	{Name: "dex_volume_by_pair_1d", MinWindow: 3 * 24 * time.Hour, Bucket: 24 * time.Hour},
+	{Name: "source_volume_1h", MinWindow: 3 * time.Hour, Bucket: time.Hour},
+	{Name: "pools_per_source_1h", MinWindow: 3 * time.Hour, Bucket: time.Hour},
 	// Must trail prices_1m.
-	{Name: "twap_1h", MinWindow: 3 * time.Hour},
-	{Name: "twap_1d", MinWindow: 3 * 24 * time.Hour},
+	{Name: "twap_1h", MinWindow: 3 * time.Hour, Bucket: time.Hour},
+	{Name: "twap_1d", MinWindow: 3 * 24 * time.Hour, Bucket: 24 * time.Hour},
 }
 
 // OracleCAGGs is every continuous aggregate rooted on `oracle_updates`
@@ -171,13 +171,13 @@ var TradesCAGGs = []CAGGSpec{
 // backfilled range reaches them only through an explicit refresh.
 // TestTradesCAGGsMatchCatalog holds the list to the schema.
 var OracleCAGGs = []CAGGSpec{
-	{Name: "oracle_prices_1m", MinWindow: 2 * time.Minute},
-	{Name: "oracle_prices_15m", MinWindow: 30 * time.Minute},
-	{Name: "oracle_prices_1h", MinWindow: 3 * time.Hour},
-	{Name: "oracle_prices_4h", MinWindow: 12 * time.Hour},
-	{Name: "oracle_prices_1d", MinWindow: 3 * 24 * time.Hour},
-	{Name: "oracle_prices_1w", MinWindow: 3 * 7 * 24 * time.Hour},
-	{Name: "oracle_prices_1mo", MinWindow: 93 * 24 * time.Hour},
+	{Name: "oracle_prices_1m", MinWindow: 2 * time.Minute, Bucket: time.Minute},
+	{Name: "oracle_prices_15m", MinWindow: 30 * time.Minute, Bucket: 15 * time.Minute},
+	{Name: "oracle_prices_1h", MinWindow: 3 * time.Hour, Bucket: time.Hour},
+	{Name: "oracle_prices_4h", MinWindow: 12 * time.Hour, Bucket: 4 * time.Hour},
+	{Name: "oracle_prices_1d", MinWindow: 3 * 24 * time.Hour, Bucket: 24 * time.Hour},
+	{Name: "oracle_prices_1w", MinWindow: 3 * 7 * 24 * time.Hour, Bucket: 7 * 24 * time.Hour},
+	{Name: "oracle_prices_1mo", MinWindow: 93 * 24 * time.Hour, Bucket: MonthBucket},
 }
 
 // CAGGsOnPrices1m are the [TradesCAGGs] views materialised FROM
@@ -283,7 +283,14 @@ func IsRefreshableCAGG(viewName string) bool { return allowedCAGGViews[viewName]
 type CAGGSpec struct {
 	Name      string
 	MinWindow time.Duration
+	// Bucket is the view's time_bucket width, or [MonthBucket]. Zero
+	// keeps a refresh of the view in one CALL ([RefreshPieces]).
+	Bucket time.Duration
 }
+
+// MonthBucket is the [CAGGSpec.Bucket] of a view bucketed by
+// time_bucket('1 month', ts, 'UTC'), which has no fixed width.
+const MonthBucket time.Duration = -1
 
 var CAGGsLiveForever = func() []CAGGSpec {
 	out := make([]CAGGSpec, 0, len(TradesCAGGs))
@@ -549,7 +556,7 @@ type BackfillCoverage struct {
 // BackfillCoverageStats is intentionally a no-op (returns no rows).
 // Retained only for interface/return-type compatibility with the
 // CoverageCache scaffolding, which is removed in the server-side
-// snapshot-pregeneration refactor (#16).
+// snapshot-pregeneration refactor (4d6e7ac4f).
 //
 // Why it does nothing: it used to scan `trades` per source for
 // earliest/latest ledger + an approximate trade count, cached by
@@ -566,7 +573,7 @@ type BackfillCoverage struct {
 // not chunk-exclude and walked the full ~2700-chunk hypertable to
 // the statement-timeout (57014) — the root cause of the
 // CoverageCache cold-start hang and a primary SLO-burn contributor.
-// #12 only time-bounded that wasted work; this removes it entirely
+// 0e470e96c only time-bounded that wasted work; this removes it entirely
 // (the honest fix). Cursor-first coverage + the source_entry_counts
 // tally already supply everything the diagnostics surface needs.
 func (s *Store) BackfillCoverageStats(_ context.Context) ([]BackfillCoverage, error) {
@@ -716,6 +723,9 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 //	                                 entries (migration 0146); literal
 //	                                 source 'defindex' (summed WITH
 //	                                 defindex_flows).
+//	defindex_admin_events          — defindex vault admin events
+//	                                 (migration 0192); literal source
+//	                                 'defindex' (summed WITH the above).
 //	comet_liquidity                — Comet join/exit/deposit/withdraw;
 //	                                 literal source 'comet' (summed WITH
 //	                                 the comet swaps from `trades`).
@@ -747,6 +757,9 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 //	soroswap_liquidity             — Soroswap add/remove liquidity; literal
 //	                                 source 'soroswap' (summed WITH skim +
 //	                                 swaps).
+//	sushiswap_v3_position_events   — SushiSwap V3 mint/burn/collect; literal
+//	                                 source 'sushiswap_v3' (summed WITH swaps
+//	                                 from `trades`).
 //	phoenix_initialize             — Phoenix pool initialize; and
 //	phoenix_admin_events           — Phoenix admin; literal source 'phoenix'.
 //	blend_emitter_events           — Blend emitter distribute/drop/swap-
@@ -831,6 +844,10 @@ const seedSourceEntryCountsSQL = `
             -- total equal to the full bump total (the outer GROUP BY sums both).
             SELECT 'defindex'           AS source, count(*) AS c FROM defindex_fees
             UNION ALL
+            -- One row per bumped defindex AdminEvent (migration 0192), disjoint
+            -- from the flow and fee tables like defindex_fees above.
+            SELECT 'defindex'           AS source, count(*) AS c FROM defindex_admin_events
+            UNION ALL
             -- Per-source non-'trades' sinks whose 'entries' tally is bumped
             -- 1/event via pipeline/sink.go::bumpEntryCount — a NON-idempotent
             -- +1 (unlike the trades/oracle_updates bump, which is inlined in
@@ -894,6 +911,8 @@ const seedSourceEntryCountsSQL = `
             SELECT 'aquarius'           AS source, count(*) AS c FROM aquarius_admin
             UNION ALL
             SELECT 'soroswap'           AS source, count(*) AS c FROM soroswap_liquidity
+            UNION ALL
+            SELECT 'sushiswap_v3'       AS source, count(*) AS c FROM sushiswap_v3_position_events
             UNION ALL
             SELECT 'phoenix'            AS source, count(*) AS c FROM phoenix_initialize
             UNION ALL

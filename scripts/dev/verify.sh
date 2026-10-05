@@ -177,9 +177,12 @@ defer_check() {
 # The self-test runs first (the gate is only as trustworthy as its fixtures).
 echo "=== verify↔CI parity self-test ===" && ./scripts/ci/check-verify-parity-test.sh
 echo "=== verify.sh ↔ CI import-checks parity ===" && ./scripts/ci/check-verify-parity.sh
+echo "=== self-test runners self-test ===" && ./scripts/ci/check-selftest-runners-test.sh
+echo "=== every scripts/ci self-test has a runner ===" && ./scripts/ci/check-selftest-runners.sh
 echo "=== CI meta-gate coverage ===" && ./scripts/ci/ci-meta-gate-coverage-test.sh
 echo "=== deploy checkout ref ===" && ./scripts/ci/deploy-checkout-ref-test.sh
 echo "=== deploy migration gate coverage ===" && ./scripts/ci/deploy-migration-gate-coverage-test.sh
+echo "=== migration follow-up gate ===" && ./scripts/ci/migration-followup-gate-test.sh
 echo "=== deploy served-path smoke ===" && ./scripts/ci/deploy-served-path-smoke-test.sh
 echo "=== Pages deploy branch label ===" && ./scripts/ci/pages-deploy-branch-test.sh
 # The verifier image installs the Postman converter from a Dockerfile ARG whose
@@ -247,6 +250,8 @@ echo "=== Agents file ===" && ./scripts/ci/lint-agents-file.sh
 echo "=== Agents file self-test ===" && ./scripts/ci/lint-agents-file-test.sh
 echo "=== Repo budget ===" && ./scripts/ci/lint-repo-budget.sh
 echo "=== Repo budget self-test ===" && ./scripts/ci/lint-repo-budget-test.sh
+echo "=== Remote /tmp staging ===" && ./scripts/ci/lint-remote-tmp-staging.sh
+echo "=== Remote /tmp staging self-test ===" && ./scripts/ci/lint-remote-tmp-staging-test.sh
 echo "=== Actions pinning ===" && ./scripts/ci/lint-actions-pinning.sh
 echo "=== Actions pinning self-test ===" && ./scripts/ci/lint-actions-pinning-test.sh
 echo "=== pnpm version pin ===" && ./scripts/ci/lint-pnpm-version-pin.sh
@@ -278,6 +283,8 @@ echo "=== Imports ==="       && ./scripts/ci/lint-imports.sh
 echo "=== Imports self-test ===" && ./scripts/ci/lint-imports-test.sh
 echo "=== Protocol registry sync ===" && ./scripts/ci/lint-protocol-registry-sync.sh
 echo "=== Lexicon ==="       && ./scripts/ci/lint-lexicon.sh
+echo "=== Deprecation removal versions ===" && ./scripts/ci/check-deprecations.sh
+echo "=== Deprecation removal versions self-test ===" && bash scripts/ci/check-deprecations-test.sh
 echo "=== i128/NUMERIC ===" && ./scripts/ci/lint-i128.sh
 # gofumpt's doc-comment reformatter rewrites a doubled apostrophe to U+201D,
 # so a comment quoting `entry_xdr != ''` stops saying what the filter is. The
@@ -307,8 +314,8 @@ echo "=== API-key keyspace walk ===" && ./scripts/ci/lint-apikey-scan.sh
 echo "=== API-key keyspace walk self-test ===" && ./scripts/ci/lint-apikey-scan-test.sh
 echo "=== Unbounded latest-row reads ===" && python3 ./scripts/ci/lint-unbounded-latest-row.py
 echo "=== Unbounded latest-row reads self-test ===" && ./scripts/ci/lint-unbounded-latest-row-test.sh
-echo "=== Healthcheck oneshot start/runtime bound ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout.sh
-echo "=== Healthcheck oneshot start/runtime bound self-test ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout-test.sh
+echo "=== Oneshot unit start bound (no ignored RuntimeMaxSec) ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout.sh
+echo "=== Oneshot unit start bound self-test ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout-test.sh
 echo "=== Deploy-baseline self-test ===" && ./scripts/ci/deploy-baseline-test.sh
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
 echo "=== Production credentials behind an environment gate ===" && python3 ./scripts/ci/lint-deploy-credentials.py
@@ -356,6 +363,7 @@ echo "=== Ansible ClickHouse host-gate self-test ===" && ./scripts/ci/ansible-cl
 echo "=== Ansible listing-sync pubnet gate ===" && ./scripts/ci/ansible-listing-sync-gate-test.sh
 echo "=== Alertmanager apply-path parity ===" && ./scripts/ci/check-alertmanager-parity.sh
 echo "=== Alertmanager apply-path parity self-test ===" && ./scripts/ci/check-alertmanager-parity-test.sh
+echo "=== Alertmanager inhibit-rule families ===" && bash configs/alertmanager/inhibit-rules-test.sh
 echo "=== pgBackRest backup wrapper self-test ===" && ./scripts/ci/pgbackrest-backup-test.sh
 echo "=== API-smoke textfile self-test ===" && ./scripts/ci/smoke-textfile-test.sh
 echo "=== Served-value harness scheduling + cadence ===" && ./scripts/ci/lint-served-value-cadence.sh
@@ -384,6 +392,7 @@ fi
 echo "=== Baseline-growth tripwire ===" && ./scripts/ci/lint-baseline-growth.sh
 echo "=== Restore-drill contract + abort-path tests ===" && bash scripts/ops/restore-drill-test.sh && bash scripts/ops/restore-drill-run-test.sh
 echo "=== config-assertions live-guard tests ===" && bash scripts/ops/config-assertions_test.sh
+echo "=== rederive-from driver tests ===" && bash scripts/ops/rederive-from-test.sh
 # BASE_SHA-gated like lint-baseline-growth.sh: self-skips locally, real in CI.
 echo "=== Replay-plan tripwire ===" && ./scripts/ci/lint-replay-plan.sh
 echo "=== External channels ===" && ./scripts/ci/lint-external-channels.sh
@@ -419,6 +428,7 @@ echo "=== ClickHouse ops-user contract self-test ===" && ./scripts/ops/ch-ops-us
 # caught this. Run it here explicitly.
 echo "=== Changed-file dispatcher self-test ===" && ./scripts/dev/lint-changed-test.sh
 echo "=== Doctor self-test ===" && ./scripts/dev/doctor-test.sh
+echo "=== verify-r1-sync self-test ===" && ./scripts/dev/verify-r1-sync-test.sh
 # GH-775: pins commit-identity-range.sh's new-branch/tag fallback (a
 # detached-HEAD checkout with the branch's own commit also present as a
 # remote-tracking ref) against the exact regression that made the range
@@ -598,15 +608,20 @@ lane_c() { # web typecheck/lint/test/build. Graceful-skip when pnpm isn't
 lane_d() { # everything else
     echo "=== Ansible galexie-restart self-test ===" && ./scripts/ci/ansible-galexie-restart-test.sh
     echo "=== Ansible Postgres DSN encoding self-test ===" && ./scripts/ci/ansible-postgres-dsn-test.sh
+    echo "=== Ansible Postgres WAL archiving render self-test ===" && ./scripts/ci/ansible-postgres-archive-test.sh
     echo "=== Ansible nftables per-source SSH rate-limit self-test ===" && ./scripts/ci/ansible-ssh-rate-limit-test.sh
     echo "=== Ansible prometheus archival-host guard self-test ===" && ./scripts/ci/ansible-prometheus-host-guard-test.sh
     echo "=== Ansible exporter listen-address self-test ===" && ./scripts/ci/ansible-exporter-listen-address-test.sh
     echo "=== Ansible textfile-collector dir mode self-test ===" && ./scripts/ci/ansible-textfile-dir-mode-test.sh
+    echo "=== Ansible ZFS ARC cap self-test ===" && ./scripts/ci/ansible-zfs-arc-cap-test.sh
+    echo "=== Ansible Postgres log size-cap self-test ===" && ./scripts/ci/ansible-pg-logrotate-cap-test.sh
     echo "=== Ansible prometheus port var self-test ===" && ./scripts/ci/ansible-prometheus-port-var-test.sh
+    echo "=== Ansible patroni etcd TLS self-test ===" && ./scripts/ci/ansible-patroni-etcd-tls-test.sh
     echo "=== Ansible node-exporter-collectors install self-test ===" && ./scripts/ci/ansible-node-exporter-collectors-install-test.sh
     echo "=== Ansible Caddy signing-key pipefail self-test ===" && ./scripts/ci/ansible-caddy-key-pipefail-test.sh
     echo "=== Promtail server listen-address self-test ===" && ./scripts/ci/promtail-listen-address-test.sh
     echo "=== Ansible README parity self-test ===" && ./scripts/ci/ansible-readme-parity-test.sh
+    echo "=== Ansible env-file secret guard self-test ===" && ./scripts/ci/ansible-envfile-secret-guard-test.sh
     echo "=== Ansible pubnet example checksum parity self-test ===" && ./scripts/ci/ansible-pubnet-checksum-parity-test.sh
     echo "=== Ansible keepalived healthcheck self-test ===" && ./scripts/ci/ansible-keepalived-healthcheck-test.sh
     echo "=== HAProxy http-request timeout self-test ===" && ./scripts/ci/haproxy-http-request-timeout-test.sh

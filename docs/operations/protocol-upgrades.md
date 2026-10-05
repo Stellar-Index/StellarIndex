@@ -43,6 +43,70 @@ Do the core bump in a maintenance window a few days AHEAD of the upgrade ledger;
 galexie's captive core can run a newer protocol against an older live network
 safely (forward-compatible), so there's no downside to being early.
 
+## Readiness checklist (every protocol bump)
+
+Work top to bottom; each line is a yes/no, and a "no" blocks the mainnet window.
+
+1. Read the release notes and CAP list; mark each change as XDR shape, operation,
+   event shape or host-function-only.
+2. `go-stellar-sdk` on `main` defines every new XDR arm (an unknown union arm
+   fails to unmarshal on every affected ledger).
+3. Every `switch` over a changed XDR enum falls through gracefully (grep the
+   enum name under `internal/`).
+4. Captive core ≥ the new protocol on every test net, then on r1 (procedure above).
+5. Run the drill below on a test net that has already crossed the upgrade.
+6. A decoder, event-schema or feed change found by the drill follows the replay
+   rule in [ingest-pipeline.md](../architecture/ingest-pipeline.md#the-replay-decision-rule).
+7. Record the result in a section like the ones below.
+
+## Upgrade drill: golden ledgers, green vs live
+
+`scripts/ops/protocol-upgrade-drill.sh` compares a **green** stack against the
+**live** one on a list of golden ledgers and prints a pass/fail diff report.
+Neither side is touched: it only reads `/ledgers/{seq}`,
+`/ledgers/{seq}/transactions` and `/ledgers/{seq}/operations` from both, drops
+request-time fields (`as_of`, `flags`) and diffs the rest. A non-200 on either
+side, an unparsable body, a `truncated` list or an empty golden list is a failure or a refusal,
+never a pass.
+
+1. **Pick the ledgers** (one sequence per line, `#` comments allowed): the
+   upgrade ledger, the one after it, and ledgers holding the new operation or
+   XDR shapes. On a test net, take the upgrade ledger from the
+   network's upgrade announcement, or page `/v1/ledgers?before=<seq>` and read
+   each row's `protocol_version` to find where it changes.
+2. **Bring up green.** Run the new build (and, for a core bump, the new captive
+   core) against a *separate* database set, replay the golden range into it
+   (`projector-replay` for projected sources, `ch-rebuild` otherwise), and serve
+   it on a private address. Green must never take the public name. One test net
+   at a time: a whole-stack blue-green needs a second host, so the first drills
+   use the spare capacity of the test-net VMs, not r1.
+3. **Run the drill** against live and green:
+
+   ```sh
+   LIVE_URL=https://<testnet-api>/v1 GREEN_URL=http://<green-host>:<port>/v1 \
+   DRILL_MIN_PROTOCOL=29 bash scripts/ops/protocol-upgrade-drill.sh golden.txt
+   ```
+
+4. **Read the report.** Each check prints `PASS`/`FAIL`; a `FAIL` on a route
+   includes the first 40 lines of the diff. The exit code is the number of
+   failed checks. Promote green only at exit 0, and keep the report with the
+   release notes. `scripts/ops/protocol-upgrade-drill-test.sh` proves the
+   drill itself fails on a mismatch, an HTTP error and an old protocol.
+
+**Limit:** a drill needs a live network that has already crossed the change. It
+cannot rehearse a mainnet-only amendment such as CAP-0076; for those, rely on
+the checklist and a decode-failure watch after the vote.
+
+## Protocol 29 — readiness
+
+Core `29.0.0` reached apt 2026-09-24; the mainnet vote is 2026-10-01.
+
+- [ ] Checklist above, steps 1–4. Step 1 for P29 has not been written up here;
+  fill the change table (as in the P28 section) when done.
+- [ ] Drill run on one test net (testnet or futurenet), report attached.
+- [ ] CAP-0076 is mainnet-only and cannot be drilled; watch for decode failures
+  and the stack-version probe after the vote instead.
+
 ## Protocol 28 "Adapter" — readiness (reviewed 2026-08-26)
 
 Timing: **Testnet 2026-08-27 17:00 UTC · Mainnet 2026-09-16 17:00 UTC**.

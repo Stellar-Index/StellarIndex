@@ -89,8 +89,7 @@ groups:
             `stellarindex_aggregator_venue_vwap{pair="{{ $labels.pair }}",window="5m"}`
             — the odd one out is the venue to investigate. Check the pair's
             div:<pair> Redis flag / API flags.divergence_warning for actual
-            price impact. NOTE: the stellarindex_price_divergence_* alerts
-            are INERT (F-1329, no Prometheus producer) — do not wait on them.
+            price impact.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
 
       # Successor to the counter-based storm gate for what venue
@@ -281,6 +280,41 @@ groups:
             massive worker in the API binary, then the chain config.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-triangulation-chains-dry.md
 
+      # A released pair re-caps only once its 30-day bucket density falls
+      # under the ADR-0019 hysteresis edge (27 days-equivalent). Several
+      # re-capping inside the same hour share a cause: a gap in ingestion,
+      # the aggregator, or prices_1m materialisation, and they stay at 0.5
+      # until the gap is repaired or rolls out of the window. last_over_time
+      # reaches back over an outage (up to 2d) to the pair's pre-gap state,
+      # which is the restart case. Covered by rule-tests/aggregator_test.yml.
+      - alert: stellarindex_aggregator_bootstrap_cap_reengaged
+        expr: |
+          count(
+            (stellarindex_aggregator_bootstrap_capped == 1)
+            and
+            (last_over_time(stellarindex_aggregator_bootstrap_capped[2d] offset 1h) == 0)
+          ) >= 3
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+          summary: "{{ $value }} pairs re-entered the bootstrap confidence cap within 1h (P3)"
+          description: |
+            {{ $value }} pairs whose last state before the past hour was
+            released from the ADR-0019 bootstrap cap are capped at 0.5 again
+            (stellarindex_aggregator_bootstrap_capped 0 -> 1): their 30-day
+            1-minute bucket density fell below the density gate (27
+            days-equivalent for a pair released since the aggregator started,
+            28.5 after a restart). A
+            simultaneous drop across pairs means a shared gap in the
+            baseline window, not one thin pair. Served confidence stays at
+            0.5 for them until the gap is repaired or rolls out of the
+            30-day window.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+
       - alert: stellarindex_aggregator_class_drop_spike
         expr: |
           sum(rate(stellarindex_aggregator_dropped_trades_total{reason="class"}[10m]))
@@ -337,7 +371,7 @@ groups:
             class). Recovery: free disk → BGSAVE → cache rebuilds.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
 
-      # ─── #43: protocol-events rollup worker ────────────────────
+      # ─── 78dff337b: protocol-events rollup worker ────────────────────
       # The aggregator's protoeventsrollup worker folds the
       # trailing-24h per-source event census into protocol_events_24h
       # so /v1/protocols' events_24h reads a keyed-on-PK lookup. A
@@ -362,7 +396,7 @@ groups:
             not zeros). Customer pricing surface is unaffected. Fix the
             failing Postgres backend and the next sweep catches up.
 
-      # ─── #43: asset-volume rollup worker ───────────────────────
+      # ─── e0fbbbc3b: asset-volume rollup worker ───────────────────────
       # The aggregator's assetvolrollup worker folds the trailing-24h
       # per-asset USD-volume SUM over prices_1m into asset_volume_24h
       # so the /v1/assets listing reads a keyed-on-PK lookup. A
@@ -387,6 +421,34 @@ groups:
             volume_24h_usd column stops advancing (last-good values
             persist, not zeros). Customer pricing surface is unaffected.
             Fix the failing Postgres backend and the next sweep catches up.
+
+      # ─── asset-volume-character rollup worker ────────────────────────
+      # The worker sweeps every 6h (the roll scans the full 14-day trades
+      # window), so the 15m/for-30m shape of the sibling rollup alerts
+      # could never fire: one error leaves a ~15m rate blip. Fire instead
+      # on a refresh_error in the last 13h with no ok sweep in that window,
+      # i.e. two consecutive sweeps failed. Analytics only.
+      - alert: stellarindex_asset_character_rollup_failing
+        expr: |
+          sum(increase(stellarindex_asset_character_rollup_sweeps_total{outcome="refresh_error"}[13h])) > 0
+            unless
+          sum(increase(stellarindex_asset_character_rollup_sweeps_total{outcome="ok"}[13h])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/asset-character-rollup-failing.md
+          summary: "Asset-character rollup failing: errors with no successful sweep in 13h"
+          description: |
+            The aggregator's asset-volume-character rollup worker (6h
+            cadence) has recorded refresh errors and no successful sweep
+            in the last 13h. The volume_character label and signals on
+            /v1/assets and /v1/assets/{id} stop advancing (last-good
+            rows persist, not blank). Pricing, verification and the raw
+            volume_24h_usd are unaffected. Fix the failing Postgres
+            backend; the next sweep catches up.
 
       # ─── Decimals-assumption landmine (decoder-correctness audit F2) ─
       # The served price is Σ(quote_amount)/Σ(base_amount) on RAW
@@ -583,3 +645,33 @@ groups:
             so the customer-visible gap can be closed by re-emitting
             once the store is healthy.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-fanout-failing.md
+
+      # The explorer delta-strip worker (internal/aggregate/changesummary)
+      # has stopped upserting change_summary_5m: every list view and detail
+      # page serves frozen deltas with no error. The gauge is seeded at
+      # worker start and advances on any pass that upserts at least one
+      # entity, so a worker that never succeeds goes stale too; the `> 0`
+      # arm keeps a process that never ran the worker silent. Scoped to
+      # job="stellarindex-aggregator" because other binaries register the
+      # gauge at 0.
+      - alert: stellarindex_change_summary_stale
+        expr: |
+          (time() - stellarindex_change_summary_last_success_unix{job="stellarindex-aggregator"}) > 1800
+            and stellarindex_change_summary_last_success_unix{job="stellarindex-aggregator"} > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/change-summary-stale.md
+          summary: "change_summary_5m has not been refreshed in over 30 min — explorer deltas are frozen"
+          description: |
+            No change-summary pass has upserted a single entity in over
+            30 minutes (six 5-minute intervals) plus a 15-minute
+            for-duration. The explorer delta strips (h1/h24/d7/d30,
+            ATH/ATL, streak) are serving the last written rows. Look at
+            the aggregator's `change-summary pass had failures` warns for
+            `first_err`, and
+            stellarindex_change_summary_passes_total{outcome="failed"}.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/change-summary-stale.md

@@ -161,10 +161,15 @@ type webauthnUser struct {
 
 func (u webauthnUser) WebAuthnID() []byte { return u.user.ID[:] }
 
-func (u webauthnUser) WebAuthnName() string { return u.user.Email }
+func (u webauthnUser) WebAuthnName() string {
+	if platform.IsPlaceholderEmail(u.user.Email) {
+		return u.WebAuthnDisplayName()
+	}
+	return u.user.Email
+}
 
 func (u webauthnUser) WebAuthnDisplayName() string {
-	if u.user.DisplayName != "" {
+	if u.user.DisplayName != "" || platform.IsPlaceholderEmail(u.user.Email) {
 		return u.user.DisplayName
 	}
 	return u.user.Email
@@ -213,7 +218,7 @@ func (h *Handlers) setPasskeyCeremonyCookie(w http.ResponseWriter, c passkeyCere
 	enc := base64.RawURLEncoding
 	value := enc.EncodeToString(payload) + "." +
 		enc.EncodeToString(passkeyCeremonyMAC(h.cfg.Generator.Secret, payload))
-	cookie := credentialCookie(PasskeyCeremonyCookieName, value)
+	cookie := credentialCookie(PasskeyCeremonyCookieName, value) //nolint:gosec // G124: credentialCookie sets Secure, HttpOnly and SameSite=Lax
 	cookie.MaxAge = int(passkeyCeremonyTTL / time.Second)
 	http.SetCookie(w, cookie)
 	return nil
@@ -372,12 +377,43 @@ func (h *Handlers) consumeCeremony(ctx context.Context, c passkeyCeremony) error
 }
 
 func (h *Handlers) clearPasskeyCeremonyCookie(w http.ResponseWriter) {
-	c := credentialCookie(PasskeyCeremonyCookieName, "")
+	c := credentialCookie(PasskeyCeremonyCookieName, "") //nolint:gosec // G124: credentialCookie sets Secure, HttpOnly and SameSite=Lax
 	c.MaxAge = -1
 	http.SetCookie(w, c)
 }
 
 // ─── Registration (session-gated) ─────────────────────────────────
+
+// passkeyRegistrationOptions are the creation options every passkey
+// enrolment uses, signed-in or signup.
+func passkeyRegistrationOptions(exclusions []protocol.CredentialDescriptor) []webauthn.RegistrationOption {
+	return []webauthn.RegistrationOption{
+		// User verification REQUIRED. The credential registered here
+		// is a first-factor, passwordless sign-in credential (the
+		// login side asks for nothing else), so it has to carry a
+		// second factor of its own: without UV, possession of the
+		// authenticator IS the account. Requiring it at registration
+		// means the credential is created behind a biometric/PIN, and
+		// the login side (HandlePasskeyBeginLogin) requires the UV bit
+		// on every assertion. Trade-off, accepted deliberately: a
+		// security key with no PIN configured cannot be enrolled.
+		//
+		// ORDER MATTERS. WithAuthenticatorSelection REPLACES the whole
+		// AuthenticatorSelection struct, while WithResidentKeyRequirement
+		// only sets its two resident-key fields — so this option must
+		// come FIRST or the UV requirement is silently dropped. The
+		// options-shape assertions in passkey_test.go pin both fields
+		// so a reorder fails the build rather than weakening sign-in.
+		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
+			UserVerification: protocol.VerificationRequired,
+		}),
+		// Discoverable (resident) so the login side can be
+		// usernameless.
+		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
+		webauthn.WithExclusions(exclusions),
+		webauthn.WithConveyancePreference(protocol.PreferNoAttestation),
+	}
+}
 
 // HandlePasskeyBeginRegister returns the credential-creation options
 // for navigator.credentials.create(). Session-gated: adding a
@@ -410,32 +446,7 @@ func (h *Handlers) HandlePasskeyBeginRegister(w http.ResponseWriter, r *http.Req
 	}
 
 	user := webauthnUser{user: sc.User, creds: libCreds}
-	creation, session, err := wa.BeginRegistration(user,
-		// User verification REQUIRED. The credential registered here
-		// is a first-factor, passwordless sign-in credential (the
-		// login side asks for nothing else), so it has to carry a
-		// second factor of its own: without UV, possession of the
-		// authenticator IS the account. Requiring it at registration
-		// means the credential is created behind a biometric/PIN, and
-		// the login side (HandlePasskeyBeginLogin) requires the UV bit
-		// on every assertion. Trade-off, accepted deliberately: a
-		// security key with no PIN configured cannot be enrolled.
-		//
-		// ORDER MATTERS. WithAuthenticatorSelection REPLACES the whole
-		// AuthenticatorSelection struct, while WithResidentKeyRequirement
-		// only sets its two resident-key fields — so this option must
-		// come FIRST or the UV requirement is silently dropped. The
-		// options-shape assertions in passkey_test.go pin both fields
-		// so a reorder fails the build rather than weakening sign-in.
-		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
-			UserVerification: protocol.VerificationRequired,
-		}),
-		// Discoverable (resident) so the login side can be
-		// usernameless.
-		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
-		webauthn.WithExclusions(exclusions),
-		webauthn.WithConveyancePreference(protocol.PreferNoAttestation),
-	)
+	creation, session, err := wa.BeginRegistration(user, passkeyRegistrationOptions(exclusions)...)
 	if err != nil {
 		h.cfg.Logger.Error("begin passkey registration", "err", err, "user_id", sc.User.ID)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)

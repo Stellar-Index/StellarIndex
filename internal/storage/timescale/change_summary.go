@@ -172,6 +172,24 @@ func (s *Store) GetChangeSummary(ctx context.Context, entityType, entityID strin
 	return row, nil
 }
 
+// DeleteChangeSummary removes the row for (entity_type, entity_id) and
+// reports whether one existed. The upsert ratchets ath/atl for good, so
+// this is the only way to clear a pinned extreme; the worker rebuilds the
+// row from the trailing window on its next pass.
+func (s *Store) DeleteChangeSummary(ctx context.Context, entityType, entityID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM change_summary_5m WHERE entity_type = $1 AND entity_id = $2`,
+		entityType, entityID)
+	if err != nil {
+		return false, fmt.Errorf("timescale: DeleteChangeSummary %s/%s: %w", entityType, entityID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("timescale: DeleteChangeSummary %s/%s: %w", entityType, entityID, err)
+	}
+	return n > 0, nil
+}
+
 func floatOrNil(f *float64) any {
 	if f == nil {
 		return nil

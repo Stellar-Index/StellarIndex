@@ -38,10 +38,9 @@ exit "${STUB_PSQL_RC:-0}"
 
 const stubOps = `#!/usr/bin/env bash
 printf 'OPS %s\n' "$*" >> "$STUB_CALLS"
-verb="$1"; from=""; to=""; srcs=""; pre=0; rec=0; allowdrop=0
+verb="$1"; from=""; to=""; srcs=""; pre=0; rec=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    -allow-dropped) allowdrop=1 ;;
     -from) from="$2"; shift ;;
     -to) to="$2"; shift ;;
     -sources) srcs="$2"; shift ;;
@@ -98,10 +97,9 @@ if [ -n "${STUB_FAIL_WRITE_FROM:-}" ] && [ "$from" = "$STUB_FAIL_WRITE_FROM" ]; 
   echo "ch-rebuild: event stream: read timeout" >&2
   exit 1
 fi
-# The binary's dropped-trade gate: a non-sdex drop fails the -write
-# unless the caller passed the opt-out.
-if [ -n "${STUB_DROP_FROM:-}" ] && [ "$from" = "$STUB_DROP_FROM" ] && [ "$allowdrop" = 0 ]; then
-  echo "ch-rebuild: trades dropped as unstorable for aquarius (rows missing)" >&2
+# The binary's failed-write gate: a trade the store refuses fails the -write.
+if [ -n "${STUB_REFUSED_FROM:-}" ] && [ "$from" = "$STUB_REFUSED_FROM" ]; then
+  echo "ch-rebuild: 1 event(s) failed to write (rows missing) — see the 'failed' column and re-run to recover" >&2
   exit 1
 fi
 printf '\n=== ch-rebuild [%s] WRITE ===\n' "$from"
@@ -519,22 +517,17 @@ func TestChRebuildProjectedScript_RequiresRowsForEveryOccupiedSource(t *testing.
 	}
 }
 
-// A trade the re-derive dropped as unstorable is a row the DELETE removed
-// and nothing put back: the script must not opt out of the binary's gate, so
-// the window stays dirty instead of being marked done.
-func TestChRebuildProjectedScript_DroppedTradeLeavesWindowDirty(t *testing.T) {
+// A trade the store refused is a row the DELETE removed and nothing put
+// back: the binary's failed-write exit must leave the window dirty instead of
+// marking it done.
+func TestChRebuildProjectedScript_RefusedTradeLeavesWindowDirty(t *testing.T) {
 	t.Parallel()
-	run := runProjectedScript(t, "", map[string]string{"SRC": "aquarius", "STUB_DROP_FROM": "61000000"})
-	for _, w := range run.writes() {
-		if w.has("-allow-dropped") {
-			t.Fatalf("-write args %q opt out of the dropped-trade gate\n%s", w.args, run.log)
-		}
-	}
+	run := runProjectedScript(t, "", map[string]string{"SRC": "aquarius", "STUB_REFUSED_FROM": "61000000"})
 	if run.exit == 0 || run.dirty == "" {
-		t.Fatalf("a dropped trade must fail the run and leave the window dirty (exit %d, dirty %q)\n%s", run.exit, run.dirty, run.log)
+		t.Fatalf("a refused trade must fail the run and leave the window dirty (exit %d, dirty %q)\n%s", run.exit, run.dirty, run.log)
 	}
 	if strings.Contains(run.state, "61000000") {
-		t.Errorf("the window with a dropped trade was marked done:\n%s", run.state)
+		t.Errorf("the window with a refused trade was marked done:\n%s", run.state)
 	}
 }
 
@@ -595,7 +588,7 @@ func TestCHRebuild_PreflightWithoutWriteIsRefused(t *testing.T) {
 
 func TestCHRebuild_PreflightRunsTheNamedSourceGate(t *testing.T) {
 	t.Parallel()
-	err := chRebuild(chRebuildArgs(t, "-write", "-preflight", "-sources", "aquarius,sushiswap_v3"))
+	err := chRebuild(chRebuildArgs(t, "-write", "-preflight", "-sources", "aquarius,upshift"))
 	if err == nil || !strings.Contains(err.Error(), "not BackfillSafe") {
 		t.Fatalf("-write -preflight over an unaudited source was not refused by the BackfillSafe gate: %v", err)
 	}

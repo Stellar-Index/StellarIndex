@@ -55,7 +55,7 @@ func synthPair(t *testing.T, quoteCode string) canonical.Pair {
 
 // TestSyntheticCross_DerivesNonUSDFiatQuote is the reason this
 // reference exists (2026-08-24): XLM/EUR gets a SECOND reference by
-// crossing XLM/USD (oracle leg) with EUR/USD (reflector-fx leg), so
+// crossing XLM/USD (oracle leg) with EUR/USD (an independent FX leg), so
 // SuccessCount can reach the divergence trust floor and the
 // corroborated-release gate can auto-release genuine repricings on
 // EUR/GBP-quoted pairs instead of paging an operator per freeze.
@@ -63,7 +63,7 @@ func TestSyntheticCross_DerivesNonUSDFiatQuote(t *testing.T) {
 	usdLeg := &pairStub{name: "reflector-cex", prices: map[string]float64{
 		"crypto:XLM/fiat:USD": 0.35,
 	}}
-	fxLeg := &pairStub{name: "reflector-fx", prices: map[string]float64{
+	fxLeg := &pairStub{name: "chainlink", prices: map[string]float64{
 		"fiat:EUR/fiat:USD": 1.09,
 	}}
 	syn, err := NewSyntheticCrossReference(SyntheticCrossOptions{
@@ -179,6 +179,74 @@ func TestSyntheticCross_LegOrderFirstAnswerWins(t *testing.T) {
 	}
 	if len(second.asked) != 0 {
 		t.Errorf("second leg consulted despite the first answering")
+	}
+}
+
+// TestSyntheticCross_LegsFromDifferentPublishers — the production leg
+// order puts reflector-cex first and reflector-fx first; crossing those
+// would be one publisher checking itself, so the FX leg falls through to
+// chainlink.
+func TestSyntheticCross_LegsFromDifferentPublishers(t *testing.T) {
+	reflectorCEX := &pairStub{name: OracleSourceReflectorCEX, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.35}}
+	chainlinkUSD := &pairStub{name: ChainlinkSourceName, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.36}}
+	reflectorFX := &pairStub{name: OracleSourceReflectorFX, prices: map[string]float64{"fiat:EUR/fiat:USD": 1.20}}
+	chainlinkFX := &pairStub{name: ChainlinkSourceName, prices: map[string]float64{"fiat:EUR/fiat:USD": 1.09}}
+	syn, _ := NewSyntheticCrossReference(SyntheticCrossOptions{
+		USDLegs: []Reference{reflectorCEX, chainlinkUSD},
+		FXLegs:  []Reference{reflectorFX, chainlinkFX},
+	})
+	got, err := priceOf(syn.LookupQuote(context.Background(), synthPair(t, "EUR"), time.Now()))
+	if err != nil {
+		t.Fatalf("LookupQuote: %v", err)
+	}
+	if want := 0.35 / 1.09; math.Abs(got-want) > 1e-12 {
+		t.Errorf("cross = %v, want reflector-cex ÷ chainlink = %v", got, want)
+	}
+	if len(chainlinkUSD.asked) != 0 {
+		t.Errorf("second base leg consulted although the first had an independent FX leg")
+	}
+}
+
+// TestSyntheticCross_SamePublisherOnlyIsUnavailable — when the only
+// answering legs share a publisher, a reading existed but no independent
+// one did: unavailable, never unsupported and never a price.
+func TestSyntheticCross_SamePublisherOnlyIsUnavailable(t *testing.T) {
+	syn, _ := NewSyntheticCrossReference(SyntheticCrossOptions{
+		USDLegs: []Reference{
+			&pairStub{name: OracleSourceReflectorCEX, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.35}},
+			&pairStub{name: ChainlinkSourceName},
+		},
+		FXLegs: []Reference{
+			&pairStub{name: OracleSourceReflectorFX, prices: map[string]float64{"fiat:EUR/fiat:USD": 1.09}},
+			&pairStub{name: ChainlinkSourceName},
+		},
+	})
+	_, err := priceOf(syn.LookupQuote(context.Background(), synthPair(t, "EUR"), time.Now()))
+	if !errors.Is(err, ErrPriceUnavailable) || errors.Is(err, ErrAssetUnsupported) {
+		t.Errorf("same-publisher legs only: err = %v, want exactly ErrPriceUnavailable", err)
+	}
+}
+
+// TestSyntheticCross_LaterBaseLegPairsWithSkippedFXLeg — an FX leg skipped
+// for one base leg is still paired with a later base leg from another
+// publisher, and is looked up only once.
+func TestSyntheticCross_LaterBaseLegPairsWithSkippedFXLeg(t *testing.T) {
+	chainlinkUSD := &pairStub{name: ChainlinkSourceName, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.35}}
+	redstoneUSD := &pairStub{name: OracleSourceRedstone, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.36}}
+	chainlinkFX := &pairStub{name: ChainlinkSourceName, prices: map[string]float64{"fiat:EUR/fiat:USD": 1.09}}
+	syn, _ := NewSyntheticCrossReference(SyntheticCrossOptions{
+		USDLegs: []Reference{chainlinkUSD, redstoneUSD},
+		FXLegs:  []Reference{chainlinkFX},
+	})
+	got, err := priceOf(syn.LookupQuote(context.Background(), synthPair(t, "EUR"), time.Now()))
+	if err != nil {
+		t.Fatalf("LookupQuote: %v", err)
+	}
+	if want := 0.36 / 1.09; math.Abs(got-want) > 1e-12 {
+		t.Errorf("cross = %v, want redstone ÷ chainlink = %v", got, want)
+	}
+	if len(chainlinkFX.asked) != 1 {
+		t.Errorf("FX leg looked up %d times, want once", len(chainlinkFX.asked))
 	}
 }
 

@@ -107,7 +107,7 @@ const (
 // verifyArchiveMismatchReasons is the closed reason set
 // verify_archive_chunks.go can emit. Sorted, and emitted in full on
 // every write so the series exist before the first divergence.
-var verifyArchiveMismatchReasons = []string{"chain", "checkpoint", "sequence"}
+var verifyArchiveMismatchReasons = []string{"chain", "checkpoint", "sdf-sample", "sequence"}
 
 // collectVerifyArchiveMismatches reads THIS run's mismatch counts
 // back out of the process registry, summed over chunk_idx. Reading

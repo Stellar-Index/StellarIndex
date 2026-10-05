@@ -67,6 +67,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // Store is the subset of timescale.Store the orchestrator needs.
@@ -346,15 +347,10 @@ type Config struct {
 	// as $0 and windows carrying real dollar volume were dropped as
 	// "below floor". Tier 2 of [usdQuoteDecimals] closes that.
 	//
-	// Non-USD fiat pairs (fiat:EUR, fiat:GBP, …) remain exempt — the
-	// $10k-style threshold is a USD figure and converting a EUR- or
-	// GBP-denominated window into USD needs a live FX rate this gate
-	// doesn't have (a distinct, still-open question from the
-	// Soroban/classic gap above). A quote asset this package can't
-	// value in USD by any of the three tiers above (e.g. a pure
-	// Soroban/Soroban pair with no declared peg) also stays exempt —
-	// see dropForMinUSDVolume's unvaluable branch for why that's a
-	// deliberate pass-through rather than fail-closed.
+	// Non-USD fiat pairs (fiat:EUR, fiat:GBP, …) are converted to USD
+	// at the [Config.FXStore] snap and held to the same floor; with no
+	// admissible FX rate the window is dropped (fail-closed), since the
+	// floor cannot be verified. See dropForMinUSDVolume.
 	//
 	// Default 0 = filter off. Production deployments stamp 10_000
 	// (== $10k in window) per the AggregateConfig default, matching
@@ -390,7 +386,7 @@ type Config struct {
 	//
 	//   - ActionAllow → publish normally.
 	//   - ActionWarn  → publish; downstream divergence-warning path
-	//                   (already handled out-of-band via #205).
+	//                   (already handled out-of-band via e29f1bfff).
 	//   - ActionFreeze → DO NOT publish the new bucket; serve the
 	//                    previous bucket's last-known-good value
 	//                    instead. FreezeWriter writes the marker so
@@ -440,7 +436,7 @@ type Config struct {
 
 	// FreezeWriter, when non-nil and Anomaly is also non-nil, writes
 	// a freeze marker to Redis when Anomaly returns ActionFreeze.
-	// The API's freeze.Looker (#226) reads the same key to set
+	// The API's freeze.Looker (48953beb7) reads the same key to set
 	// flags.frozen=true on /v1/price responses for the affected
 	// pair.
 	//
@@ -476,6 +472,12 @@ type Config struct {
 	// Flip this for historical-parity testing against a prior
 	// release that hadn't yet introduced class filtering.
 	DisableClassFilter bool
+
+	// ExcludedSources drops every stored trade from the named sources
+	// at read time, before the class filter, so an operator can remove
+	// a misbehaving source from VWAP without purging history. Applies
+	// even when DisableClassFilter is set.
+	ExcludedSources []string
 
 	// Phase2Thresholds tunes the ADR-0019 Phase 2 freeze condition
 	// (3-signal AND on confidence + z + source count). Zero-value
@@ -831,6 +833,14 @@ type Orchestrator struct {
 	// not do one without the other.
 	prevVWAPs map[string]*big.Rat
 
+	// prevVWAPAt is when each prevVWAPs entry was set; an entry with no
+	// stamp is never aged.
+	prevVWAPAt map[string]time.Time
+
+	// prevVWAPBucketEnd is the closed-bucket end each prevVWAPs entry was
+	// published for: the observed-at stamp a re-seeded held value must carry.
+	prevVWAPBucketEnd map[string]time.Time
+
 	// frozenPrevVWAPs is the SHADOW comparator for pairs whose bucket was
 	// REFUSED by the freeze lifecycle (2026-08-24, the XLM/GBP ratchet +
 	// unscored-stall incidents). prevVWAPs deliberately does not advance
@@ -1011,6 +1021,14 @@ type Orchestrator struct {
 	// first. See prevVWAPs.
 	freezeStates map[string]freeze.State
 
+	// bootstrapReleased is each pair's last bootstrap-cap gate state,
+	// keyed by pair string: true once its score cleared the cap. It is
+	// the prior state the gate's hysteresis band reads
+	// ([confidence.BootstrapReengageDensityDays]). In-memory only, so a
+	// restart falls back to the stricter upper gate. Same
+	// single-Tick-at-a-time invariant as prevVWAPs, so no lock is needed.
+	bootstrapReleased map[string]bool
+
 	// windowedFreeze is [Config.FreezeWriter] when it can scope a
 	// marker's ladder to the window that owns it
 	// ([WindowedFreezeMarker]), nil otherwise. Resolved once in [New]
@@ -1067,18 +1085,21 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 		logger = slog.Default()
 	}
 	o := &Orchestrator{
-		store:           store,
-		cache:           cache,
-		cfg:             cfg,
-		logger:          logger,
-		prevVWAPs:       make(map[string]*big.Rat, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
-		frozenPrevVWAPs: make(map[string]*big.Rat),
-		lastWriteAt:     make(map[string]time.Time, len(cfg.Pairs)),
-		lastComposites:  make(map[string]compositeSample, len(cfg.Triangulations)*max(len(cfg.Windows), 1)),
-		freezeStates:    make(map[string]freeze.State, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
-		decidedBuckets:  make(map[string]decidedBucket, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
-		refreshOrder:    refreshOrder(cfg),
-		clock:           time.Now,
+		store:             store,
+		cache:             cache,
+		cfg:               cfg,
+		logger:            logger,
+		prevVWAPs:         make(map[string]*big.Rat, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		prevVWAPAt:        make(map[string]time.Time, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		prevVWAPBucketEnd: make(map[string]time.Time, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		frozenPrevVWAPs:   make(map[string]*big.Rat),
+		lastWriteAt:       make(map[string]time.Time, len(cfg.Pairs)),
+		lastComposites:    make(map[string]compositeSample, len(cfg.Triangulations)*max(len(cfg.Windows), 1)),
+		freezeStates:      make(map[string]freeze.State, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		bootstrapReleased: make(map[string]bool, len(cfg.Pairs)),
+		decidedBuckets:    make(map[string]decidedBucket, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		refreshOrder:      refreshOrder(cfg),
+		clock:             time.Now,
 	}
 	// A freeze writer that records which window owns each ladder lets
 	// every window rehydrate ITS OWN freeze on a cold key instead of a
@@ -1312,12 +1333,10 @@ func (o *Orchestrator) pairLastWrite(pair canonical.Pair) time.Time {
 }
 
 // emitStalenessGauges sets `stellarindex_price_staleness_seconds` for
-// every configured base asset to the age of its STALEST configured
-// quote: max over the asset's pairs of `now - lastWriteAt[pair]`. The
-// gauge carries one `asset` label, and the alert on it is the only
-// serving-freshness alert, so the value has to be the worst pair — a
-// freshest-pair (or shared-key) reading stays at 0 while one quote
-// serves nothing (F067).
+// every configured (base, quote) pair to `now - lastWriteAt[pair]`. The
+// alert on it is the only serving-freshness alert, so each quote gets
+// its own series: a per-base reading stays at 0 while one quote serves
+// nothing (F067), and a per-base worst cannot say which quote is dead.
 //
 // Pairs that have never written carry the wall-clock age since the
 // aggregator started (orchestrator construction time would be cleaner
@@ -1350,27 +1369,18 @@ func (o *Orchestrator) emitStalenessGauges(now time.Time) {
 	// Customers query with `native` via /v1/price; oracles publish
 	// `crypto:XLM`. For ONE quote the customer's freshness is the
 	// freshest of the two forms — if EITHER has just been written, the
-	// API will resolve the lookup (pairLastWrite). Both forms fold into
-	// one entry here and both labels are set from it, so the
-	// api_price_stale alert isn't order-dependent on cfg.Pairs
-	// iteration. Pre-fix, the last pair iterated overwrote the other
-	// label via a one-way mirror; iteration order decided whether the
-	// alert was "always fresh" or "always stale".
-	worst := make(map[string]float64, len(o.cfg.Pairs))
+	// API will resolve the lookup (pairLastWrite). pairLastWrite is
+	// symmetric across the two forms, so writing both labels from either
+	// form's pair gives the same value whatever order cfg.Pairs lists them.
 	for _, pair := range o.cfg.Pairs {
-		asset := pair.Base.String()
-		if asset == stalenessXLMTicker {
-			asset = stalenessXLMNative
-		}
 		stale := now.Sub(o.pairLastWrite(pair)).Seconds()
-		if cur, seen := worst[asset]; !seen || stale > cur {
-			worst[asset] = stale
-		}
-	}
-	for asset, stale := range worst {
-		obs.PriceStalenessSeconds.WithLabelValues(asset).Set(stale)
-		if asset == stalenessXLMNative {
-			obs.PriceStalenessSeconds.WithLabelValues(stalenessXLMTicker).Set(stale)
+		asset, quote := pair.Base.String(), pair.Quote.String()
+		obs.PriceStalenessSeconds.WithLabelValues(asset, quote).Set(stale)
+		switch asset {
+		case stalenessXLMNative:
+			obs.PriceStalenessSeconds.WithLabelValues(stalenessXLMTicker, quote).Set(stale)
+		case stalenessXLMTicker:
+			obs.PriceStalenessSeconds.WithLabelValues(stalenessXLMNative, quote).Set(stale)
 		}
 	}
 }
@@ -1394,6 +1404,7 @@ func (o *Orchestrator) refreshPairWindow(
 	if prior, ok := o.decidedBuckets[stateKey]; ok && prior.end.Equal(bucketEnd) {
 		return o.replayDecidedBucket(ctx, pair, window, prior, now)
 	}
+	o.ageComparator(stateKey, now)
 	pub, err := o.decideBucket(ctx, pair, window, bucketEnd, now)
 	if err != nil {
 		// Undecided: the next tick retries this bucket from scratch.
@@ -1428,6 +1439,7 @@ func (o *Orchestrator) decideBucket(
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s %v: %w", pair.String(), window, err)
 	}
+	trades = dropExcludedSources(pair, trades, o.cfg.ExcludedSources)
 	preFilter := len(trades)
 	if !o.cfg.DisableClassFilter {
 		trades = filterForVWAP(trades)
@@ -1440,6 +1452,7 @@ func (o *Orchestrator) decideBucket(
 			obs.AggregatorDroppedTradesTotal.WithLabelValues("class", pair.String()).Add(float64(dropped))
 		}
 	}
+	trades = dropUnpriceable(pair, trades)
 	// Venue-level view of the set the outlier filter is handed: the
 	// outlier_storm alert reads per-venue DISAGREEMENT from this, not
 	// the trim re-count (2026-08-28).
@@ -1480,7 +1493,7 @@ func (o *Orchestrator) decideBucket(
 	// it into the VWAP — the gate is supposed to keep thin survivor
 	// sets out, so the input it evaluates must be the survivor set.
 	survivorUSD := survivorUSDVolume(trades, tradeUSD)
-	if o.dropForMinUSDVolume(pair, trades, survivorUSD) {
+	if o.dropForMinUSDVolume(ctx, pair, trades, survivorUSD, now) {
 		return o.unpricedBucket(ctx, pair, window, now)
 	}
 
@@ -1555,7 +1568,7 @@ func (o *Orchestrator) decideBucket(
 	// triangulate_corroborate.go). The composite reference changes only
 	// the VERDICT (compositeRef), never the count.
 	if o.stepPhase2Freeze(ctx, pair, window, stateKey, now,
-		conf, confOK, distinctSourceCount(trades), prevForConfidence, vwap, compositeRef) {
+		conf, confOK, distinctSourceCount(trades), vwap, compositeRef) {
 		// Refused: advance the shadow comparator with this bucket's
 		// fresh VWAP so the NEXT frozen bucket scores a per-tick
 		// return (and a post-restart frozen pair becomes scorable
@@ -1589,8 +1602,31 @@ func (o *Orchestrator) decideBucket(
 	// advance frozenPrevVWAPs above, which is what mid-freeze scoring
 	// compares against; keeping the pinned value here as the sole
 	// comparator was the auto-unfreeze ratchet (see frozenPrevVWAPs).
-	o.prevVWAPs[stateKey] = vwap
+	o.setComparator(stateKey, vwap, now, bucketEnd)
 	return pub, nil
+}
+
+// setComparator records a published bucket as the window's prev-VWAP
+// comparator with the times its aging and re-seeding read.
+func (o *Orchestrator) setComparator(stateKey string, vwap *big.Rat, now, bucketEnd time.Time) {
+	o.prevVWAPs[stateKey] = vwap
+	o.prevVWAPAt[stateKey] = now
+	o.prevVWAPBucketEnd[stateKey] = bucketEnd
+}
+
+// ageComparator drops a prevVWAPs entry the window has not refreshed within
+// [Orchestrator.vwapMaxAge]. A comparator that old no longer has a cached
+// last-known-good beside it, so a freeze fired against it would refuse the
+// bucket with no value held to serve. A live freeze keeps its comparator:
+// it is the held value.
+func (o *Orchestrator) ageComparator(stateKey string, now time.Time) {
+	at, stamped := o.prevVWAPAt[stateKey]
+	if !stamped || o.freezeStates[stateKey].Active() || now.Sub(at) <= o.vwapMaxAge() {
+		return
+	}
+	delete(o.prevVWAPs, stateKey)
+	delete(o.prevVWAPAt, stateKey)
+	delete(o.prevVWAPBucketEnd, stateKey)
 }
 
 // heldDirect is a triangulation target's priced direct bucket awaiting
@@ -2100,7 +2136,7 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 	// re-freezes it, which is intended — the durable remedy for a
 	// mis-calibration is a threshold change, not repeated overrides.
 	if !o.stepFreezeLifecycle(ctx, pair, window, stateKey,
-		freeze.Signal{Now: now, Fires: true}, decision, prev) {
+		freeze.Signal{Now: now, Fires: true}, decision) {
 		return decision.Action, true
 	}
 	return decision.Action, false
@@ -2485,32 +2521,34 @@ func minUSDVolumeRat(floor float64) *big.Rat {
 //     blackout concern keeps its answer — the WARN + metric name the
 //     missing peg, and adding it to usd_pegged_classic_assets /
 //     sac_wrappers un-blacks the pair deliberately, with valuation.
-//   - Quote is fiat but not USD (EUR, GBP, …): exempt, no WARN — a
-//     distinct, pre-existing, already-understood scope boundary (the
-//     threshold is a USD figure; converting a EUR/GBP window needs a
-//     live FX rate, same "no live lookup" limit as above, but this
-//     shape isn't new and isn't a manipulation-guard regression, so
-//     it doesn't need the same loud surfacing).
+//   - Quote is fiat but not USD (EUR, GBP, …): the survivor window's
+//     quote volume is converted to USD at the [Config.FXStore] snap
+//     ([fiatWindowUSDVolume]) and held to the same floor, so a EUR or
+//     GBP window never publishes on volume a USD window would be refused
+//     for. No admissible FX rate drops the window, as above.
 //
 // See [Config.MinUSDVolume] for the full threshold semantics.
-func (o *Orchestrator) dropForMinUSDVolume(pair canonical.Pair, trades []canonical.Trade, usdVolume *big.Rat) bool {
-	_ = trades // retained for tracing dimensions if future gates want it
+func (o *Orchestrator) dropForMinUSDVolume(ctx context.Context, pair canonical.Pair, trades []canonical.Trade, usdVolume *big.Rat, now time.Time) bool {
 	if o.cfg.MinUSDVolume <= 0 {
 		return false
 	}
 	if _, valuable := usdQuoteDecimals(pair.Quote, o.cfg.USDPeggedClassicAssets, o.cfg.USDPeggedSorobanAssets); !valuable {
-		if pair.Quote.Type == canonical.AssetClassic || pair.Quote.Type == canonical.AssetSoroban {
-			obs.AggregatorMinUSDVolumeUnvaluableTotal.WithLabelValues(pair.String()).Inc()
+		switch pair.Quote.Type {
+		case canonical.AssetClassic, canonical.AssetSoroban:
 			o.logger.Warn("min_usd_volume floor unverifiable: on-chain quote asset has no recognised USD peg — window DROPPED (fail-closed; add the peg to usd_pegged_classic_assets / sac_wrappers to publish this pair)",
 				"pair", pair.String())
-			obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume_unvaluable").Inc()
-			o.mu.Lock()
-			o.emptyWindows++
-			o.mu.Unlock()
-			obs.AggregatorEmptyWindowsTotal.Inc()
-			return true
+			return o.dropMinUSDVolumeUnvaluable(pair)
+		case canonical.AssetFiat:
+			v, reason := o.fiatWindowUSDVolume(ctx, pair.Quote, trades, now)
+			if reason != "" {
+				o.logger.Warn("min_usd_volume floor unverifiable: no admissible FX rate for the fiat quote — window DROPPED (fail-closed)",
+					"pair", pair.String(), "reason", reason)
+				return o.dropMinUSDVolumeUnvaluable(pair)
+			}
+			usdVolume = v
+		default:
+			return false
 		}
-		return false
 	}
 	// A NaN/+Inf floor can never be met, so it drops (fail-closed).
 	if floor := minUSDVolumeRat(o.cfg.MinUSDVolume); floor != nil && usdVolume.Cmp(floor) >= 0 {
@@ -2522,6 +2560,95 @@ func (o *Orchestrator) dropForMinUSDVolume(pair canonical.Pair, trades []canonic
 	o.mu.Unlock()
 	obs.AggregatorEmptyWindowsTotal.Inc()
 	return true
+}
+
+func (o *Orchestrator) dropMinUSDVolumeUnvaluable(pair canonical.Pair) bool {
+	obs.AggregatorMinUSDVolumeUnvaluableTotal.WithLabelValues(pair.String()).Inc()
+	obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume_unvaluable").Inc()
+	o.mu.Lock()
+	o.emptyWindows++
+	o.mu.Unlock()
+	obs.AggregatorEmptyWindowsTotal.Inc()
+	return true
+}
+
+// fiatWindowUSDVolume values a non-USD fiat-quoted window in USD: the
+// quote volume at each source's declared off-chain scale (the fiat:USD
+// tier of [usdQuoteDecimalsForTrade]) times the quote→USD rate from the
+// same FX snap and admission rule triangulation uses. Returns a non-empty
+// refusal reason when no admissible rate exists.
+func (o *Orchestrator) fiatWindowUSDVolume(ctx context.Context, quote canonical.Asset, trades []canonical.Trade, now time.Time) (*big.Rat, string) {
+	if o.cfg.FXStore == nil {
+		return nil, "fx_store_unwired"
+	}
+	usd, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		return nil, "fx_pair_invalid"
+	}
+	leg, err := canonical.NewPair(quote, usd)
+	if err != nil {
+		return nil, "fx_pair_invalid"
+	}
+	rate, observedAt, source, err := o.cfg.FXStore.FXQuoteAtOrBefore(ctx, leg, now, external.FXSources())
+	switch {
+	case errors.Is(err, timescale.ErrNoFXQuote):
+		return nil, "fx_missing"
+	case err != nil:
+		return nil, "fx_error: " + err.Error()
+	case rate == nil || rate.Sign() <= 0:
+		return nil, "fx_non_positive"
+	}
+	if reason := fxSnapRejection(now, observedAt, source, o.cfg.CompositeReference.withDefaults().FXMaxAge); reason != "" {
+		return nil, reason
+	}
+	sum := new(big.Rat)
+	for i := range trades {
+		amt := trades[i].QuoteAmount.BigInt()
+		if amt == nil || amt.Sign() == 0 {
+			continue
+		}
+		scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(external.Lookup(trades[i].Source).AmountScaleDecimals())), nil)
+		sum.Add(sum, new(big.Rat).SetFrac(amt, scale))
+	}
+	return sum.Mul(sum, rate), ""
+}
+
+// dropUnpriceable removes stored trades with a zero leg before the venue
+// VWAPs and outlier statistics: they have no price, so they must neither
+// count as outliers nor weigh a venue's VWAP with price-less volume.
+func dropUnpriceable(pair canonical.Pair, trades []canonical.Trade) []canonical.Trade {
+	out := make([]canonical.Trade, 0, len(trades))
+	for _, t := range trades {
+		if t.BaseAmount.BigInt().Sign() > 0 && t.QuoteAmount.BigInt().Sign() > 0 {
+			out = append(out, t)
+		}
+	}
+	if dropped := len(trades) - len(out); dropped > 0 {
+		obs.AggregatorDroppedTradesTotal.WithLabelValues("unpriceable", pair.String()).Add(float64(dropped))
+	}
+	return out
+}
+
+// dropExcludedSources returns trades minus those from any source in
+// excluded, preserving order in a fresh slice.
+func dropExcludedSources(pair canonical.Pair, trades []canonical.Trade, excluded []string) []canonical.Trade {
+	if len(excluded) == 0 {
+		return trades
+	}
+	skip := make(map[string]struct{}, len(excluded))
+	for _, s := range excluded {
+		skip[s] = struct{}{}
+	}
+	out := make([]canonical.Trade, 0, len(trades))
+	for _, t := range trades {
+		if _, drop := skip[t.Source]; !drop {
+			out = append(out, t)
+		}
+	}
+	if dropped := len(trades) - len(out); dropped > 0 {
+		obs.AggregatorDroppedTradesTotal.WithLabelValues("excluded_source", pair.String()).Add(float64(dropped))
+	}
+	return out
 }
 
 // filterForVWAP drops trades whose source is not registered as a

@@ -269,6 +269,36 @@ caggs_have_refresh_policy() {
 }
 assert_cmd caggs_have_refresh_policy caggs_have_refresh_policy
 
+# ── The trades compression policy is scheduled ───────────────────────
+# `usd-volume-restamp -chunks -write` pauses this policy for its run and
+# re-enables it on exit; a SIGKILL skips the re-enable and trades stops
+# compressing with nothing else flagging it. A pause is honoured only
+# while the run's advisory lock (hashtext('usd-volume-restamp:trades'),
+# timescale.USDVolumeRestampLockName) is held: the server drops it with
+# the killed run's connection. A missing policy counts as a failure too.
+# The policy is the custom job trades_compression_policy (migration 0205).
+# Executed against migrated TimescaleDB by
+# TestTradesCompressionScheduledAssertionSQL; keep it free of double quotes.
+TRADES_COMPRESSION_SCHEDULED_SQL="
+SELECT count(*) FROM timescaledb_information.jobs j
+ WHERE j.proc_schema = current_schema()
+   AND j.proc_name = 'trades_compression_policy'
+   AND (j.scheduled OR EXISTS (
+     SELECT 1 FROM pg_locks l
+      WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 1
+        AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+        AND l.classid::bigint = (hashtext('usd-volume-restamp:trades')::bigint >> 32) & 4294967295
+        AND l.objid::bigint = hashtext('usd-volume-restamp:trades')::bigint & 4294967295));
+"
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
+trades_compression_policy_scheduled() {
+  [[ -r "$PG_PASSWORD_FILE" ]] || return 1
+  PGPASSWORD="$(cat "$PG_PASSWORD_FILE")" \
+    psql -h 127.0.0.1 -U stellarindex -d stellarindex -tAc \
+    "$TRADES_COMPRESSION_SCHEDULED_SQL" 2>/dev/null | grep -qx 1
+}
+assert_cmd trades_compression_policy_scheduled trades_compression_policy_scheduled
+
 # ── Postgres idle-in-transaction reaper ───────────────────────────────
 # Same codified-vs-applied pairing as max_worker_processes above, for
 # the GUC that is the only thing that ever terminates a session an app
@@ -457,6 +487,28 @@ if [[ -x /usr/local/bin/minio ]]; then
   '
 else
   skip minio_prometheus_token_present
+fi
+
+# ── Loki stays loopback-only ─────────────────────────────────────────
+# Loki runs with auth_enabled: false, so the only access control is where
+# it listens. loki.r1.yml is hand-copied to /etc/loki/config.yml and
+# listen addresses are read at start, so a repo pin can sit un-applied
+# behind a pending restart. Check the file (codified) and the live
+# sockets (in effect); a listener on :3100/:9096 bound off loopback fails.
+# Skipped where no Loki config is installed.
+LOKI_CONFIG="${LOKI_CONFIG:-/etc/loki/config.yml}"
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
+loki_loopback_bound() {
+  grep -qE '^[[:space:]]*http_listen_address:[[:space:]]*127\.0\.0\.1[[:space:]]*$' "$LOKI_CONFIG" || return 1
+  grep -qE '^[[:space:]]*grpc_listen_address:[[:space:]]*127\.0\.0\.1[[:space:]]*$' "$LOKI_CONFIG" || return 1
+  local socks
+  socks=$(ss -ltnH 2>/dev/null) || return 1
+  ! grep -E '[:.](3100|9096)[[:space:]]' <<<"$socks" | grep -qvE '^[^[:space:]]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+(127\.0\.0\.1|\[::1\]):'
+}
+if [[ -f "$LOKI_CONFIG" ]]; then
+  assert_cmd loki_loopback_bound loki_loopback_bound
+else
+  skip loki_loopback_bound
 fi
 
 chmod 644 "$TMP"

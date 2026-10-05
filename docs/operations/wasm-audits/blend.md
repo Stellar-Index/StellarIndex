@@ -174,7 +174,7 @@ contracts as part of its 539-contract watch list. Walk parameters:
 - **Workers**: 8 parallel chunks (`-parallel 8`).
 - **Checkpointing**: `-checkpoint-dir /tmp/walk-checkpoint` —
   per-worker JSONL transition logs for crash recovery (the merge
-  tool from PR #370 wasn't needed; the walk completed cleanly).
+  tool from commit 18db4123d wasn't needed; the walk completed cleanly).
 - **Runtime**: 5h4m39s total.
 
 **Per-contract findings:**
@@ -502,3 +502,53 @@ Operator command (queued in the serialized r1 heavy-job chain):
     stellarindex-ops projector-replay -source blend_backstop -from 55000000
 
 (55.0M ≈ first backstop activity; the replay no-ops on empty ranges.)
+
+## V1 pool WASM `baf978f10efdbcd8` — auction-family shapes (2026-10-05)
+
+Hash `baf978f10efdbcd85747868bef8832845ea6809f7643b67a4ac0cd669327fc2c`
+runs the four V1-factory pools (`CDVQVKOY…`, `CBP7NO6F…`, `CDE65QK2…`,
+`CAQF5KNO…`). `stellar.contract_instance_changes` shows this one hash
+for each pool's whole life, so the pools were never upgraded. The
+ADR-0033 verdict's 1,175 "undecodable-but-matched" `blend` events
+are all from these pools: 737 `fill_auction`, 435 `new_auction` and
+3 `bad_debt`, ledgers 51,612,222 to 62,625,124. The V2 decoders
+rejected each of them. Every one of them decodes now, and samples are
+pinned in `test/fixtures/blend/v1-pool-auctions/`.
+
+| event | V1 topics | V1 body | decoded to |
+| --- | --- | --- | --- |
+| `new_auction` | `[Symbol, u32(auction_type)]` | `AuctionData` Map `{bid, block, lot}` | `blend_auctions` `new`: `auction_type` from topic[1] (BadDebt or Interest only), `user` = V1 backstop `CAO3AGAM…`, `percent` = 100 |
+| `fill_auction` | `[Symbol, Address(user), u32(auction_type)]` | `(filler: Address, fill_percent: i128)` | `blend_auctions` `fill`; `bid`/`lot`/`block` NULL (absent on the wire) |
+| `bad_debt` | `[Symbol, Address(user)]` | `(asset: Address, d_tokens: i128)` | `blend_emissions` `bad_debt` |
+
+V1 announces user liquidations with `new_liquidation_auction`, so
+`new_auction` carries only BadDebt (3 events) and Interest (432
+events), and a UserLiquidation there is rejected. V1 keys those
+auctions on the pool's backstop. All 435 V1 BadDebt and Interest
+`fill_auction` events name `CAO3AGAM…` (`MainnetBackstopV1`) as the
+user. The percent of 100 comes from the bad-debt rows: the `bad_debt`
+`d_tokens` sum exactly to the next `new_auction` bid (ledgers
+52,428,304→52,428,305 and 55,570,394/5→55,570,396). V2 also emits 100
+for all 3,678 BadDebt and Interest `new_auction` events in ledgers
+57.0M to 62.7M. Dispatch is by topic arity for `new_auction` and
+`bad_debt` (2 topics means V1), and by the type of `fill_auction`
+topic[1] (Address means V1, u32 means V2).
+
+## Backstop V1 WASM — unaudited, replays refused (2026-10-05)
+
+The decision above covers Backstop V2 only: the Phase-2 walk saw one
+backstop WASM, `c1f4502a…`. The `blend_backstop` decoder also admits the
+V1 backstop `CAO3AGAMZVRMHITL36EJ2VZQWKYRPWMQAPDQD5YEOF3GIF7T44U4JAL3`,
+whose only WASM is
+`62f61b32fff99f7eec052a8e573c367759f161c481a5caf0e76a10ae4617c3b4`
+(`stellar.contract_instance_changes` FINAL, ledgers 51,499,492–51,499,549,
+read 2026-10-05). No audit attests that hash: V1 has no published source,
+and the decoder's V1 shapes are pinned against lake bytes only
+(`internal/sources/blend_backstop/README.md` §Provenance).
+
+So `62f61b32…` is not in `internal/wasmaudit/audited_wasm.json`, and the
+per-WASM replay gate refuses every `blend_backstop` replay that reaches
+ledger 51,499,492: the V1 contract is in the decoder's contract set and
+its WASM is active from there on, whether or not V1 emits in the range. Adding the hash needs a
+Phase-3 review of the V1 WASM bytes against every V1 event shape
+`decode.go` reads, recorded here in the same PR.

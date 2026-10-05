@@ -123,6 +123,20 @@
       admin_ssh_keys must contain at least one key — otherwise hardening
       will lock us out.
 
+# Without the seal key the API stores new customer-webhook signing keys
+# raw and cannot sign for any webhook already sealed, so a missing vault
+# value must stop the deploy rather than render an empty env var.
+- name: Verify the customer-webhook seal key is set
+  ansible.builtin.assert:
+    that:
+      - vault_webhook_seal_key is defined
+      - vault_webhook_seal_key | length >= 32
+    fail_msg: >-
+      vault_webhook_seal_key is unset or shorter than 32 bytes. Set it in
+      the region secrets vault (`openssl rand -hex 32`); once set, never
+      change it — every sealed signing key would become unreadable.
+  no_log: true
+
 - name: Gather information about network interfaces
   ansible.builtin.setup:
     gather_subset:
@@ -156,17 +170,28 @@
       vault_stellarindex_reader_secret_key: "{{ vault_stellarindex_reader_secret_key | default('') }}"
       vault_massive_api_key: "{{ vault_massive_api_key | default('') }}"
       vault_coingecko_demo_api_key: "{{ vault_coingecko_demo_api_key | default('') }}"
+      vault_coingecko_api_key: "{{ vault_coingecko_api_key | default('') }}"
+      vault_tiingo_api_key: "{{ vault_tiingo_api_key | default('') }}"
+      vault_openexchangerates_app_id: "{{ vault_openexchangerates_app_id | default('') }}"
+      vault_exchangeratesapi_key: "{{ vault_exchangeratesapi_key | default('') }}"
       vault_chainlink_rpc_url: "{{ vault_chainlink_rpc_url | default('') }}"
       vault_resend_api_key: "{{ vault_resend_api_key | default('') }}"
       vault_dashboard_code_secret: "{{ vault_dashboard_code_secret | default('') }}"
+      vault_webhook_seal_key: "{{ vault_webhook_seal_key | default('') }}"
       # /etc/default/curated-rwa-sync (14-stellarindex-services.yml)
       vault_dune_api_key: "{{ vault_dune_api_key | default('') }}"
       clickhouse_serving_password: "{{ clickhouse_serving_password | default('') }}"
       clickhouse_ops_batch_user: "{{ clickhouse_ops_batch_user | default('') }}"
       clickhouse_ops_batch_password: "{{ clickhouse_ops_batch_password | default('') }}"
+      clickhouse_live_daemon_user: "{{ clickhouse_live_daemon_user | default('') }}"
+      clickhouse_live_daemon_password: "{{ clickhouse_live_daemon_password | default('') }}"
       # /etc/default/galexie (07-galexie.yml) — sourced by config-assertions.sh
       galexie_s3_access_key: "{{ galexie_s3_access_key | default('') }}"
       galexie_s3_secret_key: "{{ galexie_s3_secret_key | default('') }}"
+      # /etc/default/node-healthcheck (13-healthcheck.yml, sourced by
+      # node-healthcheck.sh) and /etc/default/minio (minio.env.j2)
+      minio_root_user: "{{ minio_root_user | default('') }}"
+      minio_root_password: "{{ minio_root_password | default('') }}"
   no_log: true
 
 - name: Verify env-file secrets are free of shell metacharacters
@@ -175,7 +200,7 @@
       - env_file_unsafe_secrets | length == 0
     fail_msg: >-
       These vault values would be rendered unquoted into
-      /etc/default/{stellarindex,stellarindex-ops,galexie,curated-rwa-sync} but contain a shell metacharacter
+      /etc/default/{stellarindex,stellarindex-ops,galexie,curated-rwa-sync,node-healthcheck,minio} but contain a shell metacharacter
       (whitespace $ ` ; & | quotes \ < > ( ) { } * ? [ ] ! ~), so systemd
       and any shell that sources the file would disagree on the value —
       refusing to render. Rotate to `openssl rand -hex 32`

@@ -79,10 +79,25 @@ fi
 # mismatched ledgers" that were simply not drained yet).
 TIP=$(( TIP - 100 ))
 
-echo "compute-completeness: whole-pass refresh to tip=$TIP"
+# PASS_TIMEOUT (EnvironmentFile) grants a one-off larger budget, e.g. for a
+# from-genesis re-verify; it must stay below the unit's 180 min pass budget
+# (TimeoutStartSec=34200 is that plus a 23400 s lock wait).
+PASS_TIMEOUT="${PASS_TIMEOUT:-120m}"
+
+# Arguments replace `-pass -timeout $PASS_TIMEOUT`: compute-completeness-sdex
+# .service passes `-source sdex -timeout 360m` and compute-completeness-sep41
+# .service `-source sep41_transfers -timeout 360m` for the weekly full re-proofs
+# the pass never forces, and both still need the tip margin above.
+if [ "$#" -gt 0 ]; then
+  MODE=("$@")
+else
+  MODE=(-pass -timeout "$PASS_TIMEOUT")
+fi
+
+echo "compute-completeness: ${MODE[*]} refresh to tip=$TIP"
 if ! "$OPS" compute-completeness -config "$CONFIG" -ch -ch-addr "$CH_ADDR" \
-     -pass -to "$TIP" </dev/null; then
-  echo "compute-completeness: pass FAILED (tip=$TIP)" >&2
+     -to "$TIP" "${MODE[@]}" </dev/null; then
+  echo "compute-completeness: ${MODE[*]} FAILED (tip=$TIP)" >&2
   exit 1
 fi
-echo "compute-completeness: pass complete (tip=$TIP)"
+echo "compute-completeness: ${MODE[*]} complete (tip=$TIP)"

@@ -26,6 +26,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/wasmaudit"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -104,6 +105,23 @@ type backfillOpts struct {
 	// heartbeatPath is the -heartbeat flag: an explicit node_exporter
 	// textfile path, or "" for the auto-resolved default.
 	heartbeatPath string
+	// wasmGate runs the per-WASM replay gate once for the run's whole
+	// [from, to]; every chunk shares it. nil gates on each call.
+	wasmGate *replayGateOnce
+}
+
+// replayGateOnce memoises one run's replay-gate verdict across its chunks.
+type replayGateOnce struct {
+	once sync.Once
+	err  error
+}
+
+func (g *replayGateOnce) check(gate func() error) error {
+	if g == nil {
+		return gate()
+	}
+	g.once.Do(func() { g.err = gate() })
+	return g.err
 }
 
 // chunkRange is one sub-range of a parallel backfill: [from, to]
@@ -224,6 +242,7 @@ func backfill(args []string) error {
 	// (stalled S3 read, storage write that never returns, OOM-killed chunk
 	// goroutine) is distinguishable from a working one without tailing the
 	// journal. Inert off-r1 — see opsutil.NewJobHeartbeat.
+	opts.wasmGate = &replayGateOnce{}
 	opts.heartbeat = opsutil.NewJobHeartbeat("backfill", opts.heartbeatPath, nil)
 	opts.walkedTotal = &atomic.Uint64{}
 	if opts.heartbeat.Enabled() {
@@ -332,6 +351,11 @@ func buildChunkDispatcher(
 		return nil, nil, err
 	}
 	realSources := filterOutSorobanEventsPseudo(opts.sources)
+	if err := opts.wasmGate.check(func() error {
+		return wasmaudit.GateReplay(ctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts, realSources, opts.from, opts.to)
+	}); err != nil {
+		return nil, nil, err
+	}
 
 	var soroswapOpts []soroswap.DecoderOption
 	if !pseudo && len(realSources) > 0 {
@@ -1152,8 +1176,7 @@ func checkBackfillSources(sources []string, fromLedger, toLedger uint32) error {
 	return fmt.Errorf(
 		"refusing to backfill — sources not BackfillSafe (per-WASM-hash audit pending): %v; "+
 			"run stellarindex-ops wasm-history -from %d -to %d -contracts <CID> for each on-chain source, "+
-			"review every emitted WASM hash against the current decoder, then flip BackfillSafe=true in "+
-			"internal/sources/external/registry.go in the same PR (see docs/architecture/domain-traps.md, \"Soroban DeFi contracts "+
+			"review every emitted WASM hash against the current decoder, then audit each WASM hash under docs/operations/wasm-audits/, add it to internal/wasmaudit/audited_wasm.json and set Backfill: BackfillPerWASM in internal/sources/external/registry.go in the same PR (see docs/architecture/domain-traps.md, \"Soroban DeFi contracts "+
 			"upgrade in place\")",
 		sorobanPending, fromLedger, toLedger)
 }

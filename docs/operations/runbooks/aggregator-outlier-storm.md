@@ -58,9 +58,9 @@ severity: P3
 - The published VWAP for that pair is typically still correct — cross-check the
   pair's `div:<pair>` Redis flag / API `flags.divergence_warning` for actual
   price impact before assuming the served number is wrong.
-- **Do NOT wait on `stellarindex_price_divergence_{warning,critical}`** — those
-  alerts are INERT (F-1329, no Prometheus producer; divergence values live in
-  Postgres + the `div:` Redis cache + the API flag, not the registry).
+- The live divergence signal is `stellarindex_divergence_max_abs_fraction`,
+  which drives `stellarindex_price_divergence_{warning,critical}`; check it
+  beside the `div:` Redis flag and the API flag.
 - An **agreed** move across venues (the 2026-08-28 shape) does **not** fire
   either alert any more. If you see a market-wide move alongside a ticket,
   the ticket is about a venue that did *not* move with the others.
@@ -145,8 +145,11 @@ gating.
 - [ ] **Connector regression**: identify the offending source via
       `stellarindex_source_events_total` × `stellarindex_source_decode_errors_total`
       ratio + recent deploy diff. Disable that source in TOML
-      (`[external.<venue>] enabled = false`) and reload — the
-      orchestrator picks up the change at next tick.
+      (`[external.<venue>] enabled = false`) to stop new ingest, and
+      add it to `aggregate.excluded_sources` to drop its
+      already-stored trades from VWAP at read time (`enabled=false`
+      alone leaves them in the window). Restart the aggregator to
+      apply; the `prices_1m` CAGG is not source-filtered.
 - [ ] **Filter mis-calibration**: if neither of the above holds and
       `trim_fraction` is sustained > 1 h, raise
       `aggregate.outlier_sigma_threshold` from 4.0 → 5.0 / 6.0 to
@@ -208,7 +211,7 @@ Capture for the postmortem:
 ## Changelog
 
 - 2026-04-25 — initial draft alongside the aggregator metrics
-  PR #26 wire-up.
+  commit 5f64f5e7b wire-up.
 - 2026-08-24 — per-pair `pair` label on the drop counter (task #29);
   spam-wave signature section from the 2026-08-14 token-farm storm.
 - 2026-08-26 — **rescope**: replaced the self-poisoning

@@ -2,7 +2,7 @@
 title: Runbook — external-poller-stale
 last_verified: 2026-09-04
 status: draft
-severity: P2 for `_stale`; P3 for `_stale_ecb` + `_error_rate_high`
+severity: P2 for `_stale`; P3 for `_stale_ecb` + `_stale_tiingo` + `_error_rate_high`
 ---
 
 # Runbook — the `stellarindex_external_poller_*` family
@@ -11,8 +11,8 @@ severity: P2 for `_stale`; P3 for `_stale_ecb` + `_error_rate_high`
 
 | Field | Value |
 | ----- | ----- |
-| Alerts (three route here) | `stellarindex_external_poller_stale` (> 1800 s, `{source!="ecb"}`, `for: 5m`, `severity: ticket`)<br>`stellarindex_external_poller_stale_ecb` (> 43200 s = 12 h, `for: 10m`, `severity: ticket`)<br>`stellarindex_external_poller_error_rate_high` (> 50 % errors, `for: 15m`, `severity: informational`) |
-| Severity | P2 for `_stale`; P3 for `_stale_ecb` + `_error_rate_high` |
+| Alerts (four route here) | `stellarindex_external_poller_stale` (> 1800 s, `{source!~"ecb|tiingo"}`, `for: 5m`, `severity: ticket`)<br>`stellarindex_external_poller_stale_ecb` (> 43200 s = 12 h, `for: 10m`, `severity: ticket`)<br>`stellarindex_external_poller_stale_tiingo` (> 7200 s = 2 h, `for: 10m`, `severity: ticket`)<br>`stellarindex_external_poller_error_rate_high` (> 50 % errors, `for: 15m`, `severity: informational`) |
+| Severity | P2 for `_stale`; P3 for `_stale_ecb` + `_stale_tiingo` + `_error_rate_high` |
 | Detected by | `configs/prometheus/rules.r1/external-pollers.yml` (the overlay r1 actually loads); multi-host template: `deploy/monitoring/rules/external-pollers.yml`. Both trees carry the same exprs. |
 | Typical MTTR | 5–30 min for a config/key issue; vendor outages can run hours |
 | Impact | The affected venue drops out of its pairs' consensus. Whether that moves a price at all depends on the source's `Class` / `IncludeInVWAP` row in `internal/sources/external/registry.go` (see [`aggregation-plan.md`](../../architecture/aggregation-plan.md)) — oracle- and lending-class sources never contribute to VWAP. `/v1/price` keeps serving from the remaining sources; a thinner consensus surfaces as `flags.single_source` and, on affected pairs, elevated `flags.divergence_warning`. It is **not** `flags.reduced_redundancy` — that flag is the ADR-0017 cross-region completeness signal R2/R3 set, unrelated to pollers. Note CoinGecko has TWO independent code paths — the ingest poller (this alert) and `divergence.CoinGeckoReference`, which does its own HTTP — so a stale poller does not by itself blind the cross-reference layer. |
@@ -35,8 +35,9 @@ budget is NOT 30 minutes for every source:**
 
 | Alert | Matcher | Stale after | `for:` | Severity |
 | ----- | ------- | ----------- | ------ | -------- |
-| `stellarindex_external_poller_stale` | `{source!="ecb"}` | 1800 s (30 min) | 5 m | ticket (P2) |
+| `stellarindex_external_poller_stale` | `{source!~"ecb|tiingo"}` | 1800 s (30 min) | 5 m | ticket (P2) |
 | `stellarindex_external_poller_stale_ecb` | `{source="ecb"}` | 43200 s (**12 h**) | 10 m | ticket (P3) |
+| `stellarindex_external_poller_stale_tiingo` | `{source="tiingo"}` | 7200 s (**2 h**) | 10 m | ticket (P3) |
 
 ECB is split out because it publishes once per EU business day and
 the poller's own interval is 6 h
@@ -77,7 +78,7 @@ Two more scope facts worth knowing before you start digging:
    ```sh
    ssh root@136.243.90.96 \
      'journalctl -u stellarindex-indexer --since "1 hour ago" \
-       --no-pager | grep -E "poller error|poller stopping" | grep <source>'
+       --no-pager | grep -E "poller error|poller stopping|produced no rows|no applicable pairs" | grep <source>'
    ```
 
 3. **Decode the most recent error string.** Common patterns:
@@ -90,6 +91,8 @@ Two more scope facts worth knowing before you start digging:
    | `http: timeout`             | network slowness                 | check r1 → public network egress    |
    | `dial tcp: ... no route`    | DNS / IP-allowlist / firewall    | check r1 networking + ufw + DNS     |
    | `decode` / `unmarshal`      | venue API changed shape          | bug — patch the decoder, file PR    |
+   | `produced no rows`          | 200 with nothing usable (`outcome="empty"`): renamed slug/symbol or delisted pair | fix the id in the source's seed/config |
+   | `no applicable pairs` (`outcome="idle"`) | no configured pair maps to this source | fix the pair list in the indexer TOML, or remove the source |
 
 ## Mitigation
 

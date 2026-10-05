@@ -77,6 +77,7 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	endpoint := s.restBase() + fmt.Sprintf(candlesPathTemplate, product)
 	startSec := from.Unix()
 	endSec := to.Unix()
+	now := time.Now()
 	var out []canonical.Trade
 	ticker := time.NewTicker(candlesRequestInterval)
 	defer ticker.Stop()
@@ -113,7 +114,7 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 			continue
 		}
 
-		out = append(out, coinbaseCandlesToTrades(candles, product, pair, granSec)...)
+		out = append(out, coinbaseCandlesToTrades(candles, product, pair, granSec, to, now)...)
 
 		next, done := advanceCoinbaseCursor(candles, startSec, granSec)
 		if done {
@@ -148,10 +149,15 @@ func (s *Streamer) resolveBackfillProduct(pair canonical.Pair, granSec int) (str
 // Coinbase returns candles in REVERSE chronological order (newest
 // first); walk the slice backwards so trades emit chronologically.
 // A candle coinbaseCandleToTrade can't represent is skipped, not
-// failed — the surrounding range still produces useful output.
-func coinbaseCandlesToTrades(candles []coinbaseCandle, product string, pair canonical.Pair, granSec int) []canonical.Trade {
+// failed — the surrounding range still produces useful output. A candle
+// not closed by min(to, now) is dropped; see scale.CandleClosed.
+func coinbaseCandlesToTrades(candles []coinbaseCandle, product string, pair canonical.Pair, granSec int, to, now time.Time) []canonical.Trade {
 	out := make([]canonical.Trade, 0, len(candles))
 	for i := len(candles) - 1; i >= 0; i-- {
+		openSec, ok := candles[i].openTimeSec()
+		if !ok || !scale.CandleClosed(time.Unix(openSec+int64(granSec), 0), to, now) {
+			continue
+		}
 		trade, err := coinbaseCandleToTrade(candles[i], product, pair, granSec)
 		if err != nil {
 			continue

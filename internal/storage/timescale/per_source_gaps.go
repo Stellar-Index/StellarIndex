@@ -145,6 +145,15 @@ type GapDetectorTarget struct {
 	// SAFETY: interpolated verbatim; ADR-0030 compile-time-const
 	// discipline applies exactly as for Table / WhereFilter.
 	DistinctLedgerCountSQL string
+
+	// CloseTimeColumn names the table's ledger-close-time partition
+	// column when the hypertable is partitioned by time rather than by
+	// ledger. The gap scan then also bounds that column by the close
+	// times ledger_ingest_log records around [from, to]; without it a
+	// `ledger BETWEEN` filter excludes no chunk and decompresses every
+	// compressed one (soroban_events on r1: 780 s timeout for a
+	// 4.5k-ledger window). Same ADR-0030 const discipline as Table.
+	CloseTimeColumn string
 }
 
 // sorobanEventsDistinctLedgerCountSQL answers "how many ledgers in
@@ -294,11 +303,11 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// defindex_flows (migration 0050). Both layers emit on capital
 	// movement; vault layer mirrors strategy ~1:1 in the same tx so
 	// real "no activity" stretches are scarce but the protocol is
-	// young (genesis 57_056_338) and user-action-triggered so
+	// young (genesis 55_484_403) and user-action-triggered so
 	// multi-hour quiet windows can happen. 100k threshold
 	// (~5.8 days) matches the soroswap-router cadence — past
 	// observed natural sparsity, well below "writer wedged" pages.
-	{Source: "defindex", Table: "defindex_flows", LedgerColumn: "ledger", Genesis: 57_056_338, MinGapSizeOverride: 100000},
+	{Source: "defindex", Table: "defindex_flows", LedgerColumn: "ledger", Genesis: 55_484_403, MinGapSizeOverride: 100000},
 	// defindex-fees: vault-layer dfees protocol-fee distributions
 	// (migration 0146, W5.2) — sparse and conditional (a distribution
 	// only fires when the vault has fees pending; 12,785 events lake-
@@ -310,6 +319,10 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// genesis: the topic simply never fired before 60,903,337, and a
 	// floor at 57M would flag ~3.8M permanently-empty ledgers.
 	{Source: "defindex-fees", CanonicalSource: "defindex", Table: "defindex_fees", LedgerColumn: "ledger", Genesis: 60_903_337, MinGapSizeOverride: 700000},
+	// defindex-admin-events: vault rescues / pause toggles / role
+	// rotations (0192) — 38 lake events in ~6M ledgers, so gaps are the
+	// norm; max override like phoenix-admin-events.
+	{Source: "defindex-admin-events", CanonicalSource: "defindex", Table: "defindex_admin_events", LedgerColumn: "ledger", Genesis: 57_056_338, MinGapSizeOverride: 100000000},
 	// phoenix-liquidity / phoenix-stake: events are user-action-triggered
 	// (provide/withdraw liquidity, bond/unbond stake) — multi-hour
 	// quiet windows are normal protocol behaviour, not data loss.
@@ -366,7 +379,7 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// trips this well before a natural quiet stretch would.
 	{Source: "aquarius-rewards", CanonicalSource: "aquarius", Table: "aquarius_rewards_events", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 100000},
 	// aquarius-admin: the governance/upgrade admin surface (ROADMAP
-	// #89, migration 0100) — router-scoped, operator-triggered
+	// ROADMAP #89, migration 0100) — router-scoped, operator-triggered
 	// actions (upgrades, ownership transfers, emergency mode). Rare by
 	// design (apply_upgrade: 706 lifetime across the whole protocol
 	// history is the DENSEST of the eight kinds); wide override
@@ -420,8 +433,8 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// census (DistinctLedgerCountSQL) — soroban_events has NO index on
 	// `ledger` and the generic COUNT(DISTINCT ledger) was a 556 s full
 	// scan of a 257 GB hypertable per cycle (r1 incident). The gap scan
-	// itself is unchanged (observed rows, 13-min PG timeout).
-	{Source: "soroban-events", CanonicalSource: "soroban_events", Table: "soroban_events", LedgerColumn: "ledger", Genesis: 50_457_424, ScanCadence: 6 * time.Hour, MinGapSizeOverride: 100000, DistinctLedgerCountSQL: sorobanEventsDistinctLedgerCountSQL},
+	// still reads observed rows, chunk-pruned via CloseTimeColumn.
+	{Source: "soroban-events", CanonicalSource: "soroban_events", Table: "soroban_events", LedgerColumn: "ledger", Genesis: 50_457_424, ScanCadence: 6 * time.Hour, MinGapSizeOverride: 100000, DistinctLedgerCountSQL: sorobanEventsDistinctLedgerCountSQL, CloseTimeColumn: "ledger_close_time"},
 	// SDEX is classic-DEX and does NOT flow through soroban_events.
 	// Its rows live in the unified `trades` hypertable alongside
 	// every other trade-emitting source; the WhereFilter slices
@@ -470,6 +483,10 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// swap); every later gap is under 9,400. 100k leaves 3x headroom over
 	// the observed envelope.
 	{Source: "sushiswap_v3", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'sushiswap_v3'", Genesis: 61_487_379, MinGapSizeOverride: 100000},
+	// sushiswap_v3-positions: mint/burn/collect are sparse (~5.8k events over
+	// ~2.8M ledgers), so a large override keeps a quiet stretch from reading
+	// as a decoder outage.
+	{Source: "sushiswap_v3-positions", CanonicalSource: "sushiswap_v3", Table: "sushiswap_v3_position_events", LedgerColumn: "ledger", Genesis: 61_487_379, MinGapSizeOverride: 700000},
 	// upshift: the vaults write their own hypertable, not `trades` — they
 	// publish no price. Institutional deposit flow is genuinely sparse:
 	// measured over every row-producing event in both vaults' history, the
@@ -554,10 +571,14 @@ func ApplicableGapDetectorTargets(targets []GapDetectorTarget, network string, l
 // present restores the pairing across the boundary at zero extra scan
 // cost — the seed is a single literal row, not a second query over the
 // table.
-func perSourceLedgerGapsQuery(target GapDetectorTarget) string {
-	filter := ""
+//
+// timeBound is an extra predicate ANDed into the scan (from
+// [closeTimeBoundPredicate]); empty for targets without a
+// CloseTimeColumn.
+func perSourceLedgerGapsQuery(target GapDetectorTarget, timeBound string) string {
+	filter := timeBound
 	if target.WhereFilter != "" {
-		filter = " AND (" + target.WhereFilter + ")"
+		filter += " AND (" + target.WhereFilter + ")"
 	}
 	//nolint:gosec // G201: identifiers from compile-time const list per ADR-0030
 	return fmt.Sprintf(`
@@ -583,6 +604,22 @@ func perSourceLedgerGapsQuery(target GapDetectorTarget) string {
 		  AND ledger - prev_l - 1 >= $3
 		ORDER BY gap_size DESC
 	`, target.LedgerColumn, target.Table, filter)
+}
+
+// closeTimeBoundPredicate appends the open-ended close-time bounds lo/hi
+// (an invalid side stays unbounded) to args and returns the predicate
+// referencing them.
+func closeTimeBoundPredicate(column string, lo, hi sql.NullTime, args []any) (string, []any) {
+	pred := ""
+	if lo.Valid {
+		args = append(args, lo.Time)
+		pred += fmt.Sprintf(" AND %s >= $%d", column, len(args))
+	}
+	if hi.Valid {
+		args = append(args, hi.Time)
+		pred += fmt.Sprintf(" AND %s <= $%d", column, len(args))
+	}
+	return pred, args
 }
 
 // maxLedgerInWindowQuery builds the generic "highest present ledger in
@@ -654,8 +691,6 @@ func (s *Store) FindPerSourceLedgerGaps(ctx context.Context, target GapDetectorT
 		return nil, nil
 	}
 
-	query := perSourceLedgerGapsQuery(target)
-
 	// SQL-level statement_timeout backstop: when the Go-side ctx
 	// times out mid-query the database/sql driver tries to cancel
 	// via PG's async cancellation protocol — best-effort. r1
@@ -676,7 +711,16 @@ func (s *Store) FindPerSourceLedgerGaps(ctx context.Context, target GapDetectorT
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%d'", gapDetectorStatementTimeoutMS)); err != nil {
 		return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps SET: %w", err)
 	}
-	rows, err := tx.QueryContext(ctx, query, from, to, minGapSize, seedLedger)
+	args := []any{from, to, minGapSize, seedLedger}
+	timeBound := ""
+	if target.CloseTimeColumn != "" {
+		var lo, hi sql.NullTime
+		if err := tx.QueryRowContext(ctx, enclosingCloseTimeQuery, from, to).Scan(&lo, &hi); err != nil {
+			return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps close-time bound [%d,%d]: %w", from, to, err)
+		}
+		timeBound, args = closeTimeBoundPredicate(target.CloseTimeColumn, lo, hi, args)
+	}
+	rows, err := tx.QueryContext(ctx, perSourceLedgerGapsQuery(target, timeBound), args...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps %s [%d,%d, min %d]: %w",
 			target.Table, from, to, minGapSize, err)

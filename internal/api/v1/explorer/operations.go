@@ -344,13 +344,13 @@ func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clic
 // the request context was the failure (route-sweep 2026-07-29): the
 // day-window FINAL GROUP BY shared the directory's 8s budget and dragged
 // the whole /v1/operations page into its 503 class every 5 minutes.
-func (h *Handler) resolveOpTypeStats() []OpTypeStatV {
+func (h *Handler) resolveOpTypeStats() (stats []OpTypeStatV, fresh bool) {
 	cached, fresh := h.opTypeStats.get()
 	if fresh {
-		return cached
+		return cached, true
 	}
 	h.refreshOpTypeStats() //nolint:contextcheck // intentional detach — the aggregate must never share a request deadline (see refreshOpTypeStats)
-	return cached          // stale (or nil on a cold process — panel appears next request)
+	return cached, false   // stale (or nil on a cold process — panel appears next request)
 }
 
 // PrewarmOpTypeStats primes the trailing-24h op-type breakdown so a cold
@@ -411,12 +411,13 @@ func (h *Handler) refreshOpTypeStats() {
 	}()
 }
 
-// OperationsView is the wire response for GET /v1/operations.
+// OperationsView is the wire response for GET /v1/operations and
+// GET /v1/ledgers/{seq}/operations.
 //
-// Two shapes on one route: with ?ledger=<seq> it's that ledger's ops
-// (Ledger set, no cursor/stats); without it it's the network-wide
-// recent-operations directory (Ledger 0, NextCursor for paging, and
-// OpTypeStats — the trailing-24h per-type breakdown).
+// Two shapes: the per-ledger form (Ledger set, no cursor/stats) is served by
+// /v1/ledgers/{seq}/operations; the network-wide recent-operations directory
+// (Ledger 0, NextCursor for paging, and OpTypeStats — the trailing-24h
+// per-type breakdown) by /v1/operations.
 type OperationsView struct {
 	Ledger      uint32        `json:"ledger"`
 	Operations  []OpView      `json:"operations"`
@@ -426,12 +427,15 @@ type OperationsView struct {
 	// while assembling this page, so operations without transaction_successful
 	// are of UNKNOWN outcome rather than known-applied (opsOutcomeCoverageNote).
 	CoverageNote string `json:"coverage_note,omitempty"`
-	// Total and Truncated are set only on the ?ledger= arm (GH-1135): the
+	// Total and Truncated are set only on the per-ledger form (GH-1135): the
 	// ledger header's exact operation count vs len(Operations), the same
 	// shape LedgerTransactionsView already gives /v1/ledgers/{seq}/transactions.
 	// Zero/false on the no-cursor directory arm, which pages instead.
 	Total     uint32 `json:"total,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
+	// opTypeStatsStale records that OpTypeStats was stale or absent when the
+	// page was assembled, so a cached copy still serves as degraded.
+	opTypeStatsStale bool
 }
 
 // OpTypeStatV is one op-type's count in the trailing-24h window.
@@ -440,26 +444,41 @@ type OpTypeStatV struct {
 	Count int64  `json:"count"`
 }
 
-// Operations serves GET /v1/operations.
-//
-//   - ?ledger=<seq>: that ledger's operations, decoded (partition-pruned).
-//   - no ?ledger: the network-wide recent-operations DIRECTORY — newest
-//     first, keyset-paged via ?cursor=<opaque> (echo back next_cursor;
-//     composite ledger.tx_index.op_index), plus op_type_stats (per-type
-//     counts over the trailing ~24h of ledgers).
+// Operations serves GET /v1/operations: the network-wide recent-operations
+// DIRECTORY — newest first, keyset-paged via ?cursor=<opaque> (echo back
+// next_cursor; composite ledger.tx_index.op_index), plus op_type_stats
+// (per-type counts over the trailing ~24h of ledgers).
 func (h *Handler) Operations(w http.ResponseWriter, r *http.Request) {
+	// A ledger-scoped read has its own route and consistency contract
+	// (ADR-0018); serving it here as a directory page would answer the wrong question.
+	if r.URL.Query().Has("ledger") {
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-parameter",
+			"Invalid parameter", http.StatusBadRequest,
+			"ledger is not a /v1/operations parameter; use GET /v1/ledgers/{seq}/operations")
+		return
+	}
 	if h.Reader == nil {
 		h.unavailable(w, r)
 		return
 	}
-	seq, ok := h.parseUint32Query(w, r, "ledger")
+	h.operationsDirectory(w, r)
+}
+
+// LedgerOperations serves GET /v1/ledgers/{seq}/operations.
+func (h *Handler) LedgerOperations(w http.ResponseWriter, r *http.Request) {
+	if h.Reader == nil {
+		h.unavailable(w, r)
+		return
+	}
+	seq, ok := h.parseLedgerSeq(w, r)
 	if !ok {
 		return
 	}
-	if seq == 0 {
-		h.operationsDirectory(w, r)
-		return
-	}
+	h.ledgerOperations(w, r, seq)
+}
+
+// ledgerOperations is one ledger's operations, decoded (partition-pruned).
+func (h *Handler) ledgerOperations(w http.ResponseWriter, r *http.Request, seq uint32) {
 	limit, ok := h.ParseLimit(w, r, 500, 2000)
 	if !ok {
 		return
@@ -507,18 +526,19 @@ func (h *Handler) Operations(w http.ResponseWriter, r *http.Request) {
 	// from "truncated at limit", so read the ledger header's exact op
 	// count — the same shape LedgerTransactions already gives its route. A
 	// header-read hiccup only loses this metadata, not the served page.
-	if hdr, found, herr := h.Reader.LedgerBySeq(ctx, seq); herr != nil {
+	hdr, found, herr := h.Reader.LedgerBySeq(ctx, seq)
+	if herr != nil {
 		h.Logger.Warn("explorer LedgerBySeq (operations total) failed", "err", herr, "seq", seq)
 	} else if found {
 		out.Total = hdr.OpCount
 		out.Truncated = hdr.OpCount > uint32(len(rows))
 	}
 	_, stale, _ := h.lakeTip(ctx)
-	h.WriteJSON(w, out, stale)
+	h.writeJSONAt(w, out, stale, out.CoverageNote != "" || herr != nil, time.Time{})
 }
 
 // operationsResponseByteBudget is a conservative placeholder ceiling on the
-// total raw XDR bytes GET /v1/operations?ledger=N will fully decode into a
+// total raw XDR bytes GET /v1/ledgers/{seq}/operations will fully decode into a
 // single response (Q207). It is deliberately conservative and fail-closed;
 // the exact number depends on infra (reverse proxy / load-balancer response
 // limits) not visible from this repo, so treat it as a placeholder pending
@@ -542,15 +562,43 @@ type ThroughputBucketV struct {
 	// TotalCoins are XLM stroops as decimal strings — total_coins is
 	// ~117× past 2^53, so a JSON number would silently lose precision
 	// (ADR-0003). fee_pool is CUMULATIVE: daily fee burn is the delta
-	// between consecutive complete days.
+	// between consecutive complete days, minus FeePoolAdjustment.
 	FeePool         string `json:"fee_pool"`
 	TotalCoins      string `json:"total_coins"`
 	ProtocolVersion uint32 `json:"protocol_version"`
+	// FeePoolAdjustment is the stroops this day's fee_pool changed by
+	// outside any transaction fee (a protocol upgrade crediting the pool).
+	FeePoolAdjustment string `json:"fee_pool_adjustment,omitempty"`
 	// Partial is true for a bucket that does not cover a whole UTC day — in
 	// practice only today, still accumulating. Clients should render it
 	// distinctly and exclude it from window totals; every other bucket is a
 	// complete day (the window is day-aligned).
 	Partial bool `json:"partial,omitempty"`
+}
+
+// knownFeePoolAdjustments lists fee_pool credits that no transaction paid.
+// Each is keyed on its UTC day AND the protocol upgrade applied that day, so
+// a network whose upgrade fell on another day (testnet, futurenet) never
+// matches.
+var knownFeePoolAdjustments = []struct {
+	day                    string
+	fromProtocol, protocol uint32
+	stroops                int64
+}{
+	// Pubnet's P24 upgrade (ledger 59,501,299) credited the pool directly;
+	// total_coins did not change.
+	{day: "2025-10-22", fromProtocol: 23, protocol: 24, stroops: 31_879_035},
+}
+
+// feePoolAdjustment returns the non-fee fee_pool change for day as a stroop
+// string, or "" when there is none.
+func feePoolAdjustment(day string, prevProtocol, protocol uint32) string {
+	for _, a := range knownFeePoolAdjustments {
+		if a.day == day && a.fromProtocol == prevProtocol && a.protocol == protocol {
+			return strconv.FormatInt(a.stroops, 10)
+		}
+	}
+	return ""
 }
 
 // NetworkThroughput serves GET /v1/network/throughput — daily
@@ -613,11 +661,14 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 			ProtocolVersion: b.ProtocolVersion,
 			Partial:         b.Partial,
 		}
+		if i > 0 {
+			out.Buckets[i].FeePoolAdjustment = feePoolAdjustment(out.Buckets[i].Day, buckets[i-1].ProtocolVersion, b.ProtocolVersion)
+		}
 	}
-	h.writeJSONAt(w, out, degraded, asOf)
+	h.writeJSONAt(w, out, degraded, degraded, asOf)
 }
 
-// operationsDirectory serves the no-ledger path: network-wide
+// operationsDirectory serves GET /v1/operations: network-wide
 // recent operations (keyset-paged) + the trailing-24h op-type stats.
 func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 	limit, ok := h.ParseLimit(w, r, 50, 200)
@@ -656,7 +707,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 				"Internal error", http.StatusInternalServerError, "")
 			return
 		}
-		h.writeJSONAt(w, sliceOperationsView(view, limit), degraded, asOf)
+		h.writeJSONAt(w, sliceOperationsView(view, limit), degraded, degraded || view.opTypeStatsStale || view.CoverageNote != "", asOf)
 		return
 	}
 
@@ -676,7 +727,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 			h.Logger.Warn("explorer RecentOperations refused a too-deep cursor")
 			h.WriteProblem(w, r, "https://api.stellarindex.io/errors/cursor-too-deep",
 				"Cursor too deep", http.StatusBadRequest,
-				"the supplied cursor would require scanning an unbounded portion of the table; page forward from a more recent cursor, or use ?ledger= to address a specific ledger")
+				"the supplied cursor would require scanning an unbounded portion of the table; page forward from a more recent cursor, or use /v1/ledgers/{seq}/operations to address a specific ledger")
 			return
 		}
 		if retryableColdMiss(ctx, err) {
@@ -691,7 +742,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, stale, _ := h.lakeTip(ctx)
-	h.WriteJSON(w, out, stale)
+	h.writeJSONAt(w, out, stale, out.CoverageNote != "", time.Time{})
 }
 
 // opsDirCached serves the cached max-page first-page view. A fresh entry is
@@ -767,7 +818,9 @@ func (h *Handler) buildOperationsDirectory(ctx context.Context, limit int, cur c
 	// fail the listing (only attached on the first page to keep paging
 	// responses lean).
 	if !cur.IsSet() {
-		out.OpTypeStats = h.resolveOpTypeStats() //nolint:contextcheck // intentional detach — the 24h aggregate must never share a request deadline (see resolveOpTypeStats)
+		var fresh bool
+		out.OpTypeStats, fresh = h.resolveOpTypeStats() //nolint:contextcheck // intentional detach — the 24h aggregate must never share a request deadline (see resolveOpTypeStats)
+		out.opTypeStatsStale = !fresh
 	}
 	return out, nil
 }

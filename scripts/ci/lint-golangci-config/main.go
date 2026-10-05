@@ -7,16 +7,16 @@
 // on every invocation, so a hiccup at a third-party site turns the REQUIRED
 // `lint` check red on a diff that touched no Go at all — observed 2026-08-28
 // on PR #275 (`read: connection reset by peer`), green on rerun. Reproduced
-// locally against v2.11.4 with the network blocked:
+// locally against v2.14.0 with the network blocked:
 //
 //	$ HTTPS_PROXY=http://127.0.0.1:9 golangci-lint config verify
 //	The command is terminated due to an error: [.golangci.yml] validate:
 //	compile schema: failing loading "https://golangci-lint.run/jsonschema/
-//	golangci.v2.11.jsonschema.json" … connect: connection refused   (exit 3)
+//	golangci.v2.14.jsonschema.json" … connect: connection refused   (exit 3)
 //
 // The schema check itself is worth keeping, so this is NOT a `verify: false`
 // and walk away. golangci-lint's own config loader silently IGNORES unknown
-// keys — verified against v2.11.4, where a top-level `runn:` block is
+// keys — verified against v2.14.0, where a top-level `runn:` block is
 // accepted by `golangci-lint run`/`linters` and rejected ONLY by
 // `config verify`. (The converse holds too — an unknown linter NAME is
 // rejected by `run` and passes the schema — so the two checks are
@@ -43,8 +43,8 @@
 //
 // Re-vendor after a version bump (the tag's `golangci.next.jsonschema.json`
 // is byte-identical to the golangci-lint.run copy the CLI would fetch —
-// verified for v2.11.4, sha256
-// 985af311f9448d5b0964c3eda502204326dcf35d8f757192684cddc9b6615676):
+// verified for v2.14.0, sha256
+// ba7cf9724760549ebf3370db1344863be2f95db88772c2506e4ead597ca91987):
 //
 //	curl -fsSL -o scripts/ci/golangci.v<maj>.<min>.jsonschema.json \
 //	  https://raw.githubusercontent.com/golangci/golangci-lint/<tag>/jsonschema/golangci.next.jsonschema.json
@@ -282,8 +282,8 @@ func makefileVersion(path string) (string, error) {
 
 var semverRE = regexp.MustCompile(`^v?(\d+)\.(\d+)(?:\.\d+)?`)
 
-// minorVersion turns a pinned release (v2.11.4) into the schema's version
-// segment (v2.11) — golangci-lint publishes one schema per MINOR.
+// minorVersion turns a pinned release (v2.14.0) into the schema's version
+// segment (v2.14) — golangci-lint publishes one schema per MINOR.
 func minorVersion(version string) (string, error) {
 	m := semverRE.FindStringSubmatch(version)
 	if m == nil {

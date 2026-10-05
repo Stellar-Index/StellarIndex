@@ -48,13 +48,16 @@
 #   12. "one heavy job at a time" holds ACROSS job names. An operator
 #      launch (HEAVY_JOB_CLASS unset) is refused with exit 75, payload
 #      not run, while any other heavy job holds the host-wide lock; a
-#      scheduled launch is never refused (it warns beside an operator
-#      job); a released lock is free at once; a lock file the caller
-#      cannot write still locks (it is opened read-only, never O_CREAT
+#      scheduled launch defers (exit 75, payload not run) beside an
+#      operator job and beside another scheduled job, or queues when it
+#      sets HEAVY_JOB_LOCK_WAIT; a released lock is free at once; a
+#      lock file the caller cannot write still locks (it is opened
+#      read-only, never O_CREAT
 #      on an existing file: fs.protected_regular refuses that across
 #      users in /run/lock); a lock file that cannot be opened at all
 #      refuses an operator job and only warns a scheduled one; and every
-#      timer/cron launcher declares HEAVY_JOB_CLASS=scheduled. These
+#      timer/cron launcher declares HEAVY_JOB_CLASS=scheduled and, bar the
+#      hourly galexie-archive-fill, a HEAVY_JOB_LOCK_WAIT. These
 #      cases use a real flock(2) shim, not the always-succeeds stub.
 #   12. a TERM to the root-branch wrapper stops its sibling scope, so no
 #      payload outlives a stopped/timed-out unit holding the lock.
@@ -240,7 +243,23 @@ else
   run HEAVY_JOB_OPS_ENV="$OPS_ENV" SYSTEMD_RUN_PROPS="$PROPS" HEAVY_JOB_STOP_TIMEOUT=2h
   if grep -qx 'TimeoutStopSec=2h' "$PROPS" && ! grep -qx 'TimeoutStopSec=5min' "$PROPS"; then ok "HEAVY_JOB_STOP_TIMEOUT=2h (the restamp's launch line) overrides the default"; else bad "HEAVY_JOB_STOP_TIMEOUT not honoured (props: $(tr '\n' ' ' < "$PROPS"))"; fi
 
-  # ── 6. the bound is validated, not passed through ──────────────────
+  # ── 5b. the held-since metric exists during the job and only then ──
+  # The textfile staleness alert suppresses lock-gated producers on it.
+  mkdir -p "$TMP/tf"
+  cat > "$TMP/held-payload.sh" <<'HP'
+#!/usr/bin/env bash
+cat "$HEAVY_JOB_TEXTFILE_DIR"/heavy_job_test_job.prom
+HP
+  chmod +x "$TMP/held-payload.sh"
+  HEAVY_JOB_TEXTFILE_DIR="$TMP/tf" HEAVY_JOB_OPS_ENV="$OPS_ENV" env -u INVOCATION_ID "$WRAP" test-job "$TMP/held-payload.sh" >"$TMP/out" 2>"$TMP/err"
+  if grep -q '^# HELP stellarindex_heavy_lock_held_since_unix ' "$TMP/out" && grep -qE '^stellarindex_heavy_lock_held_since_unix\{ops_job="test-job"\} [0-9]+$' "$TMP/out" && [ -z "$(ls -A "$TMP/tf")" ]; then ok "held-since metric published during the job, removed on exit"; else bad "held-since metric wrong (out: $(tr '\n' ' ' < "$TMP/out"), left: $(ls "$TMP/tf"))"; fi
+
+    # A run that did not get the lock must not publish a hold.
+  rm -rf "$TMP/tf2"; mkdir -p "$TMP/tf2"
+  run HEAVY_JOB_OPS_ENV="$OPS_ENV" FLOCK_HELD=1 HEAVY_JOB_TEXTFILE_DIR="$TMP/tf2"
+  if [ "$rc" -eq 75 ] && [ -z "$(ls -A "$TMP/tf2")" ]; then ok "lock not acquired: no heavy_job_*.prom published"; else bad "lock-not-acquired run left a hold file (rc=$rc, left: $(ls "$TMP/tf2"))"; fi
+
+# ── 6. the bound is validated, not passed through ──────────────────
   # `2` is the one that motivated this: a bare integer is SECONDS under
   # systemd.time, so an operator meaning two hours would have got a
   # two-second grace — accepted by systemd, and a harder kill than
@@ -310,9 +329,24 @@ units=0
 while IFS= read -r unit; do
   units=$((units + 1))
   if grep -qx 'SuccessExitStatus=75' "$unit"; then ok "$unit declares SuccessExitStatus=75"; else bad "$unit ExecStarts run-heavy-job.sh without SuccessExitStatus=75 — a lock skip would fail the unit"; fi
+  case "$unit" in
+    */galexie-archive-fill.service*) ;;
+    *)
+      wait_s="$(sed -n 's/^Environment=HEAVY_JOB_LOCK_WAIT=//p' "$unit")"
+      tss="$(sed -n 's/^TimeoutStartSec=//p' "$unit")"
+      case "$wait_s" in ''|*[!0-9]*) wait_s=0 ;; esac
+      case "$tss" in ''|*[!0-9]*) tss=0 ;; esac
+      if [ "$wait_s" -gt 0 ] && [ "$tss" -gt "$wait_s" ]; then ok "$unit queues (wait ${wait_s}s, TimeoutStartSec=${tss}s outlasts it)"; else bad "$unit is a daily/monthly timer unit that would skip on a held lock (HEAVY_JOB_LOCK_WAIT='${wait_s}', TimeoutStartSec='${tss}': only the hourly galexie-archive-fill may defer)"; fi ;;
+  esac
   if grep -qx 'Environment=HEAVY_JOB_CLASS=scheduled' "$unit"; then ok "$unit declares HEAVY_JOB_CLASS=scheduled"; else bad "$unit ExecStarts run-heavy-job.sh without Environment=HEAVY_JOB_CLASS=scheduled — the timer would be refused whenever another heavy job runs"; fi
 done < <(grep -rlE '^ExecStart=[^ ]*run-heavy-job\.sh ' configs/ansible/roles/archival-node/templates/systemd deploy/systemd)
 if [ "$units" -gt 0 ]; then ok "$units wrapper unit(s) checked"; else bad "no unit ExecStarts run-heavy-job.sh — the unit check ran over nothing"; fi
+# Local-pool restores must stay under the wrapper (lock, memory cap, disk
+# watchdog). The exempt units and why: maintainer-workflow.md §Heavy one-shot jobs.
+for u in restore-drill restore-drill-offsite; do
+  f="configs/ansible/roles/archival-node/templates/systemd/$u.service.j2"
+  if grep -qE '^ExecStart=[^ ]*run-heavy-job\.sh ' "$f"; then ok "$u is wrapped by run-heavy-job.sh"; else bad "$u ExecStarts its script bare — no lock, memory cap or disk watchdog"; fi
+done
 
 # ── 9. the watchdog does not hold the lock (root branch only) ────────
 if [ "$branch" != "non-root" ]; then
@@ -334,17 +368,27 @@ fi
 mkdir -p "$TMP/lockbin"
 cat > "$TMP/lockbin/flock" <<'FL'
 #!/usr/bin/env python3
-import fcntl, sys
-op, nb = fcntl.LOCK_EX, 0
-for a in sys.argv[1:-1]:
+import fcntl, sys, time
+op, nb, wait, args = fcntl.LOCK_EX, 0, 0.0, sys.argv[1:-1]
+i = 0
+while i < len(args):
+    a = args[i]
     if a == "-n": nb = fcntl.LOCK_NB
     elif a == "-s": op = fcntl.LOCK_SH
     elif a == "-x": op = fcntl.LOCK_EX
+    elif a == "-w": wait = float(args[i + 1]); i += 1
     else: sys.exit(64)
-try:
-    fcntl.flock(int(sys.argv[-1]), op | nb)
-except BlockingIOError:
-    sys.exit(1)
+    i += 1
+fd = int(sys.argv[-1])
+deadline = time.time() + wait
+while True:
+    try:
+        fcntl.flock(fd, op | fcntl.LOCK_NB)
+        break
+    except BlockingIOError:
+        if nb or time.time() >= deadline:
+            sys.exit(1)
+        time.sleep(0.05)
 FL
 chmod +x "$TMP/lockbin/flock"
 HOLD="$TMP/hold.sh"
@@ -383,7 +427,7 @@ if [ "$rc" -eq 75 ] && ! ran && err_has "refusing to start op-b: another heavy j
 lrun op-a ""
 if [ "$rc" -eq 75 ] && ! ran && err_has "still alive"; then ok "same-name duplicate still hits its per-job lock first"; else bad "same-name duplicate not refused by the per-job lock (rc=$rc, err='$(errs)')"; fi
 lrun sched-a scheduled
-if [ "$rc" -eq 0 ] && ran && err_has "WARNING sched-a (scheduled) is starting beside an operator heavy job"; then ok "scheduled job runs beside an operator job, with a WARNING"; else bad "scheduled job suppressed or silent beside an operator job (rc=$rc, err='$(errs)')"; fi
+if [ "$rc" -eq 75 ] && ! ran && err_has "deferring sched-a (scheduled): an operator heavy job holds"; then ok "scheduled job defers (exit 75, payload not run) while an operator job runs"; else bad "scheduled job ran or did not defer beside an operator job (rc=$rc, err='$(errs)')"; fi
 hold_stop h1
 lrun op-c ""
 if [ "$rc" -eq 0 ] && ran; then ok "lock is free the moment the holder exits (the watchdog does not keep it)"; else bad "operator job refused after the holder exited (rc=$rc, err='$(errs)')"; fi
@@ -392,8 +436,26 @@ hold_start h2 sched-h scheduled
 lrun op-d ""
 if [ "$rc" -eq 75 ] && ! ran; then ok "operator job refused while a scheduled job runs"; else bad "operator job started beside a scheduled job (rc=$rc)"; fi
 lrun sched-b scheduled
-if [ "$rc" -eq 0 ] && ran && ! err_has "WARNING sched-b"; then ok "scheduled jobs share the lock without a warning"; else bad "scheduled job blocked or warned beside another scheduled job (rc=$rc, err='$(errs)')"; fi
+if [ "$rc" -eq 75 ] && ! ran && err_has "deferring sched-b (scheduled): another scheduled heavy job holds"; then ok "scheduled jobs are serialised: the second defers (exit 75, payload not run)"; else bad "two scheduled jobs overlapped (rc=$rc, err='$(errs)')"; fi
 hold_stop h2
+lrun sched-c scheduled
+if [ "$rc" -eq 0 ] && ran; then ok "scheduled job runs once the other scheduled job has exited"; else bad "scheduled job refused after the holder exited (rc=$rc, err='$(errs)')"; fi
+
+# HEAVY_JOB_LOCK_WAIT on a scheduled job queues behind a scheduled holder
+# and then runs; a wait that runs out fails loud (exit 1), never 75.
+hold_start h4 sched-q scheduled
+( /bin/sleep 1; : > "$TMP/h4.release" ) &
+lrun sched-w scheduled HEAVY_JOB_LOCK_WAIT=20 INVOCATION_ID=0123456789abcdef
+wait "$HOLDER"; wait
+if [ "$rc" -eq 0 ] && ran; then ok "scheduled job with HEAVY_JOB_LOCK_WAIT queues behind a scheduled holder, then runs"; else bad "queued scheduled job did not run (rc=$rc, err='$(errs)')"; fi
+hold_start h5 sched-q2 scheduled
+lrun sched-x scheduled HEAVY_JOB_LOCK_WAIT=1 INVOCATION_ID=0123456789abcdef
+if [ "$rc" -eq 1 ] && ! ran && err_has "FAILED to start" && err_has "scheduled heavy job held"; then ok "an expired wait on the scheduled lock exits 1, payload not run"; else bad "expired scheduled wait not a loud failure (rc=$rc, err='$(errs)')"; fi
+hold_stop h5
+hold_start h6 op-q exclusive
+lrun sched-y scheduled HEAVY_JOB_LOCK_WAIT=1 INVOCATION_ID=0123456789abcdef
+if [ "$rc" -eq 1 ] && ! ran && err_has "FAILED to start" && err_has "operator heavy job held"; then ok "an expired wait on the host-wide lock exits 1, payload not run"; else bad "expired host-wide wait not a loud failure (rc=$rc, err='$(errs)')"; fi
+hold_stop h6
 
 lrun op-e bogus
 if [ "$rc" -eq 2 ] && ! ran && err_has "HEAVY_JOB_CLASS='bogus' is neither"; then ok "unknown HEAVY_JOB_CLASS refused (exit 2, payload not run)"; else bad "unknown HEAVY_JOB_CLASS not refused (rc=$rc)"; fi
@@ -439,12 +501,12 @@ for t in yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or []:
     job = ((t or {}).get("ansible.builtin.cron") or {}).get("job") or ""
     if "run-heavy-job.sh" in job:
         found += 1
-        if not re.search(r"HEAVY_JOB_CLASS=scheduled\s+\S*run-heavy-job\.sh", job):
+        if not re.search(r"HEAVY_JOB_CLASS=scheduled\s+HEAVY_JOB_LOCK_WAIT=[1-9][0-9]*\s+\S*run-heavy-job\.sh", job):
             missing.append(t.get("name"))
 print(f"  cron launchers checked: {found}")
 sys.exit(1 if found == 0 or missing else 0)
 PY
-then ok "every cron launcher of the wrapper declares HEAVY_JOB_CLASS=scheduled"; else bad "a cron launcher of the wrapper is not HEAVY_JOB_CLASS=scheduled (or none was found)"; fi
+then ok "every cron launcher of the wrapper declares HEAVY_JOB_CLASS=scheduled and a HEAVY_JOB_LOCK_WAIT"; else bad "a cron launcher of the wrapper is not HEAVY_JOB_CLASS=scheduled (or none was found)"; fi
 
 # ── 14. units that SHARE a job name queue, never skip (GH-1229) ──────
 # Two units on one lock name are mutually exclusive on purpose, so a skip

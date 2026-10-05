@@ -34,14 +34,14 @@ stellarindex-aggregator.service:Description
 stellarindex-api.service:Description
 stellarindex-indexer.service:Description
 
-# Template runs uncapped by design (its own comment: "MAX_RUNTIME=0 =
-# uncapped: ... WatchdogSec is the only bound"); reference still shows
-# the earlier 16h cap.
-verify-archive-tier-a.service:Environment:VERIFY_ARCHIVE_MAX_RUNTIME
-verify-archive-tier-b.service:Environment:VERIFY_ARCHIVE_MAX_RUNTIME
-
 # The template queues on run-heavy-job.sh's shared tier-A/B lock
 # (HEAVY_JOB_LOCK_WAIT=72000), so READY=1 can come up to 20h after start;
 # the wrapper-less reference copies keep the bare 10m start budget.
 verify-archive-tier-a.service:TimeoutStartSec
 verify-archive-tier-b.service:TimeoutStartSec
+
+# The templates queue on run-heavy-job.sh's host-wide and scheduled locks
+# (HEAVY_JOB_LOCK_WAIT=43200), so TimeoutStartSec covers a 12h wait plus the
+# run; the wrapper-less reference copies keep the bare run-only budget.
+archive-completeness.service:TimeoutStartSec
+galexie-archive-trim.service:TimeoutStartSec

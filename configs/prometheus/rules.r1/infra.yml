@@ -150,6 +150,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: infra
+          alert_family: zfs_pool_capacity
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
           summary: "ZFS data pool free space low ({{ $value | humanizePercentage }} of capacity free)"
@@ -177,6 +178,7 @@ groups:
           severity: page
           team: stellarindex
           component: infra
+          alert_family: zfs_pool_capacity
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
           summary: "ZFS data pool CRITICALLY low ({{ $value | humanizePercentage }} of capacity free) (SEV-1)"
@@ -503,3 +505,79 @@ groups:
             backup-failed.md's Step 4. Check
             `pg_stat_archiver.failed_count` and repo1's free space
             (`zfs-pool-full.md`) first.
+
+  # A 14-day trend needs no 30s cadence, and each evaluation walks two
+  # weeks of samples.
+  - name: stellarindex.infra_pool_trend
+    interval: 15m
+    rules:
+
+      # Trend tier: the zfs_pool_capacity floors only speak once the pool is
+      # past 93 % full, which on r1 leaves days, not weeks, to reclaim.
+      # These project the pool's free space forward against the same
+      # reconstructed capacity. The regression runs over each day's TROUGH
+      # (min_over_time 1d), so a backup or merge cycle that briefly eats
+      # headroom is judged by its worst point, not averaged away, and a
+      # single-scrape blip cannot swing the slope.
+      #
+      # Own alert_family: a projection is a different signal from the
+      # current-state floors, so a trend page must not mute the 7 % ticket.
+      - alert: stellarindex_zfs_pool_fill_85pct_within_30d
+        expr: |
+          predict_linear(
+            (min by (instance) (min_over_time(node_filesystem_avail_bytes{fstype="zfs"}[1d])))[14d:1h],
+            30 * 86400
+          )
+            /
+          (
+            sum by (instance) (
+              node_filesystem_size_bytes{fstype="zfs"}
+                - node_filesystem_avail_bytes{fstype="zfs"}
+            )
+            + min by (instance) (node_filesystem_avail_bytes{fstype="zfs"})
+          ) < 0.15
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: infra
+          alert_family: zfs_pool_fill_trend
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
+          summary: "ZFS data pool on course to pass 85 % full within 30 days ({{ $value | humanizePercentage }} of capacity free projected)"
+          description: |
+            A linear fit over the last 14 days of daily free-space troughs
+            leaves under 15 % of the ZFS data pool free 30 days from now
+            (or the troughs are already there). Past ~85-90 % full ZFS
+            copy-on-write allocation slows and fragments. Plan reclamation
+            now (stale snapshots, pgBackRest off-box, retention) while it
+            is still a ticket.
+      - alert: stellarindex_zfs_pool_fill_90pct_within_7d
+        expr: |
+          predict_linear(
+            (min by (instance) (min_over_time(node_filesystem_avail_bytes{fstype="zfs"}[1d])))[14d:1h],
+            7 * 86400
+          )
+            /
+          (
+            sum by (instance) (
+              node_filesystem_size_bytes{fstype="zfs"}
+                - node_filesystem_avail_bytes{fstype="zfs"}
+            )
+            + min by (instance) (node_filesystem_avail_bytes{fstype="zfs"})
+          ) < 0.10
+        for: 30m
+        labels:
+          severity: page
+          team: stellarindex
+          component: infra
+          alert_family: zfs_pool_fill_trend
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
+          summary: "ZFS data pool on course to pass 90 % full within 7 days ({{ $value | humanizePercentage }} of capacity free projected)"
+          description: |
+            A linear fit over the last 14 days of daily free-space troughs
+            leaves under 10 % of the ZFS data pool free within a week. At
+            this fill rate the 3.5 % critical floor (write stalls across
+            ClickHouse, MinIO and Postgres) follows within days. Find what
+            is filling the pool and reclaim before the floors fire.

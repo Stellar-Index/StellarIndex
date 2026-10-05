@@ -59,7 +59,7 @@ func TestRegistry_RetiredFXIdentityStaysUnregistered(t *testing.T) {
 func TestIsOnChain_Partition(t *testing.T) {
 	offChain := map[string]bool{
 		// CEX
-		"binance": true, "kraken": true, "bitstamp": true, "coinbase": true,
+		"binance": true, "kraken": true, "bitstamp": true, "coinbase": true, "poloniex_via_btc": true,
 		// FX
 		"massive": true, "exchangeratesapi": true,
 		// aggregators
@@ -68,6 +68,8 @@ func TestIsOnChain_Partition(t *testing.T) {
 		"ecb": true,
 		// Ethereum oracle (JSON-RPC), not Stellar
 		"chainlink": true,
+		// fund NAV vendor API
+		"tiingo": true,
 	}
 	for name := range Registry {
 		got := IsOnChain(name)
@@ -79,6 +81,21 @@ func TestIsOnChain_Partition(t *testing.T) {
 	// Unknown sources fall through to on-chain (registry is closed).
 	if !IsOnChain("does-not-exist") {
 		t.Error("IsOnChain(unknown) should default true (closed registry)")
+	}
+}
+
+// A fund NAV is a reference value for the RWA surface only; admitting it
+// to VWAP would price a fund share as if it were a market trade.
+func TestRegistry_TiingoIsReferenceOnly(t *testing.T) {
+	m, ok := Registry["tiingo"]
+	if !ok {
+		t.Fatal("tiingo missing from Registry")
+	}
+	if m.Class != ClassOracle || m.IncludeInVWAP || m.DefaultWeight != 0 || m.Paid {
+		t.Errorf("tiingo = %+v; want ClassOracle, IncludeInVWAP false, DefaultWeight 0, Paid false", m)
+	}
+	if IsOnChain("tiingo") {
+		t.Error("IsOnChain(tiingo) = true; it is an off-chain vendor API")
 	}
 }
 
@@ -164,7 +181,7 @@ func TestRegistry_BackfillSafePolicy(t *testing.T) {
 		//   Phase 3 disassembly) → wantSafe.
 	}
 	for _, name := range wantUnsafe {
-		if Registry[name].BackfillSafe {
+		if Registry[name].BackfillSafe() {
 			t.Errorf("source %q has BackfillSafe=true but is on-chain Soroban; flip only after wasm-history audit lands", name)
 		}
 		if BackfillSafe(name) {
@@ -172,8 +189,7 @@ func TestRegistry_BackfillSafePolicy(t *testing.T) {
 		}
 	}
 
-	wantSafe := []string{
-		"sdex",          // classic Stellar, no WASM
+	wantPerWASM := []string{
 		"soroswap",      // audited 2026-04-29 — see docs/operations/wasm-audits/soroswap.md
 		"band",          // audited 2026-04-29 — see docs/operations/wasm-audits/band.md
 		"redstone",      // audited 2026-04-29 — see docs/operations/wasm-audits/redstone.md
@@ -185,15 +201,27 @@ func TestRegistry_BackfillSafePolicy(t *testing.T) {
 		"comet",         // audited 2026-04-29 (Blend backstop pool only known mainnet deployment; WASM verified) — see docs/operations/wasm-audits/comet.md
 		"blend",         // audited 2026-05-02 (11 contracts, 3 unique WASMs, no mid-life upgrades over 11.79M-ledger walk) — see docs/operations/wasm-audits/blend.md §"Phase 2 results"
 		"blend_emitter", // audited 2026-07-10 (ClickHouse-lake-only; all 469 lifetime events shape-verified, 465/465 distribute exhaustively) — see docs/operations/wasm-audits/blend_emitter.md
+		"sushiswap_v3",
+	}
+	for _, name := range wantPerWASM {
+		if Registry[name].Backfill != BackfillPerWASM {
+			t.Errorf("source %q must be BackfillPerWASM (Soroban: static policy plus the per-WASM replay gate)", name)
+		}
+	}
+
+	wantNoWASM := []string{
+		"sdex", // classic Stellar, no WASM
 		"binance", "kraken", "bitstamp", "coinbase",
 		"massive", "exchangeratesapi",
 		"coingecko", "coinmarketcap", "cryptocompare",
 		"ecb",
 	}
-	for _, name := range wantSafe {
-		if !Registry[name].BackfillSafe {
-			t.Errorf("source %q must be BackfillSafe=true (off-chain or pre-Soroban)", name)
+	for _, name := range wantNoWASM {
+		if Registry[name].Backfill != BackfillNoWASM {
+			t.Errorf("source %q must be BackfillNoWASM (off-chain or pre-Soroban)", name)
 		}
+	}
+	for _, name := range append(wantPerWASM, wantNoWASM...) {
 		if !BackfillSafe(name) {
 			t.Errorf("BackfillSafe(%q) returned false; off-chain + SDEX have no on-chain WASM dependency", name)
 		}

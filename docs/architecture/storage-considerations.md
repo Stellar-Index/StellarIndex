@@ -342,11 +342,11 @@ sees why it was rejected.
 
 **Reclaim:** ~50-150 GB est. (trades is already 1.42x compressed; tighter compression marginally improves it.)
 
-**Touchpoints affected:** Job 1000 was disabled to stop decompress-on-write storms during heavy backfills (`feedback_reenable_trades_compression`). Re-enabling it after #38 finishes is the documented next-step regardless of any other move.
+**Touchpoints affected:** Job 1000 was disabled to stop decompress-on-write storms during heavy backfills (`feedback_reenable_trades_compression`). Re-enabling it after task #38 finishes is the documented next-step regardless of any other move.
 
 **Risk:** Slow CPU burn during re-compression cycle; no data risk.
 
-**Decision status:** Will happen anyway when #38 finishes. Independent of the strategic trim question.
+**Decision status:** Will happen anyway when task #38 finishes. Independent of the strategic trim question.
 
 ### Move G: Decode-then-trim — ship classic-supply observers + run them + then Move D
 
@@ -375,7 +375,7 @@ gone from local storage and are read from `aws-public-blockchain`.
 | Combo | Reclaim | Sequence | External dep added? | Notes |
 |---|---|---|---|---|
 | **A alone** | ~7.1 TB | One operation, ~minutes (snapshot) + 7 days observation | No (only contingent SDF DR) | Pool 93% → ~43%. Multi-year runway. Best operator-stance fit. |
-| **A + F** | ~7.2-7.3 TB | A first, F after #38 ends | No | F happens regardless once backfills end. |
+| **A + F** | ~7.2-7.3 TB | A first, F after task #38 ends | No | F happens regardless once backfills end. |
 | **A + D** | ~10-10.5 TB | A first, D over weeks | **Yes — aws-public-blockchain for cold reads** | Skip unless A+F isn't enough. |
 | **G alone** | ~4 TB | Weeks of observer work then D | No | Self-sufficient + mission-aligned. Slow. |
 | **A + G** | ~11 TB | A this week, G over months | No | Best long-term composition. |
@@ -409,7 +409,7 @@ operator's stated constraints:
 | Reversibility window | ✓ 7 days (ZFS snapshot) | partial (re-mirror slow) | low | low (pool destroy) |
 | Operational risk | low (rm + observe) | medium | high | medium-high |
 
-**After Move A lands, the gated tasks (#5, #14, #30, #35) become safe to run.** Move F happens opportunistically when #38 finishes. Move G is the long-term self-sufficiency play that can proceed without urgency in parallel.
+**After Move A lands, the gated tasks (#5, #14, #30, #35) become safe to run.** Move F happens opportunistically when task #38 finishes. Move G is the long-term self-sufficiency play that can proceed without urgency in parallel.
 
 ---
 
@@ -462,7 +462,11 @@ This restores all four subdirs in seconds.
 - [x] *Answered 2026-09-29:* no, and it no longer can be: Move A trimmed the mirror, so a local Tier E scan fails by construction and the monthly cron added for it was retired. Tier E is operator-run against a full archive (`-archivist-url`); see `docs/operations/galexie-backfill.md` §Tier E. Original question: has Tier E ever been documented as a routine practice anywhere we haven't searched?
 - [x] *Answered 2026-09-29:* R1 can offer R2/R3 Tier B only; Tier E's subject (the bucket bytes) no longer exists on R1 after Move A. R2/R3 remain deferred. Original question: what's the exact relationship between ADR-0016's "trust R1's Tier B + E verification" promise to R2/R3 and the operational reality that Tier E hasn't been run on R1 either?
 - [x] *Answered 2026-09-29:* only `galexie-archive`. `internal/ops/archive/trim_galexie_archive.go` deletes solely from `cfg.Storage.S3BucketArchive`, and its MinIO identity is scoped to that bucket. Original question: does the trim cover `galexie-live` too, or only `galexie-archive`? (Need to skim; relevant if we ever want to trim live bucket's older partitions.)
-- [ ] Confirm MinIO du for `galexie-archive` vs `galexie-live` per-bucket breakdown (du is slow over 4.96 TB; still pending).
+- [x] *Answered 2026-09-30:* `galexie-archive` 2,336 GiB, `galexie-live` 433 GiB
+  (`du -s --block-size=1G` via the detached `minio-bucket-du.service` on R1, ~2 h; the two
+  sum to 2,769 GiB = 2.70 TiB, the whole `data/minio` dataset per `zfs list -Ho used`,
+  compressratio 1.27x). Original question: confirm MinIO du for `galexie-archive` vs
+  `galexie-live` per-bucket breakdown.
 
 ---
 

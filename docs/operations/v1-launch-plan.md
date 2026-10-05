@@ -68,7 +68,7 @@ severity: P1
 |---|---|---|---|
 | 0.1 | **`main` must be green** | agent | **DONE** (`6ce95d191`). It had been red since `e68f8eaa0`: #331 F1 moved the listing's price derivation into a worker-maintained rollup and two integration tests still refreshed only the old continuous aggregate, so every asset came back unpriced. An all-unpriced board COLLAPSES rank tier 0 into tier 1, which is why the visible symptom was a wrong sort order rather than a missing price. `make verify` cannot see this class — it does not run integration tests. |
 | 0.2 | **`/terms` + `/privacy`** | **owner — legal read only** | **BLOCKED ON THE OWNER.** Both URLs 404 today. PR #237 has the code and the tests; it needs wording signed off, nothing else. |
-| 0.3 | ~~Stop the status page saying `degraded`~~ | — | **NOT A BLOCKER — the measurement was contaminated, and the contamination was ours.** The audit sampled `/v1/status` and a 1-hour Prometheus window while TEN subagents were running cold ClickHouse and Postgres scans against r1. Two 6-hour windows from r1's own Prometheus settle it: ending **2026-09-02T20:00Z, before that load, p99 = 48.6 ms and p95 = 20.5 ms**; ending 2026-09-03T07:00Z, during it, p99 = 566.2 ms and p95 = 82.1 ms. Targets are 500 ms and 200 ms, so the steady state sits inside both by an order of magnitude. With the agents drained, live `/v1/status` reads `overall: ok`, p50 1 / p95 21 / p99 34 ms, zero active incidents. The per-route figures the audit quoted (`/v1/pairs` 4,975 ms, `/v1/accounts/{g}/operations` 4,966 ms, `/v1/pools` 4,700 ms) are load artefacts. **Neither of the audit's two options — 2-4 days of optimisation, or renegotiating the published target — is needed.** Two of those three routes were independently fixed anyway (`dea56efec` for `/v1/accounts/{g}/operations`, `12590a65a` for `/v1/pools`); `/v1/pairs` is being re-measured cleanly for cold-variant cost, which is a different and much smaller question. |
+| 0.3 | ~~Stop the status page saying `degraded`~~ | — | **NOT A BLOCKER — the measurement was contaminated, and the contamination was ours.** The audit sampled `/v1/status` and a 1-hour Prometheus window while TEN subagents were running cold ClickHouse and Postgres scans against r1. Two 6-hour windows from r1's own Prometheus settle it: ending **2026-09-02T20:00Z, before that load, p99 = 48.6 ms and p95 = 20.5 ms**; ending 2026-09-03T07:00Z, during it, p99 = 566.2 ms and p95 = 82.1 ms. Targets are 500 ms and 200 ms, so the steady state sits inside both by an order of magnitude. With the agents drained, live `/v1/status` reads `overall: ok`, p50 1 / p95 21 / p99 34 ms, zero active incidents. The per-route figures the audit quoted (`/v1/pairs` 4,975 ms, `/v1/accounts/{g}/operations` 4,966 ms, `/v1/pools` 4,700 ms) are load artefacts. **Neither of the audit's two options — 2-4 days of optimisation, or renegotiating the published target — is needed.** Two of those three routes were independently fixed anyway (`dea56efec` for `/v1/accounts/{g}/operations`, `12590a65a` for `/v1/pools`); `/v1/pairs` was re-measured cleanly on 2026-09-30 03:20Z on r1 against the local API (`curl -w '%{time_total}'`, 3 samples per variant, load 9/20 cores, no heavy jobs, no agent load): hot XLM/USDC 38–82 ms (alias fan-out), cold first hit sUSD/XRP 22 ms and AFR/USDC 38 ms, repeats 4–9 ms — the audit's 4,975 ms was a load artefact; cold-variant cost is tens of ms and needs no fix (INV-0837). |
 | 0.4 | **Email/DNS perimeter (#334)** | agent + **2 clicks from the maintainer** | **RECORDS LIVE** (`7b914f351`). MX, SPF (`-all`), DMARC (`p=quarantine`), a second DKIM selector and CAA are published and verified against the authoritative nameservers, with a drift check (`scripts/ops/dns-perimeter-check.sh`) and a weekly workflow. Two steps need the maintainer: click Cloudflare's destination-verification link so `security@` can forward, and publish the DS record at the registrar. Both are on #334. |
 
 ### Tier 1 — do before announcing; cheap; does not strictly block
@@ -83,7 +83,7 @@ severity: P1
 | 1.6 | ~~**Re-frame the `recognition` axis on `/v1/coverage`.**~~ **DONE (2026-09-03).** It was a system audit signal, not a source, and as framed could NEVER read complete (`coverage_pct 0.00748`, "23,945 unrecognized shapes on unowned contracts"). It now has its own top-level `recognition` object with its own vocabulary and MORE of the audit's numbers (`unrecognized_shapes`, the new `unrecognized_contracts`, a plain-language `meaning` on the wire), and the headline counts sources only: **20 of 20**. A genuine source failure still fails the headline (`completeness.IsAuditAxis` is a narrow fail-loud predicate). Spec 1.20.0. **The go-live gate below still says 17/17 — that staleness is NOT fixed here** and remains open; the live figure is 20 sources. | agent |
 | 1.7 | ~~**Test nets are behind again — REOPENED 2026-09-15.**~~ **CLOSED 2026-09-16.** Both test nets were dispatched via `deploy.yml` and serve **v0.85.0** across every binary the region runs — indexer, api, sla-probe, ops, migrate — verified on both hosts from `/var/lib/stellarindex/deployed-versions/`. r1 serves **v0.86.0**. `stellarindex-aggregator` is deliberately NOT deployed to either: `scripts/dev/region-binaries.tsv` records it `unit-off-disabled-inactive` on testnet and `unit-not-found` on futurenet, so the deploy filters it out rather than obeying the pubnet default and failing a health probe. The stale version stamps those hosts still carry for it name a binary nothing executes. Original text follows. **Test nets are behind again — REOPENED 2026-09-15.** The 2026-09-08 measurement was true on its date and is no longer. r1 serves **v0.81.0**; both test nets serve **v0.63.0**, seventeen releases back, which is what `fleet-release-drift` has been red on. Config has been re-applied to si-testnet from `configs/ansible` (44 changed tasks; galexie and MinIO restarted and verified back). The binaries are the remaining half, and the inventories still carry `manage_stellarindex_binaries: true` from the greenfield bring-up, which predates these hosts having releases to deploy — a `deploy.yml` dispatch per region is the codified path and the flip is the change that makes `fleet-release-drift` mean something. futurenet has had neither half. Two things were learned re-applying it, both now fixed in the role: the migrations sync was O(files) and cost twenty minutes per apply over the test nets' ProxyJump, and the `secrets_file` guard checked the path string rather than the file, so a missing secrets file died forty tasks later inside a `no_log` task. | agent |
 | 1.8 | `gh variable delete DEPLOY_APPROVAL_RELAXED` + r1 required-reviewers, at the flip. | **the maintainer** |
-| 1.9 | ~~**D7** — the thin-pool third-alias VWAP review this plan says is owed "before public traffic". Never done, no artefact.~~ **DONE (2026-09-04).** Artefact: [d7-thin-pool-third-alias-vwap-review-2026-09-04.md](../methodology/d7-thin-pool-third-alias-vwap-review-2026-09-04.md). Verdict: every first-hit served-price walk crosses the base's alias family with the **literal** quote and is gated (substance + trailing guard + freshness, or the trade-count floor), so a Soroban SAC/SAC pool is not a candidate for a classic-quoted read — pinned by tests proven non-vacuous by mutation. The one **merge** walk, `/v1/price/tip` (+ `/stream`), admitted SAC combinations unasked and served a single thin-pool print in any 30 s window the SDEX book was silent — **fixed** (`tipMergePairs`: the established forms merge; a SAC-form combination the caller did not name is read last, only after the closed bucket and every other fallback have missed, so a wrapped classic whose only market is its pool still serves from it — gated by the full substance floor, ≥ $1,000 volume **and** ≥ 20 distinct buckets **and** ≥ 6 h span over the trailing 24 h, measured on the pool alone for such an asset — and a pool print never displaces or blends into a classic-book answer; red→green). Four bounded residuals recorded (alias-union substance verdict on SAC-keyed reads; `/v1/price/at` after 24 h silence; valuation tier 3 after 1 h silence; the tip's last-tier pool read for a Soroban-only wrapped classic) and two follow-ups outside that count (coverage; a decoder-level both-legs pin); the first residual is a served-policy decision for the maintainer (artefact §7 R1). | agent |
+| 1.9 | ~~**D7** — the thin-pool third-alias VWAP review this plan says is owed "before public traffic". Never done, no artefact.~~ **DONE (2026-09-04).** Artefact: [d7-thin-pool-third-alias-vwap-review-2026-09-04.md](../methodology/d7-thin-pool-third-alias-vwap-review-2026-09-04.md). Verdict: every first-hit served-price walk crosses the base's alias family with the **literal** quote and is gated (substance + trailing guard + freshness, or the trade-count floor), so a Soroban SAC/SAC pool is not a candidate for a classic-quoted read — pinned by tests proven non-vacuous by mutation. The one **merge** walk, `/v1/price/tip` (+ `/stream`), admitted SAC combinations unasked and served a single thin-pool print in any 30 s window the SDEX book was silent — **fixed** (`tipMergePairs`: the established forms merge; a SAC-form combination the caller did not name is read last, only after the closed bucket and every other fallback have missed, so a wrapped classic whose only market is its pool still serves from it — gated by the full substance floor, ≥ $1,000 volume **and** ≥ 20 distinct buckets **and** ≥ 6 h span over the trailing 24 h, measured on the pool alone for such an asset — and a pool print never displaces or blends into a classic-book answer; red→green). Four bounded residuals recorded (alias-union substance verdict on SAC-keyed reads; `/v1/price/at` after 24 h silence; valuation tier 3 after 1 h silence; the tip's last-tier pool read for a Soroban-only wrapped classic) and two follow-ups outside that count (coverage; a decoder-level both-legs pin); the first residual is accepted for v1 as-is, bounded by the trailing-baseline guard and freshness, with the one-method `SubstanceGate` literal-pair measure recorded as a post-v1 option (artefact §7 R1). | agent |
 | 1.10 | **DONE (2026-09-04).** Applied from `configs/ansible` at `9dd126f06` with `--tags ops-jobs` (`--check --diff` first; the enable step fails in check mode before the unit exists, as documented below). `verify-served-values.timer` is armed (next 06:20 UTC) and a hand-started first run exited 0: `xlm_total_supply`, `xlm_circulating_supply` and `usdc_total_supply` all OK (rel_err 4.0e-7, 3.0e-4, 1.5e-3); `served_values.prom` is written, so the three served-value alerts now select a series that exists. Recipe kept: **Apply the served-value truth harness to r1.** `verify-served-values.{service,timer}` and their `ops-jobs` task are codified and were NOT on the box — an ansible commit does not reach r1 on its own, and until this runs the harness that reconciles the flagship served numbers against SDF/Stellar Expert is still not scheduled anywhere. From `configs/ansible`, `--check --diff` first, then `ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --diff --tags ops-jobs` (tag-limited runs need `-e ansible_python_interpreter=/usr/bin/python3`). Verify: `systemctl list-timers verify-served-values.timer` shows a NEXT/LEFT, and after the first 06:20 UTC run `/var/lib/node_exporter/textfile_collector/served_values.prom` exists and Prometheus has `stellarindex_served_value_last_run_unix`. Two expected transients: the weekly `ansible-drift` workflow reports the new install/remove tasks and the systemd handler as changed until the apply lands, and `stellarindex_served_value_check_stale` fires off its new `absent_over_time` arm from the moment the rules deploy (rules ship automatically with `deploy.yml`; the units do not) until that first run stamps the series — up to ~25 h after the apply. **If the first scheduled run exits non-zero** — the 2026-07-02 hand-run found three findings, so that is a plausible outcome — `stellarindex_served_value_drift` and `stellarindex_served_value_unit_failed` fire roughly 26–50 h after the apply and stay firing until the finding is resolved or accepted; triage per the drift section of [served-value-drift](runbooks/served-value-drift.md).| operator on r1 |
 | 1.11 | ~~**Enable ClickHouse's Prometheus endpoint on r1.**~~ **DONE (2026-09-04).** The lake had exported no metrics at all: the stock `/etc/clickhouse-server/config.xml` ships the whole `<prometheus>` block inside an XML comment, nothing listened on 9363, and Prometheus held zero `ClickHouse*` series, so the API's ClickHouse READ path, the rollups and the CH-fed projector had ingest-side coverage only. The role's drop-in and scrape job (`9eeac705b`) are now on the box: `curl -s localhost:9363/metrics` returns `ClickHouse_Info`, the `clickhouse` scrape target reads `health: up` against `http://localhost:9363/metrics`, and Prometheus holds **3,092 `ClickHouse*` series**. No ClickHouse restart was performed — the `config.d` reloader picked the drop-in up. **The expected transient did fire and was handled:** `stellarindex_clickhouse_server_down` is a *page*, and it deploys with the rules while the drop-in does not, so it fired on its `absent_over_time` arm the moment the rules landed. It was silenced with a reason for the duration of the apply, resolved on the first successful scrape, and the silence was lifted — `amtool silence query` is empty. **That ordering is the lesson, not the alert:** a page whose rule ships automatically and whose exporter ships by hand is a self-inflicted page every time. Rows that install an exporter must land the exporter before, or in the same change as, the rule that watches it. | operator on r1 |
 | 1.12 | ~~**Give the ClickHouse schema snapshot an off-site target.**~~ **STALE — RESOLVED, measured 2026-09-15.** `ch-schema-snapshot.service` on r1 carries `Environment=SNAPSHOT_MC_TARGET=offsite/stellarindex-pgbackrest-r1/ch-schema`, and the 05:43 run that day logged `pushed to offsite/stellarindex-pgbackrest-r1/ch-schema/2026-09-15 (8 object(s) verified at the destination)`. The `offsite` mc alias resolves to `https://s3.eu-central-1.amazonaws.com` — a different provider, not the same host and not the same ZFS pool — and the bucket holds eight consecutive daily snapshots through that date. The row's premise (`ch_schema_snapshot_mc_target` unset) no longer holds; the lake's DDL is off-site and the ADR-0043 schema-first restore has a source. | — |
@@ -193,6 +193,35 @@ the headline should be measured by location or by ownership decides whether
 $4B is the right target at all. Publishing both, with a holder-concentration
 column, is the option that needs no one to choose in the dark.
 
+**DECIDED — measurement basis and the two policy calls.**
+
+- **Basis: publish both.** The headline is ownership-basis on the classic arm
+  only (issuer/treasury excluded where we can identify it); the contract arm is
+  still total-only (`BasisSEP41TotalOnly`) until the gaps below are closed. A
+  location-basis figure will be shown beside the headline so a reader can
+  reconcile to any third party; it is not yet served. Neither replaces the
+  other. $4B is therefore not a target: the comparable location figure is what
+  we reconcile against, and the gap lines above are explained, not chased.
+- **TPT30 bond line (~$559M): declined.** It is a bond contract with no on-chain
+  tie to its claimed issuer (see the VuMe row); of the real-estate class proper,
+  13 of 15 are scam-flagged and the other 2 are in no directory. Re-open only
+  with a primary-source binding.
+- **Private credit (~$548M): supply served, price withheld.** No price exists;
+  a supply without a price adds $0 and is not valued at par.
+- **Remaining engineering (not a decision):**
+  - Compute and serve a location-basis total (every holder balance, no
+    issuer/treasury exclusion) next to the ownership headline, on the API and
+    the RWA page.
+  - Contract arm (`BasisSEP41TotalOnly`, `internal/supply/sep41.go`): the
+    per-contract exclusion list already exists as `[supply].per_asset_locked_sets`.
+    What is missing: (1) track the SEP-41 admin balance (`set_admin`);
+    `StorageSEP41SupplyReader` returns `AdminBalance=0`
+    (`storage_sep41_reader.go`), which is why the basis is total-only;
+    (2) configure `per_asset_locked_sets` entries for the RWA contracts'
+    issuer/treasury holders, after the `sac_wrappers` observability
+    prerequisite noted at `internal/config/config.go`; or (3) add a
+    holder-concentration column.
+
 ### Tier 2 — real work that does NOT gate the announcement
 
 Named explicitly, because all of them are carried below as if they did:
@@ -202,7 +231,8 @@ with the authoritative re-sum (0 drift, tolerance 0)"; no reset is needed and
 the item is closed on that evidence, **W5.6**
 (`contract_events_daily` v2 — the branch is not even on origin), **W5.7 /
 W5.8** (CEX dust delete, galexie trim, `soroban_events` decommission #803 —
-destructive, should be last), **W8-9b**, **W8-10a**, **W8-12**, **#340**
+destructive, should be last), **W8-9b**, **W8-10a**, ~~**W8-12**~~ (ACCEPTED
+2026-10-02, see W8 item 12), **#340**
 items 6-9, **#349-#352** (correctly labelled post-v1), **#372**, the decks,
 the CoinGecko Pro purchase, enabling hashdb, and IP rotation. **HA / R2+R3
 is superseded by D2** (single box with tested restore for v1); the
@@ -219,7 +249,7 @@ as the trusted backstop. Where each unpriced line stands after today:
 | Franklin gBENJI + grBENJI (Lux CNAV MMF, ISINs LU2900381208 / LU3258450587) | 57.3M tokens ≈ $57M | ~~**PRICED 2026-09-17**~~ **NOT LIVE until the release after v0.89.3 — see the 2026-09-18 correction box below.** Original row: — admitted through the domain-sibling arm (`recognition: curated_account_directory_via_domain_sibling`, the SEP-1 at franklintempleton.com binds them beside the listed BENJI issuer) and valued at the prospectus constant NAV $1.00 (`reference.provenance: prospectus_constant_nav`; the issuer's page showed NAV $1.00 / MTM $0.9999 on 2026-09-16). The page's figures load from `POST franklintempleton.lu/api/pds/price-and-performance?op=Pricing` — a public GraphQL endpoint (query extracted from the bundle) that answers `Overview: null` to every country/language pair tried; the browser's own request body was not captured. A live daily check is the follow-up. |
 | Franklin sgBENJI (Singapore VNAV, SGXZ71843866) | 25.0M tokens ≈ $25M | admitted (sibling arm), **unpriced by design** — an accumulating VNAV class (factsheet NAV $1.02 on 2026-02-28) needs a live NAV, not a constant. Source: franklintempleton.com.sg, same PDS family. |
 | WisdomTree, 12 assets | 7.0M tokens ≈ $40M (rwa.xyz) | the issuer publishes a machine-readable daily NAV **and** the Stellar issuer per fund at `dataspanapi.wisdomtree.com/funddetails/{nav,blockchain_addresses}/?ticker=WTGXX` (`{"dt":"2026-09-16","nav":1.0,"sharesOutstanding":1230403338.34}`; Stellar address matches our WTGX issuer exactly) — read from a browser. Cloudflare returns 403 to every non-browser client, from here and from r1, so the sync cannot read it without impersonating a browser, which this project will not do. **Needs Ash:** ask WisdomTree for API access, or accept SDF's prices for these twelve via the curated arm. WTGXX is a stable-NAV MMF (1.00 daily); the other eleven float. |
-| Tradable, 24 private-credit contracts | 548.1M tokens | supply served; the platform publishes deal sizes and fill %, **no per-token value** (tradable.xyz, doc.tradable.xyz). Only par (1.00) exists, which is what the third party uses. A `stated_par` basis, served apart, is a maintainer policy call; the curated arm carries them at par once the key is set. |
+| Tradable, 24 private-credit contracts | 548.1M tokens | supply served; the platform publishes deal sizes and fill %, **no per-token value** (tradable.xyz, doc.tradable.xyz). Only par (1.00) exists, which is what the third party uses. **DECIDED 2026-10-02: no `stated_par` basis.** Par on private credit is the face value of a loan, not a statement of what the token is worth: no regulation fixes it (unlike the CNAV arm's prospectus NAV) and nothing re-reads it when a deal impairs. The 24 stay supply-only (served via `/v1/assets/{contract}/supply`). No directory names them, so they are outside the verified RWA set: they add $0 there and are not counted in `assets_unvalued`, and the served verified figure sits below the third party's by this line. The curated arm still carries them at par once its key is set, under the curator's own provenance: as `curated_assets` rows (counted in `curated.additional_value_usd`) when `curated.status` is `served`, or inside `curated.published` when it is `published_totals`. Reopen only with a per-deal value the issuer publishes. |
 | Realiz VuMe Bond 2030 (TPT30, ISIN CH1509100140) | 500M tokens | refused on the contract's own facts (see the corrected line below); rwa.xyz and Dune both carry it at NAV $1.00 from the issuer. Curated arm only. |
 | RedSwan (real estate) / long tail | ≈ $72M / ≈ $241M | scam-flagged class / no primary-source bindings — unchanged. |
 
@@ -227,7 +257,7 @@ Arithmetic: verified $2,535.8M (2026-09-16) + $57M today = **≈ $2.59B on price
 of our own**; + WisdomTree $40M + sgBENJI $25M once their NAVs can be fetched =
 ≈ $2.66B. The remaining ≈ $1.4B to the third party's figure is par-valued
 private credit and one refused bond — reachable only through the curated arm
-(SDF's own prices) or a par policy, never through a measurement. That is the
+(SDF's own prices), never through a measurement; a par policy was declined (Tradable row). That is the
 honest ceiling of "independent", and it is written here so it is not re-derived.
 
 > **v0.90.0 LIVE — measured 2026-09-18 00:25–00:45 UTC (every region; explorer
@@ -338,11 +368,14 @@ honest ceiling of "independent", and it is written here so it is not re-derived.
 > **6. Carried out of the tail-triage pass (owner: agent unless noted):**
 > C1-041 residual — `sep41_total_only` missing from the `supply_basis` spec
 > enum since v0.21.0; C6-081 — six Dockerfiles `FROM` by tag, not digest;
-> C2-038/C4-086 — the PG pipeline sink's undrained-on-exit is log-only
-> (counter + alert, like #368's CH half); C6-056 — ADR-0011 lacks the
-> amendment for the diagnostic-only over-mint leg; C2-049 — the chainlink
-> source takes feed decimals from config and never reads `decimals()` (r1
-> runs the EUR/USD feed enabled — LIVE, fix in flight); C4-069 —
+> ~~C2-038/C4-086 — the PG pipeline sink's undrained-on-exit is log-only
+> (counter + alert, like #368's CH half)~~ **fixed** for on-chain trades: once
+> the producer has stopped, shutdown rewinds the ledgerstream cursor below the
+> lowest abandoned trade; ledger-less rows stay counter + ERROR; C6-056 — ADR-0011 lacks the
+> amendment for the diagnostic-only over-mint leg; C2-049 — ~~the chainlink
+> source takes feed decimals from config and never reads `decimals()`~~
+> **FIXED `8bb7095a1` (v0.90.0): `decimals()` is read on-chain and a mismatch
+> is refused + alerted; r1 2026-09-30 shows 0 mismatches on 6 live feeds**; C4-069 —
 > `sdf_reserve_accounts` has no list-level diff against SDF's published
 > list (2% value cross-check only); C1-050 — aggregator and API resolve
 > token decimals independently, market-cap/FDV computed regardless; C1-022
@@ -374,9 +407,10 @@ stops on its own when `/var/lib/stellarindex/sdex-history.stop` exists, when
 the Postgres volume has < 300G free (2.7T free at start; `trades` is 95 GB),
 or at the floor 50,746,445 (2024-03-11, the first on-chain AMM trade). Next
 chunk's upper bound lives in `/var/lib/stellarindex/sdex-history.next`; the
-log is `/var/log/stellarindex/sdex-history.log`. Known caveat carried from
-the by-hand runs: `ch-rebuild -write` records no projection dirty window, so
-the completeness verdict keeps its prior claim over these ranges.
+log is `/var/log/stellarindex/sdex-history.log`. Chunks written before
+`ch-rebuild -write` recorded a projection dirty window (it now records one
+per re-derived source before it writes) left the completeness verdict
+carrying its prior claim over those ranges.
 
 **Sponsor / creator cohort pages — SHIPPED 2026-09-17 (post-1.0 item, done
 early because it was asked for by name).** `/insights/sponsors/{g}` and
@@ -879,12 +913,19 @@ outstanding set:
 
 - **D1 — ✅ RESOLVED BY ENGINEERING (better than the recommendation).** The
   2026-08-24 corroborated-release amendment + the synthetic USD-cross
-  reference (#142/#149, v0.41.x) give the thin fiat pairs a second source:
-  `success_count=2` medians verified live on XLM/EUR + XLM/GBP first tick,
-  auto-release works unattended, and `writer_wired` was fixed 2026-08-22 —
-  the pager now sits behind real automatic protection. The old
-  "stop paging when sources=1" recommendation is superseded. Unblocks
-  W6.7's gating logic.
+  reference (#142/#149, v0.41.x) give the thin fiat pairs a corroborating
+  reference for release — it never counts toward `SourceCount`
+  (`composite_reference.go`, `confidence.go`), so Phase 2 still engages on a
+  single-source pair, but `success_count=2` medians release it unattended
+  (verified live on XLM/EUR + XLM/GBP first tick) and `writer_wired` was
+  fixed 2026-08-22, so a freeze holds the served value. Measured 2026-09-30:
+  `stellarindex_anomaly_freeze_engaged_total` counts frozen TICKS, not
+  freezes — 575 ticks over 14 d were 10 freeze events (`freeze_events`:
+  9 XLM/GBP, 1 ETH/EUR, median hold 31 min, all self-released); the anomaly
+  alerts are ticket severity and only `freeze_escalated` pages. The old
+  "stop paging when sources=1" recommendation is superseded; the pair-level
+  fix is INV-2031 (derivation as the served base below a liquidity floor).
+  Unblocks W6.7's gating logic.
 - **W3.2 — ✅ MERGED** (#126, harness + first measurement; W3.3's
   account-family cost is root-caused further: the ops-by-account tip-walk,
   tracked with a designed fix in the session task list).
@@ -1403,7 +1444,22 @@ land WITH the rebuild.
 **W5.7 — [C]** CEX dust DELETE (#68); monthly galexie trim timer enable.
 
 **W5.8 — [C]** ClickHouse Phase 8 `soroban_events` decommission (#803) —
-destructive, LAST, enumerate live readers first.
+destructive, LAST. Every live Postgres `soroban_events` reader below must be
+moved to the ClickHouse lake or deleted before any TRUNCATE or DROP; a
+TRUNCATE leaves the table present, so each of these reads an empty table as
+"nothing happened" rather than failing. Re-grep before executing
+(`StreamSorobanEvents|FirstSorobanEventLedger|MaxSorobanEventLedger|FindSorobanEventsLedgerGaps|DistinctSorobanTopicSamples|ReDeriveOutputCountsByKind\(`).
+
+| reader | file:line | path |
+|---|---|---|
+| projector legacy branch (`clickhouse_projector_source=false`) | `internal/projector/projector.go:1262` (stream), `:1664` (first-ledger probe) | falls back to PG when `chAddr` is empty |
+| `preseedFactoryChildren` callers | `internal/ops/chops/compute_completeness.go:1951`, `verify_reconciliation.go:127`, `ch_rebuild.go:635`, `ch_reproject.go:105` | **moved to the lake** — streams `contract_events` and errors on zero seeded |
+| projection re-derive, `completeness.ReDeriveOutputCountsByKind` | `internal/completeness/reconcile.go:291`, `:417`; callers `compute_completeness.go:1819` (non-`-ch` mode), `verify_reconciliation.go:131` | PG |
+| `resume-stalled` data-gap gate | `internal/ops/ingest/resume_stalled.go:699` (`FindSorobanEventsLedgerGaps`) | PG |
+| `seed-protocol-contracts` | `internal/ops/ingest/seed_protocol_contracts.go:88` (`MaxSorobanEventLedger`), `:216` (factory walk) | PG |
+| recognition claim, `computeRecognitionGaps` | `internal/ops/chops/compute_completeness.go:2549` (non-`-ch` mode; `-ch` uses `computeRecognitionGapsCH`) | PG |
+| `verify-recognition` | `internal/ops/chops/verify_recognition.go:74` (`DistinctSorobanTopicSamples`) | PG |
+| gap-detector `soroban-events` target | `internal/storage/timescale/per_source_gaps.go:423` | PG; `gapVerdictTrustworthy` (`gap_detector.go:619`) refuses a clean verdict over zero rows — delete the target with the table |
 
 **Sequencing rule (unchanged, still binding):** one heavy job at a time under
 `/usr/local/sbin/run-heavy-job.sh`; decompress before replaying through
@@ -1507,19 +1563,19 @@ older `### D — Decisions only the maintainer can make` table further down, **t
 
 **Still open and genuinely owner-only:** PR #237 (legal read), external security-review booking, credential rotation for anything session-exposed (see the note on MinIO root below), and signing the accepted-risk list once drafted.
 
-**D7 is not a decision — it is work I owe:** the C4-012/13 third-alias thin-pool VWAP surface needs a deliberate review before public traffic. **DONE 2026-09-04** — row 1.9 above; the one exposed surface (`/v1/price/tip`) is fixed, and R1 in the artefact is the residual that IS a decision.
+**D7 is not a decision — it is work I owe:** the C4-012/13 third-alias thin-pool VWAP surface needs a deliberate review before public traffic. **DONE 2026-09-04** — row 1.9 above; the one exposed surface (`/v1/price/tip`) is fixed, and R1 in the artefact is accepted for v1 as-is (existing guards bound it); the literal-pair measure is a post-v1 option.
 
 **Correction to the security gate row:** it names `ratesengine-admin`, a pre-rename credential. Verified on r1 2026-08-29: MinIO root is now `stellarindex-admin` (40-char secret) and MinIO was restarted 2026-07-27, i.e. after the 2026-07-25 plaintext exposure. Verified 2026-09-28: the password rotated too — the old access key is rejected ("Access Key Id … does not exist") and the stored old secret differs from the live one. The exposure is closed; moving services off root to least-privilege users remains hygiene.
 
 
 ### D — Decisions only the maintainer can make
 
-**D1 — [V] Anomaly-freeze pages on CORRECT prices.** Verified worsening:
-`stellarindex_anomaly_freeze_engaged_total{class="default"}` was 382 on
-2026-07-27 and is **1,700** now. Fires on thin FX crosses with `sources=1`;
-the served prices were independently verified correct (0.06% / 0.21% off).
-`writer_wired=false`, so the page has no automatic protection behind it.
-Recommendation: stop paging when `sources=1`. **Blocks W6.7.**
+**D1 — ✅ RESOLVED 2026-08-24 (see the verified-live list above).** The
+2026-07-27 reading (`engaged_total` 382 → 1,700, `writer_wired=false`,
+"stop paging when `sources=1`") is superseded: the counter counts frozen
+ticks, the writer is wired, the alerts are ticket severity, and the served
+value is held during a freeze. Nothing left for the maintainer to decide
+here; the thin-pair serving rule is INV-2031.
 
 **D2** HA at v1 vs fast-follow (single-box SPOF as accepted risk + tested
 restore; warm standby fast-follow).
@@ -1557,7 +1613,10 @@ is a lightweight documentation sign-off, not open work.
 **Amended 2026-09-28 (#346):** PRV-1 is superseded. Account erasure and
 export were built in GH #809 (`internal/accounterasure`, migration 0188);
 the operator procedure and the backup/snapshot copies an erasure cannot
-reach are in `runbooks/account-erasure.md`.
+reach are in `runbooks/account-erasure.md`. Retention is keep-indefinitely
+with pseudonymisation on erasure; identity checks and the access,
+correction, restriction, objection and single-member erasure procedures
+are in `runbooks/privacy-rights-requests.md`.
 
 ---
 
@@ -1605,8 +1664,9 @@ reach are in `runbooks/account-erasure.md`.
 > 6. **10a convert-page build-frozen residue** (low-med honesty) —
 >    `convert/[from]/[to]/page.tsx` static header/table labeled "current
 >    rate"; only ConvertPair re-fetches live.
-> 7. **12 LP/trustline history gap** (low) — no pre-63.3M entry-delta
->    backfill; operator decision (accept documented cutoff vs build it).
+> 7. ~~**12 LP/trustline history gap** (low) — no pre-63.3M entry-delta
+>    backfill; operator decision (accept documented cutoff vs build it).~~
+>    **ACCEPTED 2026-10-02** — documented cutoff, no backfill; see W8 item 12.
 > **Item 2** (SDEX sub-$100M base-unresolvable volume) reproduces but is the
 > DISCLOSED, accepted residual with a documented path (both-legs-corroborate
 > / bridge-quote gating), not a hidden gap.
@@ -1676,8 +1736,31 @@ were all found to be done or half-done once checked).
 11. Observations `as_of` lie; three VWAP windows on one SSE topic;
     `?asset=native` matches nothing; SSE payload schema mismatch; tip stream
     6 qps/conn.
-12. LP reserves live-only from ledger 63.3M — no trustline/LP backfill.
+12. ~~LP reserves live-only from ledger 63.3M — no trustline/LP backfill.~~
+    **ACCEPTED 2026-10-02 — documented cutoff, no backfill.**
+    `lp_reserve_observations` starts at ledger 63,300,828 (observer
+    deploy). Trustlines are not part of the gap: they were seeded deep
+    (34.96M rows from ledger 31.8M). The LP component self-heals
+    because every swap re-observes the pool, so the measured cost was
+    −0.14% of AQUA's LP component (516.5M vs Horizon's 517.3M; the 231
+    missing pools are dust; see §2.4's claimable-balance entry). The
+    cost of not building it: an `as_of` supply
+    below 63.3M has no LP component, and a pool dormant since before
+    the cutoff stays unobserved. The cutoff is published in
+    [supply-pipeline.md](../architecture/supply-pipeline.md#lp-reserve-history-cutoff).
+    Reopen only if a dormant-pool audit shows a material gap. The seed
+    would then copy `supply seed-claimable-balances`.
 13. `accounts/{g}/trades` windowing; movements 11-month gap; wasm full-scan.
+    **DECIDED.** Movements gap closed on measurement (13b, W8 box above);
+    wasm full-scan fixed (`509d1d83`). Trades: deep per-account history is
+    served from an account-keyed ClickHouse table, `stellar.trades_by_account`
+    (ADR-0048 serve-by-query-shape, the `account_movements` pattern). Rejected:
+    taker/maker in `trades`' `compress_segmentby` (recompresses every chunk and
+    splits the `base_asset, quote_asset, source` segments the pair reads ride),
+    and keeping the bounded horizon as the v1 contract (the account page must
+    cover the account's whole lifetime). Until that table ships, `/trades`
+    floors at the uncompressed horizon and its `note` says so. The build (DDL,
+    writer, reader, OpenAPI) is its own slice with a plan review.
 14. ADR-0017 contract 4 never runs; archive `chmod o+rx` one-off.
 15. CI/test gaps: `lint-metric-refs` accepts comments; TWAP CAGG 5-month
     coverage; revocation drift guard misses the cache-hit path; no
@@ -4678,7 +4761,7 @@ are obsolete — repo has been public since 2026-07-03):
 | Genesis edge [2→287,404] | Accept as documented-unfillable (recover via op-replay if ever needed) |
 | Served-tier retention/serve-window policy | Document current reality (projection-scoped windows per source) as the v1 contract |
 | Site-promised features (#34 residue) | Build or retract before announcement copy is finalized |
-| C4-012/13 third-alias thin-pool VWAP surface | **DONE 2026-09-04** — [artefact](../methodology/d7-thin-pool-third-alias-vwap-review-2026-09-04.md); `/v1/price/tip` fixed, residual R1 is the remaining decision |
+| C4-012/13 third-alias thin-pool VWAP surface | **DONE 2026-09-04** — [artefact](../methodology/d7-thin-pool-third-alias-vwap-review-2026-09-04.md); `/v1/price/tip` fixed, residual R1 accepted for v1 (literal-pair measure post-v1) |
 
 ## 5. Corrections to prior plans (so nobody re-trusts stale rows)
 
@@ -4711,9 +4794,10 @@ are obsolete — repo has been public since 2026-07-03):
     companion): 24 of its 35 rows were done and never struck — rows 1 and 19
     closed on the day it was compiled (`d1cd18ac`, `a1c5c2e5`), rows 2 and 5
     two days later (`f75ab4b2`, `ef278218`). Still-open threads carry here:
-    **#7 → W8-13** (needs the decision), **#12 residual (r1
+    **#7 → W8-13** (decided: `stellar.trades_by_account` in ClickHouse; see
+    W8-13), **#12 residual (r1
     `[supply].sac_wrappers`) → W2 + an r1 config confirm**, **#14 → W5.4**,
-    **#15 → W8-12**, **#18 residual (MinBatchLimit wedge) → W8-9**, **#22
+    **#15 → W8-12** (ACCEPTED 2026-10-02), **#18 residual (MinBatchLimit wedge) → W8-9**, **#22
     residual → W6.5**, **#31/#34 → `audit-remediation-operator-actions.md`**,
     **#33 → §3 [OP] 2**, **#35 → D10**. Row **#32** (the two pending
     `--tags caddy` config changes) is presumed applied but has no apply

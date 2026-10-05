@@ -23,13 +23,9 @@ import (
 //
 // Which leg of an `XLM / <token>` market ends up in `base_asset` is the
 // pool's own token ordering, not a property of the trade — the same
-// economic swap lands either way round depending on the venue. The
-// waterfall reads the two sides differently, though:
-// [tradeUSDVolumeViaXLMBaseAnchor] fires only when the BASE leg is
-// anchorable, so an XLM-QUOTED trade goes to [tradeUSDVolumeViaFX]
-// instead and is valued off whatever rate the resolver can find for the
-// quote leg — which for XLM is a direct XLM/USD market, i.e. the same
-// number, reached by a different route.
+// economic swap lands either way round depending on the venue. Rows
+// inserted before the waterfall anchored the XLM quote leg too went to
+// [tradeUSDVolumeViaFX] instead, which applies the two-leg cross-check.
 //
 // The rows this tier repairs are the ones where that route produced
 // something else, or nothing: a NULL usd_volume (no rate for the minute
@@ -64,7 +60,7 @@ func (s *Store) PlanXLMQuoteUSDVolumeRestamp(ctx context.Context, p RestampScanP
 		Assets:  xlmAssetForms(),
 		Gate:    xlmQuoteTierFor,
 		Value: func(t canonical.Trade) (*string, error) {
-			return tradeUSDVolumeViaXLMQuoteAnchorFor(ctx, t, s.usdVolumeFXResolver), nil
+			return tradeUSDVolumeViaXLMQuoteAnchorFor(ctx, t, s.usdVolumeFXResolver)
 		},
 	})
 }

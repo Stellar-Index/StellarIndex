@@ -95,7 +95,7 @@ as of 2026-04-27.
 Verified 2026-04-23 against the public contract source
 (`comet-contracts/src/c_pool/event.rs` and `call_logic/pool.rs:21,184-191`);
 re-verified 2026-05-26 for the join/exit/deposit/withdraw
-additions (#26):
+additions (920725666):
 
     topic[0] = ScvSymbol("POOL")
     topic[1] = ScvSymbol("<kind>")
@@ -117,7 +117,7 @@ additions (#26):
     }
 
 Classification is **byte-equal** against pre-encoded `ScvSymbol`
-constants. Since #26 the decoder claims all five POOL kinds:
+constants. Since 920725666 the decoder claims all five POOL kinds:
 `swap` → `canonical.Trade` (table `trades`), the other four →
 `LiquidityEvent` (table `comet_liquidity`, migration 0042). Any
 other `(POOL, *)` topic (e.g. a hypothetical `set_controller`
@@ -175,7 +175,7 @@ amount is zero / negative. For swaps the trade direction is
    (`"COMET_POOL"`?) silently drops every event.
 2. **Topic[1] symbol change for swap** — `"swap"` → `"trade"`
    silently drops every trade. Same hazard applies to each of
-   `join_pool` / `exit_pool` / `deposit` / `withdraw` since #26 —
+   `join_pool` / `exit_pool` / `deposit` / `withdraw` since 920725666 —
    a rename of any of the five known kinds drops that kind from
    `comet_liquidity` until the decoder is updated. Brand-new
    variants (e.g. a future `(POOL, set_controller)`) fall through

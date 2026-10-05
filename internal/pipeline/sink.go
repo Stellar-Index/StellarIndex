@@ -620,7 +620,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 		aquarius.RewardsEvent, aquarius.AdminEvent, aquarius.FeeEvent, aquarius.KillEvent,
 		phoenix.TradeEvent, phoenix.LiquidityEvent, phoenix.StakeEvent, phoenix.InitializeEvent, phoenix.AdminEvent,
 		comet.TradeEvent, comet.LiquidityEvent,
-		sushiswap_v3.TradeEvent,
+		sushiswap_v3.TradeEvent, sushiswap_v3.PositionEvent,
 		reflector.UpdateEvent, redstone.UpdateEvent,
 		blend.NewAuctionEvent, blend.FillAuctionEvent, blend.DeleteAuctionEvent,
 		blend.PositionEvent, blend.EmissionEvent, blend.AdminEvent,
@@ -628,7 +628,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 		blend_emitter.DistributeEvent, blend_emitter.DropEvent, blend_emitter.SwapConfigEvent,
 		cctp.Event, rozo.Event,
 		sorocredit.Event,
-		defindex.Event, defindex.VaultEvent, defindex.DFeesEvent,
+		defindex.Event, defindex.VaultEvent, defindex.DFeesEvent, defindex.AdminEvent,
 		upshift.Event,
 		sep41_supply.Event, sep41_transfers.Event:
 		return true
@@ -1022,6 +1022,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		return persistTrade(ctx, logger, store, e.Trade)
 	case sushiswap_v3.TradeEvent:
 		return persistTrade(ctx, logger, store, e.Trade)
+	case sushiswap_v3.PositionEvent:
+		return persistSushiswapV3Position(ctx, logger, store, e)
 	case comet.LiquidityEvent:
 		return persistCometLiquidity(ctx, logger, store, e)
 	case upshift.Event:
@@ -1184,6 +1186,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		}
 		bumpEntryCount(ctx, logger, store, defindex.SourceName)
 		return nil
+	case defindex.AdminEvent:
+		return persistDefindexAdmin(ctx, logger, store, e.Admin)
 	case external.TradeEvent:
 		return persistTrade(ctx, logger, store, e.Trade)
 	case external.UpdateEvent:
@@ -2412,6 +2416,49 @@ func persistSoroswapLiquidity(ctx context.Context, logger *slog.Logger, store *t
 	return nil
 }
 
+func persistSushiswapV3Position(ctx context.Context, logger *slog.Logger, store *timescale.Store, e sushiswap_v3.PositionEvent) error {
+	const table = "sushiswap_v3_position_events"
+	txHash, err := timescale.DecodeSoroswapTxHash(e.TxHash)
+	if err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(sushiswap_v3.SourceName, table).Inc()
+		logger.Error("decode sushiswap_v3 position tx_hash failed",
+			"contract_id", e.ContractID, "ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return err
+	}
+	row := timescale.SushiswapV3PositionEvent{
+		Pool:            e.ContractID,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          txHash,
+		OpIndex:         int16(e.OpIndex),
+		EventIndex:      int16(e.EventIndex),
+		Action:          e.Action,
+		Owner:           e.Owner,
+		Sender:          e.Sender,
+		Recipient:       e.Recipient,
+		Token0:          e.Token0,
+		Token1:          e.Token1,
+		TickLower:       e.TickLower,
+		TickUpper:       e.TickUpper,
+		Amount0:         e.Amount0.String(),
+		Amount1:         e.Amount1.String(),
+	}
+	if e.Action != sushiswap_v3.EventCollect {
+		row.Liquidity = e.Liquidity.String()
+	}
+	if err := store.InsertSushiswapV3PositionEvent(ctx, row); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(sushiswap_v3.SourceName, table).Inc()
+		logger.Error("insert sushiswap_v3 position event failed",
+			"contract_id", e.ContractID, "ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return err
+	}
+	bumpEntryCount(ctx, logger, store, sushiswap_v3.SourceName)
+	logger.Debug("sushiswap_v3 position event ingested",
+		"contract_id", e.ContractID, "ledger", e.Ledger, "action", e.Action,
+		"amount_0", row.Amount0, "amount_1", row.Amount1, "owner", e.Owner)
+	return nil
+}
+
 func persistPhoenixLiquidity(ctx context.Context, logger *slog.Logger, store *timescale.Store, e phoenix.LiquidityEvent) error {
 	c := e.Change
 	sharesStr := ""
@@ -2472,6 +2519,12 @@ func persistPhoenixInitialize(ctx context.Context, logger *slog.Logger, store *t
 }
 
 func persistPhoenixAdmin(ctx context.Context, logger *slog.Logger, store *timescale.Store, e phoenix.AdminEvent) error {
+	// Only the min-trading settings carry a value; the zero Amount of every
+	// other action must stay NULL, not "0".
+	value := ""
+	if e.AdminAction == phoenix.AdminActionBlendSetMinTradingA || e.AdminAction == phoenix.AdminActionBlendSetMinTradingB {
+		value = e.Value.String()
+	}
 	if err := store.InsertPhoenixAdmin(ctx, timescale.PhoenixAdminEvent{
 		Pool:            e.Pool,
 		Ledger:          e.Ledger,
@@ -2481,6 +2534,7 @@ func persistPhoenixAdmin(ctx context.Context, logger *slog.Logger, store *timesc
 		EventIndex:      e.EventIndex,
 		AdminAction:     e.AdminAction,
 		Admin:           e.Admin,
+		Value:           value,
 	}); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(phoenix.SourceName, "phoenix_admin_events").Inc()
 		logger.Error("insert Phoenix admin failed",
@@ -2492,6 +2546,35 @@ func persistPhoenixAdmin(ctx context.Context, logger *slog.Logger, store *timesc
 	logger.Debug("Phoenix admin ingested",
 		"source", phoenix.SourceName, "pool", e.Pool, "ledger", e.Ledger,
 		"admin_action", e.AdminAction, "admin", e.Admin)
+	return nil
+}
+
+func persistDefindexAdmin(ctx context.Context, logger *slog.Logger, store *timescale.Store, a defindex.VaultAdmin) error {
+	var amount string
+	if a.Amount != nil {
+		amount = a.Amount.String()
+	}
+	if err := store.InsertDefindexAdminEvent(ctx, timescale.DefindexAdminEvent{
+		Ledger:          a.Ledger,
+		LedgerCloseTime: a.ClosedAt,
+		TxHash:          a.TxHash,
+		OpIndex:         uint32(a.OpIndex),
+		EventIndex:      a.EventIndex,
+		ContractID:      a.Vault,
+		EventKind:       a.Kind,
+		Caller:          a.Caller,
+		Strategy:        a.Strategy,
+		NewAddress:      a.NewAddress,
+		Amount:          amount,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(defindex.SourceName, "defindex_admin_events").Inc()
+		logger.Warn("defindex admin persist failed",
+			"source", defindex.SourceName,
+			"tx_hash", a.TxHash, "ledger", a.Ledger, "kind", a.Kind,
+			"err", err)
+		return err
+	}
+	bumpEntryCount(ctx, logger, store, defindex.SourceName)
 	return nil
 }
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # config-assertions_test.sh — fixture tests for the Postgres
 # max_worker_processes headroom pair (T615), the continuous-aggregate
-# refresh-policy check and the ClickHouse destructive-DDL size guard's
-# effective value (T616).
+# refresh-policy check, the trades compression-policy scheduled check and
+# the ClickHouse destructive-DDL size guard's effective value (T616).
 #
 # Pins the property T615 was about: max_worker_processes is
 # postmaster-level (postgresql.conf.j2's own comment), so an ansible
@@ -37,6 +37,9 @@ for a in "$@"; do
     *"timescaledb_information.continuous_aggregates"*)
       [ "${FAKE_PG_DOWN:-0}" = 1 ] && exit 2
       echo "${FAKE_PG_CAGGS_WITHOUT_POLICY:-0}"; exit 0 ;;
+    *"hashtext('usd-volume-restamp:trades')"*)
+      [ "${FAKE_PG_DOWN:-0}" = 1 ] && exit 2
+      echo "${FAKE_PG_TRADES_POLICY_OK:-1}"; exit 0 ;;
   esac
 done
 exit 1
@@ -59,6 +62,14 @@ exit 7
 EOF
 chmod +x "$FAKEBIN/curl"
 mkdir -p "$TMP/ch-config"
+cat > "$FAKEBIN/ss" <<'EOF'
+#!/usr/bin/env bash
+[ "${FAKE_SS_DOWN:-0}" = 1 ] && exit 1
+printf '%b' "${FAKE_SS:-}"
+EOF
+chmod +x "$FAKEBIN/ss"
+printf 'server:\n  http_listen_address: 127.0.0.1\n  grpc_listen_address: 127.0.0.1\n' > "$TMP/loki-pinned.yml"
+printf 'server:\n  http_listen_port: 3100\n' > "$TMP/loki-unpinned.yml"
 
 pass=0
 fail=0
@@ -80,10 +91,14 @@ run() {
     FAKE_PG_MAX_WORKER_PROCESSES="$live" \
     FAKE_PG_IDLE_IN_TXN_TIMEOUT="$idle_live" \
     FAKE_PG_CAGGS_WITHOUT_POLICY="${CAGGS_MISSING:-0}" \
+    FAKE_PG_TRADES_POLICY_OK="${TRADES_POLICY_OK:-1}" \
     FAKE_PG_DOWN="${PG_DOWN:-0}" \
     CH_CONFIG_DIR="${CH_DIR:-$TMP/ch-config}" \
     FAKE_CH_DROP_GUARD="${CH_GUARD:-}" \
     FAKE_CH_DOWN="${CH_DOWN:-0}" \
+    LOKI_CONFIG="${LOKI_CFG:-$TMP/absent-loki.yml}" \
+    FAKE_SS="${SS_OUT:-}" \
+    FAKE_SS_DOWN="${SS_DOWN:-0}" \
     bash "$GATE" >/dev/null 2>&1
   OUT="$(cat "$TMP/out/config_assertions.prom" 2>/dev/null)"
 }
@@ -153,6 +168,17 @@ CAGGS_MISSING=1 run 32 32
 expect_metric 'one cagg policy dropped -> caught' caggs_have_refresh_policy 0
 PG_DOWN=1 run 32 32
 expect_metric 'postgres unreachable -> fails closed' caggs_have_refresh_policy 0
+
+# ── The trades compression policy is scheduled ──────────────────────
+# The fake answers the count of trades policies that are scheduled, or
+# paused while a restamp run holds its lock. 0 is a policy left paused by
+# a killed run (or no policy at all).
+run 32 32
+expect_metric 'trades policy scheduled or paused by a live run -> ok' trades_compression_policy_scheduled 1
+TRADES_POLICY_OK=0 run 32 32
+expect_metric 'trades policy paused with no run holding the lock -> caught' trades_compression_policy_scheduled 0
+PG_DOWN=1 run 32 32
+expect_metric 'postgres unreachable -> trades policy check fails closed' trades_compression_policy_scheduled 0
 
 # ── ClickHouse drop guard (T616) ────────────────────────────────────
 # The ansible verify task asserts the EFFECTIVE limits once, at apply
@@ -228,6 +254,20 @@ else
   echo "FAIL: textfile rename not atomic+readable (mv: $(cat "$TMP/mv.log"); out: $(ls -A "$TMP/out"))" >&2
   fail=$((fail + 1))
 fi
+
+# ── Loki loopback bind ──────────────────────────────────────────────
+LO='LISTEN 0 4096 127.0.0.1:3100 0.0.0.0:*\nLISTEN 0 4096 127.0.0.1:9096 0.0.0.0:*\nLISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n'
+WILD='LISTEN 0 4096 *:3100 *:*\nLISTEN 0 4096 *:9096 *:*\n'
+run 32 32
+if grep -q 'config_assertion_skipped{assertion="loki_loopback_bound"}' <<<"$OUT"; then echo 'ok: no loki config -> skipped'; pass=$((pass + 1)); else echo 'FAIL: loki skip not emitted' >&2; fail=$((fail + 1)); fi
+LOKI_CFG="$TMP/loki-pinned.yml" SS_OUT="$LO" run 32 32
+expect_metric 'loki pinned and bound to loopback -> ok' loki_loopback_bound 1
+LOKI_CFG="$TMP/loki-pinned.yml" SS_OUT="$WILD" run 32 32
+expect_metric 'config pinned but running Loki still on * (restart pending) -> caught' loki_loopback_bound 0
+LOKI_CFG="$TMP/loki-unpinned.yml" SS_OUT="$LO" run 32 32
+expect_metric 'config not pinned -> caught' loki_loopback_bound 0
+LOKI_CFG="$TMP/loki-pinned.yml" SS_DOWN=1 run 32 32
+expect_metric 'ss unavailable -> fails closed' loki_loopback_bound 0
 
 # Lockstep: the script's default ceiling IS the role's pinned value. A
 # role change without the script (or vice versa) either fails every

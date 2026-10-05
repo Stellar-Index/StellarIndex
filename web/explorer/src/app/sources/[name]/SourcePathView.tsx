@@ -3,6 +3,7 @@
 import { Breadcrumbs } from '@/components/ui';
 import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
 import { SourceTopChart } from '@/app/dexes/[source]/SourceTopChart';
+import { useSources } from '@/api/hooks';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 
 import { SourceHealthPanel } from './SourceHealthPanel';
@@ -15,6 +16,11 @@ import { SourceHealthPanel } from './SourceHealthPanel';
  */
 export function SourcePathView() {
   const name = useLastPathSegment();
+  const sources = useSources();
+  // The top-pair chart selects by source, which the API refuses for data
+  // vendors; wait for the registry's `selectable` flag rather than guess.
+  const selectable =
+    sources.data?.find((s) => s.name === name)?.selectable === true;
 
   return (
     <div className="space-y-6">
@@ -37,7 +43,7 @@ export function SourcePathView() {
         <>
           <SourceHealthPanel source={name} />
           <SourceStatsPanel source={name} />
-          <SourceTopChart source={name} sourceName={name} />
+          {selectable && <SourceTopChart source={name} sourceName={name} />}
         </>
       )}
     </div>

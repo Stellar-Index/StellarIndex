@@ -10,7 +10,7 @@
 // `verify-served-values`, `verify-usd-volume`, `usd-volume-restamp`,
 // `sdex-claim-audit`, `classic-movements-backfill`, `projected-rebuild`,
 // `reconcile-balances`, `verify-contiguity`, `verify-hashchain`,
-// `verify-lake` — ADR-0033/ADR-0034 completeness + reconciliation checks,
+// `verify-lake`, `verify-network-state` — ADR-0033/ADR-0034 completeness + reconciliation checks,
 // the ADR-0034 Phase 2-4 lake backfill/gate/reproject/rebuild tools, the
 // ADR-0047 pre-P23 classic-movement reconstruction backfill, the ADR-0048
 // D3 bulk catch-up path for projected sources, the reconcile-balances
@@ -18,11 +18,12 @@
 // standing ledger-substrate + entry_changes-coverage lake verification,
 // verify-hashchain's standing hash-chain verification (the "hash-chained
 // to genesis" half of ADR-0034's provable-100% claim that verify-contiguity
-// doesn't cover), and verify-lake's composition of all three of the above
-// into a single "is the lake sound?" invocation for cron/Healthchecks.io
-// (verify_lake.go calls no check logic of its own — it orchestrates the
+// doesn't cover), and verify-lake's four-check "is the lake sound?"
+// invocation run daily by verify-lake.timer (the three checks above, via the
 // same package-private run* funcs verify-contiguity and verify-hashchain
-// call), which is why reconciliation_catalogue.go and gated_recon_seed.go
+// call, plus a raw-table census of the other five raw tables), and
+// verify-network-state's comparison of derived state with the network's own
+// (hot-archive buckets, lumen conservation), which is why reconciliation_catalogue.go and gated_recon_seed.go
 // (shared re-derivation source-set + factory-child preseed helpers used
 // by ch-rebuild, ch-reproject, compute-completeness, and
 // verify-reconciliation) live here too rather than in a 7th package.
@@ -41,13 +42,16 @@ import (
 // every internal/ops/* package post-split. args[0] is the subcommand
 // verb (one of the twenty this package owns); args[1:] are its flags.
 //
-// Split across two dispatch helpers by ROLE — the data-mutating tools and
+// Split across dispatch helpers by ROLE — the data-mutating tools and
 // the verifiers. The split is what keeps each switch under the gocyclo
 // ceiling as verbs accumulate, and the boundary is a real one: a `ch-*` /
 // `*-backfill` / `*-rebuild` verb rewrites lake or served DATA, while
 // nothing in the verifier half touches trade/event rows at all.
 func Run(args []string) error {
 	if fn, ok := lakeMutatorVerb(args[0]); ok {
+		return fn(args[1:])
+	}
+	if fn, ok := historyDeriveVerb(args[0]); ok {
 		return fn(args[1:])
 	}
 	if fn, ok := verifierVerb(args[0]); ok {
@@ -84,8 +88,6 @@ func lakeMutatorVerb(verb string) (func([]string) error, bool) {
 		return chInstanceBackfill, true
 	case "ch-census-rollup":
 		return chCensusRollup, true
-	case "ch-cap67-movements":
-		return chCap67Movements, true
 	case "ch-holders-rollup":
 		return chHoldersRollup, true
 	case "ch-creators-rollup":
@@ -98,12 +100,25 @@ func lakeMutatorVerb(verb string) (func([]string) error, bool) {
 		return chParticipantBackfill, true
 	case "ch-recognition":
 		return chRecognition, true
-	case "classic-movements-backfill":
-		return classicMovementsBackfill, true
 	case "projected-rebuild":
 		return projectedRebuild, true
 	case "usd-volume-restamp":
 		return usdVolumeRestamp, true
+	default:
+		return nil, false
+	}
+}
+
+// historyDeriveVerb resolves the lake → per-account/per-asset history derives,
+// split from lakeMutatorVerb to keep each switch under the gocyclo ceiling.
+func historyDeriveVerb(verb string) (func([]string) error, bool) {
+	switch verb {
+	case "ch-cap67-movements":
+		return chCap67Movements, true
+	case "ch-entry-history":
+		return chEntryHistory, true
+	case "classic-movements-backfill":
+		return classicMovementsBackfill, true
 	default:
 		return nil, false
 	}
@@ -137,6 +152,10 @@ func verifierVerb(verb string) (func([]string) error, bool) {
 		return verifyHashChain, true
 	case "verify-lake":
 		return verifyLake, true
+	case "verify-network-state":
+		return verifyNetworkState, true
+	case "wasm-drift":
+		return wasmDrift, true
 	default:
 		return nil, false
 	}

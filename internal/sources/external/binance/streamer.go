@@ -74,8 +74,7 @@ func (s *Streamer) Class() external.Class { return external.ClassExchange }
 //
 // Empty `pairs` is rejected — Binance requires explicit subscription.
 // Auto-enumeration of all listed symbols is a future capability; for
-// v1 the operator configures the pair set explicitly via the indexer
-// config.
+// v1 the caller passes the pair set (e.g. DefaultPairList).
 func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan canonical.Trade, error) {
 	if len(pairs) == 0 {
 		return nil, errors.New("binance: pairs required — auto-enumeration not yet supported")
@@ -108,16 +107,25 @@ func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan ca
 		// Subscription rides the combined-stream URL — no
 		// post-dial subscribe frame.
 		HandleFrame: func(data []byte) ([]canonical.Trade, error) {
-			trade, err := parseAggTradeFrame(data, s.PairMap)
-			if err != nil {
-				return nil, err
-			}
-			return []canonical.Trade{trade}, nil
+			return handleFrame(data, s.PairMap)
 		},
 	}
 	go loop.Run(ctx, out)
 
 	return out, nil
+}
+
+// handleFrame decodes one frame. A dust trade is a real trade below the
+// integer-scale floor, not a decode failure, so it yields no trade and no error.
+func handleFrame(data []byte, pairMap map[string]canonical.Pair) ([]canonical.Trade, error) {
+	trade, err := parseAggTradeFrame(data, pairMap)
+	if errors.Is(err, ErrDustTrade) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return []canonical.Trade{trade}, nil
 }
 
 // symbolsFor resolves canonical.Pair → Binance symbol by inverting

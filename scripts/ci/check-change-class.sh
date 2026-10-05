@@ -57,8 +57,11 @@
 #                  internal/incidents/data/**) and any testdata/** dir —
 #                  none of those are *.go files but each is read by a Go
 #                  test (test/controlwiring/rlt046_ci_class_trigger_test.go
-#                  walks every //go:embed and fails on an uncovered input)
-#   web          — web/**, openapi/**
+#                  walks every //go:embed and fails on an uncovered input),
+#                  plus Makefile, .github/workflows/ci.yml and
+#                  scripts/ci/{check-change-class,prepush-integration-required}.sh
+#                  (the trigger-class guard's inputs; it runs only in `test`)
+#   web         — web/**, openapi/**
 #   ansible      — configs/ansible/**, configs/prometheus/**,
 #                  deploy/monitoring/** (clickhouse-exporter-test.sh reads
 #                  the latter two and only that job runs it)
@@ -83,9 +86,10 @@ class_go() {
   # handler_spec_fields_test.go and its spec-parity siblings read the spec
   # file directly), not just a web one — a diff confined to it must still
   # trigger the go-test job. Mirrored in ci.yml's preflight `go` filter.
-  # The four data paths are go:embed inputs and testdata/ is Go's test
+  # The five data paths are go:embed inputs and testdata/ is Go's test
   # fixture convention: not *.go files, but each is read by a Go test.
-  grep -E '(^|/)[^/]+\.go$|^go\.mod$|^go\.sum$|^openapi/|^internal/sources/external/binance/pairs\.yaml$|^internal/sources/external/forex/circulation_data\.csv$|^internal/currency/data/seed\.yaml$|^internal/incidents/data/|(^|/)testdata/'
+  # The last four are the trigger-class guard's inputs, read only by it.
+  grep -E '(^|/)[^/]+\.go$|^go\.mod$|^go\.sum$|^openapi/|^internal/sources/external/binance/pairs\.yaml$|^internal/sources/external/forex/circulation_data\.csv$|^internal/currency/data/seed\.yaml$|^internal/wasmaudit/audited_wasm\.json$|^internal/incidents/data/|(^|/)testdata/|^Makefile$|^\.github/workflows/ci\.yml$|^scripts/ci/check-change-class\.sh$|^scripts/ci/prepush-integration-required\.sh$'
 }
 
 class_web() {

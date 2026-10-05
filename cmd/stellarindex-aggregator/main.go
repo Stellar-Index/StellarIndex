@@ -453,7 +453,7 @@ func run(cfgPath string, dryRun bool) error {
 	// `flags.divergence_warning` stays false — pre-Phase behaviour
 	// preserved.
 	var divRefresher orchestrator.DivergenceRefresher
-	divRefs := buildDivergenceReferences(cfg.Divergence, store, logger)
+	divRefs := buildDivergenceReferences(cfg.Divergence, cfg.External.CoinGecko, store, logger)
 	if len(divRefs) > 0 {
 		// Durable per-reference mirror — every (pair, reference) tick
 		// lands in the divergence_observations hypertable so the
@@ -584,6 +584,7 @@ func run(cfgPath string, dryRun bool) error {
 			},
 		},
 		DisableClassFilter:        cfg.Aggregate.DisableClassFilter,
+		ExcludedSources:           cfg.Aggregate.ExcludedSources,
 		EnableStablecoinFiatProxy: cfg.Aggregate.EnableStablecoinFiatProxy,
 		USDPeggedClassicAssets:    cfg.Trades.USDPeggedClassics(logger),
 		USDPeggedSorobanAssets:    resolveUSDPeggedSorobanAssets(cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers, logger),
@@ -738,7 +739,7 @@ func run(cfgPath string, dryRun bool) error {
 		}
 	}()
 
-	// ─── Protocol-events rollup worker (#43) ────────────────────
+	// ─── Protocol-events rollup worker (78dff337b) ────────────────────
 	// Folds the trailing-24h per-source event census into the
 	// protocol_events_24h table (migration 0086) every couple of
 	// minutes so /v1/protocols' events_24h column reads a keyed-on-PK
@@ -758,7 +759,7 @@ func run(cfgPath string, dryRun bool) error {
 		}
 	}()
 
-	// ─── Asset-volume rollup worker (#43) ───────────────────────
+	// ─── Asset-volume rollup worker (e0fbbbc3b) ───────────────────────
 	// Folds the trailing-24h per-asset USD-volume SUM over prices_1m
 	// into the asset_volume_24h table (migration 0087) every couple of
 	// minutes so the /v1/assets listing reads a keyed-on-PK lookup
@@ -788,8 +789,9 @@ func run(cfgPath string, dryRun bool) error {
 	// the alias registry is installed (above), so its canonical fold
 	// matches the per-asset read.
 	assetCharRollup := assetcharacterrollup.New(store, assetcharacterrollup.Options{
-		Interval: assetcharacterrollup.DefaultInterval,
-		Logger:   logger.With("component", "asset-character-rollup"),
+		Interval:     assetcharacterrollup.DefaultInterval,
+		StartupDelay: assetcharacterrollup.DefaultStartupDelay,
+		Logger:       logger.With("component", "asset-character-rollup"),
 	})
 	refresherWG.Add(1)
 	go func() {
@@ -1046,7 +1048,7 @@ func run(cfgPath string, dryRun bool) error {
 		logger.Warn("decimals-guard: disabled — no ClickHouse lake configured (storage.clickhouse_addr); non-7-decimal DEX-token detection is OFF for this process")
 	}
 
-	// ─── Price-alert evaluator (BACKLOG #60) ────────────────────
+	// ─── Price-alert evaluator ─────────────────────────────────
 	// Off by default. When [price_alerts] enabled=true, sweeps the
 	// enabled price_alerts rows against the latest closed 1m VWAP each
 	// tick and enqueues ACCOUNT-scoped `price.alert` webhook deliveries
@@ -1365,6 +1367,7 @@ func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, closeTimes 
 	if err != nil {
 		return nil, fmt.Errorf("sep41 computer: %w", err)
 	}
+	seeder := newGenesisAutoSeeder(cfg, store)
 	out := make([]supplyRefresherBinding, 0, len(cfg.Supply.WatchedSEP41Contracts))
 	for _, contractID := range cfg.Supply.WatchedSEP41Contracts {
 		asset, err := canonical.NewSorobanAsset(contractID)
@@ -1382,7 +1385,7 @@ func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, closeTimes 
 		out = append(out, supplyRefresherBinding{
 			refresher: supply.NewRefresher(
 				supplyAggregatorLedgers{s: store, closeTimes: closeTimes},
-				bound,
+				supply.NewGenesisSeedingComputer(bound, contractID, supply.GenesisSeedingOptions{Seed: seeder, RetryAfter: genesisAutoSeedRetry, Logger: logger.With("asset", contractID)}),
 				supplyAggregatorInserter{s: store},
 				logger.With("asset", contractID),
 				opts...,
@@ -1537,8 +1540,15 @@ func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Dur
 		out := r.Tick(ctx)
 		obs.AggregatorSupplyRefreshTotal.WithLabelValues(assetKey, string(out.Kind)).Inc()
 		obs.AggregatorSupplyRefreshDurationSeconds.WithLabelValues(string(out.Kind)).Observe(time.Since(start).Seconds())
+		if out.BandBreach != "" {
+			obs.SupplyWriteBandBreachTotal.WithLabelValues(assetKey, out.BandBreach).Inc()
+		}
 	}
 
+	// Seed both directions so increase() reads zero, not absent, before a breach.
+	for _, direction := range []string{"up", "down"} {
+		obs.SupplyWriteBandBreachTotal.WithLabelValues(assetKey, direction)
+	}
 	tick() // immediate first refresh
 
 	ticker := time.NewTicker(cadence)
@@ -2519,16 +2529,20 @@ func (obsSupplyDivergenceEmitter) Duration(kind divergence.SupplyOutcomeKind, se
 // oracle_updates rows) the `divergence.Service` runs on each tick. The
 // API binary builds a cache-reading Service with no References.
 //
-// oracles may be nil (no Postgres) — the on-chain references are
-// skipped with a warning when any is enabled.
-func buildDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.OracleReader, logger *slog.Logger) []divergence.Reference {
+// cgKeys are the external CoinGecko poller's keys; the price reference
+// authenticates with them. oracles may be nil (no Postgres) — the on-chain
+// references are skipped with a warning when any is enabled.
+func buildDivergenceReferences(cfg config.DivergenceConfig, cgKeys config.CoinGeckoVenueConfig, oracles divergence.OracleReader, logger *slog.Logger) []divergence.Reference {
 	var refs []divergence.Reference
 
 	if cfg.CoinGecko.Enabled {
 		refs = append(refs, divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
-			BaseURL: cfg.CoinGecko.BaseURL,
-			IDMap:   cfg.CoinGecko.IDMap,
-			MaxAge:  time.Duration(cfg.CoinGecko.MaxAgeMinutes) * time.Minute,
+			BaseURL:    cfg.CoinGecko.BaseURL,
+			APIKey:     cgKeys.APIKey,
+			DemoAPIKey: cgKeys.DemoAPIKey,
+			Logger:     logger,
+			IDMap:      cfg.CoinGecko.IDMap,
+			MaxAge:     time.Duration(cfg.CoinGecko.MaxAgeMinutes) * time.Minute,
 		}))
 	}
 

@@ -106,7 +106,8 @@ const DefaultAccountStatusCacheTTL = 30 * time.Second
 // MirroredKeyIdleTTL bounds a register-mirrored credential's lifetime in
 // the validator pool as a SLIDING idle window rather than a
 // hard expiry (W1-flow-register-2). The record is written with this TTL
-// ([RedisAPIKeyStore.CreateWithSecret]) and every successful validated
+// ([RedisAPIKeyStore.CreateWithSecret], and [RedisAPIKeyStore.Create] for
+// a SelfService request) and every successful validated
 // [Lookup] slides it forward, so an actively-used key never expires while
 // a key untouched for the whole window TTLs out on its own — capping the
 // keyspace growth that open, anonymous /v1/register would otherwise make
@@ -445,8 +446,8 @@ func recordFromSubject(sub Subject) APIKeyRecord {
 
 // refreshIdleTTL slides a TTL-bearing record's idle window forward to
 // mirroredKeyIdleTTL. Uses EXPIRE ... XX so it is a no-op on records
-// written without a TTL (operator-seeded / self-service keys), keeping
-// their persistent semantics intact; only the register-mirror records,
+// written without a TTL (operator-seeded keys), keeping their persistent
+// semantics intact; only register-mirror and self-service records,
 // written with an idle TTL, are re-warmed. Best-effort: any error is
 // swallowed — the worst case is the key expiring on its existing TTL, an
 // idle key by definition.

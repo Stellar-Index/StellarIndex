@@ -34,6 +34,15 @@ label keeps apart:
   MISSING ledgers, never revisits it. This is not the
   [ch-live-sink-errors](ch-live-sink-errors.md) case: there the ledger
   is absent.
+- **`soroban_fee_meta_unsupported`: the lake path, fee columns.** A
+  Soroban transaction's `TransactionMeta` version is past what the
+  charged-fee read handles, so its `stellar.transactions` row carries
+  0 for the non-refundable, refundable and rent fees.
+- **`evicted_keys_unreadable`: the lake path, evictions.** The ledger's
+  evicted-keys list could not be read, so its `removed` rows are
+  missing and every entry evicted at that ledger still reads as live in
+  `stellar.ledger_entries_current`. The log line carries the ledger.
+  This kind adds 1 per ledger, not a transaction count.
 - **`tx_read_errors_census`, `tx_event_read_errors_census`: the
   substrate path.** The indexer declines to write the
   `ledger_ingest_log` row, so a projection reconcile cannot pass

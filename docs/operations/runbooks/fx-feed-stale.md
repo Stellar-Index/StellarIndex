@@ -140,6 +140,21 @@ firing alert therefore means the standby is not serving either.
       path in `internal/storage/timescale/trades.go`
       (`FXQuoteAtOrBefore`), not a config flip.
 
+### `openexchangerates` — built, not yet serving
+
+`forex.OpenExchangeRatesProvider`
+(`internal/sources/external/forex/openexchangerates.go`) reads Open
+Exchange Rates' hourly USD-base board. With
+`[external.openexchangerates] enabled = true` the API builds it and
+hands it to the worker through `WithCorroborator`, which only stores it:
+it is never fetched, writes no `fx_quotes` row and carries no
+`source` label, so enabling it neither spends quota nor mitigates this
+alert. Its app id comes from `OPENEXCHANGERATES_APP_ID` and is sent only
+as `Authorization: Token …`. The Free plan allows 1,000 requests a month
+with hourly updates and refuses the `base`/`symbols` parameters; once it
+is wired, one request per `[external.massive] refresh_interval` poll
+spends 720–744 a month at the 1h default.
+
 ### Worker not running at all (`absent` alert)
 
 - [ ] Confirm the API binary is up and NOT in dry-run mode (dry-run
@@ -148,6 +163,27 @@ firing alert therefore means the standby is not serving either.
 - [ ] Confirm the `fx_quotes` hypertable migration is applied — a
       missing table makes every persist fail (see companion runbook
       [`fx-history-missing.md`](fx-history-missing.md)).
+
+### `stellarindex_fx_fixings_refresh_stale` / `stellarindex_fx_fixings_series_stale`
+
+A closed fiat-cross bucket (XLM/EUR at a past minute) converts at the
+`fx_fixings` bar with the greatest `bar_end` at least 3 h before the
+bucket end. With no such bar inside the cross max age it is **withheld**
+with `price_withheld_reason: fx_leg_unavailable`, never converted at a
+later rate. Unlike `fx_quotes` there is no 7-day cushion.
+
+- [ ] `refresh_stale`: the appender has not completed a cycle in 3 h.
+      It runs at the end of every forex refresh, after the cache install,
+      so check the forex worker first (sections above).
+- [ ] `series_stale`: cycles complete but store no new bar. Grep the API
+      logs for `fx_fixings bar fetch failed` (vendor error per ticker) and
+      `fx_fixings insert failed` (DB); `stellarindex_fx_fixings_fetch_errors_total`
+      and `stellarindex_fx_fixings_write_errors_total` count them.
+- [ ] Newest bar per ticker:
+      `SELECT ticker, MAX(bar_end) FROM fx_fixings GROUP BY ticker ORDER BY 2`.
+- [ ] Refill a gap once the vendor is back (idempotent; the live appender
+      only re-offers the last 48 h):
+      `go run ./scripts/ops/fx-history-backfill --series=fixings --from=YYYY-MM-DD --ticker=EUR,GBP`.
 
 ## Root cause analysis
 
@@ -186,6 +222,11 @@ per ticker (`SELECT ticker, MAX(bucket) FROM fx_quotes GROUP BY ticker`).
 
 ## Changelog
 
+- 2026-09-30 — added the `fx_fixings` appender and series staleness
+  alerts: closed fiat crosses bind to vendor-time bars and withhold on a
+  gap.
+- 2026-09-30 — added the `openexchangerates` provider section: built
+  behind a flag, held outside the serving chain.
 - 2026-09-24 — the dry-`massive` section now names the in-worker ECB
   standby (`forex.ECBProvider`), which writes `fx_quotes` and does serve
   the forex-snap, and how to tell whether it is serving.

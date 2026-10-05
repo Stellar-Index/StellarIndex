@@ -41,8 +41,8 @@ func TestPriceReadersOnZeroLegBuckets(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	db := store.DB()
 	for _, stmt := range []string{
-		`ALTER TABLE trades DROP CONSTRAINT trades_base_amount_check`,
-		`ALTER TABLE trades DROP CONSTRAINT trades_quote_amount_check`,
+		`ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_base_amount_check`,
+		`ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_quote_amount_check`,
 	} {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			t.Fatalf("%s: %v", stmt, err)
@@ -209,6 +209,8 @@ func TestPriceReadersOnZeroLegBuckets(t *testing.T) {
 		resolver, err := timescale.NewVWAPUSDFXResolver(store, timescale.VWAPUSDFXResolverOptions{
 			USDPegs:   []string{usdcID},
 			Freshness: -1,
+			// Two buckets are no market; this pins the dust floor, not the gate.
+			DisableSubstanceGate: true,
 		})
 		if err != nil {
 			t.Fatalf("NewVWAPUSDFXResolver: %v", err)

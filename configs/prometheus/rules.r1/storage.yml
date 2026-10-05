@@ -166,6 +166,7 @@ groups:
           severity: page
           team: stellarindex
           component: storage
+          alert_family: timescale_disk
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
           summary: "Postgres disk {{ $value | humanize }}% free (SEV-1)"
@@ -182,6 +183,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
+          alert_family: timescale_disk
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
           summary: "Postgres disk {{ $value | humanize }}% free"
@@ -206,6 +208,7 @@ groups:
           severity: page
           team: stellarindex
           component: storage
+          alert_family: node_root_disk
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-full.md
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free (SEV-1)"
@@ -231,6 +234,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
+          alert_family: node_root_disk
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-warning.md
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free"
@@ -523,13 +527,34 @@ groups:
         # the interval with the counter's exact label set, so the product
         # is a one-to-one match; a job whose interval did not parse drops
         # out of this arm only, and reports query_ok 0 (probe_degraded).
+        #
+        # Every arm discounts failures that were a concurrent CAGG refresh
+        # rejecting the policy (an operator replay refreshing the same
+        # window): the job body is fine and the next tick retries, yet one
+        # such collision held the 3-day arm for three days. The probe counts
+        # them per job over each arm's own window; where that gauge is
+        # absent the `or 0 *` term falls back to the raw count, so a missing
+        # gauge can only make the alert louder. A collision that never ends
+        # stops the refreshes, which is cagg_stale's to report.
         expr: |
-          increase(stellarindex_timescale_job_failures_total[6h]) > 10
-            or
-          increase(stellarindex_timescale_job_failures_total[3d]) >= 3
+          (
+            increase(stellarindex_timescale_job_failures_total[6h])
+              - (stellarindex_timescale_job_concurrent_refresh_failures_6h
+                  or 0 * increase(stellarindex_timescale_job_failures_total[6h]))
+          ) > 10
             or
           (
             increase(stellarindex_timescale_job_failures_total[3d])
+              - (stellarindex_timescale_job_concurrent_refresh_failures_3d
+                  or 0 * increase(stellarindex_timescale_job_failures_total[3d]))
+          ) >= 3
+            or
+          (
+            (
+              increase(stellarindex_timescale_job_failures_total[3d])
+                - (stellarindex_timescale_job_concurrent_refresh_failures_3d
+                    or 0 * increase(stellarindex_timescale_job_failures_total[3d]))
+            )
               * stellarindex_timescale_job_schedule_interval_seconds
           ) >= 129600
         for: 30m
@@ -818,6 +843,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
+          alert_family: "timescale_backup_age/{{ $labels.stanza }}"
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
           summary: "pgBackRest stanza {{ $labels.stanza }} last backup {{ $value | humanizeDuration }} ago"
@@ -835,6 +861,7 @@ groups:
           severity: page
           team: stellarindex
           component: storage
+          alert_family: "timescale_backup_age/{{ $labels.stanza }}"
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
           summary: "No successful Postgres backup in > 24 h (SEV-1)"
@@ -1038,8 +1065,10 @@ groups:
       # stamp is written only by a successful run, so never-configured,
       # never-succeeded and every-run-failing are an ABSENT series, which
       # the `time() - x` arm alone can never fire on. PER HOST: the second
-      # arm takes every host with a lake (it carries the schema snapshot's
-      # stamp) and drops those with a data backup inside the window. 96 h,
+      # arm takes every host whose timer has run (the `configured` gauge is
+      # written by every run, 0 or 1) and drops those with a data backup
+      # inside the window. A host with ch_lake_backup_enabled: false has no
+      # textfile, so it never enters the arm. 96 h,
       # not 36: a full of the lake runs ~2 days at the default bandwidth
       # cap, and the incrementals it delays must not ticket.
       - alert: stellarindex_ch_lake_backup_stale
@@ -1047,7 +1076,7 @@ groups:
           (time() - stellarindex_ch_lake_backup_last_success_unix) > 96 * 3600
           or
           (
-            stellarindex_ch_schema_snapshot_last_success_unix
+            stellarindex_ch_lake_backup_configured
             unless on (instance)
             max_over_time(stellarindex_ch_lake_backup_last_success_unix[96h])
           )
@@ -1068,6 +1097,114 @@ groups:
             ch_lake_backup_s3_endpoint + the vault key pair and re-apply
             the role), 1 = configured but failing —
             `journalctl -u ch-lake-backup.service -n 100`.
+
+      # The unit also exits non-zero on a failed verdict, so stellarindex_systemd_unit_failed
+      # tickets beside _failed; that catch-all also covers a run that crashed before its textfile.
+      - alert: stellarindex_lake_verify_stale
+        expr: |
+          (time() - stellarindex_lake_verify_last_run_unix) > 172800
+          or
+          (
+            stellarindex_ch_schema_snapshot_last_success_unix
+            unless on (instance)
+            max_over_time(stellarindex_lake_verify_last_run_unix[2d])
+          )
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/lake-verify.md
+          summary: "verify-lake has not completed a run on {{ $labels.instance }} in 2 days"
+          description: |
+            Timer not running, or every run crashed before its verdict —
+            `systemctl status verify-lake.timer verify-lake.service`,
+            `journalctl -u verify-lake --since -50h`.
+
+      - alert: stellarindex_lake_verify_failed
+        expr: max by (instance, check) (stellarindex_lake_verify_failures) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/lake-verify.md
+          summary: "verify-lake found {{ $value }} {{ $labels.check }} failure(s) on {{ $labels.instance }}"
+          description: |
+            Per-check triage is in the runbook; `journalctl -u verify-lake -n 300`
+            holds the gap / deficiency / SHORT lines of the last run.
+
+      - alert: stellarindex_network_state_verify_stale
+        expr: |
+          (time() - stellarindex_network_state_verify_last_run_unix) > 172800
+          or
+          (
+            stellarindex_ch_schema_snapshot_last_success_unix
+            unless on (instance)
+            max_over_time(stellarindex_network_state_verify_last_run_unix[2d])
+          )
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/network-state-verify.md
+          summary: "verify-network-state has not completed a run on {{ $labels.instance }} in 2 days"
+          description: |
+            Timer not running, history archive unreachable, or every run
+            crashed before its verdict —
+            `systemctl status verify-network-state.timer verify-network-state.service`,
+            `journalctl -u verify-network-state --since -50h`.
+
+      - alert: stellarindex_network_state_verify_failed
+        expr: max by (instance, check) (stellarindex_network_state_verify_failures) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/network-state-verify.md
+          summary: "verify-network-state found {{ $value }} {{ $labels.check }} failure(s) on {{ $labels.instance }}"
+          description: |
+            The lake's derived state disagrees with the network's. Per-check
+            triage is in the runbook; `journalctl -u verify-network-state -n 300`
+            holds the MISMATCH sample and the lumen residual of the last run.
+
+      # wasm-drift (internal/ops/chops/wasm_drift.go): a gated contract
+      # running a hash its audit log never string-checked. No never-ran
+      # arm: the timer is not deployed everywhere yet.
+      - alert: stellarindex_wasm_drift
+        expr: max by (source, contract) (stellarindex_wasm_drift) > 0
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/wasm-drift.md
+          summary: "{{ $labels.source }} contract {{ $labels.contract }} runs a WASM hash no audit log has string-checked"
+          description: |
+            The decoder was audited against other bytes. String-check the new
+            hash, record it in the source's audit log, then add it to
+            internal/wasmaudit/audited_wasm.json.
+
+      - alert: stellarindex_wasm_drift_stale
+        expr: (time() - stellarindex_wasm_drift_last_run_unix) > 172800
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/wasm-drift.md
+          summary: "wasm-drift has not completed a run on {{ $labels.instance }} in 2 days"
+          description: |
+            A run that errors writes no textfile — check the unit's journal
+            for the wasm-drift error line.
 
       # off-site-backup-plan.md §1 (NS03) — same inert-mechanism-first
       # shape as ch_lake_backup_stale above: the `configured` gauge is
@@ -1323,6 +1460,9 @@ groups:
       #   - `ops_job_backfill.prom`, `ops_job_usd_volume_restamp.prom`:
       #     both are one-off stellarindex-ops jobs with no timer/cron, so
       #     a long gap between runs is normal, not a dead cron.
+      #   - `ops_job_projected_rebuild_<source>.prom`: per-source one-shot
+      #     rebuilds; a finished run's file stays with running=0, and a live
+      #     one is watched by stellarindex_ops_job_heartbeat_stale instead.
       #   - `restore_drill*.prom`: monthly timer against a 24h threshold
       #     (see stellarindex_restore_drill_textfile_stale below, which
       #     carries the right threshold for this producer).
@@ -1331,11 +1471,31 @@ groups:
       #   - `verify_archive_tier_d.prom`: weekly cron against a 24h
       #     threshold (see stellarindex_verify_archive_tier_d_run_stale in
       #     verify-archive.yml, which carries the 8d threshold).
+      #   - `heavy_job_*.prom`: run-heavy-job.sh writes it once at job start
+      #     and removes it at exit; its age is the job's age, not a dead cron.
+      #
+      # Lock-gated producers (the `unless` clause, the ONE list of them) wait
+      # behind the host-wide heavy lock, so a long heavy job (a long projector-replay
+      # or recompress run) legitimately freezes their files. They are suppressed only
+      # while stellarindex_heavy_lock_held_since_unix says the lock has been
+      # held under 72h; a lock held longer, or a gated producer with no lock
+      # held, still alerts. min (newest hold) so an orphaned file from a
+      # SIGKILLed job cannot disable suppression; non-root holders (verify-archive
+      # tiers A and B) never publish.
       - alert: stellarindex_textfile_producer_stale
         expr: |
-          time() - node_textfile_mtime_seconds{
-            file!~".*/ops_job_.*\\.pid[0-9]+\\.prom$|.*/ops_job_(backfill|usd_volume_restamp)\\.prom$|.*/restore_drill.*\\.prom$|.*/verify_archive_tier_d\\.prom$|.*/alertmanager_receivers\\.prom$"
-          } > 86400
+          (
+            time() - node_textfile_mtime_seconds{
+              file!~".*/ops_job_.*\\.pid[0-9]+\\.prom$|.*/ops_job_(backfill|usd_volume_restamp|projected_rebuild_[a-z0-9_]+)\\.prom$|.*/restore_drill.*\\.prom$|.*/verify_archive_tier_d\\.prom$|.*/alertmanager_receivers\\.prom$|.*/heavy_job_.*\\.prom$"
+            } > 86400
+          )
+          unless on (instance, file) (
+            node_textfile_mtime_seconds{
+              file=~".*/(archive_completeness|verify_archive_tier_a|verify_archive_tier_b|lake_verify|network_state_verify|ops_job_asset_registry_backfill)\\.prom$"
+            }
+            and on (instance)
+            (min by (instance) (time() - stellarindex_heavy_lock_held_since_unix) < 259200)
+          )
         for: 30m
         labels:
           severity: ticket

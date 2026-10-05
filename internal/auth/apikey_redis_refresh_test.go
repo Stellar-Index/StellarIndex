@@ -135,8 +135,8 @@ func TestRedisValidator_ActivelyUsedKeyDoesNotExpire(t *testing.T) {
 
 // TestRedisValidator_PersistentKeyKeepsNoTTL guards the blast radius:
 // refresh-on-use is EXPIRE ... XX, so it must NOT graft a TTL onto a
-// record written WITHOUT one (operator-seeded / self-service keys, which
-// are deliberately permanent). Passes on both pre- and post-fix code;
+// record written WITHOUT one (operator-seeded keys, which are deliberately
+// permanent). Passes on both pre- and post-fix code;
 // its job is to keep a future "just GETEX everything" simplification from
 // silently making every persistent key evictable.
 func TestRedisValidator_PersistentKeyKeepsNoTTL(t *testing.T) {

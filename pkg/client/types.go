@@ -24,8 +24,13 @@ type Envelope[T any] struct {
 	// market, flagged issuer, withheld upstream leg). An id in neither
 	// Data nor Withheld has no price data. Only the batch surface sets it.
 	Withheld []string `json:"withheld,omitempty"`
-	Sources  []string `json:"sources,omitempty"`
-	Flags    Flags    `json:"flags"`
+	// Thin names the ids in Data served from a market below the
+	// substance floor under the include_thin opt-in (batch only).
+	Thin []string `json:"thin,omitempty"`
+	// UnderReviewReason is the operator-supplied reason; present exactly when Flags.UnderReview is true.
+	UnderReviewReason string   `json:"under_review_reason,omitempty"`
+	Sources           []string `json:"sources,omitempty"`
+	Flags             Flags    `json:"flags"`
 	// Pagination is a POINTER so it matches the server's wire shape
 	// (internal/api/v1/envelope.go uses *Pagination): nil ⇒ the field
 	// is absent. A value type here made `omitempty` a no-op (omitempty
@@ -97,6 +102,14 @@ type Flags struct {
 	// chain. Mirrors the server's envelope flag; omitempty hides it
 	// when false.
 	Rerouted bool `json:"rerouted,omitempty"`
+	// PivotUnverified: a composite leg was all stablecoin prints at par, so a de-peg in it went unchecked.
+	PivotUnverified bool `json:"pivot_unverified,omitempty"`
+	// ThinMarket: a served price comes from a market below the substance floor (include_thin opt-in).
+	ThinMarket bool `json:"thin_market,omitempty"`
+	// UnderReview: an operator hold covers the asset, contract or ledger; figures are served unchanged but unconfirmed.
+	UnderReview bool `json:"under_review,omitempty"`
+	// ProxyDeviation: a triangulated fiat:USD price was served through a USD peg while a declared peg trades off $1.
+	ProxyDeviation bool `json:"proxy_deviation,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.
@@ -132,6 +145,17 @@ type PriceSnapshot struct {
 	ObservedAt    time.Time `json:"observed_at"`
 	WindowSeconds int       `json:"window_seconds,omitempty"`
 
+	// FXRate, FXAsOf, FXSource and FXResolution describe the vendor FX
+	// fixing a closed-surface fiat cross converted at; FXRate is quote
+	// units per 1 USD. All omitted on a price that needed no conversion.
+	FXRate       string     `json:"fx_rate,omitempty"`
+	FXAsOf       *time.Time `json:"fx_as_of,omitempty"`
+	FXSource     string     `json:"fx_source,omitempty"`
+	FXResolution string     `json:"fx_resolution,omitempty"`
+	// USDLeg is the USD price a closed-surface USD-anchored fiat cross
+	// converted: USDLeg.Price × FXRate is Price.
+	USDLeg *USDLeg `json:"usd_leg,omitempty"`
+
 	// Change24hPct is the trailing-24h percentage change vs USD
 	// (signed, 2dp) on batch rows with a fiat:USD quote. Nil
 	// otherwise.
@@ -145,6 +169,39 @@ type PriceSnapshot struct {
 	// ConfidenceFactors is the per-factor decomposition that
 	// accompanies Confidence; nil with the same semantics.
 	ConfidenceFactors *ConfidenceFactors `json:"confidence_factors,omitempty"`
+	// Substance is the measurement behind a Flags.ThinMarket price.
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
+}
+
+// SubstanceEvidence is the trailing substance measurement behind a
+// thin-market verdict. Volumes are decimal strings.
+type SubstanceEvidence struct {
+	Base          string         `json:"base"`
+	Quote         string         `json:"quote"`
+	WindowSeconds int64          `json:"window_seconds"`
+	MeasuredAt    time.Time      `json:"measured_at"`
+	WindowEnd     *time.Time     `json:"window_end,omitempty"`
+	VolumeUSD     string         `json:"volume_usd"`
+	Buckets       int64          `json:"buckets"`
+	ValuedBuckets int64          `json:"valued_buckets"`
+	SpanSeconds   int64          `json:"span_seconds"`
+	Floor         SubstanceFloor `json:"floor"`
+	// Failed is the first floor failed: "buckets", "span", "volume" or "volume_unvalued".
+	Failed string `json:"failed"`
+}
+
+// SubstanceFloor is the substance policy a measurement was held to.
+type SubstanceFloor struct {
+	MinVolumeUSD   string `json:"min_volume_usd"`
+	MinBuckets     int64  `json:"min_buckets"`
+	MinSpanSeconds int64  `json:"min_span_seconds"`
+}
+
+// USDLeg is the USD price a derived fiat [PriceSnapshot] was converted from.
+type USDLeg struct {
+	Price      string    `json:"price"`
+	ObservedAt time.Time `json:"observed_at"`
+	Sources    []string  `json:"sources"`
 }
 
 // ConfidenceFactors is the per-factor decomposition of a
@@ -207,6 +264,8 @@ type PriceChangeHorizon struct {
 	// Withheld is true when the reference bucket exists but a serving
 	// gate refused to publish it; always false when Available is true.
 	Withheld bool `json:"withheld"`
+	// ThinMarket: the reference price comes from a market below the substance floor (include_thin opt-in).
+	ThinMarket bool `json:"thin_market,omitempty"`
 }
 
 // PriceChanges is the data shape returned by [Client.PriceChanges]:
@@ -225,6 +284,9 @@ type PriceChanges struct {
 	H24 PriceChangeHorizon `json:"24h"`
 	D7  PriceChangeHorizon `json:"7d"`
 	D30 PriceChangeHorizon `json:"30d"`
+
+	// Substance is the measurement behind a thin current price.
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
 // HistorySeries is the data shape returned by
@@ -262,6 +324,9 @@ type HistoryPoint struct {
 	T         time.Time `json:"t"`
 	P         string    `json:"p"`
 	VolumeUSD *string   `json:"v_usd,omitempty"`
+	// Sources is set only when a non-VWAP venue (a derived series)
+	// contributed to the point.
+	Sources []string `json:"sources,omitempty"`
 }
 
 // AssetDetail is the data shape returned by [Client.Assets] (listing)
@@ -344,7 +409,8 @@ type AssetDetail struct {
 	PriceUSD *string `json:"price_usd,omitempty"`
 
 	// PriceBasis identifies a PriceUSD that is NOT a direct market
-	// observation. "declared_peg": the price was filled from an
+	// observation. "global_market": filled from the vetted global
+	// ticker's cross-venue price (see GlobalMarket). "declared_peg": the price was filled from an
 	// operator-declared 1:1 fiat peg × the current fiat→USD FX rate
 	// because no market-derived price survived the server's substance
 	// gate. "transitive": the price was derived through one
@@ -359,6 +425,21 @@ type AssetDetail struct {
 	// vocabulary of the `price-withheld` 404: "substance",
 	// "scam_issuer", "upstream_leg" or "unattributed".
 	PriceWithheldReason string `json:"price_withheld_reason,omitempty"`
+
+	// GlobalMarket is the global-market reference for a classic asset the
+	// verified catalogue binds to a global ticker on its exact (code,
+	// issuer), with the Stellar price's divergence from it.
+	GlobalMarket *AssetGlobalMarket `json:"global_market,omitempty"`
+
+	// IssuerBehaviour is a classic asset's issuer flags and lifetime
+	// mint/burn/clawback totals; asset detail only.
+	IssuerBehaviour *AssetIssuerBehaviour `json:"issuer_behaviour,omitempty"`
+
+	// ThinMarket: PriceUSD comes from a market below the substance floor
+	// (include_thin opt-in); no valuation or series derives from it.
+	ThinMarket bool `json:"thin_market,omitempty"`
+	// Substance is the measurement behind a thin price (detail only).
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
 
 	// MarketCapUSD = circulating × USD price / 10^Decimals,
 	// formatted to two fractional digits. Null when supply or USD
@@ -404,9 +485,17 @@ type AssetDetail struct {
 	ListingValuation *AssetListingValuation `json:"listing_valuation,omitempty"`
 
 	// SupplyBasis identifies which ADR-0011 policy produced the
-	// supply numbers (e.g. "issuer_exclusion", "admin_exclusion",
-	// "override"); null when no snapshot exists.
+	// total/circulating numbers (e.g. "issuer_exclusion",
+	// "admin_exclusion", "override"); null when no snapshot exists. It
+	// never carries "sep1_declared_max" — see MaxSupplyBasis.
 	SupplyBasis *string `json:"supply_basis,omitempty"`
+
+	// Trust is the banded trust score with its factor breakdown; set on
+	// the detail lookup only, nil on listing rows.
+	Trust *AssetTrust `json:"trust,omitempty"`
+
+	// MaxSupplyBasis names where MaxSupply (and FDVUSD) came from when not the SupplyBasis policy, e.g. "sep1_declared_max".
+	MaxSupplyBasis *string `json:"max_supply_basis,omitempty"`
 
 	// SupplyAsOf / SupplyAsOfLedger date the supply observation; nil when
 	// the reading carries no vintage.
@@ -438,6 +527,15 @@ type AssetDetail struct {
 	// first traded < 24h ago). Clients
 	// should render "—" on null rather than fabricating "0%".
 	Change24hPct *string `json:"change_24h_pct,omitempty"`
+
+	// SEP-1 standing and backing declarations; issuer-declared, nil unless Sep1Status == "verified".
+	CurrencyStatus         *string `json:"currency_status,omitempty"`
+	IsAssetAnchored        *bool   `json:"is_asset_anchored,omitempty"`
+	AttestationOfReserve   *string `json:"attestation_of_reserve,omitempty"`
+	RedemptionInstructions *string `json:"redemption_instructions,omitempty"`
+	Regulated              *bool   `json:"regulated,omitempty"`
+	ApprovalServer         *string `json:"approval_server,omitempty"`
+	ApprovalCriteria       *string `json:"approval_criteria,omitempty"`
 
 	// ─── SEP-1 issuance declarations ─────────────────────────────
 	//
@@ -590,7 +688,8 @@ type FiatCodeAnchor struct {
 // are decimal strings (ADR-0003); `Price` is the pre-computed
 // quote/base ratio at 10 fractional digits for consumer
 // convenience (the storage layer never persists a derived price,
-// so the server computes it at response time).
+// so the server computes it at response time). Price is nil when one
+// leg is zero (an SDEX rounding fill): such a trade has no price.
 type TradeRow struct {
 	Source      string    `json:"source"`
 	Ledger      uint32    `json:"ledger"`
@@ -601,7 +700,7 @@ type TradeRow struct {
 	QuoteAsset  string    `json:"quote_asset"`
 	BaseAmount  string    `json:"base_amount"`
 	QuoteAmount string    `json:"quote_amount"`
-	Price       string    `json:"price"`
+	Price       *string   `json:"price"`
 	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each
 	// side: divide BaseAmount by 10^BaseDecimals (QuoteAmount by
 	// 10^QuoteDecimals) for whole-asset units.
@@ -734,6 +833,9 @@ type OHLCSeriesBar struct {
 	VQuoteDecimals *int      `json:"v_quote_decimals"`
 	N              int64     `json:"n"`
 	Truncated      bool      `json:"truncated,omitempty"`
+	// Sources are the venues behind this bar; a derived or vendor series
+	// is not a fill-derived VWAP.
+	Sources []string `json:"sources,omitempty"`
 }
 
 // Source is the data shape returned by [Client.Sources] — one
@@ -768,6 +870,9 @@ type Source struct {
 	// directly (dispatcher-path ingest) rather than an off-chain
 	// vendor API. False for CEX / FX / aggregators / Chainlink.
 	OnChain bool `json:"on_chain"`
+	// Selectable is true when `source=` accepts this name: on-chain
+	// sources and CEX venues. False for data vendors, which 400.
+	Selectable bool `json:"selectable"`
 	// Stats columns — populated only when the request used
 	// `?include=stats`; zero values otherwise.
 	TradeCount24h   int64  `json:"trade_count_24h,omitempty"`
@@ -907,6 +1012,28 @@ type Market struct {
 	FirstTradeAt *time.Time `json:"first_trade_at,omitempty"`
 }
 
+// AssetSupplyFlows is the data payload of [Client.AssetSupplyFlows].
+// HistoryIncomplete is true when the running net dips below zero, so
+// Days must not be cumulated into a supply level.
+type AssetSupplyFlows struct {
+	AssetID           string               `json:"asset_id"`
+	ContractID        string               `json:"contract_id"`
+	Days              []AssetSupplyFlowDay `json:"days"`
+	HistoryIncomplete bool                 `json:"history_incomplete"`
+	AsOfLedger        *int64               `json:"as_of_ledger,omitempty"`
+}
+
+// AssetSupplyFlowDay is one UTC day of supply flows. Mint/Burn/Clawback
+// are base-unit decimal strings; Net = mint - burn - clawback (signed).
+type AssetSupplyFlowDay struct {
+	Day      string `json:"day"`
+	Mint     string `json:"mint"`
+	Burn     string `json:"burn"`
+	Clawback string `json:"clawback"`
+	Net      string `json:"net"`
+	Flows    int64  `json:"flows"`
+}
+
 // AssetMetadata is the data shape returned by [Client.AssetMetadata]
 // (the SEP-1 overlay endpoint, /v1/assets/{id}/metadata). Mirrors
 // the AssetMetadata schema in openapi/stellar-index.v1.yaml.
@@ -926,6 +1053,15 @@ type AssetMetadata struct {
 	OrgName         *string `json:"org_name,omitempty"`
 	AnchorAsset     *string `json:"anchor_asset,omitempty"`
 	AnchorAssetType *string `json:"anchor_asset_type,omitempty"`
+
+	// SEP-1 standing and backing declarations; issuer-declared, nil unless Sep1Status == "verified".
+	CurrencyStatus         *string `json:"currency_status,omitempty"`
+	IsAssetAnchored        *bool   `json:"is_asset_anchored,omitempty"`
+	AttestationOfReserve   *string `json:"attestation_of_reserve,omitempty"`
+	RedemptionInstructions *string `json:"redemption_instructions,omitempty"`
+	Regulated              *bool   `json:"regulated,omitempty"`
+	ApprovalServer         *string `json:"approval_server,omitempty"`
+	ApprovalCriteria       *string `json:"approval_criteria,omitempty"`
 
 	// SEP-1 issuance declarations — issuer-declared, distinct from
 	// the F2 fields on AssetDetail which observe live ledger state.
@@ -1109,6 +1245,10 @@ type Status struct {
 	// "unknown" is how a status banner publishes "0 active alerts"
 	// while alerting is blind.
 	IncidentsStatus string `json:"incidents_status"`
+	// FreshnessStatus is the same trust signal for the Freshness block:
+	// "ok" (every enabled source active), "degraded" (active < total) or
+	// "unknown" (a count query failed; the counts are nil).
+	FreshnessStatus string `json:"freshness_status"`
 }
 
 // StatusRegion identifies which region produced the response.
@@ -1143,11 +1283,12 @@ type StatusLatency struct {
 	P99TargetMs float64 `json:"p99_target_ms"`
 }
 
-// StatusFreshness summarises the ingest layer.
+// StatusFreshness summarises the ingest layer. A nil count was not
+// measured (its query failed); a served 0 is a non-nil 0.
 type StatusFreshness struct {
 	LastAggregatorTick time.Time `json:"last_aggregator_tick,omitempty"`
-	ActiveSources      int       `json:"active_sources"`
-	TotalSources       int       `json:"total_sources"`
+	ActiveSources      *int      `json:"active_sources,omitempty"`
+	TotalSources       *int      `json:"total_sources,omitempty"`
 }
 
 // StatusIncidents counts currently-firing alerts grouped by
@@ -1248,6 +1389,10 @@ type ChartSeries struct {
 	// Points was withheld because the asset's current market cannot
 	// support a valuation, as on Asset.MarketCapLowLiquidity.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
+	// RowCapTruncated: a Timeframe "all" read hit the 50,000-bucket cap, so
+	// Points is the OLDEST slice and ends at DataEndsAt, short of the present.
+	RowCapTruncated bool       `json:"row_cap_truncated,omitempty"`
+	DataEndsAt      *time.Time `json:"data_ends_at,omitempty"`
 }
 
 // ChangeSummary is the data shape returned by [Client.ChangeSummary]
@@ -1377,6 +1522,37 @@ type VWAPResult struct {
 	Truncated           bool `json:"truncated"`
 	// Clamped: see [OHLCBar.Clamped].
 	Clamped bool `json:"clamped"`
+	// Breakdown is set only for a `breakdown=source` request.
+	Breakdown *VWAPBreakdown `json:"breakdown,omitempty"`
+	// Substance is the measurement behind a Flags.ThinMarket result.
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
+}
+
+// VWAPBreakdown mirrors `internal/api/v1.VWAPBreakdown`.
+type VWAPBreakdown struct {
+	Interval  *string               `json:"interval"`
+	Truncated bool                  `json:"truncated"`
+	Buckets   []VWAPBreakdownBucket `json:"buckets"`
+}
+
+// VWAPBreakdownBucket is one time bucket of a [VWAPBreakdown].
+type VWAPBreakdownBucket struct {
+	Start       time.Time             `json:"start"`
+	End         time.Time             `json:"end"`
+	QuoteVolume string                `json:"quote_volume"`
+	TradeCount  int                   `json:"trade_count"`
+	Sources     []VWAPSourceBreakdown `json:"sources"`
+}
+
+// VWAPSourceBreakdown is one venue's share of a [VWAPBreakdownBucket].
+type VWAPSourceBreakdown struct {
+	Source           string  `json:"source"`
+	Price            *string `json:"price"`
+	BaseVolume       string  `json:"base_volume"`
+	QuoteVolume      string  `json:"quote_volume"`
+	TradeCount       int     `json:"trade_count"`
+	Weight           string  `json:"weight"`
+	OutliersExcluded int     `json:"outliers_excluded"`
 }
 
 // TWAPResult is the data shape returned by [Client.TWAP] —
@@ -1393,6 +1569,8 @@ type TWAPResult struct {
 	Truncated        bool      `json:"truncated"`
 	// Clamped: see [OHLCBar.Clamped].
 	Clamped bool `json:"clamped"`
+	// Substance is the measurement behind a Flags.ThinMarket result.
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
 // Pool is one row from [Client.Pools] — a single (source, base,
@@ -1453,6 +1631,35 @@ type GlobalAssetView struct {
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 }
 
+// AssetGlobalMarket is a vetted same-asset token's global-market USD
+// price and the signed percentage its Stellar price diverges from it.
+type AssetGlobalMarket struct {
+	Asset                string    `json:"asset"`
+	PriceUSD             string    `json:"price_usd"`
+	Source               string    `json:"source"`
+	AsOf                 time.Time `json:"as_of"`
+	StellarDivergencePct *string   `json:"stellar_divergence_pct,omitempty"`
+	DepegWarning         bool      `json:"depeg_warning,omitempty"`
+	// IssuerSignals names the issuer behaviours present beside a depeg
+	// warning: "auth_clawback_enabled", "auth_revocable", "clawback_observed".
+	IssuerSignals []string `json:"issuer_signals,omitempty"`
+}
+
+// AssetIssuerBehaviour is what a classic asset's issuer can do to holders
+// (live account flags) and has done to supply. Totals are integer strings
+// in the asset's smallest unit.
+type AssetIssuerBehaviour struct {
+	AuthRequired        *bool   `json:"auth_required,omitempty"`
+	AuthRevocable       *bool   `json:"auth_revocable,omitempty"`
+	AuthClawbackEnabled *bool   `json:"auth_clawback_enabled,omitempty"`
+	AuthImmutable       *bool   `json:"auth_immutable,omitempty"`
+	FlagsAsOfLedger     *uint32 `json:"flags_as_of_ledger,omitempty"`
+	MintTotal           *string `json:"mint_total,omitempty"`
+	BurnTotal           *string `json:"burn_total,omitempty"`
+	ClawbackTotal       *string `json:"clawback_total,omitempty"`
+	SupplyFlowCount     *uint64 `json:"supply_flow_count,omitempty"`
+}
+
 // AssetListingReference is an independent listing platform's own USD
 // price for the EXACT Stellar address this asset lives at. It is NOT
 // this index's price for the asset and is derived from no Stellar
@@ -1505,6 +1712,27 @@ type AssetListingValuation struct {
 	// material: USDT0's trustline-visible supply is 6,469 tokens against
 	// 2,581,052 by mint minus burn.
 	SupplyBasis string `json:"supply_basis,omitempty"`
+}
+
+// AssetTrust is the output-only trust score on [AssetDetail]. A factor
+// with no evidence is "unknown" with nil Points and is excluded from
+// Score; Score is nil when no factor has evidence.
+type AssetTrust struct {
+	FormulaVersion int           `json:"formula_version"`
+	Score          *int          `json:"score"`
+	Band           string        `json:"band"` // "high" / "medium" / "low" / "unknown"
+	CoveragePct    int           `json:"coverage_pct"`
+	Factors        []TrustFactor `json:"factors"`
+}
+
+// TrustFactor is one weighted input to [AssetTrust].
+type TrustFactor struct {
+	ID       string `json:"id"`
+	Band     string `json:"band"`
+	Points   *int   `json:"points"`
+	Weight   int    `json:"weight"`
+	Source   string `json:"source"`
+	Observed string `json:"observed"`
 }
 
 // VerifiedCurrencyListItem is one row in the response to
@@ -2129,10 +2357,16 @@ type RWAReference struct {
 	// Stale marks a reference older than 72h — labelled, not withheld.
 	Stale bool `json:"stale,omitempty"`
 	// Provenance names what kind of figure PriceUSD is:
-	// "oracle_instrument_nav", "listing_platform_price",
+	// "oracle_instrument_nav", "fund_nav", "listing_platform_price",
 	// "prospectus_constant_nav" or "curator_uploaded_price". Only the
 	// first is a statement about the backing instrument.
 	Provenance string `json:"provenance"`
+	// DecimalsPublished is the publisher's stated precision; 2 on a
+	// "fund_nav" reference.
+	DecimalsPublished *int `json:"decimals_published,omitempty"`
+	// NAVDisagreement marks an oracle reference that the fund's own
+	// fresh NAV differs from by more than half a cent.
+	NAVDisagreement bool `json:"nav_disagreement,omitempty"`
 }
 
 // RWAPremium is the token's market price measured against the oracle's
@@ -2143,6 +2377,16 @@ type RWAReference struct {
 type RWAPremium struct {
 	Status string  `json:"status"`
 	Pct    *string `json:"pct,omitempty"`
+}
+
+// RWAISINCollision reports one ISIN declared in anchor_asset by several
+// issuer accounts. A declared ISIN is a claim, not proof of holding it.
+type RWAISINCollision struct {
+	// ISIN is the declared identifier in canonical upper-case form.
+	ISIN string `json:"isin"`
+	// DeclaredByIssuers counts the distinct issuer accounts, this row's
+	// included, declaring ISIN.
+	DeclaredByIssuers int `json:"declared_by_issuers"`
 }
 
 // RWAAsset is one member of the set, with the evidence that admitted
@@ -2177,6 +2421,9 @@ type RWAAsset struct {
 	Recognition string `json:"recognition"`
 	AnchorClass string `json:"anchor_class,omitempty"`
 	AnchorAsset string `json:"anchor_asset,omitempty"`
+	// ISINCollision is set when AnchorAsset is an ISIN more than one
+	// issuer account declares. Informational: it never changes the row.
+	ISINCollision *RWAISINCollision `json:"isin_collision,omitempty"`
 	// Valuation is the observed-market-price money, or the reason there
 	// is none; ReferenceValuation is the same float at the reference
 	// price. The two are separate bases and are never summed.

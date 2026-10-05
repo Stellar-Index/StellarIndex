@@ -33,9 +33,7 @@ type PriceSourceContribution struct {
 // window boundary, so every recompute of the same (asset, quote,
 // window) INSERTs a fresh row and the ON CONFLICT arm is effectively
 // unreachable — it does not refresh a historical row in place. Readers
-// take the latest bucket per (asset_id, quote_id, window_seconds);
-// rows with window_seconds NULL predate migration 0169 and carry no
-// recoverable window.
+// take the latest bucket per (asset_id, quote_id, window_seconds).
 //
 // Consequently the unguarded volume_usd never overwrites a prior
 // value (no in-place regression risk), but also never corrects one —

@@ -31,9 +31,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// sorobanEraGenesis is the first pubnet ledger with Soroban — the lower
-// bound for the global recognition scan.
-const sorobanEraGenesis = 50_457_424
+// sorobanEraFloor is the network's first Soroban ledger — the lower bound for
+// the global recognition scan and event census. A test net starts at 1, so the
+// pubnet boundary would invert the range; zero (no defaults applied) is pubnet.
+func sorobanEraFloor(cfg config.Config) uint32 {
+	if cfg.Stellar.SorobanGenesisLedger == 0 {
+		return clickhouse.SorobanGenesisLedger
+	}
+	return cfg.Stellar.SorobanGenesisLedger
+}
 
 // sourceSubstrateOK is the per-source Claim-1 verdict from a whole-range
 // SubstrateProblem result: a source is substrate-OK iff there is no problem, or
@@ -141,7 +147,8 @@ func substrateForGenesis(ctx context.Context, scan substrateScanner, cache map[u
 func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo // linear computor; one block per claim.
 	fs := flag.NewFlagSet("compute-completeness", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
-	toFlag := fs.Uint("to", 0, "Tip ledger (inclusive); 0 = resolve from the live ledgerstream cursor")
+	toFlag := fs.Uint("to", 0, "Tip ledger (inclusive); 0 = resolve from the live ledgerstream cursor. A frozen cursor is refused either way unless -allow-frozen-cursor is set")
+	allowFrozenCursor := fs.Bool("allow-frozen-cursor", false, "Stamp a verdict even though the ledgerstream cursor is provably behind the network (operator override; requires -to)")
 	only := fs.String("source", "", "Limit to one source (e.g. soroswap|blend|reflector-dex|sdex)")
 	useCH := fs.Bool("ch", false, "Read all three claims from the certified ClickHouse lake (substrate + recognition + projection re-derive) instead of Postgres soroban_events — fast, off the serving DB (ADR-0033 + ADR-0034)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (with -ch; without it, SDEX's projection still re-derives from the lake)")
@@ -149,11 +156,17 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	skipRecognition := fs.Bool("skip-recognition", false, "Trust the prior recognition audit (recognition_ok=true) instead of re-scanning all topic shapes — the global DistinctTopicShapes scan is the load-heaviest step; skip it for gentle projection-only iteration once recognition is verified")
 	fromLedger := fs.Uint("from", 0, "INCREMENTAL verify: only check [from, tip], trusting [genesis, from] as already verified (substrate + recognition + projection all scoped to [from, tip]); the watermark still extends to tip when the window is clean. 0 = full verify from each source's genesis. The completeness timer passes min(watermark) from the prior snapshots so each run re-checks only new ledgers — minutes, not hours. An incremental run can only CONFIRM or DOWNGRADE the served `complete` axis, never upgrade it: a range it did not reconcile is carried from the prior verdict, and a FAILING prior verdict is cleared only by a full run (INV-5 — see projectionClaim).")
 	pass := fs.Bool("pass", false, "WHOLE-PASS mode: prove recognition + substrate ONCE at full range for the ENTIRE source catalogue, then reconcile EACH source's projection incrementally from its own prior watermark (projectionFloor). One process replaces the per-source, per-chunk driver that re-ran the load-heaviest global recognition scan (DistinctTopicShapes, ~60s) on EVERY 25k chunk — the nightly timeout that froze the alphabetical tail's verdicts. Because substrate is proven at FULL tip, its write advances the tip and is never blocked by the CS-083 guard (the low-tip substrate flap). Every catalogue source gets a verdict — a never-seeded source, and a source whose prior projection verdict was FAILING, both reconcile from genesis (a red source has no verified ground to resume from, so the pass re-verifies it rather than carrying the failure forward forever). Requires -ch; incompatible with -source / -from / -skip-substrate / -skip-recognition (the per-chunk knobs it replaces).")
+	maxCarryAge := fs.Duration("max-carry-age", completeness.MaxProjectionCarryAge, "With -pass: a source whose clean projection claim was last reconciled over its whole served range longer ago than this (or never, on record) re-verifies from genesis instead of carrying the claim forward again — oldest evidence first, at most 3 sources per pass, never the SDEX census or a reproofOutlastsPass source such as sep41_transfers (their full re-verify outlasts the pass; compute-completeness-sdex.timer re-proves sdex weekly with -source sdex). 0 = carry without bound.")
+	sourceTimeout := fs.Duration("source-timeout", 45*time.Minute, "Deadline for ONE source's evaluation; a source that exceeds it gets no verdict (its prior stands) and the pass moves on, so one slow source cannot starve the rest. 0 disables; ignored with -source, where -timeout is the budget (the weekly SDEX re-proof needs hours).")
+	timeout := fs.Duration("timeout", 120*time.Minute, "Deadline for the whole run; sources not reached by it keep their prior verdict and are named in the error. Keep it below the systemd unit's TimeoutStartSec.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *cfgPath == "" {
 		return fmt.Errorf("-config is required")
+	}
+	if *timeout <= 0 {
+		return fmt.Errorf("-timeout must be > 0, got %s", *timeout)
 	}
 	// Fail CLOSED on -pass combined with the per-source / per-chunk knobs it
 	// replaces (validatePassFlags): a partial pass that publishes over a subset
@@ -167,7 +180,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
 	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
@@ -176,18 +189,16 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 	defer func() { _ = store.Close() }()
 
-	tip := uint32(*toFlag)
-	if tip == 0 {
-		cur, gerr := store.GetCursor(ctx, "ledgerstream", "")
-		if gerr != nil {
-			return fmt.Errorf("resolve tip from ledgerstream cursor: %w (pass -to to override)", gerr)
-		}
-		tip = cur.LastLedger
+	cur, gerr := store.GetCursor(ctx, "ledgerstream", "")
+	tip, err := verdictTipFromCursorRead(uint32(*toFlag), cur, gerr, time.Now(), *allowFrozenCursor) //nolint:gosec // ledger seq fits uint32
+	if err != nil {
+		return fmt.Errorf("compute-completeness: %w", err)
 	}
 	if tip == 0 {
 		return fmt.Errorf("tip resolved to 0 — pass -to")
 	}
 	fmt.Fprintf(os.Stderr, "compute-completeness: tip=%d\n", tip)
+	sorobanFloor := sorobanEraFloor(cfg)
 	if *pass {
 		fmt.Fprintln(os.Stderr, "compute-completeness: -pass — recognition + substrate proven once at full range; projection reconciled per source from its own watermark")
 	}
@@ -308,9 +319,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			// cap once P23/CAP-67 grew the distinct set), so always scan from
 			// genesis regardless of -from — which correctly scopes only the
 			// expensive row-by-row projection reconcile below.
-			return computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, uint32(sorobanEraGenesis), tip, soroswapOpts...)
+			return computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, sorobanFloor, tip, soroswapOpts...)
 		}
-		return computeRecognitionGaps(ctx, store, cfg, gatedOpts, tip, soroswapOpts...)
+		return computeRecognitionGaps(ctx, store, cfg, gatedOpts, sorobanFloor, tip, soroswapOpts...)
 	})
 	if recErr != nil {
 		return recErr
@@ -370,7 +381,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	// hides (eventCensusLoss).
 	var evCensus []clickhouse.EventCensusShortfall
 	if *useCH {
-		if evCensus, err = clickhouse.EventCensusShortfalls(ctx, *chAddr, sorobanEraGenesis, tip); err != nil {
+		if evCensus, err = clickhouse.EventCensusShortfalls(ctx, *chAddr, sorobanFloor, tip); err != nil {
 			return fmt.Errorf("contract_events census (failing closed — cannot certify the event table recognition and projection read): %w", err)
 		}
 	}
@@ -388,6 +399,11 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		return fmt.Errorf("prior completeness verdicts (failing closed — an incremental run cannot gate its claim without them): %w", err)
 	}
 	priorProj, priorSub, priorRec, priorWatermark := buildPriorVerdicts(priorSnaps)
+	if *pass { // projectionFloor honours an expired carry only in -pass
+		if refloored := expireStaleCarries(priorProj, catalogue, time.Now(), *maxCarryAge); len(refloored) > 0 {
+			fmt.Fprintf(os.Stderr, "compute-completeness: re-proving expired projection evidence from genesis this pass: %s\n", strings.Join(refloored, ", "))
+		}
+	}
 
 	// Durable per-target projection floors (migration 0116). Loaded once and
 	// FAILING CLOSED on error, exactly as the prior verdicts above do: these
@@ -415,8 +431,43 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		return fmt.Errorf("pending replay-rewind dirty windows (failing closed — carrying a projection claim over a rewound range is the invalidation this record exists to prevent): %w", err)
 	}
 
+	// ── System recognition snapshot (gaps on contracts no source owns) ──
+	//
+	// Refreshed on every run, whatever the -source filter, and BEFORE the
+	// per-source loop so a pass that runs out of time still publishes it. An
+	// upsert error does not stop the loop; it is joined into the run's error.
+	var recSnapErr error
+	if !*skipRecognition {
+		// The census is what /v1/coverage publishes as typed numbers on its
+		// `recognition` audit axis: the distinct-contract count says how
+		// concentrated the unattributed shapes are, not just how many.
+		census := completeness.RecognitionCensus{Shapes: len(unattributed)}
+		contracts := make(map[string]struct{}, len(unattributed))
+		for _, g := range unattributed {
+			if census.EarliestLedger == 0 || g.MinLedger < census.EarliestLedger {
+				census.EarliestLedger = g.MinLedger
+			}
+			contracts[g.ContractID] = struct{}{}
+		}
+		census.Contracts = len(contracts)
+		recW := completeness.ComputeWatermark(sorobanFloor, tip, nilOrOne(census.EarliestLedger))
+		detail := completeness.FormatRecognitionDetail(census)
+		if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{
+			Source: completeness.SystemRecognitionSource, Genesis: sorobanFloor, Tip: tip,
+			Watermark: recW.Ledger, CoveragePct: recW.CoveragePct, Complete: recW.Complete,
+			LakeComplete: recW.Complete, // no projection axis on this system snapshot
+			FirstProblem: recW.FirstProblem, SubstrateOK: true, RecognitionOK: census.Shapes == 0, ProjectionOK: true,
+			Detail: detail,
+		}); err != nil {
+			recSnapErr = fmt.Errorf("upsert recognition snapshot: %w", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "compute-completeness: recognition  unattributed=%d contracts=%d coverage=%.4f\n",
+				census.Shapes, census.Contracts, recW.CoveragePct)
+		}
+	}
+
 	// ── Per-source watermark ────────────────────────────────────────
-	evalSource := func(src reconSource) error {
+	evalSource := func(ctx context.Context, src reconSource) error {
 		genesis := src.genesis
 		var problems []uint32
 		var detail []string
@@ -570,6 +621,13 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// Set only when the CH reconcile FOUND a failure; carried to the
 		// write so a lower-tip run still records it.
 		var projFound bool
+		// What this run itself proved, as distinct from what it carried
+		// (migration 0201): its reconcile floor and the claim's evidence time.
+		var (
+			projReconciledFrom uint32
+			evidencedNow       bool
+			evidencedAt        time.Time
+		)
 		var w completeness.Watermark
 		// Incremental: only reconcile [projFrom, srW.Ledger], trusting
 		// [genesis, projFrom] as previously verified. In -pass mode projFrom is
@@ -580,7 +638,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// resume from and the source re-verifies from genesis (CS-095). Outside
 		// -pass it is the existing global max(genesis, -from) incremental floor
 		// — byte-for-byte unchanged.
-		projFrom := projectionFloor(genesis, *pass, priorProj[src.name], priorWatermark[src.name], *fromLedger)
+		projFrom := sourceProjectionFloor(src, *pass, priorProj[src.name], priorWatermark[src.name], *fromLedger)
 		// A pending replay-rewind window overrides the incremental floor:
 		// the replay rewrote served rows below the watermark, so the range
 		// MUST be re-reconciled before any claim — carried or fresh — may
@@ -643,6 +701,11 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 					projOK, projVerifiedFrom = false, 0
 					detail = append(detail, d)
 				}
+				projReconciledFrom = runFrom
+				evidencedNow, evidencedAt = projectionEvidence(projOK, servedFrom, runFrom, priorProj[src.name])
+				if projOK && !evidencedNow {
+					detail = append(detail, carriedEvidenceDetail(evidencedAt))
+				}
 			} else {
 				detail = append(detail, "projection: not evaluated (earlier claim failed at genesis)")
 			}
@@ -665,6 +728,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 					return fmt.Errorf("%s: projection: %w", src.name, perr)
 				}
 				projOK = len(pgaps) == 0 && !pblind.Any()
+				projReconciledFrom, evidencedNow = genesis, projOK
 				problems = append(problems, pgaps...)
 				problems = append(problems, pblind.Ledgers...)
 				// C4-059: name the two classes separately. A count mismatch
@@ -715,11 +779,14 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		pub, pubErr := publishSourceVerdict(ctx, store, timescale.CompletenessSnapshot{
 			Source: src.name, Genesis: genesis, Tip: tip,
 			Watermark: w.Ledger, CoveragePct: w.CoveragePct, Complete: w.Complete,
-			LakeComplete:           lakeComplete,
-			FirstProblem:           w.FirstProblem,
-			FoundProblem:           projFound,
-			ProjectionVerifiedFrom: projVerifiedFrom,
-			SubstrateOK:            substrateOK, RecognitionOK: recOK, ProjectionOK: projOK,
+			LakeComplete:             lakeComplete,
+			FirstProblem:             w.FirstProblem,
+			FoundProblem:             projFound,
+			ProjectionVerifiedFrom:   projVerifiedFrom,
+			ProjectionReconciledFrom: projReconciledFrom,
+			ProjectionEvidencedNow:   evidencedNow,
+			ProjectionEvidencedAt:    evidencedAt,
+			SubstrateOK:              substrateOK, RecognitionOK: recOK, ProjectionOK: projOK,
 			Detail: strings.Join(detail, "; "),
 		}, dirtyWin, dirtyCleared)
 		if pubErr != nil {
@@ -730,49 +797,12 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			verdictNotStoredNote(pub, tip, hasDirty))
 		return nil
 	}
-	srcErr := evaluateEachSource(ctx, catalogue, *only, evalSource)
-
-	// ── System recognition snapshot (gaps on contracts no source owns) ──
-	//
-	// W1-flowcompleteness-1: this used to be gated on `*only == ""`, so the
-	// DEPLOYED daily driver (run-compute-completeness.sh always passes
-	// -source $SRC) NEVER refreshed it — the global scan detected an
-	// unattributed gap and then discarded it, leaving /v1/coverage's recognition
-	// row stale. The scan is already global on every per-source pass (line ~163,
-	// the driver passes no -skip-recognition) and `unattributed` is already
-	// fully computed, so refreshing the system snapshot every pass is free and
-	// restores the system-level alarm for gaps on contracts no source owns. The
-	// `-source` filter still governs which PER-SOURCE rows are written; it must
-	// not silence the system-wide recognition verdict.
-	if !*skipRecognition {
-		// The census is what /v1/coverage publishes as typed numbers on
-		// its `recognition` audit axis. The DISTINCT-CONTRACT count was
-		// computed and discarded here until now, so the public surface
-		// could say how many shapes were unattributed but not how
-		// concentrated they were — 23,945 shapes across 12 contracts and
-		// across 12,000 are very different discovery backlogs.
-		census := completeness.RecognitionCensus{Shapes: len(unattributed)}
-		contracts := make(map[string]struct{}, len(unattributed))
-		for _, g := range unattributed {
-			if census.EarliestLedger == 0 || g.MinLedger < census.EarliestLedger {
-				census.EarliestLedger = g.MinLedger
-			}
-			contracts[g.ContractID] = struct{}{}
-		}
-		census.Contracts = len(contracts)
-		recW := completeness.ComputeWatermark(sorobanEraGenesis, tip, nilOrOne(census.EarliestLedger))
-		detail := completeness.FormatRecognitionDetail(census)
-		if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{
-			Source: completeness.SystemRecognitionSource, Genesis: sorobanEraGenesis, Tip: tip,
-			Watermark: recW.Ledger, CoveragePct: recW.CoveragePct, Complete: recW.Complete,
-			LakeComplete: recW.Complete, // no projection axis on this system snapshot
-			FirstProblem: recW.FirstProblem, SubstrateOK: true, RecognitionOK: census.Shapes == 0, ProjectionOK: true,
-			Detail: detail,
-		}); err != nil {
-			return errors.Join(srcErr, fmt.Errorf("upsert recognition snapshot: %w", err))
-		}
-		fmt.Fprintf(os.Stderr, "compute-completeness: recognition  unattributed=%d contracts=%d coverage=%.4f\n",
-			census.Shapes, census.Contracts, recW.CoveragePct)
+	if *pass {
+		catalogue = orderForPass(catalogue, priorProj, priorWatermark)
+	}
+	srcErr := evaluateEachSource(ctx, catalogue, *only, *sourceTimeout, evalSource)
+	if recSnapErr != nil {
+		return errors.Join(srcErr, recSnapErr)
 	}
 
 	// #483: on a non-pubnet network, rows written for pubnet-only sources
@@ -798,23 +828,62 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 // selects and joins the failures, so one source's error cannot withhold a
 // fresh verdict from every source after it. An errored source publishes
 // nothing and keeps its prior verdict. A done ctx stops the walk, since every
-// remaining eval would fail the same way.
-func evaluateEachSource(ctx context.Context, catalogue []reconSource, only string, eval func(reconSource) error) error {
+// remaining eval would fail the same way, and the error names each skipped source.
+// perSource > 0 bounds each eval: one that outlives it fails alone (no verdict,
+// prior stands) instead of consuming the run's deadline.
+func evaluateEachSource(ctx context.Context, catalogue []reconSource, only string, perSource time.Duration, eval func(context.Context, reconSource) error) error {
 	var errs []error
-	for _, src := range catalogue {
+	for i, src := range catalogue {
 		if only != "" && src.name != only {
 			continue
 		}
 		if cerr := ctx.Err(); cerr != nil {
-			errs = append(errs, fmt.Errorf("%s and every later source: not evaluated: %w", src.name, cerr))
+			var skipped []string
+			for _, s := range catalogue[i:] {
+				if only == "" || s.name == only {
+					skipped = append(skipped, s.name)
+				}
+			}
+			errs = append(errs, fmt.Errorf("not evaluated, prior verdicts stand (%s): %w", strings.Join(skipped, ", "), cerr))
 			break
 		}
-		if err := eval(src); err != nil {
+		sctx, scancel := ctx, context.CancelFunc(func() {})
+		if perSource > 0 && only == "" { // with -source the run's -timeout is that source's budget
+			sctx, scancel = context.WithTimeout(ctx, perSource)
+		}
+		err := eval(sctx, src)
+		scancel()
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "compute-completeness: %s: NO VERDICT this run, prior verdict stands: %v\n", src.name, err)
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// orderForPass moves every source whose -pass projection floor is its genesis
+// (a full re-verify) after the sources that resume incrementally, keeping
+// catalogue order within each group, so one long re-verify that exhausts the
+// run's deadline cannot withhold a fresh verdict from the cheap ones. Within the
+// from-genesis group the census (SDEX) source runs last: its full-history
+// op re-derive can outlast the whole pass, while event sources take seconds; a
+// reproofOutlastsPass source runs just before it.
+func orderForPass(catalogue []reconSource, prior map[string]priorProjection, priorWatermark map[string]uint32) []reconSource {
+	ordered := make([]reconSource, 0, len(catalogue))
+	var fromGenesis, heavyFromGenesis, censusFromGenesis []reconSource
+	for _, src := range catalogue {
+		switch {
+		case sourceProjectionFloor(src, true, prior[src.name], priorWatermark[src.name], 0) > src.genesis:
+			ordered = append(ordered, src)
+		case src.census:
+			censusFromGenesis = append(censusFromGenesis, src)
+		case src.outlastsPass():
+			heavyFromGenesis = append(heavyFromGenesis, src)
+		default:
+			fromGenesis = append(fromGenesis, src)
+		}
+	}
+	return append(append(append(ordered, fromGenesis...), heavyFromGenesis...), censusFromGenesis...)
 }
 
 // projectionFloor is the incremental projection reconcile floor for ONE source.
@@ -859,6 +928,11 @@ func evaluateEachSource(ctx context.Context, catalogue []reconSource, only strin
 // source; only a red one pays the full re-verify, which is the same work the
 // operator was already required to do by hand.
 //
+// A clean prior whose full-range evidence is older than -max-carry-age (or
+// unknown) also resumes from genesis when expireStaleCarries picks it (capped
+// per pass, census excluded): each carry re-proves only the new suffix, so
+// without that bound the prefix would be restated nightly on evidence of any age.
+//
 // Outside -pass it is the existing max(genesis, -from) incremental floor, so the
 // per-chunk driver's behaviour is unchanged: there the floor is OPERATOR-stated
 // rather than derived, and silently widening a targeted `-from` run is not this
@@ -866,7 +940,7 @@ func evaluateEachSource(ctx context.Context, catalogue []reconSource, only strin
 // reconcile). Pure — unit-testable.
 func projectionFloor(genesis uint32, pass bool, prior priorProjection, priorWatermark uint32, fromLedger uint) uint32 {
 	if pass {
-		if !prior.known || !prior.ok {
+		if !prior.known || !prior.ok || prior.evidenceExpired {
 			return genesis
 		}
 		if priorWatermark > genesis {
@@ -878,6 +952,64 @@ func projectionFloor(genesis uint32, pass bool, prior priorProjection, priorWate
 		return uint32(fromLedger) //nolint:gosec // ledger seq fits uint32
 	}
 	return genesis
+}
+
+// maxTipCursorLagLedgers is how far the network may provably have run past the
+// ledgerstream cursor before the cursor stops being usable as the verdict tip:
+// ~1h at [completeness.SlowestLedgerClose], far above a live indexer's lag.
+const maxTipCursorLagLedgers uint32 = 600
+
+// tipFromLiveCursor resolves the verdict tip from the live ledgerstream cursor,
+// refusing a cursor the network has provably left behind (ADR-0033: no cursor
+// trust). A frozen ingest would otherwise stamp a fresh computed_at onto a
+// verdict "complete to tip" for a tip the network passed long ago; refusing
+// writes no snapshot, so the stored verdicts age into the API's stale gate.
+func tipFromLiveCursor(cur timescale.Cursor, now time.Time) (uint32, error) {
+	floor := completeness.NetworkTipLowerBound(cur.LastLedger, cur.UpdatedAt, now)
+	if lag := floor - cur.LastLedger; lag > maxTipCursorLagLedgers {
+		return 0, fmt.Errorf("ledgerstream cursor is frozen at ledger %d (last advanced %s ago; the network has closed at least %d ledgers since) — it is not the network tip, so no verdict is stamped against it (-allow-frozen-cursor with -to overrides)",
+			cur.LastLedger, now.Sub(cur.UpdatedAt).Round(time.Second), lag)
+	}
+	return cur.LastLedger, nil
+}
+
+// verdictTipFromCursorRead applies the cursor read result: with an explicit -to,
+// a missing cursor row means there is no live ingest to guard (a host that never
+// ingested); any other read error, or a missing row without -to, fails closed.
+func verdictTipFromCursorRead(to uint32, cur timescale.Cursor, readErr error, now time.Time, allowFrozen bool) (uint32, error) {
+	if readErr != nil {
+		if to != 0 && errors.Is(readErr, timescale.ErrNotFound) {
+			return to, nil
+		}
+		return 0, fmt.Errorf("read ledgerstream cursor: %w", readErr)
+	}
+	return resolveVerdictTip(to, cur, now, allowFrozen)
+}
+
+// resolveVerdictTip picks the verdict tip. The frozen-cursor guard applies to an
+// explicit -to as well, since the nightly wrapper passes -to (cursor minus a
+// margin) and would otherwise keep refreshing computed_at against a stalled
+// ingest. Only an explicit override skips it.
+func resolveVerdictTip(to uint32, cur timescale.Cursor, now time.Time, allowFrozen bool) (uint32, error) {
+	live, err := tipFromLiveCursor(cur, now)
+	switch {
+	case err != nil && (!allowFrozen || to == 0):
+		return 0, err
+	case to != 0:
+		return to, nil
+	}
+	return live, nil
+}
+
+// sourceProjectionFloor is projectionFloor for one catalogue source. In -pass
+// mode a genesis-claimed source whose clean prior verdict only covered from
+// above genesis re-verifies from genesis now: projectionClaim would refuse to
+// carry that prior anyway, so resuming at the watermark only buys a false.
+func sourceProjectionFloor(src reconSource, pass bool, prior priorProjection, priorWatermark uint32, fromLedger uint) uint32 {
+	if pass && src.servedWindowReason == "" && prior.verifiedFrom > src.genesis {
+		return src.genesis
+	}
+	return projectionFloor(src.genesis, pass, prior, priorWatermark, fromLedger)
 }
 
 // validatePassFlags fails CLOSED when -pass is combined with the per-source /
@@ -1208,10 +1340,10 @@ func targetScope(servedMin uint32, haveServedRows bool, genesis, runFrom, hi uin
 	return projectionScope{From: lo, To: hi}
 }
 
-// projectionScopes resolves every target's reconcile scope against the served
-// tier, and returns (a) the scopes, parallel to src.targets, (b) servedFrom —
-// the lowest ledger the served tier holds for ANY of this source's targets,
-// i.e. the full range the served axis claims to be faithful over — and (c)
+// projectionScopes resolves every target's reconcile scope (scopesFromServed)
+// and returns (a) the scopes, parallel to src.targets, (b) servedFrom —
+// the bottom of the full range the served axis claims to be faithful over
+// (genesis, or the lowest served row of a windowed source) — and (c)
 // runFrom, where THIS run's reconcile actually starts. servedFrom < runFrom is
 // exactly the "-from skipped a range" case projectionClaim gates.
 //
@@ -1221,24 +1353,38 @@ func projectionScopes(ctx context.Context, store *timescale.Store, src reconSour
 	if len(src.targets) == 0 {
 		return nil, nil, genesis, genesis, nil
 	}
-	scopes = make([]projectionScope, len(src.targets))
 	servedMins = make([]servedFloor, len(src.targets))
-	servedFrom, runLo := hi, hi
 	for i, tgt := range src.targets {
 		minL, ok, err := store.MinLedger(ctx, tgt.table, "ledger", tgt.whereFilter, genesis, hi)
 		if err != nil {
 			return nil, nil, 0, 0, fmt.Errorf("%s min served ledger: %w", tgt.table, err)
 		}
 		servedMins[i] = servedFloor{min: minL, present: ok}
-		if served := targetScope(minL, ok, genesis, 0, hi).From; served < servedFrom {
+	}
+	scopes, servedFrom, runLo := scopesFromServed(src, servedMins, genesis, runFrom, hi)
+	return scopes, servedMins, servedFrom, runLo, nil
+}
+
+// scopesFromServed is the pure half of projectionScopes. A source without a
+// servedWindowReason scopes every target from genesis: its served tier claims
+// genesis-to-tip, so a prefix that was never projected must reconcile as
+// expected>0 vs served=0 instead of moving the floor up past it.
+func scopesFromServed(src reconSource, servedMins []servedFloor, genesis, runFrom, hi uint32) (scopes []projectionScope, servedFrom, runFromOut uint32) {
+	scopes = make([]projectionScope, len(servedMins))
+	servedFrom, runLo := hi, hi
+	for i, sm := range servedMins {
+		if src.servedWindowReason == "" {
+			sm = servedFloor{min: genesis, present: true}
+		}
+		if served := targetScope(sm.min, sm.present, genesis, 0, hi).From; served < servedFrom {
 			servedFrom = served
 		}
-		scopes[i] = targetScope(minL, ok, genesis, runFrom, hi)
+		scopes[i] = targetScope(sm.min, sm.present, genesis, runFrom, hi)
 		if scopes[i].From < runLo {
 			runLo = scopes[i].From
 		}
 	}
-	return scopes, servedMins, servedFrom, runLo, nil
+	return scopes, servedFrom, runLo
 }
 
 // servedFloor is one target's live bottom edge: `MIN(ledger)` over the
@@ -1272,15 +1418,15 @@ type servedFloor struct {
 // row below the floor is gone — and is reported as such rather than skipped.
 func detectFloorLoss(src reconSource, servedMins []servedFloor, floors map[string]timescale.CompletenessTargetFloor) []string {
 	var out []string
-	for i, tgt := range src.targets {
-		if i >= len(servedMins) {
+	for i, sm := range servedMins {
+		if i >= len(src.targets) {
 			break
 		}
+		tgt := src.targets[i]
 		prior, ok := floors[timescale.TargetFloorKey(src.name, tgt.table, tgt.whereFilter)]
 		if !ok {
 			continue // no floor recorded yet — nothing to compare against
 		}
-		sm := servedMins[i]
 		if !sm.present {
 			out = append(out, fmt.Sprintf(
 				"projection: %s holds NO rows but was previously verified from ledger %d — "+
@@ -1302,9 +1448,8 @@ func detectFloorLoss(src reconSource, servedMins []servedFloor, floors map[strin
 // floorsToRecord is what a clean run has EVIDENCE for, per target — the pure
 // half of recordFloors.
 //
-// It records scopes[i].From — the ledger the reconcile genuinely started at —
-// NOT the target's raw MIN(ledger), and ONLY when that scope actually reached
-// the target's true bottom edge (scopes[i].From <= servedMins[i].min). A
+// It records the target's live MIN(ledger), and ONLY when the reconcile scope
+// actually reached that bottom edge (scopes[i].From <= servedMins[i].min). A
 // narrowed `-from`/incremental run (projectionFloor resuming from a prior
 // watermark) clips the scope ABOVE the served tier's real minimum, so this
 // run has no evidence about the range below the clip: recording
@@ -1346,11 +1491,13 @@ func floorsToRecord(src reconSource, scopes []projectionScope, servedMins []serv
 			// it cannot bank a floor there.
 			continue
 		}
+		// The floor is the target's live bottom edge, not a genesis-floored
+		// scope start: detectFloorLoss reads MIN(ledger) > floor as loss.
 		out = append(out, timescale.CompletenessTargetFloor{
 			Source:       src.name,
 			Table:        tgt.table,
 			Filter:       tgt.whereFilter,
-			VerifiedFrom: from,
+			VerifiedFrom: sm.min,
 		})
 	}
 	return out
@@ -1408,6 +1555,73 @@ type priorProjection struct {
 	known bool
 	ok    bool
 	tip   uint32
+	// evidencedAt is when the prior claim was last reconciled over the whole
+	// served range (zero = unknown); a carry inherits it unchanged.
+	evidencedAt time.Time
+	// evidenceExpired: evidencedAt is older than -max-carry-age, so -pass
+	// re-proves the source instead of carrying it again (projectionFloor).
+	evidenceExpired bool
+	// verifiedFrom is the prior verdict's projection_verified_from; 0 = not
+	// recorded. A carry may only cover ground at or above it.
+	verifiedFrom uint32
+}
+
+// maxEvidenceRefloorsPerPass caps how many expired carries one -pass re-proves
+// from genesis. The rest keep carrying (and keep their old evidence time) until a
+// later night, which staggers expiry instead of re-flooring every source at once.
+const maxEvidenceRefloorsPerPass = 3
+
+// expireStaleCarries marks, oldest evidence first (unknown counts as oldest), at
+// most maxEvidenceRefloorsPerPass catalogue sources whose clean prior projection claim was last
+// reconciled in full longer than maxAge ago (or never) as expired, and returns
+// their names. Census sources are never marked: a full SDEX re-derive outlasts
+// the pass's deadline, and a deadline-cut source writes nothing, so a forced
+// re-floor would re-floor it every night and never refresh; its evidence ages
+// honestly until the weekly -source run re-proves it. maxAge <= 0 disables it.
+func expireStaleCarries(prior map[string]priorProjection, catalogue []reconSource, now time.Time, maxAge time.Duration) []string {
+	var expired []string
+	for _, src := range catalogue {
+		p := prior[src.name]
+		if !src.outlastsPass() && p.known && p.ok && completeness.ProjectionEvidenceExpired(p.evidencedAt, now, maxAge) {
+			expired = append(expired, src.name)
+		}
+	}
+	// Zero (unknown) sorts before every real time; ties keep catalogue order.
+	sort.SliceStable(expired, func(i, j int) bool {
+		return prior[expired[i]].evidencedAt.Before(prior[expired[j]].evidencedAt)
+	})
+	if len(expired) > maxEvidenceRefloorsPerPass {
+		expired = expired[:maxEvidenceRefloorsPerPass]
+	}
+	for _, name := range expired {
+		p := prior[name]
+		p.evidenceExpired = true
+		prior[name] = p
+	}
+	return expired
+}
+
+// carriedEvidenceDetail names how old the evidence behind a carried claim is.
+func carriedEvidenceDetail(evidencedAt time.Time) string {
+	if evidencedAt.IsZero() {
+		return "projection: the carried prefix has no full-range reconcile on record"
+	}
+	return "projection: the carried prefix was last reconciled in full at " + evidencedAt.UTC().Format(time.RFC3339)
+}
+
+// projectionEvidence is the evidence time a projection claim publishes. A run
+// that reconciled the whole served range cleanly stamps it now; a claim carried
+// over a skipped prefix keeps the prior claim's time (zero when unknown), never
+// this run's; a false claim has none. Pure.
+func projectionEvidence(projOK bool, servedFrom, runFrom uint32, prior priorProjection) (now bool, carried time.Time) {
+	switch {
+	case !projOK:
+		return false, time.Time{}
+	case runFrom <= servedFrom:
+		return true, time.Time{}
+	default:
+		return false, prior.evidencedAt
+	}
 }
 
 // buildPriorVerdicts turns the last published snapshots into the per-axis
@@ -1438,7 +1652,7 @@ func buildPriorVerdicts(snaps []timescale.CompletenessSnapshot) (priorProj, prio
 	// the same value the per-source wrapper read as its -from.
 	priorWatermark = make(map[string]uint32, len(snaps))
 	for _, s := range snaps {
-		priorProj[s.Source] = priorProjection{known: true, ok: s.ProjectionOK, tip: s.Watermark}
+		priorProj[s.Source] = priorProjection{known: true, ok: s.ProjectionOK, tip: s.Watermark, verifiedFrom: s.ProjectionVerifiedFrom, evidencedAt: s.ProjectionEvidencedAt}
 		priorWatermark[s.Source] = s.Watermark
 		// C4-057: the SUBSTRATE axis needs the same prior-verdict input the
 		// projection axis has had since INV-5, for exactly the same reason —
@@ -1474,7 +1688,8 @@ func buildPriorVerdicts(snaps []timescale.CompletenessSnapshot) (priorProj, prio
 //     failing verdict is ever cleared — deliberately, by a full re-verify.
 //  3. A partial (incremental) run may CARRY FORWARD a prior clean verdict for
 //     the prefix it skipped, but only if that prior verdict is contiguous with
-//     this run's window (prior.tip+1 >= runFrom). Confirm, never upgrade.
+//     this run's window (prior.tip+1 >= runFrom) and reached down to this
+//     run's servedFrom (prior.verifiedFrom <= servedFrom). Confirm, never upgrade.
 //  4. Anything else — no prior verdict, a FAILING prior verdict, or a stale
 //     prior that leaves an unverified band — publishes false.
 //
@@ -1498,6 +1713,8 @@ func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail st
 		return false, fmt.Sprintf("projection: verified only [%d,%d]; %s was NOT reconciled by this run and the prior verdict's projection was FAILING — refusing to upgrade without evidence (re-run without -from)", runFrom, hi, skipped)
 	case runFrom > prior.tip+1:
 		return false, fmt.Sprintf("projection: verified only [%d,%d]; the prior clean verdict only reached tip=%d, leaving [%d,%d] verified by nobody — not claiming it (re-run without -from)", runFrom, hi, prior.tip, prior.tip+1, runFrom-1)
+	case prior.verifiedFrom > servedFrom:
+		return false, fmt.Sprintf("projection: verified only [%d,%d]; the prior clean verdict only covered from ledger %d, leaving [%d,%d] verified by nobody — not claiming it (re-run without -from)", runFrom, hi, prior.verifiedFrom, servedFrom, prior.verifiedFrom-1)
 	default:
 		return true, fmt.Sprintf("projection: verified [%d,%d]; %s carried from the prior clean verdict (tip=%d), not re-verified this run", runFrom, hi, skipped, prior.tip)
 	}
@@ -1797,7 +2014,7 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chAd
 			return nil, completeness.BlindSpots{}, eerr
 		}
 		for _, tgt := range src.targets {
-			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, genesis, hi)
+			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), genesis, hi)
 			if aerr != nil {
 				return nil, completeness.BlindSpots{}, aerr
 			}
@@ -1828,7 +2045,7 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chAd
 	// findings and the caller's verdict names them apart.
 	for _, tgt := range src.targets {
 		expected := completeness.SumKinds(byKind, tgt.kinds...)
-		actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, genesis, hi)
+		actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), genesis, hi)
 		if aerr != nil {
 			return nil, completeness.BlindSpots{}, aerr
 		}
@@ -1869,7 +2086,7 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 	if lo > hi {
 		return 0, completeness.BlindSpots{}, "", nil // every target's scope is empty
 	}
-	expectedFor, blind, eerr := expectedProjection(ctx, store, chStreamer, chAddr, src, lo, hi)
+	expectedFor, blind, eerr := expectedProjection(ctx, chStreamer, chAddr, src, lo, hi)
 	if eerr != nil {
 		return 0, completeness.BlindSpots{}, "", eerr
 	}
@@ -1908,7 +2125,7 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 // decoder soft-fails inside a single op's claim list and still emits the op,
 // so a malformed claim cannot remove a whole row from the expected side
 // without also removing it from served.
-func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, lo, hi uint32) (func(reconTarget) map[uint32]int, completeness.BlindSpots, error) {
+func expectedProjection(ctx context.Context, chStreamer completeness.EventStreamer, chAddr string, src reconSource, lo, hi uint32) (func(reconTarget) map[uint32]int, completeness.BlindSpots, error) {
 	switch {
 	case src.callDec != nil:
 		// Event-less ContractCall source (band, soroswap-router): re-derive the
@@ -1945,12 +2162,10 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 		// went STALE as new pools deployed: blend reported complete=false
 		// (expected=0) on windows whose activity was on pools missing from the seed,
 		// while the live decoder (which self-seeds from deploy events) captured them.
-		// Adding it here makes the watchdog self-maintaining. (Reads the Postgres
-		// soroban_events landing zone for the rare, indexed creation events; a
-		// CH-native preseed for full -ch purity is a follow-up.)
+		// Adding it here makes the watchdog self-maintaining.
 		var walkBlind completeness.BlindSpots
 		if len(src.factories) > 0 {
-			pb, err := preseedFactoryChildren(ctx, store, src, lo)
+			pb, err := preseedFactoryChildren(ctx, chStreamer, src, lo)
 			if err != nil {
 				return nil, completeness.BlindSpots{}, fmt.Errorf("%s preseed: %w", src.name, err)
 			}
@@ -1999,7 +2214,7 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 // ever missed and no undercount (false red) is possible:
 //
 //   - (a) src.dec's gate AFTER its preseed-to-lo = the curated in-code seed ∪
-//     every child preseeded from the Postgres landing zone — i.e. the registry
+//     every child preseeded from the lake's creation events — i.e. the registry
 //     state the stream STARTS from. Read via GatedContractSet().
 //   - (b) every child the SAME certified lake announces through hi, walked from
 //     the factory's creation events on a THROWAWAY decoder — a superset of the
@@ -2088,7 +2303,7 @@ func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSourc
 	if sc.From > sc.To {
 		return 0, "", nil
 	}
-	actual, err := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, sc.From, sc.To)
+	actual, err := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), sc.From, sc.To)
 	if err != nil {
 		return 0, "", err
 	}
@@ -2098,15 +2313,14 @@ func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSourc
 
 // reDeriveSDEXCensusViaDecoder re-derives the expected SDEX trade count per
 // ledger by running the SDEX decoder over the certified CH operations and
-// counting the DISTINCT, Validate-passing trades it emits — mirroring exactly
-// what InsertTrade lands in the served tier (the Validate gate; the served
-// PK has been an ON CONFLICT DO UPDATE since migration 0109, not a de-dup —
-// a colliding op_index overwrites rather than drops). This is the honest
-// projection oracle:
-// census == served by identical write logic, so the residual is exactly the
-// ops the served tier dropped (real coverage gaps) — not a methodology
-// artifact (one-side-zero fills or op_index fanout collisions, both of which
-// the served can't hold but the CH substrate retains) — see sdexServedCensus.
+// counting the DISTINCT, Validate-passing, priceable trades it emits (the
+// served PK has been an ON CONFLICT DO UPDATE since migration 0109, so a
+// colliding op_index overwrites rather than drops). One-side-zero fills are
+// stored by the writer but excluded here AND from the served COUNT
+// (reconTarget.countFilter), because ledgers written before they were
+// admitted hold none; a full-history ch-rebuild -sdex retires both exclusions.
+// The residual is then exactly the ops the served tier dropped (real coverage
+// gaps), not a methodology artifact — see sdexServedCensus.
 // Read-only; windowed so the operations⋈results join stays under the CH
 // memory cap.
 func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to uint32) (map[uint32]int, completeness.BlindSpots, error) {
@@ -2320,19 +2534,26 @@ func decodeContractCall(op clickhouse.ContractCallOp, call dispatcher.ContractCa
 		if matched = dec.Matches(call.ContractID, call.FunctionName); !matched {
 			return
 		}
+		// The live dispatcher refuses these before Decode; mirror it so the census and
+		// ch-rebuild neither expect nor write a row the served tier never gets.
+		if dispatcher.RefusesUncorroborated(dec, call.ExecutionCorroborated) {
+			matched = false
+			return
+		}
 		evs, err = dec.Decode(dispatcher.ContractCallContext{
-			Ledger:            op.Ledger,
-			ClosedAt:          op.ClosedAt,
-			TxHash:            op.TxHash,
-			TxSource:          op.Source,
-			OpSource:          op.Source,
-			OpIndex:           int(op.OpIndex),
-			ContractID:        call.ContractID,
-			FunctionName:      call.FunctionName,
-			Args:              call.Args,
-			CallPath:          call.CallPath,
-			CallPathContracts: call.CallPathContracts,
-			AuthOccurrence:    call.AuthOccurrence,
+			Ledger:                op.Ledger,
+			ClosedAt:              op.ClosedAt,
+			TxHash:                op.TxHash,
+			TxSource:              op.Source,
+			OpSource:              op.Source,
+			OpIndex:               int(op.OpIndex),
+			ContractID:            call.ContractID,
+			FunctionName:          call.FunctionName,
+			Args:                  call.Args,
+			CallPath:              call.CallPath,
+			CallPathContracts:     call.CallPathContracts,
+			AuthOccurrence:        call.AuthOccurrence,
+			ExecutionCorroborated: call.ExecutionCorroborated,
 		})
 	}); perr != nil {
 		return nil, true, fmt.Errorf("decoder panicked: %w", perr)
@@ -2493,11 +2714,12 @@ var recognitionGlobalExcludeSyms = clickhouse.FirehoseExcludeSyms
 // surfaces the Blend/Comet pool-level set_admin collision on the shared
 // "POOL" topic. watchedSep41RecognitionShapes re-adds exactly those excluded
 // topics, scoped to the watched contract set, so both stay auditable without
-// the firehose cost.
+// the firehose cost. Those watched shapes are recognised only because
+// buildCensusDispatcher also registers the sep41 event decoders.
 func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr string, gated map[string][]contractid.Option, from, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
-	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated, soroswapOpts...)
+	disp, err := buildCensusDispatcher(cfg, gated, soroswapOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("build dispatcher: %w", err)
+		return nil, err
 	}
 	shapes, err := clickhouse.DistinctTopicShapes(ctx, chAddr, from, tip, recognitionGlobalExcludeSyms)
 	if err != nil {
@@ -2529,6 +2751,20 @@ func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr str
 	return gaps, nil
 }
 
+// buildCensusDispatcher builds the recognition census's decoder chain the
+// way the indexer does: the enabled sources plus the watched-set-gated
+// sep41 event decoders, which BuildDispatcher alone does not register.
+func buildCensusDispatcher(cfg config.Config, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (*dispatcher.Dispatcher, error) {
+	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated, soroswapOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("build dispatcher: %w", err)
+	}
+	if _, err := pipeline.RegisterSupplyEventDecoders(disp, cfg.Supply); err != nil {
+		return nil, fmt.Errorf("register supply event decoders: %w", err)
+	}
+	return disp, nil
+}
+
 // watchedSep41RecognitionShapes is the watched-set-scoped half of the
 // recognition census (GH-1295): the CAP-67 topics FirehoseExcludeSyms drops
 // from the global scan, restricted to the operator-curated
@@ -2542,18 +2778,18 @@ func watchedSep41RecognitionShapes(ctx context.Context, cfg config.Config, chAdd
 	return clickhouse.DistinctTopicShapesForWatchedContracts(ctx, chAddr, from, tip, clickhouse.FirehoseExcludeSyms, watched)
 }
 
-// computeRecognitionGaps runs the global recognition audit over the
-// Soroban era and returns every unrecognized event shape.
-func computeRecognitionGaps(ctx context.Context, store *timescale.Store, cfg config.Config, gated map[string][]contractid.Option, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
-	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated, soroswapOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("build dispatcher: %w", err)
-	}
-	samples, err := store.DistinctSorobanTopicSamples(ctx, sorobanEraGenesis, tip)
+// computeRecognitionGaps runs the global recognition audit over [from, tip]
+// and returns every unrecognized event shape.
+func computeRecognitionGaps(ctx context.Context, store *timescale.Store, cfg config.Config, gated map[string][]contractid.Option, from, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
+	disp, err := buildCensusDispatcher(cfg, gated, soroswapOpts...)
 	if err != nil {
 		return nil, err
 	}
-	if verr := recognitionScanEmptyErr(len(samples), sorobanEraGenesis, tip); verr != nil {
+	samples, err := store.DistinctSorobanTopicSamples(ctx, from, tip)
+	if err != nil {
+		return nil, err
+	}
+	if verr := recognitionScanEmptyErr(len(samples), from, tip); verr != nil {
 		return nil, verr
 	}
 	return completeness.AuditRecognition(samples, disp), nil

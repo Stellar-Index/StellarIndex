@@ -49,9 +49,13 @@ import (
 // never lands on a bucket. The rule, applied per row:
 //
 //   - take the most recent bucket AT OR BEFORE the trade's `ts`. Never a
-//     later one: a rate published after the trade is information the
-//     trade did not have, and using it would make a backfilled value
-//     depend on when the operator ran the tool. Never an interpolation
+//     later bucket. The guarantee is per UTC day, not per publication:
+//     the live worker rewrites today's bucket on every refresh and the
+//     trailing-7d history bars rewrite the days before it, so the stored
+//     rate may have been published after the trade, and a run over rows
+//     inside that 7-day window can differ from a later run by intraday
+//     FX movement. Older buckets change only through an operator
+//     fx-history-backfill correction. Never an interpolation
 //     between two buckets either — that would be a rate the vendor never
 //     published, invented by this tool on a money column.
 //   - REFUSE the row when the nearest such bucket is more than
@@ -193,7 +197,7 @@ func (s *Store) PlanCEXFiatUSDVolumeRestamp(ctx context.Context, p RestampScanPa
 			if err != nil || !ok {
 				return nil, err
 			}
-			return tradeUSDVolumeViaFiatQuoteFor(ctx, t, s.usdVolumeFXResolver), nil
+			return tradeUSDVolumeViaFiatQuoteFor(ctx, t, s.usdVolumeFXResolver)
 		},
 	})
 	if err != nil {

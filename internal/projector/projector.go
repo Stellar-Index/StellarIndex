@@ -37,9 +37,11 @@ package projector
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -67,6 +69,10 @@ const Interval = 5 * time.Second
 // small enough that dense protocol ranges, notably Aquarius reserve
 // updates, finish inside PerSourceTimeout.
 const BatchLimit = 1_000
+
+// reconstructErrLogEvery throttles the per-row malformed-row warning within a
+// cycle: a systematically broken landing-zone shape fails every row it touches.
+const reconstructErrLogEvery = 20
 
 // MinBatchLimit is the floor for the adaptive per-source window (see
 // cycleOneSource): when a cycle exceeds PerSourceTimeout the window
@@ -97,6 +103,11 @@ const cursorCommitTimeout = 10 * time.Second
 // non-advancing work, not a transient blip. The shrink logic itself is
 // unchanged; this only makes the terminal stall observable/alertable.
 const WedgeCycles = 5
+
+// MaxCycleBudgetMultiple caps how far a floor-stalled source's per-cycle
+// budget escalates (PerSourceTimeout << n, n <= 3 → 8×, 8 minutes). A floor
+// range that cannot finish in that is not a slow range, it needs an operator.
+const MaxCycleBudgetMultiple = 8
 
 // ReplayWindowRefreshInterval is how often the projector re-reads the
 // operator-recorded projection dirty windows (migration 0125) to republish
@@ -679,9 +690,11 @@ func processEventSafely(src Source, ev events.Event, sink func(consumer.Event) e
 			continue
 		}
 		// Retryable or unclassified: stop here. `emitted` counts the outputs
-		// that DID commit; the caller holds the cursor below ev.Ledger, so the
-		// row — including the outputs after this one — is re-read next cycle.
+		// that DID commit; the caller holds the cursor below this output's
+		// ledger (heldLedger, ≤ ev.Ledger), so the row — including the outputs
+		// after this one — is re-read next cycle.
 		faults.held = err
+		faults.heldLedger = outputLedger(out, ev.Ledger)
 		break
 	}
 	return emitted, false, faults.asError()
@@ -700,6 +713,21 @@ type rowSinkFaults struct {
 	// held is the first retryable or unclassified fault, which stopped the
 	// row; nil when the row ran to its last output. It holds the cursor.
 	held error
+	// heldLedger is the ledger the held output belongs to: a buffered decoder
+	// can emit an earlier ledger's output while scanning a later event, and the
+	// cursor must stay below the OUTPUT's ledger for the retry to re-read it.
+	heldLedger uint32
+}
+
+// outputLedger returns the output's own ledger when it declares one (the
+// phoenix sweep rescue), else the ledger of the lake row it was decoded from.
+func outputLedger(out consumer.Event, rowLedger uint32) uint32 {
+	if c, ok := out.(interface{ EventLedger() uint32 }); ok {
+		if l := c.EventLedger(); l != 0 && l < rowLedger {
+			return l
+		}
+	}
+	return rowLedger
 }
 
 // asError returns f as an error, or a true nil when the row had no sink fault
@@ -751,6 +779,18 @@ func rowFaultsOf(sinkErr error) *rowSinkFaults {
 // advancing (or caught-up) cycle clears both the count and the gauge.
 type wedgeTracker struct {
 	floorStalls int
+}
+
+// budget is this source's per-cycle deadline: PerSourceTimeout doubled for each
+// consecutive floor-stall, capped at MaxCycleBudgetMultiple. The window cannot
+// shrink below the floor, so a longer deadline is the only lever left to let
+// the identical range finish; an advancing cycle resets it.
+func (wt *wedgeTracker) budget() time.Duration {
+	mult := 1
+	for i := 0; i < wt.floorStalls && mult < MaxCycleBudgetMultiple; i++ {
+		mult *= 2
+	}
+	return PerSourceTimeout * time.Duration(mult)
 }
 
 // floorStall records one cycle that ended at the window floor, under a deadline,
@@ -817,7 +857,7 @@ func (p *Projector) runOneSource(ctx context.Context, src Source) {
 // lakeReader is the ClickHouse read surface a CH-mode cycle needs;
 // *clickhouse.WatermarkReader satisfies it.
 type lakeReader interface {
-	ContiguousWatermark(ctx context.Context, from uint32) (uint32, error)
+	ContiguousWatermark(ctx context.Context, from, to uint32) (uint32, error)
 	LakeMinLedger(ctx context.Context) (uint32, error)
 	Close() error
 }
@@ -853,10 +893,21 @@ func (s *sourceLake) close() {
 // identity, why we are holding (its [sinkDisposition]), how many consecutive
 // cycles it has now failed, and the error itself (for the log).
 type heldRow struct {
-	id          rowIdentity
+	id rowIdentity
+	// holdLedger is the ledger the cursor must stay below when it differs from
+	// id.ledger (a carried output from an earlier ledger); 0 means id.ledger.
+	holdLedger  uint32
 	disposition sinkDisposition
 	fails       int
 	err         error
+}
+
+// heldAt is the ledger this row holds the cursor below.
+func (r heldRow) heldAt() uint32 {
+	if r.holdLedger != 0 {
+		return r.holdLedger
+	}
+	return r.id.ledger
 }
 
 // quarantineCandidate returns the index of the ONE held row this cycle should
@@ -923,8 +974,8 @@ func shedCandidate(rows []heldRow, want sinkDisposition, budget int) int {
 		if rows[i].disposition != want || rows[i].fails < budget {
 			continue
 		}
-		if best < 0 || rows[i].id.ledger < bestLedger {
-			best, bestLedger = i, rows[i].id.ledger
+		if best < 0 || rows[i].heldAt() < bestLedger {
+			best, bestLedger = i, rows[i].heldAt()
 		}
 	}
 	return best
@@ -936,8 +987,8 @@ func lowestHeldLedger(held []heldRow) (uint32, bool) {
 	lowest := uint32(0)
 	found := false
 	for i := range held {
-		if !found || held[i].id.ledger < lowest {
-			lowest = held[i].id.ledger
+		if !found || held[i].heldAt() < lowest {
+			lowest = held[i].heldAt()
 			found = true
 		}
 	}
@@ -1038,7 +1089,7 @@ func (p *Projector) commitCursor(ctx context.Context, source string, read timesc
 //nolint:gocognit,funlen // linear cycle (cursor read → tip → scan → cursor write) with a source branch (soroban_events vs CH); splitting into helpers would scatter the cycle's success/failure metric emissions and make the control flow harder to audit.
 func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint32, tracker *poisonTracker, wedge *wedgeTracker, lake *sourceLake) { //nolint:gocyclo // essential, cohesive durability classification (C2-1)
 	start := time.Now()
-	cycleCtx, cancel := context.WithTimeout(ctx, PerSourceTimeout)
+	cycleCtx, cancel := context.WithTimeout(ctx, wedge.budget())
 	defer cancel()
 
 	cursor, err := p.store.GetCursor(cycleCtx, "projector", src.Name)
@@ -1074,7 +1125,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	// never gets ahead of "what we promise is durable." In CH
 	// feed-switch mode the bound is additionally clamped to the
 	// lake's provably-complete watermark (see resolveTip).
-	tip, durableTip, err := p.resolveTip(cycleCtx, lake, fromLedger)
+	tip, durableTip, err := p.resolveTip(cycleCtx, lake, fromLedger, saturatingAdd(fromLedger, *window))
 	if err != nil {
 		p.logger.Warn("projector: tip resolve failed", "source", src.Name, "err", err)
 		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
@@ -1106,10 +1157,11 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	}
 
 	var (
-		rowsScanned    int
-		eventsEmitted  int
-		decodeErrors   int
-		lastSeenLedger uint32
+		rowsScanned       int
+		eventsEmitted     int
+		decodeErrors      int
+		reconstructErrors int
+		lastSeenLedger    uint32
 
 		// Sink-durability tracking (audit-2026-07-16 C2-1). A sink write
 		// failure that is NOT a positively-identified permanent data fault
@@ -1215,7 +1267,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 			// retries. The whole ROW is retried, poison outputs included, so it
 			// is not also a shed candidate — the cursor is already held for it,
 			// and shedding would drop the retry budget this row is counting.
-			held = append(held, heldRow{id: id, disposition: disposition, fails: fails, err: sinkErr})
+			held = append(held, heldRow{id: id, holdLedger: faults.heldLedger, disposition: disposition, fails: fails, err: sinkErr})
 			if fails == 1 || fails%heldRowLogEvery == 0 {
 				p.logger.Warn("projector: sink failure — holding cursor for retry (NOT advancing past this ledger)",
 					"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
@@ -1242,7 +1294,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 
 	prefilter := src.PrefilterContractIDs()
 	if p.chAddr != "" {
-		// CH feed-switch (#10): read contract_events directly (already an
+		// CH feed-switch (ADR-0034 #10): read contract_events directly (already an
 		// events.Event, no Reconstruct). No FINAL — small forward window +
 		// idempotent downstream writes absorb any duplicate.
 		err = clickhouse.StreamContractEventsFiltered(cycleCtx, p.chAddr, fromLedger, toLedger,
@@ -1270,8 +1322,15 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 				if rerr != nil {
 					// Skip a malformed row but keep the cursor advancing; the
 					// row is unrecoverable so re-reading it next cycle would
-					// just re-fail. Count it for visibility.
-					decodeErrors++
+					// just re-fail. Count it, and log its identity so the
+					// dropped population can be found without re-scanning.
+					reconstructErrors++
+					if reconstructErrors == 1 || reconstructErrors%reconstructErrLogEvery == 0 {
+						p.logger.Warn("projector: malformed landing-zone row — skipped (cursor advances past it)",
+							"source", src.Name, "ledger", row.Ledger, "tx", hex.EncodeToString(row.TxHash),
+							"op_index", row.OpIndex, "event_index", row.EventIndex,
+							"contract", row.ContractID, "failures_this_cycle", reconstructErrors, "err", rerr)
+					}
 					return nil //nolint:nilerr // intentional soft-fail; see comment.
 				}
 				process(ev)
@@ -1462,6 +1521,9 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	if decodeErrors > 0 {
 		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "decode_error").Add(float64(decodeErrors))
 	}
+	if reconstructErrors > 0 {
+		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "reconstruct_error").Add(float64(reconstructErrors))
+	}
 	if sinkTransientFails > 0 {
 		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_retry").Add(float64(sinkTransientFails))
 	}
@@ -1505,13 +1567,13 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	switch {
 	case sinkTransientFails > 0 || sinkPoisonHeld > 0:
 		runOutcome = "sink_retry"
-	case decodeErrors > 0:
+	case decodeErrors > 0 || reconstructErrors > 0:
 		runOutcome = "decode_degraded"
 	}
 	obs.ProjectorRunsTotal.WithLabelValues(src.Name, runOutcome).Inc()
 	obs.ProjectorCycleDurationSeconds.WithLabelValues(src.Name).Observe(time.Since(start).Seconds())
 
-	if eventsEmitted > 0 || decodeErrors > 0 || sinkTransientFails > 0 || sinkPermanentFails > 0 ||
+	if eventsEmitted > 0 || decodeErrors > 0 || reconstructErrors > 0 || sinkTransientFails > 0 || sinkPermanentFails > 0 ||
 		sinkI128Overflows > 0 ||
 		sinkPoisonHeld > 0 || sinkQuarantined > 0 {
 		p.logger.Info("projector cycle",
@@ -1520,6 +1582,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 			"rows_scanned", rowsScanned,
 			"events_emitted", eventsEmitted,
 			"decode_errors", decodeErrors,
+			"reconstruct_errors", reconstructErrors,
 			"sink_transient_fails", sinkTransientFails,
 			"sink_permanent_fails", sinkPermanentFails,
 			"sink_i128_overflows", sinkI128Overflows,
@@ -1648,7 +1711,7 @@ func (p *Projector) findSeed(ctx context.Context, src Source, lake *sourceLake) 
 	if err != nil {
 		return 0, false, err
 	}
-	tip, _, err := p.resolveTip(ctx, lake, floor)
+	tip, _, err := p.resolveTip(ctx, lake, floor, math.MaxUint32)
 	if err != nil {
 		return 0, false, err
 	}
@@ -1705,11 +1768,15 @@ func (p *Projector) holdForWidenedGate(source string, from, to uint32, added []s
 // barrier ([Projector.SetRawEventBarrier]) has seen every row pushed before
 // the cursor read commit; a barrier that cannot settle fails the cycle.
 //
+// scanLimit bounds the CH watermark query: a cycle reads at most one batch
+// window past from, so scanning the lake to its tip every cycle is wasted work
+// for a lagging source.
+//
 // It also returns the unclamped ledgerstream tip: lag is always measured
 // against that, so a stalled watermark shows as rising lag rather than as
 // a caught-up source. A watermark error still returns durableTip, so the
 // failed cycle can publish lag.
-func (p *Projector) resolveTip(ctx context.Context, lake *sourceLake, from uint32) (scanTip, durableTip uint32, err error) {
+func (p *Projector) resolveTip(ctx context.Context, lake *sourceLake, from, scanLimit uint32) (scanTip, durableTip uint32, err error) {
 	c, err := p.store.GetCursor(ctx, "ledgerstream", "")
 	if err != nil {
 		if errors.Is(err, timescale.ErrNotFound) {
@@ -1724,7 +1791,7 @@ func (p *Projector) resolveTip(ctx context.Context, lake *sourceLake, from uint3
 		if rerr != nil {
 			return 0, durableTip, fmt.Errorf("ch watermark conn: %w", rerr)
 		}
-		wm, werr := reader.ContiguousWatermark(ctx, from)
+		wm, werr := reader.ContiguousWatermark(ctx, from, scanLimit)
 		if werr != nil {
 			return 0, durableTip, fmt.Errorf("ch watermark: %w", werr)
 		}
@@ -1737,6 +1804,13 @@ func (p *Projector) resolveTip(ctx context.Context, lake *sourceLake, from uint3
 		}
 	}
 	return scanTip, durableTip, nil
+}
+
+func saturatingAdd(a, b uint32) uint32 {
+	if a > math.MaxUint32-b {
+		return math.MaxUint32
+	}
+	return a + b
 }
 
 // freshSourceStart is the first ledger a source with no cursor row scans:

@@ -84,8 +84,19 @@ func ExtractLedger(lcm xdr.LedgerCloseMeta, passphrase string) (LedgerExtract, e
 	for i := range txs {
 		extractTx(&ext, txs[i], seq, closeTime)
 	}
+	// An unreadable tx still exists on-chain: count it so stored tx_count
+	// exceeds the transactions rows and the gate fails rather than agreeing
+	// on the smaller number.
+	ext.Ledger.TxCount += uint32(ext.TxReadErrors)
+	// An unreadable list is counted, not fatal: the rest of the ledger still
+	// lands, but every dropped eviction leaves a lapsed entry reading as live.
+	evicted, err := lcm.EvictedLedgerKeys()
+	if err != nil {
+		ext.EvictedKeysUnreadable++
+		evicted = nil
+	}
 	// ADR-0038 Phase C substrate (closes G12-03).
-	extractLedgerEntryChanges(&ext, txs, seq, closeTime)
+	extractLedgerEntryChanges(&ext, txs, evicted, seq, closeTime)
 
 	return ext, nil
 }
@@ -101,6 +112,9 @@ func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clos
 	feeCharged, _ := tx.FeeCharged()
 
 	sm := extractSorobanMetering(tx)
+	if sm.FeeMetaUnsupported {
+		ext.SorobanFeeMetaUnsupported++
+	}
 	fb := extractFeeBump(tx)
 	ext.Txs = append(ext.Txs, TransactionRow{
 		LedgerSeq:      seq,
@@ -157,6 +171,9 @@ type sorobanMetering struct {
 	NonRefundableFee int64 // actual TotalNonRefundableResourceFeeCharged
 	RefundableFee    int64 // actual TotalRefundableResourceFeeCharged
 	RentFee          int64 // actual RentFeeCharged
+	// FeeMetaUnsupported: the meta version is unknown, so the three charged
+	// fees above are zero for want of a reader, not because none were charged.
+	FeeMetaUnsupported bool
 }
 
 // extractSorobanMetering pulls the resource bid (envelope) + charged fees
@@ -177,7 +194,11 @@ func extractSorobanMetering(tx ingest.LedgerTransaction) sorobanMetering {
 		WriteEntries:   clampU16(len(sd.Resources.Footprint.ReadWrite)),
 		ResourceFeeBid: int64(sd.ResourceFee),
 	}
-	if ext, ok := sorobanMetaFeeExt(tx.UnsafeMeta); ok {
+	ext, ok, err := sorobanMetaFeeExt(tx.UnsafeMeta)
+	if err != nil {
+		m.FeeMetaUnsupported = true
+	}
+	if ok {
 		m.NonRefundableFee = int64(ext.TotalNonRefundableResourceFeeCharged)
 		m.RefundableFee = int64(ext.TotalRefundableResourceFeeCharged)
 		m.RentFee = int64(ext.RentFeeCharged)
@@ -235,22 +256,32 @@ func sorobanDataFromEnvelope(env xdr.TransactionEnvelope) (xdr.SorobanTransactio
 	return xdr.SorobanTransactionData{}, false
 }
 
+// errSorobanMetaUnsupported reports a TransactionMeta version newer than the
+// fee reader knows; its charged-fee ext cannot be located.
+var errSorobanMetaUnsupported = errors.New("clickhouse: unsupported TransactionMeta version for soroban fee ext")
+
 // sorobanMetaFeeExt reads the charged-fee ext (present since p21; live pubnet is
 // p27 → TransactionMetaV4) from either the V3 or V4 meta shape. ok=false when
 // the tx carries no Soroban meta (classic tx, or a Soroban tx whose meta
-// predates the ext).
-func sorobanMetaFeeExt(meta xdr.TransactionMeta) (xdr.SorobanTransactionMetaExtV1, bool) {
+// predates the ext); errSorobanMetaUnsupported for a version past V4.
+func sorobanMetaFeeExt(meta xdr.TransactionMeta) (xdr.SorobanTransactionMetaExtV1, bool, error) {
 	switch meta.V {
+	case 0, 1, 2:
+		// Pre-Soroban shapes: no Soroban meta to read.
 	case 3:
 		if sm := meta.MustV3().SorobanMeta; sm != nil {
-			return sm.Ext.GetV1()
+			ext, ok := sm.Ext.GetV1()
+			return ext, ok, nil
 		}
 	case 4:
 		if sm := meta.MustV4().SorobanMeta; sm != nil {
-			return sm.Ext.GetV1()
+			ext, ok := sm.Ext.GetV1()
+			return ext, ok, nil
 		}
+	default:
+		return xdr.SorobanTransactionMetaExtV1{}, false, errSorobanMetaUnsupported
 	}
-	return xdr.SorobanTransactionMetaExtV1{}, false
+	return xdr.SorobanTransactionMetaExtV1{}, false, nil
 }
 
 // clampU16 saturates a footprint length into a uint16 (a Soroban footprint is

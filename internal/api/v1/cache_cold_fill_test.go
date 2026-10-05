@@ -156,7 +156,7 @@ func TestColdFill_MarketsPools_LeaderCancelSparesWaiter(t *testing.T) {
 		return []Pool{{Source: "soroswap"}}, "", nil
 	}
 	get := func(ctx context.Context) ([]Pool, error) {
-		rows, _, err := c.fetchPools(ctx, "all_pools", "k", upstream)
+		rows, _, _, _, err := c.fetchPools(ctx, "all_pools", "k", upstream)
 		return rows, err
 	}
 	assertLeaderCancelSparesWaiter(t, g, get,

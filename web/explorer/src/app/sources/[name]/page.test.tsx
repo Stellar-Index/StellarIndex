@@ -16,8 +16,12 @@ vi.mock('./SourceHealthPanel', () => ({ SourceHealthPanel: () => <div /> }));
 vi.mock('../../dexes/[source]/SourceVolumeHistory', () => ({
   SourceVolumeHistory: () => <div />,
 }));
+const { topCharts } = vi.hoisted(() => ({ topCharts: [] as string[] }));
 vi.mock('../../dexes/[source]/SourceTopChart', () => ({
-  SourceTopChart: () => <div />,
+  SourceTopChart: ({ source }: { source: string }) => {
+    topCharts.push(source);
+    return <div />;
+  },
 }));
 
 import { buildFetchData, failBuild } from '@/lib/buildFetch';
@@ -26,19 +30,38 @@ import SourceDetailPage, {
   generateStaticParams,
 } from './page';
 
-const SOURCE = { name: 'soroswap', class: 'exchange', subclass: 'dex' };
+const SOURCE = {
+  name: 'soroswap',
+  class: 'exchange',
+  subclass: 'dex',
+  on_chain: true,
+  selectable: true,
+};
+const CEX = {
+  name: 'binance',
+  class: 'exchange',
+  subclass: 'cex',
+  on_chain: false,
+  selectable: true,
+};
+const VENDOR = {
+  name: 'coingecko',
+  class: 'aggregator',
+  on_chain: false,
+  selectable: false,
+};
 
-function mockFetches(markets: unknown) {
+function mockFetches(markets: unknown, extra: unknown[] = []) {
   vi.mocked(buildFetchData).mockImplementation(async (path: string) => {
     if (path.startsWith('/v1/markets')) return markets as never;
-    if (path.startsWith('/v1/sources')) return [SOURCE] as never;
+    if (path.startsWith('/v1/sources')) return [SOURCE, CEX, ...extra] as never;
     return [] as never; // /v1/diagnostics/cursors
   });
 }
 
-async function renderPage() {
+async function renderPage(name = 'soroswap') {
   const tree = await SourceDetailPage({
-    params: Promise.resolve({ name: 'soroswap' }),
+    params: Promise.resolve({ name }),
   });
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -76,6 +99,51 @@ describe('SourceDetailPage top markets', () => {
   });
 });
 
+// /v1/markets?source= answers 400 for a data vendor: its prices are served
+// only blended with other sources. The page gates on the API's `selectable`
+// flag, so exchange venues keep their markets and vendors never select.
+describe('SourceDetailPage per-source markets', () => {
+  const marketCalls = () =>
+    vi
+      .mocked(buildFetchData)
+      .mock.calls.map(([path]) => path)
+      .filter((path) => path.startsWith('/v1/markets'));
+
+  it('never selects a data-vendor source on /v1/markets', async () => {
+    mockFetches([], [VENDOR]);
+    vi.mocked(buildFetchData).mockClear();
+    topCharts.length = 0;
+    await renderPage('coingecko');
+    expect(marketCalls()).toEqual([]);
+    expect(topCharts).toEqual([]);
+    expect(
+      screen.queryByText('Top markets via this source'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps the per-source markets for an exchange venue', async () => {
+    mockFetches([]);
+    vi.mocked(buildFetchData).mockClear();
+    topCharts.length = 0;
+    await renderPage('binance');
+    expect(marketCalls()).toEqual([
+      '/v1/markets?source=binance&order_by=volume_24h_usd_desc&limit=25',
+    ]);
+    expect(topCharts).toEqual(['binance']);
+  });
+
+  it('keeps the per-source markets for an on-chain source', async () => {
+    mockFetches([]);
+    vi.mocked(buildFetchData).mockClear();
+    topCharts.length = 0;
+    await renderPage('soroswap');
+    expect(marketCalls()).toEqual([
+      '/v1/markets?source=soroswap&order_by=volume_24h_usd_desc&limit=25',
+    ]);
+    expect(topCharts).toEqual(['soroswap']);
+  });
+});
+
 // T291: functions/sources/[[path]].js serves /sources/shell/ for every
 // source registered after the build, so the build must bake that document
 // and it must not be the fail-hard "promised but unlisted" path.
@@ -84,6 +152,7 @@ describe('SourceDetailPage runtime shell', () => {
     mockFetches([]);
     expect(await generateStaticParams()).toEqual([
       { name: 'soroswap' },
+      { name: 'binance' },
       { name: 'shell' },
     ]);
   });
