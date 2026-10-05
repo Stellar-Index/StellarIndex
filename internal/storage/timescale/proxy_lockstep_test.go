@@ -56,8 +56,8 @@ func TestProxyQuoteLists_Lockstep(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(coverageQuoteProxies, xlmList) {
-		t.Errorf("coverageQuoteProxies lacks the XLM forms %s", xlmList)
+	if !strings.Contains(coverageQuoteProxies, xlmQuotesBound(1)) {
+		t.Errorf("coverageQuoteProxies lacks the bound XLM forms %s", xlmQuotesBound(1))
 	}
 
 	// The XLM leg in both directions, in all 8 catalogue CTEs: the
@@ -66,6 +66,10 @@ func TestProxyQuoteLists_Lockstep(t *testing.T) {
 	// test red against the pre-fix catalogue: it had 4 base-side arms
 	// per query and zero inverted ones.
 	for name, sql := range map[string]string{"listing": assetPriceCTEs, "detail": getAssetBySlugSQL} {
+		xlmList := xlmList // the writer keeps the pubnet literal; reads bind the SAC
+		if name == "detail" {
+			xlmList = xlmQuotesBound(2)
+		}
 		// The detail query column-aligns its predicates ("base_asset  IN");
 		// fold runs of spaces so the count is about the predicate, not
 		// the indentation.
@@ -91,6 +95,10 @@ func TestProxyQuoteLists_Lockstep(t *testing.T) {
 		"history24hBatch": getAssetsPriceHistory24hBatchSQL,
 		"history7dBatch":  getAssetsPriceHistory7dBatchSQL,
 	} {
+		xlmList := xlmQuotesBound(2)
+		if strings.HasSuffix(name, "Batch") {
+			xlmList = xlmQuotesBound(4)
+		}
 		sql = strings.Join(strings.Fields(sql), " ")
 		if got := strings.Count(sql, "quote_asset IN ("+xlmList+")"); got != 1 {
 			t.Errorf("%s SQL: base-side XLM arms = %d, want 1 (asset_xlm_per_*)", name, got)
@@ -113,7 +121,23 @@ func TestProxyQuoteLists_Lockstep(t *testing.T) {
 	if !strings.Contains(popularPricelessCandidatesSQL, "SELECT unnest(ARRAY["+coverageQuoteProxies+"])") {
 		t.Error("priced_direct does not seed the proxy assets — one_hop cannot route through the XLM SAC")
 	}
-	if !strings.Contains(popularPricelessCandidatesSQL, "AND base_asset IN ("+xlmList+")") {
+	if !strings.Contains(popularPricelessCandidatesSQL, "AND base_asset IN ("+xlmQuotesBound(1)+")") {
 		t.Error("priced_direct lacks the inverted XLM arm")
+	}
+}
+
+func TestXLMQuotesBoundConsts(t *testing.T) {
+	for n, c := range map[int][2]string{
+		1: {xlmQuotesBound1, ""},
+		2: {xlmQuotesBound2, xlmFormPrefOpenBound2},
+		3: {xlmQuotesBound3, xlmFormPrefOpenBound3},
+		4: {xlmQuotesBound4, xlmFormPrefOpenBound4},
+	} {
+		if c[0] != xlmQuotesBound(n) {
+			t.Errorf("xlmQuotesBound%d = %q, want %q", n, c[0], xlmQuotesBound(n))
+		}
+		if want := "array_position(ARRAY[" + xlmQuotesBound(n) + "], "; c[1] != "" && c[1] != want {
+			t.Errorf("xlmFormPrefOpenBound%d = %q, want %q", n, c[1], want)
+		}
 	}
 }
