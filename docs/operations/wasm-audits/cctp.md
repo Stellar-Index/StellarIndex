@@ -13,20 +13,17 @@ Audit log for the `cctp` source's `BackfillSafe` flag. See
 
 ## Status
 
-**Approved (2026-05-26).** Source decoder + wiring landed in
-commit `1b9a594b4`; the wasm-history walk (§"WASM timeline" below)
-found zero upgrades across all 3 mainnet contracts, and the registry
-entry was flipped to `BackfillSafe: true` in the same commit as the
-audit decision below.
+**Approved (2026-05-26).** Decoder + wiring landed in commit `1b9a594b4`; the
+wasm-history walk (§"WASM timeline") found zero upgrades across all 3 mainnet
+contracts, and the registry entry was flipped to `BackfillSafe: true` in the
+same commit as the audit decision below.
 
-CCTP is Circle's cross-chain transfer protocol — Stellar is one
-of N chains in the v2 deployment. The three contracts are
-bridge-side infrastructure (mint / burn / wire-envelope plumbing);
-they never emit price-discovery trades. The source is
-`ClassBridge` with `DefaultWeight: 0` and `IncludeInVWAP: false`
-in `internal/sources/external/registry.go` — `BackfillSafe`
-gates the operator-triggered backfill path only; aggregator
-output is unaffected either way.
+CCTP is Circle's cross-chain transfer protocol (Stellar is one chain in the v2
+deployment). The contracts are bridge infrastructure (mint / burn / wire
+envelope) and never emit trades. The source is `ClassBridge` with
+`DefaultWeight: 0` and `IncludeInVWAP: false` in
+`internal/sources/external/registry.go`; `BackfillSafe` gates only the
+operator-triggered backfill path.
 
 ## Source identity
 
@@ -41,8 +38,7 @@ output is unaffected either way.
 
 ## Mainnet contracts
 
-Verbatim from
-[`internal/sources/cctp/events.go`](../../../internal/sources/cctp/events.go)
+Verbatim from [`internal/sources/cctp/events.go`](../../../internal/sources/cctp/events.go)
 `Mainnet*` constants (verified 2026-05-20 against
 <https://developers.circle.com/cctp/references/stellar-contracts>
 + <https://github.com/circlefin/stellar-cctp>):
@@ -59,10 +55,9 @@ Avalanche=1, Arbitrum=3, Solana=7.
 
 ## Decoder expectations
 
-Captured from `internal/sources/cctp/{events,decode}.go` at HEAD
-on 2026-05-24. Four canonical events are matched on `topic[0]`
-via pre-encoded `ScSymbol` constants (single string-equal
-comparison per event — no full SCVal decode in the hot path).
+From `internal/sources/cctp/{events,decode}.go` at HEAD 2026-05-24. Four
+canonical events matched on `topic[0]` via pre-encoded `ScSymbol` constants (one
+string-equal comparison, no full SCVal decode in the hot path).
 
 | event constant | topic[0] symbol | emitting contract | wire shape |
 | --- | --- | --- | --- |
@@ -73,54 +68,44 @@ comparison per event — no full SCVal decode in the hot path).
 
 ### Topic + body details
 
-Per the schemas pinned in `events.go` (extracted from
-`contracts/{token-messenger-minter-v2,message-transmitter-v2}/src/lib.rs`
-in `github.com/circlefin/stellar-cctp`):
+Schemas pinned in `events.go` (from
+`contracts/{token-messenger-minter-v2,message-transmitter-v2}/src/lib.rs` in
+`github.com/circlefin/stellar-cctp`):
 
-- **`deposit_for_burn`** — outbound transfer.
+- **`deposit_for_burn`** (outbound transfer).
   `topics = ["deposit_for_burn", burn_token, depositor, min_finality_threshold]`;
   body `ScMap { amount, mint_recipient, destination_domain,
   destination_token_messenger, destination_caller, max_fee,
   hook_data }`. `mint_recipient` /
-  `destination_token_messenger` / `destination_caller` are
-  `BytesN<32>` (surfaced as lowercase hex, no `0x` prefix; the
-  trailing 20 bytes are the EVM address when the destination is
-  EVM, the leading 12 are zero padding).
-- **`mint_and_withdraw`** — inbound mint.
+  `destination_token_messenger` / `destination_caller` are `BytesN<32>` (lowercase hex, no `0x`; for an EVM
+  destination the trailing 20 bytes are the address, leading 12 zero padding).
+- **`mint_and_withdraw`** (inbound mint).
   `topics = ["mint_and_withdraw", mint_recipient, mint_token]`;
   body `ScMap { amount, fee_collected }`.
-- **`message_sent`** — wire envelope, emitted alongside
-  `deposit_for_burn` (correlate by `(ledger, tx_hash)`).
-  Single-topic event; body is raw `Bytes` (the serialised
-  cross-chain envelope; preserved as hex for cross-reference).
-- **`message_received`** — wire envelope, emitted alongside
-  `mint_and_withdraw`.
+- **`message_sent`**: wire envelope, emitted alongside `deposit_for_burn`
+  (correlate by `(ledger, tx_hash)`). Single-topic; body is raw `Bytes` (the
+  serialised envelope, preserved as hex).
+- **`message_received`**: wire envelope, emitted alongside `mint_and_withdraw`.
   `topics = ["message_received", caller, nonce, finality_threshold_executed]`;
   body `ScMap { source_domain, sender, message_body }`.
 
 ### Correlation invariants
 
-- One outbound `deposit_for_burn` call emits BOTH a
-  `DepositForBurn` event AND a `MessageSent` event in the same
-  transaction. Same for inbound (`MessageReceived` +
-  `MintAndWithdraw`). Correlate by `(ledger, tx_hash)` when
-  assembling a logical outbound-transfer record.
-- All amounts are i128 carried as decimal strings per ADR-0003
-  (`Amount`, `MaxFee`, `FeeCollected`).
-- `CctpForwarder` (`CBZL2IH...`) emits its own event surface:
-  `mint_and_forward` (an inbound mint relayed onward, decoded by
-  `DecodeMintAndForward` in `internal/sources/cctp/decode.go`) plus the
-  shared ownership/admin events. See the per-WASM review below.
+- One outbound `deposit_for_burn` emits BOTH a `DepositForBurn` and a
+  `MessageSent` event in the same transaction; inbound likewise
+  (`MessageReceived` + `MintAndWithdraw`). Correlate by `(ledger, tx_hash)`.
+- All amounts are i128 decimal strings per ADR-0003 (`Amount`, `MaxFee`, `FeeCollected`).
+- `CctpForwarder` (`CBZL2IH...`) emits `mint_and_forward` (inbound mint relayed
+  onward, decoded by `DecodeMintAndForward` in `internal/sources/cctp/decode.go`)
+  plus the shared ownership/admin events. See the per-WASM review below.
 
 ## WASM timeline
 
-**Walked 2026-05-26** — `stellarindex-ops wasm-history` over
-`[60000000, 62642779]` with `-parallel 4` covering all 3 mainnet
-contracts. Walk duration: 5h02m, scanned 2,642,780 ledgers across
-4 workers. Result: **zero WASM upgrades observed for any of the 3
-contracts** — output JSON shows `ranges: null` per contract,
-consistent with stellar.expert's per-contract view (all 3 deployed
-2026-04-16 within ~3 min, each with a single deploy event).
+**Walked 2026-05-26**: `stellarindex-ops wasm-history` over `[60000000, 62642779]`
+with `-parallel 4`, all 3 mainnet contracts; 5h02m, 2,642,780 ledgers scanned
+across 4 workers. **Zero WASM upgrades for any of the 3**: output JSON has
+`ranges: null` per contract, consistent with stellar.expert (all 3 deployed
+2026-04-16 within ~3 min, one deploy event each).
 
 | Contract | Deploy ledger | Deploy timestamp | Upgrades observed |
 | --- | --- | --- | --- |
@@ -128,16 +113,14 @@ consistent with stellar.expert's per-contract view (all 3 deployed
 | `CACMENFF…3FVXAZV` (MessageTransmitter)    | one-time | 2026-04-16 15:43:48 UTC | 0 |
 | `CBZL2IH7…N47TZJDF5T` (CctpForwarder)      | one-time | 2026-04-16 15:46:33 UTC | 0 |
 
-Walk evidence: `/tmp/wasm-history-bridges.json` on r1 (kept until
-the next bootstrap; copy to `evidence/` if a permanent artefact is
-needed). Per-worker JSONL transition logs are empty (no transitions
-to log).
+Walk evidence: `/tmp/wasm-history-bridges.json` on r1 (kept until the next
+bootstrap; copy to `evidence/` for a permanent artefact). Per-worker JSONL
+transition logs are empty.
 
 ## Per-WASM decoder review
 
-Three distinct WASM hashes (one per contract — they are different
-codebases serving different CCTP roles, not factory-deployed
-variants of a single template):
+Three distinct WASM hashes (one per contract; different codebases, not
+factory-deployed variants):
 
 - **TokenMessengerMinter** `a6c1acc6e367e465…` (32-byte hash from
   stellar.expert). Events: `deposit_for_burn`, `mint_and_withdraw`
@@ -153,36 +136,30 @@ variants of a single template):
   plus the shared ownership/admin events; the same decoder handles both,
   and the ROADMAP #89b/89c topic-match audits below cover its topics.
 
-Decoder coverage matches the full event set the contracts emit —
-verified against the contracts' Rust source
-([`docs/architecture/cctp-stellar-coverage.md`](../../architecture/cctp-stellar-coverage.md)),
-which `internal/sources/cctp/events.go`'s 26 `Event*` constants
-mirror; the ROADMAP #89b/89c topic-match audits (2026-07-08/09)
-additionally cross-checked every `topic_0_sym` the 3 contracts have
-ever emitted on mainnet against that set and found none missing. No
-i128 scale drift to worry about — no upgrades to drift through.
+Decoder coverage matches the full event set the contracts emit, verified against
+the Rust source ([`docs/architecture/cctp-stellar-coverage.md`](../../architecture/cctp-stellar-coverage.md)),
+which `internal/sources/cctp/events.go`'s 26 `Event*` constants mirror; the
+ROADMAP #89b/89c topic-match audits (2026-07-08/09) cross-checked every
+`topic_0_sym` the 3 contracts ever emitted on mainnet against that set and found
+none missing. No i128 scale drift: no upgrades to drift through.
 
-Disassembly + per-WASM source comparison deferred until either
-(a) Circle ships a v3 upgrade (forcing a re-audit anyway), or
-(b) decoded events diverge from Circle's public stats once live
-bridge traffic begins (caught by the cross-check below).
+Disassembly + per-WASM source comparison deferred until (a) Circle ships a v3
+upgrade, or (b) decoded events diverge from Circle's public stats once live
+bridge traffic begins.
 
 ## Hubble cross-check
 
-Hubble does not index bridge events; cross-check via Circle /
-Rozo public stats once live mainnet traffic exists. Bridges emit
-no trades — no VWAP cross-check available either, so the
-WASM-bytes audit is the load-bearing safety check (per
-README.md §4).
+Hubble does not index bridge events; cross-check via Circle / Rozo public stats
+once live traffic exists. Bridges emit no trades, so no VWAP cross-check either:
+the WASM-bytes audit is the load-bearing check (README.md §4).
 
 ## Audit decision
 
-**APPROVED 2026-05-26.** `Registry["cctp"].BackfillSafe` flipped
-to `true` in `internal/sources/external/registry.go` in the same
-commit as this audit doc update. Decoder safely covers every
-WASM hash that has ever existed for the 3 mainnet contracts (one
-each, no upgrades). Historical replay via the `soroban_events`
-landing zone (ADR-0029) is now unblocked:
+**APPROVED 2026-05-26.** `Registry["cctp"].BackfillSafe` flipped to `true` in
+`internal/sources/external/registry.go` in the same commit as this doc update.
+The decoder covers every WASM hash that has ever existed for the 3 contracts
+(one each, no upgrades). Historical replay via the `soroban_events` landing zone
+(ADR-0029) is unblocked:
 
 ```sql
 INSERT INTO cctp_events
@@ -213,25 +190,20 @@ WHERE contract_id IN (
 );
 ```
 
-Re-audit triggers: any of these tipped from this single-WASM
-state — Prometheus alerts on `unknown_topic` per source, or a
-manual `wasm-history` re-walk if Circle announces a v3.
+Re-audit triggers: Prometheus alerts on `unknown_topic` per source, or a manual
+`wasm-history` re-walk if Circle announces a v3.
 
 ## Live-traffic verification notes
 
-CCTP v2 on Stellar is brand-new (per the
-`project_protocol_coverage_additions` memory note —
-"brand-new on Stellar so short/no historical backfill"); there
-is little-to-no on-mainnet bridge traffic to verify against at
-audit time. On-mainnet live-traffic verification deferred until
-real bridge usage starts.
+CCTP v2 on Stellar is brand-new (per the `project_protocol_coverage_additions`
+memory note, "brand-new on Stellar so short/no historical backfill"), so there
+is little on-mainnet traffic to verify against; live-traffic verification is
+deferred until real bridge usage starts.
 
-Because CCTP is `ClassBridge` with `DefaultWeight: 0` and
-`IncludeInVWAP: false` in
+As `ClassBridge` with `DefaultWeight: 0` and `IncludeInVWAP: false` in
 [`internal/sources/external/registry.go`](../../../internal/sources/external/registry.go),
-the source contributes nothing to VWAP regardless of the
-`BackfillSafe` flag. The flag gates the operator-triggered
-`stellarindex-ops backfill --source=cctp` path only.
+the source contributes nothing to VWAP regardless of `BackfillSafe`, which gates
+only `stellarindex-ops backfill --source=cctp`.
 
 ## References
 

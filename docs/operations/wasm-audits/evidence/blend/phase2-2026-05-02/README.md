@@ -18,12 +18,9 @@ Walk runtime: 5h4m39s. Total ledgers scanned: 11,792,304.
   array of `{contract, ranges}` for the 11 Blend contracts.
   Format matches the canonical `wasm-history` output shape.
 
-The full 540-contract walker output remains on r1 at
-`/tmp/wide-net-walk-3.json` for re-derivation if needed. The
-per-worker JSONL checkpoints (200KB total) are at
-`/tmp/walk-checkpoint/` on r1; `wasm-history-merge-jsonl` can
-reconstitute the full JSON from those if the canonical output is
-ever lost.
+The full 540-contract output remains on r1 at `/tmp/wide-net-walk-3.json`; the
+per-worker JSONL checkpoints (200KB total) are at `/tmp/walk-checkpoint/`, and
+`wasm-history-merge-jsonl` can reconstitute the full JSON from them.
 
 ## Findings summary
 

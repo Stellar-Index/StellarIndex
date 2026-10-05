@@ -6,113 +6,48 @@ status: historical — the flip happened 2026-07-03; see v1-launch-plan.md
 
 # Public-flip strategy
 
-> **⚠️ HISTORICAL (2026-07-27).** The repo went public 2026-07-03 via a
-> different mechanism than planned here (and with a vault exposure — see
-> `credential-rotation.md`). The org is `Stellar-Index/StellarIndex` since
-> 2026-07-15. Nothing here is executable; residuals live in
+> **HISTORICAL.** The repo went public 2026-07-03 via a different mechanism than
+> planned here (with a vault exposure; see `credential-rotation.md`). The org is
+> `Stellar-Index/StellarIndex`. Nothing here is executable; residuals live in
 > [`v1-launch-plan.md`](v1-launch-plan.md).
 
-The Stellar Index source is being prepared for public open-source
-release. This doc captures **how** we make that flip, and the prep
-work that must be done before it.
+Binding decision: **publish to a NEW public repo; do NOT rewrite-and-force-push
+the private repo.** The private repo holds the only copy of the internal archive,
+WASM-audit evidence and per-region notes; a bad rewrite plus a failed backup loses
+everything. A new-repo publish has zero force-push risk and keeps the audit trail.
 
-The single binding decision: **publish to a NEW public repo, do NOT
-rewrite-and-force-push the existing private repo.**
+New repo: org `StellarIndex`, name `stellar-index` (module path
+`github.com/Stellar-Index/StellarIndex`), Apache-2.0, default branch `main`, initial
+commit `Initial public release — Stellar Index v1.0` (full tree, no history),
+CalVer releases from the launch tag with no parallel releases on both repos.
 
-## Why a new repo, not history rewrite
-
-The private repo is the source of truth and is irreplaceable. It
-holds the only copy of the internal working archive, the WASM-audit
-evidence trail, the per-region operational notes, and four months
-of CI build history. A history rewrite ("squash everything into one
-commit, force-push main") has a non-zero probability of corrupting
-that record — and if the rewrite is wrong AND the backup fails, we
-lose everything.
-
-A new-repo publish gives us **zero force-push risk**, preserves the
-private audit trail intact, and produces a clean public artefact at
-the same time. The cost — two repos coexisting — is negligible.
-
-## What "the new repo" looks like
-
-- Org: `StellarIndex` (org already created)
-- Name: `stellar-index` (matches the Go module path
-  `github.com/Stellar-Index/StellarIndex` already used internally)
-- License: Apache-2.0 (same as private)
-- Default branch: `main`
-- Initial commit message: `Initial public release — Stellar Index v1.0`
-  containing the entire working tree at the v1.0 commit, no history
-- Releases: starts CalVer at `2026.06.30.1` or whatever the launch
-  tag is — the public repo's release cadence picks up where private
-  goes silent (no parallel releases on both)
-
-## Pre-flip checklist
-
-Done as ordinary forward-going PRs against the private repo, before
-the flip. Each row's "evidence" column points at the file or PR that
-satisfies it.
+## Pre-flip checklist (all verified 2026-04-30)
 
 | ✓ | Item | Evidence |
 |---|---|---|
-| ☑ | Postgres password from the predecessor-system probe scrubbed from working tree | commit 01a417654 |
-| ☑ | r1 public IP scrubbed from working tree | commit 01a417654 |
-| ☑ | `configs/ansible/inventory/r1.yml` removed from tracked files (added to `.gitignore`) | commit 01a417654 |
-| ☑ | `SECURITY.md` lists `security@stellarindex.io` as the public reporting address (not an internal alias) | `SECURITY.md:9` (verified 2026-04-30) |
-| ☑ | `CODEOWNERS` uses external @-handles only — no internal-only logins | `CODEOWNERS` (only `the maintainer`, verified 2026-04-30) |
-| ☑ | `README.md` reads as a public landing page — what the project does, who it's for, getting-started link, badge for license + CI | `README.md` (verified 2026-04-30) |
-| ☑ | `CONTRIBUTING.md` welcomes external contributors (issue triage SLA, PR review SLA, code-of-conduct link) | `CONTRIBUTING.md` (verified 2026-04-30) |
-| ☑ | `CODE_OF_CONDUCT.md` is the standard Contributor Covenant | `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1, verified 2026-04-30) |
-| ☑ | `LICENSE` is Apache-2.0 | `LICENSE` (Apache 2.0, verified 2026-04-30) |
-| ☑ | `.github/dependabot.yml` has no internal-registry references | `.github/dependabot.yml` (verified 2026-04-30 — only public registries) |
-| ☑ | Every CI workflow in `.github/workflows/` runs on the public repo without internal secrets | `.github/workflows/{ci,api-docs}.yml` (verified 2026-04-30 — no `secrets.` references) |
-| ☑ | `AGENTS.md` reads cleanly without referencing private internal-archive paths or internal-only operator names | `AGENTS.md` (reviewed 2026-04-30 — pattern scan + manual spot-checks; 0 private references; 2 non-blocking editorial recs noted) |
-| ☑ | `docs/operations/r1-deployment-state.md` does not include credentials, API keys, or unredacted IPs | `docs/operations/r1-deployment-state.md` (verified 2026-04-30 — credentials are pointers only, no IPs in file) |
-| ☑ | Every ADR's "Status" reflects current state (no stale "Proposed" on accepted ADRs) | `docs/adr/` (all 0001-0024 are `Accepted`, verified 2026-05-02; 0012 is reserved-future per multi-region-topology.md). Initial sweep covered 0001-0021 on 2026-04-30; 0022 (classic supply observers, commit b772cc9ed), 0023 (SEP-41 supply, commit 4c5536c6c), 0024 (Redis HA via Sentinel, commit e9e338efd) merged after that and confirmed `Accepted` in this re-verification. |
-| ☑ | Final secret scan with `gitleaks detect --source .` returns clean | `gitleaks 8.30.1` — 0 leaks across 553 commits, scanned 2026-04-30 |
-
-**All rows verified 2026-04-30.** Both originally-deferred
-human-in-the-loop reviews now have written verdicts (citations
-in the rows above). Checklist is execution-ready; the next step
-is the cut-over mechanics in §below.
+| ☑ | Predecessor-probe Postgres password, r1 public IP scrubbed; `configs/ansible/inventory/r1.yml` untracked + `.gitignore`d | commit 01a417654 |
+| ☑ | `SECURITY.md` lists `security@stellarindex.io` | `SECURITY.md:9` |
+| ☑ | `CODEOWNERS` external @-handles only | `CODEOWNERS` |
+| ☑ | `README.md` public landing page; `CONTRIBUTING.md` welcomes externals (triage/review SLA, CoC link); `CODE_OF_CONDUCT.md` Contributor Covenant v2.1; `LICENSE` Apache-2.0 | files in root |
+| ☑ | `.github/dependabot.yml` public registries only; CI workflows need no internal secrets | `.github/workflows/{ci,api-docs}.yml` |
+| ☑ | `AGENTS.md` and `docs/operations/r1-deployment-state.md` free of private paths, credentials, IPs | reviewed |
+| ☑ | Every ADR "Status" current (0001-0024 `Accepted`; 0012 reserved-future per multi-region-topology.md) | `docs/adr/` |
+| ☑ | `gitleaks detect --source .` clean | gitleaks 8.30.1, 0 leaks / 553 commits |
 
 ## Final 24-hour pre-cutover dry-run
 
-The pre-flip checklist above is the **standing** state — verified
-2026-04-30 and refreshed periodically. The 24 h immediately
-before the actual cutover should re-run the same gates because
-PRs land between checklist verification and launch day. **Do this
-24 h before tagging v1.0**, in this order:
+Re-run the gates 24 h before tagging v1.0; any failing row is a launch blocker:
 
-1. **Re-run `gitleaks detect --source . --redact --exit-code 1`**
-   from a clean checkout. Any new finding is a launch blocker.
-2. **Re-run the file-level scrub check.** A directory listing
-   should show no `*.env`, `*.key`, `*.pem`, `secrets/*`,
-   `inventory/r1.yml`, or any file matching the patterns from
-   the original commit 01a417654 scrub.
-3. **`make test && make test-integration`** — the green build
-   that gets tagged v1.0 must pass both. A flake counts as
-   not-green; rerun after the flake is fixed.
-4. **Spot-check `AGENTS.md` and `docs/architecture/*.md` for
-   `last_verified` dates.** Anything older than 90 days is a
-   doc-rot candidate; flag for the L6.5 documentation sweep.
-5. **CI baseline freshness.** Check that `.github/workflows/ci.yml`
-   has a green run on `main` from within the last 24 h. If not,
-   run a no-op commit (e.g. CHANGELOG punctuation) to force a
-   green build before tagging.
-6. **External-asset readiness.** Confirm:
-   - `SECURITY.md`'s reporting address (`security@stellarindex.io`)
-     is monitored — send a test email if uncertain.
-   - The `CODEOWNERS` file's only @-handle (`the maintainer`) has the
-     bandwidth to triage day-1 external PRs (or has a delegate
-     wired up post-flip via branch-protection settings).
-   - The `Stellar-Index/StellarIndex` GitHub repo creation
-     command in §"Cut-over mechanics" still resolves cleanly
-     (`gh repo view Stellar-Index/StellarIndex` returns 404 —
-     i.e. nothing exists yet under that name).
-
-A row that fails the dry-run is a launch blocker. The dry-run
-is **destructive only of the no-op commit in step 5**; everything
-else is read-only checks against the working tree + GitHub API.
+1. `gitleaks detect --source . --redact --exit-code 1` from a clean checkout.
+2. File-level scrub: no `*.env`, `*.key`, `*.pem`, `secrets/*`, `inventory/r1.yml`
+   or other 01a417654-scrub patterns.
+3. `make test && make test-integration` both green (a flake counts as red).
+4. `last_verified` older than 90 days in `AGENTS.md` / `docs/architecture/*.md`
+   goes to the L6.5 docs sweep.
+5. `.github/workflows/ci.yml` has a green `main` run within 24 h (else a no-op
+   commit to force one; the only non-read-only step).
+6. `security@stellarindex.io` is monitored; the CODEOWNERS handle can triage
+   day-1 PRs or has a delegate; `gh repo view Stellar-Index/StellarIndex` is 404.
 
 ## Cut-over mechanics
 
@@ -162,60 +97,34 @@ gh release create YYYY.MM.DD.N \
     --verify-tag
 ```
 
-The clone-`--no-local` step is deliberate: a `git clone` with
-hardlinks shares object storage, which means an `--orphan` operation
-on the clone could affect the private repo's reflog. `--no-local
---no-hardlinks` produces a fully-independent copy.
+`--no-local --no-hardlinks` is deliberate: hardlinked clones share object storage,
+so `--orphan` on the clone could affect the private repo's reflog.
 
 ## Post-flip
 
-1. **Branch protection.** On the new public repo, require status
-   checks (every job currently in `.github/workflows/`), require PR
-   review (1 approver minimum), forbid force-push to `main`,
-   forbid deletion of `main`.
-2. **Re-create CI secrets.** Anything that was a GitHub Actions
-   secret in private (e.g. AWS credentials for the goreleaser job)
-   needs to be re-added in the public repo's settings. Audit-log
+1. **Branch protection** on the public repo: require every workflow job as a
+   status check, 1 approving review, forbid force-push to and deletion of `main`.
+2. **Re-create CI secrets** (e.g. AWS credentials for the goreleaser job); audit-log
    the addition.
-3. **Re-create issue templates / labels.** GitHub does not migrate
-   these on a clone-and-push. Re-import from the private repo's
-   `.github/` directory.
-4. **DNS cutover.**
-   - `docs.stellarindex.io` → public-repo GitHub Pages (or our
-     equivalent — see L3.15 self-service onboarding)
-   - `status.stellarindex.io` → status page (L4.11)
-5. **Stop CI on private.** Set workflows to `workflow_dispatch`-only
-   on the private repo, so it stops auto-burning Actions minutes.
-   Keep the repo itself alive — it remains the audit trail.
-6. **Announcement.** `#stellar-index-public` Discord channel
-   announcement; tweet from the project handle if applicable.
-7. **Decommission cron jobs / Renovate / Dependabot** scoped to the
-   private repo (re-scope to public).
+3. **Re-create issue templates / labels** from the private `.github/` (not migrated
+   by clone-and-push).
+4. **DNS cutover.** `docs.stellarindex.io` → public-repo GitHub Pages (or
+   equivalent; L3.15); `status.stellarindex.io` → status page (L4.11).
+5. **Stop CI on private**: `workflow_dispatch`-only; keep the repo as the audit trail.
+6. **Announcement** in `#stellar-index-public` Discord.
+7. **Re-scope** cron jobs / Renovate / Dependabot from private to public.
 
 ## Two-repo coexistence
 
-After the flip, both repos exist:
+- **Private** — full history and audit trail; new work lands here first, mirrored to
+  public by weekly batch-merge (immediate for security fixes).
+- **Public (`Stellar-Index/StellarIndex`)** — clean derived artefact; external PRs
+  land here and are backported privately if they need internal-context discussion.
 
-- **Private (`maintainer/code/stellarindex`)** — full history, internal
-  audit trail, day-to-day work continues here. New work lands here
-  first; later mirrored to public via merge PR (see below).
-- **Public (`Stellar-Index/StellarIndex`)** — clean derived artefact;
-  external PRs land here and get backported privately if they
-  require additional internal-context discussion before merge.
-
-Mirror cadence: weekly batch-merge from private → public for
-unblocked changes; immediate mirror for security fixes (so the
-public repo never lags on a CVE patch).
-
-If a piece of work is purely internal (e.g. operational runbook
-updates that reference private IPs), it stays on private only —
-never gets mirrored. The mirror discipline is part of the L6.5
-documentation sweep that precedes flip.
+Purely internal work (e.g. runbooks referencing private IPs) is never mirrored.
 
 ## Cross-references
 
-- [`docs/architecture/semver-policy.md`](../architecture/semver-policy.md) — versioning contract that binds public + private the same way
-- [`docs/operations/release-process.md`](release-process.md) — release runbook that applies post-flip
-- [`docs/architecture/launch-readiness-backlog.md`](../architecture/launch-readiness-backlog.md) §Finalization — L6.3 (this doc) and L6.4 (production cutover, which depends on this)
-- [`SECURITY.md`](../../SECURITY.md) — must be public-ready before flip
-- [`CONTRIBUTING.md`](../../CONTRIBUTING.md) — must welcome external contributors before flip
+- [`semver-policy.md`](../architecture/semver-policy.md), [`release-process.md`](release-process.md)
+- [`launch-readiness-backlog.md`](../architecture/launch-readiness-backlog.md) §Finalization — L6.3 (this doc) and L6.4 (production cutover)
+- [`SECURITY.md`](../../SECURITY.md), [`CONTRIBUTING.md`](../../CONTRIBUTING.md)
