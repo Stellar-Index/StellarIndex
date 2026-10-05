@@ -21,7 +21,11 @@ ok()  { pass=$((pass + 1)); echo "  ok   — $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL — $1"; }
 
 if [ ! -f "$TASKS" ]; then
-  # pgbackrest_exporter 0.23.0 has --web.telemetry-path and no --web.endpoint;
+  echo "ansible-exporter-service-gating-test: FAIL — $TASKS not found" >&2
+  exit 1
+fi
+
+# pgbackrest_exporter 0.23.0 has --web.telemetry-path and no --web.endpoint;
 # an unknown flag crash-loops the unit on its next restart.
 PGBR_UNIT="configs/ansible/roles/archival-node/templates/systemd/pgbackrest_exporter.service.j2"
 if grep -q -- '--web\.endpoint' "$PGBR_UNIT"; then
@@ -30,8 +34,12 @@ else
   ok "pgbackrest_exporter unit does not pass the nonexistent --web.endpoint"
 fi
 
-echo "ansible-exporter-service-gating-test: FAIL — $TASKS not found" >&2
-  exit 1
+# pgbackrest.conf is postgres:postgres 0640; without the group the exporter
+# runs but `pgbackrest info` gets EACCES and every stanza metric vanishes.
+if grep -q '^SupplementaryGroups=postgres$' "$PGBR_UNIT"; then
+  ok "pgbackrest_exporter unit can read pgbackrest.conf (SupplementaryGroups=postgres)"
+else
+  bad "pgbackrest_exporter unit lacks SupplementaryGroups=postgres; pgbackrest info cannot read pgbackrest.conf"
 fi
 
 # block_body <file> <pattern> — the top-level `- name: <pattern>` entry's
