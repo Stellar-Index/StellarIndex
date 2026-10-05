@@ -114,6 +114,13 @@ LIVE_SCHEMA="${LIVE_SCHEMA:-}"
 # for the snapshot, and an operator who typed nothing gets live.
 live_explicit="${LIVE-}"
 CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
+# INV-0802: CH as ops_monitor once the role renders this file; /dev/null (no
+# credential, CH `default`) until then, so no deploy order strands this script.
+CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-monitor.netrc}"
+if [[ ! -r "$CH_NETRC" ]]; then
+  echo "ch-schema-drift.sh: credential file $CH_NETRC unreadable; using ClickHouse default user" >&2
+  CH_NETRC=/dev/null
+fi
 CH_DATABASE="${CH_DATABASE:-stellar}"
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 # Where every ansible binary deploy records the tag it just installed —
@@ -125,7 +132,7 @@ TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 DEPLOYED_VERSIONS_DIR="${DEPLOYED_VERSIONS_DIR:-/var/lib/stellarindex/deployed-versions}"
 
 note() { echo "ch-schema-drift: $*" >&2; }
-ch() { curl -sSf --max-time 120 "$CH_HTTP" --data-binary "$1"; }
+ch() { curl -sSf --max-time 120 --netrc-file "$CH_NETRC" "$CH_HTTP" --data-binary "$1"; }
 
 # ─── where the repo's intent comes from ─────────────────────────────
 # Three candidates, tried in this order:

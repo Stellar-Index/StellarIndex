@@ -33,6 +33,13 @@ load_env_file() {
   done < "$1"
 }
 load_env_file /etc/default/stellarindex
+# INV-0802: CH as ops_batch once the role renders this file; /dev/null (no
+# credential, CH `default`) until then, so no deploy order strands this script.
+CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-batch.netrc}"
+if [[ ! -r "$CH_NETRC" ]]; then
+  echo "run-ch-supply.sh: credential file $CH_NETRC unreadable; using ClickHouse default user" >&2
+  CH_NETRC=/dev/null
+fi
 
 # Debian's pg_wrapper `psql` stats the cluster data dir to pick a version and
 # aborts with "Invalid data directory for cluster 15 main" for any user that
@@ -52,7 +59,7 @@ MEMGUARD="${CHSUPPLY_MEMGUARD:-6442450944}"   # wait while CH mem > 6 GiB
 # scraped by promtail (which ships the journal, not files). (2026-07-17)
 # -f: an HTTP 4xx/5xx is a failure with an empty stdout, not an exception
 # body that reads as a value.
-CH() { curl -sSf --max-time 3600 http://localhost:8123/ --data-binary "$1"; }
+CH() { curl -sSf --max-time 3600 --netrc-file "$CH_NETRC" http://localhost:8123/ --data-binary "$1"; }
 # Digits only — the same guard data-freshness.sh puts on its supply_flows read.
 is_uint() { case "$1" in '' | *[!0-9]*) return 1 ;; esac; }
 

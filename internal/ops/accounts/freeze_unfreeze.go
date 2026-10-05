@@ -201,7 +201,7 @@ type openFreezeLister interface {
 }
 
 type freezeRecoverer interface {
-	MarkRecovered(ctx context.Context, asset, quote canonical.Asset) error
+	MarkRecovered(ctx context.Context, asset, quote canonical.Asset, releasedBy string) error
 }
 
 // freezeStateReader reads the ladder state a pair's Redis marker carries.
@@ -329,7 +329,7 @@ func unfreezePair(ctx context.Context, audit keys.AuditSink, recoverer freezeRec
 	}
 	fmt.Printf("freeze-unfreeze: redis marker cleared for %s/%s — the serving path is unfrozen\n", asset.String(), quote.String())
 
-	switch err := recoverer.MarkRecovered(ctx, asset, quote); {
+	switch err := recoverer.MarkRecovered(ctx, asset, quote, "operator:"+req.actor); {
 	case err == nil:
 		fmt.Printf("freeze-unfreeze: freeze_events row closed for %s/%s\n", asset.String(), quote.String())
 	case errors.Is(err, timescale.ErrNotFound):

@@ -217,3 +217,60 @@ tests:
       - eval_time: 45m
         alertname: stellarindex_notify_send_rate_high
         exp_alerts: []
+
+  # ── Case 7: ONE failed send fires the any-failure alert ────────────
+  # A lone failure on a template that has sent nothing in the window: the
+  # ratio and sustained rules produce nothing at 5m, this one fires at once
+  # and clears an hour after the failure leaves the 1h window.
+  - interval: 1m
+    name: a single failed send fires stellarindex_notify_send_failed
+    input_series:
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="sent"}'
+        values: '0x200'
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="failed"}'
+        values: '0x4 1x200'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_notify_send_failed
+        exp_alerts:
+          - exp_labels:
+              template: magic-link
+              severity: ticket
+              team: stellarindex
+              component: notify
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+              summary: "Transactional email (magic-link) had 1 failed send(s) in the last hour"
+              description: |
+                At least one magic-link email send failed in the
+                last hour. Rare failures stay under the ratio and sustained
+                alerts, so this is the only signal for them. A user did not get
+                their magic link or confirmation email.
+
+                Runbook: docs/operations/runbooks/notify-send-failure.md
+      - eval_time: 5m
+        alertname: stellarindex_notify_send_failure_ratio_high
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: stellarindex_notify_send_failures_sustained
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: stellarindex_notify_send_failed
+        exp_alerts: []
+
+  # ── Case 8: no failures, zero or healthy traffic stays silent ──────
+  - interval: 1m
+    name: no failed sends keeps stellarindex_notify_send_failed silent
+    input_series:
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="sent"}'
+        values: '0+5x100'
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="failed"}'
+        values: '3x100'
+      - series: 'stellarindex_notify_sends_total{template="signup-verify",result="sent"}'
+        values: '0x100'
+      - series: 'stellarindex_notify_sends_total{template="signup-verify",result="failed"}'
+        values: '0x100'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_notify_send_failed
+        exp_alerts: []

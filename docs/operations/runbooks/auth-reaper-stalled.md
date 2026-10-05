@@ -21,7 +21,7 @@ severity: ticket
 Three background reapers in the API binary bound tables an unauthenticated
 caller can grow: `login_code_lockouts` (keyed by attacker-chosen email,
 [login-code-lockout-table-growing](login-code-lockout-table-growing.md)),
-`magic_link_tokens` (no dedicated alert; its bound is read on
+`magic_link_tokens` (bound alerted by `stellarindex_magic_link_token_table_growing`; gauge
 [`stellarindex_magic_link_token_rows`](../../reference/metrics/README.md#stellarindex_magic_link_token_rows))
 and speculative-account orphans (`internal/signupreaper`). Each reported
 WHAT it did — rows deleted, errors, a rows gauge — but none reported THAT
@@ -115,3 +115,16 @@ cadence, so the threshold follows the deployment's own interval.
 ## Changelog
 
 - 2026-09-02 — created with the gauges + alert (#368 M5).
+
+## `stellarindex_magic_link_token_table_growing` — rows above 10000
+
+Fires when `stellarindex_magic_link_token_rows > 10000` for 30 min (ticket).
+The sweep is alive but outpaced, or failing. Check in order:
+
+1. `rate(stellarindex_magic_link_token_rows_deleted_total[1h])` against the
+   growth of the gauge: deletes near zero means the sweep is failing (read
+   the API log for `magiclinkreaper`); deletes high means a flood of mints.
+2. A flood: `sum(rate(http_requests_total{route="/v1/auth/login"}[15m]))`
+   and the per-IP throttle counters; block the source at the edge.
+3. If the sweep is dead, `stellarindex_auth_reaper_stalled` fires too; fix
+   that first.

@@ -150,6 +150,22 @@ func TestStoredFrom_AssetsReachEveryKind(t *testing.T) {
 	}
 }
 
+// An empty, non-nil TxHashes would reach mev_events as '{}', which 0021's
+// CHECK does not catch; it must fall back to the candidate's own tx, and a
+// candidate naming no transaction at all is refused.
+func TestStoredFrom_EmptyTxHashes(t *testing.T) {
+	ev, err := storedFrom(Candidate{Kind: KindArbitrage, TxHash: txA, Taker: "GATK", TxHashes: []string{}})
+	if err != nil {
+		t.Fatalf("storedFrom: %v", err)
+	}
+	if len(ev.TxHashes) != 1 || ev.TxHashes[0] != txA {
+		t.Errorf("TxHashes = %q, want [%q]", ev.TxHashes, txA)
+	}
+	if _, err := storedFrom(Candidate{Kind: KindArbitrage, Taker: "GATK", TxHashes: []string{}}); err == nil {
+		t.Error("a candidate with no tx hash at all was accepted")
+	}
+}
+
 type truncObserver struct {
 	nopObserver
 	truncated []string

@@ -128,9 +128,10 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 // partition) so the streamed result set stays bounded in memory.
 //
 // Note: ID and TransactionIndex are left zero — the CH lake keys events by
-// (ledger, tx_hash, op_index, event_index) and decoders use TxHash, not the
-// RPC-shape ID/tx-index. If a future decoder needs tx_index, add it to the
-// contract_events schema + extractor first.
+// (ledger, tx_hash, op_index, event_index) and decoders use TxHash. Delivery
+// order within a ledger is still transaction apply order: the SQL sorts by
+// tx_hash so ClickHouse streams in read order, and scanInApplyOrder re-sorts
+// each ledger by stellar.transactions.tx_index before fn sees it.
 // StreamContractEventsFiltered is the projector's forward-read source (ADR-0034
 // ADR-0034 #10 feed-switch): it streams contract_events for [from,to] narrowed by a
 // per-source prefilter (contract_id IN / topic_0_sym IN — mirrors the Postgres
@@ -156,8 +157,9 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 // so. It can pass useFinal=true so merge-on-read collapses the duplicates in CH
 // (the ch-rebuild sep41 dry-run count does this). OR it can pass useFinal=false
 // and dedup adjacent duplicates in-Go: the ORDER BY (ledger_seq, tx_hash,
-// op_index, event_index) makes exact-identity duplicate rows CONSECUTIVE in the
-// callback sequence, and no window ever splits a ledger, so an O(1)
+// op_index, event_index) makes exact-identity duplicate rows CONSECUTIVE, the
+// apply-order re-sort is stable so they stay consecutive in the callback
+// sequence, and no window ever splits a ledger, so an O(1)
 // previous-key skip counts each event exactly once at no FINAL cost. The
 // completeness reconcile deliberately takes the second path
 // (completeness.ReDeriveOutputCountsByKindFromEvents via ReconcileEventStreamer)
@@ -217,7 +219,7 @@ func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uin
 		return fmt.Errorf("clickhouse: query contract_events filtered [%d,%d]: %w", from, to, err)
 	}
 	defer func() { _ = rows.Close() }()
-	if err := scanContractEvents(rows, withOpArgs, emit); err != nil {
+	if err := scanInApplyOrder(ctx, conn, rows, withOpArgs, emit); err != nil {
 		return err
 	}
 	if enricher != nil {
@@ -377,7 +379,18 @@ func StreamContractEvents(ctx context.Context, addr string, from, to uint32, exc
 		return fmt.Errorf("clickhouse: query contract_events [%d,%d]: %w", from, to, err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanContractEvents(rows, true, fn)
+	return scanInApplyOrder(ctx, conn, rows, true, fn)
+}
+
+// scanInApplyOrder scans rows through an [applyOrderer], so fn sees each
+// ledger's events in transaction apply order rather than the table's tx_hash
+// sort. The lookups use the pool's second connection while rows holds the first.
+func scanInApplyOrder(ctx context.Context, conn driver.Conn, rows driver.Rows, withOpArgs bool, fn func(events.Event) error) error {
+	o := newApplyOrderer(ctx, connTxIndexLookup(conn), fn)
+	if err := scanContractEvents(rows, withOpArgs, o.add); err != nil {
+		return err
+	}
+	return o.flush()
 }
 
 // scanContractEvents maps contract_events result rows to events.Event and

@@ -74,6 +74,7 @@ EXPECTED = {
     "stellarindex_ingestion_source_stopped": "ingestion_source_stopped",
     "stellarindex_ingestion_source_stopped_low_volume_dex": "ingestion_source_stopped",
     "stellarindex_ingestion_source_stopped_daily_publisher": "ingestion_source_stopped",
+    "stellarindex_ingestion_source_stopped_hourly_publisher": "ingestion_source_stopped",
     "stellarindex_ingestion_ch_live_sink_drops_sustained": "ingestion_ch_live_sink_drops",
     "stellarindex_ingestion_ch_live_sink_drops": "ingestion_ch_live_sink_drops",
     "stellarindex_process_mappings_critical": "process_mappings/{{ $labels.process }}",

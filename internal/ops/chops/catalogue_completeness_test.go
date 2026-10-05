@@ -69,6 +69,10 @@ const (
 	// mandatory and load-bearing — it is the declared waiver the invariant
 	// demands instead of a silent gap.
 	noReconcile
+	// waivedInCatalogue: written by a catalogue source but deliberately not
+	// counted; the waiver and its reason live on that source's runtime
+	// `waived` list, which TestCatalogue_RuntimeWaiversMatchRoutes pins.
+	waivedInCatalogue
 )
 
 // projRoute declares how ONE (consumer.Event type → persisted table) edge
@@ -95,34 +99,6 @@ type projRoute struct {
 	// waiver.
 	reason string
 }
-
-// fanoutWaiver is the shared reason for the aquarius reserve/liquidity
-// family: the sink fans ONE decoder event out to N per-token-position rows
-// (token_index is a PK component), so the projection axis's
-// event-count-vs-served-row-count reconcile would false-flag nearly every
-// ledger (lake-measured 2026-08-17: aquarius_reserves 843705 rows /
-// 421793 events, aquarius_liquidity 12043/6021 — ratio ~2.0). Covered by
-// the density gap-detector until a fan-out-aware (per-event-identity)
-// reconcile lands.
-const fanoutWaiver = "fan-out: one decoder event → N per-token-position rows " +
-	"(token_index PK component), so event-count vs served-row-count would false-flag; " +
-	"density gap-detector covers it pending a fan-out-aware reconcile"
-
-// blendEmitterDropWaiver covers the blend_emitter `drop` kind: one decoder
-// DropEvent carries N recipients and the sink writes one blend_emitter_events
-// row per recipient (recipient_index is a PK component), so an
-// event-count-vs-served-row-count reconcile false-flags the drop ledgers
-// (r1 2026-08-18: ledger 51,499,914 = 13 rows / 1 event identity; 57,467,292 =
-// 3 / 1; Σ|Δ|=14, data correct). Unlike the aquarius all-fan-out tables the
-// whole table is NOT waived — the reconTarget carves the drop rows out of the
-// served side (whereFilter `event_kind <> 'drop'`) and omits the drop kind, so
-// the 1:1 distribute/swap_config rows still reconcile per-ledger; the density
-// gap-detector covers drop.
-const blendEmitterDropWaiver = "fan-out: one drop event → N recipient rows " +
-	"(recipient_index PK component), so event-count vs served-row-count false-flags " +
-	"the drop ledgers; the blend_emitter_events reconTarget excludes drop rows " +
-	"(whereFilter event_kind <> 'drop') and omits the drop kind so the 1:1 " +
-	"distribute/swap_config rows still reconcile per-ledger; density gap-detector covers drop"
 
 // accountObservationWaiver covers account_observations specifically: a
 // LedgerEntry observation, not a soroban-event projection, so it never flows
@@ -174,9 +150,9 @@ var projRoutes = []projRoute{
 	// field. EventKind() now branches on Kind too ("aquarius.reserves" /
 	// "aquarius.reserves_sync"), so the tables are attributable by kind —
 	// fan-out alone is why they stay off the reconcile axis.
-	{typeName: "aquarius.ReservesEvent", table: "aquarius_reserves", disp: noReconcile, reason: fanoutWaiver},
-	{typeName: "aquarius.ReservesEvent", table: "aquarius_reserves_sync", disp: noReconcile, reason: fanoutWaiver},
-	{typeName: "aquarius.LiquidityEvent", table: "aquarius_liquidity", disp: noReconcile, reason: fanoutWaiver},
+	{typeName: "aquarius.ReservesEvent", table: "aquarius_reserves", disp: waivedInCatalogue},
+	{typeName: "aquarius.ReservesEvent", table: "aquarius_reserves_sync", disp: waivedInCatalogue},
+	{typeName: "aquarius.LiquidityEvent", table: "aquarius_liquidity", disp: waivedInCatalogue},
 
 	// ── phoenix ──
 	{typeName: "phoenix.TradeEvent", table: "trades", kind: "phoenix.trade", disp: reconciledByKind},
@@ -216,7 +192,7 @@ var projRoutes = []projRoute{
 	// waived — the reconTarget carves drop rows out of the served side
 	// (whereFilter `event_kind <> 'drop'`) and omits the drop kind.
 	{typeName: "blend_emitter.DistributeEvent", table: "blend_emitter_events", kind: "blend_emitter.distribute", disp: reconciledByKind},
-	{typeName: "blend_emitter.DropEvent", table: "blend_emitter_events", disp: noReconcile, reason: blendEmitterDropWaiver},
+	{typeName: "blend_emitter.DropEvent", table: "blend_emitter_events", disp: waivedInCatalogue},
 	{typeName: "blend_emitter.SwapConfigEvent", table: "blend_emitter_events", kind: "blend_emitter.swap_config", disp: reconciledByKind},
 
 	// ── cctp / rozo / sorocredit ──
@@ -428,10 +404,44 @@ func TestCatalogue_ReconciledRoutesArePresent(t *testing.T) {
 			if tc == nil || !tc.census {
 				t.Errorf("%s: table %q is declared reconciledByCensus but no census/ContractCall source in the catalogue targets it", r.typeName, r.table)
 			}
-		case noReconcile:
-			// Coverage is not required; TestCatalogue_WaiversAreDeclared
-			// enforces the written reason.
+		case noReconcile, waivedInCatalogue:
+			// Coverage is not required; TestCatalogue_WaiversAreDeclared and
+			// TestCatalogue_RuntimeWaiversMatchRoutes enforce the reason.
 		}
+	}
+}
+
+// TestCatalogue_RuntimeWaiversMatchRoutes: every waivedInCatalogue route has a
+// runtime `waived` entry with a reason on a catalogue source, and every runtime
+// entry is declared by a route — so what "reconciled" excludes is a runtime
+// fact, not one only this test file knows.
+func TestCatalogue_RuntimeWaiversMatchRoutes(t *testing.T) {
+	runtime := map[string]bool{}
+	for _, src := range builtCatalogue(t) {
+		for _, w := range src.waived {
+			if w.table == "" || w.reason == "" {
+				t.Errorf("%s: waived entry %+v needs a table and a reason", src.name, w)
+			}
+			runtime[w.table] = true
+		}
+	}
+	declared := map[string]bool{}
+	for _, r := range projRoutes {
+		if r.disp != waivedInCatalogue {
+			continue
+		}
+		declared[r.table] = true
+		if !runtime[r.table] {
+			t.Errorf("%s → %s is waivedInCatalogue but no catalogue source lists it in `waived`", r.typeName, r.table)
+		}
+	}
+	for table := range runtime {
+		if !declared[table] {
+			t.Errorf("catalogue waives %q but no projRoute declares it waivedInCatalogue", table)
+		}
+	}
+	if len(runtime) == 0 {
+		t.Fatal("no runtime waivers found — the aquarius fan-out and blend_emitter drop waivers must be in the catalogue")
 	}
 }
 
