@@ -7,50 +7,35 @@ supersedes: []
 superseded_by: null
 ---
 
-# ADR-0012 — Quorum-set composition
+# ADR-0012: Quorum-set composition
 
-**Status:** Proposed (placeholder — full ADR pending Phase 3
-validator rollout per ADR-0004. README index lists this number as
-*Planned* until the content lands.)
+## Context
 
-## Why this number exists
+Planned stub; the full ADR is written when the Tier-1 validator work (ADR-0004 Phase 3) begins.
+This number is reserved so ADR-0004's reference to "the future quorum-set ADR" resolves.
 
-The ADR numbering had a gap — `docs/adr/` jumped
-0011 → 0013 with no file at 0012-*.md. ADR-0004 (the three-validator
-aspiration) references "the future Quorum-set composition ADR"; the
-README index at [docs/adr/README.md:56](README.md) has been listing
-the number as `Planned`. This placeholder
-fills the numeric slot so anyone walking the directory sees an
-intentional reservation rather than a missing file.
+## Decision
 
-## When this gets written
+None yet. The full ADR will cover:
 
-When the Tier-1 validator work begins (ADR-0004 Phase 3), this file
-gets replaced with the full ADR covering:
+- which third-party validators are in our quorum set (shortlist: SDF, LOBSTR, Satoshipay, Whalestack, Franklin Templeton);
+- the HALT-LIVE-DROP scoring we apply when a validator behaves poorly;
+- whether R1's quorum set must differ from R2's and R3's (likely no);
+- the thresholds and majorities in stellar-core's `[QUORUM_SET]` block.
 
-  - Which third-party validators we include in our quorum set
-    (SDF / LOBSTR / Satoshipay / Whalestack / Franklin Templeton
-    are the current shortlist per the operator survey).
-  - The HALT-LIVE-DROP scoring methodology we apply when one
-    validator behaves poorly.
-  - Cross-region quorum overlap requirements (does R1's quorum
-    set need to differ from R2's / R3's? — likely no, but
-    settle that here).
-  - The thresholds and majorities we configure on stellar-core's
-    `[QUORUM_SET]` block.
+## Invariant
 
-## Invariants the future ADR must preserve
+The future ADR must preserve:
 
-  - Tier-1 status (per ADR-0004): three independent regions, three
-    validator keys, three history archives.
-  - Quorum set MUST NOT include any validator we operate (would
-    void the independence claim).
-  - No validator may have > 33% effective weight (Stellar's
-    safety threshold per the consensus protocol).
+- Tier-1 status per ADR-0004: three independent regions, three validator keys, three history archives.
+- The quorum set never includes a validator we operate, which would void the independence claim.
+- No validator has more than 33% effective weight, Stellar's consensus safety threshold.
 
-## Cross-references
+## Consequences
 
-  - [ADR-0004](0004-tier1-validator-aspiration.md) — the parent
-    Tier-1 commitment.
-  - [ADR-0008](0008-ha-topology.md) — the HA shape this composes
-    into.
+Until the ADR lands, nothing may assume a quorum-set design beyond these constraints.
+Related: ADR-0004 (parent commitment), ADR-0008 (HA shape).
+
+## Evidence
+
+None; no code implements this yet. The ADR README index lists this number as Planned.

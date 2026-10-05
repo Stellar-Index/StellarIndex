@@ -8,10 +8,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// nativeXLMSAC is the Stellar Asset Contract address wrapping native
-// XLM — the same literal the XLM/USD CTEs already hardcode. Mirrors
-// canonical's unexported nativeSAC.
-const nativeXLMSAC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+// nativeXLMSAC is the PUBNET native-XLM SAC, still concatenated into SQL
+// text (this file, transitive_price.go); Go-side code uses
+// canonical.NativeSACContractID().
+const nativeXLMSAC = canonical.XLMSacContractID
 
 // stablecoinInListSQL renders canonical.StablecoinCodes as a sorted,
 // single-quoted SQL IN-list (e.g. "'DAI', 'EURC', …"). Sorted so the

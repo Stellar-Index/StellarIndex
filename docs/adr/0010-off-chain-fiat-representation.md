@@ -11,254 +11,34 @@ superseded_by: null
 
 ## Context
 
-The aggregation layer needs to price Stellar assets against
-off-chain fiat currencies (USD, EUR, GBP, JPY, CNY, BRL).
-These are NOT Stellar assets — there's no `code+issuer`
-(Circle's USDC is a classic Stellar asset, but "USD as a
-reference currency" is not).
-
-Oracles speak in fiat: Reflector's CEX contract emits "XLM/USD at
-12.42" where USD is the abstract concept, not any specific issuer's
-stablecoin. Similarly FX feeds (OANDA etc.) publish cross-pair
-rates between fiat currencies.
-
-Our canonical type `Asset` was designed for Stellar assets only —
-three shapes: `native` / `classic (code+issuer)` / `soroban
-(contract)`. When oracle code needed to express "USD", it fell
-back to a **sentinel hack**:
-
-```go
-Asset{Type: AssetClassic, Code: "USD"}  // empty issuer = fiat sentinel
-```
-
-This shipped in the first `canonical.OracleUpdate` commit with a
-`TODO(#0)` marker flagging the debt. [`canonical.Asset.Validate`]
-specifically tolerates this form for a small allow-list; no other
-code path does.
-
-Consequences of leaving the hack:
-
-- `Asset.String()` → `"USD-"` (empty issuer renders as trailing
-  dash), which [`ParseAsset`] rejects as malformed. Round-trip
-  JSON breaks for any response that includes a fiat-quoted asset.
-- `validateFiatSentinel` duplicates the allow-list in two places.
-- New developers see a "classic asset with no issuer" and assume
-  it's a bug.
-
-Time to fix it before more code touches the Asset type.
+Oracles and FX feeds quote against fiat (USD, EUR, ...), which is not a Stellar asset and has no `code+issuer`.
+The first oracle code faked it as a classic asset with an empty issuer, which rendered as `USD-` and broke `ParseAsset` round-trips.
 
 ## Decision
 
-**Extend [`canonical.AssetType`] with a fourth variant: `fiat`.**
+`canonical.AssetType` has a fiat variant, `AssetFiat = "fiat"`; the sentinel form is removed.
 
-```go
-const (
-    AssetNative  AssetType = "native"
-    AssetClassic AssetType = "classic"
-    AssetSoroban AssetType = "soroban"
-    AssetFiat    AssetType = "fiat"   // NEW
-)
+- String form is `fiat:USD`, object form is `{"type": "fiat", "code": "USD"}`, and SQL storage is the same text column as other assets.
+- A fiat asset carries only `Code`; `Issuer` and `ContractID` stay empty.
+- `Asset.Validate` accepts a fiat code only if `canonical.IsKnownFiat(code)`; the allow-list is `knownFiatCodes` in `internal/canonical/asset_fiat.go`, currently 133 codes (ISO-4217 plus the massive.com FX feed's set plus VES).
+- Adding a fiat code is a one-line code change to that list, never a new ADR.
+- Commodities such as XAU are not currencies; they belong to the `rwa:` namespace (ADR-0028). Crypto tickers use `crypto:` (ADR-0014).
+- Rejected: a synthetic issuer address, a separate `FiatCurrency` type, an empty-issuer classic asset, and a fake contract asset.
 
-type Asset struct {
-    Type         AssetType
-    Code         string     // "USD", "EUR", … for fiat; existing use for classic
-    Issuer       string     // unused for fiat
-    ContractID   string     // unused for fiat
-}
-```
+## Invariant
 
-Canonical wire form for fiat:
-
-- **String form:** `fiat:USD`, `fiat:EUR`, etc. Unambiguous prefix
-  means `ParseAsset` can dispatch in O(1).
-- **Object form:** `{"type": "fiat", "code": "USD"}`.
-- **SQL storage:** same text column as other assets; the `fiat:`
-  prefix distinguishes it. Indexes on `(base_asset, quote_asset,
-  ts)` work identically.
-
-Allow-listed codes (ISO-4217 three-letter plus a small extension
-set for the "AQUA/BRL" case and currencies observed in live
-Reflector FX oracle traffic — see Amendments):
-
-```
-ARS AUD BRL CAD CHF CLP CNY COP EUR GBP HKD IDR ILS INR JPY KRW
-MXN MYR NGN NOK NZD PHP PLN RUB SEK SGD THB TRY UAH USD VND ZAR
-```
-
-New fiat codes require a one-line ADR amendment (added to this
-document's amendments section; never a superseding ADR).
-`canonical.IsKnownFiat(code)` exposes the allow-list to callers.
-
-Validation:
-
-```go
-func (a Asset) Validate() error {
-    switch a.Type {
-    case AssetFiat:
-        if a.Issuer != "" || a.ContractID != "" {
-            return errors.New("fiat asset must not carry issuer/contract")
-        }
-        if !IsKnownFiat(a.Code) {
-            return fmt.Errorf("%w: unknown fiat code %q", ErrInvalidAsset, a.Code)
-        }
-        return nil
-    // ... existing cases
-    }
-}
-```
+- A fiat asset has no issuer or contract id and an allow-listed code; `Asset.Validate` enforces it.
+- `Asset.String()` and `ParseAsset` round-trip every asset shape including fiat; the `asset_test.go` and `asset_fiat_test.go` tables enforce it.
+- Every `switch` over `AssetType` either covers every variant, has a `default` with a real body (not empty or only `fallthrough`/`break`), or carries an `//exhaustive:ignore` marker with prose; `TestAssetTypeExhaustiveGuard` in `internal/canonical/asset_type_exhaustive_guard_test.go` enforces it.
+- No code accepts an empty-issuer classic asset as fiat.
 
 ## Consequences
 
-**Positive**
+Each new `AssetType` variant forces every switch that lacks a real `default` to add a case, which the guard finds.
+Fiat-quoted API responses are self-describing (`"quote": "fiat:USD"`), and triangulation can treat the USD anchor as a real value.
+The pre-v1 sentinel was never shipped, so no data migration was needed.
 
-- `Asset.String()` + `ParseAsset()` round-trip cleanly for every
-  legitimate asset shape, including fiat. JSON round-trips don't
-  break for oracle responses.
-- API response for a fiat-quoted price is now self-describing:
-  `{"quote": "fiat:USD"}` — a consumer parsing the string knows
-  "this is a reference currency, not a Stellar token."
-- Single allow-list in one function, one place. The old sentinel
-  hack's duplicated allow-list comes out.
-- API docs can describe the four `AssetType` values uniformly.
-- No issuer-address trickery to signal "this isn't really a
-  Stellar asset" — the type tag does it.
+## Evidence
 
-**Negative**
-
-- Four variants instead of three. Every type-switch on
-  `AssetType` needs a new case — we grep for `AssetSoroban` today
-  to find them. CI check (TODO(#0)) to assert switch-coverage
-  exhaustiveness would be tidy; Go 1.21+ has `analyzers/
-  exhaustive` that can enforce it.
-- Wire-contract change for clients who ingested the old sentinel
-  form. Mitigation: we never shipped the old form — it was
-  internal-only. Any external API response that would've emitted
-  "USD-" is pre-launch; fix before v1 ships.
-- Migration of the migration: if any trades/oracle_updates rows
-  get written with the old `USD-` text before this lands, they
-  need a UPDATE SET base_asset = 'fiat:USD' WHERE base_asset =
-  'USD-'. Tracked in migrations/0004 (TBD).
-
-**Operational impact**
-
-- `internal/canonical/asset.go` — one new case in
-  `Validate()`, `String()`, `ParseAsset()`, `MarshalJSON`/
-  `UnmarshalJSON`, `Scan`/`Value`.
-- Tests extend the existing table-driven cases by a fiat-fixture
-  block.
-- `internal/sources/cex/*` and `internal/sources/fx/*` (future)
-  emit `AssetFiat` directly instead of the sentinel hack.
-- `docs/reference/api-design.md §3` asset-identifier grammar
-  updated to include the `fiat:CODE` form.
-
-**Downstream design impact**
-
-- The aggregator's triangulation code
-  (`internal/aggregate/triangulate.go`, future) has to handle
-  fiat ↔ fiat rates as well as fiat ↔ Stellar-asset rates. Clean
-  separation between the two via the `AssetType` tag.
-- Triangulation through a "synthetic USD anchor" (cross-pair
-  derivation) is now just `AssetType = fiat, Code =
-  USD` — a real value, not a string match.
-
-## Alternatives considered
-
-1. **Keep the empty-issuer classic sentinel.** Rejected — the
-   round-trip breakage for JSON is a real bug that'll get
-   reported once we ship a `/v1/price?quote=USD` response
-   publicly.
-
-2. **Invent a well-known synthetic issuer G-address.** Something
-   like `GAAAAAAAFIAT000000...` registered as the "off-chain"
-   issuer. Rejected: (a) it'd be a valid-looking Stellar address
-   that isn't actually on the network, risking confusion; (b)
-   any code reading the issuer would have to string-match
-   against this magic value, not type-dispatch — regressing on
-   the exact thing this ADR fixes.
-
-3. **Separate `FiatCurrency` type in a new package.** Rejected
-   as over-engineering. Every `Pair` + `Trade` + `OracleUpdate`
-   + API envelope now needs a union type (Go doesn't have sum
-   types natively, so we'd implement one via interfaces or
-   generic wrappers) for Base/Quote. Six files of scaffolding
-   to buy nothing.
-
-4. **Expand `AssetClassic` to allow empty issuer, code-match the
-   fiat set.** Rejected as a special-case of the current sentinel
-   hack with the same problems: breaks `ParseAsset` round-trip,
-   forces two allow-lists in sync.
-
-5. **Represent fiat as a Stellar contract asset.** The Chainlink
-   approach — there's a "virtual" contract address that fiat
-   prices go through. Rejected: that's them abusing their
-   smart-contract platform's type system to model an
-   abstraction. We don't have that constraint; our canonical
-   type is defined by us.
-
-## Migration from the sentinel (pre-v1 cleanup)
-
-Because this is still pre-v1 and no data is written yet with the
-sentinel shape, we do NOT need a data migration. Code migration
-is:
-
-1. Amend `canonical.AssetType` with the `AssetFiat` constant.
-2. Update `Asset.String()`, `ParseAsset`, `Validate`,
-   `MarshalJSON`, `UnmarshalJSON`, `Scan`, `Value` to handle the
-   new variant.
-3. Delete `isFiatSentinel` from `internal/canonical/oracle.go`
-   and remove the allow-list acceptance in
-   `OracleUpdate.Validate`. Replace with `a.Quote.Validate()` —
-   the fiat variant now validates cleanly through the main path.
-4. Add `canonical.IsKnownFiat(code)` + the allow-list in
-   `asset_fiat.go` (new file; keeps the ISO list navigable).
-5. Update tests: `oracle_test.go` fiat-sentinel test becomes a
-   simple fiat-asset test.
-6. Write a grep-friendly TODO comment on each `switch` over
-   `AssetType` that didn't previously handle fiat — Go's
-   exhaustive linter (if/when we enable it) will flag them
-   automatically.
-
-The implementation PR lands as `fix(canonical): AssetFiat variant
-per ADR-0010` in the session that ratifies this ADR.
-
-## Amendments
-
-_Append new fiat codes here as a one-liner. Never supersede this
-ADR for an addition._
-
-- 2026-04-22 — initial allow-list of 19 codes.
-- 2026-04-23 — added 13 codes observed in the mainnet Reflector FX
-  oracle's live payload (PR 164a, fixture capture under
-  `test/fixtures/reflector/v6-2026-04-23/`): ARS, CLP, COP, IDR,
-  ILS, MYR, NOK, PHP, PLN, SEK, THB, UAH, VND. Total: 32 codes.
-  Crypto tickers (BTC, ETH, USDT…) emitted by Reflector's CEX
-  oracle remain **out** of the fiat allow-list — they need a
-  separate canonical asset type tracked as PR 164e.
-- 2026-08-27 — widened to the full 132-code set the massive.com FX
-  feed publishes into `fx_quotes` (e17288bd; the list in the Decision
-  section above is the historical 32). The live list is
-  `canonical.knownFiatCodes` in `internal/canonical/asset_fiat.go`.
-- 2026-08-29 — added VES (Venezuelan bolívar soberano, ISO-4217 928).
-  The Reflector FX oracle publishes a VES slot on every event
-  (present in the 2026-04-23 fixtures; recorded as `raw:VES` since
-  PR #247 and paged by `stellarindex_ingestion_oracle_unknown_symbols`
-  on r1 v0.48.0). The massive.com feed does not carry VES, so it is
-  inert on the `/assets` converter like the legacy codes. XAU (gold),
-  the other raw FX slot, is a commodity — not a currency — and goes to
-  ADR-0028's `rwa:` list, deliberately not here. Total: 133 codes.
-
-## References
-
-- Related ADRs:
-  - ADR-0003 (i128 no-truncation) — amounts at fiat oracle prices
-    are still `canonical.Amount`; `AssetType = fiat` doesn't
-    change amount handling.
-- Related docs:
-  - [api-design.md §3](../reference/api-design.md#3-asset-identifier-grammar)
-    — grammar extended with `fiat:CODE`.
-  - [canonical/oracle.go](../../internal/canonical/oracle.go) —
-    the TODO(#0) this ADR closes.
-- External:
-  - ISO 4217 — the currency-code reference.
-  - Chainlink feeds — a reference for "virtual asset" naming
-    conventions in oracle systems.
+`internal/canonical/asset.go`, `asset_fiat.go`, `oracle.go`, and the exhaustive guard test above.
+Grammar: `docs/reference/api-design.md` section 3.

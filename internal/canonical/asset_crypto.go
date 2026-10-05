@@ -18,8 +18,8 @@ package canonical
 // NOT Equal() under canonical.Asset.
 
 // knownCryptoCodes is the allow-list of recognized crypto tickers.
-// Extension is a one-line amendment to ADR-0014 (never a superseding
-// ADR). Codes chosen from mainnet Reflector CEX oracle traffic
+// Extension is a one-line change here (ADR-0014 needs no
+// amendment). Codes chosen from mainnet Reflector CEX oracle traffic
 // observed 2026-04-23 plus the largest-cap global crypto assets that
 // are likely to appear.
 var knownCryptoCodes = map[string]struct{}{
@@ -60,8 +60,8 @@ var knownCryptoCodes = map[string]struct{}{
 	// crypto:BTC and crypto:SolvBTC respectively (D8, 2026-08-29); see
 	// redstone.feedRegistry for the live derivation.
 	"SolvBTC": {}, "SolvBTC_FUNDAMENTAL": {}, "SolvBTC.BBN_FUNDAMENTAL": {},
-	// 2026-07-24 RedStone relayer expansion (ledger 63624934; ADR-0014
-	// Amendments). Ethena's synthetic-dollar tokens — crypto-native
+	// RedStone relayer expansion (ADR-0014).
+	// Ethena's synthetic-dollar tokens — crypto-native
 	// (delta-neutral basis strategies), not ADR-0028 rwa; USDe stays
 	// crypto like USDT/USDC per the stablecoin-as-fiat-is-aggregator-
 	// policy rule above. sUSDe is the staked, value-accruing form.

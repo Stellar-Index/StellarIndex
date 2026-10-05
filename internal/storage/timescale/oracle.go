@@ -46,13 +46,15 @@ func (s *Store) InsertOracleUpdate(ctx context.Context, u canonical.OracleUpdate
                 ledger, tx_hash, op_index, ts,
                 asset, quote,
                 price, decimals,
-                confidence, observer, derive_generation
+                confidence, observer, derive_generation,
+                published_price
             ) VALUES (
                 $1, NULLIF($2, ''),
                 $3, $4, $5, $6,
                 $7, $8,
                 $9, $10,
-                NULLIF($11, 0.0), NULLIF($12, ''), $13
+                NULLIF($11, 0.0), NULLIF($12, ''), $13,
+                $14
             )
             ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO UPDATE SET
                 contract_id       = EXCLUDED.contract_id,
@@ -62,6 +64,7 @@ func (s *Store) InsertOracleUpdate(ctx context.Context, u canonical.OracleUpdate
                 decimals          = EXCLUDED.decimals,
                 confidence        = EXCLUDED.confidence,
                 observer          = EXCLUDED.observer,
+                published_price   = EXCLUDED.published_price,
                 derive_generation = EXCLUDED.derive_generation
               WHERE oracle_updates.derive_generation <= EXCLUDED.derive_generation
             RETURNING (xmax = 0) AS inserted
@@ -79,6 +82,7 @@ func (s *Store) InsertOracleUpdate(ctx context.Context, u canonical.OracleUpdate
 		u.Asset.String(), u.Quote.String(),
 		u.Price, int(u.Decimals),
 		u.Confidence, u.Observer, s.deriveGeneration,
+		publishedPriceArg(u.PublishedPrice),
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertOracleUpdate: %w", err)
@@ -97,7 +101,8 @@ func (s *Store) LatestOracleUpdateForAsset(ctx context.Context, source string, a
                asset, quote,
                price, decimals,
                COALESCE(confidence, 0),
-               COALESCE(observer, '')
+               COALESCE(observer, ''),
+               published_price
           FROM oracle_updates
          WHERE source = $1
            AND asset  = $2
@@ -117,6 +122,7 @@ func (s *Store) LatestOracleUpdateForAsset(ctx context.Context, source string, a
 		&u.Price, &decimals,
 		&u.Confidence,
 		&u.Observer,
+		publishedPriceDest{&u.PublishedPrice},
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -210,7 +216,8 @@ func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canon
                o.asset, o.quote,
                o.price, o.decimals,
                COALESCE(o.confidence, 0),
-               COALESCE(o.observer, '')
+               COALESCE(o.observer, ''),
+               o.published_price
           FROM latest l
           CROSS JOIN LATERAL (
                 SELECT * FROM oracle_updates u
@@ -241,6 +248,7 @@ func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canon
 			&assetStr, &quoteStr,
 			&u.Price, &decimals,
 			&u.Confidence, &u.Observer,
+			publishedPriceDest{&u.PublishedPrice},
 		); err != nil {
 			return nil, fmt.Errorf("timescale: LatestOracleUpdatesForAsset scan: %w", err)
 		}
@@ -292,7 +300,8 @@ func (s *Store) LatestAggregatorPricesForPair(ctx context.Context, base, quote c
                asset, quote,
                price, decimals,
                COALESCE(confidence, 0),
-               COALESCE(observer, '')
+               COALESCE(observer, ''),
+               published_price
           FROM oracle_updates
          WHERE asset  = $1
            AND quote  = $2
@@ -320,6 +329,7 @@ func (s *Store) LatestAggregatorPricesForPair(ctx context.Context, base, quote c
 			&assetStr, &quoteStr,
 			&u.Price, &decimals,
 			&u.Confidence, &u.Observer,
+			publishedPriceDest{&u.PublishedPrice},
 		); err != nil {
 			return nil, fmt.Errorf("timescale: LatestAggregatorPricesForPair scan: %w", err)
 		}
@@ -367,7 +377,8 @@ func (s *Store) LatestOracleObservation(ctx context.Context, source string, base
                asset, quote,
                price, decimals,
                COALESCE(confidence, 0),
-               COALESCE(observer, '')
+               COALESCE(observer, ''),
+               published_price
           FROM oracle_updates
          WHERE source = $1
            AND asset  = ANY($2)
@@ -388,6 +399,7 @@ func (s *Store) LatestOracleObservation(ctx context.Context, source string, base
 		&assetStr, &quoteStr,
 		&u.Price, &decimals,
 		&u.Confidence, &u.Observer,
+		publishedPriceDest{&u.PublishedPrice},
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -438,7 +450,8 @@ func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpda
                asset, quote,
                price, decimals,
                COALESCE(confidence, 0),
-               COALESCE(observer, '')
+               COALESCE(observer, ''),
+               published_price
           FROM oracle_updates -- totality: includes unmapped
          WHERE ts > NOW() - INTERVAL '7 days'
          ORDER BY source, asset, quote, ts DESC
@@ -460,6 +473,7 @@ func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpda
 			&assetStr, &quoteStr,
 			&u.Price, &decimals,
 			&u.Confidence, &u.Observer,
+			publishedPriceDest{&u.PublishedPrice},
 		); err != nil {
 			return nil, fmt.Errorf("timescale: LatestOracleStreams scan: %w", err)
 		}
@@ -614,4 +628,29 @@ func (s *Store) DailyOraclePrices(
 		return nil, fmt.Errorf("timescale: DailyOraclePrices rows: %w", err)
 	}
 	return out, nil
+}
+
+// publishedPriceArg binds OracleUpdate.PublishedPrice: nil is SQL NULL.
+func publishedPriceArg(p *canonical.Amount) any {
+	if p == nil {
+		return nil
+	}
+	return p.String()
+}
+
+// publishedPriceDest scans the nullable published_price NUMERIC; NULL
+// leaves the field nil (canonical.Amount.Scan refuses NULL by design).
+type publishedPriceDest struct{ dst **canonical.Amount }
+
+func (d publishedPriceDest) Scan(src any) error {
+	if src == nil {
+		*d.dst = nil
+		return nil
+	}
+	var a canonical.Amount
+	if err := a.Scan(src); err != nil {
+		return fmt.Errorf("published_price: %w", err)
+	}
+	*d.dst = &a
+	return nil
 }

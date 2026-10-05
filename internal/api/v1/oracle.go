@@ -204,9 +204,17 @@ type OracleReading struct {
 	// Price is the human-facing decimal string at Decimals scale.
 	Price string `json:"price"`
 
-	// PriceRaw is the underlying integer value at Decimals scale,
-	// preserved for cross-checks (ADR-0003 — never lose the raw).
+	// PriceRaw is the integer form of Price at Decimals scale, so a
+	// client can verify the rendering. For a feed published inverted it
+	// is the reciprocal we derived, not the publisher's value; see
+	// PriceOnchain.
 	PriceRaw string `json:"price_raw"`
+
+	// PriceOnchain is the publisher's own integer at Decimals scale, in
+	// the publisher's orientation, when Price was derived from it by
+	// inversion (ADR-0003 — the 8-dp reciprocal is lossy). Absent when no
+	// separate published value was recorded.
+	PriceOnchain *string `json:"price_onchain,omitempty"`
 
 	// Decimals is the source-declared scale. 14 for Reflector.
 	Decimals uint8 `json:"decimals"`
@@ -411,18 +419,24 @@ func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 // oracleReadingFrom converts canonical.OracleUpdate → wire shape,
 // rendering Price at its declared Decimals scale.
 func oracleReadingFrom(u canonical.OracleUpdate) OracleReading {
+	var onchain *string
+	if u.PublishedPrice != nil {
+		v := u.PublishedPrice.String()
+		onchain = &v
+	}
 	return OracleReading{
-		Source:     u.Source,
-		ContractID: u.ContractID,
-		Asset:      u.Asset.String(),
-		Quote:      u.Quote.String(),
-		Timestamp:  WireTime(u.Timestamp),
-		Price:      scaledDecimalString(u.Price.BigInt(), u.Decimals),
-		PriceRaw:   u.Price.String(),
-		Decimals:   u.Decimals,
-		Confidence: u.Confidence,
-		Observer:   u.Observer,
-		Mapped:     u.Asset.IsMapped(),
+		Source:       u.Source,
+		ContractID:   u.ContractID,
+		Asset:        u.Asset.String(),
+		Quote:        u.Quote.String(),
+		Timestamp:    WireTime(u.Timestamp),
+		Price:        scaledDecimalString(u.Price.BigInt(), u.Decimals),
+		PriceRaw:     u.Price.String(),
+		PriceOnchain: onchain,
+		Decimals:     u.Decimals,
+		Confidence:   u.Confidence,
+		Observer:     u.Observer,
+		Mapped:       u.Asset.IsMapped(),
 	}
 }
 

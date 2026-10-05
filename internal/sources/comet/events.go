@@ -87,9 +87,9 @@ const MainnetBackstopPool = "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVG
 // on). A genuinely new Comet pool must be operator-admitted (a
 // protocol_contracts row via seed-protocol-contracts, or a new entry
 // here) before its events are attributed — fail-closed, surfaced as
-// an ADR-0033 recognition gap rather than silently attributed. The
-// WASM-hash sweep (ADR-0040 §1 mechanism 3) is the registered upkeep
-// loop for discovering byte-identical Balancer-v1 deployments.
+// an ADR-0033 recognition gap rather than silently attributed. Comet
+// is curated only (ADR-0040 §1 mechanism 3): no WASM-hash sweep exists;
+// wasm-drift alerts on drift but never admits a pool.
 func MainnetGatedSet() []string { return []string{MainnetBackstopPool} }
 
 // cometTopicArity is the minimum topic count on every Comet event:

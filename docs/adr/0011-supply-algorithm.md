@@ -9,380 +9,60 @@ superseded_by: null
 
 # ADR-0011: Supply algorithm — total / circulating / max
 
-> **Amendment (2026-07-08, BACKLOG #59).** The "SAC-wrapped classics
-> — both algorithms must agree" §'s "Cross-check: alert when they
-> disagree by more than 1 stroop" is a true invariant ONLY for a
-> classic asset whose entire economic supply is represented through
-> its SAC (a genuinely SAC-issued token). It does NOT hold for the
-> common case — a classic asset that merely HAS a SAC wrapper but is
-> mostly held classically — where Algorithm 2's total and Algorithm
-> 3's total legitimately diverge by ~the whole non-wrapped supply
-> (e.g. AQUA: Algorithm 2 ≈ 86.4B, Algorithm 3 ≈ 0). Applying the
-> equality compare unconditionally produced 8 standing
-> `stellarindex_supply_cross_check_divergence` false positives — a
-> monitoring category error, not indexer corruption; served supply
-> was always correct. `internal/supply.WrapClass` now selects the
-> equality compare only for an operator-attested
-> `WrapClassFull` pair (`[supply].fully_wrapped_sacs`; none configured
-> as of 2026-07-08); every other pair defaults to `WrapClassPartial`,
-> which checks the true subset-bound invariant instead: a SAC's
-> `total_supply` can never exceed its classic asset's `total_supply`
-> (SACWrapped is one of Algorithm 2's own non-negative addends), so
-> only `sac_total > classic_total` fires. The real subset compare
-> (Algorithm 2's `SACWrapped` component vs Algorithm 3's total, which
-> per this ADR's own math IS a true equality) needs new plumbing not
-> yet built — see `internal/supply/crosscheck.go` and
-> `docs/operations/runbooks/supply-cross-check-divergence.md` for the
-> full account. The decision below is preserved as the original
-> record per the immutability rule.
-
-> **Reality note (2026-06-12, F-1354 / D2-03; resolved 2026-07-05,
-> launch-todo P4-2).** For ~3 weeks the SEP-1 `max_supply` precedence
-> step described below was dead code (`supply.Overlay` had zero
-> callers). As of 2026-07-05 it is **wired into the `/v1/assets/{id}`
-> serving path** (`internal/api/v1/assets_f2.go`): when the supply
-> snapshot carries no operator-override max, the handler overlays the
-> issuer's stellar.toml `[[CURRENCIES]]` `max_number` (falling back to
-> `fixed_number`; blocked by an explicit `is_unlimited = true`),
-> scaled from display units to raw units by the asset's decimals. The
-> `self_declared: true` flag described below shipped in a different
-> shape: the wire carries the declaration verbatim as `max_number` /
-> `fixed_number` / `is_unlimited` metadata fields, and an applied
-> overlay labels `supply_basis: "sep1_declared_max"` — a stronger
-> per-source signal than a boolean. The overlay applies at serving
-> time only; `asset_supply_history` rows are never rewritten with
-> declared values. The decision below is preserved as the original
-> record.
-
-> **Amendment (2026-10-02).** The overlay's label moved to its own
-> field: an applied overlay now sets `max_supply_basis:
-> "sep1_declared_max"` and leaves `supply_basis` naming the policy
-> behind total/circulating (`issuer_exclusion`, `override`, …).
-> Overwriting `supply_basis` erased that policy, and with it the
-> circulating lower-bound flag derived from it.
-
-> **Amendment (2026-07-24, audit-2026-07-23 wave5 DOC-01/DAT-14).**
-> The "API + schema" section's hypertable note below —
-> "Append-only; latest row per `asset_key` is the queryable current
-> state" — and migration 0005's table `COMMENT` ("append-only") are no
-> longer accurate. Migration 0109 (the INV-3 re-derive-trap fix) added
-> a generation-guarded `ON CONFLICT ... DO UPDATE` to the
-> `asset_supply_history` writer
-> (`internal/storage/timescale/supply.go`): a re-derive at the same
-> `(asset_key, ledger_sequence)` now overwrites the existing row
-> in-place when `derive_generation` is >= the stored value, rather
-> than being silently discarded by `DO NOTHING` against stale data.
-> The table is therefore **idempotent-corrective** (in-place UPDATE
-> guarded by generation, not pure append), not append-only. A follow-up
-> migration to update the migration-0005 `COMMENT ON TABLE` text
-> accordingly is tracked separately (DAT-14) and not made here.
->
-> Separately, DAT-14 also flags that this invariant — like the
-> "single-writer by construction" claims elsewhere in the codebase —
-> is enforced by application code only, with no corresponding
-> Postgres-role `REVOKE`/`GRANT` split restricting `UPDATE`/`DELETE`
-> on `asset_supply_history` (or `trades`, `oracle_updates`,
-> `soroban_events`) to a distinct migration/ops role. That hardening
-> is infrastructure + migration work, out of scope for this doc pass.
-
 ## Context
 
-The V2 spec (requirement F2.4 in
-`docs/architecture/coverage-matrix.md`) requires the API to publish
-`total_supply` / `circulating_supply` / `max_supply` for every
-asset we index. The numbers feed market-cap, FDV, and supply-pct
-fields on the asset-detail endpoint and the historical supply
-chart.
-
-Stellar's asset model has **three structurally different domains**
-that need three different algorithms:
-
-1. **Native XLM** — fixed: 50 B genesis lumens + ~1.8 B inflation
-   pool, frozen by network vote in October 2019. Total supply
-   doesn't move; only the SDF-reserve exclusion changes circulating.
-2. **Classic credit assets** (`CODE:ISSUER`) — issuer-authoritative.
-   Total supply is the sum of every unit the issuer has emitted that
-   hasn't been burned, observable as the inverse of the issuer's
-   balance + the trustline / claimable / LP / SAC-wrapped balances
-   downstream. Reconstructed from ledger meta.
-3. **SEP-41 Soroban tokens** — event-defined per the SEP-41 spec:
-   `Σ mint − Σ burn − Σ clawback`. Indexed off contract events.
-
-These can't share a single materialisation pipeline. Per ADR-0003
-all amounts are `*big.Int` / `NUMERIC` end-to-end (i128 safety) and
-strings on the wire.
-
-This ADR is the immutable commitment to the supply-derivation policy.
+The API must publish `total_supply`, `circulating_supply` and `max_supply` for every indexed asset (requirement F2.4, `docs/architecture/coverage-matrix.md`).
+Native XLM, classic credit assets and SEP-41 tokens have three structurally different sources of truth, so no single pipeline serves all three.
 
 ## Decision
 
-**Adopt three domain-specific supply algorithms with a shared
-schema, plus an operator-configurable locked-set policy for the
-circulating-supply derivation.**
+Three domain-specific algorithms share one schema, plus an operator-configurable locked-set policy for circulating supply.
 
-### Algorithm 1 — Native XLM
+**Algorithm 1, native XLM.**
+- `total_supply` is the constant `50_001_806_812 * 10^7` stroops (50 B genesis plus inflation pool, frozen October 2019), and `max_supply` equals it.
+- `circulating_supply` is `total_supply` minus the SDF reserve account balances; the reserve list is version-controlled config, not derivable on chain.
 
-- `total_supply` = hard-coded constant `50_001_806_812 * 10^7`
-  stroops (50 B genesis + inflation pool, frozen 2019-10).
-- `max_supply` = `total_supply`.
-- `circulating_supply` = `total_supply − Σ(SDF reserve account
-  balances)`. Reserve account list is config, not on-chain
-  derivable. SDF publishes the list; we maintain a YAML version-
-  controlled in the deployment repo and refresh it when SDF
-  publishes changes.
+**Algorithm 2, classic credit assets.**
+- `total_supply` is the sum of trustline, claimable-balance, LP-reserve pro-rata and SAC-wrapped contract balances, reconstructed from Galexie ledger meta and kept as a running total per (asset, ledger).
+- `max_supply` is `null` by default. An operator override wins; otherwise a SEP-1 `[[CURRENCIES]]` declaration applies (`max_number`, else `fixed_number`; blocked by `is_unlimited = true`), scaled from display units to raw units by the asset's decimals.
+- `circulating_supply` is `total_supply` minus the locked set: by default the issuer's own balance, extendable per asset in the supply policy YAML. LP-reserve balances are not excluded.
 
-No event-stream tracking; the numbers don't move except for
-reserve-account balance changes (which our trustline-delta indexer
-already observes).
+**Algorithm 3, SEP-41 tokens.**
+- `total_supply` is the lifetime sum of mint minus burn minus clawback events.
+- `max_supply` follows the same order: operator override, then SEP-1, then `null`.
+- `circulating_supply` is `total_supply` minus the locked set: by default the token's admin balance, extendable per token.
 
-### Algorithm 2 — Classic credit assets
+**SEP-1 overlay.** The overlay applies at serving time only (`internal/api/v1/assets_f2.go`) and never rewrites `asset_supply_history`.
+The declaration is passed verbatim as `max_number` / `fixed_number` / `is_unlimited`, and an applied overlay sets `max_supply_basis: "sep1_declared_max"`.
+`supply_basis` keeps naming the policy behind total and circulating (`xlm_sdf_reserve_exclusion`, `issuer_exclusion`, `admin_exclusion`, `override`, `no_metadata`).
 
-- `total_supply` = `Σ trustline balances + Σ claimable balances +
-  Σ LP-reserve pro-rata + Σ SAC-wrapped contract balances` for the
-  asset. Reconstructed from Galexie ledger meta — we observe every
-  `TrustLineEntry` / `ClaimableBalanceEntry` /
-  `LiquidityPoolEntry` / SAC-contract-data delta and maintain a
-  per-(asset, ledger) running total in the
-  `asset_supply_history` hypertable.
-- `max_supply` = `null` by default (classic issuers can always
-  issue more). Two override paths:
-  1. SEP-1 `[[CURRENCIES]].max_supply` from the issuer's
-     `stellar.toml` — respected as a display value but flagged
-     `self_declared: true` in the API response (not on-chain
-     enforced).
-  2. Operator override in the supply policy YAML.
-- `circulating_supply` = `total_supply − Σ locked_set`. Default
-  locked set: just the issuer's own balance. Operator may extend
-  via YAML to include known reserve / treasury multisigs and
-  vesting contracts. **LP-reserve balances are NOT excluded** —
-  the underlying asset is still circulating; LP-token holders own
-  it pro-rata.
+**SAC-wrapped classics** are computed by both Algorithm 2 and Algorithm 3 and cross-checked by `internal/supply.WrapClass`.
+- `WrapClassFull`, selected only for an operator-attested pair in `[supply].fully_wrapped_sacs`, requires equality within 1 stroop.
+- Every other pair is `WrapClassPartial`, where classic total legitimately exceeds the SAC total, and it checks one bound: `classic.SACWrappedStroops <= sac.TotalSupply`.
+- That bound alone drives `DivergenceStroops` and the `stellarindex_supply_cross_check_divergence_stroops` alert.
+- The over-mint leg, `sac.TotalSupply <= classic.TotalSupply`, is computed as `OverMintStroops` and is diagnostic only, because classic-side burns and one-way distributions (BLND, PHO) falsify it.
+- When `SACWrappedStroops` is nil the bound is not evaluated and `SubsetBoundChecked` is false; a reader of `WithinTolerance` must read `SubsetBoundChecked` with it.
+- Known blind spots: an under-counted `SACWrappedStroops` passes silently (cured by `supply seed-sac-balances -full-history`), and the non-SAC half of Algorithm 2 has no second observation.
 
-### Algorithm 3 — SEP-41 Soroban tokens
+**Schema.** All supply fields are decimal strings on the wire (ADR-0003); any field without a defensible value is `null`, never fabricated.
+`asset_supply_history` is a hypertable keyed by `(asset_key, ledger_sequence)` carrying total, circulating, nullable max, basis and ledger.
+It is idempotent-corrective, not append-only: the writer (`internal/storage/timescale/supply.go`) upserts a re-derive in place when `derive_generation` is at least the stored value (migration 0109).
 
-- `total_supply` = `Σ mint.amount − Σ burn.amount − Σ
-  clawback.amount` over the contract's lifetime, per SEP-41
-  semantics. Indexed off the contract's events; running per-token
-  total in `asset_supply_history`.
-- `max_supply` — no canonical on-chain source. Sources, in order:
-  1. SEP-1 `[[CURRENCIES]].max_supply` from the token's stellar.toml.
-  2. Operator override.
-  3. `null`.
-- `circulating_supply` = `total_supply − Σ locked_set`. Default
-  locked set: the token's admin account / contract balance (when an
-  admin exists). Operator extends per-token.
+Rejected: one unified algorithm, importing third-party aggregator supply, per-asset hard-coded locked sets, omitting `max_supply`, and deriving max from auth flags.
 
-### SAC-wrapped classics — both algorithms must agree
+## Invariant
 
-A SAC-wrapped classic asset (e.g. `CAS3…OWMA` for native XLM, or
-the SAC contract address for `USDC:GA5Z…`) is simultaneously a
-classic asset (Algorithm 2) and emits SEP-41 events (Algorithm 3).
-We compute both. Cross-check: alert when they disagree by more
-than 1 stroop.
-
-### API + schema
-
-- All supply fields are strings on the wire (i128 safety per
-  ADR-0003).
-- `supply_basis` field on the response identifies which policy
-  produced the numbers (`"xlm_sdf_reserve_exclusion"`,
-  `"issuer_exclusion"`, `"admin_exclusion"`, `"override"`,
-  `"no_metadata"`).
-- `null` for any field where we don't have a defensible value;
-  document the convention as "we don't fabricate."
-- Hypertable shape:
-  ```sql
-  CREATE TABLE asset_supply_history (
-    time              TIMESTAMPTZ NOT NULL,
-    asset_key         TEXT NOT NULL,    -- "XLM" | "CODE:G…" | "C…"
-    total_supply      NUMERIC NOT NULL,
-    circulating_supply NUMERIC NOT NULL,
-    max_supply        NUMERIC,           -- NULL when uncapped
-    basis             TEXT NOT NULL,
-    ledger_sequence   BIGINT NOT NULL
-  );
-  SELECT create_hypertable('asset_supply_history', 'time');
-  CREATE UNIQUE INDEX ON asset_supply_history (asset_key, ledger_sequence);
-  ```
-  Append-only; latest row per `asset_key` is the queryable current
-  state. Time-bucketed for historical queries.
+- Supply amounts are `*big.Int` / `NUMERIC` and strings on the wire; ADR-0003 and its guard tests enforce it.
+- An unknown supply field is `null`, never zero or a guess.
+- The SEP-1 overlay labels `max_supply_basis` and leaves `supply_basis` untouched; `internal/api/v1` tests enforce it.
+- The cross-check pages only on the `WrapClassPartial` escrow bound, or equality for `WrapClassFull`; `internal/supply/crosscheck_test.go` enforces it.
+- The application layer is the only enforcement of single-writer on `asset_supply_history`; no Postgres role split exists.
 
 ## Consequences
 
-- **Positive — covers F2.4 (Freighter V2 market-cap fields)** end-
-  to-end without inventing a new ingest path. Every domain-specific
-  data source we need is already captured per the discovery audit
-  (Galexie ledger entries for classic, SEP-41 events for Soroban,
-  configured constants for XLM).
+Three algorithms mean three test surfaces, and the locked-set YAML needs curation per asset; uncurated assets fall back to issuer-only exclusion and say so in `supply_basis`.
+Market-cap, FDV and supply-percentage fields depend on this table.
 
-- **Positive — the no-fabrication policy makes degradation honest.**
-  When we don't have a defensible `max_supply` (uncapped issuer +
-  no stellar.toml + no operator override), we publish `null` rather
-  than guess. Consumers handle `null` explicitly.
+## Evidence
 
-- **Positive — operator-configurable locked-set lets each
-  deployment match its compliance posture.** A deployment focused
-  on Freighter end users may include only the issuer-balance
-  exclusion; a deployment serving institutional customers may
-  exclude treasury multisigs + vesting contracts per the asset's
-  formal disclosure. Same code path; just YAML.
-
-- **Negative — three algorithms means three test surfaces and
-  three bug classes.** Partially mitigated by the SAC-wrapped
-  cross-check: when the same asset is observable both ways, the two
-  observations must satisfy a pair of INEQUALITIES. A breach triggers an
-  alert.
-
-  **Amendment (2026-07-26, C6-056 — the original text said "the sums
-  must match within 1 stroop", which the implementation has never done
-  and cannot do).** A partially-wrapped asset legitimately has
-  `classic_total > sac_total`: the classic ledger-entry sum counts every
-  holder, while the SAC event-derived total counts only what was wrapped.
-  Equality would false-alarm on every normal asset. What
-  `internal/supply.CrossCheckSubsetBound` actually asserts is two
-  one-directional bounds:
-
-  1. **over-mint** — `sac.TotalSupply ≤ classic.TotalSupply`;
-  2. **escrow-exceeds-minted** — `classic.SACWrappedStroops ≤
-     sac.TotalSupply` (every escrowed unit got there by a mint).
-
-  `DivergenceStroops = max(over_mint_excess, escrow_excess)`, so the
-  single existing gauge and alert fire on either breach.
-
-  Consequences of it being a bound rather than a reconciliation — each is
-  a real blind spot, not a hypothetical:
-
-  - **Only the OVER-report direction is detected.** An over-reported SAC
-    total (a mint the indexer double-counted, a burn it missed) breaches
-    leg 1; an UNDER-counted `SACWrappedStroops` sits *below* `sac_total`
-    and passes leg 2 silently — the documented BLND/EURC/KALE/PHO
-    dormant-pool-balance case in `WrapClassPartial`'s KNOWN LIMITATION,
-    cured by `supply seed-sac-balances -full-history`. Leg 2 is an upper
-    bound on escrow, not proof that escrow was fully observed.
-  - **The non-SAC half of Algorithm 2 is unchecked.** Trustline /
-    claimable-balance / LP-reserve balances have no independent second
-    observation, so an undercount there merely widens the benign
-    `classic > sac` gap and is invisible to this check.
-  - **Leg 2 is CS-087-gated.** When `classic.SACWrappedStroops` is nil
-    the leg is not evaluated and `SubsetBoundChecked` stays false; it is
-    never defaulted to zero, because `0 ≤ sac_total` holds vacuously and
-    a zero default would publish a green check that verified nothing.
-    **A caller reading `WithinTolerance` MUST read `SubsetBoundChecked`
-    alongside it.**
-
-  **Amendment (2026-08-05 decision, commit `6f38b63ee` / v0.26.0;
-  recorded 2026-09-18).** Leg 1 above is now **diagnostic-only**. Its
-  bound — `sac.TotalSupply ≤ classic.TotalSupply` — compares the
-  event-derived *cumulative* net mint (Algorithm 3) with the *current*
-  classic outstanding stock (Algorithm 2), and that comparison only holds
-  for a one-way wrap where nothing ever leaves contract space. Two live
-  assets falsified it, measured on production to the stroop: BLND retires
-  supply classically after SAC minting (a classic payment back to the
-  issuer burns supply with no SAC burn event, so cumulative net mint
-  125.6M legitimately exceeds classic outstanding 113.0M forever), and
-  PHO minted its entire 200M supply through the SAC once and distributed
-  it classic-side while classic outstanding is issuer-excluded (77.9M).
-  Both paged for a week as "divergence" with every unit accounted for
-  (CHANGELOG v0.26.0, "Changed: The partial-wrap supply cross-check's
-  over-mint leg is diagnostic-only"). What `CrossCheckSubsetBound` does
-  as of that commit:
-
-  - **Still computed, no longer paging:** `OverMintStroops`
-    (`max(0, sac_total − classic_total)`) is filled in on every
-    `CrossCheckResult` so a caller can read the cumulative-vs-outstanding
-    gap, but it does **not** feed `DivergenceStroops`. In production it
-    surfaces only as `over_mint_stroops` on the aggregator's
-    `cross-check: divergence over tolerance` WARN line
-    (`internal/supply/crosscheck_refresher.go`) — and that line fires
-    only on a leg-2 breach, so a leg-1 excess occurring alone is
-    computed and then silent. The `supply cross-check` ops CLI prints
-    the divergence figure only, not this leg.
-  - **The only input to the divergence figure is leg 2:**
-    `DivergenceStroops = escrow_excess = max(0, classic.SACWrappedStroops
-    − sac.TotalSupply)`, so the
-    `stellarindex_supply_cross_check_divergence_stroops` gauge and its
-    alert fire on an escrow-exceeds-minted breach alone. The "max of both
-    legs" formula in the 2026-07-26 amendment above no longer describes
-    the code.
-  - **Consequently the blind-spot list above widens.** An over-reported
-    SAC total (a double-counted mint, a missed burn) raises `sac_total`,
-    which makes leg 2 *easier* to satisfy — so that direction is no
-    longer paged, and per the previous bullet is not logged either
-    unless leg 2 breaches at the same time. What still pages is the
-    direction leg 2 owns: a mint the indexer never captured or a burn it
-    double-counted, both of which push `SACWrapped` above `sac_total`.
-  - **The CS-087 gate is now load-bearing for the whole check.** With
-    leg 1 out of the figure, a result whose `SACWrappedStroops` is nil
-    has `DivergenceStroops = 0` and `WithinTolerance = true` while
-    verifying nothing; `SubsetBoundChecked = false` is the only signal
-    that the check was vacuous. The rule above — read
-    `SubsetBoundChecked` alongside `WithinTolerance` — is therefore not
-    advisory but the difference between a green check and no check.
-
-  The `WrapClassFull` equality compare (`CrossCheck`, for operator-
-  attested fully-wrapped pairs) is unchanged by this. The decision above
-  and the 2026-07-26 amendment are preserved as the historical record.
-
-- **Negative — the locked-set YAML is operationally fiddly.** Every
-  asset-of-interest needs a curated entry to get a meaningful
-  circulating-supply. Without curation, we default to issuer-only
-  exclusion and document the policy in the API response so
-  consumers know not to trust the absolute number.
-
-- **Operational impact — adds `asset_supply_history` hypertable +
-  per-source supply-update emitters.** Storage is small (a few
-  thousand assets × a few writes/day = MB-scale). The ingest hot
-  path is unchanged; supply derivation is a downstream consumer
-  of the trustline / events streams.
-
-- **Downstream design impact — market-cap / FDV / supply-pct fields
-  in the API depend on this hypertable.** Aggregation policy
-  (combining supply with VWAP price) is straightforward but
-  documented in `aggregation-plan.md` once this lands.
-
-## Alternatives considered
-
-1. **Single unified algorithm** — rejected. The three domains have
-   incompatible truth sources (constant vs ledger entries vs
-   events); a unified path would need to special-case each anyway,
-   so make the structure explicit.
-
-2. **Trust upstream aggregators (CoinGecko / CMC) for circulating
-   supply** — rejected. We're being graded on independence per the
-   spec; importing a third-party number is what aggregators are for,
-   and we're explicitly NOT one. Plus the third parties' policies
-   for "locked" are opaque and inconsistent across assets.
-
-3. **Hard-code the locked-set per asset (no YAML)** — rejected.
-   Treasury multisigs + vesting contracts move; a code change
-   per update is too brittle for production. YAML in the
-   deployment repo is the right grain.
-
-4. **Don't publish `max_supply` at all** — rejected. The spec requires
-   it for FDV; consumers have to display "unknown" somehow, and
-   `null` is a clearer signal than "0" or omitting the field.
-
-5. **Compute max_supply from on-chain auth flags** (e.g.
-   `auth_immutable + auth_revocable + known burn-signer`
-   patterns) — considered as an enhancement but rejected for v1
-   because the heuristic is brittle and produces false positives.
-   Operator override + SEP-1 declaration are sufficient signals;
-   automatic derivation is a v2 feature gated on a discovery PR
-   that audits the heuristic across all classic issuers on
-   pubnet.
-
-## References
-
-- [`docs/architecture/supply-pipeline.md`](../architecture/supply-pipeline.md)
-  — the supply pipeline this ADR's policy drives.
-- [`docs/architecture/coverage-matrix.md`](../architecture/coverage-matrix.md)
-  §F2.4 — the requirement this ADR closes.
-- [ADR-0003](0003-i128-no-truncation.md) — i128 invariant binding
-  every amount in this ADR.
-- [ADR-0010](0010-off-chain-fiat-representation.md) — off-chain
-  fiat asset representation (out of scope here; off-chain
-  currencies don't have a "supply" we publish).
-- SEP-1 §[[CURRENCIES]] — the `max_supply` declaration we honour
-  for the self-declared overlay.
-- SEP-41 — the Soroban token-contract spec defining
-  `mint`/`burn`/`clawback` event semantics.
+`internal/supply/` (policy, overlay, crosscheck), `internal/storage/timescale/supply.go`, `docs/architecture/supply-pipeline.md`, and `docs/operations/runbooks/supply-cross-check-divergence.md`.

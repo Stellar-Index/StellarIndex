@@ -37,7 +37,7 @@ type ProjectionDirtyWindow struct {
 	UpdatedAt time.Time
 }
 
-// Reason is PROVENANCE, not prose. Four tools write this table and they
+// Reason is PROVENANCE, not prose. Five tools write this table and they
 // are not interchangeable to every reader:
 //
 //   - `projector-replay` RE-WINDS the live projector cursor, so the lag its
@@ -52,6 +52,9 @@ type ProjectionDirtyWindow struct {
 //     rewritten, it is EMPTY until the recovery run finishes (F075).
 //   - `ch-rebuild -write` rewrites the range from the lake, recorded before
 //     its first write. Like projected-rebuild it never touches the cursor.
+//   - `backfill` and `backfill-router -write` rewrite NON-projected served
+//     rows (sdex, band, soroswap-router), recorded before their first write.
+//     They have no projector cursor at all.
 //
 // The constructors and the predicate below are the ONE place the format
 // lives, so a reader can tell them apart without matching a free-form
@@ -64,6 +67,7 @@ const (
 	reasonProjectedRebuildPrefix = "projected-rebuild -write "
 	reasonCHRebuildEmptiedPrefix = "ch-rebuild-projected emptied "
 	reasonCHRebuildWritePrefix   = "ch-rebuild -write "
+	reasonBackfillWritePrefix    = "backfill -write "
 )
 
 // ProjectorReplayReason is the Reason `stellarindex-ops projector-replay`
@@ -94,6 +98,12 @@ func CHRebuildEmptiedReason(from, to uint32) string {
 // window it is about to rewrite.
 func CHRebuildWriteReason(from, to uint32) string {
 	return fmt.Sprintf("%s[%d,%d]", reasonCHRebuildWritePrefix, from, to)
+}
+
+// BackfillWriteReason is the Reason `backfill` and `backfill-router -write`
+// stamp on the window they are about to rewrite.
+func BackfillWriteReason(from, to uint32) string {
+	return fmt.Sprintf("%s[%d,%d]", reasonBackfillWritePrefix, from, to)
 }
 
 // IsProjectorReplay reports whether this window was recorded by

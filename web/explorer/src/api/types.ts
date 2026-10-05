@@ -12215,8 +12215,13 @@ export interface components {
             ts: string;
             /** @description Decimal string at declared decimals scale. */
             price: string;
-            /** @description Raw integer value preserved for cross-check (ADR-0003). */
+            /** @description Integer form of `price` at `decimals` scale, so a client can verify the rendering. For a feed published inverted it is the reciprocal we derived; see `price_onchain`. */
             price_raw: string;
+            /**
+             * @description The publisher's own integer at `decimals` scale, in the publisher's orientation, when `price` was derived from it by inversion (RedStone MXNe, chainlink inverted feeds). The 8-dp reciprocal is lossy, so this is the only copy of the published value (ADR-0003). Omitted when no separate published value was recorded — including rows written before it was captured.
+             * @example 1740000000
+             */
+            price_onchain?: string;
             decimals: number;
             /** @description 0 means unreported, not zero-confidence. */
             confidence?: number;

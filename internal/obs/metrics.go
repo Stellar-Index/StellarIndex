@@ -460,7 +460,7 @@ func registerAuthReaperMetrics() {
 		RetentionReaperRowsDeletedTotal,
 		RetentionReaperErrorsTotal,
 	)
-	for _, reaper := range []string{AuthReaperSession, AuthReaperWebhookDelivery} {
+	for _, reaper := range []string{AuthReaperSession, AuthReaperWebhookDelivery, AuthReaperRegistration} {
 		RetentionReaperRowsDeletedTotal.WithLabelValues(reaper)
 		RetentionReaperErrorsTotal.WithLabelValues(reaper)
 	}
@@ -779,7 +779,7 @@ func seedNotifySeries() {
 	for _, template := range []string{
 		NotifyTemplateMagicLink, NotifyTemplateSignupVerify, NotifyTemplatePasskeyChanged, NotifyTemplateAccountErased,
 	} {
-		for _, result := range []string{NotifySendResultSent, NotifySendResultFailed} {
+		for _, result := range []string{NotifySendResultSent, NotifySendResultFailed, NotifySendResultSuppressed} {
 			NotifySendsTotal.WithLabelValues(template, result)
 		}
 	}
@@ -3033,21 +3033,20 @@ const (
 	// NotifySendResultFailed — Sender.Send returned an error (validation,
 	// provider-rejected, or transient/network). The mail did not go out.
 	NotifySendResultFailed = "failed"
+	// NotifySendResultSuppressed — recipient is on the suppression list; no
+	// provider call was made. Not a failure.
+	NotifySendResultSuppressed = "suppressed"
 )
 
-// NotifySendsTotal counts transactional-email sends per template and result.
-// internal/notify (the Resend client) had ZERO prometheus visibility, so a mail
-// outage was silent — it surfaced only as users unable to sign in or confirm
-// their signup. This counter is incremented at every notify.Sender.Send call
-// site: `result=sent` on success, `result=failed` on any returned error. A
-// sustained failed ratio drives the notify send-failure alert. Zero-seeded per
-// (template, result) so the ratio reads a real 0 before the first email — an
-// absent series would make "no mail has ever failed" and "the mailer is dead"
-// the same scrape.
+// NotifySendsTotal counts transactional-email sends per template and result,
+// incremented at every notify.Sender.Send call site (sent|failed|suppressed).
+// A sustained failed ratio drives the notify send-failure alert; suppressed
+// is never a failure. Zero-seeded per (template, result) so the ratio reads a
+// real 0 before the first email.
 var NotifySendsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_notify_sends_total",
-		Help: "Transactional-email sends per template and result (sent|failed). A sustained failed ratio means the mail provider (Resend) is failing — magic-link login and signup-verification stop delivering.",
+		Help: "Transactional-email sends per template and result (sent|failed|suppressed). A sustained failed ratio means the mail provider (Resend) is failing — magic-link login and signup-verification stop delivering.",
 	},
 	[]string{"template", "result"},
 )
@@ -5745,10 +5744,10 @@ const (
 	AuthReaperLoginCode = "login_code"
 	AuthReaperMagicLink = "magic_link"
 	AuthReaperSignup    = "signup"
-	// The two internal/retentionreaper instances publish on the same
-	// liveness gauges so the existing stalled alert covers them.
+	// internal/retentionreaper instances share these gauges and the stalled alert.
 	AuthReaperSession         = "session"
 	AuthReaperWebhookDelivery = "webhook_delivery"
+	AuthReaperRegistration    = "registration" // unused /v1/register accounts
 )
 
 // AuthReaperLastSweepUnix — see the auth-reaper liveness note above.

@@ -9,280 +9,45 @@ superseded_by: null
 
 # ADR-0017: Archive completeness invariants and dual-archive integrity model
 
-> **Amendment (2026-06-12, F-1353 / D2-02).** The four daily hard
-> contracts enumerated below were subsequently narrowed in scope to
-> **cross-anchor verification only** (F-0019). Cold readers must not
-> treat the full four-contract guarantee as currently enforced — the
-> shipped daemon runs the cross-anchor cross-compare, not the entire
-> original contract set. The decision below is preserved as the
-> original record per the immutability rule.
-
-> **Amendment (2026-09-19, F144) — contract 3 is bounded by the
-> mirror's own coverage, and the checkpoint watermark stops there.**
->
-> Contract 3 below is written against `network_head`: "for every
-> checkpoint `seq <= network_head` the file exists". No steady state
-> can satisfy that. `/srv/history-archive` is filled by its own
-> periodic job while `verify-archive -tier checkpoint` walks to the
-> galexie bucket's live tip, so the newest checkpoints the walk reaches
-> have no mirror file yet and never did.
->
-> **Measured on r1 2026-09-19.** The nightly `verify-archive-tier-b`
-> run logged `checkpoints matched=325 missed=23`, then
-> `checkpoint anchor OK`, then `Result=success, ExecMainStatus=0` (the
-> run before it: `matched=324 missed=24`). All 23 were a contiguous
-> block ABOVE the mirror's high-water **64,499,647**; the mirror holds
-> **1,007,807 of the 1,007,807** checkpoint files between ledger 63 and
-> that high-water — no hole anywhere. The fill job lands at ~02:2x UTC
-> and the unit at 04:38 UTC, so the block is roughly two hours of
-> ledgers and is present on **every** run. The run then advanced the
-> checkpoint tier's `last_verified_ledger` to **64,501,171**, past
-> everything the anchor had been asked about.
->
-> So "the mirror is incomplete" was never the finding. Two things were
-> wrong, and both are now fixed in `internal/ops/archive`:
->
-> 1. **A checkpoint absence is attributed.** The mirror's coverage span
->    is measured from the mirror itself before the walk. An absence
->    INSIDE it is `missed` — a hole, what contract 3 forbids. An
->    absence beyond it is `unmirrored` — a delivery lag, counted and
->    logged separately (`matched=… missed=… unmirrored=…`), never
->    fatal. An unreadable `-archive-root` measures no span and every
->    absence stays `missed`.
-> 2. **The checkpoint tier certifies only what it anchored.** Its
->    high-water is clamped to the mirror's high-water, so the trailing
->    span is left for the run that can prove it. `updateTierState` only
->    moves a tier forward, so this never rewinds a persisted watermark;
->    the r1 value stays at 64,501,171 until the mirror passes it.
->
-> DAT-09 is restated for that taxonomy: a run that MATCHED nothing is
-> inconclusive whether the absences were holes or merely unmirrored, so
-> splitting the trailing edge out cannot let a walk that ran entirely
-> above the mirror exit 0.
->
-> **`-fail-on-missed` is now wired on both tier-B units** (ansible
-> template + `deploy/systemd` copy), which is what makes the "any of
-> these failing aborts with non-zero exit" sentence below true of the
-> deployed path for the first time. It could not be wired before: it
-> would have failed the unit on its next fire for the trailing block.
-> The flag's **code default stays `false`** — the 2026-08 decision
-> recorded in CHANGELOG ("flipping the code default is a separate
-> decision, deliberately not taken here") is respected, not superseded;
-> this amendment changes the units, not the default.
-> The code default has since been flipped to `true`, so a manual run
-> that omits the flag fails on an in-coverage miss too;
-> `-fail-on-missed=false` is the explicit opt-out.
->
-> **What a failure costs, stated rather than assumed:** the run returns
-> before the state write, so the checkpoint tier's high-water FREEZES
-> at its last certified value and every later run re-walks from there
-> (widening, never skipping). `node_exporter`'s systemd collector
-> raises `stellarindex_verify_archive_tier_b_unit_failed`
-> (severity: ticket).
->
-> **Amendment (2026-09-24, CA2-A20) — the coverage boundary is only
-> the trailing edge, not both.** F144 above is written entirely in
-> terms of the fill job lagging the live tip; `outsideCoverage` (then)
-> read `seq < Floor || seq > HighWater`, tolerating an absence below
-> the mirror's floor the same as one above its high-water. A mirror
-> fills upward from genesis, so it can never legitimately lag its own
-> floor — a `seq < Floor` absence means the mirror lost or never
-> restored that range (a partial restore, say from ledger 10M), which
-> is exactly the hole contract 3 forbids. Under the old rule that
-> whole leading span classified `unmirrored`, `checkpointsMissed`
-> stayed 0 for it, `-fail-on-missed` passed, and
-> `applyCheckpointTierState`/`checkpointWatermark` (clamped only to
-> `HighWater`, never `Floor`) baked the un-anchored span into the
-> persisted checkpoint high-water — so a later incremental run, resuming
-> near the tip, never re-walked it even after the mirror was refilled.
-> `outsideCoverage` now reads `seq > HighWater` only; a below-floor
-> absence classifies `missed` like any other hole inside the mirror's
-> claimed span.
->
-> **Still not covered.** The checkpoint counters
-> (`stellarindex_verify_archive_checkpoints_total{outcome=matched|
-> missed|unmirrored}`) reach Prometheus only through the opt-in
-> `-metrics-listen` endpoint, which nothing scrapes; the textfile
-> exporter the units do use writes the mismatch counter and the
-> last-success gauge alone. A miss is therefore observable as a unit
-> failure, not as a number, and a mirror whose fill job STOPS is
-> observable only as a `warn:` line in the journal plus a checkpoint
-> watermark that stops advancing. Both belong to
-> `verify_archive_textfile.go` and the alert rules, which this change
-> did not touch.
-
 ## Context
 
-Two physical archives back the indexer + the verifier. They serve
-different purposes and have been treated as separate ad-hoc concerns:
-
-1. **Primary archive** — `galexie-archive/` MinIO bucket on R1. Per-
-   ledger XDR meta files (`<HASH>--<LEDGER>.xdr.zst`), one per
-   ledger, ~62 M objects covering pubnet history. The indexer reads
-   from this; it is the *source of rate data*.
-
-2. **Cross-anchor archive** — `/srv/history-archive/` on R1, a
-   traditional Stellar history archive (`bucket/`, `history/`,
-   `ledger/`, `results/`, `scp/`, `transactions/`). Mirrored from
-   `https://history.stellar.org/prd/core-live/core_live_001`. Used
-   by `stellarindex-ops verify-archive -tier checkpoint` to confirm
-   our LCM hashes match SDF's signed checkpoint hashes every 64
-   ledgers.
-
-Two real findings on 2026-04-27 motivated this ADR:
-
-- The R1 verify-archive walk crashed at ledger 40,000,000 because
-  ~35,000 contiguous per-ledger files were missing from
-  `galexie-archive/`. Surrounding partitions (40M–40.5M range) were
-  also 28–42K files short of the expected 64,000.
-- The same walk reported `checkpointsMissed=6,273` against
-  `/srv/history-archive/`. Investigation showed that counter is
-  documented as "archive file absent, not a failure" — i.e. the
-  verifier was *tolerating* gaps in the cross-anchor archive,
-  silently skipping cross-checks at every gap. ~6,782 of 972,652
-  expected `ledger-*.xdr.gz` files are actually missing.
-
-The verifier's tolerance default ("missed = skip rather than fail")
-plus the absence of a continuous completeness check meant gaps
-accumulated unnoticed across both archives.
+Two archives back the indexer and the verifier: the primary `galexie-archive/` MinIO bucket of per-ledger XDR, and the cross-anchor `/srv/history-archive/` mirror of SDF's history archive.
+On 2026-04-27 the verifier crashed on about 35,000 missing primary files and had been silently tolerating roughly 6,800 missing mirror files as "missed = skip".
 
 ## Decision
 
-**Archive completeness is a hard invariant, not a soft tolerance.
-Both archives have explicit numerical contracts that must be true
-at all times in steady state, and a daily process is responsible
-for restoring the invariant when it breaks.**
+Archive completeness is a hard invariant, not a soft tolerance. Four contracts hold in steady state on R1:
 
-### The four hard contracts (R1)
+1. **Primary structural completeness.** Each closed partition `<HASH>--<N>-<N+63999>/` below `network_head` holds exactly 64,000 files; the open partition holds `network_head - start + 1`.
+2. **Primary chain-link integrity.** For every adjacent `(N, N+1)`, `SHA256(ledger[N].header) == ledger[N+1].previousLedgerHash`; a sequence gap is a chain break, with no tolerance.
+3. **Cross-anchor structural completeness.** Every checkpoint `seq` (`seq % 64 == 63`) up to the mirror's high-water has its `ledger-*.xdr.gz` present and decodable.
+4. **Cross-anchor verification.** For every checkpoint, the mirror's `LedgerHeaderHistoryEntry.Hash` equals the primary's hash for that ledger.
 
-1. **Primary structural completeness.** For every closed partition
-   `<HASH>--<N>-<N+63999>/` in `galexie-archive/` where `N+63999 <
-   network_head`, file count is exactly 64,000. The currently-open
-   partition has `network_head − partition.start + 1` files.
+Contract 3 is bounded by the mirror's own coverage, which is measured before each walk, because the mirror fill job lags the live tip:
+- An absence above the mirror's high-water is `unmirrored`, a delivery lag that is counted and logged and never fatal.
+- An absence at or below the high-water, including below the floor, is `missed`, a hole.
+- An unreadable `-archive-root` measures no span, so every absence is `missed`.
+- A run that matched nothing is inconclusive and cannot exit 0.
 
-2. **Primary chain-link integrity.** For every adjacent pair `(N,
-   N+1)` in `galexie-archive/`,
-   `SHA256(ledger[N].header) == ledger[N+1].previousLedgerHash`.
-   Sequence gaps are themselves chain breaks. No tolerance.
+The checkpoint tier certifies only what it anchored: its high-water is clamped to the mirror's high-water, never rewinds a persisted watermark, and freezes when a run fails.
+`verify-archive` exits non-zero on a contract failure. `-fail-on-missed` defaults to `true` and is set on both tier-B units; `-fail-on-missed=false` is the explicit opt-out.
 
-3. **Cross-anchor structural completeness.** For every ledger
-   `seq` where `seq % 64 == 63` and `seq <= network_head`, the file
-   `/srv/history-archive/ledger/XX/YY/ZZ/ledger-XXYYZZWW.xdr.gz`
-   exists and decodes cleanly (`gzip -t` passes; SDK can read all
-   64 entries).
+R1 is the integrity leader and runs the contracts daily. Other regions delegate contracts 3 and 4 (and R2 contract 1) to it (ADR-0016, superseded by ADR-0050) and mark themselves `ReducedRedundancy` when R1's last successful run is older than 26 hours.
+Rejected: tolerating missed files, per-ingest-cycle verification, mirroring the history archive to every region, and verifying against SDF over HTTPS with no local mirror.
 
-4. **Cross-anchor anchor verification.** For every checkpoint
-   `seq` where `seq % 64 == 63`, the cross-anchor file's
-   `LedgerHeaderHistoryEntry.Hash` for ledger `seq` equals our
-   primary's hash for ledger `seq`. No mismatches.
+## Invariant
 
-`verify-archive -tier all` is hardened so that **any** of these
-failing aborts with non-zero exit. The pre-2026-04-27 default
-(`checkpointsMissed > 0` → tolerated) is removed.
-
-### Per-region application of the contracts
-
-Per [ADR-0016](0016-per-region-storage-strategy.md), the three
-regions have different storage shapes; the completeness contracts
-apply asymmetrically.
-
-| Region | Primary archive | Cross-anchor archive | Local checks | Trust model |
-|---|---|---|---|---|
-| **R1 Frankfurt** | `galexie-archive/` MinIO (full local mirror, ~4.76 TB) | `/srv/history-archive/` (full SDF mirror, ~7 TB) | All four contracts daily | Integrity leader for the fleet |
-| **R2 US-East** | Reads `s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/` directly (no local mirror) | None local | Contract 2 (chain-link) weekly + Tier D (multi-peer) weekly | Trusts R1 for contracts 1, 3, 4 |
-| **R3 Singapore** | `galexie-archive/` on Vultr Object Storage (region-local hybrid, ~5 TB) | None local | Contract 1 (structural) on local copy + contract 2 (chain-link) weekly + Tier D weekly | Trusts R1 for contracts 3, 4 |
-
-R1 is the integrity leader. Its daily completeness verification
-output is published to a central metric endpoint that R2/R3 read as
-a precondition for declaring themselves healthy. If R1's last
-successful run is older than 26 hours, R2 and R3 mark themselves
-*reduced redundancy* (the same `ReducedRedundancy` envelope flag
-the API already surfaces).
-
-R2 and R3 don't duplicate contracts 3 + 4 because:
-- They have no local cross-anchor archive (it's ~7 TB and
-  redundant with R1's).
-- The cross-region CAGG-comparison alert (already specified in
-  ADR-0016 §"Trust model") catches indexer-output divergence
-  faster than re-running checkpoint verification at every region
-  would.
+- A hole inside the mirror's coverage fails the run; only an absence above its high-water is tolerated, and only as `unmirrored`.
+- The checkpoint high-water never advances past what the mirror's own coverage anchored; the `internal/ops/archive` tests enforce it.
+- A tolerated count never turns a vacuous run into a pass.
+- The shipped daemon currently enforces cross-anchor verification only (F-0019); the other contracts are not yet enforced, so none may be cited as a standing guarantee.
 
 ## Consequences
 
-- **Positive — gap-detection latency drops from "next manual
-  verify-archive run" to ≤ 26 h.** Any new gap in either archive
-  is detected within one cron cycle and either auto-repaired or
-  pages an operator.
+Gap-detection latency is one daily cron cycle instead of a manual run, and the verifier's exit code now means something.
+Bootstrap is a one-shot fill of existing gaps (`docs/operations/archive-completeness.md`).
+A failed tier-B unit raises `stellarindex_verify_archive_tier_b_unit_failed`; the checkpoint counters reach Prometheus only through the unscraped opt-in `-metrics-listen`, so a stalled mirror fill shows only as a journal warning and a stuck watermark.
 
-- **Positive — verify-archive's exit code is now meaningful.**
-  Pre-2026-04-27 a non-zero `checkpointsMissed` was a logged-but-
-  ignored stat. Post-ADR, the verifier's pass/fail signal is the
-  ground truth for archive integrity at all four contract levels.
+## Evidence
 
-- **Positive — defence-in-depth at R2/R3 is explicit, not
-  implicit.** The trust delegation from R2/R3 to R1 was previously
-  documented in ADR-0016 prose; this ADR ties it to a concrete
-  staleness budget (26 h) and an envelope flag.
-
-- **Negative — daily cron adds operational surface.** A new
-  systemd timer, a new Prometheus metric set, a new alert family,
-  a new runbook. Net cost: small. Per-run wall-clock for an
-  incremental day-of-data check is < 2 minutes on R1.
-
-- **Operational impact — bootstrap is one-shot, ~12 hours.**
-  Before the daily cron can begin enforcing the invariants,
-  R1's existing gaps must be filled. This is documented in
-  `docs/operations/archive-completeness.md` §"Bootstrap procedure".
-
-- **Downstream design impact — the API's `ReducedRedundancy`
-  envelope flag becomes load-bearing.** When R1's last successful
-  completeness run is stale, R2 and R3 set this flag on every
-  response. Customers that depend on full-fleet integrity (e.g.
-  divergence-monitoring partners) gate on this flag. Today the
-  flag is documented but unused; this ADR pins down its first
-  semantic meaning.
-
-## Alternatives considered
-
-1. **Keep the "missed = tolerated" default; document it as known
-   limitation.** Rejected: the verifier's exit code becomes
-   meaningless for integrity claims; downstream policies (the
-   API's `ReducedRedundancy` flag, the R2/R3 trust delegation in
-   ADR-0016) lose their anchoring point.
-
-2. **Run completeness verification per ingest cycle (every ~5 s).**
-   Rejected: that's 12,960× more frequent than needed for a system
-   where new data arrives in ~17,280 ledger/day chunks. Daily is
-   the right granularity; faster adds load without additional
-   evidence.
-
-3. **Mirror `/srv/history-archive/` to R2 and R3 so each region
-   verifies all four contracts independently.** Rejected: ~7 TB
-   per region for a defence-in-depth check whose unique signal
-   over Tier A + D is small. The ADR-0016 trust model — R2/R3
-   delegate to R1 for contracts 3, 4 — is the cheaper shape and
-   was explicitly chosen there. This ADR commits to that shape.
-
-4. **Use SDF's published archives directly as the cross-anchor
-   without a local mirror.** Rejected: every checkpoint verify
-   would do an HTTPS round-trip to SDF; running the full chain
-   walk would issue 972,652 requests and depend on SDF's archive
-   being reachable + the rate limits permitting. The local mirror
-   is ~7 TB at one-time cost and lets verification run cold.
-
-## References
-
-- [ADR-0015](0015-last-closed-bucket-rate-serving.md) — the
-  closed-bucket API contract that the completeness invariants
-  protect.
-- [ADR-0016](0016-per-region-storage-strategy.md) — per-region
-  storage shapes; this ADR commits to the trust model that ADR
-  describes.
-- [`docs/operations/archive-completeness.md`](../operations/archive-completeness.md)
-  — the implementation procedure (bootstrap + daily cron + the
-  `stellarindex-ops archive-completeness` tool).
-- [`docs/operations/galexie-backfill.md`](../operations/galexie-backfill.md)
-  — the original backfill procedure; the completeness daemon
-  reuses its `galexie-archive-fill` script for primary repair.
-- [`docs/operations/alerts-catalog.md`](../operations/alerts-catalog.md)
-  — the new `stellarindex_archive_*` alert family this ADR adds.
+`internal/ops/archive/verify_archive*.go` and tests, `internal/archivecompleteness/`, and `docs/operations/archive-completeness.md`.

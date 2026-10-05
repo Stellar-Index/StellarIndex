@@ -5,13 +5,6 @@ import (
 	"strings"
 )
 
-// nativeSAC is the Stellar Asset Contract address that wraps native
-// XLM (the Soroban-side alias for `native`). Both forms rank as XLM
-// for orientation. Aliased to [XLMSacContractID] (alias.go) so the one
-// literal in this package is the one the alias family, the orientation
-// ranking and the storage layer's XLM/USD CTEs all share.
-const nativeSAC = XLMSacContractID
-
 // StablecoinCodes are the asset CODES treated as fiat-pegged
 // stablecoins for canonical pair ORIENTATION — i.e. deciding which
 // side of a market is the quote. It mirrors the KEYS of the
@@ -71,25 +64,19 @@ func quoteRank(assetID string) int {
 	if StablecoinCodes[assetCode(assetID)] || isStablecoinSACForm(assetID) {
 		return 3
 	}
-	if xlmQuoteRankForms[assetID] {
+	if isXLMQuoteForm(assetID) {
 		return 2
 	}
 	return 1
 }
 
-// xlmQuoteRankForms is every canonical asset_id spelling of XLM
-// (native, crypto:XLM, the SAC wrapper) — derived from xlmAliasFamily
-// so quoteRank ranks all three forms identically. GH-1100: quoteRank
-// used to recognise only "native" and the SAC address, so a
-// crypto:XLM-spelled market could orient inversely to the same market
-// spelled native.
-var xlmQuoteRankForms = func() map[string]bool {
-	m := make(map[string]bool, len(xlmAliasFamily))
-	for _, a := range xlmAliasFamily {
-		m[a.String()] = true
-	}
-	return m
-}()
+// isXLMQuoteForm reports every canonical asset_id spelling of XLM
+// (native, crypto:XLM, the installed network's SAC wrapper), so quoteRank
+// ranks all three forms identically. GH-1100: quoteRank used to recognise
+// only "native" and the SAC address.
+func isXLMQuoteForm(assetID string) bool {
+	return assetID == "native" || assetID == "crypto:XLM" || assetID == NativeSACContractID()
+}
 
 // isStablecoinSACForm reports whether assetID is a Soroban form whose
 // alias family leads with a stablecoin-coded asset in the active registry.

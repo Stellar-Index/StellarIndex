@@ -527,11 +527,11 @@ func usdVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subclass 
 // isXLMAsset reports whether a is native XLM in either on-chain wire
 // form — the classic `native` type, or the Stellar Asset Contract
 // that wraps it (the form a Soroban pool holds when one leg of its
-// liquidity is XLM). Mirrors [nativeXLMSAC] / [canonOrientSQL]'s
+// liquidity is XLM). Mirrors [canonOrientSQL]'s
 // SQL-side check of the same two forms.
 func isXLMAsset(a canonical.Asset) bool {
 	return a.Type == canonical.AssetNative ||
-		(a.Type == canonical.AssetSoroban && a.ContractID == nativeXLMSAC)
+		(a.Type == canonical.AssetSoroban && a.ContractID == canonical.NativeSACContractID())
 }
 
 // ─── the tier-4 scope, as seen from a STORED row ─────────────────────

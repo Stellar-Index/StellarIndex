@@ -549,7 +549,9 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	// context.WithoutCancel idiom as newTouchCtx (middleware.go).
 	sendCtx, cancelSend := context.WithTimeout(context.WithoutCancel(r.Context()), sendTimeout)
 	defer cancelSend()
-	if err := h.cfg.Sender.Send(sendCtx, msg); err != nil {
+	if err := h.cfg.Sender.Send(sendCtx, msg); errors.Is(err, notify.ErrSuppressed) {
+		obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplateMagicLink, obs.NotifySendResultSuppressed).Inc()
+	} else if err != nil {
 		// Instrument the mail outage (task #33 / W8 recon 9c): the send
 		// failure is otherwise swallowed here (200 either way, see below),
 		// so without this counter a Resend outage that silently kills login

@@ -7,7 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
+	"github.com/Stellar-Index/StellarIndex/internal/accounterasure"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 	"github.com/Stellar-Index/StellarIndex/internal/retentionreaper"
 )
 
@@ -25,8 +29,23 @@ type deliverySweeper interface {
 // retentionReaperTargets returns one reaper per platform table the
 // dashboard bundle writes and nothing else bounds. A store without the
 // sweep seam (dashboard not wired, or a non-Postgres fake) yields none.
-func retentionReaperTargets(b dashboardBundle, logger *slog.Logger) []retentionreaper.Options {
+// The registration reaper runs only on the redis auth backend: there an
+// expired validator record means the key no longer authenticates. The
+// postgres backend reads that record without extending it and falls back
+// to the never-expiring api_keys row, so a key in daily use would be erased.
+func retentionReaperTargets(b dashboardBundle, rdb redis.Cmdable, authBackend string, logger *slog.Logger) []retentionreaper.Options {
 	var out []retentionreaper.Options
+	if a, ok := b.accounts.(*postgresstore.AccountStore); ok && a != nil && rdb != nil && authBackend == "redis" {
+		eraser := &accounterasure.Eraser{Store: a, Redis: rdb, Logger: logger.With("component", "registration-reaper")}
+		out = append(out, retentionreaper.Options{
+			Name: obs.AuthReaperRegistration,
+			Sweep: func(ctx context.Context, olderThan time.Time) (int64, error) {
+				return eraser.SweepAbandonedRegistrations(ctx, a, olderThan)
+			},
+			Retention: accounterasure.AbandonedRegistrationRetention,
+			Logger:    logger.With("component", "registration-reaper"),
+		})
+	}
 	if s, ok := b.users.(sessionSweeper); ok && s != nil {
 		out = append(out, retentionreaper.Options{
 			Name:      obs.AuthReaperSession,

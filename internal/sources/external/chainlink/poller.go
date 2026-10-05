@@ -407,6 +407,7 @@ func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonic
 		return canonical.OracleUpdate{}, fmt.Errorf("%w: bad decimal answer %q", ErrMalformedResult, rnd.Answer)
 	}
 	answer := rawAnswer
+	var published *canonical.Amount
 	if spec.Invert {
 		if rawAnswer.Sign() == 0 {
 			return canonical.OracleUpdate{}, fmt.Errorf("%w: cannot invert zero", ErrMalformedResult)
@@ -414,23 +415,27 @@ func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonic
 		// Round half-up like every other inverted feed; a truncating
 		// Quo biases every inverted price low.
 		answer = scale.InvertScaled(rawAnswer, int(decimals))
+		// The reciprocal is lossy; keep the feed's own answer (ADR-0003).
+		p := canonical.NewAmount(rawAnswer)
+		published = &p
 	}
 	if answer.Sign() <= 0 {
 		return canonical.OracleUpdate{}, fmt.Errorf("%w: post-invert non-positive %s", ErrNonPositivePrice, answer.String())
 	}
 
 	return canonical.OracleUpdate{
-		Source:     SourceName,
-		ContractID: "", // off-chain; ETH contract address belongs in a separate observability surface, not the canonical row
-		Ledger:     0,
-		TxHash:     syntheticTxHash(spec.Address, rnd.RoundID),
-		OpIndex:    0,
-		Timestamp:  rnd.UpdatedAt,
-		Asset:      pair.Base,
-		Quote:      pair.Quote,
-		Price:      canonical.NewAmount(answer),
-		Decimals:   decimals,
-		Observer:   "",
+		Source:         SourceName,
+		ContractID:     "", // off-chain; ETH contract address belongs in a separate observability surface, not the canonical row
+		Ledger:         0,
+		TxHash:         syntheticTxHash(spec.Address, rnd.RoundID),
+		OpIndex:        0,
+		Timestamp:      rnd.UpdatedAt,
+		Asset:          pair.Base,
+		Quote:          pair.Quote,
+		Price:          canonical.NewAmount(answer),
+		PublishedPrice: published,
+		Decimals:       decimals,
+		Observer:       "",
 	}, nil
 }
 

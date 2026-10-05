@@ -49,6 +49,9 @@ type scriptedResult struct {
 	// sub-deadline, a fallback) has its contract in what happens NEXT,
 	// and that is unassertable with a result that returns.
 	stall bool
+	// delay holds the result back this long, as a statement that does
+	// real work before it answers.
+	delay time.Duration
 }
 
 // recordedStmt is one statement the store actually issued.
@@ -123,6 +126,13 @@ func (c *scriptedConn) next(ctx context.Context, q string, args []driver.NamedVa
 	}
 	res := c.script[c.n]
 	c.n++
+	if res.delay > 0 {
+		select {
+		case <-ctx.Done():
+			return res, ctx.Err()
+		case <-time.After(res.delay):
+		}
+	}
 	if res.err != nil {
 		return res, res.err
 	}

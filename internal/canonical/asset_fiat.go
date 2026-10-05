@@ -12,7 +12,7 @@ import "sort"
 // is unambiguous, so ParseAsset dispatches in O(1).
 
 // knownFiatCodes is the allow-list of 3-letter fiat codes. Extending
-// it is a one-line amendment to ADR-0010 (never a superseding ADR).
+// it is a one-line change here (ADR-0010 needs no amendment).
 // Codes chosen from ISO-4217 plus currencies the spec explicitly
 // names or that our CEX/FX connectors will price against.
 //

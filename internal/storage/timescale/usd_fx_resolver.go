@@ -247,7 +247,7 @@ func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSD
 			pegAssets = append(pegAssets, a)
 		}
 	}
-	xlmSAC, err := canonical.NewSorobanAsset(nativeXLMSAC)
+	xlmSAC, err := canonical.NewSorobanAsset(canonical.NativeSACContractID())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: VWAPUSDFXResolver: XLM SAC: %w", err)
 	}
@@ -854,7 +854,7 @@ func xlmLegRate(vwapText string, inverted bool) (*big.Rat, bool) {
 func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Asset, at time.Time) (*big.Rat, error) {
 	// Both on-chain wire forms of XLM — the classic `native` type and
 	// the SAC wrapper a Soroban pool holds. Mirrors [isXLMAsset].
-	xlmForms := []string{canonical.NativeAsset().String(), nativeXLMSAC}
+	xlmForms := []string{canonical.NativeAsset().String(), canonical.NativeSACContractID()}
 	args := []any{
 		asset.String(),
 		xlmForms,

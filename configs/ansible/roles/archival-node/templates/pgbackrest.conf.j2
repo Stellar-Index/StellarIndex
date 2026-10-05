@@ -53,7 +53,7 @@ repo2-s3-region={{ pgbackrest_repo2_s3_region | default('auto') }}
 repo2-s3-key={{ pgbackrest_repo2_s3_key }}
 repo2-s3-key-secret={{ pgbackrest_repo2_s3_key_secret }}
 repo2-path=/pgbackrest
-# Retention is deliberately LEAN (ADR-0043 amendment 2026-08-29). The
+# Retention is deliberately LEAN (ADR-0043 §2). The
 # original estimate beside these lines read "one full + 7 days of
 # diffs/WAL ≈ 460–670 GB in S3 Standard". MEASURED 2026-09-15, the repo
 # holds 2.5 TiB: 252 GiB of backups and 2.2 TiB of WAL. The estimate was
