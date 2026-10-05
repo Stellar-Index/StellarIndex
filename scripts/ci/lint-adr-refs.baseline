@@ -31,14 +31,6 @@
 0029-soroban-events-landing-zone.md
 0030-per-source-coverage-invariant.md
 0031-data-derived-coverage-signal.md
-0032-per-source-tables-as-projections.md
-0033-completeness-verification-model.md
-0034-tiered-clickhouse-architecture.md
-0035-factory-anchored-contract-gating.md
-0038-network-explorer.md
-0039-soroban-contract-state-reader.md
-0040-completing-contract-gating.md
-0041-ingest-durability-semantics.md
 0042-v1-wire-shape.md
 0043-backup-and-restore-strategy.md
 0044-explorer-edge-rendering.md

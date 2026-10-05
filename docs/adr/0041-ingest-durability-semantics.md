@@ -7,100 +7,32 @@ supersedes: []
 superseded_by: null
 ---
 
-# ADR-0041 — Ingest durability semantics
-
-- **Closes:** CS-028 (cursor advances on enqueue), the "substrate off
-  by default" trap, and the LiveSink silent-drop blind spot (audit
-  2026-06-30 / cold-read 2026-07-02).
+# ADR-0041: Ingest durability semantics
 
 ## Context
 
-Three coupled facts about the live ingest path:
-
-1. **The ledgerstream cursor advances on ENQUEUE, not durable write**
-   (`processAndPersistCursor`): events sit in the PersistEvents
-   channel, the `soroban_events` AsyncSink, and the CH LiveSink when
-   the cursor moves past their ledger. A hard crash loses whatever
-   was buffered — silently, for any source the census doesn't cover.
-2. **The ClickHouse dual-sink and the projector's CH feed-switch were
-   `false` by default**, while the "100% coverage" claim rests on the
-   CH lake capturing everything. r1 — the only deployment — runs both
-   `true`; the defaults described a deployment shape we don't run and
-   would hand R2/R3 bring-up a certified-lake claim with the lake
-   sink off.
-3. **`clickhouse.LiveSink` drops whole ledger extracts on buffer
-   pressure by design** (non-blocking; `DroppedCount++`), healed by
-   the `ch-live-catchup` timer — but the
-   `stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}`
-   counter had **no alert in either rule tree**: sustained drops
-   (wedged CH, undersized buffer) would surface only as a later
-   completeness-verdict failure, hours after the fact.
+The ledgerstream cursor advances when a ledger's events are enqueued, not when they are durably written, so a hard crash loses whatever was buffered.
+The lake sink drops whole ledger extracts under buffer pressure by design, healed by `ch-live-catchup`. The "100% coverage" claim rests on the lake capturing everything.
 
 ## Decision
 
-### 1. Cursor semantics: keep enqueue-advance; the lake + reconcile IS the durability story
+1. **Cursor semantics.** Keep advance-on-enqueue. Advancing only past the minimum durable watermark of all sinks would couple live throughput to the slowest sink. The loss window is one crash times the buffer depth, every lost row is recoverable from the lake, and the ADR-0033 per-ledger verdict detects any residue. The cursor is a resume hint, not a durability claim. The completeness verdict is the durability claim.
+2. **Lake defaults on.** `clickhouse_live_sink` and `clickhouse_projector_source` default to `true`, matching the only production topology. A deployment that cannot run ClickHouse opts out explicitly and loses the certified-lake substrate, the CH completeness path and lake-derived supply.
+3. **Drops are alerted.** `stellarindex_ingestion_ch_live_sink_drops` is a ticket (any drop increase over 10m, `for: 10m`). `stellarindex_ingestion_ch_live_sink_drops_sustained` is a page (drops persisting 1h, the heal path losing the race).
+4. **Lake reads carry a watermark.** Lake-backed responses stamp `as_of_ledger` from the lake's contiguous watermark (`ExplorerReader.LakeWatermark`, clamped to the contiguous tip), and `flags.stale` fires when it lags.
 
-We considered advancing the cursor only past the minimum durable
-watermark of all sinks. Rejected for now:
+## Invariant
 
-- It couples live throughput to the SLOWEST sink (the 20× throughput
-  win of the batched channel drain came precisely from decoupling).
-- The loss window is one crash × ≤ buffer depth, and every lost row
-  is recoverable **mechanically**: raw events from the CH lake
-  (`ch-live-catchup` heals the lake's own tail; `projector-replay` /
-  re-derive heals the served tier), and the ADR-0033 verdict — since
-  CS-084, strict per-ledger — DETECTS any residue.
-- The invariant we commit to instead: **the cursor is a resume hint,
-  not a durability claim.** The completeness verdict is the
-  durability claim. Anything that weakens the verdict's ability to
-  see a post-crash hole (e.g. disabling the daily timer, aggregate
-  reconciles) is a regression against THIS ADR, not just ADR-0033.
-
-Preconditions this rests on (now enforced/monitored):
-- the CH sink is on (Decision 2),
-- the verdict runs on a timer and is watchdogged (`data-freshness`),
-- drops are alerted (Decision 3).
-
-### 2. `clickhouse_live_sink` + `clickhouse_projector_source` default to `true`
-
-The defaults now match the only production topology and the coverage
-claim's substrate. Deployments that genuinely cannot run ClickHouse
-(dev laptops, minimal self-hosters) opt OUT explicitly — the config
-docs say what they give up: the certified-lake substrate, the CH
-completeness path, and lake-derived supply. r1 is unaffected (both
-already explicitly `true`).
-
-### 3. Sustained LiveSink drops page
-
-New alert `stellarindex_ingestion_ch_live_sink_drops` (both rule
-trees): any drop increase over 10m, `for: 10m`, severity ticket —
-drops are self-healing via `ch-live-catchup`, so this is "the heal
-path is being exercised abnormally", not a page. A companion
-`severity: page` threshold fires when drops persist for 1h (the heal
-path is losing the race — lake tail integrity at risk).
-
-### 4. CH current-state reads get a staleness signal (spec)
-
-`ledger_entries_current` and `supply_flows` reads serve whatever the
-lake holds, with no indication when `ch-live-catchup` is behind. The
-committed follow-up: readers surface the lake's contiguous watermark
-(`ContiguousWatermark`, already computed for the projector clamp)
-as an `as_of_ledger` on supply/state responses, and the API's
-`flags.stale` fires when `tip - as_of_ledger` exceeds the freshness
-window. Implementation rides with the reconciliation harness work
-(board #14) — the same watermark plumbing serves both.
+- A change that weakens the verdict's ability to see a post-crash hole is a regression against this ADR, for example disabling the completeness timer or moving to aggregate-only reconciles.
+- The two lake config defaults stay `true` (`internal/config/config.go`), and config validation rejects `clickhouse_projector_source = true` with `clickhouse_live_sink = false` (`internal/config/validate.go`).
+- Sustained live-sink drops page. The two alerts are in `deploy/monitoring/rules/ingestion.yml` and `configs/prometheus/rules.r1/ingestion.yml`, and `deploy/monitoring/rule-tests/ingestion-core_test.yml` covers them.
+- Lake-backed supply and state reads surface the lake watermark as `as_of_ledger` and set `flags.stale` against it.
 
 ## Consequences
 
-- Fresh deployments capture the lake by default; the "certified raw
-  history" claim stops being config-conditional.
-- A crash's loss window remains, but is bounded, detected (strict
-  per-ledger verdict), healable (lake re-derive), and now *visible
-  within minutes* (drop alert) instead of at the next verdict run.
-- Operators explicitly opting out of ClickHouse own the consequence
-  in their config file, in writing.
-- **Acceptance caveat (2026-07-08):** this ADR's durability story
-  covers lake-backed (on-chain) ingest only — the non-lake CEX/FX
-  sinks do not flow through `soroban_events`/ClickHouse and need
-  their own backpressure/durability treatment (tracked separately;
-  see the trade-insert-backpressure alert lineage).
+- Fresh deployments capture the lake by default. A crash's loss window remains, but it is bounded, detected, healable from the lake, and visible within minutes through the drop alert.
+- This covers lake-backed on-chain ingest only. The CEX/FX sinks do not flow through the lake and need their own backpressure treatment.
+
+## Evidence
+
+`cmd/stellarindex-indexer/main.go` (`processAndPersistCursor`), `internal/storage/clickhouse/live_sink.go`, `internal/storage/clickhouse/protocol_reader.go`, `deploy/monitoring/rules/ingestion.yml`.
