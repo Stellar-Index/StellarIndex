@@ -465,7 +465,7 @@ ch_lake_backup_max_bandwidth: 104857600
 
 # ───── Galexie archive off-site mirror (retired 2026-10-02) ───────────────
 # The raw archive is NOT backed up off-site: it is a copy of SDF's public
-# dataset and is re-pulled from there (ADR-0043 §2 amendment 2026-08-29).
+# dataset and is re-pulled from there (ADR-0043 §2).
 # Off-site copies are the ClickHouse lake and Postgres on B2. false removes
 # the units, script and textfile from the host; true re-installs the mirror,
 # which then needs galexie_archive_mirror_s3_endpoint or its unit fails.
@@ -1753,7 +1753,7 @@ zfs_snapshot_min_free_bytes: 2199023255552
 # (03:40), so the day's snapshot predates the day's other ops jobs.
 zfs_snapshot_on_calendar: "*-*-* 01:45:00 UTC"
 # pgBackRest repo2 (off-site S3) retention — deliberately LEAN (#298,
-# ADR-0043 §1 amendment 2026-09-24): one full + 7 days of diffs/WAL ≈
+# ADR-0043 §1): one full + 7 days of diffs/WAL ≈
 # 460–670 GB in S3 Standard ≈ $12–17/month. Raising these multiplies
 # storage cost roughly linearly; PITR window = the diff/WAL retention.
 pgbackrest_repo2_retention_full: 1

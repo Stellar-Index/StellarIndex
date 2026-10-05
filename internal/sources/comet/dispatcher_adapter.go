@@ -27,8 +27,8 @@ import (
 // mechanism 2/3): the in-code MainnetGatedSet (today exactly one
 // pool, Blend's backstop) is the trust root; caller opts layer the
 // protocol_contracts DB warm on top (the operator seam for admitting
-// a future pool without a redeploy). The WASM-hash sweep is the
-// registered upkeep loop for discovering new byte-identical pools.
+// a future pool without a redeploy). No WASM-hash sweep discovers
+// pools; wasm-drift alerts on drift but never admits one.
 //
 // No goroutines, no polling. Claims any of the five Soroban-emitted
 // POOL events from a REGISTERED pool: swap (→ TradeEvent), join_pool

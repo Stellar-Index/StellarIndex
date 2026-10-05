@@ -14,24 +14,24 @@ import (
 // persistence at all, and projected domains are written later by the
 // projector. Every place that tells a reader what the row means — the
 // catalog comments an operator reads through `\d+`, 0051's header, the
-// README register row and ADR-0033 — must say so rather than calling it
+// README register row and ADR-0033's Invariant — must say so rather than calling it
 // a post-persist "ledger is done" marker (GH #923).
 func TestLedgerIngestLogNotClaimedPostPersist(t *testing.T) {
 	tableComment := lastCommentOn(t, "COMMENT ON TABLE ledger_ingest_log IS")
 	colComment := lastCommentOn(t, "COMMENT ON COLUMN ledger_ingest_log.persisted_at IS")
 	for name, got := range map[string]string{
-		"table comment":         tableComment,
-		"persisted_at comment":  colComment,
-		"0051 up header":        upHeader(t, "0051_ledger_ingest_log.up.sql"),
-		"README 0051 row":       extractRow(t, readReadme(t), "0051"),
-		"ADR-0033 reality note": adr0033RealityNotes(t),
+		"table comment":        tableComment,
+		"persisted_at comment": colComment,
+		"0051 up header":       upHeader(t, "0051_ledger_ingest_log.up.sql"),
+		"README 0051 row":      extractRow(t, readReadme(t), "0051"),
+		"ADR-0033 invariant":   adr0033RealityNotes(t),
 	} {
 		lower := strings.ToLower(got)
 		if !strings.Contains(lower, "enqueue") {
 			t.Errorf("%s does not say the row is written after ENQUEUE:\n%s", name, got)
 		}
 		if strings.Contains(name, "ADR") {
-			continue // the ADR keeps its original decision text below the note
+			continue // the ADR may name the banned phrases while saying they are wrong
 		}
 		for _, bad := range []string{"post-persist", "after its events persist", "done-marker", `"this ledger is done" marker`} {
 			if strings.Contains(lower, strings.ToLower(bad)) {
@@ -71,8 +71,8 @@ func lastCommentOn(t *testing.T, prefix string) string {
 	return last
 }
 
-// adr0033RealityNotes returns ADR-0033's text above its Context heading,
-// where amendments to the original decision are recorded.
+// adr0033RealityNotes returns ADR-0033's Invariant section, where the
+// meaning of the ledger_ingest_log row is recorded.
 func adr0033RealityNotes(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "docs", "adr", "0033-completeness-verification-model.md"))
@@ -80,9 +80,10 @@ func adr0033RealityNotes(t *testing.T) string {
 		t.Fatalf("read ADR-0033: %v", err)
 	}
 	s := string(raw)
-	idx := strings.Index(s, "\n## Context")
-	if idx == -1 {
-		t.Fatal("ADR-0033 has no '## Context' heading — update this test's anchor")
+	start := strings.Index(s, "\n## Invariant")
+	end := strings.Index(s, "\n## Consequences")
+	if start == -1 || end == -1 || end < start {
+		t.Fatal("ADR-0033 has no '## Invariant' section — update this test's anchor")
 	}
-	return s[:idx]
+	return s[start:end]
 }

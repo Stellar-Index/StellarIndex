@@ -487,3 +487,72 @@ func encodeInt256(dst []byte, v *big.Int) {
 		copy(dst, enc[len(enc)-32:])
 	}
 }
+
+// publishedPriceOf reads published_price off the row's JSON form (runtime,
+// not compile-time, failure on a build that never records it).
+func publishedPriceOf(t *testing.T, u canonical.OracleUpdate) (string, bool) {
+	t.Helper()
+	b, err := json.Marshal(u)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	raw, ok := m["published_price"]
+	if !ok {
+		return "", false
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatalf("published_price %s is not a decimal string: %v", raw, err)
+	}
+	return s, true
+}
+
+// TestProject_invertRecordsPublishedAnswer pins INV-2590 for chainlink:
+// an Invert feed keeps the reciprocal as price and the feed's own answer
+// verbatim as published_price; a non-Invert feed records none.
+func TestProject_invertRecordsPublishedAnswer(t *testing.T) {
+	t.Parallel()
+	pair := canonical.Pair{
+		Base:  canonical.Asset{Type: canonical.AssetFiat, Code: "USD"},
+		Quote: canonical.Asset{Type: canonical.AssetFiat, Code: "EUR"},
+	}
+	p := NewPoller("", nil)
+	for _, tc := range []struct {
+		invert        bool
+		answer        string
+		wantPrice     string
+		wantPublished string
+	}{
+		{invert: true, answer: "110000000", wantPrice: "90909091", wantPublished: "110000000"},
+		{invert: true, answer: "110000001", wantPrice: "90909090", wantPublished: "110000001"},
+		{invert: false, answer: "110000000", wantPrice: "110000000"},
+	} {
+		spec := FeedSpec{Address: "0xb49f677943BC038e9857d61E7d053CaA2C1734C1", Decimals: 8, Invert: tc.invert}
+		u, err := p.project(pair, spec, Round{
+			FeedAddress: spec.Address,
+			RoundID:     big.NewInt(1),
+			Answer:      tc.answer,
+			UpdatedAt:   time.Unix(1767225600, 0).UTC(),
+		})
+		if err != nil {
+			t.Fatalf("project(%s): %v", tc.answer, err)
+		}
+		if got := u.Price.String(); got != tc.wantPrice {
+			t.Errorf("invert=%v answer=%s: price = %s, want %s", tc.invert, tc.answer, got, tc.wantPrice)
+		}
+		got, ok := publishedPriceOf(t, u)
+		if tc.wantPublished == "" {
+			if ok {
+				t.Errorf("non-Invert feed recorded published_price %q; want absent", got)
+			}
+			continue
+		}
+		if got != tc.wantPublished {
+			t.Errorf("invert answer=%s: published_price = %q (present=%v), want %s", tc.answer, got, ok, tc.wantPublished)
+		}
+	}
+}

@@ -59,7 +59,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/accounts"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/archive"
@@ -266,6 +268,9 @@ func realMain() int {
 		printUsage()
 		return 2
 	}
+	if code := installNetworkFromArgs(args[1:], os.Stderr); code != 0 {
+		return code
+	}
 	return dispatchExitCode(args[0], run(args), os.Stderr)
 }
 
@@ -300,4 +305,52 @@ func dispatchExitCode(name string, err error, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %v\n", name, err)
 	}
 	return 1
+}
+
+// installNetworkFromArgs installs the configured network (passphrase and
+// alias registry) once, before any subcommand runs, from the -config flag
+// every config-reading subcommand shares. A subcommand without -config, or
+// one whose config does not load, is left on the pubnet default; the
+// subcommand reports its own config error. A config that loads but whose
+// network cannot be installed fails closed (non-zero), like the indexer.
+func installNetworkFromArgs(args []string, stderr io.Writer) int {
+	path := configPathFromArgs(args)
+	if path == "" {
+		return 0
+	}
+	cfg, err := config.LoadWithEnv(path)
+	if err != nil {
+		return 0
+	}
+	if err := canonical.InstallNetwork(cfg.Stellar.Passphrase(), cfg.Supply.SACWrappers); err != nil {
+		fmt.Fprintf(stderr, "stellarindex-ops: install network: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// configPathFromArgs returns the -config/--config value with flag-package
+// semantics: last occurrence wins, scanning stops at the first positional.
+// The token after a bare flag is taken as its value (the flag set is not known
+// here), so `-source x -config y` still finds the config.
+func configPathFromArgs(args []string) string {
+	path := ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" || !strings.HasPrefix(a, "-") || a == "-" {
+			break
+		}
+		name := strings.TrimLeft(a, "-")
+		if name != "config" && !strings.Contains(name, "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			i++
+			continue
+		}
+		if v, ok := strings.CutPrefix(name, "config="); ok {
+			path = v
+		} else if name == "config" && i+1 < len(args) {
+			i++
+			path = args[i]
+		}
+	}
+	return path
 }

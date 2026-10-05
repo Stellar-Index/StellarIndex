@@ -246,6 +246,10 @@ func run(cfgPath string, dryRun bool) error {
 		return err
 	}
 
+	if err := canonical.InstallNetwork(cfg.Stellar.Passphrase(), cfg.Supply.SACWrappers); err != nil {
+		return err
+	}
+
 	logger := mkLogger(cfg.Obs)
 	logger.Info("starting",
 		"version", version.String(),
@@ -282,11 +286,7 @@ func run(cfgPath string, dryRun bool) error {
 		}
 		defer releaseInstanceLock(instanceLock, logger)
 	}
-	// F-1350: register cancel AFTER store.Close so LIFO runs cancel
-	// FIRST on shutdown — workers see context cancellation and unwind
-	// BEFORE the store they depend on is closed. Registering it before
-	// store.Close (the prior order) closed the pool while goroutines
-	// were still issuing queries against it.
+	// Registered after store.Close so LIFO cancels workers before the pool closes.
 	defer cancel()
 	logger.Info("storage connected")
 

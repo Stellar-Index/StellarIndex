@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -52,5 +53,26 @@ func TestHandleLogin_RecordsNotifySendMetric(t *testing.T) {
 	}
 	if got := notifyCount(t, obs.NotifyTemplateMagicLink, obs.NotifySendResultFailed) - beforeFailed; got != 1 {
 		t.Errorf("notify_sends_total{template=magic-link,result=failed} delta = %v, want 1", got)
+	}
+}
+
+// A suppressed recipient is answered exactly like a sent one (200, same
+// body), counted as suppressed, and never as failed.
+func TestHandleLogin_SuppressedIsCountedSuppressedNotFailed(t *testing.T) {
+	r := newTestRig(t)
+	r.cfg.Sender = stubFailSender{err: notify.ErrSuppressed}
+	sup := func() float64 { return notifyCount(t, obs.NotifyTemplateMagicLink, obs.NotifySendResultSuppressed) }
+	failed := func() float64 { return notifyCount(t, obs.NotifyTemplateMagicLink, obs.NotifySendResultFailed) }
+	s0, f0 := sup(), failed()
+
+	w := r.postLogin(t, "bounced@example.com")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"sent"`) {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if got := sup() - s0; got != 1 {
+		t.Errorf("suppressed delta = %v, want 1", got)
+	}
+	if got := failed() - f0; got != 0 {
+		t.Errorf("failed delta = %v, want 0", got)
 	}
 }

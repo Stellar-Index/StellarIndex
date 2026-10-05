@@ -3,7 +3,10 @@
 
 package canonical
 
-import "sync/atomic"
+import (
+	"fmt"
+	"sync/atomic"
+)
 
 // installedPassphrase overrides [PubnetPassphrase] as the network the
 // canonical model derives network-dependent values against (today: the
@@ -32,9 +35,43 @@ var installedPassphrase atomic.Pointer[string]
 func InstallNetworkPassphrase(p string) {
 	if p == "" {
 		installedPassphrase.Store(nil)
+		installedNativeSAC.Store(nil)
 		return
 	}
 	installedPassphrase.Store(&p)
+	sac, err := NativeAsset().sacContractIDOn(p)
+	if err != nil {
+		installedNativeSAC.Store(nil)
+		return
+	}
+	installedNativeSAC.Store(&sac)
+}
+
+// installedNativeSAC caches the native-XLM SAC derived from the installed
+// passphrase so hot paths (orientation, MEV grouping) do not rehash per call.
+var installedNativeSAC atomic.Pointer[string]
+
+// NativeSACContractID returns the native-XLM Stellar Asset Contract
+// address on the installed network, or [XLMSacContractID] when none
+// is installed, so an uninstalled binary behaves exactly as pubnet did.
+func NativeSACContractID() string {
+	if s := installedNativeSAC.Load(); s != nil {
+		return *s
+	}
+	return XLMSacContractID
+}
+
+// InstallNetwork publishes the alias registry and the network passphrase
+// process-wide. Call once at start-up after config load: without it, SAC
+// derivation and the XLM alias family fall back to pubnet on a test net.
+func InstallNetwork(passphrase string, sacWrappers map[string]string) error {
+	reg, err := NewAliasRegistry(passphrase, sacWrappers)
+	if err != nil {
+		return fmt.Errorf("alias registry: %w", err)
+	}
+	InstallAliasRegistry(reg)
+	InstallNetworkPassphrase(passphrase)
+	return nil
 }
 
 // NetworkPassphrase returns the installed network passphrase, or

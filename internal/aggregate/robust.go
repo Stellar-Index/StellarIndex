@@ -150,10 +150,8 @@ func robustCentreScale(vals []*big.Rat) (centre, scale *big.Rat) {
 // for [robustBand]'s MAD arm at K=10 — which ordinary long-tail
 // volatility reaches routinely.
 //
-// Price noise is MULTIPLICATIVE (ADR-0046 §1's direction symmetry; its
-// MAD(log p) scale is not implemented — the scale here is a price-space
-// MAD: "a 2× and a ½× deviation
-// should be equally outlying"), so the deviation is measured on the
+// Price noise is MULTIPLICATIVE (ADR-0046 §1: "a half-size print is exactly as
+// outlying as a double-size one"), so the deviation is measured on the
 // ratio: a price below the centre is first mirrored to the up-move that
 // is the same distance away in log space (centre²/p — the reflection of
 // p about centre under multiplication) and then measured from the

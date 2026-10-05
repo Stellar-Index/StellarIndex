@@ -2,6 +2,7 @@ package redstone
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"testing"
@@ -995,5 +996,100 @@ func TestFeedRegistry_CountMatchesItsDocComment(t *testing.T) {
 	const documented = 32
 	if got := len(feedRegistry); got != documented {
 		t.Errorf("feedRegistry has %d entries but its doc comment says %d — update BOTH (internal/sources/redstone/feeds.go)", got, documented)
+	}
+}
+
+// publishedPriceOf reads published_price off the row's JSON form, so the
+// recovery test fails at runtime (not compile time) on a build that never
+// recorded the publisher's integer.
+func publishedPriceOf(t *testing.T, u canonical.OracleUpdate) (string, bool) {
+	t.Helper()
+	b, err := json.Marshal(u)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	raw, ok := m["published_price"]
+	if !ok {
+		return "", false
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatalf("published_price %s is not a decimal string: %v", raw, err)
+	}
+	return s, true
+}
+
+func decodeOneMXNe(t *testing.T, r int64) canonical.OracleUpdate {
+	t.Helper()
+	ev := &events.Event{
+		Topic: []string{TopicSymbolRedstone},
+		Value: encodeWritePricesBody(t, relayerG,
+			[]*big.Int{big.NewInt(r)}, 1_745_000_000_000, 1_745_000_060_000),
+		OpArgs: []string{
+			encodeAddressArg(t, relayerG),
+			encodeStringVecArg(t, []string{"MXNe"}),
+			encodePayloadArg(t),
+		},
+		ContractID:     adapterC,
+		Ledger:         52_000_001,
+		TxHash:         "mxne",
+		LedgerClosedAt: "2026-04-23T12:00:00Z",
+	}
+	closedAt, _ := time.Parse(time.RFC3339, ev.LedgerClosedAt)
+	updates, err := decodeWritePrices(ev, closedAt)
+	if err != nil {
+		t.Fatalf("decodeWritePrices: %v", err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update, got %d", len(updates))
+	}
+	return updates[0]
+}
+
+// TestDecode_MXNe_PublishedIntegerRecoverable pins INV-2590: two distinct
+// on-chain integers collapse to the same 8-dp reciprocal, so the row must
+// carry the publisher's integer verbatim (ADR-0003) or it is lost.
+func TestDecode_MXNe_PublishedIntegerRecoverable(t *testing.T) {
+	const wantPrice = "5747126" // round(10^16 / r) for both r below
+	for _, r := range []int64{1_740_000_000, 1_740_000_001} {
+		u := decodeOneMXNe(t, r)
+		if got := u.Price.String(); got != wantPrice {
+			t.Errorf("r=%d: price = %s, want %s (oriented reciprocal unchanged)", r, got, wantPrice)
+		}
+		got, ok := publishedPriceOf(t, u)
+		if !ok || got != big.NewInt(r).String() {
+			t.Errorf("r=%d: published_price = %q (present=%v), want the on-chain integer %d", r, got, ok, r)
+		}
+	}
+}
+
+// TestDecode_NonInvertFeed_NoPublishedPrice: price already IS the
+// publisher's integer, so nothing separate is recorded.
+func TestDecode_NonInvertFeed_NoPublishedPrice(t *testing.T) {
+	ev := &events.Event{
+		Topic: []string{TopicSymbolRedstone},
+		Value: encodeWritePricesBody(t, relayerG,
+			[]*big.Int{big.NewInt(6_700_000)}, 1_745_000_000_000, 1_745_000_060_000),
+		OpArgs: []string{
+			encodeAddressArg(t, relayerG),
+			encodeStringVecArg(t, []string{"CETES"}),
+			encodePayloadArg(t),
+		},
+		ContractID:     adapterC,
+		Ledger:         52_000_001,
+		TxHash:         "cetes",
+		LedgerClosedAt: "2026-04-23T12:00:00Z",
+	}
+	closedAt, _ := time.Parse(time.RFC3339, ev.LedgerClosedAt)
+	updates, err := decodeWritePrices(ev, closedAt)
+	if err != nil || len(updates) != 1 {
+		t.Fatalf("decodeWritePrices: %v (n=%d)", err, len(updates))
+	}
+	if got, ok := publishedPriceOf(t, updates[0]); ok {
+		t.Errorf("non-Invert feed recorded published_price %q; want absent", got)
 	}
 }

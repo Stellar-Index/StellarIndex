@@ -81,14 +81,14 @@ func TestLatestOracleStreams_DropsUnparseableRowsLoudly(t *testing.T) {
 	store, _ := newScriptedStore(t, scriptedResult{
 		cols: []string{
 			"source", "contract_id", "ledger", "tx_hash", "op_index", "ts",
-			"asset", "quote", "price", "decimals", "confidence", "observer",
+			"asset", "quote", "price", "decimals", "confidence", "observer", "published_price",
 		},
 		rows: [][]driver.Value{
-			{source, "", int64(1000), "tx-good", int64(0), ts, "native", "fiat:USD", "100", int64(7), 0.9, ""},
+			{source, "", int64(1000), "tx-good", int64(0), ts, "native", "fiat:USD", "100", int64(7), 0.9, "", nil},
 			// Truncated + lower-cased strkey — same shape TestOracleStreamUnparsedRowsAreCounted pins as unparseable.
-			{source, "", int64(1001), "tx-bad-asset", int64(0), ts, "usdc-ga5zsejyb37jrc5", "fiat:USD", "100", int64(7), 0.9, ""},
+			{source, "", int64(1001), "tx-bad-asset", int64(0), ts, "usdc-ga5zsejyb37jrc5", "fiat:USD", "100", int64(7), 0.9, "", nil},
 			// Missing the fiat: prefix.
-			{source, "", int64(1002), "tx-bad-quote", int64(0), ts, "native", "USD", "100", int64(7), 0.9, ""},
+			{source, "", int64(1002), "tx-bad-quote", int64(0), ts, "native", "USD", "100", int64(7), 0.9, "", nil},
 		},
 	})
 

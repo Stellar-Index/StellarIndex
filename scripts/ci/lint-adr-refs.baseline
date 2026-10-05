@@ -1,10 +1,5 @@
 # ADRs not yet on docs/adr/_template.md. Shrink-only: each ADR-rewrite PR removes its
 # lines, and lint-adr-refs fails on an entry that already conforms. Empty when W1 ends.
-0019-anomaly-response-and-confidence-scoring.md
-0020-chart-api-contract.md
-0021-account-entry-observer.md
-0022-classic-supply-observers.md
-0023-sep41-supply-observer.md
 0024-redis-ha-via-sentinel.md
 0025-caddy-cloudflare-trusted-proxy.md
 0026-stablecoin-fiat-proxy-late-binding.md
@@ -13,23 +8,3 @@
 0029-soroban-events-landing-zone.md
 0030-per-source-coverage-invariant.md
 0031-data-derived-coverage-signal.md
-0032-per-source-tables-as-projections.md
-0033-completeness-verification-model.md
-0034-tiered-clickhouse-architecture.md
-0035-factory-anchored-contract-gating.md
-0038-network-explorer.md
-0039-soroban-contract-state-reader.md
-0040-completing-contract-gating.md
-0041-ingest-durability-semantics.md
-0042-v1-wire-shape.md
-0043-backup-and-restore-strategy.md
-0044-explorer-edge-rendering.md
-0045-sep40-oracle-read-adapter.md
-0046-mad-outlier-filter.md
-0047-pre-p23-classic-movement-reconstruction.md
-0048-serve-by-query-shape.md
-0049-anonymous-access-and-passkey-auth.md
-0050-multi-region-ha-architecture.md
-0051-usd-anchored-fiat-derivation.md
-0052-contract-call-tree-routing.md
-0053-fiat-price-basis-rule.md

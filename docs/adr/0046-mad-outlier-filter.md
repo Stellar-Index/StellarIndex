@@ -7,150 +7,34 @@ supersedes: []
 superseded_by: null
 ---
 
-# ADR-0046 — MAD-based outlier filtering for VWAP inputs
-
-> **Amendment (2026-09-02, #360).** The DECISION — replace mean/σ with a
-> 50 %-breakdown robust filter — stands. The MECHANISM shipped differently
-> and the rollout plan never ran, so read the sections below as the
-> proposal, not as deployed state. What ships
-> (`internal/aggregate/outliers.go`): an exact `*big.Rat` median +
-> 1.4826·MAD in PRICE space, not the log-space Iglewicz–Hoaglin modified
-> z of §1; a no-op below 3 prices, not 5 (§2); a MAD==0 fallback of 0.5 %
-> of centre (±2 % at σ=4, `robust.go`), not `log(1+ε)` with ε=0.25 (§2);
-> and a single knob, `aggregate.outlier_sigma_threshold` (default 4) —
-> the `k` and `ε` of §3 do not exist. Phase A (shadow mode,
-> `aggregator_outlier_filter_disagreement_total`) was never built: the
-> metric appears nowhere in Go, in either rule tree, or in the metrics
-> reference, and the filter went straight to serving. Since 2026-08-28
-> the PUBLISHED VWAP uses the time-local layer instead
-> (`outliers_local.go`, wired at `orchestrator.go`): every print is
-> scored against the window band, its own and adjacent one-minute
-> buckets and its nearest prints, so an agreed regime shift survives
-> instead of being trimmed. The whole-window form described here
-> survives only as the per-request `/v1/vwap?outlier_sigma=` and
-> `/v1/ohlc` semantics. See `docs/methodology/vwap-aggregation.md`.
-
-> **Correction (2026-09-29).** The amendment above misattributes the
-> knob. `aggregate.outlier_sigma_threshold` does not configure the
-> whole-window filter this ADR describes: its only consumer is the
-> time-local layer (`orchestrator.go` → `FilterOutliersLocal`), which is
-> outside this ADR's scope. The whole-window `FilterOutliers` has no
-> config surface. `/v1/vwap` takes a per-request `outlier_sigma` that
-> defaults to 0, so the filter is off unless the caller asks for it.
-> `/v1/ohlc` and `/v1/twap` default to the package constant
-> `ohlcDefaultOutlierSigma` (4.0, `internal/api/v1/ohlc.go`). That
-> constant equals the config default only by convention. Changing the
-> config key does not move it.
-
-- **Decides:** the replacement design for the Phase-1 σ-threshold
-  outlier filter (`internal/aggregate/outliers.go`), per BACKLOG #44's
-  "write the ADR now — the design needs no traffic, only the
-  thresholds do".
-- **Defers:** the numeric thresholds and the shadow→serve flip date,
-  which require production trade distributions.
+# ADR-0046: MAD-based outlier filtering for VWAP inputs
 
 ## Context
 
-`FilterOutliers` drops trades whose per-trade price deviates from the
-bucket **mean** by more than `sigma × stdev` (Phase-1 default 3.0–4.0).
-Mean/σ statistics have a well-known failure mode that our own test
-suite documents (`outliers_test.go`: "a single huge outlier inflates σ
-enough that it can't remove itself"): both the mean and σ are computed
-FROM the contaminated sample, so a large-enough outlier *masks itself*
-— and two coordinated outliers mask each other even more effectively.
-For a pricing API this is not a corner case, it is the adversarial
-case: wash-trades or fat-finger fills on a thin pair are precisely the
-inputs an outlier filter exists for, and precisely the inputs that
-defeat a σ-filter.
-
-The robust-statistics standard replacement is the **median absolute
-deviation (MAD)**: median and MAD have a 50% breakdown point — up to
-half the sample can be arbitrarily corrupted without moving the
-estimate — versus 0% for mean/σ (one point suffices).
+A mean/stdev filter computes both from the contaminated sample, so one large outlier, or two coordinated ones, hides itself; wash trades on thin pairs are exactly that case.
+Median and MAD have a 50% breakdown point.
 
 ## Decision
 
-### 1. Modified z-score on log-prices
+1. Outliers are found with an exact `*big.Rat` median and 1.4826 times the MAD of prices (`internal/aggregate/robust.go`). A price is dropped when its deviation exceeds sigma times that scale. The deviation is measured in ratio space (a price below the centre is mirrored to `centre²/p`), so a half-size print is exactly as outlying as a double-size one. The scale is a price-space MAD, not a log-space one.
+2. Degenerate cases. Fewer than 3 usable prices, or sigma at or below 0, is a no-op. Zero-base or zero-quote trades are dropped first. When MAD is 0 the scale falls back to 0.5% of the centre (a ±2% band at sigma 4), so an identical majority is never dropped and honest dispersion is not collapsed.
+3. The published VWAP uses the time-local layer (`FilterOutliersLocal`, `internal/aggregate/outliers_local.go`, wired in `internal/aggregate/orchestrator/orchestrator.go`), which scores each print against the window band and its time neighbourhood so an agreed regime shift survives. `aggregate.outlier_sigma_threshold` (default 4) configures only that layer.
+4. The whole-window `FilterOutliers` has no config key. `/v1/vwap` applies it only when the request passes `outlier_sigma`, which defaults to 0. `/v1/ohlc` and `/v1/twap` default to the constant `ohlcDefaultOutlierSigma` (4.0), which matches the config default by convention only.
+5. No volume-weighted median, since one large wash trade would drag it. Instead a trim whose survivors hold less base volume than the prints it dropped returns an empty slice and the window is withheld (`keepIfVolumeMajority`).
 
-Replace the σ-test with the Iglewicz–Hoaglin modified z-score,
-computed on **log-prices**:
+## Invariant
 
-```
-mᵢ = 0.6745 · |log pᵢ − median(log p)| / MAD(log p)
-drop trade i when mᵢ > k
-```
-
-Log-space because price noise is multiplicative (a 2× and a ½×
-deviation should be equally outlying); the σ-filter's linear space
-treats the 2× as twice as deviant as the ½×.
-
-Float64 projection remains acceptable (the filter is a heuristic
-gate, not a value-serving computation — same rationale as today).
-
-### 2. Degenerate-case policy
-
-- `n < 5`: no-op (return input unchanged). Mirrors today's `n < 3`
-  guard, raised because a median over 3–4 points is too coarse to
-  reject on; a thin bucket's price signal is already degraded and the
-  confidence machinery (not the outlier filter) is the honest channel
-  for that.
-- `MAD == 0` (≥ 50% of prices identical — common in thin buckets and
-  in oracle-adjacent pairs): fall back to an exact tolerance band —
-  drop only trades where `|log pᵢ − median| > log(1 + ε)` with ε
-  generous (placeholder 25%). Never divide by zero, never drop the
-  identical majority.
-- All inputs zero-base-amount: dropped unconditionally (unchanged).
-
-### 3. Threshold placeholders — tuned only against production traffic
-
-- `k = 3.5` (the Iglewicz–Hoaglin canonical default) as the initial
-  placeholder.
-- `ε = 0.25` for the MAD==0 band.
-- Both become config surface (`[aggregation]` block) with the
-  placeholder defaults; the tuning exercise happens against ≥30 days
-  of real per-pair trade distributions and is out of scope here.
-
-### 4. Rollout: shadow first, serve second
-
-Phase A (**shadow**): compute BOTH filters per bucket; serve the
-σ-filter result unchanged; emit a per-pair disagreement metric
-(`aggregator_outlier_filter_disagreement_total{pair,direction}`) when
-the two filters drop different trade sets. Zero serving risk.
-
-Phase B (**flip**): after the disagreement rate is understood and k/ε
-are tuned, serve the MAD result and delete the σ path. The flip is a
-config default change plus a CHANGELOG entry, not a code rewrite.
-
-### 5. Explicitly not in scope
-
-- **Volume-weighted median**: rejected for now — weighting the median
-  by trade size re-opens a manipulation channel (one large wash trade
-  drags the weighted median) that the unweighted median is immune to.
-  Revisit only with evidence that small-trade noise dominates a pair.
-- Per-source trust weighting (BACKLOG #44's weighted-VWAP sibling) —
-  separate concern, separate decision.
-- The freeze/anomaly machinery (`internal/aggregate/freeze`) — the
-  outlier filter drops individual trades inside a bucket; freeze
-  handles whole-pair anomalies. Unchanged interfaces.
+- The filter is robust to self-masking outliers and symmetric in ratio space: `internal/aggregate/outliers_test.go`, `internal/aggregate/band_symmetry_test.go`.
+- A volume minority never sets the price: `internal/aggregate/outliers_volume_test.go`.
+- Money-path statistics are exact rationals, never `float64` (AGENTS.md money rule); only sigma is a float, converted before it touches a price.
 
 ## Consequences
 
-- The masked-outlier class (self-hiding single spike, coordinated
-  pair) is closed by construction: breakdown point goes 0% → 50%.
-- Thin-bucket behaviour is explicitly specified (no-op under 5
-  trades; identical-majority protected under MAD==0) instead of
-  emergent.
-- Shadow mode means the first production effect is a *metric*, not a
-  served-price change — tuning happens with evidence, and the
-  disagreement metric doubles as the tuning dataset.
-- One more config knob; mitigated by shipping placeholders that match
-  the literature defaults.
+- The self-masking class is closed by construction.
+- Thin buckets are specified, not emergent.
+- Two outlier surfaces exist (published local layer, per-request whole-window); `docs/methodology/vwap-aggregation.md` describes both.
+- Per-source trust weighting and the freeze/anomaly machinery stay separate decisions.
 
-## Sign-off checklist (the maintainer)
+## Evidence
 
-Signed off 2026-07-09 — all four accepted.
-
-- [x] Log-space modified z-score as the mechanism
-- [x] Degenerate-case policy (§2)
-- [x] Shadow-first rollout (§4)
-- [x] Volume-weighted median rejected for v1 (§5)
+`internal/aggregate/outliers.go`, `internal/aggregate/robust.go`, `internal/aggregate/outliers_local.go`, `internal/api/v1/ohlc.go`.
