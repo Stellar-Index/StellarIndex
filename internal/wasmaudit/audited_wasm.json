@@ -368,6 +368,14 @@
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
+  "baf978f10efdbcd85747868bef8832845ea6809f7643b67a4ac0cd669327fc2c": {
+    "sources": [
+      "blend"
+    ],
+    "role": "pool",
+    "audited": "2026-10-05",
+    "doc": "docs/operations/wasm-audits/blend.md"
+  },
   "c1f4502a757e25c611f5a159bc1ab0eef64085adac6c68123dca66e87faffbc2": {
     "sources": [
       "blend"
