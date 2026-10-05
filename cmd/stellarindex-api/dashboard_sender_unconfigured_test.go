@@ -200,3 +200,31 @@ func TestResendKeyDoc_DescribesTheUnconfiguredWiring(t *testing.T) {
 	}
 	t.Fatal("api.dashboard.resend_api_key_env not found in config.Describe()")
 }
+
+func TestBuildDashboardSender_SuppressionWrapsAndValidates(t *testing.T) {
+	t.Setenv(rlt321MailEnv, "re_test_key")
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	cfg := config.DashboardConfig{ResendAPIKeyEnv: rlt321MailEnv}
+
+	plain, err := buildDashboardSender(cfg, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, wrapped := plain.(notify.SuppressingSender); wrapped {
+		t.Error("empty list must not wrap the sender")
+	}
+
+	cfg.SuppressedRecipientSHA256 = []string{"0000000000000000000000000000000000000000000000000000000000000000"}
+	s, err := buildDashboardSender(cfg, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, wrapped := s.(notify.SuppressingSender); !wrapped {
+		t.Error("non-empty list must wrap the sender")
+	}
+
+	cfg.SuppressedRecipientSHA256 = []string{"not-a-digest"}
+	if _, err := buildDashboardSender(cfg, logger); err == nil {
+		t.Error("malformed digest must refuse to boot")
+	}
+}

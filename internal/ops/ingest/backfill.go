@@ -15,6 +15,7 @@ import (
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
@@ -342,12 +343,17 @@ func buildChunkDispatcher(
 	opts backfillOpts,
 	cfg config.Config,
 	store *timescale.Store,
+	rec dirtyWindowRecorder,
 	pseudo bool,
 ) (*dispatcher.Dispatcher, *sorobanevents.AsyncSink, error) {
 	// Every entry point (backfill, resume-stalled) reaches the decoders
 	// through here, so the source policy is enforced here, not only at
 	// flag parse.
 	if err := checkBackfillSourcePolicy(opts.sources, cfg, opts.from, opts.to); err != nil {
+		return nil, nil, err
+	}
+	// Before the dispatcher exists, so no event can be persisted unrecorded.
+	if err := recordBackfillDirtyWindows(ctx, rec, cfg, opts); err != nil {
 		return nil, nil, err
 	}
 	realSources := filterOutSorobanEventsPseudo(opts.sources)
@@ -436,7 +442,7 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	}
 
 	pseudo := hasSorobanEventsPseudo(opts.sources)
-	disp, rawSink, err := buildChunkDispatcher(ctx, logger, opts, cfg, store, pseudo)
+	disp, rawSink, err := buildChunkDispatcher(ctx, logger, opts, cfg, store, store, pseudo)
 	if err != nil {
 		return err
 	}
@@ -1121,6 +1127,36 @@ func filterOutSorobanEventsPseudo(sources []string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// dirtyWindowRecorder is the slice of the store that records a projection
+// dirty window (migration 0125).
+type dirtyWindowRecorder interface {
+	RecordProjectionDirtyWindow(ctx context.Context, w timescale.ProjectionDirtyWindow) error
+}
+
+// recordBackfillDirtyWindows records a dirty window over [opts.from, opts.to]
+// for every backfilled source compute-completeness audits. Backfill rewrites
+// served rows below the verdict watermark, which voids the clean claim an
+// incremental run would otherwise carry over them. Any error must stop the
+// backfill before its first write.
+func recordBackfillDirtyWindows(ctx context.Context, rec dirtyWindowRecorder, cfg config.Config, opts backfillOpts) error {
+	if opts.dryRun {
+		return nil
+	}
+	audited := completeness.AuditedSources(cfg)
+	for _, src := range opts.sources {
+		if !slices.Contains(audited, src) {
+			continue
+		}
+		if err := rec.RecordProjectionDirtyWindow(ctx, timescale.ProjectionDirtyWindow{
+			Source: src, From: opts.from, To: opts.to,
+			Reason: timescale.BackfillWriteReason(opts.from, opts.to),
+		}); err != nil {
+			return fmt.Errorf("record dirty window for %s before writing (refusing to backfill): %w", src, err)
+		}
+	}
+	return nil
 }
 
 // checkBackfillSourcePolicy is the single source-admission rule for every

@@ -20,7 +20,7 @@ groups:
         expr: |
           sum by (template) (rate(stellarindex_notify_sends_total{result="failed"}[15m]))
           /
-          sum by (template) (rate(stellarindex_notify_sends_total[15m]))
+          sum by (template) (rate(stellarindex_notify_sends_total{result!="suppressed"}[15m]))
           > 0.5
         for: 15m
         labels:
