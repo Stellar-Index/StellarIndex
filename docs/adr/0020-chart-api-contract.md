@@ -11,217 +11,53 @@ superseded_by: null
 
 ## Context
 
-The historical price chart use case requires a chart contract shaped
-as `(timeframe, granularity, price_type) → points[]`:
-
-| Timeframe      | Granularity (suggested) | Data Points | Price Type   |
-|----------------|-------------------------|-------------|--------------|
-| 1 hour         | 1 min                   | ~60         | TWAP or VWAP |
-| 24 hours       | 15 min                  | ~96         | TWAP or VWAP |
-| 1 week         | 1 hr                    | ~168        | TWAP or VWAP |
-| 1 month        | 4 hr                    | ~180        | TWAP or VWAP |
-| Since Inception| 1 day                   | Variable    | TWAP or VWAP |
-
-The existing API surfaces some but not all of this:
-
-- `/v1/history` — raw trade rows in `[from, to)` (not chart-shaped).
-- `/v1/history/since-inception` — full CAGG-served series at one
-  granularity from a pair's earliest closed bucket. Has no
-  timeframe parameter.
-- `/v1/ohlc`, `/v1/vwap`, `/v1/twap` — single-bar aggregates over a
-  window (not series).
-
-None map 1:1 to the chart shape. The OpenAPI spec already declares
-the `timeframe` + `granularity` parameter components but neither is
-referenced by an operation — they were placeholders pending this
-decision.
+A price chart needs `(timeframe, granularity, price_type) → points[]`. The existing surfaces do not fit: `/v1/history` is raw trades, `/v1/history/since-inception` is one unbounded series with no timeframe, and `/v1/ohlc`, `/v1/vwap`, `/v1/twap` are single-bar aggregates.
 
 ## Decision
 
-Add a new `GET /v1/chart` endpoint that matches the chart contract
-exactly:
+Add `GET /v1/chart` as its own endpoint; do not extend `since-inception`, whose unbounded window is its contract and whose latency and cap profile differ from a rolling-window chart.
 
 ```
-GET /v1/chart
-  ?asset=<id>
-  &quote=<id>          # default: USD
-  &timeframe=<tf>      # 1h | 24h | 1w | 1mo | 1y | all   (default 24h)
-  &granularity=<g>     # 1m | 15m | 1h | 4h | 1d | 1w | 1mo (default per timeframe)
-  &price_type=<pt>     # vwap | twap                       (default vwap)
+GET /v1/chart?asset=<id>&quote=<id>&timeframe=<tf>&granularity=<g>&price_type=<pt>
+  quote        default USD
+  timeframe    1h | 24h | 1w | 1mo | 1y | all          default 24h
+  granularity  1m | 15m | 1h | 4h | 1d | 1w | 1mo      default per timeframe
+  price_type   vwap | twap                              default vwap
 ```
 
-Response shape mirrors `/v1/history/since-inception`:
-
-```json
-{
-  "data": {
-    "asset_id": "...",
-    "quote": "fiat:USD",
-    "timeframe": "24h",
-    "granularity": "15m",
-    "price_type": "vwap",
-    "points": [{ "t": "...", "p": "1.234", "v_usd": "..." }, ...]
-  },
-  "flags": { ... }
-}
-```
-
-### Why a new endpoint, not extension of since-inception
-
-`/v1/history/since-inception` has an unbounded window by name and
-documented purpose. Adding a `timeframe` param would muddy that
-contract. Customers who want the full series (regulators, CSV
-export, audit) and customers who want a chart with a rolling window
-(Freighter's UI) have different latency / cap profiles — keeping
-them as separate endpoints lets them evolve independently.
-
-### Default-granularity table (timeframe → granularity)
-
-When `granularity` is omitted, the handler picks per the table above:
+The response mirrors `/v1/history/since-inception`: `data` carries `asset_id`, `quote`, `timeframe`, `granularity`, `price_type` and `points[]` of `{t, p, v_usd}`, plus `flags`.
 
 | Timeframe | Default granularity | Approx points |
-|-----------|---------------------|---------------|
-| `1h`      | `1m`                | 60            |
-| `24h`     | `15m`               | 96            |
-| `1w`      | `1h`                | 168           |
-| `1mo`     | `4h`                | 180           |
-| `1y`      | `1d`                | 365           |
-| `all`     | `1d`                | variable      |
+|---|---|---|
+| `1h` | `1m` | 60 |
+| `24h` | `15m` | 96 |
+| `1w` | `1h` | 168 |
+| `1mo` | `4h` | 180 |
+| `1y` | `1d` | 365 |
+| `all` | `1d` | variable |
 
-Operators can still override (e.g. `timeframe=24h&granularity=1m`
-for a 1440-point chart) — the table is a default, not a constraint.
+The table is a default, not a constraint; an explicit `granularity` overrides it.
 
-### price_type handling
+- **`vwap`** is served from the `prices_<gran>` continuous aggregates.
+- **`twap`** is served from the `twap_1h` and `twap_1d` aggregates (migration 0081) for every non-fiat base. The requested `granularity` is snapped to the grain a TWAP aggregate backs (`1d`, `1w`, `1mo` to `1d`; anything finer to `1h`), and the response's own `granularity` reports the grain actually served. A fiat:fiat pair is served from `fx_quotes` for every `price_type`, because the daily reference rate is the series. A request is never silently answered with a different `price_type`.
+- **Closed buckets only** (ADR-0015): `HistoryPointsInRange` applies `bucket + interval <= now()`. The in-progress bucket is absent; sub-bucket freshness comes from `/v1/price` or `/v1/oracle/latest`.
+- **Cap:** `historyMaxPoints = 50_000`, as for `since-inception`. When the requested `(timeframe, granularity)` grid exceeds the cap, the series is served at the finest granularity whose grid fits, and the response's `granularity` reports it (today only `1y` + `1m`, served at `15m`). `timeframe=all` is never coarsened, because its point count is a property of the data. When the cap does cut a series (`timeframe=all`), it keeps the earliest buckets and drops the most recent.
+- **`flags.truncated`** is the RETENTION signal, computed from `points[0]` against the window start; it is not a statement about the cap.
+- **Retention of `1m`:** migration 0156 attaches a 90-day retention policy to `prices_1m` only, shipped disabled and armed by a deliberate operator act. Coarser rungs keep full history and raw trades are retained forever, so a dropped range is recomputable with a forced `refresh_continuous_aggregate`. The response cap and stored history are independent bounds.
 
-`vwap` is served from the existing `prices_<gran>` CAGGs (live
-today).
+## Invariant
 
-**Superseded 2026-07-05 — `twap` is served; see the amendment of
-2026-09-20 below. The two paragraphs that follow are the original
-decision, kept as written.**
-
-`twap` is NOT yet served — we do not maintain a TWAP CAGG at audit
-time. Requests with `price_type=twap` return `400 Bad Request` with
-problem+json explaining the parameter is reserved for forward
-compatibility but not yet supported. This is preferred over silent
-fallback-to-VWAP (which would mis-label the response) and over
-on-the-fly TWAP from the 1m CAGG (which would compute differently
-from a future TWAP CAGG and create a one-time consumer-visible
-break when we ship the CAGG).
-
-Tracked as L7.8 (post-launch) in
-[`launch-readiness-backlog.md`](../architecture/launch-readiness-backlog.md);
-the row carries the implementation sketch (TWAP CAGG migration +
-aggregator tick + handler flip). Reopened when a customer asks
-for TWAP-shaped multi-bar charts.
-
-### Closed-bucket guard
-
-Per ADR-0015, only CLOSED buckets are returned. The
-`HistoryPointsInRange` storage primitive applies the same
-`bucket + interval <= now()` filter as the existing
-`HistoryPoints`. The in-progress bucket is intentionally absent;
-clients seeking sub-bucket freshness use `/v1/price` (point-in-time)
-or `/v1/oracle/latest` (per-source).
-
-### Cap
-
-`historyMaxPoints = 50_000` (same as since-inception). At `1m`
-granularity this is ~35 days of data; well above the largest
-standard timeframe (1mo @ 4h = 180 points). Operators
-running an unusual `timeframe=1y&granularity=1m` request hit the
-cap and receive `flags.truncated=true`.
+- `/v1/chart` serves only closed buckets, never the in-progress one. Enforced by the `HistoryPointsInRange` closed-bucket filter.
+- A response always names the `granularity` and `price_type` actually served, and `twap` never falls back to VWAP. Enforced by `TestChart_TWAP_ServesTimeWeightedSeries`, `TestChart_TWAP_GranularitySnapping` and `TestChart_TWAP_StablecoinFallback` in `internal/api/v1/chart_test.go`.
+- A bounded-timeframe request over the point cap is coarsened to a granularity that fits, not cut; the response names the granularity served.
 
 ## Consequences
 
-- Adds one new endpoint, one new storage method
-  (`HistoryPointsInRange`) on the existing `HistoryReader`
-  interface, one OpenAPI operation. No CAGG / migration changes.
-- The existing `/v1/history/since-inception` is unaffected. Clients
-  using it continue working unchanged.
-- TWAP support is explicitly deferred. The 400 response includes a
-  pointer to this ADR so consumers know the parameter is honored
-  on a future release. *(Superseded 2026-07-05 — see the amendment
-  of 2026-09-20.)*
-- Coverage matrix rows F1.3 (Historical Price Chart) move from
-  partial to served.
+- One endpoint, one storage method (`HistoryPointsInRange` on `HistoryReader`) and one OpenAPI operation; no change to `/v1/history/since-inception`.
+- Clients that need the full series (regulators, CSV export, audit) and clients that need a rolling chart evolve independently.
+- A consumer can never mistake a snapped or coarsened series for the one it asked for, at the cost of reading `granularity` from the response.
 
-## Amendment — 2026-09-07: the cap, and what a request that exceeds it gets
+## Evidence
 
-Recorded because this ADR is published at `/research/adr/0020` and its
-§Cap makes a prediction that was never true. **The decision is
-untouched — `(timeframe, granularity, price_type) → points[]` still
-stands, and the default-granularity table is unchanged.**
-
-**What §Cap says.** "`historyMaxPoints = 50_000` … At `1m` granularity
-this is ~35 days of data; well above the largest standard timeframe
-(1mo @ 4h = 180 points). Operators running an unusual
-`timeframe=1y&granularity=1m` request hit the cap and receive
-`flags.truncated=true`."
-
-**What was measured on production, 2026-09-07.** That request returns
-`200` with 50,000 points spanning 2026-05-05 to 2026-06-10 — 36 of the
-365 days asked for, ending three months before the request did. The
-cap's truncation takes the EARLIEST buckets, so the response is the
-oldest slice of the available minute data rather than the most recent.
-`truncated` is indeed `true`, but not for the reason §Cap gives: that
-field is the RETENTION signal, computed from `points[0]` against the
-window start, and it is raised here because the series begins late —
-it says nothing about a window cut at the far end. `1m` was also not
-"well above" the standard set: `1y` at `1m` is 525,600 grid points
-against the 50,000 cap, an order of magnitude over.
-
-**What the handler does now.** When the requested
-`(timeframe, granularity)` grid exceeds the cap, the series is served
-at the finest granularity whose grid fits and the response's own
-`granularity` reports the width actually served — the field
-`price_type=twap` has used for its snapped `1h`/`1d` grain since TWAP
-shipped. Today this moves exactly one cell: `1y` + `1m` is served at
-`15m`. `timeframe=all` is never coarsened, because its point count is a
-property of the data rather than of the request (measured the same day,
-`all` + `1h` serves 47,823 points, complete and under the cap).
-
-This is a narrowing of §Cap's claim, not a change to the contract's
-shape: the parameter is still honoured, and a request whose grid fits —
-every combination in the default table, and `1mo` + `1m` at 43,200
-points — is served exactly as before.
-
-**Separately: `1m` may now be bounded to 90 days.** Migration 0156
-attaches a 90-day retention policy to the `prices_1m` continuous
-aggregate — that one view, shipped disabled, armed only by a deliberate
-operator act. Every coarser rung keeps its full history, and the raw
-trades behind all of them are retained forever, so a dropped range is
-recomputable with a FORCED `refresh_continuous_aggregate`. §Cap's
-"~35 days of data" figure was always about the response cap, not about
-what is stored; the two bounds are independent and the OpenAPI
-`granularity` description states each.
-
-## Amendment — 2026-09-20: `price_type=twap` is served, and has been since 2026-07-05
-
-Recorded because §price_type handling and the Consequences still
-describe `twap` as a reserved parameter that returns `400`, while the
-amendment above already spoke of "since TWAP shipped" — this ADR
-contradicted itself for the reader who stopped at §price_type. **The
-decision is untouched:** the `(timeframe, granularity, price_type)`
-contract and the refusal to fall back silently to VWAP both stand.
-
-**What shipped.** Migration 0081 added the `twap_1h` and `twap_1d`
-continuous aggregates over `prices_1m`, and `/v1/chart?price_type=twap`
-serves them for every non-fiat base. The requested `granularity` is
-snapped onto the grain a TWAP CAGG backs — `1d`, `1w`, `1mo` → `1d`;
-everything finer → `1h` — and the response's own `granularity` reports
-the grain actually served, so a consumer never mistakes a snapped
-series for the one they asked for. A fiat:fiat pair is served from
-`fx_quotes` for every `price_type`, `twap` included: the daily
-reference rate is the time series, and there is no sub-daily trade
-stream to time-weight.
-
-**What §price_type feared did not happen.** The concern was an
-on-the-fly TWAP from the 1m CAGG that would later disagree with a real
-TWAP CAGG. The CAGG shipped first; nothing was ever served from an
-interim computation, so there was no consumer-visible break.
-
-**Where it is pinned.** `TestChart_TWAP_ServesTimeWeightedSeries`,
-`TestChart_TWAP_GranularitySnapping` and
-`TestChart_TWAP_StablecoinFallback` in `internal/api/v1/chart_test.go`.
-Launch-readiness row L7.8 is closed by this amendment.
+- `internal/api/v1/chart.go`, `internal/api/v1/chart_test.go`; `historyMaxPoints` in `internal/api/v1/history.go`.
+- Migrations 0081 (TWAP aggregates) and 0156 (`prices_1m` retention).
