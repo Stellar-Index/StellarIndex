@@ -57,6 +57,12 @@ func TestK023_ReplayPathsConsultBackfillSafe(t *testing.T) {
 				"it re-decodes history with the CURRENT decoder without asking whether that decoder was "+
 				"audited against every WASM generation (F050)", cmd, files, globs, gateCalls)
 		}
+		// The static policy alone is not enough for a BackfillPerWASM
+		// source: the per-WASM instance-index gate must also run.
+		if files, found := scanForCall(t, globs, []string{"wasmaudit.GateReplay("}); !found {
+			t.Errorf("%s never calls wasmaudit.GateReplay (searched %d files under %v): a BackfillPerWASM "+
+				"source would replay history without proving every WASM hash that ran was audited", cmd, files, globs)
+		}
 	}
 }
 

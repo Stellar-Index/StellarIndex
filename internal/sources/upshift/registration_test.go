@@ -151,7 +151,7 @@ func TestRegistration_SourceMetadata(t *testing.T) {
 	}
 	// BackfillSafe stays false until a WASM audit page records that the
 	// decoder handles every version that ran over a replay range.
-	if meta.BackfillSafe {
+	if meta.BackfillSafe() {
 		t.Error("BackfillSafe is true without a WASM audit page")
 	}
 }

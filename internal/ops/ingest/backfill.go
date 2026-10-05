@@ -26,6 +26,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/wasmaudit"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -332,6 +333,9 @@ func buildChunkDispatcher(
 		return nil, nil, err
 	}
 	realSources := filterOutSorobanEventsPseudo(opts.sources)
+	if err := wasmaudit.GateReplay(ctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts, realSources, opts.from, opts.to); err != nil {
+		return nil, nil, err
+	}
 
 	var soroswapOpts []soroswap.DecoderOption
 	if !pseudo && len(realSources) > 0 {
@@ -1152,8 +1156,7 @@ func checkBackfillSources(sources []string, fromLedger, toLedger uint32) error {
 	return fmt.Errorf(
 		"refusing to backfill — sources not BackfillSafe (per-WASM-hash audit pending): %v; "+
 			"run stellarindex-ops wasm-history -from %d -to %d -contracts <CID> for each on-chain source, "+
-			"review every emitted WASM hash against the current decoder, then flip BackfillSafe=true in "+
-			"internal/sources/external/registry.go in the same PR (see docs/architecture/domain-traps.md, \"Soroban DeFi contracts "+
+			"review every emitted WASM hash against the current decoder, then audit each WASM hash under docs/operations/wasm-audits/, add it to internal/wasmaudit/audited_wasm.json and set Backfill: BackfillPerWASM in internal/sources/external/registry.go in the same PR (see docs/architecture/domain-traps.md, \"Soroban DeFi contracts "+
 			"upgrade in place\")",
 		sorobanPending, fromLedger, toLedger)
 }

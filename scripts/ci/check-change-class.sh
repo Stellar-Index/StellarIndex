@@ -89,7 +89,7 @@ class_go() {
   # The five data paths are go:embed inputs and testdata/ is Go's test
   # fixture convention: not *.go files, but each is read by a Go test.
   # The last four are the trigger-class guard's inputs, read only by it.
-  grep -E '(^|/)[^/]+\.go$|^go\.mod$|^go\.sum$|^openapi/|^internal/sources/external/binance/pairs\.yaml$|^internal/sources/external/forex/circulation_data\.csv$|^internal/currency/data/seed\.yaml$|^internal/ops/chops/audited_wasm\.json$|^internal/incidents/data/|(^|/)testdata/|^Makefile$|^\.github/workflows/ci\.yml$|^scripts/ci/check-change-class\.sh$|^scripts/ci/prepush-integration-required\.sh$'
+  grep -E '(^|/)[^/]+\.go$|^go\.mod$|^go\.sum$|^openapi/|^internal/sources/external/binance/pairs\.yaml$|^internal/sources/external/forex/circulation_data\.csv$|^internal/currency/data/seed\.yaml$|^internal/wasmaudit/audited_wasm\.json$|^internal/incidents/data/|(^|/)testdata/|^Makefile$|^\.github/workflows/ci\.yml$|^scripts/ci/check-change-class\.sh$|^scripts/ci/prepush-integration-required\.sh$'
 }
 
 class_web() {

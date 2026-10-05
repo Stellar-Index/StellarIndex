@@ -30,6 +30,7 @@ import (
 	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/wasmaudit"
 )
 
 // projectedRebuild is the ADR-0048 D3 bulk catch-up path for projected
@@ -215,6 +216,10 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	fromLedger := uint32(*from) //nolint:gosec // see above
 	if toLedger < fromLedger {
 		return fmt.Errorf("-to (%d) must be >= -from (%d)", toLedger, fromLedger)
+	}
+
+	if gerr := wasmaudit.GateReplay(ctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts, []string{*sourceName}, fromLedger, toLedger); gerr != nil {
+		return gerr
 	}
 
 	if gerr := checkLiveCursorGuard(haveLive, liveCursor.LastLedger, toLedger, *allowLiveOverlap); gerr != nil {
@@ -405,9 +410,7 @@ func checkProjectedRebuildBackfillSafe(source string, from uint32) error {
 			"pending, or not a known source): this tool decodes history with the CURRENT decoder and its rows overwrite "+
 			"the stored ones, and Soroban contracts upgrade in place, so an unaudited old WASM generation decodes to "+
 			"silently wrong rows. Run stellarindex-ops wasm-history -from %d -to <tip> -contracts <CID> for the source's "+
-			"contracts, review every emitted WASM hash against the current decoder, record it under "+
-			"docs/operations/wasm-audits/, then flip BackfillSafe=true in internal/sources/external/registry.go in the "+
-			"same PR (see docs/architecture/domain-traps.md, \"Soroban DeFi contracts upgrade in place\"). The dry-run is "+
+			"contracts, review every emitted WASM hash against the current decoder, then audit each WASM hash under docs/operations/wasm-audits/, add it to internal/wasmaudit/audited_wasm.json and set Backfill: BackfillPerWASM in internal/sources/external/registry.go in the same PR (see docs/architecture/domain-traps.md, \"Soroban DeFi contracts upgrade in place\"). The dry-run is "+
 			"gated too; to evaluate an unaudited decoder against history use ch-rebuild's default dry-run. If the name "+
 			"is simply wrong: projector SOURCE names are underscored (blend_backstop, sep41_transfers); see "+
 			"internal/projector/registry.go",

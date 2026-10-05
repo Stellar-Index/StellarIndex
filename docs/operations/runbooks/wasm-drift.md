@@ -19,7 +19,7 @@ severity: P3
 
 `stellarindex-ops wasm-drift -config PATH [-source NAME] [-textfile PATH]`
 reads ClickHouse only. For every gated source (`pipeline.GatedSourceNames()`)
-that has entries in `internal/ops/chops/audited_wasm.json`, it builds the
+that has entries in `internal/wasmaudit/audited_wasm.json`, it builds the
 contract set — curated set ∪ factories ∪ every child the factories announced,
 walked from the lake's creation events — resolves each contract's **current**
 WASM hash (`stellar.contract_instance_changes`, falling back to

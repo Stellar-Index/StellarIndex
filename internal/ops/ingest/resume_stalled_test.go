@@ -874,11 +874,11 @@ func TestNewDataGapGateContext_HasDeadline(t *testing.T) {
 func withdrawBackfillSafe(t *testing.T, source string) {
 	t.Helper()
 	orig, ok := external.Registry[source]
-	if !ok || !orig.BackfillSafe {
+	if !ok || !orig.BackfillSafe() {
 		t.Fatalf("fixture: %q must be a registered BackfillSafe source", source)
 	}
 	m := orig
-	m.BackfillSafe = false
+	m.Backfill = external.BackfillUnsafe
 	external.Registry[source] = m
 	t.Cleanup(func() { external.Registry[source] = orig })
 }

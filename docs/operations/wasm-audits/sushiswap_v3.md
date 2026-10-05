@@ -10,7 +10,7 @@ backfill_safe: false
 
 Audit log for the `sushiswap_v3` source. See [`README.md`](README.md)
 for the procedure. The hashes below are the `sushiswap_v3` entries in
-`internal/ops/chops/audited_wasm.json`, which `stellarindex-ops
+`internal/wasmaudit/audited_wasm.json`, which `stellarindex-ops
 wasm-drift` checks every gated contract against
 ([runbook](../runbooks/wasm-drift.md)).
 
@@ -211,4 +211,4 @@ factory upgrade.
 - Procedure: [`README.md`](README.md)
 - Decoder: `internal/sources/sushiswap_v3/{events,decode}.go`
 - Protocol verification: [`../../protocols/sushiswap_v3.md`](../../protocols/sushiswap_v3.md)
-- Drift check: `internal/ops/chops/wasm_drift.go`, manifest `internal/ops/chops/audited_wasm.json`
+- Drift check: `internal/ops/chops/wasm_drift.go`, manifest `internal/wasmaudit/audited_wasm.json`

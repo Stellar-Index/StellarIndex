@@ -26,8 +26,8 @@
 #      -write is then given. SRC narrows the run and the DELETE with it. A
 #      source this script has no DELETE map for is refused outright: it can
 #      only be upserted additively, which is `ch-rebuild` run directly, not
-#      this script. sushiswap_v3 is not here because it is not BackfillSafe:
-#      the gate refuses to rewrite it, so it must never be deleted.
+#      this script. sushiswap_v3 is not here because it has no DELETE map:
+#      an un-mapped source must never be deleted.
 #   3. Never forget an emptied window. $DIRTY gets `lo hi sources` before the
 #      DELETE and loses it only after the re-derive succeeds — and a run that
 #      cannot write that record deletes nothing. If the re-derive dies in

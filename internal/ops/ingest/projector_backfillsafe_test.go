@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	sep41transfers "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
-	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
 // F050: projector-replay is the documented catch-up procedure for every
@@ -29,19 +29,19 @@ func TestProjectorReplay_RefusesSourceThatIsNotBackfillSafe(t *testing.T) {
 	t.Parallel()
 	// The registry is the authority; if the audit lands and this flips,
 	// the test must be re-pointed at another unaudited source, not deleted.
-	if external.BackfillSafe(sushiswap_v3.SourceName) {
-		t.Fatalf("%s is now BackfillSafe — pick a source that is still unaudited for this test", sushiswap_v3.SourceName)
+	if external.BackfillSafe(upshift.SourceName) {
+		t.Fatalf("%s is now BackfillSafe — pick a source that is still unaudited for this test", upshift.SourceName)
 	}
 	for _, extra := range [][]string{nil, {"-dry-run"}} {
-		err := projectorReplay(io.Discard, replayArgs(t, sushiswap_v3.SourceName, extra...))
+		err := projectorReplay(io.Discard, replayArgs(t, upshift.SourceName, extra...))
 		if err == nil {
 			t.Fatalf("args %v: replay of an unaudited source returned nil", extra)
 		}
 		if !strings.Contains(err.Error(), "not BackfillSafe") {
 			t.Errorf("args %v: replay of %s got past the BackfillSafe gate (F050); error was: %v",
-				extra, sushiswap_v3.SourceName, err)
+				extra, upshift.SourceName, err)
 		}
-		if !strings.Contains(err.Error(), sushiswap_v3.SourceName) {
+		if !strings.Contains(err.Error(), upshift.SourceName) {
 			t.Errorf("args %v: refusal does not name the source: %v", extra, err)
 		}
 	}
@@ -95,7 +95,7 @@ func TestReplayBackfillSafe_BackstopFollowsBlendAttestation(t *testing.T) {
 		t.Fatalf("%s must be replay-safe while blend is attested", blend_backstop.SourceName)
 	}
 	withdrawn := orig
-	withdrawn.BackfillSafe = false
+	withdrawn.Backfill = external.BackfillUnsafe
 	external.Registry["blend"] = withdrawn
 	if external.ReplayBackfillSafe(blend_backstop.SourceName) {
 		t.Errorf("%s stayed replay-safe after blend's attestation was withdrawn", blend_backstop.SourceName)

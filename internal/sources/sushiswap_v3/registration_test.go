@@ -139,10 +139,8 @@ func TestRegistration_SourceMetadata(t *testing.T) {
 	if !meta.IncludeInVWAP {
 		t.Error("source is excluded from VWAP")
 	}
-	// BackfillSafe stays false until a WASM audit page records that the
-	// decoder handles every version that ran over a replay range.
-	if meta.BackfillSafe {
-		t.Error("BackfillSafe is true without a WASM audit page")
+	if meta.Backfill != external.BackfillPerWASM {
+		t.Errorf("Backfill = %v, want BackfillPerWASM (replay gated per WASM hash by wasmaudit)", meta.Backfill)
 	}
 }
 
