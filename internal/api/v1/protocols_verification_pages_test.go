@@ -26,6 +26,9 @@ var nonProtocolDocs = map[string]bool{
 	"sep41-supply.md":     true,
 	"supply-observers.md": true,
 	"blend_emitter.md":    true,
+	// Integration not built yet (no source, no registry row); move it to a
+	// registry entry when the spectra source lands.
+	"spectra.md": true,
 }
 
 // TestProtocolVerificationPages_PointAtRealFiles fails on a link the
