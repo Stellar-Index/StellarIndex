@@ -485,7 +485,7 @@ Subcommands:
                           least one output. No DB, no Timescale, no cursors.
                           Exits non-zero when every venue is silent, and with
                           -fail-on-silent when any venue is.
-  verify-archive -config PATH [-bucket NAME] [-from N] [-to N] [-tier MODE] [-archive-root PATH] [-peers URLs] [-peer-samples N] [-archivist-bin BIN] [-archivist-url URL] [-archivist-timeout DUR] [-fail-on-missed] [-max-runtime DUR] [-workers N] [-resume-from-hash HEX] [-metrics-listen ADDR] [-textfile-output PATH] [-state-file PATH] [-from-last-verified] [-safety-overlap N]
+  verify-archive -config PATH [-bucket NAME] [-from N] [-to N] [-tier MODE] [-archive-root PATH] [-peers URLs] [-peer-samples N] [-archivist-bin BIN] [-archivist-url URL] [-archivist-timeout DUR] [-sdf-samples N] [-fail-on-missed] [-max-runtime DUR] [-workers N] [-resume-from-hash HEX] [-metrics-listen ADDR] [-textfile-output PATH] [-state-file PATH] [-from-last-verified] [-safety-overlap N]
                           Verify a galexie bucket at one or more tiers:
                             chain      (Tier A) — chain-link hash integrity:
                                        each ledger N's PreviousLedgerHash
@@ -514,7 +514,14 @@ Subcommands:
                                        archivist via -archivist-bin) on
                                        PATH; long-running, gated by
                                        -archivist-timeout (default 30m).
-                            all        run all four.
+                            sdf-sample (Tier C) — compare -sdf-samples
+                                       (default 100) random ledgers in
+                                       [-from,-to] with SDF's public
+                                       dataset (storage.s3_cold_*) by
+                                       ETag+size. Needs explicit -to;
+                                       not part of "all". Any mismatch
+                                       bumps the mismatch counter.
+                            all        run tiers A, B, D and E.
                           -fail-on-missed: per ADR-0017 X1.7, treat
                                        checkpointsMissed > 0 as a hard
                                        failure. Default on; pass
