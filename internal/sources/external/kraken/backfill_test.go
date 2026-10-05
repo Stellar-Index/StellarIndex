@@ -560,3 +560,26 @@ func TestBackfillTrades_VenueErrorKeepsFetchedPages(t *testing.T) {
 		})
 	}
 }
+
+func TestKrakenBackfill_RESTPairIsAltname(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query().Get("pair")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": []string{}, "result": map[string]any{"XLMUSD": []krakenCandle{}, "last": 0}})
+	}))
+	defer srv.Close()
+	pair, err := canonical.NewPair(mustAsset(t, "crypto:XLM"), mustAsset(t, "fiat:USD"))
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	s := NewStreamer(map[string]canonical.Pair{"XLM/USD": pair})
+	s.Endpoint = srv.URL
+	from := time.Unix(1_745_000_000, 0).UTC()
+	if _, err := s.Backfill(context.Background(), pair, from, from.Add(time.Hour), time.Hour); err != nil {
+		t.Fatalf("Backfill: %v", err)
+	}
+	if got != "XLMUSD" {
+		t.Errorf("REST pair param = %q, want XLMUSD (no WS slash)", got)
+	}
+}

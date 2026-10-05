@@ -181,7 +181,7 @@ func seekSeedEvent(t *testing.T, ctx context.Context, chAddr string, ledger uint
 			InSuccessfulCall: 1,
 		}},
 	}
-	if err := sink.Add(ctx, ext); err != nil {
+	if err := sink.Add(ctx, withEventTxs(ext)); err != nil {
 		t.Fatalf("sink add (ledger %d): %v", ledger, err)
 	}
 	if err := sink.Flush(ctx); err != nil {

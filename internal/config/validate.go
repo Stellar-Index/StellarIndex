@@ -1021,6 +1021,27 @@ func (a AggregateConfig) AggregatorTriangulations() ([]ResolvedTriangulationChai
 	return out, nil
 }
 
+// validateCORS mirrors the combinations middleware.CORS panics on, so a bad
+// config fails Validate instead of crashing the API at boot.
+func (a APIConfig) validateCORS() error {
+	if len(a.AllowedOrigins) == 0 {
+		return nil
+	}
+	allowed := make(map[string]bool, len(a.AllowedOrigins))
+	for _, o := range a.AllowedOrigins {
+		allowed[o] = true
+	}
+	if allowed["*"] && a.AllowCredentials {
+		return fmt.Errorf("%w: api.allow_credentials is incompatible with api.allowed_origins=[\"*\"]", ErrInvalidConfig)
+	}
+	for _, o := range a.CredentialedOrigins {
+		if !allowed[o] {
+			return fmt.Errorf("%w: api.credentialed_origins entry %q is not in api.allowed_origins", ErrInvalidConfig, o)
+		}
+	}
+	return nil
+}
+
 func (a APIConfig) validate() error {
 	if a.ListenAddr == "" {
 		return fmt.Errorf("%w: api.listen_addr required", ErrInvalidConfig)
@@ -1045,6 +1066,9 @@ func (a APIConfig) validate() error {
 	default:
 		return fmt.Errorf("%w: api.auth_backend %q must be redis/postgres",
 			ErrInvalidConfig, a.AuthBackend)
+	}
+	if err := a.validateCORS(); err != nil {
+		return err
 	}
 	if a.AnonRateLimitPerMin < 0 {
 		return fmt.Errorf("%w: api.anon_rate_limit_per_min must be >= 0",

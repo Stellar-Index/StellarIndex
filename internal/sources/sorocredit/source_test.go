@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"math/big"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -465,6 +466,24 @@ func TestChildgate_SeedThenAccept(t *testing.T) {
 	newColl.ContractID = child
 	if d.Matches(newColl) {
 		t.Error("NewCollateralContract must be trust-root-only — a child cannot announce a position")
+	}
+}
+
+// TestGatedContractSet_GrowsWithAnnouncedChild pins the set the completeness
+// re-derive scopes its lake read to: root first, then every announced child.
+func TestGatedContractSet_GrowsWithAnnouncedChild(t *testing.T) {
+	t.Parallel()
+	d := NewDecoder()
+	if got := d.GatedContractSet(); len(got) != 1 || got[0] != MainnetContract {
+		t.Fatalf("fresh GatedContractSet = %v, want [%s]", got, MainnetContract)
+	}
+	out, err := d.Decode(goldenEvent(t, "NewCollateralContract"))
+	if err != nil {
+		t.Fatalf("Decode(NewCollateralContract): %v", err)
+	}
+	child := out[0].(Event).CollateralContract
+	if !slices.Contains(d.GatedContractSet(), child) {
+		t.Errorf("GatedContractSet %v omits announced child %s", d.GatedContractSet(), child)
 	}
 }
 

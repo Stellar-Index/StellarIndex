@@ -224,6 +224,14 @@ type buffer struct {
 	withdrawRewards map[groupKey]*RawWithdrawRewards
 	maxAge          time.Duration
 	nowFn           func() time.Time
+	// otherEvicted counts non-swap orphans swept during a swap absorb.
+	otherEvicted int
+}
+
+func (b *buffer) takeOtherEvicted() int {
+	n := b.otherEvicted
+	b.otherEvicted = 0
+	return n
 }
 
 func newBuffer() *buffer {
@@ -261,10 +269,9 @@ func (b *buffer) absorb(e *events.Event, fieldTopic string, closedAt time.Time) 
 	// ClosedAt, not wall-clock — so backfill of historical events
 	// correctly compares against the timeline being replayed.
 	evicted = b.sweepStale(closedAt)
-	// Also age-out stale entries from the liquidity / stake buffers.
-	// The dispatcher reports orphan counts in aggregate; counting
-	// per-buffer here would just split the same number across labels.
-	_ = b.sweepStaleAll(closedAt)
+	// Also age-out stale entries from the liquidity / stake buffers; their
+	// orphan count is collected via takeOtherEvicted.
+	b.otherEvicted += b.sweepStaleAll(closedAt)
 
 	k := keyOf(e)
 	r, ok := b.m[k]

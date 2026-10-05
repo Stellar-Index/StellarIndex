@@ -95,6 +95,7 @@ PROBE="$WORK/probe.sh"
   printf '%s\n' "${STRICT:-set -euo pipefail}"
   # shellcheck disable=SC2016  # emitted into the harness verbatim; $1 must not expand here
   printf 'TMP="$1"\n'
+  printf 'CH_NETRC=/dev/null\n'
   awk '/^SF_AGE/ { p = 1 } /^chmod 0644 "\$TMP"$/ { p = 0 } p' "$SRC"
 } > "$PROBE"
 if grep -q 'stellar.supply_flows' "$PROBE" && grep -q 'curl' "$PROBE" \

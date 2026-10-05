@@ -3,6 +3,7 @@ package dashboardauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -99,6 +100,10 @@ func (h *Handlers) notifyPasskeyChanged(r *http.Request, sc SessionContext, chan
 		sendCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), sendTimeout)
 		defer cancel()
 		err = h.cfg.Sender.Send(sendCtx, msg)
+	}
+	if errors.Is(err, notify.ErrSuppressed) {
+		obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplatePasskeyChanged, obs.NotifySendResultSuppressed).Inc()
+		return
 	}
 	if err != nil {
 		obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplatePasskeyChanged, obs.NotifySendResultFailed).Inc()

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -108,5 +109,22 @@ func TestSoroswapPairSeederKeepsRowRegisteredDuringSweep(t *testing.T) {
 	if err := s.finish(); err != nil || s.inserted.Load() != 0 || s.unchanged.Load() != 1 {
 		t.Fatalf("finish() = %v, inserted=%d unchanged=%d; want nil, 0, 1",
 			err, s.inserted.Load(), s.unchanged.Load())
+	}
+}
+
+func TestSoroswapFactoriesToSeed(t *testing.T) {
+	got := soroswapFactoriesToSeed(soroswap.MainnetFactory)
+	if len(got) != len(soroswap.MainnetFactories) || got[0] != soroswap.MainnetFactory {
+		t.Fatalf("mainnet: got %v, want every MainnetFactories entry, configured first", got)
+	}
+	seen := map[string]bool{}
+	for _, f := range got {
+		if seen[f] {
+			t.Errorf("duplicate factory %s", f)
+		}
+		seen[f] = true
+	}
+	if got := soroswapFactoriesToSeed("CTESTNETFACTORY"); len(got) != 1 || got[0] != "CTESTNETFACTORY" {
+		t.Errorf("non-mainnet factory must be seeded alone, got %v", got)
 	}
 }

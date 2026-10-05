@@ -32,7 +32,7 @@ The ordered, **rehearsed** sequence to run once ADR-0047 Phase 0 finishes on R1 
 `deploy.yml` workflow_dispatch with the tag. `deploy-binary.yml` **syncs the migrations dir and runs `stellarindex-migrate up` BEFORE swapping any binary** (F-1220) — so migrations **0109–0114** apply here.
 - **Rehearsed:** the full chain 0001→0114 applies up and rolls back down cleanly (scratch PG). 0113 DROPs the dead `classic_movements`; 0114 adds `soroban_events.topics_xdr`.
 - **Verify:** `schema_migrations` at 0114; the three stellarindex services healthy; live tip advancing.
-- **Rollback:** deploy the prior tag; `stellarindex-migrate down` is reversible per the round-trip test (but avoid down-migrating money tables with live data — prefer roll-forward).
+- **Rollback:** deploy the prior tag and roll forward. `stellarindex-migrate down` is NOT the prod lever: the round-trip test runs it on a near-empty database, and with live data the 0053–0060 and 0112 downs refuse (#1161) while 0114's down loses data.
 
 ### 3. ClickHouse `ledger_entries_current` reproject (C2-4c)  — heavy, windowed
 Run `deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql` Steps 0–5 under `run-heavy-job.sh`, off-peak, **windowed** (never one statement).

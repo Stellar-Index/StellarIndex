@@ -159,7 +159,9 @@ func (h *Handlers) notifyAccountErased(r *http.Request, owners []string) {
 			cancel()
 		}
 		result := obs.NotifySendResultSent
-		if err != nil {
+		if errors.Is(err, notify.ErrSuppressed) {
+			result = obs.NotifySendResultSuppressed
+		} else if err != nil {
 			result = obs.NotifySendResultFailed
 			h.cfg.Logger.Error("account erased notice not sent", "err", err, "to", maskEmail(to))
 		}

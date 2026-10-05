@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"errors"
+	"math/big"
 	"reflect"
 	"strings"
 	"testing"
@@ -304,8 +305,8 @@ func TestScanBlendReserveParts_IgnoresUnrequestedKeys(t *testing.T) {
 	if len(byAsset) != 0 {
 		t.Errorf("unrequested key produced %v, want nothing", byAsset)
 	}
-	if bstop != 0 {
-		t.Errorf("bstop = %d, want 0", bstop)
+	if bstop != nil {
+		t.Errorf("bstop = %d, want nil", *bstop)
 	}
 	// `matched` scopes the TTL-liveness filter. A key we did not ask about
 	// must not enter it: classifying it could only ever DROP reserves on the
@@ -458,35 +459,34 @@ func TestDropArchivedBlendReserves_NilCacheKeepsEverything(t *testing.T) {
 	}
 }
 
-// TestBackstopRateFromInstance_MissesDegradeToZero — 0 means "backstop take
-// unaccounted", i.e. the supply APR is reported GROSS. That is a deliberate
-// degrade, so the miss paths must reach it rather than panicking on a
-// non-instance ScVal or an instance with no Config entry.
-func TestBackstopRateFromInstance_MissesDegradeToZero(t *testing.T) {
+// TestBackstopRateFromInstance_MissesReportNotOK — a miss is not a 0%
+// backstop take: callers must withhold the APR, and the miss paths must not
+// panic on a non-instance ScVal or an instance with no Config entry.
+func TestBackstopRateFromInstance_MissesReportNotOK(t *testing.T) {
 	// Not an instance at all.
 	i := xdr.Int64(5)
-	if got := backstopRateFromInstance(xdr.ScVal{Type: xdr.ScValTypeScvI64, I64: &i}); got != 0 {
-		t.Errorf("non-instance ScVal gave bstop = %d, want 0", got)
+	if got, ok := backstopRateFromInstance(xdr.ScVal{Type: xdr.ScValTypeScvI64, I64: &i}); ok || got != 0 {
+		t.Errorf("non-instance ScVal gave (%d, %v), want (0, false)", got, ok)
 	}
 	// An instance with no storage map.
-	if got := backstopRateFromInstance(xdr.ScVal{
+	if got, ok := backstopRateFromInstance(xdr.ScVal{
 		Type:     xdr.ScValTypeScvContractInstance,
 		Instance: &xdr.ScContractInstance{Executable: xdr.ContractExecutable{Type: xdr.ContractExecutableTypeContractExecutableStellarAsset}},
-	}); got != 0 {
-		t.Errorf("instance without storage gave bstop = %d, want 0", got)
+	}); ok || got != 0 {
+		t.Errorf("instance without storage gave (%d, %v), want (0, false)", got, ok)
 	}
 	// An instance whose storage holds no "Config" key.
 	other := xdr.ScSymbol("Something")
 	v := xdr.Int64(1)
 	storage := xdr.ScMap{{Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &other}, Val: xdr.ScVal{Type: xdr.ScValTypeScvI64, I64: &v}}}
-	if got := backstopRateFromInstance(xdr.ScVal{
+	if got, ok := backstopRateFromInstance(xdr.ScVal{
 		Type: xdr.ScValTypeScvContractInstance,
 		Instance: &xdr.ScContractInstance{
 			Executable: xdr.ContractExecutable{Type: xdr.ContractExecutableTypeContractExecutableStellarAsset},
 			Storage:    &storage,
 		},
-	}); got != 0 {
-		t.Errorf("instance without a Config entry gave bstop = %d, want 0", got)
+	}); ok || got != 0 {
+		t.Errorf("instance without a Config entry gave (%d, %v), want (0, false)", got, ok)
 	}
 }
 
@@ -510,5 +510,32 @@ func TestContractIDFromStrkey_RejectsNonContractStrkeys(t *testing.T) {
 		if id, err := contractIDFromStrkey(bad); err == nil {
 			t.Errorf("contractIDFromStrkey(%q) = %x with no error, want a rejection", bad, id)
 		}
+	}
+}
+
+// A reserve with a config but no readable pool Config must not be served a
+// supply APR computed as if the backstop took 0%.
+func TestAssembleBlendReserveStates_MissingBackstopRateWithholdsAPR(t *testing.T) {
+	one := func() *big.Int { return big.NewInt(1_000_000_000_000) }
+	rd := blend.ReserveData{
+		Version: blend.PoolV2, DRate: one(), BRate: one(), IRMod: big.NewInt(10_000_000),
+		BSupply: big.NewInt(100), DSupply: big.NewInt(50), BackstopCredit: big.NewInt(0),
+	}
+	data := map[string]*blend.ReserveData{blendTestAssetSAC: &rd}
+	cfgs := map[string]blend.ReserveConfig{blendTestAssetSAC: {Decimals: 6}}
+	assets := []string{blendTestAssetSAC}
+
+	got := assembleBlendReserveStates(blendTestPool, assets, data, cfgs, nil)
+	if len(got) != 1 || got[0].Metrics.HasAPR {
+		t.Fatalf("unknown backstop rate: HasAPR = %v, want false (got %+v)", got[0].Metrics.HasAPR, got)
+	}
+	if !got[0].DecimalsFound || got[0].Decimals != 6 {
+		t.Errorf("decimals should still come from the reserve config, got %d found=%v", got[0].Decimals, got[0].DecimalsFound)
+	}
+
+	zero := uint32(0)
+	got = assembleBlendReserveStates(blendTestPool, assets, data, cfgs, &zero)
+	if !got[0].Metrics.HasAPR {
+		t.Errorf("a known 0%% backstop rate must still serve APR")
 	}
 }
