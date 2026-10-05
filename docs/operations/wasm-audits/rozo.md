@@ -203,7 +203,8 @@ no VWAP contribution regardless of `BackfillSafe`, which gates the operator-trig
 ## 2026-07-09 addendum — 4th contract admitted + topic-shape correction
 
 Two findings from the §0.7 recognition-audit sweep, read-only
-against the r1 ClickHouse lake (HTTP 8123; no wasm-history walk run):
+against the r1 ClickHouse lake (HTTP 8123; no MinIO / port 9000
+access, no wasm-history walk run):
 
 **Topic shape correction.** "Decoder expectations" above (2026-05-24,
 pre-dating the 2026-07-07 discovery in `events.go`) describes the 2-tuple topic

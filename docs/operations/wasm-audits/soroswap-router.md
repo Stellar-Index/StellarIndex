@@ -31,7 +31,7 @@ Cross-checked against `soroswap-core/public/mainnet.contracts.json` on
 2026-04-23 (same source as the sister `soroswap.md` audit).
 
 The 2026-04-30 r1 walk inventoried this router under a single WASM hash with
-no mid-life upgrades (see `r1-walk-2026-05-01.md`); the walk evidence is
+no mid-life upgrades observed in the walk window (see `r1-walk-2026-05-01.md`); the walk evidence is
 itemised in the soroswap audit's Phase 2 results. We'll re-cite it here once
 the per-hash decoder review for the router call shapes lands.
 

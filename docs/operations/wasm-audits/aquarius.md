@@ -281,7 +281,7 @@ names in their data sections.
   topic[0] = Symbol("trade") regardless of variant. All
   three pool types in production (including the 6
   rewards-enhanced pools) emit the same trade-event shape via the
-  shared events crate.
+  shared events crate, so the decoder works on all of them.
 
 ## References
 

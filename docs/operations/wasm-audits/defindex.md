@@ -3,7 +3,7 @@ title: DeFindex WASM-history audit
 last_verified: 2026-07-06
 status: complete — BackfillSafe=true (audited 2026-05-19, live-verified post-rc.58 deploy)
 source: defindex
-backfill_safe: false
+backfill_safe: true
 ---
 
 # DeFindex WASM audit

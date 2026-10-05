@@ -56,7 +56,8 @@ audit unit is this one address across its observed lifetime, same shape as
    (not to end of buffer, which would include XDR ext/padding) --
    `sha256(wasm_bytes) ==
    438a5528cff17ede6fe515f095c43c5f15727af17d006971485e52462e7e7b89`
-   exactly. WASM saved at
+   exactly -- the strongest form of evidence available short of a full
+   disassembler. WASM saved at
    [`evidence/blend_emitter/emitter-438a5528cff17ede.wasm`](evidence/blend_emitter/emitter-438a5528cff17ede.wasm).
 4. **Symbol presence check** against the verified bytes (see
    [`evidence/blend_emitter/emitter-438a5528cff17ede.symbols.txt`](evidence/blend_emitter/emitter-438a5528cff17ede.symbols.txt)):

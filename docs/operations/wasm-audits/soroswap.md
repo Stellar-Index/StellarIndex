@@ -15,7 +15,7 @@ Audit log for the `soroswap` source's `BackfillSafe` flag. See
 > 2026-04-30 wide-net r1 walk inventoried all **196 Soroswap
 > contracts** on mainnet (1 factory + 1 router + 194 pair
 > instances), each pinned to a single WASM hash, no
-> mid-life upgrades in the walk window (`Phase 2 results` below;
+> mid-life upgrades observed in the walk window (`Phase 2 results` below;
 > bytes + disassembly under
 > `evidence/r1-walk-2026-05-01/` on r1). The last gap — the factory
 > `set_pair_wasm` storage-rotation walk — closed on 2026-09-30: the
@@ -276,8 +276,8 @@ deploys pairs at runtime from a registered pair-WASM hash
 > **2026-05-01 update — caveat partially closed by r1 walk.** The
 > 2026-04-30 walk covers **194 deployed pair
 > instances** (`configs/audit/wasm-walk-contracts.yaml`)
-> and every one runs the same `18051456…` pair WASM; none ever
-> transitioned. See
+> and every one runs the same `18051456…` pair WASM; no pair
+> transitioned during the walked ledger range. See
 > [`r1-walk-2026-05-01.md`](r1-walk-2026-05-01.md) §Soroswap. Closes
 > v2 follow-up steps (1) and (2) below.
 
