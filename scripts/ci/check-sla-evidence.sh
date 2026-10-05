@@ -129,9 +129,8 @@ echo "sla-evidence: source=${SLA_EVIDENCE_SOURCE}."
 
 # ── Leg 2: has the feed actually produced its artefact recently? ────────
 # Match ONLY the dated report filenames the procedure prescribes. The
-# glob deliberately excludes sla-proof-procedure.md and
-# sla-proof-template.md, which live in the same directory and are the
-# recipe and the blank form — not evidence.
+# glob deliberately excludes sla-proof-procedure.md, which lives in the
+# same directory and is the recipe — not evidence.
 newest_proof=""
 newest_date=""
 for f in "$SLA_EVIDENCE_DIR"/sla-proof-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md; do

@@ -858,7 +858,7 @@ Stated plainly rather than estimated.
    replace the whole band with one measurement.
 
 2. **CAGG re-materialisation cost over 3,816 days.** The runbook's 4-8 hour
-   sweep (`docs/operations/cagg-broad-recompute.md:118-130`) is for current
+   sweep (`docs/operations/cagg-broad-recompute.md:52`) is for current
    volume. `trades` would grow 4.7× and `prices_1m` accrues ~390k rows/day
    at today's density
    (`docs/operations/backfill-procedure.md:530-533`). No historical-density
