@@ -1,60 +1,41 @@
 ---
 title: Archive completeness — invariants, bootstrap, daily cron
-last_verified: 2026-07-26
+last_verified: 2026-10-05
 status: living procedure
 ---
 
 # Archive completeness — invariants, bootstrap, daily cron
 
-Operational companion to [ADR-0017](../adr/0017-archive-completeness-invariants.md)
-(the policy decision). This doc covers:
+Operational companion to [ADR-0017](../adr/0017-archive-completeness-invariants.md).
+Implementation: `internal/ops/archive/` + `internal/archivecompleteness/` (the
+`stellarindex-ops archive-completeness` subcommand) and the ansible-shipped
+`galexie-archive-fill.sh`.
 
-- The two physical archives we maintain and what each one is for
-- Per-region behaviour (R1 enforces; R2/R3 delegate)
-- Bootstrap procedure (the one-shot historical fill)
-- Daily completeness cron (the current steady-state guardrail)
-- The nine cross-anchor sources the fill phase draws from
-- Prometheus metrics + status-page integration
-- The `stellarindex-ops archive-completeness` tool
-
-The implementation lives in `internal/ops/archive/` +
-`internal/archivecompleteness/` (the `archive-completeness`
-subcommand) plus the `galexie-archive-fill.sh` shell script shipped by
-the ansible role. (`refetch-history-archive` is **not** shipped by
-anything in this repo — it was named here and in
-archival-node-bringup.md but has never existed.)
-in `/usr/local/bin/`.
-
-Important scope note for this repo snapshot: the shipped
-`archive-completeness` command enforces and repairs the
-**cross-anchor** archive only. The broader ADR-0017 four-contract
-model remains the target architecture, but the current green path is
-not proof that the primary `galexie-archive` checks have run.
+**Scope:** the shipped command enforces and repairs the **cross-anchor** archive only.
+The ADR-0017 four-contract model is the target; a green run is not proof that the
+primary `galexie-archive` checks ran.
 
 ## The two archives
 
 ### Primary — `galexie-archive/` MinIO bucket (R1)
 
-Per-ledger XDR meta files. One file per ledger, ~62 M objects
-covering pubnet history. Layout:
+One XDR meta file per ledger (~62 M objects, pubnet history):
 
 ```
 galexie-archive/
 └── <HASH>--<N>-<N+63999>/         (partition, 64,000 ledgers)
     ├── <HEX>--<N+63999>.xdr.zst   (latest ledger in partition)
-    ├── <HEX>--<N+63998>.xdr.zst
     ├── ...
     └── <HEX>--<N>.xdr.zst         (earliest ledger in partition)
 ```
 
-This is the **source of rate data** — the indexer reads from here
-to populate Timescale. Source: AWS public-blockchain S3
-(`s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`),
-populated via `mc mirror` and the `galexie-archive-fill` script.
+The indexer's source of rate data. Filled from
+`s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/` via `mc mirror` and the
+`galexie-archive-fill` script.
 
 ### Cross-anchor — `/srv/history-archive/` (R1)
 
-Traditional Stellar history archive in canonical layout:
+Canonical Stellar history archive:
 
 ```
 /srv/history-archive/
@@ -67,140 +48,78 @@ Traditional Stellar history archive in canonical layout:
 └── .well-known/
 ```
 
-Each `ledger-<hex>.xdr.gz` carries 64 `LedgerHeaderHistoryEntry`
-records (one per ledger in the checkpoint window). This is the
-**verification anchor** — `stellarindex-ops verify-archive -tier
-checkpoint` reads each checkpoint's signed hash here and compares
-against our LCM-derived hash to prove our primary archive matches
-SDF's canonical view.
-
-Source: `https://history.stellar.org/prd/core-live/core_live_001`
-(SDF's primary published archive). Mirrored via `stellar-archivist`
-or `mc mirror` at one-shot bootstrap time; refreshed by the daily
-cron.
+Each `ledger-<hex>.xdr.gz` holds 64 `LedgerHeaderHistoryEntry` records. This is the
+**verification anchor**: `stellarindex-ops verify-archive -tier checkpoint` compares each
+checkpoint's signed hash with our LCM-derived hash. Source:
+`https://history.stellar.org/prd/core-live/core_live_001`, mirrored at bootstrap
+(`stellar-archivist` or `mc mirror`) and refreshed by the daily cron.
 
 ## Per-region behaviour
 
-Per [ADR-0016](../adr/0016-per-region-storage-strategy.md) the
-three regions have asymmetric storage shapes. Completeness
-enforcement reflects that.
+Storage shapes per [ADR-0016](../adr/0016-per-region-storage-strategy.md). R2/R3 are
+deferred; today R1 is the only host.
 
 ### R1 Frankfurt — integrity leader
 
-R1 holds both archives locally. In the current implementation it runs
-the cross-anchor portion of the daily control and serves as the fleet's
-trust anchor for that narrower check set.
+Holds both archives and runs the cross-anchor control:
 
 ```
 stellarindex-ops archive-completeness verify -from <floor> -to <tip> -workers 8
-  ↓
-  ├─ implemented today: stat each expected /srv/history-archive/ledger-*.xdr.gz
-  └─ implemented today: fetch/repair missing cross-anchor checkpoint files
+  ├─ stat each expected /srv/history-archive/ledger-*.xdr.gz
+  └─ fetch/repair missing cross-anchor checkpoint files
 ```
 
-> ⚠️ **`-to 0` does NOT mean "resolve the tip".** The binary rejects it
-> outright — `-to is required (pass the network head ledger sequence)`,
-> `internal/ops/archive/archive_completeness.go`. Nothing in the tool
-> reads a cursor. It is the ansible-installed unit's
-> `ExecStartPre=/usr/local/sbin/compute-archive-to.sh` that computes a
-> tip from `ingestion_cursors` and writes `ARCHIVE_TO=<n>` to
-> `/run/archive-completeness.env`, which the unit then loads. Run it by
-> hand and you must supply `-to` yourself. Every `-to 0` in earlier
-> versions of this doc would have exited 1 without doing any work.
+> ⚠️ **`-to 0` does NOT resolve the tip** — the binary refuses it (`-to is required (pass
+> the network head ledger sequence)`). The unit's
+> `ExecStartPre=/usr/local/sbin/compute-archive-to.sh` computes the tip from
+> `ingestion_cursors` and writes `ARCHIVE_TO=<n>` to `/run/archive-completeness.env`. By
+> hand, supply `-to` yourself.
 
-(The real
-flag set is `-archive-root`, `-from`, `-to`, `-workers`,
-`-owner-user`, `-owner-group`, `-network`, `-output-file`,
-`-textfile-output`, `-write` — see
-`internal/ops/archive/archive_completeness.go::archiveCompletenessVerify`
-and `deploy/systemd/archive-completeness.service` for the exact
-invocation. `-write` is REQUIRED to actually fetch/repair anything:
-without it, `fix`/`verify` are a fail-closed DRY RUN that report what
-would change and write nothing (#1191) — the shipped systemd units
-pass it. There is no `-range`/`-checks`/`-trust-leader` flag; the
-range-keyword and per-check selectors below describe the *target*
-ADR-0017 design, not the shipped command.)
+`-write` is required to fetch/repair; without it `fix`/`verify` are a fail-closed dry run
+(#1191). The shipped units pass it. On failure the run tries the nine cross-anchor sources
+(below); if repair fails it exits non-zero and the alerts fire.
 
-On any cross-anchor failure: attempt repair from the nine
-cross-anchor sources (below). If repair succeeds, exit clean. If repair
-fails, exit non-zero and emit a Prometheus alert.
+### R2 US-East — AWS hybrid, trusts R1 (target design, not shipped)
 
-### R2 US-East — AWS hybrid, trusts R1
-
-R2 doesn't store either archive locally — the indexer streams
-galexie data direct from `aws-public-blockchain` S3, and there's no
-cross-anchor archive on R2 disks at all. R2's local cron is
-narrower:
+No local archive: the indexer streams from `aws-public-blockchain` S3.
 
 ```
-# TARGET DESIGN (not shipped) — the -checks/-trust-leader flags do not
-# exist on the current binary. R2/R3 are deferred; today R1 is the only
-# host and runs the cross-anchor `verify` above.
+# TARGET — -checks/-trust-leader do not exist on the current binary.
 stellarindex-ops archive-completeness verify -checks chain-link,multi-peer \
   -trust-leader r1
 ```
 
-The ADR describes two checks that should run locally:
+- **Chain-link (contract 2):** walk yesterday's ledgers through galexie's S3 reader;
+  confirm `prev.LedgerHash == curr.PreviousLedgerHash`.
+- **Multi-peer (Tier D):** sample 20 checkpoints from yesterday, fetch each from 6 tier-1
+  validator archives, confirm the hashes agree (catches forks).
+- **Delegation:** read R1's `archive_completeness_last_success_timestamp`; if older than
+  **26 h**, R2 marks itself reduced-redundancy and sets the API's `ReducedRedundancy`
+  envelope flag on every response.
 
-- **Chain-link (contract 2 only):** walk yesterday's ledgers
-  through galexie's S3 reader and confirm `prev.LedgerHash ==
-  curr.PreviousLedgerHash`. Catches AWS bucket bit-flips and any
-  ingest-side corruption regardless of upstream trust.
-- **Multi-peer (Tier D):** sample 20 checkpoints from yesterday's
-  range, fetch each from 6 tier-1 validator archives, verify the
-  hashes agree. Catches forks (chain internally consistent but
-  doesn't match the network's signed reality).
+### R3 Singapore — Vultr hybrid, trusts R1 (target design, not shipped)
 
-In the current implementation, contract delegation is narrower: query
-R1's Prometheus `archive_completeness_last_success_timestamp`
-gauge over the metrics endpoint. If R1's last clean run is older
-than **26 hours**, R2 marks itself *reduced redundancy* and sets
-the API's `ReducedRedundancy` envelope flag on every response.
-
-### R3 Singapore — Vultr hybrid, trusts R1
-
-R3 has the primary archive locally on Vultr Object Storage but no
-cross-anchor archive. Same shape as R2 with one addition:
+Primary archive on Vultr Object Storage, no cross-anchor. As R2 plus contract 1
+(structural) on its local copy:
 
 ```
-# TARGET DESIGN (not shipped) — same caveat as R2 above.
+# TARGET — same caveat as R2.
 stellarindex-ops archive-completeness verify \
   -checks structural,chain-link,multi-peer \
   -trust-leader r1
 ```
 
-R3's target design includes contract 1 (structural) on its own local
-primary copy because Vultr Object Storage failures are local to R3.
-The shipped `archive-completeness` implementation still only enforces
-the cross-anchor archive path.
-
-If Vultr Object Storage drops files, R3's local structural check
-catches it within 24 h. The repair path is `mc mirror` from R1's
-MinIO over the WAN — slower (165 ms RTT to Frankfurt) but
-correctness-preserving.
+Repair is `mc mirror` from R1's MinIO over the WAN (165 ms RTT to Frankfurt).
 
 ## Bootstrap procedure (one-shot)
 
-Required before the daily cron can begin enforcing the invariants
-on R1. Existing R1 gaps as of 2026-04-27:
+Required before the daily timer enforces anything on a node.
 
-- `galexie-archive/`: confirmed gap of ~35,000 contiguous ledger
-  files in partition `FD9DA5FF--40000000-40063999/`; surrounding
-  partitions 40M–40.5M are 22K–35K files short. Total to be
-  determined when `galexie detect-gaps` finishes the full-range
-  scan.
-- `/srv/history-archive/`: ~6,782 of 972,652 expected
-  `ledger-<hex>.xdr.gz` files missing (verifier reported
-  `checkpointsMissed=6273` over a partial range; full count
-  determined by enumeration).
-
-### Steps
-
-1. **Diagnose primary gaps**
+1. **Diagnose primary gaps** (~2.5 h on r1, 32 workers × 100K ledgers):
 
    ```sh
-   AWS_ACCESS_KEY_ID=stellarindex-admin \
-   AWS_SECRET_ACCESS_KEY=<...> \
+   AWS_ACCESS_KEY_ID=<minio root user> \
+   AWS_SECRET_ACCESS_KEY=<minio root secret> \
    AWS_ENDPOINT_URL=http://127.0.0.1:9000 \
      galexie detect-gaps \
        --config-file /etc/galexie/galexie-backfill.toml \
@@ -208,9 +127,7 @@ on R1. Existing R1 gaps as of 2026-04-27:
        --output-file /var/lib/galexie/detect-gaps.json
    ```
 
-   Wall-clock: ~2.5 h on r1 (32 parallel workers, 100K ledgers each).
-
-2. **Group missing ledgers into partitions**
+2. **Group missing ledgers into partition starts:**
 
    ```sh
    jq -r '.gaps[] | "\(.start) \(.end)"' /var/lib/galexie/detect-gaps.json \
@@ -219,30 +136,20 @@ on R1. Existing R1 gaps as of 2026-04-27:
      > /tmp/partials-starts.txt
    ```
 
-   Map each starting ledger to the partition's hex-prefix name (script
-   `partition-name-from-ledger.sh`, planned).
+   Map each start to its hex-prefixed partition name (`partition-name-from-ledger.sh` is
+   planned, not shipped) into `/tmp/partials.txt`.
 
-3. **Run `galexie-archive-fill` with `PARTIALS=`**
+3. **Re-mirror those partitions:**
 
    ```sh
    PARTIALS="$(cat /tmp/partials.txt)" galexie-archive-fill
    ```
 
-   The script deletes each named partition then re-mirrors it from AWS
-   in parallel (8 workers default; tunable via `PARALLEL` env). See
-   [galexie-backfill.md "mc mirror gotcha"](galexie-backfill.md#highest-impact-lever-in-practice-mirror-from-the-aws-public-bucket)
-   for the failure mode this works around.
+   Deletes each named partition, then re-mirrors it from AWS (8 workers; `PARALLEL` env).
+   See [galexie-backfill.md "mc mirror gotcha"](galexie-backfill.md#highest-impact-lever-in-practice-mirror-from-the-aws-public-bucket).
 
-4. **Diagnose + fill cross-anchor gaps**
-
-   The command dispatches three modes — `check | fix | verify`
-   (`internal/ops/archive/archive_completeness.go`; an unknown mode is
-   rejected by name). `verify` is the one you normally want: it
-   performs the cross-anchor check AND fills any missing checkpoints in
-   one pass (Phase 1 check → Phase 2 cross-anchor fill). Use `check`
-   for a read-only inventory and `fix` to repair without re-checking.
-   Run it over the range and write the JSON report — `-to` is
-   **required** and must be a real ledger:
+4. **Diagnose + fill cross-anchor gaps** (`verify` = check, then fill; see
+   [Tool reference](#tool-reference)):
 
    ```sh
    TO=$(psql "$STELLARINDEX_POSTGRES_DSN" -tA \
@@ -255,16 +162,10 @@ on R1. Existing R1 gaps as of 2026-04-27:
        -output-file /var/lib/galexie/cross-anchor-gaps.json
    ```
 
-   (`compute-archive-to.sh` computes `$TO` with exactly that query;
-   `-from` is the node's hot floor, ADR-0027.)
+   `compute-archive-to.sh` uses the same query; `-from` is the node's hot floor
+   (ADR-0027). ~100 ms per missing file; ~7K files take ~1 min at 16 workers.
 
-   For each missing checkpoint it tries `core_live_001` →
-   `core_live_002` → `core_live_003` → tier-1 validator archives.
-   ~6,782 files at ~100 ms each = ~12 min serial, ~1 min wall-clock
-   at 16-way parallel. The exit code is 0 if no residual files remain
-   after the fill, 1 if all nine cross-anchor sources were exhausted on some.
-
-5. **Run end-to-end verify with hardened defaults**
+5. **End-to-end verify** — must exit 0 before enabling the timer:
 
    ```sh
    stellarindex-ops verify-archive -config /etc/stellarindex.toml \
@@ -272,75 +173,35 @@ on R1. Existing R1 gaps as of 2026-04-27:
      -fail-on-missed
    ```
 
-   `-fail-on-missed` (added in PR D, see ADR-0017) treats
-   `checkpointsMissed > 0` as a hard failure. Must exit 0 before the
-   daily cron is enabled.
+   `-fail-on-missed` makes `checkpointsMissed > 0` a hard failure.
 
-6. **Enable the daily timer**
-
-   ```sh
-   systemctl enable --now archive-completeness.timer
-   ```
-
-After step 6, the system carries the invariants forward.
+6. **Enable the daily timer:** `systemctl enable --now archive-completeness.timer`
 
 ## Daily completeness cron (steady state)
 
-### What runs
-
-`/etc/systemd/system/archive-completeness.timer`:
-
-```ini
-[Timer]
-OnCalendar=*-*-* 02:17:00 UTC
-Persistent=true
-RandomizedDelaySec=300
-```
-
-The :17 minute and the 5-minute jitter avoid AWS S3 thundering-herd
-patterns and spread the three regions' runs apart from each other.
-
-The timer fires
-`/etc/systemd/system/archive-completeness.service`, which runs (see
-`deploy/systemd/archive-completeness.service` for the canonical unit):
+`archive-completeness.timer` (`OnCalendar=*-*-* 02:17:00 UTC`, `RandomizedDelaySec=300`,
+`Persistent=true`) fires `archive-completeness.service`
+(`configs/ansible/roles/archival-node/templates/systemd/archive-completeness.service.j2`):
 
 ```sh
-# ExecStartPre=/usr/local/sbin/compute-archive-to.sh
-#   → writes ARCHIVE_TO=<n> to /run/archive-completeness.env
-# ExecStart, with ARCHIVE_FROM = the hot floor and ARCHIVE_TO from above:
+# ExecStartPre=/usr/local/sbin/compute-archive-to.sh  → ARCHIVE_TO in /run/archive-completeness.env
 run-heavy-job.sh archive-completeness \
   stellarindex-ops archive-completeness verify \
     -write \
-    -from ${ARCHIVE_FROM} -to ${ARCHIVE_TO} -workers 8 \
-    -network ${STELLAR_NETWORK} \
-    -textfile-output /var/lib/node_exporter/textfile_collector/archive_completeness.prom \
-    -output-file /var/lib/galexie/last-completeness-report.json
+    -from ${ARCHIVE_FROM} -to ${ARCHIVE_TO} -workers ${WORKERS} \
+    -network {{ stellar_network | default('pubnet') }} \
+    -textfile-output ${TEXTFILE_OUTPUT} \
+    -output-file ${REPORT_OUTPUT}
 ```
 
-### Wall-clock budget per run
-
-| Step | Operation | Time |
-|---|---|---|
-| 1 | LIST yesterday's primary partitions; compare against expected count | ~5 s |
-| 2 | Stat each expected cross-anchor checkpoint file | ~1 s |
-| 3 | Fetch any missing primary files from AWS | ~50 ms/file |
-| 4 | Fetch any missing cross-anchor files from the nine sources | ~100 ms/file |
-| 5 | Chain-link walk yesterday's range (Tier A) | ~30 s |
-| 6 | Cross-anchor verify yesterday's range (Tier B) | ~30 s |
-| 7 | Emit Prometheus gauges, exit | <1 s |
-
-**Clean day:** ~70 s total. **Bad day with 100 missing files:**
-~2–5 min. Either fits comfortably inside the 26-h staleness budget
-that R2 + R3 use to decide their `ReducedRedundancy` flag.
+The unit stays `User=root`: `run-heavy-job.sh` creates its memory scope and disk watchdog
+only for a root caller.
 
 ## Cross-anchor sources
 
-For each missing cross-anchor file the daemon tries the nine sources
-below in order, falling through on failure. This is the shipped list,
-verbatim from `internal/archivecompleteness/cross_anchor_fill.go` —
-three families of three, **pubnet only** (a non-pubnet `-network`
-makes the fill phase refuse rather than write pubnet checkpoints into
-a test-net store):
+Tried in order per missing file, from `DefaultCrossAnchorSources` in
+`internal/archivecompleteness/cross_anchor_fill.go`. **Pubnet only:** a non-pubnet
+`-network` makes the fill phase refuse.
 
 ```
 1. sdf-core-live-001     https://history.stellar.org/prd/core-live/core_live_001
@@ -354,32 +215,11 @@ a test-net store):
 9. lobstr-v5             https://archive.v5.stellar.lobstr.co
 ```
 
-Each name is the `source` label on
-`archive_completeness_repair_attempts_total` /
-`_repair_failures_total`, so a family going dark is visible per-source
-in Prometheus. Earlier versions of this doc listed AWS
-public-blockchain S3, Franklin Templeton, SatoshiPay, Creit Tech and a
-`galexie scan-and-fill` layer 6 — none of those are in the shipped
-chain. The `galexie-archive` (primary) half is filled by the separate
-`galexie-archive-fill.sh` timer, not by this chain.
-
-All nine are fast HTTP fetches (~100 ms each). There is no
-captive-core replay layer here: if all nine are missing the same
-checkpoint, the run reports residual missing files (exit 1) and the
-gap needs the `galexie-archive-fill` / bringup path instead.
-
-Per-source success and failure are tracked in
-`archive_completeness_repair_attempts_total` /
-`archive_completeness_repair_failures_total` so a degrading source
-shows up in dashboards before it becomes the primary problem. Both
-are keyed by the **real** source name from
-[`DefaultCrossAnchorSources`](https://github.com/Stellar-Index/StellarIndex/blob/main/internal/archivecompleteness/cross_anchor_fill.go),
-and *every* try counts as an attempt — including the tries that
-failed before a later source in the chain succeeded. That matters:
-a source that fails 100 % of the time would never appear in a
-success-only denominator, which is precisely how
-`stellarindex_archive_repair_source_degraded` came to be
-structurally unfireable (C4-037, fixed 2026-07-26).
+Each name is the `source` label on the repair counters; every try counts as an attempt,
+including ones a later source rescued. There is no captive-core replay layer: if all nine
+miss a checkpoint the run exits 1 and the gap needs the `galexie-archive-fill` / bringup
+path. The primary archive is filled by the separate `galexie-archive-fill.sh` timer, not
+this chain.
 
 ## Prometheus surface
 
@@ -392,116 +232,63 @@ archive_completeness_repair_failures_total{source="..."} counter
 archive_completeness_last_success_timestamp           gauge
 ```
 
-The `verify` run rewrites this textfile wholesale (write `.tmp` →
-rename), so **anything a run does not re-emit disappears from the
-next scrape** — node_exporter's textfile collector re-reads the file
-every time; it does not retain prior values. The writer therefore
-reads the existing file back before each rewrite and carries the
-persistent state forward:
+`verify` rewrites the textfile wholesale (`.tmp` → rename), so it reads the old file back
+and carries state forward:
 
-* `archive_completeness_last_success_timestamp` is re-emitted on
-  every run, holding the last **clean** run's time. `0` means no
-  clean run has ever been recorded on this host — which correctly
-  fires the staleness alerts, because an archive that has never been
-  verified is not a healthy one.
-* the two `repair_*_total` counters accumulate across runs, so they
-  are genuine monotonic counters and `increase()` over them is
-  meaningful.
-
-Omitting the last-success line on a failed run was C4-038/039/054:
-the series vanished and `time() - <absent series>` yields no samples,
-so the staleness alerts went silent during exactly the persistent-
-failure state they exist for.
-
-R2 and R3 each emit their own copies (per region). They also scrape
-R1's `archive_completeness_last_success_timestamp` over the
-internal metrics endpoint to drive the `ReducedRedundancy` decision.
+- `archive_completeness_last_success_timestamp` is re-emitted every run with the last
+  **clean** run's time; `0` = never clean on this host, which correctly fires the
+  staleness alerts. (An absent series would silence them.)
+- the two `repair_*_total` counters accumulate across runs, so `increase()` is valid.
 
 ### Alert rules
 
-Defined in `deploy/monitoring/rules/archive-completeness.yml` per
-[alerts-catalog.md](alerts-catalog.md):
+`deploy/monitoring/rules/archive-completeness.yml` (catalog: [alerts-catalog.md](alerts-catalog.md)):
 
-| Alert | Threshold | Severity | Runbook |
+| Alert | Condition | Severity | Runbook |
 |---|---|---|---|
-| `stellarindex_archive_files_missing` | gauge > 0 for 4h on either archive | P2 | [archive-files-missing](runbooks/archive-files-missing.md) |
-| `stellarindex_archive_completeness_stale` | last_success_timestamp older than 26h | P2 | [archive-completeness-stale](runbooks/archive-completeness-stale.md) |
-| `stellarindex_archive_repair_source_degraded` | `increase(repair_failures[25h]) / increase(repair_attempts[25h])` > 0.10 per source, sustained 30 m | P3 | [archive-repair-source-degraded](runbooks/archive-repair-source-degraded.md) |
+| `stellarindex_archive_files_missing` | `archive_files_missing > 0` for 4h | ticket | [archive-files-missing](runbooks/archive-files-missing.md) |
+| `stellarindex_archive_completeness_stale` | last success > 26h, for 5m | ticket | [archive-completeness-stale](runbooks/archive-completeness-stale.md) |
+| `stellarindex_archive_completeness_critical_stale` | last success > 48h, for 5m | page | [archive-completeness-stale](runbooks/archive-completeness-stale.md) |
+| `stellarindex_archive_repair_source_degraded` | per source `increase(failures[25h]) / increase(attempts[25h]) > 0.10`, for 30m | informational | [archive-repair-source-degraded](runbooks/archive-repair-source-degraded.md) |
 
-## Status-page integration
+## Status-page integration (planned)
 
-Public status page at `https://stellarindex.io/status` (planned per
-[sev-playbook.md §5.3](sev-playbook.md#51-status-page)).
+Status page `https://stellarindex.io/status` per
+[sev-playbook.md §5.3](sev-playbook.md#51-status-page). Component "Historical data
+integrity":
 
-Two status-page indicators tied to archive completeness:
+- **Operational** — every region's last success within 26 h and `archive_files_missing == 0` everywhere.
+- **Degraded performance** — any region 26–48 h, or `archive_files_missing > 0` on a non-leader.
+- **Partial outage** — R1 older than 48 h, or `archive_files_missing > 100` on R1.
+- **Major outage** — no R1 success in 7 days.
 
-1. **Component: "Historical data integrity"**
-   - **Operational** — all three regions' last successful run is
-     within 26 h AND `archive_files_missing == 0` everywhere.
-   - **Degraded performance** — any region's last successful run
-     is 26–48 h old, OR `archive_files_missing > 0` on a non-leader
-     region.
-   - **Partial outage** — R1's last successful run is older than
-     48 h, OR `archive_files_missing > 100` on R1 (the integrity
-     leader).
-   - **Major outage** — R1 hasn't completed a successful run in
-     7 days (cross-anchor verification is dead).
-
-2. **Envelope flag exposure** — when status is *Degraded* or worse,
-   the API sets `flags.reduced_redundancy = true` on every response
-   (per ADR-0017). Customers monitoring this flag programmatically
-   see the same signal humans see on the status page.
-
-The status-page state is computed by a small worker that scrapes
-the three regions' Prometheus federations every 60 s; transitions
-between states require ≥ 2 consecutive samples to avoid flapping.
-The worker also writes a short human-readable note ("R1 archive
-backfill in progress, ETA 18:00 UTC") that operators can edit
-during incidents — see [sev-playbook.md §5.4](sev-playbook.md#54-what-we-do-not-say)
-for the comms policy.
+At *Degraded* or worse the API sets `flags.reduced_redundancy = true` on every response
+(ADR-0017). A worker scrapes the regions' Prometheus federations every 60 s and needs ≥ 2
+consecutive samples to change state; its operator-editable note follows
+[sev-playbook.md §5.4](sev-playbook.md#54-what-we-do-not-say).
 
 ## Tool reference
 
-The command dispatches three modes — `check | fix | verify`
-(`internal/ops/archive/archive_completeness.go`; an unknown mode is
-rejected by name). `verify` is the one you normally want: it performs
-the cross-anchor check AND fills any missing checkpoints in one pass
-(Phase 1 check → Phase 2 cross-anchor fill). `check` is a read-only
-inventory; `fix` repairs without re-checking.
-
-What is still NOT implemented is the FLAG set below the line — the
-`-range` / `-checks` / `-trust-leader` flags belong to the target
-ADR-0017 design and do not exist in the binary (the real flags are
-`-from` / `-to` / `-archive-root` / `-network` / `-output-file` /
-`-textfile-output` / `-write`). Read the usage block below as the
-target shape, not as today's interface.
+Modes `check | fix | verify` (`internal/ops/archive/archive_completeness.go`; unknown modes
+are rejected). `check` is a read-only inventory, `fix` repairs without re-checking,
+`verify` checks then fills. `-range` / `-checks` / `-trust-leader` are target ADR-0017 flags
+and do not exist.
 
 ```
 USAGE
   stellarindex-ops archive-completeness verify [flags]
 
 FLAGS (shipped)
-  -archive-root PATH    cross-anchor archive root (default
-                        /srv/history-archive)
-  -from N               first ledger sequence, inclusive (default 2)
-  -to N                 last ledger sequence, inclusive; REQUIRED and
-                        non-zero. 0 does NOT resolve the tip — the
-                        binary refuses it outright ("-to is required").
-                        The ansible-installed unit computes a real
-                        value at start time (see below); running by
-                        hand, you must supply it yourself.
+  -archive-root PATH    cross-anchor archive root (default /srv/history-archive)
+  -from N               first ledger, inclusive (default 2)
+  -to N                 last ledger, inclusive; REQUIRED, non-zero (0 is refused)
   -workers N            parallel fetch workers (default 8)
-  -owner-user USER      file owner for placed files (default stellar)
-  -owner-group GROUP    file group for placed files (default stellar)
-  -network NAME         pubnet (default) | testnet | futurenet — the
-                        cross-anchor FILL phase is pubnet-only and
-                        refuses on any other value
-  -output-file PATH     write JSON gap report here (empty = stdout)
-  -textfile-output PATH write a node_exporter textfile here
-                        (empty = no metrics emit)
-  -write                apply changes. Without it, fix/verify are a
-                        fail-closed DRY RUN: they report what would
-                        change and write nothing (#1191)
+  -owner-user USER      owner for placed files (default stellar)
+  -owner-group GROUP    group for placed files (default stellar)
+  -network NAME         pubnet (default) | testnet | futurenet; fill is pubnet-only
+  -output-file PATH     JSON gap report (empty = stdout)
+  -textfile-output PATH node_exporter textfile (empty = no metrics)
+  -write                apply changes; without it fix/verify are a dry run (#1191)
 
 EXIT CODES
   0   clean — no missing files after the fill pass
@@ -509,23 +296,11 @@ EXIT CODES
   other  I/O error
 ```
 
-The reference implementation is
-`cmd/stellarindex-ops/main.go::archiveCompletenessVerify` +
-`internal/archivecompleteness/`.
-
 ## Cross-references
 
-- [ADR-0017](../adr/0017-archive-completeness-invariants.md) — the
-  policy decision (4 hard contracts, per-region trust model).
-- [ADR-0016](../adr/0016-per-region-storage-strategy.md) — the
-  per-region storage shapes this doc operationalises.
-- [ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md) — the
-  closed-bucket API contract that the completeness invariants
-  protect.
-- [galexie-backfill.md](galexie-backfill.md) — the original
-  backfill procedure; the bootstrap reuses its `galexie-archive-fill`
-  script for primary repair.
-- [alerts-catalog.md](alerts-catalog.md) — the
-  `stellarindex_archive_*` alert family.
-- [sev-playbook.md](sev-playbook.md) — incident-response process;
-  this doc's status-page section follows §5.3's conventions.
+- [ADR-0017](../adr/0017-archive-completeness-invariants.md) — policy (4 contracts, per-region trust).
+- [ADR-0016](../adr/0016-per-region-storage-strategy.md) — per-region storage shapes.
+- [ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md) — the closed-bucket contract these invariants protect.
+- [galexie-backfill.md](galexie-backfill.md) — the `galexie-archive-fill` primary repair.
+- [alerts-catalog.md](alerts-catalog.md) — the `stellarindex_archive_*` family.
+- [sev-playbook.md](sev-playbook.md) — incident process and status-page conventions.

@@ -6,119 +6,77 @@ status: living doc
 
 # Release process
 
-End-to-end procedure for cutting a Stellar Index binary release. This
-is the runbook the on-rotation release engineer follows; it
-implements the policy ratified in
+Procedure for cutting a binary release; implements
 [`docs/architecture/semver-policy.md`](../architecture/semver-policy.md).
-
-SemVer tag format: `vX.Y.Z` (root tag, no prefix). Pre-v1, breaking
-changes bump the minor; minor + patch follow the standard rules.
-
-The pipeline is:
+Tag format `vX.Y.Z` (root tag, no prefix); pre-v1, breaking changes bump
+the minor.
 
 ```
-git tag vX.Y.Z      → release.yml fires
-                    → cross-compiles linux/amd64
-                      (arm64 dropped 2026-05-08; every region is
-                       amd64; re-add when an arm64 host lands)
-                    → uploads binaries + SHA256SUMS to GitHub Releases
-                    → operator runs deploy.yml (or manual scp)
+git tag vX.Y.Z  → .github/workflows/release.yml
+                → cross-compiles linux/amd64 (every region is amd64)
+                → uploads binaries + SHA256SUMS (+ signatures, provenance) to GitHub Releases
+                → operator runs deploy.yml (or manual scp)
 ```
 
-> **No container images.** `release.yml` deliberately does NOT push
-> to ghcr.io — F-1221 (codex audit-2026-05-12) flagged old docs that
-> implied otherwise. Self-hosters who want OCI images build them
-> locally from the per-binary Dockerfiles under `docker/`. See
-> `docker/README.md`.
-
-Run the `release.yml` and `deploy.yml` workflows in
-`.github/workflows/`; this doc captures the human-side decisions
-they don't automate.
+**No container images**: `release.yml` does not push to ghcr.io.
+Self-hosters build OCI images from the per-binary Dockerfiles under
+`docker/` (`docker/README.md`).
 
 ## Pre-flight
 
-Done **before** cutting the tag — discovering any of these failed
-mid-release wastes a tag and forces a `.N+1` cut.
+A failure found mid-release wastes a tag and forces a `.N+1` cut.
 
-1. **`main` is green.** The latest commit's CI run is all-passing on
-   GitHub. No "merged with optional check failures" — every required
-   AND optional job must be green.
-2. **Working tree matches `main`.** `git checkout main && git pull
-   --ff-only origin main`.
-3. **Write the release section.** Walk `git log --oneline
-   vPREV..HEAD`, operator-visible changes first and internal
-   refactors last, and name every `pkg/*` break and deprecation
-   called out in a commit message (see step 4).
-4. **Breaking `pkg/*` changes are called out in the CHANGELOG.**
-   `pkg/*` has no tag clock of its own — this repo is a single Go
-   module (ADR-0005), so `pkg/client` ships inside the root
-   `vX.Y.Z` you are about to cut and a `pkg/client/vX.Y.Z` tag
-   would version nothing. Do not cut one. The CHANGELOG body is
-   the consumer's ONLY notice that the SDK surface moved, so
-   confirm any break in this range is named there. See
-   [semver-policy.md](../architecture/semver-policy.md)
-   "Why there is only one clock".
-5. **Build dry-run is clean.** `make build` completes for every
-   checked-in binary without errors. If the release will deploy
-   the showcase site (`web/explorer/`) alongside the binaries —
-   which is the launch-week default — also run
-   `NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make
-   web-build` and confirm it produces `web/explorer/out/`. CI
-   already gates on this per the `web/explorer` job, but local
-   verification before tagging catches the rare case where a
-   merge-conflict fix on `main` slipped past the per-PR gate.
-6. **Stellar protocol is documented.** The protocol version the
-   release was tested against is known (e.g. `23` for post-Whisk).
-   Pulled from `stellar-core --version` on a test node, or from the
-   pubnet block-explorer header.
+1. **`main` is green**: every required AND optional job on the latest commit.
+2. **Working tree matches `main`**: `git checkout main && git pull --ff-only origin main`.
+3. **Write the release section** from `git log vPREV..HEAD --format=%s`,
+   filtered to `feat`/`fix`/`perf` with a user-visible scope; `!` and
+   `BREAKING CHANGE:` footers become Breaking/Deprecated entries. One line
+   per change ([CONTRIBUTING.md §Changelog](../../CONTRIBUTING.md#changelog);
+   only the newest five releases stay in the file).
+4. **Name every breaking `pkg/*` change in it.** This is one Go module
+   (ADR-0005): `pkg/client` ships inside the root `vX.Y.Z`, so never cut a
+   `pkg/client/vX.Y.Z` tag. The CHANGELOG is the consumer's only notice
+   (semver-policy.md "Why there is only one clock").
+5. **Build is clean**: `make build`. If the release deploys the showcase
+   site (`web/explorer/`, the launch-week default), also
+   `NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make web-build`
+   and confirm `web/explorer/out/` exists.
+6. **Record the Stellar protocol version tested against** (from
+   `stellar-core --version` on a test node or the pubnet explorer header).
 
 ## Cut
 
-1. **Decide the tag.** Apply the bump rules from
-   [`semver-policy.md` §"What constitutes a breaking change for
-   binaries"](../architecture/semver-policy.md). Examples:
-   - Adds a new SSE endpoint, no schema change → minor bump (`v0.2.0 → v0.3.0`)
-   - Bug fix only, no operator-visible change → patch bump (`v0.3.0 → v0.3.1`)
-   - Removes a `[external]` config key → minor bump pre-v1.0 (`v0.3.1 → v0.4.0`); major bump post-v1.0
-2. **Write the CHANGELOG section.** In a one-commit PR:
-   - Insert `## [vX.Y.Z] — YYYY-MM-DD` with the section from
-     pre-flight step 3 under the empty `## [Unreleased]` heading
-   - Title the PR `release: vX.Y.Z`
-
-   (This file carries no `[vX.Y.Z]: <compare-url>` link references at
-   the bottom — there is nothing to update. Earlier versions of this
-   step said there was.)
-3. **Merge the release PR.** Squash-merge once CI is green. **Do
-   not** tag before this PR has landed on `main` — the tag must
-   point at the commit that contains the promoted CHANGELOG block.
-4. **Cut the tag with `scripts/dev/cut-release.sh` — not by hand.**
+1. **Decide the tag** per [`semver-policy.md` §"What constitutes a breaking
+   change for binaries"](../architecture/semver-policy.md):
+   - new SSE endpoint, no schema change → minor (`v0.2.0 → v0.3.0`)
+   - bug fix only, no operator-visible change → patch (`v0.3.0 → v0.3.1`)
+   - removes a `[external]` config key → minor pre-v1.0 (`v0.3.1 → v0.4.0`), major post-v1.0
+2. **Write the CHANGELOG section** in a one-commit PR titled
+   `release: vX.Y.Z`: insert `## [vX.Y.Z] — YYYY-MM-DD` (UTC date) with
+   the pre-flight step 3 text under the empty `## [Unreleased]` heading.
+   `release.yml` extracts notes from the block headed exactly `## [vX.Y.Z]`
+   up to the next `## [`. No link references to update.
+3. **Squash-merge it once CI is green.** Never tag before it lands: the tag
+   must point at the commit carrying the section.
+4. **Tag with `scripts/dev/cut-release.sh`, never by hand.**
    ```sh
    git checkout main && git pull --ff-only origin main
    bash scripts/dev/cut-release.sh vX.Y.Z --dry-run   # every gate, no tag
    bash scripts/dev/cut-release.sh vX.Y.Z --yes       # tag + push
    ```
-   The script is the executable form of steps 1-3 and refuses to tag
-   when any of them was skipped: SemVer tag shape, on `main`, clean
-   working tree, in sync with `origin/main`, tag does not already
-   exist, a **non-empty** `## [vX.Y.Z] — YYYY-MM-DD` section exists in
-   `CHANGELOG.md`, and `bash scripts/dev/verify.sh` is green. A raw
-   `git tag` / `git push` bypasses all seven — this step used to
-   prescribe exactly that.
+   It refuses unless: SemVer tag shape; on `main`, clean, in sync with
+   `origin/main`; the tag does not exist locally or on origin; a
+   **non-empty** `## [vX.Y.Z] — YYYY-MM-DD` section exists; the newest
+   `docs/operations/sla-proof-YYYY-MM-DD.md` is within
+   `SLA_PROOF_MAX_AGE_DAYS` (default 45) and not `Verdict: FAIL`; and
+   `make prepush` prints `ALL REQUIRED CHECKS PASSED` (~20 min) with `main`
+   unmoved. Non-TTY runs must pass `--yes` or `--dry-run` (exit 2 otherwise).
 
-   (`--yes` is required for non-TTY/automation; without a terminal and
-   without it the script refuses rather than let the confirmation
-   prompt hit EOF — a 2026-08-28 "release cut" that pushed no tag.)
-   The tag push triggers `.github/workflows/release.yml` which:
-   - Cross-compiles every binary in `cmd/` for `linux/amd64` (and
-     `linux/arm64` if the matrix is enabled)
-   - Computes SHA256 sums
-   - Uploads the binaries + `SHA256SUMS` + the CHANGELOG section as
-     release notes to GitHub Releases
-   - **Does not** publish container images. The previous GHCR job
-     was dropped (search the git log for "release: drop ghcr.io
-     push") because no consumer of those images existed. Self-
-     hosters who need images build them from `docker/<binary>
-     .Dockerfile` locally — see `docker/README.md`.
+   The tag push triggers `release.yml`, which cross-compiles every `cmd/`
+   binary for `linux/amd64`, computes SHA256 sums, signs, attests, and
+   creates the release with the CHANGELOG section as notes. It **refuses an
+   existing release** for the tag: never re-run it or `gh release create`
+   by hand; if different bytes are needed, bump the version.
 5. **Verify the release.**
    ```sh
    gh release view vX.Y.Z
@@ -127,13 +85,10 @@ mid-release wastes a tag and forces a `.N+1` cut.
    sha256sum /tmp/v.bin                  # cross-check against SHA256SUMS
    ```
 
-   **Verify the cosign signature.** `SHA256SUMS` transitively covers every
-   binary in the release (a tampered binary fails the `sha256sum -c` step
-   above), so verifying the one manifest signature verifies the whole
-   release. As of the first release cut after 2026-07-10 (BACKLOG #51b),
-   the durable artifact contract is a **Sigstore bundle** —
-   `SHA256SUMS.sigstore.json`, containing the signature, Fulcio
-   certificate, and Rekor transparency-log proof in one file:
+   **Cosign signature.** `SHA256SUMS` covers every binary, so its one
+   signature verifies the release. The durable artifact is the Sigstore
+   bundle `SHA256SUMS.sigstore.json` (signature + Fulcio cert + Rekor
+   proof); needs **cosign v3** (`brew install cosign`; v2 has no `--bundle`):
    ```sh
    gh release download vX.Y.Z -p SHA256SUMS -p SHA256SUMS.sigstore.json
    cosign verify-blob \
@@ -143,15 +98,10 @@ mid-release wastes a tag and forces a `.N+1` cut.
      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
      SHA256SUMS
    ```
-   Requires **cosign v3** (`brew install cosign`, or a binary from
-   <https://github.com/sigstore/cosign/releases> — see
-   <https://docs.sigstore.dev/cosign/system_config/installation/>).
-   cosign v2 cannot read the bundle format at all (no `--bundle` flag).
-
-   **Old-contract releases (cut before 2026-07-10) only published
-   `SHA256SUMS.sig` / `SHA256SUMS.pem`** and need **cosign v2** to verify —
-   cosign v3 removed `verify-blob --signature`/`--certificate` entirely,
-   so a v3-only install cannot check them:
+   `release.yml` also publishes the retiring `SHA256SUMS.sig` /
+   `SHA256SUMS.pem` (extracted from the bundle; do not rely on them
+   staying). Releases cut before the bundle contract have only those and
+   need **cosign v2** (v3 removed `--signature`/`--certificate`):
    ```sh
    gh release download vX.Y.Z -p SHA256SUMS -p SHA256SUMS.sig -p SHA256SUMS.pem
    cosign verify-blob \
@@ -162,75 +112,58 @@ mid-release wastes a tag and forces a `.N+1` cut.
      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
      SHA256SUMS
    ```
-   The first post-migration release publishes **both** shapes as a
-   one-release transition courtesy (dual-publish) — don't rely on
-   `.sig`/`.pem` still being there on the *next* tag; see the CHANGELOG
-   `[Unreleased]` entry for the deprecation note.
 
-   **Verify the build provenance.** Each binary and `migrations.tar.gz`
-   also carries a SLSA provenance attestation (from the
-   `Attest build provenance` step), tying it to the tagged commit and
-   the `release.yml` run that built it (releases cut before that step
-   existed carry none):
+   **Build provenance.** Each binary and `migrations.tar.gz` carries a
+   SLSA attestation tying it to the tagged commit and `release.yml` run
+   (older releases carry none):
    ```sh
    gh attestation verify /tmp/v.bin --repo Stellar-Index/StellarIndex
    ```
-6. **Optional manual edits to the Release page.** The auto-generated
-   notes pull from the CHANGELOG block. Add the "Tested against
-   protocol XX" line **by hand** — `release.yml` has no protocol
-   inference (it does not run `stellar-core --version`, and never has;
-   the runner has no captive core). The
-   `.github/RELEASE_NOTES_TEMPLATE.md` mirrors the structure if you
-   need to expand sections.
+6. **Add "Tested against protocol XX" to the Release page by hand**:
+   `release.yml` has no protocol inference. `.github/RELEASE_NOTES_TEMPLATE.md`
+   mirrors the structure if sections need expanding.
 
 ## Post-flight
 
-1. **Announce.** Post the release URL to the operator channel +
-   `#stellar-index-public` if applicable.
-2. **Update `docs/operations/r1-deployment-state.md`** with the
-   running version and any operator action that was taken (e.g.
-   migration step, config edit).
-3. **Watch dashboards for 1 h.** The standard SLO board + the
-   per-pair freshness panel. Any anomaly within the first hour gets
-   the same triage as a normal incident — file a SEV before
+1. **Announce** the release URL in the operator channel (and
+   `#stellar-index-public` if applicable).
+2. **Record operator actions** taken (migration step, config edit) in
+   `docs/operations/r1-deployment-state.md`. The running version is
+   whatever `/v1/version` reports.
+3. **Watch dashboards for 1 h**: the SLO board and the per-pair freshness
+   panel. An anomaly gets normal incident triage; file a SEV before
    considering rollback.
-4. **Rollback path** (if needed): see the next section. File a SEV-2
-   minimum and a postmortem in `docs/operations/postmortems/`.
+4. **Rollback** if needed (next section): SEV-2 minimum and a postmortem
+   in `docs/operations/postmortems/`.
 
 ## Rollback
 
-The Stellar Index ships as systemd-managed binaries on bare-metal
-hosts (per [ADR-0008](../adr/0008-ha-topology.md)) — there is no
-container registry to retag and no orchestrator to roll back. A
-rollback is a binary swap on each affected host.
+Binaries run under systemd on bare metal ([ADR-0008](../adr/0008-ha-topology.md));
+a rollback is a binary swap per affected host.
 
 ### Pre-rollback
 
-1. **Confirm the previous-known-good tag.** Either from `git tag`
-   history or from `r1-deployment-state.md`'s "Running version"
-   line at the time the current release was cut.
-2. **Confirm the previous binary is still on disk.** The deploy
-   task in `configs/ansible/tasks/deploy-one-binary.yml` keeps the
-   last 5 previous binaries as
-   `/usr/local/bin/<binary>.prev-<previous-tag>` and writes a sidecar
-   marker to `/var/lib/stellarindex/deployed-versions/<binary>`. Check
-   both:
+1. **Previous known-good tag**: `git tag` history, the release workflow's
+   runs (`gh run list --workflow release.yml`), or the `.prev-<tag>`
+   names from step 2.
+2. **Previous binary on disk**: `configs/ansible/tasks/deploy-one-binary.yml`
+   keeps the last 5 as `/usr/local/bin/<binary>.prev-<previous-tag>` and
+   writes `/var/lib/stellarindex/deployed-versions/<binary>`:
    ```sh
    ssh root@<host> 'ls -lh /usr/local/bin/stellarindex-*.prev-* 2>/dev/null'
    ssh root@<host> 'cat /var/lib/stellarindex/deployed-versions/stellarindex-api'
    ```
-   If the wanted `.prev-<tag>` is pruned (>5 releases back),
-   rebuild it from the tag (`git checkout <tag> && make build`)
-   on a build host before continuing. F-1222 (codex audit-2026-05-12):
-   prior docs pointed at `/opt/stellarindex/release-<tag>/` which the
-   deploy task does not produce.
-3. **Decide the scope.** A bad indexer release does not require
-   rolling back the API. Roll back only the affected binary unless
-   the failure is shared (e.g. a config schema break).
+   If pruned (>5 releases back), rebuild from the tag
+   (`git checkout <tag> && make build`) on a build host.
+3. **Scope**: roll back only the affected binary (a bad indexer release
+   does not need an API rollback) unless the failure is shared, e.g. a
+   config schema break.
 
 ### Procedure (per host, per binary)
 
-Preferred: trigger the deploy workflow with the previous tag:
+Preferred: re-dispatch the deploy workflow with the previous tag. It runs
+backup → swap → restart → health probe, with automatic rollback on probe
+failure:
 
 ```sh
 gh workflow run deploy.yml \
@@ -239,11 +172,7 @@ gh workflow run deploy.yml \
   -f binaries=stellarindex-api,stellarindex-indexer
 ```
 
-The workflow does the host-side backup→swap→restart→health-probe
-sequence with automatic rollback on probe failure. Use this path
-unless the deploy workflow itself is the thing that broke.
-
-Fallback (manual, per host, per binary):
+Fallback, only if the deploy workflow itself is broken:
 
 ```sh
 PREVIOUS=v0.2.0                               # the known-good tag
@@ -258,41 +187,31 @@ ssh root@<host> "
 "
 ```
 
-For the API tier the rollback is **rolling**: drain one host out
-of HAProxy via the stats socket (`disable server api_pool/api-01`),
-swap that host's binary, re-enable, repeat. Avoids a 30-second
-2-of-3-host window during the cutover. Indexer and aggregator are
-single-active and can be swapped one at a time without drain.
+On a multi-host API tier roll one host at a time: drain it in HAProxy via
+the stats socket (`disable server api_pool/api-01`), swap, re-enable,
+repeat. Indexer and aggregator are single-active; swap without drain.
 
 ### Post-rollback
 
-1. Verify the runtime version: `curl -sf http://<host>:3000/v1/version`
-   reports the previous tag.
-2. The same alert that drove the rollback should clear within 5 min.
-3. Update `docs/operations/r1-deployment-state.md` "Running version"
-   and note the rollback in the postmortem.
-4. The original (broken) tag stays on `main` — DO NOT delete it.
-   Cut a `.N+1` hotfix once the underlying bug has a fix.
+1. `curl -sf http://<host>:3000/v1/version` reports the previous tag.
+2. The alert that drove the rollback clears within 5 min.
+3. Note the rollback in the postmortem.
+4. Never delete the broken tag; cut a `.N+1` hotfix once fixed.
 
 ## Hotfix releases
 
-Same procedure as above, with these differences:
+Same procedure, except:
 
-- Branch from the previous release tag (not `main`), apply the fix,
-  cut a new `.N` tag on the same day OR a new date if the day has
-  changed
-- The CHANGELOG entry under the hotfix tag references the originating
-  incident's postmortem
-- Post-flight notification flags this as a hotfix and includes the
-  scope of what changed (one-line + link to PR)
+- Branch from the previous release tag (not `main`), apply the fix, cut
+  the next patch tag.
+- The CHANGELOG entry references the originating incident's postmortem.
+- The announcement flags it as a hotfix with a one-line scope + PR link.
 
-Hotfixes never include unrelated work. If a fix needs additional
-changes that aren't strictly required, those go into the next
-regular release — never a hotfix.
+Hotfixes never include unrelated work; that goes in the next regular release.
 
 ## Cross-references
 
 - [`docs/architecture/semver-policy.md`](../architecture/semver-policy.md) — the policy this runbook implements
-- [`.github/RELEASE_NOTES_TEMPLATE.md`](../../.github/RELEASE_NOTES_TEMPLATE.md) — the template release engineers fill in
-- [`CHANGELOG.md`](../../CHANGELOG.md) — every release's entry follows the same structure
+- [`.github/RELEASE_NOTES_TEMPLATE.md`](../../.github/RELEASE_NOTES_TEMPLATE.md) — release notes template
+- [`CHANGELOG.md`](../../CHANGELOG.md) — section structure
 - [`docs/operations/sev-playbook.md`](sev-playbook.md) — incident response if a release misbehaves

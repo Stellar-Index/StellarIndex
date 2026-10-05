@@ -1,36 +1,22 @@
 ---
 title: Showcase site deployment (`stellarindex.io`)
-last_verified: 2026-05-04
+last_verified: 2026-10-05
 status: operator runbook
 ---
 
 # Showcase site deployment
 
-Operator runbook for shipping `web/explorer` to production. The
-showcase is a static-export Next.js app — no server-side runtime
-needed at the edge — so any static-asset host works. This doc
-walks through the recommended Cloudflare Pages path; alternatives
-live at the bottom.
+Shipping `web/explorer` to production. It is a Next.js 16 static export
+(`output: 'export'` in `next.config.mjs`): `pnpm build` writes
+`web/explorer/out/`, pre-rendered HTML plus fingerprinted assets, so any static
+host works. Cloudflare Pages is the production path.
 
-## What the showcase is
-
-`web/explorer/` is a Next.js 15 app configured with
-`output: 'export'` in `next.config.mjs`. `npm run build` produces
-a fully static `web/explorer/out/` directory: HTML pre-rendered for
-every route (including the top-100 coin slugs from
-`generateStaticParams` at build time), all assets fingerprinted,
-no runtime dependency on Node.
-
-The API is contacted **client-side** from the browser to this network's
-`api.*` origin — `NEXT_PUBLIC_API_BASE_URL` at build time if set, otherwise
-derived from `NEXT_PUBLIC_NETWORK` (`src/lib/networks.ts`:
-`api.stellarindex.io` / `api.testnet.` / `api.futurenet.`). `next.config.mjs`
-deliberately inlines **no** default for it: a mainnet default there used to
-shadow that per-network fallback, so a test-net build that forgot the var
-served mainnet data under test-net chrome. Same-origin
-hosting is not required and not desirable: keeping the showcase
-domain separate from `api.stellarindex.io` means the API can
-serve when the showcase is down, and vice versa.
+The browser calls the API **client-side** at this network's `api.*` origin:
+`NEXT_PUBLIC_API_BASE_URL` if set at build time, else derived from
+`NEXT_PUBLIC_NETWORK` (`src/lib/networks.ts`). `next.config.mjs` deliberately
+inlines no default for it — a mainnet default once made a test-net build serve
+mainnet data. The site and `api.stellarindex.io` stay on separate origins so
+either can serve while the other is down.
 
 ## Build locally
 
@@ -39,126 +25,64 @@ cd web/explorer
 pnpm install
 pnpm build
 # → web/explorer/out/   (drop this on any static host)
+pnpm exec http-server -p 8080 web/explorer/out   # preview at http://localhost:8080
 ```
 
-Size: ~3–4 MB minified, 100 kB shared JS, ~120 kB per route.
-
-To preview the production build locally:
-
-```sh
-pnpm exec http-server -p 8080 web/explorer/out
-# open http://localhost:8080
-```
+Static-param fetches fail the build hard if the API is unreachable
+(`src/lib/buildFetch.ts`); build with the API reachable.
 
 ## Recommended: Cloudflare Pages
 
-Same vendor as the API CDN (per `cdn-setup.md`), free tier
-sufficient, Git-driven deploys.
+Git integration auto-deploys every push to `main` (no Actions minutes).
 
-### One-time setup
+**One-time setup:**
+1. Workers & Pages → Create application → Pages → Connect to Git →
+   `Stellar-Index/StellarIndex`.
+2. Build: preset `Next.js (Static HTML Export)`; command
+   `cd web/explorer && pnpm install --frozen-lockfile && pnpm build`; output
+   `web/explorer/out`; root directory = repo root; Node 24 (what
+   `explorer-deploy.yml` uses); production branch `main`, PR previews on.
+3. Env: `NEXT_PUBLIC_API_BASE_URL` = `https://api.stellarindex.io`
+   (override per preview environment if wanted).
+4. Custom domain `stellarindex.io` (`www.stellarindex.io` as redirect); CF
+   proxies the apex, no separate origin.
+5. No compatibility flags (`nodejs_compat` not needed).
 
-1. **Connect the repo.** Cloudflare dashboard → Workers & Pages →
-   Create application → Pages → Connect to Git → select the
-   `Stellar-Index/StellarIndex` repository.
-
-2. **Build configuration.**
-   - Framework preset: `Next.js (Static HTML Export)`.
-   - Build command: `cd web/explorer && pnpm install --frozen-lockfile && pnpm build`
-   - Build output directory: `web/explorer/out`
-   - Root directory: leave at repo root (CF Pages clones the whole
-     repo; the build command CDs into the showcase directory).
-   - Node version: 22 (matches `web/explorer/.nvmrc`).
-   - Branch: `main` for production; PR previews flip on by default.
-
-3. **Environment variables.**
-   - `NEXT_PUBLIC_API_BASE_URL` = `https://api.stellarindex.io`
-     (production). Override per-environment for previews if you
-     want them pointing at a staging API.
-
-4. **Bind the domain.** Custom domains → Add custom domain →
-   `stellarindex.io` (and `www.stellarindex.io` as a redirect
-   target). Cloudflare proxies the apex through their edge so a
-   single A record (or `@` CNAME flattening) is enough; there's
-   no separate origin to point at.
-
-5. **Build settings → Compatibility flags.** No flags needed —
-   the build doesn't use `nodejs_compat` because nothing runs at
-   the edge.
-
-### What you get
-
-- Every PR gets a preview deployment at
-  `<pr-hash>.stellarindex-explorer.pages.dev` — useful for
-  reviewing UI changes before merge.
-- Production deploys on every push to `main` after the existing
-  CI gates pass (the `web/explorer` job in `.github/workflows/`
-  validates the build before merge).
-- Edge cache TTLs are CF defaults (1 year for fingerprinted assets,
-  short for HTML). The `out/_next/static/*` paths are fingerprinted
-  so the long TTL is safe.
-
-### How updates flow
-
-```
-PR merge into main
-  → GitHub Actions runs `web/explorer` job (build + lint)
-  → Cloudflare Pages webhook fires, runs build
-      (`pnpm build` → the post-build guards below)
-  → New version deploys to stellarindex.io within ~2 min
-```
-
-Rolling back is a single click in the CF dashboard — Pages keeps
-every previous build available as a preview URL.
+PR previews land at `<pr-hash>.stellarindex-explorer.pages.dev`. Production
+deploys ~2 min after merge. `_next/static/*` is fingerprinted, so CF's 1-year
+asset TTL is safe; HTML is short-TTL. Roll back with one click in the CF
+dashboard (every build stays available).
 
 ## Build-time guards
 
-`pnpm build` is not just `next build`: package.json's `postbuild`
-chain runs four guards over the emitted `web/explorer/out/`, and any
-one of them fails the build. They live there, rather than in a
-workflow, because every publisher invokes `pnpm build` and none of
-them may skip a guard — the Cloudflare Pages build above, the
-`explorer-deploy.yml` fallback, the `web-explorer` CI job and a
-laptop all get the same checks (F085/T325; they used to be steps of
-the `workflow_dispatch`-only workflow, so the path that actually
-deploys ran none of them).
+`pnpm build` runs package.json's `postbuild` chain over `out/`; any failure
+fails the build. They live there, not in a workflow, so every publisher (CF
+Pages, `explorer-deploy.yml`, the `web-explorer` CI job, a laptop) runs them.
 
 | Script | What it defends |
 | --- | --- |
-| `postbuild:pages` | Every emitted page keeps a correct heading outline (WCAG 1.3.1) and every nav-linked route exports a real frame, not an empty shell. |
-| `postbuild:prune` | Deletes the Next 16 `__next.*` segment-cache prefetch files, **keeping `__next._tree.txt`**. |
-| `postbuild:budget` | `scripts/ci/explorer-file-budget.sh` — fails at 18,500 files, below Cloudflare Pages' hard 20,000-file-per-deployment cap. |
-| `postbuild:seo` | `scripts/ci/explorer-seo-lint.sh` — every indexable page has a title, a meta description and a canonical link. |
+| `postbuild:pages` | Correct heading outline on every page (WCAG 1.3.1); every nav-linked route exports a real frame, not an empty shell. |
+| `postbuild:prune` | Deletes Next 16 `__next.*` segment-cache prefetch files, **keeping `__next._tree.txt`**. |
+| `postbuild:budget` | `scripts/ci/explorer-file-budget.sh` — fails at 18,500 files, below CF Pages' hard 20,000-file cap. |
+| `postbuild:seo` | `scripts/ci/explorer-seo-lint.sh` — every indexable page has a title, meta description and canonical link. |
+| `postbuild:openapi` | `scripts/ci/explorer-openapi-check.sh` — `out/openapi/stellar-index.v1.yaml` exists and matches the canonical spec. |
+| `postbuild:shell-fallback` | `scripts/ci/explorer-shell-fallback-check.sh` — every `functions/**/[[path]].js` shell target exists in `out/`. |
 
-The prune runs **before** the budget count, because the count is of
-what ships. Why both exist (site-audit S-024, 2026-07-03): Next 16
-emits ~8 per-segment RSC prefetch files per page for its client
-segment cache — ~36k files at our page count, past the 20,000 cap.
-Every deploy after the Next 15 → 16 bump failed there silently and
-the site froze on a June-24 build for nine days. The segment files
-are prefetch-only: the client treats a missing one as a cache miss
-and falls back to the standard `index.txt` RSC fetch.
+Prune runs before the budget count (the count is of what ships). Next 16 emits
+~8 prefetch files per page (~36k total, past the cap; deploys once failed
+silently on it for nine days). Those files are prefetch-only — a miss falls
+back to `index.txt`. `__next._tree.txt` must survive: it is the only segment
+file the router prefetches, and deleting it 404s every prefetch on routes
+without a shell fallback. ADR-0044 (edge SSR) is the real fix.
 
-`__next._tree.txt` is the exception and must survive the prune: it is
-the ONLY segment file the router actually prefetches (on `<Link>`
-hover/viewport), and deleting it 404s every prefetch on routes with
-no `functions/*/[[path]].js` shell fallback — the "tons of console
-errors" report of 2026-08-27. Keeping ~1 tree file per route adds
-~2.3k files, still far under the ceiling. ADR-0044 (edge SSR)
-remains the real fix; the prune holds the static export under the cap
-until then.
-
-The wiring itself is guarded by
-`test/controlwiring/explorer_build_guards_test.go`, which asserts the
-`pnpm build` chain reaches all three scripts and runs the prune
-against a synthetic export to pin that the tree files survive it.
+`test/controlwiring/explorer_build_guards_test.go` asserts the `pnpm build`
+chain reaches the guards and that the prune keeps the tree files.
 
 ## Test nets (Testnet / Futurenet)
 
-Each network gets its **own explorer build** — the same code with a different
-`NEXT_PUBLIC_NETWORK` + `NEXT_PUBLIC_API_BASE_URL` baked in — published to its
-own Cloudflare Pages project and custom domain. The nav network-switcher then
-lets visitors hop between them (it reads each network's public
-`/v1/ledger/tip`).
+Each network has its own build (different `NEXT_PUBLIC_NETWORK` +
+`NEXT_PUBLIC_API_BASE_URL`), Pages project and domain. The nav switcher reads
+each network's public `/v1/ledger/tip`.
 
 | Network | Pages project | Custom domain | API origin (grey) |
 | --- | --- | --- | --- |
@@ -166,170 +90,102 @@ lets visitors hop between them (it reads each network's public
 | Testnet | `stellarindex-explorer-testnet` | testnet.stellarindex.io | api.testnet.stellarindex.io |
 | Futurenet | `stellarindex-explorer-futurenet` | futurenet.stellarindex.io | api.futurenet.stellarindex.io |
 
-**One-time Cloudflare setup (dashboard, per test net):**
+**One-time Cloudflare setup per test net:**
+1. Create the Pages project. Git-integrate it (set `NEXT_PUBLIC_NETWORK`;
+   `NEXT_PUBLIC_API_BASE_URL` is optional but, if set, must be that network's
+   own `api.*` — never the mainnet one) or leave it CI-published.
+2. Add the custom domain. Its DNS record is orange/proxied, so CF terminates
+   TLS; no origin cert.
+3. Give `CLOUDFLARE_API_TOKEN` Pages:Edit on the project.
 
-1. Create the Pages project (`stellarindex-explorer-testnet` /
-   `-futurenet`). Either connect it to this repo's `main` (git integration,
-   auto-deploy) **or** leave it CI-published (below). If git-integrated, set
-   the project's build env var `NEXT_PUBLIC_NETWORK` to the row above.
-   `NEXT_PUBLIC_API_BASE_URL` is optional (it derives from the network);
-   if you do set it, it must be that network's own `api.*` origin — never
-   copy the mainnet row.
-2. Add the custom domain (testnet./futurenet.stellarindex.io). The DNS record
-   is already **orange/proxied** — Cloudflare terminates its TLS, so no origin
-   cert is needed (the app is static; its live data comes from the grey api.*
-   origin, which is unaffected).
-3. Ensure `CLOUDFLARE_API_TOKEN` has Pages:Edit on the new projects.
-
-**Publishing:** the `explorer-deploy.yml` workflow takes a `network` input that
-bakes the right env and targets the right project:
+**Publish:**
 
 ```sh
 gh workflow run explorer-deploy.yml --ref main -f network=testnet   -f environment=production
 gh workflow run explorer-deploy.yml --ref main -f network=futurenet -f environment=production
 ```
 
-The test-net API origins are already in the API's CORS `allowed_origins`, so
-the switcher's cross-origin tip probe works in every direction.
-
-**Two cross-origin gotchas** (both handled, noted so they don't recur):
-
-- **CSP `connect-src`** (`web/explorer/public/_headers`) must list *all three*
-  `api.*` origins — a test-net explorer connects to its own `api.<net>` origin,
-  and the switcher probes every network's tip. If it lists only the mainnet API,
-  every fetch + EventSource is blocked by CSP (dead odometer, dozens of console
-  warnings). It's one static file shared by all builds, so it carries all three.
-- **API `allowed_origins`** must include the explorer origins (`stellarindex.io`
-  + `testnet.` + `futurenet.`) so the browser's SSE/tip fetches pass CORS. This
-  is in the role template; re-render + restart the API if you widen it after a
-  deploy. (Mainnet r1 still needs this applied before its switcher can show the
-  test-net tips — until then those rows show a dash, which is graceful.)
-- **Pricing** is mainnet-only: the lean test nets run no aggregator, so
-  `/v1/price/tip/stream` 404s. The explorer gates the price stream on
-  `CURRENT_NETWORK.pricing` (see `src/lib/networks.ts`) so it isn't opened at all
-  on a test net; pricing widgets render their empty state.
+Cross-origin requirements:
+- CSP `connect-src` in `web/explorer/public/_headers` lists all three `api.*`
+  origins (one file serves every build, and the switcher probes every tip).
+  Missing one blocks fetch + EventSource: dead odometer, console warnings.
+- The API's CORS `allowed_origins` includes `stellarindex.io`, `testnet.` and
+  `futurenet.` (role template; re-render + restart the API after widening).
+- Pricing is mainnet-only: test nets run no aggregator, so
+  `/v1/price/tip/stream` 404s; the explorer gates it on
+  `CURRENT_NETWORK.pricing` and pricing widgets show their empty state.
 
 ## Security headers + CSP
 
-`web/explorer/public/_headers` ships a Cloudflare-Pages /
-Netlify-format header file that's copied verbatim to the build
-output. Cloudflare Pages applies it to **static-asset responses only**;
-see [What `_headers` does not cover](#what-_headers-does-not-cover).
-Every matching rule applies, not just the most specific one.
+`web/explorer/public/_headers` (Cloudflare Pages / Netlify format) is copied
+into the build. CF Pages applies it to **static-asset responses only** (see
+below), and every matching rule applies.
 
-The `/*` rule sends:
-
+`/*` sends:
 - `X-Content-Type-Options: nosniff`
-- `X-Frame-Options: DENY`: the framing control for every non-embed
-  page. The `/*` CSP deliberately carries **no** `frame-ancestors`
-  directive: an `/embed/*` response matches both rules, so it receives
-  both CSP headers, and a browser enforces two CSPs as their
-  intersection. A `frame-ancestors` on `/*` intersected with the embed
-  rule's `frame-ancestors *` blocked every customer iframe and the
-  site's own `/widgets` previews. Browsers honour `X-Frame-Options` only
-  because no CSP `frame-ancestors` supersedes it. Do not add one to `/*`
-  (the file says so too).
+- `X-Frame-Options: DENY` — the framing control for non-embed pages. The `/*`
+  CSP deliberately has **no** `frame-ancestors`: `/embed/*` matches both rules,
+  browsers intersect the two CSPs, and a `/*` `frame-ancestors` blocked every
+  customer iframe and the `/widgets` previews. Do not add one.
 - `Referrer-Policy: strict-origin-when-cross-origin`
 - `Permissions-Policy` denying accelerometer / camera / geolocation /
   microphone / payment / USB
-- `Strict-Transport-Security: max-age=31536000; includeSubDomains`
-  (no `preload` yet)
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains` (no `preload`)
 - `Cache-Control: public, max-age=0, must-revalidate` on HTML
-- `Content-Security-Policy` with `connect-src` listing `'self'` and all
-  three API origins: `https://api.stellarindex.io`,
-  `https://api.testnet.stellarindex.io` and
-  `https://api.futurenet.stellarindex.io`. One static file serves every
-  network's build, and the network switcher probes every network's tip,
-  so dropping any of them blocks fetch and EventSource on that network.
-  `img-src` is `'self' data:`; issuer-hosted asset icons load through
-  the same-origin `/icon` Pages Function (`functions/icon.js`).
-  `'unsafe-inline'` is allowed on `script-src` / `style-src` because the
-  Next.js static export emits inline bootstrap scripts and Tailwind
-  styles.
+- `Content-Security-Policy`: `connect-src 'self'` plus
+  `https://api.stellarindex.io`, `https://api.testnet.stellarindex.io`,
+  `https://api.futurenet.stellarindex.io`; `img-src 'self' data:` (issuer
+  icons go through the same-origin `/icon` Function, `functions/icon.js`);
+  `'unsafe-inline'` on `script-src` / `style-src` for Next's inline bootstrap
+  and Tailwind.
 
-`/_next/static/*` adds a 1-year `Cache-Control: immutable`. CF Pages
-does this by default; the explicit header documents it and Netlify
-needs it.
+`/_next/static/*` adds 1-year `Cache-Control: immutable` (CF default; explicit
+for Netlify). `/embed/*` sends `X-Frame-Options: ALLOWALL` and a CSP with
+`frame-ancestors *`, which overrides the inherited `DENY`.
 
-`/embed/*` exists to be iframed into customer sites: it sends
-`X-Frame-Options: ALLOWALL` for pre-CSP browsers and a CSP with
-`frame-ancestors *`, which makes browsers ignore the inherited
-`X-Frame-Options: DENY`.
-
-**No CSP reporting.** Neither CSP has `report-to` / `report-uri`, so a
-blocked `connect-src` shows up only as browser console warnings and a
-dead odometer. This is a decision, not an omission. A hosted report
-collector would be the site's first runtime third party, and the one
-first-party sink, the `/client-errors` Function, logs only the fields of
-the explorer's own error beacon, so a `csp-report` body would be logged
-empty. Revisit if that Function learns the report shape. Until then,
-check by hand after any `_headers` or API-origin change: load one page
-per network with the console open.
+**No CSP reporting**, by decision: a hosted collector would be the first
+runtime third party, and `/client-errors` logs only the explorer's own beacon
+fields, so a `csp-report` body would log empty. After any `_headers` or
+API-origin change, load one page per network with the console open.
 
 ### What `_headers` does not cover
 
-Cloudflare Pages does not apply `_headers` to responses generated by
-Pages Functions (`web/explorer/functions/`), even when the path matches
-a rule:
-
-- `/og/*` (Open Graph images) builds its own `Response` and ships
-  with none of the headers above.
+CF Pages does not apply `_headers` to Pages Function responses
+(`web/explorer/functions/`), even on a matching path:
+- `/og/*` builds its own `Response` with none of the headers above.
 - `/client-errors` returns bare status codes.
-- The shell-fallback routes (`/accounts/*`, `/assets/*`, `/contracts/*`,
+- Shell-fallback routes (`/accounts/*`, `/assets/*`, `/contracts/*`,
   `/embed/{asset,currency,pair}/*`, `/external/assets/*`,
-  `/insights/{creators,sponsors}/*`, `/issuers/*`, `/ledgers/*`,
-  `/lending/*`, `/markets/*`, `/sources/*`, `/transactions/*`) return
-  the shell page with the headers of the static shell asset they fetch,
-  via `functions/_shared/shellFallback.js`. They are protected by that
-  copy, not by `_headers` matching their own path. Tracked in #916.
+  `/insights/{creators,sponsors}/*`, `/issuers/*`, `/ledgers/*`, `/lending/*`,
+  `/markets/*`, `/sources/*`, `/transactions/*`) carry the headers of the
+  static shell they fetch via `functions/_shared/shellFallback.js`. Tracked in #916.
 
-When you add a Function, set its security headers in the Function or
-route it through `shellFallback`. `_headers` will not cover it.
+A new Function must set its own security headers or route through
+`shellFallback`.
 
-If you switch to Vercel, translate `_headers` into a
-`vercel.json` headers block — same directives, different syntax.
+## Break-glass: `explorer-deploy.yml` (Wrangler)
 
-## Alternative: Wrangler CLI (manual deploy)
-
-For hotfixes or when the git integration is paused (e.g. mid-rotation
-of the CF GitHub app token), `.github/workflows/showcase-deploy.yml`
-is a manual-trigger workflow that publishes via the Wrangler CLI.
+For hotfixes or when the CF git integration is paused (e.g. mid-rotation of
+the CF GitHub app token). `workflow_dispatch` only; `environment=production`
+only from `main` (`scripts/ci/resolve-pages-branch.sh`), any other ref
+publishes a preview.
 
 ```sh
-# Production deploy from main:
-gh workflow run showcase-deploy.yml --ref main \
-    -f environment=production
-
-# Preview deploy from a branch:
-gh workflow run showcase-deploy.yml --ref my-branch \
+gh workflow run explorer-deploy.yml --ref main -f environment=production
+gh workflow run explorer-deploy.yml --ref my-branch \
     -f environment=preview \
     -f api_base_url=https://api.staging.stellarindex.io
 ```
 
-One-time setup: add two repo secrets (`CLOUDFLARE_API_TOKEN` with
-`Pages:Edit` scoped to the `stellarindex-explorer` project, and
-`CLOUDFLARE_ACCOUNT_ID`).
+Secrets: `CLOUDFLARE_API_TOKEN` (Pages:Edit on all three explorer projects)
+and `CLOUDFLARE_ACCOUNT_ID`.
 
-The workflow intentionally doesn't fire on push — that path is
-owned by the CF git integration above. This workflow is the
-break-glass deploy when the integration isn't doing the job.
+## Alternatives
 
-## Alternative: Vercel / Netlify
-
-Both work identically — same build command, same output directory,
-same env var. Netlify reads `_headers` natively; Vercel needs
-`vercel.json` per the note above. We picked Cloudflare for vendor
-consolidation with the API CDN; Vercel would be marginally faster
-on first-paint metrics in their case-study tests, but the
-difference disappears with the API on Cloudflare.
-
-## Alternative: rsync to the API host
-
-Possible but not recommended. The showcase is small enough to
-serve from nginx on r1, but doing so couples the showcase
-availability to the API host's availability — exactly the
-property a separate static host avoids. Use only for air-gapped
-demo setups.
+- **Vercel / Netlify:** same build command, output and env. Netlify reads
+  `_headers`; Vercel needs it translated into a `vercel.json` headers block.
+- **rsync to the API host:** couples site and API availability; air-gapped
+  demos only.
 
 ```sh
 cd web/explorer && pnpm build
@@ -357,27 +213,17 @@ server {
 ## Verification after deploy
 
 ```sh
-# Page renders
 curl -sI https://stellarindex.io | head -3
-
-# Sitemap is present
 curl -sI https://stellarindex.io/sitemap.xml | head -3
-
-# /coins/USDC pre-rendered (not a 404)
-curl -sI https://stellarindex.io/coins/USDC/ | head -3
-
-# Robots is correct
+curl -sI https://stellarindex.io/assets/XLM/ | head -3   # pre-rendered asset page
 curl -s https://stellarindex.io/robots.txt
 ```
 
-If the build environment couldn't reach the API at build time, the
-coin detail pages will fall back to the seed-only set
-(7 slugs vs ~100). Re-run the build with the API reachable and
-re-deploy.
+`scripts/ci/site-crawl-check.sh` also fails when the deployed build is behind
+`main` (stuck auto-deploy).
 
 ## Touchpoints
 
-- API CDN setup: [cdn-setup.md](cdn-setup.md)
-- Status page (separate site): [`deploy/status-page/README.md`](../../deploy/status-page/README.md)
-- Public-flip checklist: [public-flip.md](public-flip.md)
-- Launch-day checklist: [launch-day-checklist.md](launch-day-checklist.md)
+- API CDN: [cdn-setup.md](cdn-setup.md)
+- Status page: [`deploy/status-page/README.md`](../../deploy/status-page/README.md)
+- [public-flip.md](public-flip.md), [launch-day-checklist.md](launch-day-checklist.md)

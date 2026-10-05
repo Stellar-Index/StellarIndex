@@ -204,5 +204,5 @@
       (whitespace $ ` ; & | quotes \ < > ( ) { } * ? [ ] ! ~), so systemd
       and any shell that sources the file would disagree on the value —
       refusing to render. Rotate to `openssl rand -hex 32`
-      (docs/operations/runbooks/credential-rotation.md):
+      (docs/operations/credential-rotation.md):
       {{ env_file_unsafe_secrets | join(', ') }}

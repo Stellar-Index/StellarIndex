@@ -261,9 +261,9 @@ wanted.
   and is reachable only through `aws-public-blockchain` (ADR-0027 cold tier), with SDF
   `history.stellar.org` as the canonical upstream. Deep-history recovery therefore depends
   on that dataset, monitored weekly by `public-dataset-check.yml`.
-- **Off-site artifacts (B2 / BX41):** Postgres via pgBackRest repo2, and the derived lake via
-  `ch-lake-backup` (Hetzner Storage Box BX41), a fast-RTO restore source: hours, not the
-  weeks a full re-ingest takes. Wiring constraints are in
+- **Off-site artifacts (Backblaze B2):** Postgres via pgBackRest repo2, and the derived lake via
+  `ch-lake-backup`, a fast-RTO restore source: hours, not the
+  weeks a full re-ingest takes. Provider and B2 hide/lifecycle constraints are in
   [`off-site-backup-plan.md`](../operations/off-site-backup-plan.md#provider).
 - **Prerequisite verification:** run a completeness/gap scan on the archive
   (genesis→tip, no missing ledger ranges) before trusting it as the sole rebuild source.
