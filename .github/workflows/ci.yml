@@ -2056,6 +2056,12 @@ jobs:
         run: go run ./scripts/ci/lint-pk-discriminators
       - name: INV-3 derive_generation guard check
         run: go run ./scripts/ci/lint-derive-generation-guard
+      - name: lint-comments
+        # No new date, ticket id, #nnn or PR n in a product Go comment;
+        # scripts/ci/lint-comments.baseline only shrinks.
+        run: ./scripts/ci/lint-comments.sh
+      - name: lint-comments self-test
+        run: ./scripts/ci/lint-comments-test.sh
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: "24"
