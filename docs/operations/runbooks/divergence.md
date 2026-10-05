@@ -44,7 +44,7 @@ Refresh cadence: the orchestrator calls `divergence.Service.RefreshPair` per con
 
 ## stellarindex_price_divergence_warning
 
-MTTR 15 min.
+MTTR 30 min – hours (depends on cause).
 
 Trips: `stellarindex_divergence_max_abs_fraction > 0.05`, `for: 10m`, `severity: informational`. Shared with `_critical`: the gauge is the worst `|ours - ref| / ref` per `{reference}` (bounded, no per-asset label); `stellarindex_divergence_pairs_over{threshold="5pct"}` / `{threshold="10pct"}` counts the pairs and `divergence_observations` names them. The gauge compares a shortest-window VWAP to instantaneous quotes, so `for: 10m` absorbs the lag on a fast move. Normal during rapid market moves.
 
@@ -84,13 +84,13 @@ Fix: eyeball the order of magnitude, identify the contributing sources and any s
 
 ## stellarindex_price_divergence_critical
 
-MTTR 15 min.
+MTTR 30 min – hours (depends on cause).
 
 Trips: `stellarindex_divergence_max_abs_fraction > 0.10`, `for: 10m`, `severity: ticket`. Same gauge, diagnosis and fix as [`stellarindex_price_divergence_warning`](#stellarindex_price_divergence_warning); > 10 % is usually a bad ingest (wrong decimals, a stale source contributing) rather than a market move, so go straight to causes 1-2 there.
 
 ## stellarindex_oracle_stream_rows_unparsed
 
-MTTR 17 min.
+MTTR none.
 
 Trips (`for: 10m`, `severity: ticket`):
 
@@ -126,7 +126,7 @@ A burst right after a deliberate schema/namespace migration is expected; if it d
 
 ## stellarindex_oracle_stale
 
-MTTR 17 min.
+MTTR 15–60 min.
 
 Trips (`for: 2m`, `severity: ticket`; a bare comparison, keep it bare):
 
@@ -192,7 +192,7 @@ in `/etc/stellarindex.toml` (codified in `configs/ansible/roles/archival-node/te
 
 ## stellarindex_divergence_refresh_error_dominant
 
-MTTR 17 min.
+MTTR 5–60 min (usually upstream-reference recovery).
 
 Trips (`for: 30m`, `severity: ticket`; the `and` clause avoids firing at cold start when both rates are 0):
 
@@ -235,7 +235,7 @@ Fix: identify the failing reference from the logs and the `divergence refresher 
 
 ## stellarindex_divergence_no_reference
 
-MTTR 17 min.
+MTTR 5–60 min (usually upstream-reference recovery / key restore).
 
 Trips (`for: 30m`, `severity: ticket`):
 
@@ -272,7 +272,7 @@ False positives: cold start (masked by `for: 30m`); a pair no configured referen
 
 ## stellarindex_divergence_no_ok_outcomes
 
-MTTR 17 min.
+MTTR 15–60 min.
 
 Trips (`for: 15m`, `severity: ticket`; gated on the refresher being wired, so an operator who disabled every reference is not paged):
 
@@ -302,7 +302,7 @@ False positive: `divergence_min_interval_seconds` above 30 min makes the pass ru
 
 ## stellarindex_divergence_reference_failing
 
-MTTR 17 min.
+MTTR none.
 
 Trips (`for: 30m`, `severity: ticket`):
 
@@ -323,7 +323,7 @@ sum by (reference, outcome) (rate(stellarindex_divergence_reference_total[15m]))
 
 ## stellarindex_divergence_pair_below_quorum
 
-MTTR 17 min.
+MTTR none.
 
 Trips (`for: 30m`, `severity: ticket`; `max_over_time` spans ~5 refreshes at the default cadence so one flaky answer does not trip it):
 
@@ -342,7 +342,7 @@ Find the dropped reference with `stellarindex_divergence_reference_total` by `ou
 
 ## stellarindex_chainlink_feed_decimals_mismatch
 
-MTTR 17 min.
+MTTR 5–60 min.
 
 Trips (`for: 5m`, `severity: ticket`):
 
@@ -366,7 +366,7 @@ Fix: set the operator's `decimals` for the pair to the on-chain value, or omit t
 
 ## stellarindex_chainlink_feed_decimals_verify_failed
 
-MTTR 17 min.
+MTTR 5–60 min.
 
 Trips (`for: 30m`, `severity: ticket`):
 
