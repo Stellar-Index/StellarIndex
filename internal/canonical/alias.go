@@ -164,47 +164,55 @@ func NewAliasRegistry(passphrase string, sacWrappers map[string]string) (*AliasR
 	sort.Strings(sacIDs)
 
 	for _, sacID := range sacIDs {
-		classicKey := sacWrappers[sacID]
-		sac, err := NewSorobanAsset(sacID)
-		if err != nil {
-			return nil, fmt.Errorf("alias registry: sac wrapper contract id %q: %w", sacID, err)
+		if err := addSACWrapperFamily(families, passphrase, sacID, sacWrappers[sacID]); err != nil {
+			return nil, err
 		}
-		classic, err := ParseAsset(classicKey)
-		if err != nil {
-			return nil, fmt.Errorf("alias registry: sac wrapper %q asset key %q: %w", sacID, classicKey, err)
-		}
-		sacStr, classicStr := sac.String(), classic.String()
-		if sacStr == classicStr {
-			// Pure SEP-41 self-map: one identity, nothing to unify.
-			continue
-		}
-		derived, err := classic.sacContractIDOn(passphrase)
-		if err != nil {
-			return nil, fmt.Errorf("alias registry: sac wrapper %q asset key %q: %w", sacID, classicKey, err)
-		}
-		if derived != sacStr {
-			return nil, fmt.Errorf("alias registry: sac wrapper %q is not the SAC of %q on this network (derived %s)",
-				sacID, classicKey, derived)
-		}
-		if classic.Type == AssetNative {
-			// The derivation above proved this is the network's XLM SAC;
-			// the baseline owns the XLM family.
-			continue
-		}
-		if _, ok := families[sacStr]; ok {
-			return nil, fmt.Errorf("alias registry: sac wrapper %q: contract already belongs to another alias family", sacID)
-		}
-		if _, ok := families[classicStr]; ok {
-			return nil, fmt.Errorf("alias registry: sac wrapper %q: asset %q already belongs to another alias family", sacID, classicKey)
-		}
-		// SAC form LAST: money-safety invariant. The read paths take the
-		// FIRST alias that produces a usable answer, so on a classic-keyed
-		// read the deep classic form is tried before the thin SAC pool.
-		family := []Asset{classic, sac}
-		families[classicStr] = family
-		families[sacStr] = family
 	}
 	return &AliasRegistry{families: families}, nil
+}
+
+// addSACWrapperFamily validates one SAC wrapper entry and, unless it is a
+// no-op, registers its two-form family in families.
+func addSACWrapperFamily(families map[string][]Asset, passphrase, sacID, classicKey string) error {
+	sac, err := NewSorobanAsset(sacID)
+	if err != nil {
+		return fmt.Errorf("alias registry: sac wrapper contract id %q: %w", sacID, err)
+	}
+	classic, err := ParseAsset(classicKey)
+	if err != nil {
+		return fmt.Errorf("alias registry: sac wrapper %q asset key %q: %w", sacID, classicKey, err)
+	}
+	sacStr, classicStr := sac.String(), classic.String()
+	if sacStr == classicStr {
+		// Pure SEP-41 self-map: one identity, nothing to unify.
+		return nil
+	}
+	derived, err := classic.sacContractIDOn(passphrase)
+	if err != nil {
+		return fmt.Errorf("alias registry: sac wrapper %q asset key %q: %w", sacID, classicKey, err)
+	}
+	if derived != sacStr {
+		return fmt.Errorf("alias registry: sac wrapper %q is not the SAC of %q on this network (derived %s)",
+			sacID, classicKey, derived)
+	}
+	if classic.Type == AssetNative {
+		// The derivation above proved this is the network's XLM SAC;
+		// the baseline owns the XLM family.
+		return nil
+	}
+	if _, ok := families[sacStr]; ok {
+		return fmt.Errorf("alias registry: sac wrapper %q: contract already belongs to another alias family", sacID)
+	}
+	if _, ok := families[classicStr]; ok {
+		return fmt.Errorf("alias registry: sac wrapper %q: asset %q already belongs to another alias family", sacID, classicKey)
+	}
+	// SAC form LAST: money-safety invariant. The read paths take the
+	// FIRST alias that produces a usable answer, so on a classic-keyed
+	// read the deep classic form is tried before the thin SAC pool.
+	family := []Asset{classic, sac}
+	families[classicStr] = family
+	families[sacStr] = family
+	return nil
 }
 
 // Aliases is the [AssetAliases] contract resolved against this specific
