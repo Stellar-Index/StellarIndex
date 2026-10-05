@@ -165,26 +165,15 @@ func TestDecoder_AddPoolRegistersNewPool(t *testing.T) {
 	}
 }
 
-// TestDecoder_ChHashOrderCanDropRegisteredPoolTrade documents Q040
-// (NEEDS-COORDINATION — the fix needs internal/projector/projector.go's
-// processEventSafely, out of this unit's scope; see also
-// internal/storage/clickhouse/event_reader.go's
-// `ORDER BY ledger_seq, tx_hash, op_index, event_index`).
-//
-// The lake read that feeds the live decoder orders events within a
-// ledger by tx_hash — a lexical string sort, not Stellar's actual
-// intra-ledger transaction-apply order (which the lake CAN resolve, via
-// stellar.tx_hash_index / clickhouse.TxIndexReader, but the projector's
-// forward stream does not consult it — docs/architecture/
-// contract-call-coverage-audit.md "Walker terrain check"). A genuinely
-// legitimate pool creation (add_pool) and its first trade can land in
-// the SAME ledger in different transactions; if the trade's tx_hash
-// lexically precedes the add_pool's, the lake delivers the trade FIRST.
-// Because this decoder's registry is grown live from add_pool alone
-// (Decode(), self-seed), that ordering flips the trade from "will
-// register successfully" to "permanently, silently dropped": Matches()
-// returns false for the not-yet-registered pool and nothing downstream
-// (this decoder has no logger/metrics hook) ever signals it happened.
+// TestDecoder_ChHashOrderCanDropRegisteredPoolTrade pins Q040's hazard at the
+// Decoder: its registry grows live from add_pool alone, so a same-ledger trade
+// delivered BEFORE its pool's add_pool is permanently missed (Matches() false,
+// and the projector's processEventSafely treats that as a silent skip).
+// stellar.contract_events sorts a ledger by tx_hash, a lexical order that can
+// put the trade first; the lake readers therefore re-sort each ledger into
+// transaction apply order (internal/storage/clickhouse/apply_order.go, tested
+// by TestApplyOrderer_SameLedgerAddPoolPrecedesTrade). This test keeps the
+// decoder-side reason that ordering is load-bearing.
 //
 // This test proves the divergence exists deterministically, at the
 // Decoder alone, independent of any live ClickHouse connection: same
