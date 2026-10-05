@@ -21,7 +21,16 @@ ok()  { pass=$((pass + 1)); echo "  ok   — $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL — $1"; }
 
 if [ ! -f "$TASKS" ]; then
-  echo "ansible-exporter-service-gating-test: FAIL — $TASKS not found" >&2
+  # pgbackrest_exporter 0.23.0 has --web.telemetry-path and no --web.endpoint;
+# an unknown flag crash-loops the unit on its next restart.
+PGBR_UNIT="configs/ansible/roles/archival-node/templates/systemd/pgbackrest_exporter.service.j2"
+if grep -q -- '--web\.endpoint' "$PGBR_UNIT"; then
+  bad "pgbackrest_exporter unit passes --web.endpoint, which does not exist in 0.23.0 (use --web.telemetry-path)"
+else
+  ok "pgbackrest_exporter unit does not pass the nonexistent --web.endpoint"
+fi
+
+echo "ansible-exporter-service-gating-test: FAIL — $TASKS not found" >&2
   exit 1
 fi
 

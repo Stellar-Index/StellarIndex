@@ -14,7 +14,7 @@ Group=pgbackrest_exporter
 # zero stanzas.
 ExecStart=/usr/local/bin/pgbackrest_exporter \
   --web.listen-address=127.0.0.1:9854 \
-  --web.endpoint=/metrics \
+  --web.telemetry-path=/metrics \
   --collect.interval=600
 
 Restart=on-failure
