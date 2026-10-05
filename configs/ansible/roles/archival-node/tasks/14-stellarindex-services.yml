@@ -186,6 +186,12 @@
   vars:
     local_dist_dir: "{{ playbook_dir }}/../../.."
 
+- name: Cancel an in-flight asset-volume-character roll
+  when: stellarindex_apply_migrations | default(false) | bool
+  ansible.builtin.import_tasks: ../../../tasks/cancel-asset-character-roll.yml
+  vars:
+    cancel_dsn: "{{ postgres_dsn_stellarindex }}"
+
 - name: Run pending migrations against the stellarindex database
   # OPT-IN since 2026-07-10: deploy.yml is the canonical migration
   # applier (stages migrations FROM THE TAG, guaranteeing

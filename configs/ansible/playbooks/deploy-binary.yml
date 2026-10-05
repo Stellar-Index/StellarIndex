@@ -227,6 +227,12 @@
         - not (backup_freshness_skip | default(false) | bool)
         - not (pgbackrest_backup_enabled | default(true) | bool)
 
+    - name: Cancel an in-flight asset-volume-character roll
+      ansible.builtin.import_tasks: ../tasks/cancel-asset-character-roll.yml
+      vars:
+        cancel_dsn: "{{ migrate_dsn | default('') }}"
+      when: not (migrations_skip | default(false) | bool)
+
     - name: Apply outstanding migrations
       # Source the host's env (STELLARINDEX_POSTGRES_DSN — the real,
       # password-bearing DSN that the services already use) and let

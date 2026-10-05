@@ -127,12 +127,15 @@ func TestRefreshAssetVolumeCharacter_zeroRowPassKeepsLastGood(t *testing.T) {
 	store, script := newScriptedStore(t,
 		scriptedResult{}, // SET max_parallel_workers_per_gather
 		scriptedResult{cols: []string{"current_setting"}, rows: [][]driver.Value{{"30000ms"}}}, // captured prior statement_timeout
+		scriptedResult{cols: []string{"current_setting"}, rows: [][]driver.Value{{""}}},        // captured prior application_name
+		scriptedResult{}, // set application_name
 		scriptedResult{}, // SET statement_timeout
 		scriptedResult{cols: []string{
 			"asset_id", "total", "total_numeric", "makers", "takers",
 			"top_pair", "self_cross", "issuer_side", "market_styled",
 		}}, // the roll: zero rows
 		scriptedResult{}, // restore statement_timeout (set_config)
+		scriptedResult{}, // restore application_name
 		scriptedResult{}, // RESET max_parallel_workers_per_gather
 		scriptedResult{}, // prune
 	)
@@ -140,14 +143,14 @@ func TestRefreshAssetVolumeCharacter_zeroRowPassKeepsLastGood(t *testing.T) {
 		t.Fatalf("RefreshAssetVolumeCharacter: %v", err)
 	}
 	got := script.statements()
-	if len(got) != 7 {
-		t.Fatalf("expected 7 statements (no upsert batch for zero rows), got %d: %v", len(got), got)
+	if len(got) != 10 {
+		t.Fatalf("expected 10 statements (no upsert batch for zero rows), got %d: %v", len(got), got)
 	}
-	if got[4] != `SELECT set_config('statement_timeout', $1, false)` {
-		t.Errorf("statement_timeout restore = %q, want the captured-value set_config restore", got[4])
+	if got[6] != `SELECT set_config('statement_timeout', $1, false)` {
+		t.Errorf("statement_timeout restore = %q, want the captured-value set_config restore", got[6])
 	}
-	if got[6] != refreshAssetVolumeCharacterPruneExpired {
-		t.Errorf("zero-row pass prune = %q, want %q", got[6], refreshAssetVolumeCharacterPruneExpired)
+	if got[9] != refreshAssetVolumeCharacterPruneExpired {
+		t.Errorf("zero-row pass prune = %q, want %q", got[9], refreshAssetVolumeCharacterPruneExpired)
 	}
 	if !script.committed() {
 		t.Error("zero-row pass must commit its expiry prune")
@@ -169,12 +172,15 @@ func TestRollAssetVolumeCharacter_RestoresCapturedStatementTimeout(t *testing.T)
 	store, script := newScriptedStore(t,
 		scriptedResult{}, // SET max_parallel_workers_per_gather
 		scriptedResult{cols: []string{"current_setting"}, rows: [][]driver.Value{{priorBackstop}}}, // captured
+		scriptedResult{cols: []string{"current_setting"}, rows: [][]driver.Value{{""}}},            // captured prior application_name
+		scriptedResult{}, // set application_name
 		scriptedResult{}, // SET statement_timeout = assetVolumeCharacterRollTimeout (45min)
 		scriptedResult{cols: []string{
 			"asset_id", "total", "total_numeric", "makers", "takers",
 			"top_pair", "self_cross", "issuer_side", "market_styled",
 		}}, // the roll: zero rows
 		scriptedResult{}, // restore
+		scriptedResult{}, // restore application_name
 		scriptedResult{}, // RESET max_parallel_workers_per_gather
 	)
 
@@ -183,13 +189,16 @@ func TestRollAssetVolumeCharacter_RestoresCapturedStatementTimeout(t *testing.T)
 	}
 
 	got := script.statements()
-	if len(got) != 6 {
-		t.Fatalf("expected 6 statements, got %d: %v", len(got), got)
+	if len(got) != 9 {
+		t.Fatalf("expected 9 statements, got %d: %v", len(got), got)
 	}
-	if got[4] != `SELECT set_config('statement_timeout', $1, false)` {
-		t.Fatalf("restore statement = %q, want the captured-value set_config restore", got[4])
+	if got[6] != `SELECT set_config('statement_timeout', $1, false)` {
+		t.Fatalf("restore statement = %q, want the captured-value set_config restore", got[6])
 	}
-	restoreArg := script.stmts[4].arg(t, 1)
+	if name := script.stmts[3].arg(t, 1); name != AssetVolumeCharacterRollApplicationName {
+		t.Errorf("application_name = %v, want %q", name, AssetVolumeCharacterRollApplicationName)
+	}
+	restoreArg := script.stmts[6].arg(t, 1)
 	if restoreArg != priorBackstop {
 		t.Errorf("restore arg = %v, want the captured prior value %q (not a bare RESET to the server default)", restoreArg, priorBackstop)
 	}
@@ -206,6 +215,8 @@ func TestRollAssetVolumeCharacter_FailedRestoreFailsTheCall(t *testing.T) {
 	store, _ := newScriptedStore(t,
 		scriptedResult{}, // SET max_parallel_workers_per_gather
 		scriptedResult{cols: []string{"current_setting"}, rows: [][]driver.Value{{"2m"}}},
+		scriptedResult{cols: []string{"current_setting"}, rows: [][]driver.Value{{""}}}, // captured prior application_name
+		scriptedResult{}, // set application_name
 		scriptedResult{}, // SET statement_timeout = assetVolumeCharacterRollTimeout (45min)
 		scriptedResult{cols: []string{
 			"asset_id", "total", "total_numeric", "makers", "takers",
