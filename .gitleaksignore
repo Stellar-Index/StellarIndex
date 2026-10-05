@@ -56,3 +56,9 @@ f9157d5dc84fb5bf5f8acdaefe4b5a6d5c5b0f1e:internal/storage/clickhouse/blend_pool_
 bd1e3b50c3d6e1bb58ad9b9b707d26c0440492c7:cmd/stellarindex-ops/usage_rollup_backfill_test.go:generic-api-key:73
 8c20079f7d2ccb5ecdebcfe0e2f1ddd27367819f:docs/agent-onboarding.md:generic-api-key:25
 
+
+# A public Soroban WASM hash (TokenMessengerMinter, CCTP) in a test-fixture
+# comment, added by 3ce15cba; dc220bed reordered the line so the scanner no
+# longer reads it as `label: secret`. Not a credential: it is the on-chain
+# code hash anyone can read from the contract instance.
+3ce15cbae082ad1682a9c733ef744458972e9014:internal/sources/cctp/real_fixture_test.go:generic-api-key:18
