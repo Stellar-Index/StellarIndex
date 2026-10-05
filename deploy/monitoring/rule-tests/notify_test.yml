@@ -300,3 +300,82 @@ tests:
               summary: "Transactional email (magic-link) failing > 50% of sends"
               runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md"
               description: "More than half of magic-link email sends have failed\nfor 15+ minutes (66.67% failed). The\nmail provider (Resend) is likely down, the API key is rotated/\ninvalid, or the sending domain is unverified. Customer impact:\nmagic-link dashboard LOGIN and/or API-signup CONFIRMATION stop\ndelivering — existing sessions and API keys are unaffected. Check\nthe Resend status + credentials per the runbook.\n\nRunbook: docs/operations/runbooks/notify-send-failure.md\n"
+
+  # ── Case 9: rare failures (1 per 20m) fire the any-failure alert ───
+  # Too sparse for the sustained rule's every-window dwell and far under the
+  # 50% ratio; stellarindex_notify_send_failed still sees each one.
+  - interval: 1m
+    name: one failed send every 20m fires the any-failure alert only
+    input_series:
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="sent"}'
+        values: '0+10x120'
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="failed"}'
+        values: '0x20 1x20 2x20 3x20 4x20 5x20'
+    alert_rule_test:
+      - eval_time: 100m
+        alertname: stellarindex_notify_send_failed
+        exp_alerts:
+          - exp_labels:
+              template: magic-link
+              severity: ticket
+              team: stellarindex
+              component: notify
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+              # promtool 2.x (CI and r1) renders increase() here as exactly 3; 3.x extrapolates to 3.051.
+              summary: "Transactional email (magic-link) had 3 failed send(s) in the last hour"
+              description: |
+                At least one magic-link email send failed in the
+                last hour. Rare failures stay under the ratio and sustained
+                alerts, so this is the only signal for them. A user did not get
+                their magic link or confirmation email.
+
+                Runbook: docs/operations/runbooks/notify-send-failure.md
+      - eval_time: 100m
+        alertname: stellarindex_notify_send_failures_sustained
+        exp_alerts: []
+      - eval_time: 100m
+        alertname: stellarindex_notify_send_failure_ratio_high
+        exp_alerts: []
+
+  # ── Case 10: all sends failed, none sent — ratio rule fires ────────
+  # failed is in the denominator, so 0 sent + N failed is 1.0, not NaN.
+  - interval: 1m
+    name: all sends failed with zero sent fires the ratio alert
+    input_series:
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="sent"}'
+        values: '0x60'
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="failed"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_notify_send_failure_ratio_high
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: notify
+              template: magic-link
+            exp_annotations:
+              summary: "Transactional email (magic-link) failing > 50% of sends"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md"
+              description: "More than half of magic-link email sends have failed\nfor 15+ minutes (100% failed). The\nmail provider (Resend) is likely down, the API key is rotated/\ninvalid, or the sending domain is unverified. Customer impact:\nmagic-link dashboard LOGIN and/or API-signup CONFIRMATION stop\ndelivering — existing sessions and API keys are unaffected. Check\nthe Resend status + credentials per the runbook.\n\nRunbook: docs/operations/runbooks/notify-send-failure.md\n"
+
+  # ── Case 11: zero traffic (0/0) fires none of the failure alerts ───
+  - interval: 1m
+    name: zero sends and zero failures keeps every failure alert silent
+    input_series:
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="sent"}'
+        values: '0x60'
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="failed"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_notify_send_failure_ratio_high
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: stellarindex_notify_send_failed
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: stellarindex_notify_send_failures_sustained
+        exp_alerts: []
