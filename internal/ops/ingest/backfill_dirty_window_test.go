@@ -189,10 +189,10 @@ func (f *fakeProjectorCursorStore) GetCursor(_ context.Context, source, sub stri
 }
 
 // TestRawBackfillBelowProjectorCursor pins INV-2638: a soroban-events backfill
-// that lands raw rows at or below a projected source's cursor (projector
-// reading Postgres soroban_events) records a dirty window over the
-// already-projected part of the range and names the projector-replay command
-// that re-projects it. The backfill itself never writes a projected table.
+// (projector reading Postgres soroban_events) records a dirty window over the
+// full [from,to] of every projected source with a cursor, whatever the cursor
+// position (it can move during the backfill), and names the projector-replay
+// command that re-projects it. The backfill itself never writes a projected table.
 func TestRawBackfillBelowProjectorCursor(t *testing.T) {
 	var legacy config.Config // ClickHouseProjectorSource=false: projector tails soroban_events
 	var chFeed config.Config
@@ -208,8 +208,9 @@ func TestRawBackfillBelowProjectorCursor(t *testing.T) {
 		want      []timescale.ProjectionDirtyWindow
 		wantReads bool
 	}{
-		{"legacy feed records the projected overlap", legacy, pseudo, false, []timescale.ProjectionDirtyWindow{
-			{Source: "cctp", From: 100, To: 150, Reason: timescale.BackfillWriteReason(100, 150)},
+		{"legacy feed records the full window for every cursored source", legacy, pseudo, false, []timescale.ProjectionDirtyWindow{
+			{Source: "aquarius", From: 100, To: 200, Reason: timescale.BackfillWriteReason(100, 200)},
+			{Source: "cctp", From: 100, To: 200, Reason: timescale.BackfillWriteReason(100, 200)},
 			{Source: "soroswap", From: 100, To: 200, Reason: timescale.BackfillWriteReason(100, 200)},
 		}, true},
 		{"CH-fed projector never reads soroban_events", chFeed, pseudo, false, nil, false},
@@ -258,8 +259,8 @@ func TestRawBackfillBelowProjectorCursor(t *testing.T) {
 		if _, _, err := buildChunkDispatcher(context.Background(), logger, opts, legacy, nil, store, true); !errors.Is(err, gateReached) {
 			t.Fatalf("err = %v, want the memoised gate verdict", err)
 		}
-		if len(store.windows) != 2 {
-			t.Fatalf("recorded %+v, want the cctp and soroswap windows", store.windows)
+		if len(store.windows) != 3 {
+			t.Fatalf("recorded %+v, want the aquarius, cctp and soroswap windows", store.windows)
 		}
 	})
 }
