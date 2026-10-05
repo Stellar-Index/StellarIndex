@@ -39,7 +39,7 @@ type feedEntry struct {
 // only non-USD suffix; the 2026-07-24 feeds carry explicit `/USD`
 // suffixes that simply restate the default. NAV feeds are the
 // exception to the default — see quoteBTC / quoteSolvBTC below.
-// See ADR-0028 §The RedStone 19-feed registry.
+// See ADR-0028 §Decision.
 var (
 	quoteUSD = mustFiat("USD")
 	quoteEUR = mustFiat("EUR")
@@ -156,7 +156,7 @@ var feedRegistry = map[string]feedEntry{
 	//     own SolvBTC.BBN_FUNDAMENTAL_USD row by the SolvBTC premium.
 	//
 	// The base codes are unchanged (each feed_id keeps its own code
-	// per ADR-0028 §3) — only the mislabelled denominator moves.
+	// per ADR-0028 §Decision) — only the mislabelled denominator moves.
 	"SolvBTC":                 {Base: mustCrypto("SolvBTC"), Quote: quoteUSD},
 	"SolvBTC_FUNDAMENTAL":     {Base: mustCrypto("SolvBTC_FUNDAMENTAL"), Quote: quoteBTC},
 	"SolvBTC.BBN_FUNDAMENTAL": {Base: mustCrypto("SolvBTC.BBN_FUNDAMENTAL"), Quote: quoteSolvBTC},

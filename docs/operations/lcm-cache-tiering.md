@@ -37,7 +37,7 @@ on r1 (the design + code primitives are already live in `main`).
   of the steps are abandonable mid-stream.
 - [ ] `mc` is configured with `local` + `aws-public` aliases (see
   `docs/operations/galexie-backfill.md`).
-- [ ] You've read ADR-0027 §Sequencing.
+- [ ] You've read ADR-0027 §Decision.
 
 ## Step 3 — enable the dual-source flag in r1's TOML
 
@@ -233,7 +233,7 @@ result as the fill's hot floor and writes `TRIM_CUTOFF` for
 duration flag is needed.
 
 The archival-node role installs both units but deliberately does not
-enable the timer (ADR-0027 §3 + §4 ship as one step). Enable it only
+enable the timer (ADR-0027 §Decision: enabling the cold tier and the bulk trim ship as one step). Enable it only
 once `s3_cold_bucket_archive` is set in the indexer/API TOML **and** a
 cold read has been proven on this host:
 `stellarindex_ledgerstream_tier_read_total{outcome="cold"}` > 0 after
