@@ -165,6 +165,7 @@ expect_has "ansible -> lint-jinja-templates" "plan  lint-jinja-templates:" "$out
 expect_has "verify.sh -> check-verify-parity" "plan  check-verify-parity:" "$out"
 expect_has "baseline -> lint-baseline-growth deferred on staged edits, with the reason" "skip  lint-baseline-growth: reads the Baseline-Growth commit trailer" "$out"
 expect_has ".md -> lint-doc-links scoped to the changed file" "lint-doc-links.sh docs/note.md" "$out"
+expect_has ".go/.md -> lint-repo-budget reading the index in staged mode" "lint-repo-budget.sh --staged   (--staged)" "$out"
 expect_has ".md -> lint-docs still deferred (no file list)" "skip  lint-docs: 1 .md file(s) changed; lint-docs" "$out"
 expect_has "an uncovered type is named, not silently dropped" "skip  data.json: no changed-file lint applies to this type" "$out"
 expect_not "no test script changed -> none is run" "plan  test-script:" "$out"
@@ -198,6 +199,7 @@ expect_not "go-only: no actionlint" "actionlint" "$out"
 expect_not "go-only: no migration gates" "lint-migrations" "$out"
 expect_not "go-only: no lint-migration-commands (Go is not in its operator corpus)" "lint-migration-commands" "$out"
 expect_not "go-only: no check-verify-parity" "check-verify-parity" "$out"
+expect_has "go-only: lint-repo-budget selected" "plan  lint-repo-budget:" "$out"
 
 R="$TMP/shonly"; new_repo "$R"
 put "$R" bin/x.sh $'#!/usr/bin/env bash\nset -euo pipefail\necho x'
@@ -208,6 +210,7 @@ expect_not "sh-only: no gofumpt" "gofumpt" "$out"
 expect_not "sh-only: no go vet" "go vet" "$out"
 expect_not "sh-only: no lint-lexicon" "lint-lexicon" "$out"
 expect_not "sh-only: no actionlint" "actionlint" "$out"
+expect_not "sh-only: no lint-repo-budget" "lint-repo-budget" "$out"
 
 R="$TMP/wfonly"; new_repo "$R"
 put "$R" .github/workflows/a.yml $'name: a\non: push\npermissions:\n  contents: read\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1\n      - run: |\n          set -euo pipefail\n          echo ok'
@@ -223,7 +226,7 @@ put "$R" CHANGELOG.md '# changelog'
 git -C "$R" add -A
 out="$(cd "$R" && "$DISPATCH" --staged --plan 2>&1)"; rc=$?
 expect_exit "md-only: plans cleanly" 0 "$rc"
-expect_has "md-only: lint-doc-links and lint-migration-commands, one deferral — never reads as fully linted" "lint-changed: plan — 2 lint(s) over 2 changed file(s), 1 deferred" "$out"
+expect_has "md-only: lint-doc-links, lint-migration-commands and lint-repo-budget, one deferral — never reads as fully linted" "lint-changed: plan — 3 lint(s) over 2 changed file(s), 1 deferred" "$out"
 expect_has "md-only: a docs/ runbook selects lint-migration-commands (it scans runbooks for a NULL-start refresh)" "plan  lint-migration-commands:" "$out"
 expect_has "md-only: lint-doc-links scoped to both changed files" "lint-doc-links.sh CHANGELOG.md docs/a.md" "$out"
 expect_has "md-only: lint-docs still names the file count and itself" "skip  lint-docs: 2 .md file(s) changed; lint-docs" "$out"
@@ -271,6 +274,10 @@ out="$(cd "$R" && "$DISPATCH" --base "$first" --plan 2>&1)"; rc=$?
 expect_exit "--base <rev> plans" 0 "$rc"
 expect_has "--base reports the range and the merge-base" "lint-changed: 2 changed file(s), ${first}...HEAD (merge-base ${first:0:12})" "$out"
 expect_has "--base runs lint-baseline-growth with BASE_SHA set to the merge-base" "plan  lint-baseline-growth: env BASE_SHA=${first} " "$out"
+put "$R" scripts/ci/lint-repo-budget.baseline 'go-lines x.go 2001'
+git -C "$R" add -A && git -C "$R" commit -q -m 'third'
+out="$(cd "$R" && "$DISPATCH" --base "$first" --plan 2>&1)"
+expect_has "--base: a changed repo-budget baseline runs lint-repo-budget with BASE_SHA at the merge-base" "plan  lint-repo-budget: env BASE_SHA=${first} " "$out"
 out="$(cd "$R" && "$DISPATCH" --plan 2>&1)"; rc=$?
 expect_exit "no mode, nothing staged, no origin/main -> exit 2" 2 "$rc"
 expect_has "the refusal names origin/main" "revision 'origin/main' does not resolve" "$out"

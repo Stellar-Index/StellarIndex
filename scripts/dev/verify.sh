@@ -248,6 +248,8 @@ echo "=== Vet (linux/arm64 cross) ===" && GOOS=linux GOARCH=arm64 go vet ./inter
 echo "=== golangci config schema ===" && go run ./scripts/ci/lint-golangci-config
 echo "=== Agents file ===" && ./scripts/ci/lint-agents-file.sh
 echo "=== Agents file self-test ===" && ./scripts/ci/lint-agents-file-test.sh
+echo "=== Repo budget ===" && ./scripts/ci/lint-repo-budget.sh
+echo "=== Repo budget self-test ===" && ./scripts/ci/lint-repo-budget-test.sh
 echo "=== Remote /tmp staging ===" && ./scripts/ci/lint-remote-tmp-staging.sh
 echo "=== Remote /tmp staging self-test ===" && ./scripts/ci/lint-remote-tmp-staging-test.sh
 echo "=== Actions pinning ===" && ./scripts/ci/lint-actions-pinning.sh
