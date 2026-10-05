@@ -145,6 +145,15 @@ type GapDetectorTarget struct {
 	// SAFETY: interpolated verbatim; ADR-0030 compile-time-const
 	// discipline applies exactly as for Table / WhereFilter.
 	DistinctLedgerCountSQL string
+
+	// CloseTimeColumn names the table's ledger-close-time partition
+	// column when the hypertable is partitioned by time rather than by
+	// ledger. The gap scan then also bounds that column by the close
+	// times ledger_ingest_log records around [from, to]; without it a
+	// `ledger BETWEEN` filter excludes no chunk and decompresses every
+	// compressed one (soroban_events on r1: 780 s timeout for a
+	// 4.5k-ledger window). Same ADR-0030 const discipline as Table.
+	CloseTimeColumn string
 }
 
 // sorobanEventsDistinctLedgerCountSQL answers "how many ledgers in
@@ -424,8 +433,8 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// census (DistinctLedgerCountSQL) — soroban_events has NO index on
 	// `ledger` and the generic COUNT(DISTINCT ledger) was a 556 s full
 	// scan of a 257 GB hypertable per cycle (r1 incident). The gap scan
-	// itself is unchanged (observed rows, 13-min PG timeout).
-	{Source: "soroban-events", CanonicalSource: "soroban_events", Table: "soroban_events", LedgerColumn: "ledger", Genesis: 50_457_424, ScanCadence: 6 * time.Hour, MinGapSizeOverride: 100000, DistinctLedgerCountSQL: sorobanEventsDistinctLedgerCountSQL},
+	// still reads observed rows, chunk-pruned via CloseTimeColumn.
+	{Source: "soroban-events", CanonicalSource: "soroban_events", Table: "soroban_events", LedgerColumn: "ledger", Genesis: 50_457_424, ScanCadence: 6 * time.Hour, MinGapSizeOverride: 100000, DistinctLedgerCountSQL: sorobanEventsDistinctLedgerCountSQL, CloseTimeColumn: "ledger_close_time"},
 	// SDEX is classic-DEX and does NOT flow through soroban_events.
 	// Its rows live in the unified `trades` hypertable alongside
 	// every other trade-emitting source; the WhereFilter slices
@@ -562,10 +571,14 @@ func ApplicableGapDetectorTargets(targets []GapDetectorTarget, network string, l
 // present restores the pairing across the boundary at zero extra scan
 // cost — the seed is a single literal row, not a second query over the
 // table.
-func perSourceLedgerGapsQuery(target GapDetectorTarget) string {
-	filter := ""
+//
+// timeBound is an extra predicate ANDed into the scan (from
+// [closeTimeBoundPredicate]); empty for targets without a
+// CloseTimeColumn.
+func perSourceLedgerGapsQuery(target GapDetectorTarget, timeBound string) string {
+	filter := timeBound
 	if target.WhereFilter != "" {
-		filter = " AND (" + target.WhereFilter + ")"
+		filter += " AND (" + target.WhereFilter + ")"
 	}
 	//nolint:gosec // G201: identifiers from compile-time const list per ADR-0030
 	return fmt.Sprintf(`
@@ -591,6 +604,22 @@ func perSourceLedgerGapsQuery(target GapDetectorTarget) string {
 		  AND ledger - prev_l - 1 >= $3
 		ORDER BY gap_size DESC
 	`, target.LedgerColumn, target.Table, filter)
+}
+
+// closeTimeBoundPredicate appends the open-ended close-time bounds lo/hi
+// (an invalid side stays unbounded) to args and returns the predicate
+// referencing them.
+func closeTimeBoundPredicate(column string, lo, hi sql.NullTime, args []any) (string, []any) {
+	pred := ""
+	if lo.Valid {
+		args = append(args, lo.Time)
+		pred += fmt.Sprintf(" AND %s >= $%d", column, len(args))
+	}
+	if hi.Valid {
+		args = append(args, hi.Time)
+		pred += fmt.Sprintf(" AND %s <= $%d", column, len(args))
+	}
+	return pred, args
 }
 
 // maxLedgerInWindowQuery builds the generic "highest present ledger in
@@ -662,8 +691,6 @@ func (s *Store) FindPerSourceLedgerGaps(ctx context.Context, target GapDetectorT
 		return nil, nil
 	}
 
-	query := perSourceLedgerGapsQuery(target)
-
 	// SQL-level statement_timeout backstop: when the Go-side ctx
 	// times out mid-query the database/sql driver tries to cancel
 	// via PG's async cancellation protocol — best-effort. r1
@@ -684,7 +711,16 @@ func (s *Store) FindPerSourceLedgerGaps(ctx context.Context, target GapDetectorT
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%d'", gapDetectorStatementTimeoutMS)); err != nil {
 		return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps SET: %w", err)
 	}
-	rows, err := tx.QueryContext(ctx, query, from, to, minGapSize, seedLedger)
+	args := []any{from, to, minGapSize, seedLedger}
+	timeBound := ""
+	if target.CloseTimeColumn != "" {
+		var lo, hi sql.NullTime
+		if err := tx.QueryRowContext(ctx, enclosingCloseTimeQuery, from, to).Scan(&lo, &hi); err != nil {
+			return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps close-time bound [%d,%d]: %w", from, to, err)
+		}
+		timeBound, args = closeTimeBoundPredicate(target.CloseTimeColumn, lo, hi, args)
+	}
+	rows, err := tx.QueryContext(ctx, perSourceLedgerGapsQuery(target, timeBound), args...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps %s [%d,%d, min %d]: %w",
 			target.Table, from, to, minGapSize, err)
