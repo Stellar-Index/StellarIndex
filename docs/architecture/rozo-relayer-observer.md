@@ -1,15 +1,37 @@
 ---
 title: Rozo relayer-account observer (classic-payment bridge path)
 last_verified: 2026-06-04
-status: proposed
+status: superseded-by-read-side
 ---
 
 # Rozo relayer-account observer (`rozo-relayer`)
 
-**Status: proposed (not yet built).** Spec for capturing Rozo's
-real bridge volume — the USDC/EURC *classic-payment* flows through
-Rozo's relayer accounts, which the Soroban-event decoder
-(`internal/sources/rozo`) is structurally blind to.
+**Status: decided 2026-10-05 (INV-1131) — no dedicated decoder or
+table.** The spec below is kept for the evidence; the build is a read
+side over `stellar.account_movements` instead. Why:
+
+- **One writer per domain** (ADR-0031/0032). `internal/sources/classicmovements`
+  already decodes classic `payment` / path-payment ops into
+  `stellar.account_movements` (feed-shaped, keyed by `address`, with
+  `direction`, `asset` as `CODE-ISSUER`, `counterparty`, Int128 `amount`).
+  A `rozo-relayer` OpDecoder + `rozo_relayer_payments` would be a second
+  writer of the same facts.
+- Post-P23 (ledger 58,762,517) the same payments arrive via
+  `sep41_transfers`; `GET /v1/accounts/{g}/movements` already merges both.
+- Read side: no new code. The relayer flow is served by
+  `GET /v1/accounts/{g}/movements` on the accounts in
+  `rozo.MainnetRelayerAccounts`; `direction` `received` is a user deposit
+  (inbound), `sent` a bridge payout (outbound). Only the (USDC, EURC)
+  issuer pairs are bridge flow; native through these accounts is dust.
+  A helper with no caller was dropped: the Rozo protocol stats
+  (`bespokeBridgeRozo`) read Postgres `rozo_events`, while
+  `account_movements` lives in ClickHouse, so folding relayer volume into
+  those stats is a cross-store read that needs its own design. Memo
+  capture stays out (v2).
+- **Lower bound:** pre-P23 rows exist only where `classic-movements-backfill`
+  has been run over the account's range (the older account predates P23);
+  the repo cannot show that coverage, so any volume derived from this path
+  is a lower bound until the backfill is verified for both accounts.
 
 ## Problem
 
