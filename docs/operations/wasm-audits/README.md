@@ -6,22 +6,17 @@ status: living procedure
 
 # WASM audits
 
-This directory holds one audit log per on-chain Soroban source. Each
-audit log is the evidence trail for a single
-`internal/sources/external.Registry` `BackfillSafe` flag flip from
-`false` → `true`. Until the audit lands, the source's
-`stellarindex-ops backfill` runs are refused; once the audit shows
-the decoder handles every WASM version that ran for the replay
-range, the flag flips in the same PR.
+One audit log per on-chain Soroban source, as the evidence trail for a single
+`internal/sources/external.Registry` `BackfillSafe` flip `false` → `true`.
+Until it lands, the source's `stellarindex-ops backfill` runs are refused; once
+the audit shows the decoder handles every WASM version in the replay range, the
+flag flips in the same PR.
 
-The constraint behind all of this is the trap AGENTS.md flags as
-"Soroban DeFi contracts upgrade in place" — Soroswap, Aquarius,
-Phoenix, Comet, Reflector\*, Redstone, and Band can each
-`update_contract` at the same address, and event body schemas /
-topic shapes can change across an upgrade. Live ingest only ever
-sees the current WASM; a since-inception backfill replays every
-prior version. Decoding old events with a current-only decoder
-silently produces wrong trades.
+Why (AGENTS.md "Soroban DeFi contracts upgrade in place"): Soroswap, Aquarius,
+Phoenix, Comet, Reflector\*, Redstone, and Band can each `update_contract` at
+the same address, changing event body schemas / topic shapes. Live ingest sees
+only the current WASM; a since-inception backfill replays every prior version,
+and a current-only decoder silently produces wrong trades.
 
 ## Files in this directory
 
@@ -37,26 +32,22 @@ silently produces wrong trades.
 
 ### 1. Identify the contracts to audit
 
-For each source, the audit covers:
+- The **factory contract** (if any) — emits `new_pair` / pool-creation events;
+  topic schema changes here add or remove pools we'd want to ingest.
+- The **router contract** (if any) — routed-swap aggregation events and
+  multi-hop accounting.
+- The **pair / pool contract WASM hash** — per-instance contracts emitting the
+  `swap` events. Instances share one hash (the factory deploys from a
+  registered hash); upgrading the factory's stored pair WASM hash is the
+  typical failure mode.
 
-- The **factory contract** (if any) — emits `new_pair` / pool-creation
-  events; topic schema changes here add or remove pools we'd want to
-  ingest.
-- The **router contract** (if any) — emits routed-swap aggregation
-  events, and is where multi-hop swap accounting lives.
-- The **pair / pool contract WASM hash** — the per-instance contracts
-  that emit the actual `swap` events. Each pair instance shares the
-  same WASM hash (factory deploys from a registered hash); upgrading
-  the factory's stored pair WASM hash is the typical failure mode.
-
-Contract IDs live in each source's package — search for `Mainnet*`
-constants in `internal/sources/<source>/events.go`.
+Contract IDs: search for `Mainnet*` constants in
+`internal/sources/<source>/events.go`.
 
 ### 2. Collect the WASM-version timeline
 
-Run `stellarindex-ops wasm-history` against a galexie data store that
-covers the replay range (output location: see "Where walk output
-goes" below):
+Run `stellarindex-ops wasm-history` against a galexie data store covering the
+replay range (output location: "Where walk output goes" below):
 
     mkdir -p /var/log/wasm-audit
     stellarindex-ops wasm-history \
@@ -66,54 +57,44 @@ goes" below):
       > /var/log/wasm-audit/<source>-wasm-history.json \
       2> /var/log/wasm-audit/<source>-wasm-history.stderr
 
-> **`-to` upper bound on r1.** Use the verified tip of
-> `galexie-archive`, NOT the network tip. As of 2026-05-01 the
-> archive is frozen at **62,249,727** (the last ledger fully
-> exported during the historical fill); live galexie writes to
-> `galexie-live`, which the walker does not consult. Setting `-to`
-> past that boundary fails partway through with `ledger object
-> containing sequence X is missing` — which looks like data
-> corruption but is actually just the partial trailing partition.
-> Cross-check the current safe boundary against
-> `/var/lib/galexie/detect-gaps.json` on r1 (`scan_to` field) and
+> **`-to` upper bound on r1.** Use the verified tip of `galexie-archive`, NOT
+> the network tip. As of 2026-05-01 the archive is frozen at **62,249,727**
+> (last ledger fully exported during the historical fill); live galexie writes
+> to `galexie-live`, which the walker does not consult. A `-to` past that
+> fails partway with `ledger object containing sequence X is missing` (the
+> partial trailing partition, not corruption). Cross-check the safe boundary
+> against `/var/lib/galexie/detect-gaps.json` on r1 (`scan_to` field) and
 > [docs/operations/r1-deployment-state.md §3a](../r1-deployment-state.md).
 
-The output is a JSON timeline of `(contract_id → [(active_from,
-active_to, wasm_hash)])`. Save this verbatim into the source's
-audit log under "WASM timeline".
+Output is a JSON timeline `(contract_id → [(active_from, active_to,
+wasm_hash)])`; save it verbatim into the audit log under "WASM timeline".
 
-For pair contracts you can't enumerate ahead of time (Soroswap pairs
-are deployed by the factory at runtime), use the factory's
-`new_pair` events to get every pair contract ID created, then pass
-all of them as `-contracts`. For an MVP audit, the dominant pairs by
-volume are sufficient; full coverage is the v2 upgrade.
+For pairs you can't enumerate ahead of time (Soroswap pairs are deployed at
+runtime), take every pair ID from the factory's `new_pair` events and pass all
+as `-contracts`. For an MVP audit the dominant pairs by volume suffice; full
+coverage is the v2 upgrade.
 
-**Where to run `wasm-history`.** Two options:
+**Where to run `wasm-history`.**
 
-- **r1 directly** — only when r1's verify-archive walk is idle.
-  The wasm-history scan reads ~46 MB/sec from MinIO and competes
-  with verify-archive on ZFS ARC. Run only when verifier is idle.
-- **A separate workstation pointed at AWS public bucket.** Set
-  galexie's `cfg.Storage.S3BucketArchive = "aws-public-blockchain"`
+- **r1 directly** — only when r1's verify-archive walk is idle (the scan reads
+  ~46 MB/sec from MinIO and competes with verify-archive on ZFS ARC).
+- **A separate workstation pointed at AWS public bucket.** Set galexie's
+  `cfg.Storage.S3BucketArchive = "aws-public-blockchain"`
   + `S3Endpoint = "https://s3.us-east-1.amazonaws.com"` +
-  `S3BucketArchivePrefix = "v1.1/stellar/ledgers/pubnet/"`. Costs
-  bandwidth (Hetzner-out → AWS-in is free, AWS-out → home is the
-  paid leg) but doesn't compete with r1's other workloads.
+  `S3BucketArchivePrefix = "v1.1/stellar/ledgers/pubnet/"`. Costs bandwidth
+  (Hetzner-out → AWS-in is free, AWS-out → home is the paid leg).
 
-**Where walk output goes.** Every walk artefact — the JSON on
-stdout, the stderr progress log, and the `-checkpoint-dir` JSONL —
-goes under `/var/log/wasm-audit/`, never loose
-in `/var/log/` or `/tmp/`. A multi-hour walk's stderr alone runs to
-gigabytes on the root filesystem, and one dedicated dir keeps the
-cleanup a single, unambiguous target. Once the audit log records the
-timeline (and any JSON worth keeping is committed under
+**Where walk output goes.** Every artefact (stdout JSON, stderr progress log,
+`-checkpoint-dir` JSONL) goes under `/var/log/wasm-audit/`, never loose in
+`/var/log/` or `/tmp/` (a multi-hour walk's stderr runs to gigabytes). Once the
+audit log records the timeline (and any JSON worth keeping is committed under
 [`evidence/`](evidence/)), delete the walk's files:
 
     rm -rf /var/log/wasm-audit/<source>-*
 
-**Crash-resilience for long walks.** Pass `-checkpoint-dir DIR`
-on every multi-hour walk. The walker refuses a checkpoint dir that
-does not exist, so create it (and the parent) first:
+**Crash-resilience for long walks.** Pass `-checkpoint-dir DIR` on every
+multi-hour walk; the walker refuses a dir that does not exist, so create it
+first:
 
     mkdir -p /var/log/wasm-audit/<source>-checkpoint
     stellarindex-ops wasm-history \
@@ -124,54 +105,45 @@ does not exist, so create it (and the parent) first:
       -contracts ... > /var/log/wasm-audit/<source>-wasm-history.json \
       2> /var/log/wasm-audit/<source>-wasm-history.stderr
 
-Each parallel worker writes its observed transitions to
-`<DIR>/wasm-history-w<i>.jsonl` as it sees them. If the walk dies
-before reaching its end-of-run JSON write (process crash, machine
-reboot, missing ledger in the archive — see
-[r1-deployment-state.md §3a](../r1-deployment-state.md)), recover the
-canonical JSON from the partial transitions:
+Each parallel worker writes transitions to `<DIR>/wasm-history-w<i>.jsonl`. If
+the walk dies before its end-of-run JSON write (crash, reboot, missing ledger
+in the archive — see [r1-deployment-state.md §3a](../r1-deployment-state.md)),
+recover the JSON from the partial transitions:
 
     stellarindex-ops wasm-history-merge-jsonl \
       -checkpoint-dir /var/log/wasm-audit/<source>-checkpoint \
       -to 62249727 \
       -output /var/log/wasm-audit/<source>-wasm-history-recovered.json
 
-`-to` MUST match the original walk's `-to` so the last open range
-per contract closes correctly. The merge tool tolerates a half-
-written trailing line (a crashed worker may not have flushed its
-last transition cleanly) and skips it without failing.
+`-to` MUST match the original walk's `-to` so the last open range per contract
+closes correctly. The merge tool skips a half-written trailing line.
 
-The recovered JSON shape is identical to what `wasm-history` writes
-at end-of-run for the contracts that had at least one observed
-transition. Contracts that the walker scanned but saw no transitions
-for ARE NOT emitted by the merge tool — the JSONL only records
-transitions, not "saw nothing" outcomes. If the audit needs that
-"ran but saw nothing" signal, restart the walk from the gap region
-rather than relying on the merge.
+The recovered JSON shape matches `wasm-history`'s, for contracts with at least
+one observed transition. Contracts scanned with no transitions ARE NOT emitted
+(the JSONL records only transitions); if the audit needs that "ran but saw
+nothing" signal, restart the walk from the gap region.
 
 ### 3. Per-WASM-hash decoder review
 
-For each unique WASM hash in the timeline, fetch the WASM and
-inspect the event-emitting code paths. Two ways to fetch:
+For each unique hash in the timeline, fetch the WASM and inspect the
+event-emitting code paths:
 
 - **stellar-core**: `stellar-core get-wasm <hash> > /tmp/<hash>.wasm`
   if a captive-core's bucket dir has it cached.
 - **stellar-rpc** (if running): `stellar-rpc getLedgerEntry`
   with the WASM-storage key.
-- **galexie LCM** (last resort): walk LedgerEntryChange entries for
-  the install ledger and extract the WASM bytes.
+- **galexie LCM** (last resort): walk LedgerEntryChange entries for the install
+  ledger and extract the WASM bytes.
 
-Once you have the WASM bytes, disassemble with `wasm2wat`:
+Disassemble with `wasm2wat`:
 
     wasm2wat <hash>.wasm | grep -A 5 'events.publish'
 
-…or for finer detail, look at the source contract repo at the
-git tag corresponding to that WASM hash (Soroswap publishes at
-github.com/soroswap/core; tags map to releases).
+…or read the source contract repo at the git tag for that hash (Soroswap
+publishes at github.com/soroswap/core; tags map to releases).
 
-For each event the contract emits, verify against the decoder's
-expectations (see "Decoder expectations" in each per-source audit
-log):
+Verify each emitted event against the decoder's expectations ("Decoder
+expectations" in each per-source log):
 
 | failure mode | what to check |
 | --- | --- |
@@ -185,49 +157,40 @@ log):
 | Event split into multiple events (e.g. `swap` → `swap_in` + `swap_out`) | correlation logic breaks; decoder may emit 0 or 2 trades per swap |
 | Topic arity changed (2-tuple → 3-tuple) | classification matches on `topic[0..2]` so a longer topic still matches — but our position-based assumptions about further topic slots break |
 
-If every WASM hash in the timeline passes review, document the
-findings and flip `BackfillSafe: true` for the source in
-`internal/sources/external/registry.go` in the same PR as the
-audit log update.
+If every hash passes, document the findings and flip `BackfillSafe: true` in
+`internal/sources/external/registry.go` in the same PR as the audit log.
 
-If any WASM hash diverges from the current decoder, fix the decoder
-(plus add a fixture test under `internal/sources/<source>/` against
-that WASM hash) and ship the fix in the same PR. Don't flip
-`BackfillSafe` if any WASM hash needs a decoder change that isn't
-deployed yet.
+If any hash diverges, fix the decoder (plus a fixture test under
+`internal/sources/<source>/` against that hash) in the same PR. Don't flip
+`BackfillSafe` if a hash needs a decoder change that isn't deployed yet.
 
 ### 4. Hubble cross-check (where applicable)
 
-For sources where Hubble has a decoded view (currently SDEX only —
-see `cmd/stellarindex-ops/hubble_check.go`), running `hubble-check`
-over the audit's replay range is the regression gate that proves
-the decoder + audit together produce correct output. For Soroban
-sources Hubble has no decoded view; the WASM audit is the
-load-bearing safety check.
+Where Hubble has a decoded view (currently SDEX only — see
+`cmd/stellarindex-ops/hubble_check.go`), running `hubble-check` over the
+replay range proves decoder + audit produce correct output. Soroban sources
+have no Hubble view; the WASM audit is the load-bearing check.
 
 ### 5. Document + flip
 
-Update the source's audit log with:
+Update the audit log with:
 
 - The full `wasm-history` JSON output.
-- The list of unique WASM hashes seen.
-- Per-hash review findings (one line per hash: "matches current
-  decoder" or "diverges, fix landed in PR #N").
-- The active ledger ranges per hash so future audits can resume
-  from `(last audited ledger + 1)`.
+- The unique WASM hashes seen.
+- Per-hash findings (one line each: "matches current decoder" or "diverges,
+  fix landed in PR #N").
+- Active ledger ranges per hash, so future audits resume from `(last audited ledger + 1)`.
 - The decision: `BackfillSafe: true | false`.
 
 Then flip the registry entry in the same PR.
 
 ## Audit log lifecycle
 
-An audit log is **append-only** with respect to history. Once a WASM
-hash has been audited as "matches current decoder" for a specific
-ledger range, that finding doesn't change — only the upper bound of
-the audited range extends as the network closes more ledgers. New
-WASM hashes deployed after the last audit get appended; if any new
-hash diverges, flip `BackfillSafe: false` and ship the fix.
+An audit log is **append-only** with respect to history. A hash audited as
+"matches current decoder" for a ledger range keeps that finding; only the upper
+bound extends as the network closes ledgers. New hashes get appended; if any
+diverges, flip `BackfillSafe: false` and ship the fix.
 
-`last_verified` in each audit doc's frontmatter MUST be updated
-whenever the audit extends — the docs CI (`scripts/ci/lint-docs.sh`)
-will fail otherwise on stale freshness markers.
+`last_verified` in each audit doc's frontmatter MUST be updated whenever the
+audit extends — the docs CI (`scripts/ci/lint-docs.sh`) fails on stale
+freshness markers.
