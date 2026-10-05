@@ -91,7 +91,7 @@ factor values in [0, 1] (`z_score`, `source_count`, `diversity`, `liquidity`, `c
 `baseline_age_days` and `bootstrap_capped`. No raw source count, USD liquidity or divergence percentage
 is served.
 
-Chained pairs (AQUA -> USDC -> USD -> COP): chained confidence is the geometric mean of each leg's confidence.
+Chained pairs (AQUA -> USDC -> USD -> COP): chained confidence is the weakest leg's confidence (the minimum, `RouteConfidence`).
 
 ## Freeze condition and calibration
 

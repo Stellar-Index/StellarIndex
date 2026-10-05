@@ -36,7 +36,7 @@ confidence < 0.45 AND z_score > 5.0 AND source_count <= 1
 
 ## Invariant
 
-- The Phase 2 freeze must never fire on fewer than three signals: `confidence`, `z_score` and `source_count` are separate legs of one AND (the Phase 1 class-threshold rule and the triangulated-composite refusal are separate freeze paths). Enforced by `TestPhase2FreezeFires_CalibratedToADRZBand`.
+- The Phase 2 freeze must never fire on fewer than three signals: `confidence`, `z_score` and `source_count` are separate legs of one AND (the Phase 1 class-threshold rule and the triangulated-composite refusal are separate freeze paths). Enforced by `TestPhase2FreezeFires_MissingOneSignal` and `TestPhase2FreezeFires_ConfidenceConditionIsNotVacuous`.
 - `confidence` is the normalised combiner: the exponent is `1 / sum(all seven weights)`, `w_tri` is 0 when triangulation is unchecked, and a composite never feeds `source_count`. Enforced by `internal/aggregate/confidence/adr_parity_test.go`.
 - A freeze is never released by calm alone: auto-unfreeze needs a corroborating lens that agrees with the candidate price, and an escalated freeze is released only by an operator.
 - The freeze record is durable and fail-closed: Redis loss never releases a live freeze, a window's release never ends a sibling window's ladder, and ambiguity about ownership resolves to the longer hold. Enforced by the freeze and orchestrator tests under `internal/aggregate`.

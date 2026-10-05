@@ -22,7 +22,7 @@ GET /v1/chart?asset=<id>&quote=<id>&timeframe=<tf>&granularity=<g>&price_type=<p
   quote        default USD
   timeframe    1h | 24h | 1w | 1mo | 1y | all          default 24h
   granularity  1m | 15m | 1h | 4h | 1d | 1w | 1mo      default per timeframe
-  price_type   vwap | twap                              default vwap
+  price_type   vwap | twap | market_cap                              default vwap
 ```
 
 The response mirrors `/v1/history/since-inception`: `data` carries `asset_id`, `quote`, `timeframe`, `granularity`, `price_type` and `points[]` of `{t, p, v_usd}`, plus `flags`.

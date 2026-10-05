@@ -18,7 +18,7 @@ superseded_by: null
 An event-stream observer, `internal/sources/sep41_supply`, writes mint, burn and clawback events to `sep41_supply_events` (migration 0015), and `supply.StorageSEP41SupplyReader` feeds the real `SEP41Computer` (`internal/supply/sep41.go`).
 
 - **Why events, not ledger entries.** Summing holder balances needs a generic SEP-41 `ContractData` observer that does not exist, is expensive even for SAC-backed tokens, and the SEP-41 mint/burn/clawback events are the audit trail. The event sum works for classic-SAC and pure SEP-41 tokens alike.
-- **Match.** `contract_id ∈ watched set AND topic[0] ∈ {mint, burn, clawback}`, reusing the discovery sniffer's `classifySymbol`. Bodies are `i128`:
+- **Match.** `contract_id ∈ watched set AND topic[0] ∈ {mint, burn, clawback}`, using its own copy of the sniffer's `classifySymbol` (the sniffer's helper is unexported). Bodies are either a bare `i128` or the CAP-67 map `{amount, to_muxed_id}`; the decoder type-tests before reading the amount:
 
 | Event | Topic shape |
 |---|---|
