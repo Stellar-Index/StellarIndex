@@ -124,7 +124,7 @@ Per `docs/operations/wasm-audits/README.md`'s table:
 1. **`distribute` topic collision with `blend_backstop`.** Handled by contract-identity gating (ADR-0035/0040), not a WASM-audit concern; see README.md "Gating".
 2. **`drop`'s outer `Vec` is variable-length** (observed arities 13 and 3); the decoder does NOT assume fixed arity (`decodeDrop` loops `range outer`).
 3. **Topic[0] symbol rename** (e.g. `"distribute"`) would silently drop every event of that kind; `classify()` is byte-equal against pre-encoded constants.
-4. **`q_swap`/`swap` Map field rename** (`new_backstop` / `new_backstop_token` / `unlock_time`): decode-by-name per `contract-schema-evolution.md`; fails loud (`ErrMalformedPayload`).
+4. **`q_swap`/`swap` Map field rename** (`new_backstop` / `new_backstop_token` / `unlock_time`): decode-by-name per `ingest-pipeline.md#contract-schema-evolution`; fails loud (`ErrMalformedPayload`).
 5. **Non-positive amount** on `distribute`/`drop`: rejected (`ErrNonPositiveAmount`); none of the 465+2 observed amounts hit this (all strictly positive in samples reviewed).
 
 ## Decision
@@ -151,7 +151,7 @@ shows a sustained non-zero rate (a new, undecoded topic).
 - Procedure: [`README.md`](README.md)
 - Decoder source: `internal/sources/blend_emitter/{events,decode}.go`
 - Package README: `internal/sources/blend_emitter/README.md`
-- Schema-evolution stance: [`../../architecture/contract-schema-evolution.md`](../../architecture/contract-schema-evolution.md)
+- Schema-evolution stance: [`../../architecture/ingest-pipeline.md#contract-schema-evolution`](../../architecture/ingest-pipeline.md#contract-schema-evolution)
 - Backfill gate: `internal/sources/external/registry.go` --
   `Registry["blend_emitter"].BackfillSafe`
 - Related audits: [`blend.md`](blend.md) (pool + pool-factory + Backstop

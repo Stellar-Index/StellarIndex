@@ -46,9 +46,12 @@ config was *deliberately* changed, update the assertion in
 ## Why this exists
 
 See [r1-ansible-drift-2026-07-03](../r1-ansible-drift-2026-07-03.md):
-ansible does not auto-run against r1, so codified≠live in either
-direction and neither self-heals. This check is the backstop until
-ansible becomes the actual deployment path.
+ansible does not auto-apply to r1, so codified≠live in either
+direction and neither self-heals. The scheduled
+[ansible-drift](../../../.github/workflows/ansible-drift.yml) workflow
+(Mondays 06:17 UTC) runs the archival-node playbook with `--check --diff`
+and reports drift; it never applies unless dispatched with `apply=true`.
+This check is the live-state backstop between those runs.
 
 ## Related
 

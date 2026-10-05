@@ -308,7 +308,7 @@ var (
 //	Map { "update_data": Vec<(Val, i128)> }
 //
 // NOT the raw Vec. We look up the field by name (per
-// docs/architecture/contract-schema-evolution.md — decode-by-name-
+// docs/architecture/ingest-pipeline.md#contract-schema-evolution — decode-by-name-
 // not-position lets us survive benign field additions across
 // upgrades).
 //
@@ -322,7 +322,7 @@ var (
 //     extend an allow-list (docs/design/oracle-capture-totality-
 //     design.md).
 //
-// Per ADR-0013 + contract-schema-evolution.md this is the ONLY
+// Per ADR-0013 + ingest-pipeline.md#contract-schema-evolution this is the ONLY
 // decoder path; tests override via the package-level var, not by
 // editing this function.
 func sdkDecodeUpdateBody(valueB64 string) ([]PriceEntry, error) {

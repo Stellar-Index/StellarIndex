@@ -12,7 +12,7 @@ status: living document
 > certified raw lake; Postgres is the served tier. Sections that
 > describe Postgres as the full-history home are stale — read them
 > against [ADR-0034](../adr/0034-tiered-clickhouse-architecture.md)
-> and `clickhouse-phase4-decoder-adapter.md`. `last_verified` reflects
+> and [ingest-pipeline.md](ingest-pipeline.md#re-deriving-from-the-lake). `last_verified` reflects
 > the last substantive edit, not a fresh re-verification.
 
 > Living document. Captures r1's storage layout, per-dataset

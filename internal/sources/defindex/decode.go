@@ -132,7 +132,7 @@ func classifyFactory(e *events.Event) string {
 //	  price_per_share: i128 }                    (harvest)
 //
 // Fields are pulled by name from the top-level Map per
-// docs/architecture/contract-schema-evolution.md's decode-by-name
+// docs/architecture/ingest-pipeline.md#contract-schema-evolution's decode-by-name
 // rule — positional decoding would silently break across upgrades.
 func decodeFlow(e *events.Event, kind string) (StrategyFlow, error) {
 	closedAt, err := e.EventClosedAt()
@@ -210,7 +210,7 @@ func decodeFlow(e *events.Event, kind string) (StrategyFlow, error) {
 // We ignore the `total_*_before` NAV-snapshot fields at Phase B —
 // they're useful for NAV reconstruction but not for flow
 // attribution. Fields are pulled by name (decode-by-name per
-// contract-schema-evolution.md), so the decoder is robust against
+// ingest-pipeline.md#contract-schema-evolution), so the decoder is robust against
 // the vault contract's known mid-life WASM upgrade
 // (`ae3409a4…468b` → `07097f83…84b0`) provided the field names
 // don't change — and they haven't.
@@ -316,7 +316,7 @@ func decodeVaultFlow(e *events.Event, kind string) (VaultFlow, error) {
 // with nothing to distribute — and yields ZERO entries with NO error,
 // keeping live-decode and the completeness re-derive count-consistent
 // (both emit 0 outputs). Field pulled by name (decode-by-name per
-// contract-schema-evolution.md). A body that doesn't match this
+// ingest-pipeline.md#contract-schema-evolution). A body that doesn't match this
 // proven schema is ErrMalformedPayload — fail loud, never silent-drop.
 func decodeDFees(e *events.Event) ([]DFee, error) {
 	closedAt, err := e.EventClosedAt()

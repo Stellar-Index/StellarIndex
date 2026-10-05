@@ -199,7 +199,7 @@ Operator steps:
    `docs/operations/wasm-audits/r1-walk-2026-05-01.md`, and
    `docs/operations/wasm-audits/blend.md §"Phase 2 results"`. Per-WASM-hash
    discipline still applies to any future upgrade:
-   [contract-schema-evolution.md](../architecture/contract-schema-evolution.md).
+   [ingest-pipeline.md#contract-schema-evolution](../architecture/ingest-pipeline.md#contract-schema-evolution).
 
 5e. **Tagged-release deploy.** `gh workflow run deploy.yml -f region=r1 -f
    version=vX.Y.Z` downloads SHA256-verified binaries from the GitHub

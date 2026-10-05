@@ -20,7 +20,7 @@ import (
 // doesn't silently break the decoder (and that a decoder change
 // doesn't silently stop matching real events).
 //
-// Per docs/architecture/contract-schema-evolution.md each
+// Per docs/architecture/ingest-pipeline.md#contract-schema-evolution each
 // <wasm_hash>/ directory carries fixtures captured under one
 // specific contract WASM. As we add decoder variants per hash, the
 // dispatcher here grows.

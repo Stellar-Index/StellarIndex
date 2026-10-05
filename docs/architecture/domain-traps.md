@@ -193,7 +193,7 @@ linked design doc has the full detail.
   ran for the replayed range. Decode by Map-field-name not position,
   dispatch on topic[0] symbol not contract address, and gate
   backfill behind a per-WASM-hash decoder audit. →
-  [docs/architecture/contract-schema-evolution.md](../../docs/architecture/contract-schema-evolution.md)
+  [docs/architecture/ingest-pipeline.md#contract-schema-evolution](../../docs/architecture/ingest-pipeline.md#contract-schema-evolution)
 - **`/v1/assets/{slug}` returns two different wire shapes.**
   When `{slug}` is a verified-currency catalogue slug (`usdc`,
   `eurc`, `aqua`, …) the handler returns `GlobalAssetView`

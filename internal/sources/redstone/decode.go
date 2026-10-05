@@ -473,7 +473,7 @@ func feedIDsFromOpArgs(opArgs []string) (feedIDs []string, updater string, err e
 	// internal/storage/clickhouse/extract.go). The adapter only emits
 	// REDSTONE from write_prices; a future WASM that emits it from
 	// another entry point is covered by
-	// docs/architecture/contract-schema-evolution.md's per-WASM-hash
+	// docs/architecture/ingest-pipeline.md#contract-schema-evolution's per-WASM-hash
 	// audit gate.
 	if len(opArgs) < 3 {
 		return nil, "", fmt.Errorf("op args arity %d, want ≥3 (updater, feed_ids, payload)", len(opArgs))

@@ -24,8 +24,8 @@ severity: P3
 ledgers**, use **`stellarindex-ops projected-rebuild`** instead
 (ADR-0048 D3) — parallel workers, no per-cycle deadline, 10-20x the
 throughput, same decoders + same idempotent writes. See
-[docs/architecture/ingest-pipeline.md](../../architecture/ingest-pipeline.md#binding-rules)'s
-"Projected-source catch-up" section for the full comparison, and
+[docs/architecture/ingest-pipeline.md](../../architecture/ingest-pipeline.md#re-deriving-from-the-lake)'s
+"`projector-replay` vs `projected-rebuild`" paragraph for the full comparison, and
 `internal/ops/chops/projected_rebuild.go`'s doc comment for the
 one-writer contract between the two tools (they must never run
 concurrently against overlapping history for the same source).

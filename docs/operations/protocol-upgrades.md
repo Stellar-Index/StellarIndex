@@ -96,11 +96,27 @@ checklist and a decode-failure watch after the vote.
 
 Core `29.0.0` reached apt 2026-09-24; the mainnet vote is 2026-10-01.
 
-- [ ] Checklist above, steps 1–4. Step 1 for P29 is not written up here; fill
-  the change table (as in the P28 section) when done.
+- [ ] Checklist above, steps 1–4. Step 1 is the table below. Still not
+  evidenced in the repo: the SDK arm check (step 2) and the r1 core version
+  after the vote.
+
+| Change | Handling |
+| --- | --- |
+| **No CAP is labelled Protocol 29.** The stellar-protocol [core/README.md](https://github.com/stellar/stellar-protocol/blob/master/core/README.md) lists CAP-0083/85/86 at 28 and CAP-0081/84/87/88 at "TBD"; none at 29. Whether any CAP shipped in P29 is **unconfirmed**. | Nothing to map to decoders. |
+| **No XDR change.** `git compare v28.0.1...v29.0.0` in stellar-core touches no `.x` file ([compare](https://github.com/stellar/stellar-core/compare/v28.0.1...v29.0.0)); stellar-horizon [#234](https://github.com/stellar/stellar-horizon/pull/234) states "No XDR change and no SDK bump in Protocol 29". | `go-stellar-sdk v0.7.3` (go.mod) already decodes everything. **No decoder, `ledgerstream` or meta change needed.** |
+| Core behaviour changes ([v29.0.0 notes](https://github.com/stellar/stellar-core/releases/tag/v29.0.0)): DEX offer-crossing accuracy fix, pool hops not counted against the limit, lower max message size in protocol 29, over-limit messages dropped early, hash-of-hash optimization removed. | Consensus and overlay behaviour inside core. DEX offer crossing may shift SDEX trade results at the vote ledger; whether it does is **unconfirmed** (the notes give no detail). No code change. |
+| Soroban host (custom-section and BrTable cost accounting raising rent fees): reported by a third party only, not confirmed from a primary source. | **Unconfirmed.** Fee fields, not shapes. |
+
+Primary sources read: stellar-core [v29.0.0](https://github.com/stellar/stellar-core/releases/tag/v29.0.0), stellar-rpc [v29.0.0](https://github.com/stellar/stellar-rpc/releases/tag/v29.0.0) ("Support for Protocol 29", no CAPs named), stellar-galexie [#96](https://github.com/stellar/stellar-galexie/pull/96) (bundled core `29.0.0-3589.4eb833373`).
+
+- Mainnet activated P29 at ledger 64717645. Core `29.0.0` is on apt and
+  `stellar-core-auto-upgrade` installs a newer apt core with tip verification
+  and rollback. galexie is pinned to `galexie-v29.0.0` (2026-10-02, VERSIONS.md).
 - [ ] Drill run on one test net (testnet or futurenet), report attached.
-- [ ] CAP-0076 is mainnet-only and cannot be drilled; watch for decode failures
-  and the stack-version probe after the vote instead.
+  No P29 drill is recorded in the repo or its git history.
+- [ ] Watch for decode failures and the stack-version probe after the vote.
+  (The earlier "CAP-0076 is mainnet-only" note does not apply: stellar-protocol
+  lists CAP-0076 at protocol 24.)
 
 ## Protocol 28 "Adapter" — readiness (reviewed 2026-08-26)
 

@@ -104,8 +104,8 @@ sum by (source) (rate(stellarindex_source_decode_errors_total[$range]))
 ```
 
 **Bar**: < 1 error/min per source in steady state. A spike on a Soroban source
-after an `update_contract` upgrade is SEV-2 (contract-schema-evolution doc for
-the pattern, `decode-errors` runbook for the response).
+after an `update_contract` upgrade is SEV-2 ([contract schema evolution](../architecture/ingest-pipeline.md#contract-schema-evolution)
+for the pattern, `decode-errors` runbook for the response).
 
 ## 9. Confidence-score distribution (spot-check)
 

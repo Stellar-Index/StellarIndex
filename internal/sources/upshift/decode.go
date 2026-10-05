@@ -101,7 +101,7 @@ func decodeAddrTopic(e *events.Event, i int, field string) (string, error) {
 // order asked for.
 //
 // Fields are read BY NAME, never by position, per
-// docs/architecture/contract-schema-evolution.md — a contract upgrade
+// docs/architecture/ingest-pipeline.md#contract-schema-evolution — a contract upgrade
 // that appends a field must stay readable, and `deployed_assets_changed`
 // puts `new_amount` FIRST on the wire despite `old` being the logically
 // prior value, so positional decoding would silently swap them.
