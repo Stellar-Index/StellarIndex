@@ -1308,7 +1308,7 @@ func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
 			Class:         string(meta.Class),
 			Subclass:      string(meta.Subclass),
 			IncludeInVWAP: meta.IncludeInVWAP,
-			BackfillSafe:  meta.BackfillSafe,
+			BackfillSafe:  meta.BackfillSafe(),
 		}
 		if st, ok := statsBySource[name]; ok {
 			row.TradeCount24h = st.TradeCount24h

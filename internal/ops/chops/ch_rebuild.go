@@ -30,6 +30,7 @@ import (
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/wasmaudit"
 )
 
 // tradeOf extracts the canonical.Trade from a trade-shaped event so the rebuild
@@ -226,6 +227,12 @@ func reDerivedSourcesInRun(cat, sep41Cat []reconSource, passes chRebuildPasses, 
 	return out
 }
 
+// gateCHRebuildLake is a -write run's per-WASM lake gate over [lo, hi].
+// chAddr is the lake the run reads (-ch-addr), not the config's.
+func gateCHRebuildLake(ctx context.Context, cfg config.Config, chAddr string, store *timescale.Store, sources []string, lo, hi uint32) error {
+	return wasmaudit.GateReplay(ctx, chAddr, cfg.Oracle, store.LoadProtocolContracts, sources, lo, hi)
+}
+
 // checkCHRebuildBackfillSafe refuses a -write run that would decode a
 // source whose decoder has not been audited against every WASM
 // generation that ran over its history (finding F050).
@@ -253,8 +260,7 @@ func checkCHRebuildBackfillSafe(sources []string) error {
 	return fmt.Errorf("ch-rebuild: refusing to -write — sources not BackfillSafe (per-WASM-hash audit pending, or not a known source): %v. "+
 		"This pass decodes history with the CURRENT decoders and its rows overwrite the stored ones; Soroban contracts upgrade in place, "+
 		"so an unaudited old WASM generation decodes to silently wrong rows. Restrict -sources to audited sources (a run with no -sources "+
-		"selects the whole catalogue), or run stellarindex-ops wasm-history over each source's contracts, record the audit under "+
-		"docs/operations/wasm-audits/, and flip BackfillSafe=true in internal/sources/external/registry.go in the same PR. "+
+		"selects the whole catalogue), or run stellarindex-ops wasm-history over each source's contracts, then audit each WASM hash under docs/operations/wasm-audits/, add it to internal/wasmaudit/audited_wasm.json and set Backfill: BackfillPerWASM in internal/sources/external/registry.go in the same PR. "+
 		"The default dry-run is not gated",
 		unsafeSources)
 }
@@ -505,7 +511,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	sep41SupplyOnly := fs.Bool("sep41-supply-only", false, "with -sep41 -sources sep41_supply: narrow the CH read to the supply-affecting topics (mint/burn/clawback) via the topic_0_sym prefilter, skipping the transfer firehose at the SQL layer — so recovering a high-transfer-volume contract's few mints does not re-read millions of transfer events. Invalid unless sep41_transfers is disabled (via -sources sep41_supply): the topic prefilter would otherwise silently drop transfer recovery.")
 	bulkTrades := fs.Bool("bulk-trades", false, "with -write: land trade rows through the BULK backfill writer (timescale.Store.BulkBackfillTrades) instead of the per-batch upsert. Opt-in and BACKFILL-ONLY. It proves - per source, scoped by ledger AND ts - that the target range holds no stored rows, then resolves usd_volume for the whole buffer through a worker pool and streams the rows in over parallel binary COPY connections. Rows are identical to the upsert path's (same storability gate, same intra-batch PK dedupe, same tradeUSDVolume waterfall, same derive_generation, same source_entry_counts / registry / sentinel side effects); the difference is that a latency-bound workload stops being serial. If the range is NOT empty - or a COPY hits a unique violation because something wrote underneath it - the buffer is handed to the ordinary generation-guarded upsert instead and the run says so. Worth it for a historical re-derive below the source's floor; pointless (and it will just fall back) for a recovery into populated ledgers.")
 	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and -write a range the live projector's cursor for a PROJECTED source is still inside. Only pass this if you have independently verified the live projector will not process this range concurrently — see the ADR-0048 D3 one-writer contract on checkCHRebuildLiveOverlap.")
-	preflight := fs.Bool("preflight", false, "with -write: run the refusals this exact -write invocation would hit BEFORE it reads the lake — the BackfillSafe gate (both legs), the live-cursor one-writer guard, and the buffered-range ceiling — then print one line naming the sources it would re-derive (`"+chRebuildPreflightPrefix+" [from,to] rederive=a,b,c`) on stdout and exit 0 WITHOUT reading ClickHouse or writing a row. A refusal exits non-zero exactly as the real run would. It exists for a caller that must do something destructive before the re-derive (scripts/ops/ch-rebuild-projected.sh DELETEs the window first): ask here, and delete only what this prints. Runtime failures (a lake stream error, a failed write) are by nature not covered.")
+	preflight := fs.Bool("preflight", false, "with -write: run the refusals this exact -write invocation would hit BEFORE it reads the lake — the BackfillSafe gate (both legs), the live-cursor one-writer guard, and the buffered-range ceiling — then print one line naming the sources it would re-derive (`"+chRebuildPreflightPrefix+" [from,to] rederive=a,b,c`) on stdout and exit 0 WITHOUT reading the lake or writing a row (the per-WASM replay gate does read the ClickHouse instance index). A refusal exits non-zero exactly as the real run would. It exists for a caller that must do something destructive before the re-derive (scripts/ops/ch-rebuild-projected.sh DELETEs the window first): ask here, and delete only what this prints. Runtime failures (a lake stream error, a failed write) are by nature not covered.")
 	requireRows := fs.String("require-rows", "", "comma-separated sources that must write at least one row: the run fails when one of them re-derives none. scripts/ops/ch-rebuild-projected.sh passes every source whose window its DELETE found occupied, so an emptied window whose re-derive came back empty (an empty gate registry, a lake gap) exits non-zero and stays dirty instead of being marked done. A source absent here may legitimately be quiet over the range.")
 	recordDirty := fs.Bool("record-dirty-window", false, "record [from,to] as a pending ADR-0033 projection dirty window for every source named in -sources (each must be a reconciliation-catalogue source; the list is REQUIRED), then exit 0 WITHOUT reading ClickHouse or writing a row. The next compute-completeness re-reconciles that range instead of carrying its prior clean projection claim over it, and clears the obligation only with the verdict that discharges it. This is the RECORD, not a re-derive, so it takes neither -write nor -preflight. It exists for the operator (and scripts/ops/ch-rebuild-projected.sh's TELL THE VERDICT line) after a clean-slate DELETE whose re-derive did not complete: the window is then EMPTY and /v1/coverage must stop certifying it complete (F075). An ordinary -write run records its own rewritten window before it writes; this mode is for a window left EMPTIED.")
 	if err := fs.Parse(args); err != nil {
@@ -707,6 +713,13 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	// run below would then refuse to rewrite (RLT-381).
 	if *preflight {
 		return reportCHRebuildPreflight(os.Stdout, lo, hi, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled))
+	}
+	// The per-WASM lake gate opens ClickHouse, so it runs after every cheap
+	// refusal and the -preflight stop, and before the first lake read or write.
+	if write {
+		if gerr := gateCHRebuildLake(ctx, cfg, *chAddr, store, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled), lo, hi); gerr != nil {
+			return gerr
+		}
 	}
 	gate.Banner()
 	// Factory-anchored sources (ADR-0035): seed each gate registry from

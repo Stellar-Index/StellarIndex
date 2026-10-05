@@ -22,6 +22,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/wasmaudit"
 )
 
 type fakeDriftLake struct {
@@ -115,9 +116,9 @@ func TestRunWasmDrift_flagsUnauditedHashOnFactoryChild(t *testing.T) {
 		hashes: map[string]string{factories[0]: hash64('f'), audited: hash64('a'), drifted: hash64('d')},
 		errs:   map[string]error{sac: clickhouse.ErrContractIsSAC},
 	}
-	manifest := map[string]auditedWasm{
-		hash64('a'): {Source: blend.SourceName, Role: "pool"},
-		hash64('f'): {Source: blend.SourceName, Role: "factory"},
+	manifest := map[string]wasmaudit.Entry{
+		hash64('a'): {Sources: []string{blend.SourceName}, Role: "pool"},
+		hash64('f'): {Sources: []string{blend.SourceName}, Role: "factory"},
 	}
 
 	rep, err := runWasmDrift(context.Background(), lake, manifest, []string{blend.SourceName}, blend.FactoryGenesisLedger+100)
@@ -158,9 +159,9 @@ func TestRunWasmDrift_hashAuditedForAnotherSourceIsDrift(t *testing.T) {
 		hashes[f] = hash64('f')
 	}
 	lake := &fakeDriftLake{events: []events.Event{blendDeploy(t, factories[0], pool)}, hashes: hashes}
-	manifest := map[string]auditedWasm{
-		hash64('c'): {Source: "comet", Role: "pool"},
-		hash64('f'): {Source: blend.SourceName, Role: "factory"},
+	manifest := map[string]wasmaudit.Entry{
+		hash64('c'): {Sources: []string{"comet"}, Role: "pool"},
+		hash64('f'): {Sources: []string{blend.SourceName}, Role: "factory"},
 	}
 	rep, err := runWasmDrift(context.Background(), lake, manifest, []string{blend.SourceName}, blend.FactoryGenesisLedger+100)
 	if err != nil {
@@ -175,7 +176,7 @@ func TestRunWasmDrift_hashAuditedForAnotherSourceIsDrift(t *testing.T) {
 // contracts is resolved or counted as drift.
 func TestRunWasmDrift_sourceWithoutAuditLogIsUnauditedNotDrift(t *testing.T) {
 	lake := &fakeDriftLake{}
-	manifest := map[string]auditedWasm{hash64('a'): {Source: blend.SourceName}}
+	manifest := map[string]wasmaudit.Entry{hash64('a'): {Sources: []string{blend.SourceName}}}
 	rep, err := runWasmDrift(context.Background(), lake, manifest, []string{"sushiswap_v3", "upshift"}, 70_000_000)
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +193,7 @@ func TestRunWasmDrift_sourceWithoutAuditLogIsUnauditedNotDrift(t *testing.T) {
 // factories checked.
 func TestRunWasmDrift_emptyFactoryWalkFailsClosed(t *testing.T) {
 	lake := &fakeDriftLake{}
-	manifest := map[string]auditedWasm{hash64('a'): {Source: blend.SourceName}}
+	manifest := map[string]wasmaudit.Entry{hash64('a'): {Sources: []string{blend.SourceName}}}
 	if _, err := runWasmDrift(context.Background(), lake, manifest, []string{blend.SourceName}, blend.FactoryGenesisLedger+100); err == nil {
 		t.Fatal("factory walk that found no children returned no error")
 	}
@@ -205,7 +206,7 @@ func TestRunWasmDrift_lakeErrorAborts(t *testing.T) {
 	for _, c := range meta.CuratedSet {
 		lake.errs[c] = boom
 	}
-	manifest := map[string]auditedWasm{hash64('a'): {Source: "comet"}}
+	manifest := map[string]wasmaudit.Entry{hash64('a'): {Sources: []string{"comet"}}}
 	if _, err := runWasmDrift(context.Background(), lake, manifest, []string{"comet"}, 70_000_000); !errors.Is(err, boom) {
 		t.Fatalf("err=%v, want wrapped %v", err, boom)
 	}
@@ -275,19 +276,20 @@ func TestRenderWasmDriftProm(t *testing.T) {
 // Every manifest entry must be traceable to the audit log it cites: the full
 // hash, or its first 8 hex chars + "…" as the logs write it.
 func TestAuditedWasmManifestMatchesAuditLogs(t *testing.T) {
-	m, err := loadAuditedWasm()
+	m, err := wasmaudit.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(m) == 0 {
 		t.Fatal("empty manifest")
 	}
-	gated := pipeline.GatedSourceNames()
 	root := filepath.Join("..", "..", "..")
 	docs := make(map[string]string)
 	for h, e := range m {
-		if !slices.Contains(gated, e.Source) {
-			t.Errorf("%s: source %q is not a gated source", h, e.Source)
+		for _, src := range e.Sources {
+			if _, err := wasmaudit.ContractSet(context.Background(), wasmaudit.Deps{}, src, 1); err != nil && strings.Contains(err.Error(), "no contract resolver") {
+				t.Errorf("%s: source %q has no contract resolver", h, src)
+			}
 		}
 		if e.Role == "" {
 			t.Errorf("%s: no role", h)
@@ -295,8 +297,9 @@ func TestAuditedWasmManifestMatchesAuditLogs(t *testing.T) {
 		if _, err := time.Parse(time.DateOnly, e.Audited); err != nil {
 			t.Errorf("%s: audited %q: %v", h, e.Audited, err)
 		}
-		if want := "docs/operations/wasm-audits/" + e.Source + ".md"; e.Doc != want {
-			t.Errorf("%s: doc %q, want %q", h, e.Doc, want)
+		stem := strings.TrimSuffix(strings.TrimPrefix(e.Doc, "docs/operations/wasm-audits/"), ".md")
+		if !strings.HasPrefix(e.Sources[0], stem) {
+			t.Errorf("%s: doc %q does not match source %q", h, e.Doc, e.Sources[0])
 		}
 		body, ok := docs[e.Doc]
 		if !ok {
@@ -307,8 +310,8 @@ func TestAuditedWasmManifestMatchesAuditLogs(t *testing.T) {
 			body = string(b)
 			docs[e.Doc] = body
 		}
-		if !strings.Contains(body, h) && !strings.Contains(body, h[:8]+"…") {
-			t.Errorf("%s (%s %s) appears in %s neither in full nor as %s…", h, e.Source, e.Role, e.Doc, h[:8])
+		if !strings.Contains(body, h) && !strings.Contains(body, h[:8]+"…") && !strings.Contains(body, h[:16]+"…") {
+			t.Errorf("%s (%s %s) appears in %s neither in full nor as %s… / %s…", h, e.Sources, e.Role, e.Doc, h[:8], h[:16])
 		}
 	}
 }
@@ -316,13 +319,15 @@ func TestAuditedWasmManifestMatchesAuditLogs(t *testing.T) {
 // A gated source with no manifest entry is skipped as unaudited, so none of
 // its contracts would ever be checked for drift.
 func TestAuditedWasmManifestCoversEveryGatedSource(t *testing.T) {
-	m, err := loadAuditedWasm()
+	m, err := wasmaudit.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	audited := make(map[string]bool)
 	for _, e := range m {
-		audited[e.Source] = true
+		for _, src := range e.Sources {
+			audited[src] = true
+		}
 	}
 	for _, s := range pipeline.GatedSourceNames() {
 		if !audited[s] {

@@ -181,7 +181,7 @@ func TestRegistry_BackfillSafePolicy(t *testing.T) {
 		//   Phase 3 disassembly) → wantSafe.
 	}
 	for _, name := range wantUnsafe {
-		if Registry[name].BackfillSafe {
+		if Registry[name].BackfillSafe() {
 			t.Errorf("source %q has BackfillSafe=true but is on-chain Soroban; flip only after wasm-history audit lands", name)
 		}
 		if BackfillSafe(name) {
@@ -189,8 +189,7 @@ func TestRegistry_BackfillSafePolicy(t *testing.T) {
 		}
 	}
 
-	wantSafe := []string{
-		"sdex",          // classic Stellar, no WASM
+	wantPerWASM := []string{
 		"soroswap",      // audited 2026-04-29 — see docs/operations/wasm-audits/soroswap.md
 		"band",          // audited 2026-04-29 — see docs/operations/wasm-audits/band.md
 		"redstone",      // audited 2026-04-29 — see docs/operations/wasm-audits/redstone.md
@@ -202,15 +201,27 @@ func TestRegistry_BackfillSafePolicy(t *testing.T) {
 		"comet",         // audited 2026-04-29 (Blend backstop pool only known mainnet deployment; WASM verified) — see docs/operations/wasm-audits/comet.md
 		"blend",         // audited 2026-05-02 (11 contracts, 3 unique WASMs, no mid-life upgrades over 11.79M-ledger walk) — see docs/operations/wasm-audits/blend.md §"Phase 2 results"
 		"blend_emitter", // audited 2026-07-10 (ClickHouse-lake-only; all 469 lifetime events shape-verified, 465/465 distribute exhaustively) — see docs/operations/wasm-audits/blend_emitter.md
+		"sushiswap_v3",
+	}
+	for _, name := range wantPerWASM {
+		if Registry[name].Backfill != BackfillPerWASM {
+			t.Errorf("source %q must be BackfillPerWASM (Soroban: static policy plus the per-WASM replay gate)", name)
+		}
+	}
+
+	wantNoWASM := []string{
+		"sdex", // classic Stellar, no WASM
 		"binance", "kraken", "bitstamp", "coinbase",
 		"massive", "exchangeratesapi",
 		"coingecko", "coinmarketcap", "cryptocompare",
 		"ecb",
 	}
-	for _, name := range wantSafe {
-		if !Registry[name].BackfillSafe {
-			t.Errorf("source %q must be BackfillSafe=true (off-chain or pre-Soroban)", name)
+	for _, name := range wantNoWASM {
+		if Registry[name].Backfill != BackfillNoWASM {
+			t.Errorf("source %q must be BackfillNoWASM (off-chain or pre-Soroban)", name)
 		}
+	}
+	for _, name := range append(wantPerWASM, wantNoWASM...) {
 		if !BackfillSafe(name) {
 			t.Errorf("BackfillSafe(%q) returned false; off-chain + SDEX have no on-chain WASM dependency", name)
 		}
