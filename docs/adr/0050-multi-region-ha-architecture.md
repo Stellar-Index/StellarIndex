@@ -1,6 +1,6 @@
 ---
 adr: 0050
-title: Multi-region HA — active/active pricing, R1-authority lake, provider-independent archive DR
+title: Multi-region HA — active/active pricing, R1-authority lake, off-site lake and Postgres backups
 status: Accepted
 date: 2026-08-21
 supersedes: [0016]

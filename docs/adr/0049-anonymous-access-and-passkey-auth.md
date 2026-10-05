@@ -16,7 +16,7 @@ The model shipped without a record, so open registration and the missing billing
 
 ## Decision
 
-1. **Anonymous reads.** Read routes work without a key under the anonymous rate-limit class, counted per client IP; an authenticated key gets its own bucket (`middleware.RateLimitBySubject`).
+1. **Anonymous reads.** Read routes work without a key under the anonymous rate-limit class, counted per client IP; an authenticated caller is counted in its owner account's bucket (`middleware.RateLimitBySubject`).
 2. **Open registration.** `POST /v1/register` mints an account and a first API key with no prior authentication (`internal/api/v1/register.go`). It is create-only, requires `Content-Type: application/json` (`internal/api/v1/csrf.go`, which forces a CORS preflight on cross-site browser POSTs; the Origin-based `RequireSameSiteWrite` is deliberately not mounted because API callers send no Origin), and passes the shared signup IP throttle (`internal/auth/signup_ip_throttle.go`).
 3. **Throttle failure mode.** The IP throttle fails open only for the first `DefaultSignupThrottleDwellTime` (30 s) of continuous Redis errors; after that `CheckIP` returns `ErrThrottleUnavailable` and signup returns 503.
 4. **Metering is by quota, not charge.** Accounts carry a free-tier `RegisterLimits` block, enforced as API-key `MonthlyQuota` on both the Postgres and Redis validators.

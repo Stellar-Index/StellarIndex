@@ -21,7 +21,7 @@ ADR-0051's derivation was ordered last, so any direct fiat book beat it. A singl
 4. A direct book backed by one venue: serve the derivation instead, when its USD leg has at least `basisMinUSDVenues` (2) venues and it is not stale (no fallback USD leg, no stale fixing). Otherwise serve the direct book. The rule only swaps one served value for a better-substantiated one; a derivation that misses, withholds or errors keeps the direct book.
 5. A swapped row carries `usd_leg`, `fx_rate`, `fx_as_of` and `triangulated`, and no `confidence`, composite or divergence enrichment, because those score the displaced book.
 6. `pricing_guard.disable_fiat_basis = true` restores direct-book-wins. It is a diagnostic kill switch, not a tuning knob.
-7. `/v1/price/tip` and the series surfaces do not apply the rule (its only callers are `/v1/price`, its batch form and `/v1/oracle/lastprice`); `/v1/oracle/lastprice` is USD-quoted so it never needs it. Each follow-up adopts this rule, not a variant.
+7. `/v1/price/tip`, the series surfaces (`/v1/chart`, `/v1/price/at`), the price stream and the aggregator composite do not apply the rule (its only callers are `/v1/price`, its batch form and `/v1/oracle/x_last_price`); they keep ADR-0051 ordering. If any of them adopts a basis rule, it adopts this one, not a variant.
 
 ## Invariant
 
