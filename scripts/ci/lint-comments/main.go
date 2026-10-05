@@ -123,9 +123,7 @@ func scan(root string) ([]hit, error) {
 		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			n := d.Name()
-			if rel != "." && (strings.HasPrefix(n, ".") || strings.HasPrefix(n, "_") ||
-				n == "vendor" || n == "testdata" || n == "node_modules" || rel == "pkg") {
+			if skipDir(rel, d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -133,26 +131,38 @@ func scan(root string) ([]hit, error) {
 		if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") {
 			return nil
 		}
-		f, err := parser.ParseFile(fset, p, nil, parser.ParseComments|parser.SkipObjectResolution)
-		if err != nil {
-			return err
-		}
-		if ast.IsGenerated(f) {
-			return nil
-		}
-		for _, cg := range f.Comments {
-			for _, c := range cg.List {
-				line := fset.Position(c.Slash).Line
-				for i, text := range strings.Split(c.Text, "\n") {
-					if h, ok := match(text); ok {
-						hits = append(hits, hit{path: rel, line: line + i, match: h, text: strings.TrimSpace(text)})
-					}
+		fileHits, err := scanFile(fset, p, rel)
+		hits = append(hits, fileHits...)
+		return err
+	})
+	return hits, err
+}
+
+func skipDir(rel, name string) bool {
+	return rel != "." && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") ||
+		name == "vendor" || name == "testdata" || name == "node_modules" || rel == "pkg")
+}
+
+func scanFile(fset *token.FileSet, p, rel string) ([]hit, error) {
+	f, err := parser.ParseFile(fset, p, nil, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		return nil, err
+	}
+	if ast.IsGenerated(f) {
+		return nil, nil
+	}
+	var hits []hit
+	for _, cg := range f.Comments {
+		for _, c := range cg.List {
+			line := fset.Position(c.Slash).Line
+			for i, text := range strings.Split(c.Text, "\n") {
+				if h, ok := match(text); ok {
+					hits = append(hits, hit{path: rel, line: line + i, match: h, text: strings.TrimSpace(text)})
 				}
 			}
 		}
-		return nil
-	})
-	return hits, err
+	}
+	return hits, nil
 }
 
 func match(text string) (string, bool) {
@@ -169,11 +179,11 @@ func match(text string) (string, bool) {
 }
 
 func readBaseline(path string) (map[string]int, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // path is the -baseline flag, a repo file by design
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	want := map[string]int{}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -198,5 +208,5 @@ func writeBaseline(path string, hits []hit) error {
 	for _, l := range lines {
 		b.WriteString(l + "\n")
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o644)
+	return os.WriteFile(path, []byte(b.String()), 0o600)
 }
