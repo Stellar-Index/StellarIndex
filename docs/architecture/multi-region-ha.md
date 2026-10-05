@@ -209,7 +209,7 @@ a caller spread across three regions gets 3× its rate limit and 3× its monthly
 The fail-closed dwell is per region too — one region's Redis outage 429s only there.
 
 With one serving region N = 1 and the published limits are exact. The mitigation is
-an **open decision** (ADR-0050 amendment), due before a second region serves
+an **open decision** (ADR-0050 §3d), due before a second region serves
 authenticated traffic — which §3c already gates. Options:
 - **Publish the limits as per-region.** No code; the tier docs and the 429 body must
   say "per region", or the number we publish is not the number we enforce.
@@ -248,7 +248,7 @@ wanted.
 > **Amended 2026-10-02.** The raw galexie-archive is **not** mirrored off-site; the
 > "crown jewel" framing and the two-artifact plan below are superseded. The archive is a
 > copy of SDF's public dataset (`s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`)
-> and is re-pulled from there (ADR-0043 §2 amendment 2026-08-29: accept the dependency,
+> and is re-pulled from there (ADR-0043 §2: accept the dependency,
 > do not duplicate public data). Off-site copies are the ClickHouse lake and Postgres on
 > B2. `galexie_archive_mirror_enabled` is false by default.
 

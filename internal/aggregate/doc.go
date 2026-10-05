@@ -38,8 +38,8 @@
 // The deviation is measured in RATIO space, so the acceptance band is
 // [median²/(median + σ·scale), median + σ·scale] — a ½× print is
 // exactly as outlying as a 2× one (ADR-0046 §1's symmetry; the scale is
-// still a price-space MAD, not §1's MAD(log p)). Until 2026-09-18 the
-// band was ADDITIVE in price space, which put its lower edge below zero
+// a price-space MAD). An additive price-space
+// band would put its lower edge below zero
 // above 1/(σ×1.4826) relative MAD — 16.9% at σ=4 — from where downward
 // prints stopped being rejectable at all while
 // their mirror-image up-moves still were. The same correction applies

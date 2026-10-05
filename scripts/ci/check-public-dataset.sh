@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-public-dataset.sh — AWS Public Blockchain dataset drift tripwire
-# (backup-restore-6, audit 2026-08-29; ADR-0043 amendment 2026-08-29).
+# (backup-restore-6, audit 2026-08-29; ADR-0043 §2).
 #
 # r1's own galexie-archive was capacity-trimmed below ledger 49,984,000
 # on 2026-07-26 (ADR-0027 hot floor; galexie-archive-trim deletes only
