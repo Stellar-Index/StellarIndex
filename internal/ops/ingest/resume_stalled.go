@@ -838,6 +838,7 @@ func runOneCursorPlan(
 		resume:       true, // monotonic-advance on the existing cursor row
 		parallel:     parallel,
 		refreshCAGGs: refreshCAGGs,
+		wasmGate:     &replayGateOnce{},
 	}
 	chunks := planBackfillChunks(opts.from, opts.to, opts.parallel)
 	cursorLogger := logger.With(

@@ -14,6 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/wasmaudit"
 )
 
 // replayGenerationNote is printed on every rewind and dry-run: the live
@@ -101,6 +102,10 @@ func projectorReplay(w io.Writer, args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
+	if err := gateProjectorReplay(cfg, store, *source, uint32(*from)); err != nil { //nolint:gosec // ledger sequences fit uint32 in real usage.
+		return err
+	}
+
 	cursor, err := store.GetCursor(ctx, "projector", *source)
 	if err != nil && !errors.Is(err, timescale.ErrNotFound) {
 		return fmt.Errorf("read projector cursor: %w", err)
@@ -178,6 +183,14 @@ func projectorReplay(w io.Writer, args []string) error {
 		chunkRange{from: target, to: rewoundFrom},
 		replayFollowUp{refreshCAGGs: *refreshCAGGs, wait: *catchUp, waitTimeout: *catchUpTimeout},
 	)
+}
+
+// gateProjectorReplay runs the per-WASM audit gate on its own context: the
+// caller's 30s one is too short for a lake instance-index read.
+func gateProjectorReplay(cfg config.Config, store *timescale.Store, source string, from uint32) error {
+	gctx, gcancel := opsutil.SignalContext()
+	defer gcancel()
+	return wasmaudit.GateReplay(gctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts, []string{source}, from, 0)
 }
 
 // replayRewinder is the slice of the store the record-then-rewind step needs.
@@ -314,9 +327,7 @@ func checkReplayBackfillSafe(source string, from uint32) error {
 			"not a known source): a rewind re-decodes every historical event with the CURRENT decoder, and "+
 			"Soroban contracts upgrade in place, so an unaudited old WASM generation decodes to silently wrong "+
 			"rows. Run stellarindex-ops wasm-history -from %d -to <tip> -contracts <CID> for the source's "+
-			"contracts, review every emitted WASM hash against the current decoder, record it under "+
-			"docs/operations/wasm-audits/, then flip BackfillSafe=true in "+
-			"internal/sources/external/registry.go in the same PR (see docs/architecture/domain-traps.md, "+
+			"contracts, review every emitted WASM hash against the current decoder, then audit each WASM hash under docs/operations/wasm-audits/, add it to internal/wasmaudit/audited_wasm.json and set Backfill: BackfillPerWASM in internal/sources/external/registry.go in the same PR (see docs/architecture/domain-traps.md, "+
 			"\"Soroban DeFi contracts upgrade in place\"). If the name is simply wrong: projector SOURCE names "+
 			"are underscored (blend_backstop, sep41_transfers — the gap detector's hyphenated per-table target "+
 			"names are NOT valid here); see internal/projector/registry.go",

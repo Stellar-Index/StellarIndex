@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
 // TestCHRebuild_ModeFlagsFollowTheSharedWriteGate pins ch-rebuild to the
@@ -25,7 +25,7 @@ func TestCHRebuild_ModeFlagsFollowTheSharedWriteGate(t *testing.T) {
 		{[]string{"-write"}, true},
 		{[]string{"-dry-run", "-write"}, true},
 	} {
-		args := append(append([]string{}, tc.mode...), "-sources", sushiswap_v3.SourceName)
+		args := append(append([]string{}, tc.mode...), "-sources", upshift.SourceName)
 		err := chRebuild(chRebuildArgs(t, args...))
 		if err == nil {
 			t.Fatalf("%v: chRebuild succeeded against a config that does not exist", tc.mode)

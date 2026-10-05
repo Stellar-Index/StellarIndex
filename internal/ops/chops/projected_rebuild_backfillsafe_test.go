@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	sep41transfers "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
-	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
 // F050, third leg: projected-rebuild builds the live projector's CURRENT
@@ -35,22 +35,22 @@ func TestProjectedRebuild_RefusesSourceThatIsNotBackfillSafe(t *testing.T) {
 	t.Parallel()
 	// The registry is the authority; if the audit lands and this flips,
 	// the test must be re-pointed at another unaudited source, not deleted.
-	if external.BackfillSafe(sushiswap_v3.SourceName) {
-		t.Fatalf("%s is now BackfillSafe — pick a source that is still unaudited for this test", sushiswap_v3.SourceName)
+	if external.BackfillSafe(upshift.SourceName) {
+		t.Fatalf("%s is now BackfillSafe — pick a source that is still unaudited for this test", upshift.SourceName)
 	}
 	// The default is a dry-run; -write is the destructive mode. Both are
 	// refused (see checkProjectedRebuildBackfillSafe for why the preview
 	// is gated too).
 	for _, extra := range [][]string{nil, {"-write"}, {"-write", "-allow-live-overlap"}} {
-		err := projectedRebuild(projectedRebuildArgs(t, sushiswap_v3.SourceName, extra...))
+		err := projectedRebuild(projectedRebuildArgs(t, upshift.SourceName, extra...))
 		if err == nil {
 			t.Fatalf("args %v: rebuild of an unaudited source returned nil", extra)
 		}
 		if !strings.Contains(err.Error(), "not BackfillSafe") {
 			t.Errorf("args %v: projected-rebuild of %s got past the BackfillSafe gate (F050); error was: %v",
-				extra, sushiswap_v3.SourceName, err)
+				extra, upshift.SourceName, err)
 		}
-		if !strings.Contains(err.Error(), `"`+sushiswap_v3.SourceName+`"`) {
+		if !strings.Contains(err.Error(), `"`+upshift.SourceName+`"`) {
 			t.Errorf("args %v: refusal does not name the source: %v", extra, err)
 		}
 	}
@@ -106,7 +106,7 @@ func TestProjectedRebuild_BackstopFollowsBlendAttestation(t *testing.T) {
 		t.Fatalf("%s must be rebuildable while blend is attested: %v", blend_backstop.SourceName, err)
 	}
 	withdrawn := orig
-	withdrawn.BackfillSafe = false
+	withdrawn.Backfill = external.BackfillUnsafe
 	external.Registry["blend"] = withdrawn
 	if err := checkProjectedRebuildBackfillSafe(blend_backstop.SourceName, 51_500_000); err == nil {
 		t.Errorf("rebuild of %s must be refused once blend is not BackfillSafe", blend_backstop.SourceName)

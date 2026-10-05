@@ -410,7 +410,7 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 	// A contract that does have index rows (a SAC: no wasm rows) is covered,
 	// so its empty timeline is authoritative and skips the legacy scan.
 	if r.instanceChangesIndexAvailable(ctx) {
-		out, err := r.contractCodeHistoryIndexed(ctx, cidHash)
+		out, _, err := r.contractCodeHistoryIndexed(ctx, cidHash)
 		if err != nil || len(out) > 0 {
 			return out, err
 		}
@@ -427,18 +427,67 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 	return r.contractCodeHistoryLegacy(ctx, cidHash)
 }
 
+// ErrInstanceHistoryIncomplete: contract_instance_changes carries no
+// genesis-complete watermark, so no timeline read from it can prove which
+// WASM ran at a historical ledger.
+var ErrInstanceHistoryIncomplete = errors.New("clickhouse: contract_instance_changes genesis watermark missing: run stellarindex-ops ch-instance-backfill to completion")
+
+// ErrCodeHistoryTruncated: the timeline hit contractCodeHistoryMaxRows,
+// which drops the OLDEST versions.
+var ErrCodeHistoryTruncated = errors.New("clickhouse: contract code history truncated at the row cap (oldest versions dropped)")
+
+// ReplayCodeHistory is ContractCodeHistory for the replay WASM gate: it reads
+// only the genesis-complete instance index and never answers an unproven
+// timeline. ErrInstanceHistoryIncomplete without the watermark, ErrContractIsSAC
+// for a SAC, ErrContractWasmUnresolved for a contract with no instance rows,
+// ErrCodeHistoryTruncated at the row cap.
+func (r *ExplorerReader) ReplayCodeHistory(ctx context.Context, contractID string) ([]ContractCodeVersion, error) {
+	dec, err := strkey.Decode(strkey.VersionByteContract, contractID)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: bad contract id %q: %w", contractID, err)
+	}
+	var cid xdr.Hash
+	copy(cid[:], dec)
+
+	wm, err := r.instanceGenesisWatermark(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: read instance genesis watermark: %w", err)
+	}
+	if wm == 0 {
+		return nil, ErrInstanceHistoryIncomplete
+	}
+	out, truncated, err := r.contractCodeHistoryIndexed(ctx, cid)
+	switch {
+	case err != nil:
+		return nil, err
+	case truncated:
+		return nil, ErrCodeHistoryTruncated
+	case len(out) > 0:
+		return out, nil
+	}
+	if _, _, err := r.contractWasmHashIndexed(ctx, cid); err != nil {
+		return nil, err // ErrContractIsSAC included
+	}
+	return nil, ErrContractWasmUnresolved
+}
+
 // instanceGenesisWatermarkQuery is shared by the reader and the writer.
 const instanceGenesisWatermarkQuery = `SELECT max(thru_ledger) FROM stellar.entry_history_watermark WHERE name = ?`
+
+// instanceGenesisWatermark is the genesis-complete thru_ledger
+// ch-instance-backfill recorded, 0 when absent.
+func (r *ExplorerReader) instanceGenesisWatermark(ctx context.Context) (uint32, error) {
+	var wm uint32
+	err := r.conn.QueryRow(ctx, instanceGenesisWatermarkQuery, ContractInstanceChangesTable).Scan(&wm)
+	return wm, err
+}
 
 // instanceGenesisCovers reports whether ch-instance-backfill recorded a
 // genesis-complete watermark at or above ledger. Absent, unreadable or lower
 // all answer false, so the caller keeps its scan.
 func (r *ExplorerReader) instanceGenesisCovers(ctx context.Context, ledger uint32) bool {
-	var wm uint32
-	if err := r.conn.QueryRow(ctx, instanceGenesisWatermarkQuery, ContractInstanceChangesTable).Scan(&wm); err != nil {
-		return false
-	}
-	return wm > 0 && ledger <= wm
+	wm, err := r.instanceGenesisWatermark(ctx)
+	return err == nil && wm > 0 && ledger <= wm
 }
 
 // contractInInstanceIndexQuery names only the primary-key prefix, so it
@@ -577,27 +626,29 @@ const contractWasmHashIndexedQueryOldKey = `SELECT is_sac, wasm_hash FROM stella
 // executable verdict). The SQL collapses consecutive identical hashes; the
 // Go loop re-checks the boundary so RMT pre-merge duplicate keys, which
 // carry the same hash as their neighbour, can never surface twice.
-func (r *ExplorerReader) contractCodeHistoryIndexed(ctx context.Context, cid xdr.Hash) ([]ContractCodeVersion, error) {
+func (r *ExplorerReader) contractCodeHistoryIndexed(ctx context.Context, cid xdr.Hash) ([]ContractCodeVersion, bool, error) {
 	q := contractCodeHistoryIndexedQuery
 	if !r.instanceChangesTxKeyed(ctx) {
 		q = contractCodeHistoryIndexedQueryOldKey
 	}
 	rows, err := r.conn.Query(ctx, q, hex.EncodeToString(cid[:]), contractCodeHistoryMaxRows)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: contract code history (indexed): %w", err)
+		return nil, false, fmt.Errorf("clickhouse: contract code history (indexed): %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	var out []ContractCodeVersion
 	var lastHash string
+	n := 0
 	for rows.Next() {
+		n++
 		var (
 			seq       uint32
 			closeTime time.Time
 			h         string
 		)
 		if err := rows.Scan(&seq, &closeTime, &h); err != nil {
-			return nil, fmt.Errorf("clickhouse: scan code history (indexed): %w", err)
+			return nil, false, fmt.Errorf("clickhouse: scan code history (indexed): %w", err)
 		}
 		if h == lastHash {
 			continue // unchanged executable — not an upgrade
@@ -605,7 +656,7 @@ func (r *ExplorerReader) contractCodeHistoryIndexed(ctx context.Context, cid xdr
 		lastHash = h
 		out = append(out, ContractCodeVersion{Ledger: seq, CloseTime: closeTime, WasmHash: h})
 	}
-	return out, rows.Err()
+	return out, n >= contractCodeHistoryMaxRows, rows.Err()
 }
 
 // contractWasmHashIndexed resolves the current executable from the

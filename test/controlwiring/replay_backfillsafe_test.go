@@ -28,8 +28,12 @@ import (
 // local helper whose name merely ends in BackfillSafe, does not count).
 // The behavioural tests that drive each real entry point are
 // internal/ops/ingest/projector_backfillsafe_test.go,
-// internal/ops/chops/ch_rebuild_backfillsafe_test.go and
-// internal/ops/chops/projected_rebuild_backfillsafe_test.go.
+// internal/ops/chops/ch_rebuild_backfillsafe_test.go,
+// internal/ops/chops/projected_rebuild_backfillsafe_test.go and
+// internal/ops/ingest/resume_stalled_test.go (the backfill chunk path); the
+// per-WASM gate's unreachable-lake refusal is pinned per entry point in
+// projector_backfillsafe_test.go, replay_gate_unreachable_test.go and
+// resume_stalled_test.go.
 //
 // A NEW command that runs a current decoder over historical events must
 // be added to this map in the same change that adds it.
@@ -39,6 +43,8 @@ func TestK023_ReplayPathsConsultBackfillSafe(t *testing.T) {
 		"projector-replay":  {"internal/ops/ingest/projector*.go", "internal/projector/*.go"},
 		"ch-rebuild":        {"internal/ops/chops/ch_rebuild*.go"},
 		"projected-rebuild": {"internal/ops/chops/projected_rebuild*.go"},
+		// backfill and resume-stalled share runBackfillChunk -> buildChunkDispatcher.
+		"backfill": {"internal/ops/ingest/backfill*.go"},
 	}
 	// The three exported forms of the one gate in
 	// internal/sources/external/registry.go.
@@ -56,6 +62,12 @@ func TestK023_ReplayPathsConsultBackfillSafe(t *testing.T) {
 			t.Errorf("%s never calls the external BackfillSafe gate (searched %d files under %v for %v): "+
 				"it re-decodes history with the CURRENT decoder without asking whether that decoder was "+
 				"audited against every WASM generation (F050)", cmd, files, globs, gateCalls)
+		}
+		// The static policy alone is not enough for a BackfillPerWASM
+		// source: the per-WASM instance-index gate must also run.
+		if files, found := scanForCall(t, globs, []string{"wasmaudit.GateReplay("}); !found {
+			t.Errorf("%s never calls wasmaudit.GateReplay (searched %d files under %v): a BackfillPerWASM "+
+				"source would replay history without proving every WASM hash that ran was audited", cmd, files, globs)
 		}
 	}
 }

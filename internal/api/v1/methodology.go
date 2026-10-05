@@ -207,7 +207,7 @@ func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 			IncludeInVWAP:     md.IncludeInVWAP,
 			Paid:              md.Paid,
 			BackfillAvailable: md.BackfillAvailable,
-			BackfillSafe:      md.BackfillSafe,
+			BackfillSafe:      md.BackfillSafe(),
 			OnChain:           external.IsOnChain(name),
 		})
 	}

@@ -10,7 +10,7 @@ backfill_safe: false
 
 Audit log for the `upshift` source. See [`README.md`](README.md) for
 the procedure. The hash below is the `upshift` entry in
-`internal/ops/chops/audited_wasm.json`, which `stellarindex-ops
+`internal/wasmaudit/audited_wasm.json`, which `stellarindex-ops
 wasm-drift` checks every gated contract against
 ([runbook](../runbooks/wasm-drift.md)).
 
@@ -121,4 +121,4 @@ listed here, or a vault is added to `MainnetGatedSet()`.
 - Procedure: [`README.md`](README.md)
 - Decoder: `internal/sources/upshift/{events,decode}.go`
 - Protocol verification: [`../../protocols/upshift.md`](../../protocols/upshift.md)
-- Drift check: `internal/ops/chops/wasm_drift.go`, manifest `internal/ops/chops/audited_wasm.json`
+- Drift check: `internal/ops/chops/wasm_drift.go`, manifest `internal/wasmaudit/audited_wasm.json`

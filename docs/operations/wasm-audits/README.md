@@ -26,7 +26,7 @@ silently produces wrong trades.
 ## Files in this directory
 
 - `README.md` — this file. Procedure + checklist.
-- `internal/ops/chops/audited_wasm.json` — the machine-readable audited set: every hash these logs string-checked, which `stellarindex-ops wasm-drift` checks each gated contract against ([runbook](../runbooks/wasm-drift.md)).
+- `internal/wasmaudit/audited_wasm.json` — the machine-readable audited set: every hash these logs string-checked, which `stellarindex-ops wasm-drift` checks each gated contract against ([runbook](../runbooks/wasm-drift.md)).
 - `soroswap.md` — Soroswap audit (in progress).
 - `sushiswap_v3.md` — SushiSwap V3 factory + 58 pools, four hashes string-checked from the lake's instance lineage.
 - `upshift.md` — Upshift earnUSDC / earnXLM vaults, one hash string-checked from the lake's instance lineage.

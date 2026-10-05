@@ -14,7 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	sep41transfers "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
-	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
 // F050: ch-rebuild -write runs the CURRENT decoders over a historical
@@ -32,18 +32,18 @@ func chRebuildArgs(t *testing.T, extra ...string) []string {
 
 func TestCHRebuild_WriteRefusesNamedSourceThatIsNotBackfillSafe(t *testing.T) {
 	t.Parallel()
-	if external.BackfillSafe(sushiswap_v3.SourceName) {
-		t.Fatalf("%s is now BackfillSafe — re-point this test at a source that is still unaudited", sushiswap_v3.SourceName)
+	if external.BackfillSafe(upshift.SourceName) {
+		t.Fatalf("%s is now BackfillSafe — re-point this test at a source that is still unaudited", upshift.SourceName)
 	}
-	err := chRebuild(chRebuildArgs(t, "-write", "-sources", "aquarius,"+sushiswap_v3.SourceName))
+	err := chRebuild(chRebuildArgs(t, "-write", "-sources", "aquarius,"+upshift.SourceName))
 	if err == nil {
 		t.Fatal("ch-rebuild -write over an unaudited source returned nil")
 	}
 	if !strings.Contains(err.Error(), "not BackfillSafe") {
 		t.Fatalf("ch-rebuild -write -sources …,%s got past the BackfillSafe gate (F050); error was: %v",
-			sushiswap_v3.SourceName, err)
+			upshift.SourceName, err)
 	}
-	if !strings.Contains(err.Error(), "["+sushiswap_v3.SourceName+"]") {
+	if !strings.Contains(err.Error(), "["+upshift.SourceName+"]") {
 		t.Errorf("refusal must name exactly the unaudited source, not the audited one beside it: %v", err)
 	}
 }
@@ -54,7 +54,7 @@ func TestCHRebuild_WriteRefusesNamedSourceThatIsNotBackfillSafe(t *testing.T) {
 func TestCHRebuild_GateLeavesDryRunAndAuditedWriteAlone(t *testing.T) {
 	t.Parallel()
 	for name, args := range map[string][]string{
-		"dry-run of an unaudited source": {"-sources", sushiswap_v3.SourceName},
+		"dry-run of an unaudited source": {"-sources", upshift.SourceName},
 		// scripts/ops/ch-rebuild-projected.sh's SRC default, verbatim.
 		"sanctioned audited write": {"-write", "-sources", "aquarius,soroswap,phoenix,comet,blend,cctp,rozo,defindex"},
 		"sep41 + backstop write":   {"-write", "-sep41", "-sources", strings.Join([]string{sep41supply.SourceName, sep41transfers.SourceName, blend_backstop.SourceName}, ",")},
@@ -99,8 +99,8 @@ func TestCHRebuild_DefaultCatalogueWriteIsGated(t *testing.T) {
 	got := external.UnsafeReplaySources(inRun)
 	sort.Strings(want)
 	sort.Strings(got)
-	if !reflect.DeepEqual(got, want) || !containsStr(got, sushiswap_v3.SourceName) {
-		t.Errorf("unsafe set = %v, want %v (must include %s)", got, want, sushiswap_v3.SourceName)
+	if !reflect.DeepEqual(got, want) || !containsStr(got, upshift.SourceName) {
+		t.Errorf("unsafe set = %v, want %v (must include %s)", got, want, upshift.SourceName)
 	}
 	for _, name := range got {
 		if !strings.Contains(gerr.Error(), name) {

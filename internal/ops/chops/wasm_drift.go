@@ -6,52 +6,19 @@ package chops
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
-	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/wasmaudit"
 )
-
-// auditedWasmJSON is the machine-readable set of WASM hashes the audit logs
-// in docs/operations/wasm-audits/ have string-checked against the decoders.
-//
-//go:embed audited_wasm.json
-var auditedWasmJSON []byte
-
-type auditedWasm struct {
-	Source  string `json:"source"`
-	Role    string `json:"role"`
-	Audited string `json:"audited"`
-	Doc     string `json:"doc"`
-}
-
-var wasmHashRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
-func loadAuditedWasm() (map[string]auditedWasm, error) {
-	var m map[string]auditedWasm
-	if err := json.Unmarshal(auditedWasmJSON, &m); err != nil {
-		return nil, fmt.Errorf("audited_wasm.json: %w", err)
-	}
-	for h, e := range m {
-		if !wasmHashRE.MatchString(h) {
-			return nil, fmt.Errorf("audited_wasm.json: %q is not a 64-char lower-hex wasm hash", h)
-		}
-		if e.Source == "" {
-			return nil, fmt.Errorf("audited_wasm.json: %s has no source", h)
-		}
-	}
-	return m, nil
-}
 
 // wasmDriftLake is the ClickHouse surface wasm-drift reads: the creation-event
 // stream the factory walk uses, and the contract → current wasm hash hop.
@@ -110,7 +77,7 @@ func wasmDrift(args []string) error {
 		return err
 	}
 
-	manifest, err := loadAuditedWasm()
+	manifest, err := wasmaudit.Load()
 	if err != nil {
 		return err
 	}
@@ -174,10 +141,12 @@ func wasmDriftSources(only string) ([]string, error) {
 // runWasmDrift checks every contract of every audited source in sources
 // against the manifest. A source with no manifest entry has nothing to
 // drift from, so it is reported unaudited instead of flagging every contract.
-func runWasmDrift(ctx context.Context, lake wasmDriftLake, manifest map[string]auditedWasm, sources []string, tip uint32) (wasmDriftReport, error) {
+func runWasmDrift(ctx context.Context, lake wasmDriftLake, manifest map[string]wasmaudit.Entry, sources []string, tip uint32) (wasmDriftReport, error) {
 	audited := make(map[string]bool)
 	for _, e := range manifest {
-		audited[e.Source] = true
+		for _, src := range e.Sources {
+			audited[src] = true
+		}
 	}
 	rep := wasmDriftReport{checked: make(map[string]int)}
 	for _, source := range sources {
@@ -185,7 +154,7 @@ func runWasmDrift(ctx context.Context, lake wasmDriftLake, manifest map[string]a
 			rep.unaudited = append(rep.unaudited, source)
 			continue
 		}
-		contracts, err := gatedContracts(ctx, lake, source, tip)
+		contracts, err := wasmaudit.ContractSet(ctx, wasmaudit.Deps{Events: lake}, source, tip)
 		if err != nil {
 			return rep, fmt.Errorf("wasm-drift: %s contract set: %w", source, err)
 		}
@@ -201,7 +170,7 @@ func runWasmDrift(ctx context.Context, lake wasmDriftLake, manifest map[string]a
 	return rep, nil
 }
 
-func wasmDriftVerdict(ctx context.Context, lake wasmDriftLake, manifest map[string]auditedWasm, source, contract string) (wasmDriftRow, error) {
+func wasmDriftVerdict(ctx context.Context, lake wasmDriftLake, manifest map[string]wasmaudit.Entry, source, contract string) (wasmDriftRow, error) {
 	row := wasmDriftRow{source: source, contract: contract}
 	h, err := lake.ContractWasmHash(ctx, contract)
 	switch {
@@ -215,56 +184,13 @@ func wasmDriftVerdict(ctx context.Context, lake wasmDriftLake, manifest map[stri
 		row.wasmHash = h
 		// A hash audited for another source is still drift here: the
 		// contract is running code this source's decoder was never checked against.
-		if e, ok := manifest[h]; ok && e.Source == source {
+		if manifest[h].Covers(source) {
 			row.verdict = wasmDriftAudited
 		} else {
 			row.verdict = wasmDriftDrift
 		}
 	}
 	return row, nil
-}
-
-// gatedContracts is the source's gate as the lake shows it: the curated set,
-// the factories, and every child the factories announced up to tip.
-func gatedContracts(ctx context.Context, es completeness.EventStreamer, source string, tip uint32) ([]string, error) {
-	meta, ok := pipeline.GatedMetaFor(source)
-	if !ok {
-		return nil, fmt.Errorf("%q is not a gated source", source)
-	}
-	set := make(map[string]struct{})
-	for _, c := range meta.CuratedSet {
-		set[c] = struct{}{}
-	}
-	for _, c := range meta.Factories {
-		set[c] = struct{}{}
-	}
-	dec := meta.NewDecoder(contractid.WithHook(func(child, _ string, _ uint32) {
-		set[child] = struct{}{}
-	}))
-	if len(meta.Factories) > 0 && meta.CreationSym != "" {
-		src := reconSource{name: source, dec: dec, factories: meta.Factories, creationSym: meta.CreationSym, genesis: meta.Genesis}
-		blind, err := preseedFactoryChildren(ctx, es, src, tip)
-		if err != nil {
-			return nil, err
-		}
-		// A creation event the decoder could not read hides a child, and a
-		// hidden child is exactly the contract this check exists to see.
-		if blind.Any() {
-			return nil, fmt.Errorf("factory walk is blind: %s", blind.Detail())
-		}
-	}
-	// Decoders that expose their gate also carry in-code seeds a factory walk cannot see.
-	if g, ok := dec.(gatedContractSetter); ok {
-		for _, c := range g.GatedContractSet() {
-			set[c] = struct{}{}
-		}
-	}
-	out := make([]string, 0, len(set))
-	for c := range set {
-		out = append(out, c)
-	}
-	sort.Strings(out)
-	return out, nil
 }
 
 func printWasmDriftReport(rep wasmDriftReport, tip uint32) {
