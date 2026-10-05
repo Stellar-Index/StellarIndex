@@ -93,31 +93,10 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	disp := dispatcher.New()
 	disp.AddContractCallDecoder(soroswap_router.NewDecoder(soroswap_router.MainnetRouter))
 
-	// Resume from prior checkpoint, if any. Cursor key is the exact
-	// from/to pair the operator passed — separate runs with different
-	// ranges get separate cursors.
-	cursorSrc := "backfill-router"
+	cursorSrc := routerCursorSource
 	cursorSub := opsutil.RangeCursorKey(uint32(*from), uint32(*to))
-	startLedger := uint32(*from)
-	if *resume {
-		prior, gerr := store.GetCursor(ctx, cursorSrc, cursorSub)
-		if gerr == nil && prior.LastLedger >= uint32(*from) {
-			startLedger = prior.LastLedger + 1
-			fmt.Fprintf(os.Stderr, "backfill-router: resuming at ledger %d (prior checkpoint last_ledger=%d)\n",
-				startLedger, prior.LastLedger)
-		} else if gerr != nil && !errors.Is(gerr, timescale.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "backfill-router: read prior cursor failed (%v) — starting from -from\n", gerr)
-		}
-	}
-	if startLedger > uint32(*to) {
-		fmt.Fprintf(os.Stderr, "backfill-router: cursor already at or past -to (%d ≥ %d) — nothing to do\n",
-			startLedger, *to)
-		return nil
-	}
-
-	if err := recordBackfillDirtyWindows(ctx, store, cfg, backfillOpts{
-		from: uint32(*from), to: uint32(*to), sources: []string{"soroswap-router"}, dryRun: !write,
-	}); err != nil {
+	startLedger, done, err := routerWriteStart(ctx, store, cfg, uint32(*from), uint32(*to), *resume, write)
+	if err != nil || done {
 		return err
 	}
 
@@ -276,6 +255,43 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 		return fmt.Errorf("%d insert failures — see stderr above", insertFailures)
 	}
 	return nil
+}
+
+// routerCursorSource keys backfill-router's per-range resume cursor.
+const routerCursorSource = "backfill-router"
+
+// routerStartStore is the slice of the store [routerWriteStart] needs.
+type routerStartStore interface {
+	dirtyWindowRecorder
+	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
+}
+
+// routerWriteStart resolves the ledger a backfill-router run starts at
+// (resuming from its range cursor) and, for a -write run with ledgers left to
+// walk, records the dirty window over [from, to] before the first insert.
+// done reports a range whose cursor is already at or past to.
+func routerWriteStart(ctx context.Context, store routerStartStore, cfg config.Config, from, to uint32, resume, write bool) (start uint32, done bool, err error) {
+	start = from
+	if resume {
+		prior, gerr := store.GetCursor(ctx, routerCursorSource, opsutil.RangeCursorKey(from, to))
+		if gerr == nil && prior.LastLedger >= from {
+			start = prior.LastLedger + 1
+			fmt.Fprintf(os.Stderr, "backfill-router: resuming at ledger %d (prior checkpoint last_ledger=%d)\n",
+				start, prior.LastLedger)
+		} else if gerr != nil && !errors.Is(gerr, timescale.ErrNotFound) {
+			fmt.Fprintf(os.Stderr, "backfill-router: read prior cursor failed (%v) — starting from -from\n", gerr)
+		}
+	}
+	if start > to {
+		fmt.Fprintf(os.Stderr, "backfill-router: cursor already at or past -to (%d ≥ %d) — nothing to do\n", start, to)
+		return start, true, nil
+	}
+	if err := recordBackfillDirtyWindows(ctx, store, cfg, backfillOpts{
+		from: from, to: to, sources: []string{"soroswap-router"}, dryRun: !write,
+	}); err != nil {
+		return 0, false, err
+	}
+	return start, false, nil
 }
 
 // insertRouterSwap writes one reconstructed router swap, or — in the

@@ -2004,27 +2004,78 @@ func TestEventCensusLoss(t *testing.T) {
 	}
 }
 
-// TestPassDefersDirtyWindow_OnlyOutlastsPassSourcesInAPass: a -pass must not
-// lower sdex's floor over a backfill-sized window (INV-2600) — its own timer
-// re-proves it — while every other source, and sdex's own -source run, still
-// re-reconcile the window.
-func TestPassDefersDirtyWindow_OnlyOutlastsPassSourcesInAPass(t *testing.T) {
-	sdex := reconSource{name: "sdex", census: true}
-	sep41 := reconSource{name: "sep41_transfers", reproofOutlastsPass: "heavy"}
-	aquarius := reconSource{name: "aquarius"}
+// TestProjectionPlan_DefersOnlyOutlastsPassSourcesInAPass: a -pass must not
+// reconcile sdex/sep41 over a backfill-sized window — their own
+// timers re-prove it — while every other source, and their own -source runs,
+// still lower the floor over the window.
+func TestProjectionPlan_DefersOnlyOutlastsPassSourcesInAPass(t *testing.T) {
+	sdex := reconSource{name: "sdex", genesis: 2, census: true}
+	sep41 := reconSource{name: "sep41_transfers", genesis: 2, reproofOutlastsPass: "heavy"}
+	aquarius := reconSource{name: "aquarius", genesis: 2}
+	win := timescale.ProjectionDirtyWindow{From: 1_000, To: 2_000}
+	cleanPrior := priorProjection{known: true, ok: true, tip: 5_000, verifiedFrom: 2}
 	for _, tc := range []struct {
-		src  reconSource
-		pass bool
-		want bool
+		src       reconSource
+		pass      bool
+		wantFrom  uint32
+		wantDefer bool
 	}{
-		{sdex, true, true},
-		{sep41, true, true},
-		{aquarius, true, false},
-		{sdex, false, false},
-		{sep41, false, false},
+		{sdex, true, 5_000, true},
+		{sep41, true, 5_000, true},
+		{aquarius, true, 1_000, false},
+		{sdex, false, 1_000, false},
+		{sep41, false, 1_000, false},
 	} {
-		if got := passDefersDirtyWindow(tc.src, tc.pass); got != tc.want {
-			t.Errorf("passDefersDirtyWindow(%s, pass=%v) = %v, want %v", tc.src.name, tc.pass, got, tc.want)
+		from, deferred := projectionPlan(tc.src, tc.pass, cleanPrior, 5_000, 4_000, win, true)
+		if deferred != tc.wantDefer || (!deferred && from != tc.wantFrom) {
+			t.Errorf("projectionPlan(%s, pass=%v) = (%d, %v), want (%d, %v)", tc.src.name, tc.pass, from, deferred, tc.wantFrom, tc.wantDefer)
 		}
+	}
+	if _, deferred := projectionPlan(sdex, true, cleanPrior, 5_000, 0, win, false); deferred {
+		t.Error("no pending window must never defer")
+	}
+}
+
+// TestDeferredDirtyWindow_WithholdsComplete: a -pass that defers a window must
+// not carry the old clean claim over it. complete is withheld and the
+// watermark stops below the window.
+func TestDeferredDirtyWindow_WithholdsComplete(t *testing.T) {
+	srW := completeness.ComputeWatermark(2, 10_000, nil) // lake clean to tip
+	got := deferredDirtyWatermark(srW, timescale.ProjectionDirtyWindow{From: 6_000, To: 7_000})
+	if got.Complete || got.Ledger != 5_999 || got.CoveragePct >= 1 || got.FirstProblem != 0 {
+		t.Fatalf("deferred = %+v, want complete=false, watermark 5999, coverage < 1, no first problem", got)
+	}
+	if got := deferredDirtyWatermark(srW, timescale.ProjectionDirtyWindow{From: 0, To: 7_000}); got.Complete || got.Ledger != 1 || got.CoveragePct != 0 {
+		t.Errorf("window below genesis: %+v, want watermark genesis-1 and zero coverage", got)
+	}
+	lakeGap := completeness.ComputeWatermark(2, 10_000, []uint32{3_000})
+	if got := deferredDirtyWatermark(lakeGap, timescale.ProjectionDirtyWindow{From: 6_000, To: 7_000}); got != lakeGap {
+		t.Errorf("an earlier lake problem must keep its own watermark: %+v, want %+v", got, lakeGap)
+	}
+}
+
+// TestDeferredDirtyWindow_NextPassKeepsDeferring: the verdict a deferring pass
+// publishes (projection_ok=false, no found problem) must not turn the next
+// pass into a from-genesis sdex re-proof, which is what a failing prior
+// otherwise earns.
+func TestDeferredDirtyWindow_NextPassKeepsDeferring(t *testing.T) {
+	sdex := reconSource{name: "sdex", genesis: 2, census: true}
+	win := timescale.ProjectionDirtyWindow{Source: "sdex", From: 6_000, To: 7_000}
+	w := deferredDirtyWatermark(completeness.ComputeWatermark(2, 10_000, nil), win)
+	published := timescale.CompletenessSnapshot{
+		Source: "sdex", Genesis: 2, Tip: 10_000,
+		Watermark: w.Ledger, CoveragePct: w.CoveragePct, Complete: w.Complete,
+		LakeComplete: true, FirstProblem: w.FirstProblem,
+		SubstrateOK: true, RecognitionOK: true, ProjectionOK: false,
+	}
+	if published.FirstProblem != 0 || published.FoundProblem {
+		t.Fatalf("a deferred window is pending, not a found problem: %+v", published)
+	}
+	prior, _, _, priorWM := buildPriorVerdicts([]timescale.CompletenessSnapshot{published})
+	if _, deferred := projectionPlan(sdex, true, prior["sdex"], priorWM["sdex"], 0, win, true); !deferred {
+		t.Fatal("the next pass reconciled sdex from genesis instead of deferring the still-pending window")
+	}
+	if again := deferredDirtyWatermark(completeness.ComputeWatermark(2, 10_100, nil), win); again.Complete || again.Ledger != w.Ledger {
+		t.Errorf("next pass republished %+v, want the same capped, incomplete verdict", again)
 	}
 }

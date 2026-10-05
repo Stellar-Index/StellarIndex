@@ -638,18 +638,18 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// resume from and the source re-verifies from genesis (CS-095). Outside
 		// -pass it is the existing global max(genesis, -from) incremental floor
 		// — byte-for-byte unchanged.
-		projFrom := sourceProjectionFloor(src, *pass, priorProj[src.name], priorWatermark[src.name], *fromLedger)
+		//
 		// A pending replay-rewind window overrides the incremental floor:
 		// the replay rewrote served rows below the watermark, so the range
 		// MUST be re-reconciled before any claim — carried or fresh — may
-		// cover it. -from can never skip past it.
+		// cover it. -from can never skip past it. A deferred window is not
+		// reconciled at all, so no claim covers it.
 		dirtyWin, hasDirty := dirtyWindows[src.name]
-		deferDirty := hasDirty && passDefersDirtyWindow(src, *pass)
-		if hasDirty && !deferDirty {
-			projFrom = dirtyReconcileFloor(projFrom, genesis, dirtyWin)
-		}
+		projFrom, deferDirty := projectionPlan(src, *pass, priorProj[src.name], priorWatermark[src.name], *fromLedger, dirtyWin, hasDirty)
 		if *useCH {
-			if srW.Ledger >= projFrom {
+			if deferDirty {
+				w = deferredDirtyWatermark(srW, dirtyWin)
+			} else if srW.Ledger >= projFrom {
 				streamer := clickhouse.ReconcileEventStreamer{Addr: *chAddr, NeedOpArgs: src.needsOpArgs, NeedStateWriteKeys: src.needsStateWriteKeys}
 				scopes, servedMins, servedFrom, runFrom, serr := projectionScopes(ctx, store, src, genesis, projFrom, srW.Ledger)
 				if serr != nil {
@@ -716,7 +716,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			// axis can never be stronger than the lake axis it sits on, so an
 			// unproven substrate claim (C4-057) gates it too — that is what
 			// lakeComplete already carries.
-			w = combineWatermark(srW, lakeComplete && projOK)
+			if !deferDirty {
+				w = combineWatermark(srW, lakeComplete && projOK)
+			}
 		} else {
 			// Legacy Postgres path: strict per-ledger projection pins the watermark.
 			if srW.Ledger >= genesis {
@@ -769,8 +771,8 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 					dirtyWin.From, dirtyWin.To))
 			} else if deferDirty {
 				detail = append(detail, fmt.Sprintf(
-					"projection: dirty window [%d,%d] PENDING — its re-verify outlasts the pass, so this source's own timer re-proves it from genesis",
-					dirtyWin.From, dirtyWin.To))
+					"projection: not evaluated — dirty window [%d,%d] PENDING this source's dedicated weekly compute-completeness timer, which re-proves it from genesis; complete withheld and watermark held at %d until then",
+					dirtyWin.From, dirtyWin.To, w.Ledger))
 			} else {
 				detail = append(detail, fmt.Sprintf(
 					"projection: replay-rewind window [%d,%d] PENDING re-verification — the reconcile floor stays extended over it until a clean run covers it",

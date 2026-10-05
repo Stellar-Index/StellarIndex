@@ -108,3 +108,56 @@ func TestRecordBackfillDirtyWindows(t *testing.T) {
 		})
 	}
 }
+
+type fakeRouterStartStore struct {
+	fakeDirtyWindowRecorder
+	cursor    timescale.Cursor
+	cursorErr error
+}
+
+func (f *fakeRouterStartStore) GetCursor(context.Context, string, string) (timescale.Cursor, error) {
+	return f.cursor, f.cursorErr
+}
+
+// TestRouterWriteStart_RecordsBeforeWalk: a backfill-router -write run records
+// its window before it hands back the start ledger the walk needs, a dry run or an already-finished range records nothing, and a
+// recording failure stops the run.
+func TestRouterWriteStart_RecordsBeforeWalk(t *testing.T) {
+	ctx := context.Background()
+	want := timescale.ProjectionDirtyWindow{
+		Source: "soroswap-router", From: 100, To: 200,
+		Reason: timescale.BackfillWriteReason(100, 200),
+	}
+	cases := []struct {
+		name      string
+		store     *fakeRouterStartStore
+		write     bool
+		wantStart uint32
+		wantDone  bool
+		wantWins  int
+	}{
+		{"fresh write", &fakeRouterStartStore{cursorErr: timescale.ErrNotFound}, true, 100, false, 1},
+		{"resumed write keeps the full window", &fakeRouterStartStore{cursor: timescale.Cursor{LastLedger: 150}}, true, 151, false, 1},
+		{"dry run", &fakeRouterStartStore{cursorErr: timescale.ErrNotFound}, false, 100, false, 0},
+		{"range already walked", &fakeRouterStartStore{cursor: timescale.Cursor{LastLedger: 200}}, true, 201, true, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			start, done, err := routerWriteStart(ctx, tc.store, config.Config{}, 100, 200, true, tc.write)
+			if err != nil || start != tc.wantStart || done != tc.wantDone {
+				t.Fatalf("= (%d, %v, %v), want (%d, %v, nil)", start, done, err, tc.wantStart, tc.wantDone)
+			}
+			if len(tc.store.windows) != tc.wantWins || (tc.wantWins == 1 && tc.store.windows[0] != want) {
+				t.Fatalf("recorded %+v, want %d window(s) of %+v", tc.store.windows, tc.wantWins, want)
+			}
+		})
+	}
+
+	t.Run("a recording failure stops the run", func(t *testing.T) {
+		recErr := errors.New("postgres down")
+		store := &fakeRouterStartStore{fakeDirtyWindowRecorder: fakeDirtyWindowRecorder{err: recErr}, cursorErr: timescale.ErrNotFound}
+		if _, _, err := routerWriteStart(ctx, store, config.Config{}, 100, 200, true, true); !errors.Is(err, recErr) {
+			t.Fatalf("err = %v, want the recording error", err)
+		}
+	})
+}

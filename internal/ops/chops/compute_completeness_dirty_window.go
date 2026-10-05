@@ -1,6 +1,9 @@
 package chops
 
-import "github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+import (
+	"github.com/Stellar-Index/StellarIndex/internal/completeness"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+)
 
 // dirtyReconcileFloor lowers an incremental run's projection reconcile floor
 // to a pending dirty window's genesis-clamped bottom (migration 0125),
@@ -18,14 +21,37 @@ func dirtyReconcileFloor(projFrom, genesis uint32, w timescale.ProjectionDirtyWi
 	return projFrom
 }
 
-// passDefersDirtyWindow reports whether a -pass leaves src's pending dirty
-// window to src's dedicated timer (compute-completeness-sdex/-sep41, which
-// re-prove from genesis and clear it) instead of lowering its floor now. A
-// backfill-sized sdex window is millions of ledgers of census re-derive: it
-// would hit -source-timeout every pass and fail the unit daily while the
-// prior verdict stood regardless.
-func passDefersDirtyWindow(src reconSource, pass bool) bool {
-	return pass && src.outlastsPass()
+// projectionPlan is src's projection reconcile floor, and whether this run
+// defers src's pending dirty window instead of reconciling over it. A -pass
+// defers for a source whose re-proof outlasts the pass (sdex, sep41): a
+// backfill-sized window would hit -source-timeout every night, so its
+// dedicated timer re-proves it from genesis instead. The deferral ignores the
+// prior verdict, so the false that a deferred pass publishes cannot pull the
+// next pass into that same from-genesis re-proof.
+func projectionPlan(src reconSource, pass bool, prior priorProjection, priorWatermark uint32, fromLedger uint, win timescale.ProjectionDirtyWindow, hasDirty bool) (projFrom uint32, deferDirty bool) {
+	projFrom = sourceProjectionFloor(src, pass, prior, priorWatermark, fromLedger)
+	if !hasDirty {
+		return projFrom, false
+	}
+	if pass && src.outlastsPass() {
+		return projFrom, true
+	}
+	return dirtyReconcileFloor(projFrom, src.genesis, win), false
+}
+
+// deferredDirtyWatermark is the verdict for a source whose dirty window this
+// run deferred: nothing re-verified the rewritten rows, so the served axis is
+// not complete and the watermark stops below the window's genesis-clamped
+// bottom. FirstProblem stays the lake's: the window is pending, not a found
+// failure.
+func deferredDirtyWatermark(srW completeness.Watermark, win timescale.ProjectionDirtyWindow) completeness.Watermark {
+	out := srW
+	out.Complete = false
+	capped := completeness.ComputeWatermark(srW.Genesis, srW.Tip, []uint32{max(win.From, srW.Genesis)})
+	if capped.Ledger < srW.Ledger {
+		out.Ledger, out.CoveragePct = capped.Ledger, capped.CoveragePct
+	}
+	return out
 }
 
 // dirtyWindowSatisfied reports whether THIS run earned the right to clear a
