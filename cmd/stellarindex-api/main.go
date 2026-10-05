@@ -56,7 +56,6 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -2495,41 +2494,6 @@ func buildDashboardGenerator(cfg config.DashboardConfig, logger *slog.Logger) *d
 			"env", cfg.CodeSecretEnv)
 	}
 	return generator
-}
-
-// buildDashboardSender picks the mail transport the dashboard auth flow
-// (and, through the bundle, the public signup flow) sends through.
-//
-// An unset / empty / blank-only Resend credential wires
-// notify.UnconfiguredSender, whose every Send is an error (RLT-321). It
-// used to wire a NoopSender, whose Send returns nil: /v1/auth/login
-// answered 200 "sent", counted result="sent" and minted a live magic-link
-// row for mail that could never be delivered, so the notify failure-ratio
-// alert read 0 on a deployment where nobody could sign in. With the
-// UnconfiguredSender the login handler refuses with 503 and a counted
-// failure, and signup reports email_verification_sent:false.
-//
-// This deliberately does NOT refuse to boot: the dashboard is one surface
-// of the API, and a missing mail credential must not take down price
-// serving with it. Passkey sign-in and existing sessions keep working.
-//
-// Only the NAME of the env var is ever logged — never the value, nor any
-// part of it.
-func buildDashboardSender(cfg config.DashboardConfig, logger *slog.Logger) (notify.Sender, error) {
-	apiKey := strings.TrimSpace(os.Getenv(cfg.ResendAPIKeyEnv))
-	if apiKey == "" {
-		reason := fmt.Sprintf("env %s is unset/empty", cfg.ResendAPIKeyEnv)
-		logger.Error("dashboard mail transport is NOT configured — no sign-in or signup-verification "+
-			"email can be delivered; POST /v1/auth/login will answer 503 until the credential is set",
-			"reason", reason)
-		return notify.UnconfiguredSender{Reason: reason}, nil
-	}
-	s, err := notify.NewResendSender(apiKey)
-	if err != nil {
-		return nil, fmt.Errorf("resend sender: %w", err)
-	}
-	logger.Info("dashboard auth using Resend sender", "from", cfg.EmailFrom)
-	return s, nil
 }
 
 // dashboardKeyMirror is the Redis key store every dashboard-minted key is
