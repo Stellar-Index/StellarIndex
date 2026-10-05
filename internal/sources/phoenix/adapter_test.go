@@ -528,3 +528,32 @@ func TestDecoder_Decode_samePoolTwiceInOpKeepsBothSwaps(t *testing.T) {
 		t.Errorf("the two trades collapsed onto %d op_index value(s), want 2 distinct (FanoutOpIndex must keep them apart on the trades PK)", len(ops))
 	}
 }
+
+// A stale partial liquidity group swept by a later swap event is an orphan
+// too; the count must reach EvictedOrphans, not be discarded.
+func TestDecoder_EvictedOrphans_countsStaleLiquidityGroup(t *testing.T) {
+	d := newTestDecoder()
+	if _, err := d.Decode(events.Event{
+		Topic:          []string{TopicSymbolProvideLiquidity, TopicSymbolPLSender},
+		Value:          addrBody(t, makeC(t, 0x10)),
+		Ledger:         1_500_000,
+		TxHash:         "old-pl-tx",
+		LedgerClosedAt: "2026-01-01T00:00:00Z",
+		ContractID:     plPool,
+	}); err != nil {
+		t.Fatalf("Decode partial provide_liquidity: %v", err)
+	}
+	if _, err := d.Decode(events.Event{
+		Topic:          []string{TopicSymbolSwap, TopicSymbolSender},
+		Value:          addrBody(t, makeC(t, 0x10)),
+		Ledger:         1_500_001,
+		TxHash:         "new-tx",
+		LedgerClosedAt: "2026-01-01T00:10:00Z",
+		ContractID:     "pool-A",
+	}); err != nil {
+		t.Fatalf("Decode swap: %v", err)
+	}
+	if got := d.EvictedOrphans(); got != 1 {
+		t.Errorf("EvictedOrphans() = %d, want 1 (the stale liquidity group)", got)
+	}
+}
