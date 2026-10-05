@@ -256,7 +256,6 @@ internal/aggregate/confidence/score.go	CS-087
 internal/aggregate/confidence/score.go	RLT-260
 internal/aggregate/decimals.go	2026-06-22
 internal/aggregate/doc.go	2026-08-04
-internal/aggregate/doc.go	2026-09-18
 internal/aggregate/doc.go	F-0014
 internal/aggregate/freeze/lifecycle.go	2026-08-04
 internal/aggregate/freeze/lifecycle.go	2026-08-05

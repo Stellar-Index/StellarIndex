@@ -1,6 +1,6 @@
 ---
 adr: 0050
-title: Multi-region HA — active/active pricing, R1-authority lake, provider-independent archive DR
+title: Multi-region HA — active/active pricing, R1-authority lake, off-site lake and Postgres backups
 status: Accepted
 date: 2026-08-21
 supersedes: [0016]
@@ -10,126 +10,40 @@ superseded_by: []
 
 # ADR-0050: Multi-region HA architecture
 
-Deciders: the maintainer (2026-08-21). Ratifies the program plan in
-[`docs/architecture/multi-region-ha.md`](../architecture/multi-region-ha.md),
-which holds the full detail, cost model, phasing, and audit provenance. This ADR
-records the **decision** and the **supersessions**.
-
 ## Context
 
-the maintainer decided to bring genuine multi-region HA before v1, with cross-region failover
-for both the API and the explorer. A cold adversarial audit (6 auditors,
-2026-08-20/21) validated a first-draft plan against the actual code and the live R1
-host and refuted its load-bearing claims. Two measurements forced the architecture:
-
-1. **No cross-region replication exists or is buildable for the lake.** Postgres is a
-   standalone primary (zero replicas/slots/publications); ClickHouse has no Replicated
-   tables. The Model A of ADR-0016/`multi-region-topology.md` ("R1 canonical history via
-   Postgres replication") is paper and cannot cover the 14.6 TiB ClickHouse lake at all.
-2. **The lake cannot be active/active cheaply.** Per-region S3-tiering fails on cost
-   (1,000–8,000 S3 GETs per cold explorer page) and latency (breaches the 8 s route
-   budget); and R3's 1.75 TiB disk physically cannot hold the lake.
-
-The prior ratified position (ADR-0008: "multi-region active/active is out of scope for
-v1") is overturned by the maintainer's decision; this ADR replaces it.
+No cross-region replication exists or is buildable for the 14.6 TiB ClickHouse lake, and a per-region S3-tiered lake fails on cost, latency and R3's disk. ADR-0008 had ruled multi-region active/active out of v1 and ADR-0016's Model A (R1-canonical Postgres replication) does not exist.
+The full plan, cost model and phasing live in `docs/architecture/multi-region-ha.md`; implementation is deferred until after v1.0 (plan §0c), so the build is not in the tree yet.
 
 ## Decision
 
-Adopt the three-tier architecture detailed in `docs/architecture/multi-region-ha.md`:
+Section labels match the plan doc and are cited from code.
 
-- **Model B — independent per-region ingest.** Each region ingests the chain itself and
-  builds its own stores; consistency is by **determinism** (ADR-0015), not replication.
-  We build **no** cross-region Postgres replication and **no** stretched Patroni cluster.
-- **Pricing/oracle tier → active/active in all 3 regions** (local Timescale+Redis). The
-  agreed SLO (ADR-0009, p95≤200/p99≤500) is preserved because **no SLO'd route crosses a
-  region boundary** — enforced by a guard test.
-- **Lake/explorer tier → R1 is the authority.** R2/R3 serve the hot set locally and
-  **proxy cold/archive queries to R1**, with Cloudflare R2 as a **fallback-only** copy
-  (not the steady-state path). R3 holds no local lake (disk-bound); it is a thin proxy.
-  **Rejected: per-region S3-tiered ClickHouse.** Lake failover is fast-normal,
-  degraded-on-R1-outage — the correct trade for 14 TiB.
-- **Control-plane state** (accounts, API keys, sessions, webauthn, alerts, webhooks) gets
-  **real cross-region replication** as its own workstream; determinism cannot reproduce
-  it. Until it lands, only anonymous traffic fails over cleanly.
-- **HA model = cross-region failover, one box per region.** Not full per-region HA fleets
-  (the $180–288 K/yr topology we reject).
-- **R2 moves off AWS** to cheap US bare metal (Vultr, matching R3). AWS was justified only
-  when R2 held the full lake; it no longer does.
-- **Durability crown jewel = the 2.49 TiB raw galexie-archive**, replicated off-site to
-  provider-independent storage (Cloudflare R2/Backblaze). Everything else is a derived,
-  re-ingestable projection (consistent with ADR-0043, which rejects backing up the derived
-  lake). Recovery/bootstrap = re-ingest from the archive.
+1. **Model B: independent per-region ingest.** Each region ingests the chain itself and builds its own stores; consistency is by determinism (ADR-0015), not replication. No cross-region Postgres replication and no stretched Patroni cluster.
+2. **§3a: pricing and oracle tier is active/active in every region** on local Timescale and Redis. The ADR-0009 SLO holds because no SLO'd route crosses a region boundary.
+3. **§3b: the lake and explorer tier is R1-authoritative.** R2 and R3 are the same shape: local pricing, Redis and API, with lake routes proxied to R1 and Cloudflare R2 as fallback only. Per-region S3-tiered ClickHouse is rejected.
+4. **§3c: control-plane state** (accounts, keys, sessions, webauthn, alerts, webhooks) needs real cross-region replication as its own workstream; until it lands only anonymous traffic fails over cleanly.
+5. **§3d (the rate-limit amendment): rate limit and monthly quota count per region,** in the serving region's own Redis, keyed per principal with no region dimension, so under active/active the global ceiling is N regions times the limit and a Redis outage fails closed in that region only. The mitigation is an open decision due before a second region serves authenticated traffic; a synchronous cross-region counter is excluded for the rate limit because it would put a cross-region round trip on every request.
+6. **§4: per-region shapes** differ in storage but serve byte-identical closed-bucket answers (ADR-0016's surviving principle). R2 moves off AWS to US bare metal.
+7. **§5: durability.** The raw galexie-archive is a copy of SDF's public dataset and is re-pulled from there, not mirrored off-site (`galexie_archive_mirror_enabled` defaults to false). Off-site copies are the ClickHouse lake and Postgres on Backblaze B2 (ADR-0043).
+8. **§7.3: lake-aware health.** `GET /v1/livez/lake` is the load-balancer probe for lake-backed routes; `/v1/readyz` covers the pricing tier.
+9. **HA is cross-region failover with one box per region;** ADR-0008's single-region HA topology and DR principle carry forward as Phase 1 (HAProxy, Patroni, Sentinel fleets, deferred post-v1.0); the multi-region layer adds failover between single-box regions, never a stretched cluster.
+10. **Determinism hardening is a launch gate** for multi-region (plan §7.2): three independent regions must return equal answers.
 
-> **Durability decision amended 2026-10-02.** The raw galexie-archive is
-> no longer mirrored off-site. It is a copy of SDF's public dataset
-> (`s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`) and is
-> re-pulled from there, so its loss is a *time* exposure, not a *data*
-> exposure (ADR-0043 §2 amendment, 2026-08-29: accept the dependency, do
-> not duplicate public data into our own storage). The off-site copies are
-> the ClickHouse lake and Postgres (pgBackRest), both on Backblaze B2. The
-> "crown jewel" bullet above and `galexie-archive-mirror` are superseded;
-> the mirror is disabled by default (`galexie_archive_mirror_enabled`).
+## Invariant
 
-Fleet cost: **~$15–18 K/yr** (single box per region). Full detail, phasing (Phase 0–4),
-per-region shapes, and the prerequisite workstreams (determinism hardening, lake-aware
-health, off-site archive DR, greenfield HA foundation, multi-region inventory/deploy) are
-in the plan doc.
+- SLO'd handlers never read lake-backed fields or cross a region boundary: `TestSLORoutesNeverTouchTheLake` in `internal/api/v1/slo_guard_test.go`.
+- `/v1/livez/lake` shares one ping per round, fails closed when the lake is absent and never echoes the driver error: `internal/api/v1/livez_lake_test.go`.
+- The rate limiter and monthly quota keep per-principal Redis counters with no region dimension: `internal/api/v1/middleware/ratelimit.go`, `internal/api/v1/middleware/monthly_quota.go`.
 
 ## Consequences
 
-- The four multi-region documents (`multi-region-topology.md`, `r2-r3-bringup.md`,
-  `multi-region-cutover.md`, and ADR-0016) described architectures we deliberately reject.
-  They are superseded and banner-marked; **implementation must follow the plan doc, not
-  them**, to avoid accidentally building Model A / per-region S3 lake / R2-on-AWS.
-- ADR-0008's single-region HA topology and DR principle **carry forward** (Phase 1); only
-  its multi-region active/active decision is overturned.
-- ADR-0044 (explorer edge SSR) becomes load-bearing: it is the enabler for runtime
-  cross-region explorer failover.
-- New prerequisite work is created (determinism fixes, lake-aware `/livez/lake`, off-site
-  archive DR, control-plane replication) — all tracked in the plan doc's Phase 0/§7.
+- ADR-0008's single-region HA topology and DR principle carry forward; only its multi-region decision is overturned, and ADR-0016 is superseded.
+- `multi-region-topology.md`, `r2-r3-bringup.md` and `multi-region-cutover.md` describe rejected architectures and are banner-marked; implement from the plan doc.
+- ADR-0044 explorer edge rendering is the enabler for runtime cross-region explorer failover.
+- Lake failover is fast when R1 is healthy and degraded during an R1 outage; fleet cost is about $15-18K/yr against $180-288K/yr for per-region HA fleets.
+- Until a second region serves authenticated traffic the published limits are exact (N = 1).
 
-## Alternatives rejected
+## Evidence
 
-- **Model A (cross-region Postgres replication + R1-canonical):** doesn't exist, and
-  cannot cover the ClickHouse lake. (ADR-0016, topology doc.)
-- **Per-region active/active lake via S3-tiered ClickHouse:** cost + latency failure
-  (audit B); impossible on R3's disk (audit D).
-- **Full per-region HA fleets (~$180–288 K/yr):** overkill for scale/cost; cross-region
-  failover with one box per region meets the need.
-- **Keep R2 on AWS:** ~3× the cost for a role that no longer needs elastic lake storage.
-
-## Amendment — 2026-08-29 (API-first)
-
-Maintainer: *"api is the main purpose really, people can wait 200 ms for explorer results."*
-R2's optional hot lake set is dropped for v1 — R2 and R3 are the same shape (local
-pricing + Redis + API, all lake routes proxied to R1 at request level), which lowers
-both boxes to ~2 TB commodity bare metal. In exchange, **determinism hardening
-(plan §7.2) is promoted to a launch gate**: with the API as the product and three
-regions answering independently, cross-region answer equality is a correctness
-promise, not an optimisation. See `docs/architecture/multi-region-ha.md` §0b.
-
-## Status note — 2026-08-29: implementation DEFERRED to post-v1.0
-
-The architecture stands; the build does not start before v1.0 ships. the maintainer's reasoning,
-the measured cache-header evidence, and the cheapest-first resume sequence
-(Cloudflare -> micro-cache test -> R2 -> R3-on-evidence) are recorded in
-`docs/architecture/multi-region-ha.md` §0c. The v1.0-relevant residue is the
-single-point-of-failure exposure, tracked against ADR-0043's DR work rather than here.
-
-## Amendment — 2026-09-30: rate limit and monthly quota are per-region
-
-Both request limits count in the serving region's own Redis (`[storage] redis_addr` renders
-as `127.0.0.1:6379`), keyed per principal with no region dimension: the rate limit
-(`internal/api/v1/middleware/ratelimit.go`) and the monthly quota's month-to-date read
-(`internal/api/v1/middleware/monthly_quota.go`, via `usage.Counter`). Under active/active
-each region enforces them independently, so the effective global ceiling is **N regions ×
-the limit** — for the per-second rate limit and the monthly quota alike. Their fail-closed
-dwell is per region as well: one region's Redis outage 429s only that region's traffic.
-
-**Mitigation: open decision.** It must be taken before a second region serves authenticated
-traffic, which already waits on control-plane replication (plan §3c); until then N = 1 and
-the published limits are exact. A synchronous cross-region counter is excluded for the rate
-limit, because it puts a cross-region round trip on every request and breaks the "no SLO'd
-route crosses a region boundary" invariant. The remaining options and their trade-offs are
-in `docs/architecture/multi-region-ha.md` §3d.
-
+`docs/architecture/multi-region-ha.md`, `internal/api/v1/slo_guard_test.go`, `internal/api/v1/livez_lake_test.go`, `internal/api/v1/server.go` (`/v1/livez/lake` route).

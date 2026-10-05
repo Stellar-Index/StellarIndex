@@ -157,7 +157,7 @@ missing the classic trustline component entirely). Code fix landed
 - [x] **Postgres repo2 retention vs. ADR-0043 §1** — the shipped lean retention
   (1 full + 7-day diffs, #298) never matched the ADR's "repo2 keeps 4 fulls" text, and
   the role comment cited the unrelated §2 amendment as its authority. Landed 2026-09-24:
-  ADR-0043 §1 amendment records the actual retention and recovery horizon;
+  ADR-0043 §1 records the actual retention and recovery horizon;
   `configs/ansible/roles/archival-node/defaults/main.yml` comment corrected to cite it.
   No config change — the lean retention (#298) was a deliberate cost call, this closes
   the doc/deployment gap only.
