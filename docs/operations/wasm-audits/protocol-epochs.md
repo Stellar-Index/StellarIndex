@@ -9,7 +9,7 @@ related:
 
 # Protocol epoch timelines
 
-> Per-protocol view of every contract we ingest, every WASM it has run, and which ledger ranges (epochs) each WASM was active. Built from the 2026-04-30 r1 wasm-history walk + 2026-05-01 cross-check via Soroban-RPC. The structured source data lives at [`evidence/r1-walk-2026-05-01/per-source-final/`](evidence/r1-walk-2026-05-01/per-source-final/); this document renders it as readable timelines.
+> Per-protocol WASM epochs. Built from the 2026-04-30 r1 wasm-history walk + 2026-05-01 Soroban-RPC cross-check. Source data: [`evidence/r1-walk-2026-05-01/per-source-final/`](evidence/r1-walk-2026-05-01/per-source-final/).
 
 ## Coverage at a glance
 
@@ -28,7 +28,7 @@ related:
 
 ## Soroswap
 
-All three Soroswap WASMs (factory + router + pair) have been completely stable since deployment. The factory's `5db738b0…` has had 6 self-touches in the walked window — these are TTL-extension restamps to the SAME hash, not upgrades. Net: zero observable upgrade events. The 194 pair instances all run the canonical pair WASM `18051456…`; none has ever transitioned.
+Stable since deployment. Factory `5db738b0…` has 6 self-touches in the walked window: TTL restamps to the SAME hash, not upgrades. Zero upgrade events. The 194 pair instances all run pair WASM `18051456…`.
 
 ### WASM inventory (3 unique)
 
@@ -39,8 +39,6 @@ All three Soroswap WASMs (factory + router + pair) have been completely stable s
 | `4c3db3ebd2d6a2ab…` | soroswap-router | 1 | `evidence/r1-walk-2026-05-01/wasm-bytes/4c3db3ebd2d6a2ab23de1f622eaabb39501539b4611b68622ec4e47f76c4ba07.wasm` |
 
 ### Contract timelines
-
-_Contracts sharing the same WASM history are grouped; rare singletons listed separately._
 
 | Group | Contracts | WASM sequence (epoch order) |
 |---|---|---|
@@ -56,11 +54,11 @@ _Contracts sharing the same WASM history are grouped; rare singletons listed sep
 
 ## Aquarius
 
-Aquarius has the most WASMs (19) and a clear two-cohort structure:
-- **Cohort A** (168 pools, never-upgraded since deployment) — runs one of three older variants (`ae0da5a84b15805c…` volatile / `f1077e0b77da5e62…` stableswap / `8875f0c770fb26d3…` rewards-enhanced).
-- **Cohort B** (145 pools, upgraded through 5 successive WASMs) — went through the chain `b54ba37b → 2d770946 → 7cecf23b → a1629dcd → 4f080d24` over the 2-year window.
+Two cohorts:
+- **Cohort A** (168 pools, never upgraded): one of three older variants (`ae0da5a84b15805c…` volatile / `f1077e0b77da5e62…` stableswap / `8875f0c770fb26d3…` rewards-enhanced).
+- **Cohort B** (145 pools, 5 successive WASMs): `b54ba37b → 2d770946 → 7cecf23b → a1629dcd → 4f080d24` over the 2-year window.
 
-The router itself has had 6 distinct WASM versions tracking governance + protocol-fee admin features. Decoder is keyed off event-topic shape (not per-WASM behaviour) — same `Symbol("trade")` event family across all 19 WASMs.
+Router: 6 WASM versions (governance + protocol-fee admin). Decoder keys off event-topic shape, not per-WASM behaviour: same `Symbol("trade")` event family across all 19 WASMs.
 
 ### WASM inventory (19 unique)
 
@@ -88,8 +86,6 @@ The router itself has had 6 distinct WASM versions tracking governance + protoco
 
 ### Contract timelines
 
-_Contracts sharing the same WASM history are grouped; rare singletons listed separately._
-
 | Group | Contracts | WASM sequence (epoch order) |
 |---|---|---|
 | 149 contracts | 149 | aquarius-pool/volatile-v1 (current state) |
@@ -116,7 +112,7 @@ _Contracts sharing the same WASM history are grouped; rare singletons listed sep
 
 ## Phoenix
 
-Phoenix is the most-iterated source — 22 unique WASMs across 13 contracts. The factory has had 5 versions, multihop 3, and the 11 pool instances span 14 different pool-template versions (each pool has been upgraded multiple times).
+22 unique WASMs across 13 contracts: factory 5 versions, multihop 3, 11 pool instances spanning 14 pool-template versions.
 
 ### WASM inventory (22 unique)
 
@@ -147,8 +143,6 @@ Phoenix is the most-iterated source — 22 unique WASMs across 13 contracts. The
 
 ### Contract timelines
 
-_Contracts sharing the same WASM history are grouped; rare singletons listed separately._
-
 | Group | Contracts | WASM sequence (epoch order) |
 |---|---|---|
 | 4 contracts | 4 | phoenix-pool/v14 → phoenix-pool/v14 → phoenix-pool/v2 |
@@ -162,7 +156,7 @@ _Contracts sharing the same WASM history are grouped; rare singletons listed sep
 
 ## Reflector
 
-All three SEP-40 oracles (DEX/CEX/FX) migrated v2 (`4a64c8c8…`) → v3 (`df88820e…`) coherently. v3 has been the active version since the migration; both versions expose the SEP-40 API (`lastprice`, `prices`, `price`, `base`, `assets`, `decimals`, `resolution`).
+All three SEP-40 oracles (DEX/CEX/FX) migrated v2 (`4a64c8c8…`) → v3 (`df88820e…`); v3 active since. Both expose the SEP-40 API (`lastprice`, `prices`, `price`, `base`, `assets`, `decimals`, `resolution`).
 
 ### WASM inventory (2 unique)
 
@@ -173,8 +167,6 @@ All three SEP-40 oracles (DEX/CEX/FX) migrated v2 (`4a64c8c8…`) → v3 (`df888
 
 ### Contract timelines
 
-_Contracts sharing the same WASM history are grouped; rare singletons listed separately._
-
 | Group | Contracts | WASM sequence (epoch order) |
 |---|---|---|
 | 2 contracts | 2 | reflector/v2 → reflector/v3 → reflector/v3 → reflector/v3 → reflector/v3 → reflector/v3 → reflector/v3 |
@@ -182,7 +174,7 @@ _Contracts sharing the same WASM history are grouped; rare singletons listed sep
 
 ## Comet
 
-One contract, one WASM — the Blend backstop pool, stable since deployment.
+One contract, one WASM: the Blend backstop pool.
 
 ### WASM inventory (1 unique)
 
@@ -192,15 +184,13 @@ One contract, one WASM — the Blend backstop pool, stable since deployment.
 
 ### Contract timelines
 
-_Contracts sharing the same WASM history are grouped; rare singletons listed separately._
-
 | Group | Contracts | WASM sequence (epoch order) |
 |---|---|---|
 | 1 contracts | CAS3FL6TLZKDGGSISDBW… | comet/v1 |
 
 ## Redstone
 
-Two WASMs spanning a deliberate hotfix sequence: an initial deploy `b400f7a8…` lived for ledgers 58,758,722 → 58,759,141 (~35 minutes) before being replaced by the second-deploy hash `5e93d22c…`, itself superseded by an unarchived successor at a ledger the walk missed — its recorded range here is not accurate (see [redstone.md#caveats](redstone.md#caveats)). Pre-backfill SQL guard reproduced in the synthesis report; required reading before any `stellarindex-ops backfill` overlapping the hotfix window.
+Initial deploy `b400f7a8…` lived ledgers 58,758,722 → 58,759,141 (~35 minutes), replaced by `5e93d22c…`, itself superseded by an unarchived successor at a ledger the walk missed (recorded range not accurate; see [redstone.md#caveats](redstone.md#caveats)). Pre-backfill SQL guard is in the synthesis report; required reading before any `stellarindex-ops backfill` overlapping the hotfix window.
 
 ### WASM inventory (2 unique)
 
@@ -210,8 +200,6 @@ Two WASMs spanning a deliberate hotfix sequence: an initial deploy `b400f7a8…`
 | `5e93d22c9e19b254…` | redstone/second-deploy (superseded) | 1 | `evidence/r1-walk-2026-05-01/wasm-bytes/5e93d22c9e19b254dae5474aebbb65a39f2f53b3b1d4371c58281987e1e29945.wasm` |
 
 ### Contract timelines
-
-_Contracts sharing the same WASM history are grouped; rare singletons listed separately._
 
 | Group | Contracts | WASM sequence (epoch order) |
 |---|---|---|
@@ -229,15 +217,11 @@ One contract, one WASM — `CCQXWMZV…` running `6cdb9a3c…` since L50,842,736
 
 ### Contract timelines
 
-_Contracts sharing the same WASM history are grouped; rare singletons listed separately._
-
 | Group | Contracts | WASM sequence (epoch order) |
 |---|---|---|
 | 1 contracts | CCQXWMZVM3KRTXTUPTN5… | band/v1 |
 
 ## How to refresh
-
-Re-run the audit pipeline:
 
 ```sh
 # 1) Run a fresh wasm-history walk on r1 against the curated list

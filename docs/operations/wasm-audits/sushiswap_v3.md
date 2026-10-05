@@ -22,10 +22,9 @@ routes on. `BackfillSafe` is **not** changed by this log; it stays
 `false` in `internal/sources/external/registry.go` until a separate
 change decides the flip.
 
-No `stellarindex-ops wasm-history` walk was run. The lineage comes from
-the certified lake's `stellar.contract_instance_changes`, which records
-the executable on every instance change, so each hash's install ledger
-is exact rather than sampled.
+No `stellarindex-ops wasm-history` walk was run; lineage comes from
+the lake's `stellar.contract_instance_changes` (executable on every
+instance change), so install ledgers are exact.
 
 ## Contracts under audit
 
@@ -34,15 +33,13 @@ is exact rather than sampled.
 | factory | `CD3KRKGDRVWPXVB3VXLUMQKMX6XZ6Q2H334IVZD4XXNAMKSRVQL5GLYF` | `sushiswap_v3` gated registry (`internal/pipeline/gated_registry.go`) |
 | pool | 58 contracts | every `pool_created` event the factory has emitted, ledgers 61,487,379 – 64,116,662 |
 
-Pools are deployed by the factory; upgrades are factory-driven
-(`wasm_approved` on the factory, then per-pool `upgraded` /
-`migrated`), so the pools move between hashes in cohorts.
+Upgrades are factory-driven (`wasm_approved` on the factory, then
+per-pool `upgraded` / `migrated`), so pools move between hashes in cohorts.
 
 ## Method
 
-All queries ran read-only on r1's ClickHouse lake on 2026-09-30.
-Contract strkeys were converted to the lower-hex 32-byte contract id
-locally.
+Read-only on r1's ClickHouse lake, 2026-09-30; strkeys converted to
+lower-hex 32-byte contract ids locally.
 
 ```sql
 -- 1. factory lineage
@@ -70,31 +67,24 @@ FROM (SELECT ledger_seq, base64Decode(entry_xdr) c
       LIMIT 1);
 ```
 
-Literals checked, per role, are the decoder's topic constants in
-`internal/sources/sushiswap_v3/events.go`:
+Literals checked (decoder topic constants, `internal/sources/sushiswap_v3/events.go`):
 
 - factory: `pool_created`
 - pool: `swap`, `mint`, `burn`, `collect`, `init`, `upgraded`, `migrated`
 
 ### Limits of the string check
 
-- It is a substring `position()` over the `contract_code` ledger
-  entry's bytes. A hit shows the literal occurs somewhere in the module
-  (an export name, a data-section string), not that the contract
-  publishes an event under it.
-- Short literals match incidentally: `init` is inside `initialize`,
-  and `swap`, `mint`, `burn` and `collect` are also pool method names.
-  A hit on those four proves little beyond the method surface.
-- A Soroban `Symbol` of up to 9 characters can be compiled into a
-  packed integer rather than stored as a string, so a miss on a short
-  literal would not prove absence either. There were no misses.
-- The bytes were matched by `LedgerKey` hash, not re-hashed with
-  SHA-256.
+- Substring `position()` over the `contract_code` entry's bytes: a hit
+  shows the literal occurs in the module, not that an event is published under it.
+- Short literals match incidentally: `init` is inside `initialize`;
+  `swap`, `mint`, `burn`, `collect` are also pool method names.
+- A `Symbol` of up to 9 characters can compile to a packed integer, so
+  a miss would not prove absence either. There were no misses.
+- Bytes matched by `LedgerKey` hash, not re-hashed with SHA-256.
 
-The runtime evidence is separate and stronger for the swap path:
-`docs/protocols/sushiswap_v3.md` verified all 97,349 lake `swap`
-events carry the same seven body fields across every pool version, and
-the decoder reads them by name.
+Stronger runtime evidence for the swap path: `docs/protocols/sushiswap_v3.md`
+verified all 97,349 lake `swap` events carry the same seven body fields
+across every pool version; the decoder reads them by name.
 
 ## Per-hash findings
 
@@ -105,22 +95,19 @@ the decoder reads them by name.
 | `48b28121451497952c1c35d58d4556f315a5b468ccde9fcd03f510aefa07c117` | pool | 54 | 61,594,973 | 62,898,525 | all 7 present |
 | `003710b383f9da7d650a7f719a7be479110266427817ebbed61d924505fcd7c7` | pool | 58 (all) | 62,898,378 | 64,700,224 | all 7 present |
 
-The factory has run one build for its whole observed life, so both of
-its `wasm_approved` events approve pool code, not factory upgrades.
+The factory has run one build throughout, so both `wasm_approved` events approve pool code.
 
 ### The two `wasm_approved` events
 
 `docs/protocols/sushiswap_v3.md` records factory `wasm_approved` at
-ledgers 61,594,963 and 62,898,168. Their bodies were not decoded for
-this log; tied by ledger order to the pool lineage:
+ledgers 61,594,963 and 62,898,168. Bodies not decoded; tied by ledger order to pool lineage:
 
 | approval ledger | most plausible pool hash | why |
 | --- | --- | --- |
 | 61,594,963 | `48b28121…` | 10 ledgers later the 3 pools then live move `41ae735d…` → `48b28121…` (61,594,973 – 61,594,998); every pool created after it starts on `48b28121…` |
 | 62,898,168 | `003710b3…` | the 54 pools on `48b28121…` move to `003710b3…` at 62,898,378 – 62,898,525; every pool created after it starts on `003710b3…` |
 
-`41ae735d…` is the factory's install-time pool template: the first
-three pools were created on it before any approval. Decoding the
+`41ae735d…` is the install-time pool template (first three pools, before any approval). Decoding the
 `wasm_approved` body would turn "most plausible" into a proof.
 
 ## Pool lineage

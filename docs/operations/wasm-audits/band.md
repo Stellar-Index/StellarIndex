@@ -17,26 +17,20 @@ Audit log for the `band` source's `BackfillSafe` flag. See
 > **zero transitions** across the [50,457,424, 62,249,727]
 > range. Combined with the contract's first-deploy ledger
 > (L50,842,736, 2024-03-19), the WASM has been stable for the
-> entire mainnet life of the contract. Bytes preserved +
-> SHA-256-verified at
+> entire mainnet life. Bytes SHA-256-verified at
 > `evidence/r1-walk-2026-05-01/wasm-bytes/6cdb9a3cdeec01a1…wasm`
 > on r1.
 >
-> **2026-05-01 update.** Hash citations in this file have been
-> cross-checked against the 2026-04-30 r1 walk; see
-> [r1-walk-2026-05-01.md](r1-walk-2026-05-01.md) for the
-> consolidated cross-source picture and current contract+WASM
-> inventory.
+> **2026-05-01 update.** Hashes cross-checked against the 2026-04-30 r1 walk;
+> see [r1-walk-2026-05-01.md](r1-walk-2026-05-01.md).
 
 ## Status
 
 **Ratified 2026-04-29.** `BackfillSafe` flips `false` → `true` in
 `internal/sources/external/registry.go` in the same PR as this
 audit. The StandardReference contract shows **one stable WASM hash**
-across the entire post-deploy window. No `update_contract` events
-observed. Per-hash review against the live decoder's positional
-op-args reader confirms function signatures and Vec tuple order
-match.
+across the post-deploy window; no `update_contract` events. The live decoder's positional
+op-args reader matches function signatures and Vec tuple order.
 
 ## Contracts under audit
 
@@ -44,9 +38,8 @@ match.
 | --- | --- |
 | StandardReference | `CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M` |
 
-The address is configured via `cfg.Oracle.Band.StandardReferenceContract`
-in `stellarindex.toml`; the value above is the published mainnet
-contract.
+Configured via `cfg.Oracle.Band.StandardReferenceContract`
+in `stellarindex.toml`.
 
 ## Decoder expectations — Band is structurally unique
 
@@ -63,16 +56,12 @@ Per AGENTS.md:
 > events plugs into the same hook — match by (contract_id,
 > function_name), decode from op args.
 
-So Band's audit is **fundamentally different** from every other
-on-chain source's:
+So Band's audit differs from every other on-chain source:
 
-- **There are no events to decode.** wasm-history's
-  `LedgerEntryChange` walk still works for tracking the contract's
-  WASM evolution, but there's no event-shape audit because there
-  are no events.
-- **The decoder operates on op args**, not event bodies. The
-  audit reviews function signatures + arg shapes against each WASM
-  hash, not topic + body.
+- **No events to decode.** wasm-history's `LedgerEntryChange` walk
+  still tracks WASM evolution; no event-shape audit.
+- **The decoder operates on op args.** The audit reviews function
+  signatures + arg shapes per WASM hash, not topic + body.
 - **Failure modes are op-args-shaped.**
 
 ### Watched function signatures
@@ -92,16 +81,13 @@ Verified against `band-soroban/src/contract.rs:23-35`:
         request_id:   u64,
     )
 
-`force_relay` drops the `from` arg — admin-only path, not gated by
-the relayer check. Both produce the same logical output: one
-`(Symbol, rate)` pair per entry written to Band's `ref_data`
-storage.
+`force_relay` drops `from` — admin-only path, not relayer-gated. Both write one
+`(Symbol, rate)` pair per entry to Band's `ref_data` storage.
 
 ### Decoder reads args by position
 
-The decoder reads InvokeContract args **positionally** — there's no
-named-arg shape to extract by name. A reorder of args silently
-produces wrong attribution.
+InvokeContract args are read **positionally** (no names); a reorder
+silently produces wrong attribution.
 
 | function | arg index | arg shape | what we extract |
 | --- | --- | --- | --- |
@@ -118,59 +104,48 @@ produces wrong attribution.
 - Rates are `u64` at **E9 = 10^9** scale (per
   `band-soroban/src/constant.rs`). Every relayed rate uses this
   scale.
-- Single-symbol rates from `relay` calls are **USD-denominated** —
-  `get_ref_data(XYZ)` returns XYZ priced in USD. Pair rates (
-  `get_reference_data`) are computed on-read at E18 — we **don't
-  emit those** because they're a function of storage state, not
-  wire input.
+- Single-symbol rates from `relay` are **USD-denominated**
+  (`get_ref_data(XYZ)` = XYZ in USD). Pair rates (
+  `get_reference_data`) are computed on-read at E18; we **don't
+  emit those** (storage state, not wire input).
 - Timestamps: `resolve_time` is UNIX seconds (verified against
   `env.ledger().timestamp()` comparison in `ref_data.rs:56`).
 
 ### Symbol allow-lists
 
-The decoder no longer skips symbols outside the fiat / crypto / RWA
-allow-lists: since the oracle capture-totality change (PR-2,
-`docs/design/oracle-capture-totality-design.md`) an unmapped symbol
-is recorded verbatim as a `raw:<symbol>` row (`canonical.AssetOracleRaw`)
-at its own `symbol_rates[]` slot, and `stellarindex_source_unknown_symbols_total{source="band"}`
-counts it so the allow-list owner can promote it in place. Only
-`USD` (contract-rejected) and `rate == 0` are still skipped — list
-lives in the discovery doc + the package's symbol_resolver.
+Symbols outside the fiat / crypto / RWA allow-lists are no longer skipped
+(oracle capture-totality, PR-2, `docs/design/oracle-capture-totality-design.md`):
+an unmapped symbol is recorded verbatim as a `raw:<symbol>` row (`canonical.AssetOracleRaw`)
+at its own `symbol_rates[]` slot and counted by `stellarindex_source_unknown_symbols_total{source="band"}`.
+Only `USD` (contract-rejected) and `rate == 0` are still skipped — list
+in the discovery doc + the package's symbol_resolver.
 
 ## Failure modes specific to Band
 
-1. **`relay` / `force_relay` function rename** — the decoder's
-   `(contract_id, function_name)` match key is the entry-point.
-   Either function renamed → no calls dispatch to us → silent drop
-   of every Band update.
+1. **`relay` / `force_relay` function rename** — the
+   `(contract_id, function_name)` match key; a rename silently drops
+   every Band update.
 2. **Function signature reorder** — e.g. `relay(symbol_rates, from,
-   resolve_time, request_id)`. Positional decoder reads index 0 as
-   the symbol_rates Vec → fails on type mismatch (Address vs Vec
-   tuple). Per-call error, every call dropped under affected WASM.
-3. **New optional arg added** — Soroban contracts can extend
-   signatures by adding args. If a future relay accepts an extra
-   `signer: Address` at index 4, our decoder ignores trailing args
-   so we still extract the first 4 correctly
+   resolve_time, request_id)`: index 0 read as the symbol_rates Vec
+   fails on type mismatch; every call dropped under that WASM.
+3. **New optional arg added** — e.g. `signer: Address` at index 4:
+   trailing args are ignored, first 4 still extract
    (`TestDecodeRelay_TrailingArgIgnored`).
 4. **Args swapped without signature change** (e.g. `(symbol, u64)`
-   → `(u64, symbol)` inside the inner Vec) — silently produces
-   wrong attribution. **No automated detection** — every new WASM
+   → `(u64, symbol)` in the inner Vec) — silently wrong
+   attribution. **No automated detection** — every new WASM
    hash needs source review.
 5. **Rate scale change E9 → E18** — silently mis-reports every
-   price. Caught only by cross-source divergence vs Reflector /
+   price; caught only by cross-source divergence vs Reflector /
    Redstone.
-6. **`u64` → `u128` rate type** — strict extraction errors per
-   entry; every entry dropped.
-7. **Rate sign change `u64` → `i64`** — possible if Band ever
-   needed negative rates (e.g. pricing-model deltas). Strict u64
+6. **`u64` → `u128` rate type** — strict extraction errors per entry.
+7. **Rate sign change `u64` → `i64`** — strict u64
    extraction errors per entry.
 8. **`from` Address required for force_relay** (adding gating) —
-   would break our positional read of `force_relay` (index 0 would
-   be Address instead of Vec). Per-call error.
+   breaks the positional read (index 0 Address instead of Vec); per-call error.
 9. **`get_ref_data` / `get_reference_data` semantics change** —
-   doesn't affect our decoder (we don't emit pair rates from
-   relay), but downstream consumers reading the pair-rate API
-   would see different values. Out of scope for this audit.
+   no decoder impact (no pair rates emitted), but pair-rate API
+   consumers would see different values. Out of scope.
 
 ## WASM timeline
 
@@ -189,19 +164,16 @@ window — full archive on r1, walked 2026-04-29:
 ]
 ```
 
-The single range is observed only in the first worker's chunk
-(where the original `CreateContract` lives at L50,842,736,
-2024-03-19). Later workers saw no `update_current_contract_wasm`
-event for the contract, so produced no entries — consistent with
-**one Band StandardReference WASM** active across the full
-post-deploy window through to walk-end at L59,301,651. Live ingest
-from walk-end through r1's current tip (L62,342,614 as of
-2026-04-29) confirms no further upgrade: 0 `ErrFunctionMismatch`
+The range appears only in the first worker's chunk
+(`CreateContract` at L50,842,736, 2024-03-19); no later
+`update_current_contract_wasm` — **one Band StandardReference WASM**
+through walk-end at L59,301,651. Live ingest
+from walk-end through r1's tip (L62,342,614 as of
+2026-04-29): no further upgrade, 0 `ErrFunctionMismatch`
 or type-extraction failures.
 
 Soroban activated at L50,457,424 (2024-02-20); Band's first deploy
-at L50,842,736 (2024-03-19) is the published mainnet launch.
-Pre-Soroban ledgers can't host the contract.
+at L50,842,736 (2024-03-19) is the mainnet launch.
 
 ## Per-hash review findings
 
@@ -213,20 +185,16 @@ Pre-Soroban ledgers can't host the contract.
 
 - **Function signatures**: `relay(Address, Vec<(Symbol, u64)>, u64, u64)`
   and `force_relay(Vec<(Symbol, u64)>, u64, u64)` match the
-  positional reader in `internal/sources/band/decode.go`. The
-  source review pins
-  `band-soroban@<release>` as the source of truth; the deployed
-  WASM hash `6cdb9a3c…` corresponds to that source release (no
+  positional reader in `internal/sources/band/decode.go`. Source of truth:
+  `band-soroban@<release>`; deployed hash `6cdb9a3c…` corresponds to it (no
   rebuild post-deploy).
 - **Inner Vec tuple order**: `(Symbol, u64)` — verified against
-  `band-soroban/src/contract.rs` and reproduced in
-  `internal/sources/band/decode_test.go` golden fixtures captured
-  from live mainnet calls.
+  `band-soroban/src/contract.rs` and in
+  `internal/sources/band/decode_test.go` golden fixtures (live mainnet calls).
 - **Rate scale**: E9 confirmed against
   `band-soroban/src/constant.rs`; live decoder applies the same
   scale via `bandRateScale = 1e9` constant.
-- **No `update_current_contract_wasm` events** in the entire
-  post-deploy window rule out signature drift across this range.
+- No `update_current_contract_wasm` post-deploy rules out signature drift.
 - Live ingest health: 0 `ErrFunctionMismatch` / 0 type-extraction
   failures observed in production metrics since the
   ContractCallDecoder hook landed (commit `ee0360da4`, "wire
@@ -239,20 +207,14 @@ Pre-Soroban ledgers can't host the contract.
 
 Rationale:
 
-- StandardReference contract has **one stable WASM hash** across
-  the entire post-deploy window — no upgrade events to decode
-  against.
-- Decoder's positional op-args reader matches the deployed WASM's
-  function signatures (verified via Phase-1 fixtures + ongoing
-  production ingest health).
-- Band's structural simplicity (no events, no per-pair contracts,
-  no factory-template indirection) means there is no analog to
-  Soroswap's pair-WASM caveat.
+- **One stable WASM hash** across the post-deploy window.
+- Positional op-args reader matches the deployed function
+  signatures (Phase-1 fixtures + production ingest health).
+- No events, per-pair contracts or factory-template indirection, so no
+  analog to Soroswap's pair-WASM caveat.
 
-If a future Band upgrade lands, the audit gets a per-hash entry +
-decoder verification and the flag stays at `true` (or flips to
-`false` if the new WASM diverges and the decoder fix isn't shipped
-yet).
+A future upgrade needs a per-hash entry + decoder verification; the flag
+flips to `false` if the new WASM diverges and the decoder fix isn't shipped.
 
 ## References
 

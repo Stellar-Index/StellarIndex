@@ -12,22 +12,18 @@ Audit log for the `sorocredit` source's `BackfillSafe` flag. See
 [`README.md`](README.md) for the full procedure.
 
 ## Status
-
 **Ratified 2026-07-07.** `BackfillSafe` flips `false` → `true` in
 `internal/sources/external/registry.go` in the same change as this
-audit. The main contract has run a **single WASM version** over its
-entire life, and — the load-bearing claim — **every one of the 7
-tracked event types has a single, invariant on-wire schema across the
-whole ledger history**, each matching `internal/sources/sorocredit/decode.go`.
-Backfill is safe **from genesis (ledger 61,620,822)**. An 8th event type,
-`TreasuryUpdated`, was admitted after ratification — see the
-**2026-09-22 addendum** below; it does not change this verdict.
+audit. One WASM version over the contract's whole life, and (load-bearing)
+**each of the 7 tracked event types has one invariant on-wire schema
+across the whole history**, matching `internal/sources/sorocredit/decode.go`.
+Backfill is safe **from genesis (ledger 61,620,822)**. An 8th type,
+`TreasuryUpdated`, was admitted later (**2026-09-22 addendum**); verdict unchanged.
 
-`sorocredit` is an unbranded consumer-USDC credit / CDP protocol
-(`ClassLending`, `DefaultWeight: 0`, `IncludeInVWAP: false`). It
-publishes no price and emits no trades — `BackfillSafe` gates only the
-operator-triggered `projector-replay` / `backfill` path; aggregator
-output is unaffected either way. See
+`sorocredit`: unbranded consumer-USDC credit / CDP protocol
+(`ClassLending`, `DefaultWeight: 0`, `IncludeInVWAP: false`). No price,
+no trades; `BackfillSafe` gates only operator-triggered
+`projector-replay` / `backfill`. See
 [`internal/sources/sorocredit/README.md`](../../../internal/sources/sorocredit/README.md)
 and the AGENTS.md "Liquidation = scheduled settlement, not distress"
 note.
@@ -45,52 +41,40 @@ note.
 | Dispatcher hook | event-based `Decoder` (topic[0] classify → one of 8 symbols) + a blend-style childgate |
 | Genesis ledger | `61,620,822` (2026-03-12 17:14:35 UTC) |
 
-The protocol has a **single trust root** — the main contract — which
-emits every business + config event and deploys the per-position
-`Collateral-<uuid>` child contracts. The childgate (ADR-0035) seeds
-those children forward-compat; in practice the children emit nothing
-(verified) and every event is emitted by the main contract, so the
-audit target is the **one** main contract's WASM.
+Single **trust root**: the main contract emits every business + config
+event and deploys per-position `Collateral-<uuid>` children. The childgate
+(ADR-0035) seeds the children forward-compat, but they emit nothing
+(verified), so the audit target is the **one** main contract's WASM.
 
 ## Method — lake-direct, not a galexie walk
+Per ADR-0034 (decoder backfills re-derive from the lake), this audit
+used the r1 ClickHouse lake **read-only**, not a `stellarindex-ops wasm-history`
+galexie walk (~1.74 M ledgers, heavy, competes with verify-archive on
+ZFS-ARC/MinIO I/O). The lake holds the ledger-entry changes and every raw
+contract event, which checks actual on-wire shapes, what `BackfillSafe`
+depends on, rather than a `wasm2wat` read of one binary.
 
-Per ADR-0034 ("decoder backfills re-derive from the lake, not MinIO
-walks"), this audit used the r1 ClickHouse lake **read-only**, not a
-`stellarindex-ops wasm-history` galexie walk. A full genesis→tip walk
-(~1.74 M ledgers) is a heavy job that competes with verify-archive on
-ZFS-ARC/MinIO I/O; the lake already holds the decoded ledger-entry
-changes and every raw contract event, which is strictly more
-informative for a schema audit (it checks the actual on-wire event
-shapes across the whole history — exactly what `BackfillSafe`
-depends on — rather than a `wasm2wat` static read of one binary).
+1. **WASM-version enumeration**: ContractInstance `executable` (WASM) hash
+   over time, from `stellar.ledger_entry_changes`.
+2. **Event-schema invariance**: per-event-type structural fingerprint
+   (topic arity + SCVal type tags, body `Vec` arity + element type tags)
+   across every event, from `stellar.contract_events`.
 
-Two lake signals were combined:
-
-1. **WASM-version enumeration** — the ContractInstance ledger entry's
-   `executable` (WASM) hash over time, from `stellar.ledger_entry_changes`.
-2. **Event-schema invariance** — the per-event-type structural
-   fingerprint (topic arity + SCVal type tags, body `Vec` arity +
-   element type tags) across every event the contract has emitted,
-   from `stellar.contract_events`.
-
-All queries were bounded to the contract's activity range and filtered
-by `contract_id` / the exact instance `key_xdr`.
+Queries bounded to the contract's activity range, filtered by
+`contract_id` / the exact instance `key_xdr`.
 
 ## 1. WASM-version timeline
-
-The ContractInstance entry (a `contract_data` entry keyed by
-`ScVal::LedgerKeyContractInstance`, persistent durability) carries the
-contract's `executable` (`ContractExecutable::Wasm(hash)`). An
-in-place `update_current_contract_wasm` upgrade rewrites this field.
-
+The ContractInstance entry (`contract_data`, key
+`ScVal::LedgerKeyContractInstance`, persistent) carries `executable`
+(`ContractExecutable::Wasm(hash)`); an in-place
+`update_current_contract_wasm` upgrade rewrites it.
 Instance `key_xdr` (base64) for the main contract:
 
     AAAABgAAAAGN0li40oVrYwRFGIib1pAgVY49gTpWCtjXW79cHTYmJwAAABQAAAAB
 
 Query (r1 ClickHouse, `stellar.ledger_entry_changes`), extracting the
-32-byte executable hash out of each instance-entry snapshot
-(`SCV_CONTRACT_INSTANCE` `0x00000013` + `CONTRACT_EXECUTABLE_WASM`
-`0x00000000` + hash):
+32-byte hash from each snapshot (`SCV_CONTRACT_INSTANCE` `0x00000013` +
+`CONTRACT_EXECUTABLE_WASM` `0x00000000` + hash):
 
 ```sql
 SELECT hex(substring(base64Decode(entry_xdr),
@@ -109,16 +93,13 @@ Result — **one** executable hash, one snapshot, at the deploy ledger:
 | --- | --- | --- | --- |
 | `84a88013828d4c4f4e4f5d0fa2f686050d69889384a044eab3ec4b1169f810ea` | 1 | 61,620,824 | 61,620,824 |
 
-That hash matches the `84a88013…` cited in the source package doc
-(`internal/sources/sorocredit/events.go`). No `updated` instance
-change was observed anywhere in the range → **no in-place WASM upgrade
-observed**.
+Matches `84a88013…` in `internal/sources/sorocredit/events.go`. No
+`updated` instance change anywhere in the range → **no in-place WASM
+upgrade observed**.
 
 ### Coverage caveat (why the instance signal alone is not sufficient)
-
-`ledger_entry_changes` on r1 is a live-capture table with a still-
-incomplete historical re-derive for the earliest partition. Per-
-partition row counts over the contract's range:
+`ledger_entry_changes` on r1 is live-capture with a still-incomplete
+historical re-derive for the earliest partition. Per-partition counts:
 
 | partition (M-ledger) | ledger range | lec rows | distinct ledgers | density |
 | --- | --- | --- | --- | --- |
@@ -126,22 +107,17 @@ partition row counts over the contract's range:
 | 62 | 62,000,000 – 62,999,998 | 1,309,754,214 | 732,781 | ~1,787 rows/ledger — dense |
 | 63 | 63,000,000 – 63,363,505 | 1,506,009,716 | 351,816 | dense |
 
-So the "no executable change" finding is **reliable for
-[62,000,000 → tip]** (dense — an upgrade there would have been
-captured) but the early window **[61,620,822 → 62,000,000) is under-
-covered** and the instance-entry signal cannot, on its own, exclude an
-unobserved upgrade there. That gap is closed by the event-schema
-invariance below.
+"No executable change" is **reliable for [62,000,000 → tip]** (dense) but
+the early window **[61,620,822 → 62,000,000) is under-covered**; the
+instance signal alone cannot exclude an unobserved upgrade there. The
+event-schema invariance below closes that gap.
 
 ## 2. Event-schema invariance (the load-bearing check)
-
-The decoder decodes by topic arity + type and by body-`Vec` position +
-element type (it is robust to field reordering within a Map, but
-`sorocredit` bodies are positional `Vec`s, so the risks are changed
-arity / retyped elements / a renamed-or-removed event type across an
-upgrade). The decisive test is therefore: **does every event type keep
-one invariant wire schema across the entire contract life, and does
-that schema match `decode.go`?**
+The decoder keys on topic arity + type and body-`Vec` position + element
+type; `sorocredit` bodies are positional `Vec`s, so the risks are changed
+arity / retyped elements / renamed-or-removed event across an upgrade.
+Test: **does every event type keep one wire schema across the contract's
+life, matching `decode.go`?**
 
 ### Per-symbol volumes + life span (`stellar.contract_events`)
 
@@ -156,31 +132,22 @@ that schema match `decode.go`?**
 | `CollateralHashUpdated` | 1 | 61,620,824 (2026-03-12) | — |
 | `TreasuryUpdated` | 1 (known) | 63,847,367 (2026-08-18 discovery) | — |
 
-`TreasuryUpdated` was not part of this 2026-07-07 lake sweep — it was
-found afterward by the ADR-0033 recognition audit and is not covered by
-the per-symbol fingerprint table below. See the **2026-09-22 addendum**
-for its (code-structural, not lake-derived) safety argument.
+`TreasuryUpdated` was not in this 2026-07-07 sweep: found later by the
+ADR-0033 recognition audit, not covered by the fingerprint table below.
+Safety argument (code-structural, not lake-derived): 2026-09-22 addendum.
 
-Two facts fall straight out of this:
-
-- The **3 config events fire exactly once**, at genesis — a single
-  occurrence cannot drift across versions, and their genesis frames
-  are pinned byte-for-byte by the golden fixtures in `source_test.go`
-  (cross-checked against the lake — identical `topics_xdr` /
-  `data_xdr`).
-- `StatementPublished` / `Liquidation` / `Withdrawal` only begin in
-  **May 2026 (≥ 62.45 M)** — i.e. entirely inside the **dense**
-  coverage window. **`NewCollateralContract` is the only event type
-  that occurs inside the sparse early window [61.62 M, 62.0 M)**, so
-  it is the one whose whole-life schema invariance actually matters
-  for the coverage caveat above.
+- The **3 config events fire once**, at genesis; they cannot drift, and
+  their frames are pinned byte-for-byte by the golden fixtures in
+  `source_test.go` (cross-checked against the lake: identical
+  `topics_xdr` / `data_xdr`).
+- `StatementPublished` / `Liquidation` / `Withdrawal` start in **May 2026
+  (≥ 62.45 M)**, inside the **dense** window. **`NewCollateralContract`
+  is the only type in the sparse early window [61.62 M, 62.0 M)**, so
+  its whole-life invariance is what matters for the coverage caveat.
 
 ### Distinct structural fingerprints
-
-For each recurring symbol, the DISTINCT `(topic_count, per-topic SCVal
-type tags, body Vec header + first element tag)` fingerprint across
-**all** of its events:
-
+DISTINCT `(topic_count, per-topic SCVal type tags, body Vec header +
+first element tag)` fingerprint across **all** events of each recurring symbol:
 ```sql
 SELECT topic_0_sym, topic_count,
        arrayStringConcat(arrayMap(x -> substring(hex(base64Decode(x)),1,8), topics_xdr),',') AS topic_type_tags,
@@ -192,8 +159,7 @@ WHERE contract_id='CCG5EWFY2KCWWYYEIUMIRG6WSAQFLDR5QE5FMCWY25N36XA5GYTCPQWR'
 GROUP BY topic_0_sym, topic_count, topic_type_tags, data_prefix;
 ```
 
-Result — **exactly one fingerprint per symbol**, spanning that
-symbol's full `[minl, maxl]`:
+Result: **one fingerprint per symbol**, spanning its full `[minl, maxl]`:
 
 | symbol | topics (SCVal tags) | body `Vec` head | distinct shapes | ledger span |
 | --- | --- | --- | ---: | --- |
@@ -202,20 +168,17 @@ symbol's full `[minl, maxl]`:
 | `Liquidation` | `Symbol, Address, String, String` (`0F,12,0E,0E`) | `Vec[7]`, elem0 `Address` (`10·07·12`) | 1 | 62,504,969 → 63,356,284 |
 | `Withdrawal` | `Symbol, Address` (`0F,12`) | `Vec[3]`, elem0 `Address` (`10·03·12`) | 1 | 62,451,103 → 63,363,545 |
 
-SCVal type-tag legend: `0F`=Symbol, `12`=Address, `0E`=String,
+SCVal tag legend: `0F`=Symbol, `12`=Address, `0E`=String,
 `0A`=i128, `10`=Vec, `05`=u64, `01`=Void, `0D`=Bytes.
 
-**`NewCollateralContract` has exactly ONE structural shape across all
-139,435 events from its first occurrence (61,624,053 — inside the
-sparse window) to its last (63,363,505).** Any unobserved instance
-upgrade in [61.62 M, 62.0 M) therefore did **not** change the one
-event schema active in that window. Combined with the dense-window
-"no executable change" finding for [62.0 M → tip], no schema-breaking
-upgrade occurred anywhere in the contract's life.
+**`NewCollateralContract` has ONE shape across all 139,435 events, from
+61,624,053 (inside the sparse window) to 63,363,505.** Any unobserved
+upgrade in [61.62 M, 62.0 M) did **not** change the schema active there;
+with the dense-window "no executable change" finding for [62.0 M → tip],
+no schema-breaking upgrade occurred in the contract's life.
 
 ### Match against `decode.go`
-
-Each observed shape is exactly what the decoder expects:
+Each observed shape is what the decoder expects:
 
 | symbol | decoder helper | expectation | observed | ✓ |
 | --- | --- | --- | --- | --- |
@@ -228,13 +191,11 @@ Each observed shape is exactly what the decoder expects:
 | `CollateralHashUpdated` | `decodeConfigBody` | topics ≥1; body captured | `[Symbol]` + `Vec[Bytes,Bytes]` | ✓ |
 | `TreasuryUpdated` | `decodeConfigBody` | topics ≥1; body captured | `[Symbol]` + `Vec[Address,Address]` (1 known occurrence, ledger 63,847,367) | ✓ |
 
-The golden-frame tests in
+Golden-frame tests in
 [`internal/sources/sorocredit/source_test.go`](../../../internal/sources/sorocredit/source_test.go)
-already decode a real sample of each of the 8 types through the
-production `decodeOne` path with no error, and the config-event frames
-there are the exact genesis frames (verified against the lake). No new
-decode arm was needed — every WASM state the contract has run emits
-the shapes the current decoder handles.
+decode a real sample of each of the 8 types via the production `decodeOne`
+path without error; the config frames are the exact genesis frames
+(verified against the lake). No new decode arm needed.
 
 ## Failure-mode review (per README.md §3 checklist)
 
@@ -249,28 +210,22 @@ the shapes the current decoder handles.
 | event removed (older WASM emitted a now-gone shape) | none — earliest samples (incl. sparse-window `NewCollateralContract` at 61,624,053) match current shapes |
 
 ## Cross-check
-
-No Hubble decoded view exists for this bespoke protocol, and it emits
-no trades → no VWAP cross-check. The event-schema-invariance evidence
-above is the load-bearing safety check (per README.md §4). Live-ingest
-health: the source has been decoding production traffic with the
-current decoder (the golden tests pin the shapes it sees).
+No Hubble decoded view exists for this bespoke protocol; no trades → no
+VWAP cross-check. Event-schema invariance is the load-bearing check (per
+README.md §4). Live ingest decodes production traffic with the current
+decoder (golden tests pin the shapes).
 
 ## Audit decision
-
 **APPROVED 2026-07-07.** `Registry["sorocredit"].BackfillSafe` flipped
-`false` → `true` in `internal/sources/external/registry.go` in the
-same change as this audit. **Safe-from ledger: genesis (61,620,822)** —
-the entire history is backfill-safe. Historical replay is now
-unblocked:
+`false` → `true` in `internal/sources/external/registry.go` in the same
+change as this audit. **Safe-from ledger: genesis (61,620,822)**. Replay:
 
 ```sh
 /usr/local/sbin/run-heavy-job.sh sorocredit-replay \
   stellarindex-ops projector-replay -source sorocredit -from 61620822
 ```
 
-(under the heavy-job wrapper per AGENTS.md; never a bespoke
-`sorocredit-backfill` subcommand).
+(heavy-job wrapper per AGENTS.md; never a bespoke `sorocredit-backfill` subcommand).
 
 ### Re-audit triggers
 
@@ -283,43 +238,33 @@ unblocked:
   fingerprint (re-run the §2 fingerprint query; extend `last_verified`).
 
 ### Belt-and-suspenders follow-up — done 2026-09-30
-
-The under-covered early window was walked directly from the archive:
-`stellarindex-ops wasm-history -bucket galexie-archive -contracts
-CCG5EWFY… -from 61620822 -to 62000000 -parallel 4` under the heavy-job
-wrapper on r1 (379,179 ledgers, 15m25s). Result: one range, one hash —
-`84a88013828d4c4f4e4f5d0fa2f686050d69889384a044eab3ec4b1169f810ea`
-over [61,620,822 → 62,000,000]. The instance-entry signal is now
-confirmed for the whole of the contract's life, not only the dense
-partitions; nothing in the verdict changes.
+Early window walked from the archive: `stellarindex-ops wasm-history
+-bucket galexie-archive -contracts CCG5EWFY… -from 61620822 -to 62000000
+-parallel 4` under the heavy-job wrapper on r1 (379,179 ledgers, 15m25s).
+Result: one range, one hash,
+`84a88013828d4c4f4e4f5d0fa2f686050d69889384a044eab3ec4b1169f810ea`, over
+[61,620,822 → 62,000,000]. Instance signal now confirmed for the whole
+life; verdict unchanged.
 
 ## 2026-09-22 addendum — TreasuryUpdated (8th symbol) admitted
-
 `TreasuryUpdated` (topic `Symbol("TreasuryUpdated")`, body
-`Vec[Address old, Address new]`) was discovered by the ADR-0033
-recognition audit (2026-08-18): one real lake event on the main
-contract at ledger 63,847,367 that `classify()` dropped at the time,
-tripping `recognition_ok=FALSE`. `internal/sources/sorocredit/decode.go`
-was updated (commit 8f4569d94) to route it to `TypeTreasuryUpdated` via
-the existing `decodeConfigBody` helper — the same one already covering
-`BeaconUpdated` / `CollateralHashUpdated` above. This doc's counts (the
-source-identity table, §2's per-symbol tables, and the failure-mode
-review) were not updated at the time; that drift is what this addendum
-corrects.
+`Vec[Address old, Address new]`) was found by the ADR-0033 recognition
+audit (2026-08-18): one lake event on the main contract at ledger
+63,847,367 that `classify()` dropped, tripping `recognition_ok=FALSE`.
+`internal/sources/sorocredit/decode.go` was updated (commit 8f4569d94) to
+route it to `TypeTreasuryUpdated` via the existing `decodeConfigBody`
+(also covering `BeaconUpdated` / `CollateralHashUpdated`). This doc's
+counts (source-identity table, §2 per-symbol tables, failure-mode review)
+were not updated then; this addendum corrects the drift.
 
-No new lake fingerprint sweep was run for this addendum, and none is
-needed for the safety verdict: `decodeConfigBody` performs **zero**
-typed field extraction — it stores `e.Value` (the raw base64 event
-body) verbatim into `Attributes["body"]` and always returns a nil
-error. There is no body shape it can fail to parse, so
-`TreasuryUpdated`'s schema-invariance risk is nil by construction — the
-same argument the 2026-07-07 audit already accepted for `BeaconUpdated`
-and `CollateralHashUpdated`. Unlike those two (which each fired exactly
-once, at genesis), `TreasuryUpdated`'s one known occurrence is well
-after genesis (ledger 63,847,367, past the 2026-07-07 audit's own
-last-observed ledger of 63,363,505) — a treasury-pointer rotation is an
-admin action, not a genesis-only config write, and may recur. That does
-not change the argument above: any future occurrence still routes
+No new lake fingerprint sweep was run, none needed: `decodeConfigBody`
+does **zero** typed field extraction, storing `e.Value` (raw base64 body)
+verbatim in `Attributes["body"]` and always returning nil error, so
+`TreasuryUpdated`'s schema-invariance risk is nil by construction (same
+argument accepted in 2026-07-07 for the other two config events).
+Unlike those (once, at genesis), its one known occurrence is after
+genesis (63,847,367, past the audit's last-observed ledger 63,363,505):
+a treasury-pointer rotation is an admin action and may recur, still
 through the same zero-assertion decoder.
 
 `Registry["sorocredit"].BackfillSafe` stays `true`.

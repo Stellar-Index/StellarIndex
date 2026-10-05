@@ -6,25 +6,20 @@ status: template — applied to each source as v2 audit lands
 
 # Per-source v2 audit update template
 
-This template documents the structural shape each source's audit
-doc takes once the v2 full-instance WASM history walk lands. The
-v1 audits (2026-04-29 — see each source's
-`wasm-audits/<source>.md` "Ratified 2026-04-29" section for the
-flipping commit) captured each factory/router/oracle's WASM
-history + each currently-deployed pool/pair contract's *current*
-WASM. The v2 follow-up adds:
+Structural shape of each source's audit doc once the v2 full-instance WASM
+history walk lands. The v1 audits (2026-04-29 — see each source's
+`wasm-audits/<source>.md` "Ratified 2026-04-29" section) captured each
+factory/router/oracle's WASM history + each deployed pool/pair's *current*
+WASM. v2 adds:
 
-1. **Per-instance upgrade history.** Each pool/pair's full WASM
-   timeline (every `update_current_contract_wasm` event observed
-   for that contract from genesis through the audit's `to`
+1. **Per-instance upgrade history.** Each pool/pair's full WASM timeline (every
+   `update_current_contract_wasm` event from genesis through the audit's `to`
    ledger).
-2. **Bytes for every unique hash.** Including hashes that have
-   been evicted from current ledger state — fetched via the
-   `extract-wasm-from-galexie` subcommand against r1's full
-   archive.
-3. **Disassembly per unique hash.** `wasm2wat` text-form output,
-   with the `e.0` (contract_event) call sites called out and the
-   topic+body XDR construction traced per call.
+2. **Bytes for every unique hash**, including hashes evicted from current
+   ledger state — fetched via `extract-wasm-from-galexie` against r1's archive.
+3. **Disassembly per unique hash.** `wasm2wat` text, with the `e.0`
+   (contract_event) call sites called out and the topic+body XDR construction
+   traced per call.
 
 ## Template sections to add (after each source's "Per-hash review findings")
 
@@ -36,9 +31,7 @@ WASM. The v2 follow-up adds:
 
 #### Per-instance timeline matrix
 
-For each instance contract under this source, the matrix shows
-every WASM hash that contract ever ran, with the active ledger
-range:
+Every WASM hash each instance contract ever ran, with the active ledger range:
 
 | contract | hash range 1 | hash range 2 | … |
 | --- | --- | --- | --- |
@@ -54,7 +47,7 @@ range:
 
 ### v2 — Disassembly per unique hash
 
-For each unique hash in the inventory above, a per-hash subsection:
+For each unique hash above, a subsection:
 
 #### `<hash-first-16>`
 
@@ -83,60 +76,47 @@ For each unique hash in the inventory above, a per-hash subsection:
 
 ### v2 — Decision
 
-For sources where every unique hash is `compatible` and the
-walk found no upgrade events that would have produced
-incompatible hashes, the v1 `BackfillSafe: true` flip is
-**confirmed deterministically**. For sources where any hash
-diverges, the v2 audit ships either:
+Where every unique hash is `compatible` and the walk found no upgrade that
+would have produced incompatible hashes, the v1 `BackfillSafe: true` flip is
+**confirmed deterministically**. Where any hash diverges, v2 ships either:
 
-- A decoder fix that handles both shapes (gated by hash at
-  decode time), and BackfillSafe stays `true`, OR
-- A backfill range cutoff in the source's metadata that refuses
-  replay of pre-divergent ranges, and BackfillSafe stays `true`
-  for the audited window only, OR
-- BackfillSafe flips back to `false` until the decoder fix lands
-  (worst case).
+- A decoder fix handling both shapes (gated by hash at decode time), and
+  BackfillSafe stays `true`, OR
+- A backfill range cutoff in the source's metadata refusing replay of
+  pre-divergent ranges, and BackfillSafe stays `true` for the audited window
+  only, OR
+- BackfillSafe flips back to `false` until the decoder fix lands (worst case).
 
 ## Process to apply this template
 
-1. Wait for the full walk (`r1:/var/log/wasm-history-full.json`)
-   to complete.
-2. For each source, extract the per-instance timeline rows from
-   the walk JSON (filter by contract IDs from
-   `internal/sources/<source>/events.go` + the per-source pool
-   list at `/tmp/wasm-audit/pools-<source>.txt`).
-3. Compute unique-hash inventory across each source's instances.
+1. Wait for the full walk (`r1:/var/log/wasm-history-full.json`) to complete.
+2. Per source, extract the per-instance timeline rows from the walk JSON
+   (filter by contract IDs from `internal/sources/<source>/events.go` + the
+   pool list at `/tmp/wasm-audit/pools-<source>.txt`).
+3. Compute the unique-hash inventory across each source's instances.
 4. For each unique hash:
    - Fetch bytes via `stellar contract fetch --wasm-hash` first.
-   - If RPC returns "Contract Code not found", the WASM is
-     evicted; fall back to
+   - If RPC returns "Contract Code not found" (evicted), fall back to
      `stellarindex-ops extract-wasm-from-galexie` against r1.
-   - Run `wasm2wat` to get text form.
-   - Use `stellar contract info interface` + `strings` for the
-     interface + symbol-table view we already use in v1 audits.
-   - Trace `e.0` call sites in the WAT (look for `(call $e.0 …)`)
-     and read back the topic/body construction.
+   - Run `wasm2wat` for text form.
+   - Use `stellar contract info interface` + `strings` for the interface +
+     symbol-table view used in v1.
+   - Trace `e.0` call sites in the WAT (`(call $e.0 …)`) and read back the
+     topic/body construction.
 5. Update the source's audit doc with the v2 sections.
-6. Update `last_verified` in the audit doc's frontmatter.
+6. Update `last_verified` in the frontmatter.
 7. If any hash diverges, ship the decoder fix in the same PR.
 
 ## CI hook (optional, future)
 
-A `scripts/ci/lint-wasm-audits.sh` could:
-
-- Re-fetch each unique hash listed in each audit doc.
-- Re-hash and confirm match (catches stellar-rpc / mainnet
-  tampering, vanishingly unlikely).
-- Re-run `stellar contract info interface` and confirm no diff
-  vs the audit doc's recorded interface SHA.
-- Re-disassemble and confirm no diff vs the audit doc's recorded
-  WAT SHA.
-
-This is v3 follow-up scope.
+A `scripts/ci/lint-wasm-audits.sh` could re-fetch and re-hash each unique hash
+in each audit doc, re-run `stellar contract info interface` and confirm no diff
+vs the recorded interface SHA, and re-disassemble and confirm no diff vs the
+recorded WAT SHA. This is v3 follow-up scope.
 
 ## See also
 
-- Schema-evolution stance (originating this whole work):
+- Schema-evolution stance:
   [`docs/architecture/ingest-pipeline.md#contract-schema-evolution`](../../architecture/ingest-pipeline.md#contract-schema-evolution)
 - Per-source v1 audits: this directory's `<source>.md` files.
 - Subcommand:

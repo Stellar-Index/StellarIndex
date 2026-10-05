@@ -8,29 +8,25 @@ backfill_safe: false
 
 # Upshift WASM audit
 
-Audit log for the `upshift` source. See [`README.md`](README.md) for
-the procedure. The hash below is the `upshift` entry in
-`internal/wasmaudit/audited_wasm.json`, which `stellarindex-ops
-wasm-drift` checks every gated contract against
+Audit log for the `upshift` source ([`README.md`](README.md) = procedure). The
+hash below is the `upshift` entry in `internal/wasmaudit/audited_wasm.json`,
+which `stellarindex-ops wasm-drift` checks every gated contract against
 ([runbook](../runbooks/wasm-drift.md)).
 
 ## Status
 
-**String-checked 2026-09-30.** Both curated vaults have run one WASM
-for their whole observed lives, and it carries every event-kind literal
-the decoder handles or recognises. `BackfillSafe` is **not** changed by
-this log; it stays `false` in `internal/sources/external/registry.go`
-until a separate change decides the flip.
+**String-checked 2026-09-30.** Both curated vaults ran one WASM for their
+whole observed lives, carrying every event-kind literal the decoder handles or
+recognises. `BackfillSafe` is **not** changed by this log; it stays `false` in
+`internal/sources/external/registry.go` until a separate change decides.
 
-No `stellarindex-ops wasm-history` walk was run. The lineage comes from
-the certified lake's `stellar.contract_instance_changes`, which records
-the executable on every instance change.
+No `stellarindex-ops wasm-history` walk was run; lineage comes from the
+lake's `stellar.contract_instance_changes`.
 
 ## Contracts under audit
 
-The curated set, `upshift.MainnetGatedSet()`
-(`internal/sources/upshift/events.go`). No factory: the set is a
-hand-maintained allow-list.
+Curated set `upshift.MainnetGatedSet()` (`internal/sources/upshift/events.go`),
+a hand-maintained allow-list with no factory.
 
 | role | contract | vault |
 | --- | --- | --- |
@@ -39,9 +35,8 @@ hand-maintained allow-list.
 
 ## Method
 
-All queries ran read-only on r1's ClickHouse lake on 2026-09-30.
-Contract strkeys were converted to the lower-hex 32-byte contract id
-locally.
+Read-only on r1's ClickHouse lake, 2026-09-30; strkeys converted to the
+lower-hex 32-byte contract id locally.
 
 ```sql
 -- 1. vault lineage
@@ -62,8 +57,7 @@ FROM (SELECT ledger_seq, base64Decode(entry_xdr) c
       LIMIT 1);
 ```
 
-Literals checked are the event-kind constants in
-`internal/sources/upshift/events.go`:
+Literals checked (event-kind constants in `internal/sources/upshift/events.go`):
 
 - decoded: `deposit`, `withdraw`, `transfer`, `deployed_assets_changed`
 - recognised, not decoded: `approve`, `deposit_to_subaccount`,
@@ -73,24 +67,19 @@ Literals checked are the event-kind constants in
 
 ### Limits of the string check
 
-- It is a substring `position()` over the `contract_code` ledger
-  entry's bytes. A hit shows the literal occurs somewhere in the module
-  (an export name, a data-section string), not that the contract
-  publishes an event under it.
-- Short literals match incidentally: `deposit` and `withdraw` are
-  substrings of `deposit_to_subaccount` and `withdraw_from_subaccount`,
-  and `transfer` / `approve` are standard token method names. Hits on
-  those four prove little on their own; the long literals are the
-  informative ones.
-- A Soroban `Symbol` of up to 9 characters can be compiled into a
-  packed integer rather than stored as a string, so a miss on a short
-  literal would not prove absence either. There were no misses.
-- The bytes were matched by `LedgerKey` hash, not re-hashed with
-  SHA-256.
+- A substring `position()` over the `contract_code` bytes: a hit shows the
+  literal occurs somewhere in the module (export name, data string), not that
+  the contract publishes an event under it.
+- Short literals match incidentally: `deposit` and `withdraw` are substrings of
+  `deposit_to_subaccount` and `withdraw_from_subaccount`; `transfer` / `approve`
+  are standard token method names. The long literals are the informative ones.
+- A `Symbol` of up to 9 characters can compile to a packed integer rather than
+  a string, so a short-literal miss would not prove absence. There were no misses.
+- Bytes were matched by `LedgerKey` hash, not re-hashed with SHA-256.
 
-The runtime evidence is separate: the topic constants in
-`internal/sources/upshift/events.go` were checked byte-for-byte against
-the lake's own `topics_xdr`.
+Runtime evidence is separate: the topic constants in
+`internal/sources/upshift/events.go` were checked byte-for-byte against the
+lake's own `topics_xdr`.
 
 ## Per-hash findings
 
@@ -100,21 +89,20 @@ the lake's own `topics_xdr`.
 | `4b3d9f6b09f7127b0ce81b0ce9d8428f3f960e4e3ce13c11c1cbb446cccc9e73` | vault | `CC6TRAPQ…` (earnXLM) | 62,623,319 | 64,698,213 | 362 | all 12 present |
 
 Each vault's first instance change is the ledger of its first event
-(`admin_set`), and no other hash appears on either vault.
+(`admin_set`); no other hash appears on either vault.
 
 ## Decision
 
 `4b3d9f6b…` is the audited set for `upshift` in `audited_wasm.json`.
 `BackfillSafe` is unchanged (`false`).
 
-Re-audit trigger: `wasm-drift` reports an `upshift` vault on a hash not
-listed here, or a vault is added to `MainnetGatedSet()`.
+Re-audit trigger: `wasm-drift` reports an `upshift` vault on a hash not listed
+here, or a vault is added to `MainnetGatedSet()`.
 
 ## Out of scope
 
 - Running `wasm-drift` on r1 or putting it on a timer.
-- A `wasm-history` walk: the lake's instance-change table is the
-  evidence here.
+- A `wasm-history` walk: the lake's instance-change table is the evidence.
 
 ## References
 

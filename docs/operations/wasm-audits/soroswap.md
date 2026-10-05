@@ -14,20 +14,16 @@ Audit log for the `soroswap` source's `BackfillSafe` flag. See
 > **2026-05-03 update — v2 per-instance walk complete.** The
 > 2026-04-30 wide-net r1 walk inventoried all **196 Soroswap
 > contracts** on mainnet (1 factory + 1 router + 194 pair
-> instances), each pinned to a single WASM hash with no
-> mid-life upgrades observed in the walk window. Per-instance
-> evidence is itemised in `Phase 2 results` below; full hash
-> bytes + disassembly artifacts live under
-> `evidence/r1-walk-2026-05-01/` on r1. The last gap — the factory
+> instances), each pinned to a single WASM hash, no
+> mid-life upgrades observed in the walk window (`Phase 2 results` below;
+> bytes + disassembly under
+> `evidence/r1-walk-2026-05-01/` on r1). The last gap — the factory
 > `set_pair_wasm` storage-rotation walk — closed on 2026-09-30: the
 > factory's `PairWasmHash` entry was written once, at its deploy
 > ledger 50,746,270, and never again (see `Caveats`).
 >
-> **2026-05-01 update.** Hash citations in this file have been
-> cross-checked against the 2026-04-30 r1 walk; see
-> [r1-walk-2026-05-01.md](r1-walk-2026-05-01.md) for the
-> consolidated cross-source picture and current contract+WASM
-> inventory.
+> **2026-05-01 update.** Hashes cross-checked against the 2026-04-30 r1 walk;
+> see [r1-walk-2026-05-01.md](r1-walk-2026-05-01.md).
 
 ## Status
 
@@ -36,9 +32,7 @@ Audit log for the `soroswap` source's `BackfillSafe` flag. See
 audit. The factory + router walk produced one stable hash apiece
 across the full post-Soroban window (L50,746,266 → L59,301,651,
 ~2024-03 → today). Per-hash review against the live decoder shows
-no schema divergence. Pair-template WASM stability is documented as
-a known caveat (see "Caveats" below) — addressed in a v2 audit
-follow-up.
+no schema divergence. Pair-template stability: see "Caveats" (v2 follow-up).
 
 ## Contracts under audit
 
@@ -51,16 +45,13 @@ Captured from `internal/sources/soroswap/events.go` (verified
 | Router | `CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH` |
 | Pair WASM hash (current) | `18051456816b66f12e773a56f77c5794fac1b1fb7ab6e22d4fad5a412770f73e` |
 
-The pair contracts themselves are deployed by the factory at
-runtime; their per-instance contract IDs are enumerable from the
-factory's `new_pair` events. Per-instance pair WASM walks land in a
-follow-up; see "Caveats".
+Pairs are deployed by the factory at runtime; IDs enumerable from
+`new_pair` events (see "Caveats").
 
 ## Decoder expectations
 
 Captured from `internal/sources/soroswap/{events,decode}.go` at
-HEAD as of 2026-04-29. Any divergence from these in a deployed
-WASM hash is an audit finding.
+HEAD as of 2026-04-29. Any divergence in a deployed WASM hash is an audit finding.
 
 ### Topic structure
 
@@ -144,40 +135,25 @@ contract is handled at asset-resolution layer, not here.
 
 ## Failure modes specific to Soroswap
 
-Drawing the generic checklist (see `README.md`) into Soroswap-
-specific tripwires:
-
-1. **Topic[0] prefix change** — historically Soroswap used
-   `"SoroswapPair"`; if a future upgrade switches to
-   `"SoroswapPairV2"` (or moves to a Symbol instead of String for
-   the prefix slot), classification drops every event silently.
-   Verify each WASM emits `("SoroswapPair", "swap")` shape.
-2. **SwapEvent direction encoding change** — current decoder
-   relies on the "exactly one in/out pair non-zero" invariant.
-   If a future contract introduces a single-direction `amount_in`
-   / `amount_out` pair (no `_0` / `_1` suffix) or adds a `direction:
-   bool` field, the decoder errors out for every event.
+1. **Topic[0] prefix change** — e.g. `"SoroswapPair"` →
+   `"SoroswapPairV2"`, or a Symbol instead of String, silently drops
+   every event. Verify each WASM emits `("SoroswapPair", "swap")`.
+2. **SwapEvent direction encoding change** — decoder relies on "exactly
+   one in/out pair non-zero". A single-direction `amount_in`
+   / `amount_out` pair (no `_0` / `_1`) or a `direction:
+   bool` field errors every event.
 3. **Sync event removed or split** — decoder requires `(swap,
-   sync)` correlation. If a contract upgrade emits only `swap` or
-   merges sync into swap as additional fields, every swap stays in
-   the buffer until the orphan-eviction timer fires and gets dropped.
-4. **`to` field removed** — currently ignored by the decoder so this
-   is a non-event, but worth noting as a "we'd need to track this
-   if requirements change" finding.
+   sync)` correlation; if only `swap` is emitted (or sync is merged in),
+   every swap stays buffered until the orphan-eviction timer drops it.
+4. **`to` field removed** — currently ignored; non-event, noted for tracking.
 5. **NewPairEvent field renamed** — `token_0` / `token_1` / `pair`
-   are pulled by name. A rename to e.g. `tokenA` / `tokenB` /
-   `pair_address` causes every `new_pair` to fail extraction; pairs
-   created under that WASM are missing from the in-memory
-   registry; their swap events get dropped (no token0/token1
-   resolution possible).
+   pulled by name; a rename (`tokenA` / `tokenB` /
+   `pair_address`) fails every `new_pair`, pairs go missing from the
+   in-memory registry, their swaps get dropped.
 6. **i128 → u128 amount type swap** — `scval.AsAmountFromI128` is
-   strict. A type-tag change would error out per swap. (Soroswap
-   is unlikely to make this change since negative amounts in
-   `amount_*_in/out` aren't meaningful, but worth confirming.)
-7. **Skim added as a fee-collection event with non-zero `amount_*`
-   fields matching SwapEvent's shape** — current decoder skips
-   `skim` by topic name only; if an upgrade makes skim look like a
-   swap on the wire, classification by `topic[1]` keeps us safe
+   strict; errors per swap. Unlikely (negative `amount_*_in/out` meaningless).
+7. **Skim made to look like a swap** (non-zero `amount_*` matching
+   SwapEvent's shape) — decoder skips `skim` by `topic[1]`, so safe,
    but warrants a check.
 
 ## WASM timeline
@@ -225,27 +201,20 @@ saved at `/var/log/wasm-history-all.json` on r1):
 ]
 ```
 
-The 6 factory ranges are worker-chunk artifacts of the parallel
-walk — each worker independently re-observed the same WASM hash at
-its chunk boundary and opened a fresh range entry. Across all 6
-ranges the hash is identical: **one factory WASM**, no upgrade in
-the entire post-Soroban window.
+The 6 factory ranges are worker-chunk artifacts (each worker re-observed
+the same hash at its chunk boundary): **one factory WASM**, no upgrade.
 
-The single router range is observed only in the first worker's
-chunk (where the original `CreateContract` lives at L50,746,272).
-Later workers saw no `update_current_contract_wasm` event for the
-router and so produced no entries — consistent with **one router
-WASM**, no upgrade in the post-Soroban window.
+The router range appears only in the first worker's chunk (`CreateContract`
+at L50,746,272); no later `update_current_contract_wasm`: **one router
+WASM**, no upgrade.
 
 Soroban activated at L50,457,424 (2024-02-20); the factory's first
-deploy at L50,746,266 (2024-03-14) is Soroswap's mainnet launch.
-Pre-Soroban ledgers can't host Soroban contracts, so this window is
+deploy at L50,746,266 (2024-03-14) is Soroswap's mainnet launch, so this window is
 the complete history.
 
 ## Phase 2 results — per-instance walk (executed 2026-04-30)
 
-The wide-net r1 walk covered all 196 Soroswap contracts as part
-of its 540-contract watch list. Walk parameters:
+The wide-net r1 walk covered all 196 Soroswap contracts (540-contract watch list):
 
 - **Range**: ledgers [50,457,424, 62,249,727] — full
   galexie-archive verified-clean range per
@@ -264,7 +233,7 @@ of its 540-contract watch list. Walk parameters:
 
 **Three unique WASM hashes** observed across all 196 contracts.
 **Zero mid-life upgrades observed** anywhere in the walked
-range. WASM bytes preserved + SHA-256-verified at
+range. WASM bytes SHA-256-verified at
 `evidence/r1-walk-2026-05-01/wasm-bytes/{5db738b0…,4c3db3eb…,18051456…}.wasm`
 on r1; disassembly (`wasm2wat` + `strings`) preserved alongside
 under `evidence/r1-walk-2026-05-01/disasm/`.
@@ -279,67 +248,55 @@ under `evidence/r1-walk-2026-05-01/disasm/`.
 
 ### `5db738b05d914812` — factory, single hash, no upgrade
 
-- Cross-checked against `internal/sources/soroswap/factory_seed_test.go`'s
-  golden fixture and `decode_test.go`'s `new_pair_*.json` fixtures —
-  both pulled directly from this WASM's emitted events. Decoder's
-  `NewPairEvent` extraction of `token_0` / `token_1` / `pair` by name
-  matches the on-wire ScvMap field names emitted by this hash.
-- No `update_current_contract_wasm` in the entire post-launch window
-  rules out schema drift across this range.
-- Upstream contract source (`github.com/soroswap/core`, factory pkg)
-  was reviewed and matches.
+- Matches `internal/sources/soroswap/factory_seed_test.go`'s
+  golden fixture and `decode_test.go`'s `new_pair_*.json` fixtures
+  (pulled from this WASM's events): `token_0` / `token_1` / `pair`
+  by name match the on-wire ScvMap fields.
+- No `update_current_contract_wasm` post-launch rules out schema drift.
+- Upstream source (`github.com/soroswap/core`, factory pkg) reviewed and matches.
 - `TopicPrefixFactory = "SoroswapFactory"` byte-equal classification
   remains valid.
 
 ### `4c3db3ebd2d6a2ab` — router, single hash, no decoder dependency
 
-The router emits `("SoroswapRouter", ...)` events. The decoder's
-`PrefixRouter` constant exists (`events.go:44`) but no router event
-reaches the trade-emit path; `classify()` in `decode.go` only
-matches Pair + Factory prefixes. Router upgrades cannot affect
-backfill correctness for this source.
+Emits `("SoroswapRouter", ...)` events. `PrefixRouter` exists (`events.go:44`)
+but `classify()` in `decode.go` only matches Pair + Factory prefixes, so
+router upgrades cannot affect backfill correctness.
 
 ## Caveats
 
-**Pair-instance WASM not walked individually.** Soroswap's factory
-deploys pair contracts at runtime from a registered pair-WASM hash
-(`MainnetPairWASMHash = 18051456…0f73e`, see `events.go:53`). This
-audit confirms:
+**Pair-instance WASM not walked individually.** The factory
+deploys pairs at runtime from a registered pair-WASM hash
+(`MainnetPairWASMHash = 18051456…0f73e`, see `events.go:53`). Confirmed:
 
-- The factory itself never upgraded — so its registered pair-WASM
-  hash never changed via factory upgrade.
-- The current pair-template hash matches the production decoder's
-  fixtures.
+- The factory never upgraded, so its registered pair-WASM hash never
+  changed via factory upgrade.
+- The pair-template hash matches the production decoder's fixtures.
 
 > **2026-05-01 update — caveat partially closed by r1 walk.** The
-> 2026-04-30 r1 wasm-history walk now covers **194 deployed pair
-> instances** (full set in `configs/audit/wasm-walk-contracts.yaml`)
-> and confirms every one runs the same `18051456…` pair WASM. No
-> pair has ever transitioned to a different WASM during the walked
-> ledger range. Findings consolidated in
-> [`r1-walk-2026-05-01.md`](r1-walk-2026-05-01.md) §Soroswap. This
-> closes follow-up steps (1) and (2) of the v2 plan below.
+> 2026-04-30 walk covers **194 deployed pair
+> instances** (`configs/audit/wasm-walk-contracts.yaml`)
+> and every one runs the same `18051456…` pair WASM; no pair
+> transitioned during the walked ledger range. See
+> [`r1-walk-2026-05-01.md`](r1-walk-2026-05-01.md) §Soroswap. Closes
+> v2 follow-up steps (1) and (2) below.
 
-What this audit does **not** confirm:
+Not confirmed by this audit:
 
-- Whether any individual deployed pair contract self-upgraded via
-  its own `update_current_contract_wasm` after deployment. Pair
-  contracts in soroswap-core's `pair/` Cargo crate do not expose an
-  upgrade entrypoint (verified during contract review), making such
-  an upgrade
+- Whether any pair self-upgraded via
+  `update_current_contract_wasm`. Pairs in soroswap-core's `pair/`
+  crate expose no upgrade entrypoint (contract review), so this is
   practically impossible without a coordinated factory + pair
   redeploy. **Empirically confirmed by the 2026-04-30 walk: zero
-  per-pair upgrades observed across 194 instances.**
-- Whether the factory's stored pair-WASM-hash configuration was
-  ever rotated by an admin (the `set_pair_wasm` flow in factory
-  storage). This is detectable as a `LedgerEntryChange` to the
-  factory's storage (not as a contract-WASM-update event), and
-  isn't surfaced by `wasm-history`'s current event-only walk.
+  per-pair upgrades across 194 instances.**
+- Whether an admin ever rotated the factory's stored pair-WASM-hash
+  (`set_pair_wasm`). Detectable only as a `LedgerEntryChange` to the
+  factory's storage, which `wasm-history`'s event-only walk did not surface.
 
-Both gaps are low-risk for an MVP backfill: the production decoder
-has been ingesting from this exact pair-template hash since
+Both low-risk for MVP backfill: the production decoder
+has ingested from this pair-template hash since
 2026-02-13 (live ingest cutover) with zero `ErrMalformedPayload` /
-`ErrUnknownEvent` rates in the metrics, against the same pair
+`ErrUnknownEvent` rates, against the same pair
 contracts a full backfill would replay.
 
 The v2 audit follow-up (tracked under L4.x backlog):
@@ -371,18 +328,14 @@ The v2 audit follow-up (tracked under L4.x backlog):
 Rationale:
 
 - Factory + router each show **one stable WASM hash** across the
-  entire post-Soroban window — no upgrade events to decode against.
-- Decoder's expectations match the deployed factory WASM (verified
-  via Phase-1 fixtures + ongoing production ingest health).
+  post-Soroban window.
+- Decoder matches the deployed factory WASM (Phase-1 fixtures + production ingest health).
 - Router is irrelevant to the decoder.
-- Pair-template stability is supported by upstream code review +
-  production decoder health, with the explicit caveat that
-  per-instance enumeration lands in v2.
+- Pair-template stability: upstream code review + production decoder health
+  (per-instance enumeration landed in v2).
 
-If the v2 follow-up surfaces any divergent pair WASM, the audit
-gets a per-hash entry + decoder fix and the flag stays at `true`
-(or flips back to `false` if the divergence requires decoder work
-that isn't shipped yet).
+If a divergent pair WASM surfaces, add a per-hash entry + decoder fix;
+the flag flips back to `false` if the fix isn't shipped yet.
 
 ## References
 
