@@ -793,6 +793,28 @@ groups:
             fail-open ends at an account takeover with no trace.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/login-code-lockout-table-growing.md
 
+      # magic_link_tokens is keyed on an address an unauthenticated caller
+      # chooses, so sustained growth is a remote table-fill. Same bound as
+      # login_code_lockout_table_growing; the reaper-stalled alert cannot
+      # see growth while the reaper is alive but outpaced.
+      - alert: stellarindex_magic_link_token_table_growing
+        expr: stellarindex_magic_link_token_rows > 10000
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/auth-reaper-stalled.md
+          summary: "magic_link_tokens has {{ $value | humanize }} rows (bound 10000)"
+          description: |
+            `magic_link_tokens` has stayed above 10k rows for 30+ minutes.
+            The key is attacker-chosen and POST /v1/auth/login is
+            unauthenticated, so sustained growth is a remote fill of a table
+            holding email and requested_ip. The retention sweep is the only
+            bound; it is either outpaced or failing.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/auth-reaper-stalled.md
+
       # ── Auth-reaper liveness (#368 M5) ─────────────────────────────────
       # The auth-table reapers (login_code_lockouts, magic_link_tokens,
       # speculative-account orphans, ended sessions, finished webhook_deliveries) each report WHAT they did; none

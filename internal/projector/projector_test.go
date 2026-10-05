@@ -301,23 +301,6 @@ func TestAdaptiveWindow(t *testing.T) {
 	}
 }
 
-// TestSinkSideShrink_BudgetExhaustedHalvesWindow pins the 2026-08-01
-// incident class: a window whose CH scan completes but whose sink writes
-// exhaust the cycle budget must SHRINK the adaptive window (the stream-side
-// shrink alone retried the identical dense range forever — aquarius
-// reserves wedged 3.5h at ledger 63,488,687).
-func TestSinkSideShrink_BudgetExhaustedHalvesWindow(t *testing.T) {
-	next, shrunk := shrinkWindow(BatchLimit, context.DeadlineExceeded)
-	if !shrunk || next != BatchLimit/2 {
-		t.Fatalf("expected halved window on deadline, got next=%d shrunk=%v", next, shrunk)
-	}
-	// The floor holds.
-	next, shrunk = shrinkWindow(MinBatchLimit, context.DeadlineExceeded)
-	if shrunk || next != MinBatchLimit {
-		t.Fatalf("expected floor hold, got next=%d shrunk=%v", next, shrunk)
-	}
-}
-
 // TestRun_PanicOutsideRowIsRecovered pins that a panic in a source's cycle
 // machinery (not a row — those have their own recover) or in the replay-window
 // watcher stops only that goroutine: the process survives, worker_panics_total

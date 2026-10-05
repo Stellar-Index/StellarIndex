@@ -1,338 +1,78 @@
 ---
 adr: 0008
-title: Per-region HA topology — colo primary + cloud DR, three-tier hot/warm/cold storage
+title: Per-region HA topology
 status: Accepted
-date: 2026-04-27
+date: 2026-04-22
 supersedes: []
 superseded_by: null
 ---
 
 # ADR-0008: Per-region HA topology
 
-> ⚠️ **Amended by ADR-0050 (2026-08-21).** The **"multi-region active/active is out of
-> scope for v1" decision in this ADR is OVERTURNED.** Multi-region HA is now the plan —
-> see [`docs/architecture/multi-region-ha.md`](../architecture/multi-region-ha.md)
-> (ratified by ADR-0050), which is authoritative for anything multi-region. The
-> **single-region HA topology** (HAProxy / Patroni / Redis-Sentinel three-tier) described
-> below **carries forward** and is Phase 1 of that plan. Do not read this ADR's
-> multi-region / active-active framing as current.
-
-> **Amendment (2026-09-04, #487).** The **≥ 99.99 % uptime** figure in
-> the Context and Consequences below was the design target the
-> three-node HA topology was sized against. It was never the customer
-> commitment: the published availability commitment is **≥ 99.9 %**
-> ([stellarindex.io/sla](https://stellarindex.io/sla)), and since
-> 2026-09-04 the burn-rate alerts in `deploy/monitoring/rules/slo.yml`
-> budget against that figure. See the dated amendment at the end of
-> this file.
-
-> **Amendment (2026-06-12, F-1353 / D2-07 + D2-08).** Two enumerations
-> below have since been superseded:
-> - The Redis "**cluster** (3 masters + 3 replicas + Sentinel)" hot
->   tier was decided as **Sentinel, not Cluster** — see ADR-0024.
-> - The `stellar-core` / `stellar-rpc` watcher services listed in the
->   storage/replication tiers were **removed from production on
->   2026-04-23** (invariant 6); production ingest is Galexie → dispatcher
->   → decoders, and `stellar-core` survives only as Galexie's captive-core
->   subprocess. See
->   [docs/architecture/ingest-pipeline.md](../architecture/ingest-pipeline.md).
->
-> The decision below is preserved as the original record.
-
-> **Amendment (2026-09-22, T570).** Two claims in §4 ("Stateless
-> services scale horizontally; one leader-elected aggregator") are
-> superseded by the corrected topology in
-> [`docs/architecture/ha-plan.md`](../architecture/ha-plan.md):
-> - The **per-source `stellarindex-indexer` process** framing does not
->   match the deployed binary. §3.8 of `ha-plan.md` records the
->   correction (2026-09-02): **one** `stellarindex-indexer` process
->   walks ledgers via `internal/ledgerstream` and the
->   `internal/dispatcher` fans each ledger to every registered
->   decoder. The per-source `Source`/`Orchestrator` goroutine seam was
->   deleted in 2026-07.
-> - The **Redis-lease leader-elected `stellarindex-aggregator`**
->   (one active + one standby) is not implemented. The binary run
->   today (`cmd/stellarindex-aggregator/main.go`) has no leader
->   election and no standby instance; it ships as a single process.
->   The active/standby pair is **not part of Phase 1** either, even
->   though the banner above carries the rest of this topology forward:
->   the aggregator holds the Postgres instance lock
->   `hashtext('instance:stellarindex-aggregator')`, so a second copy
->   against the same database refuses to start. That lock gives
->   exclusivity, not failover — see `ha-plan.md` §3.7.
->
-> The decision below is preserved as the original record.
-
 ## Context
 
-The availability SLA requires ≥ 99.99 % uptime
-(coverage-matrix S9.1). At one nine of slack against full failure
-that's 52 min/year of downtime — well below the cost of a single
-cold-start of stellar-core's catchup-recent. So the HA target
-forces per-component redundancy *and* a graceful-degradation
-contract that defines what the API serves when individual planes
-fail.
-
-[`docs/architecture/ha-plan.md`](../architecture/ha-plan.md)
-captures the full design (558 lines — physical topology,
-per-component HA, capacity math, failure matrix, degradation
-modes, backup/restore). That doc is comprehensive but was tagged
-`status: draft` pending Week-2 design review. This ADR ratifies the
-load-bearing decisions from it as the binding commitment for
-Phase 6 (Weeks 8–9) infrastructure work.
-
-Cross-references:
-
-- ADR-0001 — Horizon out of architecture (constrains ingest path).
-- ADR-0002 — S3-compatible storage (constrains MinIO + DR target).
-- ADR-0004 — Tier-1 three-validator aspiration (constrains
-  stellar-core redundancy to N+2).
-- ADR-0007 — Redis as hot-path cache + rate-limit (constrains the
-  hot tier).
-- ADR-0015 — Closed-bucket-only API serving (constrains the
-  cross-region invariant).
-- ADR-0016 — Per-region storage strategies (R1/R2/R3 storage
-  shapes; this ADR is the *per-region* HA topology, ADR-0016 is
-  *across regions*).
+The availability target forces per-component redundancy and a graceful-degradation contract for when
+a plane fails. [docs/architecture/ha-plan.md](../architecture/ha-plan.md) holds the full design; this
+ADR binds its load-bearing decisions for per-region infrastructure.
 
 ## Decision
 
-**Adopt the per-region HA topology specified in `ha-plan.md`,
-binding the following decisions:**
+1. **Per-region HA is the shape; multi-region is ADR-0050.** Each region runs full HA, with cold DR in
+   the cloud. The original "multi-region active/active out of scope for v1" call was overturned by
+   ADR-0050; [docs/architecture/multi-region-ha.md](../architecture/multi-region-ha.md) governs
+   anything multi-region, and this topology is its Phase 1.
+2. **Three tiers, three failure domains.** Hot: Redis with Sentinel, not Cluster (ADR-0007,
+   ADR-0024). Warm: Patroni-managed TimescaleDB, one primary plus two sync replicas. Cold: MinIO
+   erasure-coded EC(6+3) across 9 hosts, bucket versioning on. Ingest never blocks serving: when
+   ingestion slows the API returns stale-marked responses (ADR-0015, `flags.stale=true`), never errors.
+3. **N+1 minimum; N+2 for Galexie's captive-core**, so the three archives ADR-0004 needs survive a
+   host failure during a maintenance window.
+4. **Process shape.** `stellarindex-api` runs as N=3 stateless instances behind HAProxy with a
+   keepalived VIP. `stellarindex-indexer` is one process: it walks ledgers via `internal/ledgerstream`
+   and `internal/dispatcher` fans each ledger to every decoder. `stellarindex-aggregator` is one
+   process with no leader election and no standby, and the standby is not part of Phase 1. A second
+   copy against the same database refuses to start because the first holds the Postgres instance lock
+   `hashtext('instance:stellarindex-aggregator')`; the lock gives exclusivity, not failover, and
+   systemd restarts a dead process.
+5. **Colo primary, cloud DR.** Galexie, Postgres and MinIO run on dedicated colo hardware (cloud is
+   about 3x the cost at our IOPS). The AWS DR target holds warm-standby stateless services
+   (scale-to-zero, scale-out on DNS flip), an async logical Postgres replica (5-minute RPO), and
+   `mc mirror` of MinIO to S3 (1-hour RPO; `galexie-live/` at 5 minutes). Redis is not replicated
+   and re-hydrates from Timescale; stellar-core is not replicated and is rebuilt from our MinIO
+   archive (about 4 h to `CATCHUP_RECENT`).
+6. **Every component has a defined degraded mode.** Source down: `sources` marks the outage and
+   `flags.reduced_redundancy=true`. Aggregator down: last published row with `flags.stale=true` and
+   `as_of`. Redis down: query Timescale directly with `flags.stale=true`. Timescale primary down:
+   Patroni fails over to a sync replica (RPO 0, RTO about 30 s). Regions disagree on a closed bucket:
+   `cross-region-monitor` alerts and each region serves its local view.
+7. **Availability.** The published commitment is ≥ 99.9 % over a 30-day month
+   ([stellarindex.io/sla](https://stellarindex.io/sla)). The 99.99 % in the original ADR is the
+   design target the three-node topology was sized against, not a commitment; revisit it only once that
+   topology ships and an off-host probe has measured it for 30 days. Colo plus cloud DR cost of at
+   most $80k/year is an informative target; the shape is binding.
 
-### 1. Single-region HA first; multi-region DR second
+## Invariant
 
-At launch we run exactly **one** region (R1 / Frankfurt) at full
-HA. R2 and R3 join over Weeks 6–8 with the same per-region shape.
-Multi-region active/active is **explicitly out of scope for v1.**
-What we have is per-region full HA + cold DR in cloud + cross-
-region async replicas (per ADR-0016) for read-only failover.
+The aggregator's only exclusivity control is the Postgres instance lock named above; docs describing
+its topology stay pinned to it (`TestAggregatorTopologyDocsMatchInstanceLock`,
+`internal/ops/chops/ha_plan_citations_test.go`).
 
-### 2. Decouple ingest from serving — three failure domains
+The published availability figure, the burn-rate alert budget, the sla-probe default and the operator
+docs agree on 99.9 % (`internal/ops/chops/sla_figure_consistency_test.go`).
 
-- **Hot tier (≤30s window):** Redis cluster (3 masters + 3
-  replicas + Sentinel). Per ADR-0007.
-- **Warm tier (≤90 days raw, indefinite for 1h+ aggregates):**
-  TimescaleDB Patroni-managed HA — 1 primary + 2 sync replicas.
-- **Cold tier (raw history, indefinite):** MinIO erasure-coded
-  EC(6+3) across 9 hosts; bucket versioning on.
-
-Three tiers, three failure domains. **Ingest must never block
-serving.** If the ingestion plane slows, the serving plane returns
-stale-marked responses (per the ADR-0015 closed-bucket contract +
-the envelope `flags.stale=true`). Never errors.
-
-### 3. Redundancy is N+1 minimum; N+2 for stellar-core
-
-Every stateful component runs ≥ N+1. stellar-core / galexie /
-stellar-rpc run **N+2** because the Tier-1 aspiration (ADR-0004)
-requires three independent archives post-launch and we want the
-Tier-1 fleet to survive a single-host failure plus a single-host
-maintenance window concurrently.
-
-### 4. Stateless services scale horizontally; one leader-elected aggregator
-
-`stellarindex-api` runs as N=3 stateless instances behind HAProxy
-(keepalived VIP). `stellarindex-indexer` runs one process per
-configured source (per-source orchestration). `stellarindex-
-aggregator` runs **one active + one standby**, leader-elected via
-a Redis lease — only one instance writes to the trades hypertable
-at a time to avoid duplicate emissions.
-
-### 5. Colocated bare metal primary; cloud DR
-
-Captive-core + galexie + Postgres + MinIO live on dedicated
-R640-class colocated hardware (per ADR-0002 alternatives — the
-3× cost differential vs cloud IOPS-matched instances at our scale
-ratifies this). Cloud (AWS) is the DR target:
-
-- **Stateless services:** warm-standby in AWS, scale-to-zero,
-  scale-out on DNS flip.
-- **TimescaleDB:** async logical replica via pg_logical at AWS
-  RDS, **5-minute RPO** budget.
-- **Redis:** NOT replicated cross-region. Warm-standby is cold;
-  re-hydrates from Timescale within minutes after failover.
-- **MinIO:** `mc mirror` to AWS S3, **1-hour RPO** for the
-  archive bucket; `galexie-live/` replicated at 5 min.
-- **stellar-core / stellar-rpc:** NOT replicated. Rebuilt from
-  our own MinIO archive on DR activation (~4 h to
-  `CATCHUP_RECENT`). Running captive-cores in AWS would
-  violate the cost envelope.
-
-### 6. Every component has a defined degraded mode up front
-
-The API never silently fails. Per `ha-plan.md` §9, each component
-failure has a documented degradation:
-
-- Indexer source down → response includes `sources` list with the
-  outage marked + envelope `flags.reduced_redundancy=true`.
-- Aggregator down → API serves the last successfully published
-  aggregate row + `flags.stale=true` with `as_of` timestamp.
-- Redis down → API queries Timescale directly + `flags.stale=true`.
-- Timescale primary down → automatic failover to sync replica via
-  Patroni (RPO 0; RTO ~30s).
-- All three regions disagree on a closed bucket →
-  `cross-region-monitor` alerts; serving continues from each
-  region's local view.
-
-Anything that changes a `flags.*` value gets an explicit ADR or
-test pinning the contract.
-
-### 7. Aspirational cost envelope — colo + cloud DR ≤ $80k/year
-
-Per `ha-plan.md` §12 the per-region cost target is ~$30k/year
-hardware amortisation + ~$20k/year cloud DR + ~$30k/year colo
-power/bandwidth for R1. R2 and R3 land under ADR-0016's hybrid
-shape so they're cheaper than a third full-stack copy. This is a
-**target**, not a binding constraint — the architectural shape is
-load-bearing; the budget is informative.
+A change to any `flags.*` value needs an explicit ADR or a test pinning the contract; a handler that
+reads cold-tier storage synchronously on a hot-path request violates the tier contract.
 
 ## Consequences
 
-- **Positive — covers the 99.99 % SLA without vendor lock-in.**
-  Self-hosted bare metal on rented colo space; cloud as DR fallback;
-  every component has a defined failure mode. The numbers align
-  per the napkin math in `ha-plan.md` §4.
+Self-hosted hardware plus cloud DR covers the commitment without vendor lock-in, and the tier split
+makes the degradation contract reviewable. It costs operational complexity (Patroni, keepalived,
+Sentinel, mirror schedules, two failure-mode sets) and manual hardware refresh. A new service should
+declare its tier, redundancy and degraded mode; backup retention, alert thresholds and
+failover procedures live in `docs/operations/runbooks/`. Full cloud, single-replica Postgres,
+stellar-core in AWS and serverless aggregation were rejected.
 
-- **Positive — three-tier separation makes the degradation
-  contract enforceable.** Each tier's failure has a clear answer
-  for the API. Reviewers can call out a PR that introduces a path
-  bypassing the contract (e.g. a handler that reads MinIO
-  synchronously on a /v1/price hit) without arguing about whether
-  it's "really" a violation.
+## Evidence
 
-- **Positive — N+2 for stellar-core defends the ADR-0004
-  aspiration.** Three independent archives are a hard requirement
-  for Tier-1 quality; N+2 deployment ensures we don't fall below
-  three even during single-host maintenance.
-
-- **Negative — operational complexity.** Patroni, keepalived,
-  Sentinel, leader-election, mc mirror schedules — every
-  redundancy layer is a moving part. Mitigated by the runbook
-  catalog (`docs/operations/runbooks/`) requiring one runbook per
-  alert + the SEV playbook tying everything together.
-
-- **Negative — colo + cloud is a hybrid posture.** Egress charges
-  on cloud, manual hardware refresh on colo, two failure-mode sets
-  to operationalize. Justified by the cost envelope (cloud-only at
-  our IOPS profile is 3× more expensive) and the existing R1
-  hardware. Re-evaluate if either factor changes.
-
-- **Operational impact — every PR that adds a service needs to
-  declare its tier, redundancy, and degradation mode.** Captured
-  as a checklist line in the PR template (added in a follow-up to
-  this ADR).
-
-- **Downstream design impact — this ADR fixes the shape; specific
-  decisions about backup retention, alert thresholds, and
-  failover procedures are runbooks in
-  `docs/operations/runbooks/`.** Their content evolves; this ADR
-  doesn't.
-
-## Alternatives considered
-
-1. **Full cloud (no colo)** — rejected per ADR-0002 alternatives.
-   The 3× cost differential at our IOPS profile + the captive-core
-   fleet's existing R640 provisioning make hybrid the right call.
-
-2. **Multi-region active/active at v1** — rejected. The initial
-   build window doesn't permit multi-master Postgres / Redis at
-   launch. ADR-0016 picks up cross-region read replicas with
-   ADR-0015's closed-bucket invariance providing the
-   "byte-equivalent across regions" property; that's enough for v1.
-
-3. **Single-replica Postgres (warm standby only)** — rejected.
-   Patroni with two sync replicas costs negligibly more in
-   storage and earns RPO=0 + automatic failover. The ops cost of
-   manual standby promotion under stress would be far higher than
-   the marginal infra cost.
-
-4. **Run stellar-core in AWS for DR** — rejected. Captive-core
-   IOPS in cloud at 8 vCPU / 32 GB scale violates the cost
-   envelope. Re-bootstrapping from our own MinIO archive in ~4h is
-   acceptable for a DR scenario where the entire colo is offline
-   (which is itself a multi-failure scenario beyond what 99.99 %
-   uptime targets).
-
-5. **Stateless API + serverless aggregator (Lambda / Cloud Run)**
-   — rejected. Cold-start latency would breach the p95 ≤ 200ms /
-   p99 ≤ 500ms targets (ADR-0009 — to land — for the latency
-   contract). Redis-leader-elected daemon in colo is the right
-   profile for steady-state aggregation.
-
-## References
-
-- [`docs/architecture/ha-plan.md`](../architecture/ha-plan.md) —
-  full design; this ADR ratifies its binding decisions.
-- [`docs/architecture/coverage-matrix.md`](../architecture/coverage-matrix.md)
-  §S9.1 — the 99.99 % uptime requirement this ADR closes.
-- [`docs/architecture/infrastructure/multi-region-topology.md`](../architecture/infrastructure/multi-region-topology.md)
-  — cross-region (R1/R2/R3) topology layered on top of this
-  per-region one.
-- [`docs/architecture/infrastructure/archival-node-spec.md`](../architecture/infrastructure/archival-node-spec.md)
-  — per-host hardware spec for the colo fleet.
-- ADR-0001, 0002, 0004, 0007, 0015, 0016 (cross-references above).
-
-## Amendment — 2026-09-04: the availability figure (#487)
-
-Recorded because this ADR is published at `/research/adr/0008` and
-because three places stated the availability commitment and disagreed
-by an order of magnitude. **The decision is untouched; only the figure
-it cites is placed in context.**
-
-**What the Context says.** "The availability SLA requires ≥ 99.99 %
-uptime (coverage-matrix S9.1)."
-
-**What is committed.** The published availability commitment is
-**≥ 99.9 %** over a 30-day month — the figure at
-[stellarindex.io/sla](https://stellarindex.io/sla), in
-[`docs/operations/sla-probe.md`](../operations/sla-probe.md), in the
-launch announcement, in the k6 thresholds and in the default target of
-`cmd/stellarindex-sla-probe`. That is an error budget of about 43
-minutes a month. 99.99 % permits about 4 minutes 19 seconds, which a
-single restart cycle on the one-box deployment ratified for v1 can
-exceed; it was never a number the deployed topology could honour, and
-[`ha-plan.md`](../architecture/ha-plan.md) has recorded it as a design
-target rather than a commitment since 2026-09-03.
-
-**What changed on 2026-09-04.** The burn-rate alerts in
-`deploy/monitoring/rules/slo.yml` and the r1 overlay compared against a
-budget of `0.0001` — a 99.99 % objective — under a recording-rule label
-that asserted the same. They now budget against `0.001`, the label is
-`api_availability_3_nines`, and
-`internal/ops/chops/sla_figure_consistency_test.go` fails the build if
-the public page, the alert budget, the probe default or the operator
-documents stop agreeing. The 99.99 % in this ADR remains what it always
-was: the design target the three-node topology was sized against, to
-be revisited if that topology ships and an off-host probe has measured
-it for 30 days.
-
-## Amendment — 2026-09-22: §4's indexer and aggregator claims (T570)
-
-Recorded because §4 ("Stateless services scale horizontally; one
-leader-elected aggregator") describes a topology that diverged from
-what shipped, while this ADR is otherwise kept current with dated
-amendments. **The decision is untouched; the deployed shape is
-recorded here so the ADR does not read as the current architecture.**
-
-**What §4 says.** "`stellarindex-indexer` runs one process per
-configured source (per-source orchestration)." And:
-"`stellarindex-aggregator` runs **one active + one standby**,
-leader-elected via a Redis lease — only one instance writes to the
-trades hypertable at a time."
-
-**What shipped.** `stellarindex-indexer` is a single process
-(`cmd/stellarindex-indexer/main.go`): it walks ledgers once via
-`internal/ledgerstream` and `internal/dispatcher` fans each ledger to
-every registered decoder. The per-source `Source`/`Orchestrator`
-goroutine seam was deleted in 2026-07 —
-[`ha-plan.md` §3.8](../architecture/ha-plan.md) records this
-correction as of 2026-09-02. `stellarindex-aggregator`
-(`cmd/stellarindex-aggregator/main.go`) has no leader-election code
-path and runs as a single instance. The Redis-lease active/standby
-pair is not part of Phase 1: a second aggregator against the same
-database refuses to start because the first holds the Postgres
-instance lock (`timescale.Store.HoldInstanceLock`). This gives
-exclusivity, not failover. If the process dies, systemd restarts it
-and nothing stands by —
-[`ha-plan.md` §3.7](../architecture/ha-plan.md).
+`cmd/stellarindex-aggregator/main.go` (`HoldInstanceLock`); `deploy/monitoring/rules/slo.yml`
+(budget 0.001, label `api_availability_3_nines`); the two chops tests above.

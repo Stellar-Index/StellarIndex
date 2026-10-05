@@ -41,7 +41,10 @@ import (
 //     against. Inbound sums use mint_and_withdraw ONLY; summing both
 //     would count the same transfer 11× over. This is a real semantic
 //     rule about the protocol's event vocabulary, NOT twin dedup — it
-//     survives the raw-read change above.
+//     survives the raw-read change above. Outbound deposit_for_burn is the
+//     same canonical scale: its amount equals the same-tx BurnMessage
+//     amount the 6-decimal destination mints (cctp
+//     TestDepositForBurnAmount_IsCanonicalSixDecimals).
 //
 // Source-chain attribution (inbound): the same-op message_received row's
 // message_body carries the CCTP BurnMessage; hex chars 33..72 are the low
@@ -287,7 +290,7 @@ func (s *Store) bespokeBridgeCCTP(ctx context.Context, since string, windowDays 
 	blk := &BespokeBlock{
 		Category: "bridge",
 		Notes: []string{
-			"Flows are USDC (canonical 6-decimal event amounts, verified against the SAC leg on-chain). Inbound = mint_and_withdraw transfer events; mint_and_forward restates the same funds at the 7-decimal local scale and is excluded from sums. Outbound = deposit_for_burn events.",
+			"Flows are USDC (canonical 6-decimal event amounts: inbound verified against the SAC leg on-chain, outbound against the cross-chain BurnMessage). Inbound = mint_and_withdraw transfer events; mint_and_forward restates the same funds at the 7-decimal local scale and is excluded from sums. Outbound = deposit_for_burn events.",
 			"Source chains are attributed from the burn-side USDC token inside each transfer's CCTP message body; destinations from Circle's public domain registry. Both maps were verified against Circle's published USDC contract addresses and domain list (2026-07-30). Anything unrecognised is labelled Unverified / Domain N — never guessed.",
 		},
 	}

@@ -1099,3 +1099,43 @@ tests:
       - eval_time: 50m
         alertname: stellarindex_api_cache_refresh_failing
         exp_alerts: []
+
+  # ── magic_link_tokens table-fill bound ─────────────────────────────
+  - interval: 1m
+    name: magic_link_token_rows above 10000 for 30m tickets
+    input_series:
+      - series: 'stellarindex_magic_link_token_rows{job="stellarindex_api",instance="r1:8080"}'
+        values: '12000x80'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_magic_link_token_table_growing
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: stellarindex_magic_link_token_table_growing
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_api
+              instance: r1:8080
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/auth-reaper-stalled.md
+              summary: "magic_link_tokens has 12k rows (bound 10000)"
+              description: |
+                `magic_link_tokens` has stayed above 10k rows for 30+ minutes.
+                The key is attacker-chosen and POST /v1/auth/login is
+                unauthenticated, so sustained growth is a remote fill of a table
+                holding email and requested_ip. The retention sweep is the only
+                bound; it is either outpaced or failing.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/auth-reaper-stalled.md
+
+  - interval: 1m
+    name: magic_link_token_rows at a healthy level stays silent
+    input_series:
+      - series: 'stellarindex_magic_link_token_rows{job="stellarindex_api",instance="r1:8080"}'
+        values: '40x80'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_magic_link_token_table_growing
+        exp_alerts: []

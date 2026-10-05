@@ -9,192 +9,45 @@ superseded_by: null
 
 # ADR-0003: i128 / u128 values preserved end-to-end; never truncated to int64
 
-> **Reality note (2026-06-12, F-1353 / D2-10).** Two enforcement
-> mechanisms claimed below are **not implemented**: there is no custom
-> golangci analyzer flagging `int64` amount-shaped parameters
-> (`.golangci.yml` has no such rule or plugin), and `make
-> db-migrate-status` only prints migration state — it does not refuse
-> `BIGINT` / `DOUBLE PRECISION` amount columns. The decision itself is
-> in force and is enforced in practice by code review (CODEOWNERS on
-> `internal/canonical/`) and the round-trip fixture tests in
-> `internal/canonical/amount_test.go` (incl. the KALIEN-incident
-> regression), which DO exist. Also: the public amount type lives in
-> `pkg/client`, not the `pkg/types` path named below.
-> **Update 2026-07-05:** both missing mechanisms now exist — see the
-> Guards addendum under Enforcement.
-
 ## Context
 
-Soroban stores token quantities (balances, allowances, mint/burn
-amounts, swap amounts, pool reserves, oracle prices, supply totals)
-as **`i128` or `u128`** — two 64-bit words, `hi` and `lo`.
-
-At the standard 7-decimal precision, any amount above
-**~922 billion tokens** (i64 max ÷ 10⁷) overflows `int64`. This is
-not theoretical: a real production incident observed in adjacent
-tooling (2026-04-22) confirmed the blast radius.
-
-> "The KALIEN balance is stored as an `i128` (two 64-bit words).
-> The actual value 40,000,005,972,900,000,000 exceeds i64 max
-> (~9.2×10¹⁸), so it's stored with `high=2,
-> low=3106517825480896768`. Stellar Expert is only reading the low
-> 64 bits, displaying 310,651,782,548.0896768 instead of the real
-> 4,000,000,597,290."
-
-Stellar Expert's own response confirmed their analytics DB uses
-`int64` for most balances and that they were working on a fix at
-the time, but had no committed ship date.
-
-We also verified that `withObsrvr/cdp-pipeline-workflow`
-contains this exact class of bug — its Soroswap router processor
-reads `entry.Val.I128.Lo` and ignores `.Hi`, silently mis-recording
-every high-value swap.
-
-This is **not a tricky edge case.** It is **the most important
-correctness invariant in the entire project.**
+Soroban stores token quantities as `i128`/`u128`; above about 922 billion tokens at 7 decimals an
+`int64` overflows. Adjacent tooling shipped this bug in production (KALIEN balance 40,000,005,972,900,000,000
+shown as its low 64 bits), so it is the most important correctness invariant in the project.
 
 ## Decision
 
-Every `i128` or `u128` value on its journey from on-chain event
-through our pipeline to the API response is preserved with full
-128-bit precision. At each layer:
+Every `i128`/`u128` is held at full 128-bit precision from the on-chain event to the served JSON:
+`xdr.Int128Parts`/`UInt128Parts` upstream, `canonical.Amount` (wrapping `*big.Int`) in Go, `NUMERIC` in Postgres, and a decimal string in JSON (`pkg/client` exposes amounts as `string` fields), never a JSON number
+(IEEE 754 doubles keep 53 bits). In OpenAPI a 128-bit value is `type: string` with the
+decimal-string contract in its `description`; there is no `format: i128` tag. No code path may hold
+one of these values in `int64`, `uint64`, `float32` or `float64`, with no exceptions. Two's-complement
+sign handling lives in `internal/canonical/amount.go`.
 
-| Layer | Representation |
-| ----- | -------------- |
-| Soroban XDR | `xdr.Int128Parts` / `xdr.UInt128Parts` (upstream) |
-| Go in-memory | `*big.Int` (via `math/big`) or `decimal.Decimal` with precision ≥ 38 |
-| Postgres / TimescaleDB | `NUMERIC` (arbitrary precision) |
-| JSON API output | **String** (never a JSON number — they're IEEE 754 doubles, 53-bit precision) |
-| OpenAPI schema | `type: string`, `format: i128` (custom format tag) |
+## Invariant
 
-> **Amendment (2026-09-27, GH #926).** The OpenAPI row is not what
-> ships: no schema in `openapi/stellar-index.v1.yaml` carries a
-> `format: i128` tag. A 128-bit value is `type: string` with the
-> decimal-string contract stated in the field's `description`, and the
-> wire guard is `internal/canonical/wire_money_guard_test.go` (see
-> Enforcement). The row is preserved as the original record.
+No Go code lossily converts the word fields of `xdr.Int128Parts`, `UInt128Parts`, `Int256Parts` or
+`UInt256Parts`, nor feeds `MustI128()`/`MustU128()` into a numeric conversion
+(`internal/canonical/i128_truncation_guard_test.go`; `scripts/ci/lint-i128.sh` rejects
+`int64(<x>.Lo)`). Escape: `//i128:ok <reason>`; stale markers fail.
 
-No code path in the repo is allowed to hold one of these values in
-`int64`, `uint64`, `float32`, or `float64`. No exceptions.
+Every `migrations/*.up.sql` column with a monetary name is `NUMERIC`, never BIGINT, INT8, DOUBLE
+PRECISION, FLOAT or REAL (`scripts/ci/lint-migrations.sh`). Escape: `-- lint-money:ok <reason>`;
+the `lint-money:ok` markers under `migrations/` are the authoritative list.
 
-Two's-complement sign handling on `Int128Parts` is delegated to
-the helper in `internal/canonical/amount.go` (which follows the
-verified-correct implementation in
-`withObsrvr/stellar-extract/scval_converter.go`).
+No named API response struct field with a monetary JSON name marshals to a JSON number without
+`,string` (`internal/canonical/wire_money_guard_test.go`; named structs only, not `map[string]any`).
+
+Amount round-trip fixtures, including the KALIEN regression, must pass and a failing one blocks the release
+(`internal/canonical/amount_test.go`); changes to `internal/canonical/` need CODEOWNERS review.
 
 ## Consequences
 
-**Positive**
+Pricing stays correct for RWA and high-supply tokens, at negligible memory cost. JSON clients that
+parse amount strings as numbers lose precision; that is documented in the API and SDK docs and is
+theirs to fix. Any observed `errors.Is(err, canonical.ErrI128Overflow)` in production fires a SEV-1. It indicates an
+`int64` sneaking in somewhere on one of our own amount paths, never a property of the chain data.
 
-- Our pricing is **correct** where competitors are not. This is a
-  real product differentiator for RWA and high-supply Soroban
-  tokens.
-- We cannot be surprised by a "the amount looks tiny but should be
-  huge" incident.
+## Evidence
 
-**Negative**
-
-- Every amount field in every struct takes more memory than an
-  `int64` would. Negligible at our scale.
-- JSON clients that naively parse our amount strings as numbers
-  will truncate at their language's native precision. **This is
-  on them to fix** — we document the issue clearly in API docs
-  and SDK docs.
-
-**Operational impact**
-
-- Monitoring: amount-shape regression tests run on every release
-  (corner cases in `internal/canonical/amount_test.go`). If the
-  KALIEN-incident fixture ever stops round-tripping cleanly, the
-  release is blocked.
-- Alerting: any observed `errors.Is(err, canonical.ErrI128Overflow)`
-  in production logs fires a SEV-1. It indicates an `int64`
-  sneaking in somewhere.
-
-**Downstream design impact**
-
-- The `canonical.Amount` type (public via `pkg/client`, not a
-  separate `pkg/types`) is a distinct Go type wrapping `*big.Int`,
-  not a reused `*big.Int`. It cannot be conflated with plain-integer
-  fields by accident.
-- SDK-generated code respects the string-on-wire rule.
-- Storage schema convention is NUMERIC for amounts (never BIGINT /
-  DOUBLE PRECISION), enforced by `scripts/ci/lint-i128.sh` (a monetary-
-  named column typed BIGINT/DOUBLE/float fails CI). See Enforcement below.
-
-## Alternatives considered
-
-1. **Use `int64` and accept the overflow risk for large amounts.**
-   Rejected outright. This is what Stellar Expert does today; we
-   refuse to ship the same bug.
-2. **Use `float64` in storage but render "carefully" in the API.**
-   Rejected: precision loss happens before we ever render.
-3. **Support i128 partially (storage OK, API exposes `int64` for
-   "display purposes").** Rejected: split representation is the
-   most common place precision loss gets reintroduced.
-
-## Enforcement
-
-> **Guards addendum (2026-07-05, BACKLOG #48).** The analyzer this ADR
-> originally promised now exists, as a repo test plus a migration lint
-> (house precedent: repo-wide AST guards ship as Go tests, cf.
-> `internal/pipeline/lockstep_ast_test.go`):
->
-> - **`internal/canonical/i128_truncation_guard_test.go`** — a
->   go/types walk over every non-test package (via `packages.Load`)
->   that fails on any lossy numeric conversion of the word fields of
->   `xdr.Int128Parts` / `UInt128Parts` / `Int256Parts` / `UInt256Parts`
->   (sign reinterpretation like `int64(p.Lo)`, narrowing, floats) and
->   on `MustI128()`/`MustU128()` results fed into numeric conversions.
->   The lossless decode shape (`int64(p.Hi)`, `uint64(p.Lo)`) passes
->   without annotation. Escape hatch: `//i128:ok <reason>` on the site
->   (stale markers fail the test). First run on 2026-07-05 found zero
->   violations — the tree was already clean.
-> - **`scripts/ci/lint-migrations.sh`** — every `migrations/*.up.sql`
->   column whose name looks monetary (amount/price/supply/balance/
->   volume/reserve/fee/*_usd/stroop/wei/circulating/market_cap) must
->   be NUMERIC, never BIGINT/INT8/DOUBLE PRECISION/FLOAT/REAL. Escape:
->   inline `-- lint-money:ok <reason>` (stale markers fail). The only
->   escapes today are `sdex_offer_events.price_n/price_d` — Stellar's
->   protocol-defined int32 rational pair; the money value is the
->   sibling NUMERIC `price`.
-> - **`internal/canonical/wire_money_guard_test.go`** — a go/ast walk
->   over every non-test file under `internal/api/` that fails on a
->   struct field whose JSON name contains a monetary word (fee/reserve/
->   amount/balance/stroops/coins, unless a count or rate word such as
->   `bps`/`count`/`entries` marks it as not an amount), whose Go type
->   marshals to a JSON number, and whose tag lacks `,string`. It covers
->   named response structs only, not `map[string]any` payloads.
->
-> **Amendment (2026-09-27, GH #926).** "The only escapes today" above is
-> out of date: `defindex_fees.fee_index`
-> (`migrations/0146_create_defindex_fees.up.sql`) also carries one. It
-> is the Vec-position primary-key discriminator of the
-> `distributed_fees` fan-out, not a money value, so the escape is
-> legitimate. The authoritative list is the `lint-money:ok` markers
-> under `migrations/`, not a count in this document.
-
-- **CI grep-lint — `scripts/ci/lint-i128.sh` (built 2026-07-01, wired into
-  `make verify`).** Fast Go-side first line of defence: rejects
-  `int64(<x>.Lo)` / `int(<x>.Lo)` in production Go — truncating a
-  128-bit Soroban value to its low word (the classic bug; the correct decode
-  passes lo as `uint64` to `canonical.FromInt128Parts`). Its original
-  migration-column check moved to `scripts/ci/lint-migrations.sh`
-  (2026-07-05, broader name set + escape markers).
-- ~~Lint rule in `.golangci.yml` (via a small custom analyzer) flags
-  any function returning or accepting `int64` whose parameter
-  name contains `amount`, `balance`, `reserve`, `supply`, `price`,
-  `wei`, `stroop`, or `value`.~~ (superseded by the grep-lint above)
-- Code review: CODEOWNERS requirement on `internal/canonical/`
-  means the maintainer sees any change to the core amount type.
-- Fixture tests: `TestAmountRoundTrip_KALIEN_Incident` et al. in
-  `internal/canonical/amount_test.go`.
-
-## References
-
-- Reference correct implementation:
-  `withObsrvr/stellar-extract/scval_converter.go` — verified-correct
-  two's-complement `Int128Parts` handling.
-- Counter-example (the bug we refuse to ship):
-  `withObsrvr/cdp-pipeline-workflow` — its Soroswap router processor
-  reads only the low 64 bits of an `i128`.
+The four checks named in Invariant, all in CI; `lint-i128.sh` is wired into `make verify`.

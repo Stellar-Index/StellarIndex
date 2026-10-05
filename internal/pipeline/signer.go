@@ -58,8 +58,7 @@ type SignerRangeTagger interface {
 // stellar.transactions. Blocks until ctx cancels (run it in its own
 // goroutine); performs one final sweep on shutdown so the last partial window
 // isn't left to the next boot. interval/lookback <= 0 select the defaults.
-func RunSignerTagger(ctx context.Context, logger *slog.Logger, lake SignerLakeReader, store SignerRangeTagger, interval, lookback time.Duration) { //nolint:gocognit // linear trailing-window sweep: range → clamp → scoped lake read → first-wins tag, each step guarded
-
+func RunSignerTagger(ctx context.Context, logger *slog.Logger, lake SignerLakeReader, store SignerRangeTagger, interval, lookback time.Duration) {
 	if interval <= 0 {
 		interval = signerSweepInterval
 	}
@@ -70,61 +69,8 @@ func RunSignerTagger(ctx context.Context, logger *slog.Logger, lake SignerLakeRe
 		logger = slog.Default()
 	}
 
-	sweep := func(sweepCtx context.Context) {
-		now := time.Now().UTC()
-		minL, maxL, ok, err := store.UntaggedAMMSignerLedgerRange(sweepCtx, now.Add(-lookback), now)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return
-			}
-			logger.Warn("signer sweep: range read failed", "err", err)
-			return
-		}
-		if !ok {
-			return // nothing untagged in the window — skip the lake read
-		}
-		// Clamp a wide (cold-start / lag) span to the oldest slice; the rest
-		// is caught on the next tick as min-ledger advances.
-		if maxL-minL+1 > signerSweepMaxLedgerSpan {
-			maxL = minL + signerSweepMaxLedgerSpan - 1
-		}
-		sigs, err := lake.TxSignersForLedgerRange(sweepCtx, minL, maxL)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return
-			}
-			logger.Warn("signer sweep: lake read failed", "err", err, "min_ledger", minL, "max_ledger", maxL)
-			return
-		}
-		if len(sigs) == 0 {
-			return
-		}
-		tags := make([]timescale.SignerTag, len(sigs))
-		tsFrom, tsTo := sigs[0].CloseTime, sigs[0].CloseTime
-		for i, s := range sigs {
-			tags[i] = timescale.SignerTag{Ledger: s.Ledger, TxHash: s.TxHash, Signer: s.Signer}
-			if s.CloseTime.Before(tsFrom) {
-				tsFrom = s.CloseTime
-			}
-			if s.CloseTime.After(tsTo) {
-				tsTo = s.CloseTime
-			}
-		}
-		// Half-open [tsFrom, tsTo+1s) bounds the UPDATE to the tagged txs'
-		// chunk span (+1s makes the inclusive max representable), so the
-		// hypertable prunes instead of scanning/decompressing every chunk.
-		tagged, err := store.TagTradesSigner(sweepCtx, tsFrom, tsTo.Add(time.Second), tags)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return
-			}
-			logger.Warn("signer sweep: tag failed", "err", err)
-			return
-		}
-		if tagged > 0 {
-			logger.Info("signer sweep tagged trades", "tagged", tagged, "ledger_span", maxL-minL+1)
-		}
-	}
+	sw := &signerSweeper{logger: logger, lake: lake, store: store, lookback: lookback}
+	sweep := sw.sweep
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -140,4 +86,90 @@ func RunSignerTagger(ctx context.Context, logger *slog.Logger, lake SignerLakeRe
 			return
 		}
 	}
+}
+
+// signerSweeper holds one tagger's sweep state.
+type signerSweeper struct {
+	logger   *slog.Logger
+	lake     SignerLakeReader
+	store    SignerRangeTagger
+	lookback time.Duration
+	// floor skips past a clamped slice that made no progress: a trade whose tx
+	// is absent from the lake keeps the untagged minimum pinned, which would
+	// otherwise re-read the same slice until the lookback expires.
+	floor uint32
+}
+
+// warn logs a sweep failure unless it is just shutdown.
+func (w *signerSweeper) warn(err error, msg string, args ...any) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	w.logger.Warn(msg, append([]any{"err", err}, args...)...)
+}
+
+func (w *signerSweeper) sweep(ctx context.Context) {
+	now := time.Now().UTC()
+	minL, maxL, ok, err := w.store.UntaggedAMMSignerLedgerRange(ctx, now.Add(-w.lookback), now)
+	if err != nil {
+		w.warn(err, "signer sweep: range read failed")
+		return
+	}
+	if !ok {
+		return // nothing untagged in the window — skip the lake read
+	}
+	if minL < w.floor {
+		minL = w.floor
+		if minL > maxL {
+			return
+		}
+	}
+	// Clamp a wide (cold-start / lag) span to the oldest slice; the rest
+	// is caught on the next tick as min-ledger advances.
+	clamped := maxL-minL+1 > signerSweepMaxLedgerSpan
+	if clamped {
+		maxL = minL + signerSweepMaxLedgerSpan - 1
+	}
+	sigs, err := w.lake.TxSignersForLedgerRange(ctx, minL, maxL)
+	if err != nil {
+		w.warn(err, "signer sweep: lake read failed", "min_ledger", minL, "max_ledger", maxL)
+		return
+	}
+	if len(sigs) == 0 {
+		if clamped {
+			w.floor = maxL + 1
+		}
+		return
+	}
+	tags, tsFrom, tsTo := signerTags(sigs)
+	// Half-open [tsFrom, tsTo+1s) bounds the UPDATE to the tagged txs'
+	// chunk span (+1s makes the inclusive max representable), so the
+	// hypertable prunes instead of scanning/decompressing every chunk.
+	tagged, err := w.store.TagTradesSigner(ctx, tsFrom, tsTo.Add(time.Second), tags)
+	if err != nil {
+		w.warn(err, "signer sweep: tag failed")
+		return
+	}
+	if tagged == 0 && clamped {
+		w.floor = maxL + 1
+	}
+	if tagged > 0 {
+		w.logger.Info("signer sweep tagged trades", "tagged", tagged, "ledger_span", maxL-minL+1)
+	}
+}
+
+// signerTags converts lake rows to tags plus their inclusive close-time span.
+func signerTags(sigs []clickhouse.TxSigner) (tags []timescale.SignerTag, from, to time.Time) {
+	tags = make([]timescale.SignerTag, len(sigs))
+	from, to = sigs[0].CloseTime, sigs[0].CloseTime
+	for i, s := range sigs {
+		tags[i] = timescale.SignerTag{Ledger: s.Ledger, TxHash: s.TxHash, Signer: s.Signer}
+		if s.CloseTime.Before(from) {
+			from = s.CloseTime
+		}
+		if s.CloseTime.After(to) {
+			to = s.CloseTime
+		}
+	}
+	return tags, from, to
 }

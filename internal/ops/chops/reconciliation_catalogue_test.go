@@ -61,8 +61,8 @@ func TestBuildReconciliationCatalogue_PromotesSEP41WhenWatched(t *testing.T) {
 			if src.genesis != 50_457_424 {
 				t.Errorf("%s: genesis = %d, want 50_457_424 (sorobanEraGenesis)", src.name, src.genesis)
 			}
-			if src.aggregateReconcile != "" {
-				t.Errorf("%s: must stay on the strict per-ledger reconcile (CS-084), got opt-out %q", src.name, src.aggregateReconcile)
+			if src.aggregate != nil {
+				t.Errorf("%s: must stay on the strict per-ledger reconcile (CS-084), got opt-out %q", src.name, src.aggregate.reason)
 			}
 		}
 	}
@@ -190,8 +190,8 @@ func TestBuildSEP41ReconSources_OptIn(t *testing.T) {
 			t.Errorf("%s: whereFilter = %q, want %q (watched-set scoping matching the expected side)",
 				src.name, tgt.whereFilter, wantSEP41Filter)
 		}
-		if src.aggregateReconcile != "" {
-			t.Errorf("%s: must stay on the strict per-ledger reconcile (CS-084), got opt-out %q", src.name, src.aggregateReconcile)
+		if src.aggregate != nil {
+			t.Errorf("%s: must stay on the strict per-ledger reconcile (CS-084), got opt-out %q", src.name, src.aggregate.reason)
 		}
 	}
 	for name := range want {

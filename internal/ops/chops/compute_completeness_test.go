@@ -187,7 +187,7 @@ func TestProjectionDelta_CleanIsClean(t *testing.T) {
 	counts := map[uint32]int{100: 5, 200: 3}
 	for _, src := range []reconSource{
 		{name: "strict"},
-		{name: "agg", aggregateReconcile: "test reason"},
+		{name: "agg", aggregate: &aggregateWaiver{reason: "test reason", boundary: 1000}},
 	} {
 		delta, detail := projectionDelta(src, "trades", counts, map[uint32]int{100: 5, 200: 3}, 100, 200)
 		if delta != 0 || detail != "" {
@@ -201,7 +201,7 @@ func TestProjectionDelta_CleanIsClean(t *testing.T) {
 // across ledgers within the scope is tolerated (the documented
 // residual), while a real net loss still fails.
 func TestProjectionDelta_AggregateModeToleratesShift(t *testing.T) {
-	src := reconSource{name: "reflector-dex", aggregateReconcile: "keying vintages"}
+	src := reconSource{name: "reflector-dex", aggregate: &aggregateWaiver{reason: "keying vintages", boundary: 1000}}
 
 	// Shift: same total, different ledgers — tolerated by design.
 	delta, _ := projectionDelta(src, "oracle_updates",
@@ -232,23 +232,23 @@ func TestProjectionDelta_AggregateModeToleratesShift(t *testing.T) {
 }
 
 // TestProjectionDelta_VintageSplitClosesNettingHole pins the phoenix #15 split
-// (W1-flowcompleteness-3): an aggregateReconcile source with a vintageBoundary
+// (W1-flowcompleteness-3): an aggregate-waiver source with a boundary
 // keeps the netting tolerance BELOW the boundary but reconciles STRICT above
 // it, so a real post-boundary drop can no longer net against a pre-boundary
 // phantom the way a full-window aggregate lets it.
 func TestProjectionDelta_VintageSplitClosesNettingHole(t *testing.T) {
 	const boundary = 200
-	split := reconSource{name: "phoenix", aggregateReconcile: "sweep shift", vintageBoundary: boundary}
-	full := reconSource{name: "phoenix-nowindow", aggregateReconcile: "sweep shift"} // vintageBoundary 0
+	split := reconSource{name: "phoenix", aggregate: &aggregateWaiver{reason: "sweep shift", boundary: boundary}}
+	whole := reconSource{name: "phoenix-whole", aggregate: &aggregateWaiver{reason: "sweep shift", boundary: 300}}
 
 	// The netting HOLE: a +2 phantom at pre-boundary ledger 100 exactly cancels
 	// a -2 real drop at post-boundary ledger 300 in a window total.
 	expected := map[uint32]int{100: 5, 300: 5}
 	actual := map[uint32]int{100: 7, 300: 3}
 
-	// Full-window aggregate (no boundary) NETS them to 0 — the bug.
-	if d, _ := projectionDelta(full, "trades", expected, actual, 100, 300); d != 0 {
-		t.Fatalf("full aggregate should net the hole to 0 (that's the bug being closed), got delta=%d", d)
+	// A boundary at the window's top nets them to 0 — the residual it accepts.
+	if d, _ := projectionDelta(whole, "trades", expected, actual, 100, 300); d != 0 {
+		t.Fatalf("all-pre-boundary aggregate should net the hole to 0, got delta=%d", d)
 	}
 	// The vintage split CATCHES it: pre-aggregate Δ=2 (100) + post-strict Δ=2 (300).
 	d, detail := projectionDelta(split, "trades", expected, actual, 100, 300)
@@ -272,17 +272,29 @@ func TestProjectionDelta_VintageSplitClosesNettingHole(t *testing.T) {
 	}
 }
 
-// TestReconciliationCatalogue_OracleSourcesOptOut — only sources with a
-// documented, ledger-keying-legitimate reason may carry
-// aggregateReconcile; every other source must stay on the strict
-// per-ledger default. Guards against someone quietly opting a source out
-// of CS-084 strictness. The allow-set is the four oracle sources (write-
-// vintage keying) plus phoenix (pre-upgrade 7-field sweep-emit shifts a
-// trade to a later ledger than its served row — window-total netting
-// absorbs the documented shift; see reconciliation_catalogue.go). Adding
-// a name here must be paired with a written aggregateReconcile reason on
-// its catalogue entry.
-func TestReconciliationCatalogue_OracleSourcesOptOut(t *testing.T) {
+// TestProjectionDelta_WaiverWithoutBoundaryIsStrict is the gh#669 reflector-dex
+// worked example: a drop of 3 at 63,004,102 and 3 phantoms at 63,001,900. A
+// full-window netting compare reports Σ|Δ| = 0 and complete=true; a waiver with
+// no boundary must reconcile strict and report 6.
+func TestProjectionDelta_WaiverWithoutBoundaryIsStrict(t *testing.T) {
+	const lo, hi = 63_000_000, 63_017_280
+	src := reconSource{name: "reflector-dex", aggregate: &aggregateWaiver{reason: "keying vintages"}}
+	expected := map[uint32]int{63_001_900: 10, 63_004_102: 10}
+	actual := map[uint32]int{63_001_900: 13, 63_004_102: 7}
+
+	d, detail := projectionDelta(src, "oracle_updates", expected, actual, lo, hi)
+	if d != 6 {
+		t.Fatalf("boundary-less waiver netted the drop against the phantoms: delta=%d want 6", d)
+	}
+	if !strings.Contains(detail, "without boundary") {
+		t.Errorf("detail should say the waiver had no boundary, got: %s", detail)
+	}
+}
+
+// TestReconciliationCatalogue_AggregateWaiversAreBounded — only allow-listed
+// sources with a documented ledger-keying reason may opt out of strict
+// per-ledger reconcile, and every opt-out must carry its vintage boundary.
+func TestReconciliationCatalogue_AggregateWaiversAreBounded(t *testing.T) {
 	// phoenix RETIRED its opt-out 2026-08-21: the eventLedgerCarrier
 	// own-ledger attribution counts sweep-rescued 7-field-era trades at
 	// their first-field ledger, so the shift the netting absorbed no
@@ -290,10 +302,11 @@ func TestReconciliationCatalogue_OracleSourcesOptOut(t *testing.T) {
 	// 246,725 == 246,725) before removal. Phoenix reconciles strict
 	// per-ledger; re-adding it to this allowlist requires a NEW
 	// documented ledger-keying reason, not the old one.
-	allowedAggregate := map[string]bool{
-		"reflector-dex": true, "reflector-cex": true, "reflector-fx": true,
-		"redstone": true,
-	}
+	//
+	// The four oracle sources retired theirs: every served oracle_updates
+	// (source, ledger, tx_hash) sits on its lake event's ledger (see the
+	// catalogue comment), so no keying vintage is left to net over.
+	allowedAggregate := map[string]bool{}
 	cfg := testConfigWithAllSources()
 	cat, _, err := buildReconciliationCatalogue(cfg)
 	if err != nil {
@@ -303,11 +316,15 @@ func TestReconciliationCatalogue_OracleSourcesOptOut(t *testing.T) {
 		t.Fatalf("catalogue unexpectedly small (%d) — test config not enabling sources?", len(cat))
 	}
 	for _, src := range cat {
-		if src.aggregateReconcile != "" && !allowedAggregate[src.name] {
-			t.Errorf("%s opted out of strict per-ledger reconcile (%q) — only the allow-listed sources with a documented ledger-keying reason may", src.name, src.aggregateReconcile)
+		w := src.aggregate
+		if w == nil {
+			continue
 		}
-		if allowedAggregate[src.name] && src.aggregateReconcile == "" {
-			t.Errorf("%s should carry aggregateReconcile (documented ledger-keying reason)", src.name)
+		if !allowedAggregate[src.name] {
+			t.Errorf("%s opted out of strict per-ledger reconcile (%q) — only the allow-listed sources with a documented ledger-keying reason may", src.name, w.reason)
+		}
+		if w.reason == "" || w.boundary == 0 {
+			t.Errorf("%s: aggregate waiver needs a reason and a boundary > 0 (got reason=%q boundary=%d) — netting without the bound that justifies it hides a live drop", src.name, w.reason, w.boundary)
 		}
 	}
 }

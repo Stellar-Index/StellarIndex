@@ -130,7 +130,7 @@ Guard against the cascade class recurring: a repo test that every `FROM oracle_u
 
 ## 6. Backfill / replay plan and the completeness gate
 
-Expected side of the gate = the SAME decoders run over the lake (`compute_completeness.go expectedProjection`: band via `reDeriveContractCallCensus` keyed `(tx, op_index, ts)`; reflector/redstone via `ReDeriveOutputCountsByKindFromEvents` summing `reflector.update` / `redstone.update`; catalogue at `reconciliation_catalogue.go:450-489`, oracle sources use the `aggregateReconcile` totals compare). Decode errors soft-fail to zero on both sides. Consequences:
+Expected side of the gate = the SAME decoders run over the lake (`compute_completeness.go expectedProjection`: band via `reDeriveContractCallCensus` keyed `(tx, op_index, ts)`; reflector/redstone via `ReDeriveOutputCountsByKindFromEvents` summing `reflector.update` / `redstone.update`; catalogue at `reconciliation_catalogue.go:450-489`, oracle sources reconcile strict per-ledger). Decode errors soft-fail to zero on both sides. Consequences:
 
 1. Deploying the new decoder makes the expected side rise by every historical unmapped entry while served does not → all five oracle sources read incomplete (Δ = total unmapped rows) until replayed. Sequence deploy + replay in one window.
 2. After replay, Δ returns to 0 with no gate change — the gate is symmetric by construction.

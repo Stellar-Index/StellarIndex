@@ -35,6 +35,13 @@
 set -uo pipefail
 
 CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
+# INV-0802: CH as ops_admin once the role renders this file; /dev/null (no
+# credential, CH `default`) until then, so no deploy order strands this script.
+CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-admin.netrc}"
+if [[ ! -r "$CH_NETRC" ]]; then
+  echo "ch-lake-backup.sh: credential file $CH_NETRC unreadable; using ClickHouse default user" >&2
+  CH_NETRC=/dev/null
+fi
 CH_DATABASE="${CH_DATABASE:-stellar}"
 BACKUP_DISK="${BACKUP_DISK:-}"
 STATE_DIR="${STATE_DIR:-/var/lib/stellarindex/ch-lake-backup}"
@@ -57,7 +64,7 @@ full_unix=""
 last_error=""
 
 note() { echo "ch-lake-backup: $*" >&2; }
-ch() { curl -sSf --max-time 120 "$CH_HTTP" --data-binary "$1"; }
+ch() { curl -sSf --max-time 120 --netrc-file "$CH_NETRC" "$CH_HTTP" --data-binary "$1"; }
 disk_ref() { printf "Disk('%s', '%s')" "$BACKUP_DISK" "$1"; }
 
 write_metrics() {

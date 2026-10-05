@@ -78,9 +78,8 @@ env:
   # (upstream sha256sums.txt) and belongs in the reviewable diff:
   # storing it as a secret gained nothing and left main CI hard-red
   # for 24h+ whenever the secret was unset — invisible to local
-  # `make verify`. The `secrets.*` references remain as an OPTIONAL
-  # override (a set secret wins); an unset secret now falls back to
-  # the committed default instead of fail-fast.
+  # `make verify`. The committed default is the only source: a stale
+  # repo secret used to override it and red a correct bump.
   #
   # Bump procedure: bump the VERSION; copy the matching SHA from the
   # upstream release (Prometheus publishes sha256sums.txt; gitleaks
@@ -88,8 +87,6 @@ env:
   # IN THE SAME COMMIT. CI fails loudly on a stale SHA — the message
   # names the tarball and shows expected-vs-actual.
   GITLEAKS_TARBALL_SHA256_DEFAULT: "5bc41815076e6ed6ef8fbecc9d9b75bcae31f39029ceb55da08086315316e3ba"
-  PROM_TARBALL_SHA256: ${{ secrets.PROM_TARBALL_SHA256 }}
-  GITLEAKS_TARBALL_SHA256: ${{ secrets.GITLEAKS_TARBALL_SHA256 }}
 
 # Cancel old runs on the same ref when a new one starts.
 concurrency:
@@ -1008,10 +1005,11 @@ jobs:
         # source lint-i128 scans, the git history lint-baseline-growth
         # diffs) — only the checker's own source is pinned to the base.
         #
-        # These three guard the #1 money + i128 ADR-0003 invariants (and
-        # the baseline-tripwire that guards everyone else); deliberately
-        # scoped to them (medium-severity CID-03 scope) rather than every
-        # scripts/ci/*.sh: a blanket policy
+        # The first three guard the #1 money + i128 ADR-0003 invariants (and
+        # the baseline-tripwire that guards everyone else); lint-imports.sh
+        # and lint-deploy-systemd-authority.sh run in this job and read
+        # grandfather baselines/ORPHANS, so they are pinned too. Deliberately
+        # not every scripts/ci/*.sh: a blanket policy
         # would also block a PR from ever exercising ITS OWN fix to
         # any other gate script in the same PR that adds the case it
         # fixes — a real workflow cost this repo does not currently
@@ -1035,7 +1033,7 @@ jobs:
             echo "::warning::BASE_SHA ${BASE_SHA} not in local history — running PR-head gate scripts (fetch-depth too shallow?)."
             exit 0
           fi
-          for f in scripts/ci/lint-migrations.sh scripts/ci/lint-i128.sh scripts/ci/lint-baseline-growth.sh; do
+          for f in scripts/ci/lint-migrations.sh scripts/ci/lint-i128.sh scripts/ci/lint-baseline-growth.sh scripts/ci/lint-imports.sh scripts/ci/lint-deploy-systemd-authority.sh; do
             if git show "${BASE_SHA}:${f}" > "${f}.trusted" 2>/dev/null; then
               mv "${f}.trusted" "$f"
               chmod +x "$f"
@@ -1820,8 +1818,7 @@ jobs:
       # checksum is public (from the upstream sha256sums.txt) and belongs in the
       # reviewable diff: bumping PROM_VERSION obligates bumping this in the same
       # commit. Storing it as a secret gained nothing and left CI hard-red for
-      # 24h+ whenever the secret was unset. The `secrets.PROM_TARBALL_SHA256`
-      # override below is retained only as an optional escape hatch.
+      # 24h+ whenever the secret was unset. No secret override exists.
       PROM_TARBALL_SHA256_DEFAULT: "19700bdd42ec31ee162e4079ebda4cd0a44432df4daa637141bdbea4b1cd8927"
       AM_VERSION: "0.28.1"
       # Same C4-17b convention as PROM_TARBALL_SHA256_DEFAULT above: the
@@ -1849,9 +1846,8 @@ jobs:
           # Pre-fix this was `curl | tar -xz` straight, no
           # checksum. Now we download, verify, then unpack.
           # Checksum source (audit-2026-07-16 C4-17b): the committed
-          # PROM_TARBALL_SHA256_DEFAULT (in the job env, versioned + reviewable),
-          # overridable by an optional repo secret. No unset-secret hard-red.
-          SHA="${PROM_TARBALL_SHA256:-$PROM_TARBALL_SHA256_DEFAULT}"
+          # PROM_TARBALL_SHA256_DEFAULT (in the job env, versioned + reviewable).
+          SHA="$PROM_TARBALL_SHA256_DEFAULT"
           curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/prometheus-${PROM_VERSION}.linux-amd64.tar.gz" -o /tmp/prom.tar.gz
           echo "${SHA}  /tmp/prom.tar.gz" | sha256sum -c -
           tar -xzf /tmp/prom.tar.gz
@@ -1980,8 +1976,8 @@ jobs:
           # checksum. Now we download, verify, then unpack.
           # Checksum source (audit-2026-07-16 C4-17b): the committed
           # GITLEAKS_TARBALL_SHA256_DEFAULT (top-level env, versioned +
-          # reviewable), overridable by an optional repo secret.
-          SHA="${GITLEAKS_TARBALL_SHA256:-$GITLEAKS_TARBALL_SHA256_DEFAULT}"
+          # reviewable).
+          SHA="$GITLEAKS_TARBALL_SHA256_DEFAULT"
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
           echo "${SHA}  /tmp/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
@@ -2060,6 +2056,12 @@ jobs:
         run: go run ./scripts/ci/lint-pk-discriminators
       - name: INV-3 derive_generation guard check
         run: go run ./scripts/ci/lint-derive-generation-guard
+      - name: lint-comments
+        # No new date, ticket id, #nnn or PR n in a product Go comment;
+        # scripts/ci/lint-comments.baseline only shrinks.
+        run: ./scripts/ci/lint-comments.sh
+      - name: lint-comments self-test
+        run: ./scripts/ci/lint-comments-test.sh
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: "24"
