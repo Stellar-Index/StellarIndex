@@ -61,6 +61,7 @@ case "$q" in
     # The first call is the start-of-run check; MOCK_SWEEP_RUNNING answers
     # the later one (op id, or "fail" for an unreachable server).
     n=$(( $(cat "$MOCK_DISK.calls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$MOCK_DISK.calls"
+    if [[ "$n" -eq 1 && "${MOCK_START_FAIL:-}" == 1 ]]; then exit 22; fi
     if [[ "$n" -gt 1 && "${MOCK_SWEEP_RUNNING:-}" == fail ]]; then exit 22; fi
     if [[ "$n" -gt 1 ]]; then echo "${MOCK_SWEEP_RUNNING:-}"; else echo "${MOCK_RUNNING:-}"; fi ;;
   "BACKUP DATABASE"*)
@@ -87,6 +88,14 @@ case "$q" in
   *) exit 64 ;;
 esac
 STUB
+# macOS has no flock(1); the shim answers "held" only when MOCK_LOCK_HELD=1.
+if ! command -v flock >/dev/null 2>&1; then
+  cat > "$TMP/bin/flock" <<'STUB'
+#!/usr/bin/env bash
+[[ "${MOCK_LOCK_HELD:-}" != 1 ]]
+STUB
+  chmod +x "$TMP/bin/flock"
+fi
 chmod +x "$TMP/bin/curl" "$TMP/bin/disks"
 
 run() {
@@ -261,6 +270,50 @@ expect_rc 0 "the next incremental retries the sweep and exits 0"
 off_disk "stellar/20200102T000000Z" "the retried sweep removes the orphan"
 on_disk "stellar/$cur" "the current chain survives every case"
 if [[ -e "$TMP/state/swept" ]]; then ok "a clean sweep is recorded"; else bad "a clean sweep is recorded"; fi
+
+echo "9. the run lock and the fail-closed start check"
+reset
+mkdir -p "$TMP/state"
+holder=""
+if command -v flock >/dev/null 2>&1; then
+  ( exec 9>"$TMP/state/lock"; flock -n 9 || exit 1; sleep 30 ) &
+  holder=$!
+  sleep 1
+fi
+MOCK_LOCK_HELD=1 run; rc=$?
+[[ -n "$holder" ]] && { kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null; }
+if [[ "$rc" -ne 0 ]]; then ok "a held lock exits non-zero"; else bad "a held lock exits non-zero"; fi
+file_empty "$TMP/queries" "a held lock issues no BACKUP"
+prom_unstamped "a held lock stamps nothing"
+reset
+MOCK_START_FAIL=1 run; rc=$?
+if [[ "$rc" -ne 0 ]]; then ok "an unreadable system.backups exits non-zero"; else bad "an unreadable system.backups exits non-zero"; fi
+file_empty "$TMP/queries" "an unreadable system.backups issues no BACKUP"
+if grep -q "cannot read system.backups" "$TMP/stderr"; then ok "the refusal is logged"; else bad "the refusal is logged"; fi
+
+echo "10. the sweep refuses when the current chain is not on record"
+reset
+mkdir -p "$TMP/disk/stellar/20200101T000000Z"
+run
+cur="$(cat "$TMP/state/chains")"
+off_disk "stellar/20200101T000000Z" "setup: the sweep removed the orphan on a trusted record"
+mkdir -p "$TMP/disk/stellar/20200102T000000Z"
+rm -f "$TMP/state/swept"
+echo "20190101T000000Z" > "$TMP/state/chains"
+sleep 1
+run; rc=$?
+expect_rc 2 "an untrusted record exits 2"
+on_disk "stellar/20200102T000000Z" "nothing deleted when the current chain is not on record"
+on_disk "stellar/$cur" "the current chain is kept"
+
+echo "11. only timestamp-named folders under the database directory are deletable"
+reset
+mkdir -p "$TMP/disk/stellar/20200101T000000Z" "$TMP/disk/stellar/lake-manual-copy"   "$TMP/disk/stellar/20200101T000000" "$TMP/disk/stellar/x20200101T000000Zx"
+run
+off_disk "stellar/20200101T000000Z" "the timestamp-named orphan is removed"
+on_disk "stellar/lake-manual-copy" "a non-timestamp folder is never deleted"
+on_disk "stellar/20200101T000000" "a near-miss name without the Z is never deleted"
+on_disk "stellar/x20200101T000000Zx" "a name merely containing a timestamp is never deleted"
 
 echo
 echo "ch-lake-backup-test: $pass passed, $fail failed"

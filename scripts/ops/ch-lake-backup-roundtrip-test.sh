@@ -25,6 +25,11 @@ TMP="$(mktemp -d)"
 name="ch-lake-backup-rt-$$"
 cleanup() { docker rm -f "$name" >/dev/null 2>&1; rm -rf "$TMP"; }
 trap cleanup EXIT
+# macOS has no flock(1); this test runs one backup at a time, so a no-op is faithful.
+if ! command -v flock >/dev/null 2>&1; then
+  mkdir -p "$TMP/bin"; printf '#!/bin/sh\nexit 0\n' > "$TMP/bin/flock"; chmod +x "$TMP/bin/flock"
+  export PATH="$TMP/bin:$PATH"
+fi
 
 cat > "$TMP/si-lake-backup.xml" <<'EOF'
 <clickhouse>

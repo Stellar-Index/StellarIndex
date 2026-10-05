@@ -249,7 +249,21 @@ main() {
     return 1
   fi
   mkdir -p "$STATE_DIR" || { note "cannot create $STATE_DIR"; write_metrics; return 1; }
-  if [[ -n "$(running_backups)" ]]; then
+  # Serialises runs: the sweep is only safe with no other run mid-upload.
+  exec 9>"$STATE_DIR/lock" || { note "cannot open $STATE_DIR/lock"; write_metrics; return 1; }
+  if ! flock -n 9; then
+    note "another ch-lake-backup run holds $STATE_DIR/lock — not starting"
+    write_metrics
+    return 1
+  fi
+  # Fail closed: an unreadable system.backups must not read as "nothing running".
+  local running
+  if ! running="$(running_backups)"; then
+    note "cannot read system.backups — not starting"
+    write_metrics
+    return 1
+  fi
+  if [[ -n "$running" ]]; then
     note "a backup to $BACKUP_DISK is already running — not starting a second"
     write_metrics
     return 1
