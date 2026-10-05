@@ -1,4 +1,4 @@
-package main
+package accounts
 
 import (
 	"bytes"
@@ -91,8 +91,8 @@ func TestAccountErase_FlagValidation(t *testing.T) {
 		{"-config", "x.toml", "-account-id", uuid.NewString(), "-finish-slug", "a"},
 		{"-config", "x.toml", "-account-id", "not-a-uuid"},
 	} {
-		if err := accountErase(args); err == nil {
-			t.Errorf("accountErase(%v) accepted", args)
+		if err := Erase(args); err == nil {
+			t.Errorf("Erase(%v) accepted", args)
 		}
 	}
 }

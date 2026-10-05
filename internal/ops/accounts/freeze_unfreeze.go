@@ -1,4 +1,4 @@
-package main
+package accounts
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// freezeUnfreeze is the OPERATOR half of ADR-0019's freeze lifecycle.
+// FreezeUnfreeze is the OPERATOR half of ADR-0019's freeze lifecycle.
 //
 // ADR-0019 is explicit that an ESCALATED freeze — one that climbed the whole
 // 4 × 30-minute extension ladder without earning its auto-unfreeze — "stays
@@ -63,7 +63,7 @@ import (
 // admin API applies to every privileged write: an unfreeze overrides an
 // automated safety control on a money surface, and "who and why" has to be
 // in the record, not in someone's memory.
-func freezeUnfreeze(args []string) error {
+func FreezeUnfreeze(args []string) error {
 	fs := flag.NewFlagSet("freeze-unfreeze", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	list := fs.Bool("list", false, "list every currently-open freeze with its ladder state, and exit without changing anything")
@@ -160,7 +160,7 @@ func resolveUnfreezeMutationInputs(list bool, assetFlag, quoteFlag, reasonFlag, 
 }
 
 // newFreezeWriterForOps builds the freeze.Writer this command reads and
-// clears through. Extracted from [freezeUnfreeze] so the WIRING itself is
+// clears through. Extracted from [FreezeUnfreeze] so the WIRING itself is
 // unit-testable — it is the load-bearing part, not an incidental detail.
 //
 // The ladder store (migration 0119) is what makes both halves of this

@@ -1,4 +1,4 @@
-package main
+package accounts
 
 import (
 	"bytes"
@@ -141,7 +141,7 @@ func TestUnfreezePair_DryRunTouchesNothing(t *testing.T) {
 // privileged write with no X-Reason; the CLI equivalent must refuse too,
 // BEFORE it opens Postgres or Redis.
 func TestFreezeUnfreeze_RequiresReasonForAMutation(t *testing.T) {
-	err := freezeUnfreeze([]string{
+	err := FreezeUnfreeze([]string{
 		"-config", "/nonexistent/stellarindex.toml",
 		"-asset", "native",
 		"-quote", "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
@@ -154,7 +154,7 @@ func TestFreezeUnfreeze_RequiresReasonForAMutation(t *testing.T) {
 	}
 
 	// Whitespace is not a reason.
-	err = freezeUnfreeze([]string{
+	err = FreezeUnfreeze([]string{
 		"-config", "/nonexistent/stellarindex.toml",
 		"-asset", "native",
 		"-quote", "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
@@ -168,7 +168,7 @@ func TestFreezeUnfreeze_RequiresReasonForAMutation(t *testing.T) {
 // TestFreezeUnfreeze_RequiresPairOrList — the command must not fall through
 // to some default target when neither a pair nor -list was given.
 func TestFreezeUnfreeze_RequiresPairOrList(t *testing.T) {
-	err := freezeUnfreeze([]string{"-config", "/nonexistent/stellarindex.toml"})
+	err := FreezeUnfreeze([]string{"-config", "/nonexistent/stellarindex.toml"})
 	if err == nil || !strings.Contains(err.Error(), "-asset and -quote are required") {
 		t.Errorf("expected the missing-pair refusal, got: %v", err)
 	}
@@ -189,56 +189,10 @@ func TestFreezeUnfreeze_UnconfiguredRedisIsAnErrorNotAPanic(t *testing.T) {
 		{"-config", cfgPath, "-list"},
 		{"-config", cfgPath, "-asset", "native", "-quote", "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", "-reason", "test"},
 	} {
-		err := freezeUnfreeze(args)
+		err := FreezeUnfreeze(args)
 		if err == nil || !strings.Contains(err.Error(), "redis is not configured") {
-			t.Errorf("freezeUnfreeze(%v): want the redis-not-configured refusal, got: %v", args, err)
+			t.Errorf("FreezeUnfreeze(%v): want the redis-not-configured refusal, got: %v", args, err)
 		}
-	}
-}
-
-// TestSubcommandDispatch_LeafHandlersSeeTheirFlags is the coverage that was
-// missing and let every leaf subcommand ship UNINVOKABLE.
-//
-// The dispatch table hands a handler the FULL argv (args[0] == the verb).
-// Go's flag package stops parsing at the first non-flag argument, so a leaf
-// handler doing fs.Parse(args) on that argv parses NOTHING and every flag
-// keeps its zero value: `stellarindex-ops usage-rollup-backfill -config
-// /etc/stellarindex.toml -from 2026-07-19` answered "-config is required"
-// and there was no way to run it at all. The existing unit tests all call
-// the handlers DIRECTLY with flags-only argv, so they exercised the
-// convention the handlers wanted and never the one the dispatcher used —
-// which is precisely why nothing caught it.
-//
-// This test goes through `subcommands`, the way main() does. The assertion
-// is deliberately "the error is NOT the no-flags-parsed symptom": each
-// handler's next gate differs, but every one of them reports
-// "-config is required" if and only if the flags were dropped.
-func TestSubcommandDispatch_LeafHandlersSeeTheirFlags(t *testing.T) {
-	cases := []struct {
-		verb string
-		argv []string
-	}{
-		{"mint-key", []string{"mint-key", "-config", "/nonexistent.toml", "-identifier", "customer-acme", "-label", "Acme"}},
-		{"upgrade-key", []string{"upgrade-key", "-config", "/nonexistent.toml"}},
-		{"emit-incident", []string{"emit-incident", "-config", "/nonexistent.toml", "-slug", "s", "-event", "sev1"}},
-		{"usage-rollup-backfill", []string{"usage-rollup-backfill", "-config", "/nonexistent.toml", "-from", "2026-07-19"}},
-		{"freeze-unfreeze", []string{"freeze-unfreeze", "-config", "/nonexistent.toml", "-list"}},
-		{"change-summary-reset", []string{"change-summary-reset", "-config", "/nonexistent.toml", "-entity-type", "coin", "-entity-id", "crypto:XLM"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.verb, func(t *testing.T) {
-			run, ok := subcommands[tc.verb]
-			if !ok {
-				t.Fatalf("%s is not in the dispatch table", tc.verb)
-			}
-			err := run(tc.argv)
-			if err == nil {
-				t.Fatalf("%s: expected an error (the config file does not exist)", tc.verb)
-			}
-			if strings.Contains(err.Error(), "-config is required") {
-				t.Fatalf("%s: dispatch dropped the flags — -config was passed but the handler never saw it (got %q). The subcommand is uninvokable from the CLI.", tc.verb, err)
-			}
-		})
 	}
 }
 
@@ -365,7 +319,7 @@ func TestUnfreezePair_OperatorWinsTheRehydrateRace(t *testing.T) {
 		t.Fatalf("precondition: the pair must start frozen (present=%v, err=%v)", present, err)
 	}
 
-	// The operator's writer, built exactly as freezeUnfreeze() builds it.
+	// The operator's writer, built exactly as FreezeUnfreeze() builds it.
 	opsWriter, err := newFreezeWriterForOps(rdb, ladder)
 	if err != nil {
 		t.Fatalf("newFreezeWriterForOps: %v", err)
@@ -591,4 +545,18 @@ func captureStdout(t *testing.T, fn func()) string {
 	_ = w.Close()
 	os.Stdout = orig
 	return <-done
+}
+
+// recordingAudit is the in-memory keys.AuditSink the freeze-unfreeze tests use.
+type recordingAudit struct {
+	entries []platform.AuditEntry
+	err     error
+}
+
+func (r *recordingAudit) Append(_ context.Context, e platform.AuditEntry) error {
+	if r.err != nil {
+		return r.err
+	}
+	r.entries = append(r.entries, e)
+	return nil
 }

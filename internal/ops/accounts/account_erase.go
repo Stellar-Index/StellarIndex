@@ -1,4 +1,4 @@
-package main
+package accounts
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// accountErase is the operator path for an erasure request received
+// Erase is the operator path for an erasure request received
 // outside the dashboard, and for finishing one whose post-commit Redis
 // cleanup did not complete (GH #809). It calls the same
 // accounterasure.Eraser as DELETE /v1/dashboard/account.
@@ -30,7 +30,7 @@ import (
 //
 // Dry-run unless -write: it prints what would be removed. Output carries
 // counts and ids only, never an address.
-func accountErase(args []string) error {
+func Erase(args []string) error {
 	fs := flag.NewFlagSet("account-erase", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	idStr := fs.String("account-id", "", "Account uuid to erase")
