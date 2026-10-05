@@ -30,8 +30,11 @@ aggregator. A same-code token from another issuer is not in the set.
 Supply and price come from the same reads `/v1/assets` uses (supply
 preference chain, substance gate, dust guard). The price is the real pair
 price and is never coerced to the peg, so a depeg shows. `supply_usd` is
-`circulating_supply / 10^decimals * price_usd`, rounded to cents in exact
-rational arithmetic. All amounts are decimal strings.
+the asset's `/v1/assets` market cap. When that market cap is withheld
+(the Stellar price failed the substance gate and a global-market or
+declared-peg price fills in), the row is `withheld`, shows its
+`price_basis`, and is named in `total.not_summed` as `market_cap_withheld`.
+All amounts are decimal strings.
 
 ## The total
 
