@@ -1069,6 +1069,11 @@ groups:
       # textfile, so it never enters the arm. 96 h,
       # not 36: a full of the lake runs ~2 days at the default bandwidth
       # cap, and the incrementals it delays must not ticket.
+      # The last two arms watch the FULL: last_full_unix is written on every
+      # run from the chain record, so it is absent only while no confirmed
+      # full exists (never, or after a reset), and its age past
+      # FULL_INTERVAL_DAYS + 4 d means new fulls keep failing while the old
+      # chain ages (4 d = a ~2-day full plus one retry).
       - alert: stellarindex_ch_lake_backup_stale
         expr: |
           (time() - stellarindex_ch_lake_backup_last_success_unix) > 96 * 3600
@@ -1078,6 +1083,18 @@ groups:
             unless on (instance)
             max_over_time(stellarindex_ch_lake_backup_last_success_unix[96h])
           )
+          or
+          (
+            (time() - stellarindex_ch_lake_backup_last_full_unix)
+            >
+            (stellarindex_ch_lake_backup_full_interval_days + 4) * 86400
+          )
+          or
+          (
+            stellarindex_ch_lake_backup_configured == 1
+            unless on (instance)
+            max_over_time(stellarindex_ch_lake_backup_last_full_unix[72h])
+          )
         for: 1h
         labels:
           severity: ticket
@@ -1085,10 +1102,12 @@ groups:
           component: storage
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-lake-backup.md
-          summary: "ClickHouse lake has no data backup younger than 96 h on {{ $labels.instance }}"
+          summary: "ClickHouse lake has no current off-site backup on {{ $labels.instance }}"
           description: |
-            No ch-lake-backup run has completed on this host in 96 h, or
-            none ever has. Without one the lake's only recovery path is a
+            No ch-lake-backup run has completed on this host in 96 h (or
+            none ever has), no confirmed full has been on record for 72 h,
+            or the recorded full is older than FULL_INTERVAL_DAYS + 4 d.
+            Without a current chain the lake's only recovery path is a
             re-derive from the Galexie archive (~1–2 weeks) instead of a
             restore (hours). `stellarindex_ch_lake_backup_configured`
             splits the cases: 0 = no off-site disk configured (set
