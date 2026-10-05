@@ -68,7 +68,7 @@ func decodeNewAuctionV1(e *events.Event, closedAt time.Time) (NewAuctionEvent, e
 	return NewAuctionEvent{
 		Pool:        e.ContractID,
 		AuctionType: auctionType,
-		User:        MainnetBackstopV1,
+		User:        MainnetBackstopV1, // every V1 pool comes from the mainnet V1 factory, which binds this backstop
 		Percent:     v1BackstopAuctionPct,
 		Data:        data,
 		Ledger:      e.Ledger,

@@ -524,7 +524,7 @@ pinned in `test/fixtures/blend/v1-pool-auctions/`.
 V1 announces user liquidations with `new_liquidation_auction`, so
 `new_auction` carries only BadDebt (3 events) and Interest (432
 events), and a UserLiquidation there is rejected. V1 keys those
-auctions on the pool's backstop. All 438 V1 BadDebt and Interest
+auctions on the pool's backstop. All 435 V1 BadDebt and Interest
 `fill_auction` events name `CAO3AGAM…` (`MainnetBackstopV1`) as the
 user. The percent of 100 comes from the bad-debt rows: the `bad_debt`
 `d_tokens` sum exactly to the next `new_auction` bid (ledgers
