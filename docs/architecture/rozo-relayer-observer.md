@@ -18,10 +18,16 @@ side over `stellar.account_movements` instead. Why:
   writer of the same facts.
 - Post-P23 (ledger 58,762,517) the same payments arrive via
   `sep41_transfers`; `GET /v1/accounts/{g}/movements` already merges both.
-- Read side: `rozo.MainnetRelayerAccounts` is the watched set;
-  `rozo.RelayerAssetIDs()` / `rozo.ClassifyRelayerMovement` gate rows on
-  relayer identity + (USDC, EURC) issuer and map `received`/`sent` to
-  inbound/outbound. Memo capture stays out (v2).
+- Read side: no new code. The relayer flow is served by
+  `GET /v1/accounts/{g}/movements` on the accounts in
+  `rozo.MainnetRelayerAccounts`; `direction` `received` is a user deposit
+  (inbound), `sent` a bridge payout (outbound). Only the (USDC, EURC)
+  issuer pairs are bridge flow; native through these accounts is dust.
+  A helper with no caller was dropped: the Rozo protocol stats
+  (`bespokeBridgeRozo`) read Postgres `rozo_events`, while
+  `account_movements` lives in ClickHouse, so folding relayer volume into
+  those stats is a cross-store read that needs its own design. Memo
+  capture stays out (v2).
 - **Lower bound:** pre-P23 rows exist only where `classic-movements-backfill`
   has been run over the account's range (the older account predates P23);
   the repo cannot show that coverage, so any volume derived from this path
