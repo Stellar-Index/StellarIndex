@@ -111,10 +111,12 @@ type FillAuctionEvent struct {
 	User        string
 	Filler      string   // who paid the bid + received the lot
 	FillPercent *big.Int // i128 — fraction of the remaining auction filled
-	Data        AuctionData
-	Ledger      uint32
-	TxHash      string
-	OpIndex     uint32
+	// Data is nil for V1 pools: their fill_auction body carries no
+	// filled auction data, so bid / lot / block are unknown, not zero.
+	Data    *AuctionData
+	Ledger  uint32
+	TxHash  string
+	OpIndex uint32
 	// EventIndex — per-event discriminator (blend_auctions PK,
 	// migration 0058 / F-1324). A liquidation that fills several
 	// positions in one op emits multiple fill_auction events.
@@ -237,7 +239,7 @@ func decodeFillAuction(e *events.Event, closedAt time.Time) (FillAuctionEvent, e
 		User:        user,
 		Filler:      filler,
 		FillPercent: fillPercentAmt.BigInt(),
-		Data:        data,
+		Data:        &data,
 		Ledger:      e.Ledger,
 		TxHash:      e.TxHash,
 		OpIndex:     uint32(e.OperationIndex),

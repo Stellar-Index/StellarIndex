@@ -165,7 +165,7 @@ func TestInsertBlendFillAuction_I128FillPercentIsText(t *testing.T) {
 	err := store.InsertBlendFillAuction(context.Background(), blend.FillAuctionEvent{
 		Pool: blendPool, AuctionType: 0, User: blendUser,
 		Filler: blendFiller, FillPercent: pct,
-		Data:    blend.AuctionData{Bid: bid, Lot: bid, Block: 58_000_000},
+		Data:    &blend.AuctionData{Bid: bid, Lot: bid, Block: 58_000_000},
 		Ledger:  58_000_051,
 		TxHash:  blendTxHash,
 		OpIndex: 4, EventIndex: 1,
@@ -193,6 +193,30 @@ func TestInsertBlendFillAuction_I128FillPercentIsText(t *testing.T) {
 		t.Errorf("fill_percent must be cast to numeric explicitly:\n%s", stmt.sql)
 	}
 	assertGenerationGuardedUpsert(t, stmt.sql, "fill")
+}
+
+// A V1 pool's fill_auction carries no auction data: bid, lot and block must
+// land NULL, not as a block-0 auction with empty legs.
+func TestInsertBlendFillAuction_V1NoDataWritesNulls(t *testing.T) {
+	store, conn := newScriptedStore(t, scriptedResult{rowsAffected: 1})
+	err := store.InsertBlendFillAuction(context.Background(), blend.FillAuctionEvent{
+		Pool: blendPool, AuctionType: 2, User: blendUser,
+		Filler: blendFiller, FillPercent: big.NewInt(100),
+		Ledger: 52_504_175, TxHash: blendTxHash, OpIndex: 0, EventIndex: 4,
+		Timestamp: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("InsertBlendFillAuction: %v", err)
+	}
+	stmt := conn.only(t)
+	if got := stmt.arg(t, 11); got != nil {
+		t.Errorf("$11 block = %#v, want NULL for a fill with no auction data", got)
+	}
+	for _, n := range []int{12, 13} {
+		if got, ok := stmt.arg(t, n).([]byte); !ok || got != nil {
+			t.Errorf("$%d = %#v, want a nil []byte (SQL NULL) for a fill with no auction data", n, stmt.arg(t, n))
+		}
+	}
 }
 
 // ─── InsertBlendDeleteAuction ─────────────────────────────────────────
