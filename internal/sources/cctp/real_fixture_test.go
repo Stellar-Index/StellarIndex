@@ -15,8 +15,8 @@ import (
 // 64775825 (mint on Stellar from a domain-6 burn). Contract identity is
 // asserted before decoding. Live WASM at capture, resolved from
 // stellar.contract_instance_changes (see test/fixtures/reflector/README.md):
-//   - TokenMessengerMinter: a6c1acc6e367e46535733ce8a7320c718616ed42f762cf2f1a0aa77ac6e056f6 (set at ledger 62225106)
-//   - MessageTransmitter:   99bd0ddc506ee13fc4f433f0627092034dc38f4773ec16930a1823a1174431d4 (set at ledger 62225178)
+//   - a6c1acc6e367e46535733ce8a7320c718616ed42f762cf2f1a0aa77ac6e056f6 TokenMessengerMinter, set at ledger 62225106
+//   - 99bd0ddc506ee13fc4f433f0627092034dc38f4773ec16930a1823a1174431d4 MessageTransmitter, set at ledger 62225178
 
 var realDepositForBurn = events.Event{
 	ContractID:     "CAE2G5Z77UP7GYPYGFOWFGW7C7J6I4YP2AFGSADRKQY62SYUFLPNFTXL",
