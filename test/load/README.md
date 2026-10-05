@@ -25,6 +25,7 @@ thresholds) live under `scenarios/lib/`.
 | `scenarios/06-mixed-realistic.js` | the canonical proof scenario | p95 < 200 ms across the weighted mix; error rate < 0.1 %; sustained 10 min |
 | `scenarios/07-catalogue-browse.js` | showcase hot path (`/v1/assets`, `/v1/issuers`, `/v1/markets`, `/v1/diagnostics/cursors`) | p95 < 200 ms on lookups, p95 < 300 ms on `/v1/markets` (GROUP BY); error rate < 0.1 %; 5 min |
 | `scenarios/08-explorer-lake.js` | ClickHouse lake read path: every `explorerHandler` route (`/v1/ledgers`, `/v1/tx`, `/v1/contracts`, `/v1/accounts/{g}/movements`, `/graph/cohort`, …); fixtures discovered from the target in `setup()` | per endpoint: lookups p95 < 500 ms / p99 < 2 s, scans p95 < 2 s / p99 < 8 s (the read deadline); error rate < 0.1 %; 5 min at 30 rps. Bars are provisional until a measured staging run |
+| `scenarios/09-smoke.js` | one pass over the catalogue and price read routes, 1 VU x 1 iteration | `http_req_failed` rate == 0; any non-2xx fails the run |
 | `scenarios/99-spike.js` | brief 10× burst absorption | recovery to baseline p95 within 2 min of spike end |
 
 ## Running
@@ -104,10 +105,12 @@ done
 
 (`--no-thresholds` because the SLA gates need sustained load to be
 meaningful; the smoke only cares that every request is 2xx.)
-A cleaner gate would be a tiny `smoke` k6 scenario that fails on
-any `http_req_failed`; left as a follow-up since k6 isn't in CI
-(the weekly cron is disabled on the billing cap — see memory
-`reference_ci_cost_model`).
+`scenarios/09-smoke.js` is the same check as a gate: it fails the
+run on any `http_req_failed`.
+
+```sh
+k6 run test/load/scenarios/09-smoke.js
+```
 
 ## Output
 
