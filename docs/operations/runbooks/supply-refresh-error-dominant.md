@@ -239,7 +239,7 @@ gap alone — you must look at whether `MinComponentLedger` is
      override** below) so the gap never trips. For an asset you
      have *confirmed* is legitimately dormant for longer than 24h
      (and you monitor its component observer by some other means),
-     the escape hatch is `supply.WithMaxDormantComponentLedgers(0)`,
+     the escape hatch is `[supply] max_dormant_component_ledgers = 0`,
      which restores the legacy unbounded dormancy posture — note
      this is a global option (no per-asset equivalent), so prefer
      raising that one asset's per-asset `stale_component_ledgers`

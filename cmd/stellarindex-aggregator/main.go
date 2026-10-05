@@ -1331,14 +1331,14 @@ func buildClassicRefreshers(cfg config.Config, store *timescale.Store, closeTime
 	return out, nil
 }
 
-// supplyRefresherOptions builds the per-asset RefresherOption list:
-// the global strict-freshness toggle plus, if the operator configured
-// one for assetKey under any accepted spelling, the per-asset
-// stale-component threshold override. assetKey must be [supply.AssetKey]
-// form — the key the Refresher's gate reads off each snapshot.
+// supplyRefresherOptions builds the [supply] freshness options for one
+// refresher; assetKey must be [supply.AssetKey] form, the key the gate
+// reads off each snapshot, or a per-asset override never applies.
 func supplyRefresherOptions(cfg config.Config, assetKey string) ([]supply.RefresherOption, error) {
 	opts := []supply.RefresherOption{
 		supply.WithStrictFreshnessRequired(cfg.Supply.StrictFreshnessRequired),
+		supply.WithStaleComponentLedgers(cfg.Supply.StaleComponentLedgers),
+		supply.WithMaxDormantComponentLedgers(cfg.Supply.MaxDormantComponentLedgers),
 	}
 	byAsset, err := supply.CanonicalizeStaleComponentLedgers(cfg.Supply.StaleComponentLedgersByAsset)
 	if err != nil {

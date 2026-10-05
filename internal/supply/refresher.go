@@ -438,7 +438,7 @@ func (r *Refresher) applyStaleComponentGate(ctx context.Context, snap Supply) (O
 			"threshold", threshold,
 			"threshold_source", thresholdSource,
 			"dormancy_horizon", r.maxDormantComponentLedger,
-			"remedy", "check the component observer is advancing; raise WithMaxDormantComponentLedgers only for genuinely long-dormant assets")
+			"remedy", "check the component observer is advancing; raise [supply] max_dormant_component_ledgers only for genuinely long-dormant assets")
 		return Outcome{Kind: OutcomeKindStaleComponent, Err: err, Snapshot: snap}, true
 	}
 
