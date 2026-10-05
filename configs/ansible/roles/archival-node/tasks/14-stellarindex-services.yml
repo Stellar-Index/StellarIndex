@@ -737,7 +737,18 @@
         done
       ) 7>&- 8>&- 9>&- &
       WATCHDOG=$!
-      trap 'kill "$WATCHDOG" 2>/dev/null || true' EXIT
+      # Publish when this job took the host-wide lock, so the textfile
+      # staleness alert can tell "producer deferred behind a long heavy
+      # job" from "producer dead" (stellarindex_textfile_producer_stale,
+      # capped at 72h of hold). One file per job NAME; removed on exit.
+      HELD_PROM="${HEAVY_JOB_TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}/heavy_job_${NAME//[^A-Za-z0-9_]/_}.prom"
+      if [ -d "$(dirname "$HELD_PROM")" ]; then
+        {
+          echo "# TYPE stellarindex_heavy_lock_held_since_unix gauge"
+          echo "stellarindex_heavy_lock_held_since_unix{job=\"${NAME}\"} $(date +%s)"
+        } > "${HELD_PROM}.$$" && mv "${HELD_PROM}.$$" "$HELD_PROM" || rm -f "${HELD_PROM}.$$"
+      fi
+      trap 'kill "$WATCHDOG" 2>/dev/null || true; rm -f "$HELD_PROM"' EXIT
 
       # ── Stop bound (2026-09-04) ──────────────────────────────────
       # `systemctl stop <unit>.scope` — what stop_job above runs, and
