@@ -21150,7 +21150,8 @@ components:
         quote:       { type: string }
         ts:          { type: string, format: date-time }
         price:       { type: string, description: "Decimal string at declared decimals scale." }
-        price_raw:   { type: string, description: "Raw integer value preserved for cross-check (ADR-0003)." }
+        price_raw:   { type: string, description: "Integer form of `price` at `decimals` scale, so a client can verify the rendering. For a feed published inverted it is the reciprocal we derived; see `price_onchain`." }
+        price_onchain: { type: string, pattern: '^[0-9]+$', example: "1740000000", description: "The publisher's own integer at `decimals` scale, in the publisher's orientation, when `price` was derived from it by inversion (RedStone MXNe, chainlink inverted feeds). The 8-dp reciprocal is lossy, so this is the only copy of the published value (ADR-0003). Omitted when no separate published value was recorded — including rows written before it was captured." }
         decimals:    { type: integer, minimum: 0, maximum: 38 }
         confidence:  { type: number, minimum: 0, maximum: 1, description: "0 means unreported, not zero-confidence." }
         observer:    { type: string, description: "Strkey of the publishing relayer — an account (G…) or, when the relayer is a contract, a C… address; empty when unknown." }

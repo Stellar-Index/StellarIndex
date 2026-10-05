@@ -18,7 +18,9 @@ type feedEntry struct {
 	// convention (units-per-USD, e.g. USDMXN ≈ 17.4 pesos/USD) rather
 	// than our canonical "<Base> in <Quote>" convention. The decoder
 	// reciprocates the raw value (1/x, exact big.Int arithmetic) so
-	// the stored row reads "<Base> in USD" like every other feed.
+	// the stored row reads "<Base> in USD" like every other feed. 1/x
+	// at 8 dp is lossy, so the on-chain integer is kept verbatim as the
+	// row's PublishedPrice.
 	//
 	// Only MXNe needs this today: RedStone emits ~17.4 (pesos/USD)
 	// while every other currency/RWA feed — including the Mexican

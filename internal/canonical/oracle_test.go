@@ -87,13 +87,18 @@ func TestOracle_Validate_priceMagnitudeBound(t *testing.T) {
 
 func TestOracle_Validate_errors(t *testing.T) {
 	cases := map[string]func(*c.OracleUpdate){
-		"empty source":      func(u *c.OracleUpdate) { u.Source = "" },
-		"short tx_hash":     func(u *c.OracleUpdate) { u.TxHash = "cafe" },
-		"bad hex tx_hash":   func(u *c.OracleUpdate) { u.TxHash = "z" + goodTxHash[1:] },
-		"zero timestamp":    func(u *c.OracleUpdate) { u.Timestamp = time.Time{} },
-		"bad asset":         func(u *c.OracleUpdate) { u.Asset = c.Asset{Type: "weird"} },
-		"zero price":        func(u *c.OracleUpdate) { u.Price = c.NewAmount(big.NewInt(0)) },
-		"neg price":         func(u *c.OracleUpdate) { u.Price = c.NewAmount(big.NewInt(-1)) },
+		"empty source":    func(u *c.OracleUpdate) { u.Source = "" },
+		"short tx_hash":   func(u *c.OracleUpdate) { u.TxHash = "cafe" },
+		"bad hex tx_hash": func(u *c.OracleUpdate) { u.TxHash = "z" + goodTxHash[1:] },
+		"zero timestamp":  func(u *c.OracleUpdate) { u.Timestamp = time.Time{} },
+		"bad asset":       func(u *c.OracleUpdate) { u.Asset = c.Asset{Type: "weird"} },
+		"zero price":      func(u *c.OracleUpdate) { u.Price = c.NewAmount(big.NewInt(0)) },
+		"neg price":       func(u *c.OracleUpdate) { u.Price = c.NewAmount(big.NewInt(-1)) },
+		"zero published":  func(u *c.OracleUpdate) { z := c.NewAmount(big.NewInt(0)); u.PublishedPrice = &z },
+		"huge published": func(u *c.OracleUpdate) {
+			h := c.NewAmount(new(big.Int).Lsh(big.NewInt(1), 200))
+			u.PublishedPrice = &h
+		},
 		"too many decimals": func(u *c.OracleUpdate) { u.Decimals = 40 },
 		"decimals 39":       func(u *c.OracleUpdate) { u.Decimals = 39 },
 		"negative conf":     func(u *c.OracleUpdate) { u.Confidence = -0.1 },

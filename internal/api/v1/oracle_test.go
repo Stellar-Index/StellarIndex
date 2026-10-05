@@ -506,3 +506,44 @@ func TestOracleStreams_ReaderError500(t *testing.T) {
 		t.Fatalf("status = %d, want 500", resp.StatusCode)
 	}
 }
+
+// TestOracleLatest_PriceOnchain pins INV-2590's wire contract: price_raw
+// stays the integer form of price, and an inverted feed's publisher
+// integer rides alongside as price_onchain; a non-inverted row omits it.
+func TestOracleLatest_PriceOnchain(t *testing.T) {
+	inverted := mkReflectorUpdate("redstone", "5747126", 8)
+	onchain := canonical.NewAmount(big.NewInt(1_740_000_000))
+	inverted.PublishedPrice = &onchain
+	plain := mkReflectorUpdate("reflector-cex", "12420000000000", 14)
+	reader := &stubOracleReader{updates: []canonical.OracleUpdate{inverted, plain}}
+	tsrv := httpTestServer(t, v1.New(v1.Options{Oracle: reader}))
+
+	resp := mustGet(t, tsrv.URL+"/v1/oracle/latest?asset=native")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body struct {
+		Data []map[string]any `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if len(body.Data) != 2 {
+		t.Fatalf("got %d rows, want 2", len(body.Data))
+	}
+	for _, row := range body.Data {
+		switch row["source"] {
+		case "redstone":
+			if row["price_raw"] != "5747126" || row["price"] != "0.05747126" {
+				t.Errorf("redstone price_raw=%v price=%v, want 5747126 / 0.05747126 (unchanged)", row["price_raw"], row["price"])
+			}
+			if row["price_onchain"] != "1740000000" {
+				t.Errorf("redstone price_onchain = %v, want \"1740000000\"", row["price_onchain"])
+			}
+		case "reflector-cex":
+			if v, ok := row["price_onchain"]; ok {
+				t.Errorf("non-inverted row carries price_onchain %v; want absent", v)
+			}
+		default:
+			t.Errorf("unexpected source %v", row["source"])
+		}
+	}
+}

@@ -167,7 +167,7 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 			// Also guarantees a positive divisor for the Invert path.
 			continue
 		}
-		price, ok := orientedPrice(entry, pd.Price)
+		price, published, ok := orientedPrice(entry, pd.Price)
 		if !ok {
 			slog.Warn("redstone: skipping inverted price that rounds to zero",
 				"source", SourceName,
@@ -200,10 +200,11 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 			// `_FUNDAMENTAL` NAV-ratio feeds. Pre-ecc289c6 this was
 			// hardcoded USD, mislabelling EUROC; pre-D8 the SolvBTC
 			// NAV ratios were still fiat:USD.
-			Quote:    entry.Quote,
-			Price:    price,
-			Decimals: DefaultDecimals,
-			Observer: observer,
+			Quote:          entry.Quote,
+			Price:          price,
+			PublishedPrice: published,
+			Decimals:       DefaultDecimals,
+			Observer:       observer,
 		}
 		out = append(out, u)
 	}
@@ -225,13 +226,15 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 // orientation (units-per-USD), is reciprocated at DefaultDecimals — see
 // feedEntry.Invert. ok is false when that reciprocal rounds to zero: a
 // price-0 row would read as "worth nothing" and shadow the last real
-// observation on every latest-read.
-func orientedPrice(entry feedEntry, raw canonical.Amount) (canonical.Amount, bool) {
+// observation on every latest-read. published is the on-chain integer
+// for an Invert feed (the reciprocal is lossy, ADR-0003) and nil otherwise.
+func orientedPrice(entry feedEntry, raw canonical.Amount) (price canonical.Amount, published *canonical.Amount, ok bool) {
 	if !entry.Invert {
-		return raw, true
+		return raw, nil, true
 	}
 	inv := reciprocalAtScale(raw, DefaultDecimals)
-	return inv, inv.Sign() > 0
+	onchain := canonical.NewAmount(raw.BigInt())
+	return inv, &onchain, inv.Sign() > 0
 }
 
 // resolveFeedEntry returns the registry entry for feedID, or — when

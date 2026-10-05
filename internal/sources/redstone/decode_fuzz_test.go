@@ -186,3 +186,29 @@ func FuzzDecodeWritePricesSingle(f *testing.F) {
 		}
 	})
 }
+
+// FuzzOrientedPricePublishedVerbatim: for any r > 0 on an Invert feed the
+// recorded published integer equals r exactly.
+func FuzzOrientedPricePublishedVerbatim(f *testing.F) {
+	f.Add(big.NewInt(1_740_000_000).Bytes())
+	f.Add(big.NewInt(1_740_000_001).Bytes())
+	f.Add(ref256(^uint64(0), ^uint64(0), ^uint64(0), ^uint64(0)).Bytes())
+
+	f.Fuzz(func(t *testing.T, rb []byte) {
+		if len(rb) > 64 {
+			rb = rb[:64]
+		}
+		r := new(big.Int).SetBytes(rb)
+		if r.Sign() == 0 {
+			t.Skip("caller guarantees r > 0")
+		}
+		raw := canonical.NewAmount(r)
+		_, published, _ := orientedPrice(feedEntry{Invert: true}, raw)
+		if published == nil || published.String() != r.String() {
+			t.Fatalf("published = %v, want %s", published, r)
+		}
+		if _, p, _ := orientedPrice(feedEntry{}, raw); p != nil {
+			t.Fatalf("non-Invert feed recorded published %s", p)
+		}
+	})
+}
