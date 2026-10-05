@@ -123,15 +123,24 @@ scrape_configs:
         labels:
           service: postgres
 
+{# The exporter only runs where pgbackrest_backup_enabled (false on the test nets). #}
+{% set pgbackrest_hosts = [] %}
+{% for h in groups['postgres_cluster'] %}
+{% if hostvars[h].pgbackrest_backup_enabled | default(true) | bool %}
+{% set _ = pgbackrest_hosts.append(h) %}
+{% endif %}
+{% endfor %}
+{% if pgbackrest_hosts %}
   - job_name: "pgbackrest_exporter"
     scrape_interval: {{ prometheus_default_scrape_interval }}
     static_configs:
       - targets:
-{% for h in groups['postgres_cluster'] %}
+{% for h in pgbackrest_hosts %}
           - "{{ hostvars[h].ansible_host }}:9854"
 {% endfor %}
         labels:
           service: pgbackrest
+{% endif %}
 {% endif %}
 
 {% if 'clickhouse_cluster' in groups and groups['clickhouse_cluster'] %}

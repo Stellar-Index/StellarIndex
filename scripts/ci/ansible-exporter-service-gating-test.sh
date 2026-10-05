@@ -88,5 +88,19 @@ else
   bad "Group D's svcacct add --policy is not /etc/minio/policies/prometheus-read.json — mc reads --policy as a file path"
 fi
 
+# prometheus.yml.j2 must not scrape :9854 on hosts whose exporter never runs.
+PROM_TPL="${PROM_TPL:-configs/ansible/roles/prometheus/templates/prometheus.yml.j2}"
+pgbr_job="$(awk '/job_name: "pgbackrest_exporter"/{f=1} f{print} /service: pgbackrest/{exit}' "$PROM_TPL")"
+pgbr_pre="$(grep -B8 'job_name: "pgbackrest_exporter"' "$PROM_TPL")"
+if [ -z "$pgbr_job" ]; then
+  bad "pgbackrest_exporter scrape job not found in $PROM_TPL"
+elif grep -q "groups\['postgres_cluster'\]" <<<"$pgbr_job"; then
+  bad "pgbackrest_exporter scrape iterates all of postgres_cluster; filter on hostvars pgbackrest_backup_enabled"
+elif grep -q 'pgbackrest_backup_enabled' <<<"$pgbr_pre"; then
+  ok "prometheus.yml.j2 scrapes pgbackrest_exporter only on hosts with pgbackrest_backup_enabled"
+else
+  bad "prometheus.yml.j2 pgbackrest_exporter job is not gated on pgbackrest_backup_enabled"
+fi
+
 echo "ansible-exporter-service-gating-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
