@@ -23,14 +23,6 @@
 0021-account-entry-observer.md
 0022-classic-supply-observers.md
 0023-sep41-supply-observer.md
-0024-redis-ha-via-sentinel.md
-0025-caddy-cloudflare-trusted-proxy.md
-0026-stablecoin-fiat-proxy-late-binding.md
-0027-lcm-cache-tiering.md
-0028-rwa-asset-representation.md
-0029-soroban-events-landing-zone.md
-0030-per-source-coverage-invariant.md
-0031-data-derived-coverage-signal.md
 0032-per-source-tables-as-projections.md
 0033-completeness-verification-model.md
 0034-tiered-clickhouse-architecture.md

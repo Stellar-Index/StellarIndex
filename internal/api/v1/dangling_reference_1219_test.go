@@ -13,9 +13,7 @@ import (
 // dropped-row counter itself instead of exercising the reader). A reader
 // following the citation now lands on that unrelated issue instead of a
 // clean 404 -- a more confusing failure than the dangling reference it
-// replaces. See docs/adr/0026-stablecoin-fiat-proxy-late-binding.md's
-// Amendment for the ADR-side citation, which is left intact as historical
-// record rather than stripped.
+// replaces.
 func TestNoDangling1219Reference(t *testing.T) {
 	for _, f := range []string{
 		"oracle_sep40.go",
