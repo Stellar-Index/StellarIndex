@@ -234,7 +234,7 @@ PG_PASSWORD_FILE="${PG_PASSWORD_FILE:-/etc/stellarindex/postgres-password.txt}"
 # The test nets have no password file; the local postgres superuser reads the
 # same server-wide values (nothing here is a per-role setting).
 # shellcheck disable=SC2317,SC2329  # invoked from the functions below
-pg_psql() { # pg_psql <sql>
+query_pg() { # query_pg <sql>
   if [[ -r "$PG_PASSWORD_FILE" ]]; then
     PGPASSWORD="$(cat "$PG_PASSWORD_FILE")" \
       psql -h 127.0.0.1 -U stellarindex -d stellarindex -tAc "$1" 2>/dev/null
@@ -248,7 +248,7 @@ assert_grep pg_max_worker_processes_codified \
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 pg_max_worker_processes_live() {
   local live
-  live=$(pg_psql "SHOW max_worker_processes;")
+  live=$(query_pg "SHOW max_worker_processes;")
   [[ "$live" =~ ^[0-9]+$ && "$live" -ge 32 ]]
 }
 assert_cmd pg_max_worker_processes_live pg_max_worker_processes_live
@@ -277,7 +277,7 @@ SELECT count(*) FROM timescaledb_information.continuous_aggregates ca
 "
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 caggs_have_refresh_policy() {
-  pg_psql "$CAGGS_WITHOUT_REFRESH_POLICY_SQL" | grep -qx 0
+  query_pg "$CAGGS_WITHOUT_REFRESH_POLICY_SQL" | grep -qx 0
 }
 assert_cmd caggs_have_refresh_policy caggs_have_refresh_policy
 
@@ -304,7 +304,7 @@ SELECT count(*) FROM timescaledb_information.jobs j
 "
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 trades_compression_policy_scheduled() {
-  pg_psql "$TRADES_COMPRESSION_SCHEDULED_SQL" | grep -qx 1
+  query_pg "$TRADES_COMPRESSION_SCHEDULED_SQL" | grep -qx 1
 }
 assert_cmd trades_compression_policy_scheduled trades_compression_policy_scheduled
 
@@ -322,7 +322,7 @@ assert_grep pg_idle_in_transaction_timeout_codified \
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 pg_idle_in_transaction_timeout_live() {
   local live
-  live=$(pg_psql "SHOW idle_in_transaction_session_timeout;")
+  live=$(query_pg "SHOW idle_in_transaction_session_timeout;")
   [[ "$live" == "30min" ]]
 }
 assert_cmd pg_idle_in_transaction_timeout_live pg_idle_in_transaction_timeout_live
