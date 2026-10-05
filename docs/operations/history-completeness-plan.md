@@ -69,8 +69,8 @@ Two production `ch-rebuild -sdex -write` runs exist, both on 2026 data, and proj
 
 | anchor | per row | per window |
 |---|---|---|
-| populated compressed chunks: 47 h / ~105M rows / ~22 windows | 620 rows/s: 49.6 d | ~2.1 h/window: 108 d |
-| decompress-first: 1h44m / ~21.7M rows / 5 windows | ~3,474 rows/s: 8.8 d | ~21 min/window: 18 d |
+| populated compressed chunks: 47 h / ~105M rows / ~22 windows ([2026-07-30-verify-usd-volume-30d.md:82-84](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-07-30-verify-usd-volume-30d.md#L82-L84)) | 620 rows/s: 49.6 d | ~2.1 h/window: 108 d |
+| decompress-first: 1h44m / ~21.7M rows / 5 windows ([2026-08-04-usd-volume-rederive.md:25-32](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-08-04-usd-volume-rederive.md#L25-L32)) | ~3,474 rows/s: 8.8 d | ~21 min/window: 18 d |
 
 Range: **9 to 108 days**. Per-row tracks the Postgres write (history is half as dense, 43.1 vs 86.7 trade effects per ledger, and mostly lands in fresh chunks, so faster); per-window tracks the ClickHouse read of operations scanned (2022 ran 908 ops/ledger vs 2026's 759, so not faster). Expect 20-40 days; commit to no number until step 5 of §6 measures one 2022 window.
 
@@ -84,7 +84,7 @@ Every trades-rooted CAGG must be re-materialised over the new days; the policies
 
 `prices_1m`, `prices_15m`, `prices_1h`, `prices_4h`, `prices_1d`, `prices_1w`, `prices_1mo`, `dex_volume_by_pair_1d`, `source_volume_1h`, `pools_per_source_1h`, `twap_1h`, `twap_1d`
 
-Only the seven `prices_*` are in the Go allow-list (`allowedCAGGViews`); the rest are psql-only. [cagg-broad-recompute.md](cagg-broad-recompute.md) covers eight of the twelve and omits `dex_volume_by_pair_1d`, `source_volume_1h`, `twap_1h`, `twap_1d`; add them before using it here. Its 4-8 h estimate is for today's volume and will not hold after a 4.7x increase in `trades` (§7).
+The Go allow-list (`allowedCAGGViews`) covers all twelve trades views plus the oracle and supply CAGGs; this refresh still runs as psql under a heavy-job scope. [cagg-broad-recompute.md](cagg-broad-recompute.md) covers eight of the twelve and omits `dex_volume_by_pair_1d`, `source_volume_1h`, `twap_1h`, `twap_1d`; add them before using it here. Its 4-8 h estimate is for today's volume and will not hold after a 4.7x increase in `trades` (§7).
 
 ## 3. Project B — what exists
 

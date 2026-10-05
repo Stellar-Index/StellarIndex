@@ -48,7 +48,7 @@ Invariants:
 /usr/local/sbin/run-heavy-job.sh ch-rebuild-sdex \
   /usr/local/bin/stellarindex-ops ch-rebuild \
     -config /etc/stellarindex.toml -ch-addr 127.0.0.1:9300 \
-    -from <W_LO> -to <W_HI> -sdex -write
+    -from <W_LO> -to <W_HI> -sdex -sources sdex -write
 ```
 
 - `ch-rebuild` stamps `derive_generation` and installs the FX/peg
@@ -70,9 +70,9 @@ Invariants:
 
 ## Step 3 — CAGG rebuild over the span
 
-`ch-rebuild` and `usd-volume-restamp` refresh nothing, and most of these
-views are outside the Go allow-list (`allowedCAGGViews` covers only the
-`prices_*` seven): psql on r1, under a heavy-job scope, over `[T_LO, T_HI]`
+`ch-rebuild` and `usd-volume-restamp` refresh nothing. The Go allow-list (`allowedCAGGViews`) is built from all 12
+trades views plus the oracle and supply CAGGs, but this refresh runs as psql
+on r1, under a heavy-job scope, over `[T_LO, T_HI]`
 (pad at least 2x the bucket). The ORDER matters: `twap_1h`/`twap_1d` read
 `prices_1m`, so refresh `prices_1m` first and the two `twap_*` last.
 
@@ -253,6 +253,14 @@ segments/min, ~270 GB in an hour). `applyXLMBaseRestampBatch` now binds
 binds `tx_hash` as `bpchar` (so `trades_pkey` serves the join), and pins
 `SET LOCAL plan_cache_mode = force_custom_plan`. Keep all three.
 
+**The cause was NOT the targeted chunk (measured 2026-09-06).** A second
+attempt in `-chunks` mode reached chunk 1 of 91 — the smallest,
+`_hyper_1_26385_chunk`, 211,786 rows, 16.2 MB — decompressed it
+(`timescaledb_information.chunks` read `is_compressed = false` for the
+whole UPDATE), and then one **23-row** UPDATE ran for 60 minutes on CPU
+with no wait event and was stopped, again with nothing committed. The
+statement, not the chunk, is what does not converge.
+
 What the driver (`internal/ops/chops/usd_volume_restamp_chunks.go`,
 `internal/storage/timescale/trades_chunks.go`) does on `-write`:
 
@@ -321,6 +329,16 @@ while the first is mid-chunk. To find a lock holder:
 SELECT a.pid, a.application_name, a.backend_start, a.state, l.classid, l.objid
   FROM pg_locks l JOIN pg_stat_activity a USING (pid)
  WHERE l.locktype = 'advisory';
+```
+
+For the #372 xlm-base tier (the one-pass `-fill-null` run):
+
+```sh
+#    Value repair AND coverage fill in one pass (-fill-null): each chunk
+#    is decompressed once; a second -fill-null pass would decompress all
+#    90 again. ONE attempt at a time: the tool refuses a second while
+#    the first holds the run lock.
+HEAVY_JOB_STOP_TIMEOUT=2h /usr/local/sbin/run-heavy-job.sh usd-volume-restamp /usr/local/bin/stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml -tier xlm-base -chunks -from <D0> -to <D1> -fill-null -write
 ```
 
 #### Stopping and SIGKILL

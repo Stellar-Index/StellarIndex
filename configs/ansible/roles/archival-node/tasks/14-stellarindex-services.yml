@@ -779,8 +779,8 @@
       # cleanup on an already-cancelled context and finish in seconds.
       # Only the restamp's re-compress can run for hours, so it names
       # its own bound on its launch line
-      # (docs/operations/usd-volume-rederive-2026-08.md Step 6, chunk
-      # mode: HEAVY_JOB_STOP_TIMEOUT=2h) rather than every other job
+      # (docs/operations/usd-volume-rederive-2026-08.md, Chunk mode:
+      # HEAVY_JOB_STOP_TIMEOUT=2h) rather than every other job
       # inheriting a multi-hour stop it will never use. 5min is well
       # above the 90 s it replaces — nothing that used to finish inside
       # systemd's default is slowed — and short enough that the disk
