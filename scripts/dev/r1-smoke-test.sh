@@ -77,5 +77,31 @@ for n in 1135 1162 1164 1168 1172 1207 1189 1190; do
   fi
 done
 
+# Network profile: run the smoke against a stub curl that serves
+# /v1/coverage with the given network and 200 for everything else.
+stubdir="$(mktemp -d)"
+trap 'rm -rf "$stubdir"' EXIT
+cat > "$stubdir/curl" <<'STUB'
+#!/usr/bin/env bash
+url="${!#}"
+case "$url" in
+  */v1/coverage) printf '{"data":{"network":"%s"}}' "${STUB_NETWORK:-}" ;;
+  *) printf '{}\n200' ;;
+esac
+STUB
+chmod +x "$stubdir/curl"
+run_net() { STUB_NETWORK="$1" PATH="$stubdir:$PATH" API_BASE_URL=http://stub bash "$SMOKE" 2>&1; }
+
+for net in testnet futurenet; do
+  out="$(run_net "$net")"
+  for n in "assets verified" "price native/USD" "price tip native/USD"; do
+    if grep -q "SKIP $n .*no price sources on $net" <<<"$out"; then ok "$net skips '$n'"; else bad "$net skips '$n'"; fi
+  done
+done
+out="$(run_net pubnet)"
+for n in "assets verified" "price native/USD" "price tip native/USD"; do
+  if grep -Eq "(ok|FAIL) +$n " <<<"$out" && ! grep -q "SKIP $n" <<<"$out"; then ok "pubnet asserts '$n'"; else bad "pubnet asserts '$n'"; fi
+done
+
 echo "r1-smoke-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
