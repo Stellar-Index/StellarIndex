@@ -744,6 +744,7 @@
       HELD_PROM="${HEAVY_JOB_TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}/heavy_job_${NAME//[^A-Za-z0-9_]/_}.prom"
       if [ -d "$(dirname "$HELD_PROM")" ]; then
         {
+          echo "# HELP stellarindex_heavy_lock_held_since_unix Unix time this job took the host-wide heavy lock; present only while it is held."
           echo "# TYPE stellarindex_heavy_lock_held_since_unix gauge"
           echo "stellarindex_heavy_lock_held_since_unix{ops_job=\"${NAME}\"} $(date +%s)"
         } > "${HELD_PROM}.$$" && mv "${HELD_PROM}.$$" "$HELD_PROM" || rm -f "${HELD_PROM}.$$"

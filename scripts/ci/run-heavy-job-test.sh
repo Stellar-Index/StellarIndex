@@ -252,7 +252,7 @@ cat "$HEAVY_JOB_TEXTFILE_DIR"/heavy_job_test_job.prom
 HP
   chmod +x "$TMP/held-payload.sh"
   HEAVY_JOB_TEXTFILE_DIR="$TMP/tf" HEAVY_JOB_OPS_ENV="$OPS_ENV" env -u INVOCATION_ID "$WRAP" test-job "$TMP/held-payload.sh" >"$TMP/out" 2>"$TMP/err"
-  if grep -qE '^stellarindex_heavy_lock_held_since_unix\{ops_job="test-job"\} [0-9]+$' "$TMP/out" && [ -z "$(ls -A "$TMP/tf")" ]; then ok "held-since metric published during the job, removed on exit"; else bad "held-since metric wrong (out: $(tr '\n' ' ' < "$TMP/out"), left: $(ls "$TMP/tf"))"; fi
+  if grep -q '^# HELP stellarindex_heavy_lock_held_since_unix ' "$TMP/out" && grep -qE '^stellarindex_heavy_lock_held_since_unix\{ops_job="test-job"\} [0-9]+$' "$TMP/out" && [ -z "$(ls -A "$TMP/tf")" ]; then ok "held-since metric published during the job, removed on exit"; else bad "held-since metric wrong (out: $(tr '\n' ' ' < "$TMP/out"), left: $(ls "$TMP/tf"))"; fi
 
     # A run that did not get the lock must not publish a hold.
   rm -rf "$TMP/tf2"; mkdir -p "$TMP/tf2"
