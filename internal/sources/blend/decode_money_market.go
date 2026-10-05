@@ -899,7 +899,7 @@ func toDomainAssetAmounts(in []AssetAmount) []domain.BlendAssetAmount {
 
 // reserveConfigKeys mirrors pool/src/storage.rs::ReserveConfig.
 // Decoded by name (resilient to field reordering) per
-// docs/architecture/contract-schema-evolution.md.
+// docs/architecture/ingest-pipeline.md#contract-schema-evolution.
 //
 // Field decoding rules:
 //   - i128 → decimal string (preserved full precision per ADR-0003)

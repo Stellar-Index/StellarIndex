@@ -274,7 +274,7 @@ func classifyAny(e *events.Event) (action, string) {
 	// is an ScvMap of all fields (post-2026-07-02 pools, e.g.
 	// CBENABXP…). Checked before the two-topic String schema below —
 	// this event has only one topic. See README Q5 and
-	// docs/architecture/contract-schema-evolution.md.
+	// docs/architecture/ingest-pipeline.md#contract-schema-evolution.
 	if len(e.Topic) == 1 {
 		switch e.Topic[0] {
 		case TopicSymbolSwapMap:
@@ -486,7 +486,7 @@ func noteReceivedDivergence(pool, txHash string, ledger uint32, offer, received 
 // received, net of fees — NOT actual_received_amount, which the pool
 // emits as the INPUT it received of sell_token; a divergence from
 // offer_amount is surfaced by noteReceivedDivergence, not stored).
-// Decode is by Map-field name (contract-schema-evolution.md), so extra
+// Decode is by Map-field name (ingest-pipeline.md#contract-schema-evolution), so extra
 // / reordered fields don't break us.
 func decodeSwapMap(ev *events.Event, closedAt time.Time) (canonical.Trade, error) {
 	addr, amount, err := mapBodyReaders(ev.Value)

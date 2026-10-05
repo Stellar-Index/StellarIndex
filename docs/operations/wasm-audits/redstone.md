@@ -342,7 +342,7 @@ isn't shipped yet).
 
 - Procedure: `docs/operations/wasm-audits/README.md`
 - Decoder source: `internal/sources/redstone/{events,decode}.go`
-- Schema-evolution stance: `docs/architecture/contract-schema-evolution.md`
+- Schema-evolution stance: `docs/architecture/ingest-pipeline.md#contract-schema-evolution`
 - Backfill gate: `internal/sources/external/registry.go` —
   `Registry["redstone"].BackfillSafe`
 - Upstream contract source: pinned in `VERSIONS.md`

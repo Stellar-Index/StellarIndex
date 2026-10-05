@@ -299,7 +299,7 @@ events. Backfill replays of L50,644,229 → L51,656,691 are safe.
 
 - Procedure: `docs/operations/wasm-audits/README.md`
 - Decoder source: `internal/sources/reflector/{events,decode}.go`
-- Schema-evolution stance: `docs/architecture/contract-schema-evolution.md`
+- Schema-evolution stance: `docs/architecture/ingest-pipeline.md#contract-schema-evolution`
 - Backfill gate: `internal/sources/external/registry.go` —
   `Registry["reflector-{dex,cex,fx}"].BackfillSafe` (three entries)
 - Upstream contract source: `https://github.com/reflector-network/reflector-contract`

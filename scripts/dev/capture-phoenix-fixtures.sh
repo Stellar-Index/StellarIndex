@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016 # $vars inside single quotes are jq variables, not shell ones.
 # Capture real Phoenix swap events from a live stellar-rpc, group
 # the 8 per-swap field events by (ledger, tx_hash, op_index), and
 # write one fixture JSON per complete swap to
@@ -16,7 +17,7 @@
 # Env:
 #   WASM_HASH  Directory label for captured fixtures.
 #
-# See docs/architecture/contract-schema-evolution.md for why fixtures
+# See docs/architecture/ingest-pipeline.md#contract-schema-evolution for why fixtures
 # are per-WASM-hash.
 
 set -euo pipefail

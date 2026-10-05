@@ -463,7 +463,7 @@ the likely cause is decoder-version drift across regions, not upstream data dive
 
 - **Phase-3 validator activation**: `docs/architecture/infrastructure/validator-rollout.md`.
 - **Per-WASM-hash decoder audit** for full historical replay:
-  `docs/architecture/contract-schema-evolution.md` (hence the conservative default
+  `docs/architecture/ingest-pipeline.md#contract-schema-evolution` (hence the conservative default
   `enabled_sources`: soroswap + aquarius + phoenix).
 - **HA / multi-region failover**: `ha-plan.md`.
 

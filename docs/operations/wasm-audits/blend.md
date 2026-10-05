@@ -472,7 +472,7 @@ Rationale:
 
 - Procedure: [`README.md`](README.md)
 - Decoder source: `internal/sources/blend/{events,decode,auction_data}.go`
-- Schema-evolution stance: [`../../architecture/contract-schema-evolution.md`](../../architecture/contract-schema-evolution.md)
+- Schema-evolution stance: [`../../architecture/ingest-pipeline.md#contract-schema-evolution`](../../architecture/ingest-pipeline.md#contract-schema-evolution)
 - Backfill gate: `internal/sources/external/registry.go` —
   `Registry["blend"].BackfillSafe`
 - Upstream contracts: <https://github.com/blend-capital/blend-contracts-v2>

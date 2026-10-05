@@ -239,7 +239,7 @@ the source contributes nothing to VWAP regardless of the
 - Decoder source: [`internal/sources/cctp/{events,decode}.go`](../../../internal/sources/cctp/)
 - Source-package README: [`internal/sources/cctp/README.md`](../../../internal/sources/cctp/README.md)
 - Architecture: [`docs/architecture/cctp-stellar-coverage.md`](../../architecture/cctp-stellar-coverage.md)
-- Schema-evolution stance: [`docs/architecture/contract-schema-evolution.md`](../../architecture/contract-schema-evolution.md)
+- Schema-evolution stance: [`docs/architecture/ingest-pipeline.md#contract-schema-evolution`](../../architecture/ingest-pipeline.md#contract-schema-evolution)
 - Backfill gate: `internal/sources/external/registry.go` — `Registry["cctp"].BackfillSafe`
 - Upstream contracts: <https://github.com/circlefin/stellar-cctp>
 - Circle docs: <https://developers.circle.com/cctp/references/stellar-contracts>

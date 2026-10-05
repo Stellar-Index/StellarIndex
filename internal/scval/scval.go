@@ -3,7 +3,7 @@
 // base64-encoded SCVal, typed accessors (symbol / u64 / i128 / vec /
 // map / address), and a Map-by-field-name lookup that enforces the
 // "decode-by-name-not-position" rule from
-// docs/architecture/contract-schema-evolution.md.
+// docs/architecture/ingest-pipeline.md#contract-schema-evolution.
 //
 // This is the only package in the tree allowed to import
 // .../go-stellar-sdk/xdr directly. Connectors go through the helpers
@@ -554,7 +554,7 @@ func AsMap(sv xdr.ScVal) ([]xdr.ScMapEntry, error) {
 // should surface ErrScValMissingKey.
 //
 // This is the canonical "decode by field name, not by position"
-// entry point. Per docs/architecture/contract-schema-evolution.md,
+// entry point. Per docs/architecture/ingest-pipeline.md#contract-schema-evolution,
 // new contract versions may add, reorder, or remove fields; lookup
 // by symbolic key makes decoders resilient to all three.
 func MapField(entries []xdr.ScMapEntry, key string) (xdr.ScVal, bool) {

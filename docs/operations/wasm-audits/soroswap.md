@@ -388,7 +388,7 @@ that isn't shipped yet).
 
 - Procedure: `docs/operations/wasm-audits/README.md`
 - Decoder source: `internal/sources/soroswap/{events,decode}.go`
-- Schema-evolution stance: `docs/architecture/contract-schema-evolution.md`
+- Schema-evolution stance: `docs/architecture/ingest-pipeline.md#contract-schema-evolution`
 - Backfill gate: `internal/sources/external/registry.go` —
   `Registry["soroswap"].BackfillSafe`
 - Upstream contract source: `https://github.com/soroswap/core`

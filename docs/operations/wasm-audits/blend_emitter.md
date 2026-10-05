@@ -170,7 +170,7 @@ Per `docs/operations/wasm-audits/README.md`'s table, applied here:
    source in this repo.
 4. **`q_swap`/`swap` Map field rename** (`new_backstop` /
    `new_backstop_token` / `unlock_time`) -- decode-by-name per
-   `contract-schema-evolution.md`; a rename fails loud
+   `ingest-pipeline.md#contract-schema-evolution`; a rename fails loud
    (`ErrMalformedPayload`) rather than silently mis-decoding.
 5. **Non-positive amount** on `distribute`/`drop` -- rejected
    (`ErrNonPositiveAmount`); none of the 465+2 observed amounts hit
@@ -213,7 +213,7 @@ shows a sustained non-zero rate (a new, undecoded topic).
 - Procedure: [`README.md`](README.md)
 - Decoder source: `internal/sources/blend_emitter/{events,decode}.go`
 - Package README: `internal/sources/blend_emitter/README.md`
-- Schema-evolution stance: [`../../architecture/contract-schema-evolution.md`](../../architecture/contract-schema-evolution.md)
+- Schema-evolution stance: [`../../architecture/ingest-pipeline.md#contract-schema-evolution`](../../architecture/ingest-pipeline.md#contract-schema-evolution)
 - Backfill gate: `internal/sources/external/registry.go` --
   `Registry["blend_emitter"].BackfillSafe`
 - Related audits: [`blend.md`](blend.md) (pool + pool-factory + Backstop

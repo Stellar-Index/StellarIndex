@@ -91,7 +91,7 @@ const DefaultResolutionSeconds = 300
 // `Map{"prices": Vec<(Asset, i128)>, "timestamp": u64}` — that is
 // wrong; the Phase-1 decoder PR (#164a) must match the shape above
 // against real fixtures captured from mainnet. See
-// docs/architecture/contract-schema-evolution.md for why.
+// docs/architecture/ingest-pipeline.md#contract-schema-evolution for why.
 const (
 	EventTopic0 = "REFLECTOR"
 	EventTopic1 = "update"
