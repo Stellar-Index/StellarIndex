@@ -57,6 +57,9 @@ now="$(date -u +%s)"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 chain_file="$STATE_DIR/chain"
 chains_file="$STATE_DIR/chains"
+started_file="$STATE_DIR/started"
+completed_file="$STATE_DIR/completed"
+sweep_failed=0
 backup_ok=0
 bytes=0
 chain_len=0
@@ -172,6 +175,36 @@ prune_chains() {
   return "$failed"
 }
 
+# Deletes partial uploads of failed runs: a path in `started` that is neither
+# in `completed`, nor a link of the current chain, nor `$1` (this run's own).
+# Concurrency is excluded by main()'s system.backups check, which runs first.
+# A missing/unreadable record deletes nothing. The B2 key cannot hard-delete
+# (removal only hides versions); a bucket lifecycle rule reclaims the space.
+sweep_orphans() {
+  local cur="$1" p kept="" chain_paths=""
+  [[ -r "$started_file" ]] || return 0
+  [[ -r "$chain_file" ]] && chain_paths="$(cut -f2 "$chain_file")"
+  while IFS= read -r p; do
+    [[ -z "$p" ]] && continue
+    if [[ "$p" != "$CH_DATABASE"/[0-9]*/[0-9]*-full && "$p" != "$CH_DATABASE"/[0-9]*/[0-9]*-incr ]] ||
+      [[ "$p" == *..* || "$p" == "$cur" ]] ||
+      grep -qxF -- "$p" "$completed_file" 2>/dev/null ||
+      grep -qxF -- "$p" <<<"$chain_paths"; then
+      continue
+    fi
+    # shellcheck disable=SC2086 # CH_DISKS_CMD is a command line by design
+    if $CH_DISKS_CMD --disk "$BACKUP_DISK" --query "remove -r $p"; then
+      note "removed orphaned partial backup $p"
+    else
+      note "ORPHAN REMOVAL FAILED for $p — it stays on record"
+      kept="$kept$p"$'\n'
+      sweep_failed=1
+    fi
+  done < "$started_file"
+  printf '%s' "$kept" > "$started_file.tmp" && mv "$started_file.tmp" "$started_file"
+  : > "$completed_file.tmp" && mv "$completed_file.tmp" "$completed_file"
+}
+
 main() {
   local plan base path chain_id rc=0
   if [[ -z "$BACKUP_DISK" ]]; then
@@ -197,6 +230,8 @@ main() {
     chain_id="$(cut -d/ -f2 <<<"$base")"
     path="$CH_DATABASE/$chain_id/$stamp-incr"
   fi
+  sweep_orphans "$path"
+  echo "$path" >> "$started_file"
   note "starting ${plan%% *} backup to $(disk_ref "$path")"
   if ! run_backup "$path" "$base"; then
     # The base this chain extends is gone from the disk: every further
@@ -209,6 +244,7 @@ main() {
     return 1
   fi
   backup_ok=1
+  echo "$path" >> "$completed_file"
   if [[ "$plan" == full ]]; then
     printf '%s\t%s\n' "$now" "$path" > "$chain_file"
     echo "$chain_id" >> "$chains_file"
@@ -220,6 +256,7 @@ main() {
   chain_len="$(grep -c . "$chain_file")"
   note "backup $path created ($bytes bytes written; chain length $chain_len)"
   write_metrics
+  (( sweep_failed )) && rc=2
   return "$rc"
 }
 

@@ -141,6 +141,7 @@ if [[ "$(grep -c . "$TMP/queries")" -eq "$n_before" ]]; then ok "issues no secon
 echo "4. a new full retires the old chain — only after it succeeds"
 old_chain="$(cut -d/ -f2 <<<"$full_path")"
 age_chain 30
+rm -f "$TMP/state/started" # section 3's partials are section 8's subject
 MOCK_STATUS='BACKUP_FAILED\t0\t0\tboom' run
 file_empty "$TMP/prunes" "a failed full prunes nothing"
 on_record "$old_chain" "a failed full keeps the old chain on record"
@@ -180,6 +181,52 @@ printf 'garbage\n' > "$TMP/state/chain"
 sleep 1
 run
 last_is_full "malformed state takes a full"
+
+echo "8. partial uploads of failed runs are removed; nothing else is"
+reset
+run
+full_path="$(cut -f2 "$TMP/state/chain")"
+: > "$TMP/prunes"
+sleep 1
+MOCK_STATUS='BACKUP_FAILED\t0\t0\tboom' run
+orphan="$(tail -n1 "$TMP/state/started")"
+if [[ "$orphan" != "$full_path" && "$orphan" == *-incr ]]; then ok "failed run is on the started record"; else bad "failed run is on the started record"; fi
+file_empty "$TMP/prunes" "nothing removed in the run that failed (its own path)"
+sleep 1
+run; rc=$?
+expect_rc 0 "run after the failure exits 0"
+if grep -qx -- "--disk si_lake_backup --query remove -r $orphan" "$TMP/prunes"; then ok "orphan deleted"; else bad "orphan deleted"; fi
+if grep -qF -- "$full_path" "$TMP/prunes"; then bad "completed full kept"; else ok "completed full kept"; fi
+if [[ "$(grep -c . "$TMP/prunes")" -eq 1 ]]; then ok "only the orphan was removed"; else bad "only the orphan was removed"; fi
+if grep -qxF -- "$orphan" "$TMP/state/started"; then bad "removed orphan leaves the record"; else ok "removed orphan leaves the record"; fi
+: > "$TMP/prunes"
+sleep 1
+run
+file_empty "$TMP/prunes" "completed incrementals and the chain base are kept"
+echo "8b. a failed removal stays on record and exits 2"
+sleep 1
+MOCK_STATUS='BACKUP_FAILED\t0\t0\tboom' run
+orphan="$(tail -n1 "$TMP/state/started")"
+sleep 1
+MOCK_PRUNE_RC=1 run; rc=$?
+expect_rc 2 "failed orphan removal exits 2"
+if grep -qxF -- "$orphan" "$TMP/state/started"; then ok "unremoved orphan stays on record"; else bad "unremoved orphan stays on record"; fi
+
+echo "8c. a missing or unreadable record deletes nothing"
+sleep 1
+MOCK_STATUS='BACKUP_FAILED\t0\t0\tboom' run
+rm -f "$TMP/state/started" "$TMP/prunes"
+sleep 1
+run; rc=$?
+expect_rc 0 "missing record: run succeeds"
+file_empty "$TMP/prunes" "missing record deletes nothing"
+
+echo "8d. a malformed or foreign record line is never deleted"
+printf 'stellar\n../etc\nother/20200101T000000Z/20200101T000000Z-full\n' > "$TMP/state/started"
+rm -f "$TMP/prunes"
+sleep 1
+run
+file_empty "$TMP/prunes" "malformed lines deleted nothing"
 
 echo
 echo "ch-lake-backup-test: $pass passed, $fail failed"
