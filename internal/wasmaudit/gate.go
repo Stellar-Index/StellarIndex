@@ -302,8 +302,9 @@ func walkFactory(ctx context.Context, es completeness.EventStreamer, source stri
 // decoder admits an event from by tip. Its childgate honours any child the
 // root announced, so a child that emits runs WASM the decoder reads; gating
 // the ~139k silent children instead would cost one lake read each for no
-// coverage. One ledger-ordered pass over every emitter registers each child
-// before its own events, as a replay does.
+// coverage. The lake orders a ledger by tx hash, not apply order, so a
+// child's event can precede its announcement: emitters and announcements are
+// collected separately and intersected after the walk.
 func sorocreditEmittingChildren(ctx context.Context, es completeness.EventStreamer, tip uint32) ([]string, error) {
 	if sorocredit.GenesisLedger >= tip {
 		return nil, nil
@@ -312,16 +313,31 @@ func sorocreditEmittingChildren(ctx context.Context, es completeness.EventStream
 		return nil, fmt.Errorf("%s child walk: no event stream", sorocredit.SourceName)
 	}
 	dec := sorocredit.NewDecoder()
-	emitters := map[string]struct{}{}
-	created := 0
+	announced := map[string]struct{}{}
+	// emitters maps each non-root contract the decoder would admit as a child
+	// to the ledgers of its events that failed to decode.
+	emitters := map[string][]uint32{}
 	blind := completeness.NewBlindTracker()
 	err := es.StreamContractEvents(ctx, sorocredit.GenesisLedger, tip, nil, sorocredit.EventSymbols(), func(ev events.Event) error {
+		if ev.ContractID != sorocredit.MainnetContract {
+			if perr := completeness.Guard(func() {
+				child := sorocredit.NewDecoder(contractid.WithSeed([]string{ev.ContractID}))
+				if !child.Matches(ev) {
+					return
+				}
+				undecodable := emitters[ev.ContractID]
+				if _, derr := child.Decode(ev); derr != nil {
+					undecodable = append(undecodable, ev.Ledger)
+				}
+				emitters[ev.ContractID] = undecodable
+			}); perr != nil {
+				emitters[ev.ContractID] = append(emitters[ev.ContractID], ev.Ledger)
+			}
+			return nil
+		}
 		if perr := completeness.Guard(func() {
 			if !dec.Matches(ev) {
 				return
-			}
-			if ev.ContractID != sorocredit.MainnetContract {
-				emitters[ev.ContractID] = struct{}{}
 			}
 			outs, derr := dec.Decode(ev)
 			if derr != nil {
@@ -330,7 +346,7 @@ func sorocreditEmittingChildren(ctx context.Context, es completeness.EventStream
 			}
 			for _, o := range outs {
 				if e, ok := o.(sorocredit.Event); ok && e.EventType == sorocredit.TypeNewCollateralContract {
-					created++
+					announced[e.CollateralContract] = struct{}{}
 				}
 			}
 		}); perr != nil {
@@ -341,13 +357,23 @@ func sorocreditEmittingChildren(ctx context.Context, es completeness.EventStream
 	if err != nil {
 		return nil, fmt.Errorf("%s child walk: %w", sorocredit.SourceName, err)
 	}
+	children := map[string]struct{}{}
+	for c, undecodable := range emitters {
+		if _, ok := announced[c]; !ok {
+			continue // a look-alike the decoder never admits
+		}
+		children[c] = struct{}{}
+		for _, l := range undecodable {
+			blind.Undecodable(l)
+		}
+	}
 	if b := blind.Result(); b.Any() {
 		return nil, fmt.Errorf("%s child walk is blind: %s", sorocredit.SourceName, b.Detail())
 	}
-	if created == 0 {
+	if len(announced) == 0 {
 		return nil, fmt.Errorf("%s child walk: 0 %q events in [%d,%d]", sorocredit.SourceName, sorocredit.TopicNewCollateralContract, sorocredit.GenesisLedger, tip)
 	}
-	return sorted(emitters), nil
+	return sorted(children), nil
 }
 
 func sorted(set map[string]struct{}) []string {

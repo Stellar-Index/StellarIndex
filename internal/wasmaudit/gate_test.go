@@ -14,6 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -310,5 +311,78 @@ func TestGate_SorocreditChildThatEmitsIsChecked(t *testing.T) {
 	}
 	if err := Gate(ctx, Deps{}, h, m, []string{"sorocredit"}, sorocredit.GenesisLedger, tip); err == nil {
 		t.Error("no event stream admitted the replay")
+	}
+}
+
+// TestGate_SorocreditChildEmittingBeforeItsAnnouncementIsChecked: the lake
+// streams a ledger by (tx_hash, op_index, event_index), not apply order, so
+// a child's first event can arrive before the root's announcement of it in
+// the same ledger. Backfill applies in order and admits that event, so the
+// gate must check the child's WASM whatever order the walk sees them in.
+func TestGate_SorocreditChildEmittingBeforeItsAnnouncementIsChecked(t *testing.T) {
+	m := mustLoad(t)
+	ctx := context.Background()
+	ledger := sorocredit.GenesisLedger + 10
+	create := soroEvent(sorocredit.MainnetContract, ledger,
+		[]string{scval.MustEncodeSymbol(sorocredit.TopicNewCollateralContract), soroCreateTopic1}, soroCreateData)
+	outs, err := sorocredit.NewDecoder().Decode(create)
+	if err != nil || len(outs) != 1 {
+		t.Fatalf("fixture creation event: %v, %d outs", err, len(outs))
+	}
+	child := outs[0].(sorocredit.Event).CollateralContract
+	withdraw := soroEvent(child, ledger,
+		[]string{scval.MustEncodeSymbol(sorocredit.TopicWithdrawal), soroCreateTopic1}, soroWithdrawData)
+	withdraw.TxHash = "0000000000000000000000000000000000000000000000000000000000000001"
+	if withdraw.TxHash >= create.TxHash {
+		t.Fatal("fixture: the child's tx must sort before the announcing tx")
+	}
+	h := &fakeHistory{
+		byContract: map[string][]clickhouse.ContractCodeVersion{sorocredit.MainnetContract: {v(sorocredit.GenesisLedger, hashFor(t, m, "sorocredit"))}},
+		fallback:   []clickhouse.ContractCodeVersion{v(ledger, hB)},
+	}
+	d := Deps{Events: fakeStream{evs: []events.Event{withdraw, create}}}
+	err = Gate(ctx, d, h, m, []string{"sorocredit"}, sorocredit.GenesisLedger, sorocredit.GenesisLedger+100)
+	if err == nil || !strings.Contains(err.Error(), child) || !strings.Contains(err.Error(), hB) {
+		t.Fatalf("err = %v, want refusal naming child %s and its WASM %s", err, child, hB)
+	}
+
+	// An emitter the root never announced is a look-alike the decoder rejects.
+	stranger := withdraw
+	stranger.ContractID = soroswap_router.MainnetRouter
+	h.asked = nil
+	d = Deps{Events: fakeStream{evs: []events.Event{stranger, create}}}
+	if err := Gate(ctx, d, h, m, []string{"sorocredit"}, sorocredit.GenesisLedger, sorocredit.GenesisLedger+100); err != nil {
+		t.Fatalf("unannounced emitter gated: %v", err)
+	}
+	if strings.Contains(strings.Join(h.asked, ","), stranger.ContractID) {
+		t.Errorf("unannounced emitter was looked up: %v", h.asked)
+	}
+}
+
+// TestGate_BlendBackstopV1Refused pins that the V1 backstop's WASM, which no
+// audit attests, refuses every blend_backstop replay reaching its range.
+func TestGate_BlendBackstopV1Refused(t *testing.T) {
+	const (
+		v1Hash   = "62f61b32fff99f7eec052a8e573c367759f161c481a5caf0e76a10ae4617c3b4"
+		v1Ledger = 51_499_492
+	)
+	m := mustLoad(t)
+	if _, ok := m[v1Hash]; ok {
+		t.Fatalf("manifest attests Backstop V1 WASM %s; this test pins its absence (docs/operations/wasm-audits/blend.md)", v1Hash)
+	}
+	if blend_backstop.MainnetBackstopV1 != "CAO3AGAMZVRMHITL36EJ2VZQWKYRPWMQAPDQD5YEOF3GIF7T44U4JAL3" {
+		t.Fatalf("MainnetBackstopV1 = %s", blend_backstop.MainnetBackstopV1)
+	}
+	h := &fakeHistory{byContract: map[string][]clickhouse.ContractCodeVersion{
+		blend_backstop.MainnetBackstopV2: {v(blend_backstop.BackstopGenesisLedger, hashFor(t, m, "blend"))}, // blend_backstop's audit subject
+		blend_backstop.MainnetBackstopV1: {v(v1Ledger, v1Hash)},
+	}}
+	err := Gate(context.Background(), Deps{}, h, m, []string{"blend_backstop"}, v1Ledger, v1Ledger+1_000)
+	if err == nil || !strings.Contains(err.Error(), "62f61b32") || !strings.Contains(err.Error(), blend_backstop.MainnetBackstopV1) {
+		t.Fatalf("err = %v, want refusal naming V1 %s and WASM 62f61b32", err, blend_backstop.MainnetBackstopV1)
+	}
+	// Before V1 existed the replay is V2-only and admitted.
+	if err := Gate(context.Background(), Deps{}, h, m, []string{"blend_backstop"}, v1Ledger-1_000, v1Ledger-1); err != nil {
+		t.Fatalf("pre-V1 range: %v", err)
 	}
 }

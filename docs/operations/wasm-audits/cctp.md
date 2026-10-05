@@ -107,10 +107,10 @@ in `github.com/circlefin/stellar-cctp`):
   assembling a logical outbound-transfer record.
 - All amounts are i128 carried as decimal strings per ADR-0003
   (`Amount`, `MaxFee`, `FeeCollected`).
-- `CctpForwarder` (`CBZL2IH...`) is in the watchlist for
-  completeness but the v2 forwarder pattern emits no extra event
-  surface beyond `TokenMessengerMinter` / `MessageTransmitter` —
-  any forwarder-specific events surface as an audit finding.
+- `CctpForwarder` (`CBZL2IH...`) emits its own event surface:
+  `mint_and_forward` (an inbound mint relayed onward, decoded by
+  `DecodeMintAndForward` in `internal/sources/cctp/decode.go`) plus the
+  shared ownership/admin events. See the per-WASM review below.
 
 ## WASM timeline
 
