@@ -97,7 +97,12 @@ checklist and a decode-failure watch after the vote.
 Core `29.0.0` reached apt 2026-09-24; the mainnet vote is 2026-10-01.
 
 - [ ] Checklist above, steps 1–4. Step 1 for P29 is not written up here; fill
-  the change table (as in the P28 section) when done.
+  the change table (as in the P28 section) when done. Not yet evidenced in the
+  repo: the P29 CAP list and per-CAP handling, the SDK arm check (step 2), and
+  the r1 core version after the vote.
+- Mainnet activated P29 at ledger 64717645. Core `29.0.0` is on apt and
+  `stellar-core-auto-upgrade` installs a newer apt core with tip verification
+  and rollback. galexie is pinned to `galexie-v29.0.0` (2026-10-02, VERSIONS.md).
 - [ ] Drill run on one test net (testnet or futurenet), report attached.
 - [ ] CAP-0076 is mainnet-only and cannot be drilled; watch for decode failures
   and the stack-version probe after the vote instead.

@@ -162,7 +162,7 @@ ON CONFLICT DO NOTHING absorbs duplicates.
   `projector_events_decoded_total{source, outcome}` counter.
 - `deploy/monitoring/rules/projector.yml` (NEW) — alert rule
   `stellarindex_projector_lag_high` fires when
-  `projector_lag_ledgers > 1000` sustained 15min.
+  `projector_lag_ledgers > 256` sustained 10min.
 
 **Verification:**
 - Per-source row rates remain constant (both writers active,
