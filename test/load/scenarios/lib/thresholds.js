@@ -44,6 +44,10 @@ export const sla = {
     // recovery asserted out-of-band by the runbook.
     'http_req_failed': ['rate<0.005'],
   },
+  smoke: {
+    // Contract check, not a load test: one request failing is a failure.
+    'http_req_failed': ['rate==0'],
+  },
   catalogue: {
     // Catalogue endpoints — same SLA bar as other read
     // surfaces. /v1/markets does a GROUP BY across the 14-day
