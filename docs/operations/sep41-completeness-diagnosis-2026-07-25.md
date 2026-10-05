@@ -14,8 +14,7 @@ structurally** (no live data needed), names the exact predicate that
 must be failing, and gives the operator the discriminating queries for
 the one candidate family that remains.
 
-It also retires
-[`sep41-watched-set-decision.md`](sep41-watched-set-decision.md), whose
+It also retires the earlier watched-set decision doc (deleted), whose
 premise (`watched_sep41_contracts = []`) went stale on 2026-07-05.
 
 > **No tool was built.** The triage's standing instruction — do not
@@ -224,9 +223,9 @@ once. So the question splits in two:
 | scattered, `expected > served` | **Failed-transaction events counted as expected.** `dispatcher.go:598` and `census.go:94` both skip `!tx.Result.Successful()`; `clickhouse/extract.go:117` calls `extractEvents` with **no success gate** and hard-codes `InSuccessfulCall: 1` (`extract.go:317`), and the reconcile stream applies no `in_successful_call` predicate. Would affect every event source, so treat a non-zero Q5 as significant only if other sources are also red. | Q5 |
 | at/near a source's `MIN(ledger)` with a P5 detail line | **Durable-floor loss** (migration 0116). | Q6 |
 
-### 3.1 A note on the watched set, and why the decision doc is stale
+### 3.1 A note on the watched set, and why the old decision doc was stale
 
-[`sep41-watched-set-decision.md`](sep41-watched-set-decision.md) opens
+The deleted watched-set decision doc opened
 with "`watched_sep41_contracts = []` on r1 — the sep41_transfers +
 sep41_supply sources are config-disabled". **That has been false since
 2026-07-05.** `configs/ansible/roles/archival-node/defaults/main.yml:771`
@@ -589,5 +588,4 @@ document's author was fenced out of. Neither was changed.
 - `migrations/0088_sep41_supply_rollup_genesis_baseline.up.sql` — candidate (b)'s schema
 - `migrations/0116_completeness_target_floors.up.sql` — P5's durable floor
 - [`sep41-mint-recovery.md`](sep41-mint-recovery.md) — the scoped, additive recovery procedure
-- [`sep41-watched-set-decision.md`](sep41-watched-set-decision.md) — RETIRED by this document
 - [`runbooks/completeness-incomplete.md`](runbooks/completeness-incomplete.md) — the generic incomplete-source runbook

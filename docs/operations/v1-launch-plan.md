@@ -16,7 +16,7 @@ severity: P1
 > `production-readiness-master-plan-2026-07-18.md` (the campaign log),
 > `production-readiness-remaining.md`, `docs/audit/audit-2026-07-16/go-live-master-plan.md`,
 > `launch-todo.md`, `launch-day-checklist.md`, `public-flip.md`,
-> `public-flip-runbook.md`, `notes/ROADMAP.md`, `notes/BACKLOG.md`.
+> `notes/ROADMAP.md`, `notes/BACKLOG.md`.
 > Still ACTIVE as companions: `production-confidence-campaign-2026-07-23.md`
 > (the adversarial proof harness — its E-gate is §2.6 here) and the
 > gitignored `production-remediation-ledger-2026-07-23.md` (finding-status

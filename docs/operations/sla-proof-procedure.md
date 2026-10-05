@@ -526,8 +526,6 @@ a pass.
   [`scripts/ci/render-sla-proof.sh`](../../scripts/ci/render-sla-proof.sh)
 - Report generator self-test:
   [`scripts/ci/render-sla-proof-test.sh`](../../scripts/ci/render-sla-proof-test.sh)
-- Report template (historical; superseded by the generator):
-  [`sla-proof-template.md`](sla-proof-template.md)
 - ADR-0009 multi-window SLO:
   [`../adr/0009-latency-budget.md`](../adr/0009-latency-budget.md)
 - Reports directory README:
