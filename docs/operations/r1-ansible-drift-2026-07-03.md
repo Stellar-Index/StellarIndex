@@ -6,139 +6,71 @@ status: current
 
 # r1 ↔ ansible drift audit (2026-07-03)
 
-**Trigger:** the 2026-06-11 incident's rsyslog suppression rules turned
-out to be codified in ansible but **never applied to r1** (the
-postmortem recorded codified-as-applied). That raised the reverse
-question: what lives on r1 by hand that ansible would **erase** if the
-playbook ran? Both directions were audited: every `dest:` in
-`configs/ansible/roles/*/tasks` plus the r1 overlay surfaces
-(prometheus, alertmanager, caddy, systemd units) diffed against the
-live host.
+Why `codified ≠ live` is a failure class here: the 2026-06-11 rsyslog
+suppression rules were codified in ansible but never applied to r1, and r1
+also carried hand fixes a playbook run would have erased. The audit diffed
+every `dest:` in `configs/ansible/roles/*/tasks` plus the r1 overlays
+(prometheus, alertmanager, caddy, systemd units) against the live host in both
+directions.
 
 ## ⚠️ Standing rule
 
-**RESOLVED 2026-07-03 (same day):** after 18 dry-run rounds + staged
-application, the full playbook applies cleanly to live r1 (exit 0,
-failed=0) and IS now the deployment path for host config. Guardrails:
-the hourly `config-assertions.sh` timer, the weekly `ansible-drift.yml`
-workflow (fails on >allowance changed tasks), and the CI ansible
-syntax/lint job. Always `--check --diff` before an apply; binaries stay
-with deploy.yml (`manage_stellarindex_binaries=false`).
+The full playbook applies cleanly to r1 and IS the deployment path for host
+config. Binaries stay with deploy.yml (`manage_stellarindex_binaries=false`).
 
-Post-mortem-grade findings from the APPLY stages (beyond the table
-below): the role would have downgraded the live upstream OpenZFS 2.3.4
-to Ubuntu's 2.2.2 — apt deleted the dkms module before failing,
-leaving the pool one reboot from gone (recovered from the 2026-05-21
-migration debs; packages now held + role gated + 3 new assertions);
-galexie ran on MinIO ROOT creds and now uses the dedicated
-galexie-writer user; the vault's galexie keys had been literal
-placeholder braces since April; postgres's hand-tuned 8GB
-max_wal_size was inert behind a postgresql.auto.conf override the
-whole time (auto.conf RESET; the file is single-source now).
+- Always `--check --diff` before an apply.
+- Every hand fix on r1 is codified in the same PR.
+- Guardrails: the hourly `config-assertions.sh` timer (load-bearing subset),
+  the weekly `ansible-drift.yml` workflow, and the CI ansible syntax/lint job.
+- `ansible-drift.yml` fails on any changed task not listed in
+  `scripts/ci/ansible-drift.baseline` (each entry needs a reason; repo-ahead or
+  live-ahead drift never belongs there). An apply is `workflow_dispatch` with
+  `apply=true`, under deploy.yml's approval gate.
 
-## Findings — live-on-r1, absent-from-ansible (would be ERASED)
+## What a drift report means
 
-| # | Surface | Live state | Codified? |
-|---|---|---|---|
-| 1 | `[supply]` in `/etc/stellarindex.toml` | 16 `sdf_reserve_accounts` + `reserve_balances_stroops` table (CS-010 fix, 2026-07-02) | ✅ 2026-07-03: template renders the balances table; accounts + balances now in `inventory/r1.yml` vars |
-| 2 | Redis `maxmemory 1gb` (2026-06-16 sweep) | Debian-packaged redis, hand-edited conf; the redis-sentinel role is the future HA shape and does NOT manage it | ✅ 2026-07-03: archival-node lineinfile task |
-| 3 | nftables nft-drop log tweak (`5/second … level info`, 2026-06-30) + `10-nft-drop.conf` rsyslog + logrotate pair | Hand observability addition | ✅ 2026-07-03: template matches live (5/s level info) + rsyslog/logrotate pair in 15-log-discipline |
-| 4 | nftables `11625 accept` (F-1201, future validator) | Hand rule; template gates it on `run_stellar_core`, which is `false` in r1.yml | ✅ resolved by decision: the rule dropped at apply (nothing listens; run_stellar_core flips it back for Phase 3) |
-| 5 | Caddy (public TLS edge) | Entirely hand-managed; live still bound a legacy-domain alias the repo Caddyfile had dropped | ✅ 2026-07-03: 19-caddy.yml (official repo form, Caddyfile.j2, caddy validate); legacy-domain alias removed same day in the brand purge |
-| 6 | systemd units (`stellarindex-*.service`) | Live = root-user shape; repo `deploy/systemd/` = non-root future shape (task #30) | ✅ 2026-07-03: the staged apply EXECUTED the non-root migration — all three services run as `stellarindex` |
-| 7 | sshd | Live = stock Ubuntu (root-with-key); template needs `ssh_permit_root_login` | ✅ 2026-07-03: pinned `"prohibit-password"` in r1.yml (deploy workflow + agents SSH as root) |
+- **Live-only on r1** (an apply would ERASE it): codify it. The 2026-07-03 set
+  (`[supply]` reserve accounts/balances in `/etc/stellarindex.toml`, Redis
+  `maxmemory 1gb`, nftables drop-log + rsyslog/logrotate pair, Caddy, non-root
+  systemd units, sshd `ssh_permit_root_login: "prohibit-password"`) is all
+  codified. nftables `11625 accept` is gated on `run_stellar_core` (`false` on
+  r1).
+- **Repo-ahead-of-r1**: clears on the next apply.
+- **Inherently non-idempotent** (`Sync migrations` rsync itemize, `disable-thp`
+  oneshot `state: started`): baseline entries.
 
-## Findings — repo-ahead-of-r1 (apply-gaps, now closed)
+Lessons from the first apply, each now guarded: the role would have downgraded
+r1's upstream OpenZFS 2.3.4 to Ubuntu's 2.2.2 (apt removed the dkms module
+before failing; packages held, role gated, assertions added); galexie ran on
+MinIO root creds (now the galexie-writer user); Postgres `max_wal_size` was
+inert behind a `postgresql.auto.conf` override (auto.conf reset; the conf file
+is single-source).
 
-- rsyslog loki/clickhouse suppression (2026-06-11 fix) — **applied
-  2026-07-03**, probe-verified.
-- Prometheus rules: `served_value_drift`/`_check_stale` (board #14),
-  `divergence_no_reference` (CS-088), `ch_live_sink_drops`/`_sustained`
-  (ADR-0041), plus rebrand wording in anomaly/api/sla-probe — **synced
-  2026-07-03**. Live rules.r1 now matches the repo tree exactly.
-- prometheus.yml / alertmanager.yml: live is older but strictly a
-  subset (no live-only material lines). Alertmanager sync is gated on
-  the Discord/Healthchecks env vars existing (operator account item).
+## Phantom drift (false positives)
 
-## False positives worth remembering
+- Raw-text diffs against `.j2` templates miss loop/var-rendered content (the
+  nftables 80/443/SSH-limit rules come from `public_allow_ports_base`). Render
+  with `ansible-playbook --check --diff` before believing a template gap.
+- `community.general.zfs` reads props with `zfs get -p`, so `zfs_datasets`
+  recordsize must be the byte form (`131072`/`8192`/`1048576`). The
+  `Create ZFS datasets` task is item-driven: it manages only the properties
+  each entry declares (forcing an inherited property re-reports every run);
+  per-item `dir_mode` (`pgbackrest` uses `"0750"`).
+- `postgresql_set` string-compares against `pg_settings`, so
+  `shared_preload_libraries` must be the stored form
+  `timescaledb, pg_stat_statements` (with the space).
 
-Raw-text diffs against `.j2` templates flag loop/var-rendered content
-as "missing" — the nftables 80/443/SSH-limit rules ARE in the role
-(`public_allow_ports_base` defaults) despite not appearing in the
-template text. Render (`ansible-playbook --check --diff`) before
-believing a template gap.
+## Comment-only drift is reported, not counted
 
-## 2026-07-06 reconcile — ZFS datasets + shared_preload false-drift (BACKLOG #50)
+`scripts/ci/check-ansible-drift.sh` classifies a changed task as
+**comment-only** when its `--diff` hunks' removed and added lines are the same
+multiset after stripping trailing comments (`#`, `--`, `//`) and blanks, and a
+changed handler as **consequential** when every other non-allowed changed task
+is comment-only. Both print (`≈` / `↳`) in the job summary and neither fails the
+run. A task that reports changed with **no diff** (`diff: false`, e.g.
+`Install pgBackRest core config`, which carries repo credentials) stays drift.
 
-The weekly `ansible-drift.yml` was failing at `changed=14` (allowance 13).
-A read-only `--check --diff` against live r1 broke the count down, and three
-of the changed items were **phantom drift** (the codified value could never
-equal what the module reads back), now fixed:
-
-- **`Create ZFS datasets` (8 item-diffs → 1 changed task).** The
-  `community.general.zfs` module reads current props with `zfs get -p`
-  (parsable), so a human-readable `recordsize: "128K"` never equals the live
-  `131072` and every run re-reported a change. `zfs_datasets` recordsize
-  values are now the byte form (`131072`/`8192`/`1048576`), grounded in
-  `zfs get -p` on r1.
-- **`Add timescaledb to shared_preload_libraries` (+ its `Restart postgres`
-  handler = 2 changed items).** `postgresql_set` string-compares the desired
-  value against the live `pg_settings` value, which Postgres stores with a
-  space (`timescaledb, pg_stat_statements`). The spaceless codified value
-  drifted every run; now matches the stored form.
-
-Same pass **closed BACKLOG #50**: the out-of-band `data/pgbackrest` and
-`data/restore-drill` datasets are now codified. Both set only `mountpoint`
-locally on r1 (the rest inherit the pool defaults), so the
-`Create ZFS datasets` task was made **item-driven** — it manages exactly the
-properties each entry declares, rather than forcing all six with defaults.
-Forcing an inherited/default-source property would have re-reported a change
-on every run. `pgbackrest`'s mount dir carries `dir_mode: "0750"` (postgres
-backup repo) via the new per-item `dir_mode` knob.
-
-Post-fix the verified recap is `changed=11` (≤ 13). The remaining 11 are all
-either **repo-ahead-of-r1** (clear on the next apply — `Install r1-smoke.sh`
-+ its smoke-timer handler, `Install config-assertions script`, `heavy-job
-wrapper`, the three `Ownership — … data dir` 0755→0750 hardenings) or
-**inherently non-idempotent** (`Sync migrations` rsync mtime/owner itemize
-from a fresh checkout; `disable-thp` oneshot `state: started`; the
-catchup-probe/`Ensure migrations dir` metadata) — i.e. exactly what the
-allowance exists for. The allowance was left at 13.
-
-## The durable fix
-
-Make ansible the actual deployment path for r1 (run with
-`--check --diff`, reconcile the table above, then apply for real and
-keep applying). Until then: every hand fix on r1 gets codified in the
-same PR (this audit is the enforcement backstop), and
-`config-assertions.sh` alerts on regressions of the load-bearing
-subset.
-
-## 2026-09-17 — comment-only drift is reported, not counted
-
-The scheduled check had been red since 2026-07-15 (#496, #502). Replaying
-the 2026-09-16 dry-run showed what it was red *about*: `postgresql.conf`
-and the shipped Tier-1 DDL intent copy differed from the repo **only in
-comment text** (an incident note hand-written on r1 on 2026-09-16 beside
-`max_wal_size = 2GB`, a rewritten comment block in the template, the
-intent header's version stamp), plus the `Restart postgres` handler
-those two notified. Applying that would have bought a production
-Postgres restart for a comment.
-
-`scripts/ci/check-ansible-drift.sh` now classifies a changed task as
-**comment-only** when its `--diff` hunks' removed and added lines are the
-same multiset after stripping trailing comments (`#`, `--`, `//`) and
-blanks — a value that changes, or a line that appears or disappears,
-stays drift whatever else is in the hunk — and a changed handler as
-**consequential** when every other non-allowed changed task is
-comment-only. Both are printed (`≈` / `↳`) and rowed in the job summary,
-and neither fails the run. A task that reports changed with **no diff**
-(`diff: false`, e.g. `Install pgBackRest core config`, which carries
-repo credentials) stays drift: the check cannot tell, so it does not
-guess.
-
-What remains red after this, on the 2026-09-16 evidence: the pgBackRest
-config (no diff by design) and the restart handler it keeps in the
-drift set. Clearing those is an apply — `workflow_dispatch` with
-`apply=true` — in a window where a Postgres restart is acceptable, or a
-by-hand look at `/etc/pgbackrest/pgbackrest.conf` against the template.
+Clearing the pgBackRest config and the `Restart postgres` handler it keeps in
+the drift set takes an `apply=true` run in a window where a Postgres restart is
+acceptable, or a by-hand comparison of `/etc/pgbackrest/pgbackrest.conf` with
+the template.

@@ -6,45 +6,34 @@ status: draft
 
 # SAC wrappers + Soroban USD-volume backfill
 
-How to add a Stellar-Asset-Contract mapping and retroactively
-price the historical trades that pre-date the addition.
+Add a Stellar-Asset-Contract mapping and retroactively price the historical
+trades that pre-date it.
 
 ## Why this matters
 
-Soroban DEX sources (Soroswap, Phoenix, Aquarius, Comet) emit
-`base_asset` and `quote_asset` as the wrapped-asset SAC contract
-ID — not the underlying classic asset. Without an operator-config
-mapping from C-strkey to "CODE-ISSUER", three things go wrong:
+Soroban DEX sources (Soroswap, Phoenix, Aquarius, Comet) emit `base_asset` /
+`quote_asset` as the SAC contract ID, not the classic asset. Without an
+operator-config mapping from C-strkey to "CODE-ISSUER":
 
-1. **Explorer shows raw C-strkeys** instead of readable tickers
-   (the `/dexes` and `/markets` AssetLabel can't resolve them).
-2. **`/v1/sac-wrappers` returns an empty map** — the explorer's
-   client-side resolution falls through to the truncated form.
-3. **`trades.usd_volume` stays NULL** — the indexer's on-chain
-   USD-volume path can't follow `quote_asset = C…` back to a
-   USD-pegged classic, so it skips the column.
+1. The explorer (`/dexes`, `/markets` AssetLabel) shows raw C-strkeys.
+2. `/v1/sac-wrappers` returns an empty map.
+3. `trades.usd_volume` stays NULL: the on-chain USD-volume path can't follow
+   `quote_asset = C…` back to a USD-pegged classic.
 
-The fix is two-part: a one-line config addition for the contract
-mapping (lights up all three for new trades), plus a
-backfill SQL that retroactively prices the historical rows.
+A config line fixes all three for new trades; a backfill prices historical rows.
 
 ## Adding a single SAC mapping
 
 ### 1. Resolve the SAC's underlying classic
-
-Use stellar.expert's contract endpoint:
 
 ```sh
 curl https://api.stellar.expert/explorer/public/contract/<C-strkey> \
   | jq -r '.asset'
 ```
 
-Returns the underlying asset in `CODE-ISSUER-N` form (the trailing
-`-N` is stellar.expert's display ordinal for multiple issuers
-per CODE — strip it before adding to config).
-
-Sanity-check by visiting `https://stellar.expert/explorer/public/asset/<asset>`
-and confirming the issuer's home_domain matches your expectations.
+Returns `CODE-ISSUER-N`; strip the trailing `-N` (stellar.expert's display
+ordinal). Sanity-check the issuer's home_domain at
+`https://stellar.expert/explorer/public/asset/<asset>`.
 
 ### 2. Append to `[supply.sac_wrappers]` on r1
 
@@ -54,9 +43,8 @@ ssh root@136.243.90.96 'cat >> /etc/stellarindex.toml' << 'EOF'
 EOF
 ```
 
-Note the **colon** separator (not the dash that the canonical
-`/v1/assets` asset_id form uses). This is the form
-`[supply].sac_wrappers` parses.
+Separator is a **colon** (not the dash of the canonical `/v1/assets` asset_id);
+that is the form `[supply].sac_wrappers` parses.
 
 ### 3. Restart the api + indexer + aggregator
 
@@ -64,7 +52,7 @@ Note the **colon** separator (not the dash that the canonical
 ssh root@136.243.90.96 'systemctl restart stellarindex-api stellarindex-indexer stellarindex-aggregator'
 ```
 
-Verify with:
+Verify:
 
 ```sh
 curl -s https://api.stellarindex.io/v1/sac-wrappers | jq '.data | length'
@@ -72,22 +60,18 @@ curl -s https://api.stellarindex.io/v1/sac-wrappers | jq '.data | length'
 
 ### 4. Bake into the ansible template
 
-`configs/ansible/roles/archival-node/templates/stellarindex.toml.j2`
-already has a `[supply.sac_wrappers]` block — append your new
-entry there in the same PR so future re-renders don't lose it.
+Append the entry to the `[supply.sac_wrappers]` block in
+`configs/ansible/roles/archival-node/templates/stellarindex.toml.j2` in the
+same PR so re-renders don't lose it.
 
 ## Backfilling historical USD-volume
 
-After a SAC entry that maps to a USD-pegged classic lands, NEW
-trades will populate `trades.usd_volume` correctly. Trades that
-landed BEFORE that config addition stay NULL.
-
-To retroactively price them, use `stellarindex-ops usd-volume-restamp`
-with `-tier exact -fill-null`. A SAC-quoted trade whose wrapper resolves to
-a USD-pegged classic is exact-tier (`quote_amount / 10^7`), and the tool
-classifies it from the same `[trades].usd_pegged_classic_assets` and
-`[supply.sac_wrappers]` the insert path reads, so there is no hand-kept
-`IN (…)` list to extend:
+New trades populate `trades.usd_volume` once a USD-pegged SAC entry lands;
+earlier trades stay NULL. Price them with `stellarindex-ops usd-volume-restamp`
+`-tier exact -fill-null`. A SAC-quoted trade whose wrapper resolves to a
+USD-pegged classic is exact-tier (`quote_amount / 10^7`); the tool classifies
+from the same `[trades].usd_pegged_classic_assets` and `[supply.sac_wrappers]`
+the insert path reads, so there is no hand-kept `IN (…)` list.
 
 ```sh
 # dry run: per-day candidate counts, nothing written
@@ -105,26 +89,24 @@ set -a; . /etc/default/stellarindex; set +a
 ```
 
 Then run the windowed CAGG refreshes the tool prints: it refreshes nothing
-itself, and every served volume surface reads a continuous aggregate.
-Full procedure and flags: [usd-volume-rederive-2026-08.md, Step
+itself, and every served volume surface reads a continuous aggregate. Full
+procedure and flags: [usd-volume-rederive-2026-08.md, Step
 5](usd-volume-rederive-2026-08.md).
 
 Do NOT backfill with a hand-written `UPDATE trades … WHERE usd_volume IS
-NULL`. `trades` is a compressed hypertable, and an UPDATE with no `ts`
-predicate makes every chunk a result relation in one transaction: the
-restamp path measured 260 result relations and ~270 GB of WAL for that
-shape, on a host whose `pg_wal` sits on a 49 GB root filesystem. It also
-leaves `derive_generation` at 0, so a later live re-write reverts it. The
-tool slices the window by `ts`, lifts the decompression cap with
-`SET LOCAL` per slice, and stamps the run's generation.
-`scripts/ci/lint-migration-commands.sh` fails an ops SQL script that runs
-DML on a compressed hypertable without a time-column predicate.
+NULL`. `trades` is a compressed hypertable; an UPDATE with no `ts` predicate
+makes every chunk a result relation in one transaction (measured: 260 result
+relations, ~270 GB WAL, on a host whose `pg_wal` sits on a 49 GB root fs). It
+also leaves `derive_generation` at 0, so a later live re-write reverts it. The
+tool slices by `ts`, lifts the decompression cap with `SET LOCAL` per slice and
+stamps the run's generation. `scripts/ci/lint-migration-commands.sh` fails an
+ops SQL script that runs DML on a compressed hypertable without a time-column
+predicate.
 
 ## Adding a new USD-pegged classic
 
-If you add a SAC mapping pointing at a NEW USD-pegged stablecoin
-(not just USDC), also extend `[trades].usd_pegged_classic_assets`
-in `/etc/stellarindex.toml`:
+For a SAC pointing at a NEW USD-pegged stablecoin (not just USDC), also extend
+`[trades].usd_pegged_classic_assets` in `/etc/stellarindex.toml`:
 
 ```toml
 [trades]
@@ -134,56 +116,37 @@ usd_pegged_classic_assets = [
 ]
 ```
 
-Then both new and historical trades quoted in USDx (or its SAC
-wrapper) will be priced via `usd_volume = quote_amount / 10^7`:
-new trades at insert, historical ones by the `usd-volume-restamp`
-run above, which reads the same config.
+Trades quoted in USDx (or its SAC) are then priced `usd_volume = quote_amount /
+10^7`: new ones at insert, historical ones by the `usd-volume-restamp` run above.
 
 ## Pure-Soroban SEP-41 tokens (no USD-pegged quote at all)
 
-The two paths above ("Adding a single SAC mapping" and "Adding a
-new USD-pegged classic") both require the trade's QUOTE asset to
-resolve to a USD-pegged classic — either directly or via a SAC
-wrapper. A pure-Soroban SEP-41 token whose only liquidity route is
-against XLM (no classic counterpart, no fiat-quoted pair) has no
-quote-side USD peg to add, so neither path lights it up.
-
-Two further tiers cover this case (ROADMAP #37 / L7.6), both gated
-on `[trades].usd_pegged_classic_assets` being non-empty (which also
-wires `VWAPUSDFXResolver` — see
+The paths above need the QUOTE asset to resolve to a USD-pegged classic. A
+pure SEP-41 token whose only route is against XLM has none, so two further
+tiers apply (ROADMAP #37 / L7.6), both gated on `[trades].usd_pegged_classic_assets`
+being non-empty (which also wires `VWAPUSDFXResolver`, see
 `cmd/stellarindex-indexer/main.go`):
 
-- **Tier 3** (existing, L2.2 Phase 2): fires when the trade's QUOTE
-  asset — including plain `native` XLM — has a recent VWAP against
-  one of the configured USD pegs in `prices_1m`. Covers pools that
-  store the pair as `base=TOKEN, quote=XLM`.
-- **Tier 4** (L7.6): fires when tier 3 declines (the quote is the
-  pure SEP-41 token itself, with no USD-pegged market) AND the
-  trade's BASE asset is `native` XLM or its SAC wrapper. Covers the
-  mirror-image pool orientation, `base=XLM, quote=TOKEN` — `internal/sources`
-  decoders don't re-orient trades to a canonical form, so both
-  orientations occur on-chain depending on which pool token ordering
-  the venue used. Values the trade off the XLM leg —
-  `usd_volume = base_amount/1e7 × XLM/USD` — which needs no
-  knowledge of the SEP-41 token's own decimals.
+- **Tier 3** (L2.2 Phase 2): the quote asset, including plain `native` XLM, has
+  a recent VWAP against a configured USD peg in `prices_1m`. Covers
+  `base=TOKEN, quote=XLM`.
+- **Tier 4** (L7.6): tier 3 declined (quote is the SEP-41 token, no USD-pegged
+  market) AND the BASE is `native` XLM or its SAC. Covers `base=XLM,
+  quote=TOKEN` (decoders in `internal/sources` don't re-orient trades). Values
+  off the XLM leg: `usd_volume = base_amount/1e7 × XLM/USD`, needing no knowledge
+  of the token's decimals.
 
-Both tiers are insert-time only (no retroactive backfill for trades
-that landed before the resolver was wired — same posture as the
-"Backfilling historical USD-volume" section above). A pure
-SEP-41/SEP-41 pair (neither leg XLM nor USD-pegged) stays out of
-scope on every tier — that needs a per-token oracle, not a
-peg-anchor. `internal/storage/timescale/trades.go`'s `tradeUSDVolume`
-docstring is the authoritative reference for the exact four-tier
-order; `Store.SorobanVolume24hUSDForAsset` is the read-side
-equivalent for the one field (`/v1/assets/{id}`'s `volume_24h_usd`)
-that also has a query-time fallback for trades that predate tier 3/4
-being wired.
+Both tiers are insert-time only (no retroactive backfill). A SEP-41/SEP-41 pair
+(neither leg XLM nor USD-pegged) stays out of scope on every tier: it needs a
+per-token oracle. `tradeUSDVolume`'s docstring in
+`internal/storage/timescale/trades.go` is authoritative for the four-tier
+order; `Store.SorobanVolume24hUSDForAsset` is the read-side equivalent for
+`/v1/assets/{id}`'s `volume_24h_usd`, which also has a query-time fallback for
+trades that predate tier 3/4.
 
 ## Bulk-resolve helper
 
-When seeding many SACs at once (e.g. adding all top pools for a
-new venue), this loop crawls the active pools for a source and
-prints the config lines to paste:
+Prints config lines for the active pools of a source:
 
 ```sh
 for addr in $(curl -s "https://api.stellarindex.io/v1/pools?source=$SRC&limit=50" \
@@ -201,9 +164,8 @@ done
 
 ## Related
 
-- `internal/ops/chops/usd_volume_restamp.go` — the backfill
-  (`stellarindex-ops usd-volume-restamp -tier exact -fill-null`).
-- `internal/storage/timescale/usd_volume_quote_spec.go` — the live
-  USD-volume path; the restamp classifies through the same spec.
-- `internal/api/v1/known_issuers.go` — curated org-name fallback;
-  add an entry alongside the SAC for explorer label parity.
+- `internal/ops/chops/usd_volume_restamp.go`: the backfill.
+- `internal/storage/timescale/usd_volume_quote_spec.go`: the live USD-volume
+  path; restamp classifies through the same spec.
+- `internal/api/v1/known_issuers.go`: curated org-name fallback; add an entry
+  alongside the SAC for explorer label parity.

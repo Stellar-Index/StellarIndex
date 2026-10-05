@@ -6,11 +6,8 @@ status: operational
 
 # Local preflight
 
-Every failure below was discovered in GitHub Actions or on a deploy host,
-minutes to tens of minutes after it became knowable locally. Measured on
-2026-09-07 alone: **four failed deploys, two failed twelve-minute `verify.sh`
-runs, one failed release cut** — each one answerable on this machine in
-seconds beforehand.
+Each failure below was knowable locally in seconds but surfaced in GitHub
+Actions or on a deploy host minutes later.
 
 | Question | Command | Cost |
 | --- | --- | --- |
@@ -22,173 +19,131 @@ seconds beforehand.
 ## `make preflight-deploy REGION=… VERSION=…`
 
 Runs [`scripts/dev/preflight-deploy.sh`](../../scripts/dev/preflight-deploy.sh).
-Answers, in one run, every question `.github/workflows/deploy.yml` asks, and
-ends with the exact `gh workflow run deploy.yml` line for that region. Exit is
-non-zero whenever an operator decision is outstanding; the command is printed
-either way, because knowing the command and knowing it is not yet safe are
-separate facts.
+Answers every question `.github/workflows/deploy.yml` asks and ends with the
+exact `gh workflow run deploy.yml` line for the region. Exit is non-zero
+while an operator decision is outstanding; the command is printed either way.
 
-The three failure classes it removes:
+**1. Config-apply gate.** `scripts/ci/config-apply-gate.sh` fails a deploy
+whose release changed a config surface a binary deploy does not apply and
+nothing has cleared. The gate decides the surfaces, in
+[three cases](deploy-config-apply.md#three-cases-not-two) (comment-only,
+already applied, substantive); the preflight reads both the surface list and
+the classifier out of the gate script, so it reports the same names.
 
-**1. Config-apply gate.** The gate (`scripts/ci/config-apply-gate.sh`) fails a
-deploy whose release changed a config surface a binary deploy does not apply
-and that nothing has cleared. Which surfaces those are is decided by the gate,
-in [three cases](deploy-config-apply.md#three-cases-not-two) — comment-only,
-already applied, substantive — and the preflight reports the same three under
-the same names, because it reads both the surface list **and** the classifier
-out of the gate script rather than keeping a second copy.
+It adds the host half: for a `deploy/clickhouse/*.sql` diff verifiable by
+object existence, it asks the target whether every created object is in
+`system.tables` and passes the satisfied files to the gate as `[applied]`,
+the same evidence `deploy.yml` produces.
 
-What it adds is the host half. For a `deploy/clickhouse/*.sql` diff the gate
-says is verifiable by object existence, the preflight asks the target whether
-every object the diff creates is present in `system.tables`, and passes the
-files that are to the gate as its `[applied]` argument — the same evidence
-`deploy.yml` produces for itself. So the verdict printed here is the verdict
-that job will reach.
+The emitted dispatch **never** carries `-f config_acknowledged=true`: that
+is an operator asserting a surface no checker can read has been applied,
+which the script cannot assert for them. ("All comment-only, so
+acknowledge" would have acknowledged v0.61.1..v0.62.0's unapplied
+`CREATE TABLE`.)
 
-The emitted dispatch **never** carries `-f config_acknowledged=true`. Both
-cases where that flag was warranted by evidence are now cleared by machine, so
-what remains is an operator asserting, from their own knowledge, that a surface
-no checker can read has been applied — which this script has no basis to assert
-for them. The rule it used to apply, "all comment-only, so acknowledge", is the
-rule that would have acknowledged v0.61.1..v0.62.0's unapplied `CREATE TABLE`.
+Limits:
 
-Three limits, stated because they matter:
+- A file type with no known comment convention (`.md`, anything
+  unrecognised) is **substantive by default**.
+- Comment-only means no rendered behaviour differs, not that host bytes
+  match: a comment-only `.j2` change still shows in the weekly
+  `ansible-drift` job until applied.
+- "Already applied" is answered only for ClickHouse DDL adding whole new
+  statements. A column added inside an existing `CREATE TABLE IF NOT
+  EXISTS`, an `ALTER`, a systemd unit or an ansible template stays
+  substantive.
 
-- A file type with no comment convention known to the gate (`.md`, anything
-  unrecognised) is **substantive by default**. The failure to avoid is a
-  rubber-stamped acknowledgement, so the ambiguous case falls to a human.
-- Comment-only means *no rendered behaviour differs*. It does not mean the
-  bytes on the host match: a comment-only `.j2` change still leaves a textual
-  difference the weekly `ansible-drift` job will report until it is applied.
-- "Already applied" is only ever answered for ClickHouse DDL whose diff adds
-  whole new statements. A column added inside an existing
-  `CREATE TABLE IF NOT EXISTS`, an `ALTER`, a systemd unit and an ansible
-  template have no such check and stay substantive.
-
-**2. The region's real binary set.** No per-region manifest existed anywhere:
-`deploy.yml` carries one default list of six binaries for three regions.
-Dispatching that list at futurenet, which has no `stellarindex-aggregator`
-unit, failed the health probe and rolled the binary back — the residue is on
-that host now as `/usr/local/bin/stellarindex-aggregator.failed-v0.62.0`.
+**2. The region's real binary set.** `deploy.yml` defaults to six binaries
+for three regions; dispatching that at futurenet (no
+`stellarindex-aggregator` unit) failed the health probe and left
+`/usr/local/bin/stellarindex-aggregator.failed-v0.62.0`.
 
 [`scripts/dev/region-binaries.tsv`](../../scripts/dev/region-binaries.tsv) is
-the manifest, derived from the hosts rather than declared:
+the manifest, derived from the hosts:
 
 - A **daemon** binary is deployable where systemd has its unit and has not
-  been told to keep it off. `configs/ansible/tasks/deploy-one-binary.yml`
-  restarts `<binary>.service` and then requires `systemctl is-active` to
-  report active, so an absent or masked unit is a failed deploy by
-  construction. Enablement alone is the wrong test and testnet is the
-  counter-example: its aggregator is `disabled` at boot and `active` right
-  now, and this workflow deployed it there at v0.62.0. What is refused is a
-  unit that is absent or masked, or one that is switched off *and* not
-  running.
-- A **CLI** binary — the three on `deploy-binary.yml`'s `cli_binaries`
-  deny-list (`ops`, `migrate`, `sla-probe`) — has no unit to restart and no
-  health probe; the playbook stats the file. The test is installation.
+  been masked. `configs/ansible/tasks/deploy-one-binary.yml` restarts
+  `<binary>.service` and requires `systemctl is-active`, so an absent or
+  masked unit fails by construction. Enablement alone is the wrong test
+  (testnet's aggregator is `disabled` at boot yet `active`). Refused: unit
+  absent or masked, or switched off *and* not running.
+- A **CLI** binary (the three on `deploy-binary.yml`'s `cli_binaries`
+  deny-list: `ops`, `migrate`, `sla-probe`) has no unit or health probe;
+  the playbook stats the file. The test is installation.
 
-Refresh a row with `--refresh-manifest` and commit the result. Every run that
-can reach the host re-derives the set anyway and **uses the host's answer**,
-so a stale row can never be what gets dispatched — it is reported as drift and
-blocks the run until the row is refreshed.
+Refresh a row with `--refresh-manifest` and commit it. Every run that can
+reach the host re-derives the set and **uses the host's answer**; a stale
+row is reported as drift and blocks the run until refreshed. `deploy.yml`
+reads the same file
+([deploy-workflow.md](deploy-workflow.md#the-region-binary-manifest)).
 
-Since 2026-09-07 `deploy.yml` reads the same file, so this preflight is a
-preview of a refusal rather than the only thing standing between a wrong set
-and a rolled-back binary. See
-[deploy-workflow.md](deploy-workflow.md#the-region-binary-manifest).
+The emitted `-f binaries=` is always the region's **whole** deployable set;
+a partial dispatch left `stellarindex-migrate` and
+`stellarindex-sla-probe` behind and tripped
+`stellarindex_binary_version_skew`.
 
-The emitted `-f binaries=` list is always the region's **whole** deployable
-set. A partial dispatch is what left `stellarindex-migrate` and
-`stellarindex-sla-probe` behind and tripped `stellarindex_binary_version_skew`.
-
-**3. Skew and migrations.** Per binary, the version live on the target against
-the release, read from `/var/lib/stellarindex/deployed-versions/`. A binary
-ahead of the release makes the dispatch a rollback, which is blocked with a
-pointer to [rollback.md](rollback.md) — migrations do not roll back with it
-(CS-099). Migrations in the range are listed with that same caveat, checked
-with `scripts/ci/lint-migration-compat.sh --staged` over the deploying tag's
-own `migrations/`, and block the run until `--migrations-ack` records that
-they have been read for old-binary compatibility. A migration that declares
-`-- REQUIRED-FOLLOWUP:` commands ([`migrations/README.md`](../../migrations/README.md)
-rule 12) runs deploy.yml's follow-up gate here too: the commands are listed and
-the run blocks until `--followups-ack` records that you will run them straight
-after the deploy, which also adds `-f followups_acknowledged=true` to the
+**3. Skew and migrations.** Per binary, the live version (from
+`/var/lib/stellarindex/deployed-versions/`) against the release. A binary
+ahead of the release makes the dispatch a rollback: blocked, pointing at
+[rollback.md](rollback.md) (migrations do not roll back with it, CS-099).
+Migrations in the range are listed, checked with
+`scripts/ci/lint-migration-compat.sh --staged` over the deploying tag's
+`migrations/`, and block until `--migrations-ack` records an old-binary
+compatibility read. A migration declaring `-- REQUIRED-FOLLOWUP:` commands
+([`migrations/README.md`](../../migrations/README.md) rule 12) runs
+deploy.yml's follow-up gate: commands are listed and the run blocks until
+`--followups-ack`, which also adds `-f followups_acknowledged=true` to the
 printed dispatch.
 
-Flags: `--no-host` makes no SSH connection at all and falls back to the
-ancestry baseline, saying so; `--refresh-manifest` rewrites the region row;
-`--migrations-ack` records the CS-099 read; `--followups-ack` the promise to
-run the follow-ups.
+Flags: `--no-host` (no SSH; ancestry baseline, said so), `--refresh-manifest`,
+`--migrations-ack`, `--followups-ack`.
 
-Everything read from a host is read-only: `cat` of the deploy sidecars,
-`systemctl is-enabled` / `is-active`, a `test -x`, and a
-`SELECT … FROM system.tables` when a ClickHouse surface is up for the
-already-applied question.
+Host reads are read-only: `cat` of the deploy sidecars, `systemctl
+is-enabled` / `is-active`, `test -x`, and `SELECT … FROM system.tables` for
+the already-applied question.
 
 ## `make bootstrap-worktree`
 
 Runs [`scripts/dev/bootstrap-worktree.sh`](../../scripts/dev/bootstrap-worktree.sh).
-Makes a fresh checkout or linked worktree able to pass `verify.sh`, and
-reports **every** gap in one pass rather than one per twelve-minute run.
+Makes a fresh checkout or linked worktree able to pass `verify.sh` and
+reports **every** gap in one pass. It checks the executable each gate
+invokes (`openapi-typescript`, `tsc`), not the directory, since a
+half-finished install leaves `node_modules` present and the binary absent.
 
-The two runs it would have saved on 2026-09-07 both died about ten minutes in,
-in sections unrelated to the change under test:
-`openapi-typescript: command not found` (`web/explorer` had no `node_modules`),
-then `tsc: command not found` (`web/status` had none). Both apps are installed
-here, and the check is for the executable each gate invokes, not for the
-directory — a half-finished install leaves the directory present and the
-binary absent.
+- **blocking**: `verify.sh` hard-fails without it; exit non-zero while any remains.
+- **clearance**: `verify.sh` defers it and ends `VERIFY INCOMPLETE`, while
+  `scripts/dev/doctor.sh --profile native` (run by `make prepush` and
+  `cut-release.sh`) requires it. Reported with its install command; does
+  not fail the script.
 
-Severity is explicit:
-
-- **blocking** — `verify.sh` hard-fails without it. Exit is non-zero while any
-  remains.
-- **clearance** — `verify.sh` defers the check and ends `VERIFY INCOMPLETE`,
-  while `scripts/dev/doctor.sh --profile native` (which `make prepush` and
-  `cut-release.sh` both run) treats it as required. Reported with its install
-  command; does not fail the script.
-
-Missing pinned Go tools are installed by `make deps`, which owns the pins —
-this script repeats no version number. `~/go/bin` is not on every shell's
-PATH, and the Makefile calls `gofumpt`, `goimports` and `golangci-lint` there
-by absolute path, so the survey resolves them the same way instead of through
-`command -v`, which would report a false miss.
-
-A tool present at the **wrong** version is reported and never silently
-corrected: `~/go/bin` is shared with every other checkout on the machine, so
-downgrading one is the operator's decision and `make deps` is the one command
-that makes them all match.
+Missing pinned Go tools are installed by `make deps`, which owns the pins.
+`~/go/bin` is not on every PATH and the Makefile calls `gofumpt`,
+`goimports`, `golangci-lint` there by absolute path, so the survey resolves
+them the same way (`command -v` would false-miss). A tool at the **wrong**
+version is reported, never silently corrected (`~/go/bin` is shared across
+checkouts); `make deps` makes them all match.
 
 `make bootstrap-worktree-check` surveys and installs nothing.
 
 ## `verify.sh` preconditions
 
-`scripts/dev/verify.sh` now resolves its preconditions in its first five
-seconds and stops there if any is missing, listing all of them at once and
-pointing at `make bootstrap-worktree`. Nothing about **what** any check
-asserts changed — each condition in the preamble is the same condition as the
-section that depends on it, so a gap named there is a gate that would have
-failed later, and a gap absent there is not.
+`scripts/dev/verify.sh` resolves its preconditions in its first five
+seconds, lists every missing one, and points at `make bootstrap-worktree`.
+Each preamble condition is the same as the section that depends on it. It
+also prints which checks **will** defer; under `VERIFY_FAIL_ON_SKIP=1`
+(set by `make prepush`) a deferrable tool is blocking.
 
-The preamble also prints which checks **will** defer, so the end state is
-known at the start. Under `VERIFY_FAIL_ON_SKIP=1` — what `make prepush` sets —
-a deferrable tool is blocking, and the preamble treats it as such: the same
-verdict, ten minutes sooner.
-
-`VERIFY INCOMPLETE: 1 check(s) deferred` with exit 1 at the end of a macOS run
-is **by design**, not a defect. The deploy migrations-sync self-test runs an
-ansible task file whose `unarchive --diff` needs GNU tar, and macOS ships
-bsdtar. Use `VERIFY_PROFILE=container`, or let CI's ansible-check job run it.
-`make prepush` is the command that issues push clearance.
+`VERIFY INCOMPLETE: 1 check(s) deferred` with exit 1 at the end of a macOS
+run is **by design**: the deploy migrations-sync self-test runs an ansible
+task file whose `unarchive --diff` needs GNU tar, and macOS ships bsdtar.
+Use `VERIFY_PROFILE=container` or let CI's ansible-check job run it.
+`make prepush` issues push clearance.
 
 ## `cut-release.sh` preconditions
 
-Branch, clean working tree and origin-sync are one question — is this checkout
-in a state a release can be cut from? — and they are evaluated as a set before
-anything else, with every failure named and the first line of output naming
-the failing precondition. Asking them one at a time cost a round trip per
-answer: fix the branch, re-run, discover the tree is dirty, re-run, discover
-you are behind origin.
+Branch, clean tree and origin-sync are evaluated together before anything
+else; every failure is named, the first output line names the failing
+precondition.
 
 ## See also
 

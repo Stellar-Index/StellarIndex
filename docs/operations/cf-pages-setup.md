@@ -6,26 +6,16 @@ status: current
 
 # Cloudflare Pages — bootstrap
 
-> ⚠️ **DO NOT RUN `scripts/ops/cf-pages-bootstrap.sh` AGAINST THE LIVE
-> ZONE.** This page previously described it as idempotent and safe to
-> run from CI. It is neither. The script creates the **pre-rename**
-> Pages projects and upserts the apex record `stellarindex.io` → the
-> `stellarindex-showcase` Pages project, which **detaches the live
-> explorer from the domain**.
->
-> The script now refuses to run unless `CF_BOOTSTRAP_I_UNDERSTAND=1` is
-> set, so an accidental invocation exits 1 without touching Cloudflare.
-> Treat what follows as the reference procedure for standing up a NEW
-> zone, not as a maintenance tool for the current one.
+> **DO NOT RUN `scripts/ops/cf-pages-bootstrap.sh` AGAINST THE LIVE ZONE.**
+> It is not idempotent and not CI-safe: it creates the **pre-rename** Pages
+> projects and upserts the apex record `stellarindex.io` → the
+> `stellarindex-showcase` project, which **detaches the live explorer from the
+> domain**. It refuses to run unless `CF_BOOTSTRAP_I_UNDERSTAND=1` is set.
+> Treat this page as the procedure for standing up a NEW zone.
 
-
-> **Moved (2026-06):** the live status page now lives on the main site at
-> `https://stellarindex.io/status`. The `status.stellarindex.io` subdomain +
-> its `stellarindex-status` CF Pages project still exist but are **redirect-only**
-> (`web/status/public/_redirects` 301s every path to `/status`). No DNS change.
-
-Provisions the public-facing surfaces on Cloudflare Pages, plus
-DNS + the `api.stellarindex.io` proxy:
+The live status page is `https://stellarindex.io/status`. `status.stellarindex.io`
+and its `stellarindex-status` project are **redirect-only**
+(`web/status/public/_redirects` 301s every path to `/status`).
 
 | Surface | Project | Domain |
 |---|---|---|
@@ -35,57 +25,35 @@ DNS + the `api.stellarindex.io` proxy:
 | Dashboard redirect (retired) | `stellarindex-app` | `app.stellarindex.io` → `301 /account` |
 | API (proxied) | (n/a — Caddy on r1) | `api.stellarindex.io` → `136.243.90.96` |
 
-> **The CF Pages projects use the `stellarindex-*` names.** Because CF
-> Pages project names are immutable, changing a project name is a
-> recreate-move-over: new direct-upload projects are created + deployed,
-> the `stellarindex.io` custom domains detached from the old projects and
-> re-attached to the new ones (DNS CNAMEs repointed), and the old projects
-> deleted. The deploy workflows (`explorer-deploy.yml`, `status-page.yml`)
-> target the `stellarindex-*` names.
-
-> **The new projects are DIRECT-UPLOAD, not git-connected.** Deploys
-> happen only via the `workflow_dispatch` workflows (wrangler
-> `pages deploy`), never auto-on-push. (The old projects were
-> git-connected and auto-deployed on every push, which is why they
-> accrued ~2,000 deployments each.) Creating a git-connected project via
-> the API fails on this account — `8000011 internal issue with your
-> Cloudflare Pages Git installation` — so direct-upload is the supported
-> path here.
-
-> **The standalone dashboard was retired (2026-06-17).** Login +
-> the account/keys/usage/settings/admin surfaces now live *in-site* at
-> `stellarindex.io/account/*` (explorer routes). `app.stellarindex.io`
-> now 301-redirects to `/account` via the tiny `stellarindex-app` Pages
-> project (a single `_redirects` file — `/* https://stellarindex.io/account 301`),
-> used because a zone-level redirect rule needs a Rulesets-scoped token
-> this account's deploy token lacks.
-
-> **The `ratesengine.net` domains were dropped (2026-06-17).**
-> Some old projects also carried `*.ratesengine.net` custom domains; they
-> were detached and now return CF 522 (their zone CNAMEs still point at
-> the now-deleted projects). To make them `NXDOMAIN`, delete the
-> `ratesengine.net` zone DNS records (separate zone; not in the
-> stellarindex.io-scoped deploy token).
+- Pages project names are immutable; renaming is recreate-move-over (§Renaming).
+  Deploy workflows (`explorer-deploy.yml`, `status-page.yml`) target the
+  `stellarindex-*` names.
+- The projects are **direct-upload, not git-connected**: deploys happen only via
+  the `workflow_dispatch` workflows (wrangler `pages deploy`), never on push.
+  Creating a git-connected project via the API fails on this account with
+  `8000011 internal issue with your Cloudflare Pages Git installation`.
+- The standalone dashboard is retired: login and account/keys/usage/settings/admin
+  live at `stellarindex.io/account/*` (explorer routes). `app.stellarindex.io`
+  301s to `/account` via `stellarindex-app` (single `_redirects` file,
+  `/* https://stellarindex.io/account 301`); a zone redirect rule would need a
+  Rulesets-scoped token the deploy token lacks.
+- `*.ratesengine.net` domains were detached and return CF 522. To make them
+  `NXDOMAIN`, delete that zone's DNS records (separate zone, outside the deploy
+  token's scope).
 
 ## One-time prerequisite (already done)
 
-Cloudflare's GitHub app must be authorised against the
-`StellarIndex` org once. Visit
-`https://dash.cloudflare.com/<account-id>/pages/new/connect` and
-click through the OAuth grant. After that, every project this
-script creates can wire its `git source` programmatically — no
-further dashboard clicks.
+Cloudflare's GitHub app authorised against the `StellarIndex` org
+(`https://dash.cloudflare.com/<account-id>/pages/new/connect`).
 
 ## Run it
 
 ```sh
-# 1. Create a scoped API token at:
-#      https://dash.cloudflare.com/profile/api-tokens
-#    Permissions:
-#      Account → Cloudflare Pages → Edit
-#      Account → Account Settings → Read
-#      Zone    → Zone → Read
-#      Zone    → DNS → Edit
+# 1. Scoped API token at https://dash.cloudflare.com/profile/api-tokens
+#    Account → Cloudflare Pages → Edit
+#    Account → Account Settings → Read
+#    Zone    → Zone → Read
+#    Zone    → DNS → Edit
 #    Zone resources: Include → Specific zone → stellarindex.io
 #    Account resources: Include → <your account>
 
@@ -99,47 +67,31 @@ DRY_RUN=1 bash scripts/ops/cf-pages-bootstrap.sh
 CF_BOOTSTRAP_I_UNDERSTAND=1 bash scripts/ops/cf-pages-bootstrap.sh
 ```
 
-Re-runs converge existing projects onto the declared config, but the
-script is **not** safe to run repeatedly against a live zone and is
-**not** wired into any workflow: step 4 below upserts the apex record
-onto the pre-rename `stellarindex-showcase` project, which detaches
-the live explorer from `stellarindex.io`. That is why
-`CF_BOOTSTRAP_I_UNDERSTAND=1` is required and why nothing in
-`.github/workflows/` invokes it.
+Re-runs converge existing projects but are unsafe on a live zone (step 4 below
+repoints the apex), and no workflow in `.github/workflows/` invokes the script.
 
 ## What it does
 
-1. Verifies the API token + looks up the `stellarindex.io`
-   zone (warns + skips DNS if the zone isn't on Cloudflare).
-2. For each of the three Pages projects: creates it pointing
-   at `Stellar-Index/StellarIndex` with the right
-   `root_dir` / `build_command` / `output_dir` / env vars,
-   or PATCHes the existing project to converge on those
-   values.
-3. Attaches the production custom domain (and `www.` for the
-   showcase).
-4. Upserts the four CNAME / A records (proxied) at the zone.
+1. Verifies the token and looks up the `stellarindex.io` zone (warns + skips DNS
+   if the zone isn't on Cloudflare).
+2. For each of the three Pages projects: creates it against
+   `Stellar-Index/StellarIndex` with `root_dir` / `build_command` / `output_dir` /
+   env vars, or PATCHes the existing one to match.
+3. Attaches the production custom domain (and `www.` for the showcase).
+4. Upserts the four CNAME / A records (proxied).
 
-After the first successful run, deploys come from whichever
-publish path that zone is configured for. For **this** zone that is
-Cloudflare's dashboard git integration (no GitHub Actions minutes),
-with `.github/workflows/explorer-deploy.yml` as the
-`workflow_dispatch`-only direct-upload fallback — it never fires on
-push. The projects this script creates carry `build_command` /
-`output_dir`, so a zone whose git integration is not connected
-deploys nothing until it is.
+Afterwards deploys come from the zone's configured publish path. For **this**
+zone that is Cloudflare's dashboard git integration, with
+`.github/workflows/explorer-deploy.yml` as the `workflow_dispatch`-only
+direct-upload fallback. Projects carry `build_command` / `output_dir`, so a zone
+whose git integration is not connected deploys nothing until it is.
 
 ## Verify
 
 ```sh
-# Pages dashboard
 open "https://dash.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/pages"
-
-# DNS resolution (should return Cloudflare IPs once propagated)
-dig +short stellarindex.io status.stellarindex.io
+dig +short stellarindex.io status.stellarindex.io   # Cloudflare IPs once propagated
 dig +short api.stellarindex.io   # → 136.243.90.96 behind orange-cloud
-
-# Surface health
 curl -sI https://stellarindex.io | head -3
 curl -sI https://status.stellarindex.io | head -3
 curl -s  https://api.stellarindex.io/v1/healthz
@@ -147,17 +99,15 @@ curl -s  https://api.stellarindex.io/v1/healthz
 
 ## Enabling in-site login (the `/account` auth flow)
 
-The magic-link handlers (`POST /v1/auth/login` + callback + logout)
-mount **only** when `cfg.API.Dashboard.BaseURL` is non-empty AND Postgres
-is reachable (see `internal/api/v1/server.go` `s.dashboardAuth != nil`).
-On r1 today `[api.dashboard]` is absent, so `/v1/auth/login` returns 404
-and `/account` shows the signed-out shell. To turn login on:
+The magic-link handlers (`POST /v1/auth/login` + callback + logout) mount only
+when `cfg.API.Dashboard.BaseURL` is non-empty AND Postgres is reachable
+(`internal/api/v1/server.go`, `s.dashboardAuth != nil`). On r1 `[api.dashboard]`
+is absent, so `/v1/auth/login` returns 404 and `/account` shows the signed-out
+shell.
 
-1. **Set the dashboard + cross-origin config** in `/etc/stellarindex.toml`
-   on r1. Note the section split — `base_url`/`cookie_*` are
-   `[api.dashboard]` keys; `allow_credentials`/`allowed_origins` are
-   `[api]` keys. Putting the cookie keys under `[api]` crash-loops the API
-   ("config: unknown keys"):
+1. Set config in `/etc/stellarindex.toml` on r1. `base_url`/`cookie_*` are
+   `[api.dashboard]` keys; `allow_credentials`/`allowed_origins` are `[api]` keys.
+   Cookie keys under `[api]` crash-loop the API ("config: unknown keys"):
 
    ```toml
    [api]
@@ -165,114 +115,75 @@ and `/account` shows the signed-out shell. To turn login on:
    allow_credentials = true
 
    [api.dashboard]
-   # In-site account lives on the apex now — NOT app.stellarindex.io.
-   base_url           = "https://stellarindex.io/account"
+   base_url           = "https://stellarindex.io/account"   # apex, NOT app.
    email_from         = "Stellar Index <hello@stellarindex.io>"
    resend_api_key_env = "STELLARINDEX_RESEND_API_KEY"
    cookie_secure      = true
-   # Apex-issued cookie must be readable by the api. subdomain (the
-   # browser calls api.stellarindex.io with credentials), so scope it
-   # to the parent zone. Pairs with SameSite=None;Secure (rc.109+).
+   # api. must read the apex-issued cookie; pairs with SameSite=None;Secure (rc.109+)
    cookie_domain      = ".stellarindex.io"
    ```
 
-2. **Add the Resend API key** to `/etc/default/stellarindex`:
+2. Add the Resend key to `/etc/default/stellarindex`, then
+   `systemctl restart stellarindex-api`:
 
    ```sh
    STELLARINDEX_RESEND_API_KEY=re_...
    ```
 
-   Then `systemctl restart stellarindex-api`. Cross-origin cookies
-   (apex page → `api.` XHR) need the `SameSite=None` cookie helper added
-   **after the rc.109 tag** (commit 9ab579c0) — so a **rc.110+ binary is
-   required**; rc.109 (currently on r1) still sets `SameSite=Lax` and the
-   browser drops the cookie on the cross-subdomain call. Cut + deploy
-   rc.110 before flipping login on.
+   Cross-origin cookies need the `SameSite=None` helper added after the rc.109
+   tag (commit 9ab579c0), so a **rc.110+ binary is required**; rc.109 sets
+   `SameSite=Lax` and the browser drops the cookie on the cross-subdomain call.
 
 ## Fallback paths
 
-- **Per-project Wrangler CLI deploy** — the new projects are
-  direct-upload, so this is the primary path (not a fallback):
+- **Wrangler CLI deploy** (primary path, projects are direct-upload):
   ```sh
   cd web/explorer && pnpm build && \
     wrangler pages deploy out --project-name stellarindex-explorer
   # docs is a static dir, no build:
   wrangler pages deploy docs/reference/api --project-name stellarindex-docs
   ```
-- **GitHub Actions workflow** — `explorer-deploy.yml` (explorer) and
-  `status-page.yml` (status) deploy via `workflow_dispatch`. Trigger via
-  `gh workflow run explorer-deploy.yml --ref main`. Both target the
-  `stellarindex-*` project names.
+- **GitHub Actions** — `gh workflow run explorer-deploy.yml --ref main`
+  (explorer) or `status-page.yml` (status); both `workflow_dispatch`.
 
 ## Troubleshooting
 
-- **`source.config.production_branch` rejected** — you're
-  hitting the legacy Pages API; the script uses the v4 endpoint
-  which understands the new shape. If you've hand-edited
-  `cf-pages-bootstrap.sh` to use older field names, revert.
-- **Token verification 403** — token scopes are missing one of
-  `Pages:Edit` / `Zone:Read` / `DNS:Edit`. Mint a new token.
-- **DNS records create but the site doesn't load** — the
-  custom-domain attachment can take ~30 s after project create
-  for CF to issue the cert. Check
+- **`source.config.production_branch` rejected** — legacy Pages API; the script
+  uses the v4 endpoint. Revert any hand-edit to older field names.
+- **Token verification 403** — token lacks `Pages:Edit` / `Zone:Read` / `DNS:Edit`.
+- **DNS records create but the site doesn't load** — cert issuance takes ~30 s
+  after project create. Check
   `https://dash.cloudflare.com/<account>/pages/view/<project>/domains`.
-- **The explorer itself is down or serving a stale build** — see
+- **Explorer down or stale build** — see
   [`runbooks/explorer-cf-pages-down.md`](runbooks/explorer-cf-pages-down.md)
-  for diagnosis and rollback (full outage, edge-function failure, or
-  a stale deploy stuck past the 20,000-file ceiling).
-- **A route is missing its security headers (CSP, HSTS, X-Frame-Options)**
-  — Pages applies `web/explorer/public/_headers` to static assets only,
-  never to a Pages Function response. The shell-fallback routes
-  (`accounts`, `assets`, `contracts`, `issuers`, `ledgers`, `markets`,
-  `transactions`, `insights/*`, `embed/*`, …) set them explicitly —
-  `shellFallback()` mirrors both `_headers` blocks and
-  `shell-fallback.test.js` fails if the mirror drifts from the file
-  (GH-916). `/og/*` and `/client-errors` still rely on `_headers` alone
-  and remain uncovered (#893). See
+  (full outage, edge-function failure, stale deploy past the 20,000-file ceiling).
+- **Route missing security headers (CSP, HSTS, X-Frame-Options)** — Pages applies
+  `web/explorer/public/_headers` to static assets only, never to a Pages Function
+  response. Shell-fallback routes (`accounts`, `assets`, `contracts`, `issuers`,
+  `ledgers`, `markets`, `transactions`, `insights/*`, `embed/*`, …) set them
+  explicitly: `shellFallback()` mirrors both `_headers` blocks and
+  `shell-fallback.test.js` fails on drift (GH-916). `/og/*` and `/client-errors`
+  rely on `_headers` alone and remain uncovered (#893). See
   [explorer-deployment.md § What `_headers` does not cover](explorer-deployment.md#what-_headers-does-not-cover).
-
-## Dashboard retirement (`app.stellarindex.io`) — DONE 2026-06-17
-
-The standalone dashboard was consolidated into the explorer's
-`/account/*` routes; `web/dashboard/` was removed from the repo (CI job +
-Makefile targets too). `app.stellarindex.io` now **301-redirects to
-`https://stellarindex.io/account`** via the `stellarindex-app` Pages
-project, whose only content is a `_redirects` file:
-
-```
-/*  https://stellarindex.io/account  301
-```
-
-(A zone-level dynamic-redirect rule would be tidier but needs a
-Rulesets-scoped token; the deploy token only has Pages/DNS/Zone-read.)
 
 ## Renaming a Pages project (recreate-move-over)
 
-CF Pages project names are immutable, so changing one is a
-recreate-move-over. The exact sequence, for the next time a Pages
-project needs renaming (`old-X` → `stellarindex-X`):
+`old-X` → `stellarindex-X`:
 
-1. **Pre-create** the new direct-upload project:
+1. **Pre-create** the direct-upload project:
    `POST /accounts/{acct}/pages/projects {"name":"stellarindex-X","production_branch":"main"}`
-   (omit `source` → direct-upload; git-connected create fails with
-   `8000011` on this account).
-2. **Deploy** content to it (`wrangler pages deploy <dir> --project-name
-   stellarindex-X`, or the `workflow_dispatch` deploy workflow) and
-   verify `stellarindex-X.pages.dev` serves.
-3. **Move each custom domain** (a hostname can only be on one project):
+   (omit `source`; git-connected create fails with `8000011`).
+2. **Deploy** content (`wrangler pages deploy <dir> --project-name stellarindex-X`
+   or the `workflow_dispatch` workflow); verify `stellarindex-X.pages.dev` serves.
+3. **Move each custom domain** (a hostname lives on one project):
    `DELETE …/projects/old-X/domains/<host>` →
    `POST …/projects/stellarindex-X/domains {"name":"<host>"}` →
    `PATCH /zones/{zid}/dns_records/{id} {"content":"stellarindex-X.pages.dev"}`.
-   Activation + cert on the new project is ~30–60 s (expect transient
-   `522` during the window). Do the lowest-traffic host first as a canary.
-4. **Delete the old project.** Blocked by `8000076 too many deployments`
-   until you purge them — git-connected projects accrue ~1 deployment per
-   push (these had ~2,000 each). Loop `DELETE
-   …/projects/X/deployments/{id}?force=true` over every page, then delete
-   the project. (`/tmp/cf_purge.sh`-style; pace ~4 req/s for the API rate
-   limit.)
+   Activation + cert take ~30–60 s (transient `522`). Lowest-traffic host first.
+4. **Delete the old project.** `8000076 too many deployments` blocks it until you
+   purge them (git-connected projects accrue ~1 per push): loop
+   `DELETE …/projects/X/deployments/{id}?force=true` over every page at ~4 req/s,
+   then delete the project.
 
-`docs.stellarindex.io` was **dead** before this (no project claimed it;
-the API's own RFC-9457 404 body points users there) — fixed by standing
-up `stellarindex-docs` (serves `docs/reference/api/`) and attaching the
-hostname + a fresh CNAME.
+`docs.stellarindex.io` is served by `stellarindex-docs` (`docs/reference/api/`);
+the API's RFC-9457 404 body points users there.

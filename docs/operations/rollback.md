@@ -6,16 +6,17 @@ status: operator runbook
 
 # Rollback procedures
 
-What to do when a launch — or any subsequent release — needs to
-be reverted. Per
-[`release-process.md`](release-process.md#post-flight) the
-default escalation is "any first-hour alert ⇒ SEV-2 minimum",
-but rollback is a **separate** decision from incident response —
-this doc covers the reversal mechanics.
+Reversal mechanics for a launch or any later release. Rollback is a
+**separate** decision from incident response (per
+[`release-process.md`](release-process.md#post-flight), any first-hour alert
+is SEV-2 minimum). **Roll back fast, write the postmortem after**: a wrong
+rollback is recoverable; a slow one lets a broken release accumulate state.
 
-The principle: **roll back fast, write the postmortem after.**
-A wrong rollback is recoverable; a slow rollback that lets a
-broken release accumulate state isn't.
+**Migrations do not roll back** (CS-099). A binary rollback runs the previous
+binary on the forward schema, which is safe only because every migration is
+old-binary-safe ([migrations/README.md](../../migrations/README.md) rule 9).
+`down.sql` is not a production lever. `make preflight-deploy` flags a dispatch
+to an older tag as a rollback and points here.
 
 ## Decision tree — should we roll back?
 
@@ -41,29 +42,23 @@ Customer impact?    ├─ price returned with confidence < 0.05 for popular pai
                               (file SEV-2 + diagnose forward)
 ```
 
-If unsure, **roll back**. The cost of an unnecessary rollback
-is one extra release tag; the cost of letting bad data
-accumulate is corrupted history that has to be backfilled-
-or-truncated later.
+If unsure, **roll back**. An unnecessary rollback costs one release tag;
+letting bad data accumulate costs corrupted history to backfill or truncate.
 
 ## Failure-mode triage
 
 ### A. The release didn't take
 
-Symptoms: API binary won't start, indexer panics on boot,
-aggregator won't connect to Redis.
+Symptoms: API binary won't start, indexer panics on boot, aggregator won't
+connect to Redis. Diagnose with `systemctl status stellarindex-{api,indexer,
+aggregator}` on r1. A release that crashes at startup never served traffic;
+rollback is re-deploying the previous tag.
 
-Diagnosis is fast — `systemctl status stellarindex-{api,indexer,
-aggregator}` on r1. If the new release crashes at startup, it never
-served real traffic; rollback is just re-deploying the previous tag.
-
-The deploy workflow keeps the last 5 previous binaries on disk as
-`/usr/local/bin/<binary>.prev-<previous-tag>` (see
-[`deploy-workflow.md`](deploy-workflow.md#backup-naming--rollback)).
-Preferred path is to re-trigger the deploy workflow with the
-previous-known-good tag — it does the host-side
-backup→swap→restart→health-probe with automatic rollback on probe
-failure:
+The deploy workflow keeps previous binaries as
+`/usr/local/bin/<binary>.prev-<previous-tag>`
+([`deploy-workflow.md`](deploy-workflow.md#backup-naming--rollback)).
+Preferred path: re-trigger it with the previous known-good tag (host-side
+backup→swap→restart→health-probe, automatic rollback on probe failure):
 
 ```sh
 gh workflow run deploy.yml \
@@ -72,16 +67,16 @@ gh workflow run deploy.yml \
   -f binaries=stellarindex-api
 ```
 
-Find the previous tag from `git tag` history or the "Running
-version" line in [`r1-deployment-state.md`](r1-deployment-state.md).
-Confirm the `.prev-<tag>` is still on disk first:
+The previous tag is in `git tag` history or the "Running version" line in
+[`r1-deployment-state.md`](r1-deployment-state.md). Confirm the
+`.prev-<tag>` is still on disk first:
 
 ```sh
 ssh root@<host> 'ls -lh /usr/local/bin/stellarindex-*.prev-* 2>/dev/null'
 ```
 
-Manual fallback (only if the deploy workflow itself is broken — see
-[`release-process.md` §Rollback](release-process.md#rollback)):
+Manual fallback, only if the deploy workflow itself is broken
+([`release-process.md` §Rollback](release-process.md#rollback)):
 
 ```sh
 PREVIOUS=vX.Y.Z                               # the known-good tag
@@ -95,19 +90,17 @@ ssh root@<host> "
 "
 ```
 
-Skip directly to **§Post-rollback** below.
+The sidecar must be a single word (the tag): the next deploy's backup step
+errors on anything else. Then go to **§Post-rollback**.
 
 ### B. The release runs but breaks `/v1/price` correctness
 
-Symptoms: prices reading wrong values (ratio inverted, peg
-expansion off, FX leg unsnapped), confidence scores
-collapsing to zero, freeze flags fired everywhere.
+Symptoms: wrong prices (ratio inverted, peg expansion off, FX leg unsnapped),
+confidence collapsing to zero, freeze flags everywhere. Highest priority: bad
+data accumulates in the trades hypertable and the CAGGs every minute.
 
-Highest-priority rollback. Bad data accumulates in the trades
-hypertable + the CAGGs every minute the broken release runs.
-
-R1 is the only production host today (single-host per
-[ADR-0008](../adr/0008-ha-topology.md); R2/R3 deferred). The sequence:
+r1 is the only production host ([ADR-0008](../adr/0008-ha-topology.md);
+R2/R3 deferred):
 
 ```sh
 # 1. Stop the aggregator on r1 — preserves the cache in its
@@ -132,24 +125,20 @@ stellarindex-sla-probe -base-url https://api.stellarindex.io/v1 \
   -duration 30s -concurrency 1
 ```
 
-If any rows landed in the trades hypertable from the broken
-release, decide post-rollback whether to truncate or leave —
-typically the broken decoder produced *missing* data rather
-than *wrong* data, so leave-and-backfill is the cheap
-recovery. The trades schema's `(source, ledger, tx_hash,
-op_index)` primary key prevents duplicate inserts on
+Rows the broken release wrote to trades: decide after the rollback whether
+to truncate or leave. A broken decoder usually produced *missing* rather than
+*wrong* data, so leave-and-backfill is the cheap recovery; the
+`(source, ledger, tx_hash, op_index)` primary key prevents duplicates on
 re-ingest.
 
 ### C. The release runs but a single source is broken
 
-Symptoms: `stellarindex_source_decode_errors_total{source="X"}`
-spiking; `stellarindex_source_events_total{source="X"}` dropping
-to zero; the `decode-errors` runbook fires.
+Symptoms: `stellarindex_source_decode_errors_total{source="X"}` spiking,
+`stellarindex_source_events_total{source="X"}` dropping to zero, the
+`decode-errors` runbook firing.
 
-DON'T roll back the whole release. Instead disable just the
-broken source by removing it from the `[ingestion]` allow-list in
-`/etc/stellarindex.toml` — the indexer only runs the connectors
-named in `enabled_sources`:
+DON'T roll back the release. Remove the source from the `[ingestion]`
+allow-list; the indexer runs only the connectors named in `enabled_sources`:
 
 ```toml
 # /etc/stellarindex.toml
@@ -165,29 +154,18 @@ scp stellarindex.toml root@<host>:/etc/stellarindex.toml
 ssh root@<host> "systemctl restart stellarindex-indexer"
 ```
 
-Then file a SEV-2 against the broken source's package. The
-release stands; the source enters degraded mode. Re-enable
-once the fix lands.
+File a SEV-2 against the source's package; the source runs degraded until
+the fix lands, then re-enable it.
 
-### D. Public-flip went wrong
+### D. Public-repo content went wrong
 
-Symptoms: public repo content doesn't match private; orphan-
-branch initial commit had unintended files; secrets accidentally
-included; license/CONTRIBUTING/etc. headers wrong.
+Symptoms: unintended files, accidentally included secrets, wrong
+license/CONTRIBUTING headers. The public repo IS the repo: there is no
+private source of truth to re-cut from.
 
-> ⚠️ **The repo-deletion option has been REMOVED from this runbook.**
-> It invoked the GitHub CLI's repo-delete subcommand against this
-> repository, with confirmation suppressed, and was
-> written before the public flip executed (2026-07-03). There is no
-> longer a separate private source of truth: **the public repo IS the
-> repo**. Running that command destroys the project's history, every
-> issue, every PR and every release artifact — irreversibly, and in the
-> middle of an incident, which is exactly when someone reaches for a
-> runbook. It is not recoverable by re-doing the cut-over, because there
-> is nothing left to cut over from.
-
-**Public-repo rollback rolls FORWARD.** History is never rewritten and
-the repository is never deleted or re-created.
+**Public-repo rollback rolls FORWARD.** Never rewrite history; never delete
+or re-create the repository (that destroys history, issues, PRs and release
+artifacts irreversibly).
 
 ```sh
 # Revert the bad commit(s), oldest-first, and push normally.
@@ -195,55 +173,37 @@ git revert --no-edit <sha>            # or <oldest>^..<newest> for a range
 git push origin main
 ```
 
-> ⚠️ **Do not force-push `main`.** This runbook prescribed
-> `git push origin +public-v1:main` until 2026-09-02. `main` carries no
-> branch protection and no rulesets, so that command succeeds — it
-> rewrites the public repository's history, breaks every clone, fork
-> and existing PR, and orphans the commits the release tags point at.
-> It also cannot work as written: `public-v1` exists on no remote. The
-> project's standing rule since the 2026-07-03 public flip is **never
-> force-push history**.
+> ⚠️ **Do not force-push `main`.** `main` carries no branch protection and no
+> rulesets, so a force-push succeeds: it rewrites public history, breaks every
+> clone, fork and open PR, and orphans the commits release tags point at.
 
-A revert leaves the bad commit in history on purpose: that is the point
-of a public log, and it is the only rollback that every clone converges
-on without operator coordination.
+A revert keeps the bad commit in history on purpose: it is the only rollback
+every clone converges on without coordination.
 
-If the damage is something a revert cannot undo — **secrets committed to
-history**, an unintended file set — a force-push does not fix it either
-(the objects survive on GitHub via the pre-rewrite refs, forks and the
-events API). Stop and treat it as a security incident per
-[SECURITY.md](../../SECURITY.md): **rotate the exposed credential
-first** — that is the recoverable action — then decide about history
-surgery with the maintainers. Rotating an exposed credential is
-recoverable; deleting or rewriting the repository is not.
+If a revert cannot undo the damage (**secrets in history**, an unintended
+file set), a force-push cannot either: the objects survive via pre-rewrite
+refs, forks and the events API. Treat it as a security incident per
+[SECURITY.md](../../SECURITY.md): **rotate the exposed credential first**,
+then decide about history surgery with the maintainers.
 
 ### E. Status page misbehaving
 
-Symptoms: the public page at `status.stellarindex.io` shows
-components down when production is fine, or vice versa.
+Symptoms: `stellarindex.io/status` shows components down when production is
+fine, or vice versa. Lowest stakes: the page is a derived view and carries no
+production traffic. It is part of the explorer static export
+(`web/explorer/src/app/status/`, Cloudflare Pages, deployed on push to
+`main`); `web/status/` is now only a redirect stub.
 
-Lowest-stakes rollback. The status page is a derived view; it
-doesn't affect production traffic. F-1211 (codex audit-2026-05-12):
-the page is a static Next.js export at [`web/status/`](../../web/status/)
-deployed to Cloudflare Pages on push to `main`. Earlier docs
-mentioned an Upptime / GitHub-Pages pipeline that no longer
-exists.
+1. **Edit + push** (preferred). Edit the incident corpus
+   `internal/incidents/data/<YYYY-MM-DD>-<slug>.md`, the single source of
+   truth: `web/explorer/src/lib/incidents.ts` reads it at build time and
+   `/v1/incidents` serves it embedded in the Go binary. Cloudflare Pages
+   redeploys in ~2 minutes; `/v1/incidents` reflects the edit only after
+   `stellarindex-api` is re-deployed.
+2. **Revert** if the page itself broke: `git revert <bad-sha>` on `main` and
+   push; the previous good build redeploys.
 
-Two paths:
-
-1. **Edit + push** (preferred). Edit the incident Markdown corpus
-   under `internal/incidents/data/<YYYY-MM-DD>-<slug>.md` (this is
-   the single source of truth — `web/status/src/lib/incidents.ts`
-   reads it at build time, and `/v1/incidents` serves the same
-   corpus from the Go binary), commit, push. Cloudflare Pages
-   redeploys the status page in ~2 minutes. Note a corpus edit also
-   requires re-deploying `stellarindex-api` for `/v1/incidents` to
-   reflect it (the corpus is embedded in the binary).
-2. **Revert** if the page itself broke. `git revert <bad-sha>` on
-   `main` and push — the previous-known-good build redeploys.
-
-If the page is fundamentally broken and can't be corrected within
-the SEV-2 detection window:
+If it cannot be corrected within the SEV-2 detection window:
 
 ```sh
 # DNS revert — point status. at a previous Cloudflare Pages
@@ -254,40 +214,23 @@ the SEV-2 detection window:
 
 ## Post-rollback
 
-After any rollback above:
-
-1. **Confirm rollback took.** Re-run the SLA probe; verify the
-   per-pair freshness gauges return to nominal.
-2. **File the SEV.**
-   - Title: `SEV-1: <vX.Y.Z> rolled back due to <symptom>`
-   - Body: which decision-tree branch fired; what the rollback
-     command was; current state.
-3. **Customer comms.** If the broken release was live for any
-   non-trivial window, send a follow-up to the launch-day comm
-   thread from
-   [`deploy/comms/rollback-update.md`](../../deploy/comms/rollback-update.md).
-   Honest is better than apologetic — say what was wrong, what
-   was rolled back, what the customer-visible impact was.
-4. **Open the postmortem.** Same template as any other SEV-1.
-   Bias toward writing it the same day; details fade.
-5. **Block forward releases.** Until the postmortem identifies
-   the root cause and a fix has landed + been re-tested,
-   pause the release-cut cadence. A second cut on top of an
-   un-fixed problem is a force-multiplier on the original
-   incident.
+1. **Confirm it took.** Re-run the SLA probe; per-pair freshness gauges
+   return to nominal.
+2. **File the SEV.** Title `SEV-1: <vX.Y.Z> rolled back due to <symptom>`;
+   body: which decision-tree branch fired, the rollback command, current state.
+3. **Customer comms.** If the broken release was live for a non-trivial
+   window, follow up on the launch-day thread from
+   [`deploy/comms/rollback-update.md`](../../deploy/comms/rollback-update.md):
+   what was wrong, what was rolled back, the customer-visible impact.
+4. **Open the postmortem** (SEV-1 template), the same day.
+5. **Block forward releases** until the postmortem names the root cause and
+   a re-tested fix has landed.
 
 ## Cross-references
 
-- [`launch-day-checklist.md`](launch-day-checklist.md) — the
-  cut-over runbook this rollback procedure protects.
-- [`release-process.md`](release-process.md) — the per-release
-  procedure; §Post-flight has the rollback one-liner this doc
-  expands on.
-- [`sev-playbook.md`](sev-playbook.md) — incident escalation
-  for the SEV file step.
-- [`public-flip.md`](public-flip.md) — public-repo cut-over
-  mechanics; rollback shape D references this.
-- [`docs/operations/postmortems/`](postmortems/) — where the
-  postmortem lands after the dust settles.
-- [`deploy/comms/rollback-update.md`](../../deploy/comms/rollback-update.md)
-  — the customer follow-up template for the Customer comms step.
+- [`launch-day-checklist.md`](launch-day-checklist.md): the cut-over this protects.
+- [`release-process.md`](release-process.md): per-release procedure;
+  §Post-flight has the rollback one-liner.
+- [`sev-playbook.md`](sev-playbook.md): SEV escalation.
+- [`public-flip.md`](public-flip.md): public-repo cut-over mechanics (shape D).
+- [`postmortems/`](postmortems/): where the postmortem lands.
