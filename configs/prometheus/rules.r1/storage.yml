@@ -1065,8 +1065,10 @@ groups:
       # stamp is written only by a successful run, so never-configured,
       # never-succeeded and every-run-failing are an ABSENT series, which
       # the `time() - x` arm alone can never fire on. PER HOST: the second
-      # arm takes every host with a lake (it carries the schema snapshot's
-      # stamp) and drops those with a data backup inside the window. 96 h,
+      # arm takes every host whose timer has run (the `configured` gauge is
+      # written by every run, 0 or 1) and drops those with a data backup
+      # inside the window. A host with ch_lake_backup_enabled: false has no
+      # textfile, so it never enters the arm. 96 h,
       # not 36: a full of the lake runs ~2 days at the default bandwidth
       # cap, and the incrementals it delays must not ticket.
       - alert: stellarindex_ch_lake_backup_stale
@@ -1074,7 +1076,7 @@ groups:
           (time() - stellarindex_ch_lake_backup_last_success_unix) > 96 * 3600
           or
           (
-            stellarindex_ch_schema_snapshot_last_success_unix
+            stellarindex_ch_lake_backup_configured
             unless on (instance)
             max_over_time(stellarindex_ch_lake_backup_last_success_unix[96h])
           )

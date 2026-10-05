@@ -46,6 +46,17 @@ exit 1
 EOF
 chmod +x "$FAKEBIN/psql"
 echo x > "$TMP/pgpass"
+# Fake runuser: the no-password-file fallback. Drops "-u postgres --" and
+# runs the rest (the fake psql), so FAKE_RUNUSER_DOWN=1 models failed peer auth.
+cat > "$FAKEBIN/runuser" <<'EOF'
+#!/usr/bin/env bash
+[ "${FAKE_RUNUSER_DOWN:-0}" = 1 ] && exit 1
+[ "$1 $2 $3" = "-u postgres --" ] || exit 1
+shift 3
+touch "$RUNUSER_MARK"
+exec "$@"
+EOF
+chmod +x "$FAKEBIN/runuser"
 
 # Fake curl: answers only the drop-guard query, with FAKE_CH_DROP_GUARD
 # (printf %b escapes); every other query fails like an unreachable lake.
@@ -87,7 +98,10 @@ run() {
   PATH="$FAKEBIN:$PATH" \
     TEXTFILE_DIR="$TMP/out" \
     PG_CONF_FILE="$TMP/postgresql.conf" \
-    PG_PASSWORD_FILE="$TMP/pgpass" \
+    PG_PASSWORD_FILE="${PGPASS:-$TMP/pgpass}" \
+    RUNUSER_MARK="$TMP/runuser.mark" \
+    FAKE_RUNUSER_DOWN="${RUNUSER_DOWN:-0}" \
+    STELLAR_TOML="${TOML:-$TMP/absent.toml}" \
     FAKE_PG_MAX_WORKER_PROCESSES="$live" \
     FAKE_PG_IDLE_IN_TXN_TIMEOUT="$idle_live" \
     FAKE_PG_CAGGS_WITHOUT_POLICY="${CAGGS_MISSING:-0}" \
@@ -179,6 +193,38 @@ TRADES_POLICY_OK=0 run 32 32
 expect_metric 'trades policy paused with no run holding the lock -> caught' trades_compression_policy_scheduled 0
 PG_DOWN=1 run 32 32
 expect_metric 'postgres unreachable -> trades policy check fails closed' trades_compression_policy_scheduled 0
+
+# ── No password file (test nets): local postgres superuser fallback ──
+# Readable file keeps the password path; absent file uses runuser; both
+# unavailable still fails rather than skipping.
+PG_LIVE='pg_max_worker_processes_live pg_idle_in_transaction_timeout_live caggs_have_refresh_policy trades_compression_policy_scheduled'
+rm -f "$TMP/runuser.mark"; run 32 32
+if [ ! -e "$TMP/runuser.mark" ]; then echo "ok: password file readable -> runuser not used"; pass=$((pass + 1)); else echo "FAIL: runuser used despite readable password file" >&2; fail=$((fail + 1)); fi
+rm -f "$TMP/runuser.mark"; PGPASS="$TMP/no-such-pass" run 32 32
+for a in $PG_LIVE; do expect_metric "no password file -> fallback ok ($a)" "$a" 1; done
+if [ -e "$TMP/runuser.mark" ]; then echo "ok: fallback went through runuser"; pass=$((pass + 1)); else echo "FAIL: runuser fallback not taken" >&2; fail=$((fail + 1)); fi
+PGPASS="$TMP/no-such-pass" CAGGS_MISSING=1 run 32 32
+expect_metric 'fallback still catches a missing cagg policy' caggs_have_refresh_policy 0
+PGPASS="$TMP/no-such-pass" RUNUSER_DOWN=1 run 32 32
+for a in $PG_LIVE; do expect_metric "no password file and runuser fails -> fail ($a)" "$a" 0; done
+
+# ── supply_reserve_accounts_nonempty is pubnet-only ─────────────────
+printf 'network = "testnet"\n[supply]\nsdf_reserve_accounts = [\n]\n' > "$TMP/testnet.toml"
+printf 'network = "pubnet"\n[supply]\nsdf_reserve_accounts = [\n]\n' > "$TMP/pubnet-empty.toml"
+printf 'network = "pubnet"\n[supply]\nsdf_reserve_accounts = [\n  "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",\n]\n' > "$TMP/pubnet-full.toml"
+TOML="$TMP/testnet.toml" run 32 32
+if grep -qF 'config_assertion_skipped{assertion="supply_reserve_accounts_nonempty"} 1' <<<"$OUT" \
+  && ! grep -qF 'config_assertion_ok{assertion="supply_reserve_accounts_nonempty"}' <<<"$OUT"; then
+  echo "ok: testnet empty reserve list -> skipped"; pass=$((pass + 1))
+else
+  echo "FAIL: testnet empty reserve list not skipped" >&2; fail=$((fail + 1))
+fi
+TOML="$TMP/pubnet-empty.toml" run 32 32
+expect_metric 'pubnet empty reserve list -> enforced' supply_reserve_accounts_nonempty 0
+TOML="$TMP/pubnet-full.toml" run 32 32
+expect_metric 'pubnet populated reserve list -> ok' supply_reserve_accounts_nonempty 1
+run 32 32
+expect_metric 'unreadable config -> treated as pubnet, enforced' supply_reserve_accounts_nonempty 0
 
 # ── ClickHouse drop guard (T616) ────────────────────────────────────
 # The ansible verify task asserts the EFFECTIVE limits once, at apply

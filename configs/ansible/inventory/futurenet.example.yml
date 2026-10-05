@@ -50,6 +50,8 @@ all:
     run_postgres:        true
     run_clickhouse:          true
     clickhouse_apply_schema: true
+    # No off-site lake-backup target on the test nets; an unconfigured run fails by design.
+    ch_lake_backup_enabled:  false
     # Small shared VM: r1's strict overcommit + 72 GB CH cap starve a 20 GB VM
     # (malloc/fork fail despite free RAM → API OOM-loops). Heuristic overcommit
     # + a 4 GB ClickHouse cap.

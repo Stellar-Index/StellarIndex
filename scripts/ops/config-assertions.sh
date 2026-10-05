@@ -65,9 +65,10 @@ have_zfs() { command -v zpool >/dev/null 2>&1 && zpool list data >/dev/null 2>&1
 # binaries read. Empty if unreadable — callers must treat empty as
 # "assume pubnet" so an unreadable config can never SILENCE a check on
 # r1 (fail-closed: unknown host shape keeps the strict assertions).
+STELLAR_TOML="${STELLAR_TOML:-/etc/stellarindex.toml}"
 stellar_network() {
   sed -nE 's/^[[:space:]]*network[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
-    /etc/stellarindex.toml 2>/dev/null | head -1
+    "$STELLAR_TOML" 2>/dev/null | head -1
 }
 is_pubnet() { [[ "$(stellar_network)" != "testnet" && "$(stellar_network)" != "futurenet" ]]; }
 
@@ -124,8 +125,14 @@ assert_grep redis_maxmemory /etc/redis/redis.conf '^maxmemory [0-9]'
 # ── CS-010 supply config (erased if ansible renders without its vars) ─
 assert_grep supply_reserve_accounts /etc/stellarindex.toml \
   'sdf_reserve_accounts = \['
-assert_cmd supply_reserve_accounts_nonempty sh -c \
-  'sed -n "/^sdf_reserve_accounts/,/^\]/p" /etc/stellarindex.toml | grep -cqE "G[A-Z0-9]{55}"'
+# The reserve accounts are mainnet SDF accounts; test-net inventories leave the list empty.
+if is_pubnet; then
+  # shellcheck disable=SC2016  # $1 is for the inner sh
+  assert_cmd supply_reserve_accounts_nonempty sh -c \
+    'sed -n "/^sdf_reserve_accounts/,/^\]/p" "$1" | grep -cqE "G[A-Z0-9]{55}"' _ "$STELLAR_TOML"
+else
+  skip supply_reserve_accounts_nonempty
+fi
 
 # ── MinIO galexie-writer credential drift (BACKLOG #66, 2026-07-03
 # rotation follow-up: docs/operations/credential-rotation.md) ────────
@@ -224,16 +231,24 @@ fi
 # testable without root or a live Postgres.
 PG_CONF_FILE="${PG_CONF_FILE:-/etc/postgresql/15/main/postgresql.conf}"
 PG_PASSWORD_FILE="${PG_PASSWORD_FILE:-/etc/stellarindex/postgres-password.txt}"
+# The test nets have no password file; the local postgres superuser reads the
+# same server-wide values (nothing here is a per-role setting).
+# shellcheck disable=SC2317,SC2329  # invoked from the functions below
+pg_psql() { # pg_psql <sql>
+  if [[ -r "$PG_PASSWORD_FILE" ]]; then
+    PGPASSWORD="$(cat "$PG_PASSWORD_FILE")" \
+      psql -h 127.0.0.1 -U stellarindex -d stellarindex -tAc "$1" 2>/dev/null
+  else
+    runuser -u postgres -- psql -d stellarindex -tAc "$1" 2>/dev/null
+  fi
+}
 assert_grep pg_max_worker_processes_codified \
   "$PG_CONF_FILE" \
   '^max_worker_processes[[:space:]]*=[[:space:]]*32'
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 pg_max_worker_processes_live() {
-  [[ -r "$PG_PASSWORD_FILE" ]] || return 1
   local live
-  live=$(PGPASSWORD="$(cat "$PG_PASSWORD_FILE")" \
-    psql -h 127.0.0.1 -U stellarindex -d stellarindex -tAc \
-    "SHOW max_worker_processes;" 2>/dev/null)
+  live=$(pg_psql "SHOW max_worker_processes;")
   [[ "$live" =~ ^[0-9]+$ && "$live" -ge 32 ]]
 }
 assert_cmd pg_max_worker_processes_live pg_max_worker_processes_live
@@ -262,10 +277,7 @@ SELECT count(*) FROM timescaledb_information.continuous_aggregates ca
 "
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 caggs_have_refresh_policy() {
-  [[ -r "$PG_PASSWORD_FILE" ]] || return 1
-  PGPASSWORD="$(cat "$PG_PASSWORD_FILE")" \
-    psql -h 127.0.0.1 -U stellarindex -d stellarindex -tAc \
-    "$CAGGS_WITHOUT_REFRESH_POLICY_SQL" 2>/dev/null | grep -qx 0
+  pg_psql "$CAGGS_WITHOUT_REFRESH_POLICY_SQL" | grep -qx 0
 }
 assert_cmd caggs_have_refresh_policy caggs_have_refresh_policy
 
@@ -292,10 +304,7 @@ SELECT count(*) FROM timescaledb_information.jobs j
 "
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 trades_compression_policy_scheduled() {
-  [[ -r "$PG_PASSWORD_FILE" ]] || return 1
-  PGPASSWORD="$(cat "$PG_PASSWORD_FILE")" \
-    psql -h 127.0.0.1 -U stellarindex -d stellarindex -tAc \
-    "$TRADES_COMPRESSION_SCHEDULED_SQL" 2>/dev/null | grep -qx 1
+  pg_psql "$TRADES_COMPRESSION_SCHEDULED_SQL" | grep -qx 1
 }
 assert_cmd trades_compression_policy_scheduled trades_compression_policy_scheduled
 
@@ -312,11 +321,8 @@ assert_grep pg_idle_in_transaction_timeout_codified \
   '^idle_in_transaction_session_timeout[[:space:]]*=[[:space:]]*30min'
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 pg_idle_in_transaction_timeout_live() {
-  [[ -r "$PG_PASSWORD_FILE" ]] || return 1
   local live
-  live=$(PGPASSWORD="$(cat "$PG_PASSWORD_FILE")" \
-    psql -h 127.0.0.1 -U stellarindex -d stellarindex -tAc \
-    "SHOW idle_in_transaction_session_timeout;" 2>/dev/null)
+  live=$(pg_psql "SHOW idle_in_transaction_session_timeout;")
   [[ "$live" == "30min" ]]
 }
 assert_cmd pg_idle_in_transaction_timeout_live pg_idle_in_transaction_timeout_live

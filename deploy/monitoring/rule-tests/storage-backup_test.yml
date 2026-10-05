@@ -681,10 +681,10 @@ tests:
   - interval: 1h
     name: lake backup — a healthy host does not mask an unprotected one
     input_series:
-      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
-        values: '0+3600x200'
-      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r2:9100"}'
-        values: '0+3600x200'
+      - series: 'stellarindex_ch_lake_backup_configured{job="node_exporter", instance="r1:9100"}'
+        values: '1x200'
+      - series: 'stellarindex_ch_lake_backup_configured{job="node_exporter", instance="r2:9100"}'
+        values: '0x200'
       - series: 'stellarindex_ch_lake_backup_last_success_unix{job="node_exporter", instance="r1:9100"}'
         values: '0+3600x200'
     alert_rule_test:
@@ -709,6 +709,18 @@ tests:
                 ch_lake_backup_s3_endpoint + the vault key pair and re-apply
                 the role), 1 = configured but failing —
                 `journalctl -u ch-lake-backup.service -n 100`.
+
+  # A host with ch_lake_backup_enabled: false has a lake and a schema
+  # snapshot but no lake-backup textfile at all: silent.
+  - interval: 1h
+    name: lake backup disabled host — silent
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="t1:9100"}'
+        values: '0+3600x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_ch_lake_backup_stale
+        exp_alerts: []
 
   # Healthy, including a 3-day full: the stamp ages to 72 h and refreshes.
   - interval: 1h
