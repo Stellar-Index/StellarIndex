@@ -413,6 +413,9 @@ echo "=== Runbook annotations ===" && python3 ./scripts/ci/lint-runbook-annotati
 # no_log) so `--check --diff` never prints vault material into scrollback
 # or the weekly drift job's CI log (audit-2026-08-28 backup-restore-7).
 echo "=== Ansible secret-diff ===" && python3 ./scripts/ci/lint-ansible-secret-diff.py
+# INV-0802: installed scripts reaching ClickHouse without a credential file
+# (report-only until `default` is locked) + its self-test.
+echo "=== ClickHouse client auth ===" && python3 ./scripts/ci/lint-ch-client-auth.py && ./scripts/ci/lint-ch-client-auth-test.sh
 # The metric-refs SELF-test (does the guard still detect a dead ref?)
 # needs neither promtool nor the monitoring stack, so it runs
 # unconditionally — outside the promtool branch above, which would

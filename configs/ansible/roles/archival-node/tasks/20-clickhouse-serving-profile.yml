@@ -545,3 +545,310 @@
   delay: 2
   until: ch_live_daemon_user_live.stdout == '1'
   tags: [clickhouse, clickhouse-live-daemon-profile]
+
+# ───── ops_monitor / ops_admin: the last callers of `default` ───────────
+#
+# INV-0802 step 2. `default` takes no password, so every local uid gets a
+# passwordless superuser over loopback. These two users give its remaining
+# callers a password-backed identity so `default` can be locked later:
+#   ops_monitor — read-only probes (config-assertions, data-freshness,
+#     ch-schema-drift, restore-drill). Stock `default` profile plus
+#     readonly=2, so a probe keeps normal priority: on ops_batch's
+#     priority 100 a heavy job would time freshness probes out into alerts.
+#   ops_admin — root shells and this role's own clickhouse-client tasks,
+#     through /root/.clickhouse-client/config.xml. The same envelope as
+#     `default` today minus access management.
+# Each flag also renders that user's client credential files, root-only
+# (0600). Client files carry <port> because a -C file or
+# ~/.clickhouse-client/config.xml REPLACES /etc/clickhouse-client/config.xml,
+# so config.d/zz-port.xml is not merged and a portless file hangs on
+# MinIO's :9000 (15-log-discipline.yml). Every task that renders a
+# credential is no_log + diff: false; review these with --check only,
+# never --diff.
+#
+# ops_admin is PERMANENT once it has run DDL: CH (26.5) defaults a view's
+# SQL SECURITY to DEFINER = CURRENT_USER, so a view or MV it creates runs
+# as ops_admin and dropping the user breaks that MV's inserts. Before
+# removing it, `SELECT database, name FROM system.tables WHERE
+# create_table_query LIKE '%DEFINER = ops_admin%'` must be empty.
+#
+# Gated OFF by default (defaults/main.yml). Activation, per host: add
+# vault_clickhouse_ops_{monitor,admin}_password (alphanumeric) to the
+# inventory's secrets, set the flags, then
+#   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+#     --tags clickhouse-ops-monitor-profile,clickhouse-ops-admin-profile --check
+# This moves no script. Its one behaviour change is root's bare
+# clickhouse-client, which becomes ops_admin (including root-run scripts
+# such as ch-live-catchup.sh: a client config with <user> makes the client
+# ignore CLICKHOUSE_USER/CLICKHOUSE_PASSWORD).
+
+- name: Assert ClickHouse ops_monitor password is set and netrc-safe
+  ansible.builtin.assert:
+    that:
+      - clickhouse_ops_monitor_password | default('') is match('^[A-Za-z0-9]{16,}$')
+    fail_msg: >-
+      clickhouse_ops_monitor_password must be at least 16 alphanumeric
+      characters (netrc splits on whitespace; the client XML is not
+      escaped). Generate one with `openssl rand -hex 32`, add it to
+      inventory/<region>.secrets.yml as
+      `vault_clickhouse_ops_monitor_password: "<generated>"`, then re-run
+      with --tags clickhouse-ops-monitor-profile. Never commit the
+      plaintext password.
+    quiet: true
+  when: clickhouse_ops_monitor_profile_enabled | bool
+  tags: [clickhouse, clickhouse-ops-monitor-profile]
+
+- name: Install the ops_monitor ClickHouse profile + user
+  ansible.builtin.copy:
+    dest: /etc/clickhouse-server/users.d/ops-monitor.xml
+    owner: clickhouse
+    group: clickhouse
+    mode: "0640"       # password_sha256_hex is a secret at rest
+    content: |
+      <clickhouse>
+          <!-- Managed by ansible (archival-node /
+               20-clickhouse-serving-profile.yml). Read-only identity for
+               the ops probes. Inherits the `default` profile, so priority
+               and limits match what the probes run with today; readonly=2
+               still lets a probe set per-query SETTINGS.
+               Password: SHA-256 hex digest of clickhouse_ops_monitor_password
+               (ansible-vault — vault_clickhouse_ops_monitor_password). The
+               plaintext is rendered only into the root-only
+               /etc/clickhouse-client/ops-monitor.{xml,netrc}. -->
+          <profiles>
+              <ops_monitor>
+                  <profile>default</profile>
+                  <readonly>2</readonly>
+              </ops_monitor>
+          </profiles>
+          <users>
+              <{{ clickhouse_ops_monitor_user }}>
+                  <password_sha256_hex>{{ clickhouse_ops_monitor_password | hash('sha256') }}</password_sha256_hex>
+                  <networks>
+                      <ip>127.0.0.1</ip>
+                      <ip>::1</ip>
+                  </networks>
+                  <profile>ops_monitor</profile>
+                  <quota>default</quota>
+                  <access_management>0</access_management>
+                  <allow_databases>
+                      <database>stellar</database>
+                      <database>system</database>
+                  </allow_databases>
+              </{{ clickhouse_ops_monitor_user }}>
+          </users>
+      </clickhouse>
+  when: clickhouse_ops_monitor_profile_enabled | bool
+  no_log: true   # content embeds the password's SHA-256 digest
+  diff: false
+  # No restart notify: users.d is hot-reloaded; the tasks below apply and
+  # verify it (same as api_serving / ops_batch above).
+  tags: [clickhouse, clickhouse-ops-monitor-profile]
+
+- name: Reload ClickHouse config so the ops_monitor drop-in is live (no restart)
+  when:
+    - clickhouse_ops_monitor_profile_enabled | bool
+    - not ansible_check_mode
+  ansible.builtin.command: >-
+    clickhouse-client --port {{ clickhouse_tcp_port | default(9300) }}
+    -q "SYSTEM RELOAD CONFIG"
+  changed_when: false
+  tags: [clickhouse, clickhouse-ops-monitor-profile]
+
+- name: Verify the ops_monitor profile + user are live in ClickHouse
+  # A rejected drop-in keeps the previous users config and reads as 0.
+  when:
+    - clickhouse_ops_monitor_profile_enabled | bool
+    - not ansible_check_mode
+  ansible.builtin.command: >-
+    clickhouse-client --port {{ clickhouse_tcp_port | default(9300) }}
+    -q "SELECT
+    (SELECT count() FROM system.users WHERE name = '{{ clickhouse_ops_monitor_user }}'),
+    (SELECT count() FROM system.settings_profiles WHERE name = 'ops_monitor')
+    FORMAT CSV"
+  register: ch_ops_monitor_profile_live
+  changed_when: false
+  retries: 10
+  delay: 2
+  until: ch_ops_monitor_profile_live.stdout == '1,1'
+  tags: [clickhouse, clickhouse-ops-monitor-profile]
+
+- name: Render the ops_monitor client credential files (root-only)
+  # ops-monitor.xml is the native client's -C file; ops-monitor.netrc is
+  # curl's --netrc-file for HTTP :8123, with both hosts because the
+  # scripts use both and netrc matches the host name exactly. Neither
+  # puts the password on argv.
+  ansible.builtin.copy:
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0600"
+    content: "{{ item.content }}"
+  loop:
+    - dest: /etc/clickhouse-client/ops-monitor.xml
+      content: |
+        <config>
+            <!-- Managed by ansible (archival-node / 20-clickhouse-serving-profile.yml). -->
+            <port>{{ clickhouse_tcp_port | default(9300) }}</port>
+            <user>{{ clickhouse_ops_monitor_user }}</user>
+            <password>{{ clickhouse_ops_monitor_password }}</password>
+        </config>
+    - dest: /etc/clickhouse-client/ops-monitor.netrc
+      content: |
+        machine 127.0.0.1 login {{ clickhouse_ops_monitor_user }} password {{ clickhouse_ops_monitor_password }}
+        machine localhost login {{ clickhouse_ops_monitor_user }} password {{ clickhouse_ops_monitor_password }}
+  loop_control:
+    label: "{{ item.dest }}"
+  when: clickhouse_ops_monitor_profile_enabled | bool
+  no_log: true
+  diff: false
+  tags: [clickhouse, clickhouse-ops-monitor-profile]
+
+- name: Verify the ops_monitor client files authenticate as ops_monitor
+  # End to end: the native file carries the port (timeout turns a MinIO
+  # hang into a failure) and both netrc hosts carry the password.
+  when:
+    - clickhouse_ops_monitor_profile_enabled | bool
+    - not ansible_check_mode
+  ansible.builtin.command:
+    argv: "{{ item }}"
+  loop:
+    - [timeout, "10", clickhouse-client, -C, /etc/clickhouse-client/ops-monitor.xml, -q, "SELECT currentUser()"]
+    - [curl, -sS, --max-time, "10", --netrc-file, /etc/clickhouse-client/ops-monitor.netrc,
+       "http://127.0.0.1:8123/", --data-binary, "SELECT currentUser()"]
+    - [curl, -sS, --max-time, "10", --netrc-file, /etc/clickhouse-client/ops-monitor.netrc,
+       "http://localhost:8123/", --data-binary, "SELECT currentUser()"]
+  loop_control:
+    label: "{{ item[0] }} {{ item[-3] }}"
+  register: ch_ops_monitor_client_probe
+  changed_when: false
+  retries: 5
+  delay: 2
+  until: (ch_ops_monitor_client_probe.stdout | trim) == clickhouse_ops_monitor_user
+  tags: [clickhouse, clickhouse-ops-monitor-profile]
+
+- name: Assert ClickHouse ops_admin password is set and XML-safe
+  ansible.builtin.assert:
+    that:
+      - clickhouse_ops_admin_password | default('') is match('^[A-Za-z0-9]{16,}$')
+    fail_msg: >-
+      clickhouse_ops_admin_password must be at least 16 alphanumeric
+      characters (the client XML is not escaped). Generate one with
+      `openssl rand -hex 32`, add it to inventory/<region>.secrets.yml as
+      `vault_clickhouse_ops_admin_password: "<generated>"`, then re-run
+      with --tags clickhouse-ops-admin-profile. Never commit the
+      plaintext password.
+    quiet: true
+  when: clickhouse_ops_admin_profile_enabled | bool
+  tags: [clickhouse, clickhouse-ops-admin-profile]
+
+- name: Install the ops_admin ClickHouse user
+  ansible.builtin.copy:
+    dest: /etc/clickhouse-server/users.d/ops-admin.xml
+    owner: clickhouse
+    group: clickhouse
+    mode: "0640"       # password_sha256_hex is a secret at rest
+    content: |
+      <clickhouse>
+          <!-- Managed by ansible (archival-node /
+               20-clickhouse-serving-profile.yml). The identity for root
+               shells and ansible's clickhouse-client tasks (schema apply,
+               drop guard, these profile reloads). Same envelope as the
+               `default` user it replaces: `default` profile, every
+               database, loopback only; no access management.
+               PERMANENT once it has run DDL (views default to SQL
+               SECURITY DEFINER = CURRENT_USER); see the task file.
+               Password: SHA-256 hex digest of clickhouse_ops_admin_password
+               (ansible-vault — vault_clickhouse_ops_admin_password). The
+               plaintext is rendered only into the root-only
+               /root/.clickhouse-client/config.xml. -->
+          <users>
+              <{{ clickhouse_ops_admin_user }}>
+                  <password_sha256_hex>{{ clickhouse_ops_admin_password | hash('sha256') }}</password_sha256_hex>
+                  <networks>
+                      <ip>127.0.0.1</ip>
+                      <ip>::1</ip>
+                  </networks>
+                  <profile>default</profile>
+                  <quota>default</quota>
+                  <access_management>0</access_management>
+              </{{ clickhouse_ops_admin_user }}>
+          </users>
+      </clickhouse>
+  when: clickhouse_ops_admin_profile_enabled | bool
+  no_log: true   # content embeds the password's SHA-256 digest
+  diff: false
+  tags: [clickhouse, clickhouse-ops-admin-profile]
+
+- name: Reload ClickHouse config so the ops_admin drop-in is live (no restart)
+  when:
+    - clickhouse_ops_admin_profile_enabled | bool
+    - not ansible_check_mode
+  ansible.builtin.command: >-
+    clickhouse-client --port {{ clickhouse_tcp_port | default(9300) }}
+    -q "SYSTEM RELOAD CONFIG"
+  changed_when: false
+  tags: [clickhouse, clickhouse-ops-admin-profile]
+
+- name: Verify the ops_admin user is live in ClickHouse
+  # Runs before root's client config points at ops_admin, so a rejected
+  # drop-in fails here while root's client still works.
+  when:
+    - clickhouse_ops_admin_profile_enabled | bool
+    - not ansible_check_mode
+  ansible.builtin.command: >-
+    clickhouse-client --port {{ clickhouse_tcp_port | default(9300) }}
+    -q "SELECT count() FROM system.users WHERE name = '{{ clickhouse_ops_admin_user }}' FORMAT CSV"
+  register: ch_ops_admin_user_live
+  changed_when: false
+  retries: 10
+  delay: 2
+  until: ch_ops_admin_user_live.stdout == '1'
+  tags: [clickhouse, clickhouse-ops-admin-profile]
+
+- name: Create root's ClickHouse client config directory
+  ansible.builtin.file:
+    path: /root/.clickhouse-client
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: clickhouse_ops_admin_profile_enabled | bool
+  tags: [clickhouse, clickhouse-ops-admin-profile]
+
+- name: Render root's ClickHouse client config (ops_admin, root-only)
+  # The client reads ~/.clickhouse-client/config.xml before
+  # /etc/clickhouse-client/config.xml, so root's bare clickhouse-client
+  # (interactive shells, ansible over ssh as root, root-run scripts)
+  # authenticates as ops_admin with no secret on argv.
+  ansible.builtin.copy:
+    dest: /root/.clickhouse-client/config.xml
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      <config>
+          <!-- Managed by ansible (archival-node / 20-clickhouse-serving-profile.yml). -->
+          <port>{{ clickhouse_tcp_port | default(9300) }}</port>
+          <user>{{ clickhouse_ops_admin_user }}</user>
+          <password>{{ clickhouse_ops_admin_password }}</password>
+      </config>
+  when: clickhouse_ops_admin_profile_enabled | bool
+  no_log: true
+  diff: false
+  tags: [clickhouse, clickhouse-ops-admin-profile]
+
+- name: Verify root's bare clickhouse-client authenticates as ops_admin
+  # No --port on purpose: this is the operator's bare-command path, and the
+  # timeout turns a portless config's MinIO hang into a failure.
+  when:
+    - clickhouse_ops_admin_profile_enabled | bool
+    - not ansible_check_mode
+  ansible.builtin.command:
+    argv: [timeout, "10", clickhouse-client, -q, "SELECT currentUser()"]
+  register: ch_ops_admin_client_probe
+  changed_when: false
+  retries: 5
+  delay: 2
+  until: (ch_ops_admin_client_probe.stdout | trim) == clickhouse_ops_admin_user
+  tags: [clickhouse, clickhouse-ops-admin-profile]

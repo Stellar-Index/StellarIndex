@@ -2589,6 +2589,13 @@ jobs:
         # via `--check --diff`. Pure-Python (PyYAML); also in verify.sh.
         if: needs.preflight.outputs.ansible == 'true'
         run: python3 ./scripts/ci/lint-ansible-secret-diff.py
+      - name: installed scripts reach ClickHouse with a credential file (report-only)
+        # INV-0802: lists every clickhouse-client / :8123 call that would
+        # still authenticate as CH `default`. Becomes fatal with the lock.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: |
+          python3 ./scripts/ci/lint-ch-client-auth.py
+          ./scripts/ci/lint-ch-client-auth-test.sh
 
   branch-protection-status:
     name: branch protection status

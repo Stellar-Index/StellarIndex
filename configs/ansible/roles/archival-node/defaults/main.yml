@@ -638,6 +638,25 @@ clickhouse_live_daemon_user: "live_daemon"
 # /etc/default/stellarindex, mode 0640 root:stellarindex).
 clickhouse_live_daemon_password: "{{ vault_clickhouse_live_daemon_password | default('') }}"
 
+# ───── ClickHouse ops_monitor / ops_admin identities ───────────────────
+# Named users for the last callers of CH's unauthenticated `default`:
+# ops_monitor (read-only probes, normal priority) and ops_admin (root
+# shells and ansible's own clickhouse-client tasks, via
+# /root/.clickhouse-client/config.xml). Each flag also renders that
+# user's root-only client credential files. Defaults FALSE for the same
+# ansible-drift reason as ops_batch above: enabling asserts a vault
+# password. Passwords must be alphanumeric (`openssl rand -hex 32`): the
+# netrc format splits on whitespace and the client XML is not escaped.
+# ops_admin is PERMANENT once it has run DDL — see the task file.
+clickhouse_ops_monitor_profile_enabled: false
+clickhouse_ops_monitor_user: "ops_monitor"
+# clickhouse_ops_monitor_password ← ansible-vault, vault_clickhouse_ops_monitor_password
+clickhouse_ops_monitor_password: "{{ vault_clickhouse_ops_monitor_password | default('') }}"
+clickhouse_ops_admin_profile_enabled: false
+clickhouse_ops_admin_user: "ops_admin"
+# clickhouse_ops_admin_password ← ansible-vault, vault_clickhouse_ops_admin_password
+clickhouse_ops_admin_password: "{{ vault_clickhouse_ops_admin_password | default('') }}"
+
 # ───── ClickHouse destructive-DDL size guard (2026-08-29 r1 audit) ─────
 # ClickHouse refuses DROP TABLE / TRUNCATE / DROP|REPLACE PARTITION on
 # anything larger than max_table_size_to_drop / max_partition_size_to_drop
