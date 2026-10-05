@@ -466,7 +466,7 @@ func (s *Store) bespokeCredit(ctx context.Context, windowDays int) (*BespokeBloc
 		BespokeKPI{Label: fmt.Sprintf("Unique users (%dd)", windowDays), Value: strconv.FormatInt(a.UniqueUsers, 10), Hint: "distinct position owners (G-addresses)"},
 		BespokeKPI{Label: fmt.Sprintf("Statements published (%dd)", windowDays), Value: strconv.FormatInt(a.Statements, 10), Hint: "StatementPublished events (periodic per-position charge statements)"},
 		BespokeKPI{Label: fmt.Sprintf("Scheduled settlements (%dd)", windowDays), Value: strconv.FormatInt(a.Settlements, 10), Hint: "recurring keeper settlements of published statements — NOT distressed liquidations"},
-		BespokeKPI{Label: fmt.Sprintf("Settlement volume (%dd)", windowDays), Value: a.SettlementVolume.String(), Unit: "USDC-units", Hint: creditSettlementVolumeHint},
+		BespokeKPI{Label: fmt.Sprintf("Settlement volume (%dd)", windowDays), Value: a.SettlementVolume.String(), Unit: "USDC-units", Hint: creditSettlementVolumeKPIHint(a.SettlementsNotFullySummed)},
 		BespokeKPI{Label: fmt.Sprintf("Withdrawals (%dd)", windowDays), Value: strconv.FormatInt(a.Withdrawals, 10), Hint: "position cash-out events in the window"},
 	)
 	if !a.LatestActivity.IsZero() {
@@ -489,6 +489,9 @@ func (s *Store) bespokeCredit(ctx context.Context, windowDays int) (*BespokeBloc
 	}
 	if len(series) > 0 {
 		blk.Series = append(blk.Series, BespokeSeries{Name: "Settlement volume", Unit: "USDC-units", Points: series})
+	}
+	if a.SettlementsNotFullySummed > 0 {
+		blk.Notes = append(blk.Notes, "Settlement volume (KPI and series) is a LOWER BOUND: it sums only USDC primary legs; "+creditPartialSettlementsPhrase(a.SettlementsNotFullySummed)+" carry a non-USDC or undecoded primary leg, or extra debt legs, whose amounts are not summed.")
 	}
 
 	if err := s.creditPositionExtras(ctx, blk, windowDays, since); err != nil {
@@ -516,15 +519,31 @@ func (s *Store) bespokeCredit(ctx context.Context, windowDays int) (*BespokeBloc
 	return blk, nil
 }
 
+// creditSettlementVolumeKPIHint returns the settlement-volume KPI hint, a
+// LOWER BOUND naming the excluded settlements when any is not fully summed.
+func creditSettlementVolumeKPIHint(notFullySummed int64) string {
+	if notFullySummed <= 0 {
+		return creditSettlementVolumeHint
+	}
+	return "LOWER BOUND: " + creditSettlementVolumeHint + "; excludes the non-USDC, undecoded or extra debt legs of " + creditPartialSettlementsPhrase(notFullySummed)
+}
+
+func creditPartialSettlementsPhrase(n int64) string {
+	if n == 1 {
+		return "1 settlement"
+	}
+	return strconv.FormatInt(n, 10) + " settlements"
+}
+
 // creditSettlementSeriesQuery builds the scheduled-settlement volume
 // series at the window's grain (hourly at 24h via bridgeSeriesGrain,
-// daily otherwise). Summing settled_amount is honest here — unlike the
-// mixed-asset Blend tables, every settlement's primary leg is the same
-// 7-decimal USDC unit (migration 0090).
+// daily otherwise). Only USDC primary legs are summed, so the series stays
+// single-denomination (7-decimal USDC base units); bespokeCredit flags it a
+// lower bound when any settlement is not fully summed.
 func creditSettlementSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
-		SELECT to_char(date_trunc('` + trunc + `', ledger_close_time), '` + format + `'), COALESCE(sum(settled_amount),0)::text
+		SELECT to_char(date_trunc('` + trunc + `', ledger_close_time), '` + format + `'), COALESCE(sum(settled_amount) FILTER (WHERE ` + creditUSDCLegFilter + `),0)::text
 		FROM credit_settlements WHERE ledger_close_time > now() - $1::interval` +
 		completeDaysOnly(windowDays, "ledger_close_time") + `
 		GROUP BY 1 ORDER BY 1 ASC`

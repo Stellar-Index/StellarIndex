@@ -205,7 +205,7 @@ func classifySinkFault(err error) sinkDisposition {
 // because a value that must fit in 128 bits did not.
 //
 // It is one of [valueShapeSentinels] and is skipped like the rest, but it is
-// NOT a verdict about an on-chain value: ADR-0003 (§Operational impact) reads
+// NOT a verdict about an on-chain value: ADR-0003 (§Consequences) reads
 // "any observed errors.Is(err, canonical.ErrI128Overflow) in production fires
 // a SEV-1 — it indicates an int64 sneaking in somewhere". The bug is ours, and
 // an int64 on an amount path silently truncates every value it touches, not

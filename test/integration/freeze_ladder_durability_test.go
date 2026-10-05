@@ -186,7 +186,7 @@ func TestFreezeLadder_DurableAcrossRedisLoss(t *testing.T) {
 	// `stellarindex-ops freeze-unfreeze` stamps recovered_at. After that
 	// the ladder must read absent, or a human could not end a freeze that
 	// by construction never ends on its own.
-	if err := sink.MarkRecovered(ctx, asset, quote); err != nil {
+	if err := sink.MarkRecovered(ctx, asset, quote, "operator:test"); err != nil {
 		t.Fatalf("MarkRecovered: %v", err)
 	}
 	if _, ok, lerr := sink.LoadLadder(ctx, asset, quote); lerr != nil || ok {

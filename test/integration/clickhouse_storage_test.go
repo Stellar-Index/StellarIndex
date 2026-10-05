@@ -80,7 +80,7 @@ func TestClickHouseLakeRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sink.Close(ctx) })
 
-	if err := sink.Add(ctx, ext); err != nil {
+	if err := sink.Add(ctx, withEventTxs(ext)); err != nil {
 		t.Fatalf("sink add: %v", err)
 	}
 	if err := sink.Flush(ctx); err != nil {
@@ -90,7 +90,7 @@ func TestClickHouseLakeRoundTrip(t *testing.T) {
 	// ORDER-BY identity is unchanged, so a FINAL read must collapse the
 	// duplicates — the lake's idempotent-re-ingest guarantee (ADR-0034: "NO ON
 	// CONFLICT silent-drop like the Postgres soroban_events bug").
-	if err := sink.Add(ctx, ext); err != nil {
+	if err := sink.Add(ctx, withEventTxs(ext)); err != nil {
 		t.Fatalf("sink add (duplicate): %v", err)
 	}
 	if err := sink.Flush(ctx); err != nil {
@@ -911,4 +911,29 @@ func TestClickHouseContractDirectoryDedupsDuplicateEvents(t *testing.T) {
 	if !edgeFound {
 		t.Fatalf("partner contract %s absent from ContractInteractions", partner)
 	}
+}
+
+// withEventTxs adds one stellar.transactions row per distinct (ledger, tx)
+// among ext.Events, in first-seen order, as the extractor always writes them:
+// the lake readers resolve each event's apply order from that table and fail
+// a stream whose event has no transaction row.
+func withEventTxs(ext chstore.LedgerExtract) chstore.LedgerExtract {
+	next := map[uint32]uint32{}
+	type ledgerTx struct {
+		ledger uint32
+		tx     string
+	}
+	seen := map[ledgerTx]bool{}
+	for _, e := range ext.Events {
+		k := ledgerTx{e.LedgerSeq, e.TxHash}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		ext.Txs = append(ext.Txs, chstore.TransactionRow{
+			LedgerSeq: e.LedgerSeq, CloseTime: e.CloseTime, TxHash: e.TxHash, TxIndex: next[e.LedgerSeq],
+		})
+		next[e.LedgerSeq]++
+	}
+	return ext
 }

@@ -177,7 +177,7 @@ func TestFreezeEventSink_RecoveryRoundTrip(t *testing.T) {
 	// worker consumes (compile-time check via type assertion).
 	var _ freeze.OpenFreezePair = open[0]
 
-	if err := sink.MarkRecovered(ctx, asset, quote); err != nil {
+	if err := sink.MarkRecovered(ctx, asset, quote, "operator:test"); err != nil {
 		t.Fatalf("MarkRecovered: %v", err)
 	}
 
@@ -192,7 +192,7 @@ func TestFreezeEventSink_RecoveryRoundTrip(t *testing.T) {
 	// Re-running MarkRecovered on an already-closed pair returns
 	// ErrNotFound — operators relying on the idempotent-by-skip
 	// semantics catch this loudly.
-	err = sink.MarkRecovered(ctx, asset, quote)
+	err = sink.MarkRecovered(ctx, asset, quote, "operator:test")
 	if err == nil {
 		t.Error("expected ErrNotFound on second MarkRecovered, got nil")
 	}

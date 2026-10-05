@@ -142,6 +142,15 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Refuse before the DB pre-flight when no producer could be minted;
+	// the hub-less path has no producer registry to consult.
+	if s.hub != nil {
+		if outcome := s.tipProducerPrecheck(r, asset, quote, window); outcome != tipProducerAdmitted {
+			s.writeTipProducerRefused(w, r, outcome, asset, quote, window)
+			return
+		}
+	}
+
 	// First synchronous compute — gives us a chance to return 404
 	// before switching the response into SSE mode (where it's too
 	// late to set a non-200 status code).
@@ -162,34 +171,8 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	preflightCtx, cancelPreflight := context.WithTimeout(r.Context(), tipStreamTickTimeout)
 	defer cancelPreflight()
 	first, firstSources, err := s.computeTip(preflightCtx, asset, quote, window)
-	if errors.Is(err, ErrPriceWithheld) {
-		// Substance-gated pair: the stream cannot start — same verdict
-		// and problem type as the request endpoint.
-		writePriceWithheldProblem(w, r, asset, quote, priceWithheldReason(err))
-		return
-	}
-	if errors.Is(err, ErrPriceNotFound) {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/price-not-found",
-			"No price data for pair", http.StatusNotFound,
-			"no trades or oracle observations for "+asset.String()+" / "+quote.String())
-		return
-	}
 	if err != nil {
-		if clientAborted(r, err) {
-			return
-		}
-		if IsCacheUnavailable(err) {
-			s.logger.Warn("computeTip cache unavailable (stream prelude)",
-				"err", err, "asset", asset.String(), "quote", quote.String())
-			writeCacheUnavailableProblem(w, r)
-			return
-		}
-		s.logger.Error("computeTip failed (stream prelude)",
-			"err", err, "asset", asset.String(), "quote", quote.String())
-		writeProblemErr(w, r, err,
-			"https://api.stellarindex.io/errors/internal",
-			"Internal error", http.StatusInternalServerError, "")
+		s.writeTipPreflightError(w, r, err, asset, quote)
 		return
 	}
 
@@ -249,6 +232,41 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	go s.runTipStreamProducer(prodCtx, ch, &gen, asset, quote, window, firstEv)
 
 	streaming.StreamFromChannelPreAdmitted(w, r, ch, s.streamOptions())
+}
+
+// writeTipPreflightError maps a failed pre-flight computeTip to its
+// problem response; a client abort writes nothing.
+func (s *Server) writeTipPreflightError(w http.ResponseWriter, r *http.Request, err error, asset, quote canonical.Asset) {
+	if errors.Is(err, ErrPriceWithheld) {
+		// Substance-gated pair: the stream cannot start — same verdict
+		// and problem type as the request endpoint.
+		writePriceWithheldProblem(w, r, asset, quote, priceWithheldReason(err))
+		return
+	}
+	if errors.Is(err, ErrPriceNotFound) {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/price-not-found",
+			"No price data for pair", http.StatusNotFound,
+			"no trades or oracle observations for "+asset.String()+" / "+quote.String())
+		return
+	}
+	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		if IsCacheUnavailable(err) {
+			s.logger.Warn("computeTip cache unavailable (stream prelude)",
+				"err", err, "asset", asset.String(), "quote", quote.String())
+			writeCacheUnavailableProblem(w, r)
+			return
+		}
+		s.logger.Error("computeTip failed (stream prelude)",
+			"err", err, "asset", asset.String(), "quote", quote.String())
+		writeProblemErr(w, r, err,
+			"https://api.stellarindex.io/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
 }
 
 // writeTipProducerRefused answers a connection whose pair has no shared

@@ -76,7 +76,7 @@ func (s *Streamer) BackfillTrades(ctx context.Context, pair canonical.Pair, from
 
 	for {
 		q := url.Values{}
-		q.Set("pair", symbol)
+		q.Set("pair", restPair(symbol))
 		q.Set("since", cursor)
 		q.Set("count", strconv.Itoa(tradesPageLimit))
 

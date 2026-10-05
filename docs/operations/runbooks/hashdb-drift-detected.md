@@ -1,6 +1,6 @@
 ---
 title: Runbook — hashdb-drift-detected
-last_verified: 2026-07-09
+last_verified: 2026-10-05
 status: living
 severity: P3
 ---
@@ -69,27 +69,60 @@ curl -fs http://localhost:<obs.metrics_listen-port>/metrics \
 journalctl -u stellarindex-indexer --since "-2h" \
   | grep "hashdb DRIFT DETECTED"
 
-# 3. For each drifted ledger, compare against a THIRD, independent
-#    source (not the bucket hashdb already compared against) — SDF's
-#    public history archive is the natural anchor:
-curl -fsS "https://history.stellar.org/prd/core-live/core_live_001/ledger/<XX>/<YY>/<ZZ>/ledger-<hex8>.xdr.gz" \
-  -o /tmp/sdf-ledger.xdr.gz
-# (XX/YY/ZZ/hex8 per the checkpoint-path scheme in
-#  internal/archivecompleteness/cross_anchor.go's checkpointPath —
-#  the drifted seq needs to be rounded to its checkpoint if you want
-#  the SDF anchor directly; for a byte-exact single-ledger compare,
-#  re-fetch the object from the SAME galexie bucket path instead and
-#  diff manually.)
 ```
+
+## Adjudicate a drifted ledger
+
+hashdb records `sha256(lcm.MarshalBinary())`: a hash of the re-marshaled
+canonical XDR of the decoded `LedgerCloseMeta`. SDF's history archive
+holds ledger headers, transaction sets and results, never an LCM, so
+**SDF cannot confirm or refute that hash directly**. Adjudicate at
+ledger-header level instead, where SDF can answer. The hash definition
+stays as is: Galexie objects are zstd-compressed, and hashing the raw
+compressed bytes would false-alarm whenever a file is re-compressed.
+
+```sh
+# 1. Re-check the drift through the same marshal path (one ledger).
+#    Non-zero exit plus a "hashdb DRIFT DETECTED" log line = still drifted.
+stellarindex-indexer -config /etc/stellarindex.toml \
+  -verify-hashdb-from <N> -verify-hashdb-to <N>
+
+# 2. Header hash in ClickHouse = what we first ingested.
+curl -s 'http://127.0.0.1:8123/' --data-binary \
+  "SELECT ledger_hash FROM stellar.ledgers FINAL WHERE ledger_seq = <N>"
+
+# 3. Header hash in SDF's checkpoint file. The file for ledger N is the
+#    one for its checkpoint C = N | 63 (it holds 64 LedgerHeaderHistoryEntry
+#    records, C-63..C); take the entry whose ledger seq is N.
+#    Path: <root>/ledger/XX/YY/ZZ/ledger-<hex8(C)>.xdr.gz, hex8 = %08x of C,
+#    XX/YY/ZZ = its first three bytes
+#    (internal/archivecompleteness/cross_anchor.go: checkpointPath).
+#    Parsing reference: readArchivedLedgerHash in
+#    internal/ops/archive/verify_archive.go.
+```
+
+The bucket object's CURRENT header hash (the `LedgerHeaderHistoryEntry`
+inside the LCM) has **no single-ledger command today**: `verify-archive`
+(`-tier` A/B/D/E/sdf-sample) and `verify-decoders` check ranges and
+checkpoints, they do not print one ledger's header hash. Decode the
+object with a throwaway Go snippet (`lcm.LedgerHash()`, as
+`internal/storage/clickhouse/extract.go` does), or run `verify-archive`
+over a range that contains the ledger and read its mismatch output.
+Do not invent a command here.
 
 ## Decision tree
 
+Compare three header hashes for the ledger: **current** (bucket object),
+**SDF** (checkpoint file), **original** (ClickHouse `stellar.ledgers.ledger_hash`,
+what we first saw). First re-run the verify command above.
+
 | What you find | Likely cause | Next step |
 | -------------- | ------------ | --------- |
-| The bucket object's CURRENT bytes hash-match hashdb's recorded value on re-fetch (i.e. re-running the verify window now finds no drift) | Transient read glitch (partial read, bit flip in transit) — not a real rewrite | No action beyond noting it; if it recurs on the SAME ledger, escalate |
-| The bucket object's CURRENT bytes differ from hashdb's recorded value AND differ from SDF's signed history for that ledger | **Local corruption** — our copy is bad, upstream's isn't | Re-fetch that ledger's object from a known-good source (SDF / peer) and re-place it in the local bucket; see the archival-node-bringup runbook's disaster-recovery triage tree for the general "corrupt-in-place" procedure |
-| The bucket object's CURRENT bytes differ from hashdb's recorded value AND MATCH SDF's signed history — but hashdb's recorded (ORIGINAL) value does NOT match SDF | **We recorded a bad value originally** — the indexer ingested a corrupt object once, and it has since self-healed (Galexie re-upload, cold-tier refresh) | Confirms the detector worked as intended on our OWN historical bad data, not an upstream rewrite. Note in the postmortem; no ongoing risk |
-| The bucket object's CURRENT bytes differ from hashdb's recorded (ORIGINAL) value AND the ORIGINAL value is what matches SDF | **Upstream rewrote history** — the exact ADR-0016 failure mode this detector exists for | This is the serious case. Escalate: the region may be silently serving/have served data derived from bytes SDF never signed. Check whether any pricing/trade data derived from the drifted ledger has already been served, and whether a re-derive is warranted (`docs/operations/wasm-audits/`-style evidence trail; coordinate before any bulk re-derive — see docs/operations/maintainer-workflow.md, "Heavy one-shot jobs") |
+| Re-running `-verify-hashdb-from/-to` now reports no drift | Transient read glitch (partial read, bit flip in transit) | No action beyond noting it; if it recurs on the SAME ledger, escalate |
+| Current = SDF = original, but the LCM hash still drifts | The change is in the metadata only (not the header), which SDF cannot adjudicate | Compare the object against the B2 lake copy or the ClickHouse raw tables for that ledger; escalate if they differ |
+| Current != SDF | **Local corruption** — our copy is bad, upstream's isn't | Re-fetch that ledger's object from a known-good source (SDF / peer) and re-place it in the local bucket; see the archival-node-bringup runbook's disaster-recovery triage tree for the general "corrupt-in-place" procedure |
+| Original != SDF, current = SDF | **We ingested a bad object once** and it has since self-healed (Galexie re-upload, cold-tier refresh) | Confirms the detector worked on our OWN historical bad data, not an upstream rewrite. Note in the postmortem; no ongoing risk |
+| Original = SDF, current != both | **Upstream rewrote history** — the exact ADR-0016 failure mode this detector exists for | This is the serious case. Escalate: the region may be silently serving/have served data derived from bytes SDF never signed. Check whether any pricing/trade data derived from the drifted ledger has already been served, and whether a re-derive is warranted (`docs/operations/wasm-audits/`-style evidence trail; coordinate before any bulk re-derive — see docs/operations/maintainer-workflow.md, "Heavy one-shot jobs") |
 
 ## Mitigation
 
@@ -202,8 +235,8 @@ serious data-integrity signal, but:
 ## Root cause analysis
 
 For the postmortem, capture: the drifted ledger sequence(s), the
-three-way comparison (hashdb's recorded value / the bucket's current
-value / SDF's signed history) for each, which region(s) observed it,
+three-way header-hash comparison (current bucket object / SDF checkpoint /
+ClickHouse original) for each, which region(s) observed it,
 and whether any served pricing/trade data derived from the affected
 ledger(s) before detection.
 
@@ -213,11 +246,15 @@ ledger(s) before detection.
   this alert alone** — a torn write to the hashdb file itself (disk
   full mid-Append, power loss) would also show up as a "mismatch" on
   next Verify, but it's OUR record that's wrong, not the source data.
-  The three-way SDF comparison in the decision tree disambiguates
-  this: if the bucket's current bytes match SDF, hashdb's own record
+  The header-hash comparison in the decision tree disambiguates
+  this: if current = SDF = original, hashdb's own record
   is the thing that's wrong (recreate the hashdb file from a fresh
   `Create` + let it re-populate; historical entries before that point
-  are simply un-verifiable, not proof of anything).
+  are simply un-verifiable, not proof of anything). A record is 32
+  bytes after a 16-byte header, so 1 record in 128 straddles a 4 KiB
+  page and a crash can tear it on a non-CoW filesystem (ext4/xfs); the
+  torn record reads as drift permanently (INV-2592). r1 runs on ZFS,
+  which cannot tear it; R2/R3 need the format change first.
 - **A ledger the indexer re-appended after a restart** with genuinely
   different bytes than its first observation, where BOTH are valid
   (this shouldn't happen for a single ledger sequence under normal
@@ -248,5 +285,6 @@ ledger(s) before detection.
 
 ## Changelog
 
+- 2026-10-05 — drift adjudication rewritten at header level (SDF holds no LCM); torn-record note (INV-2593, INV-2592).
 - 2026-07-09 — initial draft alongside wiring hashdb into production
   (ADR-0016, ROADMAP #46). Founding case: ledger 63332650.
