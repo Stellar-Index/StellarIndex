@@ -39,4 +39,4 @@ are mirrored to local disk then synced into MinIO.
 
 ## Evidence
 
-Dev-only filesystem use: `deploy/docker-compose/`. Rule cited in AGENTS.md invariant 3.
+Rule cited in AGENTS.md invariant 3.

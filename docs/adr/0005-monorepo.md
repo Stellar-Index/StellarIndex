@@ -36,7 +36,7 @@ Nothing outside `scripts/` is a one-off script; everything in `internal/` is use
 
 ## Consequences
 
-Shared types (`CanonicalTrade`, `Asset`, `Amount`) have one home, and cross-cutting changes land in
+Shared types (`canonical.Trade`, `Asset`, `Amount`) have one home, and cross-cutting changes land in
 one reviewed PR with one CI run and one release workflow. Docs, ADRs and runbooks live beside the
 code. Costs are longer builds, noisy CI and hot-file merge conflicts, mitigated by per-package builds,
 path filters, small PRs and CODEOWNERS. Revisit a split only if contributors exceed 5 with distinct

@@ -32,8 +32,8 @@ KV. HA is Sentinel, not Cluster (ADR-0024). Key schema:
 | `div:<asset_id>` | divergence result | 5 min | divergence worker |
 | `health:<source>` | per-source freshness | 60 s | indexer |
 
-The instance is also the store of record for three TTL-less families: `apikey:` credentials (plaintext
-is unrecoverable, so an evicted record is a lost key), `apikey-index:` and `signup:email:`. Persistence
+The instance is also the store of record for two TTL-less families: `apikey:` credentials (plaintext
+is unrecoverable, so an evicted record is a lost key), and `apikey-index:`. Persistence
 is AOF every second plus a nightly 03:00 UTC RDB shipped to MinIO. Max-memory policy is `volatile-lru`
 (applied to running instances by the redis-sentinel role; r1 runs `noeviction`), so only TTL-bearing
 keys are eviction candidates. The `usage:<subject>:<day>` meter has a 35-day TTL and so is evictable;
@@ -46,7 +46,7 @@ and `stale_flag=true`.
 
 ## Invariant
 
-Every cache family carries a TTL; a family written without one is a store-of-record decision.
+Every cache family carries a TTL, except closed OHLC candles (immutable, CDN-pinned); any other family written without one is a store-of-record decision.
 Callers build keys through the typed helpers in `internal/cachekeys`, never raw strings. Rate counters
 increment atomically (Lua `INCR`+`EXPIRE`).
 

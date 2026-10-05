@@ -19,8 +19,8 @@ materialisation, and mature HA, backup and PITR tooling.
 
 TimescaleDB on PostgreSQL 15 stores raw trades, oracle updates and derived price aggregates.
 
-- `trades` is a hypertable partitioned on `ts` in 1-day chunks, columnar-compressed after 7 days, keyed on `ts`+`pair` with a source-identity index on (`source`, `ledger`, `tx_hash`, `op_index`, `ts`); `oracle_updates`
-  has the same shape plus an `oracle_source` column.
+- `trades` is a hypertable partitioned on `ts` in 1-day chunks, columnar-compressed after 7 days, keyed on (`source`, `ledger`, `tx_hash`, `op_index`, `ts`) with a (`base_asset`, `quote_asset`, `ts`) pair index;
+  `oracle_updates` has the same shape plus a `source` column.
 - Seven continuous aggregates (`prices_1m`, `prices_15m`, `prices_1h`, `prices_4h`, `prices_1d`,
   `prices_1w`, `prices_1mo`) are kept fresh by `add_continuous_aggregate_policy`.
 - Raw trades and price aggregates are retained indefinitely (migration 0031 removed the original
