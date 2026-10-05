@@ -169,11 +169,22 @@ func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, ver
 		return nil, fmt.Errorf("clickhouse: blend reserves ttl liveness: %w", err)
 	}
 
-	// Assemble in the caller's asset order. ResData (the state) is
-	// mandatory; the rate-model config is optional — with it we report
-	// APY + the real decimals, without it supplied/borrowed/utilization
-	// (config-free) + placeholder decimals 7 (DecimalsFound=false), APY
-	// omitted (HasAPR=false).
+	return assembleBlendReserveStates(pool, assets, dataByAsset, configs, bstop), nil
+}
+
+// assembleBlendReserveStates builds the reported states in the caller's
+// asset order. ResData (the state) is mandatory; the rate-model config is
+// optional — with it we report the real decimals, without it
+// supplied/borrowed/utilization (config-free) + placeholder decimals 7
+// (DecimalsFound=false). APR needs the config AND the pool's backstop
+// rate: a nil bstop (instance Config missing or undecodable) withholds it
+// (HasAPR=false) rather than serving the gross rate as the supply APR.
+func assembleBlendReserveStates(
+	pool string, assets []string,
+	dataByAsset map[string]*blend.ReserveData,
+	configs map[string]blend.ReserveConfig,
+	bstop *uint32,
+) []BlendReserveState {
 	out := make([]BlendReserveState, 0, len(assets))
 	for _, asset := range assets {
 		rd := dataByAsset[asset]
@@ -182,13 +193,13 @@ func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, ver
 		}
 		decimals := uint32(7)
 		decimalsFound := false
-		var metrics blend.ReserveMetrics
+		metrics := blend.BaseMetrics(*rd)
 		if cfg, ok := configs[asset]; ok {
 			decimals = cfg.Decimals
 			decimalsFound = true
-			metrics = blend.Metrics(*rd, cfg, bstop)
-		} else {
-			metrics = blend.BaseMetrics(*rd)
+			if bstop != nil {
+				metrics = blend.Metrics(*rd, cfg, *bstop)
+			}
 		}
 		out = append(out, BlendReserveState{
 			Pool:          pool,
@@ -199,7 +210,7 @@ func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, ver
 			Metrics:       metrics,
 		})
 	}
-	return out, nil
+	return out
 }
 
 // keyRef maps a built storage key back to what it is.
@@ -252,12 +263,12 @@ func scanBlendReserveParts(rows interface {
 	Scan(...any) error
 	Err() error
 }, refByKey map[string]keyRef, version blend.PoolVersion,
-) (dataByAsset map[string]*blend.ReserveData, bstop uint32, matched []string, err error) {
+) (dataByAsset map[string]*blend.ReserveData, bstop *uint32, matched []string, err error) {
 	dataByAsset = make(map[string]*blend.ReserveData)
 	for rows.Next() {
 		var keyXDR, b64 string
 		if err := rows.Scan(&keyXDR, &b64); err != nil {
-			return nil, 0, nil, fmt.Errorf("clickhouse: scan blend reserve: %w", err)
+			return nil, nil, nil, fmt.Errorf("clickhouse: scan blend reserve: %w", err)
 		}
 		ref, ok := refByKey[keyXDR]
 		if !ok {
@@ -269,7 +280,9 @@ func scanBlendReserveParts(rows interface {
 		}
 		switch ref.kind {
 		case "Instance":
-			bstop = backstopRateFromInstance(val)
+			if rate, ok := backstopRateFromInstance(val); ok {
+				bstop = &rate
+			}
 			matched = append(matched, keyXDR)
 		case "ResData":
 			if rd, err := blend.DecodeReserveData(val, version); err == nil {
@@ -280,7 +293,7 @@ func scanBlendReserveParts(rows interface {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, nil, fmt.Errorf("clickhouse: blend reserves rows: %w", err)
+		return nil, nil, nil, fmt.Errorf("clickhouse: blend reserves rows: %w", err)
 	}
 	return dataByAsset, bstop, matched, nil
 }
@@ -363,23 +376,24 @@ func contractDataValue(b64 string) (xdr.ScVal, bool) {
 }
 
 // backstopRateFromInstance pulls PoolConfig.bstop_rate (7 decimals)
-// from a contract instance entry's storage map (Symbol "Config"). 0 on
-// any miss → the supply-APR is then the gross rate (backstop take
-// unaccounted).
-func backstopRateFromInstance(val xdr.ScVal) uint32 {
-	inst, ok := val.GetInstance()
-	if !ok || inst.Storage == nil {
-		return 0
+// from a contract instance entry's storage map (Symbol "Config"). ok is
+// false on a missing or undecodable Config: 0 is a legal rate, so a miss
+// must not be spelled as 0 (that serves the gross rate as supply APR).
+func backstopRateFromInstance(val xdr.ScVal) (rate uint32, ok bool) {
+	inst, isInst := val.GetInstance()
+	if !isInst || inst.Storage == nil {
+		return 0, false
 	}
 	for _, e := range *inst.Storage {
 		if e.Key.Type == xdr.ScValTypeScvSymbol && e.Key.Sym != nil && string(*e.Key.Sym) == "Config" {
-			if pc, err := blend.DecodePoolConfig(e.Val); err == nil {
-				return pc.BstopRate
+			pc, err := blend.DecodePoolConfig(e.Val)
+			if err != nil {
+				return 0, false
 			}
-			return 0
+			return pc.BstopRate, true
 		}
 	}
-	return 0
+	return 0, false
 }
 
 // poolDataKeyXDR builds the base64 LedgerKey for a Blend

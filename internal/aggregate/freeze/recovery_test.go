@@ -40,13 +40,15 @@ func (l *fakeOpenLister) ListOpen(_ context.Context) ([]freeze.OpenFreezePair, e
 type fakeRecoverer struct {
 	mu       sync.Mutex
 	calls    []freeze.OpenFreezePair
+	by       []string
 	failWith error
 }
 
-func (r *fakeRecoverer) MarkRecovered(_ context.Context, asset, quote canonical.Asset) error {
+func (r *fakeRecoverer) MarkRecovered(_ context.Context, asset, quote canonical.Asset, releasedBy string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls = append(r.calls, freeze.OpenFreezePair{Asset: asset, Quote: quote})
+	r.by = append(r.by, releasedBy)
 	return r.failWith
 }
 
@@ -79,6 +81,9 @@ func TestRecovery_ClosesRowsWhenRedisMarkerGone(t *testing.T) {
 	}
 	if got.Quote.String() != quote.String() {
 		t.Errorf("quote = %s, want %s", got.Quote.String(), quote.String())
+	}
+	if closer.by[0] != freeze.ReleasedBySystemRecovery {
+		t.Errorf("released_by = %q, want %q", closer.by[0], freeze.ReleasedBySystemRecovery)
 	}
 }
 
@@ -234,7 +239,7 @@ type ladderCloser struct {
 	calls  int
 }
 
-func (c *ladderCloser) MarkRecovered(_ context.Context, _, _ canonical.Asset) error {
+func (c *ladderCloser) MarkRecovered(_ context.Context, _, _ canonical.Asset, _ string) error {
 	c.mu.Lock()
 	c.calls++
 	c.mu.Unlock()

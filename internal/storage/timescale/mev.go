@@ -244,6 +244,11 @@ const insertMEVEventQuery = `
 // no detector estimates attacker profit, and trade notional is not profit.
 // Satisfies mev.Sink.
 func (s *Store) InsertMEVEvent(ctx context.Context, e domain.MEVStoredEvent) (bool, error) {
+	// 0021's CHECK (array_length(tx_hashes, 1) > 0) passes '{}' (the length
+	// is NULL), so an event with no evidence transaction must be refused here.
+	if len(e.TxHashes) == 0 {
+		return false, fmt.Errorf("timescale: InsertMEVEvent: %s event has no tx_hashes", e.Kind)
+	}
 	var inserted bool
 	err := s.db.QueryRowContext(ctx, insertMEVEventQuery,
 		e.Timestamp.UTC(), int(e.DetectedAtLedger), e.Kind,

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // Phoenix admin rotations have 0 mainnet occurrences (verified in the
@@ -81,5 +82,26 @@ func TestDecodeAdmin_voidBodyTolerated(t *testing.T) {
 	}
 	if ae.Admin != "" {
 		t.Errorf("admin = %q, want empty (void body)", ae.Admin)
+	}
+}
+
+// An admin phrase outside adminActionByTopic must not fail ingest: the raw
+// event is in the soroban_events landing zone, so it is recognised-not-projected.
+func TestDecodeAdmin_unknownPhraseIsNotAnError(t *testing.T) {
+	d := NewDecoder()
+	ev := events.Event{
+		ContractID:     "CBENABXP6C4C7WG6KB7JQOTDS5GIIXF3IX3PIYNZFCDZDWUHITO2HZ4S",
+		Ledger:         60_000_000,
+		TxHash:         "admintx3",
+		LedgerClosedAt: "2026-04-23T12:00:00Z",
+		Topic:          []string{TopicSymbolAdmin, scval.MustEncodeString("Some future admin phrase: ")},
+		Value:          "AAAAAQ==",
+	}
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode: %v, want nil", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("want no events, got %d", len(out))
 	}
 }

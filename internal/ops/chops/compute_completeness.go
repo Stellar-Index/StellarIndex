@@ -638,17 +638,19 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// resume from and the source re-verifies from genesis (CS-095). Outside
 		// -pass it is the existing global max(genesis, -from) incremental floor
 		// — byte-for-byte unchanged.
-		projFrom := sourceProjectionFloor(src, *pass, priorProj[src.name], priorWatermark[src.name], *fromLedger)
+		//
 		// A pending replay-rewind window overrides the incremental floor:
 		// the replay rewrote served rows below the watermark, so the range
 		// MUST be re-reconciled before any claim — carried or fresh — may
-		// cover it. -from can never skip past it.
+		// cover it. -from can never skip past it. A deferred window is not
+		// reconciled at all, so no claim covers it.
 		dirtyWin, hasDirty := dirtyWindows[src.name]
-		if hasDirty {
-			projFrom = dirtyReconcileFloor(projFrom, genesis, dirtyWin)
-		}
+		projFrom, deferDirty := projectionPlan(src, *pass, priorProj[src.name], priorWatermark[src.name], *fromLedger, srW.Ledger, dirtyWin, hasDirty)
 		if *useCH {
-			if srW.Ledger >= projFrom {
+			switch {
+			case deferDirty:
+				// Detail is written by the window disposition below.
+			case srW.Ledger >= projFrom:
 				streamer := clickhouse.ReconcileEventStreamer{Addr: *chAddr, NeedOpArgs: src.needsOpArgs, NeedStateWriteKeys: src.needsStateWriteKeys}
 				scopes, servedMins, servedFrom, runFrom, serr := projectionScopes(ctx, store, src, genesis, projFrom, srW.Ledger)
 				if serr != nil {
@@ -706,7 +708,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				if projOK && !evidencedNow {
 					detail = append(detail, carriedEvidenceDetail(evidencedAt))
 				}
-			} else {
+			default:
 				detail = append(detail, "projection: not evaluated (earlier claim failed at genesis)")
 			}
 			// Coverage = substrate∧recognition (proven data capture). complete
@@ -715,7 +717,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			// axis can never be stronger than the lake axis it sits on, so an
 			// unproven substrate claim (C4-057) gates it too — that is what
 			// lakeComplete already carries.
-			w = combineWatermark(srW, lakeComplete && projOK)
+			w = servedAxisVerdict(srW, lakeComplete && projOK, deferDirty, dirtyWin)
 		} else {
 			// Legacy Postgres path: strict per-ledger projection pins the watermark.
 			if srW.Ledger >= genesis {
@@ -766,6 +768,10 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				detail = append(detail, fmt.Sprintf(
 					"projection: replay-rewind window [%d,%d] re-verified clean this run — clearing it",
 					dirtyWin.From, dirtyWin.To))
+			} else if deferDirty {
+				detail = append(detail, fmt.Sprintf(
+					"projection: not evaluated — dirty window [%d,%d] PENDING this source's dedicated weekly compute-completeness timer, which re-proves it from genesis; complete withheld and watermark held at %d until then",
+					dirtyWin.From, dirtyWin.To, w.Ledger))
 			} else {
 				detail = append(detail, fmt.Sprintf(
 					"projection: replay-rewind window [%d,%d] PENDING re-verification — the reconcile floor stays extended over it until a clean run covers it",
@@ -1739,53 +1745,6 @@ func projectionWithoutEvidence(projOK bool, nTargets int, servedMins []servedFlo
 		"an empty served tier matching an empty expectation is not a verification (check the catalogue's contract identities)", nTargets, genesis, hi)
 }
 
-// dirtyReconcileFloor lowers an incremental run's projection reconcile floor
-// to cover a pending replay-rewind dirty window (migration 0125) — the
-// structural fix for the carried-claim invalidation gap (2026-07-31).
-//
-// projectionClaim rule 3 lets an incremental run CARRY the prior clean
-// verdict for the prefix its -from floor skipped. That carry's premise is
-// that the served tier below the floor is immutable. A projector-replay
-// rewind breaks the premise: it rewrites served rows below the watermark,
-// so the prior verdict's evidence no longer describes what the tables hold —
-// yet nothing re-examined the range, because the daily driver's -from
-// (min(watermark)) sits above it forever. The 07-30 cctp replay wrote
-// 19,366 duplicate rows at 62.27M–63.55M and every subsequent incremental
-// run carried the pre-replay clean claim right over them.
-//
-// The floor therefore extends DOWN to the window's genesis-clamped bottom,
-// regardless of -from: the rewound range re-enters the reconcile scope and
-// the claim is re-earned rather than carried. Ground the replay did not
-// touch (below dirty.From) keeps the normal carry semantics. Pure —
-// unit-testable.
-func dirtyReconcileFloor(projFrom, genesis uint32, w timescale.ProjectionDirtyWindow) uint32 {
-	lo := w.From
-	if lo < genesis {
-		lo = genesis // nothing exists below the source's genesis to re-verify
-	}
-	if lo < projFrom {
-		return lo
-	}
-	return projFrom
-}
-
-// dirtyWindowSatisfied reports whether THIS run earned the right to clear a
-// pending replay-rewind window: its projection verdict is CLEAN (projOK —
-// which per projectionClaim requires this run's own reconcile to have found
-// nothing, never a carried claim over an unchecked range) AND the run's
-// reconcile floor reached the window's genesis-clamped bottom AND the
-// reconciled range reached the window's top. Anything less keeps the window
-// pending — a failing verdict must not erase the obligation, and a run whose
-// scope stopped short of the window proved nothing about it. Pure —
-// unit-testable.
-func dirtyWindowSatisfied(w timescale.ProjectionDirtyWindow, projOK bool, reconcileFloor, genesis, hi uint32) bool {
-	lo := w.From
-	if lo < genesis {
-		lo = genesis
-	}
-	return projOK && reconcileFloor <= lo && hi >= w.To
-}
-
 // verdictPublisher is the slice of the store [publishSourceVerdict] needs.
 type verdictPublisher interface {
 	PublishCompletenessVerdict(ctx context.Context, snap timescale.CompletenessSnapshot, clearWindow *timescale.DirtyWindowClear) (timescale.VerdictPublication, error)
@@ -2219,8 +2178,8 @@ func expectedProjection(ctx context.Context, chStreamer completeness.EventStream
 //     the factory's creation events on a THROWAWAY decoder — a superset of the
 //     children the real stream will self-seed in [lo,hi]. The throwaway keeps
 //     src.dec's just-in-time in-stream seeding UNDISTURBED, so ordering-
-//     sensitive edge cases (a pool created and traded in the same ledger with
-//     adverse tx_hash sort order) resolve byte-identically to the unfiltered
+//     sensitive edge cases (a pool created and traded in the same ledger)
+//     resolve byte-identically to the unfiltered
 //     stream — the prefilter only ever ADDS contract rows to the read; Matches()
 //     is still the final per-event gate.
 //
