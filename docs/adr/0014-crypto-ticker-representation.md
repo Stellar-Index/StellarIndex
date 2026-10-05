@@ -3,7 +3,6 @@ adr: 0014
 title: Crypto tickers as AssetType "crypto"
 status: Accepted
 date: 2026-04-23
-accepted: 2026-04-23
 supersedes: []
 superseded_by: null
 ---
@@ -12,187 +11,35 @@ superseded_by: null
 
 ## Context
 
-Reflector's CEX oracle (`CAFJZQWS…`) emits prices for off-chain
-crypto assets (BTC, ETH, USDT, SOL, XRP, ADA, AVAX, DOT, LINK,
-USDC, …) as `Asset::Other(Symbol)` on-chain. The Symbol is a bare
-ticker like `"BTC"` — not a Stellar classic asset (no issuer), not
-a Soroban contract, and not a fiat currency in the ISO-4217 sense.
-
-Our canonical model today has four `AssetType` variants — native,
-classic, soroban, fiat (ADR-0010). None of them fit a crypto
-ticker:
-
-- `classic`: requires an issuer G-address. BTC as a reference has
-  no issuer.
-- `soroban`: requires a C-address. Reflector doesn't provide one —
-  BTC is referenced by ticker alone.
-- `fiat`: semantically wrong (BTC is not fiat) and bound to an
-  ISO-4217 allow-list that excludes crypto.
-
-PR 164a's initial decoder path rejected these symbols with
-`ErrUnknownFiatSymbol`, skipping 100% of CEX-oracle updates. PR 164d's
-real-fixture harness `t.Skip`ed all three CEX fixtures under
-`test/fixtures/reflector/v6-2026-04-23/` with a pointer at this
-ADR. Time to fix.
+Oracles such as Reflector's CEX feed and RedStone publish bare tickers (BTC, ETH, USDT) with no issuer or contract.
+These fit none of native, classic, soroban or fiat (ADR-0010), and the decoder was skipping every such update.
 
 ## Decision
 
-**Extend `canonical.AssetType` with a fifth variant: `crypto`.**
+`canonical.AssetType` has a `crypto` variant, `AssetCrypto = "crypto"`, mirroring `fiat` (ADR-0010).
 
-```go
-const (
-    AssetNative  AssetType = "native"
-    AssetClassic AssetType = "classic"
-    AssetSoroban AssetType = "soroban"
-    AssetFiat    AssetType = "fiat"
-    AssetCrypto  AssetType = "crypto"  // NEW
-)
+- String form is `crypto:BTC`, object form is `{"type": "crypto", "code": "BTC"}`, and SQL storage is the same text column.
+- A crypto asset carries only `Code`; issuer and contract id stay empty.
+- Codes are allow-listed. The live list is `canonical.IsKnownCrypto` in `internal/canonical/asset_crypto.go`, and adding a code is a one-line change there, never a new ADR.
+- Stablecoins and wrapped or yield tokens (USDC, USDT, USDT0, DAI, EURC, USDe, SolvBTC, ...) stay `crypto`; they are not normalised to `fiat` at ingest, and the aggregator maps them to a fiat leg at compute time (`internal/aggregate/stablecoin.go`).
+- `USDT0` is a distinct code from `USDT`, and the SolvBTC NAV feeds are distinct codes from their USD-quoted variants.
+- A feed_id's `/` becomes `_` in the code (URL-path safety), so the USD-quoted SolvBTC NAV feeds are `SolvBTC_FUNDAMENTAL_USD` and `SolvBTC.BBN_FUNDAMENTAL_USD`.
+- A feed's quote asset lives in the connector's registry (`redstone.feedRegistry`, ADR-0028), not here: `crypto:BTC` and `crypto:SolvBTC` can be quote assets.
+- Rejected: broadening `fiat` into a generic external reference, a synthetic Soroban contract id, an empty-issuer classic asset, and skipping crypto symbols.
 
-type Asset struct {
-    Type         AssetType
-    Code         string  // "BTC", "ETH", ... for crypto; existing use preserved
-    Issuer       string  // unused for crypto/fiat
-    ContractID   string  // unused for crypto/fiat
-}
-```
+## Invariant
 
-Canonical wire form for crypto:
-
-- **String form:** `crypto:BTC`, `crypto:ETH`, etc. Unambiguous
-  prefix so `ParseAsset` dispatches in O(1), same pattern as
-  `fiat:USD`.
-- **Object form:** `{"type": "crypto", "code": "BTC"}`.
-- **SQL storage:** text column, `crypto:` prefix distinguishes it.
-
-Allow-listed codes (observed in mainnet Reflector CEX traffic
-2026-04-23, plus the largest-cap tickers not yet seen but very
-likely to appear):
-
-```
-ADA ATOM AVAX BCH BNB BTC DOGE DOT ETH LINK LTC MATIC NEAR SHIB
-SOL TON TRX UNI USDC USDT XLM XRP
-```
-
-Extension is a one-line amendment to this ADR (same pattern as
-ADR-0010's fiat list).
+- `crypto:USDC` is never the same asset as Circle's classic `USDC:GA5Z...`; keys stay `crypto:` prefixed and are never matched on bare ticker.
+- A crypto asset has no issuer or contract id and an allow-listed code, and it round-trips through `String` and `ParseAsset`; `asset_crypto_test.go` enforces it.
+- An unmapped oracle symbol is recorded as `raw:<symbol>`, never dropped (AGENTS.md domain rules).
+- Every `AssetType` switch covers the variant, has a real-bodied `default`, or carries an `//exhaustive:ignore` marker; `TestAssetTypeExhaustiveGuard` enforces it.
 
 ## Consequences
 
-- **Positive:** Reflector CEX feed's 10 symbols-per-event decode
-  end-to-end. All three variants of `Asset::Other(Symbol)` — fiat,
-  crypto, unknown — now have explicit handling in the decoder.
-- **Positive:** `crypto:USDC` ≠ `USDC:GA5ZSEJY…` (Circle's Stellar
-  classic asset). The canonical model keeps them distinct even
-  though they share the `USDC` ticker. A price quoted against
-  "USDC the global crypto asset" and a price quoted against
-  "Circle's Stellar USDC classic asset" are semantically different;
-  making them textually different prevents accidental mixing.
-- **Negative:** Adds one more variant callers must handle in
-  `switch asset.Type` ladders. Mitigated by keeping the allow-list
-  small.
-- **Negative:** Tickers are ambiguous without context. BTC on
-  Reflector = BTC on Binance = BTC on Coinbase. We rely on oracle
-  metadata (`base()`, data source) to know which backing market the
-  price represents. Not a new problem — Reflector itself doesn't
-  encode the venue in the event.
-- **Operational impact:** Minimal. Storage is the same text
-  column; pair IDs in Timescale grow a few new variants.
-- **Downstream design impact:**
-  - Pricing aggregation logic that cross-pairs crypto assets must
-    use `crypto:BTC` as the key, not bare `BTC`. No free-form
-    string matching.
-  - Eventually, a **SAC bridge** might map `crypto:USDC` to
-    Circle's on-chain `USDC-GA5ZSEJY…` for cross-venue arbitrage —
-    but that's a registry decision, not an Asset type decision.
-    See ADR-0010 §SAC bridge for prior art.
+Reflector CEX events decode end to end.
+Tickers stay ambiguous across venues, so the oracle's metadata decides which market a price represents.
+A future registry may bridge `crypto:USDC` to the on-chain SAC; that is a registry decision, not an asset-type one.
 
-## Alternatives considered
+## Evidence
 
-1. **Broaden `AssetFiat` to `AssetExternalRef` (rename + relax
-   allow-list)** — rejected. Fiat and crypto have different
-   semantic properties (ISO-4217 vs tradable token). Renaming
-   loses the type-level clarity that `fiat:USD` gives us today.
-   If we ever need to represent "generic off-chain reference" we
-   add a third variant; we don't conflate fiat with crypto.
-
-2. **Use `AssetSoroban` with a synthetic contract ID** — rejected.
-   Would require minting a fake C-address per ticker; breaks the
-   invariant that `AssetSoroban.ContractID` is a real on-chain
-   address.
-
-3. **Encode as `classic` with empty issuer** — rejected for the
-   same reason ADR-0010 rejected it for fiat: the empty-issuer
-   string round-trips through JSON as `"BTC-"`, which `ParseAsset`
-   rejects. Round-trip breakage is a cardinal sin of serialization
-   design.
-
-4. **Leave it and skip crypto symbols permanently** — rejected.
-   Reflector's CEX oracle is a deliberate integration target
-   (required coverage); skipping it defeats the purpose.
-
-## Amendments
-
-_Append new crypto codes here as a one-liner. Never supersede this
-ADR for an addition._
-
-- 2026-04-23 — initial allow-list of 22 codes (observed in CEX
-  oracle traffic + top-cap global cryptos). See
-  `canonical.IsKnownCrypto` for the live list.
-- 2026-04-24 (#19) — added `DAI`, `PYUSD`, `USDP` (stablecoins),
-  `EURC`, `EUROC`, `EUROB` (euro-pegged stablecoins) and `MXNe`
-  (Bitso peso-pegged stablecoin) — published by RedStone's Stellar
-  adapter. Kept `crypto`, not normalized to `fiat`, so the decoder
-  stays fiat-proxy-agnostic: the aggregator maps each to its fiat
-  leg (USD / EUR / MXN) at VWAP time, per the "stablecoin-as-fiat is
-  aggregator policy" rule.
-- 2026-05-05 (#643) — added `DASH`. One-line allow-list extension;
-  no connector or aggregator change at the time — wired into the
-  per-CEX `DefaultPairs()` maps separately as venues list it
-  (Kraken, Binance, Bitstamp).
-- 2026-05-22 (#53) — added `SolvBTC`, `SolvBTC_FUNDAMENTAL`,
-  `SolvBTC.BBN_FUNDAMENTAL` — tokenized-BTC feeds from RedStone's
-  Stellar deployment. BTC-backed crypto tokens, so `crypto` not the
-  ADR-0028 `rwa` variant. Each feed_id is its own code (market vs
-  NAV observations stay distinct).
-  **Amended 2026-08-29 (D8):** the two `_FUNDAMENTAL` codes are
-  allow-listed unchanged, but they are no longer USD-quoted — a NAV
-  ratio is denominated in the token's reserve asset, so
-  `SolvBTC_FUNDAMENTAL` is quoted `crypto:BTC` and
-  `SolvBTC.BBN_FUNDAMENTAL` `crypto:SolvBTC`. This ADR governs the
-  code allow-list only; the per-feed quote lives in
-  `redstone.feedRegistry` and is amended in ADR-0028 §2/§3, which
-  carries the live evidence. Note the consequence for this
-  allow-list: `crypto:BTC` and `crypto:SolvBTC` are now used as
-  QUOTE assets as well as bases, which the bare-ticker model already
-  supports (`OracleUpdate.Quote` is an ordinary `Asset`).
-- 2026-07-27 — added `USDe`, `sUSDe` (Ethena synthetic dollars),
-  `savUSD_FUNDAMENTAL` (Avant staked USD — crypto-native yield
-  vault like sUSDe, not `rwa`), `SolvBTC_FUNDAMENTAL_USD`,
-  `SolvBTC.BBN_FUNDAMENTAL_USD` (USD-quoted SolvBTC NAV feeds —
-  a different quantity from the unsuffixed NAV-ratio feeds, so
-  distinct codes; the on-chain feed_id's `/USD` suffix is
-  normalized `/`→`_` for URL-path safety). From RedStone's
-  2026-07-24 relayer expansion (ledger 63624934). These two keep
-  `fiat:USD`: the `/USD` suffix is exactly what makes them
-  dollar-denominated (see the 2026-08-29 D8 amendment above).
-- 2026-08-31 (#439) — added `USDT0`, the omnichain USDT
-  representation published by RedStone's Stellar adapter. A DISTINCT
-  code from `USDT`, deliberately: its own issuance and peg risk, so
-  collapsing the two here would be the eager normalisation the
-  stablecoin rule above rejects. Whether it should ALSO proxy to
-  `fiat:USD` at VWAP time is an aggregator-policy decision, taken in
-  `internal/aggregate/stablecoin.go`, not this ADR. It was arriving
-  as `raw:USDT0` and ticketing
-  `stellarindex_ingestion_oracle_unknown_symbols` before this
-  amendment.
-
-## References
-
-- Related ADRs:
-  - ADR-0010 (fiat representation) — same pattern; crypto is the
-    sibling variant.
-  - ADR-0003 (i128 no-truncation) — crypto amounts still flow
-    through the i128 path; no change.
-- Implementation: `internal/canonical/asset_crypto.go` (allow-list
-  + constructor), `internal/canonical/asset.go` (type + String +
-  ParseAsset + Validate).
+`internal/canonical/asset_crypto.go`, `asset.go`, `asset_crypto_test.go`, and the Reflector real-fixture tests under `internal/sources/reflector/`.

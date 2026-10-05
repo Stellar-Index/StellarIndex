@@ -1,14 +1,5 @@
 # ADRs not yet on docs/adr/_template.md. Shrink-only: each ADR-rewrite PR removes its
 # lines, and lint-adr-refs fails on an entry that already conforms. Empty when W1 ends.
-0010-off-chain-fiat-representation.md
-0011-supply-algorithm.md
-0012-quorum-set-composition.md
-0013-go-stellar-sdk-xdr-for-scval.md
-0014-crypto-ticker-representation.md
-0015-last-closed-bucket-rate-serving.md
-0016-per-region-storage-strategy.md
-0017-archive-completeness-invariants.md
-0018-api-consistency-surfaces.md
 0024-redis-ha-via-sentinel.md
 0025-caddy-cloudflare-trusted-proxy.md
 0026-stablecoin-fiat-proxy-late-binding.md
