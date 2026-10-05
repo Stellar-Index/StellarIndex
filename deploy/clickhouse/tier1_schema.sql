@@ -690,7 +690,8 @@ ORDER BY (address, ledger, tx_hash, op_index, leg_index, direction);
 -- trailing address makes the sent/received pair of one movement two distinct
 -- keys so ReplacingMergeTree never collapses them. Live rows arrive through
 -- the MV; history is caught up by deploy/clickhouse/movements_by_asset.sql
--- (partition-at-a-time INSERT..SELECT). Keep that file's DDL identical.
+-- (partition-at-a-time INSERT..SELECT FROM account_movements FINAL, plus the
+-- DROP PARTITION note for asset-relabelling re-derives). Keep that file's DDL identical.
 CREATE TABLE IF NOT EXISTS stellar.movements_by_asset
 (
     address           String,

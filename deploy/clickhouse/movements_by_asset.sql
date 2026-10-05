@@ -56,22 +56,44 @@ FROM stellar.account_movements;
 --       INSERT INTO stellar.movements_by_asset
 --       SELECT address, ledger, ledger_close_time, tx_hash, op_index, leg_index, direction,
 --              movement_kind, provenance, asset, counterparty, amount, attributes, ingested_at
---       FROM stellar.account_movements
+--       FROM stellar.account_movements FINAL
 --       WHERE ledger >= $((P * 1000000)) AND ledger < $(((P + 1) * 1000000))
 --       SETTINGS max_threads = 4, max_memory_usage = 8000000000,
 --                max_bytes_before_external_sort = 4000000000"
+--     # Let merges drain before the next partition: 100 active parts is a
+--     # tenth of parts_to_delay_insert (1000), so inserts never throttle.
+--     while [ "$(clickhouse-client --port 9300 -q "SELECT count() FROM system.parts
+--         WHERE database = 'stellar' AND table = 'movements_by_asset' AND active")" -ge 100 ]; do
+--       sleep 60
+--     done
 --   done
 --
+-- FINAL is mandatory: the target key includes asset, so an unmerged stale
+-- source row (same key, superseded asset) would be copied in and never merge
+-- away.
+--
+-- OPERATOR NOTE: a re-derive of account_movements that relabels assets (a
+-- wrong -network SAC check in ch_cap67_movements.go, or CAP-0038 leg
+-- renumbering) leaves the old-asset rows here forever. After such a re-derive,
+-- for each affected partition P:
+--   ALTER TABLE stellar.movements_by_asset DROP PARTITION P;
+-- then repeat that partition's FINAL copy above.
+--
 -- ── Step 3: verify ──────────────────────────────────────────────────────────
--- Per partition, distinct keys must match (not count(): un-merged RMT parts):
+-- Per partition, FINAL row counts and distinct keys (asset included) must match
+-- on both sides; a count above the distinct-key count means leftover rows:
 --
 --   SELECT
---     (SELECT uniqExact(address, ledger, tx_hash, op_index, leg_index, direction)
---        FROM stellar.account_movements WHERE ledger >= 60000000 AND ledger < 61000000) AS src,
---     (SELECT uniqExact(address, ledger, tx_hash, op_index, leg_index, direction)
---        FROM stellar.movements_by_asset WHERE ledger >= 60000000 AND ledger < 61000000) AS dst
+--     (SELECT count() FROM stellar.account_movements FINAL
+--        WHERE ledger >= 60000000 AND ledger < 61000000) AS src_rows,
+--     (SELECT count() FROM stellar.movements_by_asset FINAL
+--        WHERE ledger >= 60000000 AND ledger < 61000000) AS dst_rows,
+--     (SELECT uniqExact(address, ledger, tx_hash, op_index, leg_index, direction, asset)
+--        FROM stellar.account_movements WHERE ledger >= 60000000 AND ledger < 61000000) AS src_keys,
+--     (SELECT uniqExact(address, ledger, tx_hash, op_index, leg_index, direction, asset)
+--        FROM stellar.movements_by_asset WHERE ledger >= 60000000 AND ledger < 61000000) AS dst_keys
 --
--- Expect src = dst.
+-- Expect src_rows = dst_rows and src_keys = dst_keys.
 --
 -- ── ROLLBACK ────────────────────────────────────────────────────────────────
 --   DROP TABLE IF EXISTS stellar.movements_by_asset_mv;
