@@ -115,9 +115,12 @@ WITH f AS (
   -- few minutes → 3h threshold. ECB is the exception: a DAILY FX reference
   -- (publishes ~16:00 CET on TARGET business days, none on weekends/holidays),
   -- so it needs a 4-day threshold to tolerate a weekend + a holiday without
-  -- false-firing — otherwise it reads stale ~21h of every day.
+  -- false-firing — otherwise it reads stale ~21h of every day. Tiingo is the
+  -- same shape: end-of-day fund NAV bars, and a re-poll of a stored bar hits
+  -- the primary key without moving ingested_at, so the age only resets when a
+  -- NEW bar lands (none on weekends/holidays).
   SELECT 'oracle'  AS domain, source AS src, extract(epoch FROM now()-max(ingested_at)) AS age,
-         CASE WHEN source = 'ecb' THEN 345600 ELSE 10800 END AS thr
+         CASE WHEN source IN ('ecb', 'tiingo') THEN 345600 ELSE 10800 END AS thr
     FROM oracle_updates GROUP BY source
   UNION ALL
   -- FX is daily-grain: observed_at is the data-point time (lags ~a day even

@@ -487,5 +487,18 @@ else
   bad "sep1 freshness row does not measure sep1_payload_fetched_at: '$SEP1_ROW'"
 fi
 
+# ─── 10. daily NAV/FX oracles get the 4-day threshold ────────────────
+#
+# Tiingo's NAV bars are daily and ingested_at only moves on a new bar, so
+# the 3 h oracle default fired every weekend and most of every trading day.
+ORACLE_THR="$(grep -E "CASE WHEN source (=|IN)" "$SRC")"
+for daily in ecb tiingo; do
+  if [[ "$ORACLE_THR" == *"'$daily'"* && "$ORACLE_THR" == *"THEN 345600"* ]]; then
+    ok "oracle '$daily' has the 4-day daily-feed threshold"
+  else
+    bad "oracle '$daily' is not on the 345600 s arm: '$ORACLE_THR'"
+  fi
+done
+
 printf 'data-freshness-test: %d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
