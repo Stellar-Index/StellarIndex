@@ -76,6 +76,16 @@ else
   bad "Group C has no 'when: pgbackrest_backup_enabled | default(true) | bool' guard — installs/starts even with backups disabled"
 fi
 
+pgbr_off_body="$(block_body "$TASKS" "Remove pgbackrest_exporter where backups are disabled")"
+if [ -z "$pgbr_off_body" ]; then
+  bad "pgbackrest_exporter disable block not found — a leftover exporter keeps crash-looping when backups are off"
+elif grep -qE '^\s*when:\s*not \(pgbackrest_backup_enabled\s*\|\s*default\(true\)\s*\|\s*bool\)\s*$' <<<"$pgbr_off_body" \
+  && grep -q 'enabled: false' <<<"$pgbr_off_body" && grep -q 'state: absent' <<<"$pgbr_off_body"; then
+  ok "pgbackrest_exporter is stopped, disabled and removed when pgbackrest_backup_enabled is false"
+else
+  bad "pgbackrest_exporter disable block is not gated on 'not (pgbackrest_backup_enabled ...)' or does not disable/remove the unit"
+fi
+
 minio_body="$(block_body "$TASKS" "Group D — MinIO Prometheus bearer token (requires MinIO)")"
 # mc's `svcacct add --policy` takes a JSON policy FILE, not a policy name; a
 # bare name fails the mint on a fresh host.
