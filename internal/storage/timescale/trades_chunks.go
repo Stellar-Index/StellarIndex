@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // ─── `trades` chunk primitives for the chunk-wise usd_volume restamp ───
@@ -116,27 +118,34 @@ const (
 )
 
 // DecompressTradesChunk decompresses one chunk; a no-op if it already is.
-// Its exclusive lock is acquired under a bounded wait and retried — see
-// the convoy note below.
+// Its locks are taken under a bounded wait and retried — see the convoy
+// note below.
 func (s *Store) DecompressTradesChunk(ctx context.Context, c TradeChunk) error {
-	if err := s.execUnderBoundedLockWait(ctx, tradesChunkDecompressLock, tradesChunkDecompress, c.Schema, c.Name); err != nil {
+	if err := s.execUnderBoundedLockWait(ctx, ctx, tradesChunkDecompressLock, tradesChunkDecompress, c); err != nil {
 		return fmt.Errorf("timescale: decompress chunk %s: %w", c, err)
 	}
 	return nil
 }
 
 // CompressTradesChunk compresses one chunk; a no-op if it already is. Its
-// lock is acquired under the same per-attempt bound as the decompress but
-// with a far larger retry budget, because giving up here LEAVES THE CHUNK
+// locks are taken under the same per-request bound as the decompress but
+// with a far larger budget, because giving up here LEAVES THE CHUNK
 // DECOMPRESSED — see the convoy note below.
 func (s *Store) CompressTradesChunk(ctx context.Context, c TradeChunk) error {
-	if err := s.execUnderBoundedLockWait(ctx, tradesChunkCompressLock, tradesChunkCompress, c.Schema, c.Name); err != nil {
+	return s.compressTradesChunk(ctx, ctx, c)
+}
+
+// compressTradesChunk is [Store.CompressTradesChunk] with the caller's own
+// context (live) separate from the one the statement runs on, which the
+// re-compress detaches from cancellation.
+func (s *Store) compressTradesChunk(ctx, live context.Context, c TradeChunk) error {
+	if err := s.execUnderBoundedLockWait(ctx, live, tradesChunkCompressLock, tradesChunkCompress, c); err != nil {
 		return fmt.Errorf("timescale: compress chunk %s: %w", c, err)
 	}
 	return nil
 }
 
-// ─── the lock convoy: why the WAIT is bounded and the WORK is not ────────
+// ─── the lock convoy: why every WAIT is bounded and the WORK is not ──────
 //
 // PRODUCTION INCIDENT 2026-09-10, 00:12–00:31 UTC (r1). A deploy restarted
 // stellarindex-aggregator; its cold-start VWAP alias-map aggregation
@@ -164,47 +173,53 @@ func (s *Store) CompressTradesChunk(ctx context.Context, c TradeChunk) error {
 // and it recurs for as long as r1 is kept saturated with restamps while
 // deploys continue.
 //
-// THE BOUND IS ON ACQUISITION, NOT ON DURATION. `lock_timeout` aborts a
-// statement that has been WAITING for a lock too long and does nothing to
-// one that HOLDS its locks and is working. That distinction is the whole
-// design. Decompressing the 159.7 GB outlier chunk runs about 1.5 hours
-// once it has the lock (see [opsutil.JobHeartbeat.ProgressBytes]) and
-// nothing here touches it. A `statement_timeout` would have killed it,
-// which is why one is not used.
+// WHAT THE 5 s BOUND COVERS. `SET LOCAL lock_timeout` covers EVERY lock
+// request in the attempt's transaction, not only the first. On TimescaleDB
+// 2.26.4 both functions take AccessShareLock on `trades`, then
+// ExclusiveLock on the chunk (readers still pass), do their work, and
+// then ask for AccessExclusiveLock on the chunk: that late request is the
+// one a long reader blocks, and it is bounded at 5 s like the rest. No
+// request of ours may sit pending longer, because a pending exclusive
+// request queues every later reader of the chunk and the API's request
+// timeout is 15 s. `lock_timeout` does nothing to a statement that HOLDS
+// its locks and is working; the 1.5-hour decompress of the 159.7 GB
+// outlier chunk is untouched, and no `statement_timeout` is used.
 //
-// FAILING IS SAFE, AND FAILING IS NOT THE FIRST ANSWER. Both statements
-// run in their own transaction, so a lock timeout rolls back atomically
-// and the chunk is left in the state it was already in. Verified against
-// the deployed pair (TimescaleDB 2.26.4 / PG 15) with a concurrent session
-// holding a conflicting lock: the decompress failed at the bound with
-// SQLSTATE 55P03 and the chunk still read is_compressed = true; the
-// compress failed the same way and left the chunk decompressed with every
-// row readable. Nothing half-done in either direction.
+// THE COST OF THAT BOUND, AND HOW IT IS AVOIDED. A refusal of the late
+// request throws the attempt's work away: up to 1.5 hours of decompress.
+// Two things keep that rare and visible:
 //
-// But a re-compress that gave up would leave a 160 GB chunk open, which is
-// the one outcome this tool exists to avoid. So neither statement gives up
-// on a refusal: each is RETRIED until its budget is spent, pausing
-// [lockWaitPolicy.drain] between attempts. During that pause this process
-// has NO exclusive request pending, so the queue behind the last one
-// drains — the pause is the load-bearing half, not the timeout. The
-// re-compress carries a much larger budget than the decompress precisely
-// because of the asymmetry: a decompress that never runs changed nothing
-// (the walk stops there and a rerun resumes at that chunk), while a
-// compress that never runs leaves work for a human. On exhaustion both
-// surface an ordinary error, so [Store.RestampTradesChunk]'s contract —
-// and the operator-facing "compress it by hand" line the walk prints
-// around it — is unchanged.
+//   - before each attempt, a lock holder on the chunk (or its compressed
+//     chunk) whose transaction is older than [longLockHolderAge] is waited
+//     out, with no request of ours pending, instead of starting work it
+//     would block at the end.
+//   - each attempt first takes the functions' own opening locks with
+//     `LOCK TABLE`, in their order, so a refusal there is known to be
+//     cheap and one inside the function is known to have cost work.
+//
+// FAILING IS SAFE, AND FAILING IS NOT THE FIRST ANSWER. Each attempt is
+// one transaction, so a refusal rolls back atomically: verified on 2.26.4
+// / PG 15, a refused decompress left the chunk compressed and a refused
+// compress left it decompressed with every row readable. Between attempts
+// this process has NO request pending for [lockWaitPolicy.drain], so the
+// queue behind the last one drains. The budget is charged only for time
+// spent waiting (refused requests, drains, long holders), never for work.
+// A retry after a refusal that cost work starts only while the caller is
+// still running and the last attempt's length fits in what is left of
+// the budget on the wall clock, so a re-compress after a SIGTERM cannot
+// start a fresh 47-minute attempt that the stop window would kill.
 //
 // WHAT THIS DOES NOT COVER. A convoy whose head is somebody ELSE's
 // exclusive request (a by-hand ALTER, a migration, the compression
 // policy's own proc) is untouched by this; that is what the
-// stellarindex_pg_lock_convoy alert exists for. And a decompress that
-// HOLDS its lock for 1.5 hours still makes every reader of that chunk wait
-// 1.5 hours — inherent to decompressing a chunk, and deliberately not
-// bounded here.
+// stellarindex_pg_lock_convoy alert exists for. A decompress that HOLDS
+// its locks for 1.5 hours still blocks writers of that chunk for 1.5
+// hours. And a holder in another role is invisible to the long-holder
+// check unless this role can read its pg_stat_activity row.
 
-// lockWaitPolicy is how hard one statement may ask for a lock: `wait` per
-// attempt, `drain` of clear air between attempts, `budget` overall.
+// lockWaitPolicy is how hard one statement may ask for its locks: `wait`
+// per request, `drain` of clear air between attempts, `budget` of total
+// waiting.
 type lockWaitPolicy struct {
 	wait   time.Duration
 	drain  time.Duration
@@ -214,11 +229,9 @@ type lockWaitPolicy struct {
 var (
 	// tradesChunkDecompressLock bounds decompress_chunk.
 	//
-	// wait: the longest an exclusive request of ours may sit pending.
-	// Sized against the thing that broke first — the postgres_exporter
-	// scrape gives up at 30 s and took the alerting layer with it — so 5 s
-	// leaves a 6x margin, and it is four orders of magnitude above what
-	// taking an uncontended lock costs.
+	// wait: the longest a request of ours may sit pending. Under the API's
+	// 15 s request timeout and the exporter's 30 s scrape timeout, and four
+	// orders of magnitude above what taking an uncontended lock costs.
 	//
 	// drain: the 2026-09-10 convoy drained in under 20 s once its head was
 	// removed; 15 s of clear air per 5 s of asking keeps the drain ahead
@@ -229,15 +242,20 @@ var (
 	// (config.BackgroundStatementTimeout) — and finite because failing
 	// here is the SAFE direction.
 	tradesChunkDecompressLock = lockWaitPolicy{wait: 5 * time.Second, drain: 15 * time.Second, budget: 35 * time.Minute}
-	// tradesChunkCompressLock bounds compress_chunk. Same per-attempt
-	// bound and pause; the budget is deliberately much larger, because by
-	// the time this runs the chunk is ALREADY decompressed and exhausting
-	// the budget is the expensive outcome rather than the cheap one. It
-	// stays finite so a run under run-heavy-job.sh cannot sit past its
-	// SIGTERM-to-SIGKILL window (HEAVY_JOB_STOP_TIMEOUT=2h on the
-	// restamp's launch line) without ever saying why.
+	// tradesChunkCompressLock bounds compress_chunk. Same per-request
+	// bound and pause; the budget is much larger because by the time this
+	// runs the chunk is ALREADY decompressed and giving up is the
+	// expensive outcome. It stays finite so a run under run-heavy-job.sh
+	// cannot sit past its SIGTERM-to-SIGKILL window
+	// (HEAVY_JOB_STOP_TIMEOUT=2h on the restamp's launch line) without
+	// saying why.
 	tradesChunkCompressLock = lockWaitPolicy{wait: 5 * time.Second, drain: 15 * time.Second, budget: 90 * time.Minute}
 )
+
+// longLockHolderAge is the transaction age past which a holder of a lock
+// on the chunk is waited out rather than raced: four times the API's
+// request timeout, and far below an 18-minute read.
+const longLockHolderAge = 60 * time.Second
 
 // pgLockNotAvailable is SQLSTATE 55P03, what PostgreSQL raises when
 // `lock_timeout` expires ("canceling statement due to lock timeout").
@@ -256,57 +274,194 @@ func isLockNotAvailable(err error) bool {
 	return false
 }
 
-// execUnderBoundedLockWait runs one statement in its own transaction under
-// `SET LOCAL lock_timeout`, retrying for as long as the ONLY thing that
-// failed was the lock acquisition and the policy has budget left. Any
-// other error is returned on the spot — a retry loop that swallowed, say,
-// an out-of-disk compress would be a worse bug than the one this fixes.
-//
-// `SET LOCAL`, and POSTGRES scopes it — not the driver. A session-level
-// `SET` on a pooled connection outlives the call (pgx v5's stdlib adapter
-// resets nothing on reuse), which would leave a 5 s lock_timeout riding
-// every later statement that landed on that connection; COMMIT/ROLLBACK
-// unwinds LOCAL even on the error path. Same discipline as the
-// decompression cap in [Store.RestampExactTierUSDVolume].
-func (s *Store) execUnderBoundedLockWait(ctx context.Context, p lockWaitPolicy, query string, args ...any) error {
-	deadline := time.Now().Add(p.budget)
-	for attempt := 1; ; attempt++ {
-		err := s.execUnderLockTimeout(ctx, p.wait, query, args...)
+// errLongLockHolder is wrapped when the budget ran out waiting on a
+// long-running holder, before any attempt was refused.
+var errLongLockHolder = errors.New("a long-running transaction holds a lock on the chunk")
+
+// longLockHolderSelect finds the oldest other transaction older than $3
+// seconds holding any lock on the chunk or its compressed chunk. It reads
+// only pg_locks, pg_stat_activity and the catalog, so it takes no lock a
+// convoy could queue it behind.
+const longLockHolderSelect = `
+	WITH target AS (
+	  SELECT to_regclass(format('%I.%I', $1::text, $2::text))::oid AS relid
+	  UNION ALL
+	  SELECT to_regclass(format('%I.%I', cc.schema_name, cc.table_name))::oid
+	    FROM _timescaledb_catalog.chunk ch
+	    JOIN _timescaledb_catalog.chunk cc ON cc.id = ch.compressed_chunk_id
+	   WHERE ch.schema_name = $1::text AND ch.table_name = $2::text
+	)
+	SELECT a.pid, l.mode, l.relation::regclass::text,
+	       EXTRACT(EPOCH FROM clock_timestamp() - a.xact_start)::bigint
+	  FROM pg_locks l
+	  JOIN target t ON t.relid = l.relation
+	  JOIN pg_stat_activity a ON a.pid = l.pid
+	 WHERE l.locktype = 'relation'
+	   AND l.granted
+	   AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+	   AND l.pid <> pg_backend_pid()
+	   AND a.xact_start < clock_timestamp() - make_interval(secs => $3::double precision)
+	 ORDER BY a.xact_start
+	 LIMIT 1
+`
+
+// longLockHolder describes the oldest long-running holder of a lock on
+// the chunk, or returns "" when there is none.
+func (s *Store) longLockHolder(ctx context.Context, c TradeChunk) (string, error) {
+	var (
+		pid       int
+		mode, rel string
+		ageSec    int64
+	)
+	err := s.db.QueryRowContext(ctx, longLockHolderSelect, c.Schema, c.Name, longLockHolderAge.Seconds()).Scan(&pid, &mode, &rel, &ageSec)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", nil
+	case err != nil:
+		return "", fmt.Errorf("check for long-running lock holders: %w", err)
+	}
+	return fmt.Sprintf("pid %d holding %s on %s in a transaction open %s", pid, mode, rel, time.Duration(ageSec)*time.Second), nil
+}
+
+// lockTally is what one bounded call has spent, for the retry decision
+// and the operator's error.
+type lockTally struct {
+	start        time.Time
+	charged      time.Duration // waiting only: refused requests, drains, long holders
+	workLost     time.Duration // work thrown away by refusals inside the statement
+	cheap, late  int           // refusals before and inside the statement
+	holderWaits  int
+	lastHolder   string
+	attemptsMade int
+}
+
+func (t *lockTally) String() string {
+	s := fmt.Sprintf("after %s and %d attempt(s): %d refused before any work, %d refused inside the statement (%s of work lost); "+
+		"%s of waiting charged",
+		time.Since(t.start).Round(time.Millisecond), t.attemptsMade, t.cheap, t.late, t.workLost.Round(time.Millisecond),
+		t.charged.Round(time.Millisecond))
+	if t.holderWaits > 0 {
+		s += fmt.Sprintf("; %d wait(s) on a long-running holder, last: %s", t.holderWaits, t.lastHolder)
+	}
+	return s
+}
+
+// execUnderBoundedLockWait runs one chunk statement, each attempt in its
+// own transaction with every lock request bounded at p.wait, retrying
+// for as long as the ONLY thing that failed was a lock request and the
+// policy allows it. Any other error is returned on the spot — a retry
+// loop that swallowed, say, an out-of-disk compress would be a worse bug
+// than the one this fixes. `live` is the caller's own context: once it is
+// done, no retry that would repeat work starts.
+func (s *Store) execUnderBoundedLockWait(ctx, live context.Context, p lockWaitPolicy, query string, c TradeChunk) error {
+	t := lockTally{start: time.Now()}
+	giveUp := func(why string, err error) error {
+		return fmt.Errorf("gave up on the chunk's locks (%s) %s; %s per request, %s between attempts: something else holds a "+
+			"conflicting lock — identify it with pg_blocking_pids() and see docs/operations/runbooks/pg-lock-convoy.md: %w",
+			why, &t, p.wait, p.drain, err)
+	}
+	// mayWait: another cheap wait fits the budget, and once the caller has
+	// gone, the wall clock as well.
+	mayWait := func() bool {
+		if live.Err() != nil && time.Since(t.start)+p.drain >= p.budget {
+			return false
+		}
+		return t.charged+p.drain < p.budget
+	}
+	for {
+		holder, err := s.longLockHolder(ctx, c)
+		if err != nil {
+			return err
+		}
+		if holder != "" {
+			t.holderWaits++
+			t.lastHolder = holder
+			if !mayWait() {
+				return giveUp(fmt.Sprintf("the %s budget is spent", p.budget), errLongLockHolder)
+			}
+			if err := t.drain(ctx, p.drain); err != nil {
+				return fmt.Errorf("stopped waiting for the chunk's locks %s: %w", &t, err)
+			}
+			continue
+		}
+
+		t.attemptsMade++
+		began := time.Now()
+		stmtElapsed, inStatement, err := s.chunkLockAttempt(ctx, p.wait, query, c)
 		if err == nil {
 			return nil
 		}
 		if !isLockNotAvailable(err) {
 			return err
 		}
-		// No room for another attempt: report the refusal AS a lock wait,
-		// with how hard it was tried, so the operator reads "something
-		// else is holding it" rather than a bare 55P03.
-		if time.Until(deadline) <= p.drain {
-			return fmt.Errorf("gave up waiting for the chunk's exclusive lock after %d attempt(s) over %s "+
-				"(%s per attempt, %s between): something else holds a conflicting lock — identify it with "+
-				"pg_blocking_pids() and see docs/operations/runbooks/pg-lock-convoy.md: %w",
-				attempt, p.budget, p.wait, p.drain, err)
+		// A refusal inside the statement ended a wait of at most p.wait;
+		// the rest of the statement's time was work.
+		var work time.Duration
+		if inStatement {
+			work = stmtElapsed - min(stmtElapsed, p.wait)
 		}
-		if cerr := sleepCtx(ctx, p.drain); cerr != nil {
-			return cerr
+		t.charged += time.Since(began) - work
+		t.workLost += work
+		if inStatement {
+			t.late++
+			switch remaining := p.budget - time.Since(t.start); {
+			case live.Err() != nil:
+				return giveUp("the caller has stopped, so the work is not repeated", err)
+			case stmtElapsed+p.drain > remaining:
+				return giveUp(fmt.Sprintf("another %s attempt does not fit the %s left of the %s budget",
+					stmtElapsed.Round(time.Second), remaining.Round(time.Second), p.budget), err)
+			}
+		} else {
+			t.cheap++
+			if !mayWait() {
+				return giveUp(fmt.Sprintf("the %s budget is spent", p.budget), err)
+			}
+		}
+		if err := t.drain(ctx, p.drain); err != nil {
+			return fmt.Errorf("stopped waiting for the chunk's locks %s: %w", &t, err)
 		}
 	}
 }
 
-// execUnderLockTimeout is one attempt: BEGIN, bound the wait, run, COMMIT.
-func (s *Store) execUnderLockTimeout(ctx context.Context, wait time.Duration, query string, args ...any) error {
+// drain waits d with no request pending and charges what it took.
+func (t *lockTally) drain(ctx context.Context, d time.Duration) error {
+	began := time.Now()
+	err := sleepCtx(ctx, d)
+	t.charged += time.Since(began)
+	return err
+}
+
+// chunkLockAttempt is one attempt: BEGIN; bound every lock request; take
+// the statement's opening locks with LOCK TABLE (AccessShare on `trades`,
+// then Exclusive on the chunk — the order both functions use on 2.26.4);
+// run; COMMIT. inStatement reports whether a failure came from the
+// statement itself, after its opening locks were held, and stmtElapsed how
+// long the statement ran.
+//
+// `SET LOCAL`, and POSTGRES scopes it — not the driver. A session-level
+// `SET` on a pooled connection outlives the call (pgx v5's stdlib adapter
+// resets nothing on reuse); COMMIT/ROLLBACK unwinds LOCAL even on the
+// error path.
+func (s *Store) chunkLockAttempt(ctx context.Context, wait time.Duration, query string, c TradeChunk) (stmtElapsed time.Duration, inStatement bool, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", wait.Milliseconds())); err != nil {
-		return err
+	for _, q := range []string{
+		fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", wait.Milliseconds()),
+		"LOCK TABLE ONLY trades IN ACCESS SHARE MODE",
+		fmt.Sprintf("LOCK TABLE ONLY %s IN EXCLUSIVE MODE", pgx.Identifier{c.Schema, c.Name}.Sanitize()),
+	} {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			return 0, false, err
+		}
 	}
-	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
-		return err
+	began := time.Now()
+	if _, err := tx.ExecContext(ctx, query, c.Schema, c.Name); err != nil {
+		return time.Since(began), true, err
 	}
-	return tx.Commit()
+	return time.Since(began), false, tx.Commit()
 }
 
 // sleepCtx waits d, or returns early with the context's error. The
@@ -540,7 +695,7 @@ func (s *Store) RestampTradesChunk(ctx context.Context, c TradeChunk, work func(
 func (s *Store) recompressTradesChunk(ctx context.Context, c TradeChunk, res *TradeChunkRestampResult, before func(ChunkRestampStep), werr error) error {
 	rctx := context.WithoutCancel(ctx)
 	before(ChunkRestampCompress)
-	cerr := s.CompressTradesChunk(rctx, c)
+	cerr := s.compressTradesChunk(rctx, ctx, c)
 	switch {
 	case werr != nil && cerr != nil:
 		return fmt.Errorf("timescale: chunk %s restamp failed AND the re-compress failed (%v) — the chunk is LEFT DECOMPRESSED; "+
