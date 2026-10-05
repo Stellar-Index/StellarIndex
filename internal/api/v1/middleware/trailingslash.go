@@ -67,7 +67,7 @@ func TrailingSlashRedirect(mux muxMatcher) Middleware {
 				if r.URL.RawQuery != "" {
 					target += "?" + r.URL.RawQuery
 				}
-				http.Redirect(w, r, target, http.StatusPermanentRedirect)
+				http.Redirect(w, r, target, http.StatusPermanentRedirect) //nolint:gosec // G710: target passed isCleanSameOriginPath, a same-origin path
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -85,12 +85,18 @@ type muxMatcher interface {
 // isCleanSameOriginPath reports whether target is safe to redirect a
 // caller to: a same-origin absolute path with exactly one leading '/'
 // (not "//…", which a browser resolves as a protocol-relative absolute
-// URL to whatever host follows) and no backslash (some browsers treat
+// URL to whatever host follows), no backslash (some browsers treat
 // '\' as equivalent to '/', so "/\evil.com" is the same bypass spelled
-// differently).
+// differently) and no control byte (browsers strip tab, LF and CR before
+// parsing, so "/\t/evil.com" is "//evil.com" again).
 func isCleanSameOriginPath(target string) bool {
 	if !strings.HasPrefix(target, "/") || strings.HasPrefix(target, "//") {
 		return false
 	}
-	return !strings.Contains(target, "\\")
+	for i := 0; i < len(target); i++ {
+		if c := target[i]; c == '\\' || c < 0x20 || c == 0x7f {
+			return false
+		}
+	}
+	return true
 }
