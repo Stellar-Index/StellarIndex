@@ -32,8 +32,12 @@ type OpenFreezePair struct {
 // on the open `freeze_events` row for (asset, quote). Implemented
 // by `internal/storage/timescale.FreezeEventSink.MarkRecovered`.
 type Recoverer interface {
-	MarkRecovered(ctx context.Context, asset, quote canonical.Asset) error
+	MarkRecovered(ctx context.Context, asset, quote canonical.Asset, releasedBy string) error
 }
+
+// ReleasedBySystemRecovery is the freeze_events.released_by value the
+// recovery worker stamps when it closes a row after an auto or lapsed release.
+const ReleasedBySystemRecovery = "system:recovery"
 
 // Recovery is the freeze-recovery worker. It periodically lists
 // every still-open `freeze_events` row, checks whether the Redis
@@ -205,7 +209,7 @@ func (r *Recovery) tick(ctx context.Context) {
 				continue
 			}
 			// Freeze cleared. Close the durable row.
-			if err := r.closer.MarkRecovered(ctx, p.Asset, p.Quote); err != nil {
+			if err := r.closer.MarkRecovered(ctx, p.Asset, p.Quote, ReleasedBySystemRecovery); err != nil {
 				r.logger.Warn("MarkRecovered failed",
 					"asset", p.Asset.String(),
 					"quote", p.Quote.String(),
