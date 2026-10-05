@@ -72,8 +72,8 @@ removal, so a closed trustline, claimed balance or withdrawn pool stops
 counting. A removed claimable balance or LP entry carries no asset in its key;
 `claimable_balances` and `liquidity_pools` resolve it from the same-ledger
 STATE pre-image (`dispatcher_adapter.go` memo), and an unattributable removal
-is a decode error, not a silent drop. Pinned by each package's
-`removal_supply_test.go`
+is a decode error, not a silent drop. Pinned by
+`internal/sources/{claimable_balances,liquidity_pools}/removal_supply_test.go`
 ([45b findings](../operations/45b-verify-first-findings.md#gated--larger-items)).
 
 ## The chained-fallback reader pattern
@@ -89,7 +89,7 @@ supply.Refresher.Tick() → <Algorithm>Computer.Compute(asset, ledger, observedA
       3. otherwise: bubble the error
 ```
 
-For XLM, `supplyAggregatorChainReader` (`cmd/stellarindex-aggregator/main.go`)
+For XLM, `supply.NewChainedReserveBalanceReader` (`cmd/stellarindex-aggregator/main.go`)
 wraps `supply.LCMReserveBalanceReader` (live) with
 `supply.ConfigReserveBalanceReader` (static); once the observer covers the
 reserves the live reader wins and the static map may go stale.
@@ -201,7 +201,7 @@ sides' `Store.LatestSupply`, runs `supply.CrossCheckForClass` (→
   never stale.
 - `stellarindex_supply_cross_check_total{outcome,wrap_class}`.
 
-Alert `stellarindex_supply_cross_check_divergence` fires when the gauge stays
+Alert `stellarindex_supply_cross_check_divergence` (`deploy/monitoring/rules/supply.yml`) fires when the gauge stays
 > 1 for ≥ 5 min ([runbook](../operations/runbooks/supply-cross-check-divergence.md)).
 An empty pair set is a no-op.
 
@@ -375,12 +375,21 @@ reduces to a `Supply`.
 
 `/v1/assets/{id}` reads `asset_supply_history` via `Store.LatestSupply`; the F2
 fields are JSON null when no snapshot exists (ADR-0011: we don't fabricate).
-The handler never reads observer state directly. Two serving-time refinements:
+The handler never reads observer state directly. Three serving-time refinements:
 
 - **SEP-41 lake fallback** — a Soroban token with no observer snapshot (not on
   the watched set, the common case) serves the lake-derived
   Σmint−Σburn−Σclawback (`supply_basis: "sep41_lake_flows"`, total ==
   circulating).
+- **Classic lake fallback** (`classic_lake_supply.go`, `higherClassicSupply`)
+  — a classic asset serves the higher of the lake-derived flows
+  (`supply_basis: "classic_lake_flows"`) and the trustline sum
+  (`classic_trustline_sum`, blind to three holding domains).
+- **Contract storage balances** (`asset_supply.go`) — Σ of a contract's
+  per-holder balance entries (`contract_storage_balances`).
+- `classic_trustline_sum` and `contract_storage_balances` are lower bounds:
+  `Basis.LowerBound()` (`internal/supply/supply.go`) sets
+  `circulating_supply_lower_bound`.
 - **SEP-1 max_supply overlay** — see "Max supply" above.
 
 ## Failure modes
@@ -441,13 +450,21 @@ the divergence alert cannot fire for a pair it is not evaluating.
   reason. Non-Stellar entries (BTC, ETH, …) are `reference_only`: pricing
   references, not browseable assets. The cross-chain `networks[]` model was
   removed ([stellar-focus-refactor-plan.md](stellar-focus-refactor-plan.md)).
+  `internal/canonical/asset_fiat.go` stays the source of truth for allowed
+  fiat codes; the catalogue refers to fiat by ISO code.
+- `CoinGeckoIDs()` feeds the CoinGecko poller's `TickerToID`, and
+  `aggregatorPairsFromCatalogue` feeds the aggregator pairs
+  (`cmd/stellarindex-indexer/main.go`), so adding a currency with a
+  `coingecko_id` widens polling. Aggregator prices live in `oracle_updates`;
+  there is no `aggregator_prices` table.
 - **Ticker-collision warning.** An asset whose code matches a verified ticker
   but whose issuer is not the verified one gets
   `flags.unverified_ticker_collision: true` and an `unverified_warning`
   pointing at the verified asset. It is independent of the scam-issuer
   registry; both can fire on one asset.
 - **Global price** (`aggregate.ComputeGlobalPrice`) walks three tiers and
-  reports `price_authority` + sources: `vwap_native` (our `prices_1m` VWAP,
+  reports `price_authority` + `price_sources` (`class` is the wire field;
+  `asset_class` is only the query parameter): `vwap_native` (our `prices_1m` VWAP,
   wins at `trade_count >= VWAPMinTradeCount`, default 5), `aggregator_avg`
   (mean of fresh `Class:Aggregator` observations, `MaxAggregatorAge` default
   10m; aggregators never feed VWAP, to avoid double counting), then
@@ -455,13 +472,16 @@ the divergence alert cannot fire for a pair it is not evaluating.
   "no rows" falls to the next tier, so a transient failure never silently
   degrades the authority. A cross-chain ticker-bucketed VWAP was not built: it
   needs per-trade FX-anchor conversion and only means something once
-  non-Stellar trades are ingested.
+  non-Stellar trades are ingested. `price_authority` has three more values
+  outside that walk: `reference_rate` (fiat, via `fiatUSDPriceFor`, not
+  `ComputeGlobalPrice`), `identity` (USD) and `onchain_listing` (fallback for
+  a Stellar-only token, `assets_global.go`).
 
 ## Open items
 
 | Item | Inventory |
 |---|---|
-| Global view `market_cap_usd` / `circulating_supply` / `ath` / `atl` / `change_24h_pct` are populated for fiat only; crypto and stablecoin rely on the per-asset F2 fields | INV-1119 (blocked) |
+| `GlobalAssetView` has only `market_cap_usd` / `circulating_supply` (no ath / atl / change_24h_pct), and fills them for fiat only; crypto and stablecoin rely on the per-asset F2 fields | INV-1119 (blocked) |
 | The lake wrote persistent `contract_data` / `contract_code` evictions as `removed`; `emitEvictions` (`internal/storage/clickhouse/extract_entry_changes.go`) now keeps an archived entry current, since it stays restorable from the hot archive. Already-written lake rows still need repair, and current-state reads (seeds, lumen conservation) inherit the error until then | INV-2532 (in progress) |
 | Lumen conservation residual +119,100,885,352 stroops at ledger 64,767,268: the lake holds 11,910 XLM the network does not count. Candidate causes (evictions, a non-native SAC leak, the CAP-76 rule) are undiagnosed | INV-2533 (open) |
 
