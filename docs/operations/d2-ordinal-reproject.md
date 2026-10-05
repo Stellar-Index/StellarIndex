@@ -26,10 +26,11 @@ positions (INV-1313). Re-derive them through the Go walk with
 writes idempotent RMT rows that supersede by `ingested_at`: no partition swap,
 safe beside live ingest. Without `ingestion.live_seam_ledger` configured,
 `ch-backfill` reads the live bucket, which does not hold historic ranges and
-needs `-bucket galexie-archive`. The script cannot pass `-bucket` today (the
-change is tracked under INV-1313). r1 has no seam
-(`stellarindex_live_seam_ledger: 0`), so the run fails loudly on its first chunk
-(`backfillCoverage`, `ch_backfill.go:236`) rather than reading the wrong data.
+needs `-bucket galexie-archive`. The script passes `-bucket "$BUCKET"`
+(`BUCKET` env, default `galexie-archive`), so r1, which has no seam
+(`stellarindex_live_seam_ledger: 0`), reads the archive. Pointed at the live
+bucket instead, the run fails loudly on its first chunk (`backfillCoverage`,
+`ch_backfill.go:236`) rather than reading the wrong data.
 
 ## Why the ordinal matters
 
