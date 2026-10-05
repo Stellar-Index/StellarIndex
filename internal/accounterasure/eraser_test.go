@@ -27,13 +27,22 @@ type fakeStore struct {
 	requests  []postgresstore.ErasureRequest
 	renames   []string
 	renameErr error
+	// afterPlan, when set, runs after each PlanErasure has taken its
+	// snapshot: the account changing between two reads.
+	afterPlan func(*fakeStore)
+	plans     int
 }
 
 func (f *fakeStore) PlanErasure(context.Context, uuid.UUID) (postgresstore.ErasurePlan, error) {
 	if f.gone {
 		return postgresstore.ErasurePlan{}, platform.ErrNotFound
 	}
-	return f.plan, nil
+	p := f.plan
+	f.plans++
+	if f.afterPlan != nil {
+		f.afterPlan(f)
+	}
+	return p, nil
 }
 
 func (f *fakeStore) EraseAccount(_ context.Context, req postgresstore.ErasureRequest) (postgresstore.ErasureCounts, error) {

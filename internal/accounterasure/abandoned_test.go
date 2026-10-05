@@ -67,6 +67,24 @@ func TestSweepAbandonedRegistrations(t *testing.T) {
 			t.Fatalf("erased = %d, err = %v, erase calls = %d; want 0, nil, 0", n, err, len(st.requests))
 		}
 	})
+	// The member check and the erase must read one plan: a member who
+	// joins after a first plan must not ride into a second one that is
+	// executed without being checked.
+	t.Run("ChecksThePlanItExecutes", func(t *testing.T) {
+		e, st, _, _ := newRig(t)
+		st.afterPlan = func(f *fakeStore) { f.plan.UserIDs = []uuid.UUID{uuid.New()} }
+		if _, err := e.SweepAbandonedRegistrations(ctx, &fakeLister{ids: []uuid.UUID{st.plan.AccountID}}, cutoff); err != nil {
+			t.Fatal(err)
+		}
+		if st.plans != 1 {
+			t.Errorf("plans read = %d, want 1", st.plans)
+		}
+		for _, req := range st.requests {
+			if len(req.Plan.UserIDs) > 0 {
+				t.Fatalf("executed a plan with %d members; the sweep only checked one without", len(req.Plan.UserIDs))
+			}
+		}
+	})
 	t.Run("RefusesWithoutRedis", func(t *testing.T) {
 		e, st, _, _ := newRig(t)
 		e.Redis = nil

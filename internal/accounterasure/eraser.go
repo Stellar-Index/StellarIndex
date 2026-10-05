@@ -94,12 +94,33 @@ type Report struct {
 // an error after it wraps ErrCleanupIncomplete, carries the full Report,
 // and leaves Redis state that FinishBySlug removes.
 func (e *Eraser) Erase(ctx context.Context, id uuid.UUID, actor platform.ActorKind) (Report, error) {
+	return e.erase(ctx, id, actor, nil)
+}
+
+// errNotAdmitted is erase's answer when admit refused the plan.
+var errNotAdmitted = errors.New("account erasure: plan not admitted")
+
+// erase is Erase with an optional admit check run against the very plan
+// it executes, so a caller's precondition cannot go stale between plans.
+func (e *Eraser) erase(
+	ctx context.Context, id uuid.UUID, actor platform.ActorKind,
+	admit func(postgresstore.ErasurePlan) (bool, error),
+) (Report, error) {
 	plan, err := e.Store.PlanErasure(ctx, id)
 	if errors.Is(err, platform.ErrNotFound) {
 		return Report{AlreadyErased: true}, nil
 	}
 	if err != nil {
 		return Report{}, err
+	}
+	if admit != nil {
+		ok, err := admit(plan)
+		if err != nil {
+			return Report{}, err
+		}
+		if !ok {
+			return Report{}, errNotAdmitted
+		}
 	}
 	rep := Report{Plan: plan}
 
@@ -228,8 +249,10 @@ func (e *Eraser) deleteRedis(
 }
 
 // AbandonedRegistrationRetention is how long an unused /v1/register
-// account lives. It equals the validator record's idle TTL, so by then the
-// key no longer authenticates and the reap removes only dead rows.
+// account lives. It equals the validator record's idle TTL, so on the redis
+// auth backend the key no longer authenticates by then and the reap removes
+// only dead rows. The postgres backend falls back to the never-expiring
+// api_keys row, so the sweep must not run there.
 const AbandonedRegistrationRetention = auth.MirroredKeyIdleTTL
 
 // abandonedSweepLimit caps the accounts one sweep erases; the next hourly
@@ -255,26 +278,19 @@ func (e *Eraser) SweepAbandonedRegistrations(ctx context.Context, l AbandonedLis
 	if err != nil {
 		return 0, err
 	}
-	var erased int64
-	for _, id := range ids {
-		plan, err := e.Store.PlanErasure(ctx, id)
-		if errors.Is(err, platform.ErrNotFound) || errors.Is(err, ErrBlocked) {
-			continue
-		}
-		if err != nil {
-			return erased, err
-		}
+	abandoned := func(plan postgresstore.ErasurePlan) (bool, error) {
 		if len(plan.UserIDs) > 0 {
-			continue
+			return false, nil
 		}
 		live, err := e.hasLiveCredential(ctx, plan)
-		if err != nil {
-			return erased, err
-		}
-		if live {
+		return !live, err
+	}
+	var erased int64
+	for _, id := range ids {
+		rep, err := e.erase(ctx, id, platform.ActorSystem, abandoned)
+		if errors.Is(err, errNotAdmitted) || errors.Is(err, ErrBlocked) {
 			continue
 		}
-		rep, err := e.Erase(ctx, id, platform.ActorSystem)
 		if errors.Is(err, ErrCleanupIncomplete) {
 			e.logger().Warn("abandoned registration erased; cleanup incomplete", "account_id", id, "err", err)
 		} else if err != nil {

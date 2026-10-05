@@ -23,7 +23,7 @@ func TestRetentionReaperTargets_WiredDashboardBoundsSessionsAndDeliveries(t *tes
 		webhookStore: postgresstore.NewWebhookStore(pg),
 	}
 	got := map[string]time.Duration{}
-	for _, o := range retentionReaperTargets(b, nil, slog.New(slog.NewTextHandler(io.Discard, nil))) {
+	for _, o := range retentionReaperTargets(b, nil, "redis", slog.New(slog.NewTextHandler(io.Discard, nil))) {
 		if o.Sweep == nil {
 			t.Errorf("%s: nil Sweep", o.Name)
 		}
@@ -46,8 +46,8 @@ func TestRetentionReaperTargets_WiredDashboardBoundsSessionsAndDeliveries(t *tes
 	}
 }
 
-// INV-0759: with Postgres accounts and Redis wired, unused /v1/register
-// accounts get a reaper at the validator record's idle TTL.
+// Unused /v1/register accounts get a reaper at the validator record's
+// idle TTL only with Postgres accounts, Redis and the redis auth backend.
 func TestRetentionReaperTargets_RegistrationReaperNeedsAccountsAndRedis(t *testing.T) {
 	pg := postgresstore.New(nil)
 	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
@@ -56,7 +56,7 @@ func TestRetentionReaperTargets_RegistrationReaperNeedsAccountsAndRedis(t *testi
 	b := dashboardBundle{accounts: postgresstore.NewAccountStore(pg)}
 
 	var found bool
-	for _, o := range retentionReaperTargets(b, rdb, logger) {
+	for _, o := range retentionReaperTargets(b, rdb, "redis", logger) {
 		if o.Name == obs.AuthReaperRegistration {
 			found = true
 			if o.Retention != auth.MirroredKeyIdleTTL || o.Sweep == nil {
@@ -68,15 +68,23 @@ func TestRetentionReaperTargets_RegistrationReaperNeedsAccountsAndRedis(t *testi
 	if !found {
 		t.Fatal("no registration reaper with accounts + Redis wired")
 	}
-	for _, o := range retentionReaperTargets(b, nil, logger) {
+	for _, o := range retentionReaperTargets(b, nil, "redis", logger) {
 		if o.Name == obs.AuthReaperRegistration {
 			t.Fatal("registration reaper started without Redis; it could not prove a key dead")
+		}
+	}
+	// Under the postgres backend the validator falls back to the
+	// never-expiring api_keys row, so an expired Redis record does not
+	// mean a dead key: a key in daily use would be erased.
+	for _, o := range retentionReaperTargets(b, rdb, "postgres", logger) {
+		if o.Name == obs.AuthReaperRegistration {
+			t.Fatal("registration reaper started under auth_backend=postgres")
 		}
 	}
 }
 
 func TestRetentionReaperTargets_UnwiredDashboardStartsNone(t *testing.T) {
-	if got := retentionReaperTargets(dashboardBundle{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil))); len(got) != 0 {
+	if got := retentionReaperTargets(dashboardBundle{}, nil, "redis", slog.New(slog.NewTextHandler(io.Discard, nil))); len(got) != 0 {
 		t.Fatalf("targets = %d, want 0 without a Postgres-backed dashboard", len(got))
 	}
 }
