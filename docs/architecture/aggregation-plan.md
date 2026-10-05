@@ -88,6 +88,16 @@ lets real volatility through (a depeg passes), fails **open** on too
 little history, and is pure pass-through for healthy pairs. All math is
 exact `*big.Rat`.
 
+### Frozen pairs
+
+A freeze fires only when all three hold (`phase2FreezeFires`,
+`internal/aggregate/orchestrator/phase2_freeze.go`): confidence < 0.45,
+z > 5 and source_count <= 1. Two of three does not freeze; it surfaces as
+`flags.divergence_warning`. A frozen pair serves the held value from Redis
+even when a `prices_1m` row exists, overriding the CAGG path above (pinned
+by `TestFrozenPairServesHeldValueThroughProductionAdapters`,
+`cmd/stellarindex-api/price_frozen_lkg_test.go`).
+
 ### Closed-bucket-only serving
 
 ADR-0015: queries filter `bucket <= now() - INTERVAL '<granularity>'`, so
@@ -213,7 +223,8 @@ the point path (row 1.14), keeping point/series parity (C1-024).
   three-constituent `native/fiat:USD` bar.
 - **Rejected shapes**, with plan costs: a CTE joined back on bucket
   (1.34×), a union at row grain (2.08×), `WITH ORDINALITY` + `FILTER`
-  (1.09×). Shipped cost: `OHLCSeries` 1.005×, `OHLCSeriesReBucketed` 1.25×
+  (1.09×) — refused because its failure mode is silently wrong sums on a
+  money path, unprovable without a database. Shipped cost: `OHLCSeries` 1.005×, `OHLCSeriesReBucketed` 1.25×
   (1h→4h, 30 days), constituent reads 21 → 24 (`native/fiat:USD`).
 - **Not done**: fiat bars still do not attribute `sources` on the wire —
   the combine always merged SDEX, four CEX and the FX pollers
@@ -253,6 +264,7 @@ that was all stablecoin prints at par (a depeg there went unchecked).
 A market below the substance floor is withheld from `price_usd` unless the
 caller asks with `include_thin=true`; the price then carries
 `thin_market: true` (`internal/api/v1/envelope.go`, `assets.go`).
+`/v1/price`, `/v1/price/batch` and `/v1/price/at` withhold it the same way;
 `/v1/vwap` and `/v1/twap` serve such a market by default and flag it the
 same way. A thin price is display-only: no valuation, total or series
 derives from it.
@@ -264,7 +276,7 @@ Config (`[aggregate]`, full reference in
 `windows` (5m, 1h, 24h), `interval_seconds`, `max_trades_per_window`,
 `disable_class_filter`, `enable_stablecoin_fiat_proxy`,
 `outlier_sigma_threshold`, `vwap_window_seconds` / `twap_window_seconds`
-(legacy, 300), `min_usd_volume`, `triangulation_enabled`,
+(unread, retired by GH-1129; windows come from `windows`), `min_usd_volume`, `triangulation_enabled`,
 `divergence_min_interval_seconds` (300), `min_route_confidence`.
 
 Metrics ([docs/reference/metrics/README.md](../reference/metrics/README.md)):
@@ -295,8 +307,11 @@ set: `silent`, `outlier_storm`, `outlier_trim_fraction`,
 `stellarindex_change_summary_stale`).
 
 Divergence (`internal/aggregate/orchestrator/divergence_refresh.go`): per
-tick, `divergence.Service` checks CoinGecko and Chainlink-HTTP, writes
-`div:<pair>` (`internal/cachekeys/keys.go`) with a 5-minute TTL, and
+tick, `divergence.Service` checks every enabled reference (CoinGecko, Chainlink-HTTP,
+Reflector, RedStone, Band, synthetic USD-cross; see
+[oracle-manipulation-defense.md](oracle-manipulation-defense.md)), writes
+`div:<pair>` (`internal/cachekeys/keys.go`) with a TTL of
+max(5m, refresh interval + worst pass + 1m) (`internal/divergence/worker.go`), and
 `/v1/price` reads it into `flags.divergence_warning`. Outcomes `ok`,
 `no_vwap`, `parse_error`, `refresh_error`; a sustained `refresh_error`
 fires `stellarindex_divergence_refresh_error_dominant`.

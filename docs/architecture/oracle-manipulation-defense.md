@@ -58,18 +58,26 @@ Feb 2020, ~$1M across several incidents).
 | # | Layer | Status | Mechanism |
 |---|---|---|---|
 | 1 | Multi-source consensus | shipped | VWAP across every `ClassExchange` venue; one venue is diluted by the rest. With one contributing venue it degrades to trusting that venue — the USTRY case |
-| 2 | Source-class exclusion | shipped | only `ClassExchange` (verified CEX + DEX trades) weighs; oracle and aggregator classes are excluded so an oracle attack cannot move our price |
+| 2 | Source-class exclusion | shipped | only `ClassExchange` (verified CEX + DEX trades) weighs; oracle and aggregator classes are excluded so an oracle attack cannot move our price, only lower confidence through the cross-oracle factor (Layer 5) |
 | 3 | Liquidity floor per source per bucket | **not shipped** | weight is volume-proportional with no absolute floor; ADR-0019's `liquidity_factor` partly covers it. Proposed: `aggregate.min_pool_tvl_usd` (~$10K), `aggregate.min_per_bucket_volume_usd` (~$1K) |
 | 4 | Outlier trimming | shipped, **active** | median + 1.4826·MAD at `outlier_sigma_threshold` 4, plus the time-local test (`outliers_local.go`) and `keepIfVolumeMajority`; trades are dropped before VWAP, not just alerted on |
-| 5 | Cross-reference divergence | shipped | CoinGecko + Chainlink-HTTP every `divergence_min_interval_seconds` (300); see below |
+| 5 | Cross-reference divergence | shipped | every `divergence_min_interval_seconds` (300) against the references below; see below |
 | 6 | Closed-bucket serving | shipped | ADR-0015; a single-block spike is diluted across the 1-minute bucket |
 | 7 | TWAP alongside VWAP | shipped | `/v1/twap` lets a consumer use a manipulation-resistant mean |
 | 8 | Decoder + WASM-version audit gating | shipped | `Backfill: BackfillPerWASM` in `registry.go`; a new or upgraded DEX contract is caught at audit time, not after an exploit |
 | 9 | Per-asset confidence + freeze | shipped (ADR-0019 Phases 1–2) | `internal/aggregate/anomaly/`, `baseline/`, `confidence/` |
 
-Layer 5 references are CoinGecko and Chainlink-HTTP only: the CMC poller
-is not wired, and our ingested oracles play a different role. The worker
-writes `div:<pair>` (`internal/cachekeys/keys.go`, 5-minute TTL); `/v1/price`
+Layer 5 references, each behind its `[divergence.*]` switch
+(`internal/config/config.go`, `cmd/stellarindex-aggregator/main.go`):
+CoinGecko (`coingecko`, default on), Chainlink-HTTP (`chainlink`, default
+off, needs a feed map), the on-chain oracles read from our ingested
+`oracle_updates` rows — Reflector dex/cex/fx (`reflector`), RedStone
+(`redstone`), Band (`band`), all default on — and a synthetic USD-cross
+reference derived from whichever of those are enabled. The CMC poller is
+not wired. Oracles are references only: a compromised oracle cannot move
+our VWAP (Layer 2) but can lower confidence through the cross-oracle
+factor, and with two or more references disagreeing, set the warning. The
+worker writes `div:<pair>` (`internal/cachekeys/keys.go`, 5-minute TTL); `/v1/price`
 surfaces `flags.divergence_warning`. The bounded gauge
 `stellarindex_divergence_max_abs_fraction` (worst |ours−ref|/ref per
 reference, no asset label) feeds `stellarindex_price_divergence_warning`
@@ -132,7 +140,10 @@ and serves the last good $1.00 with `flags.frozen`, `stale` and
 Auto-release needs two consecutive buckets with z < 3.0 **and**
 confidence > 0.30, so a single-source asset sitting at 0.20 does not
 auto-release until its confidence recovers (for example, a second
-source). Reflector's only observed venue was the manipulated pool, so it
+source). Release also needs a corroborating lens that agrees with the
+candidate level (`release_corroborated`, `internal/aggregate/freeze/lifecycle.go`):
+a held manipulation is calm too. See
+[anomaly-freeze-and-confidence.md](anomaly-freeze-and-confidence.md). Reflector's only observed venue was the manipulated pool, so it
 published the spike; its value carries no weight here (Layer 2).
 
 ## Open gaps
@@ -158,7 +169,8 @@ Adversarial exercises, each with its pass condition:
    operators notice within minutes, the response is flagged rather than
    silently wrong.
 4. **External-oracle compromise** — point an oracle source at a
-   manipulated value: our VWAP does not change.
+   manipulated value: our VWAP does not change; confidence may drop via the
+   cross-oracle factor and the divergence warning may fire.
 
 ## SEP-40: what we serve and why there is no generic reader
 
