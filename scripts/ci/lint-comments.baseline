@@ -175,7 +175,6 @@ cmd/stellarindex-api/main.go	Pre-2026
 cmd/stellarindex-api/main.go	Q146
 cmd/stellarindex-api/main.go	RLT-287
 cmd/stellarindex-api/main.go	RLT-321
-cmd/stellarindex-api/main.go	RLT-321
 cmd/stellarindex-api/main.go	T038
 cmd/stellarindex-api/main.go	T038
 cmd/stellarindex-api/main.go	T279
@@ -1653,7 +1652,6 @@ internal/ops/chops/compute_completeness.go	2026-07-16
 internal/ops/chops/compute_completeness.go	2026-07-16
 internal/ops/chops/compute_completeness.go	2026-07-16
 internal/ops/chops/compute_completeness.go	2026-07-25
-internal/ops/chops/compute_completeness.go	2026-07-31
 internal/ops/chops/compute_completeness.go	2026-07-31
 internal/ops/chops/compute_completeness.go	2026-09-09
 internal/ops/chops/compute_completeness.go	CS-083
