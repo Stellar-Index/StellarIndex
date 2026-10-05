@@ -11,12 +11,12 @@ Operator guide for `cmd/stellarindex-sla-probe`, run every 15 min by
 
 ## Purpose
 
-| Metric          | Target           |
-| --------------- | ---------------- |
-| p95 latency     | ≤ 200 ms         |
-| p99 latency     | ≤ 500 ms         |
-| Availability    | ≥ 99.9 %         |
-| Price freshness | ≤ 30 s staleness |
+| Metric          | Target           | Source      |
+| --------------- | ---------------- | ----------- |
+| p95 latency     | ≤ 200 ms         | service SLA |
+| p99 latency     | ≤ 500 ms         | service SLA |
+| Availability    | ≥ 99.9 %         | service SLA |
+| Price freshness | ≤ 30 s staleness | service SLA |
 
 Defaults live in `cmd/stellarindex-sla-probe/main.go::default*Target`;
 flags override them for a deployment with a different contract.
@@ -48,9 +48,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now stellarindex-sla-probe.timer
 ```
 
-`configs/healthchecks/sla-probe.sh` reads only these from
-`/etc/default/stellarindex-healthchecks`; it always requests a JSON
-report and passes no other flags:
+Override defaults via `/etc/default/stellarindex-healthchecks`. These are
+the only variables `configs/healthchecks/sla-probe.sh` reads; it always
+requests a JSON report and passes no other flags:
 
 ```sh
 SLA_PROBE_BASE_URL=http://localhost:3000/v1  # default (see below)
