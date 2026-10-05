@@ -363,6 +363,8 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 		// longer catalogue one: a CDN entry must not outlive the
 		// valuations it carries.
 		path == "/v1/rwa/assets",
+		// Stablecoin supply valued through the same listing pipeline.
+		path == "/v1/stablecoins",
 		// Pool reserves — CURRENT contract state from the lake; can
 		// change every ledger (~5 s) but the explorer polls it, so
 		// the short band absorbs fan-out while staying honest about

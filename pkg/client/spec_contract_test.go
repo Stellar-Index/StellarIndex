@@ -119,6 +119,8 @@ var coveredOperations = []coveredOperation{
 // reason. Adding an endpoint to the spec without either an SDK
 // method or an entry here fails TestSDKCoversSpec.
 var uncoveredOperations = map[string]string{
+	"GET /stablecoins": "new surface; SDK method deferred until a customer asks",
+
 	// SSE streams — the SDK has no streaming client yet. When one
 	// lands, these five move to coveredOperations together.
 	"GET /price/stream":        "SSE — no streaming client in the SDK yet",

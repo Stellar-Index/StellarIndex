@@ -98,6 +98,7 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// must not outlive them, while the two daily series sit behind
 		// a 10-minute assembly TTL.
 		{"/v1/rwa/assets", "public, max-age=30, s-maxage=60"},
+		{"/v1/stablecoins", "public, max-age=30, s-maxage=60"},
 		{"/v1/rwa/history", "public, max-age=60, s-maxage=300"},
 		{"/v1/rwa/premium", "public, max-age=60, s-maxage=300"},
 
