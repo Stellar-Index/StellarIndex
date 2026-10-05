@@ -784,6 +784,13 @@ jobs:
         run: ./scripts/ci/lint-doc-links.sh
       - name: lint-doc-links self-test
         run: ./scripts/ci/lint-doc-links-test.sh
+      - name: lint-adr-refs
+        # ADRs on docs/adr/_template.md keep its sections and line caps, an
+        # Accepted ADR's Decision/Invariant match their recorded hash, and every
+        # ADR-NNNN / AGENTS.md invariant / docs anchor citation resolves.
+        run: ./scripts/ci/lint-adr-refs.sh
+      - name: lint-adr-refs self-test
+        run: ./scripts/ci/lint-adr-refs-test.sh
       - name: Changed-file dispatcher self-test
         # `make lint-changed` picks the applicable lints for a diff and runs
         # them in seconds, so a defect surfaces at the keyboard rather than

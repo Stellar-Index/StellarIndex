@@ -34,8 +34,8 @@ or `name()` in backticks is telling an implementer what to call. A span whose
 final identifier appears in no .go file is a phantom: ADRs named
 `source.HandledTopics()` and `sources.Source.TopicSymbols()`, neither of which
 was ever built, and a reader implementing against them builds the wrong thing.
-Because ADR text is immutable, a phantom is corrected by a dated amendment and
-the preserved original is acknowledged in the same file with
+A phantom is corrected in the ADR text; where the original wording is kept
+(an ADR not yet on the template), it is acknowledged in the same file with
 `<!-- adr-absent-identifier: Name — reason -->`. A marker for a name that now
 exists, or that no span in the file uses, is stale and fails.
 
@@ -163,7 +163,7 @@ def adr_identifier_fails(adrs):
             if name not in have and name not in marks:
                 fails.append((path, lineno, name,
                               "Go identifier in an ADR code span exists in no .go file — correct it "
-                              "with a dated amendment and mark the preserved original with "
+                              "in the ADR text, or mark the preserved original with "
                               "<!-- adr-absent-identifier: Name — reason -->"))
         for name, lineno in marks.items():
             if name in have:
