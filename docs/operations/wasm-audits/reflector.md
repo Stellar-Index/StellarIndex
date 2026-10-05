@@ -10,10 +10,9 @@ backfill_safe: true
 
 Audit log for the three Reflector source variants —
 `reflector-dex`, `reflector-cex`, `reflector-fx`. All three share
-**one decoder** and **one event shape**; they differ only in which
-on-chain contract emits the events. We audit them as a single unit
-for the wire format but make per-variant `BackfillSafe` decisions
-because each contract has its own deploy history.
+**one decoder** and **one event shape**, differing only in the emitting
+contract. Audited as one unit for wire format, with per-variant
+`BackfillSafe` decisions (own deploy history each).
 
 See `README.md` for the full procedure.
 
@@ -24,22 +23,18 @@ See `README.md` for the full procedure.
 > (`CBKGPWGK…`) contract has been on `df88820e…` since first
 > deploy at L56,733,481. **No further upgrades observed** through
 > the walk's upper bound (L62,249,727). All three contracts
-> currently run `df88820e…`. Bytes preserved + SHA-256-verified
+> currently run `df88820e…`. Bytes SHA-256-verified
 > for both hashes at `evidence/r1-walk-2026-05-01/wasm-bytes/`
 > on r1.
 >
-> **2026-05-01 update.** Hash citations in this file have been
-> cross-checked against the 2026-04-30 r1 walk; see
-> [r1-walk-2026-05-01.md](r1-walk-2026-05-01.md) for the
-> consolidated cross-source picture and current contract+WASM
-> inventory.
+> **2026-05-01 update.** Hashes cross-checked against the 2026-04-30 r1 walk;
+> see [r1-walk-2026-05-01.md](r1-walk-2026-05-01.md).
 
 ## Status
 
 **Ratified 2026-04-29.** All three Reflector variants (DEX, CEX,
 FX) flip `BackfillSafe: false → true` in this PR. Two unique WASM
-hashes observed across the three contracts; both fetched and
-analyzed via `stellar contract fetch` against
+hashes across the three contracts; both fetched via `stellar contract fetch` against
 mainnet.sorobanrpc.com — interface diff between v2 (`4a64c8c8…`)
 and v3 (`df88820e…`) is **cosmetic** (one removed governance
 function, struct definition reordering); event-emitting types and
@@ -48,7 +43,7 @@ SDK-family are identical, so the wire format is preserved.
 ## Contracts under audit
 
 Per AGENTS.md "Reflector is three separate contracts (DEX / CEX /
-FX), not one." Each variant maps to a distinct mainnet contract:
+FX), not one.":
 
 | variant | source name | mainnet contract |
 | --- | --- | --- |
@@ -56,10 +51,9 @@ FX), not one." Each variant maps to a distinct mainnet contract:
 | CEX | `reflector-cex` | `CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN` |
 | FX  | `reflector-fx`  | `CBKGPWGKSKZF52CFHMTRR23TBWTPMRDIYZ4O2P5VS65BMHYH4DXMCJZC` |
 
-Three legacy / placeholder contract IDs
-(`CAVLP5DH…`, `CCYOZJCO…`, `CCSSOHTB…`) were also walked and
-produced **NO_EVENTS** — they are inactive on mainnet and not in
-the live decoder's contract list.
+Three legacy / placeholder IDs
+(`CAVLP5DH…`, `CCYOZJCO…`, `CCSSOHTB…`) walked: **NO_EVENTS**; inactive on mainnet, not in
+the decoder's contract list.
 
 ## Decoder expectations
 
@@ -74,36 +68,27 @@ HEAD as of 2026-04-29. Re-verified 2026-04-23 against the upstream
     topic[2] = ScvU64(timestamp)        // unix milliseconds
     body     = ScvVec<(ScVal, ScI128)>  // per-entry tuple
 
-The 3-element topic shape is unusual — `timestamp` is hoisted out
-of the body and into a `#[topic]` slot via the `#[contractevent]`
-macro. **Important historical correction in the source comments:**
-the previous decoder comment claimed body was
-`Map{"prices": Vec<(Asset, i128)>, "timestamp": u64}` — that's
-WRONG; `#[contractevent]` expands tuple-shaped fields to ScvVec
-with the fields in declaration order.
+`timestamp` is hoisted into a `#[topic]` slot by the `#[contractevent]`
+macro. The body is NOT `Map{"prices": Vec<(Asset, i128)>, "timestamp": u64}`:
+`#[contractevent]` expands tuple-shaped fields to ScvVec in declaration order.
 
 Classification is byte-equal against `TopicSymbolReflector` +
-`TopicSymbolUpdate`. Any of those drifting silently drops every
-event.
+`TopicSymbolUpdate`; drift silently drops every event.
 
 ### Body extraction
 
 Each tuple in the outer `Vec<(ScVal, I128)>` is one (asset, price)
-pair. The first element identifies the asset — it can be:
+pair. First element:
 
-- `ScvAddress` (Soroban contract address — for DEX/CEX variant)
-- `ScvSymbol` (a fiat code like "USD" or asset symbol — for FX variant)
+- `ScvAddress` (Soroban contract address — DEX/CEX)
+- `ScvSymbol` (fiat code like "USD" or asset symbol — FX)
 
-The decoder skips entries whose first element is neither
-ScvAddress nor ScvSymbol (per `ErrUnknownAssetIdentifier`).
+Other types are skipped (`ErrUnknownAssetIdentifier`). The second
+element is the price as `i128` at the documented 14-decimal scale.
 
-The second element is the price as `i128` at Reflector's documented
-14-decimal scale.
-
-The decoder fans **one event** out into **N OracleUpdate rows** —
-one per (asset, price) tuple in the vector. To preserve the
-unique-key constraint on `(source, ledger, tx_hash, op_index)`, the
-fanout uses a per-entry op_index stride (matching the SDEX pattern).
+**One event** fans out into **N OracleUpdate rows**, one per tuple; to keep
+`(source, ledger, tx_hash, op_index)` unique, fanout uses a per-entry op_index
+stride (as SDEX).
 
 ### Asset identification
 
@@ -111,40 +96,29 @@ For `reflector-dex` / `reflector-cex` (Soroban Address tuples), the
 asset is `canonical.NewSorobanAsset(strkey)`. For `reflector-fx`
 (Symbol tuples), it's `canonical.NewFiatAsset(symbol_str)`.
 
-A future contract upgrade that swapped DEX from Address to Symbol
-(or vice versa) would still decode but produce wrong asset
-classifications.
+Swapping DEX from Address to Symbol (or vice versa) would still decode but misclassify assets.
 
 ## Failure modes specific to Reflector
 
 1. **Topic[0] / topic[1] symbol change** — `"REFLECTOR"` or
    `"update"` to anything else silently drops every event.
-2. **Topic[2] type change** — `u64` → `i64` or `Symbol` for
-   timestamp would error per event (`AsU64FromTopic` strict).
-   Fail-loud, but every event in the range dropped.
-3. **Body shape change Vec → Map** — the outer-Vec assumption
-   breaks; every event errors at extraction.
-4. **Per-entry tuple field reorder** — currently `(asset, price)`;
-   a swap to `(price, asset)` would produce nonsense (the i128
-   would be parsed as an Address). **Almost certainly fail-loud
-   per entry**, but every event dropped under that WASM.
-5. **Per-entry tuple length change** (e.g. adding a confidence
-   score) — would error at the AsTupleN(2) check; every entry
-   skipped.
+2. **Topic[2] type change** — `u64` → `i64` or `Symbol` errors per
+   event (`AsU64FromTopic` strict); fail-loud, range dropped.
+3. **Body shape change Vec → Map** — every event errors at extraction.
+4. **Per-entry tuple field reorder** — `(asset, price)` → `(price, asset)`
+   (i128 parsed as Address). **Almost certainly fail-loud
+   per entry**; every event dropped under that WASM.
+5. **Per-entry tuple length change** (e.g. a confidence
+   score) — errors at the AsTupleN(2) check; entries skipped.
 6. **Asset identifier type mix-up across variants** — DEX/CEX
-   start emitting Symbols (or FX starts emitting Addresses).
-   Decoder still produces output but with wrong asset
-   classification — silent. Per-WASM source review must verify
-   each variant's tuple type matches its expected shape.
-7. **Price scale change** — Reflector documents 14 decimals; if a
-   contract upgrade switched to E18 or similar, the i128 still
-   decodes but every recorded price is off by 10^N. **No automated
-   detection** — caught only by cross-check against external
-   oracle data sources.
-8. **Vector overflow past OpIndex fanout stride** — if Reflector
-   ever emits more than `opIndexFanoutStride` (1024) entries in a
-   single event, our op_index synthesis collides. `ErrPriceVectorOverflow`
-   surfaces this; would require a stride bump.
+   emitting Symbols (or FX Addresses): silent misclassification.
+   Per-WASM source review must verify each variant's tuple type.
+7. **Price scale change** — documented 14 decimals; a switch to E18 or
+   similar still decodes but is off by 10^N. **No automated
+   detection** — only cross-check against external oracle data.
+8. **Vector overflow past OpIndex fanout stride** — more than
+   `opIndexFanoutStride` (1024) entries in one event collides op_index synthesis.
+   `ErrPriceVectorOverflow` surfaces it; needs a stride bump.
 
 ## WASM timeline
 
@@ -193,14 +167,11 @@ Two unique hashes total across all three contracts:
   FX deployed fresh on this hash at L56,733,481 (~2025-06) and
   has never been on any other.
 
-The DEX+CEX upgrade timing aligns with Reflector's documented
-v2→v3 transition. The
-v3-era binary is what every fixture in `internal/sources/reflector/`
-was captured against.
+Matches Reflector's documented v2→v3 transition; every fixture in
+`internal/sources/reflector/` was captured against the v3-era binary.
 
-Live ingest from walk-end (L59,301,651) through r1's current tip
-(L62,342,614) confirms no further upgrade events for any of the
-three contracts: `df88820e` is still production.
+Live ingest from walk-end (L59,301,651) through r1's tip
+(L62,342,614): no further upgrades; `df88820e` is still production.
 
 ## Per-hash review findings
 
@@ -214,75 +185,61 @@ three contracts: `df88820e` is still production.
 
 ### `df88820e231ad8f3` — current production, all three variants
 
-- Live decoder fixtures
-  (`internal/sources/reflector/decode_test.go`,
-  `real_fixture_test.go`) are captured from this WASM's emitted
-  events. Topic shape `("REFLECTOR", "update", <u64 ms>)` and body
-  `Vec<(asset, i128)>` match the by-vec-tuple extraction.
-- All three variants (DEX/CEX/FX) emit the SAME wire format from
-  this WASM (the decoder is variant-agnostic except for the
-  ScvAddress vs ScvSymbol asset slot, which is handled by
-  `ErrUnknownAssetIdentifier` skipping rather than by per-variant
-  classification).
+- Fixtures (`internal/sources/reflector/decode_test.go`,
+  `real_fixture_test.go`) captured from this WASM's events; topic shape
+  `("REFLECTOR", "update", <u64 ms>)` and body
+  `Vec<(asset, i128)>` match.
+- All three variants emit the SAME wire format from
+  this WASM (decoder is variant-agnostic apart from the
+  ScvAddress vs ScvSymbol asset slot, handled by
+  `ErrUnknownAssetIdentifier` skipping).
 - 14-decimal price scale matches the constant in the decoder.
 - Live ingest health: 0 `ErrMalformedPayload` /
   `ErrUnknownAssetIdentifier` rate spikes since FX support landed
   (PR #161, 2026-03 cutover).
-- No `update_current_contract_wasm` events from
-  L51,656,689 (DEX+CEX) / L56,733,481 (FX) through walk-end +
-  ongoing live ingest = production hash is stable.
+- No `update_current_contract_wasm` from
+  L51,656,689 (DEX+CEX) / L56,733,481 (FX) through walk-end and live ingest.
 
 ### `4a64c8c8502df326` — DEX + CEX pre-v3 hash (disassembly-confirmed)
 
-This hash was active on DEX and CEX from L50,644,229 (DEX) /
-L50,644,239 (CEX) — i.e., from each contract's first deploy in
-February 2024 — through the v2→v3 upgrade at ~L51,656,690 in late
-April 2024. ~1M ledgers / ~9 weeks of mainnet history under each
-contract.
+Active on DEX (L50,644,229) / CEX (L50,644,239) from first deploy in
+February 2024 through the v2→v3 upgrade at ~L51,656,690 (late
+April 2024); ~1M ledgers / ~9 weeks.
 
-**Disassembly evidence** (added 2026-04-29):
-
-WASM bytes fetched via `stellar contract fetch --wasm-hash
-4a64c8c8…` against mainnet.sorobanrpc.com. Compared against the
-v3 production hash (`df88820e…`) using `stellar contract info
+**Disassembly evidence** (2026-04-29): bytes via `stellar contract fetch --wasm-hash
+4a64c8c8…` against mainnet.sorobanrpc.com, compared with
+v3 (`df88820e…`) using `stellar contract info
 interface` + data-section string analysis:
 
 1. **Contract interface diff is cosmetic.** The v2→v3 transition
-   removed a single governance function (`bump(env, ledgers_to_live:
-   u32)` for storage TTL extension) and reordered the `PriceData` /
-   `ConfigData` struct definitions in the rendered output. **Every
+   removed one governance function (`bump(env, ledgers_to_live:
+   u32)`, storage TTL extension) and reordered the `PriceData` /
+   `ConfigData` struct definitions. **Every
    public method signature relevant to event emission is
    unchanged** — `set_price(env, updates: Vec<i128>, timestamp:
-   u64)` is identical, as is the `Asset { Stellar(Address) |
+   u64)`, the `Asset { Stellar(Address) |
    Other(Symbol) }` enum and `PriceData { price: i128, timestamp:
-   u64 }` struct. None of the cosmetic changes affects the
-   event-publish wire format.
+   u64 }`. The event-publish wire format is unaffected.
 2. **Data-section field names are identical.** Both v2 and v3
-   binaries contain the same heavy strings used in `Symbol::new`
-   construction: `price`, `prices`, `timestamp`, `last_timestamp`,
+   binaries contain the same `Symbol::new` strings: `price`, `prices`, `timestamp`, `last_timestamp`,
    `asset`, `assets`, `base_asset`, `quote_asset`, `decimals`,
    `period`, `resolution`, `update_contract`, `updates`, `records`,
-   `lastprice`. (The "REFLECTOR" / "update" topic Symbols are short
-   enough to be encoded as small-symbol u64 constants and don't
-   appear as raw strings in either binary — verified via
-   `strings <wasm>`.)
+   `lastprice`. ("REFLECTOR" / "update" are small-symbol u64 constants,
+   not raw strings in either binary — verified via `strings <wasm>`.)
 3. **SDK family is the same.** v2 was built against soroban-sdk
    20.2.0 (commit 6e198b79); v3 against 20.3.2 (1d7f9bd8). Both are
-   in the SDK 20.x line where the `#[contractevent]` macro
-   (introduced in early 20.x) produces stable wire formats — a
-   tuple-shaped event field expands to `ScvVec` of
-   declaration-order entries; topic strings encode to small-symbol
-   `ScvSymbol`. No SDK-internal change between 20.2.0 and 20.3.2
+   in the 20.x line where `#[contractevent]` yields stable wire formats
+   (tuple field -> `ScvVec` in declaration order; topics -> small-symbol
+   `ScvSymbol`). No change between 20.2.0 and 20.3.2
    touches event encoding.
-4. **Source code at the v3-era release** (the only release our
-   `.discovery-repos/reflector-contract` checkout has) shows the
+4. **Source at the v3-era release** (the only one in our
+   `.discovery-repos/reflector-contract` checkout) shows the
    `#[contractevent(topics = ["REFLECTOR", "update"])] struct
    UpdateEvent { #[topic] timestamp: u64, update_data: Vec<(Val,
    i128)> }` pattern that matches the decoder's expected
    `topic[0..2] = ("REFLECTOR", "update", <u64>)` + `body =
-   Vec<(Val, i128)>`. With contract spec, data section, and SDK
-   family all identical between v2 and v3, the event shape is
-   preserved.
+   Vec<(Val, i128)>`. With spec, data section and SDK
+   family identical between v2 and v3, the event shape is preserved.
 
 **Conclusion**: the v3-tuned decoder will correctly decode v2-era
 events. Backfill replays of L50,644,229 → L51,656,691 are safe.
