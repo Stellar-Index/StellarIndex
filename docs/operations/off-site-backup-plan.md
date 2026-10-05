@@ -184,4 +184,4 @@ external price tick, an operator annotation) would not be, and would need
 its own tail copy.
 
 ## Related
-Master plan `production-readiness-master-plan-2026-07-18.md` (this is a Phase F / post-D hardening item). Restore tooling: `scripts/ops/restore-drill.sh`.
+This is a Phase F / post-D hardening item of the 2026-07 production-readiness campaign (log removed; see [v1-launch-plan.md](v1-launch-plan.md)). Restore tooling: `scripts/ops/restore-drill.sh`.

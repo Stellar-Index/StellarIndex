@@ -31,8 +31,7 @@ status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for Clic
 > path. **§4.3 (storage/capacity) and §8 (backup) have been rewritten** to current
 > reality. §3.11 adds the ClickHouse tier: one instance per region, cross-region
 > failover per ADR-0050, and snapshot-restore bootstrap. The in-region lake is still a
-> SPOF by design. Background: `docs/operations/production-readiness-master-plan-2026-07-18.md`
-> §6b + `docs/operations/off-site-backup-plan.md`.
+> SPOF by design. Background: `docs/operations/off-site-backup-plan.md`.
 
 # High-Availability Infrastructure Plan
 
@@ -565,7 +564,7 @@ pods is comfortable.
 
 > ⚠️ The original estimate here ("~500 GB/year, a single TB NVMe lasts 2 years, storage is not a constraint") sized storage off the Timescale `trades` table and **predates the ADR-0034 ClickHouse tier-1 lake.** It is the likely root cause of R1 reaching **94% unplanned** — the capacity model was never redone after the architecture changed. Real, live-verified numbers:
 
-**Actual footprint (R1, 2026-07-18):** ZFS pool `data` = 27.7 TB raw (4× 7.68 TB NVMe, **raidz1**), **94% full**. Datasets: **ClickHouse 8.6 TiB** (the tier-1 lake — the dominant store), MinIO galexie-archive **5.56 TiB**, Postgres **676 GiB**, pgBackRest **2.6 TiB**, rest small. **Storage is the binding production constraint**, not an afterthought. **Update:** Phase A of the capacity-relief campaign (ZSTD-recompressing the four largest ClickHouse tables) has since **completed**, reclaiming ~3.8 TiB and taking the pool from 94% to ~75% before Phase D's comprehensive backfill began drawing that headroom back down — see `docs/operations/production-readiness-master-plan-2026-07-18.md` §0 for the current live number; this architecture doc intentionally doesn't chase the day-to-day figure.
+**Actual footprint (R1, 2026-07-18):** ZFS pool `data` = 27.7 TB raw (4× 7.68 TB NVMe, **raidz1**), **94% full**. Datasets: **ClickHouse 8.6 TiB** (the tier-1 lake — the dominant store), MinIO galexie-archive **5.56 TiB**, Postgres **676 GiB**, pgBackRest **2.6 TiB**, rest small. **Storage is the binding production constraint**, not an afterthought. **Update:** Phase A of the capacity-relief campaign (ZSTD-recompressing the four largest ClickHouse tables) has since **completed**, reclaiming ~3.8 TiB and taking the pool from 94% to ~75% before Phase D's comprehensive backfill began drawing that headroom back down — this architecture doc intentionally doesn't chase the day-to-day figure.
 
 **Growth:** live ingest adds ~10–20 GiB/day (full-fidelity `ledger_entry_changes` dominate) + a one-time multi-TiB draw from the Phase-D comprehensive backfill.
 
@@ -578,7 +577,7 @@ pods is comfortable.
 5. **pgBackRest diff-retention prune** (~1 TiB, deferred until off-site backup exists — see §8).
 6. **Horizontal growth — a second server, not a bigger R1.** R1 is one region of the multi-region design in §2; the durable answer to R1 filling up is R2 coming online (per [ADR-0016](../adr/0016-per-region-storage-strategy.md); `production-readiness-remaining.md` §5c: "R2 provisioning … unblocks HA/DR *and* capacity") and eventual R1 retirement — not more drives in this chassis.
 
-Detail + live capacity table: `docs/operations/runbooks/phase-a-capacity-relief-2026-07-18.md` (its own "5th NVMe" line carried the same stale claim and has since been corrected the same way — the runbook is safe to follow) + `docs/operations/production-readiness-remaining.md` §4 (the current, hardware-ruled-out version). Campaign source of truth: `docs/operations/production-readiness-master-plan-2026-07-18.md`.
+Detail + live capacity table: `docs/operations/runbooks/phase-a-capacity-relief-2026-07-18.md` (its own "5th NVMe" line carried the same stale claim and has since been corrected the same way — the runbook is safe to follow) + `docs/operations/production-readiness-remaining.md` §4 (the current, hardware-ruled-out version). Launch source of truth: `docs/operations/v1-launch-plan.md`.
 
 ---
 
