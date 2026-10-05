@@ -61,4 +61,7 @@ check "  and says so" has 'no Go test pins' "$out"
 out="$(run --list HEAD HEAD)"; rc=$?
 check "no changed .md selects nothing" [ "$rc" -eq 0 -a -z "$out" ]
 
+run --list nosuchref >/dev/null; rc=$?
+check "a base that does not resolve fails" [ "$rc" -ne 0 ]
+
 exit "$fail"

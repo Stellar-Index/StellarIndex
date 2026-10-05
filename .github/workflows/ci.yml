@@ -813,6 +813,11 @@ jobs:
         run: ./scripts/ci/lint-external-channels.sh
       - name: lint-external-channels self-test
         run: ./scripts/ci/lint-external-channels-test.sh
+      # Go before the self-test and the selection: both call `go list`.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
       - name: doc-pinned-tests self-test
         run: ./scripts/ci/doc-pinned-tests-test.sh
       # Go tests read markdown at test time (29 packages), but a docs-only PR
@@ -829,11 +834,6 @@ jobs:
           pkgs="$(bash scripts/ci/doc-pinned-tests.sh --list "$BASE")"
           printf 'doc-pinned packages: %s\n' "${pkgs:-none}"
           echo "any=${pkgs:+true}" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
-        if: steps.doc_pinned.outputs.any == 'true'
-        with:
-          go-version-file: go.mod
-          cache: true
       - name: Run Go tests that pin a changed doc
         if: steps.doc_pinned.outputs.any == 'true'
         env:

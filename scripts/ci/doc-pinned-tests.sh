@@ -30,21 +30,32 @@ if [ "${1:-}" = "--files" ]; then
     for f in "$@"; do case "$f" in *.md) md+=("$f") ;; esac; done
 else
     base="${1:?usage: doc-pinned-tests.sh [--list] <base-rev> | --files <f.md>...}"
-    while IFS= read -r f; do md+=("$f"); done \
-        < <(git diff --name-only "$base" HEAD -- '*.md')
+    files="$(git diff --name-only --no-renames "$base" HEAD -- '*.md')"
+    while IFS= read -r f; do [ -n "$f" ] && md+=("$f"); done <<<"$files"
 fi
 
 dirs=""
 for f in ${md[@]+"${md[@]}"}; do
+    rc=0
+    hits="$(git grep -l -F -e "$f" -e "$(basename "$f")" -- '*_test.go')" || rc=$?
+    [ "$rc" -le 1 ] || { echo "doc-pinned-tests: git grep failed (exit $rc)" >&2; exit "$rc"; }
     while IFS= read -r t; do
-        dirs="${dirs}$(dirname "$t")"$'\n'
-    done < <(git grep -l -F -e "$f" -e "$(basename "$f")" -- '*_test.go' || true)
+        [ -n "$t" ] && dirs="${dirs}$(dirname "$t")"$'\n'
+    done <<<"$hits"
 done
 
 pkgs=()
 while IFS= read -r d; do
-    # A dir whose only files are build-tagged out is not a testable package.
-    [ -n "$d" ] && go list "./$d" >/dev/null 2>&1 && pkgs+=("./$d")
+    [ -n "$d" ] || continue
+    rc=0
+    err="$(go list "./$d" 2>&1 >/dev/null)" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        # A dir whose only files are build-tagged out is not a testable package.
+        case "$err" in *"build constraints exclude all Go files"*) continue ;; esac
+        echo "doc-pinned-tests: go list ./$d failed: $err" >&2
+        exit "$rc"
+    fi
+    pkgs+=("./$d")
 done < <(printf '%s' "$dirs" | sort -u)
 
 if [ "${#pkgs[@]}" -eq 0 ]; then
