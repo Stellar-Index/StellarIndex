@@ -6,58 +6,29 @@ status: ratified
 
 # Running backfill + verify-archive alongside live ingest
 
-Audit finding F-0020 (audit-2026-05-26) recorded a 7 h
-on-chain-trade ingest freeze caused by Postgres back-pressure
-while a 12-way parallel `soroban-events` fill walk + a 12-chunk
-verify-archive bootstrap were running concurrently against the
-same Postgres cluster. The live indexer's write path back-pressured
-to halt because every available connection was busy with the
-heavy walks.
-
-This page documents the operating posture that prevents recurrence
-and the alerts that page if it happens anyway.
+F-0020: a 12-way parallel `soroban-events` fill walk plus a 12-chunk
+verify-archive bootstrap exhausted Postgres connections and froze on-chain
+trade ingest for 7 h. The W28 back-pressure design is correct (it blocks the
+fill producer when its sink is full, so no row lands in `soroban_events`
+after its cursor advanced past it), but when the live indexer shares Postgres
+with that sink its writes block too. The live indexer must have priority.
 
 ## Posture
 
-**Default operating posture:** the live indexer has Postgres
-to itself. Backfill, verify-archive, and any other
-write-heavy walks run during dedicated maintenance windows
-when the live cursor is allowed to lag.
+The live indexer has Postgres to itself; write-heavy walks run in
+maintenance windows where the live cursor may lag.
 
-Concretely:
-
-- **Live indexer always running** at full priority. Its cursor
-  must advance every ledger.
-- **Backfill walks (`stellarindex-ops backfill`)**: run at
-  `-parallel 4` or lower when live ingest is also writing.
-  `-parallel 12` is for catch-up windows where live ingest is
-  paused or running on a fresh box.
-- **verify-archive Tier A**: scheduled by
-  `verify-archive-tier-a.timer` for off-peak windows (default:
-  Sunday 02:00 UTC). Operators triggering an ad-hoc tier-A run
-  should `systemctl stop stellarindex-indexer` first OR
-  `-chunks 4` it down from the bootstrap's 12.
-- **Galexie + ledgerstream-fill** runs continuously in the
-  background but pulls from MinIO, not Postgres — these don't
-  contribute to the back-pressure pattern.
-
-## Why this matters
-
-The W28 back-pressure design ensures cursor coherence on the
-*fill* walk (no row lands in `soroban_events` after its cursor
-has been recorded as advanced past it). That guarantee is held
-by blocking the fill walk's producer when its sink is full.
-When the live indexer shares Postgres with that sink, the live
-indexer's writes also block — which is what F-0020 observed.
-
-The data-correctness invariant is right; the resource-priority
-arrangement was wrong (live indexer should have higher priority
-than fill walks).
+- **Live indexer** always running at full priority; its cursor advances every ledger.
+- **Fill walks (`stellarindex-ops backfill`)**: `-parallel 4` or lower while
+  live ingest writes. `-parallel 12` only when live ingest is paused or on a
+  fresh box.
+- **verify-archive**: `verify-archive-tier-a.timer` fires daily at 03:23 UTC
+  under `run-heavy-job.sh` (queues behind other heavy jobs). An ad-hoc run
+  should `systemctl stop stellarindex-indexer` first OR use `-workers 4` or lower.
+- **Galexie + ledgerstream-fill** read MinIO, not Postgres; they do not
+  contribute.
 
 ## Alerts that page on recurrence
-
-Even without operator vigilance the recurrence pattern is now
-alertable:
 
 | Signal | Alert | Severity |
 | --- | --- | --- |
@@ -67,45 +38,29 @@ alertable:
 | Per-asset staleness > 120 s | `stellarindex_api_price_stale` | ticket |
 | Postgres connections > 80 % of `max_connections` | `stellarindex_timescale_connections_saturated` | ticket |
 
-> Severities are the rules' own `labels.severity` — the routing key
-> (`page` → Discord #stellarindex-pages, `ticket` → #stellarindex-alerts).
-> The last row used to name `stellarindex_postgres_connections_high`,
-> which is defined in NEITHER rule tree — so an operator watching for it
-> mid-backfill would have watched forever. The real alert is
-> `stellarindex_timescale_connections_saturated`
-> (`configs/prometheus/rules.r1/storage.yml:320`).
+Severities are the rules' `labels.severity` (`page` → Discord
+#stellarindex-pages, `ticket` → #stellarindex-alerts). Rules live in
+`configs/prometheus/rules.r1/`. Duplicate-flood runbook:
+[ingestion-duplicate-flood](runbooks/ingestion-duplicate-flood.md).
 
-The first two were shipped in this session (tasks #61 / #62 /
-#67) specifically to surface the F-0020 pattern at first
-observation. Pre-this-session those signals didn't exist and the
-freeze was visible only through manual `psql max(ts)` queries
-during the audit.
-
-If any of the alerts above fire while a fill walk or
-verify-archive run is in progress: assume back-pressure unless
-proven otherwise, and stop the heavy walker first.
+If any fires while a fill walk or verify-archive runs, assume back-pressure
+and stop the heavy walker first.
 
 ## Operator commands
 
 ### Stop a running fill walk
 
 ```sh
-# On r1 — find the fill PID. The fill is a manual operator invocation
-# (`stellarindex-ops backfill -source soroban-events`, normally wrapped by
-# run-heavy-job.sh), NOT a systemd unit.
-# NOTE the binary name: the pattern below used to read '[r]atesengine-ops',
-# the PRE-REBRAND name, so it matched nothing mid-incident and the operator
-# concluded no fill was running.
+# On r1. The fill is a manual invocation (`stellarindex-ops backfill -source
+# soroban-events`, normally under run-heavy-job.sh), NOT a systemd unit.
 ps -eo pid,args | grep '[s]tellarindex-ops backfill'
-# kill -INT by the EXPLICIT PID (graceful — drains in-flight rows then exits).
-# Do NOT `pkill -f 'backfill'`: the pattern self-matches your own shell over
-# ssh and can kill the wrong process.
+# Graceful: drains in-flight rows then exits. Kill by EXPLICIT PID; a
+# `pkill -f 'backfill'` self-matches your own ssh shell.
 kill -INT <pid>
 ```
 
-Either path lets the in-flight batch finish so cursor coherence
-is preserved. SIGKILL works too but loses the in-flight batch's
-rows; only use if `pkill -INT` doesn't return within 60 s.
+SIGINT lets the in-flight batch finish, preserving cursor coherence. SIGKILL
+loses that batch's rows; use it only if the process has not exited within 60 s.
 
 ### Stop a running verify-archive
 
@@ -113,13 +68,12 @@ rows; only use if `pkill -INT` doesn't return within 60 s.
 systemctl stop verify-archive-tier-a.service
 ```
 
-The timer remains armed; the next scheduled fire still happens.
+The timer stays armed; the next scheduled fire still happens.
 
 ### Resume the live indexer after a freeze
 
 ```sh
-# The indexer should be running; the freeze symptom is "cursor
-# not advancing" not "process not running". Confirm:
+# The symptom is "cursor not advancing", not "process not running". Confirm:
 systemctl status stellarindex-indexer
 # Cursor lag check:
 curl -sS http://localhost:3000/v1/diagnostics/cursors \
@@ -127,50 +81,22 @@ curl -sS http://localhost:3000/v1/diagnostics/cursors \
 # Should be under 30 s in steady state.
 ```
 
-If lag stays high after the back-pressure source is stopped,
-restart the indexer:
+If lag stays high after the heavy walker is stopped:
 
 ```sh
 systemctl restart stellarindex-indexer
 journalctl -u stellarindex-indexer -f
 ```
 
-## Long-term architecture options
+## Unshipped hardening options
 
-These aren't shipped yet but are the candidate paths the audit
-named:
+1. **Per-sink prioritisation in AsyncSink**: live writes take connections
+   ahead of fill walks. Moderate cost, medium risk (tracked under W28).
+2. **Separate replica for fill-walk writes** via logical replication. High
+   cost, medium-high risk (W28 / W30).
+3. **Connection-pool reservation**: reserve N connections for the live
+   indexer via per-binary pool sizes. Cheapest; prevents connection
+   starvation but not in-database lock contention. The next hardening step.
 
-1. **Per-sink prioritisation in AsyncSink.** Live ingest writes
-   take Postgres connections ahead of fill walks. Implementation
-   cost: moderate (need a priority queue or per-sink connection
-   budget); risk: medium (gets into Postgres-pool semantics).
-2. **Separate read-replica for fill walks.** The fill walks read
-   nothing from Postgres today (they're producers) but a
-   replica would let the WAL replay decouple primary writes from
-   fill-walk writes via logical replication. Implementation
-   cost: high; risk: medium-high (replication-lag handling).
-3. **Postgres connection-pool reservation.** Reserve N
-   connections for the live indexer; backfill workers can use
-   only the remaining (max_connections - N). Cheapest path;
-   implementable today via per-binary `DATA_SOURCE_NAME` with
-   distinct pool sizes. Doesn't solve write-lock contention
-   inside Postgres itself but does prevent connection
-   starvation.
-
-The current alert-shipped posture is "operationally well-
-behaved AND alertable on recurrence." Architecture path (3) is
-the next-cheapest hardening; (1) and (2) are tracked under
-W28 / W30 for future work.
-
-## Cross-reference
-
-- F-0020 (audit-2026-05-26) — original finding.
-- F-0028 — soroban_events lag (same back-pressure cluster).
-- W28 — back-pressure design.
-- W30 — cold-tier interaction with backfill.
-- `docs/operations/runbooks/ingestion-duplicate-flood.md` — the
-  paged-alert runbook for the recurrence detector.
-
-## Changelog
-
-- 2026-05-28 — initial draft (F-0020 closure).
+Related: F-0028 (soroban_events lag, same cluster), W30 (cold-tier
+interaction with backfill).

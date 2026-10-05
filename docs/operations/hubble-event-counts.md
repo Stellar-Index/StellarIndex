@@ -6,39 +6,29 @@ status: living procedure
 
 # Hubble event-count cross-check for Soroban sources
 
-The `stellarindex-ops hubble-soroban-events` subcommand emits per-
-ledger counts of events from
-`hubble-public.crypto_stellar.history_contract_events`. It's a
-primitive — operators combine it with the per-source knowledge of
-the (events ↔ trades) ratio to cross-check decoder coverage.
-
-This doc captures the per-source filter recipe + the comparison
-math. SDEX uses the dedicated `hubble-check` subcommand instead
-(Hubble has a decoded `history_trades` view of classic SDEX);
-Soroban DEXes / oracles do not.
+`stellarindex-ops hubble-soroban-events` emits per-ledger counts from
+`hubble-public.crypto_stellar.history_contract_events`. Combine it with each
+source's events-to-trades ratio to cross-check decoder coverage. SDEX uses
+`hubble-check` instead (Hubble has a decoded `history_trades` view); Soroban
+DEXes and oracles do not.
 
 ## When to run
 
-After any of:
-
-- A WASM-history audit completes for a Soroban source and flips
-  its `BackfillSafe` flag to `true`.
-- A since-inception backfill batch lands for a Soroban source.
-- A decoder change ships for a Soroban source.
-
-The check is a regression gate: if the decoder dropped a topic
-shape or got the event-vs-trade ratio wrong, the Hubble count and
+After a WASM-history audit flips a Soroban source's `BackfillSafe` to `true`, a
+since-inception backfill batch lands, or a decoder change ships. It is a
+regression gate: a dropped topic shape or wrong ratio makes the Hubble count and
 our row count diverge.
 
 ## Per-source recipe
 
-For each source, run the Hubble query, then the our-side query,
-then compare with the documented multiplier.
+Run the Hubble query, run our-side query, compare with the multiplier. All
+examples use `-from 51000000 -to 62250000 -bigquery-project <BQ_PROJECT>`;
+`-output total` prints N events. Our side is `SELECT COUNT(*) FROM trades WHERE
+source = '<source>' AND ledger BETWEEN <from> AND <to>` (M rows) unless noted.
 
 ### Soroswap
 
-> 2 events per trade (`swap` + `sync`). Filter to topic[1]='swap'
-> for one event per trade.
+2 events per trade (`swap` + `sync`); filter topic[1]='swap' for one per trade.
 
 ```sh
 stellarindex-ops hubble-soroban-events \
@@ -48,28 +38,15 @@ stellarindex-ops hubble-soroban-events \
   -topic0 SoroswapPair \
   -topic1 swap \
   -output total
-# → N events
 ```
 
-```sql
--- Our side:
-SELECT COUNT(*) FROM trades
- WHERE source = 'soroswap'
-   AND ledger BETWEEN 51000000 AND 62250000;
--- → M trades
-```
-
-**Expected: N == M.** Each Soroswap pair contract emits one
-`("SoroswapPair","swap")` event per trade; we record one trade
-row per swap-sync correlation.
-
-To enumerate pair contracts: query our trades hypertable for
-distinct contract IDs we've ingested under `source='soroswap'`,
-or walk factory `new_pair` events.
+**Expected N == M** (one trade row per swap-sync correlation). Enumerate pair
+contracts from distinct contract IDs in `trades` under `source='soroswap'`, or
+walk factory `new_pair` events.
 
 ### Aquarius
 
-> 1 event per trade. Filter to topic[0]='trade'.
+1 event per trade.
 
 ```sh
 stellarindex-ops hubble-soroban-events \
@@ -78,17 +55,15 @@ stellarindex-ops hubble-soroban-events \
   -contracts <pool-A>,<pool-B>... \
   -topic0 trade \
   -output total
-# → N events
 ```
 
-Compare to `COUNT(*) WHERE source = 'aquarius'`. **Expected: N == M.**
+Compare to `source = 'aquarius'`. **Expected N == M.**
 
 ### Phoenix
 
-> 8 events per trade (one per field). Filter to topic[0]='swap'
-> AND topic[1]='offer_amount' for one event per trade. Any one of
-> the 8 field names works as a filter — `offer_amount` is the
-> conventional pick because it's strictly numeric.
+8 events per trade (one per field). Filter topic[0]='swap' AND
+topic[1]='offer_amount' (conventional pick, strictly numeric; any of the 8 field
+names works) for one per trade.
 
 ```sh
 stellarindex-ops hubble-soroban-events \
@@ -98,19 +73,15 @@ stellarindex-ops hubble-soroban-events \
   -topic0 swap \
   -topic1 offer_amount \
   -output total
-# → N events (= number of distinct swaps)
 ```
 
-Compare to `COUNT(*) WHERE source = 'phoenix'`. **Expected: N == M.**
-
-If you DON'T add a topic[1] filter you get 8N events back —
-useful to confirm the 8-events-per-swap correlation is healthy.
-If `total / 8 != trades`, some events are missing for some
-swaps and the correlation is dropping incomplete RawSwaps.
+Compare to `source = 'phoenix'`. **Expected N == M.** Without the topic[1] filter
+you get 8N; if `total / 8 != trades`, events are missing and the correlation is
+dropping incomplete RawSwaps.
 
 ### Comet
 
-> 1 event per trade. Filter topic[0]='POOL', topic[1]='swap'.
+1 event per trade.
 
 ```sh
 stellarindex-ops hubble-soroban-events \
@@ -120,15 +91,13 @@ stellarindex-ops hubble-soroban-events \
   -topic0 POOL \
   -topic1 swap \
   -output total
-# → N events
 ```
 
-Compare to `COUNT(*) WHERE source = 'comet'`. **Expected: N == M.**
+Compare to `source = 'comet'`. **Expected N == M.**
 
 ### Reflector (DEX / CEX / FX)
 
-> 1 event fans out to N OracleUpdate rows in our DB (one per
-> (asset, price) entry in the event's prices Vec).
+1 event fans out to N OracleUpdate rows (one per (asset, price) in the prices Vec).
 
 ```sh
 # Per variant: substitute the contract from cfg.Oracle.Reflector.{DEX,CEX,FX}Contract.
@@ -139,25 +108,20 @@ stellarindex-ops hubble-soroban-events \
   -topic0 REFLECTOR \
   -topic1 update \
   -output total
-# → N events
 ```
 
 ```sql
--- Our side:
 SELECT COUNT(*) FROM oracle_updates
  WHERE source = 'reflector-dex'  -- or -cex / -fx
    AND ledger BETWEEN 51000000 AND 62250000;
--- → M oracle updates
 ```
 
-**Expected: N <= M (typically much less).** Each event fans out
-to multiple rows; the ratio depends on how many assets are in
-the event's prices vector. As a rough check: `M / N ~ N_assets`.
+**Expected N <= M** (typically much less); roughly `M / N ~ N_assets`.
 
 ### Redstone
 
-> 1 event per write_prices call → fans to N OracleUpdate rows
-> (one per feed in the call's feed_ids op-arg).
+1 event per write_prices call, fanning to N OracleUpdate rows (one per feed in
+the call's feed_ids op-arg).
 
 ```sh
 stellarindex-ops hubble-soroban-events \
@@ -166,64 +130,47 @@ stellarindex-ops hubble-soroban-events \
   -contracts <redstone-adapter> \
   -topic0 REDSTONE \
   -output total
-# → N events
 ```
 
-Compare to `COUNT(*) WHERE source = 'redstone'`. **Expected:
-N <= M.** Same fanout pattern as Reflector.
+Compare to `source = 'redstone'`. **Expected N <= M.**
 
 ### Band
 
-**Not applicable.** Band's Soroban contract emits zero events
-(AGENTS.md "Band's Soroban contract emits zero events"). Decoder
-operates on InvokeContract op args via the
-`ContractCallDecoder` hook. There's no event count to cross-check
-against. Per-WASM-hash decoder audit is the only safety net.
+**Not applicable.** Band's Soroban contract emits zero events (AGENTS.md); the
+decoder reads InvokeContract op args via the `ContractCallDecoder` hook. The
+per-WASM-hash decoder audit is the only safety net.
 
 ## When totals differ
 
-Possible explanations, in rough order of likelihood:
+In rough order of likelihood:
 
-1. **Contract-list incompleteness.** Did you miss a pair / pool
-   contract? Re-enumerate from on-chain history and re-run.
-2. **Topic-filter typo.** topic[0] / topic[1] strings need exact
-   case-sensitive match. Most Soroban events use `ScvSymbol`
-   identifiers (no spaces); Soroswap's `SoroswapPair` and Phoenix
-   use `ScvString`, including the space-bearing
-   `actual received amount` (Q2). The filter matches the topic's
-   raw XDR in Hubble's `topics` column as either type, so a topic
-   of any other type (an address, a number) never matches.
-3. **Range edge effects.** Ledger boundaries can clip events
-   across `from` / `to`. Re-run with a wider range.
-4. **Decoder bug.** This is the case the cross-check exists to
-   catch — decoder dropping events. Action: per-ledger drill-down
-   with `-output json` or `-output csv` to find the affected
-   range, then inspect the decoder against that range's WASM
-   hash via `stellarindex-ops wasm-history`.
-5. **Identical-event collision on Hubble's side.** The query
-   dedups with `COUNT(DISTINCT contract_event_xdr)` to strip
-   Hubble's overlapping-batch-load duplicates, but
-   `contract_event_xdr` carries no tx hash or operation index —
-   only contract id, type, topics and data. Two genuinely distinct
-   events in the same ledger with byte-identical contents (most
-   plausible for a bot issuing the same call twice) collapse to a
-   single counted event, under-reporting N. If a small, persistent
-   gap survives after ruling out 1–4, check for repeated identical
-   calls in that ledger before concluding the decoder dropped
-   something.
+1. **Contract-list incompleteness.** Re-enumerate pair/pool contracts from
+   on-chain history and re-run.
+2. **Topic-filter typo.** Strings are exact and case-sensitive. Most Soroban
+   events use `ScvSymbol`; Soroswap's `SoroswapPair` and Phoenix use `ScvString`,
+   including the space-bearing `actual received amount` (Q2). The filter matches
+   raw XDR in Hubble's `topics` column as either type; any other topic type
+   (address, number) never matches.
+3. **Range edge effects.** Re-run with a wider `from` / `to`.
+4. **Decoder bug.** The case the check exists to catch. Drill down per ledger
+   with `-output json` or `-output csv` to find the range, then inspect the
+   decoder against that range's WASM hash via `stellarindex-ops wasm-history`.
+5. **Identical-event collision on Hubble's side.** The query dedups with
+   `COUNT(DISTINCT contract_event_xdr)` to strip overlapping-batch-load
+   duplicates, but `contract_event_xdr` has no tx hash or op index, so two
+   distinct same-ledger events with byte-identical contents (e.g. a bot calling
+   twice) collapse to one, under-reporting N. If a small persistent gap
+   survives 1-4, check for repeated identical calls in that ledger first.
 
 ## Cost preview
 
-Always dry-run before a full-range query:
+Dry-run before a full-range query:
 
 ```sh
 stellarindex-ops hubble-soroban-events ... -dry-run-bytes
 ```
 
-Typical: 20–40 GB scan per 1M-ledger range → ~$0.20 at $5/TB on-
-demand. Reservation pricing essentially free at our scale.
-
-Every real query also carries `-max-bytes-billed` (default
-100000000000, i.e. 100 GB): a query that would scan more fails
-before it is billed. Raise it deliberately for a wider range; `0`
-is refused because BigQuery reads it as uncapped.
+Typical: 20-40 GB scan per 1M-ledger range, ~$0.20 at $5/TB on-demand. Every
+real query also carries `-max-bytes-billed` (default 100000000000, 100 GB): a
+query that would scan more fails before billing. Raise it deliberately for a
+wider range; `0` is refused because BigQuery reads it as uncapped.
