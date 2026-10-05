@@ -1,4 +1,4 @@
-package main
+package incident
 
 import (
 	"context"
@@ -73,7 +73,7 @@ func incidentEventKey(found *incidents.Incident, eventType platform.WebhookEvent
 }
 
 // incidentPayloadFields builds the webhook body a subscriber receives.
-// Extracted from [emitIncident] to keep that function under the funlen
+// Extracted from [Emit] to keep that function under the funlen
 // cap; the shape is the same one the dashboard explorer + /v1/incidents
 // render, so a hook subscriber sees what the public status page shows.
 func incidentPayloadFields(found *incidents.Incident, eventType platform.WebhookEventType) map[string]any {
@@ -103,7 +103,7 @@ func incidentPayloadFields(found *incidents.Incident, eventType platform.Webhook
 	return fields
 }
 
-// emitIncident fans out an `incident.sev1` or `incident.resolved`
+// Emit fans out an `incident.sev1` or `incident.resolved`
 // webhook to every subscribed dashboard hook for the given slug.
 //
 // F-1249 (codex audit-2026-05-12): pre-fix the platform shipped
@@ -142,7 +142,7 @@ func incidentPayloadFields(found *incidents.Incident, eventType platform.Webhook
 // `-event` accepts `sev1` and `resolved` as ergonomic aliases for
 // the wire-level event names `incident.sev1` and
 // `incident.resolved`.
-func emitIncident(args []string) error {
+func Emit(args []string) error {
 	fs := flag.NewFlagSet("emit-incident", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	slug := fs.String("slug", "",
