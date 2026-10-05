@@ -70,6 +70,10 @@ func RunSignerTagger(ctx context.Context, logger *slog.Logger, lake SignerLakeRe
 		logger = slog.Default()
 	}
 
+	// floor skips past a clamped slice that made no progress: a trade whose tx
+	// is absent from the lake keeps the untagged minimum pinned, which would
+	// otherwise re-read the same slice until the lookback expires.
+	var floor uint32
 	sweep := func(sweepCtx context.Context) {
 		now := time.Now().UTC()
 		minL, maxL, ok, err := store.UntaggedAMMSignerLedgerRange(sweepCtx, now.Add(-lookback), now)
@@ -83,9 +87,16 @@ func RunSignerTagger(ctx context.Context, logger *slog.Logger, lake SignerLakeRe
 		if !ok {
 			return // nothing untagged in the window — skip the lake read
 		}
+		if minL < floor {
+			minL = floor
+			if minL > maxL {
+				return
+			}
+		}
 		// Clamp a wide (cold-start / lag) span to the oldest slice; the rest
 		// is caught on the next tick as min-ledger advances.
-		if maxL-minL+1 > signerSweepMaxLedgerSpan {
+		clamped := maxL-minL+1 > signerSweepMaxLedgerSpan
+		if clamped {
 			maxL = minL + signerSweepMaxLedgerSpan - 1
 		}
 		sigs, err := lake.TxSignersForLedgerRange(sweepCtx, minL, maxL)
@@ -97,6 +108,9 @@ func RunSignerTagger(ctx context.Context, logger *slog.Logger, lake SignerLakeRe
 			return
 		}
 		if len(sigs) == 0 {
+			if clamped {
+				floor = maxL + 1
+			}
 			return
 		}
 		tags := make([]timescale.SignerTag, len(sigs))
@@ -120,6 +134,9 @@ func RunSignerTagger(ctx context.Context, logger *slog.Logger, lake SignerLakeRe
 			}
 			logger.Warn("signer sweep: tag failed", "err", err)
 			return
+		}
+		if tagged == 0 && clamped {
+			floor = maxL + 1
 		}
 		if tagged > 0 {
 			logger.Info("signer sweep tagged trades", "tagged", tagged, "ledger_span", maxL-minL+1)
