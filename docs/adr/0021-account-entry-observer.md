@@ -9,315 +9,37 @@ superseded_by: null
 
 # ADR-0021: AccountEntry observer — live home-domain + reserve-balance tracking
 
-> **Status note (2026-07-05, launch-todo P4-2).** Implemented. The
-> observer (`internal/sources/accounts`), the `account_observations`
-> hypertable (migration 0010), the `LedgerEntryChangeDecoder` hook,
-> and `supply.LCMReserveBalanceReader` all shipped; the live reader
-> is chained ahead of `ConfigReserveBalanceReader` in both refresh
-> paths (see `docs/architecture/supply-pipeline.md` §"The
-> chained-fallback reader pattern") — the static map is the
-> intentional bootstrap fallback, not an interim implementation.
-> One gap remained: a reserve account that never CHANGES after the
-> observer starts never emits a `LedgerEntryChange`, so the live
-> reader would defer to the static map forever. Closed by
-> `stellarindex-ops supply seed-observations` — a one-shot,
-> idempotent seed of each `[supply] sdf_reserve_accounts` entry's
-> latest AccountEntry from the ClickHouse lake's
-> `ledger_entries_current` projection (ADR-0034). Accounts dormant
-> since before the lake's entry-change capture window need a
-> `state-snapshot` (history-archive checkpoint) run first; the
-> seeder reports them instead of fabricating.
-
 ## Context
 
-Two operator-static config knobs in the codebase are placeholders
-for live data we don't currently index:
-
-1. **`metadata.issuer_home_domains`** —
-   ([`internal/config/config.go`](../../internal/config/config.go))
-   A G-strkey → home-domain map populated by hand. The struct
-   docstring explicitly notes: "AccountEntry.HomeDomain isn't
-   currently indexed in our trades hypertable; deriving it would
-   require either a separate account-entry observer in the indexer
-   (deferred) or a per-request stellar-rpc lookup (latency hit on
-   the hot path)."
-
-2. **`supply.reserve_balances_stroops`** —
-   ([`internal/config/config.go`](../../internal/config/config.go),
-   shipped in #285) A G-strkey → stroop-balance map operators
-   update by hand whenever SDF announces a reserve move. The
-   `ConfigReserveBalanceReader` docstring marks it as the interim
-   implementation pending an LCM-derived live reader (Task #54).
-
-Both gaps have the same root cause: we don't currently observe
-`AccountEntry` ledger-entry changes during ingestion. Every
-LedgerCloseMeta XDR carries the deltas (`AccountEntry` rows
-created / updated / removed per tx), but the dispatcher's three
-existing hooks (`Decoder`, `OpDecoder`, `ContractCallDecoder`)
-all operate on transaction-level artifacts (events, ops,
-contract calls) — none observe ledger-entry deltas directly.
-
-Per ADR-0001 (Horizon-not-in-our-architecture) we cannot fall
-back to Horizon's pre-computed `accounts` table. Per the
-"stellar-rpc not in production ingest path" rule (AGENTS.md
-"Things that will surprise you"), we cannot fall back to
-per-request RPC. The path forward is in-house observation from
-the LCM stream we already consume.
-
-The `wasm-history` walker
-([`cmd/stellarindex-ops/main.go::scanLCMForWasmChanges`](../../cmd/stellarindex-ops/main.go))
-proves the technique works: it iterates
-`LedgerEntryChange` rows from `tx.Operations[].Changes` and the
-fee-meta block, filters to `LedgerEntryDataType == ContractCode`,
-and tracks per-contract WASM-hash transitions. The AccountEntry
-observer is the same technique with a different filter and a
-different sink.
+Issuer home domains and SDF reserve balances were hand-maintained config maps because ingestion did not observe `AccountEntry` changes. Every LedgerCloseMeta already carries them, but the existing dispatcher hooks (events, ops, contract calls) see only transaction artifacts, and Horizon (ADR-0001) and per-request RPC are ruled out.
 
 ## Decision
 
-Add a fourth dispatcher hook —
-`LedgerEntryChangeDecoder` — and ship a single canonical decoder
-implementing it: `internal/sources/accounts.AccountEntryObserver`.
-Persist observations to a new `account_observations` hypertable.
-Surface them via two readers consuming the same table:
+Add a dispatcher hook, `LedgerEntryChangeDecoder`, and one canonical implementation, `internal/sources/accounts.AccountEntryObserver`, writing the `account_observations` hypertable (migration 0010).
 
-- `metadata.LCMHomeDomainResolver` (replaces operator-static
-  `issuer_home_domains` → live home-domain lookup).
-- `supply.LCMReserveBalanceReader` (replaces operator-static
-  `reserve_balances_stroops` → live reserve-balance reads).
+- **Hook.** `Matches(change)` is a cheap pre-filter on the entry type; `Decode(ctx)` emits zero or more events for one change, with ledger, close time, tx hash and op index (empty and -1 for fee-meta changes). The walker visits per-op changes and the tx-level fee changes. Errors are skip-and-count, as for the other hooks.
+- **Not an existing hook:** an `AccountEntry` change is a side effect of any classic op (and fees), so it is neither an event nor an op-type filter.
+- **Table.** One row per `(account_id, ledger)` with `balance_stroops` NUMERIC (ADR-0003), nullable `home_domain` (NULL, not empty string, when unset), `flags` and `seq_num`; hypertable on `observed_at`, 7-day chunks. Readers take the latest row by `observed_at DESC`.
+- **Idempotent insert.** Identity is `(account_id, ledger, observed_at)`, because Timescale needs the partition column in the key and `observed_at` is the ledger close time. The conflict action is `DO UPDATE ... WHERE intra_ledger_seq <= EXCLUDED.intra_ledger_seq`: an account is touched several times in a ledger (fee phase, then operations) and the LAST change is the ledger-final state, so `DO NOTHING` would freeze the fee-phase balance. A re-walk re-assigns the same position and rewrites the same value.
+- **Readers** over the same table: `metadata.LCMHomeDomainResolver` (latest observed `home_domain`; an observed absence of one wins, and only an unobserved issuer falls back to `[metadata.issuer_home_domains]`) and `supply.LCMReserveBalanceReader` (sum of each account's latest `balance_stroops` at or before a ledger; an error if any account has no observation by then).
+- **Fallback is permanent.** The live reader is chained ahead of `supply.ConfigReserveBalanceReader` in both refresh paths (`docs/architecture/supply-pipeline.md`, "The chained-fallback reader pattern"); the static map is the bootstrap fallback, not an interim. A reserve account that never changes emits no change, so `stellarindex-ops supply seed-observations` seeds each `[supply] sdf_reserve_accounts` entry's latest `AccountEntry` from the lake's `ledger_entries_current` projection (ADR-0034). Accounts dormant since before the lake's capture window need a `state-snapshot` run first, and the seeder reports them rather than fabricating.
+- **Watched set, not global.** The observer records accounts named by `[supply] sdf_reserve_accounts` and `[metadata] watched_issuer_accounts`. Watching every account (50M+ accounts times N observations) needs its own ADR.
+- **One canonical decoder,** not per-source: `AccountEntry` has one shape network-wide.
 
-### Hook interface
+## Invariant
 
-```go
-// LedgerEntryChangeDecoder observes raw LedgerEntryChange deltas
-// from each LCM, regardless of which transaction or fee-meta
-// block produced them. Used for sources that derive their state
-// from ledger-entry changes rather than events/ops/calls.
-type LedgerEntryChangeDecoder interface {
-    Name() string
-    // Matches reports whether this decoder owns the given change
-    // type. Cheap pre-filter — typically checks the entry's Data
-    // discriminant (AccountEntry vs Trustline vs ContractCode etc.).
-    Matches(change xdr.LedgerEntryChange) bool
-    // Decode emits zero or more canonical outputs for one change.
-    Decode(ctx LedgerEntryChangeContext) ([]consumer.Event, error)
-}
-
-type LedgerEntryChangeContext struct {
-    Ledger   uint32
-    ClosedAt time.Time
-    TxHash   string  // empty for fee-meta-block changes
-    OpIndex  int     // -1 for fee-meta-block changes
-    Change   xdr.LedgerEntryChange
-}
-```
-
-Same non-fatal-error contract as the other three hooks: returning
-an error is a "skip + count" signal, not "stop dispatching."
-
-### `account_observations` hypertable
-
-```sql
-CREATE TABLE account_observations (
-    account_id      TEXT       NOT NULL,        -- G-strkey
-    ledger          INTEGER    NOT NULL,
-    observed_at     TIMESTAMPTZ NOT NULL,        -- ledger close time
-    balance_stroops NUMERIC    NOT NULL,         -- native XLM balance
-    home_domain     TEXT,                        -- AccountEntry.HomeDomain (NULLable)
-    flags           INTEGER    NOT NULL,         -- AccountFlags bitmask
-    seq_num         BIGINT     NOT NULL,         -- AccountEntry.SeqNum
-    PRIMARY KEY (account_id, ledger)
-);
-
-SELECT create_hypertable('account_observations', 'observed_at',
-                          chunk_time_interval => INTERVAL '7 days');
-
-CREATE INDEX account_observations_account_observed_idx
-    ON account_observations (account_id, observed_at DESC);
-```
-
-Schema rationale:
-
-- **Per-(account, ledger) row** — a single account that's touched
-  in many ledgers within a chunk window writes many rows. The
-  observer dedupes within a tx (one row per leaf change) but does
-  not coalesce across ledgers; the readers query
-  `ORDER BY observed_at DESC LIMIT 1` to get the latest.
-- **`balance_stroops` as NUMERIC** — XLM amounts are i64 in XDR
-  but ADR-0003 mandates NUMERIC end-to-end for consistency and
-  future-proofing if Stellar ever migrates to wider amount types.
-- **`home_domain` nullable** — many accounts have no home_domain.
-  NULL is the correct representation (vs empty string).
-- **`flags` + `seq_num` carried** — operationally useful and
-  cheap to capture. `flags` lets us spot accounts that have been
-  authorized for a SEP-1 issuer; `seq_num` is a cross-check for
-  ordering when an account is touched multiple times in a single
-  ledger.
-
-### Backfill semantics
-
-Same path as every other source: an operator runs
-`stellarindex-ops backfill -source accounts -from N -to M` to
-replay an LCM range. The dispatcher's existing range-walker
-delivers `LedgerEntryChange` rows in chronological order; the
-observer's `Decode` writes one row per matched change.
-
-The `Insert` path is `ON CONFLICT (account_id, ledger, observed_at)
-DO UPDATE SET … WHERE account_observations.intra_ledger_seq <=
-EXCLUDED.intra_ledger_seq` (see
-`internal/storage/timescale/account_observations.go`). A backfill that
-re-walks an already-observed range is idempotent — the observation for a
-given (account, ledger) is deterministic from XDR, so re-deriving it
-writes the same value.
-
-Two corrections to what this ADR originally ratified (C4-098,
-audit-2026-07-23 — the text said `ON CONFLICT (account_id, ledger) DO
-NOTHING`, differing in BOTH the conflict target and the action):
-
-- **The conflict target carries `observed_at`.** Timescale requires the
-  partition column in the primary key, so identity is
-  `(account_id, ledger, observed_at)` — `observed_at` is the ledger
-  close time, not the write time, so it is a function of `ledger` and
-  adds no new identity.
-- **The action is `DO UPDATE`, guarded by `intra_ledger_seq`, not
-  `DO NOTHING`.** An account is typically touched several times inside
-  one ledger (fee phase, then one or more operations), and it is the
-  LAST intra-ledger change that is the ledger-final state.
-  `DO NOTHING` would have frozen the FIRST write — usually the fee-phase
-  balance — as the published one. The `<=` (rather than `<`) keeps a
-  deterministic re-backfill, which re-assigns the same position per
-  change, idempotent-corrective rather than a no-op.
-
-### Reader contracts
-
-#### `metadata.LCMHomeDomainResolver`
-
-```go
-type LCMHomeDomainResolver struct {
-    db *sql.DB
-}
-
-func (r *LCMHomeDomainResolver) HomeDomainFor(ctx context.Context, issuer string) (string, bool, error) {
-    // Reads the most-recent home_domain for the issuer's G-strkey.
-    // Returns "", false, nil when not observed yet (caller falls
-    // back to operator-static map then defaults).
-    // Returns "", false, nil when home_domain is NULL — issuer
-    // exists but has no domain set.
-}
-```
-
-The existing `metadata.MetadataConfig.HomeDomainFor` becomes the
-fallback when `LCMHomeDomainResolver` returns `(_, false, nil)`.
-Operators can keep entries in `[metadata.issuer_home_domains]`
-to override the live value or to seed before the observer
-backfill catches up.
-
-#### `supply.LCMReserveBalanceReader`
-
-```go
-type LCMReserveBalanceReader struct {
-    db *sql.DB
-}
-
-func (r *LCMReserveBalanceReader) ReserveBalanceTotal(
-    ctx context.Context, accounts []string, ledger uint32,
-) (*big.Int, error) {
-    // For each account in `accounts`, reads the most-recent
-    // balance_stroops at ledger ≤ `ledger`. Sums across accounts.
-    // Returns an error if any account has no observation at or
-    // before the requested ledger.
-}
-```
-
-The existing `supply.ConfigReserveBalanceReader` (shipped in
-#285) stays in tree as the bootstrap fallback — operators flip
-to the LCM reader by changing one line in
-`cmd/stellarindex-ops/supply.go::supplySnapshot`. Until the
-observer has backfilled the configured reserve accounts to a
-deep enough range, the config reader remains the safer choice
-(its values are explicitly operator-blessed; the LCM reader
-would silently return historical balances if the backfill
-lagged).
-
-### Dispatcher integration
-
-```go
-// In ProcessLedger:
-for _, ed := range tx.OperationChanges() { // helper that walks
-                                            // op-meta + fee-meta
-    for _, decoder := range d.entryDecoders {
-        if !decoder.Matches(ed.Change) { continue }
-        events, err := decoder.Decode(ctx)
-        // … same metrics + non-fatal-error path as other hooks
-    }
-}
-```
-
-The walker visits both per-op `Changes` and the tx-level
-`FeeChanges` block. AccountEntry deltas appear in both —
-fee-debit changes the account's XLM balance.
-
-### Why not piggyback on an existing hook
-
-- `Decoder` is event-based; AccountEntry changes don't emit
-  events.
-- `OpDecoder` operates on classic ops; AccountEntry changes can
-  be a side-effect of any op (Payment, ChangeTrust,
-  ManageData, …) and inflation, so filtering at op-type level
-  doesn't cover the surface.
-- `ContractCallDecoder` is for Soroban; AccountEntry changes are
-  classic-state.
-
-A single observer plugged into the new fourth hook is the right
-shape.
-
-### Why one canonical decoder, not per-source
-
-Soroswap / Phoenix / Aquarius / Reflector / Band / Redstone all
-need to emit canonical events; per-source decoders make sense.
-AccountEntry observation has exactly one shape across the
-network: read the entry, write to the table. Multiple decoders
-would all do the same thing. Ship one canonical observer in
-`internal/sources/accounts/` and let operator config drive which
-accounts are watched (via the existing
-`[supply] sdf_reserve_accounts` and a new
-`[metadata] watched_issuers` knob).
+- Observations are derived from LCM ledger-entry changes only: never Horizon, never per-request RPC.
+- The conflict guard has since gained `walk_version` (migrations 0120, 0199). The published row for an `(account, ledger)` is the last intra-ledger change, and a re-walk of a range is idempotent. Enforced by the `intra_ledger_seq` guard in `internal/storage/timescale/account_observations.go`.
+- Amounts are NUMERIC end to end, never a narrower integer (ADR-0003).
+- The live reserve reader never replaces the config reader silently: an account with no observation is an error that falls back, not a zero.
 
 ## Consequences
 
-- New hypertable migration (0010 — first migration after the
-  blend_auctions migration shipped in #274).
-- New `internal/sources/accounts` package with the observer +
-  storage writer.
-- New dispatcher hook (`LedgerEntryChangeDecoder`) +
-  `Dispatcher.AddEntryDecoder` registration.
-- New readers in `internal/metadata/` and `internal/supply/`.
-- Drive-by migration: `cmd/stellarindex-ops backfill` learns a
-  `-source accounts` flag.
-- `ConfigReserveBalanceReader` stays as the bootstrap fallback
-  with a clearer comment pointing at this ADR. Operator-config-
-  managed reserve balances remain valid until live data has
-  caught up.
-- Task #57 (periodic supply-snapshot worker in aggregator)
-  becomes implementable — once the LCM reader is live, the
-  aggregator can refresh supply snapshots per tick rather than
-  per cron-fire.
-- The observer is operator-watched-set-driven by default to keep
-  the table small. Switching to "watch every account" is a
-  config change, but the table size implications (50M+ accounts
-  × N observations each) need a separate ADR before we'd default
-  it on.
+- One new hypertable, one hook (`Dispatcher.AddEntryDecoder`), two readers; the aggregator can refresh supply snapshots per tick.
+- The static reserve map stays valid and must be kept for bootstrap.
+- The table stays small only while the watched set does.
 
-## References
+## Evidence
 
-- Task #54: LCM-AccountEntry observer (the implementation work
-  this ADR bounds).
-- ADR-0001: Horizon-not-in-our-architecture.
-- ADR-0003: i128 / u128 never truncates.
-- ADR-0011: Supply algorithm (sets the reserve-exclusion
-  invariant Algorithm 1 needs the live reader for).
-- PR #285: ships `ConfigReserveBalanceReader` as the interim
-  implementation this ADR replaces.
-- `cmd/stellarindex-ops/main.go::scanLCMForWasmChanges`:
-  reference implementation of the LedgerEntryChange iteration
-  pattern.
+- `internal/sources/accounts`, `internal/dispatcher/dispatcher.go` (`LedgerEntryChangeDecoder`), `internal/pipeline/sink.go` (writer), `internal/supply/` (`LCMReserveBalanceReader`).
+- Migrations 0010 and 0111 (`intra_ledger_seq`); ADR-0001, ADR-0003, ADR-0011.

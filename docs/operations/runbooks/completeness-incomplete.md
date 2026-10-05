@@ -129,6 +129,26 @@ sudo -u postgres psql -d stellarindex -c \
   `-from`: a run that starts above the served floor carries the range below it
   and stamps no evidence, so chunked `-from` runs cannot clear this.
 
+## Pending: a deferred dirty window (sdex, sep41_transfers)
+
+If the source's `detail` reads `dirty window [F,T] PENDING this source's
+dedicated weekly compute-completeness timer`, nothing was found wrong. A
+`backfill -write`, `ch-rebuild` or `projector-replay` rewrote served rows from
+`F`, and re-checking from `F` to tip is more than one day of ledgers, which
+does not fit the nightly `-pass`. The pass withholds `complete` and holds the
+watermark below `F` instead of carrying the old claim over the rewrite.
+
+Do not re-derive. Re-prove the source with the weekly budget, which clears the
+window once it reconciles clean:
+
+```sh
+sudo systemctl start compute-completeness-sdex.service   # or compute-completeness-sep41.service
+# equivalent: run-compute-completeness.sh -source <X> -timeout 360m
+```
+
+A window that fits the pass (re-check from `F` within a day of ledgers) is
+re-checked and cleared by the next nightly run, with no action.
+
 ## Root cause analysis
 
 A served<>lake divergence: dropped rows (a decoder bug fixed forward-only, e.g.
@@ -170,6 +190,9 @@ The `detail` column names the per-target Δ and window.
 
 ## Changelog
 
+- 2026-10-05 — a dirty window too wide for the nightly `-pass` (sdex,
+  sep41_transfers) is deferred to the weekly re-proof and reads as pending
+  re-verification, not a gap; see "Pending: a deferred dirty window".
 - 2026-10-04 — `sep41_transfers` left the pass's forced re-proof;
   `compute-completeness-sep41.timer` re-proves it weekly (Wednesday).
 
