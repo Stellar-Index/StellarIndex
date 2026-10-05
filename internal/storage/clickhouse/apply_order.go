@@ -31,7 +31,7 @@ type txIndexLookup func(ctx context.Context, ledgers []uint32) (map[ledgerTx]uin
 // transaction APPLY order. stellar.contract_events is sorted by
 // (ledger_seq, tx_hash, ...), a lexical order: a pool's first trade whose
 // tx hash sorts before its add_pool's would otherwise reach a live-grown
-// registry first and be dropped (Q040). The SQL keeps the table's sort key
+// registry first and be dropped. The SQL keeps the table's sort key
 // so ClickHouse still streams in read order; the reorder is per ledger,
 // buffered, and stable, so exact duplicate rows stay adjacent for the
 // counting consumers that skip them by previous key.
