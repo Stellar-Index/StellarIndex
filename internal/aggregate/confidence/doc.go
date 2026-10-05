@@ -38,13 +38,10 @@
 //     0.5 a real ceiling rather than a number ordinary buckets never
 //     reach anyway.
 //
-// ADR-0019's formula block writes the product WITHOUT the exponent
-// while its prose says "weighted geometric mean" (which is the
-// normalised form by definition). The code is authoritative; see the
-// R-003 amendment at the top of
-// docs/adr/0019-anomaly-response-and-confidence-scoring.md for the
-// full reasoning and for what the 0.10 freeze threshold means on this
-// scale.
+// Normalisation is what makes the weights relative and the 0.7
+// cross-oracle value neutral. See
+// docs/architecture/anomaly-freeze-and-confidence.md for the formula,
+// the factor constants and what the 0.10 scale means.
 //
 // The shape is right because it gives DOMINATING-FACTOR behaviour:
 // any one near-zero factor pulls the whole score toward zero (and an
