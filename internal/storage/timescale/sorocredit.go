@@ -315,6 +315,11 @@ type CreditAnalyticsSummary struct {
 	// liquidations. Label accordingly wherever surfaced.
 	Settlements      int64
 	SettlementVolume canonical.Amount
+	// SettlementsNotFullySummed counts window settlements whose debt is not
+	// wholly inside SettlementVolume: a non-USDC or undecoded primary leg, or
+	// extra legs the decoder recorded only as attributes.debt_legs. Non-zero
+	// makes SettlementVolume a lower bound.
+	SettlementsNotFullySummed int64
 
 	// Withdrawals is a count only: credit_events.amount is per `asset`, so
 	// a volume would have to be grouped by asset to mean anything.
@@ -331,6 +336,25 @@ func (a *CreditAnalyticsSummary) HasActivity() bool {
 	return a != nil && (a.PositionsOpened > 0 || a.Statements > 0 ||
 		a.Settlements > 0 || a.Withdrawals > 0)
 }
+
+// creditUSDCSAC is the mainnet USDC SAC, the only debt asset whose amounts
+// SettlementVolume sums (7-decimal base units). Mirrored here, not imported:
+// storage keeps its no-upward-import boundary.
+const creditUSDCSAC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+
+// creditUSDCLegFilter admits the settled_amount of rows whose primary leg is
+// USDC; creditPartialSettlementFilter matches rows that sum leaves short.
+const (
+	creditUSDCLegFilter           = `debt_asset = '` + creditUSDCSAC + `'`
+	creditPartialSettlementFilter = `debt_asset IS DISTINCT FROM '` + creditUSDCSAC + `' OR settled_amount IS NULL OR attributes->'debt_legs' IS NOT NULL`
+)
+
+const creditSettlementsAnalyticsQuery = `
+		SELECT count(*),
+		       COALESCE(sum(settled_amount) FILTER (WHERE ` + creditUSDCLegFilter + `),0)::text,
+		       count(*) FILTER (WHERE ` + creditPartialSettlementFilter + `),
+		       max(ledger_close_time)
+		  FROM credit_settlements WHERE ledger_close_time > now() - $1::interval`
 
 // CreditWindowAnalytics reads the windowed sorocredit activity summary
 // (positions / statements / SCHEDULED settlements / withdrawals) from the
@@ -381,10 +405,8 @@ func (s *Store) CreditWindowAnalytics(ctx context.Context, windowDays int) (*Cre
 		return nil, fmt.Errorf("timescale: CreditWindowAnalytics statements: %w", err)
 	}
 
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT count(*), COALESCE(sum(settled_amount),0)::text, max(ledger_close_time)
-		  FROM credit_settlements WHERE ledger_close_time > now() - $1::interval`, since).
-		Scan(&out.Settlements, &out.SettlementVolume, &settleLatest); err != nil {
+	if err := s.db.QueryRowContext(ctx, creditSettlementsAnalyticsQuery, since).
+		Scan(&out.Settlements, &out.SettlementVolume, &out.SettlementsNotFullySummed, &settleLatest); err != nil {
 		return nil, fmt.Errorf("timescale: CreditWindowAnalytics settlements: %w", err)
 	}
 

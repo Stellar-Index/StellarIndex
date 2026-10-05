@@ -47,6 +47,11 @@ var _ dispatcher.Decoder = (*Decoder)(nil)
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
+// GatedContractSet returns the contracts Matches can accept: the trust root
+// plus every child registered so far. The completeness re-derive scopes its
+// lake read to it, so a child's events are counted exactly as live admits them.
+func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
+
 // Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY,
 // not the topic symbol (ADR-0035): the seven symbols are distinctive but
 // two other mainnet contracts emit them, so a non-trust-root emitter must

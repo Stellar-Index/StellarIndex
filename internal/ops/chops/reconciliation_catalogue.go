@@ -555,18 +555,21 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			},
 		},
 		{
-			// sorocredit — ADR-0035 contract-gated on a SINGLE trust-root
-			// main contract. The bare NewDecoder() hard-codes that trust
-			// root as its only "factory" and the main contract emits ALL
-			// events (children emit nothing), so IsFactory(main) matches
-			// everything without a factories/creationSym preseed. contractIDs
-			// pins the re-derive to the one emitter (fast + recognition
-			// attribution). One Go Event type fans out to four tables by the
-			// dynamic EventKind() — hence a target per table. NOTE: the
-			// "settlement" kind is the on-wire "Liquidation" event (scheduled
-			// settlement, NOT distress).
+			// sorocredit — ADR-0035 identity-gated on its main contract (the
+			// trust root) ∪ the Collateral children it announces via
+			// NewCollateralContract. Matches admits a registered child's
+			// events, so a static root-only contractIDs pin would drop them
+			// in ch-rebuild / ch-reproject and the lake prefilter while the
+			// live projector serves them. factories/creationSym preseed the
+			// children for sub-range re-derives; newGatedDec scopes the lake
+			// read to root ∪ children, as blend does. One Go Event type fans
+			// out to four tables by the dynamic EventKind() — hence a target
+			// per table. NOTE: the "settlement" kind is the on-wire
+			// "Liquidation" event (scheduled settlement, NOT distress).
 			name: sorocredit.SourceName, genesis: sorocredit.GenesisLedger,
-			dec: sorocredit.NewDecoder(), contractIDs: []string{sorocredit.MainnetContract},
+			dec:       sorocredit.NewDecoder(),
+			factories: []string{sorocredit.MainnetContract}, creationSym: sorocredit.TopicNewCollateralContract,
+			newGatedDec: func() gatedDecoder { return sorocredit.NewDecoder() },
 			targets: []reconTarget{
 				{"credit_positions", "", []string{"sorocredit.new_collateral_contract"}},
 				{"credit_statements", "", []string{"sorocredit.statement_published"}},
