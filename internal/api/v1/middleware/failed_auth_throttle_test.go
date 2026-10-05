@@ -151,16 +151,16 @@ func TestAuth_FailedAuthThrottle(t *testing.T) {
 		t.Fatalf("different IP first attempt: status = %d, want 401 (per-IP isolation)", w2.Code)
 	}
 
-	// A valid key from the throttled ip waits out the window too: the
-	// throttle is checked before the lookup, which is what makes a
-	// throttled caller cost nothing (see ThrottledCallerTriggersNoLookup).
+	// A VALID key from the throttled ip still passes: successful auth
+	// never consumes the failed-auth budget, and the pre-lookup gate is
+	// per credential, so a guesser sharing the IP cannot lock it out.
 	good := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
 	good.RemoteAddr = ip
 	good.Header.Set("X-API-Key", "good-key")
 	w3 := httptest.NewRecorder()
 	h.ServeHTTP(w3, good)
-	if w3.Code != http.StatusTooManyRequests {
-		t.Fatalf("valid key from throttled IP: status = %d, want 429 (refused before lookup)", w3.Code)
+	if w3.Code != http.StatusOK {
+		t.Fatalf("valid key from throttled IP: status = %d, want 200 (valid requests are never failed-auth-throttled)", w3.Code)
 	}
 }
 
@@ -277,9 +277,9 @@ func TestAuth_FailedAuthTotal_CountsEveryRejection(t *testing.T) {
 		key     string
 		want    int
 	}{
-		{h, "good-key", http.StatusOK},
 		{h, "wrong-key", http.StatusUnauthorized},
 		{h, "wrong-key", http.StatusTooManyRequests},
+		{h, "good-key", http.StatusOK},
 		{misconfigured, "wrong-key", http.StatusServiceUnavailable},
 	} {
 		if got := serve(step.handler, step.key); got != step.want {
@@ -333,9 +333,11 @@ func (c countingAPIKeyValidator) Lookup(ctx context.Context, key string) (auth.S
 }
 
 // Invariant: a throttled caller triggers no credential lookup. Once an
-// IP has been answered 429 by the failed-auth throttle, every further
-// credentialed request from it in the window is refused before the
-// validator runs, valid key or not; another IP is unaffected.
+// (IP, credential) pair has failed past the budget, replaying that
+// credential from that IP is refused before the validator runs. The gate
+// is per credential, so a guesser sharing the IP (NAT, CGNAT, IPv6 /64)
+// cannot lock out a key it does not hold: a new guess is still looked up
+// and answered by the IP-wide status, and a valid key still passes.
 func TestAuth_FailedAuthThrottle_ThrottledCallerTriggersNoLookup(t *testing.T) {
 	if err := middleware.SetTrustedProxyCIDRs([]string{}); err != nil {
 		t.Fatalf("SetTrustedProxyCIDRs: %v", err)
@@ -363,6 +365,12 @@ func TestAuth_FailedAuthThrottle_ThrottledCallerTriggersNoLookup(t *testing.T) {
 				h.ServeHTTP(w, r)
 				return w.Code
 			}
+			lookups := func(want int64, what string) {
+				t.Helper()
+				if got := calls.Swap(0); got != want {
+					t.Fatalf("%s: %d credential lookups, want %d", what, got, want)
+				}
+			}
 
 			const ip = "203.0.113.90"
 			for i := 1; i <= budget; i++ {
@@ -373,25 +381,30 @@ func TestAuth_FailedAuthThrottle_ThrottledCallerTriggersNoLookup(t *testing.T) {
 			if got := serve(ip, "wrong-key"); got != http.StatusTooManyRequests {
 				t.Fatalf("over-budget attempt: status = %d, want 429", got)
 			}
-			before := calls.Load()
-			for _, key := range []string{"wrong-key", "another-wrong-key", "good-key"} {
-				if got := serve(ip, key); got != http.StatusTooManyRequests {
-					t.Fatalf("throttled IP with key %q: status = %d, want 429", key, got)
+			lookups(budget+1, "attempts up to the refusal")
+
+			for range 3 {
+				if got := serve(ip, "wrong-key"); got != http.StatusTooManyRequests {
+					t.Fatalf("replayed refused key: status = %d, want 429", got)
 				}
 			}
-			if d := calls.Load() - before; d != 0 {
-				t.Fatalf("throttled caller triggered %d credential lookups, want 0", d)
+			lookups(0, "replaying the refused key")
+
+			if got := serve(ip, "another-wrong-key"); got != http.StatusTooManyRequests {
+				t.Fatalf("new guess from throttled IP: status = %d, want 429 (IP-wide status)", got)
 			}
-			// A keyless request carries no credential to look up and stays anonymous.
+			lookups(1, "a new guess from the throttled IP")
+
+			if got := serve(ip, "good-key"); got != http.StatusOK {
+				t.Fatalf("valid key behind the throttled IP: status = %d, want 200 (not lockable by a guesser)", got)
+			}
 			if got := serve(ip, ""); got != http.StatusOK {
 				t.Fatalf("keyless request from throttled IP: status = %d, want 200 (anonymous)", got)
 			}
-			if got := serve("198.51.100.91", "good-key"); got != http.StatusOK {
-				t.Fatalf("valid key from another IP: status = %d, want 200", got)
+			if got := serve("198.51.100.91", "wrong-key"); got != http.StatusUnauthorized {
+				t.Fatalf("refused key from another IP: status = %d, want 401", got)
 			}
-			if d := calls.Load() - before; d != 1 {
-				t.Fatalf("lookups after the throttle = %d, want 1 (the other IP's)", d)
-			}
+			lookups(2, "valid key and another IP")
 		})
 	}
 }
