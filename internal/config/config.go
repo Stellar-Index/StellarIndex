@@ -1815,30 +1815,17 @@ type SupplyConfig struct {
 	// launch, after a few weeks of green snapshot timers.
 	StrictFreshnessRequired bool `toml:"strict_freshness_required" doc:"F-1236: when true, supply snapshots without a MinComponentLedger anchor (i.e. zero-value freshness, the static-XLM fallback or a transiently-failing producer) are rejected rather than published. Default false preserves backwards-compatible permissive behaviour; flip true after the freshness producers are confirmed wired in steady state." default:"false"`
 
-	// StaleComponentLedgersByAsset maps asset_key — the internal
-	// supply.AssetKey() shape ('XLM' for native, 'CODE:ISSUER' for
-	// classic, bare contract id for SEP-41; see
-	// internal/supply.AssetKey and PerAssetLockedSets above) — to a
-	// per-asset stale-component threshold override in ledgers.
-	// F-0040 (audit-2026-05-26): the global 1000-ledger F-1236
-	// default rejects low-activity assets like PHO (~1200-ledger
-	// lag between trustline observations is normal). Per-asset
-	// overrides relax the gate without loosening it for
-	// high-activity XLM/USDC. Empty map preserves the global
-	// default for every asset. Keys are canonicalised through
-	// supply.CanonicalizeStaleComponentLedgers (so CODE-ISSUER and
-	// "native" also resolve), and Validate rejects a key that does
-	// not name a watched asset.
-	//
-	// Concrete deployment example:
-	//
-	//   [supply.stale_component_ledgers_by_asset]
-	//   "PHO:GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO" = 5000
-	//
-	// A zero per-asset value disables the gate for that asset
-	// alone — useful for assets where the trustline-observer
-	// cadence isn't yet wired and the operator wants to publish
-	// snapshots while accepting unbounded staleness.
+	StaleComponentLedgers uint32 `toml:"stale_component_ledgers" doc:"Global stale-component threshold in ledgers: a supply snapshot whose oldest component observation lags the snapshot ledger by more than this is rejected (outcome stale_component). 0 disables the gate. Per-asset overrides live in stale_component_ledgers_by_asset. Independent of the classic/SAC cross-check alignment window, which stays fixed at 1000 ledgers." default:"1000"`
+
+	MaxDormantComponentLedgers uint32 `toml:"max_dormant_component_ledgers" doc:"Dormancy horizon in ledgers: how far the snapshot ledger may run ahead of an UNCHANGED component ledger before a dormant-asset accept becomes a stale_component rejection. 0 disables the horizon, so a dead observer looks dormant forever; set it only for assets legitimately dormant for long stretches whose observers are monitored another way." default:"17280"`
+
+	// StaleComponentLedgersByAsset relaxes or tightens the global
+	// stale_component_ledgers gate for one asset, so a known low-activity
+	// asset (PHO lags ~1200 ledgers between trustline observations) does
+	// not force the gate open fleet-wide. Keys are canonicalised through
+	// supply.CanonicalizeStaleComponentLedgers; Validate rejects a key
+	// that names no watched asset. A zero value disables the gate for that
+	// asset alone.
 	StaleComponentLedgersByAsset map[string]uint32 `toml:"stale_component_ledgers_by_asset" doc:"Per-asset override of the F-1236 stale-component-ledger threshold. Map keys are asset_key in the internal supply.AssetKey() shape ('XLM' for native, CODE:ISSUER for classic, bare contract id for SEP-41); values are ledger counts. Empty map (default) keeps every asset on the global 1000-ledger threshold. F-0040 (audit-2026-05-26)." default:"{}"`
 
 	// PerAssetLockedSets overrides the per-algorithm default
@@ -2427,8 +2414,10 @@ func Default() Config {
 			// flipped on; a non-zero default avoids time.NewTicker(0)
 			// panicking if an operator enables the worker without setting
 			// it (the validation gap behind G19-02).
-			AggregatorRefreshCadence: 5 * time.Minute,
-			ReserveBalancesMaxAge:    DefaultReserveBalancesMaxAge,
+			AggregatorRefreshCadence:   5 * time.Minute,
+			ReserveBalancesMaxAge:      DefaultReserveBalancesMaxAge,
+			StaleComponentLedgers:      supply.DefaultStaleComponentLedgers,
+			MaxDormantComponentLedgers: supply.DefaultMaxDormantComponentLedgers,
 		},
 		HashDB: defaultHashDBConfig(),
 		Obs: ObsConfig{

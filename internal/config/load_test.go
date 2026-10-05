@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	cfg "github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 func TestLoadReader_happyPath(t *testing.T) {
@@ -766,5 +767,36 @@ func TestLoadReader_PasswordKeysAndDeprecatedAliases(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "fixture-") {
 		t.Errorf("error echoes a password value: %v", err)
+	}
+}
+
+// The global supply freshness keys default to the supply package's
+// compiled thresholds, and an explicit 0 (gate / horizon disabled) must
+// survive decoding rather than fall back to the default.
+func TestLoadReader_SupplyFreshnessThresholds(t *testing.T) {
+	c, err := cfg.LoadReader(strings.NewReader("[stellar]\nnetwork = \"pubnet\"\n"), "test.toml")
+	if err != nil {
+		t.Fatalf("LoadReader: %v", err)
+	}
+	if c.Supply.StaleComponentLedgers != supply.DefaultStaleComponentLedgers ||
+		c.Supply.MaxDormantComponentLedgers != supply.DefaultMaxDormantComponentLedgers {
+		t.Fatalf("defaults = (%d, %d), want (%d, %d)",
+			c.Supply.StaleComponentLedgers, c.Supply.MaxDormantComponentLedgers,
+			supply.DefaultStaleComponentLedgers, supply.DefaultMaxDormantComponentLedgers)
+	}
+	c, err = cfg.LoadReader(strings.NewReader(`
+[stellar]
+network = "pubnet"
+
+[supply]
+stale_component_ledgers = 0
+max_dormant_component_ledgers = 0
+`), "test.toml")
+	if err != nil {
+		t.Fatalf("LoadReader: %v", err)
+	}
+	if c.Supply.StaleComponentLedgers != 0 || c.Supply.MaxDormantComponentLedgers != 0 {
+		t.Fatalf("explicit zeros decoded as (%d, %d), want (0, 0)",
+			c.Supply.StaleComponentLedgers, c.Supply.MaxDormantComponentLedgers)
 	}
 }
