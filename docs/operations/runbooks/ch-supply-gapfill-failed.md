@@ -57,7 +57,7 @@ Classify the failure:
 ## Related
 
 - Script: `configs/ansible/roles/archival-node/files/run-ch-supply.sh`; unit: `templates/systemd/ch-supply.service.j2`.
-- Architecture: `docs/architecture/clickhouse-supply-from-ch.md`.
+- Architecture: `docs/architecture/storage-considerations.md#supply-flows-in-the-lake`.
 - Sibling failed-unit alert (same `node_systemd_unit_state` pattern): [`verify-archive-unit-failed.md`](verify-archive-unit-failed.md).
 
 ## Changelog

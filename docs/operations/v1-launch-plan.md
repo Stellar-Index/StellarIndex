@@ -26,7 +26,7 @@ severity: P1
 
 > **RE-VERIFIED 2026-09-08 against live r1 and repo HEAD.** Rows corrected in that pass: **1.7**
 > (test nets were NOT behind — all three hosts level at v0.63.0/schema 155) and the retention claims
-> in `docs/architecture/slos-and-guarantees.md` (which asserted `prices_1d` held native pairs back to
+> in the since-deleted `slos-and-guarantees.md` (now summarised in `docs/architecture/coverage-matrix.md`, S6.1/S7.2; it then asserted `prices_1d` held native pairs back to
 > 2015-11-18 with 6.3M rows; SDEX data begins **2026-03-12** and the whole view is 4.33M rows).
 > Confirmed still open: **1.2** (no signed accepted-risk register exists), **1.5** (all five
 > `HEALTHCHECKS_URL_*` present but EMPTY), **1.8** (`DEPLOY_APPROVAL_RELAXED=true`, set 2026-07-26),

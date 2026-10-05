@@ -18,7 +18,7 @@ import (
 //
 //	supply(contract) = Σ mint − Σ burn − Σ clawback   (baseline 0 at genesis)
 //
-// (ADR-0034 + docs/architecture/clickhouse-supply-from-ch.md.) The contract_id
+// (ADR-0034 + docs/architecture/storage-considerations.md#supply-flows-in-the-lake.) The contract_id
 // is the asset's SAC (classic) or token (SEP-41) contract — a unique per-token
 // key.
 //
