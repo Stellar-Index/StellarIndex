@@ -51,6 +51,7 @@ scripts/ops/zfs-snapshot.sh                                               zfs_sn
 # one that drives the convoy/CAGG probe whose 2026-09-10 defect this gate
 # exists for.
 configs/ansible/roles/archival-node/tasks/10-observability.yml            galexie_catchup.prom,timescale_jobs.prom,stellar_stack_version.prom,stellarindex_binary_version.prom  scripts/ci/timescale-jobs-probe-test.sh
+configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml        operator-supplied                  scripts/ci/run-heavy-job-test.sh
 configs/ansible/roles/haproxy/tasks/07-monitoring.yml                     keepalived.prom                    -
 configs/ansible/roles/patroni/tasks/11-monitoring.yml                     patroni.prom                       -
 configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml              redis_sentinel.prom                -
