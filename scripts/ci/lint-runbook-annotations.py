@@ -67,7 +67,7 @@ def resolve_local_runbook(value):
     presence-only). A bare repo-relative path is NOT resolved here — it
     fails its own check below instead of being treated as valid."""
     if value.startswith("https://") and RUNBOOKS_MARKER in value:
-        return RUNBOOKS_MARKER + value.split(RUNBOOKS_MARKER, 1)[1]
+        return RUNBOOKS_MARKER + value.split(RUNBOOKS_MARKER, 1)[1].split("#", 1)[0]
     return None
 
 

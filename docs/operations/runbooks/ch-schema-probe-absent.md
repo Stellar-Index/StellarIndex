@@ -115,7 +115,7 @@ clickhouse-client --port 9300 -q "SELECT name FROM system.columns
 
 ## Related
 
-- [clickhouse-server-health](clickhouse-server-health.md) — the lake
+- [clickhouse](clickhouse.md) — the lake
   itself being down or failing queries.
 - `docs/reference/metrics/README.md` — `stellarindex_ch_schema_probe_present`
   and `stellarindex_ch_schema_probe_unanswered_total`.

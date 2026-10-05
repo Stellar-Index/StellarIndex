@@ -164,10 +164,10 @@ ssh root@<host> "journalctl -u stellarindex-aggregator -n 200 --output=cat | gre
 - `aggregator-silent.md` — the absent-series branch of this alert.
 - `source-stopped.md` — when a specific source has stopped dispatching.
 - `cagg-stale.md` — when aggregation jobs fail to refresh.
-- `oracle-stale.md` — oracle-specific staleness.
+- `divergence.md#stellarindex_oracle_stale` — oracle-specific staleness.
 - `sla-probe-freshness-breach.md` — the customer-facing freshness
   alert (`/v1/price/tip` > 30 s, other endpoints > 180 s).
-- `data-source-stale.md`, `served-value-drift.md` — adjacent
+- `data-freshness.md` — adjacent
   freshness / drift signals.
 - `binary-version-skew.md` — half-upgraded aggregator (root cause 5).
 - HA plan §9 degradation envelope: `docs/architecture/ha-plan.md`.

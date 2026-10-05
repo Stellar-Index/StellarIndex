@@ -586,7 +586,7 @@ list).
   the policy chain underlying VWAP computation.
 - [`docs/operations/runbooks/aggregator-outlier-storm.md`](../operations/runbooks/aggregator-outlier-storm.md) —
   the runbook that fires on adversarial outlier patterns.
-- [`docs/operations/runbooks/price-divergence.md`](../operations/runbooks/price-divergence.md) —
+- [`docs/operations/runbooks/divergence.md`](../operations/runbooks/divergence.md) —
   the runbook that fires on cross-reference divergence.
 
 ## Maintenance

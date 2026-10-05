@@ -45,7 +45,7 @@ ssh root@136.243.90.96 'sudo -u postgres psql -d stellarindex -c "SELECT source,
 
 ## Prices stale / wrong / diverging
 
-Runbook chain: `price-divergence.md` + the aggregator-layer runbooks.
+Runbook chain: `runbooks/divergence.md` + the aggregator-layer runbooks.
 Layer order (check top-down):
 1. **Served value vs truth** — `stellarindex-ops verify-served-values
    -api https://api.stellarindex.io` (supply/mcap class) and

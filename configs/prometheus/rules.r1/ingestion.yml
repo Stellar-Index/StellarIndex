@@ -131,7 +131,7 @@ groups:
             ample slack for upstream cadence variation.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
 
-      # Hourly publishers. Band relays hourly (oracle-stale.md), so a 30h
+      # Hourly publishers. Band relays hourly (divergence.md#stellarindex_oracle_stale), so a 30h
       # window would take a day and a half to notice a dead relayer.
       # 6h = six missed relays; for 1h keeps a late push from ticketing.
       - alert: stellarindex_ingestion_source_stopped_hourly_publisher

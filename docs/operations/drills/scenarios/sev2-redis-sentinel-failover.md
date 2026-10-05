@@ -3,7 +3,7 @@ title: SEV-2 tabletop — Redis Sentinel master failover under live traffic
 last_verified: 2026-10-05
 status: draft
 severity: P2
-exercises_runbook: ../../runbooks/redis-master-down.md
+exercises_runbook: ../../runbooks/cache.md#stellarindex_redis_master_down
 playbook_section: ../../sev-playbook.md#4-response-flow
 ---
 

@@ -119,7 +119,7 @@ curl -sSf https://api.stellarindex.io/v1/readyz | jq '.data'
 ```
 
 - `postgres.ok == false` → [timescale-primary-down](timescale-primary-down.md).
-- `redis.ok == false` → [redis-master-down](redis-master-down.md).
+- `redis.ok == false` → [cache](cache.md#stellarindex_redis_master_down).
 - All OK but 5xx still elevated → handler-level bug, §B Mitigation.
 
 ### 4. Is there a visible pattern in the logs?
@@ -236,7 +236,7 @@ last-known-good binary. You can't path-gate around middleware.
 If /v1/readyz points at a dep being down, the dependency's runbook
 is the one to follow:
 - [timescale-primary-down](timescale-primary-down.md)
-- [redis-master-down](redis-master-down.md)
+- [cache](cache.md#stellarindex_redis_master_down)
 - [all-ingestion-down](all-ingestion-down.md)
 
 This alert will auto-resolve once the dep recovers.

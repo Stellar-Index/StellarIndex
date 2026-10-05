@@ -253,7 +253,7 @@ Gather for the postmortem:
   hosts healthy.
 - [`api-latency.md`](api-latency.md) — slow but alive.
 - [`timescale-primary-down.md`](timescale-primary-down.md),
-  [`redis-master-down.md`](redis-master-down.md) — upstream
+  [`cache.md`](cache.md#stellarindex_redis_master_down) — upstream
   failures that can cascade into readyz red.
 - [`binary-version-skew.md`](binary-version-skew.md) — running
   binary != deployed tag.

@@ -18,7 +18,7 @@ groups:
           team: stellarindex
           component: cache
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-master-down.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache.md#stellarindex_redis_master_down
           summary: "Redis master {{ $labels.instance }} down (SEV-1)"
           description: |
             A Redis master has been unreachable for 30+ s. Sentinel should
@@ -33,7 +33,7 @@ groups:
           team: stellarindex
           component: cache
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache.md#stellarindex_redis_memory_saturated
           summary: "Redis {{ $labels.instance }} memory {{ $value | humanize }}% used"
           description: |
             At > 90 % memory for 5+ minutes. volatile-lru will start evicting
@@ -48,7 +48,7 @@ groups:
           team: stellarindex
           component: cache
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache.md#stellarindex_redis_evictions_high
           summary: "Redis {{ $labels.instance }} evicting {{ $value | humanize }}/s keys"
           description: |
             Eviction rate exceeds 100/s sustained 5+ min. LRU pressure. API
@@ -83,7 +83,7 @@ groups:
           team: stellarindex
           component: cache
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache.md#stellarindex_redis_write_rejected_oom
           summary: "Redis {{ $labels.instance }} rejecting writes ({{ $labels.err }})"
           description: |
             Redis is refusing writes outright rather than degrading —
@@ -115,7 +115,7 @@ groups:
           team: stellarindex
           component: cache
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-replication.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache.md#stellarindex_redis_replication_broken
           summary: "Redis master {{ $labels.instance }} missing replicas"
           description: |
             Master reports {{ $value }} connected replicas, fewer than
@@ -136,7 +136,7 @@ groups:
           team: stellarindex
           component: cache
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-sentinel-textfile-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache.md#stellarindex_redis_sentinel_textfile_stale
           summary: "redis-sentinel-textfile-scraper has not run for 10m on {{ $labels.instance }}"
           description: |
             redis_sentinel.prom has not been rewritten in 10+ minutes

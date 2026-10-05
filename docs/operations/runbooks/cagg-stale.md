@@ -66,7 +66,7 @@ runuser -u postgres -- psql -d stellarindex -c \
 
 # Try a manual refresh of the trailing window — does it succeed? Never a
 # NULL start: on twap_1h/twap_1d that deletes history once prices_1m's
-# retention is armed (twap-history-missing.md). <min_window> is the view's
+# retention is armed (data-freshness.md#stellarindex_twap_history_missing). <min_window> is the view's
 # MinWindow in internal/storage/timescale/diagnostics.go (TradesCAGGs,
 # OracleCAGGs, SupplyCAGG) — e.g. '3 hours' for *_1h, '3 days' for *_1d,
 # '21 days' for *_1w, '93 days' for *_1mo; narrower fails 22023 "refresh

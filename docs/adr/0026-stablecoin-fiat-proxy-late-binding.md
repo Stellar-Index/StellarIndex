@@ -29,7 +29,7 @@ Decoders never rewrite a stablecoin code to fiat, and the crypto-ticker proxy ma
 - Fixing a peg policy corrects all history on the next response.
 - Each API surface that resolves a `fiat:*` quote must call the proxy itself after its primary lookup misses; accepted over one middleware that would couple every response shape to it.
 - `XLM/fiat:USD` is a pseudo-pair that matches no single set of trades; per-surface flags and OpenAPI say so.
-- Operator response to a depeg is `docs/operations/runbooks/price-divergence.md`.
+- Operator response to a depeg is `docs/operations/runbooks/divergence.md`.
 
 ## Evidence
 

@@ -149,7 +149,7 @@ scrape_configs:
   # applied the job is down and clickhouse.yml's
   # stellarindex_clickhouse_server_down pages, which is the intended
   # signal that the lake's read path has no telemetry.
-  # Runbook: docs/operations/runbooks/clickhouse-server-health.md
+  # Runbook: docs/operations/runbooks/clickhouse.md
   - job_name: clickhouse
     static_configs:
       - targets: [localhost:9363]

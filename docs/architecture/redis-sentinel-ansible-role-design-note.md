@@ -4,7 +4,7 @@ last_verified: 2026-07-24
 status: NOT shipped (corrected 2026-07-24, audit-2026-07-23 DOC-05) — the ansible role exists at configs/ansible/roles/redis-sentinel/ but no playbook invokes it and it has never been applied to any host; R1 runs a single-node, no-AUTH redis-server. The Go client-side FailoverClient support IS shipped (see banner).
 related:
   - docs/architecture/ha-plan.md §3.4 (Redis cluster topology)
-  - docs/operations/runbooks/redis-master-down.md (the runbook this role makes work)
+  - docs/operations/runbooks/cache.md#stellarindex_redis_master_down (the runbook this role makes work)
   - docs/architecture/patroni-ansible-role-design-note.md (sister role; same pattern)
 ---
 
@@ -50,7 +50,7 @@ related:
 
 Bootstraps the Redis Sentinel sub-role of Task #72 —
 second-priority after the Patroni piece. Pairs with the Patroni
-note: both roles collectively make `redis-master-down.md` and
+note: both roles collectively make `cache.md` and
 `timescale-primary-down.md` runbooks' "happy path" sections
 actually apply, once deployed.
 
@@ -267,7 +267,7 @@ sub-role focuses on Postgres + API only.
 
 ## Once Redis Sentinel lands, what changes elsewhere
 
-`docs/operations/runbooks/redis-master-down.md`:
+`docs/operations/runbooks/cache.md#stellarindex_redis_master_down`:
 - Mitigation steps shift from "manually identify a replica and
   promote it" to "wait for Sentinel; ~15-30 s. Verify with
   `redis-cli SENTINEL get-master-addr-by-name`."
@@ -346,7 +346,7 @@ Coverage matrix #12 (Redis sub-role) flips ✅.
 | `templates/redis.conf.j2` + `sentinel.conf.j2` | 2 h |
 | `internal/cachekeys` switch to `FailoverClient` | 2 h |
 | `configs/example.toml` update | 0.5 h |
-| `redis-master-down.md` runbook updates | 1 h |
+| `cache.md` runbook updates | 1 h |
 | ha-plan §3.4 amendment + ADR if needed | 1 h |
 | `README.md` (operator-facing) | 1 h |
 | Local Vagrant 3-VM smoke test | 3 h |
@@ -367,7 +367,7 @@ Jinja + a small Go change. Sub-commits:
 3. `feat(ansible): systemd units + firewall + monitoring`
 4. `feat(ansible): bootstrap idempotency (Sentinel-aware)`
 5. `feat(cachekeys): switch to redis FailoverClient`
-6. `docs: redis-master-down runbook updates for Sentinel-driven failover`
+6. `docs: cache runbook updates for Sentinel-driven failover`
 7. `docs: ha-plan §3.4 amendment (Sentinel vs Cluster terminology)`
 8. `chore: configs/example.toml redis.sentinel_addrs + master_name`
 9. `chore: CHANGELOG`

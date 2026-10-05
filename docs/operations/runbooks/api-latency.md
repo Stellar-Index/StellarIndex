@@ -82,7 +82,7 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
      [cache-miss-rate-high.md](cache-miss-rate-high.md)), plus Redis
      `keyspace_misses` / `evicted_keys` climbing in `INFO stats`.
    - Mitigation: warm the cache or scale Redis memory; see
-     `redis-memory.md`.
+     `cache.md`.
 
 2. **Timescale contention**. A long-running query (manual backfill,
    an operator's exploratory `SELECT` without a LIMIT) holds shared
@@ -114,7 +114,7 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
 - [ ] Step 1 — narrow down which endpoint is slow (diagnosis above).
 - [ ] Step 2 — walk the likely causes in the order above; each has
       a faster check than the next.
-- [ ] Step 3 — if Redis-driven: jump to `redis-memory.md`.
+- [ ] Step 3 — if Redis-driven: jump to `cache.md`.
 - [ ] Step 4 — if Timescale-driven: jump to `pg-conns-saturated.md`
       or `replica-lag.md` depending on the signal (replica-lag is
       multi-host only; INERT on r1 — the single-host deployment has
@@ -162,7 +162,7 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
 ## Related
 
 - `api-5xx.md` — errors, not slowness.
-- `redis-memory.md` / `cagg-stale.md` — common upstream causes.
+- `cache.md` / `cagg-stale.md` — common upstream causes.
 - `pg-conns-saturated.md` — when the pool is the bottleneck.
 
 ## Changelog

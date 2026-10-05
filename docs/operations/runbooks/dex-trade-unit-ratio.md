@@ -52,7 +52,7 @@ flow), so the alert requires BOTH >25 unit-ratio trades in 30m AND
   for that source.
 - Prices for pairs traded predominantly on that source look "too close to
   1" relative to other sources or reference prices (cross-check
-  `price-divergence.md`).
+  `divergence.md`).
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -146,7 +146,7 @@ recomputation after the re-derive.
 - Sibling silent-mispricing detector: `dex-nonstandard-decimals.md`
   (decimals-assumption landmine — same "presence != plausibility" class
   of bug).
-- `price-divergence.md` — the downstream symptom this can cause on a
+- `divergence.md` — the downstream symptom this can cause on a
   liquid pair.
 - ADR-0033 (completeness verification) — what this alert complements:
   completeness proves row presence, not economic correctness.

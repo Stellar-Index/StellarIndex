@@ -36,7 +36,7 @@
 # configs/prometheus/prometheus.r1.yml (job `clickhouse`); the alerts
 # that read the series are in {deploy/monitoring,configs/prometheus}/
 # rules{,.r1}/clickhouse.yml with docs/operations/runbooks/
-# clickhouse-server-health.md.
+# clickhouse.md.
 
 - name: Enable the ClickHouse Prometheus endpoint
   ansible.builtin.template:

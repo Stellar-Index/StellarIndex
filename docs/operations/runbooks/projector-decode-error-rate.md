@@ -121,7 +121,7 @@ the live ingest path (`stellarindex_ingestion_decode_error`); check both.
   write, not a decode, was the un-processable failure).
 - `projector-lag.md` — the projector's lag/cycle-error alerts; note this
   alert can fire while lag looks healthy.
-- `completeness-incomplete.md` — a sustained decode drop on one source
+- `data-freshness.md#stellarindex_completeness_incomplete` — a sustained decode drop on one source
   eventually shows up as `complete=false` on the ADR-0033 verdict.
 - `internal/projector/projector.go` (`processEventSafely`,
   `cycleOneSource`) — the implementation.

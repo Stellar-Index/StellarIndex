@@ -132,7 +132,7 @@ means nothing is being scraped at all.
   that let it write.
 - `sla-probe-stale.md` — the same OBS-2 shape for the SLA probe; read it
   for the general "is the check itself alive" pattern.
-- `data-freshness-watchdog-silent.md` — the frozen-textfile failure mode
+- `data-freshness.md#stellarindex_data_freshness_probe_frozen` — the frozen-textfile failure mode
   in a different emitter.
 - `healthcheck-ping-undelivered.md` — the other reason Healthchecks.io
   goes quiet about this check: the ping was never delivered. That alert

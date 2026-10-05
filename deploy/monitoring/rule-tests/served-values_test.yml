@@ -68,7 +68,7 @@ tests:
               team: stellarindex
               component: data-truth
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_served_value_check_stale
               summary: "verify-served-values has not completed in 2 days"
               description: |
                 The daily served-value truth harness hasn't written its
@@ -95,7 +95,7 @@ tests:
               team: stellarindex
               component: data-truth
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_served_value_check_stale
               summary: "verify-served-values has not completed in 2 days"
               description: |
                 The daily served-value truth harness hasn't written its
@@ -166,7 +166,7 @@ tests:
               name: verify-served-values.service
               state: failed
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_served_value_unit_failed
               summary: "verify-served-values.service failed on two consecutive daily runs"
               description: |
                 The served-value truth harness exited non-zero on its last two
@@ -221,7 +221,7 @@ tests:
               component: data-truth
               kind: missing
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_sdf_reserve_list_drift
               summary: "supply.sdf_reserve_accounts differs from the reserve list SDF publishes (1 missing)"
               description: |
                 verify-served-values found 1 account(s) of kind
@@ -291,7 +291,7 @@ tests:
               component: data-truth
               check: sdf_reserve_list
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_served_value_persistently_skipped
               summary: "Served-value check sdf_reserve_list unverifiable for 2 days (truth source dark)"
               description: |
                 verify-served-values has SKIPPED sdf_reserve_list on every

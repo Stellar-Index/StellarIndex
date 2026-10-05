@@ -334,9 +334,9 @@ escalated ones that had already paged a human.
   attack catalogue; this runbook is the operational arm of Layer 9.
 - [freeze-recovery-stalled.md](freeze-recovery-stalled.md) —
   companion: the recovery worker (durable-row close side) stalling.
-- [price-divergence.md](price-divergence.md) — cross-reference
+- [divergence.md](divergence.md#stellarindex_price_divergence_warning) — cross-reference
   divergence triage; often co-fires with a real anomaly.
-- [divergence-no-reference.md](divergence-no-reference.md) — when
+- [divergence.md](divergence.md#stellarindex_divergence_no_reference) — when
   the cross-oracle checker itself is dark (CS-087/CS-088): an
   unverifiable freeze decision is weaker evidence in both directions.
 - [aggregator-outlier-storm.md](aggregator-outlier-storm.md) —

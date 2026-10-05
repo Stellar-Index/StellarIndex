@@ -14,7 +14,7 @@ groups:
           team: stellarindex
           component: data-freshness
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_source_stale
           summary: "Data source {{ $labels.domain }}/{{ $labels.source }} is stale"
           description: |
             stellarindex_data_freshness_stale{domain="{{ $labels.domain }}",source="{{ $labels.source }}"} = 1
@@ -29,7 +29,7 @@ groups:
             mechanisms. Never silence this alert at Alertmanager instead;
             it hides every other source's real outage too.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md#retiring-a-source
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#retiring-a-source
 
       # CS-102 (2026-07-28): the domain-level `supply` freshness check measures
       # max(time) across the WHOLE table, so it proves only that SOME asset is
@@ -45,7 +45,7 @@ groups:
           team: stellarindex
           component: supply
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-assets-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_supply_assets_stale
           summary: "{{ $value }} watched asset(s) have frozen supply"
           description: |
             stellarindex_supply_assets_stale = {{ $value }} — that many watched
@@ -61,7 +61,7 @@ groups:
             snapshot. Check whether the affected assets share a component whose
             observations have gone quiet before assuming a dead writer.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-assets-stale.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_supply_assets_stale
 
       # A source's ADR-0033 verdict is complete=false: either a REAL
       # served<>lake gap to re-derive, or (sdex/sep41_transfers only) a dirty
@@ -75,7 +75,7 @@ groups:
           team: stellarindex
           component: completeness
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/completeness-incomplete.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_completeness_incomplete
           summary: "Source {{ $labels.source }} failed the ADR-0033 completeness verdict"
           description: |
             stellarindex_completeness_incomplete{source="{{ $labels.source }}"} = 1 — the latest
@@ -90,7 +90,7 @@ groups:
             - Anything else is a real served<>lake gap: re-derive that source from the lake,
               then re-verify with compute-completeness.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/completeness-incomplete.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_completeness_incomplete
 
       # UNRECOGNIZED EVENTS FROM A KNOWN PROTOCOL — the bucket that means
       # our bug.
@@ -120,7 +120,7 @@ groups:
           team: stellarindex
           component: completeness
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-recognition-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_source_recognition_failing
           summary: "{{ $labels.source }} emitted events none of its decoders recognise"
           description: |
             Source {{ $labels.source }} has an unrecognized (contract, topic) shape on a
@@ -170,7 +170,7 @@ groups:
           team: stellarindex
           component: completeness
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/twap-history-missing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_twap_history_missing
           summary: "Continuous aggregate {{ $labels.view }} is missing its history — post-migration refresh_continuous_aggregate follow-up not run"
           description: |
             {{ $labels.view }} is missing history the `trades` hypertable holds: the view
@@ -189,7 +189,7 @@ groups:
             TWAP refresh deletes the history it was meant to restore. Then confirm this clears
             on the next data-freshness tick.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/twap-history-missing.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_twap_history_missing
 
       # The watchdog that catches every other staleness is itself dark.
       - alert: stellarindex_data_freshness_watchdog_silent
@@ -201,7 +201,7 @@ groups:
           team: stellarindex
           component: data-freshness
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_freshness_watchdog_silent
           summary: "data-freshness watchdog stopped emitting"
           description: |
             stellarindex_data_freshness_stale has been absent > 45m — data-freshness.timer
@@ -209,7 +209,7 @@ groups:
             verdict staleness is blind. Check `systemctl status data-freshness.service` +
             its last journal on r1.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_freshness_watchdog_silent
 
       # watchdog_silent is family-wide: it cannot see ONE series vanish while
       # the rest of the file keeps publishing. The ClickHouse supply_flows
@@ -228,7 +228,7 @@ groups:
           team: stellarindex
           component: data-freshness
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_sep41_supply_freshness_absent
           summary: "SEP-41 supply freshness gauge absent on {{ $labels.instance }} — served SEP-41 supply staleness is unmonitored"
           description: |
             data_freshness.prom on {{ $labels.instance }} is publishing, but
@@ -239,7 +239,7 @@ groups:
             supply while this lasts. Check ClickHouse HTTP on :8123 and
             `journalctl -u data-freshness.service` for "supply_flows probe failed".
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md#sep-41-supply-series-absent
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_sep41_supply_freshness_absent
 
       # watchdog_silent above only sees ABSENCE. The script builds the
       # whole textfile in a temp file and swaps it in atomically at the
@@ -261,7 +261,7 @@ groups:
           team: stellarindex
           component: data-freshness
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_freshness_probe_frozen
           summary: "data-freshness.prom has not been rewritten in 45m — gauges may be frozen, not fresh"
           description: |
             data_freshness.prom's mtime is > 45m old (timer runs every
@@ -273,7 +273,7 @@ groups:
             and the file's mtime directly before trusting any
             stellarindex_data_freshness_stale reading as current.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_freshness_probe_frozen
 
       - alert: stellarindex_served_value_drift
         expr: stellarindex_served_value_ok == 0
@@ -283,7 +283,7 @@ groups:
           team: stellarindex
           component: data-truth
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_served_value_drift
           summary: "Served value {{ $labels.check }} diverges from independent ground truth"
           description: |
             verify-served-values found {{ $labels.check }} outside its
@@ -313,7 +313,7 @@ groups:
           team: stellarindex
           component: data-truth
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_served_value_check_stale
           summary: "verify-served-values has not completed in 2 days"
           description: |
             The daily served-value truth harness hasn't written its
@@ -331,7 +331,7 @@ groups:
           team: stellarindex
           component: data-truth
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_served_value_persistently_skipped
           summary: "Served-value check {{ $labels.check }} unverifiable for 2 days (truth source dark)"
           description: |
             verify-served-values has SKIPPED {{ $labels.check }} on every
@@ -369,7 +369,7 @@ groups:
           team: stellarindex
           component: data-truth
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_sdf_reserve_list_drift
           summary: "supply.sdf_reserve_accounts differs from the reserve list SDF publishes ({{ $value }} {{ $labels.kind }})"
           description: |
             verify-served-values found {{ $value }} account(s) of kind
@@ -422,7 +422,7 @@ groups:
           team: stellarindex
           component: data-truth
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_served_value_unit_failed
           summary: "verify-served-values.service failed on two consecutive daily runs"
           description: |
             The served-value truth harness exited non-zero on its last two

@@ -3,7 +3,7 @@
 # endpoint (port 9363 — there is no exporter process; the server serves
 # /metrics itself). Producer: the archival-node role's
 # 22-clickhouse-exporter.yml drop-in, scraped by the `clickhouse` job.
-# Runbook: docs/operations/runbooks/clickhouse-server-health.md.
+# Runbook: docs/operations/runbooks/clickhouse.md.
 #
 # Why this file exists (2026-09-03): the stock config.xml ships the
 # entire <prometheus> block inside an XML comment, so on r1 nothing
@@ -53,7 +53,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse-server-health.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_clickhouse_server_down
           summary: "ClickHouse is not answering its metrics endpoint — the lake read path is unobservable"
           description: |
             The `clickhouse` scrape target (clickhouse-server's own
@@ -85,7 +85,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse-server-health.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_clickhouse_query_failures_high
           summary: "ClickHouse is failing {{ printf \"%.2f\" $value }} queries/s on {{ $labels.instance }}"
           description: |
             More than 0.1 failed queries/s (≈ 6/min) for 15 minutes,
@@ -127,7 +127,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse-server-health.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_clickhouse_inserts_rejected
           summary: "ClickHouse rejected {{ $value | humanize }} inserts on {{ $labels.instance }} in the last hour — too many parts"
           description: |
             ClickHouse refused at least one INSERT in the trailing hour

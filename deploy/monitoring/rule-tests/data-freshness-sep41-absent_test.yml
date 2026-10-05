@@ -34,7 +34,7 @@ tests:
               team: stellarindex
               component: data-freshness
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_sep41_supply_freshness_absent
               summary: "SEP-41 supply freshness gauge absent on r1:9100 — served SEP-41 supply staleness is unmonitored"
               description: |
                 data_freshness.prom on r1:9100 is publishing, but
@@ -45,7 +45,7 @@ tests:
                 supply while this lasts. Check ClickHouse HTTP on :8123 and
                 `journalctl -u data-freshness.service` for "supply_flows probe failed".
 
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md#sep-41-supply-series-absent
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_sep41_supply_freshness_absent
       # The family-wide meta-alert is structurally blind to this state.
       - eval_time: 150m
         alertname: stellarindex_data_freshness_watchdog_silent

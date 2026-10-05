@@ -88,7 +88,7 @@ tests:
               team: stellarindex
               component: cache
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-sentinel-textfile-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache.md#stellarindex_redis_sentinel_textfile_stale
               summary: "redis-sentinel-textfile-scraper has not run for 10m on r1:9100"
               description: |
                 redis_sentinel.prom has not been rewritten in 10+ minutes

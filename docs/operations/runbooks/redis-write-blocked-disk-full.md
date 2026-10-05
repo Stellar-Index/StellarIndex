@@ -193,9 +193,9 @@ happen the change is one `CONFIG SET` away.
 ## Related runbooks
 
 - [`db-disk-full.md`](db-disk-full.md) — postgres-side disk pressure.
-- [`redis-master-down.md`](redis-master-down.md) — different shape:
+- [`cache.md`](cache.md#stellarindex_redis_master_down) — different shape:
   Redis process exited rather than rejecting writes.
-- [`redis-memory.md`](redis-memory.md) — memory pressure (eviction
+- [`cache.md`](cache.md#stellarindex_redis_memory_saturated) — memory pressure (eviction
   policies + maxmemory); `stellarindex_redis_write_rejected_oom` is
   that runbook's write-refusal alert (OOM/READONLY/NOREPLICAS) — a
   different mechanism from this one's MISCONF/disk-full, not a

@@ -60,7 +60,7 @@ systemctl status stellarindex-aggregator stellarindex-indexer postgresql@15-main
 ```
 
 Key signals:
-- **`/v1/price` 5xx → upstream Postgres or Redis failed**; jump to `timescale-primary-down.md` or `redis-master-down.md`.
+- **`/v1/price` 5xx → upstream Postgres or Redis failed**; jump to `timescale-primary-down.md` or `cache.md`.
 - **All routes 5xx → API process itself is sick**; check OOM (`dmesg | grep -i kill`) and the runtime gauges the API already exports — there is no pprof endpoint in the binary:
   `curl -s http://localhost:3000/metrics | grep -E '^go_goroutines|^go_memstats_heap_inuse'`.
 - **Recent deploy → roll back via `gh workflow run deploy.yml -f region=r1 -f version=<previous-tag> -f binaries=stellarindex-api`**.
