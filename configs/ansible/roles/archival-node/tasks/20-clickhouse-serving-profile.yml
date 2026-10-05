@@ -353,11 +353,9 @@
                Password: SHA-256 hex digest of
                clickhouse_ops_batch_password (ansible-vault —
                vault_clickhouse_ops_batch_password). The plaintext is
-               templated ONLY into /etc/default/stellarindex-ops
-               (09-minio.yml, 0640 root:stellarindex) — the env file
-               the stellarindex-{indexer,aggregator,api} services do
-               NOT source, which is what keeps this demotion scoped
-               to batch jobs. -->
+               templated into /etc/default/stellarindex-ops (09-minio.yml,
+               0640; the env file the indexer/aggregator/api services do
+               NOT source) and the root-only ops-batch xml/netrc client files. -->
           <profiles>
               <ops_batch>
                   <max_threads>{{ clickhouse_ops_batch_max_threads }}</max_threads>

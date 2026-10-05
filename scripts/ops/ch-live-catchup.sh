@@ -55,7 +55,10 @@ PAR=${PAR:-4}
 # the env pair above applies as before.
 CH_CFG=/etc/clickhouse-client/ops-batch.xml
 CH_AUTH=(-C "$CH_CFG")
-[[ -r "$CH_CFG" ]] || CH_AUTH=()
+if [[ ! -r "$CH_CFG" ]]; then
+  echo "ch-live-catchup.sh: credential file $CH_CFG unreadable; using ClickHouse default user" >&2
+  CH_AUTH=()
+fi
 CH() { clickhouse-client ${CH_AUTH[@]+"${CH_AUTH[@]}"} --port "${CH_PORT:-9300}" "$@"; }
 # LIVE_ERA_FROM is the lowest ledger the in-dispatcher dual-sink is
 # responsible for — one past the ceiling of the certified bulk backfill.

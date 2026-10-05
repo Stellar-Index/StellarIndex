@@ -36,7 +36,10 @@ load_env_file /etc/default/stellarindex
 # INV-0802: CH as ops_batch once the role renders this file; /dev/null (no
 # credential, CH `default`) until then, so no deploy order strands this script.
 CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-batch.netrc}"
-[[ -r "$CH_NETRC" ]] || CH_NETRC=/dev/null
+if [[ ! -r "$CH_NETRC" ]]; then
+  echo "run-ch-supply.sh: credential file $CH_NETRC unreadable; using ClickHouse default user" >&2
+  CH_NETRC=/dev/null
+fi
 
 # Debian's pg_wrapper `psql` stats the cluster data dir to pick a version and
 # aborts with "Invalid data directory for cluster 15 main" for any user that

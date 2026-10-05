@@ -21,7 +21,10 @@ set -u
 # INV-0802: CH as ops_monitor once the role renders this file; /dev/null (no
 # credential, CH `default`) until then, so no deploy order strands this script.
 CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-monitor.netrc}"
-[[ -r "$CH_NETRC" ]] || CH_NETRC=/dev/null
+if [[ ! -r "$CH_NETRC" ]]; then
+  echo "config-assertions.sh: credential file $CH_NETRC unreadable; using ClickHouse default user" >&2
+  CH_NETRC=/dev/null
+fi
 
 OUT="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}/config_assertions.prom"
 # Temp beside $OUT so the mv is a same-filesystem rename the collector never sees half-written.

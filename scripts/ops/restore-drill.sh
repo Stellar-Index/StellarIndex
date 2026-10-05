@@ -64,7 +64,10 @@ CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
 # INV-0802: CH as ops_monitor once the role renders this file; /dev/null (no
 # credential, CH `default`) until then, so no deploy order strands this script.
 CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-monitor.netrc}"
-[[ -r "$CH_NETRC" ]] || CH_NETRC=/dev/null
+if [[ ! -r "$CH_NETRC" ]]; then
+  echo "restore-drill.sh: credential file $CH_NETRC unreadable; using ClickHouse default user" >&2
+  CH_NETRC=/dev/null
+fi
 # Bucket the CH re-derive reads. The window is ~1M ledgers below the
 # tip, i.e. history — which on r1 lives in galexie-archive, NOT the
 # trimmed galexie-live default (the 5179250a wrong-bucket class). Passed
