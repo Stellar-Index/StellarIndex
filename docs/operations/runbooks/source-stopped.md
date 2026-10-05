@@ -11,7 +11,7 @@ severity: P2
 
 | Field | Value |
 | ----- | ----- |
-| Alerts (three route here) | `stellarindex_ingestion_source_stopped` — 30 m rate / `for: 15m`, **high-volume allowlist only**<br>`stellarindex_ingestion_source_stopped_low_volume_dex` — 24 h rate / `for: 30m`<br>`stellarindex_ingestion_source_stopped_daily_publisher` — 30 h rate / `for: 1h` |
+| Alerts (four route here) | `stellarindex_ingestion_source_stopped` — 30 m rate / `for: 15m`, **high-volume allowlist only**<br>`stellarindex_ingestion_source_stopped_low_volume_dex` — 24 h rate / `for: 30m`<br>`stellarindex_ingestion_source_stopped_daily_publisher` — 30 h rate / `for: 1h` (`ecb`)<br>`stellarindex_ingestion_source_stopped_hourly_publisher` — 6 h rate / `for: 1h` (`band`) |
 | Severity | P2 (`severity: ticket`) for all three |
 | Detected by | `configs/prometheus/rules.r1/ingestion.yml` (the overlay r1 actually loads); multi-host template: `deploy/monitoring/rules/ingestion.yml`. Both trees carry the same exprs. |
 | Typical MTTR | 15–60 min |
@@ -31,9 +31,10 @@ appears in none of the three is covered only by the fleet-level
 | ----- | ------------------------ | ---------- | ------- |
 | `..._source_stopped` | `binance`, `bitstamp`, `coinbase`, `kraken`, `sdex`, `aquarius`, `reflector-dex`, `reflector-cex`, `reflector-fx`, `redstone`, `coingecko` | `rate(...[30m]) == 0` | 15 m |
 | `..._source_stopped_low_volume_dex` | `comet`, `phoenix`, `soroswap`, `blend` | `rate(...[24h]) == 0` | 30 m |
-| `..._source_stopped_daily_publisher` | `ecb`, `band` | `rate(...[30h]) == 0` | 1 h |
+| `..._source_stopped_daily_publisher` | `ecb` | `rate(...[30h]) == 0` | 1 h |
+| `..._source_stopped_hourly_publisher` | `band` | `rate(...[6h]) == 0` | 1 h |
 
-All three additionally require `stellarindex_source_enabled == 1`
+All four additionally require `stellarindex_source_enabled == 1`
 joined `on (source)`, so a deliberately-disabled source stays quiet.
 
 - Dashboard: *Ingestion → Events per source* panel shows a flat line for the offending source while other sources are still producing.
@@ -87,7 +88,7 @@ whose allowlist names the source.
 | `comet` | Pool-activity-driven; sparse — one curated pool | 45 min normal; alerted by the 24 h low-volume-DEX rule | Since 2026-07-08 comet is contract-identity **gated** to a curated allowlist (`comet.MainnetGatedSet()`, today exactly the Blend BLND/USDC backstop; ADR-0035/0040, CS-026), so unrelated Balancer-v1 deploys no longer leak in — and silence now genuinely means that one pool is quiet. If a *legitimate* new pool has appeared, admitting it is a code change to `comet.MainnetGatedSet()` plus a redeploy; `seed-protocol-contracts -source comet` only re-upserts the in-code set. |
 | `aquarius` | Tied to AMM pool activity; sparse | 30 min | Soroban-RPC `getEvents`. |
 | `blend` | Auction-driven; very sparse outside active markets | 90 min | Auctions don't run continuously — verify there's an active auction window before treating silence as a stop. |
-| `band` | Relayer-push driven — **roughly daily**, not minutes (its rule's own annotation: "Band publishes on relayer push (also roughly daily)") | ~24 h normal; alerted by the 30 h daily-publisher rule | Band emits **zero events** (AGENTS.md surprise) — observed via `InvokeContract` op args through the dispatcher's `ContractCallDecoder`. Verify the `ContractCallDecoder` is wired and the contract is still being relayed-to upstream. |
+| `band` | Relayer-push driven — relays **hourly** (oracle-stale.md) | ~1 h normal; alerted by the 6 h hourly-publisher rule | Band emits **zero events** (AGENTS.md surprise) — observed via `InvokeContract` op args through the dispatcher's `ContractCallDecoder`. Verify the `ContractCallDecoder` is wired and the contract is still being relayed-to upstream. |
 | `redstone` | Batch pushes every ~1 min during active periods | 10 min active / 30 min off-peak | Redstone's adapter event topic is `"REDSTONE"`; the body has no `feed_id` (lives in OpArgs). Verify the OpArgs plumbing is intact. |
 | `reflector` (×3 contracts: DEX/CEX/FX) | Continuous on the active feed | 15 min DEX/CEX, 60 min FX (FX feed is much slower) | Reflector is **three separate contracts** — confirm WHICH one is silent. The DEX/CEX contracts are the most-watched; the FX contract's slower cadence makes it falsely-page-prone. **Upstream-relayer-stuck check**: if the contract is emitting fresh events on-chain (check the ClickHouse `contract_events` lake — the projector's default read source per ADR-0034 — for recent topic_0=REFLECTOR rows; the Postgres `soroban_events` landing zone is the legacy fallback, decommission-pending) BUT every row in `oracle_updates` has the same stale `ts` value, the issue is Reflector's relayer pushing the same `last_update_timestamp` payload — our decoder is correct, the data is genuinely stale upstream. Confirmed pattern on 2026-05-29 (24+ hours stuck at one ts). Cannot mitigate from our side; raise upstream via Reflector ops + flag the staleness publicly. |
 | `binance`, `kraken`, `bitstamp`, `coinbase` (CEX WS streamers) | Continuous (sub-second) when open | 60 s gap = anomalous; 5 min = certainly broken | These are WebSocket streamers, not pollers — silence usually means the WS connection dropped silently. Check streamer-error metrics + reconnect logs. |
