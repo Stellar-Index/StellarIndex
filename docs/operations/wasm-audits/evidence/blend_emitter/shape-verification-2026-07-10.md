@@ -105,8 +105,4 @@ on the whole network at these exact ledgers):
   `evidence/blend_emitter/emitter-438a5528cff17ede.wasm`), not a
   distinct third version.
 
-See `blend_emitter.md` "WASM timeline" for the interpretation --
-this doc's own hedge ("up to 3 uploads") is not something the audit
-could independently confirm from the lake, and the one ledger that
-IS corroborated shows the same hash already established elsewhere,
-not a new one.
+See `blend_emitter.md` "WASM timeline" for the interpretation.
