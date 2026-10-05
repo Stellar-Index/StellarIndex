@@ -227,6 +227,89 @@ func (e *Eraser) deleteRedis(
 	return keys, deleted, nil
 }
 
+// AbandonedRegistrationRetention is how long an unused /v1/register
+// account lives. It equals the validator record's idle TTL, so by then the
+// key no longer authenticates and the reap removes only dead rows.
+const AbandonedRegistrationRetention = auth.MirroredKeyIdleTTL
+
+// abandonedSweepLimit caps the accounts one sweep erases; the next hourly
+// sweep takes the rest.
+const abandonedSweepLimit = 500
+
+// AbandonedLister lists reap candidates; *postgresstore.AccountStore
+// satisfies it.
+type AbandonedLister interface {
+	ListAbandonedRegistrations(ctx context.Context, createdBefore time.Time, limit int) ([]uuid.UUID, error)
+}
+
+// SweepAbandonedRegistrations erases the accounts l lists as unused
+// registrations created before createdBefore, skipping any that gained a
+// member or still has a validator record in Redis since a record that has
+// not expired may belong to a key in use whose last_used_at touch was
+// dropped. It needs Redis to prove that, and returns how many it erased.
+func (e *Eraser) SweepAbandonedRegistrations(ctx context.Context, l AbandonedLister, createdBefore time.Time) (int64, error) {
+	if e.Redis == nil {
+		return 0, errors.New("account erasure: abandoned-registration sweep needs Redis")
+	}
+	ids, err := l.ListAbandonedRegistrations(ctx, createdBefore, abandonedSweepLimit)
+	if err != nil {
+		return 0, err
+	}
+	var erased int64
+	for _, id := range ids {
+		plan, err := e.Store.PlanErasure(ctx, id)
+		if errors.Is(err, platform.ErrNotFound) || errors.Is(err, ErrBlocked) {
+			continue
+		}
+		if err != nil {
+			return erased, err
+		}
+		if len(plan.UserIDs) > 0 {
+			continue
+		}
+		live, err := e.hasLiveCredential(ctx, plan)
+		if err != nil {
+			return erased, err
+		}
+		if live {
+			continue
+		}
+		rep, err := e.Erase(ctx, id, platform.ActorSystem)
+		if errors.Is(err, ErrCleanupIncomplete) {
+			e.logger().Warn("abandoned registration erased; cleanup incomplete", "account_id", id, "err", err)
+		} else if err != nil {
+			return erased, err
+		}
+		if !rep.AlreadyErased {
+			erased++
+		}
+	}
+	return erased, nil
+}
+
+// hasLiveCredential reports whether any of plan's keys, or any key held
+// only in Redis under its identifier, still has a validator record.
+func (e *Eraser) hasLiveCredential(ctx context.Context, plan postgresstore.ErasurePlan) (bool, error) {
+	if len(plan.KeyHashes) > 0 {
+		names := make([]string, 0, len(plan.KeyHashes))
+		for _, h := range plan.KeyHashes {
+			names = append(names, cachekeys.APIKey(h).String())
+		}
+		n, err := e.Redis.Exists(ctx, names...).Result()
+		if err != nil {
+			return false, fmt.Errorf("account erasure: check key records: %w", err)
+		}
+		if n > 0 {
+			return true, nil
+		}
+	}
+	recs, err := auth.NewRedisAPIKeyStore(e.Redis).ListKeysForIdentifier(ctx, auth.AccountIdentifier(plan.Slug))
+	if err != nil {
+		return false, fmt.Errorf("account erasure: list redis keys: %w", err)
+	}
+	return len(recs) > 0, nil
+}
+
 func (e *Eraser) logger() *slog.Logger {
 	if e.Logger == nil {
 		return slog.Default()

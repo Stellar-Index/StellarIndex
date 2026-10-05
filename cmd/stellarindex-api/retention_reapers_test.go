@@ -6,6 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
@@ -20,7 +23,7 @@ func TestRetentionReaperTargets_WiredDashboardBoundsSessionsAndDeliveries(t *tes
 		webhookStore: postgresstore.NewWebhookStore(pg),
 	}
 	got := map[string]time.Duration{}
-	for _, o := range retentionReaperTargets(b, slog.New(slog.NewTextHandler(io.Discard, nil))) {
+	for _, o := range retentionReaperTargets(b, nil, slog.New(slog.NewTextHandler(io.Discard, nil))) {
 		if o.Sweep == nil {
 			t.Errorf("%s: nil Sweep", o.Name)
 		}
@@ -43,8 +46,37 @@ func TestRetentionReaperTargets_WiredDashboardBoundsSessionsAndDeliveries(t *tes
 	}
 }
 
+// INV-0759: with Postgres accounts and Redis wired, unused /v1/register
+// accounts get a reaper at the validator record's idle TTL.
+func TestRetentionReaperTargets_RegistrationReaperNeedsAccountsAndRedis(t *testing.T) {
+	pg := postgresstore.New(nil)
+	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	t.Cleanup(func() { _ = rdb.Close() })
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	b := dashboardBundle{accounts: postgresstore.NewAccountStore(pg)}
+
+	var found bool
+	for _, o := range retentionReaperTargets(b, rdb, logger) {
+		if o.Name == obs.AuthReaperRegistration {
+			found = true
+			if o.Retention != auth.MirroredKeyIdleTTL || o.Sweep == nil {
+				t.Errorf("registration reaper: retention %v, sweep nil %v; want %v, false",
+					o.Retention, o.Sweep == nil, auth.MirroredKeyIdleTTL)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no registration reaper with accounts + Redis wired")
+	}
+	for _, o := range retentionReaperTargets(b, nil, logger) {
+		if o.Name == obs.AuthReaperRegistration {
+			t.Fatal("registration reaper started without Redis; it could not prove a key dead")
+		}
+	}
+}
+
 func TestRetentionReaperTargets_UnwiredDashboardStartsNone(t *testing.T) {
-	if got := retentionReaperTargets(dashboardBundle{}, slog.New(slog.NewTextHandler(io.Discard, nil))); len(got) != 0 {
+	if got := retentionReaperTargets(dashboardBundle{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil))); len(got) != 0 {
 		t.Fatalf("targets = %d, want 0 without a Postgres-backed dashboard", len(got))
 	}
 }

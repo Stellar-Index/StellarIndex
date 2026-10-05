@@ -113,6 +113,10 @@ const registerBodyMaxBytes = 4 * 1024
 //   - No enumeration surface: there is no per-email uniqueness, so
 //     there is nothing to probe — every accepted call mints a fresh
 //     account.
+//   - Retention: an account whose key is never used is erased once
+//     that key's validator record expires
+//     ([accounterasure.AbandonedRegistrationRetention]), so a stranger's
+//     address typed in as the email does not persist.
 //
 // Stores nil → 503 (deployment without Postgres), same posture as
 // the admin account endpoints.

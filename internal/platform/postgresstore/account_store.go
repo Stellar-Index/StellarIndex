@@ -371,6 +371,44 @@ func (r *AccountStore) ReapSuspendedOrphans(ctx context.Context, reasonPrefix st
 	return total, nil
 }
 
+// ListAbandonedRegistrations returns up to limit accounts, oldest first,
+// in the shape an unused /v1/register call leaves: active, free tier, no
+// billing customer, no member user, at least one API key and none ever
+// used (last_used_at is NULL), created before createdBefore. Callers
+// erase them through [accounterasure.Eraser], which also checks that the
+// keys' validator records have expired.
+func (r *AccountStore) ListAbandonedRegistrations(ctx context.Context, createdBefore time.Time, limit int) ([]uuid.UUID, error) {
+	const q = `
+		SELECT a.id FROM accounts a
+		 WHERE a.status = 'active'
+		   AND a.tier = 'free'
+		   AND a.stripe_customer_id IS NULL
+		   AND a.created_at < $1
+		   AND NOT EXISTS (SELECT 1 FROM users u WHERE u.account_id = a.id)
+		   AND EXISTS (SELECT 1 FROM api_keys k WHERE k.account_id = a.id)
+		   AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.account_id = a.id AND k.last_used_at IS NOT NULL)
+		 ORDER BY a.created_at
+		 LIMIT $2
+	`
+	rows, err := r.s.db.QueryContext(ctx, q, createdBefore, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list abandoned registrations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("list abandoned registrations: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list abandoned registrations: %w", err)
+	}
+	return out, nil
+}
+
 // CountAccounts returns the current row count of the accounts table.
 // Read by the signup-reaper's sweep to publish [obs.AccountRows] — see
 // [AccountStore.ReapSuspendedOrphans]'s doc comment for why the reap
