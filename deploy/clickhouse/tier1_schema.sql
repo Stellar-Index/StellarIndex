@@ -684,6 +684,40 @@ ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger, 1000000)
 ORDER BY (address, ledger, tx_hash, op_index, leg_index, direction);
 
+-- ── movements_by_asset — asset-keyed copy of account_movements (INV-2140) ──
+-- "Everything that ever moved asset X" is a scan over account_movements, whose
+-- ORDER BY leads with address. Same rows, same columns, asset-first key; the
+-- trailing address makes the sent/received pair of one movement two distinct
+-- keys so ReplacingMergeTree never collapses them. Live rows arrive through
+-- the MV; history is caught up by deploy/clickhouse/movements_by_asset.sql
+-- (partition-at-a-time INSERT..SELECT). Keep that file's DDL identical.
+CREATE TABLE IF NOT EXISTS stellar.movements_by_asset
+(
+    address           String,
+    ledger            UInt32,
+    ledger_close_time DateTime64(0, 'UTC'),
+    tx_hash           String,
+    op_index          UInt32,
+    leg_index         UInt32,
+    direction         LowCardinality(String),
+    movement_kind     LowCardinality(String),
+    provenance        LowCardinality(String),
+    asset             String,
+    counterparty      String DEFAULT '',
+    amount            Int128,
+    attributes        String DEFAULT '{}',
+    ingested_at       DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger, 1000000)
+ORDER BY (asset, ledger, tx_hash, op_index, leg_index, direction, address);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.movements_by_asset_mv
+TO stellar.movements_by_asset AS
+SELECT address, ledger, ledger_close_time, tx_hash, op_index, leg_index, direction,
+       movement_kind, provenance, asset, counterparty, amount, attributes, ingested_at
+FROM stellar.account_movements;
+
 -- ── ops_by_source: slim sourced-history projection (2026-07-30) ─────────────
 -- (source_account → ledger/tx/op keys) from BOTH stellar.operations (op-
 -- effective source, real op_index) and stellar.transactions (tx source,
