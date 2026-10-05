@@ -26,6 +26,11 @@ func runRefreshLoop(ctx context.Context, refresh func(context.Context) error, in
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+			// select picks at random when both are ready; never start a
+			// refresh after cancellation.
+			if ctx.Err() != nil {
+				return
+			}
 			refreshWithTimeout(ctx, refresh, timeout, logger, msg)
 		}
 	}
