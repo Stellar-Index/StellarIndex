@@ -207,7 +207,8 @@ func (s *Store) compressTradesChunk(ctx, live context.Context, c TradeChunk) err
 // A retry after a refusal that cost work starts only while the caller is
 // still running and the last attempt's length fits in what is left of
 // the budget on the wall clock, so a re-compress after a SIGTERM cannot
-// start a fresh 47-minute attempt that the stop window would kill.
+// start a fresh 47-minute attempt that the stop window would kill. A late
+// attempt cut by SIGKILL anyway rolls back and leaves the chunk decompressed (safe).
 //
 // WHAT THIS DOES NOT COVER. A convoy whose head is somebody ELSE's
 // exclusive request (a by-hand ALTER, a migration, the compression
@@ -300,6 +301,8 @@ const longLockHolderSelect = `
 	   AND l.granted
 	   AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
 	   AND l.pid <> pg_backend_pid()
+	   -- Postgres cancels a non-wraparound autovacuum when compress asks for its lock; waiting on it burns the budget.
+	   AND NOT (a.backend_type = 'autovacuum worker' AND a.query NOT LIKE '%(to prevent wraparound)%')
 	   AND a.xact_start < clock_timestamp() - make_interval(secs => $3::double precision)
 	 ORDER BY a.xact_start
 	 LIMIT 1

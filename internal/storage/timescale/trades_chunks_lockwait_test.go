@@ -442,3 +442,11 @@ func TestExecUnderBoundedLockWait_ChargesARefusedOpeningLock(t *testing.T) {
 		t.Errorf("made %d attempts of 30 ms waiting against a 100 ms budget, want at most 4", n)
 	}
 }
+
+func TestLongLockHolderSelectExcludesCancellableAutovacuum(t *testing.T) {
+	for _, want := range []string{"a.backend_type = 'autovacuum worker'", "(to prevent wraparound)"} {
+		if !strings.Contains(longLockHolderSelect, want) {
+			t.Errorf("longLockHolderSelect missing %q", want)
+		}
+	}
+}
