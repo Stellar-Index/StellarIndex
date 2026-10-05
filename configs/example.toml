@@ -584,6 +584,14 @@ trusted_proxy_cidrs      = []
 # the probe.
 # tls_cert_probe_hosts = ["api.stellarindex.io", "status.stellarindex.io", "stellarindex.io"]
 
+# holds_file / holds_reload_interval — TOML file of [[hold]] entries
+# (asset, contract_id, ledger_from, ledger_to, reason; all set selectors
+# must match) that flag matching supply, balance and holder responses
+# `flags.under_review`. Re-read every interval; a missing file means no
+# holds, an invalid one keeps the previous list. Empty path disables it.
+# holds_file = "/etc/stellarindex/holds.toml"
+# holds_reload_interval = "15s"
+
 # prometheus_url — Prometheus HTTP API root backing /v1/status. Empty
 # leaves /v1/status serving an in-process surface (uptime + region).
 # prometheus_url = "http://localhost:9090"
