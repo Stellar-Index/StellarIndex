@@ -26,8 +26,9 @@ if [[ ! -f "$VERSIONS" ]]; then
   exit 1
 fi
 
-gomod_require_line="$(grep -E '^require[[:space:]]+github\.com/stellar/go-stellar-sdk[[:space:]]+v[0-9]' "$GOMOD" || true)"
-want="$(awk '{print $3; exit}' <<<"$gomod_require_line")"
+# Accepts both `require mod vX` and the in-block `\tmod vX` form (go 1.27's
+# `go mod tidy` folds direct requires into one block).
+want="$(awk '{i=($1=="require")?2:1} $i=="github.com/stellar/go-stellar-sdk" && $(i+1) ~ /^v[0-9]/ {print $(i+1); exit}' "$GOMOD")"
 
 if [[ -z "$want" ]]; then
   echo "lint-sdk-version-pin: FAIL — $GOMOD has no github.com/stellar/go-stellar-sdk require line" >&2

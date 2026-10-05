@@ -62,6 +62,11 @@ mk_gomod "$TMP/ok.mod" "v0.7.3"
 mk_versions "$TMP/ok.md" "v0.7.3"
 check "VERSIONS.md matches go.mod -> pass" 0 "$TMP/ok.mod" "$TMP/ok.md"
 
+# ── block-form require (go mod tidy on go 1.27) is still read ───────
+printf 'module example.com/fixture\n\ngo 1.27.0\n\nrequire (\n\tgithub.com/stellar/go-stellar-sdk v0.7.3 // fixture\n)\n' > "$TMP/block.mod"
+check "block-form require, matching -> pass" 0 "$TMP/block.mod" "$TMP/ok.md"
+check "block-form require, stale row -> FAIL" 1 "$TMP/block.mod" "$TMP/stale.md"
+
 # ── missing inputs fail closed, not vacuously ────────────────────────
 check "missing go.mod -> FAIL" 1 "$TMP/nope.mod" "$TMP/ok.md"
 check "missing VERSIONS.md -> FAIL" 1 "$TMP/ok.mod" "$TMP/nope.md"
