@@ -54,7 +54,10 @@ type ProjectionDirtyWindow struct {
 //     its first write. Like projected-rebuild it never touches the cursor.
 //   - `backfill` and `backfill-router -write` rewrite NON-projected served
 //     rows (sdex, band, soroswap-router), recorded before their first write.
-//     They have no projector cursor at all.
+//     They have no projector cursor at all. `backfill -source soroban-events`
+//     also stamps the full range on every PROJECTED source with a cursor: the
+//     landed raw rows may sit behind it, so those served rows are not
+//     rewritten but stale until a projector-replay re-projects them.
 //
 // The constructors and the predicate below are the ONE place the format
 // lives, so a reader can tell them apart without matching a free-form
