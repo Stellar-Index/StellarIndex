@@ -651,6 +651,8 @@ jwt_ttl         = "1h"
 # base_url             = "https://stellarindex.io"
 email_from             = "Stellar Index <hello@stellarindex.io>"
 resend_api_key_env     = "STELLARINDEX_RESEND_API_KEY"
+# Hex SHA-256 of bounced addresses to never mail. Pseudonymised, not anonymous; suppressed logins return faster (same timing shape as the throttle path).
+# suppressed_recipient_sha256 = []
 code_secret_env        = "STELLARINDEX_DASHBOARD_CODE_SECRET"
 webhook_seal_key_env   = "STELLARINDEX_WEBHOOK_SEAL_KEY"
 magic_link_ttl_minutes = 15
