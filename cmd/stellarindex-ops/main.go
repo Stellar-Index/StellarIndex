@@ -1,14 +1,14 @@
 // Binary stellarindex-ops is the admin CLI for operational tasks
 // that don't belong in the long-running binaries. Subcommand
 // implementations live in internal/ops/{ingest,archive,discovery,
-// supply,diagnostics,chops} (one package per rough bucket; chops
+// supply,diagnostics,chops,incident} (one package per rough bucket; chops
 // covers the ADR-0033/ADR-0034 ClickHouse-lake tools — named chops,
 // not clickhouse, to avoid shadowing internal/storage/clickhouse in
 // every file there) plus internal/ops/opsutil (helpers shared across
 // more than one of those packages). main.go is only the dispatch
 // table + the handful of subcommands too small or too miscellaneous
 // to warrant their own package (docs-config, mint-key, upgrade-key,
-// emit-incident, usage-rollup-backfill).
+// usage-rollup-backfill; emit-incident lives in internal/ops/incident).
 //
 //   - Ingest / backfill (internal/ops/ingest): `backfill`,
 //     `backfill-external`, `backfill-chainlink`, `backfill-index`,
@@ -64,6 +64,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/chops"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/diagnostics"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/discovery"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/incident"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/ingest"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/supply"
@@ -119,7 +120,7 @@ var subcommands = map[string]func(args []string) error{
 	"docs-config":           leaf(func([]string) error { return config.EmitMarkdown(os.Stdout) }),
 	"mint-key":              leaf(mintKey),
 	"upgrade-key":           leaf(upgradeKey),
-	"emit-incident":         leaf(emitIncident),
+	"emit-incident":         leaf(incident.Emit),
 	"usage-rollup-backfill": leaf(usageRollupBackfill),
 	"freeze-unfreeze":       leaf(freezeUnfreeze),
 	"account-erase":         leaf(accountErase),
