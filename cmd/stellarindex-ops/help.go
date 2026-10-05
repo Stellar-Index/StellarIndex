@@ -1,0 +1,1581 @@
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/Stellar-Index/StellarIndex/internal/version"
+)
+
+// usageBody is the static portion of `stellarindex-ops -h`. The header
+// (with version) is prepended at print time so the binary's build
+// version shows in the output. Kept as a package-level const so the
+// printUsage func itself stays short — funlen lint counts the
+// multi-line string literal against the function it's defined in.
+const usageBody = `
+Usage:
+  stellarindex-ops <subcommand>
+
+Subcommands:
+  docs-config             Emit the generated config reference to stdout.
+  rpc-probe [endpoint]    Diagnostic probe against a stellar-rpc endpoint.
+                          Default: http://127.0.0.1:8000.
+  list-cursors -config PATH
+                          Print every source's last-indexed ledger + age.
+  reap-cursors -config PATH [-older-than DUR] [-source NAME] [-write]
+                          Delete the ingestion_cursors rows left behind by
+                          finished or abandoned one-shot jobs (default:
+                          older than 168h — the same boundary
+                          /v1/diagnostics/cursors calls 'abandoned').
+                          Previews by default; -write applies. The live
+                          namespaces (ledgerstream, projector) are never
+                          reaped — an old row there is a stuck-ingest
+                          incident, not garbage. Check what a shard still
+                          owes with resume-stalled -dry-run first: a reaped
+                          row deletes the resume point, never data.
+  detect-gaps -config PATH [-threshold N] [-rpc URL]
+                          Report sources lagging more than N ledgers (default 100)
+                          behind the stellar-rpc network tip. Exit code 1 if any
+                          source is lagging.
+  ch-cap67-movements -ch-addr ADDR [-from N] [-to N] [-window N] [-max-decode-errors N] [-write]
+                          Derive post-P23 account movements (ALL assets,
+                          native XLM included) from the lake's CAP-67
+                          transfer events into stellar.account_movements
+                          (provenance cap67_derived). Resumes from
+                          stellar.cap67_movements_watermark; a 5-min timer
+                          keeps it following the tip. Inventory #1.
+                          A one-shot run exits non-zero when more transfer
+                          events failed to decode than -max-decode-errors
+                          (default 0); -follow logs them per window.
+  ch-entry-history -ch-addr ADDR [-from N] [-to N] [-window N] [-floor-ledger N] [-max-decode-errors N] [-write]
+                          One decode pass of stellar.ledger_entry_changes
+                          (classic entries) into the account-keyed
+                          stellar.account_entry_changes and asset-keyed
+                          stellar.asset_entry_changes. Resumes from
+                          stellar.entry_history_watermark. Without -write it
+                          reports rows and field bytes per entry type.
+  ch-holders-rollup -ch-addr ADDR [-write]
+                          Recompute every asset's top-500 holders board +
+                          holder count into staging and atomically exchange
+                          live (asset_holders_rollup). Run from the 30-min
+                          timer; backs sub-second /v1/assets/{id}/holders.
+  ch-creators-rollup -ch-addr ADDR [-config PATH]
+                          Recompute the account-creator league table
+                          (funder -> accounts created, plus the created
+                          set's surviving accounts and current XLM) into
+                          staging and atomically exchange live
+                          (account_creators_rollup). Aggregated from
+                          account_movements on both sides of the P23
+                          boundary: create_account movements below it,
+                          CAP-67 transfers paired with CreateAccount
+                          operations above. -config supplies the
+                          network's boundary (stellar.movements_floor_
+                          ledger; default pubnet's). Also writes the
+                          ledger span it covered. Backs
+                          /v1/accounts/creators. Issue #351.
+  ch-sponsors-rollup -ch-addr ADDR
+                          Recompute the sponsor league table (sponsorship
+                          arrangements started, distinct accounts
+                          sponsored, revocations issued) into staging and
+                          atomically exchange live
+                          (account_sponsors_rollup). Aggregated from the
+                          Begin/End/Revoke sponsorship operations that
+                          APPLIED — each is joined to its transaction and
+                          kept only where that transaction succeeded, so
+                          operations in failed transactions are excluded;
+                          reads no operation bodies. History only, never a
+                          live sponsored set. Backs /v1/accounts/sponsors.
+                          Issues #351, #494.
+  ch-cohort-rollup -ch-addr ADDR -config PATH
+                          Recompute what the accounts each sponsor and
+                          each creator (>= 10 accounts) went on to hold
+                          and do: current holdings per asset, monthly
+                          inflow/outflow per asset, the contracts the
+                          cohort moved value through, members active in
+                          the last 30/90/365 days, and open DeFi
+                          positions — into staging and atomically
+                          exchanged live (account_cohort_*). Membership
+                          is the edge tables the creators and sponsors
+                          rollups write, so run it after them. The DeFi
+                          snapshot is read from Postgres (-config), which
+                          is why this one carries a config path. Backs
+                          /v1/accounts/{g}/graph/cohort.
+  ch-contract-ledgers-backfill -ch-addr ADDR (-write | -dry-run) [-from N] [-to N] [-window N]
+                          One-time historical fill of
+                          stellar.contract_active_ledgers (the per-contract
+                          activity index behind fast contract pages) from
+                          contract_events. Windowed + resumable; run under
+                          run-heavy-job.sh on r1 immediately after applying
+                          deploy/clickhouse/contract_active_ledgers.sql —
+                          the reader trusts a non-empty index as complete.
+  directory-sync -config PATH [-url URL] [-write] [-timeout DUR]
+                          Mirror the MIT-licensed stellar-expert/public-directory
+                          account labels (~18.5k G/C addresses: names, domains,
+                          tags like #exchange/#sdf/#malicious) into
+                          account_directory. One tarball GET, full upsert +
+                          prune; refuses an empty parse. Not display-only: a
+                          scam-class tag withholds the issuer's price, and a
+                          recognition tag admits it to the RWA surface.
+                          Run daily from a timer.
+  directory-override -config PATH -address G|C… (-clear-scam-flag -reason TEXT [-actor NAME] | -delete) [-write]
+                          Durable correction of a false-positive directory scam
+                          flag. -clear-scam-flag takes the row over as
+                          operator-override with only the scam-class tags
+                          removed (name, domain, recognition tags kept) and
+                          stores -reason as its override_reason and -actor
+                          (default: the OS user) as its override_by;
+                          directory-sync never updates or prunes it. -delete
+                          hands the address back to the next sync. Dry run
+                          unless -write.
+  curated-rwa-sync -config PATH [-base-url URL] [-write] [-timeout DUR] [-textfile PATH]
+                          Cache a third party's PUBLISHED totals about
+                          tokenized real-world assets on Stellar — a
+                          monthly market-cap total and a subclass split —
+                          into curated_rwa_published_series for the RWA
+                          surface's CURATED arm. First curator: the
+                          Stellar team's "RWAs on Stellar" dashboard, read
+                          as the latest RESULT of its public queries (GET
+                          /api/v1/query/{id}/results) — the private
+                          per-asset upload tables behind it cannot be read
+                          by anyone else. Executes nothing; bills by
+                          datapoints (fractions of a credit), which are
+                          printed and, with -textfile, emitted as a gauge.
+                          A row is the curator's own arithmetic and is
+                          served under its own basis and total, never
+                          inside the verified set. A malformed or
+                          unparseable row refuses the whole run — nothing
+                          is silently skipped and kept. Refuses an empty
+                          result. Key from DUNE_API_KEY (required).
+  listing-sync -config PATH [-base-url URL] [-write] [-timeout DUR]
+                          Cache the Stellar slice of an independent price-
+                          aggregation platform's own per-coin platform->address
+                          map (CoinGecko /coins/list?include_platform=true
+                          joined to /coins/markets) into
+                          asset_listing_directory. ~50 of the upstream's ~21k
+                          coins carry a Stellar address, in both network forms
+                          (Soroban C-strkeys and classic CODE-GISSUER pairs);
+                          malformed ones are skipped and counted. Full upsert +
+                          prune; refuses an empty parse. Prices are carried as
+                          decimal strings and a price with no upstream
+                          publication time is REJECTED, never given a
+                          fabricated one. Corroborating data — it never
+                          attests, and carries no scam flags. Key from
+                          COINGECKO_API_KEY (Pro, auto-selects
+                          pro-api.coingecko.com) or COINGECKO_DEMO_API_KEY.
+                          Run hourly from a timer.
+  verify-decoders -config PATH -from N -to N [-bucket NAME] [-fail-on-silent=BOOL]
+                          Stream a bounded ledger range from Galexie through
+                          every registered decoder and print a per-source tally
+                          (events matched, outputs emitted, first sample). No
+                          DB writes; dispatcher runs in a dry harness. Useful
+                          as an end-to-end smoke test after a decoder change
+                          and for proving each venue emits on the wire.
+                          Exits non-zero on a short walk, when every decoder
+                          is silent, and (-fail-on-silent, default true) when
+                          any registered decoder emitted nothing.
+  scan-soroban-events -config PATH -from N -to N [-topic0 STR] [-contract CID] [-limit N] [-bucket NAME]
+                          In-infra analogue of hubble-soroban-events (no
+                          BigQuery): stream a galexie ledger range and dump
+                          EVERY Soroban contract event as JSON
+                          (contract_id, decoded topic[], body map keys +
+                          value types), optionally filtered to topic[0]==STR
+                          and/or a single contract. Decodes by reusing the
+                          dispatcher's event extraction — ground-truth for
+                          "what does protocol X actually emit on-chain"
+                          (e.g. discovering real contract addresses + event
+                          schemas before writing/auditing a decoder). No DB
+                          writes. -bucket defaults to s3_bucket_archive then
+                          s3_bucket_live; -limit caps matches (default 50).
+  verify-external -config PATH [-timeout DUR] [-fail-on-silent]
+                          Start every enabled off-chain connector
+                          (cfg.External.<venue>.enabled = true), drain the
+                          shared sink for up to -timeout (default 60s), and
+                          print per-venue first-trade/update samples. Exits
+                          early once every enabled venue has emitted at
+                          least one output. No DB, no Timescale, no cursors.
+                          Exits non-zero when every venue is silent, and with
+                          -fail-on-silent when any venue is.
+  verify-archive -config PATH [-bucket NAME] [-from N] [-to N] [-tier MODE] [-archive-root PATH] [-peers URLs] [-peer-samples N] [-archivist-bin BIN] [-archivist-url URL] [-archivist-timeout DUR] [-sdf-samples N] [-fail-on-missed] [-max-runtime DUR] [-workers N] [-resume-from-hash HEX] [-metrics-listen ADDR] [-textfile-output PATH] [-state-file PATH] [-from-last-verified] [-safety-overlap N]
+                          Verify a galexie bucket at one or more tiers:
+                            chain      (Tier A) — chain-link hash integrity:
+                                       each ledger N's PreviousLedgerHash
+                                       equals ledger N-1's Hash. Default.
+                            checkpoint (Tier B) — cross-check our LCM's
+                                       hash at every 64-ledger checkpoint
+                                       against the canonical header-hash
+                                       from the local history-archive
+                                       (-archive-root, default
+                                       /srv/history-archive).
+                            peers      (Tier D) — sample checkpoints
+                                       within the range and cross-compare
+                                       history-XXXXXXXX.json across N
+                                       tier-1 validator archives (-peers
+                                       URL list or default set of 7).
+                                       Consensus-level cryptographic
+                                       agreement.
+                            archivist  (Tier E) — shell out to
+                                       stellar-archivist scan for a full
+                                       bucket-by-bucket sha256 audit of
+                                       the archive. -archivist-url
+                                       defaults to file://<archive-root>;
+                                       any peer's https:// archive URL
+                                       also works. Requires
+                                       stellar-archivist (or rs-stellar-
+                                       archivist via -archivist-bin) on
+                                       PATH; long-running, gated by
+                                       -archivist-timeout (default 30m).
+                            sdf-sample (Tier C) — compare -sdf-samples
+                                       (default 100) random ledgers in
+                                       [-from,-to] with SDF's public
+                                       dataset (storage.s3_cold_*) by
+                                       ETag+size. Needs explicit -to;
+                                       not part of "all". Any mismatch
+                                       bumps the mismatch counter.
+                            all        run tiers A, B, D and E.
+                          -fail-on-missed: per ADR-0017 X1.7, treat
+                                       checkpointsMissed > 0 as a hard
+                                       failure. Default on; pass
+                                       -fail-on-missed=false to tolerate
+                                       scattered in-coverage misses.
+                          -textfile-output: write the per-reason mismatch
+                                       counter into node_exporter's
+                                       textfile_collector dir (cumulative
+                                       across runs, zero-seeded). This is
+                                       the export path the P1
+                                       stellarindex_stellar_archive_divergence
+                                       page reads on r1; without it the
+                                       counter dies with the process
+                                       (issue #282).
+                          Exit 0 = clean; 1 = first break with details.
+  archive-completeness <mode> [flags]
+                          Completeness check + repair across the dual-archive
+                          stack per ADR-0017. Modes:
+                            check      Read-only enumeration. Walks expected
+                                       checkpoint positions in the cross-anchor
+                                       archive and writes a JSON gap report.
+                                       Flags: -archive-root PATH, -from N, -to N,
+                                              -output-file PATH (default stdout).
+                            fix        Run check, then fetch every missing
+                                       checkpoint via the multi-source fallback
+                                       chain (SDF core_live_001/002/003 +
+                                       tier-1 validators) and place each file
+                                       atomically. Re-checks after the fill so
+                                       the emitted report reflects post-fix
+                                       state. Flags: -archive-root, -from, -to,
+                                              -workers N, -owner-user STR,
+                                              -owner-group STR, -output-file.
+                            verify     Daily-cron mode. Runs check → fix →
+                                       re-check, then emits a Prometheus
+                                       textfile for node_exporter to scrape.
+                                       Flags: same as fix, plus -textfile-output
+                                       PATH (target node_exporter's
+                                       textfile_collector dir, e.g.
+                                       /var/lib/node_exporter/textfile_collector/
+                                       archive_completeness.prom).
+                          Current implementation scope: cross-anchor archive
+                          only. Primary MinIO-bucket structural/chain-link
+                          enforcement is not shipped in this snapshot.
+                          Exit 0 = clean; 1 = at least one missing file remains.
+  cross-region-check -regions name=URL,name=URL,... [-pairs PAIR,...] [-metric vwap|twap|ohlc] [-window DUR] [-samples N] [-to TS]
+                          Hit each region's /v1/{vwap|twap|ohlc} endpoint
+                          for the same closed-bucket window and assert
+                          equality across the stable user-visible payload
+                          (data, sources, and flags, excluding
+                          per-response as_of). Per
+                          ADR-0015 the response should be byte-identical
+                          across regions once trades have replicated;
+                          divergence here flags one of: replication lag,
+                          decoder version drift, upstream divergence,
+                          or postgres replication broken. Designed for
+                          periodic execution from a monitoring host.
+                          Exit 0 = clean; 1 = divergence with diff.
+                          Example:
+                            stellarindex-ops cross-region-check \
+                              -regions r1=https://r1.api.example.net,r2=https://r2.api.example.net \
+                              -pairs native/fiat:USD,crypto:BTC/fiat:USD \
+                              -metric vwap -samples 5
+  cross-region-monitor -regions name=URL,name=URL,... [-pairs PAIR,...] [-metric vwap|twap|ohlc] [-window DUR] [-samples N] [-interval DUR] [-listen :PORT]
+                          Long-running daemon variant of cross-region-check.
+                          Runs the same per-bucket comparison on a fixed
+                          interval and exposes the outcome as Prometheus
+                          metrics on -listen (default :9479). Designed
+                          to live as a sidecar systemd service on the
+                          observability host. Metrics:
+                            stellarindex_cross_region_checks_total{outcome=ok|divergence|error}
+                            stellarindex_cross_region_divergences_total
+                            stellarindex_cross_region_fetch_errors_total{region}
+                            stellarindex_cross_region_last_run_timestamp_seconds
+                            stellarindex_cross_region_last_reached_timestamp_seconds
+                          /healthz reflects the LAST sweep, not the first
+                          (C4-007): 503 before the first sweep, when the
+                          last sweep is older than 3×interval+timeout (the
+                          tick loop is stuck or dead), or when no sweep has
+                          reached ANY region within that window (every
+                          fetch failing). A partial region failure stays
+                          200 — see the fetch_errors counter. Example:
+                            stellarindex-ops cross-region-monitor \
+                              -regions r1=...,r2=...,r3=... \
+                              -interval 60s -listen :9479
+  supply audit <asset> -config PATH [-cross-check <other-asset>] [-history-hours N]
+                          Operator-side audit for ADR-0011 supply
+                          derivation. Prints the latest snapshot
+                          from asset_supply_history (total /
+                          circulating / max / basis / observed_at /
+                          ledger). When -cross-check is supplied,
+                          fetches the counterpart's snapshot and
+                          runs the wrap-class-appropriate
+                          cross-check: strict 1-stroop equality
+                          (ADR-0011) only for a SAC listed in
+                          [supply].fully_wrapped_sacs, else the
+                          subset bound (the SAC total must not
+                          EXCEED the classic total). When
+                          -history-hours is set, also prints the
+                          recent N-hour snapshot trail so an
+                          operator can spot whether divergence is
+                          fresh or chronic. Asset accepts the
+                          canonical wire form (native | CODE-G… |
+                          C…). Cross-check pairing is operator-
+                          supplied because SAC contract-id
+                          derivation isn't wired in canonical yet.
+  supply snapshot -config PATH [-asset <id>] [-ledger N] [-write]
+                          Compute a fresh supply snapshot and write
+                          it to asset_supply_history. The CLI is
+                          intentionally native-XLM only — classic
+                          (Algorithm 2) + SEP-41 (Algorithm 3)
+                          computers shipped (Tasks #55, #56) but
+                          their refresh surface is the aggregator
+                          goroutine path ([supply].aggregator_refresh_enabled).
+                          Reserve balances come from the chained-
+                          fallback reader: live LCM AccountEntry
+                          observer (L2.12a) wins when populated;
+                          operator-static [supply].reserve_balances_stroops
+                          is the bring-up fallback. Default ledger
+                          attribution is the ledgerstream ingestion
+                          cursor, clamped to the newest landed
+                          stellar.ledgers row at or before it; pass
+                          -ledger to override. -dry-run prints
+                          without writing.
+  supply seed-observations -config PATH [-ch-addr ADDR] [-write]
+                          Seed account_observations from the ClickHouse
+                          lake for every [supply].sdf_reserve_accounts
+                          entry (ADR-0021). Closes the dormant-account
+                          bootstrap gap: an account that never changes
+                          after the live observer starts would otherwise
+                          keep the reserve reader on the static fallback
+                          forever. Idempotent; the live observer
+                          supersedes seeded rows on the next real change.
+  supply seed-sac-balances -config PATH [-ch-addr ADDR] [-full-history] [-contracts LIST] [-timeout DUR] [-heartbeat PATH] [-write]
+                          Seed sac_balance_observations from the lake for
+                          every current Balance(Address) entry of each
+                          [supply].sac_wrappers contract (ADR-0022 /
+                          migration 0014, incident 2026-07-06). Closes the
+                          dormant contract-held SAC balance gap. Pass
+                          -full-history to read stellar.ledger_entry_changes
+                          (complete to genesis) instead of the
+                          ~ledger-62M-floored current-state projection —
+                          heavier, walked in ledger windows, run under
+                          run-heavy-job.sh only.
+  supply seed-claimable-balances -config PATH [-ch-addr ADDR] [-assets LIST] [-timeout DUR] [-heartbeat PATH] [-write]
+                          Seed claimable_observations from the ClickHouse
+                          lake for every currently-LIVE claimable balance
+                          paying a classic credit asset (ADR-0022 /
+                          migration 0012). claimable_observations was never
+                          seeded from history — 997 rows, floor ledger
+                          63,301,831, i.e. live-observer output only — so
+                          the claimable component of Algorithm 2 read ~4%
+                          populated and AQUA served 13.2% under Horizon
+                          (the claimable component was the entire gap).
+                          Reads stellar.ledger_entry_changes reduced
+                          latest-write-wins in ledger windows, so it sees
+                          balances created below the current-state
+                          projection's floor. Scope is EVERY classic credit
+                          asset; -assets CODE-ISSUER,... narrows a run and
+                          prints a PARTIAL banner because every omitted
+                          asset keeps its under-count. Native (XLM)
+                          claimables are skipped — Algorithm 1 does not
+                          read this table. Idempotent (rows land at each
+                          balance's true last-modified ledger); a later
+                          live is_removal observation always wins.
+                          Whole-chain scan over a ~150B-row table: hours,
+                          silent until the end (all inserts land after the
+                          reduction), r1 = run-heavy-job.sh only.
+  supply seed-sep41-genesis -config PATH [-ch-addr ADDR] [-genesis-ledger N] [-write]
+                          Seed each [supply].watched_sep41_contracts
+                          contract's pre-Soroban (ledger < 50457424)
+                          per-kind opening balance into sep41_supply_rollup
+                          from the ClickHouse supply_flows lake (migration
+                          0088, incident 2026-07-06). Fixes SAC-wrappers
+                          issued before Soroban reading a negative
+                          Soroban-era-only total. Idempotent (baseline is
+                          SET, not added); Soroban-only contracts seed a
+                          zero baseline (served total unchanged).
+  supply verify-rollup -config PATH [-contracts C1,C2,...] [-tolerance N] [-statement-timeout DUR] [-timeout DUR]
+                          Derived-checkpoint reconcile (ADR-0033 fourth
+                          integrity check): diff every watched contract's
+                          sep41_supply_rollup fold (the served incremental
+                          checkpoint) against the AUTHORITATIVE same-source
+                          re-sum of the exact sep41_supply_events rows it
+                          folds (ledger <= last_ledger). Reports any
+                          (contract, kind) that diverge by more than
+                          -tolerance (Delta > 0 = double-fold over-count,
+                          the KALE 2× signature; Delta < 0 = a
+                          below-checkpoint edit the worker never re-summed).
+                          Exit 1 if any drift. SLOW / post-re-derive check,
+                          NOT a per-tick job — each re-sum is the
+                          full-history aggregate the served fast path
+                          avoids (the incident's 30s probe timed out at 6
+                          contracts), so it runs under -statement-timeout
+                          (default 15m per contract), is scoped/resumable
+                          via -contracts, and on r1 must run under the
+                          heavy-job wrapper (run-heavy-job.sh).
+  discovery list -config PATH [-since DUR] [-limit N]
+                          List SEP-41 contracts auto-detected from the
+                          event stream (the dispatcher's discovery
+                          hook from 526b520f0 + the indexer wire-up from
+                          2c2e4e55b populate discovered_assets in
+                          production). Output is one row per
+                          contract: contract_id, first_seen_at,
+                          first_seen_event, event_count. Ordered by
+                          first_seen_at DESC so the most-recent
+                          arrivals show up first.
+                            -since 1h    only contracts first seen
+                                         within the last 1h; default
+                                         empty (no filter, full table)
+                            -limit 100   cap result rows; default 100
+  wasm-history -config PATH -contracts ID,ID,... [-from N] [-to N] [-bucket NAME]
+                          Walk a galexie bucket and emit a per-contract
+                          WASM-version timeline. For each watched contract,
+                          tracks every change to its instance's executable
+                          hash and reports the active ledger range per hash.
+                          Read-only audit; no DB writes. Output is JSON to
+                          stdout. Defaults to S3BucketArchive (the historical
+                          bucket) — pass -bucket to override.
+                          Example:
+                            stellarindex-ops wasm-history \
+                              -config /etc/stellarindex.toml \
+                              -from 21000000 -to 25000000 \
+                              -contracts CDLZ...,CARFAC... \
+                              -checkpoint-dir /tmp/walk-checkpoint \
+                              > soroswap-wasm-history.json
+                          When -checkpoint-dir is set, each parallel
+                          worker also writes its observed transitions
+                          to <dir>/wasm-history-w<i>.jsonl. Recover the
+                          canonical JSON from a crashed run with
+                          wasm-history-merge-jsonl below.
+  wasm-history-merge-jsonl -checkpoint-dir DIR -to N [-output PATH]
+                          Reconstruct the canonical wasm-history JSON
+                          from per-worker JSONL transition logs left
+                          behind by a crashed wasm-history run with
+                          -checkpoint-dir set. -to MUST match the
+                          original walk's upper bound (closes the last
+                          open range per contract). Output is the same
+                          JSON shape wasm-history writes at end-of-run.
+                          Empty-history contracts (the "ran but saw no
+                          transitions" signal) are NOT emitted — the
+                          JSONL only carries observed transitions.
+                          Example:
+                            stellarindex-ops wasm-history-merge-jsonl \
+                              -checkpoint-dir /tmp/walk-checkpoint \
+                              -to 62249727 \
+                              -output recovered.json
+  extract-wasm-from-galexie -config PATH -hashes HEX,HEX,... -output-dir DIR [-from N] [-to N] [-parallel N] [-bucket NAME]
+                          Extract raw WASM bytes for one or more contract-
+                          code hashes by walking the local galexie LCM
+                          archive. Writes <hash>.wasm files into
+                          -output-dir. Companion to wasm-history: walk the
+                          history first to enumerate hashes, then run this
+                          to pull bytes for the (likely-evicted from current
+                          ledger state) older versions. r1's full archive is
+                          the truer source than RPC getLedgerEntry —
+                          works offline, doesn't depend on TTL retention.
+                          Example:
+                            stellarindex-ops extract-wasm-from-galexie \
+                              -config /etc/stellarindex.toml \
+                              -from 50457424 -to 62296694 -parallel 8 \
+                              -hashes 4a64c8c8...,b400f7a8... \
+                              -output-dir /var/wasm-audit
+  backfill-external -config PATH -source SRC -pair SYM -from TS -to TS -granularity D [-write]
+                          Pull historical candles from an external venue
+                          (binance / kraken / bitstamp / coinbase) and
+                          insert synthesised canonical.Trade rows into
+                          the trades hypertable. -dry-run prints stats
+                          only, no writes. Refuses a window that already
+                          holds rows for the source+pair unless
+                          -allow-overlap. Example:
+                            stellarindex-ops backfill-external \
+                              -config configs/prod.toml \
+                              -source binance -pair XLMUSDT \
+                              -from 2024-01-01T00:00:00Z \
+                              -to   2024-12-31T00:00:00Z \
+                              -granularity 1h
+  backfill-chainlink -config PATH [-from-block N] [-to-block N] [-chunk-blocks N] [-sleep-ms N] [-write]
+                          Walk every configured Chainlink feed's
+                          AnswerUpdated event log across the requested
+                          block range and insert one OracleUpdate row
+                          per historical round into oracle_updates.
+                          Idempotent (deterministic synthesised
+                          tx_hash + ON CONFLICT). ~33k eth_getLogs
+                          calls / 7h wall time for all 516 mainnet
+                          feeds at 5k blocks/chunk on Alchemy free
+                          tier — run overnight. Example:
+                            stellarindex-ops backfill-chainlink \
+                              -config /etc/stellarindex.toml \
+                              -from-block 15537393  # post-Merge marker
+                              -sleep-ms 50          # ~20 req/s polite cap
+  backfill-index -config PATH -from RFC3339 -to RFC3339 [-pair P] [-chunk-days N] [-sleep-ms N] [-write]
+                          Index-source (CoinGecko) history as ORACLE
+                          UPDATES — never trades — for the windows no
+                          venue we ingest reaches. The earliest CEX
+                          candle we hold is kraken 2017-01-17, so the
+                          475 days back to the 2015-09-30 genesis have
+                          no venue price at all; this is the only
+                          source that covers them.
+                          Emits canonical.OracleUpdate with the same
+                          synthesised tx_hash the poller uses, so a
+                          backfilled and a polled observation for one
+                          timestamp collapse rather than double-count.
+                          Idempotent; a zero-row run exits non-zero.
+                          Key from COINGECKO_API_KEY (Pro, auto-selects
+                          the pro-api host) or COINGECKO_DEMO_API_KEY.
+                          BUDGET: /market_chart/range returns a whole
+                          span per call, so a full historical pass is
+                          tens of calls, not thousands. Keep -chunk-days
+                          wide and -sleep-ms non-zero; the Analyst plan
+                          allows 500 req/min against a 500k monthly
+                          credit, and there is no reason for this
+                          command to approach either. Example:
+                            stellarindex-ops backfill-index \
+                              -config /etc/stellarindex.toml \
+                              -from 2015-09-30T00:00:00Z \
+                              -to   2017-01-17T00:00:00Z \
+                              -chunk-days 90 -sleep-ms 250
+  hubble-check -config PATH -from N -to N -bigquery-project PROJ [-max-mismatches N] [-dry-run-bytes]
+                          Cross-check our SDEX trades against SDF's
+                          published hubble-public.crypto_stellar.history_trades
+                          BigQuery table for the same ledger range.
+                          Reports every ledger where the counts disagree.
+                          Catches decoder coverage gaps + over-eager
+                          decoding on classic SDEX (ManageOffer +
+                          classic LP) which Tier A/B/D/E (bytes-level)
+                          and cross-region-check (intra-fleet) do not.
+                          Soroban DEXes have no decoded Hubble counterpart;
+                          covered by the per-WASM decoder audit instead.
+                          Off-chain sources (CEX/FX) are out of scope.
+                          Auth: Application Default Credentials (run
+                          gcloud auth application-default login first).
+                          Cost: ~$0.05 per 1M-ledger range at on-demand
+                          pricing. Use -dry-run-bytes for a pre-flight
+                          estimate. Example:
+                            stellarindex-ops hubble-check \
+                              -config /etc/stellarindex.toml \
+                              -from 21000000 -to 22000000 \
+                              -bigquery-project my-gcp-project
+  hubble-soroban-events -from N -to N -bigquery-project PROJ -contracts CID,CID [-topic0 SYM] [-topic1 SYM] [-output json|total|csv] [-dry-run-bytes]
+                          Per-ledger event-count primitive against
+                          hubble-public.crypto_stellar.history_contract_events
+                          for the supplied Soroban contract IDs, with
+                          optional topic[0]/topic[1] filters. Operators
+                          combine this with knowledge of per-source
+                          (events ↔ trades) ratios to cross-check
+                          decoder coverage on Soroswap / Aquarius /
+                          Phoenix / Comet / Reflector / Redstone.
+                          See docs/operations/hubble-event-counts.md
+                          for the per-source recipe. Auth via
+                          Application Default Credentials (same as
+                          hubble-check). Cost: 20-40 GB scan per
+                          1M-ledger range — use -dry-run-bytes for
+                          a preview.
+  backfill -config PATH -from N -to N [-source S,S,...] [-bucket NAME] (-write | -dry-run) [-resume]
+                          Replay a bounded ledger range through the
+                          full ingest pipeline (galexie → dispatcher
+                          → decoders → trades hypertable). Same code
+                          path as the live indexer, no live tail; CAGGs
+                          auto-roll on the inserted rows. Refuses to
+                          run any source that isn't BackfillSafe in
+                          internal/sources/external/registry.go — for
+                          on-chain Soroban sources: audit each WASM hash
+                          under docs/operations/wasm-audits/, add it to
+                          internal/wasmaudit/audited_wasm.json and set
+                          Backfill: BackfillPerWASM in registry.go in the
+                          same PR, per AGENTS.md
+                          "Soroban DeFi contracts upgrade in place".
+                          Also refuses projector-owned sources (AGENTS.md
+                          invariant [7]); re-derive those with
+                          projector-replay or projected-rebuild.
+                          Idempotent: the trades hypertable's unique
+                          index on (source, ledger, tx_hash, op_index)
+                          makes re-runs over the same range a no-op.
+                          Example:
+                            stellarindex-ops backfill \
+                              -config /etc/stellarindex.toml \
+                              -from 21000000 -to 25000000 \
+                              -source sdex,band -write
+  backfill-router -config PATH -from N -to N [-resume] [-bucket NAME] [-write]
+                          Reconstruct soroswap_router_swaps for a ledger
+                          range by replaying the soroswap-router
+                          ContractCallDecoder over raw Galexie ledger
+                          metadata (the router emits no Soroban events, so
+                          the projector cannot rebuild it). Idempotent;
+                          stamps a derive_generation so a re-walk corrects
+                          stored rows; checkpoints into ingestion_cursors
+                          for resume. Superseded on the lake path by
+                          ch-rebuild -contract-calls.
+  resume-stalled -config PATH [-min-lag DUR] [-max-resumes N] [-source-filter S] [-parallel N] [-write]
+                          Resume every stalled backfill cursor that still
+                          has a remaining range, marching each toward the
+                          'to' ledger encoded in its sub_source. One-shot
+                          replacement for a hand-rolled SQL+shell loop over
+                          stalled cursors. -dry-run prints the plan only.
+                          Skips (with the reason) any cursor whose sources
+                          backfill would refuse today: projector-owned, or
+                          no longer BackfillSafe.
+  find-data-gaps -config PATH [-from N] [-to N] [-min-gap-size N] [-source S] [-output text|json]
+                          Data-derived gap detector: scan the soroban_events
+                          hypertable directly and report contiguous
+                          ledger-coverage gaps >= -min-gap-size (default
+                          1000 ledgers). Feed the output to a targeted
+                          backfill run. Read-only.
+  tag-routed-via -config PATH [-from N] [-to N] [-window N] [-resume] [-write]
+                          Back-tag trades.routed_via='soroswap-router' for
+                          every trade sharing (ledger, tx_hash) with a
+                          persisted soroswap_router_swaps row (migration
+                          0025 Phase B). SQL-only join — no Galexie walk;
+                          run AFTER the router record itself is complete
+                          (ch-rebuild -contract-calls or backfill-router).
+                          Defaults to the full extent of
+                          soroswap_router_swaps; windowed by ledger
+                          (default 500k) so each UPDATE prunes trades
+                          chunks; first-wins (never overwrites an existing
+                          tag) so re-runs are no-ops. Checkpoints into
+                          ingestion_cursors per -from/-to pair; -resume
+                          (default true) resumes only a run of the same
+                          range. The live indexer keeps the trailing 30
+                          min tagged going forward.
+  tag-signer -config PATH -from N -to N [-window N] [-ch-addr H:P] [-resume] [-write]
+                          Back-tag trades.signer (the AMM/Soroban swap tx
+                          source account) over a ledger range, reading the
+                          signer from the lake's stellar.transactions
+                          (migration 0150). The recovery half of the live
+                          pipeline.RunSignerTagger sweeper — run it when an
+                          indexer/ClickHouse outage or projector lag exceeded
+                          the sweeper's 30-min lookback. First-wins;
+                          checkpointed per -from/-to pair, and -resume
+                          (default true) resumes only a run of the same
+                          range.
+  tag-tx-index -config PATH -from RFC3339 -to RFC3339 [-window DUR] [-ch-addr H:P] [-write]
+                          Back-tag trades.tx_index (intra-ledger apply
+                          order, migration 0196) for every on-chain trade
+                          in [-from, -to), read from the lake's
+                          stellar.tx_hash_index. The recovery half of the
+                          live pipeline.RunTxIndexTagger sweeper; run it
+                          over history the 30-min lookback never saw (e.g.
+                          after each SDEX history window). Windowed by ts
+                          (default 1h); first-wins, so re-runs are no-ops.
+                          -write refuses a range touching a compressed
+                          trades chunk: tag history before compression.
+  census-backfill -config PATH -from N -to N [-bucket NAME] [-resume] [-write]
+                          Populate ledger_ingest_log (ADR-0033 substrate
+                          record) for a historical range. Pure structural
+                          walk — counts contract events + classic trade
+                          effects per ledger and records the header
+                          hash-chain anchors, no decoders run. The live
+                          indexer writes this going forward; this fills
+                          history so substrate continuity + hash-chain
+                          checks cover [genesis, tip]. Idempotent
+                          (ON CONFLICT DO UPDATE); checkpoints for resume.
+  ch-instance-backfill    -ch-addr ADDR (-write | -dry-run) [-from N] [-to N] [-window N] [-table NAME]
+                          One-time historical fill of
+                          stellar.contract_instance_changes (the keyed
+                          instance-executable timeline behind fast
+                          /contracts/{id}/code-history) from
+                          ledger_entry_changes. Windowed + resumable; run
+                          under run-heavy-job.sh.
+  ch-census-rollup        -ch-addr ADDR [-backfill] [-from-day YYYY-MM-DD] [-write]
+                          Maintain stellar.contracts_census_daily (the
+                          day-keyed census behind fast /v1/contracts).
+                          Timer mode recomputes today + missing days;
+                          -backfill walks from the lake's first event.
+  ch-backfill -config PATH -from N -to N [-bucket NAME] [-ch-addr H:P] [-flush-every N] [-parallel N] (-write | -dry-run)
+                          ADR-0034 Phase 2: structurally decode [from,to]
+                          from galexie into the ClickHouse stellar.* Tier-1
+                          tables (ledgers/txs/ops/op_results/contract_events).
+                          Decoder-independent; retains raw XDR. Idempotent
+                          (ReplacingMergeTree), so re-running a range is safe.
+                          -parallel N runs N concurrent range-walkers (each
+                          its own Sink) — the throughput unlock for the full
+                          historic backfill.
+  ch-gate -config PATH -from N -to N [-bucket NAME] [-ch-addr H:P] [-project-to TIP]
+                          ADR-0034 Phase 2 §6 gates over a backfilled range:
+                          recompute the census + structural extract from
+                          galexie, assert extract==census, then read the
+                          range back from ClickHouse and assert STORED and
+                          ACTUAL row counts both equal the census. Reports
+                          compressed bytes/ledger + full-history projection
+                          and walk throughput. Writes nothing; exits non-zero
+                          if the completeness gate fails.
+  ch-reproject -config PATH -from N -to N [-ch-addr H:P] [-max-list N]
+                          ADR-0034 Phase 4 validation: re-derive the range
+                          from the ClickHouse lake with the production
+                          decoders and compare per-ledger counts with the
+                          served protocol tables. Writes nothing; exits
+                          non-zero on any divergence. soroswap is re-derived
+                          without pair seeding, so a range holding pairs
+                          created before -from diverges by construction.
+  ch-rebuild -config PATH -from N -to N [-write] [-ch-addr H:P] [-sources CSV] [-sdex] [-sep41] [-contract-calls] [-contracts CSV] [-bulk-trades]
+                          Re-derive event-based served tables (Timescale)
+                          from the ClickHouse lake for a range by re-running
+                          the production decoders — the ADR-0034 lake-replay
+                          successor to per-source MinIO backfills. -sdex also
+                          re-derives SDEX trades from operations;
+                          -contract-calls the event-less router/band sources;
+                          -sep41 the watched SEP-41 supply/transfer sources
+                          (see docs/operations/sep41-mint-recovery.md). Reads
+                          the lake; idempotent ON CONFLICT writes.
+
+                          -bulk-trades (with -write) swaps the TRADE writer
+                          for the backfill-only bulk path: it proves the
+                          target range is empty per source (scoped by ledger
+                          AND ts), resolves usd_volume for the whole buffer
+                          through a worker pool instead of one serial
+                          prices_1m round trip per row, and streams the rows
+                          in over parallel binary COPY connections. Rows are
+                          identical to the upsert path's; a non-empty range
+                          or a concurrent writer falls back to that path and
+                          says so. Use it for a historical re-derive below
+                          the source's floor — for a recovery INTO populated
+                          ledgers it only adds a probe and then falls back.
+  trades-cagg-refresh -config PATH -from N -to N
+                          Refresh every continuous aggregate over trades
+                          (prices_1m first, twap_1h/twap_1d last) over the
+                          time span of the trades now in ledgers
+                          [-from,-to], padded so the edge buckets are
+                          refreshed too. Their policies never look back
+                          this far, so run it after any in-place rewrite of
+                          historical trades; scripts/ops/
+                          ch-rebuild-projected.sh runs it per window.
+                          Fails on a range with no trades (the span of what
+                          was deleted is unknowable), on the first view
+                          that fails, and when prices_1m then disagrees
+                          with trades in any of 8 sampled one-hour
+                          windows of the span. Idempotent.
+  ch-supply -config PATH -from N -to N [-ch-addr H:P] [-top N] [-final] [-seed-flows]
+                          Derive every token's total supply from the lake by
+                          summing CAP-67 classic + SEP-41 mint/burn/clawback
+                          flows per contract (ADR-0034). Defaults to a
+                          top-N report; -seed-flows writes one decoded row
+                          per flow event into stellar.supply_flows
+                          (idempotent). Read-only unless -seed-flows.
+  ch-txindex-backfill (-full | -from N | -to N) (-write | -dry-run) [-ch-addr H:P] [-window N]
+                          Fill stellar.tx_hash_index (the hash-ordered
+                          GET /v1/tx/{hash} lookup table, perf-todo §4)
+                          from stellar.transactions history in windowed,
+                          resumable INSERT…SELECT chunks (idempotent —
+                          ReplacingMergeTree keyed on tx_hash). The
+                          tx_hash_index_mv MV covers post-deploy ingest;
+                          this covers the history behind it. -to 0 = the
+                          CONTIGUOUS lake tip from -from; an explicit -to
+                          above it is refused (a hole in stellar.ledgers
+                          below it). A bare invocation is REFUSED: -full runs the
+                          whole ledger-2..tip history (~10.2B rows), or pass
+                          an explicit -from (resume point) / -to bound.
+                          Prints a resume point per window; serialize it and
+                          run under the root-<2G watchdog on r1.
+  ch-participant-backfill [-ch-addr H:P] [-from N] [-to N] [-window N] [-max-decode-errors N] [-write]
+                          Fill stellar.operation_participants (the non-source
+                          side of ADR-0038 Phase B account history) for
+                          HISTORICAL ledgers by re-deriving participants from
+                          stellar.operations.body_xdr in the ClickHouse lake —
+                          NOT a Galexie re-walk (BACKLOG #59). Reuses the live
+                          extractor's participant derivation, so the fill is
+                          byte-identical to live capture. -to 0 = the
+                          live-capture floor − 1 (exactly the gap). Either
+                          bound must lie within the CONTIGUOUS lake tip from
+                          -from, else the run is refused (no MV re-derives a
+                          ledger read as a hole). Windowed, resumable
+                          (idempotent ReplacingMergeTree), prints a resume
+                          point (-from AND -to: a resumed run reads its own
+                          rows as the floor) per window. -dry-run counts what WOULD
+                          be written. Run under run-heavy-job.sh on r1.
+                          Exits non-zero when more op bodies failed to
+                          decode than -max-decode-errors (default 0).
+  classic-movements-backfill -from N -to N [-window N] [-ch-addr H:P] [-resume] [-write] [-verify]
+                          ADR-0047, all four phases, RETARGETED by ADR-0048
+                          D2 to ClickHouse: reconstruct pre-P23 classic
+                          movements from the lake into
+                          stellar.account_movements (feed-shaped, two rows
+                          per movement — see that table's DDL header in
+                          deploy/clickhouse/tier1_schema.sql for the full
+                          row-cardinality table). No Postgres connection —
+                          the Postgres classic_movements hypertable
+                          (migration 0105) was never populated and is
+                          dropped by migration 0113. Op-only
+                          surface (stellar.operations join
+                          operation_results): Payment, CreateAccount,
+                          PathPaymentStrictReceive/Send,
+                          CreateClaimableBalance, ClaimClaimableBalance,
+                          ClawbackClaimableBalance, Clawback, AccountMerge.
+                          Entry-changes-correlated surface (also needs
+                          ledger_entry_changes — see ADR-0047 Phase 0):
+                          LiquidityPoolDeposit/Withdraw + the CAP-0038
+                          AllowTrust/SetTrustLineFlags trustline-revocation
+                          auto-liquidation edge case; ops in this surface
+                          report entry-changes-unavailable / are skipped
+                          (counted + logged, never guessed) until Phase 0's
+                          ch-backfill closes the ledger_entry_changes
+                          fidelity gap for this range. ClaimClaimableBalance/
+                          ClawbackClaimableBalance correlate against their
+                          own CreateClaimableBalance row via an in-run index
+                          + a ClickHouse fallback (previously Postgres);
+                          unresolved ones are counted + logged, never
+                          guessed. HISTORICAL-ONLY — -to is HARD-CLAMPED
+                          below the P23 boundary (ledger 58762517,
+                          2025-09-03) regardless of what is passed, since
+                          every ledger from P23 onward already emits a
+                          unified CAP-67 event via sep41_transfers.
+                          Windowed (-window, default 500000 ledgers) and
+                          resumable (-resume, default true; DATA-DERIVED —
+                          queries the highest ledger already in
+                          stellar.account_movements for [-from,-to] and
+                          re-processes it, no ingestion_cursors row
+                          involved, per ADR-0048's "no Postgres in the
+                          loop"). -verify recounts each window from
+                          ClickHouse and compares against this run's
+                          decode-time counts (cheap reconciliation, not
+                          full ADR-0033 machinery). Idempotent
+                          (ReplacingMergeTree) — safe to re-run over an
+                          already-written range (re-running after Phase 0
+                          lands resolves anything reported
+                          entry-changes-unavailable on a prior pass).
+                          Defaults to DRY-RUN (count only); pass -write to
+                          persist. Run under run-heavy-job.sh on r1. Example:
+                            stellarindex-ops classic-movements-backfill \
+                              -ch-addr 127.0.0.1:9300 \
+                              -from 2 -to 58762516 \
+                              -write -verify
+  projector-replay -config PATH -source NAME -from N [-write]
+                          Rewind the projector's per-source cursor so the
+                          indexer's projector goroutine re-projects a
+                          historical range from soroban_events (ADR-0032
+                          Phase 5 replacement for the retired *-backfill
+                          subcommands). One-shot cursor SQL — the running
+                          indexer does the work at derive_generation 0,
+                          so rows a re-derive stamped higher are NOT
+                          corrected (use projected-rebuild). -source names: see
+                          internal/projector/registry.go. Referenced by the
+                          migration 0137/0139 operator follow-ups.
+  projected-rebuild -config PATH -source NAME -from N [-to N] [-workers K] [-window N] [-resume] [-write] [-ch-addr H:P] [-heartbeat PATH] [-allow-live-overlap]
+                          ADR-0048 D3: bulk catch-up for a projected
+                          (Soroban-derived) source, replacing
+                          projector-replay for any rewind beyond
+                          roughly 1M ledgers. projector-replay rewinds
+                          the LIVE projector's cursor and is bound by
+                          its tick cadence + 60s per-cycle deadline
+                          (~720k ledgers/hour ceiling); this tool runs
+                          -workers (default 4, soft-capped 8) parallel
+                          ledger-window goroutines with NO per-cycle
+                          deadline, each streaming the ClickHouse lake
+                          through the SAME decoder + sink
+                          (pipeline.HandleEvent) the live projector
+                          uses, at roughly 10-20x the projector-replay
+                          rate. -to defaults to the live projector
+                          cursor's current position (fill exactly the
+                          history behind the live tail). One-writer
+                          contract: REFUSES to run if the live
+                          projector's cursor for -source is still
+                          inside [-from,-to] (would mean two writers
+                          racing the same range) unless
+                          -allow-live-overlap is passed; never touches
+                          the live projector's own cursor. Windowed
+                          (-window, default 50000 ledgers — controls
+                          checkpoint/scheduling granularity only; this
+                          tool streams, never buffers a window) and
+                          resumable (-resume, default true;
+                          checkpoints into ingestion_cursors as
+                          source="projected-rebuild",
+                          sub_source="<name>:<wlo>-<whi>" per window).
+                          Idempotent (every per-source table's ON
+                          CONFLICT DO NOTHING) — safe to re-run or to
+                          overlap with a retried window. Defaults to
+                          DRY-RUN (count + report only); pass -write to
+                          persist. A held window or dropped trade exits
+                          non-zero and writes last_exit_ok=0 to the
+                          -heartbeat textfile (stellarindex_ops_job_run_failed).
+                          Prints per-topic emitted counts on
+                          completion for an operator eyeball-check
+                          against the census tables — the ADR-0033
+                          compute-completeness verdict remains
+                          authoritative. Run under run-heavy-job.sh on
+                          r1. Example:
+                            stellarindex-ops projected-rebuild \
+                              -config /etc/stellarindex.toml \
+                              -source blend_backstop -from 51499546 \
+                              -workers 6 -write
+  reconcile-balances (-account G... | -sample N) [-ch-addr H:P] [-horizon URL] [-tolerance-stroops N] [-recent-ledgers N] [-min-recent-ledger N] [-sample-seed N] [-sleep-ms N] [-timeout DUR]
+                          ADR-0033-style verification harness for the
+                          "verified explorer" claim: proves
+                          stellar.ledger_entry_changes reflects TRUE
+                          on-chain state by comparing our latest
+                          recorded NATIVE (XLM) balance for an account
+                          against an independent external source
+                          (public Horizon — a one-off, read-only
+                          verifier is exactly the case ADR-0001's
+                          Horizon ban doesn't cover; see the source
+                          file's doc comment). Requires exactly one of
+                          -account (reconcile one) or -sample N
+                          (reconcile N accounts sampled from accounts
+                          with a ledger_entry_changes row in the last
+                          -recent-ledgers (default 17280, ~1 day) below
+                          the lake tip, or above an absolute
+                          -min-recent-ledger, so their latest snapshot
+                          approximates current chain state; ordered by
+                          cityHash64(account_id, -sample-seed), a fresh
+                          random seed per run unless pinned, printed
+                          with the floor so a run can be reproduced).
+                          Per account: reads our balance
+                          via argMax(balance, ledger_seq) (zero rows =
+                          NO_DATA, outside our coverage, not a
+                          mismatch), fetches Horizon's current native
+                          balance (404 = MERGED_OR_ABSENT — the account
+                          existed in our data but is gone now, reported
+                          not hard-failed), and classifies
+                          MATCH/MISMATCH by
+                          |our_stroops - ref_stroops| <= -tolerance-stroops
+                          (default 0). Horizon's decimal XLM string is
+                          parsed exactly via math/big (no float64
+                          anywhere in the path, per ADR-0003). Polite
+                          by default: serial requests with -sleep-ms
+                          (default 250) between them and a bounded
+                          429 backoff/retry. Prints a full MATCH/
+                          MISMATCH/NO_DATA/MERGED_OR_ABSENT report plus
+                          a one-line summary. Exit code = number of
+                          MISMATCHes (capped at 255), mirroring
+                          scripts/dev/r1-smoke.sh's convention so cron/
+                          Healthchecks.io can consume it directly.
+                          Example:
+                            stellarindex-ops reconcile-balances \
+                              -sample 50 -ch-addr 127.0.0.1:9300 \
+                              -horizon https://horizon.stellar.org
+  verify-contiguity [-config PATH] [-ch-addr H:P] [-from N] [-to N] [-ec-floor N] [-check ledgers|entrychanges|all]
+                          Standing ADR-0034 data-verification tool for the
+                          ClickHouse raw lake. Two checks: (1) ledger
+                          substrate contiguity — every ledger_seq in
+                          [-from,-to] (default 2..CH max) must be present in
+                          stellar.ledgers; starts with a cheap whole-range
+                          uniqExact() + count() headline (un-merged duplicate
+                          rows are reported, informational), and only pays for
+                          a windowed (1M-ledger bucket) scan + a bounded
+                          per-bucket gap-range localization pass (capped at
+                          200 ranges total) when a deficit is found. (2)
+                          stellar.ledger_entry_changes coverage vs.
+                          tx-bearing ledgers, split at -ec-floor (default 0 =
+                          auto: the lowest ledger in range holding a
+                          transaction-scoped entry-change row; no such row
+                          gates the whole range): missing coverage AT/ABOVE
+                          the floor is a DEFICIENCY (counts toward the exit
+                          code); missing BELOW the floor is reported as
+                          BACKFILL-PENDING, informational only, and the
+                          exempted range is printed. -check
+                          restricts to one check (ledgers|entrychanges),
+                          default all. Read-only; touches ClickHouse only,
+                          never Postgres. Exit code = ledger gaps +
+                          entry-change deficiencies at/above -ec-floor
+                          (capped at 255), mirroring reconcile-balances'
+                          convention so cron/Healthchecks.io can consume it
+                          directly. Example:
+                            stellarindex-ops verify-contiguity \
+                              -ch-addr 127.0.0.1:9300
+  verify-hashchain [-config PATH] [-ch-addr H:P] [-from N] [-to N]
+                          Standing ADR-0034 data-verification tool proving the
+                          ClickHouse raw lake's ledger substrate is
+                          HASH-CHAINED, not just present — the second half of
+                          the "ledgers contiguous AND hash-chained to genesis"
+                          claim (verify-contiguity proves the first half). For
+                          every ledger n in [-from,-to] (default 2..CH max),
+                          asserts prev_hash == ledger n-1's ledger_hash. Two
+                          checks, both windowed at the same 1M-ledger buckets
+                          as verify-contiguity: (1) in-window links, via a
+                          lagInFrame(ledger_hash) window function ordered by
+                          ledger_seq, one cheap count-shaped query per window;
+                          (2) boundary links, a 2-row point lookup at every
+                          window seam (lagInFrame can't see across a window's
+                          own WHERE bounds). A broken or absent predecessor at
+                          a seam counts as a broken link either way, tagged
+                          distinctly in the report. Per-ledger localization
+                          (which exact ledger_seq is broken, capped at 200
+                          entries) only runs for windows the headline already
+                          flagged nonzero. NOTE: a missing ledger (a
+                          contiguity gap) is ALSO reported as a broken link
+                          here, because the chain necessarily fails to
+                          connect across it — run verify-contiguity first to
+                          tell "missing ledger" apart from "present but wrong
+                          hash". Read-only; touches ClickHouse only, never
+                          Postgres. Exit code = in-window broken links +
+                          boundary broken links (capped at 255), mirroring
+                          verify-contiguity's convention so cron/
+                          Healthchecks.io can consume it directly. Example:
+                            stellarindex-ops verify-hashchain \
+                              -ch-addr 127.0.0.1:9300 -from 2 -to 60000000
+  verify-lake [-config PATH] [-ch-addr H:P] [-from N] [-to N] [-ec-floor N] [-checks contiguity,entrychanges,hashchain,rawcensus] [-textfile PATH]
+                          Single "is the lake sound?" invocation with one
+                          unified verdict + exit code; run daily by
+                          verify-lake.timer and used as the restore
+                          acceptance gate. Over one resolved [-from,-to]
+                          range (default 2..CH max, -ec-floor default
+                          0 = auto, as in verify-contiguity): (1) ledger
+                          substrate contiguity, (2)
+                          stellar.ledger_entry_changes coverage
+                          (floor-gated — below -ec-floor is
+                          backfill-pending, informational only, and
+                          the exempted range is printed), (3)
+                          hash-chain integrity (in-window + boundary
+                          links), (4) raw-table census: transactions,
+                          operations and contract_events rows per 1M-
+                          ledger partition vs the ledger headers'
+                          tx/op/soroban_event counts, operation_results
+                          and operation_participants presence-only
+                          (active-part rows, so duplicates can mask a
+                          partial loss; confirm a suspect range with
+                          ch-gate). Checks 1-3 call the same funcs
+                          verify-contiguity and verify-hashchain call.
+                          -checks restricts to a comma-separated subset
+                          (contiguity|entrychanges|hashchain|rawcensus),
+                          default all. -textfile writes per-check
+                          failure gauges + last-run time for
+                          node_exporter once every requested check
+                          completed. Read-only; touches ClickHouse
+                          only, never Postgres. Exit code = ledger
+                          gaps + entry-change deficiencies at/above
+                          -ec-floor + hash-chain broken links + short
+                          raw-table partitions (capped at 255).
+                          reconcile-balances (the ADR-0033 external-
+                          Horizon balance check) is NOT composed in —
+                          it's network-bound and account-sampled, a
+                          different shape; run it separately. Example:
+                            stellarindex-ops verify-lake \
+                              -ch-addr 127.0.0.1:9300
+  verify-network-state [-config PATH] [-ch-addr H:P] [-archive URL] [-checkpoint N] [-checks hotarchive,lumens] [-textfile PATH]
+                          Compares the lake's derived current state with
+                          state the network publishes; run daily by
+                          verify-network-state.timer. (1) hotarchive:
+                          every archived entry in the history archive's
+                          hot-archive buckets at a checkpoint (default the
+                          newest at or below the lake tip) must match
+                          ledger_entries_current — a protocol upgrade can
+                          rewrite these with no ledger-meta change.
+                          (2) lumens: native XLM in accounts, claimable
+                          balances, liquidity pools and native-SAC
+                          balances plus fee_pool must equal total_coins
+                          exactly. Keys absent from the lake or changed
+                          after the checkpoint are reported, not counted.
+                          Needs a loadable -config (network passphrase +
+                          archive URL). Exit code = hot-archive mismatches
+                          (+1 if nothing was comparable) + 1 for a lumen
+                          residual (capped at 255). Example:
+                            stellarindex-ops verify-network-state \
+                              -config /etc/stellarindex.toml
+  wasm-drift [-config PATH] [-ch-addr H:P] [-source NAME] [-textfile PATH]
+                          Every contract of a gated source that has an
+                          audit log (curated set + factories + children
+                          walked from the lake's creation events) must
+                          run a WASM hash in the embedded audited-hash
+                          manifest (internal/wasmaudit/audited_wasm.json).
+                          A hash absent from it is drift; a SAC or a
+                          contract with no lake instance entry is
+                          reported, not drift; a gated source with no
+                          audit log is reported unaudited. -textfile
+                          writes wasm_drift.prom for node_exporter.
+                          Read-only; touches ClickHouse only. Exit code
+                          = drifting contracts (capped at 255). Runbook:
+                          docs/operations/runbooks/wasm-drift.md.
+  ch-recognition -config PATH [-from N] [-to N] [-ch-addr H:P] [-include-firehose] [-top N]
+                          ADR-0033 Claim 2a recognition audit: pull every
+                          distinct (contract_id, topic_0_sym) shape from the
+                          lake and run each through the production decoder
+                          chain's Matches(); any shape no decoder claims is a
+                          recognition gap (an event the system would silently
+                          drop). -include-firehose also audits the CAP-67
+                          classic-token topics. Read-only.
+  verify-served-values -api URL [-config PATH] [-textfile PATH] [-timeout DUR]
+                          Data-correctness harness: fetch a curated set of
+                          values we SERVE and reconcile each against an
+                          INDEPENDENT ground truth (e.g. XLM supply vs the
+                          SDF lumen API), emitting node_exporter textfile
+                          gauges so a drifting served value alerts within a
+                          day. Also diffs -config's supply.sdf_reserve_accounts
+                          (default /etc/stellarindex.toml; empty skips it)
+                          against the reserve list SDF publishes. Read-only.
+  sdex-claim-audit -config PATH -from N -to N [-bucket NAME] [-examples N] [-dump-ops]
+                          Walk a ledger range and run every classic-DEX claim
+                          atom through the real SDEX decode path, tallying
+                          which claims the decoder DROPS and why — the exact
+                          diagnosis of SDEX trade-count gaps against Hubble
+                          (which counts one trade per claim atom). Read-only.
+  verify-recognition -config PATH -from N -to N
+                          ADR-0033 Claim 2a: pull every distinct
+                          (contract, topic[0]) shape from soroban_events
+                          in the range and run each through the
+                          production decoder chain's Matches(). Lists any
+                          shape no decoder handles (a topic a WASM upgrade
+                          added that we'd silently drop) and exits non-zero
+                          if any exist. Cron/CI-gateable.
+  verify-reconciliation -config PATH -from N -to N [-source S] [-max-list N] [-ch-addr ADDR]
+                          ADR-0033 Claim 2b: re-derive how many trades
+                          each soroban_events range WOULD produce (running
+                          the real decoder) and diff per ledger against the
+                          trades table. Lists ledgers where projected rows
+                          went missing (or phantom rows appeared) and exits
+                          non-zero. Covers every per-ledger source —
+                          trades (soroswap/aquarius/phoenix/comet), oracles
+                          (reflector/redstone), cctp/rozo/defindex, blend's
+                          four tables (re-derive bucketed by EventKind), and
+                          sdex (lake ops re-derive). Seeds soroswap pairs via RPC.
+  compute-completeness -config PATH [-to N] [-allow-frozen-cursor] [-source S] [-ch -pass]
+                          ADR-0033 Phase 6: compute the per-source
+                          completeness WATERMARK (substrate continuity +
+                          hash chain ∧ projection reconciliation) and a
+                          system recognition verdict, and write them to
+                          completeness_snapshots for the API + status page.
+                          -to defaults to the live ledgerstream tip. Run on
+                          a cron; the headline replaces density/gap_free.
+                          -ch -pass is the nightly whole-pass driver: prove
+                          recognition + substrate once at full range, then
+                          reconcile every source's projection incrementally
+                          from its own watermark (one process, no per-chunk
+                          re-invocation).
+  verify-usd-volume [-config PATH] [-day YYYY-MM-DD] [-days N] [-min-rows N] [-max-list N]
+                          The VALUE half of the usd_volume checks (C4-055/
+                          C4-066). The standing
+                          stellarindex_{cex,onchain}_usd_volume_coverage_low
+                          alerts only measure COVERAGE — the share of trades
+                          with a non-NULL usd_volume. A trade priced with the
+                          WRONG number is 100% covered and completely wrong,
+                          and every volume surface we publish (DEX volume,
+                          asset volume, venue rankings, market share) is a sum
+                          of that column.
+                          Splits the five-tier valuation waterfall in two:
+                            * CHECKED — the exact tiers. Where the QUOTE leg
+                              (tiers 1/2) or the BASE leg (tier 2b) is
+                              USD-pegged, usd_volume is a pure decimal
+                              rescaling of an amount already on the row:
+                              usd_volume == pegged_leg / 10^decimals. No price
+                              lookup, no time alignment, so NO TOLERANCE is
+                              involved. A mismatch means the wrong scale,
+                              wrong leg, a stale peg list, or a superseded
+                              backfill vintage, and it FAILS the run.
+                            * MEASURED — the estimated tiers (FX rate /
+                              XLM anchor). Sums and row counts are PRINTED
+                              per tier so an operator can read the real
+                              divergence distribution off production, but
+                              they are NOT judged: no threshold for them has
+                              been measured yet, and guessing one on a money
+                              surface is the C6-118 mistake.
+                          Read-only against Postgres; no alert rule. Uses the
+                          SAME peg inputs (trades.usd_pegged_classic_assets +
+                          supply.sac_wrappers) as the insert path, so it
+                          re-derives what the writer should have done rather
+                          than reimplementing it. -day defaults to YESTERDAY
+                          (today's chunk is still being written).
+                          Exit: non-zero iff an exact-tier identity is
+                          violated. Follow-up after the first production run:
+                          read the tier-3/4 spread, THEN calibrate an alert.
+                          Example:
+                            stellarindex-ops verify-usd-volume \
+                              -config /etc/stellarindex.toml -days 30
+  usd-volume-restamp -config PATH -from YYYY-MM-DD -to YYYY-MM-DD [-tier exact|xlm-base] [-slice DUR] [-sources a,b] [-fill-null] [-heartbeat PATH] [-allow-live-overlap] [-write]
+                          The corrective WRITE half of verify-usd-volume.
+                          -tier exact (default) repairs the SQL peg
+                          identity (W5.3); -tier xlm-base RE-DERIVES the
+                          tier-4 XLM anchor in Go through the store's own
+                          waterfall (#372) and takes the extra flags
+                          [-report] [-sample N] [-batch N]
+                          [-min-rel-delta F] [-max-generation N]
+                          [-chunks [-chunk-batch N] [-min-free-bytes N]
+                          [-generation N] [-allow-live-adjacent]
+                          [-resume-paused-policy]].
+                          -chunks walks the window one trades chunk at a
+                          time — decompress_chunk, restamp inside it,
+                          compress_chunk — for a window whose chunks are
+                          compressed (in-place UPDATEs measured ~1,574
+                          rows/min there, 2026-09-03). A -write run holds
+                          the session advisory lock
+                          hashtext('usd-volume-restamp:trades') for its
+                          life (run-heavy-job.sh's lock is per job NAME
+                          and cannot stop an attempt under another name; a
+                          held lock is a refusal), PAUSES the trades
+                          compression policy (refusing to start without
+                          one, and refusing an
+                          already-unscheduled one unless
+                          -resume-paused-policy), waits out a policy run
+                          in flight, lists the chunks again after the
+                          pause, and re-enables the policy on every exit
+                          before releasing the lock. It restores each
+                          chunk to the state it was listed in (an
+                          uncompressed chunk stays so); reads the chunk's
+                          is_compressed ahead of EVERY batch and stops if
+                          it was re-compressed underneath (never the
+                          per-row path); and refuses a window reaching
+                          into the policy's lag unless
+                          -allow-live-adjacent. Its dry run prints the
+                          chunk plan and decompresses nothing; -write
+                          refuses unless free space on the data volume
+                          exceeds 2x the largest chunk's uncompressed size
+                          (statfs on the DB host, or -min-free-bytes with
+                          a warning; re-checked before every decompress);
+                          a -generation in the future is refused; a failed
+                          chunk is re-compressed before the tool exits; a
+                          rerun probes finished chunks read-only and skips
+                          them.
+                          BOTH tiers refuse a window the live ledgerstream
+                          cursor has not passed (-allow-live-overlap is the
+                          explicit override), and BOTH are fail-closed DRY
+                          RUNS without -write.
+
+                          -tier exact: for every EXACT-tier (source, base, quote)
+                          group in the window — quote leg or base leg
+                          USD-pegged — rewrites each row whose stored
+                          usd_volume differs from the identity
+                          usd_volume == pegged_leg / 10^decimals to exactly
+                          the value the insert path writes today, stamped
+                          with this run's derive_generation (INV-3: guarded
+                          by derive_generation <= gen, so a live gen-0
+                          replay can never claw a correction back).
+                          Repairs the pre-2026-07-23 class (USDC-base SDEX
+                          rows valued by the resolver's VWAP instead of the
+                          $1 peg). The FX tier is NEVER read by either tier
+                          — that is ch-rebuild's job.
+
+                          -tier xlm-base: for every on-chain DEX trade whose
+                          BASE leg is XLM (native or its SAC) and whose
+                          QUOTE leg is not USD-pegged, recomputes
+                          usd_volume = base_amount/1e7 x XLM/USD-at-ts by
+                          calling the store's own
+                          usdVolumeViaXLMBaseAnchor with the installed
+                          VWAPUSDFXResolver — the same function InsertTrade
+                          calls. Repairs the pre-fd1860bd class (#372):
+                          XLM-base trades valued QUOTE-side through the
+                          counterparty's own thin <token>/USDC book, or
+                          left NULL. A row the anchor CANNOT price is
+                          reported, never guessed at: its stored NULL stays
+                          NULL and its stored value is never blanked.
+                          -report prints the read-only decision block
+                          (candidates, NULL->value population, the
+                          distribution of relative moves, USD sums, the two
+                          extremes, a deterministic sample) and refuses
+                          -write. -min-rel-delta narrows the write set to
+                          the large moves; -max-generation targets a
+                          vintage (0 = the never-re-derived population).
+                          AFTER a run, refresh the CAGGs that read
+                          usd_volume over the span: prices_1m first, then
+                          prices_15m/1h/4h/1d/1w/1mo,
+                          pools_per_source_1h, dex_volume_by_pair_1d,
+                          source_volume_1h (all direct on trades), and
+                          twap_1h/twap_1d LAST (they read prices_1m).
+                          See docs/operations/usd-volume-rederive-2026-08.md.
+                          Fail-closed DRY RUN by default (prints per-day
+                          candidate counts); -write applies. Walks -from..-to
+                          (inclusive UTC days, never today) oldest → newest
+                          in -slice windows (default 1h) on a dedicated
+                          session with the Timescale decompression cap
+                          raised. Idempotent: rows already satisfying the
+                          identity are untouched (value AND generation), so
+                          a re-run reports 0. -fill-null also stamps NULL
+                          exact-tier rows (a coverage change; opt-in).
+                          Heartbeat like ch-backfill (-heartbeat); run under
+                          run-heavy-job.sh under ONE job name for every
+                          attempt (usd-volume-restamp): the wrapper's lock
+                          is per name, so a fresh name per attempt lets two
+                          runs overlap.
+                          Acceptance: verify-usd-volume over the span at
+                          0 violations. Example:
+                            stellarindex-ops usd-volume-restamp \
+                              -config /etc/stellarindex.toml \
+                              -from 2026-05-12 -to 2026-07-22 -write
+                            stellarindex-ops usd-volume-restamp \
+                              -config /etc/stellarindex.toml -tier xlm-base \
+                              -from 2026-03-12 -to 2026-07-21 -report
+                            stellarindex-ops usd-volume-restamp \
+                              -config /etc/stellarindex.toml -tier xlm-base \
+                              -chunks -from 2026-01-01 -to 2026-07-21 \
+                              -fill-null -write
+  state-snapshot -config PATH [-archive URL] [-checkpoint N] [-limit N] [-write] [-scope contracts|all|storage] [-ch ADDR] [-dry-run]
+                          Read a history-archive checkpoint's ledger-entry
+                          state and tally it per entry type. -write fills
+                          ClickHouse ledger_entry_changes from the snapshot
+                          (DATA-TRUTH-PLAN G1-G3) and needs -limit 0: a read
+                          the -limit (default 2000000) truncated is refused.
+                          -scope selects the entry types; -dry-run sizes the
+                          write set without writing.
+  issuer-enrich -config PATH [-ch ADDR] [-batch N] [-write]
+                          Populate issuers.home_domain from on-chain account
+                          state in the ClickHouse lake (unblocks sep1-refresh
+                          → org_name). Batched; -dry-run reports counts
+                          without writing.
+  sep1-refresh -config PATH [-limit N] [-older-than DUR] [-timeout DUR] [-issuer G...] [-write]
+                          Resolve the SEP-1 stellar.toml for every issuer
+                          with a home_domain and write the parsed payload to
+                          issuers.sep1_payload (surfacing org_name on
+                          /v1/issuers). Per-issuer failures are counted, not
+                          fatal; built-in per-request timeout + SSRF guard.
+                          Run hourly from cron.
+  issuer-flags -config PATH [-ch-addr ADDR] [-limit N] [-batch N] [-timeout DUR] [-write]
+                          Decode issuer AccountEntry auth flags from the lake
+                          and persist them to issuers.auth_* — a DURABLE
+                          fallback for the API's read-time enrichment, which
+                          already resolves 39/40 top issuers but needs the
+                          ClickHouse lake plus a warm account-state cache and
+                          degrades to "not yet resolved" on a cold page.
+                          Matches on key_xdr (the sort key: 0.069s vs 5.18s
+                          via account_id). Queue is auth_required IS NULL
+                          ordered by PK, so bounded runs resume rather than
+                          re-walk. Issuers outside the captured window are
+                          reported as absent, not an error. Run daily.
+  asset-registry-backfill -config PATH [-ch-addr ADDR] [-page N] [-batch N] [-write]
+                          [-limit N] [-resume-from ASSET_ID] [-timeout DUR]
+                          [-min-free-bytes N] [-heartbeat PATH] [-write]
+                          Register every classic asset the lake holds a
+                          TRUSTLINE for, whether or not it has ever traded.
+                          classic_assets had one population path — a trade —
+                          and issuers is written only from inside that same
+                          writer, so an asset that is held but never traded
+                          had no registry row, no issuer row, no SEP-1 fetch
+                          and no RWA candidacy. Measured 2026-09-10: 512,496
+                          classic assets with a trustline against 199,793
+                          registered, 61% absent (Franklin Templeton's BENJI
+                          among them). Reads the lake, writes through the
+                          existing registry writer; never touches
+                          observation_count, which stays a TRADE counter.
+                          Keyset-paginated on asset_id: any early stop prints
+                          a RESUME line. Idempotent and monotone, so resuming
+                          is an optimisation, not a correctness requirement.
+                          Long — run under run-heavy-job.sh, and use -limit to
+                          land it in tranches while the listing spine grows.
+  seed-soroswap-pairs -config PATH [-rpc URL] [-timeout DUR] [-write]
+                          Bootstrap the soroswap_pairs registry table
+                          via stellar-rpc simulateTransaction. Walks the
+                          factory's all_pairs() / token_0() / token_1()
+                          view functions and inserts each (pair, token0,
+                          token1) tuple not yet registered; never rewrites
+                          a registered pair (a disagreeing one fails the
+                          run). Run once on first deployment;
+                          live new_pair events keep the table fresh
+                          afterwards (see migrations/0016_create_soroswap_pairs.up.sql).
+  seed-protocol-contracts -config PATH -source NAME|all [-to LEDGER] [-timeout DUR] [-write]
+                          Bootstrap the protocol_contracts registry for a
+                          factory-anchored gated decoder (ADR-0035): walks
+                          the source's factory creation events (e.g. Blend
+                          pool-factory deploy) from the lake and upserts
+                          every child contract. Deploy precondition before
+                          relying on the gate; live creation events keep the
+                          table fresh afterwards.
+                          ~3N+1 RPC calls at 300ms throttle, so wall-time
+                          scales linearly with pair count (~3 min for 200
+                          pairs). Idempotent — re-running is safe.
+  seed-entry-counts -config PATH [-timeout DUR]
+                          Authoritatively recompute source_entry_counts
+                          (the "entries" column on /v1/diagnostics/
+                          ingestion) from a full GROUP BY over every
+                          decoded-event hypertable. The writers keep it live going
+                          forward; this one-shot folds in pre-counter
+                          history + any crash drift. Run ONCE post-
+                          backfill (scans every trades chunk). Idempotent
+                          — SETs not ADDs, so re-running converges.
+  trim-galexie-archive -config PATH -older-than-ledger N [-dry-run|-commit] [-no-verify-upstream] [-max-files N]
+                          Per ADR-0027 §Step 2: DESTRUCTIVE — deletes
+                          LCM files from the local hot tier
+                          (galexie-archive on MinIO) whose ledger range
+                          is entirely below -older-than-ledger, after
+                          verifying their presence in the cold tier
+                          (aws-public-blockchain). Reclaims pool
+                          capacity by tiering off historical mirror.
+                          Safety stack:
+                            * --dry-run is the DEFAULT when neither
+                              flag is set; --commit MUST be explicit.
+                            * Upstream verification is the DEFAULT (no
+                              flag enables it); every candidate is
+                              HEAD'd against cold before deletion.
+                              --no-verify-upstream skips this and is
+                              NOT RECOMMENDED.
+                            * --max-files caps deletions per run
+                              (default 100000, at most 1000000).
+                            * --older-than-ledger is REQUIRED — no
+                              implicit "trim everything below tip - N" —
+                              and must sit at least 30 days (518400
+                              ledgers) below the hot archive's newest
+                              ledger.
+                            * A deletion counts only once the hot
+                              datastore no longer resolves the path.
+                            * Cold tier MUST be configured. Refuses
+                              to run otherwise.
+                          Rollback: stellarindex-ops
+                          rehydrate-galexie-archive -from N -to N.
+  rehydrate-galexie-archive -config PATH -from N -to N [-write]
+                          Per ADR-0027 §Step 2: copy LCM files for the
+                          ledger range [-from, -to] from the configured
+                          cold tier (storage.s3_cold_*; production is the
+                          aws-public-blockchain bucket) back into the
+                          local hot tier (storage.s3_bucket_archive on
+                          MinIO). Idempotent — uses PutFileIfNotExists,
+                          so files already present in hot are skipped.
+                          -dry-run reports the file list + skipped vs
+                          would-copy counts without writing.
+                          Use cases:
+                            * recover from accidental trim;
+                            * pre-warm hot before a planned backfill;
+                            * cold-tier integrity spot check (surfaces
+                              files missing in cold via the
+                              missing_in_cold counter).
+                          Refuses to run if cold tier is not configured
+                          (cfg.Storage.ColdTieringEnabled() == false).
+  galexie-mirror-verify -config PATH [-bucket B] [-from N] [-to N] [-parallel N] [-max-report N] [-textfile-output PATH]
+                          Read-only. Compare every object of the local
+                          Galexie mirror (storage.s3_bucket_archive)
+                          with the same key on the upstream dataset
+                          (storage.s3_cold_*) by ETag and size, per
+                          partition present on both sides. Prints one
+                          MISMATCH line per differing object with its
+                          partition and ledger; cause is
+                          upstream-rewritten (upstream modified after
+                          our copy), local-differs, or local-only.
+                          Exits non-zero on any mismatch or listing
+                          error. galexie-archive-fill checks presence
+                          only, so this is what sees a re-export.
+  compare-entry-changes -config PATH -from N -to N [-bucket NAME] [-window N]
+                          Read-only. Extract the ledger_entry_changes rows
+                          for [-from, -to] from our galexie export
+                          (storage.s3_bucket_archive, or -bucket) and from
+                          the cold tier (the AWS public export), exactly as
+                          the lake writer would, and compare them position
+                          by position. Prints a JSON report (row counts,
+                          difference count, first 20 differences); exits 1
+                          on any difference. -window (default 100) bounds
+                          the ledgers held in memory per export.
+  mint-key -config PATH -identifier ID -label LABEL -reason TEXT [-actor NAME] [-tier T [-confirm-operator]] [-scopes S,..] [-rate-limit-per-min N] [-expires-in DUR]
+                          Issue a fresh API key directly via the
+                          Redis API-key store. Operator-only path
+                          to bootstrap a customer's first key —
+                          /v1/account/keys self-service can't be
+                          hit until a pre-existing authenticated
+                          subject already exists (chicken + egg).
+                          Writes a key.mint audit_log row (actor,
+                          reason, grant); no row, no key. Plaintext
+                          goes to stdout, the record to stderr,
+                          so a >key.txt redirect captures only
+                          the secret. Plaintext is shown ONCE —
+                          unrecoverable. Pipe stdout to an
+                          encrypted transport (Bitwarden, vault,
+                          encrypted email) immediately. Tiers:
+                          apikey | sep10 | operator (operator needs
+                          -confirm-operator). Rate 0..100000.
+                          Example:
+                            stellarindex-ops mint-key \
+                              -config /etc/stellarindex.toml \
+                              -identifier customer-acme-corp \
+                              -label 'ACME Corp - production' \
+                              -tier apikey \
+                              -rate-limit-per-min 1000 \
+                              -reason 'onboarding ticket 1234'
+  upgrade-key -config PATH -key-id KID -rate-limit-per-min N -reason TEXT [-actor NAME]
+                          Lift (or lower) an existing API key's
+                          per-minute rate-limit budget. Operator-
+                          side path for manual / partner rate
+                          limits, via
+                          internal/auth.RedisAPIKeyStore.UpdateRateLimit.
+                          The customer's existing plaintext key
+                          keeps working — they don't need to
+                          rotate to pick up the new budget;
+                          effective on the next request. Writes a
+                          key.ratelimit.update audit_log row; no
+                          row, no change. Rate 0..100000.
+                          Tier reference (matches the /signup page):
+                              1000 = Starter,  10000 = Pro,
+                             50000 = Business, custom = Enterprise.
+                          Example:
+                            stellarindex-ops upgrade-key \
+                              -config /etc/stellarindex.toml \
+                              -key-id kid_515c8d94191f4e93 \
+                              -rate-limit-per-min 10000 \
+                              -reason 'partner contract 2026-09'
+  emit-incident -config PATH -slug SLUG -event {sev1|resolved}
+                          Fan out one incident.sev1 or
+                          incident.resolved customer webhook for
+                          the named incident slug. The slug must
+                          already exist in internal/incidents/data/
+                          (embedded into this binary at build
+                          time). F-1249 (codex audit-2026-05-12):
+                          part of the SEV runbook — draft the .md,
+                          merge + deploy, then emit. See
+                          docs/operations/sev-playbook.md.
+                          Example:
+                            stellarindex-ops emit-incident \
+                              -config /etc/stellarindex.toml \
+                              -slug 2026-05-12-redis-blip \
+                              -event sev1
+  usage-rollup-backfill -config PATH -from YYYY-MM-DD [-to YYYY-MM-DD] [-write] [-timeout DUR]
+                          Re-fold the Redis per-endpoint usage
+                          counters into the usage_daily hypertable
+                          for a past UTC date range. The API's
+                          in-process rollup worker re-folds days an
+                          outage skipped on its own, a week per
+                          sweep; this folds a range now, or with no
+                          API running. Redis keeps the source
+                          counters for 35 days, so neither reaches
+                          past that. Dry-run unless -write.
+                          Idempotent (GREATEST() merge), so
+                          re-running is safe and can never lower an
+                          existing row. Folds exactly -from..-to
+                          with the worker's own grouping code.
+                          Example:
+                            stellarindex-ops usage-rollup-backfill \
+                              -config /etc/stellarindex.toml \
+                              -from 2026-07-19 -to 2026-07-21 -write
+  account-erase -config PATH (-account-id UUID | -finish-slug SLUG) [-write] [-timeout DUR]
+                          Erase a platform account (GH #809) through
+                          the same code as DELETE
+                          /v1/dashboard/account, for a request
+                          received outside the dashboard;
+                          -finish-slug re-runs only the post-commit
+                          Redis cleanup of an erased account and
+                          refuses a slug that was never erased.
+                          Dry-run unless -write. Prints counts and
+                          ids only. Runbook:
+                          docs/operations/runbooks/account-erasure.md.
+  freeze-unfreeze -config PATH [-list] [-asset A -quote Q -reason "..." [-actor NAME]] [-write]
+                          Manually lift an ADR-0019 price freeze. An
+                          ESCALATED freeze (the 4x30m extension
+                          ladder ran out) never auto-unfreezes by
+                          design — "stays active until manual
+                          unfreeze" — and until now that manual step
+                          had no code path at all, only a raw
+                          redis-cli DEL. This clears the Redis marker
+                          (unfreezing the serving path immediately)
+                          AND stamps recovered_at on the open
+                          freeze_events row, so the explorer
+                          /anomalies timeline agrees. -reason is
+                          required for the mutation, mirroring the
+                          admin API's X-Reason discipline; it lands
+                          in a "freeze.unfreeze" audit_log row with
+                          -actor (default: the OS user) before
+                          anything changes. -list
+                          shows every open freeze with its ladder
+                          state and whether its marker is still live.
+                          Example:
+                            stellarindex-ops freeze-unfreeze \
+                              -config /etc/stellarindex.toml -list
+  change-summary-reset -config PATH -entity-type T -entity-id ID [-write]
+                          Delete one change_summary_5m row. The
+                          upsert ratchets ath/atl for good, so a
+                          bad stored extreme is only cleared by
+                          removing the row; the aggregator rebuilds
+                          it from the trailing 30 days within 5
+                          minutes. Dry-run unless -write.
+                          Example:
+                            stellarindex-ops change-summary-reset \
+                              -config /etc/stellarindex.toml \
+                              -entity-type coin -entity-id crypto:XLM -write
+  version                 Print version + build date.
+  help                    This help.
+`
+
+func printUsage() {
+	fmt.Fprintf(os.Stderr, "stellarindex-ops %s\n%s", version.String(), usageBody)
+}
