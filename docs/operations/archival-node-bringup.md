@@ -6,34 +6,24 @@ status: living doc
 
 # Archival node bring-up
 
-End-to-end procedure for provisioning a new archival node (or
-rebuilding one from disaster) from the moment the box is reachable
-to the moment `stellarindex-indexer` is committing rows to
-TimescaleDB. Distilled from the messy r1 bring-up of 2026-04-23 →
-2026-04-27 — every step here is one we learned the hard way.
-
-If you're recovering an existing node, jump to [§ Disaster
-recovery](#disaster-recovery). Otherwise read top-down.
+Provision (or rebuild) an archival node from a reachable box to `stellarindex-indexer`
+committing rows to TimescaleDB. Recovering an existing node: jump to
+[§ Disaster recovery](#disaster-recovery). Otherwise read top-down.
 
 ---
 
 ## Prerequisites
 
-Before any ansible runs against the target host:
-
 | Need | Where it lives | Notes |
 |---|---|---|
 | Provisioned host | Hetzner / equivalent | Ubuntu 24.04+, ≥ 4 NVMe drives, ≥ 192 GB RAM (per `archival-node-spec.md`) |
-| Root SSH access | `inventory/<host>.yml` (`ansible_user: root`) | Hetzner installimage default; harden later, not yet |
-| ansible-vault password | Operator's password manager | Won't be on disk |
+| Root SSH access | `inventory/<host>.yml` (`ansible_user: root`) | Hetzner installimage default; not yet hardened |
+| ansible-vault password | Operator's password manager | Never on disk |
 | Inventory file | `configs/ansible/inventory/<host>.yml` | Copy from `r1.example.yml`, fill in disk serials + IP |
 | Inventory secrets | `configs/ansible/inventory/<host>.secrets.yml` | `ansible-vault create` if new; needs `postgres_pass_*`, `minio_root_password`, `galexie_s3_*`, `stellarindex_reader_secret_key`, `stellarindex_pass_stellarindex` |
-| Local Go ≥ 1.25 | Operator's machine | Required by the cross-compile step in `14-stellarindex-services.yml`. Confirm with `go version` |
+| Local Go ≥ 1.25 | Operator's machine | Cross-compile step in `14-stellarindex-services.yml`; check `go version` |
 
-The stellar-archivist binary should be available on the host —
-the role doesn't install it today (Phase-1 gap; tracked under
-operator follow-up). On r1 it was installed by hand from
-[stellar/go-stellar-archivist](https://github.com/stellar/go-stellar-archivist).
+The role installs `stellar-archivist` (`07-galexie.yml`).
 
 ---
 
@@ -52,42 +42,28 @@ ansible-playbook playbooks/archival-node.yml \
   --ask-vault-pass
 ```
 
-> ⚠️ **Four `--extra-vars` that a verbatim run used to omit, each of
-> which silently produces a half-built host:**
->
-> - **`secrets_file=`** — `playbooks/archival-node.yml` loads
->   `vars_files: "{{ secrets_file | default('../inventory/r1.secrets.yml') }}"`.
->   Passing the secrets with `--extra-vars "@…"` does **not** change
->   that default, so on any non-r1 host the play loads **r1's** vault
->   (or dies if you don't have it). Set the variable, don't `@`-load
->   the file.
-> - **`manage_stellarindex_binaries=true`** — defaults to `false`
->   (`14-stellarindex-services.yml:46,62,107`); binary build/install is
->   normally the deploy workflow's job. A greenfield host has no
->   binaries, so bootstrap needs it on.
-> - **`stellarindex_apply_migrations=true`** — defaults to `false`
->   (`:197`). Without it the database is created but empty.
-> - **`run_clickhouse=true`** — defaults to `false`
->   (`defaults/main.yml:82`) while `storage.clickhouse_live_sink`
->   defaults to **`true`** (`internal/config/config.go:937`,
->   `stellarindex.toml.j2`). The indexer opens the live sink at boot
->   and returns `clickhouse live-sink: …` if it cannot connect
->   (`cmd/stellarindex-indexer/main.go`), so a greenfield host with no
->   ClickHouse **will not start** at step 5. Install ClickHouse (this
->   flag) or opt the host out with
->   `stellarindex_clickhouse_live_sink=false` — accepting the loss of
->   the certified lake, the CH completeness path and lake-derived
->   supply (ADR-0034/0041).
+Each of the four `--extra-vars` is required; omitting one silently yields a half-built host:
 
-This creates: ZFS pool + datasets, MinIO single-node + buckets +
-IAM (`galexie-writer`, `galexie-archive-writer`,
-`stellarindex-reader`), Postgres 15 + TimescaleDB extension +
-`stellarindex` db/role, galexie service (live tail starts ingesting
-immediately), all five `stellarindex-*` binaries cross-compiled
-locally and copied up, migrations applied, indexer systemd unit
-installed (initially **stopped** — see step 5).
+- **`secrets_file=`**: the playbook loads
+  `vars_files: "{{ secrets_file | default('../inventory/r1.secrets.yml') }}"`. `--extra-vars "@…"`
+  does not change that default, so a non-r1 host would load **r1's** vault. Set the variable;
+  do not `@`-load the file.
+- **`manage_stellarindex_binaries=true`**: defaults `false` (`14-stellarindex-services.yml:46,62,107`);
+  a greenfield host has no binaries.
+- **`stellarindex_apply_migrations=true`**: defaults `false` (`:197`); otherwise the database is empty.
+- **`run_clickhouse=true`**: defaults `false` (`defaults/main.yml:82`) while
+  `storage.clickhouse_live_sink` defaults `true` (`internal/config/config.go:937`,
+  `stellarindex.toml.j2`). The indexer returns `clickhouse live-sink: …` at boot if it cannot
+  connect (`cmd/stellarindex-indexer/main.go`), so without ClickHouse it **will not start** at
+  step 6. Install it, or opt out with `stellarindex_clickhouse_live_sink=false` (loses the
+  certified lake, the CH completeness path and lake-derived supply; ADR-0034/0041).
 
-Verify after apply:
+Creates: ZFS pool + datasets, MinIO single-node + buckets + IAM (`galexie-writer`,
+`galexie-archive-writer`, `stellarindex-reader`), Postgres 15 + TimescaleDB + `stellarindex`
+db/role, galexie service (live tail starts immediately), all five `stellarindex-*` binaries
+(cross-compiled locally), migrations, and the indexer unit (initially **stopped**; see step 6).
+
+Verify:
 
 ```sh
 ssh <host> 'systemctl is-active galexie minio postgresql@15-main'
@@ -100,23 +76,17 @@ ssh <host> 'sudo -u postgres psql -d stellarindex -c "\dt"'
 # trades, oracle_updates, ingestion_cursors, schema_migrations
 ```
 
-Galexie should be exporting to `local/galexie-live/` already —
-**capture the live-start ledger** from the running process for
-step 4:
+**Capture the live-start ledger** (the live seam: where the archive ends and live begins):
 
 ```sh
 ssh <host> 'pgrep -af "galexie append"'
 # /usr/local/bin/galexie append --config-file ... --start <SEAM>
 ```
 
-Save that ledger number — it's the **live seam** the indexer will
-use to know where the archive ends and live begins.
-
 ### 2. Mirror the SDF history archive (3–4 h wall, 7 TB)
 
-`/srv/history-archive` is the trusted reference dataset that
-`verify-archive` Tier B uses to anchor checkpoint hashes. We mirror
-SDF's published archive once at bring-up.
+`/srv/history-archive` is the trusted reference `verify-archive` Tier B anchors checkpoint
+hashes against.
 
 ```sh
 ssh <host>
@@ -130,11 +100,8 @@ tmux new-session -d -s archive-mirror "
 "
 ```
 
-Walk away for ~4 h. **Expect a fatal error count at the end** —
-on r1 this completed on 2026-04-25 with `fatal: 21394 errors while
-mirroring`. Those are partial-write artefacts of peer 4xx/timeouts
-and need cleaning up before `verify-archive` can use the dataset.
-Mandatory next step:
+**Expect a fatal error count at the end** (peer 4xx/timeouts leave partial writes). Step 3 is
+mandatory before `verify-archive`.
 
 ### 3. Sweep + heal `/srv/history-archive` (5–10 min sweep + 5 min refetch)
 
@@ -155,21 +122,10 @@ ssh <host> 'systemd-run --unit=archivist-sweep --no-block bash -c "
 ssh <host> 'wc -l /tmp/corrupt-gz.txt; awk -F/ "{print \$4}" /tmp/corrupt-gz.txt | sort | uniq -c'
 ```
 
-On r1 the sweep found **5 193 corrupt files** distributed across
-`bucket/` (2 906), `scp/` (1 023), `transactions/` (740),
-`results/` (462), `ledger/` (62). Re-fetch each from upstream:
-
-> ⚠️ **`/usr/local/bin/refetch-history-archive` does not exist.** This
-> step named it three times; nothing in this repo ships it, and the
-> ansible role does not install it. Use the two tools that ARE shipped.
-
-Re-mirror the affected paths with `stellar-archivist` (installed by
-the role, `07-galexie.yml`) — it re-fetches only what is missing or
-fails to verify:
+Re-fetch with `stellar-archivist` (no `refetch-history-archive` helper exists). Delete first:
+archivist fetches absent files only, never overwrites.
 
 ```sh
-# Delete the corrupt objects first — archivist will not overwrite a
-# file that is present, only fetch one that is absent.
 ssh <host> 'xargs -a /tmp/corrupt-gz.txt -r rm -f'
 ssh <host> "systemd-run --unit=archivist-refetch --no-block \
   stellar-archivist mirror \
@@ -178,11 +134,10 @@ ssh <host> "systemd-run --unit=archivist-refetch --no-block \
 ssh <host> 'journalctl -u archivist-refetch -f'
 ```
 
-Then repair anything archivist could not, from the nine cross-anchor
-sources, with `archive-completeness` (`-to` is REQUIRED — it is not
-optional and `0` is rejected; `-write` is REQUIRED too — without it
-`fix`/`verify` fail-closed DRY RUN and report what would change but
-write nothing; see [archive-completeness.md](archive-completeness.md)):
+Repair anything archivist could not from the nine cross-anchor sources with
+`archive-completeness`. `-to` is REQUIRED (`0` is rejected) and `-write` is REQUIRED (without
+it `fix`/`verify` fail-closed DRY RUN and write nothing); see
+[archive-completeness.md](archive-completeness.md):
 
 ```sh
 ssh <host> '/usr/local/sbin/run-heavy-job.sh archive-completeness-bringup \
@@ -200,22 +155,17 @@ ssh <host> 'find /srv/history-archive -type f -name "*.gz" -print0 \
 
 ### 4. Mirror the historical Galexie data (4–6 h wall, 4.8 TB)
 
-The historical galexie ledger-meta exists in the AWS public
-blockchain bucket — mirror it directly into `galexie-archive`.
-Use the per-partition tool that handles the `mc mirror` mtime
-gotcha (see [galexie-backfill.md](galexie-backfill.md) for why):
+Historical ledger-meta comes from the AWS public blockchain bucket into `galexie-archive`,
+via the per-partition helper that handles the `mc mirror` mtime gotcha
+([galexie-backfill.md](galexie-backfill.md)):
 
 ```sh
 ssh <host> '/usr/local/bin/galexie-archive-fill 2>&1 | tee /var/log/galexie-archive-fill.log'
 ```
 
-The script audits local partitions, deletes any partials (zero on
-a fresh node), computes the missing-from-AWS set, and runs
-`mc mirror --skip-errors` per missing partition with 8-way
-parallelism. On r1 (greenfield: 0 → 974 partitions) this ran in
-**~4 h** at ~1 500 files/sec sustained.
-
-Confirm: 974 partitions present, 4.7+ TB on disk:
+It audits local partitions, deletes partials, computes the missing-from-AWS set, and runs
+`mc mirror --skip-errors` per missing partition, 8-way parallel (r1: ~4 h, ~1 500 files/s).
+Confirm 974 partitions and 4.7+ TB:
 
 ```sh
 ssh <host> 'mc ls local/galexie-archive/ | wc -l'
@@ -226,12 +176,9 @@ ssh <host> 'zfs list -Ho used data/minio'
 
 ```sh
 ssh <host>
-# Read the EnvironmentFile VERBATIM — never `source` it. Its values are
-# unquoted (that is what systemd wants), so the shell would expand `$`,
-# split on `;`/`&`/`|`/whitespace and eat quotes inside a secret, and the
-# job would fail with a mangled DSN or S3 key while the services around it
-# keep working (deploy-ansible-secrets-5). Same reader as
-# run-heavy-job.sh / compute-archive-to.sh.
+# Read the EnvironmentFile VERBATIM, never `source` it: values are unquoted (systemd
+# style), so the shell would expand `$`, split on `;`/`&`/`|`/whitespace and eat quotes in
+# a secret (deploy-ansible-secrets-5). Same reader as run-heavy-job.sh / compute-archive-to.sh.
 while IFS= read -r l || [ -n "$l" ]; do
   case "$l" in [A-Za-z_]*=*) export "$l";; esac
 done < /etc/default/stellarindex-ops
@@ -247,32 +194,25 @@ tmux send-keys -t gbackfill:verify-A "
 " Enter
 ```
 
-(`-tier` is single-valued; `all` = chain + checkpoint + peers +
-archivist. A comma-separated list is `unknown -tier`. The heavy-job
-wrapper is mandatory for a walk this long —
-[maintainer-workflow.md](maintainer-workflow.md) §Heavy one-shot jobs.)
+`-tier` is single-valued (`chain | checkpoint | peers | archivist | all`; a comma list is
+`unknown -tier`); `all` = chain + checkpoint + peers + archivist. The heavy-job wrapper is
+mandatory for a walk this long ([maintainer-workflow.md](maintainer-workflow.md) §Heavy one-shot jobs).
 
-`<SEAM>` is the live-start ledger from step 1. Tier A walks every
-ledger and confirms the hash chain links; Tier B compares each 64th
-ledger's hash against the local `/srv/history-archive`; Tier E
-runs `stellar-archivist scan` on the local archive. Tier E needs the
-full mirror, so `-tier all` fails once `/srv/history-archive` is
-trimmed to `history/` + `ledger/` (storage-considerations.md Move A);
-after the trim use `-tier chain` and `-tier checkpoint`.
+`<SEAM>` is the step-1 live-start ledger. Tier A walks every ledger and checks hash-chain
+links; Tier B compares every 64th ledger's hash with local `/srv/history-archive`; Tier E runs
+`stellar-archivist scan` on the local archive. Tier E needs the full mirror, so `-tier all`
+fails once `/srv/history-archive` is trimmed to `history/` + `ledger/`
+(storage-considerations.md Move A); after the trim use `-tier chain` and `-tier checkpoint`.
 
-Expected outcome: `verified <N> ledgers, chain-link integrity OK ✓,
-checkpoint anchor OK ✓ (XX matched, YY missed)`. **Both Tier A and
-Tier B must say OK before declaring success.**
-
-If Tier B trips on `archive read failed: open gz stream: EOF` or
-`unexpected EOF`, step 3 was incomplete — sweep + refetch the
-specific failing partition's checkpoint range and resume.
+Expected: `verified <N> ledgers, chain-link integrity OK ✓, checkpoint anchor OK ✓ (XX matched,
+YY missed)`. **Both Tier A and Tier B must say OK.** If Tier B trips on
+`archive read failed: open gz stream: EOF` or `unexpected EOF`, step 3 was incomplete:
+sweep + refetch that partition's checkpoint range and resume.
 
 ### 6. Set the live seam in inventory + reapply, start the indexer (5 min)
 
-The first apply (step 1) installed the indexer service but kept it
-stopped via `LiveSeamLedger=0` (live-only mode = refuses to start
-without a cursor on a fresh node). Set the real seam now:
+Step 1 left the indexer stopped via `LiveSeamLedger=0` (live-only mode refuses to start
+without a cursor). Set the real seam:
 
 ```yaml
 # inventory/<host>.yml
@@ -285,8 +225,6 @@ stellarindex_enabled_sources:
   # add others as their per-WASM-hash audit completes
 ```
 
-Re-apply just the stellarindex bits:
-
 ```sh
 ansible-playbook playbooks/archival-node.yml \
   --tags stellarindex \
@@ -295,12 +233,8 @@ ansible-playbook playbooks/archival-node.yml \
   --ask-vault-pass
 ```
 
-(Same `secrets_file=` note as step 1 — `--extra-vars "@…"` does not
-override the playbook's `r1.secrets.yml` default.)
-
-This re-templates `/etc/stellarindex.toml` with the seam value and
-restarts `stellarindex-indexer.service`. The indexer log should
-show:
+(Same `secrets_file=` caveat as step 1.) This re-templates `/etc/stellarindex.toml` and
+restarts `stellarindex-indexer.service`. Expected log:
 
 ```
 ledgerstream: archive phase from=2 to=<SEAM-1>
@@ -308,8 +242,6 @@ ledgerstream: archive phase from=2 to=<SEAM-1>
 ledgerstream: archive phase complete; handing off to live
 ledgerstream: live-only seam=<SEAM>
 ```
-
-Watch:
 
 ```sh
 ssh <host> 'journalctl -fu stellarindex-indexer'
@@ -320,32 +252,24 @@ ssh <host> 'sudo -u postgres psql -d stellarindex -c "
 "'
 ```
 
-When the archive phase is done and the indexer is in live mode,
-trade rows should land within ~5 s of each ledger close.
+In live mode, trade rows should land within ~5 s of each ledger close.
 
 ---
 
 ## Disaster recovery
 
-Triage tree by symptom. The node holds three independent stores and
-each derives from the one before it: MinIO (`galexie-archive`,
-`galexie-live`) is ground truth, the ClickHouse lake is decoded from
-it, and the projected Postgres tables are projected from the lake. A
-node that lost more than one restores them in that order — MinIO, then
-ClickHouse, then Postgres.
+The node holds three stores, each derived from the one before: MinIO (`galexie-archive`,
+`galexie-live`) is ground truth, the ClickHouse lake is decoded from it, and projected
+Postgres tables are projected from the lake. Restore in that order.
 
 ### OS mirror reinstalled, data drives left intact
 
-Before re-applying the ansible role: run `zpool list -H data`. If it
-exits non-zero the pool is not imported (no `zpool.cache` survives an
-OS reinstall) — `03-zfs.yml`'s create task will refuse to proceed until
-you resolve this, because `zpool create -f` would otherwise silently
-overwrite the existing pool (all three stores) on the same devices. Run
-`zpool import -d /dev/disk/by-id` (read-only) to confirm `data` is
-listed, then `zpool import data` to bring it back before re-applying
-the role. Only pass `-e zfs_data_pool_recreate_ack=true` if you have
-independently confirmed with `zdb -l <device>` that the pool the scan
-found is not the one you need.
+Before re-applying the role run `zpool list -H data`. Non-zero exit = pool not imported (no
+`zpool.cache` survives an OS reinstall); `03-zfs.yml`'s create task refuses to proceed
+because `zpool create -f` would overwrite the pool (all three stores). Confirm `data` is
+listed with `zpool import -d /dev/disk/by-id` (read-only), then `zpool import data`. Pass
+`-e zfs_data_pool_recreate_ack=true` only after confirming with `zdb -l <device>` that the
+pool found is not the one you need.
 
 ### Galexie service is down
 
@@ -356,32 +280,25 @@ ssh <host> 'systemctl status galexie -n 50'
 # unreachable, archive tip stale.
 ```
 
-Most galexie failures self-heal via systemd `Restart=on-failure`.
-If it loops, journal will have the captive-core stderr.
+Most failures self-heal via `Restart=on-failure`; if it loops the journal has captive-core stderr.
 
 ### `galexie-archive` has missing or partial partitions
 
-(e.g. someone ran `mc cp` against it and left partials, or the
-bucket lost objects to disk failure.)
+(e.g. stray `mc cp` partials, or objects lost to disk failure.) Symptom: verify-archive trips
+on a missing or truncated `.xdr.zst`. Identify partials with the partition-counts approach in
+`/usr/local/bin/galexie-archive-fill` (audit phase); for a known partial, delete and re-mirror:
 
 ```sh
-# Symptom: verify-archive trips on missing-or-truncated .xdr.zst.
-# Identify partials with the partition-counts approach in
-# /usr/local/bin/galexie-archive-fill (audit phase). For a known
-# partial, just delete and re-mirror:
 ssh <host> 'PARTIALS="<partition-id>" /usr/local/bin/galexie-archive-fill'
 ```
 
-Never try to fix a partial partition by `mc cp --recursive`. See
-[galexie-backfill.md](galexie-backfill.md) "Antipattern".
+Never fix a partial with `mc cp --recursive` ([galexie-backfill.md](galexie-backfill.md) "Antipattern").
 
 ### `/srv/history-archive` has corrupt files
 
-Same procedure as step 3 above:
+Same as step 3: sweep, delete, re-mirror, then cross-anchor fix.
 
 ```sh
-# Sweep, delete the corrupt objects, re-mirror, then cross-anchor fix —
-# the full sequence is in step 3 above.
 ssh <host> 'find /srv/history-archive -type f -name "*.gz" -print0 \
   | xargs -0 -P 16 gzip -t 2>&1 | sed -E "s/^gzip: //;s/:.*//" > /tmp/corrupt-gz.txt'
 ssh <host> 'xargs -a /tmp/corrupt-gz.txt -r rm -f'
@@ -395,69 +312,50 @@ ssh <host> 'stellar-archivist mirror \
 # Re-run migrations:
 ssh <host> 'while IFS= read -r l || [ -n "$l" ]; do case "$l" in [A-Za-z_]*=*) export "$l";; esac; done < /etc/default/stellarindex-ops; \
   stellarindex-migrate -migrations /usr/local/share/stellarindex/migrations up'
-
-# Ingestion cursor is gone, so the indexer needs an explicit
-# starting point — set stellarindex_backfill_from_ledger: 2 in
-# inventory and re-apply, then watch the archive phase replay.
 ```
 
-That replay walks galexie-archive through the dispatcher, so it
-refills only the dispatcher-written (non-projected) domains, such as
-`sdex`, `band` and the supply observers — no AWS round-trip needed.
-Wall-clock: ≈ archive phase time on first bring-up.
+The ingestion cursor is gone: set `stellarindex_backfill_from_ledger: 2` in inventory,
+re-apply, and watch the archive phase replay. That replay walks galexie-archive through the
+dispatcher, so it refills only dispatcher-written (non-projected) domains (`sdex`, `band`,
+supply observers), with no AWS round-trip; wall-clock ≈ the first-bring-up archive phase.
 
-The projected domains (Soroban-venue `trades`, reflector/redstone
-`oracle_updates`, `sep41_*`, `blend_*` and the rest of
-`internal/pipeline/sink.go::IsProjectedEvent`) do **not** come from
-that replay. The projector writes them, reading the ClickHouse
-`contract_events` lake by default (`storage.clickhouse_projector_source`).
-Its cursors were in Postgres too, so each source re-seeds at its
-genesis floor and re-projects from the lake. That only works if the
-lake survived. Check it with `stellarindex-ops verify-lake` /
-`verify-contiguity` before you call the served tier whole. If it did
-not survive, do [ClickHouse lake lost or damaged](#clickhouse-lake-lost-or-damaged)
-first. The live projector's catch-up is capped at roughly 720k
-ledgers/hour. For a genesis-deep refill use `projected-rebuild`, per
+Projected domains (Soroban-venue `trades`, reflector/redstone `oracle_updates`, `sep41_*`,
+`blend_*`, the rest of `internal/pipeline/sink.go::IsProjectedEvent`) do **not** come from that
+replay. The projector reads the ClickHouse `contract_events` lake by default
+(`storage.clickhouse_projector_source`); its cursors were in Postgres, so each source re-seeds
+at its genesis floor and re-projects. This works only if the lake survived: check with
+`stellarindex-ops verify-lake` / `verify-contiguity` before calling the served tier whole,
+else do [ClickHouse lake lost or damaged](#clickhouse-lake-lost-or-damaged) first. The live
+projector's catch-up is capped at ~720k ledgers/hour; for a genesis-deep refill use
+`projected-rebuild`, per
 [the replay decision rule](../architecture/ingest-pipeline.md#the-replay-decision-rule).
 
 ### ClickHouse lake lost or damaged
 
-No other branch on this page restores or re-derives the lake. Pick
-the path by what survived:
+Nothing else here re-derives the lake. By what survived:
 
-1. **A lake backup chain exists.** Restore from the newest link and
-   bring it to the tip with `ch-live-catchup`. That takes hours.
-   Procedure: [ch-lake-backup § Restore](runbooks/ch-lake-backup.md#restore).
-2. **No chain survives.** Recreate the tables from the daily schema
-   snapshot, then re-derive from `galexie-archive` with
-   `ch-full-backfill.sh`. That takes about 1–2 weeks. Procedure:
+1. **A lake backup chain exists.** Restore the newest link, then bring it to tip with
+   `ch-live-catchup` (hours): [ch-lake-backup § Restore](runbooks/ch-lake-backup.md#restore).
+2. **No chain survives.** Recreate tables from the daily schema snapshot, then re-derive from
+   `galexie-archive` with `ch-full-backfill.sh` (~1–2 weeks):
    [ch-schema-restore](runbooks/ch-schema-restore.md#restore-path-snapshot--create).
+   Historical `ch-backfill` reads need `-bucket galexie-archive` (it defaults to the live,
+   trimmed bucket).
 
-Either way, run `stellarindex-ops verify-lake` / `verify-contiguity`
-before you let the projector read the lake. The projected Postgres
-tables are only as complete as the lake beneath them.
+Either way run `stellarindex-ops verify-lake` / `verify-contiguity` before the projector reads the lake.
 
 ### MinIO data dir lost
 
-Worst case. galexie-live data is unrecoverable past the upstream
-archive horizon (which is whatever the AWS bucket has — usually
-within ~24 h of network tip). galexie-archive is fully recoverable
-via step 4. Procedure:
+Worst case. `galexie-live` is unrecoverable past the upstream archive horizon (the AWS bucket,
+usually within ~24 h of tip); `galexie-archive` is fully recoverable via step 4.
 
-1. Re-run the ansible role to re-template the buckets + IAM.
-2. Run step 4 (`galexie-archive-fill`) to re-mirror from AWS.
-3. Wait for galexie service to fill `galexie-live`.
-   `galexie-append.sh` probes MinIO for the highest already-exported
-   LCM and resumes from `last_exported + 1` (the path on every
-   restart of an already-running deployment — guarantees no gap).
-   On a fresh deploy with an empty bucket it falls back to querying
-   SDF's `.well-known/stellar-history.json` and starting from the
-   archive tip minus a checkpoint-margin.
-4. Update `stellarindex_live_seam_ledger` in inventory if galexie
-   restarted at a different ledger than before — query the new
-   process args.
-5. Re-run migrations + restart indexer (it'll replay from genesis
-   per the cursor logic).
+1. Re-run the ansible role to re-template buckets + IAM.
+2. Step 4 (`galexie-archive-fill`) to re-mirror from AWS.
+3. Wait for galexie to fill `galexie-live`. `galexie-append.sh` resumes from the highest
+   already-exported LCM + 1 (no gap); on an empty bucket it starts from SDF's
+   `.well-known/stellar-history.json` archive tip minus a checkpoint margin.
+4. Update `stellarindex_live_seam_ledger` if galexie restarted at a different ledger (query the new process args).
+5. Re-run migrations + restart the indexer (replays from genesis per the cursor logic).
 
 ---
 
@@ -473,46 +371,30 @@ via step 4. Procedure:
 | 6. Indexer apply + start | 5 min | systemd |
 | **End-to-end** | **~10–13 h** | mostly networks |
 
-If any step fails partway, re-running it is idempotent — none
-write twice, all skip already-complete work. Keep going.
+Every step is idempotent and skips completed work; re-run on failure.
 
 ---
 
 ## Per-region variations (R2 / R3) — ⚠️ historical, ADR-0016 is superseded
 
-> ⛔ **The per-region shapes below describe
-> [ADR-0016](../adr/0016-per-region-storage-strategy.md), which is
-> `status: Superseded` — replaced by
+> **Historical: [ADR-0016](../adr/0016-per-region-storage-strategy.md) is `Superseded`** by
 > [ADR-0050](../adr/0050-multi-region-ha-architecture.md) /
-> [multi-region-ha.md](../architecture/multi-region-ha.md) on
-> 2026-08-21.** ADR-0050 rejects ADR-0016's Model A ("Postgres
-> replication from R1 is the canonical history"), its R2-on-AWS shape,
-> and its ClickHouse-blind per-region sizing.
->
-> **Do not provision R2 or R3 from this section.** It is retained as a
-> record of what was planned, and because §Per-region trust +
-> verification model below is still the shape of the Tier A/D split.
-> Derive the actual per-region recipe from ADR-0050 first.
+> [multi-region-ha.md](../architecture/multi-region-ha.md) (2026-08-21). ADR-0050 rejects its
+> Model A (Postgres replication from R1 as canonical history), the R2-on-AWS shape and the
+> ClickHouse-blind sizing. **Do not provision R2 or R3 from this section**; derive the recipe
+> from ADR-0050. It is kept as a record, and because §Per-region trust + verification model is
+> still the shape of the Tier A/D split.
 
-The recipe above is the **R1 (Hetzner Frankfurt)** path: full local
-mirror of every dataset. Under ADR-0016 the storage shape differed per
-region and several recipe steps changed or dropped, as follows.
+The recipe above is **R1 (Hetzner Frankfurt)**: full local mirror of every dataset. Under
+ADR-0016 other regions changed these steps:
 
 ### R2 — AWS us-east-1 (galexie-direct-from-public-bucket)
 
-R2 reads galexie ledger-meta data **directly from
-`s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`**, no
-local mirror. The bucket is co-located in us-east-2 (Ohio); from a
-us-east-1 indexer the latency is ~5-15 ms per S3 GET, free egress
-(AWS Open Data Sponsorship).
+R2 reads ledger-meta **directly from `s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`**
+(us-east-2, ~5-15 ms per GET from us-east-1, free egress), no local mirror.
 
-Differences from the recipe above:
-
-- **Step 2 (stellar-archivist mirror)** — *skip*. R2 doesn't keep a
-  local SDF history archive; it trusts R1's Tier B + E verification.
-- **Step 3 (sweep + heal)** — *skip*. Nothing local to sweep.
-- **Step 4 (galexie-archive-fill)** — *skip*. The indexer reads from
-  AWS public bucket directly via galexie's `datastore_config` block:
+- **Steps 2, 3, 4** (history-archive mirror, sweep, galexie-archive-fill): *skip*. R2 trusts
+  R1's Tier B + E. The indexer reads the AWS bucket via:
 
   ```toml
   [storage]
@@ -521,130 +403,75 @@ Differences from the recipe above:
   s3_region          = "us-east-2"
   ```
 
-  > ⚠️ **There is no `s3_bucket_archive_prefix` key.** This block
-  > carried one; the loader is STRICT and rejects unknown keys
-  > (`config: unknown keys in …`, `internal/config/load.go`), so the
-  > indexer would refuse to boot on the config as printed. `[storage]`
-  > has `s3_endpoint`, `s3_region`, `s3_bucket_archive`,
-  > `s3_bucket_live` and no prefix key — a bucket-internal prefix is
-  > not expressible here today, which is one of the things ADR-0050
-  > has to settle before R2 is provisioned this way.
+  There is **no `s3_bucket_archive_prefix` key**: the loader is STRICT and rejects unknown keys
+  (`config: unknown keys in …`, `internal/config/load.go`). `[storage]` has `s3_endpoint`,
+  `s3_region`, `s3_bucket_archive`, `s3_bucket_live` only, so a bucket-internal prefix is not
+  expressible; ADR-0050 must settle that before R2 is provisioned this way.
 
-  AWS public bucket access is anonymous — no `STELLARINDEX_S3_*` creds
-  needed for the archive read path; galexie's S3 client falls back
-  to anonymous when no credentials are configured. (`galexie-live/`
-  for R2's own captive-core export still uses an authenticated
-  bucket in us-east-1.)
-- **Step 5 (verify-archive)** — `-tier` takes ONE value, never a list:
-  `chain | checkpoint | peers | archivist | all`
-  (`internal/ops/archive/verify_archive.go`; anything else is
-  `unknown -tier`). To get Tier A + D, run it **twice**:
-  `-tier chain` then `-tier peers`. Tier A confirms R2's local chain
-  integrity (catches bytes corrupted in transit from AWS); Tier D
-  cross-validates against the built-in tier-1 peer set over HTTPS
-  (catches a forked upstream) and needs no `/srv/history-archive`.
-  Wall-clock ~30-45 min for both.
-- **Step 6 (indexer apply + start)** — same as R1 but
-  `stellarindex_live_seam_ledger` in inventory points at *R2's own
-  galexie-append start*, not R1's. Otherwise identical.
+  Archive reads are anonymous (no `STELLARINDEX_S3_*` creds; galexie's S3 client falls back to
+  anonymous). R2's own `galexie-live/` export still uses an authenticated us-east-1 bucket.
+- **Step 5**: Tier A + D, run **twice** (`-tier` takes one value): `-tier chain` then
+  `-tier peers`. A catches corruption in transit from AWS; D cross-validates against the
+  built-in tier-1 peer set over HTTPS (catches a forked upstream) and needs no
+  `/srv/history-archive`. ~30-45 min for both.
+- **Step 6**: as R1, but `stellarindex_live_seam_ledger` is *R2's own* galexie-append start.
 
-R2 also runs the **Tier D weekly cron** (per
-`14-stellarindex-services.yml`) — same defence-in-depth as R1.
-
-End-to-end R2 bring-up: **~1–2 h** (compute + EBS provisioning +
-ansible apply + Tier A+D verify), vs ~10–13 h for R1. The
-short-circuit is "no local history-archive mirror, no local galexie-
-archive mirror".
+R2 also runs the **Tier D weekly cron** (`14-stellarindex-services.yml`). End-to-end ~1–2 h
+(vs ~10–13 h for R1).
 
 ### R3 — Vultr Singapore (bare-metal + Vultr Object Storage hybrid)
 
-R3 keeps the bulk dataset (galexie-archive) on **Vultr Object Storage**
-(S3-compatible, region-local at ~5-10 ms latency, ~$25/mo for the
-4.76 TB), with postgres + galexie-live + OS on local NVMe.
+R3 keeps `galexie-archive` on **Vultr Object Storage** (S3-compatible, ~5-10 ms, ~$25/mo for
+4.76 TB); postgres, galexie-live and OS on local NVMe.
 
-Differences from the recipe above:
-
-- **Step 2 (stellar-archivist mirror)** — *skip* (same as R2).
-- **Step 3 (sweep + heal)** — *skip*.
-- **Step 4 (galexie-archive-fill)** — runs, but writes to **Vultr
-  Object Storage** rather than local MinIO. The fill script reads
-  AWS public bucket and copies into Vultr's S3 endpoint. Procedure:
+- **Steps 2, 3**: *skip*.
+- **Step 4**: runs, but writes to Vultr Object Storage (source is always the AWS public bucket):
 
   ```sh
   # On r3 — set Vultr Object Storage endpoint as the destination
   mc alias set vultr-objstor https://sgp1.vultrobjects.com $VULTR_S3_KEY $VULTR_S3_SECRET
   mc alias set aws-public https://s3.us-east-2.amazonaws.com "" "" --api S3v4
 
-  # Use the same per-partition fill helper, just point at the
-  # Vultr alias as destination (the source is always the aws-public
-  # alias's pubnet prefix)
   ARCHIVE_DEST=vultr-objstor/galexie-archive galexie-archive-fill
   ```
 
-  `ARCHIVE_DEST` defaults to `local/galexie-archive` and must be
-  `<mc-alias>/<bucket>[/<prefix>]`; the script refuses anything else
-  before its first `mc` call.
+  `ARCHIVE_DEST` defaults to `local/galexie-archive`, must be `<mc-alias>/<bucket>[/<prefix>]`,
+  and the script refuses anything else before its first `mc` call. ~6-8 h.
+- **Step 5**: `-tier chain` then `-tier peers`; no `/srv/history-archive`; ~30-45 min.
+- **Step 6**: point the indexer's archive bucket at `vultr-objstor/galexie-archive`;
+  `stellarindex_live_seam_ledger` is R3's own galexie-append start ledger.
 
-  Wall-clock: ~6-8 h (same bandwidth as R1's fill, plus Vultr's S3
-  endpoint write latency from the bare metal).
-- **Step 5 (verify-archive)** — two runs, `-tier chain` then
-  `-tier peers` (Tier A + D; `-tier` is single-valued). No
-  `/srv/history-archive` needed. ~30-45 min.
-- **Step 6 (indexer apply + start)** — config points the indexer's
-  archive bucket at `vultr-objstor/galexie-archive` instead of the
-  local MinIO bucket. `stellarindex_live_seam_ledger` is R3's own
-  galexie-append start ledger.
-
-R3 captive-core for galexie-live runs locally on the bare metal NVMe
-(small footprint, ~7 GB). `galexie-live` writes go to either a small
-Vultr Object Storage bucket (cheap) or a local MinIO single-node
-on the bare metal's NVMe (faster, easier).
-
-End-to-end R3 bring-up: **~7-9 h** (compute provisioning + ansible +
-S3 fill + verify), most of which is the AWS-public-bucket read
-+ Vultr-Object-Storage write step.
+Captive-core for galexie-live runs locally (~7 GB); its writes go to a small Vultr bucket or a
+local single-node MinIO on NVMe (faster, easier). End-to-end ~7-9 h, mostly the AWS-read +
+Vultr-write step.
 
 ### Per-region trust + verification model
 
-Recapping per ADR-0016 (superseded — see the banner above):
+Per ADR-0016 (superseded):
 
-- **R1** is the *integrity leader*. Runs all four tiers (A+B+D+E)
-  on a schedule (Tier B + E weekly, Tier A nightly, Tier D weekly).
-- **R2** runs Tier A + D locally (weekly via cron). Trusts R1 for
-  Tier B + E.
-- **R3** runs Tier A + D locally (weekly via cron). Trusts R1 for
-  Tier B + E.
+- **R1** is the *integrity leader*, running all four tiers on a schedule (A nightly; B, D, E weekly).
+- **R2** and **R3** run Tier A + D locally (weekly cron) and trust R1 for Tier B + E.
 
-The **cross-region CAGG consistency monitor** (per ADR-0015's contract,
-implementation pending) is the strongest check — it samples
-`(pair, window, from_ts)` triples across all three regions and asserts
-the closed-bucket VWAP rows are byte-identical. Failures there are
-investigated immediately; the most likely cause is decoder-version
-drift across regions, not raw upstream data divergence.
+The **cross-region CAGG consistency monitor** (ADR-0015's contract, implementation pending)
+is the strongest check: it samples `(pair, window, from_ts)` triples across regions and
+asserts closed-bucket VWAP rows are byte-identical. Failures are investigated immediately;
+the likely cause is decoder-version drift across regions, not upstream data divergence.
 
 ---
 
 ## What this doc deliberately doesn't cover
 
-- **Phase-3 validator activation** (running our own three
-  geographically-separated full validators) — see
-  `docs/architecture/infrastructure/validator-rollout.md`.
-- **Per-WASM-hash decoder audit** for full historical replay —
-  see `docs/architecture/contract-schema-evolution.md`. Today the
-  default `enabled_sources` list is conservative (soroswap +
-  aquarius + phoenix) for exactly that reason.
-- **HA / multi-region failover** — see `ha-plan.md`.
+- **Phase-3 validator activation**: `docs/architecture/infrastructure/validator-rollout.md`.
+- **Per-WASM-hash decoder audit** for full historical replay:
+  `docs/architecture/contract-schema-evolution.md` (hence the conservative default
+  `enabled_sources`: soroswap + aquarius + phoenix).
+- **HA / multi-region failover**: `ha-plan.md`.
 
 ---
 
 ## References
 
-- [galexie-backfill.md](galexie-backfill.md) — `mc mirror` gotcha,
-  the per-partition fill helper, the antipattern that bit r1.
-- [r1-deployment-state.md](r1-deployment-state.md) — current
-  state of r1; configuration pitfalls captured during first
-  deploy.
-- [docs/architecture/ingest-pipeline.md](../architecture/ingest-pipeline.md)
-  — the binding rules for the ingest path the indexer runs.
-- [docs/architecture/infrastructure/archival-node-spec.md](../architecture/infrastructure/archival-node-spec.md)
-  — hardware + software baseline.
+- [galexie-backfill.md](galexie-backfill.md): `mc mirror` gotcha, per-partition fill helper, the antipattern.
+- [r1-deployment-state.md](r1-deployment-state.md): r1 state and configuration pitfalls.
+- [docs/architecture/ingest-pipeline.md](../architecture/ingest-pipeline.md): binding rules for the indexer's ingest path.
+- [docs/architecture/infrastructure/archival-node-spec.md](../architecture/infrastructure/archival-node-spec.md): hardware + software baseline.

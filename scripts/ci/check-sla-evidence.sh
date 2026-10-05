@@ -282,7 +282,7 @@ sla-evidence: RED (rc=2) — the load run can execute, but no proof report
   inside the ${SLA_PROOF_MAX_AGE_DAYS}-day window has landed in
   ${SLA_EVIDENCE_DIR}/. The run is only half the feed: promote the run's
   summary to ${SLA_EVIDENCE_DIR}/sla-proof-<YYYY-MM-DD>.md per
-  docs/operations/sla-proof-procedure.md ("Write the report").
+  docs/operations/sla-proof-procedure.md ("Run").
 EOF
   fi
   exit 2

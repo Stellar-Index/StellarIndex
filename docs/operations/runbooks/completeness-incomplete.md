@@ -186,7 +186,7 @@ The `detail` column names the per-target Δ and window.
 - [ADR-0033](../../adr/0033-completeness-verification-model.md) — the
   completeness-verification model (there is no
   `docs/architecture/completeness-verification.md`).
-- `docs/operations/launch-todo.md` Phase C.
+- `docs/operations/launch-todo.md` (resync Phase C = re-derives).
 
 ## Changelog
 

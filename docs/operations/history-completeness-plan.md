@@ -27,7 +27,7 @@ measured, §7 says so instead of estimating one.
 Issue #349 costs the SDEX backfill as a re-ingest and makes it conditional
 on first rehydrating ~2.3 TiB of ledger meta from the AWS public dataset,
 because r1's local `galexie-archive` was trimmed to a hot floor of
-49,984,000 on 2026-07-26 (`docs/operations/galexie-backfill.md:20-37`).
+49,984,000 on 2026-07-26 (`docs/operations/galexie-backfill.md` hot-floor banner).
 
 That prerequisite does not apply to this job. The served `trades` row for
 `source = 'sdex'` is derived from operation results, and the lake already
@@ -810,7 +810,7 @@ exits. After each slice, or once at the end, run the twelve-view refresh in
 the §2.5 order, in weekly or monthly windows, and never concurrently with
 another backfill (Timescale rejects the loser with `55P03` and the
 backfill's ~3.0 s retry budget is exhausted,
-`docs/operations/backfill-procedure.md:534-546`).
+`docs/operations/backfill-procedure.md` "Repairing a range backfilled after 2026-08-22").
 
 ---
 
@@ -861,7 +861,7 @@ Stated plainly rather than estimated.
    sweep (`docs/operations/cagg-broad-recompute.md:52`) is for current
    volume. `trades` would grow 4.7× and `prices_1m` accrues ~390k rows/day
    at today's density
-   (`docs/operations/backfill-procedure.md:530-533`). No historical-density
+   (`docs/operations/backfill-procedure.md` "Repairing a range backfilled after 2026-08-22"). No historical-density
    figure exists. This could plausibly rival the insert cost and is
    unbudgeted.
 
