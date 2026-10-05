@@ -1,88 +1,35 @@
 ---
 title: Finding — dust trades set OHLC chart extremes
 last_verified: 2026-07-24
-status: FIXED in code (migration 0115 + band removed) — AWAITING operator re-materialization
+status: FIXED — migration 0115 deployed, 2× VWAP band removed
 ---
 
 # Dust trades set OHLC chart extremes
 
-## Symptom
+Audit B11-F1. The rationale of record for migration 0115, the removal of
+`combinedOutlierBandRatio`, and the dust floors in `usd_fx_resolver.go`.
 
-The home-page XLM/USD chart shows a drop to **$0.1333** at the 06:00 UTC bar on
-2026-07-17, against a bar VWAP of $0.1832 — a ~27% dip that never happened.
+## Symptom and root cause
 
-Reported by the operator; this is the same *class* as the earlier S-012 finding
-($0.56 highs) but a **different root cause**, and the existing outlier filter
-cannot catch it.
+The XLM/USD chart showed a low of **$0.1333** against a bar VWAP of $0.1832.
+`migrations/0002_create_price_aggregates.up.sql` built OHLC extremes with no
+size filter (`max/min(quote_amount / base_amount)`), so every trade set
+high/low regardless of notional. The print: pair `USDC-GA5ZSEJY…` / `native`
+(reverse direction), base **2 stroops**, quote **15 stroops**, usd_volume
+**$0.00000027**, price 15/2 = 7.5. `OHLCSeries` inverts reverse-direction
+pairs (`1.0 / NULLIF(high_price, 0)`), so the 7.5 high became a 0.1333 low.
 
-## Root cause
+The serve-layer 2× VWAP band (`selectExtreme`) could not catch it: 0.1333 sits
+inside the 0.0916 floor, and the band only ever compared whole-constituent
+extremes (this constituent: 321 trades, $14,493). Tightening the band would
+clip genuine intra-bar moves.
 
-`migrations/0002_create_price_aggregates.up.sql` builds the OHLC extremes with
-no size filter at all:
-
-```sql
-max(quote_amount / base_amount) AS high_price,
-min(quote_amount / base_amount) AS low_price
-FROM trades
-GROUP BY bucket, base_asset, quote_asset
-```
-
-Every trade contributes to high/low regardless of notional. The offending print:
-
-| field | value |
-|---|---|
-| pair | `USDC-GA5ZSEJY…` / `native` (REVERSE direction) |
-| base_amount | **2 stroops** |
-| quote_amount | **15 stroops** |
-| usd_volume | **$0.00000027** |
-| price | 15/2 = **7.5000** XLM per USDC |
-
-`OHLCSeries` (`internal/storage/timescale/aggregates.go:1240`) normalises
-reverse-direction pairs by inverting them:
-
-```sql
-CASE WHEN base_asset = $1 THEN low_price ELSE 1.0 / NULLIF(high_price, 0) END AS lo
-```
-
-so that 7.5 high inverts to **1/7.5 = 0.1333333333**, which becomes the served
-low for XLM/USD.
-
-## Why the existing outlier filter does not catch it
-
-`selectExtreme` (`internal/api/v1/ohlc_fiat_combine.go`, shipped v0.18.0) drops
-candidates outside `combinedOutlierBandRatio` (2x) of the bar VWAP. Here:
-
-- bar VWAP = 0.1832 ⟹ low band floor = 0.0916
-- offending low = 0.1333 — **comfortably inside the band**
-
-It also is not dust at the *constituent* level: that constituent had 321 trades
-and $14,493 of volume. The bad print is a single dust fill **inside an otherwise
-legitimate constituent**, and the serve-layer filter only ever compares
-whole-constituent extremes — it can never see inside one.
-
-Tightening the band is NOT a safe fix: catching 0.728x VWAP would clip genuine
-intra-bar moves.
-
-## Scale
-
-Trades on 2026-07-17 (one day):
-
-| bucket | count | share |
-|---|---|---|
-| usd_volume < $0.01 | **1,448,695** | **24%** |
-| usd_volume < $1 | 1,674,790 | 28% |
-| total | 6,018,245 | — |
-
-A quarter of all trades are sub-cent dust. Any one of them can set an extreme on
-any pair, in either direction, on every granularity.
-
+On one day (6,018,245 trades) 24% had `usd_volume < $0.01`.
 
 ## Why the dust exists: path-payment remainders
 
-The offending fill was NOT a standalone order. The transaction
-(`6231307e…`, ledger 63514245) contains exactly ONE operation —
-`PathPaymentStrictSend` — and the trades table's `op_index` is the CLAIM-ATOM
-index within that path payment, not an operation index. The full chain:
+Tx `6231307e…` (ledger 63514245) is one `PathPaymentStrictSend`; the trades
+table's `op_index` is the claim-atom index within it.
 
 | hop | sold → bought | usd_volume | leg price |
 |---|---|---|---|
@@ -91,44 +38,19 @@ index within that path payment, not an operation index. The full chain:
 | 2 | USDC → XLM | $19.99 | 5.459 ✓ market |
 | 3 | USDC → XLM | **$0.00000027** | **7.500** ← the outlier |
 
-Hops 1–2 filled at the true market rate. Hop 3 is the **remainder** — the
-2-stroop crumb left after the earlier hops consumed the available depth, swept
-against the next offer in the book at a worse price. At 2 stroops there is no
-precision left: 15/2 = 7.5 exactly, so the "price" is an artifact of dividing two
-tiny integers.
+Hop 3 is the remainder swept against the next offer. Every claim atom is
+recorded as an independent market trade, so path payments structurally produce
+these crumbs.
 
-**This is the real modeling error.** We record every claim atom of a path payment
-as an independent market trade. Economically this was ONE ~$20 conversion that
-executed at ~5.458 — it was never a market quote of 7.5 XLM/USDC. Path-payment
-remainders are structurally guaranteed to produce these crumbs, which is why 24%
-of trades are sub-cent.
+**Open modelling decision:** whether a path payment's intermediate hops should
+contribute to price discovery at all, or only the end-to-end rate. It affects
+VWAP and volume too; take it deliberately.
 
-It also gives the notional floor a principled meaning: it is not "ignore small
-trades", it is **ignore fills too small to carry price information**. $0.01
-excludes this crumb by ~37,000x while leaving hops 1 ($0.09) and 2 ($19.99)
-intact, so the genuine execution stays fully represented.
+## Decision (operator)
 
-Worth considering alongside the notional floor: whether a path payment's
-intermediate hops should contribute to price discovery at all, or whether only
-the end-to-end rate is a real observation. That is a broader modelling decision
-(it affects VWAP and volume too, not just extremes) and should be taken
-deliberately.
-
-
-## DECISION (2026-07-22, operator)
-
-**Filter on trade SIZE, never on price divergence.** A genuine fat-finger — say a
-$100,000 sale at a terrible price — is a real market event and MUST still show,
-even though it was a mistake. Suppressing it because it sits far from VWAP is
-editing reality. What must be excluded is dust: fills whose total value is below
-a meaningful floor.
-
-Consequently `combinedOutlierBandRatio` (the 2x VWAP band) is to be **REMOVED**,
-not retuned.
-
-### Why the band can go — every case it existed for was dust
-
-Verified against production:
+**Filter on trade SIZE, never on price divergence.** A real $100k fat-finger
+must still show. `combinedOutlierBandRatio` is removed, not retuned: every case
+it existed for was dust.
 
 | case | amounts | price | usd_volume | caught by notional floor? |
 |---|---|---|---|---|
@@ -137,89 +59,33 @@ Verified against production:
 | absurd high | 128 ↔ 4.9e9 stroops | 38,252,788 | $0.0000129 | ✅ |
 | hypothetical $100k fat-finger | large | far off market | $100,000 | ❌ — correctly SHOWN |
 
-The band was treating the symptom (divergence from VWAP) when the cause was
-always size. The notional floor subsumes it entirely and, unlike the band, never
-suppresses a real event.
+Amounts are integer stroops, so price carries a quantisation error of about
+`1/base + 1/quote`; at 1↔1 or 2↔15 stroops that is 50–100%. A size floor removes
+fills below the ledger's own measurement resolution.
 
-### Supporting rationale: below a few thousand stroops the price is unmeasurable
-
-Amounts are integers (stroops), so price = quote/base carries a quantisation
-error of roughly `1/base + 1/quote`. At 1↔1 or 2↔15 stroops that error is ~50-100%
-— the "price" is an artifact of dividing two tiny integers, not an observation.
-This is why a size floor is principled rather than arbitrary: it removes fills
-that are below the measurement resolution of the ledger itself.
-
-Distribution on 2026-07-17 (6,018,245 trades):
-
-| filter | excluded | share |
+| filter (same day) | excluded | share |
 |---|---|---|
 | `least(base,quote) < 100` stroops | 310,539 | 5.2% |
 | `least(base,quote) < 1,000` | 563,764 | 9.4% |
 | `least(base,quote) < 10,000` | 1,226,222 | 20.4% |
 | `usd_volume < $0.01` | 1,448,695 | 24.1% |
 
-## Fix (IMPLEMENTED 2026-07-24 — deploy pending)
+## Fix
 
-Shipped as:
+- `migrations/0115_ohlc_extremes_notional_floor.up.sql`: open/high/low/close of
+  all seven `prices_*` CAGGs take
+  `COALESCE(agg(...) FILTER (WHERE usd_volume >= 0.01), agg(...))`; the
+  threshold is defined once as `ohlc_extreme_min_usd_volume`. `twap_1h`/`twap_1d`
+  are recreated unchanged as dependents of `prices_1m`. The migration is
+  `WITH NO DATA`: applying it empties the views (~1.1 TB) until re-materialised
+  per the migration header.
+- `internal/api/v1/ohlc_fiat_combine.go`: the 2× band removed.
+- `test/integration/ohlc_dust_floor_test.go`: the 2↔15-stroop crumb serves
+  `0.1333333333` before and `0.1822` after, on every grain.
 
-- `migrations/0115_ohlc_extremes_notional_floor.up.sql` — the notional
-  floor on all four extremes (open/high/low/close) of all seven
-  `prices_*` CAGGs. `twap_1h`/`twap_1d` are recreated unchanged as
-  dependents of `prices_1m`.
-- `internal/api/v1/ohlc_fiat_combine.go` — `combinedOutlierBandRatio`
-  (the 2× VWAP band) REMOVED per the decision below.
-- `test/integration/ohlc_dust_floor_test.go` — DB-backed proof on
-  TimescaleDB 2.26.4: the seeded 2↔15-stroop crumb serves `0.1333333333`
-  before the migration and `0.1822` after, on every grain.
+NULL `usd_volume` never satisfies the filter, so an entirely unpriced bucket
+keeps the unfiltered extreme; a mixed bucket takes extremes from priced trades
+only. **Open:** a stroop-based floor for unpriced pairs is a separate decision.
 
-Open questions 1–4 as resolved at implementation time:
-
-1. **Threshold** — $0.01, as designed. Defined ONCE, in the migration's
-   `ohlc_extreme_min_usd_volume` constant.
-2. **`usd_volume` NULLs** — NULL never satisfies `>= 0.01`, so an
-   entirely unpriced bucket falls through the `COALESCE` to today's
-   unfiltered extreme (unchanged behaviour, and the option that cannot
-   suppress a real extreme). A bucket MIXING priced and unpriced trades
-   takes its extremes from the priced ones only. A stroop-based floor
-   for unpriced pairs remains a separate, deliberate decision.
-3. **CAGG support** — verified: TimescaleDB 2.26.4 (the deployed
-   version) accepts `COALESCE(agg(...) FILTER (WHERE ...), agg(...))`
-   for `first`/`last`/`max`/`min` inside a continuous aggregate.
-4. **Re-materialisation cost** — unchanged and still the gating step:
-   the migration is `WITH NO DATA`, so applying it EMPTIES the seven
-   price views plus `twap_1h`/`twap_1d` (~1.1 TB, hours). Operator step,
-   off the D2 window; refresh sequence is in the migration header.
-
-## Fix (as designed)
-
-The extremes must be computed over economically meaningful trades only. This has
-to happen in the **continuous aggregate**, because the cagg stores only the
-extremes — the serve layer cannot recover what was already collapsed.
-
-```sql
-COALESCE(
-  max(quote_amount / base_amount) FILTER (WHERE usd_volume >= 0.01),
-  max(quote_amount / base_amount)
-) AS high_price
-```
-
-The `COALESCE` fallback matters: a bucket containing *only* dust still reports an
-extreme rather than NULL.
-
-Open questions before implementing:
-1. **Threshold.** $0.01 excludes the observed dust with large margin. Needs a
-   sweep over historical data to confirm it never removes a legitimate extreme.
-2. **`usd_volume` NULLs.** Pairs with no USD pricing need a size-based fallback
-   (a stroop floor), or they keep today's behaviour.
-3. **Cagg support.** Verify TimescaleDB accepts `FILTER` + `COALESCE` in a
-   continuous aggregate definition at these versions; if not, the filter moves
-   into a view over the cagg or the trades-side write path.
-4. **Re-materialisation cost.** Seven caggs (1m/15m/1h/4h/1d/1w/1mo) over full
-   history. Heavy — must be scheduled off the D2 window.
-
-## Blast radius
-
-Every OHLC chart on every pair and every granularity, in both directions
-(inverted pairs get dust highs turned into lows and vice versa). This is the
-"money surface" — treat the change with the same care as a pricing migration and
-verify against known-good bars before and after.
+Blast radius: every OHLC chart, every pair and grain, both directions. Treat
+changes here as a pricing migration and verify against known-good bars.

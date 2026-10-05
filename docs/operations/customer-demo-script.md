@@ -6,33 +6,26 @@ status: operator runbook
 
 # API walkthrough script
 
-End-to-end demo walk-through of the API. Goal: in 30 minutes, walk a
-new user through every surface they're likely to use, with concrete
-`curl` commands they can re-run later. They should leave able to make
-their first real request without further intervention.
+A 30-minute walk through every surface a new user needs, with `curl` commands
+they can re-run. They should leave able to make a first real request unaided.
 
 ## Pre-flight (T-30 min)
 
-- [ ] **Demo URL pinned.** `https://api.stellarindex.io/v1`
-      (post-cutover) or `https://staging.stellarindex.io/v1`
-      (pre-cutover dry-run).
-- [ ] **Demo API key minted.** Use a tier-`apikey` key with
-      reasonable rpm; record it in the demo notes for cleanup
-      after.
-- [ ] **Browser tabs open** — interactive explorer
-      (`https://stellarindex.io`), API reference, getting-started,
-      status page.
-- [ ] **Terminal pre-loaded** with `BASE`, `KEY` env vars:
+- [ ] **Demo URL pinned:** `https://api.stellarindex.io/v1` (post-cutover) or
+      `https://staging.stellarindex.io/v1` (pre-cutover dry-run).
+- [ ] **Demo API key minted:** tier-`apikey`, reasonable rpm; note it for cleanup.
+- [ ] **Tabs open:** explorer (`https://stellarindex.io`), API reference,
+      getting-started, status page.
+- [ ] **Terminal env:**
       ```sh
       export BASE='https://api.stellarindex.io/v1'
       export KEY='ak_demo_...'
       ```
-- [ ] **Wireshark / network inspector NOT open** — keeps the
-      visible noise low.
+- [ ] **Wireshark / network inspector NOT open.**
 
 ## The walk-through
 
-Stages are 5 min each unless noted; total ≈ 25-30 min.
+About 5 min per stage unless noted; total 25-30 min.
 
 ### Stage 1 — "Is this thing on?" (2 min)
 
@@ -41,16 +34,11 @@ curl -s "$BASE/healthz" | jq .
 curl -s "$BASE/version" | jq .
 ```
 
-Talking points:
-- Health + version surfaces are cheap, unauthenticated, and
-  suitable for monitoring.
-- `version` exposes the CalVer tag — operators can tell at a
-  glance which build is responding.
-- **Hand the user `https://stellarindex.io`** — the
-  interactive explorer. Every panel reveals the API call that
-  produced it via the `<>` button, so the rest of the walk-through
-  has a "click the panel, see the curl" parallel they can follow
-  along with. They should leave the demo with that tab pinned.
+- Both are cheap, unauthenticated, monitoring-suitable; `version` shows the
+  CalVer tag of the responding build.
+- **Hand the user `https://stellarindex.io`**: each panel's `<>` button shows
+  the API call behind it, so they can follow the walk-through. They leave with
+  that tab pinned.
 
 ### Stage 2 — Closed-bucket pricing (5 min)
 
@@ -59,39 +47,27 @@ curl -sH "Authorization: Bearer $KEY" \
   "$BASE/price?base=native&quote=fiat:USD" | jq .
 ```
 
-Talking points:
-- **Closed-bucket** semantics: the value you see is
-  byte-identical across r1/r2/r3, and it stays the same for
-  every request within the same minute. Demo by re-running
-  the same request → the response should be identical.
-- **`flags`**: `stale`, `divergence_warning`, `frozen`, etc.
-  Each has a documented meaning; consumers gating on them get
-  meaningful signal.
-- **`confidence`** + **`confidence_factors`**: ADR-0019.
-  Multi-factor score (0..1) with the per-factor decomposition
-  on the wire. Consumers can read why confidence dropped.
-- **`sources`**: which venues contributed to this VWAP. Click
-  through the names to `/v1/sources` for class metadata.
+- **Closed-bucket:** byte-identical across r1/r2/r3 and constant within a
+  minute. Re-run the request; the response is identical.
+- **`flags`:** `stale`, `divergence_warning`, `frozen`, etc., each documented.
+- **`confidence`** + **`confidence_factors`** (ADR-0019): 0..1 score with the
+  per-factor decomposition on the wire.
+- **`sources`:** contributing venues; names link to `/v1/sources`.
 
-### Stage 3 — Tip pricing + "consistency vs freshness" tradeoff (3 min)
+### Stage 3 — Tip pricing + consistency vs freshness (3 min)
 
 ```sh
 curl -sH "Authorization: Bearer $KEY" \
   "$BASE/price/tip?asset=native&quote=fiat:USD" | jq .
 ```
 
-Talking points:
-- Tip is **rolling-window**, not closed-bucket — different
-  surface, different consistency contract (ADR-0018).
-- Use tip when freshness > consistency (e.g. UI displays).
-  Use `/v1/price` for trade execution + reporting.
-- The two URLs are deliberately distinct — a query param can't
-  flip between them. URL discipline is a feature.
-- **Note the parameter name.** `/v1/price/tip` and
-  `/v1/price/stream` take `asset=` (quote defaults to `fiat:USD`);
-  `/v1/price`, `/v1/observations` and `/v1/history/*` take `base=`.
-  `base=` on tip or stream is a **400 `missing-asset`** — do not
-  find that out in front of a customer.
+- Tip is **rolling-window**, not closed-bucket: a different consistency
+  contract (ADR-0018). Use tip for UI freshness, `/v1/price` for execution and
+  reporting. The URLs are deliberately distinct; no query param flips between them.
+- **Parameter name:** `/v1/price/tip` and `/v1/price/stream` take `asset=`
+  (quote defaults to `fiat:USD`); `/v1/price`, `/v1/observations` and
+  `/v1/history/*` take `base=`. `base=` on tip or stream is a **400
+  `missing-asset`**; don't find that out in front of a customer.
 
 ### Stage 4 — Per-source observations (3 min)
 
@@ -100,13 +76,11 @@ curl -sH "Authorization: Bearer $KEY" \
   "$BASE/observations?base=native&quote=fiat:USD" | jq '.data[:3]'
 ```
 
-Talking points:
-- The raw inputs the aggregator sees. Useful for consumers
-  who want to apply their own aggregation policy.
-- `?source=binance` or `?source=sdex` filters to one venue (an exchange
-  or an on-chain source); a data vendor such as `?source=coingecko`
-  returns 400, because its rows are served only beside other sources.
-  `?aggregate=latest` collapses to one row per source.
+- Raw aggregator inputs, for consumers applying their own policy.
+- `?source=binance` or `?source=sdex` filters to one venue (exchange or
+  on-chain source); a data vendor such as `?source=coingecko` returns 400
+  (its rows are served only beside other sources). `?aggregate=latest`
+  collapses to one row per source.
 
 ### Stage 5 — Historical data (3 min)
 
@@ -116,12 +90,10 @@ curl -sH "Authorization: Bearer $KEY" \
   | jq '.data[:3]'
 ```
 
-Talking points:
-- Since-inception coverage — Galexie replays from ledger 2.
-- Granularities: 1m / 15m / 1h / 4h / 1d / 1w / 1mo (same
-  CAGGs the aggregator's closed-bucket path uses).
-- CDN caches this aggressively (s-maxage=86400) — repeated
-  requests are sub-10ms p99 once the edge is warm.
+- Since-inception coverage; Galexie replays from ledger 2.
+- Granularities 1m / 15m / 1h / 4h / 1d / 1w / 1mo (the CAGGs the closed-bucket
+  path uses).
+- CDN caches aggressively (s-maxage=86400): sub-10ms p99 once the edge is warm.
 
 ### Stage 6 — SSE streaming (3 min)
 
@@ -130,12 +102,10 @@ curl -NH "Authorization: Bearer $KEY" \
   "$BASE/price/stream?asset=native&quote=fiat:USD"
 ```
 
-Let it run for 60 seconds. One `data: {...}` line per closed
-bucket. Talking points:
-- Last-Event-ID resumption — disconnect + reconnect with the
-  last seen ID, the server replays missed buckets from the
-  Hub's ring buffer.
-- Heartbeat every 15s as a comment line keeps proxies happy.
+Run 60 seconds; one `data: {...}` line per closed bucket.
+- Last-Event-ID resumption: reconnect with the last ID and the server replays
+  missed buckets from the Hub's ring buffer.
+- A 15s heartbeat comment line keeps proxies happy.
 
 ### Stage 7 — Asset detail (3 min)
 
@@ -144,56 +114,42 @@ curl -sH "Authorization: Bearer $KEY" \
   "$BASE/assets/native" | jq .
 ```
 
-Talking points:
 - F2 fields: `total_supply`, `circulating_supply`, `max_supply`,
-  `market_cap_usd`, `fdv_usd`, `volume_24h_usd`, `supply_basis`.
-- Supply data per ADR-0011 — three algorithms (XLM /
-  classic / SEP-41) all wired.
-- `change_24h_pct` is currently null; deferred per L7.7.
+  `market_cap_usd`, `fdv_usd`, `volume_24h_usd`, `supply_basis`,
+  `change_24h_pct`.
+- Supply per ADR-0011: XLM / classic / SEP-41 algorithms all wired.
 
 ### Stage 8 — SDK demo (4 min)
 
-Open the Go SDK example in `pkg/client/example_test.go` (or
-the getting-started page). Talking points:
-- Generic `Envelope[T]` shape — type-safe at the call site.
-- `pkg/client` is SemVer-pinned; v0.x policy is documented in
+Open `pkg/client/example_test.go` (or getting-started).
+- Generic `Envelope[T]`: type-safe at the call site.
+- `pkg/client` is SemVer-pinned; v0.x policy in
   `docs/architecture/semver-policy.md`.
 
 ### Stage 9 — Q&A (5 min)
 
-Common questions to expect:
-- **"What if Reflector goes down?"** → Diversity factor,
-  confidence drops; operators alert on confidence < 0.5
-  sustained. Multi-source means single-oracle outage is
-  mitigated.
-- **"How do you handle USDC depegs?"** → Stablecoin classifier
-  + per-class anomaly thresholds + freeze policy (ADR-0019).
-  Demo: `flags.frozen` on the response when the freeze fires.
-- **"What's the SLA?"** → Show `/sla` doc + the SLA-probe
-  results dashboard.
-- **"Can you commit to 99.99%?"** → Honest answer: the published
-  commitment is ≥ 99.9 % (`/sla`, #487). 99.99 % is the design
-  target of the multi-region topology (ADR-0050) and is not offered
-  until that ships and an off-host probe has measured it for
-  ≥ 30 days.
-- **"What if we want a private deployment?"** → Apache-2.0
-  source + ansible roles + bringup runbook are all public;
-  point at `docs/operations/archival-node-bringup.md`.
+- **"What if Reflector goes down?"** Diversity factor lowers confidence;
+  operators alert on confidence < 0.5 sustained; multi-source mitigates a
+  single-oracle outage.
+- **"How do you handle USDC depegs?"** Stablecoin classifier, per-class anomaly
+  thresholds, freeze policy (ADR-0019). Demo `flags.frozen` when a freeze fires.
+- **"What's the SLA?"** Show `/sla` and the SLA-probe results dashboard.
+- **"Can you commit to 99.99%?"** The published commitment is ≥ 99.9 %
+  (`/sla`, #487). 99.99 % is the design target of the multi-region topology
+  (ADR-0050), not offered until that ships and an off-host probe has measured it
+  for ≥ 30 days.
+- **"Private deployment?"** Apache-2.0 source, ansible roles and bringup runbook
+  are public: `docs/operations/archival-node-bringup.md`.
 
 ## Post-demo
 
-- [ ] **Share the recording** if recorded.
-- [ ] **Send `onboarding-email.md`** with the user's
-      production API key (different from the demo key — rotate
-      the demo key out same day).
-- [ ] **Open a feedback issue** capturing any surface that
-      drew confusion or any feature request raised.
+- [ ] Share the recording if recorded.
+- [ ] Send `onboarding-email.md` with the user's production key; rotate the demo
+      key out the same day.
+- [ ] Open a feedback issue for any confusing surface or feature request.
 
 ## Cross-references
 
-- [`docs/getting-started.md`](../getting-started.md) — the
-  written walkthrough this demo follows.
-- [`deploy/comms/onboarding-email.md`](../../deploy/comms/onboarding-email.md)
-  — what to send a new user after.
-- [`launch-day-checklist.md`](launch-day-checklist.md) §T-3
-  — schedule the demo.
+- [`docs/getting-started.md`](../getting-started.md): the written walkthrough.
+- [`deploy/comms/onboarding-email.md`](../../deploy/comms/onboarding-email.md): post-demo email.
+- [`launch-day-checklist.md`](launch-day-checklist.md) §T-3: schedule the demo.

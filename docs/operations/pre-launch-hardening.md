@@ -6,37 +6,28 @@ status: operator runbook
 
 # Pre-launch hardening checklist
 
-Run through this BEFORE flipping public DNS at
-`api.stellarindex.io` / `stellarindex.io`. Each item is a config
-edit + service restart on R1; combined effort ~10 minutes.
-
-The API binary at startup now logs `SECURITY:` warnings when any
-of these are still in their dev-friendly defaults — checking
-`journalctl -u stellarindex-api -b -p warning | grep SECURITY` is
-the canonical way to verify nothing's missed.
+Run BEFORE flipping public DNS at `api.stellarindex.io` / `stellarindex.io`. Each
+item is a config edit + restart on R1 (~10 min total). At startup the API logs
+`SECURITY:` warnings for dev-friendly defaults still in place:
+`journalctl -u stellarindex-api -b -p warning | grep SECURITY`.
 
 ## 1. Bind the API to loopback
 
-**Why:** the API listens on `0.0.0.0:3000` by default — every
-request goes through it including raw `http://<R1-IP>:3000` that
-bypasses Caddy's TLS. Once DNS lands, customers expect TLS-only;
-the loopback bind makes Caddy mandatory.
-
-**Config — append to `[api]` block in `/etc/stellarindex.toml`:**
+**Why:** the API listens on `0.0.0.0:3000` by default, so raw
+`http://<R1-IP>:3000` bypasses Caddy's TLS. Loopback makes Caddy mandatory.
 
 ```toml
+# /etc/stellarindex.toml
 [api]
 listen_addr = "127.0.0.1:3000"
 ```
-
-**Apply:**
 
 ```sh
 systemctl restart stellarindex-api
 ss -tlnp | grep stellarindex-api    # should show 127.0.0.1:3000, not *:3000
 ```
 
-**Verify** the loopback restriction holds end-to-end:
+Verify:
 
 ```sh
 # From R1 (loopback) — works:
@@ -49,17 +40,12 @@ curl --connect-timeout 3 http://136.243.90.96:3000/v1/healthz   # connection ref
 curl -fsS https://api.stellarindex.io/v1/healthz
 ```
 
-Caddy is on the same host so loopback access from Caddy still
-works; only external direct-port access dies.
+Caddy is on the same host, so only external direct-port access dies.
 
 ## 2. Narrow CORS
 
-**Why:** `[api].allowed_origins = ["*"]` lets any browser-side
-origin call the API. With `auth_mode = apikey_optional` (R1's
-current mode) that means a third-party site can phish a logged-in
-user's bearer token. Restrict to the showcase + API hostnames.
-
-**Config — replace `[api]` block:**
+**Why:** `[api].allowed_origins = ["*"]` with `auth_mode = apikey_optional` (R1's
+mode) lets a third-party site phish a logged-in user's bearer token.
 
 ```toml
 [api]
@@ -69,62 +55,37 @@ allowed_origins = [
 ]
 ```
 
-If you preview the showcase via Cloudflare Pages preview URLs
-(`<branch>.<projectslug>.pages.dev`), add specific preview
-hostnames temporarily — wildcards aren't honoured by the CORS
-middleware.
-
-**Apply:** `systemctl restart stellarindex-api`.
+For Cloudflare Pages previews (`<branch>.<projectslug>.pages.dev`) add specific
+hostnames temporarily; the CORS middleware does not honour wildcards. Then
+`systemctl restart stellarindex-api`.
 
 ## 3. Confirm trusted-proxy CIDRs match the proxy's source
 
-**Why:** with the loopback bind, the only legitimate caller of
-the API IS Caddy. `trusted_proxy_cidrs = ["127.0.0.1/32"]` is
-already correct on R1 (Caddy is on the same host). If you later
-move Caddy to a separate host or front R1 with Cloudflare's
-proxy mode, the CIDRs need to expand to the proxy's source range
-or `X-Forwarded-For` from the wider internet starts being trusted.
-
-**No edit needed today** unless the proxy topology changes.
+With the loopback bind the only caller is Caddy, so
+`trusted_proxy_cidrs = ["127.0.0.1/32"]` is already correct on R1. Expand it only
+if Caddy moves to another host, else `X-Forwarded-For` from the wider internet
+becomes trusted. No edit needed today.
 
 ## 4. Cloudflare proxy in front of api.stellarindex.io (recommended)
 
-**Why:** Caddy gives TLS termination but no L7 protection. R1
-is one box; a sustained L7 flood saturates it. Cloudflare's
-free tier in front of `api.stellarindex.io` gives WAF rules, rate
-limiting at the edge, and IP-based bot blocking out of the box.
+**Why:** Caddy gives TLS but no L7 protection; R1 is one box. Cloudflare's free tier
+adds WAF, edge rate limiting and bot blocking.
 
-**Steps:**
-
-1. In Cloudflare dashboard, set the `api` A record to
-   `136.243.90.96` with the **orange cloud** (proxy) ON.
-2. Cloudflare's edge IPs are now the immediate peer R1's Caddy
-   sees. **No API-side `trusted_proxy_cidrs` change needed**
-   per ADR-0025 — the trust boundary stays at Caddy. The
-   Caddyfile's global `servers { trusted_proxies static <CF
-   CIDRs>; client_ip_headers CF-Connecting-IP X-Forwarded-For }`
-   block resolves the real client IP at Caddy and forwards it
-   downstream as `X-Forwarded-For: {client_ip}`. The API
-   continues to trust only `127.0.0.1/32` (Caddy on the same
-   host) and accepts the resolved client IP in the
-   `X-Forwarded-For` header from Caddy. (F-1270, 2026-05-13:
-   earlier text told operators to expand the API-side
-   `trusted_proxy_cidrs` to include Cloudflare ranges, which
-   contradicts the chosen ADR-0025 trust boundary.)
-3. Refresh CF's CIDR list inside the Caddyfile on quarterly
-   audits or when CF publishes a notice — see
+1. Set the `api` A record to `136.243.90.96` with the **orange cloud** ON.
+2. **No API-side `trusted_proxy_cidrs` change** (ADR-0025): the trust boundary stays
+   at Caddy. The Caddyfile's global `servers { trusted_proxies static <CF CIDRs>;
+   client_ip_headers CF-Connecting-IP X-Forwarded-For }` block resolves the real
+   client IP and forwards it as `X-Forwarded-For: {client_ip}`; the API trusts only
+   `127.0.0.1/32`.
+3. Refresh CF's CIDR list in the Caddyfile quarterly or on a CF notice; see
    [`configs/caddy/README.md` §"Real client IP under
-   Cloudflare"](../../configs/caddy/README.md) for the curl
-   commands and the audit cadence.
-4. (Optional) Cloudflare Origin Cert — replace Caddy's
-   Let's Encrypt with a long-lived Cloudflare-issued cert so
-   the connection from CF edge → R1 origin is authenticated.
+   Cloudflare"](../../configs/caddy/README.md).
+4. (Optional) Cloudflare Origin Cert instead of Let's Encrypt, so CF edge → origin
+   is authenticated.
 
 ## 5. Healthchecks.io URLs
 
-Five URLs go into `/etc/default/stellarindex-healthchecks`
-(F-1267 corrected the four-vs-five count on 2026-05-13 — the
-SLA-probe timer joined the heartbeat fleet):
+Five URLs in `/etc/default/stellarindex-healthchecks`:
 
 ```sh
 HEALTHCHECKS_URL_INDEXER='https://hc-ping.com/<uuid-indexer>'
@@ -134,8 +95,7 @@ HEALTHCHECKS_URL_SMOKE='https://hc-ping.com/<uuid-smoke>'
 HEALTHCHECKS_URL_SLA_PROBE='https://hc-ping.com/<uuid-sla-probe>'
 ```
 
-Plus the deadmansswitch + Discord webhook URLs into
-`/etc/default/alertmanager-secrets`:
+Deadmansswitch and Discord webhooks in `/etc/default/alertmanager-secrets`:
 
 ```sh
 HEALTHCHECKS_DEADMANSSWITCH_URL='https://hc-ping.com/<uuid-dms>'
@@ -146,14 +106,10 @@ DISCORD_WEBHOOK_URL_PAGES='https://discord.com/api/webhooks/<id>/<token>'
 DISCORD_WEBHOOK_URL_ALERTS='https://discord.com/api/webhooks/<id>/<token>'
 ```
 
-Apply:
+Apply. `stellarindex-sla-probe.timer` must be in the restart set so systemd reloads
+the EnvironmentFile; otherwise the SLA-evidence check stays silent (F-1304).
 
 ```sh
-# F-1304 (codex audit-2026-05-13): stellarindex-sla-probe.timer
-# must be in the restart set so systemd reloads the EnvironmentFile
-# and the new HEALTHCHECKS_URL_SLA_PROBE takes effect — without it
-# the timer keeps the old value (or runs with the URL unset) and
-# the SLA-evidence Healthchecks check stays silent.
 systemctl restart \
   'stellarindex-heartbeat@*.timer' \
   stellarindex-smoke.timer \
@@ -163,8 +119,7 @@ bash /opt/stellarindex/alertmanager/apply.sh
 
 ## 6. FX API keys (recommended, not blocking)
 
-The 4 FX sources flagged "stopped" in `/v1/sources` are missing
-operator-supplied API keys. Set in `[external.fx]` under
+The 4 FX sources shown "stopped" in `/v1/sources` lack operator API keys. In
 `/etc/stellarindex.toml`:
 
 ```toml
@@ -173,28 +128,23 @@ openexchangerates_app_id = "<your-key>"
 # … per the source-config docs
 ```
 
-Restart the indexer. Aggregator picks them up on the next tick.
-
-Without these, fiat divergence has fewer cross-checks (CoinGecko
-+ Reflector still cover most cases). Not a launch blocker.
+Restart the indexer; the aggregator picks them up next tick. Without them fiat
+divergence has fewer cross-checks (CoinGecko + Reflector still cover most cases).
 
 ## 7. Smoke from the open internet
 
-Once DNS lands and Caddy has its cert:
+After DNS lands and Caddy has its cert, from your laptop (NOT R1):
 
 ```sh
-# From your laptop, NOT R1:
 API_BASE_URL=https://api.stellarindex.io make smoke
 ```
 
-13/13 green confirms TLS + DNS + cert + path are all healthy
-end-to-end before customer traffic arrives.
+13/13 green confirms TLS, DNS, cert and path end-to-end.
 
 ## 8. Backup baseline
 
-The launch-readiness backlog has `L4.16` for automated daily
-Postgres dumps + MinIO snapshot replication; until that lands,
-take a manual baseline:
+Until L4.16 (automated daily Postgres dumps + MinIO replication) lands, take a
+manual baseline, copy it off-host and document where:
 
 ```sh
 # On R1:
@@ -203,13 +153,10 @@ pg_dump -h localhost -U stellarindex stellarindex | gzip \
 mc mirror /var/lib/galexie-archive remote-backup/galexie-archive-baseline-$(date +%F)
 ```
 
-Copy off-host. Document where.
-
 ## Verification at the end
 
-The full-checklist verifier lives at `scripts/ops/pre-launch-check.sh`.
-It's read-only — performs no state changes — and prints
-`pass / warn / fail` for each step. Exit code = number of fails.
+`scripts/ops/pre-launch-check.sh` is read-only, prints `pass / warn / fail` per
+step, exit code = number of fails.
 
 ```sh
 # Run end-to-end on R1:
@@ -220,15 +167,10 @@ scp scripts/ops/pre-launch-check.sh root@r1:/opt/stellarindex/
 ssh root@r1 'bash /opt/stellarindex/pre-launch-check.sh'
 ```
 
-Spot checks if you'd rather verify by hand:
+By hand:
 
 ```sh
-# No SECURITY warnings in last boot:
 journalctl -u stellarindex-api -b -p warning | grep SECURITY    # empty == good
-
-# ListenAddr is loopback:
 ss -tlnp | grep stellarindex-api        # 127.0.0.1:3000
-
-# Smoke from outside:
 API_BASE_URL=https://api.stellarindex.io make smoke
 ```
