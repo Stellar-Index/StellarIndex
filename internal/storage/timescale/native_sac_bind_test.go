@@ -6,6 +6,8 @@ package timescale
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +59,7 @@ func TestNativeSACIsBoundNotHardCoded(t *testing.T) {
 		{"TransitiveUSDPriceCandidates", 3, func(s *Store) { _, _ = s.TransitiveUSDPriceCandidates(ctx, "C1") }},
 		{"PopularPricelessCandidates", 1, func(s *Store) { _, _ = s.PopularPricelessCandidates(ctx) }},
 		{"AssetIsPriced", 1, func(s *Store) { _, _ = s.AssetIsPriced(ctx, "C1") }},
+		{"BlendFillsForMEVScan", 0, func(s *Store) { _, _ = s.BlendFillsForMEVScan(ctx, since, 10) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, conn := newScriptedStore(t)
@@ -65,6 +68,10 @@ func TestNativeSACIsBoundNotHardCoded(t *testing.T) {
 				t.Fatal("no statement issued")
 			}
 			st := conn.stmts[0]
+			assertPlaceholdersMatchArgs(t, st.sql, len(st.args))
+			if tc.idx == 0 {
+				return
+			}
 			if got := st.arg(t, tc.idx); got != testnetNativeSACForBind {
 				t.Errorf("$%d = %v, want the installed network's native SAC %s", tc.idx, got, testnetNativeSACForBind)
 			}
@@ -98,6 +105,7 @@ func TestNativeSACIsBound_MarketQueryBuilders(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			q, args := tc.build()
+			assertPlaceholdersMatchArgs(t, q, len(args))
 			if len(args) != tc.idx {
 				t.Fatalf("args = %d, want the SAC last at $%d", len(args), tc.idx)
 			}
@@ -111,5 +119,29 @@ func TestNativeSACIsBound_MarketQueryBuilders(t *testing.T) {
 				t.Errorf("SQL hard-codes the pubnet native SAC")
 			}
 		})
+	}
+}
+
+var (
+	sqlLineComment = regexp.MustCompile(`--[^\n]*`)
+	sqlPlaceholder = regexp.MustCompile(`\$(\d+)`)
+)
+
+// pgx rejects a statement whose argument count differs from its highest
+// placeholder, so an inserted bind must not leave an unused or missing arg.
+func assertPlaceholdersMatchArgs(t *testing.T, sql string, nargs int) {
+	t.Helper()
+	seen := map[int]bool{}
+	for _, m := range sqlPlaceholder.FindAllStringSubmatch(sqlLineComment.ReplaceAllString(sql, ""), -1) {
+		n, _ := strconv.Atoi(m[1])
+		seen[n] = true
+	}
+	if len(seen) != nargs {
+		t.Fatalf("SQL uses %d distinct placeholders, statement binds %d args\nSQL: %s", len(seen), nargs, sql)
+	}
+	for i := 1; i <= nargs; i++ {
+		if !seen[i] {
+			t.Fatalf("SQL never references $%d of %d bound args\nSQL: %s", i, nargs, sql)
+		}
 	}
 }

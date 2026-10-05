@@ -59,7 +59,7 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
          ORDER BY ledger DESC, tx_hash DESC, op_index DESC
          LIMIT $2
     `
-	rows, err := s.db.QueryContext(ctx, q, since.UTC(), limit, canonical.NativeSACContractID())
+	rows, err := s.db.QueryContext(ctx, q, since.UTC(), limit)
 	if err != nil {
 		return nil, nil, fmt.Errorf("timescale: TradesForArbScan: %w", err)
 	}
@@ -187,7 +187,7 @@ func (s *Store) BlendFillsForMEVScan(ctx context.Context, since time.Time, limit
          ORDER BY ledger DESC, tx_hash DESC, op_index DESC
          LIMIT $2
     `
-	rows, err := s.db.QueryContext(ctx, q, since.UTC(), limit, canonical.NativeSACContractID())
+	rows, err := s.db.QueryContext(ctx, q, since.UTC(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: BlendFillsForMEVScan: %w", err)
 	}
