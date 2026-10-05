@@ -969,3 +969,63 @@ func TestPriceTip_FallbackFreshnessIsSeparate(t *testing.T) {
 		t.Errorf("fallback response at 200s must fail the 150s bound, got %v", got)
 	}
 }
+
+func TestDropNoPriceEndpoints(t *testing.T) {
+	all := append(staticEndpoints(), pairEndpoints("native", "fiat:USD", time.Minute)...)
+	all = append(all, pairEndpoints("native", "fiat:EUR", time.Minute)...)
+	names := func(eps []endpoint) string {
+		var out []string
+		for _, e := range eps {
+			out = append(out, sampleKey(e))
+		}
+		return strings.Join(out, ",")
+	}
+	for _, net := range []string{"pubnet", ""} {
+		var buf strings.Builder
+		got := dropNoPriceEndpoints(all, net, &buf)
+		if names(got) != names(all) || buf.Len() != 0 {
+			t.Errorf("network %q: endpoints changed or logged: %q", net, buf.String())
+		}
+	}
+	for _, net := range []string{"testnet", "futurenet"} {
+		var buf strings.Builder
+		got := dropNoPriceEndpoints(all, net, &buf)
+		for _, e := range got {
+			if e.Pair == "native/fiat:USD" {
+				t.Errorf("%s: %s still probed", net, sampleKey(e))
+			}
+		}
+		if len(got) != len(all)-3 {
+			t.Errorf("%s: kept %d, want %d (other pairs and static stay)", net, len(got), len(all)-3)
+		}
+		if strings.Count(buf.String(), "SKIP") != 1 || !strings.Contains(buf.String(), net) {
+			t.Errorf("%s: want one SKIP line naming the network, got %q", net, buf.String())
+		}
+	}
+}
+
+func TestFetchNetwork(t *testing.T) {
+	serve := func(code int, body string) string {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/coverage" {
+				t.Errorf("path = %q", r.URL.Path)
+			}
+			w.WriteHeader(code)
+			_, _ = w.Write([]byte(body))
+		}))
+		t.Cleanup(srv.Close)
+		return fetchNetwork(srv.URL, "")
+	}
+	if got := serve(200, `{"data":{"network":"testnet"}}`); got != "testnet" {
+		t.Errorf("testnet = %q", got)
+	}
+	for name, got := range map[string]string{
+		"500":     serve(500, `{"data":{"network":"testnet"}}`),
+		"badjson": serve(200, `x`),
+		"empty":   serve(200, `{"data":{}}`),
+	} {
+		if got != "pubnet" {
+			t.Errorf("%s: = %q, want pubnet", name, got)
+		}
+	}
+}

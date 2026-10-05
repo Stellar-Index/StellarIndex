@@ -183,6 +183,60 @@ func pairEndpoints(asset, quote string, closedBucketFresh time.Duration) []endpo
 	}
 }
 
+// fetchNetwork reads the served network from /v1/coverage .data.network,
+// the same source r1-smoke.sh uses. Any failure returns "pubnet" so an
+// unreadable answer keeps every probe running.
+func fetchNetwork(baseURL, apiKey string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), maxRequestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/coverage", http.NoBody)
+	if err != nil {
+		return "pubnet"
+	}
+	req.Header.Set("User-Agent", "stellarindex-probe/1")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := (&http.Client{Timeout: maxRequestTimeout}).Do(req)
+	if err != nil {
+		return "pubnet"
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var body struct {
+		Data struct {
+			Network string `json:"network"`
+		} `json:"data"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&body) != nil || body.Data.Network == "" {
+		return "pubnet"
+	}
+	return body.Data.Network
+}
+
+// dropNoPriceEndpoints removes the native/USD price, price-tip and
+// oracle-latest probes on test nets, which have no price sources
+// (same network profile as r1-smoke.sh). Dropped endpoints are
+// never sampled, so they are in neither side of the availability
+// denominator. Any other network returns endpoints unchanged.
+func dropNoPriceEndpoints(endpoints []endpoint, network string, log io.Writer) []endpoint {
+	if network != "testnet" && network != "futurenet" {
+		return endpoints
+	}
+	kept := make([]endpoint, 0, len(endpoints))
+	var skipped []string
+	for _, ep := range endpoints {
+		if ep.Pair == "native/fiat:USD" && (ep.Name == "price" || ep.Name == "price-tip" || ep.Name == "oracle-latest") {
+			skipped = append(skipped, ep.Name)
+			continue
+		}
+		kept = append(kept, ep)
+	}
+	if len(skipped) > 0 {
+		fmt.Fprintf(log, "stellarindex-sla-probe: SKIP %s native/USD: no price sources on %s\n", strings.Join(skipped, ", "), network)
+	}
+	return kept
+}
+
 // sampleKey is the samples-map key for ep: Name alone collides across
 // -pair flags (see endpoint.Pair), so every endpoint carrying a Pair
 // is keyed on both.
@@ -382,7 +436,10 @@ func main() {
 		endpoints = append(endpoints, pairEndpoints(parts[0], parts[1], *closedFresh)...)
 	}
 
-	rep := runProbe(*baseURL, resolveAPIKey(*apiKey), endpoints, *duration, *concurrency, *maxRPS, slaTargets{
+	key := resolveAPIKey(*apiKey)
+	endpoints = dropNoPriceEndpoints(endpoints, fetchNetwork(*baseURL, key), os.Stderr)
+
+	rep := runProbe(*baseURL, key, endpoints, *duration, *concurrency, *maxRPS, slaTargets{
 		P95MS:           durationMS(*p95Target),
 		P99MS:           durationMS(*p99Target),
 		FreshnessSec:    freshTarget.Seconds(),
