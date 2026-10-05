@@ -1,14 +1,5 @@
 # ADRs not yet on docs/adr/_template.md. Shrink-only: each ADR-rewrite PR removes its
 # lines, and lint-adr-refs fails on an entry that already conforms. Empty when W1 ends.
-0001-horizon-deprecated.md
-0002-minio-s3-compat-storage.md
-0003-i128-no-truncation.md
-0004-tier1-validator-aspiration.md
-0005-monorepo.md
-0006-timescaledb-for-price-time-series.md
-0007-redis-cache-schema.md
-0008-ha-topology.md
-0009-latency-budget.md
 0010-off-chain-fiat-representation.md
 0011-supply-algorithm.md
 0012-quorum-set-composition.md
