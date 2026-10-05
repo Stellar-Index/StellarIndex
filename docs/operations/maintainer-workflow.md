@@ -21,7 +21,7 @@ generalise: S3-compatible storage (ADR-0002), the ansible roles under
 The archival-node playbook applies cleanly to r1 and a weekly
 `ansible-drift.yml` workflow fails on divergence. **Any config change on r1
 lands in `configs/ansible/` in the same PR** (secrets: the vault file
-`inventory/r1.secrets.yml`, edited through the vault helper, never printed).
+`inventory/r1.secrets.yml`, `ansible-vault edit inventory/r1.secrets.yml`, never printed).
 Hand fixes without codification WILL page Monday morning. Apply with
 `ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags
 <area>`, always `--check --diff` first. Findings log:
@@ -95,7 +95,8 @@ If the release touched any config-bearing surface (ansible
 `-f config_acknowledged=true` and mean it: the deploy swaps BINARIES ONLY,
 so a feature those surfaces gate ships dead and silent until the config is
 applied, and the post-deploy config-apply gate fails the job to force the
-question. See [deploy-config-apply.md](deploy-config-apply.md).
+question. A config-free release passes it either way, so the flag is not
+boilerplate. See [deploy-config-apply.md](deploy-config-apply.md).
 
 The workflow downloads binaries from the GitHub Release, verifies
 SHA256SUMS, and runs an Ansible playbook over SSH: **stage → backup →

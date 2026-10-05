@@ -58,13 +58,18 @@ The deploy workflow keeps previous binaries as
 `/usr/local/bin/<binary>.prev-<previous-tag>`
 ([`deploy-workflow.md`](deploy-workflow.md#backup-naming--rollback)).
 Preferred path: re-trigger it with the previous known-good tag (host-side
-backup→swap→restart→health-probe, automatic rollback on probe failure):
+backup→swap→restart→health-probe, automatic rollback on probe failure). It
+works only with `-f migrations_skip=true` (`deploy.yml:105`): the schema stays
+forward (CS-099), so without it `migrate up` (`deploy-binary.yml:291`) fails
+with "no migration found for version N" whenever a migration landed after that
+tag.
 
 ```sh
 gh workflow run deploy.yml \
   -f region=r1 \
   -f version=vX.Y.Z \
-  -f binaries=stellarindex-api
+  -f binaries=stellarindex-api \
+  -f migrations_skip=true
 ```
 
 The previous tag is in `git tag` history or the "Running version" line in

@@ -25,8 +25,11 @@ positions (INV-1313). Re-derive them through the Go walk with
 [entry-walk-renumbering.md](runbooks/entry-walk-renumbering.md) §1. ch-backfill
 writes idempotent RMT rows that supersede by `ingested_at`: no partition swap,
 safe beside live ingest. Without `ingestion.live_seam_ledger` configured,
-`ch-backfill` reads the live bucket, which does not hold historic ranges; pass
-the archive bucket with `-bucket` (the script does not).
+`ch-backfill` reads the live bucket, which does not hold historic ranges and
+needs `-bucket galexie-archive`. The script cannot pass `-bucket` today (the
+change is tracked under INV-1313). r1 has no seam
+(`stellarindex_live_seam_ledger: 0`), so the run fails loudly on its first chunk
+(`backfillCoverage`, `ch_backfill.go:236`) rather than reading the wrong data.
 
 ## Why the ordinal matters
 
@@ -56,11 +59,12 @@ a ledger can serve its `state` pre-image as current, and 90.78% of
   query-memory cap; ledger sub-range chunks are exact.
 
 `max_partition_size_to_drop` was raised by hand for D2's `REPLACE PARTITION`
-and left raised; planned big drops now use the force flag, never a raised
+and left raised, since pinned to 50 GB by ansible
+(`configs/ansible/roles/archival-node/defaults/main.yml:678`); planned big drops now use the force flag, never a raised
 limit: [clickhouse-destructive-ddl.md](clickhouse-destructive-ddl.md).
 
 ## Then
 
 D3 (`deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql`, windowed,
-drop MVs before RENAME) → D4 (`projector-replay`, `derive_generation` guarded) →
+drop MVs before RENAME) → D4 (`projector-replay`, INV-3 guarded) →
 cleanup (census DELETE + tx_hash ZSTD) → Phase E prove.

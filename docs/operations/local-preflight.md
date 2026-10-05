@@ -85,7 +85,8 @@ a partial dispatch left `stellarindex-migrate` and
 **3. Skew and migrations.** Per binary, the live version (from
 `/var/lib/stellarindex/deployed-versions/`) against the release. A binary
 ahead of the release makes the dispatch a rollback: blocked, pointing at
-[rollback.md](rollback.md) (migrations do not roll back with it, CS-099).
+[rollback.md](rollback.md) (migrations do not roll back with it, CS-099; a
+previous-tag dispatch must set `migrations_skip=true`).
 Migrations in the range are listed, checked with
 `scripts/ci/lint-migration-compat.sh --staged` over the deploying tag's
 `migrations/`, and block until `--migrations-ack` records an old-binary
