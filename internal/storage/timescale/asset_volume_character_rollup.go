@@ -193,6 +193,11 @@ func volumeCharacterFromSums(totalNum string, total, topPair, selfCross, issuerS
 // ~23 min on the full lake, so the bound leaves headroom while still guarding a wedge.
 const assetVolumeCharacterRollTimeout = "45min"
 
+// AssetVolumeCharacterRollApplicationName tags the roll's backend so a
+// deploy can pg_cancel_backend it before a migration ALTERs trades
+// (configs/ansible/tasks/cancel-asset-character-roll.yml).
+const AssetVolumeCharacterRollApplicationName = "stellarindex-asset-character-roll"
+
 // refreshAssetVolumeCharacterPrune drops assets whose priced volume lapsed
 // out of the window this pass — same one-transaction now() trick as the
 // asset_volume_24h rollup: just-upserted rows carry computed_at = now() and
@@ -281,13 +286,24 @@ func (s *Store) rollAssetVolumeCharacter(ctx context.Context) (out []assetVolume
 	if err := conn.QueryRowContext(ctx, `SELECT current_setting('statement_timeout')`).Scan(&prevTimeout); err != nil {
 		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter read statement_timeout: %w", err)
 	}
+	var prevAppName string
+	if err := conn.QueryRowContext(ctx, `SELECT current_setting('application_name')`).Scan(&prevAppName); err != nil {
+		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter read application_name: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `SELECT set_config('application_name', $1, false)`, AssetVolumeCharacterRollApplicationName); err != nil {
+		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter set application_name: %w", err)
+	}
 	if _, err := conn.ExecContext(ctx, "SET statement_timeout = '"+assetVolumeCharacterRollTimeout+"'"); err != nil {
 		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter set timeout: %w", err)
 	}
 	defer func() {
 		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), caggRefreshRestoreTimeout)
 		defer rcancel()
-		if _, rerr := conn.ExecContext(rctx, `SELECT set_config('statement_timeout', $1, false)`, prevTimeout); rerr != nil {
+		_, rerr := conn.ExecContext(rctx, `SELECT set_config('statement_timeout', $1, false)`, prevTimeout)
+		if rerr == nil {
+			_, rerr = conn.ExecContext(rctx, `SELECT set_config('application_name', $1, false)`, prevAppName)
+		}
+		if rerr != nil {
 			// Never hand a connection back with this call's bound still on
 			// it. Discard it; the pool dials a fresh one.
 			_ = conn.Raw(func(any) error { return driver.ErrBadConn })

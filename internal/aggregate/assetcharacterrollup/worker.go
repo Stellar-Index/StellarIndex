@@ -48,8 +48,10 @@ const DefaultInterval = 6 * time.Hour
 
 // DefaultStartupDelay holds the first roll back after boot. The roll's long
 // ACCESS SHARE lock on `trades` would otherwise block a follow-up deploy's
-// migrations within that window of a restart. Rolls started by the tick can
-// still collide with a migration; that is not covered here.
+// migrations within that window of a restart. A roll started by the tick is
+// cancelled by the deploy (pg_cancel_backend on its application_name) just
+// before `migrate up`; that is safe because the heavy read runs outside the
+// upsert transaction, so a cancel writes nothing and the next tick re-rolls.
 const DefaultStartupDelay = 30 * time.Minute
 
 // Refresher recomputes and atomically replaces the asset_volume_character

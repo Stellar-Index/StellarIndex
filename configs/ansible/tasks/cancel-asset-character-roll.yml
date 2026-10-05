@@ -1,0 +1,30 @@
+---
+# Cancel an in-flight asset-volume-character roll just before
+# `stellarindex-migrate up`. The roll holds ACCESS SHARE on ~14d of trades
+# chunks for up to its 45min statement_timeout; a migration that ALTERs
+# trades behind it would fail on lock_timeout. Cancelling is safe: the heavy
+# read runs outside the upsert transaction, so nothing partial is written,
+# and the aggregator re-rolls on its next 6h tick.
+#
+# Imported by playbooks/deploy-binary.yml and the archival-node role's
+# 14-stellarindex-services.yml. Best effort: if psql or the cancel fails,
+# the migrate step's own lock_timeout still fails the deploy closed.
+# Optional var `cancel_dsn` overrides the DSN read from the host env file.
+- name: Cancel an in-flight asset-volume-character roll before migrating
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      {% if cancel_dsn is defined and cancel_dsn | length > 0 %}
+      export STELLARINDEX_POSTGRES_DSN={{ cancel_dsn | quote }}
+      {% else %}
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          [A-Za-z_]*=*) export "$line" ;;
+        esac
+      done < /etc/default/stellarindex
+      {% endif %}
+      psql "$STELLARINDEX_POSTGRES_DSN" -qAt -v ON_ERROR_STOP=1 -c "SELECT count(pg_cancel_backend(pid)) FROM pg_stat_activity WHERE application_name = 'stellarindex-asset-character-roll' AND pid <> pg_backend_pid()"
+  register: roll_cancel
+  changed_when: roll_cancel.stdout | trim not in ['', '0']
+  failed_when: false
+  no_log: true
