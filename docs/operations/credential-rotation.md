@@ -187,7 +187,7 @@ mc ls archivewriter/galexie-archive/ | head        # must list, not 403
 (`archivewriter/galexie-archive`, set in `/etc/default/galexie-archive-fill`) and exits 1 if
 it cannot list it. The only delete, the operator-run `PARTIALS=…` sweep, goes through
 `ARCHIVE_DELETE_ALIAS` (`local`, same file); the run stops before deleting if that alias is
-not configured.
+not configured. After deploying, confirm one full timer cycle.
 
 ## Related
 

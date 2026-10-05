@@ -136,6 +136,11 @@ gh workflow run deploy.yml -f region=futurenet -f version=vX.Y.Z -f binaries=ste
 
 Verify: `curl -sf https://api.testnet.stellarindex.io/v1/version | jq -r .data.version` equals r1's; the next scheduled run closes the issue.
 
+## Known gaps
+
+- `/v1/markets` on test nets is empty: it builds its pair set from the empty `prices_1d` CAGG (use `/v1/pools`).
+- The test-net indexer heartbeat is wired by INV-1469 (closed 10-05).
+
 ## Related
 
 - [testnet-futurenet-reset-runbook.md](./testnet-futurenet-reset-runbook.md) — reset handling.

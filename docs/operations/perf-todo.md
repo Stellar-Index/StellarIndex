@@ -95,3 +95,5 @@ stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 -full -window 50000
   an address-keyed secondary table/MV partitioned by `cityHash64(address) % N`
   (full 6.76B-row rebuild). Interim: accept and monitor; if user-facing, add a
   per-query timeout and a "history too large to page interactively" response.
+
+Shipped: §3 SLO burn alerts `stellarindex_slo_latency_burn_*` and slow-request ratio — see git history for before/after timings

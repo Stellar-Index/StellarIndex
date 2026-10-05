@@ -197,6 +197,20 @@ run-heavy-job.sh archive-completeness \
 The unit stays `User=root`: `run-heavy-job.sh` creates its memory scope and disk watchdog
 only for a root caller.
 
+### Wall-clock budget per run
+
+| Step | Operation | Time |
+|---|---|---|
+| 1 | LIST yesterday's primary partitions vs expected count | ~5 s |
+| 2 | Stat each expected cross-anchor checkpoint file | ~1 s |
+| 3 | Fetch missing primary files from AWS | ~50 ms/file |
+| 4 | Fetch missing cross-anchor files from the nine sources | ~100 ms/file |
+| 5 | Chain-link walk of yesterday's range (Tier A) | ~30 s |
+| 6 | Cross-anchor verify of yesterday's range (Tier B) | ~30 s |
+| 7 | Emit Prometheus gauges, exit | <1 s |
+
+~70 s clean day; ~2–5 min with 100 missing files. Both fit inside the 26-h staleness budget R2 + R3 use for their `ReducedRedundancy` flag.
+
 ## Cross-anchor sources
 
 Tried in order per missing file, from `DefaultCrossAnchorSources` in

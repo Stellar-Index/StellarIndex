@@ -17,19 +17,19 @@ Back up by recovery time, not by re-derivability:
 |---|---|---|---|---|
 | **Galexie archive (MinIO LCM)** | ≈ 3.1 TB (2.8 TiB) | — | days–weeks (re-pull) | **Not backed up** — a copy of `s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`, re-pulled from there (ADR-0043 §2) |
 | **ClickHouse lake** | **14.6 TiB (≈ 16.1 TB)**, growing ≈ 11 GiB/day | ~4–36 h (restore) | **~1–2 weeks** (full `ch-backfill` re-walk) | **HIGH** — on the serving path, B2 (§4) |
-| **Postgres (served money state)** | repo2 ≈ 0.5 TB (1 full + 7 d, compressed) | ~1–3 h (pgBackRest) | slow (re-project) | **HIGH** — pgBackRest repo2, B2 (§2) |
+| **Postgres (served money state)** | repo2 ≈ 2.5 TiB measured (252 GiB backups + 2.2 TiB WAL; `configs/ansible/roles/archival-node/templates/pgbackrest.conf.j2`) | ~1–3 h (pgBackRest) | slow (re-project) | **HIGH** — pgBackRest repo2, B2 (§2) |
 | **Config / vault / secrets / systemd** | < 1 GiB | minutes | impossible (secrets) | **HIGH** — encrypted tarball (§3) |
 
 **RTO math:** re-deriving the lake ≈ 63.5M ledgers × ~80 ledgers/s ≈ **~9 days for `entry_changes` alone**, ~1–2 weeks for the full set plus served re-projection. Restoring ≈ 16.1 TB ≈ **~36 h @1 Gbps / ~4 h @10 Gbps**. The whole lake serves deep history, so back it up in full; re-derive-from-archive stays the both-copies-gone fallback.
 
-**Footprint:** ≈ 16.6 TB at rest (lake 16.1 TB + repo2 0.5 TB + config), incremental after the first sync. **Peak ≈ 33 TB** while a rolling lake full runs: `ch-lake-backup.sh` removes the previous chain only after the new full is `BACKUP_CREATED`, so two lake fulls coexist — and on B2 the removed chain stays billed until the lifecycle rule purges it (see [Provider](#provider)). Size every figure from `system.parts.bytes_on_disk` / `zfs get logicalused`; ZFS `used` (9.42 T for the lake) is compressed and understates an upload by ≈ 1.45×.
+**Footprint:** ≈ 18.9 TB at rest (lake 16.1 TB + repo2 2.75 TB + config), incremental after the first sync. **Peak ≈ 35 TB** while a rolling lake full runs: `ch-lake-backup.sh` removes the previous chain only after the new full is `BACKUP_CREATED`, so two lake fulls coexist — and on B2 the removed chain stays billed until the lifecycle rule purges it (see [Provider](#provider)). Size every figure from `system.parts.bytes_on_disk` / `zfs get logicalused`; ZFS `used` (9.42 T for the lake) is compressed and understates an upload by ≈ 1.45×.
 
 ## Provider
 
 **Backblaze B2 for every off-site copy we own: the ClickHouse lake (§4) and pgBackRest repo2 (§2).** The raw Galexie archive has no off-site copy; SDF's public AWS bucket is its upstream.
 
 - **repo2 moves from its AWS S3 bucket to a fresh B2 repo** with a new cipher pass. The AWS repo2 retires once a B2 Postgres restore test passes. Set `repo2-s3-region` to the bucket's real region, not `auto`.
-- **r1 uploads with a key that lacks `deleteFiles`.** On B2 an S3 DeleteObject from such a key succeeds by writing a *hide* marker: the version stays, restorable, and billed. So `ch-lake-backup.sh`'s chain prune and orphan sweep exit 0 but free nothing. Each bucket needs a lifecycle rule (`daysFromHidingToDeleting`, set with the master key) to purge hidden versions; that window is also how long a wipe from r1 stays recoverable. Check with `b2 ls --versions --long` (column 2 = upload/hide).
+- **r1 uploads with a key that lacks `deleteFiles`.** On B2 an S3 DeleteObject from such a key succeeds by writing a *hide* marker: the version stays, restorable, and billed. So `ch-lake-backup.sh`'s chain prune and orphan sweep exit 0 but free nothing. Each bucket needs a lifecycle rule to purge hidden versions: ~14 d hide→delete on the B2 lake and Postgres buckets, set with the B2 master key; not in config. That window is also how long a wipe from r1 stays recoverable. Check with `b2 ls --versions --long` (column 2 = upload/hide).
 - Until the B2 buckets exist, §4 stays unfunded and `stellarindex_ch_lake_backup_stale` keeps ticketing the host.
 
 ## The four backup streams

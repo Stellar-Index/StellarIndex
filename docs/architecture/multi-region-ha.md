@@ -365,7 +365,7 @@ promise, so a future change can't silently route pricing over a WAN.
 | R1 (Hetzner, existing) | primary + lake authority | ~$5,000 |
 | R2 (Vultr-US bare metal) | pricing + explorer proxy (bigger NVMe if local hot lake) | ~$4,200 (–$7,000) |
 | R3 (Vultr-SG bare metal) | pricing + thin lake proxy | ~$4,500 |
-| Off-site backups | archive + repo2 ≈ 3.6 TB on B2; lake ≈ 16.1 TB on a BX41 (flat rate) | B2 ≈ $300 + BX41 |
+| Off-site backups | lake + Postgres on B2 (raw ledgers from SDF's public AWS bucket; AWS repo2 retiring; no BX41 lake copy) | B2 |
 | **Fleet total (single box per region)** | | **~$15,000–18,000** |
 
 Anchors verified 2026-08-21: r7i.4xlarge $1.0584/hr (the AWS option we rejected for R2);
