@@ -25,39 +25,39 @@ import (
 // Both queries must name it on BOTH legs (base and quote): XLM is a
 // quote as often as it is a base (AQUA/XLM).
 func TestSourceStatsQueries_SACLiteralMatchesCanonical(t *testing.T) {
-	for name, q := range map[string]string{
-		"pairSourceStatsQuery":  pairSourceStatsQuery,
-		"assetSourceStatsQuery": assetSourceStatsQuery,
+	for name, tc := range map[string]struct {
+		q   string
+		sac string
+	}{
+		"pairSourceStatsQuery":  {pairSourceStatsQuery, "$3::text"},
+		"assetSourceStatsQuery": {assetSourceStatsQuery, "$2::text"},
 	} {
-		if !strings.Contains(q, canonical.XLMSacContractID) {
-			t.Errorf("%s does not contain canonical.XLMSacContractID (%s) — the volume CASE "+
-				"and canonical.AssetAliases must name the same XLM SAC address",
-				name, canonical.XLMSacContractID)
-			continue
+		if strings.Contains(tc.q, canonical.XLMSacContractID) {
+			t.Errorf("%s hard-codes the pubnet XLM SAC; bind canonical.NativeSACContractID()", name)
 		}
-		if got := strings.Count(q, canonical.XLMSacContractID); got != 2 {
-			t.Errorf("%s mentions the XLM SAC %d time(s), want 2 (base leg and quote leg)", name, got)
+		if got := strings.Count(tc.q, "IN ('native', "+tc.sac+")"); got != 2 {
+			t.Errorf("%s binds the XLM SAC as %s %d time(s), want 2 (base leg and quote leg)", name, tc.sac, got)
 		}
-		// And the other two forms of the family must be reachable through
+		// The other forms of the family must be reachable through
 		// the bound array, not hard-coded — the filter is `= ANY($n)`.
-		if !strings.Contains(q, "= ANY($1)") {
+		if !strings.Contains(tc.q, "= ANY($1)") {
 			t.Errorf("%s no longer binds the form set with `= ANY($1)`; the alias expansion "+
 				"is how `native`/`crypto:XLM`/SAC all reach the same aggregate", name)
 		}
 	}
 
-	// The alias family the handler binds must itself contain the literal
-	// the SQL values — assert the join, not just each side.
+	// The alias family the handler binds must contain the SAC the SQL
+	// binds — assert the join, not just each side.
 	forms := canonical.AssetAliasStrings(canonical.NativeAsset())
 	found := false
 	for _, f := range forms {
-		if f == canonical.XLMSacContractID {
+		if f == canonical.NativeSACContractID() {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("AssetAliasStrings(native) = %v, missing the SAC form the source-stats "+
-			"volume CASE prices as XLM — Soroban XLM volume would be valued but never selected", forms)
+		t.Errorf("AssetAliasStrings(native) = %v, missing the bound native SAC %s — "+
+			"Soroban XLM volume would be valued but never selected", forms, canonical.NativeSACContractID())
 	}
 }
