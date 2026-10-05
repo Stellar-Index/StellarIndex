@@ -19,8 +19,8 @@ import (
 // both by TestSacContractID_Golden (sac_test.go) and by
 // TestXLMSacContractID_MatchesDerivation here, so the literal can never
 // drift from the derivation. It is the pubnet default only; Go code that
-// must follow the configured network calls [NativeSACContractID], never this. The
-// constant remains for SQL text built at init.
+// must follow the configured network calls [NativeSACContractID], never this.
+// It remains for SQL text a later slice will move to bound parameters.
 const XLMSacContractID = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 
 // xlmAliasFamily is the XLM equivalence class in CANONICAL PRIORITY
