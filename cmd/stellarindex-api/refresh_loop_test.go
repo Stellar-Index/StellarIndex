@@ -26,6 +26,9 @@ func TestRunRefreshLoop_BoundsEachAttemptAndStopsOnCancel(t *testing.T) {
 		}
 		if calls == 3 {
 			cancel()
+			// Let the next tick fire too, so the loop sees ctx.Done and tick.C
+			// ready at once; select picks between them at random.
+			time.Sleep(5 * time.Millisecond)
 		}
 		return errors.New("boom")
 	}
