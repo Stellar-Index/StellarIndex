@@ -1,6 +1,6 @@
 ---
 title: Runbook — lake-verify
-last_verified: 2026-09-30
+last_verified: 2026-10-05
 status: draft
 severity: P3
 ---
@@ -60,18 +60,24 @@ cat /var/lib/node_exporter/textfile_collector/lake_verify.prom
 ## Mitigation
 
 - [ ] `contiguity` / `hash_chain`: follow the gap lines. A missing or wrong
-      ledger range is re-read from the archive:
-      `stellarindex-ops ch-backfill -config PATH -from LO -to HI -bucket galexie-archive -write`,
+      ledger range is re-read from the lake:
+      `stellarindex-ops ch-backfill -config PATH -from LO -to HI -write`,
       then `ch-gate -config PATH -from LO -to HI` over the same range.
-- [ ] `entry_changes`: same `ch-backfill -bucket galexie-archive` over the
-      deficient ledgers.
+      Ledgers still in the live window sit in the live bucket, which
+      `ch-backfill` picks by default: omit `-bucket`. Add
+      `-bucket galexie-archive` only for ranges older than the live window
+      that the trimmer has removed.
+- [ ] `entry_changes`: same `ch-backfill` over the deficient ledgers.
 - [ ] `raw_census` on `transactions`, `operations`, `operation_results` or
       `contract_events`: the `SHORT` line names table and partition
       (`p` × 1,000,000 … +999,999). Re-read that range with `ch-backfill
-      -bucket galexie-archive -write`, then `ch-gate` it.
+      -write` (same bucket rule as above), then `ch-gate` it.
 - [ ] `raw_census` on `operation_participants` below the live-capture floor:
       `stellarindex-ops ch-participant-backfill -from LO -to HI -write`
       re-derives participants from `stellar.operations` in the lake.
+- [ ] Run by hand, `stellarindex-ops` fails with 403 AccessDenied on the
+      MinIO read unless the transient unit loads the service env files:
+      `systemd-run --unit=NAME --collect -p EnvironmentFile=-/etc/default/stellarindex -p EnvironmentFile=-/etc/default/stellarindex-ops /usr/local/sbin/run-heavy-job.sh NAME /usr/local/bin/stellarindex-ops SUBCOMMAND ...`
 - [ ] Whether a range goes through `ch-backfill` or a projector replay is
       decided by [the replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule).
       Never add a bespoke per-table backfill.
