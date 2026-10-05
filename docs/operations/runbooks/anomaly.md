@@ -16,7 +16,7 @@ Runbooks for the aggregator anomaly and freeze alerts (policy: [ADR-0019](../../
 
 ## stellarindex_amm_self_pair_swap_burst
 
-**Severity** P3 (ticket). **Trigger** `sum by (source) (increase(stellarindex_amm_self_pair_swap_total[15m])) > 10`, `for: 2m`. The counter is normally flat at zero; any climb is the signal. A self-pair swap (`token_in == token_out`) has no honest purpose; it is the primitive of the 2026-08-25 Blend/Comet exploit (~390 swaps walking a pool's spot price).
+**Severity** P3 (ticket). **Trigger** `sum by (source) (increase(stellarindex_amm_self_pair_swap_total[15m])) > 10`, `for: 2m`. The counter is normally flat at zero; any climb is the signal (comet emitted zero before the exploit, which is why the threshold is low; escalate to page once the detector proves out). A self-pair swap (`token_in == token_out`) has no honest purpose; it is the primitive of the 2026-08-25 Blend/Comet exploit (~390 swaps walking a pool's spot price).
 
 **Impact** None direct: the decoder drops self-pair rows (`(nil, nil)`) before serving, so they never reach `trades`. The freeze and divergence guards do not see them, so a sustained burst means someone is hammering a pool's internal price. Counter is incremented at the drop point in `internal/sources/comet/dispatcher_adapter.go` (`internal/obs/metrics.go`: `AMMSelfPairSwapTotal`).
 
@@ -181,7 +181,7 @@ If the pair is still anomalous it re-freezes on its next bucket. Within 2 hours 
 
 ## stellarindex_anomaly_warn_rate
 
-**Severity** P3 (ticket). **Trigger** `sum by (class) (rate(stellarindex_anomaly_warn_total[15m])) > 0`, `for: 15m`. The Phase 1 checker emitted `ActionWarn` (deviation past `warn_pct`, short of the class `freeze_pct`) for asset class `{{ class }}` continuously for 15 min.
+**Severity** P3 (ticket). **Trigger** `sum by (class) (rate(stellarindex_anomaly_warn_total[15m])) > 0`, `for: 15m`. The Phase 1 checker emitted `ActionWarn` (deviation past `warn_pct`; at or past the class `freeze_pct` it also warns when more than one source corroborates) for asset class `{{ class }}`; the rule needs at least one warn in every trailing 15m window for 15 min, not literally continuous warns.
 
 **Impact** None customer-facing: `ActionWarn` does not freeze or flag `/v1/price`. Meaning: either a real, building market move (may precede [stellarindex_anomaly_freeze_engaged](#stellarindex_anomaly_freeze_engaged)) or `warn_pct` is tuned too tight for the class's normal volatility.
 
@@ -203,7 +203,7 @@ ssh root@136.243.90.96 "journalctl -u stellarindex-aggregator --since -1h | grep
 
 ## stellarindex_anomaly_freeze_recovery_stalled
 
-**Severity** P3 (`severity: ticket`). **Trigger** `sum(rate(stellarindex_anomaly_freeze_engaged_total[1h])) > sum(rate(stellarindex_anomaly_freeze_recovered_total[1h]))` AND `on() (sum(rate(stellarindex_anomaly_freeze_recovery_sweeps_total{outcome!="ok"}[15m])) > 0)`, `for: 2h`. Typical MTTR 5-15 min once the cause is found.
+**Severity** P3 (`severity: ticket`). **Trigger** `stellarindex_anomaly_freeze_active > 0 and on() (sum(rate(stellarindex_anomaly_freeze_recovery_sweeps_total{outcome!="ok"}[15m])) > 0)`, `for: 2h`. Typical MTTR 5-15 min once the cause is found.
 
 **Impact** Resolved freezes still appear "firing" in `freeze_events`; the explorer `/anomalies` timeline shows resolved incidents as ongoing. The API is unaffected: `flags.frozen` is driven by the Redis marker, not the durable mirror.
 
@@ -268,7 +268,7 @@ ssh root@136.243.90.96 "runuser -u postgres -- psql -d stellarindex -c \
      -asset <asset_id> -quote <quote_id> -reason "recovery worker down; verified marker gone by hand"
    ```
 
-   A bulk SQL sweep is a last resort and MUST be gated on the durable hold. Closing a ladder-held row is destructive: `recovered_at IS NULL` is the exact predicate the rehydrate reads, so blanket-closing deletes the ladder's Redis-flush protection (an escalated freeze loses its "stays active until manual unfreeze" state) and records a normal recovery on `/v1/anomalies` for a freeze that never recovered. `freeze_events` is a hypertable on `frozen_at` (migrations/0018) and `recovered_at`/`hold_until` are not the partition column, so bound `frozen_at` too (7 days is generous: a stalled incident is hours old, the ladder escalates after 4x30 min):
+   A bulk SQL sweep is a last resort and MUST be gated on the durable hold. Closing a ladder-held row is destructive: `recovered_at IS NULL` is the exact predicate the rehydrate reads, so blanket-closing deletes the ladder's Redis-flush protection (an escalated freeze loses its "stays active until manual unfreeze" state) and records a normal recovery on `/v1/anomalies` for a freeze that never recovered. `freeze_events` is a hypertable on `frozen_at` (migrations/0018; compression is enabled but no `add_compression_policy` is scheduled) and `recovered_at`/`hold_until` are not the partition column, so bound `frozen_at` too (7 days is generous: a stalled incident is hours old, the ladder escalates after 4x30 min):
 
    ```sql
    -- Close only rows whose durable hold has demonstrably lapsed

@@ -62,7 +62,7 @@ THE RUNBOOK COLUMN (RLT-010):
 The page a responder receives carries the rule's `runbook_url`; the
 catalogue's Runbook column is what they read when browsing. The two had
 drifted for eight alerts (the SLO burn rows linked per-tier pages while
-the pages themselves link api-latency.md / api-5xx.md). So, per alert:
+the pages themselves link the api.md latency / error-rate sections). So, per alert:
   * the two rule trees agree on `runbook_url`;
   * the FIRST link in the catalogue's Runbook cell resolves to the same
     docs/operations/ path as `runbook_url`. Links after it are per-alert

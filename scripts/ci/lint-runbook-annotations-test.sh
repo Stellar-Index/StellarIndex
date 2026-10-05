@@ -42,10 +42,18 @@ restore
 # Point only the description's Runbook: line at a different (existing)
 # runbook; runbook_url stays correct.
 sed -i.tmp \
-  's#^\( *\)Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md#\1Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md#' \
+  's#^\( *\)Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md#\1Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#' \
   "$FIXTURE"
 rm -f "${FIXTURE}.tmp"
 check "description Runbook: link disagreeing with runbook_url is rejected" red
+restore
+
+# Point the fragment at a heading that does not exist on the target page.
+sed -i.tmp \
+  's#runbooks/galexie-archive-tip-lag.md$#runbooks/galexie-archive-tip-lag.md\#no_such_heading#' \
+  "$FIXTURE"
+rm -f "${FIXTURE}.tmp"
+check "runbook_url fragment matching no heading is rejected" red
 restore
 
 echo "lint-runbook-annotations-test: $PASS passed, $FAIL failed"

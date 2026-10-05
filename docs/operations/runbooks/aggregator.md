@@ -28,7 +28,7 @@ Runbooks for the `stellarindex.aggregator` alert group (`configs/prometheus/rule
 
 ## stellarindex_aggregator_bootstrap_cap_reengaged
 
-**Severity:** P3 (ticket). **Trigger:** `count((stellarindex_aggregator_bootstrap_capped == 1) and (last_over_time(stellarindex_aggregator_bootstrap_capped[2d] offset 1h) == 0)) >= 3`, `for: 10m`. **MTTR:** 1-4 h to repair the gap, else up to 30 days for it to roll out.
+**Severity:** P3 (ticket). **Trigger:** `count((stellarindex_aggregator_bootstrap_capped == 1) and (last_over_time(stellarindex_aggregator_bootstrap_capped[2d] offset 1h) == 0)) >= 3`, `for: 10m`; needs 3+ pairs re-capping in the same hour, each compared with its last reported state up to 2 days back, so a re-cap that arrives with a restart still counts. **MTTR:** 1-4 h to repair the gap, else up to 30 days for it to roll out.
 
 **Impact:** 3+ pairs released from the ADR-0019 bootstrap cap are pinned at confidence 0.5 again. Prices still serve; `confidence` and the anomaly-freeze inputs drop, and `confidence_factors.bootstrap_capped` is `true` on `/v1/price`.
 
@@ -229,7 +229,7 @@ runuser -u postgres -- psql -d stellarindex -c \
 
 **RCA capture:** 1 h metric range of the spike and recovery; `external_fx_last_quote_unix` and API forex-worker logs; `fx_quotes` row activity per affected ticker; whether chains stopped publishing (`outcome="missing_leg"` rate).
 
-**False positives:** first 30 min after a fresh deploy (absorbed by `for: 30m`); aggregator then API restart (clears in <= 5 min); bucket-end at exactly the latest FX row `ts` combined with > 1 s clock skew (query is `<=`; skew is its own chrony/timesyncd alert).
+**False positives:** first 30 min after a fresh deploy (absorbed by `for: 30m`); aggregator then API restart (clears in <= 5 min); bucket-end at exactly the latest FX row `ts` combined with > 1 s clock skew (query is `<=`; a region clock even 1 s ahead of the FX publish time moves the cutoff past the latest row so the next bucket's snap misses; skew is its own chrony/timesyncd alert).
 
 **See also:** [stellarindex_aggregator_silent](#stellarindex_aggregator_silent) (zero writes across the board).
 
@@ -515,7 +515,7 @@ For a lockstep hit read the ERROR line `decimals-guard: nonstandard_decimals_ass
 
 ## stellarindex_customer_webhook_fanout_failing
 
-Fan-out failure means no delivery row was written, so nothing retries. Delivery attempts that do exist retry on a 15-attempt budget whose last retry lands ~4–8 h after the event; see [stellarindex_customer_webhook_delivery_failing](api.md#stellarindex_customer_webhook_delivery_failing).
+Fan-out failure means no delivery row was written, so nothing retries. Delivery attempts that do exist retry on a 15-attempt budget whose last retry lands ~4–8 h after the event (jittered backoff, 30 s doubling to a 1 h cap); see [stellarindex_customer_webhook_delivery_failing](api.md#stellarindex_customer_webhook_delivery_failing).
 
 **Severity:** P3 (ticket). **MTTR:** minutes once Postgres writes are healthy; the re-emit is the slow part. **Trigger** (`for: 5m`): `sum by (event_type, reason) (increase(stellarindex_customer_webhook_fanout_failures_total[1h])) > 0`. One occurrence is worth a ticket.
 
@@ -560,7 +560,7 @@ ssh r1 'sudo -u postgres psql stellarindex -c "
 | `anomaly.freeze` | `freeze_events` |
 | `divergence.firing` | `divergence_runs` (+ Redis cached result) |
 | `incident.sev1` / `incident.resolved` | incident markdown under `deploy/comms/` |
-| `price.alert` | `price_alerts` (emitted by `internal/pricealerts/worker.go`, which enqueues directly, not via `Fanout`; its series are pre-seeded and will not move) |
+| `price.alert` | `price_alerts` (emitted by `internal/pricealerts/worker.go`, which enqueues directly, not via `Fanout`; its series are pre-seeded and will not move until it is migrated onto `Fanout`) |
 
 3. Re-emit: incidents via `stellarindex-ops emit-incident -slug <slug> -event <sev1|resolved>` (exits non-zero if the fan-out loses anything; zero exit confirms). Freeze/divergence have no re-emit command: contact the customer directly if they depend on them. The `emit-incident` process is short-lived and never scraped; it returns the error to the shell.
 4. `invalid_payload`: a code bug; find the call site from the log line and fix the marshalling.

@@ -240,7 +240,7 @@ Common patterns:
 
 **Trigger.** Same expression as [stellarindex_api_error_rate_critical](#stellarindex_api_error_rate_critical) with threshold `> 0.01` (5xx share over 1%), `for: 2m`, P3 (`severity: ticket`, not a page).
 
-**Differences.** Lower severity and threshold; early warning that usually lands before the >5% page and before `slo_availability_burn_fast` (trip point 1.44%). A sustained 1-5% for 1h is real budget burn: treat it with the same urgency as a `_burn_fast` page. A brief deploy hiccup can trip it.
+**Differences.** Lower severity and threshold; early warning that usually lands before the >5% page and before `slo_availability_burn_fast` (trip point 1.44%). A sustained rate at or above 1.44% (the `_burn_fast` trip point) for 1h is real budget burn: treat it with the same urgency as a `_burn_fast` page. A brief deploy hiccup can trip it.
 
 **Diagnose and fix.** Identical to the critical section: top 5xx routes, deploy check, `/v1/readyz`, ERROR-log grouping; then revert (A), gate + fix forward (B), dependency runbook (C), or shed load (D). Verify that `error_rate_high` clears and the rate falls well below 1%. Known false positives (minute-zero after release) as in the critical section.
 
@@ -526,7 +526,7 @@ ssh root@<host> "journalctl -u stellarindex-aggregator -n 200 --output=cat | gre
 
 ## stellarindex_api_price_stream_not_delivering
 
-**Trigger.** `sum(rate(stellarindex_aggregator_stream_publish_total{outcome="ok"}[15m])) > 0 unless on() sum(rate(stellarindex_api_stream_subscribe_total{outcome="ok"}[15m])) > 0`, `for: 15m`, P3 (`severity: ticket`). Aggregator publishes while the API's subscribe `ok` counter is flat or absent. MTTR 15-60 min. Impact: `/v1/price/stream` answers 200 and sends keepalives but no `price_update` events.
+**Trigger.** `sum(rate(stellarindex_aggregator_stream_publish_total{outcome="ok"}[15m])) > 0 unless on() sum(rate(stellarindex_api_stream_subscribe_total{outcome="ok"}[15m])) > 0`, `for: 15m`, P3 (`severity: ticket`). Rule: `configs/prometheus/rules.r1/api.yml`; multi-host twin `deploy/monitoring/rules/api.yml`. Aggregator publishes while the API's subscribe `ok` counter is flat or absent. MTTR 15-60 min. Impact: `/v1/price/stream` answers 200 and sends keepalives but no `price_update` events.
 
 **Diagnose** (at most 5 min).
 
@@ -765,7 +765,7 @@ ssh r1 'journalctl -u stellarindex-api --since -2h | grep -i "customer-webhook.*
 
 **Fix** Almost always Postgres: unreachable, in recovery, or the statement is being cancelled. Restore the database; the next lease writes the outcome and the loop ends by itself.
 
-The attempt's own HTTP deadline is NOT a cause: `Worker.mark` writes on `context.WithoutCancel(ctx)` bounded by its own `markWriteTimeout` (1s). If Postgres is healthy and the counter still advances, the single-row UPDATE is not landing inside that second: look for lock contention or a slow statement on `webhook_deliveries` (`pg_stat_activity`, `pg_locks`). Such a row keeps its claim lease and is retried at lease expiry with a fresh budget.
+The attempt's own HTTP deadline is NOT a cause: the outcome write shares neither it nor the worker's shutdown signal; `Worker.mark` writes on `context.WithoutCancel(ctx)` bounded by its own `markWriteTimeout` (1s), so a POST that uses the whole attempt budget still gets the full 1s. If Postgres is healthy and the counter still advances, the single-row UPDATE is not landing inside that second: look for lock contention or a slow statement on `webhook_deliveries` (`pg_stat_activity`, `pg_locks`). Such a row keeps its claim lease and is retried at lease expiry with a fresh budget.
 
 ## stellarindex_dex_tvl_refresh_failing
 
@@ -800,7 +800,7 @@ The refresh is one lake reserve lookup per protocol plus a bounded set of `price
 
 ## stellarindex_dex_tvl_total_divergent
 
-**Severity** ticket. MTTR 5-20 min (usually the same backend reachability as [stellarindex_dex_tvl_refresh_failing](#stellarindex_dex_tvl_refresh_failing)).
+**Severity** ticket. Rules: `deploy/monitoring/rules/api.yml` and `configs/prometheus/rules.r1/api.yml`. MTTR 5-20 min (usually the same backend reachability as [stellarindex_dex_tvl_refresh_failing](#stellarindex_dex_tvl_refresh_failing)).
 
 **Impact** The headline `tvl_total` on `/v1/protocols` (and the explorer's "Total value locked") UNDERSTATES: it excludes at least one protocol whose per-protocol figure is still published beside it; if nothing was admitted `tvl_total` is omitted and the explorer shows no headline. No 5xx, no wrong number: every refusal is named in `excluded[]`. Invisible otherwise: the refresh alert cannot fire while other protocols still refresh.
 
@@ -992,7 +992,7 @@ Keep BOTH predicates: the second protects a live lock, which must never be delet
 **Fix**
 
 - Redis down/degraded: Redis recovery path; the middleware self-heals on the first successful read; the alert clears ~10 min after the last bypass.
-- AUTH drift: the Redis password is the `STELLARINDEX_REDIS_PASSWORD` env override (config `[storage] redis_password`). Re-sync it in the unit's `EnvironmentFile` (`/etc/default/stellarindex`) to Redis's `requirepass` (ansible `redis_password`), then `systemctl restart stellarindex-api`.
+- AUTH drift: the Redis password is the `STELLARINDEX_REDIS_PASSWORD` env override (config `[storage] redis_password`), not a hand-edited TOML value. Re-sync it in the unit's `EnvironmentFile` (`/etc/default/stellarindex`) to Redis's `requirepass` (ansible `redis_password`), then `systemctl restart stellarindex-api`.
 - Eviction: confirm `maxmemory-policy`; usage counters must not be in an evictable class (Redis config fix).
 - After recovery: decide whether any customer materially exceeded their cap. Metering is a separate write path and the usage rows are intact, so reconcile from the usage rollup, not this counter.
 - Do NOT shorten the dwell time to fail closed sooner (a 429 on a read error hard-denies every metered customer, including those far under cap). Do NOT silence while Redis is down.
@@ -1044,7 +1044,7 @@ ORDER BY ts DESC;
 
 **Impact** Every request hitting the affected bucket gets a 503: outright API unavailability.
 
-**Trigger** `sum(rate(stellarindex_ratelimit_fail_closed_total[5m])) > 0` for 2m. Past `ratelimit.DefaultDwellTime` (30s) of continuous Redis errors on a bucket, the limiter fails closed: 503 (`errors/throttle-unavailable`, `Retry-After: 30`, `writeThrottleUnavailableProblem`). This is what a hard sustained Redis outage looks like (the fail-open counter goes flat ~30s in). It clears after the same dwell time of unbroken Redis successes; a flapping Redis keeps it armed. Anonymous and authenticated tiers are separate buckets with separate clocks.
+**Trigger** `sum(rate(stellarindex_ratelimit_fail_closed_total[5m])) > 0` for 2m. Past `ratelimit.DefaultDwellTime` (30s) of continuous Redis errors on a bucket, the limiter fails closed: 503 (`errors/throttle-unavailable`, `Retry-After: 30`, `writeThrottleUnavailableProblem`). This is what a hard sustained Redis outage looks like, with a red Redis readiness check (the fail-open counter goes flat ~30s in). It clears after the same dwell time of unbroken Redis successes; a flapping Redis keeps it armed. Anonymous and authenticated tiers are separate buckets with separate clocks.
 
 **Diagnose and fix** Same as [stellarindex_ratelimit_fail_open](#stellarindex_ratelimit_fail_open); Redis recovery is urgent. Calls that still fail keep answering 503 until Redis has answered without error for `DefaultDwellTime`. Do NOT disable the fail-closed switch (a negative `WithDwellTime`): an attacker who can degrade Redis would then get unlimited request volume.
 
@@ -1072,7 +1072,7 @@ The window is bounded: once a bucket's Redis calls have failed for longer than `
 **Fix**
 
 - Redis down: Redis recovery path. Successful calls are limited normally at once; failing calls answer 503 until Redis is clean for `DefaultDwellTime`. The alert clears ~10 min after the last bypass.
-- AUTH drift: the password is the `STELLARINDEX_REDIS_PASSWORD` env override (config `[storage] redis_password`). Re-sync it in the unit's `EnvironmentFile` (`/etc/default/stellarindex`) to Redis's `requirepass` (ansible `redis_password`), then `systemctl restart stellarindex-api`.
+- AUTH drift: the password is the `STELLARINDEX_REDIS_PASSWORD` env override (config `[storage] redis_password`), not a hand-edited TOML value. Re-sync it in the unit's `EnvironmentFile` (`/etc/default/stellarindex`) to Redis's `requirepass` (ansible `redis_password`), then `systemctl restart stellarindex-api`.
 - Sustained abuse while open: the limiter cannot help; block the offending source at the edge (Caddy/HAProxy) per the traffic-shedding section of [api-latency](api.md#stellarindex_api_latency_p99_high).
 - Do NOT remove the fail-open window (zero dwell time turns every Redis blip into an outage). Do NOT silence while Redis is down.
 
@@ -1201,7 +1201,7 @@ or (
 )
 ```
 
-The `> 0` arm is a defensive floor (a zero sample would fire permanently). A failing probe KEEPS the last-known gauge value (`internal/obs/metrics.go`), so the probe-failure arms are the liveness signal; the raw counter query is `sum by (host, outcome) (rate(stellarindex_tls_cert_probe_total{outcome!="ok"}[1h]))`. The probe runs from the API binary every 6 h (`TLSCertProbeInterval`, `internal/api/v1/tls_probe.go::RunTLSCertProbe`, plus one at startup). Caddy's journal (`journalctl -u caddy`) may show renewal errors.
+The `> 0` arm is a defensive floor (a zero sample would fire permanently). A failing probe KEEPS the last-known gauge value (`internal/obs/metrics.go`), so the probe-failure arms are the liveness signal. The `absent_over_time` arm means the gauge has no series at all (the prober is down or never succeeded). The probe-outcome arm means a host had failed probes and no `ok` probe in 13 h (unreachable, or a cert failing verification); its alert value is a failure count, not a timestamp. The raw counter query is `sum by (host, outcome) (rate(stellarindex_tls_cert_probe_total{outcome!="ok"}[1h]))`. The probe runs from the API binary every 6 h (`TLSCertProbeInterval`, `internal/api/v1/tls_probe.go::RunTLSCertProbe`, plus one at startup); the 14-day threshold gives 56 successful probes' head room. Caddy's journal (`journalctl -u caddy`) may show renewal errors.
 
 **Diagnose**
 
@@ -1270,7 +1270,7 @@ The alert clears after `for: 1h` with the new gauge value. Metric reference: `do
 
 **Impact** Dashboard per-endpoint usage analytics stop advancing; `/v1/account/usage` degrades to endpoint-less legacy per-day rows. No customer pricing impact. Redis counters keep accumulating (35-day TTL). After recovery the worker re-folds every day no successful sweep covered, oldest first, 7 days per sweep (a restarted API walks the whole 35-day window once). A day older than 35 days when the outage ends is lost.
 
-**Trigger** `sum(rate(stellarindex_usage_rollup_sweeps_total{outcome=~"scan_error|sink_error"}[15m])) > 0` for 30m (5-min sweep cadence, so at least 6 consecutive failures). `journalctl -u stellarindex-api | grep "usage rollup sweep failed"` shows the Redis/Postgres error every ~5 min; `/dashboard/usage` per-endpoint table freezes at the last good sweep while daily totals may still move (Redis fallback path). The worker is thin (one SCAN + HGETALLs in Redis, one batched upsert in Postgres), so failure with healthy `/v1/price` traffic usually means the host lost ONE backend; check what else fired.
+**Trigger** `sum(rate(stellarindex_usage_rollup_sweeps_total{outcome=~"scan_error|sink_error"}[15m])) > 0` for 30m (5-min sweep cadence, so at least 6 consecutive failures; `outcome="ok"` flat separates a failing rollup from a quiet counter). `journalctl -u stellarindex-api | grep "usage rollup sweep failed"` shows the Redis/Postgres error every ~5 min; `/dashboard/usage` per-endpoint table freezes at the last good sweep while daily totals may still move (Redis fallback path). The worker is thin (one SCAN + HGETALLs in Redis, one batched upsert in Postgres), so failure with healthy `/v1/price` traffic usually means the host lost ONE backend; check what else fired.
 
 **Diagnose**
 

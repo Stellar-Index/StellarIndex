@@ -17,7 +17,7 @@ Alerts from `deploy/monitoring/rules/archive-completeness.yml` and `configs/prom
 ## stellarindex_archive_completeness_stale
 
 **Severity** P2 (ticket). MTTR 5 min if the cron silently failed, 1 h if the daemon is broken.
-**Trigger** `(time() - archive_completeness_last_success_timestamp) > (26 * 3600)` for 5m (24 h cron + 2 h cushion). Value exactly `0` means no clean verify was ever recorded on this host (fresh deploy or wiped collector dir): a real staleness condition. A run that ends with residuals leaves the timestamp at its previous value (carried forward), so the series stays present and the alert keeps firing; that is intended. `archive_completeness_runs_total` incrementing means runs happen but fail; not incrementing means the timer/service is not firing.
+**Trigger** `(time() - archive_completeness_last_success_timestamp) > (26 * 3600)` for 5m (24 h cron + 2 h cushion). Value exactly `0` means no clean verify was ever recorded on this host (fresh deploy or wiped collector dir): a real staleness condition. A run that ends with residuals leaves the timestamp at its previous value (carried forward), so the series stays present and the alert keeps firing; that is intended. To tell "timer not firing" from "runs failing", compare `last_success_timestamp` with the timer and journal output below.
 **Impact** Same as [files-missing](#stellarindex_archive_files_missing) given time: `flags.reduced_redundancy` on API responses, status page degrades.
 
 **Diagnose** (5 min)
@@ -33,9 +33,9 @@ ssh r1 'journalctl -u archive-completeness.service --since="48 hours ago" -p err
 # 3. Did the last run exit non-zero? Why?
 ssh r1 'journalctl -u archive-completeness.service --since="48 hours ago" | tail -50'
 
-# 4. Is the binary working? Run verify over the trailing window (-to 0 resolves the tip
-#    from the live ledgerstream cursor). Exact timer flags: deploy/systemd/archive-completeness.service
-ssh r1 'stellarindex-ops archive-completeness verify -from 2 -to 0 -workers 8'
+# 4. Is the binary working? Take -from/-to from the unit's Environment (-to is required):
+ssh r1 'systemctl show -p Environment archive-completeness.service; cat /run/archive-completeness.env'
+ssh r1 'stellarindex-ops archive-completeness verify -from <ARCHIVE_FROM> -to <ARCHIVE_TO> -workers 8'
 ```
 
 Patterns:
@@ -55,9 +55,9 @@ Patterns:
    ```
 3. If that fails, run verify manually and bisect the range. `verify` is a single cross-anchor structural check (no `-checks` modes; `cmd/stellarindex-ops/main.go::archiveCompletenessVerify`).
    ```sh
-   # Full trailing window, capturing the JSON gap report.
+   # ARCHIVE_FROM / ARCHIVE_TO from the unit's Environment (see step 4 above); -to is required.
    ssh r1 'stellarindex-ops archive-completeness verify \
-     -from 2 -to 0 -workers 8 \
+     -from <ARCHIVE_FROM> -to <ARCHIVE_TO> -workers 8 \
      -output-file /tmp/completeness-report.json'
 
    # Inspect the missing-file list, then re-run scoped to a narrow range (LO/HI from the report).
@@ -82,7 +82,7 @@ Patterns:
 
 **Severity** P2 (ticket). MTTR 5-15 min (next daily run refills); 1-4 h manual after the fallback chain is exhausted.
 **Trigger** `archive_files_missing > 0` for 4h. Only `archive="cross-anchor"` can appear today (`internal/archivecompleteness/report.go`: `Report.Primary` is nil, so no `galexie-archive` series); Galexie's own archive is covered by [galexie-archive-contiguity](galexie-archive-contiguity.md) and [galexie-archive-tip-lag](galexie-archive-tip-lag.md). The daily timer must still be alive (`archive_completeness_last_success_timestamp` within 26 h); if older, go to [stale](#stellarindex_archive_completeness_stale).
-**Impact** `flags.reduced_redundancy = true` on API responses while the gap persists; rate data still served correctly from CAGGs. Status page may show Degraded performance if R1 is affected.
+**Impact** `flags.reduced_redundancy = true` on API responses while the gap persists; rate data still served correctly from CAGGs. Status page may show Degraded performance if R1 is affected; it stays "Operational" if only R2/R3 are affected.
 
 **Diagnose** (5 min)
 
@@ -153,10 +153,8 @@ Related: [archive-divergence](archive-divergence.md) (content/hash mismatch; thi
 # 1. Which source is degraded?
 ssh r1 'curl -s localhost:9100/metrics | grep archive_completeness_repair_failures_total'
 
-# 2. Test the source directly
-# AWS:
-curl -sf -m 10 -I https://aws-public-blockchain.s3.us-east-2.amazonaws.com/v1.1/stellar/ledgers/pubnet/
-
+# 2. Test the source directly. Source labels (DefaultCrossAnchorSources): sdf-core-live-001/002/003,
+#    publicnode-bootes/lyra/hercules, lobstr-v1/v2/v5.
 # SDF core_live_001:
 curl -sf -m 10 -I https://history.stellar.org/prd/core-live/core_live_001/.well-known/stellar-history.json
 
@@ -169,9 +167,8 @@ Persistent 5xx: their problem; the chain is the answer. Open an issue tracking t
 **Fix** No immediate action unless several sources are degraded.
 - One source degraded: confirm the chain still fills files (`archive_files_missing` 0 or trending down).
 - Multiple degraded: re-run to confirm completeness holds and watch the per-source metric: `ssh r1 'systemctl start archive-completeness.service'`
-- `source="aws"` degraded > 4 h: R2 reads ingest data from `aws-public-blockchain` directly (no local mirror). Check R2's ingest-lag metric; if R2 also struggles it is a P2 multi-region incident, escalate to the R2 ingest runbook.
 
-**RCA** Capture per-source counter snapshots for 24 h; cross-reference the source's public status page (AWS Health Dashboard, SDF / publicnode / lobstr); if a known maintenance window, add the schedule to `deploy/monitoring/silences.yml`.
+**RCA** Capture per-source counter snapshots for 24 h; cross-reference the source's public status page (SDF / publicnode / lobstr); if a known maintenance window, add the schedule to `deploy/monitoring/silences.yml`.
 
 **False positives** First ~24 h after adding a new source URL (suppress). One checkpoint 404 on one source: the threshold ignores single-file misses, but a low-volume cycle amplifies (3 repairs, one 404 = 33%); check absolute `increase(archive_completeness_repair_attempts_total[25h])` before opening anything.
 
