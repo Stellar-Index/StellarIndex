@@ -78,10 +78,11 @@ func TestPairSourceStatsMatchesBothOrientations(t *testing.T) {
 // readers to canonOrientSQL's folded pair: the count DISTINCTs on it and
 // the top-markets preview groups volume and trade count by it.
 func TestAssetMarketQueriesFoldOrientation(t *testing.T) {
-	canonBase, canonQuote, _ := canonOrientSQL()
+	canonBase, canonQuote, _ := canonOrientSQL(2)
 	if q := assetMarketsCountQuery(); !strings.Contains(q, "SELECT DISTINCT "+canonBase+", "+canonQuote) {
 		t.Errorf("GetAssetMarketsCount must DISTINCT on the canonical pair:\n%s", q)
 	}
+	canonBase, canonQuote, _ = canonOrientSQL(3)
 	q := assetTopMarketsQuery()
 	folded := "SELECT " + canonBase + " AS base_asset, " + canonQuote + " AS quote_asset"
 	if got := strings.Count(q, folded); got != 2 {

@@ -40,10 +40,10 @@ func TestSorobanVolume24hUSDQueryShape(t *testing.T) {
 	}
 	// The XLM leg is valued off BOTH stored directions: native (or its SAC)
 	// as base (base_amount) and as quote (quote_amount).
-	if !strings.Contains(q, "WHEN base_asset IN ('native', '"+nativeXLMSAC+"')") {
+	if !strings.Contains(q, "WHEN base_asset IN ('native', $2::text)") {
 		t.Error("query missing the XLM-base-leg branch (native + SAC)")
 	}
-	if !strings.Contains(q, "WHEN quote_asset IN ('native', '"+nativeXLMSAC+"')") {
+	if !strings.Contains(q, "WHEN quote_asset IN ('native', $2::text)") {
 		t.Error("query missing the XLM-quote-leg branch (native + SAC)")
 	}
 	// Asset participates as either side; result floored to a definite "0".
