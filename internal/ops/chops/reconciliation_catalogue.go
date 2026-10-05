@@ -136,28 +136,18 @@ type reconSource struct {
 	// source.
 	needsStateWriteKeys bool
 
-	// aggregateReconcile, when non-empty, makes the -ch projection
-	// reconcile compare WINDOW TOTALS instead of strict per-ledger
-	// counts, and documents why. Per-ledger is the default (CS-084:
-	// totals let a real drop in ledger L net against a phantom
-	// elsewhere and report complete=true); only sources whose served
-	// `ledger` keying can legitimately differ from the re-derive's
-	// event ledger may opt out, and they accept the netting residual
-	// the reason string acknowledges.
-	aggregateReconcile string
+	// aggregate, when non-nil, makes the -ch projection reconcile compare
+	// WINDOW TOTALS (the netting compare) at ledgers <= its boundary
+	// and strict per-ledger above it. Per-ledger is the default: totals let a
+	// real drop in ledger L net against a phantom elsewhere and report
+	// complete=true. Only a source whose served `ledger` keying differs from
+	// the re-derive's event ledger over a FIXED historical span may opt out.
+	aggregate *aggregateWaiver
 
-	// vintageBoundary, when > 0 on an aggregateReconcile source, CONFINES
-	// the window-totals (netting) compare to ledgers <= vintageBoundary and
-	// reverts to STRICT PER-LEDGER above it (W1-flowcompleteness-3 / the
-	// phoenix #15 split). The keying vintage that justifies the netting is
-	// historical (a WASM upgrade, a legacy backfill) with a fixed upper edge;
-	// above that edge the served `ledger` keys 1:1 with the re-derive again,
-	// so there is no reason to keep the CS-084 netting blindness there. The
-	// split narrows the netting-blind window to just the pre-boundary vintage
-	// so a REAL post-boundary drop (all live + future ledgers) is caught by
-	// strict per-ledger instead of netting against a phantom. 0 = full-window
-	// aggregate (the boundary is not a clean constant for this source).
-	vintageBoundary uint32
+	// waived names the served rows this source writes that the projection
+	// reconcile deliberately does NOT count, with why. It is the runtime
+	// record of what "reconciled" excludes for this source.
+	waived []waivedTable
 
 	// newGatedDec, when non-nil, opts a factory-anchored IDENTITY-gated
 	// source (aquarius, phoenix) into the -ch re-derive contract-id
@@ -180,6 +170,42 @@ type reconSource struct {
 	// -source-timeout); a `-source <name>` run re-proves it in full.
 	reproofOutlastsPass string
 }
+
+// aggregateWaiver is a source's opt-out from strict per-ledger reconcile.
+// boundary is the highest ledger of the keying vintage that justifies the
+// netting; projectionDelta reconciles a waiver with boundary 0 strict, so a
+// netting exception without its bound cannot mark a source complete.
+type aggregateWaiver struct {
+	reason   string
+	boundary uint32
+}
+
+// waivedTable is one served table (or the whereFilter slice of it) a source
+// writes but the projection reconcile does not count.
+type waivedTable struct {
+	table       string
+	whereFilter string // "" = the whole table
+	reason      string
+}
+
+// fanoutWaiver: the aquarius reserve/liquidity sinks fan ONE decoder event
+// out to N per-token-position rows (token_index is a PK component), so an
+// event-count vs served-row-count reconcile false-flags nearly every ledger
+// (lake-measured: aquarius_reserves 843705 rows / 421793 events,
+// aquarius_liquidity 12043/6021).
+const fanoutWaiver = "fan-out: one decoder event → N per-token-position rows " +
+	"(token_index PK component), so event-count vs served-row-count would false-flag; " +
+	"density gap-detector covers it pending a fan-out-aware reconcile"
+
+// blendEmitterDropWaiver: one DropEvent carries N recipients and the sink
+// writes one blend_emitter_events row per recipient (r1-measured: ledger
+// 51,499,914 = 13 rows / 1 event; 57,467,292 = 3 / 1). Only the drop rows
+// are waived; distribute/swap_config stay reconciled per-ledger.
+const blendEmitterDropWaiver = "fan-out: one drop event → N recipient rows " +
+	"(recipient_index PK component), so event-count vs served-row-count false-flags " +
+	"the drop ledgers; the blend_emitter_events reconTarget excludes drop rows " +
+	"(whereFilter event_kind <> 'drop') and omits the drop kind so the 1:1 " +
+	"distribute/swap_config rows still reconcile per-ledger; density gap-detector covers drop"
 
 // outlastsPass reports whether the daily -pass must not force this source's
 // from-genesis re-proof (the SDEX census, or a named heavy source).
@@ -291,8 +317,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				{"aquarius_admin", "", []string{"aquarius.admin"}},
 				{"aquarius_protocol_fee", "", []string{"aquarius.fee"}},
 				{"aquarius_kill_switches", "", []string{"aquarius.kill"}},
-				// DELIBERATELY NOT reconciled here (declared in the
-				// catalogue-completeness invariant's noReconcile waiver):
+				// DELIBERATELY NOT reconciled here (the `waived` list below):
 				// aquarius_reserves / aquarius_reserves_sync / aquarius_liquidity
 				// each fan ONE decoder event out to N per-token-position rows
 				// (token_index is a PK component), so the projection axis's
@@ -309,6 +334,11 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				// stay on the density gap-detector until a fan-out-aware
 				// (per-event-identity) reconcile lands — surfaced as a real
 				// follow-up finding, not silently claimed complete.
+			},
+			waived: []waivedTable{
+				{"aquarius_reserves", "", fanoutWaiver},
+				{"aquarius_reserves_sync", "", fanoutWaiver},
+				{"aquarius_liquidity", "", fanoutWaiver},
 			},
 		},
 		{
@@ -482,6 +512,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 					"blend_emitter.distribute", "blend_emitter.swap_config",
 				}},
 			},
+			waived: []waivedTable{{"blend_emitter_events", "event_kind = 'drop'", blendEmitterDropWaiver}},
 		},
 		{
 			// Lake-derived exact genesis (2026-07-30, mirrors
@@ -633,31 +664,35 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 	// Oracle sources: decoder needs a real contract address; include only
 	// when configured. The contract prefilter also makes the re-derive
 	// fast (uses the soroban_events contract index).
+	//
+	// Strict per-ledger, no aggregate waiver: the legacy backfill vintage that
+	// keyed oracle_updates.ledger by the oracle timestamp is gone from the
+	// served tier. Measured on r1: every served (source, ledger, tx_hash) was
+	// joined to stellar.contract_events (ledger_seq, tx_hash) for its contract;
+	// all 680,108 pairs in [58,849,942, 64,782,017] sit on their event's ledger
+	// (reflector-dex 59,775, -cex 59,188, -fx 59,869, redstone 501,276).
 	if a := cfg.Oracle.Reflector.DEXContract; a != "" {
 		cat = append(cat, reconSource{
-			name:               "reflector-dex",
-			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 50_644_229, dec: reflector.NewDecoder(reflector.VariantDEX, a, reflector.WithDecoderDecimals(cfg.Oracle.Reflector.DEXDecimals)), contractIDs: []string{a},
+			name: "reflector-dex", genesis: 50_644_229, dec: reflector.NewDecoder(reflector.VariantDEX, a, reflector.WithDecoderDecimals(cfg.Oracle.Reflector.DEXDecimals)), contractIDs: []string{a},
 			targets: []reconTarget{{"oracle_updates", "source = 'reflector-dex'", []string{"reflector.update"}}},
 		})
 	}
 	if a := cfg.Oracle.Reflector.CEXContract; a != "" {
 		cat = append(cat, reconSource{
-			name:               "reflector-cex",
-			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 50_644_239, dec: reflector.NewDecoder(reflector.VariantCEX, a, reflector.WithDecoderDecimals(cfg.Oracle.Reflector.CEXDecimals)), contractIDs: []string{a},
+			name: "reflector-cex", genesis: 50_644_239, dec: reflector.NewDecoder(reflector.VariantCEX, a, reflector.WithDecoderDecimals(cfg.Oracle.Reflector.CEXDecimals)), contractIDs: []string{a},
 			targets: []reconTarget{{"oracle_updates", "source = 'reflector-cex'", []string{"reflector.update"}}},
 		})
 	}
 	if a := cfg.Oracle.Reflector.FXContract; a != "" {
 		cat = append(cat, reconSource{
-			name:               "reflector-fx",
-			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 56_733_481, dec: reflector.NewDecoder(reflector.VariantFX, a, reflector.WithDecoderDecimals(cfg.Oracle.Reflector.FXDecimals)), contractIDs: []string{a},
+			name: "reflector-fx", genesis: 56_733_481, dec: reflector.NewDecoder(reflector.VariantFX, a, reflector.WithDecoderDecimals(cfg.Oracle.Reflector.FXDecimals)), contractIDs: []string{a},
 			targets: []reconTarget{{"oracle_updates", "source = 'reflector-fx'", []string{"reflector.update"}}},
 		})
 	}
 	if a := cfg.Oracle.Redstone.AdapterContract; a != "" {
 		cat = append(cat, reconSource{
-			name:               "redstone",
-			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 58_758_722, dec: redstone.NewDecoder(a), contractIDs: []string{a},
+			name:    "redstone",
+			genesis: 58_758_722, dec: redstone.NewDecoder(a), contractIDs: []string{a},
 			needsOpArgs:         true, // redstone reads feed_ids from the write_prices op args (events.Event.OpArgs, PR 166)
 			needsStateWriteKeys: true, // exact subset attribution from the op's written per-feed contract-data keys
 			targets:             []reconTarget{{"oracle_updates", "source = 'redstone'", []string{"redstone.update"}}},
