@@ -218,7 +218,7 @@ func (h *Handlers) setPasskeyCeremonyCookie(w http.ResponseWriter, c passkeyCere
 	enc := base64.RawURLEncoding
 	value := enc.EncodeToString(payload) + "." +
 		enc.EncodeToString(passkeyCeremonyMAC(h.cfg.Generator.Secret, payload))
-	cookie := credentialCookie(PasskeyCeremonyCookieName, value)
+	cookie := credentialCookie(PasskeyCeremonyCookieName, value) //nolint:gosec // G124: credentialCookie sets Secure, HttpOnly and SameSite=Lax
 	cookie.MaxAge = int(passkeyCeremonyTTL / time.Second)
 	http.SetCookie(w, cookie)
 	return nil
@@ -377,7 +377,7 @@ func (h *Handlers) consumeCeremony(ctx context.Context, c passkeyCeremony) error
 }
 
 func (h *Handlers) clearPasskeyCeremonyCookie(w http.ResponseWriter) {
-	c := credentialCookie(PasskeyCeremonyCookieName, "")
+	c := credentialCookie(PasskeyCeremonyCookieName, "") //nolint:gosec // G124: credentialCookie sets Secure, HttpOnly and SameSite=Lax
 	c.MaxAge = -1
 	http.SetCookie(w, c)
 }

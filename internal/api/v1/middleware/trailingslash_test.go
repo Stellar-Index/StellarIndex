@@ -108,6 +108,38 @@ func TestTrailingSlashRedirect_refusesProtocolRelativeTarget(t *testing.T) {
 	}
 }
 
+// Every spelling of an off-origin Location must be refused, including the
+// ones a browser only turns into "//evil.com" after parsing: it treats '\\'
+// as '/', and strips every ASCII tab, LF and CR from a URL before parsing it.
+func TestTrailingSlashRedirect_refusesOffOriginSpellings(t *testing.T) {
+	for _, target := range []string{
+		"//evil.com/",
+		"/%5Cevil.com/",
+		"/%5C%5Cevil.com/",
+		"/%09/evil.com/",
+		"/%0A/evil.com/",
+		"/%0D/evil.com/",
+		"/%7F/evil.com/",
+	} {
+		t.Run(target, func(t *testing.T) {
+			called := false
+			mw := TrailingSlashRedirect(http.NewServeMux())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusNotFound)
+			}))
+			rec := httptest.NewRecorder()
+			mw.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+
+			if rec.Code == http.StatusPermanentRedirect {
+				t.Fatalf("redirected to Location %q; want fall-through", rec.Header().Get("Location"))
+			}
+			if !called {
+				t.Error("expected the request to fall through to next")
+			}
+		})
+	}
+}
+
 // 308 (rather than 301/302) preserves method and body for POST/DELETE.
 // Pin the redirect status itself so a refactor can't silently weaken
 // the redirect to a method-changing 301.

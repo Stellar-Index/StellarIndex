@@ -649,7 +649,7 @@ func sessionSameSite() http.SameSite {
 // is named __Host-, which browsers store only when Secure, Path=/ and
 // host-only, so no sibling host can read, overwrite or plant it.
 func credentialCookie(name, value string) *http.Cookie {
-	return &http.Cookie{
+	return &http.Cookie{ //nolint:gosec // G124: Secure and HttpOnly are literal true; sessionSameSite() is Lax
 		Name:     name,
 		Value:    value,
 		Path:     "/",
@@ -724,7 +724,7 @@ func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		next = "/"
 	}
 	dest := strings.TrimRight(h.cfg.DashboardBaseURL, "/") + next
-	http.Redirect(w, r, dest, http.StatusSeeOther)
+	http.Redirect(w, r, dest, http.StatusSeeOther) //nolint:gosec // G710: next is a single-slash path appended to the configured DashboardBaseURL, so the host is fixed
 }
 
 // verifyCodeRequest is the JSON body POST /v1/auth/verify-code accepts.
@@ -1015,7 +1015,7 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 		h.cfg.Logger.Warn("cap live sessions at login", "err", err, "user_id", user.ID)
 	}
 
-	sc := credentialCookie(SessionCookieName, token)
+	sc := credentialCookie(SessionCookieName, token) //nolint:gosec // G124: credentialCookie sets Secure, HttpOnly and SameSite=Lax
 	sc.Expires = sess.ExpiresAt
 	http.SetCookie(w, sc)
 	// The JS-readable shadow of the cookie above, written in the same
@@ -1096,7 +1096,7 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 // response, its presence flag: a hint left behind would send the explorer
 // back for one more 401 per page load until it expired on its own.
 func (h *Handlers) clearSessionCookies(w http.ResponseWriter) {
-	cleared := credentialCookie(SessionCookieName, "")
+	cleared := credentialCookie(SessionCookieName, "") //nolint:gosec // G124: credentialCookie sets Secure, HttpOnly and SameSite=Lax
 	cleared.MaxAge = -1
 	http.SetCookie(w, cleared)
 	h.clearSessionHintCookie(w)

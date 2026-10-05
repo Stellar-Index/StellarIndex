@@ -127,7 +127,7 @@ func typeLabel(t reflect.Type) string {
 	switch t.Kind() {
 	case reflect.Slice:
 		return "[]" + typeLabel(t.Elem())
-	case reflect.Ptr:
+	case reflect.Pointer:
 		return "*" + typeLabel(t.Elem())
 	default:
 		return t.Kind().String()

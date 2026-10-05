@@ -47,7 +47,7 @@ const sessionHintValue = "1"
 // session cookie it may carry [Config.SessionHintDomain] so the
 // explorer's origin can read it.
 func (h *Handlers) setSessionHintCookie(w http.ResponseWriter, expires time.Time) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: JS-readable by design (constant flag, no bearer power); SameSite=Lax; Secure follows cookie_secure
 		Name:    SessionHintCookieName,
 		Value:   sessionHintValue,
 		Path:    "/",
@@ -67,7 +67,7 @@ func (h *Handlers) setSessionHintCookie(w http.ResponseWriter, expires time.Time
 // holding a hint for a session the server has already dropped on its
 // own initiative.
 func (h *Handlers) clearSessionHintCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: deletion of the JS-readable hint; same attributes as setSessionHintCookie
 		Name:     SessionHintCookieName,
 		Value:    "",
 		Path:     "/",

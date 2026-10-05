@@ -1,8 +1,8 @@
 module github.com/Stellar-Index/StellarIndex
 
-go 1.26.0
+go 1.27.0
 
-toolchain go1.26.8
+toolchain go1.27.1
 
 // Direct production dependencies.
 //
@@ -16,23 +16,11 @@ toolchain go1.26.8
 // use them. See CHANGELOG [Unreleased].
 
 require (
-	github.com/BurntSushi/toml v1.6.0 // TOML parser for config/ + metadata/sep1.go
-	github.com/alicebob/miniredis/v2 v2.39.0 // In-memory Redis for ratelimit/ tests (test-only)
-	github.com/golang-migrate/migrate/v4 v4.20.1 // Schema migrations; cmd/stellarindex-migrate (ADR-0006)
-	github.com/jackc/pgx/v5 v5.11.0 // Postgres driver — pgx v5 via the database/sql stdlib adapter (ADR-0006)
-	github.com/prometheus/client_golang v1.24.1 // /metrics + counters/gauges in internal/obs
-	github.com/redis/go-redis/v9 v9.22.0 // Redis client (ADR-0007) — rate-limit + SEP-1 cache
-	github.com/testcontainers/testcontainers-go v0.44.0 // Integration-test Postgres container
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0 // Timescale-flavoured container helper
-	golang.org/x/sync v0.23.0 // singleflight for metadata/cache.go
-)
-
-require github.com/stellar/go-stellar-sdk v0.7.3 // SCVal/XDR decoding for Soroban event connectors (ADR-0013). Pinned SHA in VERSIONS.md.
-
-require (
 	cloud.google.com/go/bigquery v1.85.0
+	github.com/BurntSushi/toml v1.6.0 // TOML parser for config/ + metadata/sep1.go
 	github.com/ClickHouse/ch-go v0.74.0
 	github.com/ClickHouse/clickhouse-go/v2 v2.48.0
+	github.com/alicebob/miniredis/v2 v2.39.0 // In-memory Redis for ratelimit/ tests (test-only)
 	github.com/aws/aws-sdk-go-v2 v1.47.1
 	github.com/aws/aws-sdk-go-v2/config v1.33.6
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.6
@@ -40,27 +28,26 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/go-webauthn/webauthn v0.18.2
+	github.com/golang-migrate/migrate/v4 v4.20.1 // Schema migrations; cmd/stellarindex-migrate (ADR-0006)
 	github.com/google/uuid v1.6.0
+	github.com/jackc/pgx/v5 v5.11.0 // Postgres driver — pgx v5 via the database/sql stdlib adapter (ADR-0006)
+	github.com/moby/moby/api v1.56.0 // Docker inspect/port types — test/harness implements testcontainers' wait.StrategyTarget with them (test-only; already in the graph via testcontainers)
+	github.com/moby/patternmatcher v0.6.1 // Docker's .dockerignore matcher — test/controlwiring pins the image build context with it (test-only; already in the graph via testcontainers)
+	github.com/prometheus/client_golang v1.24.1 // /metrics + counters/gauges in internal/obs
 	github.com/prometheus/client_model v0.6.3
+	github.com/redis/go-redis/v9 v9.22.0 // Redis client (ADR-0007) — rate-limit + SEP-1 cache
+	github.com/stellar/go-stellar-sdk v0.7.3 // SCVal/XDR decoding for Soroban event connectors (ADR-0013). Pinned SHA in VERSIONS.md.
+	github.com/testcontainers/testcontainers-go v0.44.0 // Integration-test Postgres container
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0 // Timescale-flavoured container helper
 	github.com/xeipuuv/gojsonschema v1.2.0 // JSON-Schema validation for scripts/ci/lint-golangci-config (offline .golangci.yml check, #317); already in the graph via go-stellar-sdk
 	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.57.0
+	golang.org/x/sync v0.23.0 // singleflight for metadata/cache.go
+	golang.org/x/sys v0.48.0
 	golang.org/x/time v0.16.0 // rate.Limiter pacing in cmd/stellarindex-sla-probe; already in the graph
 	golang.org/x/tools v0.50.0
 	google.golang.org/api v0.299.0
 	gopkg.in/yaml.v3 v3.0.1
-)
-
-require (
-	github.com/jackc/pgpassfile v1.0.0 // indirect
-	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/puddle/v2 v2.2.2 // indirect
-)
-
-require (
-	github.com/moby/moby/api v1.56.0 // Docker inspect/port types — test/harness implements testcontainers' wait.StrategyTarget with them (test-only; already in the graph via testcontainers)
-	github.com/moby/patternmatcher v0.6.1 // Docker's .dockerignore matcher — test/controlwiring pins the image build context with it (test-only; already in the graph via testcontainers)
-	golang.org/x/sys v0.48.0
 )
 
 require (
@@ -133,6 +120,9 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.22 // indirect
 	github.com/googleapis/gax-go/v2 v2.24.1 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
