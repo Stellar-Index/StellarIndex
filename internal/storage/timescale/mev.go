@@ -59,7 +59,7 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
          ORDER BY ledger DESC, tx_hash DESC, op_index DESC
          LIMIT $2
     `
-	rows, err := s.db.QueryContext(ctx, q, since.UTC(), limit)
+	rows, err := s.db.QueryContext(ctx, q, since.UTC(), limit, canonical.NativeSACContractID())
 	if err != nil {
 		return nil, nil, fmt.Errorf("timescale: TradesForArbScan: %w", err)
 	}
