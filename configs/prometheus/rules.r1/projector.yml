@@ -206,8 +206,8 @@ groups:
 
             Runbook: docs/operations/runbooks/projector-row-quarantined.md
 
-      # RLT-131 / ADR-0003 (docs/adr/0003-i128-no-truncation.md, §Operational
-      # impact): "any observed errors.Is(err, canonical.ErrI128Overflow) in
+      # RLT-131 / ADR-0003 (docs/adr/0003-i128-no-truncation.md, §Consequences):
+      # "any observed errors.Is(err, canonical.ErrI128Overflow) in
       # production fires a SEV-1. It indicates an int64 sneaking in
       # somewhere." That promise had no implementation — the sentinel is in
       # the projector's valueShapeSentinels, so an overflow was skipped and
