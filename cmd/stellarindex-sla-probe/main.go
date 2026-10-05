@@ -115,6 +115,12 @@ type endpoint struct {
 	// contract (ADR-0015) makes the run-level 30 s target structurally
 	// unmeetable — see defaultClosedBucketFreshTarget.
 	FreshTarget time.Duration
+	// FallbackFreshTarget, when non-zero, is the freshness bound for
+	// responses that carry no data.window_seconds: /price/tip serves
+	// those from the closed 1 m bucket or the VWAP snapshot when the pair
+	// had no trade in the last 30 s, so they are structurally 61-150 s
+	// old. Window responses stay held to the run-level target.
+	FallbackFreshTarget time.Duration
 	// WantObservedAt: a 2xx without a parseable data.observed_at is a
 	// failed sample. Without it a response-shape change would silently
 	// drop the freshness series and the alert reading it.
@@ -172,7 +178,7 @@ func pairEndpoints(asset, quote string, closedBucketFresh time.Duration) []endpo
 	pair := asset + "/" + quote
 	return []endpoint{
 		{Name: "price", Pair: pair, Path: "/price", Query: q(nil), Critical: true, FreshTarget: closedBucketFresh, WantObservedAt: true},
-		{Name: "price-tip", Pair: pair, Path: "/price/tip", Query: q(nil), Critical: true, WantObservedAt: true},
+		{Name: "price-tip", Pair: pair, Path: "/price/tip", Query: q(nil), Critical: true, FallbackFreshTarget: closedBucketFresh, WantObservedAt: true},
 		{Name: "oracle-latest", Pair: pair, Path: "/oracle/latest", Query: map[string]string{"asset": asset}, WantData: true},
 	}
 }
@@ -218,6 +224,12 @@ type stats struct {
 	// records which bound the verdict held this endpoint to. Zero =
 	// the run-level sla.freshness_sec applied.
 	FreshnessTargetSec float64 `json:"freshness_target_sec,omitempty"`
+	// FallbackObservedAtFreshSec / FallbackTargetSec: the stalest
+	// fallback-served response (see endpoint.FallbackFreshTarget) and the
+	// bound it is held to, kept apart so a stale window response cannot
+	// hide behind the looser fallback bound.
+	FallbackObservedAtFreshSec *float64 `json:"fallback_observed_at_fresh_sec,omitempty"`
+	FallbackTargetSec          float64  `json:"fallback_target_sec,omitempty"`
 	// Critical mirrors endpoint.Critical: a Critical endpoint fails the
 	// whole run on ANY error, independent of whether the blanket
 	// availability target is still cleared. Carried through to the
@@ -418,6 +430,9 @@ type probeSample struct {
 	failure    string
 	observedAt time.Time
 	receivedAt time.Time
+	// fallback: a tip response served from the closed bucket / snapshot
+	// rather than the trade window (see endpoint.FallbackFreshTarget).
+	fallback bool
 }
 
 // runProbe drives `concurrency` workers against `endpoints` for
@@ -496,7 +511,7 @@ func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []end
 				}
 				ep := endpoints[i]
 				i = (i + 1) % len(endpoints)
-				lat, failure, observedAt := hit(reqCtx, httpClient, baseURL, apiKey, ep)
+				lat, failure, observedAt, fallback := hit(reqCtx, httpClient, baseURL, apiKey, ep)
 				// Stamp the receipt instant here, before the mutex: this
 				// is the clock reading freshness is measured against, and
 				// it must be the sample's own instant rather than anything
@@ -510,6 +525,7 @@ func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []end
 					failure:    failure,
 					observedAt: observedAt,
 					receivedAt: receivedAt,
+					fallback:   fallback,
 				})
 				mu.Unlock()
 			}
@@ -529,7 +545,7 @@ func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 	// server's success histogram (internal/obs/http_middleware.go): a
 	// refused connection "takes" ~0 ms, so pooling it would report a hard
 	// outage as a fast API. Failures are counted by availability instead.
-	var latencies, freshSamples []float64
+	var latencies, freshSamples, fallbackSamples []float64
 	var failedBy map[string]int
 	for _, s := range ss {
 		if s.ok {
@@ -545,7 +561,12 @@ func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 		// would charge every sample the distance from its request to
 		// the end of the run (see probeSample.receivedAt).
 		if !s.observedAt.IsZero() && !s.receivedAt.IsZero() {
-			freshSamples = append(freshSamples, s.receivedAt.Sub(s.observedAt).Seconds())
+			age := s.receivedAt.Sub(s.observedAt).Seconds()
+			if s.fallback {
+				fallbackSamples = append(fallbackSamples, age)
+			} else {
+				freshSamples = append(freshSamples, age)
+			}
 		}
 	}
 	successes := len(latencies)
@@ -554,6 +575,7 @@ func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 		Pair:               ep.Pair,
 		Path:               ep.Path,
 		FreshnessTargetSec: ep.FreshTarget.Seconds(),
+		FallbackTargetSec:  ep.FallbackFreshTarget.Seconds(),
 		Samples:            len(ss),
 		Successes:          successes,
 		Errors:             len(ss) - successes,
@@ -573,6 +595,10 @@ func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 	if len(freshSamples) > 0 {
 		stalest := maxFloat(freshSamples)
 		st.ObservedAtFreshSec = &stalest
+	}
+	if len(fallbackSamples) > 0 {
+		stalest := maxFloat(fallbackSamples)
+		st.FallbackObservedAtFreshSec = &stalest
 	}
 	return st
 }
@@ -632,6 +658,9 @@ func endpointFailures(st stats, sla slaTargets) []string {
 	if st.ObservedAtFreshSec != nil && *st.ObservedAtFreshSec > freshTarget {
 		out = append(out, fmt.Sprintf("%s: freshness=%.1fs > target %.1fs", label, *st.ObservedAtFreshSec, freshTarget))
 	}
+	if st.FallbackObservedAtFreshSec != nil && *st.FallbackObservedAtFreshSec > st.FallbackTargetSec {
+		out = append(out, fmt.Sprintf("%s: fallback freshness=%.1fs > target %.1fs", label, *st.FallbackObservedAtFreshSec, st.FallbackTargetSec))
+	}
 	return out
 }
 
@@ -672,7 +701,7 @@ func transportFailure(err error) string {
 // wall-clock latency, the failure cause ("" on a 2xx meeting ep's body
 // contract), and the parsed observed_at timestamp from the response body
 // when present. apiKey, when non-empty, is sent as `Authorization: Bearer <key>`.
-func hit(ctx context.Context, c *http.Client, baseURL, apiKey string, ep endpoint) (time.Duration, string, time.Time) {
+func hit(ctx context.Context, c *http.Client, baseURL, apiKey string, ep endpoint) (time.Duration, string, time.Time, bool) {
 	u := baseURL + ep.Path
 	if len(ep.Query) > 0 {
 		var parts []string
@@ -684,7 +713,7 @@ func hit(ctx context.Context, c *http.Client, baseURL, apiKey string, ep endpoin
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
-		return 0, "request", time.Time{}
+		return 0, "request", time.Time{}, false
 	}
 	// The API keeps synthetic traffic out of the customer-facing SLO and
 	// out of the access log by User-Agent prefix, and `stellarindex-probe/`
@@ -705,39 +734,41 @@ func hit(ctx context.Context, c *http.Client, baseURL, apiKey string, ep endpoin
 	resp, err := c.Do(req)
 	lat := time.Since(start)
 	if err != nil {
-		return lat, transportFailure(err), time.Time{}
+		return lat, transportFailure(err), time.Time{}, false
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return lat, failureClass(resp.StatusCode), time.Time{}
+		return lat, failureClass(resp.StatusCode), time.Time{}, false
 	}
-	observedAt, ok := checkBody(ep, body)
+	observedAt, fallback, ok := checkBody(ep, body)
 	if !ok {
-		return lat, "body", observedAt
+		return lat, "body", observedAt, fallback
 	}
-	return lat, "", observedAt
+	return lat, "", observedAt, fallback
 }
 
 // checkBody parses data.observed_at from a 2xx body (zero when absent)
 // and reports whether the body meets ep's contract. Endpoints with no
 // contract accept any body, including a non-JSON one.
-func checkBody(ep endpoint, body []byte) (time.Time, bool) {
+func checkBody(ep endpoint, body []byte) (time.Time, bool, bool) {
 	var env struct {
 		Data json.RawMessage `json:"data"`
 	}
 	_ = json.Unmarshal(body, &env)
 	var obj struct {
-		ObservedAt time.Time `json:"observed_at"`
+		ObservedAt    time.Time `json:"observed_at"`
+		WindowSeconds int       `json:"window_seconds"`
 	}
 	_ = json.Unmarshal(env.Data, &obj)
+	fallback := ep.FallbackFreshTarget > 0 && obj.WindowSeconds == 0
 	if ep.WantObservedAt && obj.ObservedAt.IsZero() {
-		return time.Time{}, false
+		return time.Time{}, false, false
 	}
 	if ep.WantData && !hasData(env.Data) {
-		return obj.ObservedAt, false
+		return obj.ObservedAt, fallback, false
 	}
-	return obj.ObservedAt, true
+	return obj.ObservedAt, fallback, true
 }
 
 // hasData reports whether raw is a non-null scalar or a non-empty
