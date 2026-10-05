@@ -774,6 +774,38 @@ const (
 // classic ones carry supply and no feed.
 const matrixdockXAUM = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
 
+// Centrifuge's deRWA tokens: Soroban-native wrappers of two Janus
+// Henderson Anemoy funds, issued on Stellar by the Open Market
+// Foundation. Neither has a classic (code, issuer) pair, so no SEP-1
+// arm can reach them.
+//
+// The addresses come from the issuer's own SEP-1 file at
+// centrifuge.io/.well-known/stellar.toml: its
+// [[CURRENCIES]] entries for code deJTRSY and deJAAA each carry a
+// `contract` field naming exactly these C-strkeys, display_decimals 18.
+// The curator picked centrifuge.io, so a lookalike domain cannot stand
+// in for it. Corroboration, not source: the ledger's own decimals() for
+// deJTRSY is 18, its supply reproduces to the unit by event flows and by
+// contract storage (docs/methodology/contract-storage-supply.md), and
+// the independent listing directory names the deJTRSY address, which is
+// what admits it under C2's second arm.
+//
+// Classes. deJTRSY is `bond`: the toml declares anchor_asset_type
+// "bond", anchor "US Treasury Bills" — the same instrument class as
+// Spiko's T-Bill funds. deJAAA is `bond` too, but the toml declares
+// "other" / "AAA CLO", which the vocabulary excludes; the fund holds
+// AAA-rated CLO debt tranches, so `bond` is true of its assets and its
+// exposure, where `fund` would say only that someone manages it.
+//
+// The same toml names the underlying JTRSY and JAAA contracts. They are
+// deliberately NOT bound: the deRWA tokens are wrappers of the same
+// funds, and binding both before measuring what backs the wrapper risks
+// counting one holding twice.
+const (
+	centrifugeDeJTRSY = "CBI7UCH5KGSVQRO5H4SUCZUTZABCITZLRHQQZTWL2TK4RZ72TAR6IHRV"
+	centrifugeDeJAAA  = "CC64WBDGS6QQP22QTTIACYIXT3WF7BBQEYOQPLTP7GTKYY7PZ74QYGSL"
+)
+
 // contractInstruments is the curated set. See [contractInstrument] for
 // the evidence bar each entry has to meet, and for what an entry does
 // and does not do.
@@ -827,6 +859,8 @@ var contractInstruments = []contractInstrument{
 	{ContractID: spikoGbpSAFO, Instrument: "Spiko Amundi Overnight Swap Fund, GBP share class (gbpSAFO)", Class: "fund"},
 	{ContractID: spikoChfSAFO, Instrument: "Spiko Amundi Overnight Swap Fund, CHF share class (chfSAFO)", Class: "fund"},
 	{ContractID: matrixdockXAUM, Instrument: "Matrixdock Gold (XAUm)", Class: "commodity"},
+	{ContractID: centrifugeDeJTRSY, Instrument: "Janus Henderson Anemoy Treasury Fund, Centrifuge deRWA token (deJTRSY)", Class: "bond"},
+	{ContractID: centrifugeDeJAAA, Instrument: "Janus Henderson Anemoy AAA CLO Fund, Centrifuge deRWA token (deJAAA)", Class: "bond"},
 }
 
 // ContractInstrumentClass reports whether a class string is one a

@@ -73,7 +73,7 @@ be exactly the fabricated figure the whole definition exists to prevent.
 | Franklin Templeton | $527.2M | $0 | NOT COLLECTED | Two G-addresses in the directory, domain `franklintempleton.com`, tag `issuer`. Both issue no classic asset and both are absent from `issuers`. Now reported in `unreached_entities`. **19 distinct `BENJI` issuers exist in the lake and every one is an impersonator** — `franklintempleton.co.com`, `benji.qlumen.co`, `stellar.dtcc.network` — which is why the address, not the code, has to be the thing that is recognised. |
 | Red Swan | $71.7M | $0 | NOT COLLECTED | Directory presence stated; address form *(not measured)*. |
 | WisdomTree | $40.3M | **$0, 12 members** | **WAS NO ATTESTATION — corrected 2026-09-16** | The refusal was OURS. `stellar.wisdomtree.com` serves a real SEP-1 whose `ACCOUNTS` array ends with an unterminated string on line 20, and a whole-document parse discarded all eighteen of its well-formed `[[CURRENCIES]]` tables. Section recovery (v0.86.0) reads them and **12 assets are admitted** — 8 bond, 3 stock, 1 commodity — carrying **7,023,543 tokens** across ~30,000 trustlines each. `CRDT` stays out: its issuer is the one named on the broken line and is in no directory. All 12 are UNPRICED — only WTGX is in the independent listing directory, and the RWA classic arm does not read listing prices. |
-| Centrifuge | $26.9M | $0 → *see detail* | NOT COLLECTED → **now a candidate** | The directory names `CBI7UCH5KG…` — a **contract**, not an account. Before this change no arm could see it. It is now a contract-arm candidate; whether it is admitted depends on its directory tags and its on-chain symbol, neither *(measured)*. If its tag is `issuer`/`anchor`/`custodian` and its symbol is ADR-0028 allow-listed, it is admitted; otherwise it is refused under C3 or C4 and **the refusal is reported**. |
+| Centrifuge | $26.9M | $0 → *see detail* | NOT COLLECTED → **now a candidate** | The directory names `CBI7UCH5KG…` — a **contract**, not an account. Before this change no arm could see it. It is deJTRSY. The directory tags it `defi`, so the first contract arm does not recognise it; it now carries an in-repo binding sourced from `centrifuge.io`'s own SEP-1, and the independent listing names the same address, so C2's second arm admits it. deJAAA (`CC64WBDG…`) is bound on the same evidence and is admitted only once the listing also names it; until then it is refused under `contract_curated_binding_without_independent_listing` and **the refusal is reported**. |
 | Rivool | $26.8M | $0 | NOT COLLECTED | Directory presence stated; address form *(not measured)*. |
 | Cometum | $23.2M | $0 | NOT COLLECTED | In the directory; issues no classic asset (measured). |
 | Finexity | $21.6M | $0 | NOT COLLECTED | Directory presence stated; address form *(not measured)*. |
@@ -205,9 +205,10 @@ Each needs its contract address named, either:
 The in-repo set shipped **empty** with this work, deliberately: populating
 it requires contract addresses from a primary source, and this work had
 none. An address inferred from a dashboard screenshot is a fabricated
-identity for a financial instrument. It has since grown to ten bindings
-at that bar, nine Spiko fund share classes and Matrixdock's XAUm; the
-list in `contract.go` is the authority, not this count.
+identity for a financial instrument. It has since grown to twelve bindings
+at that bar, nine Spiko fund share classes, Matrixdock's XAUm and
+Centrifuge's deJTRSY and deJAAA; the list in `contract.go` is the
+authority, not this count.
 
 The evidence bar for an entry is recorded beside the type: the address
 from a primary source (a block explorer is corroboration, not a source —

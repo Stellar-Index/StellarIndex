@@ -39,8 +39,8 @@ var knownRWACodes = map[string]struct{}{
 	"USDY":    {}, // Ondo US Dollar Yield — tokenized note backed by short-term US Treasuries + bank deposits
 	"USST":    {}, // STBL treasury-backed stablecoin (feed_id USST_FUNDAMENTAL)
 	"XAUm":    {}, // Matrixdock tokenized gold (1 token ≈ 1 troy oz)
-	"deJAAA":  {}, // Securitize deRWA token of the Janus Henderson AAA CLO ETF (JAAA)
-	"deJTRSY": {}, // Securitize deRWA token of the Janus Henderson treasury fund (JTRSY)
+	"deJAAA":  {}, // Centrifuge deRWA token of the Janus Henderson AAA CLO ETF (JAAA)
+	"deJTRSY": {}, // Centrifuge deRWA token of the Janus Henderson treasury fund (JTRSY)
 	// 2026-08-29: the Reflector FX oracle's spot-gold slot (ISO-4217
 	// X-code, 1 troy oz in USD). A commodity reference, not a currency —
 	// kept OFF the fiat list (ADR-0010) and OFF crypto; it shares the
