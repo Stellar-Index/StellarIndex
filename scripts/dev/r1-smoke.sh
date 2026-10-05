@@ -174,7 +174,25 @@ expect_status() {
   printf "  %sok%s   %-32s %s%s%s\n" "$GREEN" "$OFF" "$name" "$DIM" "${path}" "$OFF"
 }
 
-echo "Smoke-test: ${API_BASE_URL}"
+# skip NAME REASON — an explicit, non-failing line for an assertion that
+# cannot hold on this network.
+skip() {
+  printf "  %sSKIP%s %-32s %s%s%s\n" "$DIM" "$OFF" "$1" "$DIM" "$2" "$OFF"
+}
+
+# Test nets have no price sources (protocol sources are anchored to
+# pubnet contracts, ADR-0035), so price and verified-asset assertions
+# cannot hold there. /v1/coverage reports the served network; if it
+# cannot be read, assume pubnet so every assertion still runs.
+NETWORK="$(curl -sS -m "$TIMEOUT" -A "stellarindex-smoke/1" "${API_BASE_URL}/v1/coverage" 2>/dev/null \
+  | jq -r '.data.network // "pubnet"' 2>/dev/null)"
+[ -n "$NETWORK" ] || NETWORK="pubnet"
+case "$NETWORK" in
+  testnet|futurenet) NO_PRICES=1; NO_PRICES_WHY="no price sources on $NETWORK" ;;
+  *) NO_PRICES=0; NO_PRICES_WHY="" ;;
+esac
+
+echo "Smoke-test: ${API_BASE_URL} (network: ${NETWORK})"
 echo
 
 echo "  Health"
@@ -190,7 +208,11 @@ echo "  Catalogue"
 # audit-2026-05-12 migration. Smoke checks updated to match.
 check "assets (5)"         "/v1/assets?limit=5" -- '.data | length > 0'
 check "asset native"       "/v1/assets/native"  -- '.data.asset_id == "native"'
-check "assets verified"    "/v1/assets/verified" -- '.data | length > 0'
+if [ "$NO_PRICES" -eq 1 ]; then
+  skip "assets verified" "$NO_PRICES_WHY"
+else
+  check "assets verified"    "/v1/assets/verified" -- '.data | length > 0'
+fi
 check "markets (5)"        "/v1/markets?limit=5"
 check "sources"            "/v1/sources"
 check "issuers (5)"        "/v1/issuers?limit=5"
@@ -199,8 +221,13 @@ check "sac wrappers"       "/v1/sac-wrappers"
 echo
 
 echo "  Pricing"
-check "price native/USD"   "/v1/price?asset=native&quote=fiat:USD" -- '.data.price | tonumber > 0'
-check "price tip native/USD" "/v1/price/tip?asset=native&quote=fiat:USD"
+if [ "$NO_PRICES" -eq 1 ]; then
+  skip "price native/USD" "$NO_PRICES_WHY"
+  skip "price tip native/USD" "$NO_PRICES_WHY"
+else
+  check "price native/USD"   "/v1/price?asset=native&quote=fiat:USD" -- '.data.price | tonumber > 0'
+  check "price tip native/USD" "/v1/price/tip?asset=native&quote=fiat:USD"
+fi
 # /v1/ohlc returns 404 errors/no-trades on empty windows per ADR-0018.
 # The smoke runs every 5 min — a cold pair with no recent trades is
 # the documented contract, not a regression. F-0156: accept both 200
