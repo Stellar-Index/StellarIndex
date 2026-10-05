@@ -33,6 +33,7 @@ const (
 	stablecoinReasonNonUSD     = "non_usd_peg"
 	stablecoinReasonYield      = "yield_bearing_wrapper"
 	stablecoinReasonPegUnknown = "peg_unmapped"
+	stablecoinReasonMCapNull   = "market_cap_withheld"
 )
 
 // stablecoinPegs is the peg each catalogue ticker tracks. The catalogue holds
@@ -83,6 +84,8 @@ type StablecoinExclusion struct {
 
 // StablecoinAsset is one member, keyed by (code, issuer). The price is the
 // real served pair price, never coerced to the peg, so a depeg shows.
+// SupplyUSD is the pipeline's own market cap, as /v1/assets and /v1/rwa/assets
+// publish it; PriceBasis names a non-market price behind PriceUSD.
 type StablecoinAsset struct {
 	AssetID                     string  `json:"asset_id"`
 	Code                        string  `json:"code"`
@@ -96,6 +99,7 @@ type StablecoinAsset struct {
 	SupplyBasis                 *string `json:"supply_basis,omitempty"`
 	CirculatingSupplyLowerBound bool    `json:"circulating_supply_lower_bound,omitempty"`
 	PriceUSD                    *string `json:"price_usd,omitempty"`
+	PriceBasis                  string  `json:"price_basis,omitempty"`
 	SupplyUSD                   *string `json:"supply_usd,omitempty"`
 	ValuationStatus             string  `json:"valuation_status"`
 }
@@ -130,23 +134,6 @@ func stablecoinMembership(cat *currency.Catalogue) ([]stablecoinMember, []Stable
 		members = append(members, stablecoinMember{ticker: vc.Ticker, code: se.Code, issuer: se.Issuer})
 	}
 	return members, excluded
-}
-
-// stablecoinSupplyUSD is supply × price ÷ 10^decimals to cents, in big.Rat so
-// no figure passes through a float. Empty when an input does not parse.
-func stablecoinSupplyUSD(circ, price string, decimals int) (string, bool) {
-	c, ok := new(big.Int).SetString(circ, 10)
-	if !ok || c.Sign() < 0 || decimals < 0 {
-		return "", false
-	}
-	p, ok := new(big.Rat).SetString(price)
-	if !ok || p.Sign() < 0 {
-		return "", false
-	}
-	v := new(big.Rat).SetInt(c)
-	v.Mul(v, p)
-	v.Quo(v, new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)))
-	return v.FloatString(2), true
 }
 
 // stablecoinAliasSupply finds a supply reading for an asset under any of its
@@ -211,6 +198,7 @@ func stablecoinAssetOf(m stablecoinMember, d AssetDetail, found bool) Stablecoin
 	a.Decimals = d.Decimals
 	a.CirculatingSupply = d.CirculatingSupply
 	a.PriceUSD = d.PriceUSD
+	a.PriceBasis = d.PriceBasis
 	if d.CirculatingSupply != nil && d.SupplyBasis != nil {
 		b := supply.Basis(*d.SupplyBasis)
 		bs := b.String()
@@ -218,19 +206,17 @@ func stablecoinAssetOf(m stablecoinMember, d AssetDetail, found bool) Stablecoin
 	}
 	withheld := d.MarketCapLowLiquidity || d.MarketCapDecimalsMismatch || d.DecimalsUnresolved || d.UnverifiedTickerCollision
 	switch {
+	case d.MarketCapUSD != nil:
+		a.SupplyUSD = d.MarketCapUSD
+		a.ValuationStatus = stablecoinPublished
 	case d.CirculatingSupply == nil:
 		a.ValuationStatus = stablecoinSupplyUnavailable
-	case withheld:
-		a.ValuationStatus = stablecoinWithheld
-	case d.PriceUSD == nil:
+	case d.PriceUSD == nil && !withheld:
 		a.ValuationStatus = stablecoinPriceUnavailable
 	default:
-		if v, ok := stablecoinSupplyUSD(*d.CirculatingSupply, *d.PriceUSD, d.Decimals); ok {
-			a.SupplyUSD = &v
-			a.ValuationStatus = stablecoinPublished
-		} else {
-			a.ValuationStatus = stablecoinPriceUnavailable
-		}
+		// Includes a price filled from a declared peg or the global market:
+		// the pipeline publishes no market cap for it, so neither do we.
+		a.ValuationStatus = stablecoinWithheld
 	}
 	return a
 }
@@ -248,6 +234,9 @@ func stablecoinSummarise(assets []StablecoinAsset, excluded []StablecoinExclusio
 		pegN[a.Peg]++
 		if a.SupplyUSD == nil {
 			t.AssetsUnvalued++
+			if a.ValuationStatus == stablecoinWithheld {
+				t.NotSummed = append(t.NotSummed, StablecoinExclusion{Ticker: a.Ticker, Reason: stablecoinReasonMCapNull})
+			}
 			continue
 		}
 		t.AssetsValued++

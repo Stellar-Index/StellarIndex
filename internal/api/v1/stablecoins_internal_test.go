@@ -6,18 +6,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 )
 
-func TestStablecoinSupplyUSD_ExactAboveInt64(t *testing.T) {
-	got, ok := stablecoinSupplyUSD("1180591620717411303424", "1", 7)
-	if !ok || got != "118059162071741.13" {
-		t.Fatalf("got %q ok=%v", got, ok)
-	}
-	for _, bad := range [][2]string{{"-1", "1"}, {"1.5", "1"}, {"1", "x"}, {"1", "-1"}} {
-		if _, ok := stablecoinSupplyUSD(bad[0], bad[1], 7); ok {
-			t.Errorf("accepted %v", bad)
-		}
-	}
-}
-
 func TestStablecoinSummarise_TotalEqualsReAddedRows(t *testing.T) {
 	big, small := "118059162071741.13", "0.07"
 	assets := []StablecoinAsset{

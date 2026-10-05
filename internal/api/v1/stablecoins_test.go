@@ -1,11 +1,15 @@
 package v1_test
 
 import (
+	"context"
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"testing"
+	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -174,6 +178,75 @@ func TestStablecoins_ByPegKeepsEURApart(t *testing.T) {
 	}
 	if got["EUR"] != "108.00" {
 		t.Errorf("by_peg = %v, want EUR 108.00", got)
+	}
+}
+
+// scGlobalOracle serves aggregator USD rows, the global-market reference
+// applyGlobalMarket fills a withheld Stellar price from.
+type scGlobalOracle struct{ streams []canonical.OracleUpdate }
+
+func (o *scGlobalOracle) LatestOracleUpdatesForAsset(context.Context, canonical.Asset, string) ([]canonical.OracleUpdate, error) {
+	return nil, nil
+}
+
+func (o *scGlobalOracle) LatestOracleUpdatesForAssets(context.Context, []canonical.Asset, string) ([]canonical.OracleUpdate, error) {
+	return nil, nil
+}
+
+func (o *scGlobalOracle) LatestOracleStreams(context.Context) ([]canonical.OracleUpdate, error) {
+	return o.streams, nil
+}
+
+// The substance gate withholds the Stellar USDC price, then the global market
+// fills one. /v1/assets publishes no market cap for that row, so this surface
+// must not value, sum or hide the basis of it either.
+func TestStablecoins_GlobalFilledPriceIsNotSummedAndShowsItsBasis(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	usdc, err := canonical.ParseAsset("crypto:USDC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	usd, err := canonical.ParseAsset("fiat:USD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := v1.New(v1.Options{
+		VerifiedCurrencies: cat,
+		Substance:          &stubSubstanceGate{allow: false},
+		Oracle: &scGlobalOracle{streams: []canonical.OracleUpdate{{
+			Source: "coingecko", Timestamp: time.Now().Add(-time.Minute),
+			Asset: usdc, Quote: usd, Price: canonical.NewAmount(big.NewInt(97000000)), Decimals: 8,
+		}}},
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer:            map[string][]timescale.AssetRow{scUSDC: {rwaRow("USDC", scUSDC, sptr("0.5"), 900000)}},
+			supply:              map[string]string{"USDC-" + scUSDC: "5000000000"},
+		},
+	})
+	v, _ := scGet(t, srv)
+
+	a := scAsset(t, v, "USDC")
+	if a.PriceBasis != "global_market" || a.PriceUSD == nil || *a.PriceUSD != "0.97000000" {
+		t.Fatalf("price = %v basis = %q, want 0.97000000 / global_market", a.PriceUSD, a.PriceBasis)
+	}
+	if a.SupplyUSD != nil || a.ValuationStatus != "withheld" {
+		t.Fatalf("supply_usd = %v status = %q, want absent / withheld", a.SupplyUSD, a.ValuationStatus)
+	}
+	if v.Total.SupplyUSD != nil {
+		t.Errorf("total.supply_usd = %q, want absent: the only member is withheld", *v.Total.SupplyUSD)
+	}
+	if !v.Total.LowerBound {
+		t.Error("lower_bound = false, want true")
+	}
+	named := false
+	for _, e := range v.Total.NotSummed {
+		named = named || (e.Ticker == "USDC" && e.Reason == "market_cap_withheld")
+	}
+	if !named {
+		t.Errorf("not_summed = %v, want USDC/market_cap_withheld", v.Total.NotSummed)
 	}
 }
 

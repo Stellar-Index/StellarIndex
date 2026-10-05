@@ -3125,9 +3125,12 @@ export interface paths {
          *     VALUATION. Supply and price come from the same reads `/assets` and
          *     `/rwa/assets` use (supply preference chain, substance gate, dust
          *     guard). The price is the REAL served pair price: it is never
-         *     coerced to the peg, so a depeg shows. `supply_usd` is
-         *     `circulating_supply / 10^decimals * price_usd`, rounded to cents,
-         *     in exact rational arithmetic; every amount is a decimal string.
+         *     coerced to the peg, so a depeg shows. `supply_usd` is the
+         *     pipeline's own market cap (the figure `/assets` and `/rwa/assets`
+         *     publish), a decimal string rounded to cents. When the Stellar
+         *     price is withheld and a global-market or declared-peg price is
+         *     filled instead, `price_basis` says so, `supply_usd` is absent,
+         *     `valuation_status` is `withheld` and the row is not summed.
          *     Each row's `valuation_status` is `published`, `supply_unavailable`,
          *     `price_unavailable`, `withheld` (a guard declined the figure) or
          *     `not_observed`.
@@ -3142,7 +3145,8 @@ export interface paths {
          *     outside the set (USDT has no Tether-native Stellar issuer);
          *     `total.not_summed` names set members left out of the total: non-USD
          *     pegs (`non_usd_peg`), yield-bearing wrappers
-         *     (`yield_bearing_wrapper`) and unmapped pegs (`peg_unmapped`).
+         *     (`yield_bearing_wrapper`), unmapped pegs (`peg_unmapped`) and
+         *     members whose market cap is withheld (`market_cap_withheld`).
          *     `by_peg` keeps pegs apart and totals every valued member of a peg,
          *     including those `not_summed`.
          *
@@ -8426,6 +8430,14 @@ export interface components {
             circulating_supply_lower_bound?: boolean;
             /** @description The served pair price; never normalised to the peg. */
             price_usd?: string;
+            /**
+             * @description Present only when `price_usd` is not a direct Stellar market
+             *     observation (same values as `/assets`). Such a row carries no
+             *     `supply_usd` and is named in `total.not_summed`.
+             * @enum {string}
+             */
+            price_basis?: "global_market" | "declared_peg" | "transitive";
+            /** @description The pipeline's own market cap, as `/assets` and `/rwa/assets` publish it; absent when withheld. */
             supply_usd?: string;
             /** @enum {string} */
             valuation_status: "published" | "supply_unavailable" | "price_unavailable" | "withheld" | "not_observed";
