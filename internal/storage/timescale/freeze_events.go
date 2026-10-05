@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
@@ -744,9 +745,16 @@ func (s *FreezeEventSink) ListOpen(ctx context.Context) ([]freeze.OpenFreezePair
 // detects a previously-frozen pair has cleared) — NOT by the
 // freeze.Writer.Mark path.
 //
+// releasedBy records who closed the row: "operator:<actor>" or
+// "system:<worker>"; anything else is refused before the UPDATE runs.
+//
 // Idempotent: if no open row exists, returns ErrNotFound. Caller
 // can swallow and continue.
-func (s *FreezeEventSink) MarkRecovered(ctx context.Context, asset, quote canonical.Asset) error {
+func (s *FreezeEventSink) MarkRecovered(ctx context.Context, asset, quote canonical.Asset, releasedBy string) error {
+	if !validReleasedBy(releasedBy) {
+		return fmt.Errorf("timescale: MarkRecovered %s/%s: released_by %q must be \"operator:<actor>\" or \"system:<worker>\"",
+			asset.String(), quote.String(), releasedBy)
+	}
 	now := s.clock().UTC()
 	var ledger uint32
 	if s.getLedger != nil {
@@ -756,11 +764,12 @@ func (s *FreezeEventSink) MarkRecovered(ctx context.Context, asset, quote canoni
 	const q = `
 		UPDATE freeze_events
 		   SET recovered_at        = $3,
-		       recovered_at_ledger = $4
+		       recovered_at_ledger = $4,
+		       released_by         = $5
 		 WHERE asset_id = $1 AND quote_id = $2 AND recovered_at IS NULL
 	`
 	res, err := s.db.ExecContext(ctx, q,
-		asset.String(), quote.String(), now, int64(ledger))
+		asset.String(), quote.String(), now, int64(ledger), releasedBy)
 	if err != nil {
 		return fmt.Errorf("timescale: MarkRecovered %s/%s: %w",
 			asset.String(), quote.String(), err)
@@ -774,6 +783,15 @@ func (s *FreezeEventSink) MarkRecovered(ctx context.Context, asset, quote canoni
 		return ErrNotFound
 	}
 	return nil
+}
+
+func validReleasedBy(v string) bool {
+	for _, prefix := range []string{"operator:", "system:"} {
+		if rest, ok := strings.CutPrefix(v, prefix); ok {
+			return strings.TrimSpace(rest) != ""
+		}
+	}
+	return false
 }
 
 // FreezeEventRow is one freeze_events row for the /v1/anomalies read

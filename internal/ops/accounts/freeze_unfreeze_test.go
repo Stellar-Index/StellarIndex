@@ -40,11 +40,13 @@ func (c *recordingClearer) Clear(_ context.Context, asset, quote canonical.Asset
 
 type recordingRecoverer struct {
 	calls []string
+	by    []string
 	err   error
 }
 
-func (r *recordingRecoverer) MarkRecovered(_ context.Context, asset, quote canonical.Asset) error {
+func (r *recordingRecoverer) MarkRecovered(_ context.Context, asset, quote canonical.Asset, releasedBy string) error {
 	r.calls = append(r.calls, asset.String()+"/"+quote.String())
+	r.by = append(r.by, releasedBy)
 	return r.err
 }
 
@@ -81,6 +83,9 @@ func TestUnfreezePair_ClearsMarkerAndClosesDurableRow(t *testing.T) {
 	}
 	if len(recoverer.calls) != 1 || recoverer.calls[0] != want {
 		t.Errorf("MarkRecovered calls = %v, want exactly [%s]", recoverer.calls, want)
+	}
+	if len(recoverer.by) != 1 || recoverer.by[0] != "operator:oncall" {
+		t.Errorf("released_by = %v, want exactly [operator:oncall]", recoverer.by)
 	}
 }
 
@@ -253,7 +258,7 @@ type tickProbingRecoverer struct {
 	probed     bool
 }
 
-func (r *tickProbingRecoverer) MarkRecovered(ctx context.Context, asset, quote canonical.Asset) error {
+func (r *tickProbingRecoverer) MarkRecovered(ctx context.Context, asset, quote canonical.Asset, _ string) error {
 	_, present, err := r.aggregator.LoadState(ctx, asset, quote)
 	if err != nil {
 		return err

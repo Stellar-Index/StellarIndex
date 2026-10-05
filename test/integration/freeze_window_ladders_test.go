@@ -177,7 +177,7 @@ func TestFreezeWindowLadders_EscalationSurvivesSiblingWrite(t *testing.T) {
 	if err := restarted.Clear(ctx, asset, quote); err != nil {
 		t.Fatalf("Clear: %v", err)
 	}
-	if err := sink.MarkRecovered(ctx, asset, quote); err != nil {
+	if err := sink.MarkRecovered(ctx, asset, quote, "operator:test"); err != nil {
 		t.Fatalf("MarkRecovered: %v", err)
 	}
 	for _, window := range []time.Duration{short, long, day} {
