@@ -253,13 +253,24 @@ Concretely:
       replace the originally-scoped `schema-audit` shape with
       something that walks history end-to-end without an RPC
       dependency.
-- [ ] Column `contract_wasm_hash` on the `trades` and
-      `oracle_updates` hypertables. No migration written yet —
-      the per-row decoder-variant selector is `Source` +
-      `(asset, contract_id)` lookup at decode time today, not a
-      stamped column. Adding the column is a future hardening
-      for backfill where we want explicit per-row variant
-      tagging.
+- [x] ~~Column `contract_wasm_hash` on the `trades` and
+      `oracle_updates` hypertables.~~ Not stamped, by decision.
+      Per-WASM safety is enforced where history is re-derived:
+      `wasmaudit.GateReplay` refuses a range unless every WASM
+      version active in it on every admitted contract is attested
+      in `internal/wasmaudit/audited_wasm.json`. It runs in
+      `backfill` (and `resume-stalled`), `projector-replay`,
+      `projected-rebuild` and `ch-rebuild -write`. Live drift is
+      caught by `stellarindex-ops wasm-drift`. The hash behind any
+      row is derivable after the fact from the lake's contract code
+      history (`ContractCodeHistory` / `ReplayCodeHistory` in
+      `internal/storage/clickhouse/wasm_lake_reader.go`), so a
+      per-row column would duplicate the lake and stay NULL on
+      every row written before it. Known gaps: `backfill-router`
+      is not gated although `soroswap-router` is in the manifest,
+      and `ch-cap67-movements` uses ungated SEP-41 decoders
+      (standard schema; the gate's `policyCheck` exempts sep41). Reopen if a served-tier
+      read needs the hash without a ClickHouse hop.
 - [x] Per-connector schema notes: kept out of this doc, which
       holds only the generic strategy. Each Soroban connector's
       WASM inventory and decoder-shape evidence is its audit log
