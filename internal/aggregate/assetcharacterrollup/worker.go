@@ -48,8 +48,8 @@ const DefaultInterval = 6 * time.Hour
 
 // DefaultStartupDelay holds the first roll back after boot. The roll's long
 // ACCESS SHARE lock on `trades` would otherwise block a follow-up deploy's
-// migrations within that window of a restart. Rolls started by the tick are
-// covered by deploy-binary.yml, which stops the aggregator around migrations.
+// migrations within that window of a restart. Rolls started by the tick can
+// still collide with a migration; that is not covered here.
 const DefaultStartupDelay = 30 * time.Minute
 
 // Refresher recomputes and atomically replaces the asset_volume_character
