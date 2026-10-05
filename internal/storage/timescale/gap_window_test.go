@@ -1,6 +1,7 @@
 package timescale
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -20,13 +21,56 @@ import (
 func TestPerSourceLedgerGapsQuerySeedsAcrossWindowBoundary(t *testing.T) {
 	t.Parallel()
 	for _, target := range DefaultGapDetectorTargets {
-		got := perSourceLedgerGapsQuery(target)
+		got := perSourceLedgerGapsQuery(target, "")
 		if !strings.Contains(got, "$4::bigint > 0 AND $4::bigint < $1") {
 			t.Errorf("%s/%s: query has no seed guard:\n%s", target.Source, target.Table, got)
 		}
 		if !strings.Contains(got, "UNION ALL") {
 			t.Errorf("%s/%s: query does not UNION the seed row into the scanned set:\n%s", target.Source, target.Table, got)
 		}
+	}
+}
+
+// TestCloseTimeBoundPredicate pins INV-1530's scan shape: soroban_events
+// is partitioned by ledger_close_time, so its gap scan must carry a
+// close-time predicate or it excludes no chunk; each known bound becomes
+// its own placeholder after the four fixed ones, an unknown side stays open.
+func TestCloseTimeBoundPredicate(t *testing.T) {
+	t.Parallel()
+	lo := sql.NullTime{Time: time.Date(2026, 10, 4, 16, 27, 57, 0, time.UTC), Valid: true}
+	hi := sql.NullTime{Time: time.Date(2026, 10, 4, 22, 43, 17, 0, time.UTC), Valid: true}
+	base := func() []any { return []any{int64(1), int64(2), int64(3), int64(0)} }
+
+	cases := []struct {
+		name     string
+		lo, hi   sql.NullTime
+		wantPred string
+		wantArgs int
+	}{
+		{"both", lo, hi, " AND ledger_close_time >= $5 AND ledger_close_time <= $6", 6},
+		{"lo only", lo, sql.NullTime{}, " AND ledger_close_time >= $5", 5},
+		{"hi only", sql.NullTime{}, hi, " AND ledger_close_time <= $5", 5},
+		{"neither", sql.NullTime{}, sql.NullTime{}, "", 4},
+	}
+	for _, tc := range cases {
+		pred, args := closeTimeBoundPredicate("ledger_close_time", tc.lo, tc.hi, base())
+		if pred != tc.wantPred || len(args) != tc.wantArgs {
+			t.Errorf("%s: got (%q, %d args); want (%q, %d args)", tc.name, pred, len(args), tc.wantPred, tc.wantArgs)
+		}
+	}
+
+	var soroban GapDetectorTarget
+	for _, target := range DefaultGapDetectorTargets {
+		if target.Table == "soroban_events" {
+			soroban = target
+		}
+	}
+	if soroban.CloseTimeColumn != "ledger_close_time" {
+		t.Fatalf("soroban_events target CloseTimeColumn = %q; want ledger_close_time (its hypertable time dimension)", soroban.CloseTimeColumn)
+	}
+	pred, _ := closeTimeBoundPredicate(soroban.CloseTimeColumn, lo, hi, base())
+	if q := perSourceLedgerGapsQuery(soroban, pred); !strings.Contains(q, "BETWEEN $1 AND $2 AND ledger_close_time >= $5 AND ledger_close_time <= $6") {
+		t.Errorf("soroban_events scan does not bound the partition column:\n%s", q)
 	}
 }
 

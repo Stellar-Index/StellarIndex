@@ -254,6 +254,18 @@ func (s *Store) SorobanEventsTimeBound(ctx context.Context, from, to uint32) (lo
 	return loN.Time, hiN.Time, cnt == expected, nil
 }
 
+// enclosingCloseTimeQuery returns close times that enclose every ledger
+// in [$1, $2]: those of the nearest logged ledger at or below $1 and at
+// or above $2. Close time is monotonic in ledger sequence, so unlike
+// [Store.SorobanEventsTimeBound] this needs no full coverage of the range
+// (the gap scan runs exactly when coverage may have holes); a side with
+// no anchor comes back NULL and is left unbounded.
+const enclosingCloseTimeQuery = `
+	SELECT (SELECT ledger_close_time FROM ledger_ingest_log
+	         WHERE ledger_seq <= $1 ORDER BY ledger_seq DESC LIMIT 1),
+	       (SELECT ledger_close_time FROM ledger_ingest_log
+	         WHERE ledger_seq >= $2 ORDER BY ledger_seq ASC LIMIT 1)`
+
 // LedgerIngestExtent returns the min and max ledger_seq present in the
 // table (ok=false when the table is empty). Used to bound watermark
 // computation without scanning trades.
