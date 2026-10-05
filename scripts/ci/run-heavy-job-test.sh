@@ -252,9 +252,14 @@ cat "$HEAVY_JOB_TEXTFILE_DIR"/heavy_job_test_job.prom
 HP
   chmod +x "$TMP/held-payload.sh"
   HEAVY_JOB_TEXTFILE_DIR="$TMP/tf" HEAVY_JOB_OPS_ENV="$OPS_ENV" env -u INVOCATION_ID "$WRAP" test-job "$TMP/held-payload.sh" >"$TMP/out" 2>"$TMP/err"
-  if grep -qE '^stellarindex_heavy_lock_held_since_unix\{job="test-job"\} [0-9]+$' "$TMP/out" && [ -z "$(ls -A "$TMP/tf")" ]; then ok "held-since metric published during the job, removed on exit"; else bad "held-since metric wrong (out: $(tr '\n' ' ' < "$TMP/out"), left: $(ls "$TMP/tf"))"; fi
+  if grep -qE '^stellarindex_heavy_lock_held_since_unix\{ops_job="test-job"\} [0-9]+$' "$TMP/out" && [ -z "$(ls -A "$TMP/tf")" ]; then ok "held-since metric published during the job, removed on exit"; else bad "held-since metric wrong (out: $(tr '\n' ' ' < "$TMP/out"), left: $(ls "$TMP/tf"))"; fi
 
-  # ── 6. the bound is validated, not passed through ──────────────────
+    # A run that did not get the lock must not publish a hold.
+  rm -rf "$TMP/tf2"; mkdir -p "$TMP/tf2"
+  run HEAVY_JOB_OPS_ENV="$OPS_ENV" FLOCK_HELD=1 HEAVY_JOB_TEXTFILE_DIR="$TMP/tf2"
+  if [ "$rc" -eq 75 ] && [ -z "$(ls -A "$TMP/tf2")" ]; then ok "lock not acquired: no heavy_job_*.prom published"; else bad "lock-not-acquired run left a hold file (rc=$rc, left: $(ls "$TMP/tf2"))"; fi
+
+# ── 6. the bound is validated, not passed through ──────────────────
   # `2` is the one that motivated this: a bare integer is SECONDS under
   # systemd.time, so an operator meaning two hours would have got a
   # two-second grace — accepted by systemd, and a harder kill than

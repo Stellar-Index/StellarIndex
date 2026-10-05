@@ -745,7 +745,7 @@
       if [ -d "$(dirname "$HELD_PROM")" ]; then
         {
           echo "# TYPE stellarindex_heavy_lock_held_since_unix gauge"
-          echo "stellarindex_heavy_lock_held_since_unix{job=\"${NAME}\"} $(date +%s)"
+          echo "stellarindex_heavy_lock_held_since_unix{ops_job=\"${NAME}\"} $(date +%s)"
         } > "${HELD_PROM}.$$" && mv "${HELD_PROM}.$$" "$HELD_PROM" || rm -f "${HELD_PROM}.$$"
       fi
       trap 'kill "$WATCHDOG" 2>/dev/null || true; rm -f "$HELD_PROM"' EXIT

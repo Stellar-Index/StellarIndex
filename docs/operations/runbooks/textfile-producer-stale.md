@@ -60,9 +60,10 @@ ever rebuilt leaves a file behind with `stellarindex_ops_job_running 0`.
 A run in progress is covered by `stellarindex_ops_job_heartbeat_stale`.
 
 **2026-10-05: lock-gated producers deferred while the heavy lock is held.**
-`archive_completeness.prom`, `verify_archive_tier_a.prom` and
-`ops_job_asset_registry_backfill.prom` wait behind (or exit 75 on) the
-host-wide heavy-job lock, so a long heavy job (a ~41h lake backup) froze
+`archive_completeness.prom`, `verify_archive_tier_a.prom`,
+`verify_archive_tier_b.prom`, `lake_verify.prom`, `network_state_verify.prom`
+and `ops_job_asset_registry_backfill.prom` wait behind (or exit 75 on) the
+host-wide heavy-job lock, so a long heavy job (a long projector-replay or recompress run) froze
 them past 24h and the alert fired for healthy producers. The rule now
 drops them while `stellarindex_heavy_lock_held_since_unix` (written by
 `run-heavy-job.sh` to `heavy_job_<name>.prom` for the job's lifetime,

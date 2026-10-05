@@ -1471,11 +1471,13 @@ groups:
       #     and removes it at exit; its age is the job's age, not a dead cron.
       #
       # Lock-gated producers (the `unless` clause, the ONE list of them) wait
-      # behind the host-wide heavy lock, so a long heavy job (a ~41h lake
-      # backup) legitimately freezes their files. They are suppressed only
+      # behind the host-wide heavy lock, so a long heavy job (a long projector-replay
+      # or recompress run) legitimately freezes their files. They are suppressed only
       # while stellarindex_heavy_lock_held_since_unix says the lock has been
       # held under 72h; a lock held longer, or a gated producer with no lock
-      # held, still alerts.
+      # held, still alerts. min (newest hold) so an orphaned file from a
+      # SIGKILLed job cannot disable suppression; non-root holders (verify-archive
+      # tiers A and B) never publish.
       - alert: stellarindex_textfile_producer_stale
         expr: |
           (
@@ -1485,10 +1487,10 @@ groups:
           )
           unless on (instance, file) (
             node_textfile_mtime_seconds{
-              file=~".*/(archive_completeness|verify_archive_tier_a|ops_job_asset_registry_backfill)\\.prom$"
+              file=~".*/(archive_completeness|verify_archive_tier_a|verify_archive_tier_b|lake_verify|network_state_verify|ops_job_asset_registry_backfill)\\.prom$"
             }
             and on (instance)
-            (max by (instance) (time() - stellarindex_heavy_lock_held_since_unix) < 259200)
+            (min by (instance) (time() - stellarindex_heavy_lock_held_since_unix) < 259200)
           )
         for: 30m
         labels:

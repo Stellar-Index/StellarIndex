@@ -1839,7 +1839,7 @@ tests:
         values: '0x6001'
       - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/some_other_producer.prom",instance="r1:9100",job="node_exporter"}'
         values: '0x6001'
-      - series: 'stellarindex_heavy_lock_held_since_unix{instance="r1:9100",job="node_exporter",job_name="lake-backup"}'
+      - series: 'stellarindex_heavy_lock_held_since_unix{instance="r1:9100",job="node_exporter",ops_job="projector-replay"}'
         values: '36000x6001'
     alert_rule_test:
       - eval_time: 40h
@@ -1862,6 +1862,30 @@ tests:
                 this file and `systemctl status` its unit. This is a catch-all:
                 most producers should have fired their own, tighter alert long
                 before this one does.
+  # An orphaned hold file (SIGKILLed job, 100h old) beside a fresh 30h hold:
+  # the newest hold decides, so gated producers stay silent. A stale
+  # heavy_job_*.prom alone never alerts (excluded from the catch-all).
+  - interval: 1m
+    name: textfile_producer_stale ignores an orphaned 100h hold beside a fresh 30h hold, and a stale heavy_job file
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/archive_completeness.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/verify_archive_tier_b.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/lake_verify.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/network_state_verify.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/heavy_job_x.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x6001'
+      - series: 'stellarindex_heavy_lock_held_since_unix{instance="r1:9100",job="node_exporter",ops_job="orphan"}'
+        values: '0x6001'
+      - series: 'stellarindex_heavy_lock_held_since_unix{instance="r1:9100",job="node_exporter",ops_job="fresh"}'
+        values: '252000x6001'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_textfile_producer_stale
+        exp_alerts: []
   - interval: 1m
     name: textfile_producer_stale alerts lock-gated producers once the lock has been held 80h
     input_series:
@@ -1873,7 +1897,7 @@ tests:
         values: '0x6001'
       - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/some_other_producer.prom",instance="r1:9100",job="node_exporter"}'
         values: '0x6001'
-      - series: 'stellarindex_heavy_lock_held_since_unix{instance="r1:9100",job="node_exporter",job_name="lake-backup"}'
+      - series: 'stellarindex_heavy_lock_held_since_unix{instance="r1:9100",job="node_exporter",ops_job="projector-replay"}'
         values: '72000x6001'
     alert_rule_test:
       - eval_time: 100h
