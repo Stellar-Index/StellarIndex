@@ -56,7 +56,7 @@ All sources healthy (`stellarindex_source_events_total` within ±20% of baseline
 
 ## Gaps surfaced by prior runs
 
-Slow drift below the 1/s threshold goes unalerted (action: per-source ratio alert, `decode_errors / events_total > 5%`);
+Slow drift is covered by `stellarindex_projector_decode_error_rate_high` (INV-1221; `projector.yml:316`, >0.1/s per source for 15m, a rate not a ratio; the 5% ratio form was not built);
 protocol upgrades are discovered by operator knowledge, no release-notes watcher on `developers.stellar.org`.
 
 ## Variants

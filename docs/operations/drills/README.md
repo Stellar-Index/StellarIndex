@@ -68,7 +68,7 @@ are tracked; a new drill keeps its writeup file until then.
 
 - 3-person tabletop after launch with the next on-call hire, due 2026-Q3 (inventory INV-1220; blocked on staffing).
 - 3-person SEV-2 tabletop with status-page state-transition rehearsal (*Degraded, Identified, Mitigated, Operational*), due 2026-Q3 (INV-1224; same blocker).
-- Per-source decode-error ratio alert (`decode_errors / events_total > 5%`) to catch slow drift below the 1/s alert threshold.
+- Per-source decode-error alert: done (INV-1221), shipped as `stellarindex_projector_decode_error_rate_high` (`deploy/monitoring/rules/projector.yml:316`, >0.1/s per source for 15m, ticket). It is a rate, not a ratio; the 5% `decode_errors / events_total` form was not built.
 - stellar-core / developers.stellar.org release-notes watcher (INV-1222, discarded in the inventory; no watcher exists).
 - Wire a per-source `-source` flag for `stellarindex-ops backfill` (INV-1223, discarded: bespoke backfills were removed by ADR-0032; projected sources recover with `projector-replay`, see [decode-errors.md](../runbooks/decode-errors.md)).
 

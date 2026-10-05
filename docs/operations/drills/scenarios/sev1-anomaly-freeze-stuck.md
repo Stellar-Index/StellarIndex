@@ -25,7 +25,7 @@ All services up, aggregator producing closed-bucket VWAPs each minute, `flags.fr
 
 | T+ | Beat |
 | --- | --- |
-| 0:00 | Freeze-dwell page on XLM/USD (frozen >5 closed buckets); see `stellarindex_anomaly_freeze_*` in `deploy/monitoring/rules/anomaly.yml` |
+| 0:00 | Freeze-dwell page on XLM/USD (frozen >5 closed buckets); `stellarindex_anomaly_freeze_engaged` (`anomaly.yml`, ticket, 1m after engage) and `stellarindex_anomaly_freeze_active` (`freeze-lifecycle.yml:349`, informational, >0 for 5m) are the early signals; neither pages. Only `stellarindex_anomaly_freeze_escalated` (`freeze-lifecycle.yml:146`, page) wakes anyone, and it fires on escalation to operator review, not on a stuck marker |
 | 0:30 | Customer team asks if the feed is broken (same number for 8 min) |
 | 3:00 | `redis-cli GET freeze:native:fiat:USD` shows `engaged_at=...,reason=class_diversity_drop` |
 | 5:00 | Source-class diversity query: dropped to 2 at 22:17, back to 4 at 22:18:30 |

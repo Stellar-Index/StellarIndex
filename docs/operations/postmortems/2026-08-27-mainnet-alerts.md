@@ -35,7 +35,7 @@ is itself a reliability signal and had to be driven to zero.
 **Fix:** restored r1's unit to the template, reset the stale from-genesis `in_progress` state (chain high-water 64112025 kept), chowned the state file back to `stellarindex`;
 `find … -type d ! -perm -o+rx -exec chmod o+rx` on the 6,034 dirs (public ledger data); codified the mirror-perm sweep idempotently in the archival-node role (`04-users.yml`).
 Verified: Tier A green (`chain-link integrity OK`, exit 0); Tier B verified 957 checkpoints, 0 missed, 0 permission errors (capped test); timers (05:27 / 06:44 CEST) run the corrected config.
-**Follow-ups:** nothing re-asserts these units between deploys; a periodic `ansible-playbook --check` drift alarm on r1's units would have caught it (tracked separately). Tier B's first run is a
+**Follow-ups:** nothing re-asserts these units between deploys; a periodic `ansible-playbook --check` drift alarm on r1's units would have caught it. That alarm shipped as `.github/workflows/ansible-drift.yml` (INV-0994). Tier B's first run is a
 full ~2.5 h pass from 49984000, later runs incremental, deprioritised (CPUWeight/IOWeight=20).
 
 ## Alert 1 — API p99 latency (root-caused; needs deliberate deploy)

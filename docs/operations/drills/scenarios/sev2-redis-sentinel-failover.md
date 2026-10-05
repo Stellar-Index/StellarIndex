@@ -30,6 +30,7 @@ playbook_section: ../../sev-playbook.md#4-response-flow
 | 0:30 | Sentinel promoting `cache-02`; `stellarindex_ratelimit_fail_open_total` spikes |
 | 1:00 | `cache-02` accepts writes; replicas re-attach; `flags.frozen` paths re-enable as cache catches up |
 | 2:00 | Customer: a few 503s on `/v1/price` |
+| 2:30 | `stellarindex_redis_replication_broken` (`cache.yml:109`, `redis_connected_slaves < 2` for 2m, ticket) while `cache-01` is still absent; clears when it rejoins |
 | 5:00 | Metrics baseline, but `flags.frozen` fires on a pair not frozen pre-failover: stale marker or legitimate aggregator freeze during the outage? |
 | 10:00 | `cache-01` restarted, rejoins as replica; Sentinel does not fail back (ADR-0024) |
 | 20:00 | Customer asks if stored API keys are affected (no: validator cache is read-through, a master swap loses no record) |
@@ -48,7 +49,7 @@ playbook_section: ../../sev-playbook.md#4-response-flow
 
 ## Pass criteria
 
-1. Classified SEV-2 (degraded), not SEV-1.
+1. Classified SEV-2 (degraded), not SEV-1: `/v1/readyz` recovers within 60 s and 5xx is back to baseline within 5 min.
 2. Confirmed failover completion via `/v1/readyz`, not metrics alone.
 3. Treated post-failover `flags.frozen` as expected behaviour.
 4. Verified the API-key validator path still serves.
@@ -59,4 +60,4 @@ playbook_section: ../../sev-playbook.md#4-response-flow
 
 ## Variants
 
-Both replicas down (no quorum; manual recovery; escalates to SEV-1 mid-drill); Sentinel split-brain (partition between Sentinel hosts; ADR-0024 three-host quorum=2 rationale).
+Both replicas down (no quorum; manual recovery; `stellarindex_redis_replication_broken` stays firing as a ticket; escalates to SEV-1 mid-drill); Sentinel split-brain (partition between Sentinel hosts; ADR-0024 three-host quorum=2 rationale).
