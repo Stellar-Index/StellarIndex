@@ -6,6 +6,8 @@ package timescale
 import (
 	"context"
 	"fmt"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // AssetCoverageSignals is the per-asset signal set the priceless-popular
@@ -72,16 +74,17 @@ type AssetCoverageSignals struct {
 // Composed from the resolver's own lists (transitive_price.go) rather
 // than restated, so the tripwire and Store.TransitiveUSDPriceCandidates cannot
 // disagree about what a proxy is; TestProxyQuoteLists_Lockstep pins the
-// catalogue's literal IN-lists to the same set.
-const coverageQuoteProxies = usdProxyQuotes + `,
-	` + xlmQuotes
+// catalogue's literal IN-lists to the same set. The XLM SAC is bound at $1
+// in every query that splices this.
+var coverageQuoteProxies = usdProxyQuotes + `,
+	` + xlmQuotesBound(1)
 
 // pricelessTradeLegs is the trailing-7d priced trade set seen from each
 // asset's side: one row per (trade, leg). Sources that store swap direction
 // (aquarius) can leave an asset on the QUOTE leg only, so enumerating base_asset
 // alone would never surface it. The proxy quotes are skipped on the quote leg:
 // they are seeded into the priced set, so they can never be candidates.
-const pricelessTradeLegs = `(
+var pricelessTradeLegs = `(
   SELECT base_asset AS asset_id, ts, usd_volume, maker, taker
     FROM trades
    WHERE ts >= now() - INTERVAL '7 days'
@@ -134,7 +137,7 @@ const pricelessTradeLegs = `(
 // read are unchanged; the planner declines to parallelise the wider
 // aggregate. That keeps a full sweep around 70s, well inside
 // DefaultSweepTimeout (5 min) and the 10-minute cadence.
-const popularPricelessCandidatesSQL = `
+var popularPricelessCandidatesSQL = `
 WITH vol7d AS (
   SELECT asset_id,
          SUM(usd_volume)::double precision AS vol_7d,
@@ -219,7 +222,7 @@ top_pair AS (
 // priceless-popular tripwire classifies. Priced assets are excluded in
 // SQL (they are not coverage gaps); everything else the classifier judges.
 func (s *Store) PopularPricelessCandidates(ctx context.Context) ([]AssetCoverageSignals, error) {
-	rows, err := s.db.QueryContext(ctx, popularPricelessCandidatesSQL)
+	rows, err := s.db.QueryContext(ctx, popularPricelessCandidatesSQL, canonical.NativeSACContractID())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: PopularPricelessCandidates: %w", err)
 	}
@@ -264,7 +267,7 @@ const substanceFloorHaving = `SUM(volume_usd) >= 1000                           
 // single-asset probe asks EXACTLY the same question the sweep asks. Both
 // queries splice it after their own leading CTEs; it ends with the
 // `priced` CTE closed, no trailing comma.
-const pricelessPricedCTEs = `priced_direct AS (
+var pricelessPricedCTEs = `priced_direct AS (
   SELECT base_asset AS asset_id
     FROM prices_1m
    WHERE bucket >= now() - INTERVAL '24 hours'
@@ -279,7 +282,7 @@ const pricelessPricedCTEs = `priced_direct AS (
    WHERE bucket >= now() - INTERVAL '24 hours'
      AND bucket <= now() - INTERVAL '1 minute'
      AND vwap > 0
-     AND base_asset IN (` + xlmQuotes + `)
+     AND base_asset IN (` + xlmQuotesBound(1) + `)
    GROUP BY quote_asset
   HAVING ` + substanceFloorHaving + `
   UNION
@@ -351,9 +354,9 @@ const pricelessServedArm = `SELECT asset_id
    WHERE computed_at > now() - INTERVAL '` + assetPriceSnapshotMaxAge + `'`
 
 // assetIsPricedSQL asks the sweep's own priced set about one asset id.
-const assetIsPricedSQL = `
+var assetIsPricedSQL = `
 WITH ` + pricelessPricedCTEs + `
-SELECT EXISTS (SELECT 1 FROM priced WHERE asset_id = $1)
+SELECT EXISTS (SELECT 1 FROM priced WHERE asset_id = $2)
 `
 
 // AssetIsPriced reports whether assetID is in the set the priceless-popular
@@ -362,7 +365,7 @@ SELECT EXISTS (SELECT 1 FROM priced WHERE asset_id = $1)
 // resolved to its classic asset) without a second definition of "priced".
 func (s *Store) AssetIsPriced(ctx context.Context, assetID string) (bool, error) {
 	var priced bool
-	if err := s.db.QueryRowContext(ctx, assetIsPricedSQL, assetID).Scan(&priced); err != nil {
+	if err := s.db.QueryRowContext(ctx, assetIsPricedSQL, canonical.NativeSACContractID(), assetID).Scan(&priced); err != nil {
 		return false, fmt.Errorf("timescale: AssetIsPriced: %w", err)
 	}
 	return priced, nil

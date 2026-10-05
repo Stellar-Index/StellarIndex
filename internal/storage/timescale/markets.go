@@ -317,7 +317,7 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 //
 // Rows are alias-folded BEFORE grouping, so the filters, the XLM-fallback
 // CASE and every group key see one spelling per asset.
-func perSourcePoolsCTE(foldIdx int) string {
+func perSourcePoolsCTE(foldIdx, sacIdx int) string {
 	return `
         WITH ` + aliasFoldCTE(foldIdx) + `,
         xlm_usd AS (
@@ -334,11 +334,11 @@ func perSourcePoolsCTE(foldIdx int) string {
                        FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0)
               +
               CASE
-                WHEN p.base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+                WHEN ` + xlmNativeAssetIn("p.base_asset", sacIdx) + `
                   THEN COALESCE(SUM(p.sum_base_unpriced)
                                 FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) / 1e7::numeric
                        * COALESCE((SELECT vwap FROM xlm_usd), 0)
-                WHEN p.quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+                WHEN ` + xlmNativeAssetIn("p.quote_asset", sacIdx) + `
                   THEN COALESCE(SUM(p.sum_quote_unpriced)
                                 FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) / 1e7::numeric
                        * COALESCE((SELECT vwap FROM xlm_usd), 0)
@@ -425,8 +425,8 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// pre-#25 query returned NULL; the handler scan collapses
 	// NULL and "0" identically, so functionally equivalent).
 	// $8/$9 are the alias-fold arrays, after the $1..$7 layout below.
-	cte := perSourcePoolsCTE(8)
-	canonBase, canonQuote, flipped := canonOrientSQL()
+	cte := perSourcePoolsCTE(8, 10)
+	canonBase, canonQuote, flipped := canonOrientSQL(10)
 	cte += poolsFilterSQL(canonBase, canonQuote) + `
          GROUP BY p.source, p.base_asset, p.quote_asset
         )
@@ -493,11 +493,11 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	return cte + tail, poolsQueryArgs(since, filter, cursor, limit)
 }
 
-// poolsQueryArgs binds $1..$9 for buildPoolsQuery.
+// poolsQueryArgs binds $1..$10 for buildPoolsQuery; $10 is the native-XLM SAC.
 func poolsQueryArgs(since time.Time, filter PoolsFilter, cursor string, limit int) []any {
 	forms, canons := sacAliasFoldBind()
 	args := append([]any{since, cursor, limit + 1}, poolsFilterArgs(filter)...)
-	return append(args, forms, canons)
+	return append(args, forms, canons, canonical.NativeSACContractID())
 }
 
 // assetAliasBind expands an asset filter to the text[] of its alias forms
@@ -647,9 +647,9 @@ func (s *Store) sourceMarketsCommon(ctx context.Context, source, cursor string, 
 // PREVIOUS day (6h end_offset, materialized_only) and it is pair-wide
 // rather than per-venue anyway.
 func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, order MarketsOrder) (string, []any) {
-	canonBase, canonQuote, flipped := canonOrientSQL()
+	canonBase, canonQuote, flipped := canonOrientSQL(7)
 	forms, canons := sacAliasFoldBind() // $5, $6
-	ctes := perSourcePoolsCTE(5) + `
+	ctes := perSourcePoolsCTE(5, 7) + `
            AND p.source = $4
          GROUP BY p.source, p.base_asset, p.quote_asset
         ),
@@ -684,14 +684,14 @@ func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, 
                   (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source, forms, canons}
+		return ctes + tail, []any{since, cursor, limit + 1, source, forms, canons, canonical.NativeSACContractID()}
 	default: // MarketsOrderPair
 		const tail = `
          WHERE ($2 = '' OR (base_asset || '|' || quote_asset) > $2)
          ORDER BY (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source, forms, canons}
+		return ctes + tail, []any{since, cursor, limit + 1, source, forms, canons, canonical.NativeSACContractID()}
 	}
 }
 
@@ -1042,7 +1042,7 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	// canonOrientSQL / canonical.Orient. `folded` first maps each SAC
 	// spelling onto its classic form, so a market traded on SDEX and on a
 	// Soroban venue is one row; orientation is decided on the folded pair.
-	canonBase, canonQuote, flipped := canonOrientSQL()
+	canonBase, canonQuote, flipped := canonOrientSQL(8)
 	ctes := distinctPairsActivityCTEs + `        raw AS (
             SELECT COALESCE(d.base_asset, h.base_asset)   AS base_asset,
                    COALESCE(d.quote_asset, h.quote_asset) AS quote_asset,
@@ -1108,14 +1108,14 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
                   (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source, assets, forms, canons}
+		return ctes + tail, []any{since, cursor, limit + 1, source, assets, forms, canons, canonical.NativeSACContractID()}
 	default: // MarketsOrderPair
 		const tail = `
          WHERE ($2 = '' OR (base_asset || '|' || quote_asset) > $2)
          ORDER BY (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source, assets, forms, canons}
+		return ctes + tail, []any{since, cursor, limit + 1, source, assets, forms, canons, canonical.NativeSACContractID()}
 	}
 }
 

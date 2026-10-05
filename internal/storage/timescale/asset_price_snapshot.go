@@ -307,12 +307,13 @@ func unionPriceArmCTE(name, quotes, window, asset string) string {
 // aggregator's stablecoin-proxy policy, in its classic and SAC forms
 // because Soroban venues carry the SAC id) and `asset_vs_xlm*` against
 // XLM in both identity forms ([xlmQuotes]). TestProxyQuoteLists_Lockstep
-// pins both IN-lists.
-func assetPriceArmCTEs(asset string) string {
+// pins both IN-lists. xlmQuoteList is [xlmQuotes] for the snapshot writer
+// and [xlmQuotesBound] for reads.
+func assetPriceArmCTEs(asset, xlmQuoteList string) string {
 	arms := make([]string, 0, 8)
 	for _, arm := range []struct{ name, quotes string }{
 		{"direct_usd", usdProxyQuotes},
-		{"asset_vs_xlm", xlmQuotes},
+		{"asset_vs_xlm", xlmQuoteList},
 	} {
 		for _, lb := range []struct{ suffix, window string }{
 			{"", priceWindowNow},
@@ -330,7 +331,7 @@ func assetPriceArmCTEs(asset string) string {
 // arms plus the XLM/USD scalars. The `/*PUSHDOWN_*/` markers the listing
 // once carried are gone: a full all-asset recompute has nothing to
 // narrow to (same reason refreshAssetVolumeUpsert carries none).
-var assetPriceCTEs = assetPriceArmCTEs("") + "," + xlmUSDCTEs
+var assetPriceCTEs = assetPriceArmCTEs("", xlmQuotes) + "," + xlmUSDCTEs
 
 // usdQuotePref ranks the USD quote forms for a pick that two forms can tie
 // on the same bucket: a true USD quote, then classic USDC, then its SAC
@@ -342,6 +343,11 @@ const usdQuotePref = `array_position(ARRAY['fiat:USD',
 // xlmFormPrefOpen ranks XLM's two on-chain forms the same way, classic
 // first; close it with the column holding the XLM form.
 const xlmFormPrefOpen = `array_position(ARRAY[` + xlmQuotes + `], `
+
+// xlmFormPrefOpenBound is [xlmFormPrefOpen] with the SAC bound at $n.
+func xlmFormPrefOpenBound(n int) string {
+	return `array_position(ARRAY[` + xlmQuotesBound(n) + `], `
+}
 
 // xlmUSDNewest orders an XLM/USD scalar pick: newest bucket, then
 // [usdQuotePref] so a same-minute USDC and fiat:USD print resolve stably.

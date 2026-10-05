@@ -166,8 +166,8 @@ func TestTradesForArbScanQueryShape(t *testing.T) {
 		!strings.Contains(q, "quote_amount / 1e7::numeric") {
 		t.Error("TradesForArbScan lost the XLM-leg USD fallback — SDEX arb legs would report $0 notionals again")
 	}
-	if !strings.Contains(q, mevXLMSAC) {
-		t.Errorf("the XLM-leg fallback must also recognise the native-XLM SAC %s", mevXLMSAC)
+	if strings.Contains(q, mevXLMSAC) || !strings.Contains(q, "IN ('native', $3::text)") {
+		t.Errorf("the XLM-leg fallback must bind the native-XLM SAC at $3, not hard-code it:\n%s", q)
 	}
 }
 

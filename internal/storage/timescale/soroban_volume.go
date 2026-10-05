@@ -3,6 +3,8 @@ package timescale
 import (
 	"context"
 	"fmt"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // sorobanVolume24hUSDQuery derives the trailing-24h USD trade volume for
@@ -35,7 +37,8 @@ import (
 // the same bounded most-recent XLM→USD anchor GetSourceStats uses; a NULL
 // anchor degrades the XLM-leg fallback to NULL, which SUM skips, and the
 // outer COALESCE floors the all-NULL case to "0". $1 binds the asset's
-// canonical key (trades.base_asset / quote_asset form, e.g. a `C…` id).
+// canonical key (trades.base_asset / quote_asset form, e.g. a `C…` id); $2 the
+// network's native-XLM SAC.
 const sorobanVolume24hUSDQuery = `
         WITH xlm_usd AS (
           ` + xlmUSDVolumeSelect + `
@@ -49,9 +52,9 @@ const sorobanVolume24hUSDQuery = `
         )
         SELECT COALESCE(sum(
           COALESCE(usd_volume, CASE
-            WHEN base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+            WHEN base_asset IN ('native', $2::text)
               THEN (base_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
-            WHEN quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+            WHEN quote_asset IN ('native', $2::text)
               THEN (quote_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
             ELSE NULL
           END)
@@ -74,7 +77,7 @@ const sorobanVolume24hUSDQuery = `
 // canonical asset string trades.base_asset / quote_asset stores.
 func (s *Store) SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (string, error) {
 	var out string
-	if err := s.db.QueryRowContext(ctx, sorobanVolume24hUSDQuery, assetKey).Scan(&out); err != nil {
+	if err := s.db.QueryRowContext(ctx, sorobanVolume24hUSDQuery, assetKey, canonical.NativeSACContractID()).Scan(&out); err != nil {
 		return "", fmt.Errorf("timescale: SorobanVolume24hUSDForAsset(%s): %w", assetKey, err)
 	}
 	return out, nil

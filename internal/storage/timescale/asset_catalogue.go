@@ -1149,7 +1149,7 @@ const (
 // Buckets with no underlying trades produce a null P. Callers can
 // either render a gap or interpolate; we leave that to the UI.
 func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]AssetPricePoint, error) {
-	rows, err := s.db.QueryContext(ctx, getAssetPriceHistory24hSQL, assetAliasArray(assetID))
+	rows, err := s.db.QueryContext(ctx, getAssetPriceHistory24hSQL, assetAliasArray(assetID), canonical.NativeSACContractID())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetPriceHistory24h: %w", err)
 	}
@@ -1176,7 +1176,7 @@ func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]
 // getAssetPriceHistory24hSQL is GetAssetPriceHistory24h's query,
 // hoisted to a package constant so the function body stays under the
 // funlen threshold (same treatment as getNativeAssetSQL).
-const getAssetPriceHistory24hSQL = `
+var getAssetPriceHistory24hSQL = `
 		WITH hours AS (
 		  SELECT generate_series(
 		    date_trunc('hour', now() - INTERVAL '23 hours'),
@@ -1232,18 +1232,18 @@ const getAssetPriceHistory24hSQL = `
 		      FROM (
 		        SELECT date_trunc('hour', bucket) AS h, vwap::numeric AS vwap,
 		               array_position($1::text[], base_asset) AS prio,
-		               bucket, 0 AS inverted, ` + xlmFormPrefOpen + `quote_asset) AS xlm_prio
+		               bucket, 0 AS inverted, ` + xlmFormPrefOpenBound(2) + `quote_asset) AS xlm_prio
 		          FROM prices_1m
 		         WHERE base_asset = ANY($1)
-		           AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		           AND quote_asset IN ('native', $2::text)
 		           AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
 		           AND vwap IS NOT NULL
 		        UNION ALL
 		        SELECT date_trunc('hour', bucket), 1::numeric / vwap,
 		               array_position($1::text[], quote_asset),
-		               bucket, 1, ` + xlmFormPrefOpen + `base_asset)
+		               bucket, 1, ` + xlmFormPrefOpenBound(2) + `base_asset)
 		          FROM prices_1m
-		         WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         WHERE base_asset IN ('native', $2::text)
 		           AND quote_asset = ANY($1)
 		           AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
 		           AND vwap > 0
@@ -1290,7 +1290,7 @@ const getAssetPriceHistory24hSQL = `
 //
 // Buckets with no underlying trades produce a null P.
 func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]AssetPricePoint, error) {
-	rows, err := s.db.QueryContext(ctx, getAssetPriceHistory7dSQL, assetAliasArray(assetID))
+	rows, err := s.db.QueryContext(ctx, getAssetPriceHistory7dSQL, assetAliasArray(assetID), canonical.NativeSACContractID())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetPriceHistory7d: %w", err)
 	}
@@ -1317,7 +1317,7 @@ func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]A
 // getAssetPriceHistory7dSQL is GetAssetPriceHistory7d's query, hoisted
 // to a package constant so TestProxyQuoteLists_Lockstep can pin its XLM
 // arms alongside getAssetPriceHistory24hSQL.
-const getAssetPriceHistory7dSQL = `
+var getAssetPriceHistory7dSQL = `
 		WITH days AS (
 		  SELECT generate_series(
 		    date_trunc('day', now() - INTERVAL '6 days'),
@@ -1370,18 +1370,18 @@ const getAssetPriceHistory7dSQL = `
 		      FROM (
 		        SELECT date_trunc('day', bucket) AS d, vwap::numeric AS vwap,
 		               array_position($1::text[], base_asset) AS prio,
-		               bucket, 0 AS inverted, ` + xlmFormPrefOpen + `quote_asset) AS xlm_prio
+		               bucket, 0 AS inverted, ` + xlmFormPrefOpenBound(2) + `quote_asset) AS xlm_prio
 		          FROM prices_1m
 		         WHERE base_asset = ANY($1)
-		           AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		           AND quote_asset IN ('native', $2::text)
 		           AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
 		           AND vwap IS NOT NULL
 		        UNION ALL
 		        SELECT date_trunc('day', bucket), 1::numeric / vwap,
 		               array_position($1::text[], quote_asset),
-		               bucket, 1, ` + xlmFormPrefOpen + `base_asset)
+		               bucket, 1, ` + xlmFormPrefOpenBound(2) + `base_asset)
 		          FROM prices_1m
-		         WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         WHERE base_asset IN ('native', $2::text)
 		           AND quote_asset = ANY($1)
 		           AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
 		           AND vwap > 0
@@ -1570,7 +1570,7 @@ type AssetTopMarket struct {
 // Returns 0 cleanly when the asset has no rows in the window.
 func (s *Store) GetAssetMarketsCount(ctx context.Context, assetID string) (int64, error) {
 	var n int64
-	if err := s.db.QueryRowContext(ctx, assetMarketsCountQuery(), assetAliasArray(assetID)).Scan(&n); err != nil {
+	if err := s.db.QueryRowContext(ctx, assetMarketsCountQuery(), assetAliasArray(assetID), canonical.NativeSACContractID()).Scan(&n); err != nil {
 		return 0, fmt.Errorf("timescale: GetAssetMarketsCount: %w", err)
 	}
 	return n, nil
@@ -1612,7 +1612,7 @@ func (s *Store) GetAssetTopMarkets(ctx context.Context, assetID string, limit in
 	if limit <= 0 || limit > 20 {
 		limit = 5
 	}
-	rows, err := s.db.QueryContext(ctx, assetTopMarketsQuery(), assetAliasArray(assetID), limit)
+	rows, err := s.db.QueryContext(ctx, assetTopMarketsQuery(), assetAliasArray(assetID), limit, canonical.NativeSACContractID())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetTopMarkets: %w", err)
 	}
@@ -1639,7 +1639,7 @@ func (s *Store) GetAssetTopMarkets(ctx context.Context, assetID string, limit in
 // assetMarketsCountQuery builds GetAssetMarketsCount's query: DISTINCT
 // on canonOrientSQL's folded (base, quote), never the raw stored pair.
 func assetMarketsCountQuery() string {
-	canonBase, canonQuote, _ := canonOrientSQL()
+	canonBase, canonQuote, _ := canonOrientSQL(2)
 	return `
 		SELECT COUNT(*) FROM (
 		  SELECT DISTINCT ` + canonBase + `, ` + canonQuote + `
@@ -1661,7 +1661,7 @@ func assetMarketsCountQuery() string {
 // pair keyed by the asset's crypto:XLM or SAC form is labelled as the
 // asset's own market rather than being mislabelled as a counterparty.
 func assetTopMarketsQuery() string {
-	canonBase, canonQuote, _ := canonOrientSQL()
+	canonBase, canonQuote, _ := canonOrientSQL(3)
 	return `
 		WITH per_pair_24h AS (
 		  SELECT ` + canonBase + ` AS base_asset, ` + canonQuote + ` AS quote_asset,
@@ -1769,7 +1769,7 @@ var getAssetBySlugSQL = `
 		         AND volume_usd IS NOT NULL
 		    ) t
 		),
-		` + assetPriceArmCTEs("(SELECT asset_id FROM chosen)") + `,
+		` + assetPriceArmCTEs("(SELECT asset_id FROM chosen)", xlmQuotesBound(2)) + `,
 		` + xlmUSDCTEs + `
 		SELECT
 		    -- asset_id is the LAST resort here, and it is load-bearing.
@@ -1823,7 +1823,7 @@ var getAssetBySlugSQL = `
 // retry — see the SQL's WHERE clause + the handler's case-fallback
 // for the full input-shape table.
 func (s *Store) GetAssetBySlug(ctx context.Context, slug string) (AssetRow, error) {
-	r, err := scanAssetRow(s.db.QueryRowContext(ctx, getAssetBySlugSQL, slug))
+	r, err := scanAssetRow(s.db.QueryRowContext(ctx, getAssetBySlugSQL, slug, canonical.NativeSACContractID()))
 	if err != nil {
 		// Surface sql.ErrNoRows unwrapped so handler errors.Is checks
 		// keep matching; scanAssetRow wraps with %w which preserves it.
@@ -2166,7 +2166,7 @@ func (s *Store) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []st
 		return map[string][]AssetPricePoint{}, nil
 	}
 	forms, owners, prios := assetAliasRows(assetIDs)
-	rows, err := s.db.QueryContext(ctx, getAssetsPriceHistory24hBatchSQL, forms, owners, prios)
+	rows, err := s.db.QueryContext(ctx, getAssetsPriceHistory24hBatchSQL, forms, owners, prios, canonical.NativeSACContractID())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory24hBatch: %w", err)
 	}
@@ -2193,7 +2193,7 @@ func (s *Store) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []st
 
 // getAssetsPriceHistory24hBatchSQL is GetAssetsPriceHistory24hBatch's
 // query, hoisted so TestProxyQuoteLists_Lockstep can pin its XLM arms.
-const getAssetsPriceHistory24hBatchSQL = `
+var getAssetsPriceHistory24hBatchSQL = `
 		WITH hours AS (
 		  SELECT generate_series(
 		    date_trunc('hour', now() - INTERVAL '23 hours'),
@@ -2238,19 +2238,19 @@ const getAssetsPriceHistory24hBatchSQL = `
 		  SELECT DISTINCT ON (asset_id, h) asset_id, h, vwap
 		    FROM (
 		      SELECT w.asset_id, date_trunc('hour', p.bucket) AS h, p.vwap::numeric AS vwap,
-		             w.prio, p.bucket, 0 AS inverted, ` + xlmFormPrefOpen + `quote_asset) AS xlm_prio
+		             w.prio, p.bucket, 0 AS inverted, ` + xlmFormPrefOpenBound(4) + `quote_asset) AS xlm_prio
 		        FROM prices_1m p
 		        JOIN want w ON w.form = p.base_asset
 		       WHERE base_asset = ANY($1)
-		         AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         AND quote_asset IN ('native', $4::text)
 		         AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
 		         AND vwap IS NOT NULL
 		      UNION ALL
 		      SELECT w.asset_id, date_trunc('hour', p.bucket), 1::numeric / p.vwap,
-		             w.prio, p.bucket, 1, ` + xlmFormPrefOpen + `base_asset)
+		             w.prio, p.bucket, 1, ` + xlmFormPrefOpenBound(4) + `base_asset)
 		        FROM prices_1m p
 		        JOIN want w ON w.form = p.quote_asset
-		       WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		       WHERE base_asset IN ('native', $4::text)
 		         AND quote_asset = ANY($1)
 		         AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
 		         AND vwap > 0
@@ -2294,7 +2294,7 @@ func (s *Store) GetAssetsPriceHistory7dBatch(ctx context.Context, assetIDs []str
 		return map[string][]AssetPricePoint{}, nil
 	}
 	forms, owners, prios := assetAliasRows(assetIDs)
-	rows, err := s.db.QueryContext(ctx, getAssetsPriceHistory7dBatchSQL, forms, owners, prios)
+	rows, err := s.db.QueryContext(ctx, getAssetsPriceHistory7dBatchSQL, forms, owners, prios, canonical.NativeSACContractID())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory7dBatch: %w", err)
 	}
@@ -2321,7 +2321,7 @@ func (s *Store) GetAssetsPriceHistory7dBatch(ctx context.Context, assetIDs []str
 
 // getAssetsPriceHistory7dBatchSQL is GetAssetsPriceHistory7dBatch's
 // query, hoisted so TestProxyQuoteLists_Lockstep can pin its XLM arms.
-const getAssetsPriceHistory7dBatchSQL = `
+var getAssetsPriceHistory7dBatchSQL = `
 		WITH days AS (
 		  SELECT generate_series(
 		    date_trunc('day', now() - INTERVAL '6 days'),
@@ -2366,19 +2366,19 @@ const getAssetsPriceHistory7dBatchSQL = `
 		  SELECT DISTINCT ON (asset_id, d) asset_id, d, vwap
 		    FROM (
 		      SELECT w.asset_id, date_trunc('day', p.bucket) AS d, p.vwap::numeric AS vwap,
-		             w.prio, p.bucket, 0 AS inverted, ` + xlmFormPrefOpen + `quote_asset) AS xlm_prio
+		             w.prio, p.bucket, 0 AS inverted, ` + xlmFormPrefOpenBound(4) + `quote_asset) AS xlm_prio
 		        FROM prices_1m p
 		        JOIN want w ON w.form = p.base_asset
 		       WHERE base_asset = ANY($1)
-		         AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		         AND quote_asset IN ('native', $4::text)
 		         AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
 		         AND vwap IS NOT NULL
 		      UNION ALL
 		      SELECT w.asset_id, date_trunc('day', p.bucket), 1::numeric / p.vwap,
-		             w.prio, p.bucket, 1, ` + xlmFormPrefOpen + `base_asset)
+		             w.prio, p.bucket, 1, ` + xlmFormPrefOpenBound(4) + `base_asset)
 		        FROM prices_1m p
 		        JOIN want w ON w.form = p.quote_asset
-		       WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+		       WHERE base_asset IN ('native', $4::text)
 		         AND quote_asset = ANY($1)
 		         AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
 		         AND vwap > 0

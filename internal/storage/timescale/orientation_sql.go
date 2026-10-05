@@ -8,10 +8,23 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// nativeXLMSAC is the PUBNET native-XLM SAC, still concatenated into SQL
-// text (this file, transitive_price.go); Go-side code uses
-// canonical.NativeSACContractID().
+// nativeXLMSAC is the PUBNET native-XLM SAC. Read paths bind
+// canonical.NativeSACContractID() instead (see [nativeSACParam]); this
+// literal survives only in the asset_price_snapshot writer and tests that
+// pin pubnet.
 const nativeXLMSAC = canonical.XLMSacContractID
+
+// nativeSACParam is the placeholder for the installed network's native
+// XLM SAC, bound at $n from canonical.NativeSACContractID().
+func nativeSACParam(n int) string { return fmt.Sprintf("$%d::text", n) }
+
+// xlmQuotesBound is [xlmQuotes] with the SAC bound at $n.
+func xlmQuotesBound(n int) string { return "'native', " + nativeSACParam(n) }
+
+// xlmNativeAssetIn renders `col IN ('native', $n::text)`.
+func xlmNativeAssetIn(col string, n int) string {
+	return col + " IN (" + xlmQuotesBound(n) + ")"
+}
 
 // stablecoinInListSQL renders canonical.StablecoinCodes as a sorted,
 // single-quoted SQL IN-list (e.g. "'DAI', 'EURC', …"). Sorted so the
@@ -32,12 +45,12 @@ func stablecoinInListSQL() string {
 // given asset column: fiat (4) > stablecoin (3) > XLM (2) > token (1).
 // Higher = more quote-like. Rendered per query because the declared
 // stablecoin SACs come from the alias registry installed at start-up.
-func quoteRankSQL(col string) string {
+func quoteRankSQL(col string, sacIdx int) string {
 	return fmt.Sprintf(`(CASE
         WHEN %[1]s LIKE 'fiat:%%' THEN 4
         WHEN split_part(replace(%[1]s, 'crypto:', ''), '-', 1) IN (%[2]s) THEN 3%[4]s
-        WHEN %[1]s IN ('native', 'crypto:XLM', '%[3]s') THEN 2
-        ELSE 1 END)`, col, stablecoinInListSQL(), nativeXLMSAC, stablecoinSACArmSQL(col))
+        WHEN %[1]s IN ('native', 'crypto:XLM', %[3]s) THEN 2
+        ELSE 1 END)`, col, stablecoinInListSQL(), nativeSACParam(sacIdx), stablecoinSACArmSQL(col))
 }
 
 // stablecoinSACArmSQL is quoteRankSQL's rank-3 arm for the declared
@@ -85,9 +98,9 @@ func canonLastPriceSQL(flipped string) string {
 // received), Soroban AMMs (aquarius, comet, phoenix, soroswap) store
 // base = token_in (what the taker sold). The same economic trade lands in
 // opposite orientations, so a read combining sources must orient here.
-func canonOrientSQL() (canonBase, canonQuote, flipped string) {
+func canonOrientSQL(sacIdx int) (canonBase, canonQuote, flipped string) {
 	const bcol, qcol = "base_asset", "quote_asset"
-	rb, rq := quoteRankSQL(bcol), quoteRankSQL(qcol)
+	rb, rq := quoteRankSQL(bcol, sacIdx), quoteRankSQL(qcol, sacIdx)
 	// The stored base (bcol) is actually the canonical QUOTE when it
 	// outranks the stored quote, or on a tie sorts after it. COLLATE "C"
 	// makes the tie-break byte order, as Go's string compare is; the
