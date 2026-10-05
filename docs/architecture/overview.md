@@ -25,7 +25,7 @@ rational arithmetic (ADR-0003). Everything is served through a public
 | On-chain ingest | Galexie MinIO → `ledgerstream` → `dispatcher` → decoders → sink / projector → Timescale, plus the CH lake dual-sink | [ingest-pipeline.md](ingest-pipeline.md) |
 | Off-chain ingest | CEX/FX connectors (`internal/sources/external`) → the same event channel | [add-cex-connector](../contributing/procedures/add-cex-connector.md) |
 | Re-derive / replay | CH lake → the same decoders → served tier | [ingest-pipeline.md § The replay decision rule](ingest-pipeline.md#the-replay-decision-rule) |
-| Aggregation | trades → outlier filter → class gating → VWAP → freeze/confidence → Redis + CAGGs | [aggregation-plan.md](aggregation-plan.md) |
+| Aggregation | trades → outlier filter → class gating → VWAP → freeze/confidence → Redis + CAGGs | [aggregation-plan.md](aggregation-plan.md); oracles and manipulation defense: [oracle-manipulation-defense.md](oracle-manipulation-defense.md) |
 | Verification | lake substrate + recognition + per-ledger projection reconcile → `completeness_snapshots` | ADR-0033, ADR-0041 |
 | Serving | Timescale CAGGs + Redis + CH explorer reads → `internal/api/v1` → REST/SSE | ADR-0015, ADR-0018 |
 

@@ -190,7 +190,7 @@ func TestFiatSeries_ThinSACPoolNeverSetsABarBesideBookData(t *testing.T) {
 // ── (b) the decision: suppression is per BUCKET, never per response ────
 
 // TestFiatSeries_PoolFillsOnlyTheBucketsTheBookCannotAnswer pins the
-// decision recorded in docs/architecture/aggregate-alias-folding.md §7.5.
+// decision recorded in docs/architecture/aggregation-plan.md §"The fiat quote leg, per bucket".
 // The book holds day 1; the pool holds days 1, 2 and 3.
 //
 // Served: three bars. Day 1 is the book's alone — the pool is dropped

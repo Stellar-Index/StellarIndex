@@ -142,11 +142,11 @@ func TestRouteContractCall_emptyDecoderListNoMatch(t *testing.T) {
 	}
 }
 
-// ─── Discovery hook (event-less oracle, §3(b)(2)) ─────────────────
+// ─── Discovery hook (event-less oracle, §"Event-less discovery") ─────────────────
 
 // TestDispatchContractCall_DiscoveryHook_FiresOnOracleCallCandidate
-// — the event-less-oracle sniffer (docs/architecture/generic-oracle-sep-onboarding.md
-// §3(b)(2)) must push a Hit for a call matching the oracle-suggestive
+// — the event-less-oracle sniffer (docs/architecture/oracle-manipulation-defense.md
+// §"Event-less discovery") must push a Hit for a call matching the oracle-suggestive
 // function-name allow-list, with ZERO ContractCallDecoders
 // registered — this is the whole point: a future Band-alike must be
 // sighted even before anyone writes a decoder for it.

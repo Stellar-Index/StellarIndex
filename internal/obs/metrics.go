@@ -1993,8 +1993,8 @@ var SourceNonDirectionalSwapsTotal = prometheus.NewCounterVec(
 
 // DiscoveryDroppedHitsTotal — count of discovery hits (SEP-41 token
 // sightings AND the broader oracle-suggestive event/call sightings
-// added per docs/architecture/generic-oracle-sep-onboarding.md
-// §3(b) — internal/canonical/discovery.Sniff / SniffOracleEvent /
+// added per docs/architecture/oracle-manipulation-defense.md
+// §"Discovery pipeline" — internal/canonical/discovery.Sniff / SniffOracleEvent /
 // SniffOracleCall all share the one sink) that were dropped because
 // the async sink buffer was full. Discovery is intentionally
 // best-effort, but operators still need a live signal when the

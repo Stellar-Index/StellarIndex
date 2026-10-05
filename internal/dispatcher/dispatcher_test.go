@@ -489,8 +489,8 @@ func TestDispatch_DiscoveryHook_NilSinkIsNoop(t *testing.T) {
 }
 
 // TestDispatch_DiscoveryHook_FiresOnOracleSuggestiveEvent — the
-// broader oracle-event sniffer (docs/architecture/generic-oracle-sep-onboarding.md
-// §3(b)(1)) must also push, independent of whether any Decoder
+// broader oracle-event sniffer (docs/architecture/oracle-manipulation-defense.md
+// §"Event-shaped discovery") must also push, independent of whether any Decoder
 // claims the event (no decoder registered here at all).
 func TestDispatch_DiscoveryHook_FiresOnOracleSuggestiveEvent(t *testing.T) {
 	sink := &recordingSink{}

@@ -90,7 +90,7 @@ import (
 // Per BUCKET and not per response, because the alternative makes the
 // constituent set a function of the WINDOW: the same day would render
 // one way inside a window the book also covers and another way inside
-// one it does not. See [docs/architecture/aggregate-alias-folding.md]
+// one it does not. See [docs/architecture/aggregation-plan.md §"The direction fold"]
 // §7.5 for the decision and the measurement behind it.
 //
 // Each constituent read goes through the cached HistoryReader, so repeat
@@ -220,7 +220,7 @@ func (s *Server) usdPeggedConstituents(pair canonical.Pair) []canonical.Pair {
 // give. Gating a family's SAC form on that family's own classic being
 // empty is not enough — the pool would then be admitted into another
 // family's populated bucket. See
-// [docs/architecture/aggregate-alias-folding.md] §7.5.
+// [docs/architecture/aggregation-plan.md] §"The fiat quote leg, per bucket".
 //
 // Deduplicated by MARKET, across both sets together. The ordered pair
 // was the whole market back when a read bound one orientation; both
