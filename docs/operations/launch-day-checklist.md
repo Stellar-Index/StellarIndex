@@ -6,120 +6,74 @@ status: operator runbook
 
 # Launch-day operator checklist
 
-> **⚠️ SUPERSEDED 2026-07-27 by [`v1-launch-plan.md`](v1-launch-plan.md) §2.8**
-> — the public-flip steps here already happened (2026-07-03, differently) and
-> the CalVer tag format is wrong (we use SemVer). The still-live content
-> (`apikey_optional` warning, F-0100 counter-presence check, first-24h watch)
-> is carried in the new plan.
+> **SUPERSEDED by [`v1-launch-plan.md`](v1-launch-plan.md) §2.8.** The public-flip
+> steps here already happened (2026-07-03, differently) and the CalVer tag format
+> is wrong (we use SemVer). The still-live content (`apikey_optional` warning,
+> F-0100 counter-presence check, first-24h watch) is carried in the new plan.
 
-End-to-end cutover runbook for **L6.4** in the launch-readiness
-backlog. Follow this **on the day**. Each step has a clear pass
-condition; do not advance until the prior step passes.
-
-The mental model: every launch-blocking row is already ✅ when
-this runbook starts. This doc is the orchestration that flips
-the public-facing surface from "private staging" to "production"
-without surprises.
+Cutover runbook for **L6.4**. Do not advance until the prior step passes. Every
+launch-blocking row is already done when this starts; this flips the public surface
+from private staging to production.
 
 ## T-7 days — final pre-cut
 
-The week before the cut. Done while everything is still calm.
-
-- [ ] **Open PR pile is drained.** All open `docs/`, ops, and
-      reclassification PRs from the launch sprint are merged.
-      `gh pr list --state open --limit 100` returns zero
-      launch-blocking entries. Anything left becomes
-      [post-launch](../architecture/launch-readiness-backlog.md)
-      explicitly.
-- [ ] **Last L6.5 docs sweep.** One final pass through
-      [`docs/`](../) — every `last_verified` date inside
-      30 days, every runbook frontmatter `status:` reflects
-      reality. Single PR; merge same day.
-- [ ] **External security review (L5.6) findings closed.** Each
-      reviewer comment has a tracked PR or an explicit "won't
-      fix, post-launch" decision recorded.
-- [ ] **SEV-1/SEV-2 dry-run (L5.7) done.** A drill that killed
-      something on staging, captured the time-to-detect +
-      time-to-mitigate, and updated the
-      [SEV playbook](sev-playbook.md) with anything that
-      surprised the on-call.
-- [ ] **Chaos Wave 1 retrospective (L5.5) clean.** All three
-      scenarios passed; `test/chaos/reports/<launch-cut>/RETRO.md`
-      committed; any code-side fixes the chaos run motivated have
-      landed.
-- [ ] **Showcase site staged.** Cloudflare Pages project for
-      `web/explorer/` is connected per
-      [`explorer-deployment.md`](explorer-deployment.md), a
-      preview deploy succeeded, `stellarindex.io` custom domain
-      is bound but DNS still points at staging. Final cutover is
-      step 5 of T-0.
+- [ ] **Open PR pile drained.** `gh pr list --state open --limit 100` shows zero
+      launch-blocking entries; leftovers become
+      [post-launch](../architecture/launch-readiness-backlog.md) explicitly.
+- [ ] **Last L6.5 docs sweep.** Every `last_verified` within 30 days, every runbook
+      `status:` accurate. One PR, merged same day.
+- [ ] **External security review (L5.6) findings closed**: a tracked PR or a
+      recorded "won't fix, post-launch" per comment.
+- [ ] **SEV-1/SEV-2 dry-run (L5.7) done**: staging drill with time-to-detect and
+      time-to-mitigate captured, [SEV playbook](sev-playbook.md) updated.
+- [ ] **Chaos Wave 1 retrospective (L5.5) clean**: all three scenarios passed,
+      `test/chaos/reports/<launch-cut>/RETRO.md` committed, code fixes landed.
+- [ ] **Showcase site staged.** `web/explorer/` Pages project connected per
+      [`explorer-deployment.md`](explorer-deployment.md), preview deploy
+      succeeded, `stellarindex.io` bound but DNS still on staging (cut at T-0
+      step 5).
 
 ## T-3 days — final freeze
 
-- [ ] **Merge freeze.** No new PRs to `main` except critical
-      bug fixes flagged with the `launch-blocker` label.
-      Document the freeze in `#stellar-index` and pin the date.
+- [ ] **Merge freeze.** No PRs to `main` except `launch-blocker` fixes; announce
+      in `#stellar-index` and pin the date.
 
-Struck 2026-09-29 so the T-1 "all boxes ticked" rule can be met: the
-public-flip dry-run (the repo has been public since 2026-07-03, so there
-is no orphan-branch cut to rehearse) and the customer demo (L6.6 maps to
-W6.7 announcement copy in `v1-launch-plan.md`; there are no customers at
-the 1.0 cut).
+Struck so the T-1 "all boxes ticked" rule can be met: the public-flip dry-run (repo
+already public, no orphan-branch cut to rehearse) and the customer demo (L6.6 maps
+to W6.7 announcement copy in `v1-launch-plan.md`; no customers at the 1.0 cut).
 
 ## T-1 day — go/no-go
 
-- [ ] **Production environment is green.** Every dashboard panel
-      on the SLO board reading nominal:
+- [ ] **Production environment green** on the SLO board:
       - `stellarindex_aggregator_ticks_total` rising on `outcome="ok"`.
-      - `stellarindex_source_events_total` rising for every
-        configured source (`source_enabled=1`).
+      - `stellarindex_source_events_total` rising for every source with
+        `source_enabled=1`.
       - `stellarindex_aggregator_vwap_writes_total` rising.
       - No fired alerts in Alertmanager.
-      - **Counter-presence sanity** (F-0100, audit-2026-05-26):
-        "no fired alerts" by itself is a false-green when an
-        underlying counter has gone stale and the rule sees
-        no-data. Run this PromQL against the prod Prometheus
-        and confirm the result is non-empty for every named
-        family:
+      - **Counter-presence sanity** (F-0100): "no fired alerts" is a false green
+        when a counter went stale and the rule sees no-data. Run on prod
+        Prometheus; the result must be non-empty for every named family:
         ```promql
         count by (__name__) ({__name__=~"stellarindex_.*_total"})
         ```
-        If a counter family is missing from the result, treat
-        "no alerts" as silence-not-success and investigate
-        before declaring green. The post-2026-05-26 alert
-        portfolio now uses `absent_over_time(...)` guards on
-        every cascade-fragile rule (F-0080, F-0085, F-0104) so
-        a missing counter SHOULD trigger an alert in its own
-        right — this step is the manual belt-and-braces check
-        in case a new rule lands without the guard.
-- [ ] **SLA probe latest pass.** `cmd/stellarindex-sla-probe`
-      against the staging URL ran in the last 4 h with `verdict:
-      pass`. (Or run it manually now — see "Smoke test" below.)
-- [ ] **CDN provisioned.** Per
-      [`cdn-setup.md`](cdn-setup.md). DNS for
-      `api.stellarindex.io` is proxied through Cloudflare;
-      curl headers show `cf-cache-status` for the historical
-      surfaces.
-- [ ] **Status page provisioned.** Per
-      [`status-page-setup.md`](status-page-setup.md). The
-      Cloudflare Pages deploy of `web/status/` is live at
-      `stellarindex.io/status`; `internal/incidents/data/`
-      has no open SEV entries (no `status: investigating |
-      identified | monitoring` rows).
-- [ ] **Customer comms ready.** Email/Discord draft for the
-      announcement is approved by stakeholders, ready to send
-      post-cut.
-- [ ] **Rollback plan rehearsed.** Walked through
-      [`rollback.md`](rollback.md) — operator knows the DNS
-      revert, rate-limit reset, and customer-comms templates
-      cold.
-- [ ] **Go/No-go decision.** All checkboxes above ticked → GO.
-      Any unticked → defer cutover; fix what's blocking; revisit
-      tomorrow.
+        A missing family means silence-not-success: investigate first. Cascade-fragile
+        rules carry `absent_over_time(...)` guards (F-0080, F-0085, F-0104); this
+        is the manual check for a new rule landing without one.
+- [ ] **SLA probe latest pass.** `cmd/stellarindex-sla-probe` against staging ran
+      in the last 4 h with `verdict: pass` (or run it per T-0 step 4).
+- [ ] **CDN provisioned** per [`cdn-setup.md`](cdn-setup.md): `api.stellarindex.io`
+      proxied through Cloudflare, `cf-cache-status` visible on historical surfaces.
+- [ ] **Status page provisioned** per [`status-page-setup.md`](status-page-setup.md):
+      live at `stellarindex.io/status`; `internal/incidents/data/` has no open
+      entries (`status: investigating | identified | monitoring`).
+- [ ] **Customer comms approved**, ready to send post-cut.
+- [ ] **Rollback rehearsed** via [`rollback.md`](rollback.md): DNS revert,
+      rate-limit reset, comms templates known cold.
+- [ ] **Go/No-go.** All ticked → GO; any unticked → defer and revisit tomorrow.
 
 ## T-0 — cutover
 
-Order matters. Don't skip.
+Order matters.
 
 1. **Tag the release (`release-process.md` §Cut).**
    ```sh
@@ -130,40 +84,27 @@ Order matters. Don't skip.
    git push origin YYYY.MM.DD.1
    ```
 
-2. **Public-flip (`public-flip.md` §Cut-over mechanics).**
-   Follow the 6-step procedure. The orphan-branch verification
-   diff at step 4 MUST be zero. Stop and investigate if it
-   isn't.
+2. **Public-flip (`public-flip.md` §Cut-over mechanics).** Follow the 6 steps; the
+   orphan-branch diff at step 4 MUST be zero, else stop and investigate.
 
-3. **DNS flip — `api.stellarindex.io`.**
-   At Cloudflare, the proxied A/CNAME for `api` is already in
-   place from the CDN setup. The "flip" here is **enabling
-   the public rate-limit tier**: edit the API binary's
-   `[api].auth_mode` config from `none` (private staging) to
-   the production value, restart the API binary on each
-   region. Ansible role does this in one command:
+3. **DNS flip — `api.stellarindex.io`.** The proxied record is already in place
+   from the CDN setup; the "flip" is **enabling the public rate-limit tier**: change
+   `[api].auth_mode` from `none` (private staging) to the production value and
+   restart the API on each region:
    ```sh
    ansible-playbook -i inventory/r1.yml deploy/ansible/roles/api/restart.yml \
      --extra-vars 'auth_mode=apikey_optional'
    # Repeat for r2, r3.
    ```
 
-   > **The production value is `apikey_optional`, NOT `apikey`.** This
-   > command said `apikey` until 2026-07-25, which contradicted the very
-   > sentence above it and the deployed reality (r1 has run
-   > `apikey_optional` throughout). The difference is not cosmetic:
-   >
-   > - `apikey_optional` — no key means ANONYMOUS, served at the anon
-   >   rate-limit tier; a supplied key must be valid and grants its tier.
-   >   This is "enable the public rate-limit tier", i.e. what this step
-   >   is actually for, and what a public read API used by wallets,
-   >   widgets and SDKs requires.
-   > - `apikey` — every request needs a credential. Following this step
-   >   literally would have taken the public API PRIVATE at launch, and
-   >   because the auth middleware wraps the whole mux it would also have
-   >   401'd `/v1/healthz`, `/v1/readyz` and `/metrics`, so load-balancer
-   >   probes and Prometheus would have failed at the same moment
-   >   (audit SEC-01).
+   > **The production value is `apikey_optional`, NOT `apikey`.**
+   > - `apikey_optional`: no key means ANONYMOUS at the anon rate-limit tier; a
+   >   supplied key must be valid and grants its tier. This is what a public read
+   >   API for wallets, widgets and SDKs needs, and what r1 has always run.
+   > - `apikey`: every request needs a credential. It would take the public API
+   >   PRIVATE, and because the auth middleware wraps the whole mux it would also
+   >   401 `/v1/healthz`, `/v1/readyz` and `/metrics`, failing load-balancer probes
+   >   and Prometheus at once (audit SEC-01).
 
 4. **Smoke test the public surface.**
    ```sh
@@ -174,19 +115,13 @@ Order matters. Don't skip.
      -concurrency 4 \
      -report-format text
    ```
-   The API key is required — without one the probe trips the
-   anonymous-tier rate limit (60 req/min) and the verdict reads
-   `fail` on availability for reasons unrelated to actual SLA
-   compliance. Mint a fresh load-test key from the operator
-   vault. Pass condition: `verdict: pass`. Any `failed_reasons`
-   halts the cut → trigger rollback.
+   A key is required: without one the probe trips the anonymous-tier limit (60
+   req/min) and fails availability for unrelated reasons. Mint a load-test key from
+   the operator vault. Pass: `verdict: pass`; any `failed_reasons` halts the cut
+   and triggers rollback.
 
-5. **Showcase site goes live (`stellarindex.io`).** Per
-   [`explorer-deployment.md`](explorer-deployment.md), the
-   site is built statically from `web/explorer/` and served
-   from Cloudflare Pages. Trigger a fresh build now that the
-   API is in production auth-mode so the build-time
-   `generateStaticParams` fetch picks up the live coin
+5. **Showcase site goes live (`stellarindex.io`).** Rebuild now that the API is in
+   production auth-mode so build-time `generateStaticParams` picks up the live coin
    directory:
    ```sh
    # CF Pages: dashboard → Workers & Pages → stellarindex-explorer
@@ -196,64 +131,42 @@ Order matters. Don't skip.
    git commit --allow-empty -m "chore(showcase): rebuild for launch"
    git push origin main
    ```
-   Pass condition: `curl -I https://stellarindex.io | head -3`
-   returns 200, and `curl -I https://stellarindex.io/coins/USDC/`
-   is 200 (not 404).
+   Pass: `curl -I https://stellarindex.io | head -3` is 200 and
+   `curl -I https://stellarindex.io/coins/USDC/` is 200 (not 404).
 
-6. **Status page goes live.** Post the launch-cut maintenance
-   window resolved by editing the matching
-   `internal/incidents/data/<DATE>-launch-cut.md` (if a
-   maintenance entry was opened pre-cut) and merging to `main`
-   so Cloudflare Pages re-deploys with `status: resolved`.
-   Verify `stellarindex.io/status` shows no active incidents.
+6. **Status page goes live.** If a launch-cut maintenance entry was opened, set
+   `status: resolved` in `internal/incidents/data/<DATE>-launch-cut.md` and merge to
+   `main`. Verify `stellarindex.io/status` shows no active incidents.
 
-7. **Send customer comms.** Email + Discord templates from T-1 day
-   ([`deploy/comms/launch-announcement.md`](../../deploy/comms/launch-announcement.md)).
-   Public announcement on the project handle if applicable.
+7. **Send customer comms** from
+   [`deploy/comms/launch-announcement.md`](../../deploy/comms/launch-announcement.md)
+   (email + Discord, project handle if applicable).
 
-8. **Open the L6.7 24-h watch.**
-   - On-call clock starts.
-   - SLO dashboards open in a window the on-call keeps
-     tabbed for the next 24 h.
-   - Any alert in the first 24 h is treated as a SEV-2
-     minimum (per the
-     [release-process post-flight](release-process.md#post-flight))
-     regardless of impact, so the team builds muscle memory
-     for the actual escalation flow on the day it matters.
+8. **Open the L6.7 24-h watch.** On-call clock starts; SLO dashboards stay open
+   for 24 h; any alert in the first 24 h is SEV-2 minimum regardless of impact
+   (per [release-process post-flight](release-process.md#post-flight)).
 
 ## Pass condition for the whole runbook
 
-- The release tag is on `main`, on the public repo, and as a
-  GitHub Release.
-- `https://api.stellarindex.io/v1/healthz` returns 200 from
-  any external network.
-- `https://stellarindex.io` returns 200 and renders live
-  data in the home Network panel.
-- `https://stellarindex.io/status` shows "all systems
-  operational".
-- The customer-comms message has been delivered.
-- The SLA probe has logged at least one passing run against the
-  public URL post-cut.
+- Release tag on `main`, on the public repo, and as a GitHub Release.
+- `https://api.stellarindex.io/v1/healthz` returns 200 from any external network.
+- `https://stellarindex.io` returns 200 with live data in the home Network panel.
+- `https://stellarindex.io/status` shows "all systems operational".
+- Customer comms delivered; at least one passing SLA probe run against the public
+  URL post-cut.
 - L6.4 in `launch-readiness-backlog.md` flips 🔴 → ✅.
 
 ## If anything fails mid-cut
 
-Stop. Open [`rollback.md`](rollback.md) and follow the matching
-failure-mode section. Cutover is reversible up to step 6 (DNS
-revert is one-line); after step 6 (customer comms sent) the
-rollback also includes a follow-up "we're rolling back" message.
+Stop; follow the matching section of [`rollback.md`](rollback.md). Cutover is
+reversible up to step 6 (DNS revert is one line); after customer comms (step 7) the
+rollback also needs a "we're rolling back" message.
 
 ## Cross-references
 
-- [`release-process.md`](release-process.md) — the per-release
-  procedure this runbook orchestrates.
-- [`public-flip.md`](public-flip.md) — repo cut-over mechanics.
-- [`cdn-setup.md`](cdn-setup.md) — CDN provisioning.
-- [`explorer-deployment.md`](explorer-deployment.md) — `stellarindex.io` (showcase site) hosting.
-- [`status-page-setup.md`](status-page-setup.md) — status page setup.
-- [`chaos-wave1-runbook.md`](chaos-wave1-runbook.md) — chaos
-  Wave 1 execution.
-- [`rollback.md`](rollback.md) — what to do when something breaks.
-- [`sev-playbook.md`](sev-playbook.md) — incident escalation.
-- [`sla-probe.md`](sla-probe.md) — the post-cut smoke probe.
-- L6.4–L6.7 in [`launch-readiness-backlog.md`](../architecture/launch-readiness-backlog.md).
+[`release-process.md`](release-process.md), [`public-flip.md`](public-flip.md),
+[`cdn-setup.md`](cdn-setup.md), [`explorer-deployment.md`](explorer-deployment.md),
+[`status-page-setup.md`](status-page-setup.md),
+[`chaos-wave1-runbook.md`](chaos-wave1-runbook.md), [`rollback.md`](rollback.md),
+[`sev-playbook.md`](sev-playbook.md), [`sla-probe.md`](sla-probe.md); L6.4–L6.7 in
+[`launch-readiness-backlog.md`](../architecture/launch-readiness-backlog.md).

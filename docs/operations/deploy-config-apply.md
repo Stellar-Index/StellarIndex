@@ -6,32 +6,31 @@ status: operational
 
 # Post-deploy config-apply
 
-`deploy.yml` runs `configs/ansible/playbooks/deploy-binary.yml` — a
-**binary-only** playbook. It stages + installs the release binaries, runs
-migrations, and health-checks. It does **NOT**:
+`deploy.yml` runs `configs/ansible/playbooks/deploy-binary.yml`, a
+**binary-only** playbook: stage + install release binaries, run migrations,
+health-check. It does **NOT**:
 
 - render/apply the ansible `stellarindex.toml.j2` config,
 - install/enable systemd units, or
 - apply ClickHouse schema.
 
-(Prometheus **rule files** used to be on this list. Since 2026-09-01 they
-are the one surface `deploy.yml` applies and verifies itself, in a step
-*outside* the binary playbook — see [below](#prometheus-rules--applied-automatically-no-operator-action).)
+(Prometheus **rule files** are the one surface `deploy.yml` applies and
+verifies itself, in a step outside the binary playbook — see
+[below](#prometheus-rules--applied-automatically-no-operator-action).)
 
-So when a release's diff touches any of those surfaces, the feature they
-gate **ships dead and silent** unless an operator applies the config too.
-This bit us twice on 2026-08-25: the v0.42.0 declared-peg map (`[pricing_guard]`
-was absent from live `/etc/stellarindex.toml`, so AUDD/AUDR served no peg
-despite "deploy OK"), and the v0.43.0 Prometheus rules (copied to the unused
-`rules.d/` before the live dir `rules.r1/` was noticed).
+When a release's diff touches those surfaces, the feature they gate **ships
+dead and silent** unless an operator applies the config. Precedents: the
+v0.42.0 declared-peg map (`[pricing_guard]` absent from live
+`/etc/stellarindex.toml`, so AUDD/AUDR served no peg despite "deploy OK") and
+the v0.43.0 Prometheus rules (copied to the unused `rules.d/`, not the live
+`rules.r1/`).
 
 The **config-apply gate** (`scripts/ci/config-apply-gate.sh`, run by
 `deploy.yml`) fails the deploy job when a release changed a config surface
 that nothing has cleared and the operator did not pass
-`-f config_acknowledged=true` — a forcing function so the apply below is
-never forgotten. Its surfaces are the whole
+`-f config_acknowledged=true`. Surfaces: the whole
 `configs/ansible/roles/` tree (templates, tasks, files, **defaults**,
-handlers — a `defaults/main.yml` change re-renders every template that reads
+handlers; a `defaults/main.yml` change re-renders every template reading
 it), `configs/ansible/inventory/`, `configs/healthchecks/`, the Prometheus
 rules, `deploy/systemd/`, `deploy/clickhouse/`, and the repo scripts the role
 copies onto the host verbatim (`scripts/ops/config-assertions.sh`,
@@ -39,16 +38,13 @@ copies onto the host verbatim (`scripts/ops/config-assertions.sh`,
 
 ## Three cases, not two
 
-Until 2026-09-07 the gate knew only *changed* and *unchanged*, so every diff
-was an operator decision. Two of that day's four failed deploys were spent
-discovering that a `deploy/clickhouse/*.sql` diff was comment-only. The rule
-generalised from that — "comment-only, so acknowledge" — is **false**:
+"Comment-only, so acknowledge" is **false** as a general rule:
 `v0.61.1..v0.62.0` added `CREATE TABLE stellar.account_creators_ops` to
-`account_creators_rollup.sql` **and** `tier1_schema.sql`, and the
-acknowledgement was correct only because the DDL had been applied by hand
-first and the objects confirmed present.
+`account_creators_rollup.sql` **and** `tier1_schema.sql`; the acknowledgement
+was correct only because the DDL had been applied by hand and the objects
+confirmed present.
 
-Each changed surface now lands in exactly one of:
+Each changed surface lands in exactly one case:
 
 | Case | What it means | Who clears it |
 | --- | --- | --- |
@@ -57,43 +53,40 @@ Each changed surface now lands in exactly one of:
 | **substantive** | everything else | the operator, with `-f config_acknowledged=true`, after applying **and verifying** |
 
 Classification is conservative: a file type with no known comment convention
-is substantive, and any non-comment payload on either side of the diff is
-substantive. A comment-only surface still differs *textually* from the host
-copy until the config is applied — the weekly `ansible-drift` job is what
-reports that.
+is substantive, as is any non-comment payload on either side of the diff. A
+comment-only surface still differs *textually* from the host copy until
+applied; the weekly `ansible-drift` job reports that.
 
 ### What "applied" is allowed to mean
 
-The gate reads git, not the host: it can verify nothing itself. `[applied]` is
-evidence its caller produced, and `deploy.yml` produces exactly two kinds:
+The gate reads git, not the host. `[applied]` is evidence its caller
+produced; `deploy.yml` produces two kinds:
 
-- **`configs/prometheus/rules.r1/`** — `apply-rules.sh` installs and then
-  POLLS `/api/v1/rules` until every expected alert is loaded and healthy,
-  restoring its backup if it never is.
-- **`deploy/clickhouse/*.sql`, and only some of them.** The *Verify ClickHouse
-  DDL is applied* step asks the target whether every object such a diff
-  creates is present in `system.tables`. A file qualifies only when its whole
-  diff is additive whole statements: every hunk opens a `CREATE
+- **`configs/prometheus/rules.r1/`**: `apply-rules.sh` installs, then POLLS
+  `/api/v1/rules` until every expected alert is loaded and healthy,
+  restoring its backup if never.
+- **`deploy/clickhouse/*.sql`, only some.** The *Verify ClickHouse DDL is
+  applied* step asks the target whether every object such a diff creates is
+  in `system.tables`. A file qualifies only when its whole diff is additive
+  whole statements: every hunk opens a `CREATE
   TABLE/MATERIALIZED VIEW/VIEW/DICTIONARY`, nothing substantive was removed,
   and no other DDL/DML verb appears (`config-apply-gate.sh --ddl-objects`
-  decides this, and is what the self-test pins).
+  decides; the self-test pins it).
 
-What is **not** checked, deliberately, because no cheap check exists:
+Deliberately **not** checked (no cheap check exists), never auto-cleared:
 
-- a column added inside an existing `CREATE TABLE IF NOT EXISTS` — the object
-  is present either way, and re-running the file would not add the column;
-- an `ALTER` / `DROP` / `EXCHANGE`, or any diff that removes a statement;
-- a systemd unit, an ansible template, an inventory var, a healthcheck script.
+- a column added inside an existing `CREATE TABLE IF NOT EXISTS`;
+- an `ALTER` / `DROP` / `EXCHANGE`, or any diff removing a statement;
+- a systemd unit, ansible template, inventory var, healthcheck script.
 
-Those are never auto-cleared. Existence also proves the DDL **ran**, not that
-a new materialized view is backfilled — backfills are a separate monitored
-job, as below.
+Existence proves the DDL **ran**, not that a new materialized view is
+backfilled; backfills are a separate monitored job.
 
 The gate diffs the deploying tag against the **previous release tag by
-ancestry** unless it is given the host's live version as a 3rd argument —
-so on a **skip-ahead** deploy (host on v0.45.0, deploying v0.47.2) or a
-**rollback**, the ancestry diff is the wrong interval. Run it by hand
-against the host's real baseline before acknowledging:
+ancestry** unless given the host's live version as a 3rd argument. On a
+**skip-ahead** deploy (host v0.45.0, deploying v0.47.2) or a **rollback**
+that interval is wrong; run it by hand against the real baseline before
+acknowledging:
 
 ```
 ssh r1 'cat /var/lib/stellarindex/deployed-versions/stellarindex-api'   # → live version
@@ -103,7 +96,7 @@ bash scripts/ci/config-apply-gate.sh v0.47.2 false v0.45.0
 ## The apply procedure (per surface)
 
 r1: `ssh -i ~/.ssh/si_deploy root@<r1-host>`. Each step: **back up → apply →
-verify the key landed** (never trust "deploy OK" — grep the live surface).
+verify the key landed** (never trust "deploy OK"; grep the live surface).
 
 ### `stellarindex.toml` (ansible template changed)
 The full render needs the ansible vault (operator-gated). For a small
@@ -117,36 +110,28 @@ field), not just that the process restarted.
 ### Prometheus rules — APPLIED AUTOMATICALLY, no operator action
 
 Live dir is **`/etc/prometheus/rules.r1/`** (prometheus.yml globs
-`rules.r1/*.yml` — NOT `rules.d/`, which is unused). Source is the repo's
+`rules.r1/*.yml`, NOT `rules.d/`, which is unused). Source:
 `configs/prometheus/rules.r1/*.yml`.
 
-**Since 2026-09-01 this surface applies itself.** `deploy.yml`'s
-*Apply Prometheus rules (r1)* step runs
+`deploy.yml`'s *Apply Prometheus rules (r1)* step runs
 [`configs/prometheus/apply-rules.sh`](../../configs/prometheus/apply-rules.sh)
-on every r1 deploy, and the config-apply gate no longer asks you to
-acknowledge it. The step runs **unconditionally**, not only when a release
-changed a rule file — the host's rule set becomes a function of the repo
-rather than of who remembered to run what.
+on every r1 deploy, **unconditionally**, and the gate no longer asks for
+acknowledgement. It:
 
-What it does that the old manual procedure did not:
-
-- **Reconciles deletions.** The manual `scp <changed>.yml` only ever added
-  files. A rule deleted from the repo stayed on the host and kept firing —
-  on 2026-09-01 `stellarindex_recognition_unattributed_jump` did exactly
-  that for hours after #465 removed it.
+- **Reconciles deletions.** A manual `scp <changed>.yml` only adds; a rule
+  deleted from the repo kept firing (`stellarindex_recognition_unattributed_jump`
+  after #465 removed it).
 - **Verifies by POLLING** `/api/v1/rules` until every expected alert is
-  loaded *and* its rule health is ok, restoring its backup and failing if
-  not. The old "verify: lists the new alert names" was a single sample;
-  Prometheus re-reads on SIGHUP asynchronously, so one sample inside that
-  window reports a good apply as a failure — and an operator who saw it
-  pass once had no evidence the rules were *evaluating*.
-- **Refuses an empty rule set**, so a path typo cannot silently delete
-  every alert (the same F-1357 guard the ansible prometheus role carries).
+  loaded *and* healthy, else restores its backup and fails. Prometheus
+  re-reads on SIGHUP asynchronously, so a single sample can report a good
+  apply as a failure.
+- **Refuses an empty rule set** (F-1357 guard, as in the ansible
+  prometheus role), so a path typo cannot delete every alert.
 - Keeps 5 timestamped backups at `/etc/prometheus/rules.r1.bak-*`.
 
-If the step fails, its surface stays in the config-apply gate and the gate
-goes red — the binaries are already live, so that is a signal to act, not a
-rollback. To apply by hand (or from a laptop for a hotfix):
+If the step fails its surface stays in the gate and the gate goes red; the
+binaries are already live, so that is a signal to act, not a rollback. By
+hand (or from a laptop for a hotfix):
 
 ```
 scp configs/prometheus/apply-rules.sh r1:/tmp/
@@ -154,31 +139,28 @@ scp -r configs/prometheus/rules.r1 r1:/tmp/rules.r1.incoming
 ssh r1 'bash /tmp/apply-rules.sh /tmp/rules.r1.incoming'
 ```
 
-`--check-only` validates without installing (this is what CI runs).
+`--check-only` validates without installing (what CI runs).
 
-**Verify:** the script does it for you and exits non-zero if it could not.
-Independently: `curl -s localhost:9090/api/v1/rules | grep -c alert`.
+**Verify:** the script exits non-zero if it could not. Independently:
+`curl -s localhost:9090/api/v1/rules | grep -c alert`.
 
-> The multi-host tree `deploy/monitoring/rules/` is **not** covered — it
-> belongs to the ansible `prometheus` role, which requires a two-host
-> `prometheus_pair` inventory group r1 does not have. It remains a gated
-> surface.
+> The multi-host tree `deploy/monitoring/rules/` is **not** covered: it
+> belongs to the ansible `prometheus` role, which needs a two-host
+> `prometheus_pair` inventory group r1 lacks. It remains a gated surface.
 
 ### systemd units
 
 > `deploy/systemd/` is **mixed authority** (`scripts/ci/lint-deploy-systemd-authority.sh`):
-> most units there are a REFERENCE copy only — the archival-node role ships its
-> own `.j2` for the same unit, and that template is what actually runs. Scp-ing
-> the reference copy for one of those deploys stale content (no
-> `run-heavy-job.sh` wrap, wrong `User=`, wrong resource caps — see
-> `deploy/systemd/DIVERGENCES` for the known gaps) that the next `ansible-playbook`
-> run silently overwrites, so the drift shows up only if you page in between.
-> Before scp-ing, confirm the unit is in the AUTHORITATIVE set:
+> most units there are a REFERENCE copy only; the archival-node role ships its
+> own `.j2` for the same unit and that template is what runs. Scp-ing the
+> reference copy deploys stale content (no `run-heavy-job.sh` wrap, wrong
+> `User=`, wrong resource caps; see `deploy/systemd/DIVERGENCES`) that the
+> next `ansible-playbook` run silently overwrites.
+> Before scp-ing, confirm the unit is AUTHORITATIVE:
 > `python3 scripts/ci/deploy-systemd-authoritative.py configs/ansible/roles/archival-node`.
-> If it is not in that list, it is templated — apply it via the `archival-node`
-> ansible role instead of scp, or if the role apply is unavailable, template the
-> `.j2` in `configs/ansible/roles/archival-node/templates/systemd/` by hand
-> rather than trusting the reference copy.
+> If not listed, it is templated: apply it via the `archival-node` ansible
+> role, or template the `.j2` in
+> `configs/ansible/roles/archival-node/templates/systemd/` by hand.
 
 ```
 scp deploy/systemd/<unit>.{service,timer} r1:/etc/systemd/system/
@@ -193,14 +175,11 @@ Apply idempotent DDL (`CREATE … IF NOT EXISTS`) via `clickhouse-client` /
 
 Apply it **before** the dispatch where you can: the deploy's ClickHouse
 evidence step then finds the objects present, clears those surfaces itself,
-and no acknowledgement is needed. That is what happened by hand for
-`stellar.account_creators_ops`; the difference is that it is now checked
-rather than remembered.
+and no acknowledgement is needed.
 
 ## Durable fix (roadmap)
-`ansible-drift.yml` already `--check --diff`s the full archival-node playbook
-against live r1 — the authoritative drift check — but it is **credential-broken
-since 2026-07-20** (stale `ANSIBLE_VAULT_PASSWORD` / `ANSIBLE_VAULT_FILE_B64`).
+`ansible-drift.yml` `--check --diff`s the full archival-node playbook against
+live r1 (the authoritative drift check) but is **credential-broken since
+2026-07-20** (stale `ANSIBLE_VAULT_PASSWORD` / `ANSIBLE_VAULT_FILE_B64`).
 Restoring those secrets (operator item) makes it the real post-deploy gate;
-until then, this runbook + the `config-apply-gate` forcing function are the
-guard.
+until then this page + the gate are the guard.

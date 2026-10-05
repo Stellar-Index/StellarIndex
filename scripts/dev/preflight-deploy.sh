@@ -453,7 +453,7 @@ if [ ${#live_pairs[@]} -gt 0 ]; then
         echo "  ${behind_count} of ${#live_pairs[@]} binaries are not on ${VERSION}."
     fi
     if [ "$rollback_count" -gt 0 ]; then
-        block "${rollback_count} binary/binaries on ${REGION} are AHEAD of ${VERSION}: this dispatch is a ROLLBACK. Migrations do not roll back with it (CS-099) — follow docs/operations/rollback.md rather than dispatching a deploy"
+        block "${rollback_count} binary/binaries on ${REGION} are AHEAD of ${VERSION}: this dispatch is a ROLLBACK. Migrations do not roll back with it (CS-099) — a previous-tag dispatch must set migrations_skip=true; see docs/operations/rollback.md"
     fi
     echo "  The dispatch below names the region's WHOLE set, so none is left behind:"
     echo "  a partial list is what leaves stellarindex_binary_version_skew non-zero."
