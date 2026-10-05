@@ -228,8 +228,9 @@ func reDerivedSourcesInRun(cat, sep41Cat []reconSource, passes chRebuildPasses, 
 }
 
 // gateCHRebuildLake is a -write run's per-WASM lake gate over [lo, hi].
-func gateCHRebuildLake(ctx context.Context, cfg config.Config, store *timescale.Store, sources []string, lo, hi uint32) error {
-	return wasmaudit.GateReplay(ctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts, sources, lo, hi)
+// chAddr is the lake the run reads (-ch-addr), not the config's.
+func gateCHRebuildLake(ctx context.Context, cfg config.Config, chAddr string, store *timescale.Store, sources []string, lo, hi uint32) error {
+	return wasmaudit.GateReplay(ctx, chAddr, cfg.Oracle, store.LoadProtocolContracts, sources, lo, hi)
 }
 
 // checkCHRebuildBackfillSafe refuses a -write run that would decode a
@@ -675,9 +676,6 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		if gerr := checkCHRebuildBackfillSafe(reDerivedSourcesInRun(cat, sep41Cat, passes, enabled)); gerr != nil {
 			return gerr
 		}
-		if gerr := gateCHRebuildLake(ctx, cfg, store, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled), lo, hi); gerr != nil {
-			return gerr
-		}
 		projected := projectedSourcesInRun(cfg, cat, sep41Cat, *includeSEP41, enabled)
 		if gerr := checkCHRebuildLiveOverlap(projected, hi, *allowLiveOverlap, func(source string) (uint32, bool, error) {
 			c, cerr := store.GetCursor(ctx, "projector", source)
@@ -715,6 +713,13 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	// run below would then refuse to rewrite (RLT-381).
 	if *preflight {
 		return reportCHRebuildPreflight(os.Stdout, lo, hi, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled))
+	}
+	// The per-WASM lake gate opens ClickHouse, so it runs after every cheap
+	// refusal and the -preflight stop, and before the first lake read or write.
+	if write {
+		if gerr := gateCHRebuildLake(ctx, cfg, *chAddr, store, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled), lo, hi); gerr != nil {
+			return gerr
+		}
 	}
 	gate.Banner()
 	// Factory-anchored sources (ADR-0035): seed each gate registry from
