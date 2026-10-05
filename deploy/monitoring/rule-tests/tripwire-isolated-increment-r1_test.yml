@@ -390,7 +390,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_customer_webhook_delivery_exhausted"
               summary: "Customer webhook deliveries permanently failed (budget exhausted)"
               description: |
                 A delivery hit the 15-attempt retry budget (~8h) and

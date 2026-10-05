@@ -4,7 +4,7 @@ last_verified: 2026-05-02
 status: shipped (Task #74 — six scenarios in test/load/scenarios/; unblocks Task #77 p95 proof which is operator-bound)
 related:
   - docs/architecture/coverage-matrix.md S9.1 / S9.2
-  - docs/operations/runbooks/api-latency.md (the alert this proves we don't trip)
+  - docs/operations/runbooks/api.md#stellarindex_api_latency_p95_high (the alert this proves we don't trip)
   - deploy/monitoring/rules/slo.yml (multi-window SLO rules)
 ---
 

@@ -18,7 +18,7 @@ direction.
 ## Self-pair swaps
 
 `<wasm>/self_pair/` holds two real self-pair swaps (`token_in ==
-token_out`, `docs/operations/runbooks/amm-self-pair-swap-burst.md`) at
+token_out`, `docs/operations/runbooks/anomaly.md#stellarindex_amm_self_pair_swap_burst`) at
 ledgers 64,112,340 and 64,112,891. They are older than the public RPC's
 `getEvents` retention (~120k ledgers from the tip), so they were read
 from the archival lake (ClickHouse `stellar.contract_events`, ADR-0034),

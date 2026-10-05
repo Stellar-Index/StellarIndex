@@ -18,7 +18,7 @@ severity: P3
 | Metric source | `node_exporter` textfile_collector reads `/var/lib/node_exporter/textfile_collector/curated_rwa_sync.prom`, written by `stellarindex-ops curated-rwa-sync` at the end of every run — dry or wet, success or refusal — from `curated-rwa-sync.timer` (daily, 04:12 UTC) |
 | Steady-state | `last_run_unix` advances once a day; `rows` ≈ 220–230 (the curator's monthly total series, ~13 points, plus its per-subclass split, ~210 rows); `datapoints_read` a small constant per run (what Dune metered for the two result reads — fractions of a credit; a run never executes a query); `executed_at_unix` advances about daily on the curator's own schedule |
 | Customer impact | None on verified figures. `/v1/rwa/assets` reports `curated.status: unavailable` once the 48-hour recognition bound passes and the explorer's curated panel says the comparison is unavailable rather than showing a stale published total |
-| Companions | [api-smoke-stale](api-smoke-stale.md) (same textfile-stamp pattern), `docs/methodology/rwa-coverage-reconciliation.md` § *The curated arm* |
+| Companions | [api-smoke-stale](api-smoke.md#stellarindex_api_smoke_stale) (same textfile-stamp pattern), `docs/methodology/rwa-coverage-reconciliation.md` § *The curated arm* |
 
 ## Why this exists
 
@@ -173,7 +173,7 @@ if that net is not expected to carry a key.
   (`rwa_curated_directory.go` is the per-asset reader the arm was built
   on; the first curator's per-asset tables are private, so it stays
   empty.)
-- `api-smoke-stale.md` — the same "textfile stamped every run, absent
+- `api-smoke.md#stellarindex_api_smoke_stale` — the same "textfile stamped every run, absent
   branch for never-ran" shape; the diagnosis order there applies here.
 - `docs/methodology/rwa-coverage-reconciliation.md` § *The curated arm*
   — why the curator's figure is served apart from the verified set, and

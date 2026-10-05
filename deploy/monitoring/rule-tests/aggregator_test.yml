@@ -83,7 +83,7 @@ tests:
               component: aggregator
               pair: crypto:XLM/fiat:USD
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_storm
               summary: "crypto:XLM/fiat:USD venues disagree >1% on the 5m VWAP for 15m — persistent price dispersion (P3)"
               description: |
                 The highest and lowest per-venue 5m VWAP feeding
@@ -98,7 +98,7 @@ tests:
                 — the odd one out is the venue to investigate. Check the pair's
                 div:<pair> Redis flag / API flags.divergence_warning for actual
                 price impact.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_storm
 
   # ── Case 3: a SINGLE venue can never fire, whatever it prints ──
   # crypto:XLM/fiat:GBP has only kraken (the 2026-08-28 freeze pair,
@@ -155,7 +155,7 @@ tests:
               window: 24h
               binary: stellarindex-aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_trim_fraction
               summary: "crypto:XLM/fiat:USD outlier filter rejecting >20% of the 24h window for 30m — in-window price dispersion (P3)"
               description: |
                 More than 20% of crypto:XLM/fiat:USD's 24h VWAP input has been
@@ -170,7 +170,7 @@ tests:
                 is protected by the trim; the risk is a thin surviving sample
                 (see min_usd_volume gating). Diagnose from the trades table
                 for the pair; see the spam-wave signature in the runbook.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_trim_fraction
 
   # ── Case 5: a normal trim share (10%) stays silent ──
   - interval: 1m
@@ -229,7 +229,7 @@ tests:
               window: 5m
               binary: stellarindex-aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_volume_trim_fraction
               summary: "crypto:XLM/crypto:USDT outlier filter removing >20% of the 5m window's volume for 15m (P3)"
               description: |
                 The outlier filter has removed more than 20% of the base volume
@@ -242,7 +242,7 @@ tests:
                 many prints but little volume removed is dust; few prints and
                 much volume is a large print outside the band. Diagnose from
                 the trades table for the pair.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_volume_trim_fraction
 
   # ── Case 8: a fat-finger trim removes almost no volume and stays silent ──
   # Same Go test's second case: class 5,010,000, outlier 5,000,000 (0.2%).
@@ -288,7 +288,7 @@ tests:
               team: stellarindex
               component: aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_correction_failing
               summary: "Non-7-decimals correction sweep failing, serving declining, or decimals resolvers out of lockstep — tokens at risk of silent price skew (P2)"
               description: |
                 Either the aggregator's nonstandard_decimals_assets
@@ -312,7 +312,7 @@ tests:
                 the aggregator's
                 decimals-guard component (internal/decimalsguard) and the
                 nonstandard_decimals_assets table directly.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_correction_failing
 
   # ── the decimals-lockstep arm (C1-050) ───────────────────────────
   # stellarindex_nonstandard_decimals_lockstep_mismatch_total is a
@@ -342,7 +342,7 @@ tests:
               team: stellarindex
               component: aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_correction_failing
               summary: "Non-7-decimals correction sweep failing, serving declining, or decimals resolvers out of lockstep — tokens at risk of silent price skew (P2)"
               description: |
                 Either the aggregator's nonstandard_decimals_assets
@@ -366,7 +366,7 @@ tests:
                 the aggregator's
                 decimals-guard component (internal/decimalsguard) and the
                 nonstandard_decimals_assets table directly.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_correction_failing
 
   # A mismatch that was repaired once and never recurs ages out with
   # the window — the lockstep arm must not latch the way the removed
@@ -442,7 +442,7 @@ tests:
               component: aggregator
               job: stellarindex_aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_decimals_guard_sweep_stale
               summary: "Decimals-guard sweep has not completed in over 45 min — guard health is unknown"
               description: |
                 The aggregator's decimals-assumption guard
@@ -500,7 +500,7 @@ tests:
               component: aggregator
               job: stellarindex_aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_decimals_guard_sweep_stale
               summary: "Decimals-guard sweep has not completed in over 45 min — guard health is unknown"
               description: |
                 The aggregator's decimals-assumption guard
@@ -576,7 +576,7 @@ tests:
               team: stellarindex
               component: aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_bootstrap_cap_reengaged
               summary: "3 pairs re-entered the bootstrap confidence cap within 1h (P3)"
               description: |
                 3 pairs whose last state before the past hour was
@@ -589,7 +589,7 @@ tests:
                 baseline window, not one thin pair. Served confidence stays at
                 0.5 for them until the gap is repaired or rolls out of the
                 30-day window.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_bootstrap_cap_reengaged
       - eval_time: 155m
         alertname: stellarindex_aggregator_bootstrap_cap_reengaged
         exp_alerts: []
@@ -649,7 +649,7 @@ tests:
               team: stellarindex
               component: aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_bootstrap_cap_reengaged
               summary: "3 pairs re-entered the bootstrap confidence cap within 1h (P3)"
               description: |
                 3 pairs whose last state before the past hour was
@@ -662,7 +662,7 @@ tests:
                 baseline window, not one thin pair. Served confidence stays at
                 0.5 for them until the gap is repaired or rolls out of the
                 30-day window.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_bootstrap_cap_reengaged
       - eval_time: 256m
         alertname: stellarindex_aggregator_bootstrap_cap_reengaged
         exp_alerts: []
@@ -690,7 +690,7 @@ tests:
               team: stellarindex
               component: aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_bootstrap_cap_reengaged
               summary: "3 pairs re-entered the bootstrap confidence cap within 1h (P3)"
               description: |
                 3 pairs whose last state before the past hour was
@@ -703,7 +703,7 @@ tests:
                 baseline window, not one thin pair. Served confidence stays at
                 0.5 for them until the gap is repaired or rolls out of the
                 30-day window.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_bootstrap_cap_reengaged
       - eval_time: 1996m
         alertname: stellarindex_aggregator_bootstrap_cap_reengaged
         exp_alerts: []
@@ -731,7 +731,7 @@ tests:
               component: aggregator
               job: stellarindex_aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/change-summary-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_change_summary_stale
               summary: "change_summary_5m has not been refreshed in over 30 min — explorer deltas are frozen"
               description: |
                 No change-summary pass has upserted a single entity in over
@@ -741,7 +741,7 @@ tests:
                 the aggregator's `change-summary pass had failures` warns for
                 `first_err`, and
                 stellarindex_change_summary_passes_total{outcome="failed"}.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/change-summary-stale.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_change_summary_stale
 
   - interval: 5m
     name: a change-summary worker upserting every 5 minutes never tickets

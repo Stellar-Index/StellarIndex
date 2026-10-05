@@ -148,7 +148,7 @@ tests:
               team: stellarindex
               component: aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged
               summary: "Composite corroboration unavailable for fiat:USD/crypto:XLM / 5m for 6h (P3)"
               description: |
                 Every evaluated bucket of `fiat:USD/crypto:XLM`
@@ -163,7 +163,7 @@ tests:
                 whether a no_chain target has any triangulations. The
                 aggregator log reason string
                 (`composite_unavailable: ...`) names the failing leg.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged
 
   - interval: 1m
     name: a corroborating bucket inside the window keeps the unavailable alert quiet

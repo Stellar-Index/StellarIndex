@@ -42,7 +42,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_warn_rate
           summary: "Anomaly ActionWarn sustained on class {{ $labels.class }} (P3)"
           description: |
             The aggregator's anomaly checker has emitted ActionWarn
@@ -52,7 +52,7 @@ groups:
             does not freeze or flag /v1/price — but a sustained rate
             means either a real, building market move or warn_pct is
             tuned too tight for this class's normal volatility.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_warn_rate
 
       - alert: stellarindex_anomaly_freeze_engaged
         expr: |
@@ -63,7 +63,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged
           summary: "Anomaly freeze engaged on class {{ $labels.class }} (P3)"
           description: |
             The aggregator's anomaly checker emitted ActionFreeze
@@ -78,7 +78,7 @@ groups:
             Inspect the freeze:<asset>:<quote> Redis keys to
             identify the affected pair(s); manual override via
             policy YAML if confirmed false-positive.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged
 
       # The P1 page for a freeze that exhausted its extension
       # ladder lives ONLY in freeze-lifecycle.yml
@@ -103,7 +103,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_recovery_stalled
           summary: "Freeze recovery worker is stalled (P3)"
           description: |
             At least one (pair, window) freeze has stayed active
@@ -121,7 +121,7 @@ groups:
             or a Redis ACL drift. Check the recovery worker logs
             (component=freeze-recovery) for the specific transport
             error.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_recovery_stalled
 
       # Exploit-shaped detector (4.4c, post-2026-08-25 Blend/Comet).
       # A SELF-PAIR swap (token_in == token_out) on a curated AMM pool
@@ -151,7 +151,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/amm-self-pair-swap-burst.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_amm_self_pair_swap_burst
           summary: "Self-pair swap burst on {{ $labels.source }} — possible pool-price manipulation (P3)"
           description: |
             More than 10 SELF-PAIR swaps (token_in == token_out) were
@@ -174,4 +174,4 @@ groups:
                 walk over the burst window.
               - If confirmed benign (a pool op we don't yet model), widen
                 or silence; if malicious, follow the incident runbook.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/amm-self-pair-swap-burst.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_amm_self_pair_swap_burst

@@ -178,6 +178,6 @@ that (`/privacy` §6).
 ## Related
 
 - [`account-erasure.md`](account-erasure.md) — whole-account erasure and export, and what an erasure cannot reach
-- [`admin-audit-write-failing.md`](admin-audit-write-failing.md) — the audit sink the admin calls above write to
+- [`api.md#stellarindex_admin_audit_write_failing`](api.md#stellarindex_admin_audit_write_failing) — the audit sink the admin calls above write to
 - [`web/explorer/src/app/privacy/page.tsx`](../../../web/explorer/src/app/privacy/page.tsx) — the public promise this runbook carries out
 - [`migrations/0188_account_erasure.up.sql`](../../../migrations/0188_account_erasure.up.sql) — the only audit-log rewrite the database permits

@@ -119,7 +119,7 @@ journalctl -u stellarindex-aggregator --since "1 hour ago" -n 200 | \
   (different metric, different expectation).
 - `ch-supply-gapfill-failed.md` — the ClickHouse supply gap-fill
   sibling.
-- `aggregator-silent.md` — when the orchestrator's tick counter
+- `aggregator.md#stellarindex_aggregator_silent` — when the orchestrator's tick counter
   itself is stalled.
 
 ## Changelog

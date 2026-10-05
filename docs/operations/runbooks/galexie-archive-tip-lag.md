@@ -18,7 +18,7 @@ severity: P1 | P3
 | Metric source | `node_exporter` textfile_collector reads `/var/lib/node_exporter/textfile_collector/galexie_archive_tip_lag.prom`, refreshed every 5 min by `galexie-archive-tip-lag.timer` → `/usr/local/bin/galexie-archive-tip-lag` |
 | Steady-state | 0 → 64,000 ledgers, sawtooth: the fill mirrors only COMPLETE 64,000-ledger partitions (`files_per_partition=64000`, `ledgers_per_file=1`), so lag climbs for ~4 days per partition and drops to ~0 on the next hourly fill after a partition completes. A lag > 64,000 sustained means a completed partition was not mirrored. |
 | Customer impact | None while alerting — live ingest unaffected; durable upstream `aws-public-blockchain` backstops the data. The R1 full-mirror integrity-leader role degrades. |
-| Companions | [archive-files-missing](archive-files-missing.md), [bootstrap-archival-node](bootstrap-archival-node.md), [galexie-archive-contiguity](galexie-archive-contiguity.md) |
+| Companions | [archive-files-missing](archive-completeness.md#stellarindex_archive_files_missing), [bootstrap-archival-node](bootstrap-archival-node.md), [galexie-archive-contiguity](galexie-archive-contiguity.md) |
 
 ## Why this exists
 
@@ -135,6 +135,6 @@ below the floor is not a fill failure.
 - ADR-0027 — LCM cache tiering (hot floor + trim; `docs/operations/lcm-cache-tiering.md`).
 - `f12289f6d` — the standing fix for the originating 23-day silent-stall incident.
 - `task #7` — LCM-cache tiering (longer-term capacity strategy).
-- [archive-files-missing](archive-files-missing.md) — sibling Tier-A/B archive integrity alert.
+- [archive-files-missing](archive-completeness.md#stellarindex_archive_files_missing) — sibling Tier-A/B archive integrity alert.
 - [galexie-archive-contiguity](galexie-archive-contiguity.md) — the middle-is-intact guard sharing this rule file (`stellarindex_galexie_archive_gap`, `_contiguity_silent`).
 - `galexie-archive-fill.{service,timer}` — canonical source `configs/ansible/roles/archival-node/templates/systemd/*.j2`, installed by `tasks/07-galexie.yml`; the `deploy/systemd/` copies have drifted (bare `ExecStart`, no `run-heavy-job.sh` wrapper) and are not what runs on r1.

@@ -33,7 +33,7 @@ suspicious if sustained.
 sum by (route) (rate(http_requests_total{status=~"5.."}[$range]))
 ```
 
-**Bar**: < 0.1% of total request rate per surface (the SLA target is ≥ 99.9% availability). Sustained 5xx on one surface is SEV-2 minimum; triage in runbook `api-5xx.md`.
+**Bar**: < 0.1% of total request rate per surface (the SLA target is ≥ 99.9% availability). Sustained 5xx on one surface is SEV-2 minimum; triage in runbook `api.md#stellarindex_api_error_rate_critical`.
 
 ## 3. p95 / p99 latency per surface
 

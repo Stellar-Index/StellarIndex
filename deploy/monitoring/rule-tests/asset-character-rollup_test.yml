@@ -33,7 +33,7 @@ tests:
               team: stellarindex
               component: aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/asset-character-rollup-failing.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_asset_character_rollup_failing
               summary: "Asset-character rollup failing: errors with no successful sweep in 13h"
               description: |
                 The aggregator's asset-volume-character rollup worker (6h

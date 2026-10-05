@@ -31,8 +31,8 @@ func TestRetryWindowMatchesOperatorDocs(t *testing.T) {
 	stale := regexp.MustCompile(`\b72 ?h\b`)
 	root := filepath.Join("..", "..")
 	for _, rel := range []string{
-		"docs/operations/runbooks/customer-webhook-fanout-failing.md",
-		"docs/operations/runbooks/customer-webhook-delivery-failing.md",
+		"docs/operations/runbooks/aggregator.md",
+		"docs/operations/runbooks/api.md",
 		"docs/architecture/platform-spec.md",
 		"internal/retentionreaper/reaper.go",
 		"internal/customerwebhook/worker.go",

@@ -14,7 +14,7 @@ severity: P2
 | Alert | None dedicated — no Prometheus rule watches the explorer's edge. The weekly `site-crawl` workflow opens (or comments on) a GitHub issue labelled `site-crawl-drift` when any crawl check fails, including the stale-deploy check, and closes it once the crawl is clean. |
 | Detected by | The weekly `site-crawl` workflow (`scripts/ci/site-crawl-check.sh`, Mondays 06:20 UTC, or `gh workflow run site-crawl.yml`); a Cloudflare dashboard/email alert on the project; a customer report; or a manual `curl -sI https://stellarindex.io`. |
 | Typical MTTR | 5–20 min (rollback is a dashboard click; a stuck deploy needs a re-publish). |
-| Impact | `stellarindex.io` / `www.` / `testnet.` / `futurenet.` serve errors or a stale build. `api.stellarindex.io` is a **separate** Cloudflare Pages/Caddy surface (`docs/operations/cdn-setup.md`) and is unaffected — this is a presentation-layer outage, not a data outage. See `api-down.md` if the API itself is down. |
+| Impact | `stellarindex.io` / `www.` / `testnet.` / `futurenet.` serve errors or a stale build. `api.stellarindex.io` is a **separate** Cloudflare Pages/Caddy surface (`docs/operations/cdn-setup.md`) and is unaffected — this is a presentation-layer outage, not a data outage. See `api.md#stellarindex_api_down` if the API itself is down. |
 
 ## Symptoms
 

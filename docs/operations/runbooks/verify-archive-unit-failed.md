@@ -119,7 +119,7 @@ Gather for the postmortem:
   this ticket-level alert wasn't actioned in time.
 - ADR-0016 — per-region trust model that this nightly run anchors.
 - `docs/operations/archival-node-bringup.md` §"Per-region trust + verification model"
-- The `archive-files-missing.md` runbook — adjacent failure mode that
+- The `archive-completeness.md#stellarindex_archive_files_missing` runbook — adjacent failure mode that
   often co-fires with this alert.
 
 ## Changelog
