@@ -288,7 +288,7 @@ Supply runs for operator-watched assets (XLM always; classic/SEP-41 via `[supply
 | X3.2 | Per-asset statistical baseline (Phase 2) | `aggregate/baseline`, migration 0007 | 📦 |
 | X3.3 | Multi-factor confidence score | `aggregate/confidence`; not on the public API | 📦 |
 | X3.4 | Freeze policy (3-signal AND, closed-bucket only) | `aggregate/freeze` | ✅ |
-| X3.5 | ADR-0019 Phase 3 cross-oracle confidence factor: deferred post-launch; depends on `divergence/` being wired into `aggregate/confidence`; not built | `aggregate/confidence` × `divergence`, ADR-0019 §Phase 3 | ⏳ |
+| X3.5 | ADR-0019 Phase 3 cross-oracle confidence factor: built — divergence references (Reflector ×3, RedStone, Band, synthetic USD-cross) feed `CrossOracleFactor` through the `div:` cache; live `/v1/price` reports `cross_oracle_checked` | `orchestrator/confidence.go::lookupCrossOracle`, `TestConfidence_DivergenceWiredFromCache` | ✅ |
 | X3.6 | Multi-window anti frog-boiling (1d/7d/30d MAD) | `baseline/multi.go`, migration 0008 | 📦 |
 | X3.7 | Bootstrap (warmup) policy for new assets | `baseline/refresh.go` MinSamples gate | 📦 |
 | X3.8 | Operator runbook for freeze events | `docs/operations/runbooks/anomaly.md` | 📦 |
@@ -318,7 +318,6 @@ Every outstanding item is launch-blocking except ⏳ ones. Tracking: `docs/opera
 
 1. S2.5 DIA mainnet ship: testnet only today; integration conditional on DIA's mainnet launch.
 2. S9.1 99.9 % availability measurement: needs ≥ 30 days production; number reported 90 days post-launch.
-3. X3.5 Phase 3 cross-oracle factor: depends on `internal/divergence/` shipping; nominal post-launch unless schedule allows pulling it forward.
 
 #### Verification protocol
 
