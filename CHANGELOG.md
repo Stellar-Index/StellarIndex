@@ -22,7 +22,7 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [v0.104.0] — 2026-10-05
 
-36 commits since v0.103.0. Two migrations (0206, 0207). No `pkg/*` break.
+41 commits since v0.103.0. Two migrations (0206, 0207). No `pkg/*` break.
 
 ### Migrations
 
@@ -35,6 +35,8 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 - **api:** thin-market flag with substance evidence on `/v1/vwap` and `/v1/twap` (#2335); operator under-review hold, hot-reloadable from file (#2200).
 - **aggregate:** `excluded_sources` read-time VWAP kill-switch (#2232).
 - **aggregator:** alert when `change_summary_5m` stops refreshing (#2217).
+- **clickhouse:** `movements_by_asset` added and `account_movements` re-keyed asset-first (#2345). Operator: apply the Step-1 DDL in `deploy/clickhouse/movements_by_asset.sql` on r1, testnet and futurenet before deploy.
+- **rozo:** relayer bridge flow classified over `account_movements` (#2349).
 
 ### Fixed
 
@@ -51,7 +53,16 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 - **external:** CEX trades with an implausible vendor timestamp dropped (#2247).
 - **forex:** history stuck streak counted per refresh (#2233); only fresh upstream rates count as source entries (#2211).
 - **monitoring:** alert when the asset-character rollup stops succeeding (#2230); heartbeat oracle sources get a heartbeat-based stale budget (#2263).
+- **timescale:** the `soroban_events` gap scan is chunk-pruned by close time (#2350).
 - **ci:** push and PR identity checks scoped to their own commits (#2341, #2326).
+
+### Documentation
+
+- NOTICE added with the goxdr dual-license note (#2347).
+
+### Tests
+
+- **load:** k6 smoke scenario that fails on any `http_req_failed` (#2348).
 
 ## [v0.103.0] — 2026-10-04
 
