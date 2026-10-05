@@ -1,210 +1,70 @@
 ---
 title: SEV-1 tabletop — Anomaly freeze stuck-engaged on a major pair
-last_verified: 2026-05-03
+last_verified: 2026-10-05
 status: ratified
 severity: P1
 exercises_runbook: ../../runbooks/anomaly-freeze-engaged.md
 playbook_section: ../../sev-playbook.md#4-response-flow
 ---
 
-# SEV-1 tabletop — Anomaly freeze stuck-engaged on a major pair
+# SEV-1 tabletop — Anomaly freeze stuck-engaged
 
-Scripted scenario for the monthly tabletop drill. ~30 min for
-3 people. Exercises the ADR-0019 anomaly-response chain:
-`internal/aggregate/anomaly` (Phase 1 thresholds) →
-`internal/aggregate/baseline` (Phase 2 statistical baseline) →
-`internal/aggregate/freeze` (writer + Looker) →
-`/v1/price`'s `flags.frozen` envelope flag.
+~30 min, 3 people. Exercises the ADR-0019 chain (`internal/aggregate/anomaly`, `baseline`, `freeze`) and `/v1/price`'s `flags.frozen`.
+A stuck freeze on a major pair (XLM/USD) means every consumer reads a frozen last-known-good price while real moves are suppressed.
 
-This is the canonical drill for the freeze-policy path. The
-anomaly response is **operationally critical** — a stuck-
-engaged freeze on a major pair (XLM/USD) means every consumer
-is reading a frozen LKG price; legitimate market moves are
-being suppressed; the aggregator is incorrectly trusting its
-own caution. Detecting + clearing this is on-call's job.
+## Setup and trigger
 
-## Initial conditions
+All services up, aggregator producing closed-bucket VWAPs each minute, `flags.frozen` <0.1% baseline. 22:15 UTC Friday, light traffic.
 
-Read aloud at drill setup.
+> 22:17 UTC a CEX feed (Binance) goes down for 90 s. Class diversity for XLM/USD drops below `class_diversity_min=3`,
+> `anomaly.ActionFreeze` fires and `freeze.Writer` publishes `freeze:native:fiat:USD` with TTL 600 s. The feed returns at 22:18:30
+> and diversity recovers, but the writer's contract is set-on-engage, clear-by-operator (ADR-0019 Phase 1), so the marker stays.
+> `/v1/price?asset=native` returns the same value with `flags.frozen=true` for ~10 minutes.
 
-- All Stellar Index services up. SLA probe metrics within target.
-  Aggregator is producing closed-bucket VWAPs every minute for
-  the configured pair set. `flags.frozen` rate across `/v1/price`
-  responses is < 0.1% baseline.
-- It is **22:15 UTC, Friday**. Light traffic — start of the
-  weekend. Oncall is `<participant 1>`. Backup is
-  `<participant 2>`.
-
-## Trigger event
-
-Read aloud at drill T+0.
-
-> At 22:17 UTC, an off-chain CEX feed (Binance) goes down for
-> 90 s — venue-side maintenance window. The aggregator's
-> Phase 1 anomaly detector sees the source-count for XLM/USD
-> drop below `class_diversity_min=3`, fires
-> `anomaly.ActionFreeze`, and `freeze.Writer` publishes
-> `freeze:native:fiat:USD` with TTL 600 s.
->
-> Binance comes back at 22:18:30. The aggregator's class-diversity
-> recovers. **But** the freeze marker still has 9 minutes left
-> on its TTL — and the next aggregator tick at 22:19 doesn't
-> automatically clear the marker; the freeze writer's contract
-> is "set on engage; clear on operator-driven evaluate-and-
-> clear" (per ADR-0019 Phase 1).
->
-> First user-visible signal: `/v1/price?asset=native` returns
-> the same closed-bucket value at 22:19, 22:20, … with
-> `flags.frozen=true`. Customer dashboards show "frozen at
-> $0.0712" for 10 minutes during what should be live trading
-> hours. PagerDuty wakes oncall at 22:23 because the
-> `frozen_pair_dwell_minutes` alert fires for "frozen for > 5
-> consecutive closed buckets on a P1 pair".
-
-## Injection timeline
-
-Drill leader reads each beat in order; pauses after each for
-participants to narrate.
+## Beats (T+ min:sec)
 
 | T+ | Beat |
 | --- | --- |
-| 0:00 | `frozen_pair_dwell_minutes` fires (5 min on XLM/USD). PagerDuty pages oncall. |
-| 0:30 | While oncall is acknowledging, an internal Slack message from a customer team: "is the price feed broken? showing the same number for 8 min". |
-| 1:00 | Oncall opens the runbook. Decision tree: was the freeze legitimate (real anomaly) or stuck (recovered but not cleared)? |
-| 3:00 | `redis-cli GET freeze:native:fiat:USD` returns `engaged_at=...,reason=class_diversity_drop`. The reason is one the operator should recognise. |
-| 5:00 | `prometheus` query for source-class diversity over the last 10 min shows: dropped to 2 at 22:17, recovered to 4 at 22:18:30. The source-side recovery happened 7 minutes ago. |
-| 8:00 | A second customer DMs: "we've stopped trading XLM/USD for 12 minutes because your `flags.frozen` is firing. Is this real?" |
-| 12:00 | The freeze marker is still in Redis with ~7 minutes TTL remaining. Operator considers: wait for TTL? Manually clear? `freeze.Writer.Clear` is exposed via `stellarindex-ops`? |
+| 0:00 | Freeze-dwell page on XLM/USD (frozen >5 closed buckets); `stellarindex_anomaly_freeze_engaged` (`anomaly.yml`, ticket, 1m after engage) and `stellarindex_anomaly_freeze_active` (`freeze-lifecycle.yml:349`, informational, >0 for 5m) are the early signals; neither pages. Only `stellarindex_anomaly_freeze_escalated` (`freeze-lifecycle.yml:146`, page) wakes anyone, and it fires on escalation to operator review, not on a stuck marker |
+| 0:30 | Customer team asks if the feed is broken (same number for 8 min) |
+| 3:00 | `redis-cli GET freeze:native:fiat:USD` shows `engaged_at=...,reason=class_diversity_drop` |
+| 5:00 | Source-class diversity query: dropped to 2 at 22:17, back to 4 at 22:18:30 |
+| 8:00 | Second customer stopped trading XLM/USD for 12 min |
+| 12:00 | Marker has ~7 min TTL left; operator weighs waiting vs clearing |
 
-## Expected response per the playbook
+## Expected response
 
-Drill leader compares participant narratives against this
-expected sequence.
+- **5 min:** acknowledge; open `#incident-<YYYY-MM-DD>-freeze-stuck`; post "stuck-frozen flag on XLM/USD, price feed may not update"; status page *Degraded performance* on API.
+- **10 min, diagnose** ([anomaly-freeze-engaged.md](../../runbooks/anomaly-freeze-engaged.md)): read the marker; check `engaged_at` and `reason`
+  against the alert; check the class-diversity gauge for the last 15 min. If recovered, the freeze is stuck (Phase 1 does not auto-clear).
+  Verify upstream recovery before clearing.
+- **20 min, mitigate:** operator clear:
+  ```
+  stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
+    -asset native -quote fiat:USD \
+    -reason "drill: escalated freeze, oracle verified healthy by hand" \
+    -write
+  ```
+  `-reason` is required (an unfreeze overrides an automated safety control on a money surface); `-list` shows open freezes, `-dry-run` rehearses.
+  **Never `redis-cli DEL freeze:native:fiat:USD`**: since migration 0119 the durable ladder leaves `freeze_events.recovered_at` NULL, reads the missing
+  marker as "Redis lost it", rehydrates and re-writes it next tick, so a bare DEL is inert for escalated freezes.
+  Verify next tick: `curl -sS https://api.stellarindex.io/v1/price?asset=native | jq '.flags'` shows `frozen` false. If it re-engages, the source condition
+  is not recovered; investigate the source.
+- **30 min:** status *Mitigated*: "A stuck price-freeze flag on XLM/USD has been cleared; live updates resumed at <UTC>."
+- **24 h postmortem** covers: why Phase 1 chose operator-clear over auto-clear (flapping defence); whether the 600 s TTL suits major pairs; whether the runbook states TTL semantics.
 
-### Within 5 minutes (per [§2 Timelines](../../sev-playbook.md#2-timelines-the-sla-promises))
+## Pass criteria
 
-- Oncall acknowledges PagerDuty.
-- Oncall opens `#incident-<YYYY-MM-DD>-freeze-stuck` channel.
-- Initial post: "Investigating a stuck-frozen flag on XLM/USD.
-  Customers may see a non-updating price feed."
-- Status page set to *Degraded performance* on **API**.
+1. Classified SEV-1 (frozen feed on a major pair is effective service-down for that pair).
+2. Read `freeze:native:fiat:USD` directly, not just the metric.
+3. Distinguished stuck from legitimate freeze via the class-diversity timeline.
+4. Identified operator-clear as ADR-0019 Phase 1 design, not a bug.
+5. Used `stellarindex-ops freeze-unfreeze` (never `redis-cli DEL`) instead of waiting for TTL.
+6. Verified `flags.frozen` false on the next tick.
+7. Postmortem recorded the clear-policy rationale rather than "just auto-clear".
+8. Status-page wording stayed factual until *Identified*.
 
-### Within 10 minutes — diagnose
+## Variants
 
-Per [`anomaly-freeze-engaged.md`](../../runbooks/anomaly-freeze-engaged.md):
-
-- `redis-cli GET freeze:native:fiat:USD` reads the marker.
-- Inspect the `engaged_at` + `reason` fields. Confirm:
-  1. Engagement timestamp is consistent with the alert.
-  2. Reason matches a recovered upstream condition (in this
-     drill: `class_diversity_drop` and class diversity is now ≥
-     the threshold).
-- Check `prometheus` for the source-class-diversity gauge over
-  the past 15 min. If recovered, the freeze is stuck — Phase 1
-  doesn't auto-clear.
-
-### Within 20 minutes — mitigate
-
-**Operator-driven clear** (the right call here):
-
-```
-stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
-  -asset native -quote fiat:USD \
-  -reason "drill: escalated freeze, oracle verified healthy by hand" \
-  -write
-```
-
-`-reason` is REQUIRED for a mutation — an unfreeze overrides an
-automated safety control on a money surface, so who and why has to be
-in the record. `-list` first to see what is open, `-dry-run` to
-rehearse.
-
-**Do NOT use `redis-cli DEL freeze:native:fiat:USD`.** It was the
-documented form before the durable ladder landed (migration 0119) and
-it no longer works: deleting the key alone leaves
-`freeze_events.recovered_at` NULL, so the aggregator reads the missing
-marker as "Redis lost it", rehydrates the ladder and re-writes the
-marker on the next tick. Against the escalated freeze this drill
-simulates, a bare DEL is permanently inert.
-
-Verify on the next aggregator tick:
-
-```
-curl -sS https://api.stellarindex.io/v1/price?asset=native | jq '.flags'
-# → flags.frozen should be false on the response
-```
-
-Watch for **re-freeze**: if the underlying condition isn't
-actually recovered, the next tick will re-engage. If that
-happens, escalate to investigating the source itself.
-
-### Within 30 minutes — communicate
-
-- Status page transitions *Degraded performance* → *Mitigated*
-  with body: "A stuck price-freeze flag on XLM/USD has been
-  cleared; live updates resumed at <UTC>."
-- Customer-facing post: same shape, slightly more context.
-
-### Within 24 hours — postmortem
-
-Postmortem covers:
-
-- Why did the operator-driven-clear contract exist (ADR-0019
-  Phase 1 explicitly chose "operator clears" over "auto-clear
-  on first recovered tick" — defence against flapping)?
-- Did the freeze marker TTL (600s in this drill) match the
-  operational reality? Should it be shorter for major pairs?
-- Was the runbook clear about the TTL semantics?
-
-## Validation criteria
-
-| # | Criterion |
-| --- | --- |
-| 1 | Did oncall classify this as SEV-1 (frozen feed on a major pair = effective service-down for that pair)? |
-| 2 | Did the team consult `freeze:native:fiat:USD` directly via `redis-cli` (not just the metric)? |
-| 3 | Did the team correctly distinguish "freeze is stuck" vs "freeze is legitimate" by checking the source-class-diversity timeline? |
-| 4 | Did anyone correctly identify that ADR-0019 Phase 1 freeze is **operator-cleared by design**, not a bug? |
-| 5 | Did the team use `stellarindex-ops freeze-unfreeze` (never `redis-cli DEL` — inert for escalated freezes, and the ladder rehydrates) rather than waiting for TTL? |
-| 6 | After clearing, did anyone verify on the next tick that `flags.frozen` was indeed false? |
-| 7 | Did the postmortem capture the Phase 1 clear-policy rationale rather than recommending "just auto-clear"? |
-| 8 | Status-page wording stayed factual (no speculation about cause until §"Identified")? |
-
-## Common gaps surfaced (from prior simulations)
-
-- **The clear-policy rationale gets lost in the heat of the
-  moment.** Operators want to "fix" auto-clear; they need to
-  understand it's a deliberate ADR-0019 decision. Action item
-  template: "Add a one-line `WHY` summary to the runbook's
-  clear-procedure section."
-
-- **Re-freeze recovery loop.** If the source condition that
-  triggered freeze hasn't actually cleared (it can flap), a
-  manual clear will be re-engaged on the next tick. Operators
-  need a "verify before clearing" check — the runbook covers
-  it but it's at the bottom; should be the first step.
-  Action item template: "Reorder the runbook so 'verify
-  upstream recovery' precedes 'clear'."
-
-- **`stellarindex-ops freeze clear` may not be shipped yet.**
-  In the absence of the ops command, the redis-cli form works
-  but feels unsafe ("am I deleting the right key?"). Action
-  item template: "Ship `stellarindex-ops freeze clear` if not
-  already, and add a dry-run flag."
-
-## Variant scenarios
-
-- **Phase 2 freeze variant.** The aggregator's Phase 2
-  statistical baseline (multi-window MAD per ADR-0019) fires
-  freeze on XLM/USD because of a real legitimate market move
-  — the freeze is correct, but the customer doesn't see why.
-  Tests whether oncall correctly DEFENDS the freeze rather
-  than clearing it.
-- **Cascade freeze variant.** A stuck freeze on XLM/USD also
-  affects every triangulated pair (XLM is the leg). Tests
-  whether oncall checks the triangulation graph + clears the
-  root cause vs the leaves.
-
-## Pairs with
-
-- [SEV-1 Timescale primary failover](sev1-timescale-primary-failover.md)
-  — same severity tier; both exercise the SEV-1 response shape.
+Phase 2 freeze (multi-window MAD baseline fires on a real market move; oncall should defend the freeze, not clear it); cascade freeze
+(a stuck XLM/USD also freezes every triangulated pair; clear the root cause, not the leaves).

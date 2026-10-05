@@ -1,175 +1,63 @@
 ---
 title: SEV-2 tabletop — Redis Sentinel master failover under live traffic
-last_verified: 2026-05-03
-status: ratified
+last_verified: 2026-10-05
+status: draft
 severity: P2
-exercises_runbook: ../../runbooks/redis-fanout-broken.md
+exercises_runbook: ../../runbooks/redis-master-down.md
 playbook_section: ../../sev-playbook.md#4-response-flow
 ---
 
-# SEV-2 tabletop — Redis Sentinel master failover under live traffic
+# SEV-2 tabletop — Redis Sentinel master failover
 
-Scripted scenario for the monthly tabletop drill. ~30 min for
-3 people. Exercises the Redis HA path (ADR-0024,
-`configs/ansible/roles/redis-sentinel`) end-to-end across the
-endpoints that depend on Redis: `/v1/price` (closed-bucket VWAP
-cache + freeze markers + confidence + triangulation), `/v1/account/*`
-(API-key validator), `/v1/assets/{id}/metadata` (SEP-1 cache).
+> **Infra not deployed.** The `redis-sentinel` role (ADR-0024) exists but no playbook runs it on r1. Run this when a Sentinel cluster exists (r2/r3).
 
-This is the canonical drill for the Redis-dependent surface —
-unlike Timescale (where loss is service-down), Redis loss
-**degrades** rather than kills. Most of the validation criteria
-test whether the team correctly distinguishes degraded-vs-down.
+~30 min, 3 people. Exercises the Redis-dependent surface: `/v1/price` (closed-bucket VWAP cache, freeze markers, confidence, triangulation),
+`/v1/account/*` (API-key validator), `/v1/assets/{id}/metadata` (SEP-1 cache). Redis loss **degrades** rather than kills; most criteria test degraded-vs-down.
 
-## Initial conditions
+## Setup and trigger
 
-Read aloud at drill setup.
+`cache-01` master, `cache-02`/`cache-03` replicas, `redis_exporter` up on all three. 17:45 UTC Wednesday, ~1.2k req/min mostly `/v1/price`.
 
-- All Stellar Index services up. SLA probe metrics within target.
-  Redis Sentinel cluster (`cache-01` master, `cache-02` +
-  `cache-03` replicas) all reachable; `redis_exporter` shows
-  `up=1` on all three.
-- It is **17:45 UTC, Wednesday**. Steady-state traffic — peak
-  US trading hours. ~1.2 k requests/min mostly on `/v1/price`.
-- Oncall is `<participant 1>`. Backup is `<participant 2>`.
-  Engineering manager is in another meeting; reachable on Slack.
+> 17:46 UTC `cache-01` becomes unresponsive (OOM-kill after a rogue `SCAN MATCH` from a debug session). Sentinel detects within 30 s and promotes
+> `cache-02` (~5 s); API connections to Redis time out meanwhile. `/v1/price` p99 spikes 80 ms to 1.8 s for ~10 s; `flags.frozen` and
+> `flags.divergence_warning` pause (freeze markers unreadable until the new master accepts traffic).
 
-## Trigger event
-
-Read aloud at drill T+0.
-
-> At 17:46 UTC, `cache-01` (the current Redis master) becomes
-> unresponsive — say, an OOM-killer hit it after a rogue
-> SCAN-with-MATCH from a manual debug session blew its memory
-> budget. Sentinel detects within 30 s and begins promoting
-> `cache-02`. The promotion takes ~5 s; during that window
-> every API replica's connection to Redis times out.
->
-> First user-visible signal: `/v1/price` p99 spikes from 80 ms
-> to 1.8 s for ~10 s as connections re-establish. `flags.frozen`
-> stops firing on degraded pairs (the `freeze:<asset>:<quote>`
-> markers can't be read until the new master accepts traffic).
-> `flags.divergence_warning` likewise pauses.
-
-## Injection timeline
-
-Drill leader reads each beat in order; pauses after each for
-participants to narrate.
+## Beats (T+ min:sec)
 
 | T+ | Beat |
 | --- | --- |
-| 0:00 | `redis_master_unreachable` fires (Sentinel can't reach `cache-01` for 10 s). |
-| 0:30 | `redis_failover_in_progress` fires (Sentinel promoting `cache-02`). API-side connection-pool errors spike in `stellarindex_ratelimit_fail_open_total`. |
-| 1:00 | `cache-02` accepts writes; replicas re-attach. `flags.frozen` paths re-enable as the cache catches up. |
-| 2:00 | A customer (Freighter) DMs: "we got 503s on a few `/v1/price` calls, are you OK?" |
-| 5:00 | API metrics return to baseline, BUT `flags.frozen` is firing on a pair that wasn't frozen pre-failover — was the marker stale data? Or did the aggregator legitimately freeze it during the outage? |
-| 10:00 | `cache-01` recovers (operator restart) and rejoins as a replica. Sentinel does NOT fail back automatically (per ADR-0024). |
-| 20:00 | A second customer asks via Discord whether their stored API keys are affected (they're not — keys live in Redis but the validator's cache is read-through, not write-through; the master swap doesn't lose any record). |
+| 0:00 | `stellarindex_redis_master_down` (`redis_up == 0` for 30s) |
+| 0:30 | Sentinel promoting `cache-02`; `stellarindex_ratelimit_fail_open_total` spikes |
+| 1:00 | `cache-02` accepts writes; replicas re-attach; `flags.frozen` paths re-enable as cache catches up |
+| 2:00 | Customer: a few 503s on `/v1/price` |
+| 2:30 | `stellarindex_redis_replication_broken` (`cache.yml:109`, `redis_connected_slaves < 2` for 2m, ticket) while `cache-01` is still absent; clears when it rejoins |
+| 5:00 | Metrics baseline, but `flags.frozen` fires on a pair not frozen pre-failover: stale marker or legitimate aggregator freeze during the outage? |
+| 10:00 | `cache-01` restarted, rejoins as replica; Sentinel does not fail back (ADR-0024) |
+| 20:00 | Customer asks if stored API keys are affected (no: validator cache is read-through, a master swap loses no record) |
 
-## Expected response per the playbook
+## Expected response
 
-Drill leader compares participant narratives against this
-sequence.
+- **5 min:** acknowledge; open `#incident-<YYYY-MM-DD>-redis-failover`; post "brief 503s on `/v1/price` from a Redis cache failover; recovering automatically";
+  status *Degraded performance* on API (not *Major outage*).
+- **15 min, diagnose:** `/v1/readyz` `redis` check back to ok; `redis-cli -p 26379 -a "$REDIS_PASSWORD" SENTINEL get-master-addr-by-name stellarindex-r1-cache`
+  shows the new master (password required since Sentinel got `requirepass`); root cause from `cache-01` host logs and `redis-server` stderr; do **not** fail back.
+- **30 min, verify side-effects:** `/v1/price` 5xx back to <=0.1%; `/v1/account/me` serves; `flags.frozen` markers repopulated (spot-check
+  `redis-cli GET freeze:<asset>:<quote>`); canary `curl -sS https://api.stellarindex.io/v1/price?asset=native | jq '.flags'`.
+  `flags.frozen` firing after failover is expected: a stale marker is re-evaluated by the aggregator's next tick.
+- **1 h:** status *Degraded performance* to *Operational* with a monitoring note; post "~10 s of brief 5xx during a designed Redis failover; no data loss; no action needed".
+- **24 h:** postmortem per [§6](../../sev-playbook.md#6-after-the-incident).
 
-### Within 5 minutes (per [§2 Timelines](../../sev-playbook.md#2-timelines-the-sla-promises))
+## Pass criteria
 
-- Oncall acknowledges PagerDuty page.
-- Oncall opens `#incident-<YYYY-MM-DD>-redis-failover` channel.
-- Initial post: "We're seeing brief 503s on `/v1/price` from a
-  Redis cache failover; recovering automatically."
-- Status page set to *Degraded performance* on **API**
-  (NOT *Major outage* — the API is still serving, just briefly
-  noisier).
+1. Classified SEV-2 (degraded), not SEV-1: `/v1/readyz` recovers within 60 s and 5xx is back to baseline within 5 min.
+2. Confirmed failover completion via `/v1/readyz`, not metrics alone.
+3. Treated post-failover `flags.frozen` as expected behaviour.
+4. Verified the API-key validator path still serves.
+5. Checked `SENTINEL get-master-addr-by-name`, not just the dashboard.
+6. Did not fail back to `cache-01` (ADR-0024 "let Sentinel pick").
+7. Status page severity *Degraded performance*.
+8. Customer comms free of alarmist language.
 
-### Within 15 minutes — diagnose
+## Variants
 
-- Confirm via `/v1/readyz` that the `redis` check is now back
-  to `status: ok` after a brief flap.
-- Confirm via `redis-cli -p 26379 -a "$REDIS_PASSWORD" SENTINEL get-master-addr-by-name stellarindex-r1-cache`
-  that the new master is correctly promoted. (F-1273,
-  2026-05-13: the `-a "$REDIS_PASSWORD"` is required since wave 106
-  added `requirepass` to the Sentinel listener; earlier versions
-  of this drill omitted both the password and the master-name
-  arg.)
-- Identify root cause via `cache-01` host logs + `redis-server`
-  stderr — likely OOM-kill on the rogue debug session.
-- Decide whether to **fail back to cache-01** (no — let it stay
-  a replica per ADR-0024) or **leave cache-02 as the new
-  primary**.
-
-### Within 30 minutes — verify side-effects
-
-- `/v1/price` 5xx rate back to baseline (≤ 0.1%).
-- `/v1/account/me` still serves correctly (validator hit Redis
-  for the lookup; new master serves the same records).
-- `flags.frozen` markers re-populated for any pair that the
-  aggregator actively re-flagged during the outage. Spot-check
-  one against `redis-cli GET freeze:<asset>:<quote>`.
-- Run the canary: `curl -sS https://api.stellarindex.io/v1/price?asset=native | jq '.flags'`.
-
-### Within 1 hour — communicate
-
-- Status page transitions *Degraded performance* → *Operational*
-  with a "monitoring" note.
-- Customer-facing post in the operator channel summarising:
-  "10s of brief 5xx during a planned-into-design Redis failover.
-  No data loss. No customer action required."
-
-### Within 24 hours — postmortem
-
-Postmortem doc per [§6](../../sev-playbook.md#6-after-the-incident).
-Action items filed with owners.
-
-## Validation criteria
-
-Score `pass` / `partial` / `fail`. Aim for ≥ 80% pass.
-
-| # | Criterion |
-| --- | --- |
-| 1 | Did oncall correctly classify this as **SEV-2** (degraded) not SEV-1 (down)? |
-| 2 | Did anyone confirm via `/v1/readyz` (not just metrics) that the failover completed? |
-| 3 | Did the team correctly identify that `flags.frozen` resuming firing post-failover is **expected behaviour**, not a regression? |
-| 4 | Did anyone verify the API-key validator path still served (Redis is the validator's source of truth, but reads survive a master swap)? |
-| 5 | Did the team check `redis-cli ... SENTINEL get-master-addr-by-name` rather than just trusting the dashboard? |
-| 6 | Did the team explicitly NOT fail back to `cache-01` per ADR-0024's "let Sentinel pick" rule, even though the engineer's instinct is to "restore the original topology"? |
-| 7 | Status-page severity correct (Degraded performance, not Major outage)? |
-| 8 | Customer-comms post avoided alarmist language? |
-
-## Common gaps surfaced (from prior simulations)
-
-- **Oncall over-classifies as SEV-1.** Brief 503s feel like a
-  full outage. The runbook needs to lead with the
-  classification rule: "if `/v1/readyz` recovers within 60 s
-  and 5xx rate returns to baseline within 5 min, this is SEV-2."
-  Action item template: "Add classification flowchart to
-  redis-fanout-broken.md."
-
-- **Team waits for `cache-01` to fail back.** Sentinel-driven
-  failover is one-way until manual ops decide otherwise. Action
-  item template: "Reinforce the fail-forward-only rule in the
-  runbook + roleplay."
-
-- **`flags.frozen` reading post-failover.** If the freeze
-  marker TTL was longer than the failover window, the new
-  master will serve a stale marker. The aggregator's next tick
-  will re-evaluate and either renew or clear the marker.
-  Operators need to know this so they don't react to a "frozen"
-  flag during the recovery window. Action item template:
-  "Document expected post-failover marker behaviour in
-  ADR-0019 ⚠ Failover."
-
-## Variant scenarios
-
-- **Both replicas down variant.** Cluster has only the master
-  + a single replica, master fails — Sentinel can't get quorum.
-  Tests the `redis_quorum_lost` alert + the manual recovery
-  path. Promotes to SEV-1 mid-drill.
-- **Sentinel split-brain variant.** Network partition between
-  the two Sentinel hosts. Tests the runbook's split-brain
-  resolution + ADR-0024 §Decision (three cache hosts, quorum=2) justification.
-
-## Pairs with
-
-- [SEV-1 Timescale primary failover](sev1-timescale-primary-failover.md)
-  — different stateful tier; back-to-back drill exercises both
-  HA paths in 90 min.
+Both replicas down (no quorum; manual recovery; `stellarindex_redis_replication_broken` stays firing as a ticket; escalates to SEV-1 mid-drill); Sentinel split-brain (partition between Sentinel hosts; ADR-0024 three-host quorum=2 rationale).
