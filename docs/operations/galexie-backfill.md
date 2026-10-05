@@ -1,228 +1,119 @@
 ---
 title: Galexie backfill
-last_verified: 2026-09-02
+last_verified: 2026-10-05
 status: current
 ---
 
 # Galexie backfill — genesis → live-bucket handoff
 
-Procedure for replaying pubnet history into the `galexie-archive`
-MinIO bucket on an archival node, plus the verification we run
-afterwards to prove the bytes are canonical.
+One-shot replay of pubnet history into the `galexie-archive` MinIO bucket on an
+archival node, plus the verification that proves the bytes are canonical. The
+steady-state story (daily cron, cross-anchor fill, dual-archive invariants) is
+[archive-completeness.md](archive-completeness.md) /
+[ADR-0017](../adr/0017-archive-completeness-invariants.md).
 
-> **See also:** [archive-completeness.md](archive-completeness.md) +
-> [ADR-0017](../adr/0017-archive-completeness-invariants.md) — the
-> *steady-state* completeness story (daily cron, cross-anchor fill,
-> dual-archive invariants). This doc is the *one-shot* historical
-> bring-up; the completeness daemon takes over once the bootstrap is
-> clean.
-
-> ⚠️ **"Genesis → live bucket" is the GREENFIELD shape, not r1's shape
-> today.** ADR-0027 trimmed `galexie-archive` on r1 to a **hot floor**
-> (`stellarindex_archive_hot_floor` in the region's inventory; the
-> 2026-09-02 trim boundary was 49,984,000 — read the rendered value from
-> `/etc/default/galexie-archive-fill` on the host, not from this page). Once the monthly
-> trim timer runs, the fill's floor is the higher of that value and the
-> cutoff the last trim used, which `compute-trim-cutoff.sh` persists to
-> `/var/lib/galexie-archive/hot-floor` before deleting. Everything below
-> that floor is intentionally absent locally and lives in the cold
-> tier. So on r1:
+> **"Genesis → live bucket" is the GREENFIELD shape, not r1's.** ADR-0027
+> trimmed r1's `galexie-archive` to a **hot floor**
+> (`stellarindex_archive_hot_floor`; read the rendered value from
+> `/etc/default/galexie-archive-fill`, not from this page). After the monthly
+> trim timer runs, the fill floor is the higher of that value and the cutoff the
+> last trim used, persisted by `compute-trim-cutoff.sh` to
+> `/var/lib/galexie-archive/hot-floor`. Below the floor is intentionally absent
+> locally and lives in the cold tier. On r1:
 >
-> - Do **not** run this procedure with `--start 2`. It would re-download
->   ~48 M ledgers the trim deliberately removed and refill the pool.
-> - A gap **below** the floor is not a defect and must not be "fixed"
->   here — see [lcm-cache-tiering.md](lcm-cache-tiering.md) for the
->   rehydrate path.
-> - A gap **above** the floor is what `galexie-archive-fill` and the
->   ADR-0017 completeness daemon already handle on their own timers.
+> - Do **not** run this with `--start 2`: it re-downloads ~48 M ledgers the trim removed.
+> - A gap **below** the floor is not a defect; rehydrate per [lcm-cache-tiering.md](lcm-cache-tiering.md).
+> - A gap **above** the floor is handled by `galexie-archive-fill` and the ADR-0017 daemon.
 >
-> Read this doc as written for a **fresh archival node** (or a region
-> that keeps a full mirror). On a trimmed node, substitute the hot
-> floor for ledger 2 everywhere below.
+> On a trimmed node substitute the hot floor for ledger 2 everywhere below.
 
 ## Why a separate bucket
 
-- `galexie-live` is appended to by the long-running `galexie.service`
-  (one ledger every ~5 s, forever). Co-mingling historical writes
-  with live-tip writes invites races and breaks the "live bucket
-  tails the network tip" invariant the indexer assumes.
-- `galexie-archive` is the immutable historical half: `[ledger 1,
-  first-live-ledger − 1]`. Written once by a one-shot backfill job
-  (see below), never again. The indexer reads from both buckets —
-  contents stitch cleanly at the boundary.
+`galexie-live` is appended forever by `galexie.service` (one ledger / ~5 s);
+mixing historical writes in races the "live bucket tails the tip" invariant the
+indexer assumes. `galexie-archive` is the immutable half, `[1, first-live-ledger − 1]`,
+written once by a one-shot job. The indexer reads both; they stitch at the boundary.
 
 ## Backfill procedure
 
-1. **Disk check** — ensure the `data` zpool has room (~2.5 TB for
-   genesis-to-tip after zstd). `zfs list data/minio` + `zpool list`.
-2. **MinIO user** — `galexie-writer` is scoped to `galexie-live`
-   only (Task #156). Create `galexie-backfill-writer` with write
-   access scoped to `galexie-archive`; revoke it after the backfill
-   completes.
-3. **Captive-core config** — copy
-   `/etc/stellar/captive-core-galexie.cfg` to
-   `captive-core-galexie-backfill.cfg`, set
-   `CATCHUP_COMPLETE = true`, `CATCHUP_RECENT` unset. Use a
-   distinct `PEER_PORT` so it can run alongside the live captive-
-   core without collision.
-4. **Galexie config** — copy `/etc/galexie/galexie.toml` to
-   `galexie-backfill.toml`, change
-   `datastore_config.params.destination_bucket_path = "galexie-archive/"`
-   and point `captive_core_toml_path` at the new backfill cfg.
-5. **Launch — under the heavy-job wrapper on r1.**
+1. **Disk**: `data` zpool needs ~2.5 TB for genesis-to-tip after zstd (`zfs list data/minio`, `zpool list`).
+2. **MinIO user**: `galexie-writer` is scoped to `galexie-live` only. Create
+   `galexie-backfill-writer` scoped to write `galexie-archive`; delete it when the job exits clean.
+3. **Captive-core config**: copy `/etc/stellar/captive-core-galexie.cfg` to
+   `captive-core-galexie-backfill.cfg`; set `CATCHUP_COMPLETE = true`, leave
+   `CATCHUP_RECENT` unset, use a distinct `PEER_PORT`.
+4. **Galexie config**: copy `/etc/galexie/galexie.toml` to `galexie-backfill.toml`; set
+   `datastore_config.params.destination_bucket_path = "galexie-archive/"` and point
+   `captive_core_toml_path` at the new cfg.
+5. **Launch, under the heavy-job wrapper on r1**:
    ```sh
    /usr/local/sbin/run-heavy-job.sh galexie-backfill-<start>-<end> \
      /usr/local/bin/galexie scan-and-fill --start <start> --end <end>
    ```
-   `--start` is 2 on a greenfield node, the **hot floor** on a trimmed
-   one (see the banner above); `--end` is `first-live-ledger − 1`.
-   `scan-and-fill` is **idempotent** — safe to interrupt/restart, picks
-   up where it left off, only writes ledgers missing from the bucket.
-
-   The wrapper is mandatory for heavy one-shots on r1
-   ([maintainer-workflow.md](maintainer-workflow.md) §Heavy one-shot
-   jobs): `MemoryMax=20G`, `MemorySwapMax=0`, batch-class CPU/IO
-   weights, a singleton lock and the disk watchdog. This job is
-   precisely the class the wrapper exists for — a multi-hour walk
-   sharing a host with the consensus-critical live captive core, which
-   an unwrapped re-derive wedged for 11 hours on 2026-07-05. Use the
-   SAME job name on every attempt: the lock is per name, and a run
-   that finds it held is **refused** with exit 75 because the previous
-   run is still alive (`fuser -v` on the lock file names it).
-
-   Run it from tmux or as a `galexie-backfill.service` oneshot systemd
-   unit (which should itself call the wrapper) so it survives SSH
-   disconnects.
-6. **Throughput expectation** — full pubnet ≈ 62 M ledgers →
-   **8–14 h wall-clock** on r1-class hardware (observed
-   2026-04-25 backfill run on r1: 9 h 33 m for phase 1 alone).
-
-   **Monitoring**: r1 ships a `galexie-backfill-status` TUI at
-   `/usr/local/bin/galexie-backfill-status` (history download
-   progress + LCM-bucket object count + zpool I/O + process
-   table). Run it under `watch`:
-
-   ```sh
-   ssh -t r1 'watch -c -n 5 galexie-backfill-status'
-   ```
-
-   For raw bucket-size sampling without ssh: `mc du
-   local/galexie-archive` every hour.
-
-   The run unfolds in three roughly-equal-cost phases (the live
-   TUI shows phase 1 explicitly; phases 2 and 3 read as
-   continuous LCM uploads):
-
-   1. **History download** — captive-core fetches every
-      checkpoint's bucket files from the configured peer
-      archives into `/srv/history-archive`. Throughput is
-      bounded by upstream archive availability (FT SCV /
-      LOBSTR / SatoshiPay etc); per-archive 404s on missing
-      checkpoints are normal and self-heal via fail-over.
-   2. **Bucket apply** — captive-core hydrates its in-memory
-      ledger state from the downloaded buckets. Brief, mostly
-      CPU-bound, no significant zpool I/O.
-   3. **Ledger replay + LCM upload** — captive-core replays
-      ledger-by-ledger from genesis; galexie wraps each
-      `LedgerCloseMeta` in a zstd-compressed `xdr.zst` object
-      and uploads to `galexie-archive`. Visible as steady
-      `Uploading FFFFFFFF--…/<seq>.xdr.zst` log lines + zpool
-      writes near 5–10 MiB/s. Object count grows from
-      checkpoint-count to per-ledger-count
-      (~62 M for full pubnet at `LedgersPerFile = 1`).
+   `--start` is 2 greenfield, the hot floor on a trimmed node; `--end` is
+   `first-live-ledger − 1`. `scan-and-fill` is idempotent: interrupt and restart
+   freely, it writes only missing ledgers. The wrapper is mandatory
+   ([maintainer-workflow.md](maintainer-workflow.md) §Heavy one-shot jobs):
+   `MemoryMax=20G`, `MemorySwapMax=0`, batch CPU/IO weights, singleton lock, disk
+   watchdog. Use the SAME job name each attempt; a held lock is refused with exit
+   75 (`fuser -v` on the lock file names the holder). Run from tmux or a
+   `galexie-backfill.service` oneshot that calls the wrapper.
+6. **Throughput**: full pubnet ≈ 62 M ledgers, **8-14 h** on r1-class hardware.
+   Monitor with `ssh -t r1 'watch -c -n 5 galexie-backfill-status'`
+   (`/usr/local/bin/galexie-backfill-status`), or `mc du local/galexie-archive`
+   hourly. Three phases: (1) history download of checkpoint bucket files into
+   `/srv/history-archive` (bounded by peer archives; per-archive 404s self-heal by
+   fail-over); (2) bucket apply (brief, CPU-bound); (3) ledger replay + upload of
+   `xdr.zst` objects (`Uploading FFFFFFFF--…/<seq>.xdr.zst`, zpool writes ~5-10
+   MiB/s, ~62 M objects at `LedgersPerFile = 1`).
 
 ## Verification tiers
 
-Run after the backfill exits cleanly. Each tier is independent —
-run the ones whose cost/evidence balance fits the situation.
+Run after a clean exit; tiers are independent.
 
-### Tier A — Chain-link integrity (primary, free, mandatory)
+### Tier A — Chain-link integrity (mandatory)
 
-Walks every written LCM. Asserts
-`ledger[N].LedgerHeader.LedgerHash ==
-ledger[N+1].LedgerHeader.PreviousLedgerHash`. Catches any internal
-corruption, dropped ledger, or replay divergence regardless of
-upstream trust.
+Asserts `ledger[N].LedgerHeader.LedgerHash == ledger[N+1].LedgerHeader.PreviousLedgerHash`
+over every LCM; catches corruption, drops and replay divergence.
+`stellarindex-ops verify-archive -tier chain`
 
-Command: `stellarindex-ops verify-archive -tier chain` (commit d8abecac1).
+### Tier B — Checkpoint anchoring (mandatory)
 
-### Tier B — Checkpoint anchoring against local history archive (primary, free, mandatory)
+Every 64 ledgers `/srv/history-archive/history/.../history-XXXXXXXX.json` holds the
+SCP-agreed `currentLedger.hash`; our `LedgerHash` must match at each checkpoint
+(equivalent to byte-comparing SDF's bucket; inter-checkpoint content follows by
+hash chaining). `stellarindex-ops verify-archive -tier checkpoint`
 
-Every 64 ledgers, `/srv/history-archive/history/.../history-XXXXXXXX.json`
-stores the canonical SCP-agreed `currentLedger.hash`. This was
-produced by SDF and signed off on as canonical when the archive was
-published — that's what `rs-stellar-archivist mirror` pulled into
-our local disk. Assert our output's `LedgerHash` at each checkpoint
-matches the archive's signed value.
+### Tier C — Byte-compare sample against SDF (optional)
 
-**Cryptographically equivalent** to byte-comparing against SDF's
-published bucket, because both derive from the same source. If
-checkpoint hashes match at every 64th ledger, inter-checkpoint
-content is byte-identical by induction (each ledger's hash chains to
-the next).
+Proves the "re-seed from SDF" DR path works and surfaces egress issues early.
+`stellarindex-ops verify-archive -tier sdf-sample -from N -to M -sdf-samples 1000`
+targets the AWS public dataset (`storage.s3_cold_*`), compares ETag + size (equal
+ETags are equal bytes for single-part uploads), needs an explicit `-to`, and is not
+part of `-tier all`. No timer yet.
 
-Command: `stellarindex-ops verify-archive -tier checkpoint` (commit a1cd9f167).
+### Tier D — Multi-peer checkpoint cross-validation (optional, strongest)
 
-### Tier C — Byte-compare sample against SDF's GCS bucket (optional, belt-and-braces)
-
-Pulls N random ledgers from `gs://sdf-ledger-close-meta/v1/ledgers/pubnet`,
-decompresses both sides, byte-diffs.
-
-Doesn't add evidence beyond Tier B (same upstream source), but:
-
-- Documents our "re-seed from SDF on disaster recovery" capability
-  works in practice.
-- Catches any corruption introduced between the history archive and
-  SDF's own galexie output, in the unlikely event SDF replayed
-  incorrectly.
-- Surfaces GCS requester-pays / egress issues before an actual DR
-  event.
-
-Command: `stellarindex-ops verify-archive -tier sdf-sample -from N -to M -sdf-samples 1000`. Targets the AWS public dataset (`storage.s3_cold_*`), compares ETag + size (equal ETags are equal bytes for single-part uploads), needs an explicit `-to`, and is not part of `-tier all`. No timer yet.
-
-Caveat: SDF's galexie bucket may not retain to genesis; check
-coverage before relying on it.
-
-### Tier D — Multi-peer checkpoint cross-validation (optional, high-evidence)
-
-For a sampled set of checkpoints (say, 20 across the chain — ledger
-63, 1M, 5M, 10M, 20M, 40M, current − 1000, etc.), fetch the
-`history-XXXXXXXX.json` from **multiple** tier-1 validators'
-published archives (SDF, LOBSTR, SatoshiPay, PublicNode, Blockdaemon,
-Franklin Templeton) and diff the `currentLedger.hash` fields.
-
-The tier-1 URLs are already listed on each `[[VALIDATORS]]` block
-in `/etc/stellar/captive-core-galexie.cfg` — no new config needed,
-just parse them out.
-
-If N independent validators' archives all agree on the hash at
-ledger K, and our replay produces the same hash, the network
-agreed on those bytes via SCP consensus. Cryptographically the
-strongest evidence available short of running our own validator.
-
-Command: `stellarindex-ops verify-archive -tier peers -peer-samples
-20 -peers <url>,<url>,...` (commit 19e607ac2). Defaults to a built-in
-seven-peer set when `-peers` is empty.
-
-Cost: tiny — one HTTP GET per (checkpoint × peer). ~20 × 6 = 120
-JSON fetches of ~1 KB each. Run on demand.
+For ~20 sampled checkpoints (ledger 63, 1M, 5M, 10M, 20M, 40M, current − 1000, ...),
+diff `currentLedger.hash` across several tier-1 validators' archives (SDF, LOBSTR,
+SatoshiPay, PublicNode, Blockdaemon, Franklin Templeton; URLs are in the
+`[[VALIDATORS]]` blocks of `/etc/stellar/captive-core-galexie.cfg`).
+`stellarindex-ops verify-archive -tier peers -peer-samples 20 -peers <url>,<url>,...`
+(empty `-peers` uses a built-in seven-peer set). ~120 tiny GETs; run on demand.
 
 ### Tier E — stellar-archivist scan of the source archive (housekeeping)
 
-Runs `stellar-archivist scan --verify <url>` (without `--verify` a
-scan only checks that files exist): every checkpoint file is present
-and verifies, and every referenced bucket's sha256 is recomputed and
-checked against its name. Defaults to `file://<archive-root>`; pass
-`-archivist-url` to scan another archive.
+Runs `stellar-archivist scan --verify <url>` (without `--verify` it only checks
+files exist): every checkpoint file present and verifying, every referenced bucket
+sha256 recomputed. Defaults to `file://<archive-root>`; `-archivist-url` scans
+another archive.
 
-**Operator-run only; not scheduled.** r1's `/srv/history-archive` was
-trimmed to `history/` + `ledger/`
-([storage-considerations.md](../architecture/storage-considerations.md)
-Move A), so a local scan fails by construction: every transaction and
-result set reads as missing (`got 0000…`). The monthly cron and its
-staleness alert were retired for that reason. Tier B still anchors the
-files that remain. To audit the full archive, scan a peer and budget
-for re-downloading it; the flag default of 30 min is too short:
+**Operator-run only; not scheduled.** r1's `/srv/history-archive` is trimmed to
+`history/` + `ledger/` ([storage-considerations.md](../architecture/storage-considerations.md)
+Move A), so a local scan fails by construction (transactions and results read as
+missing, `got 0000…`); the monthly cron and its staleness alert were retired. To audit
+the full archive scan a peer and budget for re-downloading it; the 30 min flag
+default is too short:
 
 ```sh
 stellarindex-ops verify-archive -config /etc/stellarindex.toml \
@@ -232,33 +123,20 @@ stellarindex-ops verify-archive -config /etc/stellarindex.toml \
 
 ## Tuning — when 60 ledgers/sec isn't enough
 
-The 2026-04-25 r1 backfill ran phase 3 at **~59 ledgers/sec** —
-~10–25× under galexie's claimed 500–1500 ledgers/sec ceiling.
-Captive-core CPU was at 1.5%, zpool had headroom, network
-bandwidth peaked at 133 MiB/s. The bottleneck is the
-**single-goroutine S3 PUT loop in galexie's uploader** — ~16 ms
-RTT per object × 60 PUTs/sec ≈ what we observed.
-
-Verified against `stellar/stellar-galexie@6dec23e2`
-(`internal/uploader.go`'s `Run` method) and
-`go-stellar-sdk:support/datastore/s3.go`'s `putFile`. There is
-no `--workers` / `--upload-concurrency` flag exposed.
+Phase 3 ran at ~59 ledgers/s (galexie claims 500-1500) with captive-core at 1.5% CPU
+and spare zpool and network: the bottleneck is galexie's **single-goroutine S3 PUT
+loop** (~16 ms RTT x ~60 PUT/s; `stellar-galexie internal/uploader.go` `Run`,
+`go-stellar-sdk support/datastore/s3.go` `putFile`). No `--workers` flag exists.
 
 ### Highest-impact lever: parallel `scan-and-fill` processes
 
-Galexie's per-object `IfNoneMatch: "*"` precondition makes
-overlapping writes idempotent (loser gets `PreconditionFailed`,
-treats as success), so multiple processes on **disjoint** ledger
-ranges are safe — no lock file or DB coordinator. Each process
-needs its own captive-core `storage_path` and `admin_port` so
-the LMDB buckets don't collide.
-
-For a full pubnet backfill on r1-class hardware:
+Galexie's `IfNoneMatch: "*"` precondition makes overlapping writes idempotent, so
+processes on **disjoint** ranges are safe with no coordination. Each needs its own
+captive-core `storage_path` and `admin_port`. Eight workers x ~7.7M ledgers, ~470
+ledgers/s, full pubnet in ~1.5 days instead of ~12 (CPU headroom is ample at 8;
+measure before going past 16):
 
 ```sh
-# 8 workers × ~7.7M ledgers each. CPU at 1.5% per worker means
-# we have plenty of headroom for at least 8 — measure before
-# pushing past 16.
 mkdir -p /var/galexie/{1,2,3,4,5,6,7,8}/captive-core
 for i in 1 2 3 4 5 6 7 8; do
   start=$(( 2 + (i - 1) * 7781216 ))
@@ -270,7 +148,7 @@ for i in 1 2 3 4 5 6 7 8; do
 done
 ```
 
-…where each `galexie-backfill-$i.toml` overrides:
+Each `galexie-backfill-$i.toml` overrides:
 
 ```toml
 [stellar_core_config]
@@ -278,314 +156,134 @@ storage_path = "/var/galexie/$i/captive-core"
 admin_port   = $((11725 + i))
 ```
 
-Expected throughput at 8 workers: ~470 ledgers/sec → full
-pubnet backfill in ~1.5 days instead of ~12.
-
 ### Other knobs (lower impact, mostly not exposed)
 
 | Knob | Status | Notes |
 | --- | --- | --- |
-| `[datastore_config.schema] ledgers_per_file` | exposed but locked | Schema is persisted in the bucket manifest on first write; can't change for an existing datastore. Only relevant for greenfield buckets. Bumping from 1 → 64 divides PUT count by 64. |
+| `[datastore_config.schema] ledgers_per_file` | exposed but locked | Persisted in the bucket manifest on first write; greenfield only. 1 → 64 divides PUT count by 64. |
 | `[datastore_config.schema] files_per_partition` | exposed | Layout only, no PUT-rate impact. |
-| Upload concurrency / worker count | hard-coded (single goroutine) | `internal/uploader.go` `Uploader.Run`. Patching upstream is ~15 lines of code; worth filing as a galexie issue. |
-| `uploadQueueCapacity = 128` | hard-coded constant | Doesn't help when the consumer is single-threaded. |
-| zstd compression level | hard-coded `SpeedDefault` (~level 3) | `support/compressxdr/compressor.go`'s `ZstdCompressor.NewWriter` — no options. Comment in galexie's `config.go` reads `// user-configurable in the future`. |
-| S3 client tuning (PUT timeout, keep-alive pool, multipart) | hard-coded defaults | `s3.go` `NewS3DataStore` calls `config.LoadDefaultConfig(ctx)` with no transport overrides. |
-| Multipart upload | irrelevant | `manager.NewUploader` defaults to 5 MB part size, 5 concurrent parts per upload — but parts only kick in for objects ≥ 5 MB. LCM-per-file is small. |
+| Upload concurrency | hard-coded (single goroutine) | `Uploader.Run`; a ~15-line upstream patch. |
+| `uploadQueueCapacity = 128` | hard-coded | No help with a single consumer. |
+| zstd level | hard-coded `SpeedDefault` (~3) | `support/compressxdr/compressor.go`. |
+| S3 client tuning | hard-coded defaults | `NewS3DataStore` uses `config.LoadDefaultConfig(ctx)`, no transport overrides. |
+| Multipart | irrelevant | Only objects >= 5 MB; LCM files are small. |
 
 ### Highest-impact lever (in practice): mirror from the AWS public bucket
 
-AWS hosts a publicly-readable galexie-format Stellar dataset at
-`s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`. For
-historical backfill (genesis → live tip), we don't need to run
-galexie ourselves — we can `mc mirror` / `aws s3 sync` the
-public bucket into our `galexie-archive` and skip the
-~12-day-serial / ~1.5-day-parallel export step entirely.
+AWS hosts a public galexie-format dataset at
+`s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`. For historical backfill
+skip the export and `mc mirror` it into `galexie-archive`.
 
-OBSRVR's `nebu` tool does exactly this in its archive mode
-(per `nebu/docs/ARCHIVE_MODE.md`). The 2026-04-25 OBSRVR-fork
-research confirmed they have **no parallel-write galexie fork**
-— they piggy-back on the AWS public dataset for backfill and
-the SDK's `NumWorkers` parallel prefetch on the read side.
-
-#### Verified 2026-04-25
-
-- **Retention floor: genesis.** Anonymous `aws s3 ls
-  --no-sign-request` against the bucket lists partition
-  `FFFFFFFF--0-63999/` (Galexie reverse-hex naming for ledgers
-  0-63999) with all 63,997 expected objects (pubnet ledger
-  numbering starts at 3; ledgers 0/1/2 don't exist on
-  pubnet). No gaps, no missing objects. Object timestamps
-  cluster around 2025-09-20 — single full backfill / re-write,
-  not rolling pruning.
-- **Egress: free.** The bucket is registered in the AWS Open
-  Data Sponsorship Program at
-  <https://registry.opendata.aws/aws-public-blockchain/>. The
-  registry YAML carries the `aws-pds` tag and **no
-  `RequesterPays: true` field**; anonymous reads with
-  `--no-sign-request` succeed without the
-  `--request-payer requester` flag (a requester-pays bucket
-  would 403). The standard $0.09/GB egress does not apply.
-
-So pulling the full ~2.5 TB pubnet archive costs **$0** in
-egress. Wall-clock time depends on what fraction of the
-1 Gbps link the source actually delivers, not the link's
-rated speed. Observed on r1 during the 2026-04-25 cutover:
-**sustained ~80 MB/s (640 Mbps)** = ~65% link utilisation,
-which works out to roughly **9 h** for the full ~2.5 TB.
-The "5–6 h at 1 Gbps" figure you'll see in older planning
-notes assumed the link saturates; in practice S3 GETs from
-us-east-2 to Hetzner FRA cap out around two-thirds of that.
-
-#### When this is the right call
-
-- Bringing up a brand-new archival node from cold — switch to
-  mirror immediately, don't run scan-and-fill at all for the
-  historical chunk.
-- Disaster recovery on a corrupt `galexie-archive` — re-seed
-  from AWS.
-- Mid-backfill cutover (current 2026-04-25 r1 case): galexie's
-  `IfNoneMatch: "*"` precondition makes the mirror idempotent
-  against already-uploaded objects, so killing the in-flight
-  scan-and-fill and switching to mirror is a clean cutover.
-
-#### When it isn't
-
-- We give up the cross-validation we'd otherwise have between
-  our own captive-core export and someone else's. If the
-  audit story matters more than the wall-clock cost, run our
-  own scan-and-fill at least once and Tier-C compare against
-  AWS afterwards (still TBD per the verify-archive playbook).
-- The bucket is in `us-east-2` (Ohio); transatlantic latency
-  to a European colo is real. Throughput's still bounded by
-  network, not RTT, but small-object listings can feel
-  slower.
+- **Floor: genesis**, complete: partition `FFFFFFFF--0-63999/` holds all 63,997
+  expected objects (pubnet numbering starts at 3), no gaps.
+- **Egress: free.** AWS Open Data Sponsorship (`aws-pds`, no `RequesterPays`);
+  anonymous `--no-sign-request` reads work. Full ~2.5 TB observed on r1 at
+  ~80 MB/s sustained, about 9 h.
+- **Right call**: new archival node from cold; DR on a corrupt `galexie-archive`;
+  mid-backfill cutover (`IfNoneMatch` makes it idempotent against uploaded objects).
+- **Trade-off**: you lose cross-validation against your own captive-core export; if
+  audit matters, run `scan-and-fill` once and Tier-C compare against AWS. The
+  bucket is in `us-east-2`; throughput is network-bound, small-object listings are slower.
 
 #### Runbook — fresh bucket (greenfield)
 
 ```sh
-# 1. Stop the in-flight scan-and-fill (if any).
-sudo systemctl stop galexie-backfill   # or: kill <pid>
-
-# 2. Configure mc with anonymous AWS access.
+sudo systemctl stop galexie-backfill   # stop any in-flight scan-and-fill (or kill <pid>)
 mc alias set aws https://s3.us-east-2.amazonaws.com "" "" --api S3v4
-
-# 3. Mirror with --skip-errors. NOT --overwrite=false.
-#    See "mc mirror gotcha" below for why.
+# --skip-errors, NOT --overwrite=false (see "mc mirror gotcha")
 mc mirror --skip-errors \
   aws/aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ \
   local/galexie-archive/
-
-# 4. Sanity-check the floor.
 mc ls local/galexie-archive/FFFFFFFF--0-63999/ | head
 # Expect: FFFFFFFC--3.xdr.zst, FFFFFFFB--4.xdr.zst, FFFFFFFA--5.xdr.zst, ...
-
-# 5. Source the reader credentials, then run verify-archive
-#    (Tier A + B) before declaring success:
 set -a; source /etc/default/stellarindex-ops; set +a
 stellarindex-ops verify-archive -config /etc/stellarindex.toml \
   -tier all -from 2 -to <last-mirrored-ledger>
 ```
 
-`/etc/default/stellarindex-ops` sets `AWS_ACCESS_KEY_ID` /
-`AWS_SECRET_ACCESS_KEY` (which the AWS SDK actually consumes) plus
-the `STELLARINDEX_S3_*` duplicates for the config loader. Without
-sourcing it, verify-archive falls through to the default credential
-chain and gets a 403 from MinIO. Provisioned by the
-`stellarindex-reader` MinIO user — see
-`roles/archival-node/tasks/09-minio.yml`.
+`/etc/default/stellarindex-ops` sets `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
+(what the AWS SDK consumes) plus the `STELLARINDEX_S3_*` duplicates for the config
+loader. Unsourced, verify-archive falls to the default credential chain and gets a
+403 from MinIO. Provisioned by the `stellarindex-reader` MinIO user
+(`roles/archival-node/tasks/09-minio.yml`).
 
 #### Runbook — recovering from a partial / mc-cp-poisoned bucket
 
-If `galexie-archive` already contains objects with mtimes that don't
-match AWS source mtimes — typically because someone ran `mc cp` against
-it — bucket-level `mc mirror` will deadlock (see gotcha below). Use
-the per-partition recovery script instead:
+If `galexie-archive` has objects whose mtimes differ from AWS's (typically after
+someone ran `mc cp`), bucket-level `mc mirror` deadlocks. Use the per-partition
+script, which audits the bucket, deletes partials and mirrors only missing or
+just-deleted partitions:
 
 ```sh
-# Audits local bucket → identifies partials → deletes them →
-# mirrors only missing/just-deleted partitions, never the
-# fully-present ones (those would trigger mtime stalls).
-galexie-archive-fill          # /usr/local/bin on r1
+galexie-archive-fill          # /usr/local/bin on r1; restartable
 ```
 
-Source: `/usr/local/bin/galexie-archive-fill` on r1, restartable.
-Logs to `/var/log/galexie-mirror.log`. Monitor via
-`galexie-backfill-status`.
+Logs to `/var/log/galexie-mirror.log`; monitor with `galexie-backfill-status`.
 
-**Phase 1b auto-partial detection (F-0158 fix, 2026-05-27).** Every
-run now file-counts the latest `PARTIAL_CHECK_WINDOW=4` partitions on
-AWS and re-mirrors any local partition with fewer files than AWS.
-This closes the trailing-edge blind spot in the partition-level
-set-diff (see "Partition-level worklists hide partial partitions"
-below): when AWS first publishes a new partition with only a handful
-of ledgers and our hourly timer fires, the old script mirrored those
-few files, marked the partition "present", and never revisited.
-Override via `PARTIAL_CHECK_WINDOW=N galexie-archive-fill` (set to
-`0` to disable). The cost is N × recursive `mc ls`, sub-second at
-N=4.
-
-If you have known partials OUTSIDE the trailing window (operator
-already knows the names from `verify-archive`), still use the
-explicit override:
-
-```sh
-PARTIALS="PART1 PART2 PART3" galexie-archive-fill
-```
-
-The mirror runs as the bucket-scoped writer (`ARCHIVE_DEST`,
-`archivewriter/galexie-archive`), which cannot delete. The partials delete
-goes through `ARCHIVE_DELETE_ALIAS` (`local`, MinIO root) on the same
-bucket; if that alias is not configured the run exits 1 before deleting
-anything. An operator-set `ARCHIVE_DEST` uses its own alias for both
-unless `ARCHIVE_DELETE_ALIAS` is also set.
-
-Each entry must be a full partition name such as
-`FC42F7FF--62720000-62783999`, with no trailing slash. If any entry is
-not, the script rejects the whole list before deleting anything and
-exits 1. A name in the AWS listing that is not a partition (other than
-`.config.json`) is never mirrored. It is reported, and the run exits 1
-after the valid partitions are mirrored.
-
-The script takes its own lock (`/run/lock/galexie-archive-fill.lock`)
-and works in a private `mktemp -d` directory, so a manual run cannot
-overlap the timer's run: if the timer's run is still going, the manual
-run exits 75 without touching anything. Wait for
-`galexie-archive-fill.service` to finish, then re-run.
+- **Auto-partial detection**: every run file-counts the latest
+  `PARTIAL_CHECK_WINDOW=4` AWS partitions and re-mirrors any local one with fewer
+  files (covers a new partition AWS published with only a few ledgers). Override
+  `PARTIAL_CHECK_WINDOW=N galexie-archive-fill`; `0` disables; cost is N recursive `mc ls`.
+- **Known partials outside that window** (e.g. named by `verify-archive`):
+  `PARTIALS="PART1 PART2 PART3" galexie-archive-fill`. Entries must be full
+  partition names like `FC42F7FF--62720000-62783999`, no trailing slash; any bad
+  entry rejects the whole list (exit 1) before deleting. A non-partition name in the
+  AWS listing (other than `.config.json`) is never mirrored and makes the run exit 1
+  after the valid partitions finish.
+- **Credentials**: the mirror runs as the bucket-scoped writer (`ARCHIVE_DEST`,
+  `archivewriter/galexie-archive`), which cannot delete. Partial deletes use
+  `ARCHIVE_DELETE_ALIAS` (`local`, MinIO root); unset, the run exits 1 before
+  deleting. An operator-set `ARCHIVE_DEST` uses its own alias for both unless
+  `ARCHIVE_DELETE_ALIAS` is also set.
+- **Locking**: `/run/lock/galexie-archive-fill.lock` plus a private `mktemp -d`; a
+  manual run during the timer's run exits 75 untouched. Wait for
+  `galexie-archive-fill.service`, then re-run.
 
 #### `mc mirror` gotcha — `--overwrite=false` doesn't mean what it says
 
-Verified against `mc RELEASE.2025-08-13T08-35-41Z` on r1 2026-04-26:
-
-`mc mirror --overwrite=false` does NOT silently skip already-present
-objects. For every dest object whose mtime differs from source (which
-in our case is *every* object copied via `mc cp`, since the upload
-timestamp != AWS's original timestamp), mc emits:
-
-```
-mc: <ERROR> Failed to perform mirroring, with error condition
-(mm-source-mtime) Overwrite not allowed for `…`. Use `--overwrite`
-to override this behavior.
-```
-
-…and after enough error spam (~120 K errors observed before stall),
-the worker pool deadlocks in `futex_` wait. The process stays alive,
-emits no further output, makes no further progress.
-
-`--skip-errors` keeps the same per-object error noise but lets the
-worker pool drain through it without deadlocking — which is fine for
-**fresh** buckets (no mtime conflicts to trigger the error path) but
-useless for buckets with pre-existing mc-cp content (the error storm
-itself becomes the bottleneck and drowns out genuine copy progress).
-
-The only reliable recovery from an mc-cp-poisoned bucket is the
-per-partition script: skip fully-present partitions entirely, delete
-+ re-mirror partial ones, mirror the missing ones.
+Verified on `mc RELEASE.2025-08-13T08-35-41Z`: `--overwrite=false` does NOT
+silently skip present objects. Every dest object whose mtime differs from source
+(every `mc cp`-uploaded one) emits
+`(mm-source-mtime) Overwrite not allowed for …`, and after ~120 K errors the worker
+pool deadlocks in `futex_` wait: process alive, no output, no progress.
+`--skip-errors` drains through the same noise without deadlocking, which is fine for
+**fresh** buckets but useless on pre-existing `mc cp` content (the error storm is the
+bottleneck). The only reliable recovery is the per-partition script.
 
 #### Antipattern: do not run `mc cp --recursive` in xargs against galexie-archive
 
-Three failure modes (all observed on r1 2026-04-26):
+1. `mc cp` has no skip-if-exists: parallel loops double GETs, a stale worklist re-fetches finished partitions.
+2. Partition-level worklists hide partials: a partition holds 64 000 `.xdr.zst`
+   objects, `mc ls` shows it present at 21 307, and `comm -23 aws.txt local.txt`
+   then excludes it forever.
+3. `mc cp --recursive partition/` is not resumable: a kill re-fetches all 64 000.
 
-1. **`mc cp` has no skip-if-exists.** It always copies. Two parallel
-   loops reading the same worklist double S3 GETs; a single loop on
-   a stale worklist re-fetches partitions completed since the
-   snapshot.
-2. **Partition-level worklists hide partial partitions.** A galexie
-   partition contains 64 000 `.xdr.zst` objects. `mc ls` reports the
-   directory as present even if it holds 21 307 of 64 000 — and
-   `comm -23 aws.txt local.txt` then excludes it from the worklist.
-   The partial stays partial forever.
-3. **`mc cp --recursive partition/` is not resumable.** Killed mid-
-   partition, restart re-fetches all 64 000 objects from scratch.
-
-`mc cp` also poisons future `mc mirror` runs (its uploads carry
-current-time mtimes that mismatch AWS's original mtimes — see gotcha
-above). Once a bucket has been touched by `mc cp`, the only clean way
-to mirror missing data is per-partition (the `galexie-archive-fill`
-script).
-
-If you find an existing `xargs ... mc cp --recursive ...` running:
-SIGTERM the **outer bash** of the pipeline (xargs alone often isn't
-enough — bash respawns the inner dispatchers). Then wait for orphan
-`mc cp` workers to drain. Then run `galexie-archive-fill`.
-
-The verify-archive playbook's Tier C (deferred) was originally
-shaped around the SDF GCS bucket. The AWS public bucket is the
-same shape and accessible via S3-native APIs (no GCS auth
-dance), so a future Tier C implementation should target AWS
-first.
+`mc cp` also poisons future `mc mirror` runs (current-time mtimes). To stop a running
+`xargs ... mc cp --recursive ...`: SIGTERM the **outer bash** (killing xargs alone
+gets respawned), wait for orphan `mc cp` workers to drain, then run `galexie-archive-fill`.
 
 ## What we do today
 
-- **At backfill time:** Tier A + Tier B (Tier E only against a full
-  archive — see Tier E above).
-- **First-pass disaster-recovery rehearsal:** Tier C once, to prove
-  the path works.
-- **Periodic health check:** Tier D quarterly, or any time a
-  downstream price consumer reports a divergence.
+- **At backfill**: Tier A + Tier B (Tier E only against a full archive).
+- **DR rehearsal**: Tier C once.
+- **Health check**: Tier D quarterly, or when a downstream price consumer reports divergence.
 
 ## State after backfill completes
 
-- `galexie-archive/` — 1 → `first-live-ledger − 1` (historical,
-  immutable)
-- `galexie-live/` — `first-live-ledger` → live tip (continuous,
-  append-only)
-- Indexer reads from both; seams align at the handoff ledger.
-- MinIO policy: `galexie-writer` keeps write on `galexie-live`.
-  `galexie-backfill-writer` user is **deleted** once the job
-  exits clean (one-shot credential, no need to leave live write
-  permission hanging around on an unused account).
+- `galexie-archive/`: 1 → `first-live-ledger − 1` (immutable); `galexie-live/`:
+  `first-live-ledger` → tip (append-only); the indexer reads both.
+- `galexie-writer` keeps write on `galexie-live`; `galexie-backfill-writer` is **deleted** once the job exits clean.
 
-## ⛔ BLOCKER on test nets — captive-core carries the PUBNET validator set
+## RESOLVED — test-net captive-core used the PUBNET validator set
 
-**Discovered 2026-08-27 while attempting the first testnet/futurenet
-backfills. Both attempts were aborted; do not retry until fixed.**
+Found 2026-08-27 (futurenet backfill died at exit 3; testnet fetched PUBNET checkpoints).
+Fixed: `stellar-core.cfg.j2` emits `[[HOME_DOMAINS]]` / `[[VALIDATORS]]` only when
+`stellar_network == 'pubnet'` (21039639e, #203), and
+`configs/ansible/roles/archival-node/tasks/07-galexie.yml:682` removes the pubnet-only
+`galexie-archive-fill` from non-pubnet networks. Live `galexie.toml` was never affected
+(no `captive_core_toml_path`).
 
-### Symptom
-
-- **futurenet**: `scan-and-fill --start 2` dies within seconds with
-  `Could not prepare captive core ledger backend: Error fast-forwarding
-  to 2: stellar core exited unexpectedly: exit status 3`.
-- **testnet**: `scan-and-fill --start 2` *appears* to work — it reaches
-  phase 1 and downloads checkpoints at a healthy rate — but the archives
-  it downloads from are `bootes-history.publicnode.org`,
-  `archive.v5.stellar.lobstr.co`, `stellar-full-history1.bdnodes.net`,
-  `history.stellar.org/prd/core-live/…`. **Those are all PUBNET.** The
-  run is fetching mainnet checkpoints to replay under a testnet
-  passphrase; it can only end in verification failure or garbage.
-
-### Root cause
-
-The rendered `/etc/stellar/captive-core-galexie-backfill.cfg` (and the
-live `captive-core-galexie.cfg`) carry `NETWORK_PASSPHRASE` correctly
-per network, but their `[[HOME_DOMAINS]]` / `[[VALIDATORS]]` blocks —
-and crucially the `HISTORY="curl -sf …"` archive URL on **every**
-validator — come from `stellar_home_domains` / `stellar_validators` in
-`roles/archival-node/defaults/main.yml`, which are the **pubnet**
-validator set. Neither `inventory/testnet.yml` nor
-`inventory/futurenet.yml` overrides them (verified: zero occurrences in
-both files).
-
-This is precisely the hazard the neighbouring variable already guards
-against — `stellar_history_archive_urls` is network-keyed and its own
-comment says it *"MUST track stellar_network"* as "the guard against a
-test net silently ingesting pubnet checkpoints". That guard was applied
-to the archivist/append URL but **not** to the captive-core validator
-list, so the backfill path is unguarded.
-
-Live ingestion is unaffected: `galexie-append.sh` resolves the correct
-per-network archive via `SDF_HAS_URL`, and the live captive core only
-needs recent ledgers. Only the **genesis backfill** path, which relies
-on the validators' `HISTORY` archives, is broken.
-
-### Fix required before a test-net backfill can run
-
-Override the validator/archive set per network — either add
-`stellar_home_domains` + `stellar_validators` for testnet/futurenet to
-their inventories, or make the captive-core template select the set from
-`stellar_network`. Minimum viable: point the archives at the SDF
-network archive already present in `stellar_history_archive_urls`
-(`core_testnet_001` / `core_futurenet_001`). Then re-run:
+Test-net backfill:
 
 ```sh
 systemd-run --unit=galexie-backfill --property=User=galexie \
@@ -597,61 +295,37 @@ systemd-run --unit=galexie-backfill --property=User=galexie \
     --start 2 --end <galexie_start_ledger − 1>
 ```
 
-`scan-and-fill` is idempotent, so a corrected re-run is safe. Verify
-early that the *"Selected archive …"* log lines name the intended
-network's archives before letting the run proceed.
+Check early that the *"Selected archive …"* log lines name the right network's archives.
 
-### Also observed on the testnet VM (unrelated, still open)
+## Second hazard — MinIO credential drift on any `--tags galexie` run
 
-`galexie-archive-fill.service` fails hourly. It mirrors the **AWS public
-pubnet bucket**, which has no testnet equivalent — the unit is
-inapplicable to test nets and should not be enabled there. It is one of
-8 failed units on that box (also `pgbackrest-backup`,
-`archive-completeness`, `verify-archive-tier-a/b`, `config-assertions`,
-plus `stellar-core`/`stellarindex-aggregator` units for services the
-lean test nets deliberately do not run).
+`--tags galexie` re-renders `/etc/default/galexie` and `/etc/default/galexie-backfill`
+from `galexie_s3_access_key` / `galexie_archive_s3_access_key` (vault). On both test
+nets the MinIO users were provisioned under different names than the templates:
 
-## ⚠️ Second hazard — MinIO credential drift on any `--tags galexie` run
-
-**Hit 2026-08-27 on si-testnet; caused a short live-ingestion outage.**
-
-`--tags galexie` re-renders `/etc/default/galexie` and
-`/etc/default/galexie-backfill` from `galexie_s3_access_key` /
-`galexie_archive_s3_access_key` (vault). On si-testnet the MinIO users
-had been provisioned under **different names** than the role templates:
-
-| what ansible renders | what MinIO actually had |
+| ansible renders | MinIO had |
 | --- | --- |
-| `galexie-writer` (this is also the *policy* name) | user `galexie-live-writer`, policy `galexie-writer` |
-| `galexie-archive-writer` | present, but the secret no longer matched |
+| `galexie-writer` (also the *policy* name) | user `galexie-live-writer`, policy `galexie-writer` |
+| `galexie-archive-writer` | present, secret no longer matched |
 
-The drift is **latent** — it only bites when the env files are
-re-rendered. Symptom: galexie crash-loops with
-
-```
-could not connect to destination data store failed to list objects in
-bucket 'galexie-live': ... StatusCode: 403 ... InvalidAccessKeyId
-```
-
-`--tags minio` did *not* repair it (that play failed on a `no_log` task).
-The reliable repair is to reconcile MinIO to whatever ansible rendered —
-`mc admin user add` updates the secret when the user already exists:
+It is latent until the env files re-render; then galexie crash-loops with
+`failed to list objects in bucket 'galexie-live': ... StatusCode: 403 ... InvalidAccessKeyId`.
+`--tags minio` did not repair it (`no_log` task failed). Reconcile MinIO to what
+ansible rendered (`mc admin user add` updates an existing secret):
 
 ```sh
 KEY=$(grep '^AWS_ACCESS_KEY_ID='     /etc/default/galexie | cut -d= -f2-)
 SEC=$(grep '^AWS_SECRET_ACCESS_KEY=' /etc/default/galexie | cut -d= -f2-)
 mc admin user add    local "$KEY" "$SEC"
 mc admin policy attach local galexie-writer --user "$KEY"
-# verify BEFORE restarting galexie:
-mc alias set probe http://127.0.0.1:9000 "$KEY" "$SEC" && mc ls probe/galexie-live/
+mc alias set probe http://127.0.0.1:9000 "$KEY" "$SEC" && mc ls probe/galexie-live/   # verify BEFORE restart
 systemctl restart galexie      # ONE restart, then watch
 ```
 
-Repeat with `/etc/default/galexie-backfill` + policy
-`galexie-archive-writer` for the `galexie-archive` bucket.
+Repeat with `/etc/default/galexie-backfill` + policy `galexie-archive-writer` for
+`galexie-archive`.
 
-**Check this BEFORE running `--tags galexie` on any box**, so the env
-re-render doesn't strand live ingestion. The one-liner pre-check:
+**Check BEFORE any `--tags galexie` run.** Pre-check of the live creds:
 
 ```sh
 K=$(grep '^AWS_ACCESS_KEY_ID='     /etc/default/galexie | cut -d= -f2-)
@@ -660,42 +334,19 @@ mc alias set probe http://127.0.0.1:9000 "$K" "$S" && mc ls probe/galexie-live/
 mc admin user list local     # does $K appear as an ACCESS KEY (col 2)?
 ```
 
-**The drift affects BOTH test nets** (verified 2026-08-27 the hard way —
-see the trap below). Each vault renders `galexie_s3_access_key` =
-`galexie-writer` / `galexie-archive-writer`, but both boxes had their
-MinIO users provisioned as `galexie-live-writer` /
-`galexie-archive-writer`. So `--tags galexie` strands live ingestion on
-either net until the users are reconciled.
-
-> **TRAP — the pre-check above is NOT sufficient on its own.** Reading
-> the *current* `/etc/default/galexie` only tells you the creds that are
-> live **right now**; it says nothing about what ansible is **about to
-> render over them**. On si-futurenet the current env authenticated fine
-> (`galexie-live-writer`, AUTH=OK), so the re-render looked safe — and it
-> still broke ingestion, because the vault renders a *different* key.
-> Compare the **rendered** value, not the current file:
+> **TRAP: that pre-check is not sufficient.** It shows the creds live now, not what
+> ansible is about to render over them (si-futurenet authenticated fine, then broke).
+> Compare the **rendered** value, from `configs/ansible/`:
 >
 > ```sh
-> # what ansible WILL write (run from configs/ansible/):
 > ansible -i inventory/<net>.yml archival_nodes -m debug \
 >   -a "var=galexie_s3_access_key" | tail -3
-> # …then confirm that exact string appears as an ACCESS KEY (col 2) in:
-> mc admin user list local
+> # then confirm that exact string is an ACCESS KEY (col 2) in: mc admin user list local
 > ```
 >
-> If it doesn't, reconcile FIRST (recipe above), then run `--tags galexie`.
+> If absent, reconcile FIRST, then run `--tags galexie`.
 
-Real fix (not yet done): make the MinIO user names and the galexie env
-template read the *same* variable, align the two regions' vault values,
-and stop naming a user after a policy.
-
-### Why only the backfill was fetching pubnet checkpoints
-
-Worth recording, because it bounds the blast radius of the blocker
-above: the **live** `galexie.toml` has **no** `captive_core_toml_path`,
-so live ingestion uses galexie's built-in per-network preset — which
-already carries the correct `sdf_testnet_1/2/3` validators and
-`core_testnet_00{1,2,3}` archives. Only `galexie-backfill.toml` sets
-`captive_core_toml_path`, so only the backfill picked up the rendered
-pubnet validator list. Live ingestion was never fetching wrong-network
-data on any net.
+Real fix, partly done: the MinIO user tasks (`09-minio.yml`) and the env templates
+(`galexie.env.j2`, `07-galexie.yml`) already read the same variables
+(`galexie_s3_access_key`, `galexie_archive_s3_access_key`). Still open: align each
+region's vault values with the live MinIO users, and stop naming a user after a policy.

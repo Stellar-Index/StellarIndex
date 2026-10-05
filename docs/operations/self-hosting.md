@@ -6,92 +6,50 @@ status: living doc
 
 # Self-hosting Stellar Index
 
-Stellar Index is Apache-2.0. Nothing in the stack requires our
-hosted API or our infrastructure — this doc is the path for an
-outside operator standing up their own instance, from an empty box
-to a serving `/v1/price` endpoint.
-
-It adapts the internal bring-up recipe
-([`archival-node-bringup.md`](archival-node-bringup.md)) for someone
-who has never seen this repo. That doc (and the Ansible role behind
-it) is the fastest path if you're comfortable running Ansible against
-a fresh Hetzner-class box — read [§ Advanced path](#advanced-path-the-ansible-role)
-for how to use it directly. This guide is the manual, one-command-at-
-a-time walkthrough for everyone else, and it's also the one to read
-first even if you'll eventually run the Ansible role, because it
-explains what each piece is for.
-
-**What this doc deliberately does not cover:** running your own
-tier-1 validator set, multi-region deployment, and disaster recovery
-for an existing node. See [§ What's not covered](#whats-not-covered).
+Apache-2.0; nothing requires our hosted API. This is the path from an empty
+box to a serving `/v1/price`, as manual one-command-at-a-time steps. It
+adapts [`archival-node-bringup.md`](archival-node-bringup.md); if you are
+comfortable with Ansible on a fresh Hetzner-class box use
+[§ Advanced path](#advanced-path-the-ansible-role). Read this guide first
+either way: it explains what each piece is for. Not covered: see
+[§ What's not covered](#whats-not-covered).
 
 ---
 
 ## 1. What you get
 
-One deployment gives you the full pricing pipeline described in
-[docs/architecture/overview.md](../architecture/overview.md):
+The pipeline in [docs/architecture/overview.md](../architecture/overview.md):
 
 ```
-                    ┌──────────────┐
-  Stellar network → │ Galexie      │  (captive stellar-core; exports
-                    │ (your host)  │   LedgerCloseMeta to object storage)
-                    └──────┬───────┘
-                           ▼
-                    ┌──────────────┐
-                    │ MinIO (S3)   │  galexie-live / galexie-archive buckets
-                    └──────┬───────┘
-                           ▼
-                    ┌──────────────┐
-                    │  indexer     │  ledgerstream → dispatcher → decoders
-                    └──┬────────┬──┘
-                       ▼        ▼
-              ┌────────────┐ ┌─────────────┐
-              │ ClickHouse │ │ TimescaleDB │  raw lake (ADR-0034) /
-              │ raw lake   │ │ served tier │  served tier (recent
-              └────────────┘ └──────┬──────┘  working set + CAGGs)
-                                     ▼
-                              ┌─────────────┐
-                              │ aggregator  │  VWAP/TWAP/confidence → Redis
-                              └──────┬──────┘
-                                     ▼
-                              ┌─────────────┐
-                              │  api        │  REST + SSE, /v1/*
-                              └─────────────┘
+Stellar network -> Galexie (captive stellar-core) -> MinIO (galexie-live / galexie-archive)
+  -> indexer (ledgerstream -> dispatcher -> decoders)
+       -> ClickHouse raw lake (ADR-0034) + TimescaleDB served tier (recent working set + CAGGs)
+  -> aggregator (VWAP/TWAP/confidence -> Redis) -> api (REST + SSE, /v1/*)
 ```
 
-Six binaries make up the stack (`cmd/`); the ones you run
-continuously are `stellarindex-indexer`, `stellarindex-aggregator`,
-and `stellarindex-api`. `stellarindex-migrate` applies schema once;
-`stellarindex-ops` is the admin CLI for backfills, verification, and
-one-shot jobs; `stellarindex-sla-probe` is an optional latency/
-freshness proof harness. There is no Horizon and no `stellar-rpc` in
-the production ingest path — see
-[ADR-0001](../adr/0001-horizon-deprecated.md) and AGENTS.md invariant
-6; ingest reads Galexie's MinIO output directly.
+Six binaries (`cmd/`). Run continuously: `stellarindex-indexer`,
+`stellarindex-aggregator`, `stellarindex-api`. `stellarindex-migrate`
+applies schema; `stellarindex-ops` is the admin CLI (backfills,
+verification, one-shots); `stellarindex-sla-probe` is an optional
+latency/freshness harness. No Horizon and no `stellar-rpc` in the
+production ingest path ([ADR-0001](../adr/0001-horizon-deprecated.md),
+AGENTS.md invariant 6); ingest reads Galexie's MinIO output directly.
 
-ClickHouse (the Tier-1 raw lake,
-[ADR-0034](../adr/0034-tiered-clickhouse-architecture.md)) is the
-certified full history of every ledger; TimescaleDB is the **served**
-tier — the recent working set the API actually queries. You can run
-the indexer with the ClickHouse sink disabled
-(`clickhouse_live_sink = false`) if you only want the price endpoints
-and don't need the raw-lake/completeness-verdict story — see
-[§ 2 light mode](#light-mode-recent-window-only) for what you give
-up.
+ClickHouse ([ADR-0034](../adr/0034-tiered-clickhouse-architecture.md)) is the
+certified full history; TimescaleDB is the **served** tier the API queries.
+With `clickhouse_live_sink = false` you get the price endpoints without the
+raw-lake / completeness-verdict story (see [§ 2 light mode](#light-mode-recent-window-only)).
 
 ---
 
 ## 2. Hardware and disk expectations
 
-Be honest with yourself about which of these two shapes you're
-building before you provision anything.
+Decide which shape you are building before provisioning.
 
 ### Full-history archival node
 
-This is what [archival-node-bringup.md](archival-node-bringup.md)
-builds and what r1 runs today. Real, measured numbers from that
-node ([r1-deployment-state.md](r1-deployment-state.md),
+What [archival-node-bringup.md](archival-node-bringup.md) builds and r1 runs
+([r1-deployment-state.md](r1-deployment-state.md),
 [archival-node-spec.md](../architecture/infrastructure/archival-node-spec.md)):
 
 | Component | Measured size |
@@ -101,69 +59,45 @@ node ([r1-deployment-state.md](r1-deployment-state.md),
 | r1's total ZFS pool (raidz1 — single parity, 4× 7.68 TB NVMe) | ~18.3 TB (~16.8 TiB) usable |
 | r1's RAM | 192 GB DDR5 ECC |
 
-The [hardware spec doc](../architecture/infrastructure/archival-node-spec.md)
-tiers this explicitly rather than quoting one number — pick the tier
-that matches your ambition, not a five-year ceiling:
-
 | Tier | Disk | Covers |
 |---|---|---|
 | Minimum viable | 2 TB | `CATCHUP_RECENT` + 30-day Galexie + Postgres only |
 | Comfortable Phase A/B | 4 TB | + 90-day Galexie retention |
 | Full `CATCHUP_COMPLETE` | 8 TB | full history archive + Galexie meta + Postgres, ~2-year runway |
-| Long-runway (r1's actual shape) | 16 TB | 3+ years before re-provisioning |
+| Long-runway (r1's shape) | 16 TB | 3+ years before re-provisioning |
 
-CPU/RAM tiers from the same doc: 8c/32 GB is the `stellar-core`-alone
-floor; 32c/128 GB ("all-in-one") is what's needed to colocate core +
-Galexie + the indexer + Postgres + ClickHouse on one box the way r1
-does. ClickHouse itself is capped to ~32–48 GB resident on r1
-(a "resource-limited good neighbour" to Postgres per ADR-0034) — plan
-for that headroom on top of the core/Galexie/Postgres numbers above
-if you're running the full lake.
+CPU/RAM: 8c/32 GB is the `stellar-core`-alone floor; 32c/128 GB
+("all-in-one") colocates core + Galexie + indexer + Postgres + ClickHouse as
+r1 does. ClickHouse is capped to ~32–48 GB resident on r1 (ADR-0034); budget
+that on top if you run the full lake.
 
-**Bring-up wall-clock**, per the internal recipe: **~10–13 hours**
-end-to-end for a from-genesis mirror (dominated by network transfer,
-not compute) — see the
-[time budget table](archival-node-bringup.md#time-budget-summary)
-for the step-by-step breakdown.
+Bring-up wall-clock for a from-genesis mirror: **~10–13 hours**, dominated by
+network transfer ([time budget](archival-node-bringup.md#time-budget-summary)).
 
 ### Light mode (recent-window-only)
 
-If you don't need certified full history — you just want a live,
-correct pricing feed from today forward — the code supports starting
-the indexer at (near) the current network tip instead of genesis,
-skipping the multi-TB archive mirror and the `galexie-archive-fill`
-step entirely:
+For a live, correct feed from today forward, start the indexer near the tip
+and skip the multi-TB mirror and `galexie-archive-fill`:
 
-- **Galexie itself defaults to this.** A fresh `galexie-append.sh`
-  invocation with no prior cursor in MinIO starts exporting from the
-  current network tip (queried from `stellar-core` on service start),
-  not from genesis — see
+- **Galexie defaults to this.** A fresh `galexie-append.sh` with no prior
+  cursor in MinIO exports from the current network tip (queried from
+  `stellar-core` at service start), per
   [`galexie.service.j2`](../../configs/ansible/roles/archival-node/templates/systemd/galexie.service.j2).
-  You only get history older than "when you first started this node"
-  by deliberately mirroring it (steps 2–4 of the bring-up recipe).
-- **The indexer has an explicit "no persisted cursor" config knob for
-  this.** `ingestion.backfill_from_ledger` (`internal/config/config.go`
-  `IngestionConfig.BackfillFromLedger`) is read once, at first boot,
-  when there's no cursor row yet; set it to the current network tip
-  (or any recent ledger) instead of `2` and the indexer never touches
-  history before that point. `ingestion.live_seam_ledger = 0` (the
-  default) means "no archive bucket" — the indexer reads only
-  `galexie-live`, so there's no `galexie-archive` mirror to keep
-  around at all.
-- **What you honestly lose:** the ADR-0033 completeness verdict
-  (`GET /v1/coverage`, `.complete`) for any source can only be true
-  from your `backfill_from_ledger` forward — a source's `genesis_ledger`
-  in that verdict is the protocol's real on-chain genesis, so a
-  light-mode node's coverage percentage will legitimately never reach
-  100% against pre-existing history. `/v1/history/since-inception`
-  and long OHLC/VWAP windows (30d/1y) will be empty or short until
-  enough live time has accrued. This is an honest trade, not a bug —
-  document it to your own API consumers if you run this mode
+  Older history only comes from deliberately mirroring it (bring-up steps 2–4).
+- **Indexer knob.** `ingestion.backfill_from_ledger`
+  (`internal/config/config.go` `IngestionConfig.BackfillFromLedger`) is read
+  once at first boot, when no cursor row exists; set it to the current tip
+  instead of `2`. `ingestion.live_seam_ledger = 0` (default) means no archive
+  bucket: the indexer reads only `galexie-live`.
+- **What you lose.** The ADR-0033 completeness verdict (`GET /v1/coverage`,
+  `.complete`) is only true from `backfill_from_ledger` forward, since a
+  source's `genesis_ledger` is the protocol's real on-chain genesis; coverage
+  will legitimately never reach 100% against older history.
+  `/v1/history/since-inception` and long OHLC/VWAP windows (30d/1y) are empty
+  or short until live time accrues. Tell your API consumers if you serve this
   publicly.
 
-There's no first-class "`--light`" flag; the above is exactly how the
-existing knobs behave, described accurately rather than promised as a
-named feature.
+There is no `--light` flag; this is how the existing knobs behave.
 
 ---
 
@@ -171,29 +105,25 @@ named feature.
 
 | Need | Notes |
 |---|---|
-| A host | Ubuntu 22.04+/24.04+ per the [hardware spec](../architecture/infrastructure/archival-node-spec.md); NVMe strongly recommended (SATA pushes catchup from hours to days) |
+| A host | Ubuntu 22.04+/24.04+ per the [hardware spec](../architecture/infrastructure/archival-node-spec.md); NVMe strongly recommended (SATA turns catchup from hours into days) |
 | Docker Engine 24+ / Docker Desktop + Compose v2 | for the local dependency stack (`make dev`) |
 | Go ≥ 1.25 | to build the six binaries (`go version`) |
-| `stellar-core` + Galexie | installed from `apt.stellar.org` / the [`stellar-galexie`](https://github.com/stellar/stellar-galexie) release — **not part of this repo**; see [ADR-0002](../adr/0002-minio-s3-compat-storage.md) for why we don't run Horizon or ship our own core build |
-| An S3-compatible object store | MinIO by default (bundled in `make dev`); AWS S3, GCS, Cloudflare R2, Backblaze B2, Wasabi all work via `endpoint_url` — **never** Galexie's local-filesystem backend in production (silently drops 9 metadata keys + is multi-writer-unsafe; see [ADR-0002](../adr/0002-minio-s3-compat-storage.md)) |
-| ClickHouse server (the raw lake — on by default; §4.5 says how to opt out) | `clickhouse-server` from the [official ClickHouse install](https://clickhouse.com/docs/getting-started/quick-start) or the `clickhouse/clickhouse-server` Docker image — **this repo does not package or install ClickHouse itself**; it ships the schema (`deploy/clickhouse/tier1_schema.sql`) and the indexer-side dual-sink code only |
-| `stellar-archivist` (optional, only for a full history mirror) | from [`stellar/go-stellar-archivist`](https://github.com/stellar/go-stellar-archivist) — not installed by anything in this repo either |
+| `stellar-core` + Galexie | from `apt.stellar.org` / the [`stellar-galexie`](https://github.com/stellar/stellar-galexie) release; **not part of this repo** ([ADR-0002](../adr/0002-minio-s3-compat-storage.md)) |
+| An S3-compatible object store | MinIO by default (bundled in `make dev`); AWS S3, GCS, Cloudflare R2, Backblaze B2, Wasabi work via `endpoint_url`. **Never** Galexie's local-filesystem backend (drops 9 metadata keys, multi-writer-unsafe; ADR-0002) |
+| ClickHouse server (raw lake, on by default; §4.5 says how to opt out) | `clickhouse-server` from the [official install](https://clickhouse.com/docs/getting-started/quick-start) or the `clickhouse/clickhouse-server` image; this repo ships only the schema (`deploy/clickhouse/tier1_schema.sql`) and the indexer dual-sink |
+| `stellar-archivist` (optional, full history mirror only) | from [`stellar/go-stellar-archivist`](https://github.com/stellar/go-stellar-archivist); not installed by this repo |
 
 ---
 
 ## 4. Step-by-step bring-up
 
-This is the manual path: one host, systemd units from `deploy/systemd/`,
-no Ansible. Every command below is real and lifted from the files
-cited — nothing here is invented shorthand.
+Manual path: one host, systemd units from `deploy/systemd/`, no Ansible.
 
 ### 4.1 Dependency stack
 
-For local development / evaluation, the bundled Compose file brings
-up Postgres+TimescaleDB, Redis, and MinIO (see
-[`deploy/docker-compose/README.md`](../../deploy/docker-compose/README.md)
-for the full walkthrough — it is **not** production-shaped: no HA, no
-TLS, no backups):
+The bundled Compose file brings up Postgres+TimescaleDB, Redis and MinIO
+([`deploy/docker-compose/README.md`](../../deploy/docker-compose/README.md)).
+It is **not** production-shaped: no HA, TLS or backups.
 
 ```sh
 git clone https://github.com/Stellar-Index/StellarIndex.git
@@ -202,17 +132,15 @@ cp deploy/docker-compose/.env.example deploy/docker-compose/.env
 make dev              # timescale + redis + minio, docker compose
 ```
 
-`make dev` brings up **only** those three containers. Nothing in this
-repo's compose file serves the API or the docs site — those are your
-own binaries (§4.2, §4.7) and a static build (`make docs-api`).
+`make dev` brings up **only** those three containers: no API, no ClickHouse,
+no docs site. The app binaries run on the host (§4.2, §4.7); the docs site is
+a static build (`make docs-api`).
 
-For a production host, install Postgres 15 + the TimescaleDB
-extension, Redis 7, and MinIO natively (or point at your own S3-
-compatible service + managed Postgres/Redis) — the Compose file's
-`init/00-timescale-extension.sql` shows the one extension statement
-you need (`CREATE EXTENSION IF NOT EXISTS timescaledb;`). Create the
-three buckets `galexie-live`, `galexie-archive`, `backups` the same
-way `minio-init` does (`mc mb -p local/<bucket>`).
+For production, install Postgres 15 + TimescaleDB, Redis 7 and MinIO natively
+(or use your own S3-compatible service and managed Postgres/Redis). The one
+extension statement is `CREATE EXTENSION IF NOT EXISTS timescaledb;`
+(`init/00-timescale-extension.sql`). Create buckets `galexie-live`,
+`galexie-archive`, `backups` as `minio-init` does (`mc mb -p local/<bucket>`).
 
 ### 4.2 Build the binaries
 
@@ -226,55 +154,44 @@ make build            # bin/stellarindex-{indexer,aggregator,api,ops,migrate,sla
 cp configs/example.toml /etc/stellarindex.toml
 ```
 
-Every field is annotated in place; the generated field-by-field
-reference is [`docs/reference/config/README.md`](../reference/config/README.md)
-(regenerate with `make docs-config` after any `internal/config/config.go`
-change). At minimum, edit:
+Every field is annotated in place; the generated reference is
+[`docs/reference/config/README.md`](../reference/config/README.md)
+(`make docs-config` after any `internal/config/config.go` change). Edit at
+minimum:
 
 - `[stellar] network` — `pubnet` for mainnet.
 - `[storage] postgres_dsn`, `redis_addr`, `s3_endpoint` / `s3_bucket_archive`
-  / `s3_bucket_live` — point at what you brought up in 4.1.
-- `[ingestion] enabled_sources` — which on-chain decoders to run.
-  The example file ships `["soroswap"]`; the built-in default when
-  the key is absent is `["soroswap", "aquarius", "phoenix"]`. See
-  `internal/config/validate.go`'s `KnownSources` for the full list.
-  Each requires a per-WASM-hash decoder audit before it's safe for
-  historical backfill — see
-  [docs/operations/wasm-audits/README.md](wasm-audits/README.md).
+  / `s3_bucket_live` — what you brought up in 4.1.
+- `[ingestion] enabled_sources` — which on-chain decoders to run. The example
+  ships `["soroswap"]`; the default when absent is
+  `["soroswap", "aquarius", "phoenix"]`; the full list is `KnownSources` in
+  `internal/config/validate.go`. Each needs a per-WASM-hash decoder audit
+  before historical backfill: [wasm-audits/README.md](wasm-audits/README.md).
 - `[storage] clickhouse_addr`, `[storage] clickhouse_live_sink` and
-  `[storage] clickhouse_projector_source` — all three live under
-  `[storage]`, and all three are commented out in the example file, so
-  the built-in defaults apply: both switches `true` (ADR-0041) against
-  `clickhouse_addr = "127.0.0.1:9300"`. **If you are not standing up
-  ClickHouse (§4.5), uncomment the two switches and set them
-  `false`** — the indexer dials that address at boot and refuses to
-  start when nothing answers.
+  `[storage] clickhouse_projector_source` — all commented out in the example,
+  so the defaults apply: both switches `true` (ADR-0041) against
+  `clickhouse_addr = "127.0.0.1:9300"`. **Without ClickHouse (§4.5),
+  uncomment the two switches and set them `false`**: the indexer dials that
+  address at boot and refuses to start when nothing answers.
 - `[api] external_base_url` — **your own** public `/v1` root, e.g.
-  `https://api.example.com/v1`. When an email sender is configured, the
-  sign-in and verification links are built from this value and nothing
-  else (the request's `Host` header is client-controlled and is never
-  used). Leaving the upstream default `https://api.stellarindex.io/v1`
-  emails your users' live verification tokens to our host, where they
-  do not work. An empty or non-`http(s)` value suppresses the
-  verification email (`email_verification_sent: false`).
+  `https://api.example.com/v1`. Sign-in and verification emails build their
+  links from this value alone (the `Host` header is never used). The upstream
+  default `https://api.stellarindex.io/v1` emails your users' live tokens to
+  our host. Empty or non-`http(s)` suppresses the email
+  (`email_verification_sent: false`).
 
-Secrets never belong in this file — see §5.
+Secrets never belong in this file (§5).
 
-Upgrading in place by re-copying `example.toml` over an edited config is
-not the flow: keep editing your existing file and diff in new keys by
-hand. But a key a *later* release deleted from the schema can still be
-sitting in your file if it started life from an older `example.toml`.
-Such a key is logged and ignored at boot (`config: retired keys present,
-ignoring`) rather than refused, as long as it's registered on
-`internal/config.RetiredKeys`; anything not on that list still hard-fails
-with `config: unknown keys in ...` — remove it from your file.
+Do not re-copy `example.toml` over an edited config on upgrade; diff new keys
+in by hand. A key a later release deleted is logged and ignored at boot
+(`config: retired keys present, ignoring`) if registered on
+`internal/config.RetiredKeys`; anything else hard-fails with
+`config: unknown keys in ...`: remove it.
 
 ### 4.4 MinIO + Galexie (captive stellar-core)
 
-Galexie is a separate SDF project; install it per its own docs, then
-point it at your MinIO with a config matching
-[`galexie.toml.j2`](../../configs/ansible/roles/archival-node/templates/galexie.toml.j2)'s
-shape:
+Install Galexie per its own docs and point it at your MinIO, matching
+[`galexie.toml.j2`](../../configs/ansible/roles/archival-node/templates/galexie.toml.j2):
 
 ```toml
 admin_port = 8090
@@ -297,42 +214,34 @@ captive_core_toml_path   = "/etc/stellar/captive-core-galexie.cfg"
 stellar_core_binary_path = "/usr/bin/stellar-core"
 ```
 
-`captive_core_toml_path` needs a standard stellar-core config —
-`[[HOME_DOMAINS]]` / `[[VALIDATORS]]` / `[HISTORY.*]` /
-`NETWORK_PASSPHRASE` — SDF's own
-[`stellar-core_example.cfg`](https://github.com/stellar/stellar-core/blob/master/docs/stellar-core_example.cfg)
-is the reference; this repo doesn't ship a quorum set of its own for
-external operators to copy (the templated one at
-`configs/ansible/roles/archival-node/templates/stellar-core.cfg.j2`
-is r1-specific and vault-gated).
+`captive_core_toml_path` needs a standard stellar-core config
+(`[[HOME_DOMAINS]]` / `[[VALIDATORS]]` / `[HISTORY.*]` / `NETWORK_PASSPHRASE`);
+use SDF's
+[`stellar-core_example.cfg`](https://github.com/stellar/stellar-core/blob/master/docs/stellar-core_example.cfg).
+The repo's `stellar-core.cfg.j2` is r1-specific and vault-gated.
 
 ```sh
 galexie append --config-file /etc/galexie.toml --start <START_LEDGER>
 ```
 
-`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars carry your
-MinIO credentials for Galexie's S3 client. A fresh MinIO bucket with
-no prior export makes Galexie start at `<START_LEDGER>` = whatever
-you pass; a restart against an already-populated bucket resumes from
-`last_exported + 1` automatically. Decide here whether you're doing
-full history (start = 2, then also run the archive-mirror steps in
-[archival-node-bringup.md §2-4](archival-node-bringup.md#2-mirror-the-sdf-history-archive-34-h-wall-7-tb))
-or light mode (start = current network tip — query it from any public
-Horizon-free source, e.g. `stellar-core`'s own `/info` endpoint, or a
-public `stellar-rpc` if you have one handy for this one read).
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` carry the MinIO credentials. A
+fresh bucket starts at `<START_LEDGER>`; a restart against a populated bucket
+resumes at `last_exported + 1`. Full history: start = 2, then run the
+archive-mirror steps in
+[archival-node-bringup.md §2-4](archival-node-bringup.md#2-mirror-the-sdf-history-archive-34-h-wall-7-tb).
+Light mode: start = current network tip, read from `stellar-core`'s own
+`/info` endpoint.
 
 ### 4.5 ClickHouse raw lake (opt-out, not opt-in)
 
-Since ADR-0041 the lake is substrate rather than an add-on, so this
-step is the default path: skipping it means turning two switches off
-(below), not leaving them alone.
+Since ADR-0041 the lake is substrate: skipping it means turning two switches
+off, not leaving them alone.
 
-Install `clickhouse-server` (native package or Docker). Before starting
-it, move its native protocol port off 9000: ClickHouse listens there by
-default, and MinIO (§4.4) already holds it. Drop this into
-`/etc/clickhouse-server/config.d/si-override.xml` (Docker: mount it into
-the same directory) — it is what the ansible role writes, with
-`clickhouse_tcp_port` defaulting to 9300:
+Install `clickhouse-server` (native package or Docker). Before starting it,
+move its native port off 9000, which MinIO (§4.4) holds. Put this in
+`/etc/clickhouse-server/config.d/si-override.xml` (Docker: mount into that
+directory); the ansible role writes the same, `clickhouse_tcp_port`
+defaulting to 9300:
 
 ```xml
 <clickhouse>
@@ -341,55 +250,47 @@ the same directory) — it is what the ansible role writes, with
 </clickhouse>
 ```
 
-Restart `clickhouse-server`, then apply the schema. `clickhouse-client`
-also defaults to 9000, so pass the port on every invocation:
+Restart `clickhouse-server`, then apply the schema. `clickhouse-client` also
+defaults to 9000, so pass the port every time:
 
 ```sh
 clickhouse-client --port 9300 < deploy/clickhouse/tier1_schema.sql   # CREATE ... IF NOT EXISTS — safe to re-run
 ```
 
-The indexer's dual-sink dials ClickHouse's **native protocol** port
-(`storage.clickhouse_addr`, default `127.0.0.1:9300` — not the 8123
-HTTP port). If you pick a different `<tcp_port>`, set
-`storage.clickhouse_addr` to match. See [ADR-0034](../adr/0034-tiered-clickhouse-architecture.md)
-and [`docs/architecture/clickhouse-migration-plan.md`](../architecture/clickhouse-migration-plan.md)
-for the full tiering rationale and what's populated vs. not yet
-(`ledger_entry_changes` is schema'd but not yet written — see that
-plan's §"Accepted exclusion").
+The indexer dials the **native protocol** port (`storage.clickhouse_addr`,
+default `127.0.0.1:9300`, not 8123 HTTP); if you pick another `<tcp_port>`,
+set `storage.clickhouse_addr` to match. Tiering and what is populated:
+[ADR-0034](../adr/0034-tiered-clickhouse-architecture.md),
+[`clickhouse-migration-plan.md`](../architecture/clickhouse-migration-plan.md)
+(`ledger_entry_changes` is schema'd, not yet written; see its "Accepted
+exclusion").
 
-The reference `stellarindex-api` unit orders itself `After=clickhouse-server.service`
-(ordering only, so it is a no-op for a remote or Docker-managed
-ClickHouse). Before it starts listening, the API dials both lake readers
-concurrently and retries for up to seven seconds, with the last attempt
-starting about six seconds in. A ClickHouse that has not answered by then
-leaves the lake-backed endpoints on 503 and
-`stellarindex_dependency_up{dependency="clickhouse"}` at 0 until you
-restart the API.
+The reference `stellarindex-api` unit is `After=clickhouse-server.service`
+(ordering only; a no-op for remote/Docker ClickHouse). Before listening, the
+API dials both lake readers concurrently and retries for up to seven seconds
+(last attempt ~six seconds in). A ClickHouse that has not answered by then
+leaves lake-backed endpoints on 503 and
+`stellarindex_dependency_up{dependency="clickhouse"}` at 0 until you restart
+the API.
 
-If you skip ClickHouse, set `storage.clickhouse_live_sink = false`
-and `storage.clickhouse_projector_source = false` — both keys are
-under `[storage]`, and `internal/config/load.go` rejects an unknown
-key as a hard error, so a misfiled one stops every binary from
-starting. Neither is optional to set: both default to `true`
-(ADR-0041), and leaving them on without a ClickHouse to talk to fails
-the indexer at boot. The pricing path (trades → VWAP → API) is
-unaffected either way; what you give up is the raw-lake completeness
+Without ClickHouse, set `storage.clickhouse_live_sink = false` and
+`storage.clickhouse_projector_source = false`. Both are under `[storage]`;
+`internal/config/load.go` rejects an unknown key as a hard error, so a
+misfiled one stops every binary. Both default to `true` (ADR-0041), so leaving
+them on with no ClickHouse fails the indexer at boot. The pricing path
+(trades → VWAP → API) is unaffected; you lose the raw-lake completeness
 verdict and lake-derived supply figures.
 
-**Serving-query isolation (ADR-0048 D4, optional).** By default the
-API authenticates to ClickHouse as the unauthenticated `default` user
-— the same connection every other CH client in this repo uses, fine
-for a single-operator or low-traffic deployment. Once explorer traffic
-matters (public GET /v1/accounts/{g}/movements and friends), provision
-a dedicated bounded settings profile + user so a burst of public reads
-can never queue behind a heavy backfill or a background merge on the
-same box: `configs/ansible/roles/archival-node/tasks/20-clickhouse-serving-profile.yml`
-is the reference (ansible-managed on r1; hand-apply the equivalent
-`users.d` XML drop-in — see that file's comments for the exact
-settings + rationale — on a non-ansible deployment). Then set
-`storage.clickhouse_serving_user` / the
-`STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD` env var to point the API at
-it; both empty (the default) is the unauthenticated pre-D4 behavior.
+**Serving-query isolation (ADR-0048 D4, optional).** By default the API
+connects to ClickHouse as the unauthenticated `default` user, fine for
+low-traffic. Once public reads matter (e.g. `GET /v1/accounts/{g}/movements`),
+provision a dedicated bounded settings profile + user so public reads never
+queue behind a backfill or merge. Reference:
+`configs/ansible/roles/archival-node/tasks/20-clickhouse-serving-profile.yml`
+(on a non-ansible host hand-apply the equivalent `users.d` XML drop-in; the
+file's comments give the settings). Then set `storage.clickhouse_serving_user`
+and `STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD`; both empty (default) is the
+unauthenticated behaviour.
 
 ### 4.6 Migrations
 
@@ -399,22 +300,16 @@ export STELLARINDEX_POSTGRES_DSN="postgres://stellarindex:<password>@127.0.0.1:5
 ./bin/stellarindex-migrate -migrations migrations status   # confirm: migrated to version <N> (dirty=false)
 ```
 
-`<N>` tracks the highest-numbered file under `migrations/` — check
-`ls migrations/*.up.sql | sort | tail -1` rather than hard-coding a
-number, since this repo adds migrations over time (74 numbered
-migrations as of this writing; see
-[`migrations/README.md`](../../migrations/README.md) for what each one
-adds). Migrations run as the `stellarindex` app role — never as a
-Postgres superuser (see rule 7 in that README); running as superuser
-leaves objects superuser-owned and the app loses access to them at
-runtime.
+`<N>` is the highest file under `migrations/`
+(`ls migrations/*.up.sql | sort | tail -1`; index in
+[`migrations/README.md`](../../migrations/README.md)). Run migrations as the
+`stellarindex` app role, never a Postgres superuser (rule 7 of that README):
+superuser-owned objects become inaccessible to the app at runtime.
 
 ### 4.7 Indexer, aggregator, API — systemd units
 
-The unit files in `deploy/systemd/` are the canonical wiring; each
-has an in-file comment block describing its dependencies and
-config. Copy, enable, and start them in this order (each depends on
-the previous one being healthy):
+`deploy/systemd/` is the canonical wiring (each unit documents its
+dependencies). Start in this order, each healthy before the next:
 
 ```sh
 sudo cp bin/stellarindex-indexer bin/stellarindex-aggregator bin/stellarindex-api /usr/local/bin/
@@ -424,7 +319,7 @@ sudo mkdir -p /var/lib/stellarindex && sudo chown stellarindex:stellarindex /var
 
 # Secrets env file the units load (EnvironmentFile=-/etc/default/stellarindex-ops
 # in every one of the three unit files):
-sudo tee /etc/default/stellarindex-ops >/dev/null <<'EOF'
+sudo tee /etc/default/stellarindex-ops >/dev/null <<'EOT'
 STELLARINDEX_POSTGRES_DSN=postgres://stellarindex:<password>@127.0.0.1:5432/stellarindex?sslmode=disable
 STELLARINDEX_S3_ACCESS_KEY=<minio-access-key>
 STELLARINDEX_S3_SECRET_KEY=<minio-secret-key>
@@ -432,75 +327,64 @@ AWS_ACCESS_KEY_ID=<minio-access-key>
 AWS_SECRET_ACCESS_KEY=<minio-secret-key>
 AWS_ENDPOINT_URL=http://127.0.0.1:9000
 AWS_REGION=us-east-1
-EOF
+EOT
 sudo chmod 640 /etc/default/stellarindex-ops
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now stellarindex-indexer.service
-# wait for the archive/live handoff (or, in light mode, for the
-# first live trades) — watch:
+# wait for the archive/live handoff (light mode: the first live trades):
 journalctl -fu stellarindex-indexer
 
 sudo systemctl enable --now stellarindex-aggregator.service
 sudo systemctl enable --now stellarindex-api.service
 ```
 
-The env-var names above match `internal/config/load.go`'s
-`ApplyEnvOverrides` (`STELLARINDEX_POSTGRES_DSN`,
-`STELLARINDEX_S3_ACCESS_KEY` / `_SECRET_KEY` — the *names* configured
-under `[storage] s3_access_key_env` / `s3_secret_key_env` in your TOML)
-plus the plain `AWS_*` vars the S3 SDK client reads directly for the
-Galexie-bucket read path.
+The `STELLARINDEX_*` names match `ApplyEnvOverrides` in
+`internal/config/load.go` (the names set by `[storage] s3_access_key_env` /
+`s3_secret_key_env`); the plain `AWS_*` vars are read directly by the S3 SDK
+for the Galexie-bucket path.
 
 ---
 
 ## 5. Configuration reference pointers
 
-- **Full generated reference:** [`docs/reference/config/README.md`](../reference/config/README.md)
-  (`make docs-config`, sourced from `internal/config/config.go` struct
-  tags — every field, its TOML key, its env-var override if any, and
-  its default).
-- **Annotated example:** [`configs/example.toml`](../../configs/example.toml)
-  — copy this, not the generated reference, as your starting file;
-  every block has prose explaining the trade-offs (CORS, trusted
-  proxies, stablecoin fiat-proxy expansion, supply observers, etc).
-- **Secrets never go in the TOML.** A `*_env` field names an environment
-  variable that holds the secret (`s3_access_key_env`, `resend_api_key_env`,
-  and so on). The two password fields, `redis_password` and
-  `clickhouse_serving_password`, hold the value itself, so leave them unset
-  in the file and inject `STELLARINDEX_REDIS_PASSWORD` /
-  `STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD` instead. Either way, set the
-  actual value via your own secret manager (Vault, AWS Secrets Manager, or a
-  root-owned `/etc/default/stellarindex-ops` per §4.7) before starting the
-  binary. The old keys `redis_password_env` and
-  `clickhouse_serving_password_env` still load, with a deprecation warning.
+- **Generated reference:** [`docs/reference/config/README.md`](../reference/config/README.md)
+  (`make docs-config`; every field, TOML key, env override, default).
+- **Annotated example:** [`configs/example.toml`](../../configs/example.toml);
+  copy this as your starting file (CORS, trusted proxies, stablecoin
+  fiat-proxy expansion, supply observers, and so on).
+- **Secrets never go in the TOML.** A `*_env` field names the environment
+  variable holding the secret (`s3_access_key_env`, `resend_api_key_env`, …).
+  `redis_password` and `clickhouse_serving_password` hold the value itself, so
+  leave them unset and inject `STELLARINDEX_REDIS_PASSWORD` /
+  `STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD`. Set values via your secret
+  manager (Vault, AWS Secrets Manager) or a root-owned
+  `/etc/default/stellarindex-ops` (§4.7). The old `redis_password_env` and
+  `clickhouse_serving_password_env` still load with a deprecation warning.
 - **Known on-chain sources** (`[ingestion] enabled_sources`):
-  `internal/config/validate.go`'s `KnownSources` list is the
-  authoritative whitelist; adding a new one is documented in
-  [`docs/contributing/add-onchain-source.md`](../contributing/add-onchain-source.md).
-- **Off-chain (CEX/FX) connectors:** each lives under its own
-  `[external.<venue>]` block, `enabled = false` by default — flip on
-  what you want per venue; see the prose in `configs/example.toml`'s
-  `[external]` section for which need paid API keys.
+  `KnownSources` in `internal/config/validate.go` is the authoritative
+  whitelist; adding one: [`add-onchain-source.md`](../contributing/add-onchain-source.md).
+- **Off-chain (CEX/FX) connectors:** one `[external.<venue>]` block each,
+  `enabled = false` by default; `configs/example.toml`'s `[external]` section
+  says which need paid API keys.
 
 ---
 
 ## 6. Verification
 
-Once the API is up (default `0.0.0.0:3000`), run the same smoke
-battery r1 runs every 5 minutes via `stellarindex-smoke.timer`:
+With the API up (default `0.0.0.0:3000`), run the smoke battery r1 runs every
+5 minutes via `stellarindex-smoke.timer`:
 
 ```sh
 API_BASE_URL=http://localhost:3000 bash scripts/dev/r1-smoke.sh
 ```
 
-It's 13+ independent `GET`s across health, catalogue, pricing,
-VWAP/TWAP, oracle passthrough, and diagnostics, each with a `jq`
-shape assertion; **exit code is the number of failed checks**, so it
-composes directly with cron / Healthchecks.io. A clean run prints
-`All checks passed.`
+13+ independent `GET`s (health, catalogue, pricing, VWAP/TWAP, oracle
+passthrough, diagnostics), each with a `jq` shape assertion; **exit code is
+the number of failed checks**, so it composes with cron / Healthchecks.io. A
+clean run prints `All checks passed.`
 
-Two endpoints worth checking by hand as you bring the node up:
+By hand:
 
 ```sh
 curl -s localhost:3000/v1/healthz | jq            # liveness — .data.status == "ok"
@@ -510,106 +394,78 @@ curl -s localhost:3000/v1/coverage | jq            # ADR-0033 completeness verdi
                                                     # .coverage_pct (watermark vs. tip)
 ```
 
-`/v1/coverage`'s `complete: true` is the honest "did I actually
-capture everything since genesis for this source" claim — in light
-mode (§2) expect `complete: false` / a `coverage_pct` under 100 for
-every source until you've decided to backfill, or forever if you
-never do; that's expected, not broken.
+`complete: true` claims everything since genesis was captured for that source.
+In light mode (§2) expect `complete: false` and `coverage_pct` under 100 for
+every source until you backfill, or forever: expected, not broken.
 
 ---
 
 ## 7. Operational notes
 
-- **Backups.** r1 runs `pgbackrest` daily via a systemd timer
-  (`pgbackrest-backup.timer` → `/usr/local/bin/pgbackrest-backup.sh`)
-  against the `backups` MinIO bucket — this repo doesn't ship that
-  script for external use today; `pgBackRest`'s own docs cover the
-  setup against any S3-compatible target. At minimum, back up
-  Postgres (the served tier is not re-derivable from ClickHouse for
-  every table — see the "Accepted exclusion" note in
-  [ADR-0034](../adr/0034-tiered-clickhouse-architecture.md)) and your
-  MinIO `galexie-archive` bucket (if you did a full mirror, that's
-  your only local copy short of re-pulling from AWS's public
-  blockchain bucket or SDF's history archive).
-- **Monitoring.** Prometheus alert rules ship in
-  [`deploy/monitoring/rules/`](../../deploy/monitoring/rules/) (the
-  multi-host set — use this one, not `configs/prometheus/rules.r1/`,
-  which is r1's single-host overlay with r1-specific job-name
-  rewrites). Every alert cites a runbook under
-  [`docs/operations/runbooks/`](runbooks/); the alert catalogue is
-  [`docs/operations/alerts-catalog.md`](alerts-catalog.md). Metrics
-  reference: [`docs/reference/metrics/README.md`](../reference/metrics/README.md).
-- **Heavy one-shot jobs.** Any bulk operation — a re-derive, a
-  backfill, a big ad-hoc SQL query — should run under a hard
-  memory/IO-priority cap so it can't starve the indexer or Postgres.
-  r1's Ansible role installs this wrapper at
-  `/usr/local/sbin/run-heavy-job.sh` (a `systemd-run --scope` with
-  `MemoryMax=20G MemorySwapMax=0` + batch-class CPU/IO weights — see
-  `configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`
-  for the exact script). If you're not running the Ansible role,
-  reproduce the same shape by hand before running
-  `stellarindex-ops` against a large ledger range: an unwindowed
-  re-derive on an under-provisioned box can balloon memory and take
-  down colocated services (this happened on r1 on 2026-07-05 — see
-  docs/operations/maintainer-workflow.md's "Heavy one-shot jobs"
-  section for the full incident).
-- **Backfilling / catching up after downtime:** see
-  [`docs/operations/backfill-procedure.md`](backfill-procedure.md)
-  and, for Soroban-derived sources specifically,
-  `stellarindex-ops projector-replay -source <name> -from <ledger> -write`
-  (fail-closed: without `-write` it reports and writes nothing)
-  (never a bespoke `<source>-backfill` command — those were removed;
-  see AGENTS.md invariant 7).
+- **Backups.** r1 runs `pgbackrest` daily (`pgbackrest-backup.timer` →
+  `/usr/local/bin/pgbackrest-backup.sh`) against the `backups` bucket; the
+  script is not shipped for external use, so follow pgBackRest's own docs for
+  any S3-compatible target. Back up at minimum Postgres (the served tier is
+  not re-derivable from ClickHouse for every table; ADR-0034 "Accepted
+  exclusion") and, after a full mirror, `galexie-archive` (your only local copy
+  short of re-pulling from AWS's public blockchain bucket or SDF's archive).
+- **Monitoring.** Alert rules: [`deploy/monitoring/rules/`](../../deploy/monitoring/rules/)
+  (the multi-host set, not r1's single-host overlay `configs/prometheus/rules.r1/`).
+  Every alert cites a runbook under [`runbooks/`](runbooks/); catalogue:
+  [`alerts-catalog.md`](alerts-catalog.md); metrics:
+  [`docs/reference/metrics/README.md`](../reference/metrics/README.md).
+- **Heavy one-shot jobs.** Run any re-derive, backfill or big ad-hoc SQL under
+  a hard memory/IO cap so it cannot starve the indexer or Postgres. r1's role
+  installs `/usr/local/sbin/run-heavy-job.sh` (`systemd-run --scope`,
+  `MemoryMax=20G MemorySwapMax=0`, batch-class CPU/IO weights; see
+  `configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`).
+  Without the role, reproduce that shape before running `stellarindex-ops`
+  over a large ledger range: an unwindowed re-derive on a small box took down
+  colocated services on r1 (docs/operations/maintainer-workflow.md, "Heavy
+  one-shot jobs").
+- **Catching up after downtime:** [`backfill-procedure.md`](backfill-procedure.md).
+  A projected Soroban source: `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger> -write`
+  (fail-closed: without `-write` it reports and writes nothing). A
+  non-projected one (`sdex`, contract calls): `ch-rebuild`. Never a bespoke
+  `<source>-backfill` (removed; AGENTS.md invariant 7). `ch-backfill` reads
+  the live bucket (trimmed) by default; historical ranges need
+  `-bucket galexie-archive`.
 
 ---
 
 ## Advanced path: the Ansible role
 
-If you're standing up a full archival-shaped node (the "full-history"
-tier above) and are comfortable running Ansible against a fresh box,
+For a full archival-shaped node on a fresh box,
 [`configs/ansible/roles/archival-node/`](../../configs/ansible/roles/archival-node/)
-does everything in §4 for you — ZFS pool + datasets, MinIO + IAM,
-Postgres + TimescaleDB, Galexie, all six binaries cross-compiled and
-copied up, migrations applied, systemd units installed. Follow
-[`archival-node-bringup.md`](archival-node-bringup.md) top to bottom;
-it's the exact recipe r1 was built from, generalized with
-`<host>` / `<SEAM>` placeholders. The role does **not** install
-`stellar-archivist` or ClickHouse — those remain manual steps (see
-that doc's Prerequisites and §4.5 above respectively).
+does all of §4: ZFS pool + datasets, MinIO + IAM, Postgres + TimescaleDB,
+Galexie, all six binaries cross-compiled and copied, migrations, systemd
+units. Follow [`archival-node-bringup.md`](archival-node-bringup.md) top to
+bottom (r1's recipe with `<host>` / `<SEAM>` placeholders). The role does
+**not** install `stellar-archivist` or ClickHouse (manual; see that doc's
+Prerequisites and §4.5).
 
 ---
 
 ## What's not covered
 
-- **Running your own tier-1 validator set.** This guide builds a
-  non-voting archival node. Promoting to a validator (HSM-backed
-  signing keys, SCP participation) is a distinct, later step — see
-  [ADR-0004](../adr/0004-tier1-validator-aspiration.md).
-- **Multi-region deployment / cross-region consistency.** Our own
-  three-region topology (R1 Hetzner / R2 AWS / R3 Vultr) and its
-  per-region storage-shape trade-offs are documented in
+- **Your own tier-1 validator set.** This guide builds a non-voting archival
+  node; validators (HSM keys, SCP) are later: [ADR-0004](../adr/0004-tier1-validator-aspiration.md).
+- **Multi-region deployment.** Our R1/R2/R3 topology:
   [ADR-0016](../adr/0016-per-region-storage-strategy.md) and
-  [`archival-node-bringup.md`'s per-region section](archival-node-bringup.md#per-region-variations-r2--r3--️-historical-adr-0016-is-superseded),
-  but running more than one node of your own, and keeping them
-  consistent, is out of scope here.
-- **Disaster recovery for an existing node.** Covered separately in
-  [`archival-node-bringup.md`'s Disaster recovery section](archival-node-bringup.md#disaster-recovery)
-  — corrupt history archive, wiped Postgres, lost MinIO data dir.
-- **HA / failover.** See [`docs/architecture/ha-plan.md`](../architecture/ha-plan.md).
-- **The dashboard / customer platform** (`internal/platform`, API-key
-  self-service, billing). This guide covers the pricing/explorer data
-  plane only.
+  [`archival-node-bringup.md`'s per-region section](archival-node-bringup.md#per-region-variations-r2--r3--️-historical-adr-0016-is-superseded).
+  Running and reconciling several nodes is out of scope.
+- **Disaster recovery.** [`archival-node-bringup.md`'s Disaster recovery section](archival-node-bringup.md#disaster-recovery).
+- **HA / failover.** [`docs/architecture/ha-plan.md`](../architecture/ha-plan.md).
+- **Dashboard / customer platform** (`internal/platform`, API-key self-service,
+  billing): this guide covers the data plane only.
 
 ---
 
 ## References
 
-- [`docs/architecture/overview.md`](../architecture/overview.md) — 10-minute architecture orientation.
-- [`docs/architecture/ingest-pipeline.md`](../architecture/ingest-pipeline.md) — the binding rules for the ingest path.
-- [ADR-0001](../adr/0001-horizon-deprecated.md) — no Horizon.
-- [ADR-0002](../adr/0002-minio-s3-compat-storage.md) — S3-compatible storage, not local filesystem.
-- [ADR-0034](../adr/0034-tiered-clickhouse-architecture.md) — ClickHouse raw lake / Postgres served tier.
-- [`docs/architecture/infrastructure/archival-node-spec.md`](../architecture/infrastructure/archival-node-spec.md) — hardware tiers in full.
-- [`archival-node-bringup.md`](archival-node-bringup.md) — the internal recipe this guide adapts.
-- [`migrations/README.md`](../../migrations/README.md) — schema migration rules + full index.
-- [`deploy/docker-compose/README.md`](../../deploy/docker-compose/README.md) — local dev stack detail.
+- [`docs/architecture/overview.md`](../architecture/overview.md) — architecture orientation.
+- [`docs/architecture/ingest-pipeline.md`](../architecture/ingest-pipeline.md) — binding ingest rules.
+- [ADR-0001](../adr/0001-horizon-deprecated.md), [ADR-0002](../adr/0002-minio-s3-compat-storage.md), [ADR-0034](../adr/0034-tiered-clickhouse-architecture.md).
+- [`archival-node-spec.md`](../architecture/infrastructure/archival-node-spec.md) — hardware tiers.
+- [`archival-node-bringup.md`](archival-node-bringup.md) — the recipe this adapts.
+- [`migrations/README.md`](../../migrations/README.md); [`deploy/docker-compose/README.md`](../../deploy/docker-compose/README.md).

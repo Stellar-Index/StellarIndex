@@ -6,36 +6,19 @@ status: active
 
 # API ↔ explorer coverage
 
-Every path in `openapi/stellar-index.v1.yaml` — the contract, and the
-authority for this document — against what `web/explorer` actually calls
-and what a person can actually navigate to.
-
-## Why this exists
-
-`/v1/accounts/sponsors` and `/v1/accounts/creators` both return real data
-(2.58 M sponsorships on the top account). Pages exist. They are in the
-sitemap. And the operator still reported *"I don't see pages on the
-explorer for the sponsors / creators"* — because the only way in is the
-`/insights` hub. That pair turns out to be fine (the hub is in the rail
-and cards both children, so it is level 3 below), but the report is the
-right question asked of the whole surface, and the repo has been bitten
-by the real version of it before: `components/nav/Footer.tsx` still
-carries finding S-020, *"these pages were an orphaned island — they
-linked only to each other; nothing linked in."*
-
-So "exposed" is not one property. It is three, and they fail
-independently.
+Every path in `openapi/stellar-index.v1.yaml` (the authority) against what
+`web/explorer` calls and what a reader can navigate to. Network assessed:
+pubnet, where all five capability flags in `src/lib/networks.ts` are true;
+`src/lib/network-routes.ts` hides capability-gated routes per network, so a
+route absent on a test net is correct, not a gap.
 
 ## The three levels
 
 | Level | Meaning |
 |:-:|---|
-| **1** | **Not consumed.** No explorer code calls the endpoint. A real coverage gap: the data is served and nothing renders it. |
-| **2** | **Consumed but unreachable.** A page calls it, but no nav, footer or in-page link leads there. The sitemap does *not* count — a sitemap is for crawlers, not readers. |
-| **3** | **Reachable.** A reader starting at `/` can get there by following links. |
-
-A hub that is itself in the nav, with its children linked from it, is
-level 3. The chain to `/` is what matters, not the hop count.
+| **1** | **Not consumed.** No explorer code calls the endpoint: data served, nothing renders it. |
+| **2** | **Consumed but unreachable.** A page calls it, but no nav, footer or in-page link leads there. The sitemap does not count. |
+| **3** | **Reachable.** A reader starting at `/` can get there by following links (a hub in the nav with its children linked from it is level 3). |
 
 ## Result
 
@@ -47,43 +30,27 @@ level 3. The chain to `/` is what matters, not the hop count.
 | Level 1 — not consumed | **24** |
 | Deliberately excluded (operational) | **4** |
 
-Re-derived against the repo on 2026-09-24: the endpoint table, these
-counts, and both guard tests below (green). The live probes quoted in the
-level-1 and spec-disagreement sections were not re-run and are as of
-2026-09-09.
-
-**Level 2 is empty, and that is enforced, not lucky.**
-`src/lib/route-reachability.test.ts` already walks the link graph from
-`/` and fails on any page without a click path. All 88 `page.tsx` routes
-are reachable except nine that are exempt with a stated reason (iframe
-widgets, legacy redirect shims, the magic-link landing, the design-system
-reference). So there was no "just add a footer link" fix to make — the
-gaps this audit found are all discoverability, not reachability.
-
-**Network assessed: pubnet/mainnet**, where all five capability flags in
-`src/lib/networks.ts` are true. `src/lib/network-routes.ts` hides
-capability-gated routes per network, so a route absent on a test net is
-correct behaviour, not a gap; the reachability walk is static and
-therefore describes the mainnet shape.
+Level 2 is empty and enforced: `src/lib/route-reachability.test.ts` walks the
+link graph from `/` and fails on any page without a click path. All 88
+`page.tsx` routes are reachable except nine exempt with a stated reason
+(iframe widgets, legacy redirect shims, the magic-link landing, the
+design-system reference). Counts and both guard tests were last re-derived
+2026-09-24; the live probes below were not re-run since 2026-09-09.
 
 ## How to re-derive this
-
-The guards are in the test suite — run these and they fail if any of the
-above stops being true:
 
 ```
 cd web/explorer && pnpm vitest run src/lib/route-reachability.test.ts src/app/crawl-surface.test.ts
 cd web/explorer && pnpm vitest run src/lib/api-explorer-coverage-doc.test.ts
 ```
 
-`route-reachability.test.ts` owns level 2 (every page has a click path
-from `/`). `crawl-surface.test.ts` owns discoverability (the sitemap and
-the nav agree in both directions, and no shell page is indexable). Both
-share one link-graph implementation, `src/lib/route-graph.ts`, so they
-cannot drift into two different notions of "reachable".
+`route-reachability.test.ts` owns level 2. `crawl-surface.test.ts` owns
+discoverability (sitemap and nav agree both ways; no shell page is
+indexable). Both share `src/lib/route-graph.ts`. `api-explorer-coverage-doc.test.ts`
+pins the table and Result counts to the spec. Level 1 has no test: an
+endpoint the explorer does not call is a product decision, not a defect.
 
-Level 1 has no test — an endpoint the explorer does not call is a product
-decision, not a defect. To re-derive the endpoint table:
+To re-derive the endpoint table:
 
 ```
 # every path in the contract
@@ -94,515 +61,230 @@ cd web/explorer && grep -rno '/v1/[A-Za-z0-9/_.{}$-]*' \
   --include='*.ts' --include='*.tsx' src functions
 ```
 
-Two traps make a naive grep wrong, and both bit the first pass of this
-audit:
-
-1. **`src/api/types.ts` is generated** from the spec and names every
-   endpoint in its prose descriptions. It is never evidence of
-   consumption. Exclude it.
-2. **`src/api/account.ts` strips the `/v1` prefix** — `accountFetch`
-   adds it — so the whole dashboard/auth surface is invisible to a
-   `/v1/` grep. Match `accountFetch('/dashboard/keys')` too.
-
-Comments must be stripped before matching. Prose names paths constantly,
-and a comment is not a call site — the same reason the reachability walk
-strips them before looking for links.
+Two traps: `src/api/types.ts` is generated from the spec and names every
+endpoint in prose, so exclude it; `src/api/account.ts` strips the `/v1`
+prefix (`accountFetch` adds it), so also match `accountFetch('/dashboard/keys')`.
+Strip comments before matching; a comment is not a call site.
 
 ## The table
 
-Level `ex` = deliberately excluded (see the end of this document).
-"Consumed in" names the call site; a shared hook is shown as
-`hooks.ts:useX`. "Reachable from `/`" lists the routes that render it —
-`global nav chrome` means the rail, footer or search modal, which every
-page carries.
+Level `ex` = deliberately excluded (last section). "Consumed in" is the first
+call site; `hooks.ts:useX` is a shared hook.
 
-| Endpoint | Methods | Level | Consumed in | Reachable from `/` via |
-|---|---|:-:|---|---|
-| `/healthz` | GET | ex | app/status/StatusPageClient.tsx | /status |
-| `/readyz` | GET | ex | app/status/StatusPageClient.tsx | /status |
-| `/livez/lake` | GET | ex | — | — |
-| `/version` | GET | ex | — | — |
-| `/status` | GET | 3 | hooks.ts:useStatus | /status |
-| `/status/notices` | GET | 3 | app/status/StatusPageClient.tsx | /status |
-| `/assets` | GET | 3 | app/HomeTopAssets.tsx, app/HomeTopMovers.tsx | /, /assets, /assets/[slug], /docs, /external/assets +2 |
-| `/external/assets` | GET | 3 | app/external/assets/[slug]/page.tsx, app/external/assets/page.tsx | /external/assets, /external/assets/[slug] |
-| `/external/assets/{slug}` | GET | 3 | app/HomeTryAPI.tsx, app/external/assets/[slug]/page.tsx | /, /external/assets/[slug] |
-| `/assets/verified` | GET | 3 | app/HomeTryAPI.tsx, app/assets/AssetsTable.tsx | global nav chrome; /, /accounts, /accounts/[g] |
-| `/assets/{asset_id}` | GET | 3 | app/HomeTryAPI.tsx, app/assets/[slug]/AssetClientFallback.tsx | /, /assets/[slug], /convert/[from]/[to], /docs, /network +1 |
-| `/assets/{asset_id}/metadata` | GET | 1 | — | — |
-| `/assets/{asset_id}/supply` | GET | 3 | hooks.ts:useAssetSupply | /assets/[slug] |
-| `/assets/{asset_id}/supply/flows` | GET | 1 | — | — |
-| `/assets/{asset_id}/holders` | GET | 3 | app/assets/[slug]/HoldersTabPanel.tsx | /assets/[slug] |
-| `/price` | GET | 3 | ../functions/og/[[path]].js, app/HomeTryAPI.tsx | /, /accounts, /accounts/[g], /aggregators, /amm +71 |
-| `/price/at` | GET | 1 | — | — |
-| `/price/changes` | GET | 1 | — | — |
-| `/price/tip` | GET | 3 | app/docs/page.tsx, app/methodology/page.tsx | /, /docs, /methodology, /sla, /status |
-| `/price/tip/stream` | GET | 3 | app/docs/page.tsx, lib/live/hooks.ts | /, /accounts, /accounts/[g], /aggregators, /amm +71 |
-| `/price/batch` | GET, POST | 3 | app/HomeCurrencies.tsx, app/accounts/AccountPositions.tsx | /, /accounts, /accounts/[g], /assets/[slug], /convert/[from]/[to] +2 |
-| `/observations` | GET | 3 | app/status/StatusPageClient.tsx | /status |
-| `/observations/stream` | GET | 3 | app/docs/page.tsx, lib/live/hooks.ts | /, /accounts, /accounts/[g], /aggregators, /amm +71 |
-| `/price/stream` | GET | 3 | app/docs/page.tsx, app/page.tsx | /, /docs, /sdk, /status |
-| `/history` | GET | 3 | app/HomeRecentTrades.tsx, app/HomeTryAPI.tsx | /, /assets/[slug], /docs, /markets/[pair], /status |
-| `/history/since-inception` | GET | 1 | — | — |
-| `/chart` | GET | 3 | app/assets/[slug]/ChartPanel.tsx, app/assets/[slug]/SupplyTabPanel.tsx | /, /assets/[slug], /convert/[from]/[to], /docs, /markets/[pair] +2 |
-| `/ohlc` | GET | 3 | app/assets/[slug]/ChartPanel.tsx, app/docs/page.tsx | /, /assets/[slug], /dexes/[source], /docs, /exchanges/[name] +3 |
-| `/vwap` | GET | 3 | app/docs/page.tsx, app/status/StatusPageClient.tsx | /docs, /status |
-| `/twap` | GET | 3 | app/docs/page.tsx, app/status/StatusPageClient.tsx | /docs, /status |
-| `/oracle/latest` | GET | 3 | app/assets/[slug]/AssetOraclesPanel.tsx, app/status/StatusPageClient.tsx | /assets/[slug], /status |
-| `/pools` | GET | 3 | app/HomeTryAPI.tsx, app/assets/[slug]/LiquidityTabPanel.tsx | /, /assets/[slug], /dexes, /docs, /markets/[pair] +1 |
-| `/pools/reserves` | GET | 3 | app/dexes/[source]/PairReservesPanel.tsx | /dexes/[source] |
-| `/liquidity-pools` | GET | 3 | app/liquidity-pools/NativePoolsPanel.tsx | /liquidity-pools |
-| `/lending/pools` | GET | 3 | app/HomeTryAPI.tsx, app/docs/page.tsx | /, /docs, /lending, /lending/[pool] |
-| `/lending/pools/{pool}/reserves` | GET | 3 | app/lending/LendingPoolsTable.tsx, app/lending/[pool]/PoolReserves.tsx | /lending, /lending/[pool] |
-| `/mev` | GET | 3 | app/docs/page.tsx, app/mev/MevFeed.tsx | /docs, /mev |
-| `/anomalies` | GET | 3 | app/anomalies/AnomaliesFeed.tsx, app/anomalies/page.tsx | /anomalies, /docs |
-| `/divergence` | GET | 3 | app/divergences/DivergenceFeed.tsx, app/docs/page.tsx | /divergences, /docs |
-| `/divergence/series` | GET | 3 | app/divergences/DivergenceFeed.tsx | /divergences |
-| `/oracle/streams` | GET | 3 | app/HomeTryAPI.tsx, app/assets/[slug]/AssetOraclesPanel.tsx | /, /assets/[slug], /docs, /oracles |
-| `/markets` | GET | 3 | app/HomeTopMarkets.tsx, app/HomeTryAPI.tsx | /, /assets/[slug], /dexes/[source], /docs, /exchanges +5 |
-| `/markets/sources` | GET | 3 | app/docs/page.tsx, app/markets/[pair]/SourceBreakdown.tsx | /assets/[slug], /docs, /markets/[pair] |
-| `/issuers` | GET | 3 | app/docs/page.tsx, app/issuers/IssuersTable.tsx | /, /accounts, /assets/[slug], /dexes, /docs +4 |
-| `/issuers/{g_strkey}` | GET | 3 | app/assets/[slug]/IssuerPanel.tsx, app/assets/[slug]/page.tsx | /accounts, /assets/[slug], /docs, /issuers, /issuers/[g_strkey] |
-| `/contracts/{contract_id}/transfers` | GET | 3 | app/contract/ContractView.tsx | /contracts/[id] |
-| `/changes/{entity_type}/{id}` | GET | 3 | hooks.ts:useChangeSummary, hooks.ts:useNetworkStats | /, /assets/[slug] |
-| `/diagnostics/cursors` | GET | 3 | app/HomeLivePanels.tsx, app/HomeTryAPI.tsx | /, /diagnostics, /network, /sources, /sources/[name] |
-| `/diagnostics/ingestion` | GET | 3 | app/status/StatusPageClient.tsx | /status |
-| `/diagnostics/archive` | GET | 3 | app/diagnostics/ArchivePanel.tsx, app/diagnostics/page.tsx | /diagnostics |
-| `/diagnostics/backups` | GET | 3 | hooks.ts:useBackupsDiagnostics | /status |
-| `/incidents` | GET | 3 | app/HomeTryAPI.tsx, app/status/StatusPageClient.tsx | /, /status |
-| `/incidents.atom` | GET | 3 | app/contact/page.tsx, app/methodology/page.tsx | /contact, /methodology, /status |
-| `/coverage` | GET | 3 | app/diagnostics/CoveragePanel.tsx, app/diagnostics/page.tsx | /, /diagnostics, /sources |
-| `/protocols` | GET | 3 | app/bridges/page.tsx, app/contracts/ContractsView.tsx | /bridges, /contracts, /dexes, /dexes/[source], /docs +5 |
-| `/protocols/{name}` | GET | 3 | app/dexes/[source]/DexAnalyticsSection.tsx, app/dexes/[source]/SourceVolumeHistory.tsx | /dexes/[source], /docs, /protocols/[name], /sdex |
-| `/protocols/{name}/tvl` | GET | 1 | — | — |
-| `/sdex/orderbook` | GET | 3 | app/dexes/[source]/page.tsx, app/markets/[pair]/OrderBookPanel.tsx | /dexes/[source], /markets/[pair], /sdex |
-| `/ledger/tip` | GET | 3 | components/nav/NetworkSwitcher.tsx | global nav chrome; /, /accounts, /accounts/[g] |
-| `/ledger/stream` | GET | 3 | app/docs/page.tsx, lib/live/hooks.ts | /, /accounts, /accounts/[g], /aggregators, /amm +71 |
-| `/network/stats` | GET | 3 | app/HomeLivePanels.tsx, app/HomeTryAPI.tsx | /, /dashboard, /docs, /network, /status |
-| `/network/throughput` | GET | 3 | app/diagnostics/IngestThroughputChart.tsx, app/docs/page.tsx | /diagnostics, /docs, /ledgers, /network, /operations +1 |
-| `/methodology` | GET | 1 | — | — |
-| `/sources` | GET | 3 | app/HomeTryAPI.tsx, app/aggregators/ReferencePriceAggregators.tsx | /, /aggregators, /assets/[slug], /bridges, /dexes +10 |
-| `/sources/{name}/health` | GET | 3 | app/sources/[name]/SourceHealthPanel.tsx | /sources/[name] |
-| `/aggregators` | GET | 3 | app/aggregators/RoutedVolumePanel.tsx | /aggregators |
-| `/sac-wrappers` | GET | 3 | hooks.ts:useSACWrappers | /accounts, /anomalies, /assets/[slug], /contracts, /dexes +6 |
-| `/rwa/assets` | GET | 3 | app/rwa/RWAView.tsx | /rwa |
-| `/stablecoins` | GET | 1 | — | — |
-| `/rwa/history` | GET | 3 | app/rwa/RWAHistoryPanel.tsx | /rwa |
-| `/rwa/premium` | GET | 3 | app/rwa/RWAPremiumPanel.tsx | /rwa |
-| `/pairs` | GET | 1 | — | — |
-| `/oracle/lastprice` | GET | 3 | app/oracles/OraclesView.tsx, app/status/StatusPageClient.tsx | /oracles, /status |
-| `/oracle/prices` | GET | 3 | app/oracles/OraclesView.tsx | /oracles |
-| `/oracle/x_last_price` | GET | 3 | app/oracles/OraclesView.tsx | /oracles |
-| `/account/me` | GET | 3 | hooks.ts:useMe | /dashboard |
-| `/account/usage` | GET | 3 | account.ts:fetchUsage | /dashboard/usage |
-| `/account/keys` | GET, POST | 1 | — | — |
-| `/account/keys/{keyID}` | DELETE | 1 | — | — |
-| `/account/admin/lookup` | POST | 3 | account.ts:adminLookup | /dashboard/admin |
-| `/admin/keys` | POST | 1 | — | — |
-| `/admin/keys/{keyID}` | DELETE | 1 | — | — |
-| `/admin/accounts/{id}` | GET, PATCH | 1 | — | — |
-| `/admin/status-notices` | GET, POST | 1 | — | — |
-| `/admin/status-notices/{id}/resolve` | POST | 1 | — | — |
-| `/register` | POST | 3 | app/pricing/page.tsx, app/signup/page.tsx | /pricing, /signup |
-| `/signup` | POST | 1 | — | — |
-| `/signup/verify` | GET | 1 | — | — |
-| `/dashboard/account` | DELETE | 1 | — | — |
-| `/dashboard/account/export` | GET | 1 | — | — |
-| `/dashboard/keys` | GET, POST | 3 | account.ts:createKey, account.ts:listKeys | /dashboard, /dashboard/keys, /dashboard/usage |
-| `/dashboard/keys/{id}` | DELETE | 3 | account.ts:revokeKey | /dashboard/keys |
-| `/dashboard/webhooks` | GET, POST | 3 | account.ts:createDashboardWebhook, account.ts:listDashboardWebhooks | /dashboard/webhooks |
-| `/dashboard/webhooks/{id}` | PATCH, DELETE | 3 | account.ts:deleteDashboardWebhook, account.ts:updateDashboardWebhook | /dashboard/webhooks |
-| `/dashboard/webhooks/{id}/deliveries` | GET | 1 | account.ts:listWebhookDeliveries | /dashboard/webhooks |
-| `/dashboard/webhooks/{id}/rotate-secret` | POST | 3 | account.ts:rotateDashboardWebhookSecret | /dashboard/webhooks |
-| `/dashboard/price-alerts` | GET, POST | 3 | account.ts:createPriceAlert, account.ts:listPriceAlerts | /dashboard/price-alerts |
-| `/dashboard/price-alerts/{id}` | PATCH, DELETE | 3 | account.ts:deletePriceAlert, account.ts:updatePriceAlert | /dashboard/price-alerts |
-| `/auth/login` | POST | 3 | app/signin/SignInForm.tsx, app/status/StatusPageClient.tsx | /signin, /signup, /status |
-| `/auth/callback` | GET | 3 | app/auth/callback/CallbackHandler.tsx, app/status/StatusPageClient.tsx | /status |
-| `/auth/verify-code` | POST | 3 | account.ts:verifyCode | /signin |
-| `/auth/logout` | POST | 3 | account.ts:logout, components/nav/Sidebar.tsx | global nav chrome; /, /accounts, /accounts/[g] |
-| `/auth/passkey/begin-login` | POST | 3 | account.ts:beginPasskeyLogin | /signin |
-| `/auth/passkey/finish-login` | POST | 3 | account.ts:finishPasskeyLogin | /signin |
-| `/auth/passkey/begin-signup` | POST | 3 | account.ts:beginPasskeySignup | /signin |
-| `/auth/passkey/finish-signup` | POST | 3 | account.ts:finishPasskeySignup | /signin |
-| `/auth/passkey/begin-register` | POST | 3 | account.ts:beginPasskeyRegister | /dashboard/settings |
-| `/auth/passkey/finish-register` | POST | 3 | account.ts:finishPasskeyRegister | /dashboard/settings |
-| `/auth/passkey/credentials` | GET | 3 | account.ts:listPasskeys | /dashboard/settings |
-| `/auth/passkey/credentials/{id}` | DELETE | 3 | account.ts:deletePasskey | /dashboard/settings |
-| `/auth/sep10/challenge` | GET | 3 | app/status/StatusPageClient.tsx | /status |
-| `/auth/sep10/token` | POST | 1 | — | — |
-| `/ledgers` | GET | 3 | app/ledgers/LedgersTable.tsx, app/network/NetworkView.tsx | /ledgers, /network, /transactions |
-| `/ledgers/{seq}` | GET | 3 | app/ledger/LedgerView.tsx | /ledgers/[seq] |
-| `/ledgers/{seq}/transactions` | GET | 3 | app/ledger/LedgerView.tsx, app/transactions/TransactionsView.tsx | /ledgers/[seq], /transactions |
-| `/ledgers/{seq}/operations` | GET | 1 | — | — |
-| `/tx/{hash}` | GET | 3 | app/operation/OperationView.tsx, app/tx/TxView.tsx | /operation, /transactions/[hash] |
-| `/operations` | GET | 3 | app/operations/OperationsView.tsx, components/NetworkInsight.tsx | /ledgers, /network, /operations, /transactions |
-| `/contracts` | GET | 3 | app/contracts/ContractsView.tsx, app/contracts/page.tsx | /contracts |
-| `/contracts/{contract_id}` | GET | 3 | app/contract/ContractView.tsx | /contracts/[id] |
-| `/contracts/{contract_id}/wasm` | GET | 3 | app/contract/ContractView.tsx | /contracts/[id] |
-| `/contracts/{contract_id}/interactions` | GET | 3 | app/contract/ContractView.tsx | /contracts/[id] |
-| `/contracts/{contract_id}/code-history` | GET | 3 | app/contract/ContractView.tsx | /contracts/[id] |
-| `/accounts` | GET | 3 | app/accounts/AccountView.tsx | /accounts, /accounts/[g] |
-| `/directory` | GET | 1 | — | — |
-| `/accounts/stats` | GET | 3 | app/accounts/AccountsAnalytics.tsx | /accounts, /accounts/[g] |
-| `/accounts/creators` | GET | 3 | app/insights/creators/CreatorBoard.tsx | /insights/creators |
-| `/accounts/sponsors` | GET | 3 | app/insights/sponsors/SponsorBoard.tsx | /insights/sponsors |
-| `/accounts/{g_strkey}` | GET | 3 | app/accounts/AccountActivitySummary.tsx, app/accounts/AccountDefiPositions.tsx | /accounts, /accounts/[g] |
-| `/accounts/{g_strkey}/transactions` | GET | 3 | app/accounts/AccountView.tsx | /accounts, /accounts/[g] |
-| `/accounts/{g_strkey}/operations` | GET | 3 | app/accounts/AccountView.tsx | /accounts, /accounts/[g] |
-| `/accounts/{g_strkey}/movements` | GET | 3 | app/accounts/AccountMovements.tsx | /accounts, /accounts/[g] |
-| `/accounts/{g_strkey}/positions` | GET | 3 | app/accounts/AccountDefiPositions.tsx | /accounts, /accounts/[g] |
-| `/accounts/{g_strkey}/trades` | GET | 3 | app/accounts/AccountTrades.tsx | /accounts, /accounts/[g] |
-| `/accounts/{g_strkey}/activity` | GET | 3 | app/accounts/AccountActivitySummary.tsx | /accounts, /accounts/[g] |
-| `/accounts/{g_strkey}/graph` | GET | 3 | app/accounts/AccountGraph.tsx | /accounts, /accounts/[g] |
-| `/accounts/{g_strkey}/graph/history` | GET | 3 | app/insights/AccountRelationHistory.tsx | /insights/creators/[address], /insights/sponsors/[address] |
-| `/accounts/{g_strkey}/graph/cohort` | GET | 3 | app/insights/AccountRelationCohort.tsx | /insights/creators/[address], /insights/sponsors/[address] |
-| `/search` | GET | 3 | components/nav/SearchModal.tsx | global nav chrome; /, /accounts, /accounts/[g] |
+| Endpoint | Methods | Level | Consumed in |
+|---|---|:-:|---|
+| `/healthz` | GET | ex | app/status/StatusPageClient.tsx |
+| `/readyz` | GET | ex | app/status/StatusPageClient.tsx |
+| `/livez/lake` | GET | ex | — |
+| `/version` | GET | ex | — |
+| `/status` | GET | 3 | hooks.ts:useStatus |
+| `/status/notices` | GET | 3 | app/status/StatusPageClient.tsx |
+| `/assets` | GET | 3 | app/HomeTopAssets.tsx |
+| `/external/assets` | GET | 3 | app/external/assets/[slug]/page.tsx |
+| `/external/assets/{slug}` | GET | 3 | app/HomeTryAPI.tsx |
+| `/assets/verified` | GET | 3 | app/HomeTryAPI.tsx |
+| `/assets/{asset_id}` | GET | 3 | app/HomeTryAPI.tsx |
+| `/assets/{asset_id}/metadata` | GET | 1 | — |
+| `/assets/{asset_id}/supply` | GET | 3 | hooks.ts:useAssetSupply |
+| `/assets/{asset_id}/supply/flows` | GET | 1 | — |
+| `/assets/{asset_id}/holders` | GET | 3 | app/assets/[slug]/HoldersTabPanel.tsx |
+| `/price` | GET | 3 | ../functions/og/[[path]].js |
+| `/price/at` | GET | 1 | — |
+| `/price/changes` | GET | 1 | — |
+| `/price/tip` | GET | 3 | app/docs/page.tsx |
+| `/price/tip/stream` | GET | 3 | app/docs/page.tsx |
+| `/price/batch` | GET, POST | 3 | app/HomeCurrencies.tsx |
+| `/observations` | GET | 3 | app/status/StatusPageClient.tsx |
+| `/observations/stream` | GET | 3 | app/docs/page.tsx |
+| `/price/stream` | GET | 3 | app/docs/page.tsx |
+| `/history` | GET | 3 | app/HomeRecentTrades.tsx |
+| `/history/since-inception` | GET | 1 | — |
+| `/chart` | GET | 3 | app/assets/[slug]/ChartPanel.tsx |
+| `/ohlc` | GET | 3 | app/assets/[slug]/ChartPanel.tsx |
+| `/vwap` | GET | 3 | app/docs/page.tsx |
+| `/twap` | GET | 3 | app/docs/page.tsx |
+| `/oracle/latest` | GET | 3 | app/assets/[slug]/AssetOraclesPanel.tsx |
+| `/pools` | GET | 3 | app/HomeTryAPI.tsx |
+| `/pools/reserves` | GET | 3 | app/dexes/[source]/PairReservesPanel.tsx |
+| `/liquidity-pools` | GET | 3 | app/liquidity-pools/NativePoolsPanel.tsx |
+| `/lending/pools` | GET | 3 | app/HomeTryAPI.tsx |
+| `/lending/pools/{pool}/reserves` | GET | 3 | app/lending/LendingPoolsTable.tsx |
+| `/mev` | GET | 3 | app/docs/page.tsx |
+| `/anomalies` | GET | 3 | app/anomalies/AnomaliesFeed.tsx |
+| `/divergence` | GET | 3 | app/divergences/DivergenceFeed.tsx |
+| `/divergence/series` | GET | 3 | app/divergences/DivergenceFeed.tsx |
+| `/oracle/streams` | GET | 3 | app/HomeTryAPI.tsx |
+| `/markets` | GET | 3 | app/HomeTopMarkets.tsx |
+| `/markets/sources` | GET | 3 | app/docs/page.tsx |
+| `/issuers` | GET | 3 | app/docs/page.tsx |
+| `/issuers/{g_strkey}` | GET | 3 | app/assets/[slug]/IssuerPanel.tsx |
+| `/contracts/{contract_id}/transfers` | GET | 3 | app/contract/ContractView.tsx |
+| `/changes/{entity_type}/{id}` | GET | 3 | hooks.ts:useChangeSummary |
+| `/diagnostics/cursors` | GET | 3 | app/HomeLivePanels.tsx |
+| `/diagnostics/ingestion` | GET | 3 | app/status/StatusPageClient.tsx |
+| `/diagnostics/archive` | GET | 3 | app/diagnostics/ArchivePanel.tsx |
+| `/diagnostics/backups` | GET | 3 | hooks.ts:useBackupsDiagnostics |
+| `/incidents` | GET | 3 | app/HomeTryAPI.tsx |
+| `/incidents.atom` | GET | 3 | app/contact/page.tsx |
+| `/coverage` | GET | 3 | app/diagnostics/CoveragePanel.tsx |
+| `/protocols` | GET | 3 | app/bridges/page.tsx |
+| `/protocols/{name}` | GET | 3 | app/dexes/[source]/DexAnalyticsSection.tsx |
+| `/protocols/{name}/tvl` | GET | 1 | — |
+| `/sdex/orderbook` | GET | 3 | app/dexes/[source]/page.tsx |
+| `/ledger/tip` | GET | 3 | components/nav/NetworkSwitcher.tsx |
+| `/ledger/stream` | GET | 3 | app/docs/page.tsx |
+| `/network/stats` | GET | 3 | app/HomeLivePanels.tsx |
+| `/network/throughput` | GET | 3 | app/diagnostics/IngestThroughputChart.tsx |
+| `/methodology` | GET | 1 | — |
+| `/sources` | GET | 3 | app/HomeTryAPI.tsx |
+| `/sources/{name}/health` | GET | 3 | app/sources/[name]/SourceHealthPanel.tsx |
+| `/aggregators` | GET | 3 | app/aggregators/RoutedVolumePanel.tsx |
+| `/sac-wrappers` | GET | 3 | hooks.ts:useSACWrappers |
+| `/rwa/assets` | GET | 3 | app/rwa/RWAView.tsx |
+| `/stablecoins` | GET | 1 | — |
+| `/rwa/history` | GET | 3 | app/rwa/RWAHistoryPanel.tsx |
+| `/rwa/premium` | GET | 3 | app/rwa/RWAPremiumPanel.tsx |
+| `/pairs` | GET | 1 | — |
+| `/oracle/lastprice` | GET | 3 | app/oracles/OraclesView.tsx |
+| `/oracle/prices` | GET | 3 | app/oracles/OraclesView.tsx |
+| `/oracle/x_last_price` | GET | 3 | app/oracles/OraclesView.tsx |
+| `/account/me` | GET | 3 | hooks.ts:useMe |
+| `/account/usage` | GET | 3 | account.ts:fetchUsage |
+| `/account/keys` | GET, POST | 1 | — |
+| `/account/keys/{keyID}` | DELETE | 1 | — |
+| `/account/admin/lookup` | POST | 3 | account.ts:adminLookup |
+| `/admin/keys` | POST | 1 | — |
+| `/admin/keys/{keyID}` | DELETE | 1 | — |
+| `/admin/accounts/{id}` | GET, PATCH | 1 | — |
+| `/admin/status-notices` | GET, POST | 1 | — |
+| `/admin/status-notices/{id}/resolve` | POST | 1 | — |
+| `/register` | POST | 3 | app/pricing/page.tsx |
+| `/signup` | POST | 1 | — |
+| `/signup/verify` | GET | 1 | — |
+| `/dashboard/account` | DELETE | 1 | — |
+| `/dashboard/account/export` | GET | 1 | — |
+| `/dashboard/keys` | GET, POST | 3 | account.ts:createKey |
+| `/dashboard/keys/{id}` | DELETE | 3 | account.ts:revokeKey |
+| `/dashboard/webhooks` | GET, POST | 3 | account.ts:createDashboardWebhook |
+| `/dashboard/webhooks/{id}` | PATCH, DELETE | 3 | account.ts:deleteDashboardWebhook |
+| `/dashboard/webhooks/{id}/deliveries` | GET | 1 | account.ts:listWebhookDeliveries |
+| `/dashboard/webhooks/{id}/rotate-secret` | POST | 3 | account.ts:rotateDashboardWebhookSecret |
+| `/dashboard/price-alerts` | GET, POST | 3 | account.ts:createPriceAlert |
+| `/dashboard/price-alerts/{id}` | PATCH, DELETE | 3 | account.ts:deletePriceAlert |
+| `/auth/login` | POST | 3 | app/signin/SignInForm.tsx |
+| `/auth/callback` | GET | 3 | app/auth/callback/CallbackHandler.tsx |
+| `/auth/verify-code` | POST | 3 | account.ts:verifyCode |
+| `/auth/logout` | POST | 3 | account.ts:logout |
+| `/auth/passkey/begin-login` | POST | 3 | account.ts:beginPasskeyLogin |
+| `/auth/passkey/finish-login` | POST | 3 | account.ts:finishPasskeyLogin |
+| `/auth/passkey/begin-signup` | POST | 3 | account.ts:beginPasskeySignup |
+| `/auth/passkey/finish-signup` | POST | 3 | account.ts:finishPasskeySignup |
+| `/auth/passkey/begin-register` | POST | 3 | account.ts:beginPasskeyRegister |
+| `/auth/passkey/finish-register` | POST | 3 | account.ts:finishPasskeyRegister |
+| `/auth/passkey/credentials` | GET | 3 | account.ts:listPasskeys |
+| `/auth/passkey/credentials/{id}` | DELETE | 3 | account.ts:deletePasskey |
+| `/auth/sep10/challenge` | GET | 3 | app/status/StatusPageClient.tsx |
+| `/auth/sep10/token` | POST | 1 | — |
+| `/ledgers` | GET | 3 | app/ledgers/LedgersTable.tsx |
+| `/ledgers/{seq}` | GET | 3 | app/ledger/LedgerView.tsx |
+| `/ledgers/{seq}/transactions` | GET | 3 | app/ledger/LedgerView.tsx |
+| `/ledgers/{seq}/operations` | GET | 1 | — |
+| `/tx/{hash}` | GET | 3 | app/operation/OperationView.tsx |
+| `/operations` | GET | 3 | app/operations/OperationsView.tsx |
+| `/contracts` | GET | 3 | app/contracts/ContractsView.tsx |
+| `/contracts/{contract_id}` | GET | 3 | app/contract/ContractView.tsx |
+| `/contracts/{contract_id}/wasm` | GET | 3 | app/contract/ContractView.tsx |
+| `/contracts/{contract_id}/interactions` | GET | 3 | app/contract/ContractView.tsx |
+| `/contracts/{contract_id}/code-history` | GET | 3 | app/contract/ContractView.tsx |
+| `/accounts` | GET | 3 | app/accounts/AccountView.tsx |
+| `/directory` | GET | 1 | — |
+| `/accounts/stats` | GET | 3 | app/accounts/AccountsAnalytics.tsx |
+| `/accounts/creators` | GET | 3 | app/insights/creators/CreatorBoard.tsx |
+| `/accounts/sponsors` | GET | 3 | app/insights/sponsors/SponsorBoard.tsx |
+| `/accounts/{g_strkey}` | GET | 3 | app/accounts/AccountActivitySummary.tsx |
+| `/accounts/{g_strkey}/transactions` | GET | 3 | app/accounts/AccountView.tsx |
+| `/accounts/{g_strkey}/operations` | GET | 3 | app/accounts/AccountView.tsx |
+| `/accounts/{g_strkey}/movements` | GET | 3 | app/accounts/AccountMovements.tsx |
+| `/accounts/{g_strkey}/positions` | GET | 3 | app/accounts/AccountDefiPositions.tsx |
+| `/accounts/{g_strkey}/trades` | GET | 3 | app/accounts/AccountTrades.tsx |
+| `/accounts/{g_strkey}/activity` | GET | 3 | app/accounts/AccountActivitySummary.tsx |
+| `/accounts/{g_strkey}/graph` | GET | 3 | app/accounts/AccountGraph.tsx |
+| `/accounts/{g_strkey}/graph/history` | GET | 3 | app/insights/AccountRelationHistory.tsx |
+| `/accounts/{g_strkey}/graph/cohort` | GET | 3 | app/insights/AccountRelationCohort.tsx |
+| `/search` | GET | 3 | components/nav/SearchModal.tsx |
 
 ## Level 1 — the 24 stranded endpoints
 
-Every one of these was probed live on 2026-09-09. **All 19 exist and
-answer** — none 404s at the route level. This is served data with no
-reader.
-
-Building pages for them is a product decision and is deliberately not
-made here. What follows is what is stranded and roughly what it would
-take.
+All probed live 2026-09-09; none 404s at the route level. Building pages for
+them is a product decision, not made here.
 
 ### Public data with no surface (9)
 
 | Endpoint | What is stranded | Rough cost |
 |---|---|---|
-| `/price/changes` | Multi-horizon deltas for any asset — 1h / 24h / 7d / 30d, each with `reference_at` + `resolution`, in one request. Live: XLM returned all four horizons populated. The explorer today recomputes a 24h change per surface. | Small. It is a strictly better source for a strip the asset pages already render — a swap, not a new page. |
-| `/price/at` | Point-in-time price at any timestamp: the cost-basis / PnL / tax lookup. Resolves to the finest CAGG bar covering the instant, back to 2018. | Small as an input to an existing page; a real feature as a date-picker UI. |
-| `/history/since-inception` | Full-history series. XLM returned **3 341 daily points, 2017-01-17 → 2026-09-08**, with the 2017-08 → 2018-02 gap explicitly flagged (`discontinuous`). The charts today are bounded windows, so the whole "since inception" view is unreachable. | Medium — a range control on the existing asset chart. Note the param is `asset`, **not** `base`. |
-| `/assets/{asset_id}/metadata` | The full SEP-1 CURRENCIES block per asset: `sep1_status`, `home_domain`, and the issuer's declared metadata. Richer than what asset pages render now. | Small — a panel on `/assets/[slug]`. |
-| `/protocols/{name}/tvl` | Per-protocol TVL with per-leg reserves and pricing basis. Live: soroswap returned 125 pools, $1.25 M TVL, **11 priced / 114 unpriced**. That priced-vs-unpriced split is a real completeness signal nothing surfaces. | Small — `/protocols/[name]` already exists. Returns a typed 404 (`protocol-tvl-not-derived`) for lending protocols like blend; handle that, don't treat it as an error. |
-| `/pairs` | Per-pair trade stats (`trade_count_24h`, `volume_24h_usd`) for an explicit base/quote. Both params required. | Small — overlaps what `/markets` already gives; likely redundant rather than missing. |
-| `/directory` | Curated address labels with tags and provenance (`source: stellar-expert`). `src/components/DirectoryLabel.tsx` exists and renders the `directory` field that comes back *embedded in other responses* — but the standalone bulk endpoint is never called. | Small. The rendering component is already built. |
-| `/ledgers/{seq}/operations` | One ledger's operations, fully decoded, with `total`/`truncated` from the header. The only per-ledger operations read (`/operations` refuses `?ledger=`); not in the 2026-09-09 probe. The ledger page lists transactions but never the decoded operations. | Small — a tab on `/ledgers/[seq]`. |
-| `/assets/{asset_id}/supply/flows` | Daily mint / burn / clawback series from the `supply_flows` lake, with `net` and a `history_incomplete` flag; added with the SDK method `AssetSupplyFlows`. | Small — a chart panel beside the supply card on `/assets/[slug]`. |
+| `/price/changes` | Multi-horizon deltas (1h / 24h / 7d / 30d, each with `reference_at` + `resolution`) in one request. The explorer recomputes a 24h change per surface. | Small: swap into the asset-page strip. |
+| `/price/at` | Point-in-time price at any timestamp (cost-basis / PnL / tax lookup), finest CAGG bar, back to 2018. | Small as input to an existing page; a date-picker is a real feature. |
+| `/history/since-inception` | Full-history series; XLM returned 3 341 daily points, 2017-01-17 → 2026-09-08, the 2017-08 → 2018-02 gap flagged `discontinuous`. Charts today are bounded windows. | Medium: range control on the asset chart. Param is `asset`, not `base`. |
+| `/assets/{asset_id}/metadata` | Full SEP-1 CURRENCIES block: `sep1_status`, `home_domain`, issuer metadata. | Small: panel on `/assets/[slug]`. |
+| `/protocols/{name}/tvl` | Per-protocol TVL with per-leg reserves and pricing basis (soroswap: 125 pools, $1.25 M, 11 priced / 114 unpriced, a completeness signal nothing surfaces). | Small: `/protocols/[name]` exists. Lending protocols (blend) return typed 404 `protocol-tvl-not-derived`; handle it, not an error. |
+| `/pairs` | Per-pair `trade_count_24h`, `volume_24h_usd`; both params required. | Small; overlaps `/markets`, likely redundant. |
+| `/directory` | Curated address labels with tags and provenance. `src/components/DirectoryLabel.tsx` renders the `directory` field embedded in other responses; the bulk endpoint is never called. | Small. |
+| `/ledgers/{seq}/operations` | One ledger's decoded operations with `total`/`truncated`; the only per-ledger operations read (`/operations` refuses `?ledger=`). | Small: tab on `/ledgers/[seq]`. |
+| `/assets/{asset_id}/supply/flows` | Daily mint / burn / clawback from the `supply_flows` lake, with `net` and `history_incomplete` (SDK `AssetSupplyFlows`). | Small: chart beside the supply card. |
 
-### `/methodology` — the one with a page that ignores it
+### `/methodology`
 
-`/v1/methodology` returns a live ~6.9 KB machine-readable document: 30
-sources, 7 source classes, 6 ADR references, the stablecoin proxy list,
-`version: "1.0"`. The explorer's `/methodology` page is **hand-written
-prose that does not call it.** So the page and the endpoint can disagree
-about how the index works and nothing notices. Worth wiring — it is the
-kind of drift that is invisible until it is embarrassing.
-
-**Gated rather than wired, 2026-09-12.** The page stays hand-written on
-purpose: it covers a superset of the endpoint (latency SLOs, numeric
-precision, the freeze policy have no endpoint counterpart) and the
-explorer is a static export, so rendering from the API at build time
-would trade a prose-drift risk for a build-time network dependency.
-`internal/api/v1/methodology_explorer_drift_test.go` is the compile step
-for the overlap instead — it renders the real handler, reads the real
-page, and fails on any claim they both make and disagree about. Eight
-assertions now: source-class names and count, the outlier default, the
-deferral on the operator-configured peg map, the formula's price method,
-the VWAP-eligibility class, and the venues each class description names.
-
-Auditing that overlap turned up a **larger disagreement inside the
-endpoint itself**: `source_classes` described four classes while
-`sources` served seven, so the eight `router` / `lending` / `bridge`
-venues carried a class the document never defined. The page, the spec,
-the Go godoc and the endpoint's own baseline test all repeated the count
-of four; none of them checked it against `external.Registry`. Fixed —
-all seven are described, and the class-coverage check is one of the new
-gates. What is still **not** gated is the reverse direction: a class
-description may omit a registered venue, and six are omitted today
-(cryptocompare, sushiswap_v3, massive, exchangeratesapi, ecb,
-blend_emitter). Both copies describe some venues by category — "FX
-vendors", "canonical fiat rates" — so an exhaustive-list gate would be
-noise. Nothing *named* can be wrong; something registered can be
-unmentioned.
+`/v1/methodology` returns a ~6.9 KB machine-readable document (30 sources, 7
+source classes, 6 ADR references, stablecoin proxy list, `version: "1.0"`).
+The explorer's `/methodology` page is hand-written and does not call it, by
+design: it covers a superset (latency SLOs, numeric precision, freeze policy)
+and the explorer is a static export, so API rendering would add a build-time
+network dependency. `internal/api/v1/methodology_explorer_drift_test.go` gates
+the overlap instead (source-class names and count, outlier default, deferral
+on the operator-configured peg map, the formula's price method, the
+VWAP-eligibility class, venues each class names). Not gated: a class
+description may omit a registered venue (six omitted: cryptocompare,
+sushiswap_v3, massive, exchangeratesapi, ecb, blend_emitter), since both
+copies describe some venues by category.
 
 ### Account/admin surfaces with no UI (12)
 
-Consistent gaps, all behind auth, all returning a correct `401` when
-probed unauthenticated:
+All behind auth; unauthenticated probes return a correct `401`.
 
-- **Staff admin (5)** — `/admin/keys`, `/admin/keys/{keyID}`,
-  `/admin/accounts/{id}`, `/admin/status-notices`,
-  `/admin/status-notices/{id}/resolve`. `/dashboard/admin` exists and
-  uses `/account/admin/lookup` only, so staff can look an account up but
-  not act on it; status notices are posted out-of-band.
-- **Legacy key surface (2)** — `/account/keys`, `/account/keys/{keyID}`.
-  Superseded by `/dashboard/keys` (the richer Postgres-backed store the
-  UI uses). Probably wants deprecating rather than building.
-- **Signup (2)** — `POST /signup`, `/signup/verify`. Retired (410 Gone, INV-0907);
-  the UI uses the `/auth/login` magic-link flow instead.
-- **Account erasure (2)** — `DELETE /dashboard/account`,
-  `/dashboard/account/export` (#809). API shipped; the dashboard
-  settings page that calls them is the follow-up.
-- **SEP-10 (1)** — `POST /auth/sep10/token`. See the disagreement note
-  below: SEP-10 is not wired on this deployment.
+- **Staff admin (5)**: `/admin/keys`, `/admin/keys/{keyID}`, `/admin/accounts/{id}`, `/admin/status-notices`, `/admin/status-notices/{id}/resolve`. `/dashboard/admin` uses only `/account/admin/lookup`; status notices are posted out-of-band.
+- **Legacy key surface (2)**: `/account/keys`, `/account/keys/{keyID}`; superseded by `/dashboard/keys`, wants deprecating.
+- **Signup (2)**: `POST /signup`, `/signup/verify`; retired (410 Gone, INV-0907), UI uses the `/auth/login` magic link.
+- **Account erasure (2)**: `DELETE /dashboard/account`, `/dashboard/account/export` (#809); API shipped, the dashboard settings page is the follow-up.
+- **SEP-10 (1)**: `POST /auth/sep10/token`; not wired here (see below).
 
 ## Discoverability
 
-Reachability answers "can a reader get there from `/`". It does not
-answer "can anyone find the site in the first place". Assessed
-separately, and this is where the actual defects were.
+Assessed separately from reachability. Defects found and fixed:
 
-### What was wrong, and is now fixed
+- `sitemap.ts` lacked `/bridges` and `/external/assets` (both nav-linked, indexable); added.
+- `/contract?id=`, `/ledger?seq=`, `/tx?hash=`, `/operation?tx=&i=` render entirely from the query string yet canonicalised to the bare path, an empty-shell soft-404 (same class `crawl-surface.test.ts` catches for `/assets/shell`, `/markets/shell`). They now carry `robots: { index: false, follow: true }`, like their canonical counterparts.
 
-**Two hub pages were missing from `sitemap.ts`.** Both are linked from
-the nav, indexable and canonical-tagged — they were simply never added:
+Already right: `robots.ts` disallows `/dev/`, `/embed/`, `/auth/`, `/dashboard`, `/signin`, `/signup`, with per-network origin and sitemap URL; all 82 content pages have title and description; canonicals complete on every indexable page; JSON-LD only on `/assets/[slug]` and `/markets/[pair]`, always through `serializeJsonLd`; the sitemap filters through `routeAvailable`. 27 pages are noindex (auth and dashboard surfaces, iframe widgets, design-system reference, unbounded per-entity shells); a noindex URL must not appear in the sitemap. The per-page metadata matrix is enforced by `crawl-surface.test.ts`.
 
-- `/bridges` — the newest member of the category-hub family
-  (`/dexes`, `/lending`, `/amm`, `/yield`, …), every other member of
-  which is listed.
-- `/external/assets` — the rail's "External → Assets" entry. Its
-  per-currency **children** were sitemapped while the hub that indexes
-  them was not.
-
-This is the same omission the file already records for the seven
-chain-explorer hubs, made again by the two newest pages.
-
-**Four query-param entity shells were indexable.** `/contract?id=`,
-`/ledger?seq=`, `/tx?hash=` and `/operation?tx=&i=` render *entirely*
-from their query string, and each tags itself `canonical: '/<route>'`.
-So the only URL a crawler can construct — and the one every
-parameterised hit is consolidated onto — is the bare path, which renders
-an empty shell. That is a soft-404 of exactly the class
-`crawl-surface.test.ts` was written to catch for the `/assets/shell` and
-`/markets/shell` sentinels.
-
-The first three exist *specifically to catch inbound legacy links*, so
-they are the most likely of all these pages to actually be crawled. Every
-canonical counterpart — `/contracts/[id]`, `/ledgers/[seq]`,
-`/transactions/[hash]`, `/accounts/[g]` — already carried
-`robots: { index: false, follow: true }`. These four did not. They do
-now, `follow: true` throughout so outbound links keep flowing.
-
-### What was already right
-
-- **`robots.ts`** disallows `/dev/`, `/embed/`, `/auth/`, `/dashboard`,
-  `/signin`, `/signup` — all correct, nothing valuable blocked. Origin
-  and sitemap URL are per-network, so a test-net build does not point
-  crawlers at mainnet.
-- **Titles and descriptions: complete.** All 82 content pages supply
-  both, via `metadata`, `generateMetadata`, or an inherited layout. No
-  duplicates among indexable pages.
-- **Canonicals: complete** on every indexable page.
-- **JSON-LD** appears on `/assets/[slug]` and `/markets/[pair]`, both
-  through `serializeJsonLd`. No hand-rolled `application/ld+json`
-  anywhere — the stored-XSS rule holds.
-- The sitemap already filters through `routeAvailable`, so a test net
-  does not submit pages that are structurally empty there.
-
-### Per-page table
-
-`n/a` in the sitemap column means the page is `noindex`, where absence
-from the sitemap is correct (a noindex URL in a sitemap is a Search
-Console error). 27 pages are noindex: the auth and dashboard surfaces,
-the iframe widgets, the design-system reference, and the unbounded
-per-entity shells.
-
-| Route | Title | Desc | Canonical | Indexable | In sitemap |
-|---|:-:|:-:|:-:|:-:|:-:|
-| `/` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/accounts` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/accounts/[g]` | ✓ | ✓ | — | — | n/a |
-| `/aggregators` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/amm` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/anomalies` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/assets` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/assets/[slug]` | ✓ | ✓ | ✓ | — | ✓ |
-| `/auth/callback` | ✓ | ✓ | ✓ | — | n/a |
-| `/blog` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/blog/[slug]` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/bridges` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/careers` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/changelog` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/company` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/contact` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/contract` | ✓ | ✓ | ✓ | — | n/a |
-| `/contracts` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/contracts/[id]` | ✓ | ✓ | — | — | n/a |
-| `/convert/[from]/[to]` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/dashboard` | ✓ | ✓ | ✓ | — | n/a |
-| `/dashboard/admin` | ✓ | ✓ | ✓ | — | n/a |
-| `/dashboard/keys` | ✓ | ✓ | ✓ | — | n/a |
-| `/dashboard/price-alerts` | ✓ | ✓ | ✓ | — | n/a |
-| `/dashboard/settings` | ✓ | ✓ | ✓ | — | n/a |
-| `/dashboard/usage` | ✓ | ✓ | ✓ | — | n/a |
-| `/dashboard/webhooks` | ✓ | ✓ | ✓ | — | n/a |
-| `/dev/primitives` | ✓ | ✓ | ✓ | — | n/a |
-| `/dev/styleguide` | ✓ | ✓ | ✓ | — | n/a |
-| `/dexes` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/dexes/[source]` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/diagnostics` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/divergences` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/docs` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/embed/asset/[slug]` | ✓ | ✓ | ✓ | — | n/a |
-| `/embed/currency/[ticker]` | ✓ | ✓ | — | — | n/a |
-| `/embed/pair/[pair]` | ✓ | ✓ | — | — | n/a |
-| `/exchanges` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/exchanges/[name]` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/external/assets` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/external/assets/[slug]` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/insights` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/insights/creators` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/insights/creators/[address]` | ✓ | ✓ | — | — | n/a |
-| `/insights/sponsors` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/insights/sponsors/[address]` | ✓ | ✓ | — | — | n/a |
-| `/issuers` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/issuers/[g_strkey]` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/ledger` | ✓ | ✓ | ✓ | — | n/a |
-| `/ledgers` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/ledgers/[seq]` | ✓ | ✓ | — | — | n/a |
-| `/lending` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/lending/[pool]` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/liquidity-pools` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/markets` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/markets/[pair]` | ✓ | ✓ | ✓ | — | ✓ |
-| `/methodology` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/mev` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/network` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/network/ledgers` | _redirect shim_ | | | | |
-| `/network/operations` | _redirect shim_ | | | | |
-| `/operation` | ✓ | ✓ | ✓ | — | n/a |
-| `/operations` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/oracles` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/pricing` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/protocols` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/protocols/[name]` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/research` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/research/adr/[id]` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/research/architecture` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/research/architecture/[slug]` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/research/operations` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/research/operations/[slug]` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/rwa` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/sdex` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/sdk` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/signin` | ✓ | ✓ | — | — | n/a |
-| `/signup` | ✓ | ✓ | — | — | n/a |
-| `/sla` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/sources` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/sources/[name]` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/status` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/status/incident/[slug]` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/transactions` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/transactions/[hash]` | ✓ | ✓ | — | — | n/a |
-| `/tx` | ✓ | ✓ | ✓ | — | n/a |
-| `/widgets` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `/yield` | ✓ | ✓ | ✓ | ✓ | ✓ |
+The per-page sitemap/noindex table was removed; `web/explorer/src/app/crawl-surface.test.ts` and `web/explorer/src/lib/route-reachability.test.ts` re-derive it.
 
 ## Deliberately excluded
 
-Listed rather than silently dropped, so a future reader can tell absence
-from oversight.
-
 | Surface | Why excluded |
 |---|---|
-| `/v1/healthz`, `/v1/readyz` | Liveness/readiness probes. Answer to monitoring, not to a reader. (Both *are* in fact rendered on `/status`, which is why they are marked `ex` and not level 1.) |
-| `/v1/livez/lake` | Lake-critical probe. Not consumed by the explorer; live and green when probed. Monitoring surface. |
-| `/v1/version` | Build identity (`v0.65.0`, commit, Go version). Operational. The explorer shows its own build SHA in the footer instead. |
-| `/embed/*` routes | Iframe widget endpoints, chrome-less by design. Reached via `src=` on an `<iframe>` from `/widgets`, never an `<a href>`, so they are exempt from the reachability walk and `noindex` by design. |
+| `/v1/healthz`, `/v1/readyz` | Probes; both are rendered on `/status`, hence `ex` not level 1. |
+| `/v1/livez/lake` | Lake-critical probe; monitoring surface. |
+| `/v1/version` | Build identity; the explorer shows its own build SHA in the footer. |
+| `/embed/*` routes | Chrome-less iframe widgets reached via `src=` from `/widgets`; exempt from the reachability walk, `noindex` by design. |
 | `/metrics`-style endpoints | Not in the v1 contract; Prometheus scrape surface. |
 
 ## Where the spec and the running API disagree
 
-Probed read-only against `https://api.stellarindex.io` on 2026-09-09.
-Nothing here is a contract violation — every documented route exists and
-every status code observed is one the spec documents. These are drift and
-fitness issues.
+Probed read-only against `https://api.stellarindex.io` on 2026-09-09; no
+contract violations, only drift.
 
-1. **The published spec is 8 minor versions stale.** The explorer serves
-   the contract at `stellarindex.io/openapi/stellar-index.v1.yaml` (the
-   link on `/docs`), copied at build time by the `prebuild` script. The
-   published copy is `info.version 1.20.0`; the repo is `1.28.0`. It is
-   missing four paths that exist locally **and are live on the API** —
-   `/protocols/{name}/tvl`, `/accounts/creators`, `/accounts/sponsors`,
-   `/rwa/assets`. Drift is one-directional (nothing published is absent
-   locally), so this is a stale deploy artifact, not a contract
-   disagreement. Note that `/accounts/creators` and `/accounts/sponsors`
-   are the very endpoints that prompted this audit: they are undocumented
-   to anyone reading the published spec. **A rebuild of the explorer
-   fixes it.**
-
-2. **SEP-10 is not wired on this deployment.**
-   `GET /v1/auth/sep10/challenge` validates parameters (missing `account`
-   → 400) but returns **503 `sep10-unavailable`** for a valid G-strkey:
-   *"no SEP-10 validator wired — typically because the server signing
-   seed isn't configured."* The spec documents the 503, so this agrees
-   formally. But `/v1/account/keys`'s own 401 detail says it "requires an
-   API key or SEP-10 token", and the SEP-10 half of that sentence
-   currently cannot be satisfied. `/sdk` documents the flow as available.
-
-   **Resolved in documentation 2026-09-09** (the deployment is
-   unchanged — enabling SEP-10 remains a product decision). SEP-10 is
-   implemented, not missing: the 503 is the `NoopSEP10Validator`
-   fallback taken when `STELLARINDEX_SEP10_SEED` /
-   `STELLARINDEX_SEP10_JWT_SECRET` are unset and `auth_mode` is not
-   `sep10`. Every doc that promised the flow now says it is unavailable
-   here and names that configuration. A second, sharper claim was found
-   and corrected alongside it: the OpenAPI security scheme and
-   `pkg/client` both said the bearer header accepts API keys **and**
-   SEP-10 JWTs. `middleware.authenticate` is a mutually exclusive switch
-   over the four `auth_mode` values, so no deployment accepts both —
-   enabling SEP-10 turns `sip_*` keys off.
-
-   **The 503 body itself was finished 2026-09-12.** The documentation
-   fix left the one surface that answers a caller who read none of those
-   documents still saying only *"this deployment has no SEP-10 validator
-   wired"* — the error code restated, on two of the four branches that
-   produce it. All four now share one constant naming the cause, the
-   credential that does work here, and the swap-not-add nature of
-   enabling it. Still no product decision taken: the deployment is
-   unchanged and SEP-10 stays off.
-
-3. **Timezone leak — larger than two endpoints.** `/v1/price/at` and
-   `/v1/history/since-inception` emit timestamps with a local UTC offset
-   (`2026-09-07T11:00:00+02:00`, `2017-01-17T01:00:00+01:00`) where every
-   other endpoint probed — and every spec example — uses `Z`. Valid
-   RFC 3339 either way, so no schema violation, but the server's local
-   timezone is leaking into those two series and a client doing a naive
-   string-prefix comparison would mis-bucket them. Both are level-1
-   endpoints, so nothing in the explorer is affected today. Whether this
-   is deliberate could not be determined from outside.
-
-   **Fixed 2026-09-09**, and it was not deliberate. A re-probe of every
-   reachable GET found **fourteen** leaking endpoints, not two: also
-   `/v1/price`, `/v1/history`, `/v1/chart`, `/v1/observations`,
-   `/v1/lending/pools`, `/v1/coverage`, `/v1/diagnostics/ingestion` and
-   all four `/v1/oracle/*` surfaces. The class is any json-tagged
-   `time.Time` whose value came from Postgres, since `timestamptz`
-   decodes into the process's local zone; the endpoints that looked
-   correct were the ones stamping `time.Now().UTC()` themselves. All 43
-   such fields now use a `WireTime` type that renders UTC unconditionally,
-   and two tests hold the line — one scans rendered payloads across
-   twelve endpoints, one fails the build on a new json-tagged
-   `time.Time` anywhere in the package.
-
-4. **Stale illustrative figure in the spec's own prose.** The
-   `/history/since-inception` description states a `1d` request measured
-   2026-09-07 returned 2 183 points. The live API returns **3 341**, and
-   reaches back to 2017 rather than 2021. The route is fine; the
-   measurement quoted in the doc is out of date.
-
-   **Fixed 2026-09-09** in the spec and in the handler comment carrying
-   the same measurement. Re-measured live: 3 341 points, 2017-01-17 →
-   2026-09-08. The `granularity=1m` half of the claim (50 000 points
-   ending 2018-02-21) was re-checked and still holds exactly.
-
-5. **No spec served from the API host.** `/v1/openapi.json`,
-   `/openapi.json`, `/v1/openapi.yaml`, `/v1/spec` and `/v1/docs` all
-   404. The contract is published only from the explorer origin. Not a
-   defect — just worth knowing, since it is why item 1 is possible.
-
-## Changes made under this audit
-
-- `sitemap.ts` — added `/bridges` and `/external/assets`.
-- `contract/`, `ledger/`, `tx/`, `operation/page.tsx` — added
-  `robots: { index: false, follow: true }`.
-- `src/lib/route-graph.ts` — new. The link-graph walk, extracted from
-  `route-reachability.test.ts` so the sitemap guard shares one
-  implementation. Test-only, like `lib/nav-shell`.
-- `crawl-surface.test.ts` — four new assertions: the sitemap submits
-  nothing unreachable from the nav; every entry names a real page; every
-  page the nav offers is submitted; the four query-param shells stay out
-  of the index.
+1. **Published spec is stale.** The explorer serves the contract at `stellarindex.io/openapi/stellar-index.v1.yaml` (copied by the `prebuild` script); the published copy was `info.version 1.20.0` vs repo `1.28.0`, missing `/protocols/{name}/tvl`, `/accounts/creators`, `/accounts/sponsors`, `/rwa/assets`. A stale deploy artifact; an explorer rebuild fixes it.
+2. **SEP-10 is not wired on this deployment.** `GET /v1/auth/sep10/challenge` returns 503 `sep10-unavailable` for a valid G-strkey. It is the `NoopSEP10Validator` fallback, taken when `STELLARINDEX_SEP10_SEED` / `STELLARINDEX_SEP10_JWT_SECRET` are unset and `auth_mode` is not `sep10`. Docs and the 503 body now say so; enabling it stays a product decision. `middleware.authenticate` is a mutually exclusive switch over the four `auth_mode` values, so enabling SEP-10 turns `sip_*` keys off (the bearer header never accepts both).
+3. **Timezone leak (fixed).** Fourteen endpoints (`/v1/price/at`, `/v1/history/since-inception`, `/v1/price`, `/v1/history`, `/v1/chart`, `/v1/observations`, `/v1/lending/pools`, `/v1/coverage`, `/v1/diagnostics/ingestion`, all four `/v1/oracle/*`) emitted a local UTC offset instead of `Z`: any json-tagged `time.Time` from Postgres `timestamptz` decodes into the process's local zone. All 43 such fields now use `WireTime` (UTC); one test scans rendered payloads across twelve endpoints, one fails the build on a new json-tagged `time.Time` in the package.
+4. **Stale figure in the spec prose (fixed).** `/history/since-inception` quoted 2 183 points; live is 3 341 back to 2017. `granularity=1m` (50 000 points ending 2018-02-21) still holds.
+5. **No spec on the API host.** `/v1/openapi.json`, `/openapi.json`, `/v1/openapi.yaml`, `/v1/spec`, `/v1/docs` all 404; the contract is published only from the explorer origin.
