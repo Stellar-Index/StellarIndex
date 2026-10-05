@@ -51,10 +51,12 @@ when next touched.
 
 ## Gated / larger items
 
-- **IsRemoval v2**: works where the LedgerKey carries the asset (`trustlines`,
-  `sac_balances`; `internal/supply/lcm_reader.go`); absent for
-  `claimable_balances` + `liquidity_pools` (needs writer-side asset lookup).
-  Gated on the supply Sum overcount becoming measurable in production.
+- **IsRemoval v2**: done for all four supply sources. `claimable_balances` and
+  `liquidity_pools` resolve a removed entry's asset from the same-ledger STATE
+  pre-image (`dispatcher_adapter.go` memo) and emit `IsRemoval` rows, which
+  `SumClaimableBalancesAtOrBefore` / `SumLPReservesAtOrBefore` exclude; an
+  unattributable removal is a decode error, not a silent drop. Pinned by each
+  package's `removal_supply_test.go`.
 - **rozo v2 token field**: `Payment` omits a token field (v1 hardcodes USDC;
   `internal/sources/rozo/events.go`), `Flush` carries `Token`. Gated on Rozo v2
   Forwarder/IntentBridge reaching mainnet (INV-1164).
@@ -72,7 +74,7 @@ when next touched.
   `supply_flows` is written live. Remaining: an incremental MV for the
   token_supply rollup and the snapshot-shape integration (classic↔SAC
   asset_key mapping, XLM total_coins) per
-  `docs/architecture/clickhouse-supply-from-ch.md`.
+  `docs/architecture/storage-considerations.md#supply-flows-in-the-lake`.
 - **SEP-1 trust-chain signature verification**: issuer↔toml `org_verified` is
   enforced; SIGNING_KEY verification is absent, reserved for a future ADR
   (`internal/metadata/doc.go`), post-launch.

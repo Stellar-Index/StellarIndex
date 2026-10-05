@@ -1,486 +1,217 @@
 ---
-title: Storage considerations — r1 knowledge base
-last_verified: 2026-08-31
-status: living document
+title: Storage tiers — ClickHouse raw lake, Postgres served tier, r1 capacity
+last_verified: 2026-10-05
+status: living doc
 ---
 
-# Storage considerations — r1 knowledge base
+# Storage tiers
 
-> **Drift note (audit 2026-06-12, F-1331/D3-09):** the storage
-> inventory below predates the ADR-0034 ClickHouse pivot
-> (2026-06-05) and the 2026-05-20 storage move. ClickHouse is now the
-> certified raw lake; Postgres is the served tier. Sections that
-> describe Postgres as the full-history home are stale — read them
-> against [ADR-0034](../adr/0034-tiered-clickhouse-architecture.md)
-> and `clickhouse-phase4-decoder-adapter.md`. `last_verified` reflects
-> the last substantive edit, not a fresh re-verification.
+Where each kind of data lives, what "retention" means here, and the
+capacity facts for r1. The decision of record is
+[ADR-0034](../adr/0034-tiered-clickhouse-architecture.md); the ingest
+and re-derive paths are in [ingest-pipeline.md](ingest-pipeline.md).
+Read this before recommending a trim, a retention change or a move of a
+read path between tiers.
 
-> Living document. Captures r1's storage layout, per-dataset
-> touchpoints, trade-offs around space reclamation, and the
-> rationale for any decisions we've made (or are pending). Not an
-> ADR — when a decision IS made here, an ADR captures the
-> commitment; this doc captures the **why we considered the options
-> we did**.
->
-> Maintenance: append findings as they arise. Mark obsolete sections
-> rather than deleting (we want to be able to trace why we ruled
-> something out). Last-modified header per section.
+## The tiers
 
----
+| Tier | Store | Holds | Notes |
+|---|---|---|---|
+| 0 archive | Galexie → MinIO (S3 API, never Galexie's filesystem backend: ADR-0002) | LCM/XDR, immutable | Source of truth. Below ledger 49,984,000 it is read from `aws-public-blockchain` (ADR-0043 §2, see Move D) |
+| 1 raw lake | ClickHouse on r1 | Structural, decoder-independent decode of every ledger, tx, op, op result, contract event and ledger-entry change, all history | Certified genesis-to-tip; the re-derive source |
+| 3 served tier | Postgres/TimescaleDB | Decoded protocol entities, trades, pricing CAGGs: the recent working set | Not the full archive. Some v1 surfaces read ClickHouse directly (ADR-0038, ADR-0048) |
 
-## Audience
+Tier 2 (fuzzy search) and a Parquet cold tier were planned and not
+built; exact-id search is served from ClickHouse.
 
-If you (human or agent) are about to:
+**Why two stores.** The chain firehose (billions of append-only rows)
+sat in a row store with unique-PK indexes larger than RAM, so every
+insert was random IO and bulk reprocessing ran at ~0.24 ledgers/s
+(months). Columnar append-only storage fixes the class: ClickHouse
+loads and scans in bulk and dedups on merge instead of `ON CONFLICT`,
+which also removes the `event_index` collision class of silent drop.
+Pricing stays in Postgres: closed-bucket serving (ADR-0015), i128 as
+`NUMERIC` (ADR-0003), the CAGG ladder and the Go aggregator already
+work there and are small. Rejected: scaling Postgres (Citus, fewer
+indexes), Parquet + DuckDB/Trino as the serving engine, a managed
+warehouse (conflicts with self-hosting), decode-on-read from Galexie,
+and pricing in ClickHouse.
 
-- Recommend trimming, deleting, or moving a multi-TB dataset on r1
-- Change which storage tier serves which read path
-- Adjust ADR-0016 (per-region storage) or ADR-0017 (archive
-  completeness) or ADR-0027 (LCM cache tiering)
-- Diagnose "why is r1's pool at 93%"
+**Dataflow.** One structural Galexie walk fills the lake; protocol
+decoders read lake rows, and the served tier is re-derived from the
+lake, never from a second Galexie walk. Live ingest dual-sinks (CH
+structural + Postgres semantic) so pricing latency does not depend on
+the lake. Details: [ingest-pipeline.md § The structural lake ingest](ingest-pipeline.md#the-structural-lake-ingest)
+and [§ Re-deriving from the lake](ingest-pipeline.md#re-deriving-from-the-lake).
 
-**Start here.** Most of the bad-recommendation paths I've taken
-across sessions came from operating on partial datastore knowledge.
+### Tier-1 lake schema
 
----
+DDL: `deploy/clickhouse/tier1_schema.sql`. `MergeTree` family,
+`PARTITION BY intDiv(ledger_seq, 1000000)`, `ORDER BY` the
+query-natural key, dedup by `ReplacingMergeTree` or idempotent
+partition-replace on backfill. Tables: `ledgers` (also the ADR-0033
+substrate/census record), `transactions`, `operations` (`body_xdr`),
+`operation_results` (`result_xdr`), `contract_events` (topics, data,
+op args XDR), `ledger_entry_changes` and `ledger_entries_current` (which carry contract code/data). Keeping the
+raw XDR is what lets every decoder class run from the lake.
 
-## r1 ZFS pool inventory
+`ReplacingMergeTree` dedups only on merge: an unmerged recent partition
+can hold a row twice, so count with `FINAL` or `uniqExact` on the sort
+key.
 
-### Topology (live-verified 2026-07-17) — SINGLE parity
+### Migration status
+
+The ADR-0034 migration (lake stand-up, historic backfill, served-tier
+rebuild from the lake, completeness on the new model, explorer and
+per-protocol pages) has shipped. The projector reads the lake by
+default (`clickhouse_projector_source` and `clickhouse_live_sink`, both
+on). Not done: decommissioning the Postgres landing zone. The
+`soroban_events` hypertable, `ledger_ingest_log`,
+`internal/sources/sorobanevents`, `internal/storage/timescale/{soroban_events,topic_samples,ledger_ingest_log}.go`
+and `backfill -source soroban-events` are still present. When that
+work runs, it also purges the orphan `ingestion_cursors` rows of
+deleted subsources and reverts trades-chunk tuning
+(`max_locks_per_transaction`) that no longer applies.
+
+The original plan said to drop and rebuild `trades` with a retention
+window. That was overtaken: see the next section.
+
+## Retention: what is kept, and what "retention-scoped" means
+
+- **Raw `trades` are kept forever. NEVER put a retention policy on
+  `trades`** (AGENTS.md invariant 8). Migration 0031 removed the old
+  90-day policy; its `.down.sql` names re-adding one as the "rogue
+  retention on trades" data-loss drift. A `drop_after` on `trades` is
+  drift: remove it.
+- Arming one would also fire the completeness verifier: migration 0116
+  and `compute_completeness.go`'s `detectFloorLoss` read a rising
+  `MIN(ledger)` on a reconcile target as loss.
+  `test/integration/migrations_test.go` pins the absence
+  (`assertPolicyAbsent(… "trades", "policy_retention")`).
+- "Retention-scoped" in a coverage verdict means scoped to what has
+  been **projected** into the served tier, not a database drop policy.
+  The lake holds the full archive; Postgres holds the working set
+  (see [coverage-matrix.md § Completeness](coverage-matrix.md#completeness-what-v1coverage-publishes)).
+- Price aggregates: every rung except `prices_1m` is kept forever (see
+  Datasets). The nine `prices_*`/`twap_*` aggregates totalled 141 GB on 2026-09-08
+  and reach the earliest trade of every source.
+
+## Supply flows in the lake
+
+Supply is a flow: `total = Σmint − Σburn − Σclawback`. Classic-asset
+flows are in the lake for all history, not only from P23: the archive
+was re-generated by a modern core that writes V4 meta for every ledger
+and emits the CAP-67 `mint`/`burn`/`clawback`/`transfer` events for
+classic movements back to genesis. Those rows are replay-derived and
+core-version-dependent (see [supply-pipeline.md](supply-pipeline.md)
+for the genesis baseline built on them).
+
+- `stellar.supply_flows` holds one decoded row per flow event
+  (`ReplacingMergeTree` by event identity), keyed by `contract_id` (SAC
+  for classic, token contract for SEP-41). The indexer writes it live
+  via its decode-at-ingest CH sink.
+- The API's `SupplyReader.TokenSupply()` sums it live with `FINAL` on
+  every request: no rollup, no refresh lag.
+- `stellarindex-ops ch-supply -seed-flows` (`internal/ops/chops/ch_supply.go`)
+  re-seeds `[last-seeded+1, tip]` from the lake. `run-ch-supply.sh` runs
+  it daily under `ch-supply.timer` as a defensive gap-filler (normally a
+  no-op). The `-write` flag and its `stellar.token_supply` rollup are
+  retired; do not confuse the two flags.
+- Amount decode type-tests a bare `i128` or the map variant's `amount`
+  field; ~99.997% of flows decode (the rest are U32/Vec/Void bodies).
+- Open caveat: the sample re-run partitions 25/45/62 are still
+  duplicated in `contract_events`, so tokens active around ledgers
+  25M, 45M and 62.7M read supply-inflated (≲0.14% for tokens active
+  across history, more for tokens concentrated there).
+- The 25/45/62 partitions are not deduped: a full `FINAL` over
+  `contract_events` takes ~10 h and `uniqExact` dedup OOMs at ClickHouse's
+  memory cap.
+- Operator follow-up: drop the orphaned `stellar.token_supply` table on r1
+  (its `computed_at` stopped advancing after 2026-06-08).
+- XLM: total from `ledgers.total_coins`; it is not part of the
+  mint/burn flows.
+
+## Storage-package layering
+
+`internal/storage` should not import compute or source packages. The
+persisted shapes moved to `internal/domain`; six files still import
+upward because they pull in real compute logic. They are grandfathered
+by name in the shrink-only `scripts/ci/lint-imports.baseline`: a new
+upward import fails CI. There is no stricter storage-purity rule.
+
+## r1 capacity
+
+### Pool topology
 
 ```
 zpool: data
   topology:  raidz1, one 4-wide vdev across 4 × 7.68 TB Samsung MZQL27T6HBLA-00A07
   raw:       27.7 TB
-  usable:    ~18.3 TB (~16.8 TiB)   # measured, not derived — see the evidence below
+  usable:    ~18.3 TB (~16.8 TiB), measured
   parity:    ONE drive. At DEGRADED there is ZERO remaining redundancy.
 ```
 
-> **This is the fact that keeps drifting — read the evidence before
-> you "correct" it back.** Three docs still said raidz2 as late as
-> 2026-08-28 (#289). The settled answer is raidz1, on three
-> independent grounds:
->
-> 1. **Live inspection.** The 2026-07-17 live r1 review:
->    "ZFS **raidz1** (single parity, NOT raidz2), 4×7.68TB, pool ~90 %
->    (~1.6 T usable free). Usable ≈ 66 % of raw (parity + 4K padding)."
->    — commit `ca2f4748`, whose finding was "corrected from the earlier
->    snapshot-based assessment", which landed the same correction into
->    both rule trees' `stellarindex_zfs_pool_degraded` description.
-> 2. **Arithmetic, which needs no host access.** The dataset footprint
->    measured that day — ClickHouse 7.5 T + MinIO 5.56 T + pgBackRest
->    2.49 T + Postgres 1.21 T ≈ **16.8 T** — cannot fit the ~13.85 TB
->    ceiling that two parity drives leave on these four devices. A
->    raidz2 pool holding 16.8 T of data is not a thing.
-> 3. **Alert calibration.** `configs/prometheus/rules.r1/infra.yml`
->    reconstructs pool capacity from the per-dataset
->    `node_filesystem_*` series and records ~16.8 TiB — again above
->    the two-parity ceiling.
-> 4. **An unrelated, more recent measurement.** The ZFS-snapshot
->    runbook shipped 2026-08-29 (#295) records "the pool had 5.0 TB
->    free of **18.3 TB** when this landed" — a total that two parity
->    drives on four 7.68 TB devices simply cannot produce.
->
-> Not settled: **why** it changed. The 2026-05-20 snapshot below
-> (used 12.5 TB + free 813 GB = 13.3 TB total) is internally
-> consistent with two parity drives, and the same live review notes
-> "Pool expansion **DID complete** (2026-05-21)". No in-repo record
-> says what was run. `zpool history data` on the box is the audit
-> trail; it does not change today's topology or capacity.
->
-> Machine-readable authority: `zfs_data_pool_type` in
-> `configs/ansible/inventory/r1.example.yml`. `scripts/ci/lint-docs.sh`
-> §18 lints every r1-scoped file against it, so this correction cannot
-> silently un-propagate again.
+This fact has drifted before. It is raidz1, not raidz2: the 2026-07-17
+live review saw raidz1, the measured footprint (~16.8 T) cannot fit the
+~13.85 TB that raidz2 leaves on these drives, and the pool reported
+18.3 TB total in 2026-08. The authority is `zfs_data_pool_type` in
+`configs/ansible/inventory/r1.example.yml`; `scripts/ci/lint-docs.sh`
+§18 lints r1-scoped files against it. OpenZFS on r1 is a local 2.3.4
+build (`apt-mark hold`). All four bays are in use.
 
-### Superseded snapshot (2026-05-20) — kept for the trace
+### Datasets
 
-```
-zpool: data
-  topology:  raidz2 across 4 × 7.68 TB Samsung MZQL27T6HBLA-00A07   # SUPERSEDED — raidz1 since ~2026-05-21
-  raw:       27.7 TB
-  usable:    13.85 TB                                                # SUPERSEDED — ~18.3 TB
-  used:      12.5 TB (93%)
-  free:      813 GB
-```
-
-OpenZFS version at that snapshot: 2.2.2 (Ubuntu 24.04 default);
-r1 has run locally-built **2.3.4** (`apt-mark hold`) since
-2026-05-21. raidz expansion (grow-vdev) requires 2.3+ — available
-now, but irrelevant: the box has four bays and all four are in the
-pool (R1 is not hardware-upgradeable, see
-`docs/operations/production-readiness-remaining.md` §4).
-
-### Per-dataset breakdown
-
-| Dataset | Mount | Used | Role | Trim sensitivity |
-|---|---|---|---|---|
-| `data/archive` | `/srv/history-archive` | **6.95 TB** | Stellar history-archive (SDF format) | Mixed — see below |
-| `data/minio` | `/var/lib/minio` | 4.96 TB | MinIO buckets (galexie-archive + galexie-live) | LCM tiering candidate (ADR-0027) |
-| `data/postgres` | `/var/lib/postgresql` | 606 GB | TimescaleDB | Grows indefinitely — ADR-0006's retention was SUPERSEDED by migration 0031 (raw trades retained forever); the ADR says so itself. One exception since migration 0156: `prices_1m` alone may carry a 90-day window, shipped disabled, and arming it releases 22 GB of that view's 69 GB on the first run. Every other price aggregate is still kept forever |
-| `data/galexie` | `/var/lib/galexie` | 7.83 GB | Galexie captive-core working dir | NA |
-| `data/os` | `/` | 645 KB | (rounding artefact) | NA |
-
----
-
-## `/srv/history-archive` — full touchpoint map
-
-> Last verified 2026-05-20 (Task #44 audit).
-
-### Subdir-level inventory
-
-| Subdir | Size | What it is |
-|---|---|---|
-| `bucket/` | **4.2 TB** | Stellar-core bucket files — historical state snapshots, content-addressed by SHA256. Used by stellar-core for catchup-mode and by stellar-archivist `scan` for state reconstruction at a checkpoint. |
-| `transactions/` | **2.0 TB** | Per-checkpoint transaction XDR. Needed to replay history. |
-| `results/` | 833 GB | Per-checkpoint transaction results. Companion to `transactions/`. |
-| `scp/` | 74 GB | Per-checkpoint SCP consensus state. Used by stellar-core for SCP replay. |
-| `ledger/` | 16 GB | Per-checkpoint `LedgerHeaderHistoryEntry`. **Required by ADR-0017 contracts 3+4.** |
-| `history/` | 6.2 GB | Per-checkpoint manifest. **Required by ADR-0017 contracts 3+4.** |
-
-### Active touchpoints (verified by code grep + journalctl)
-
-| Touchpoint | Reads | Writes | Cadence |
+| Dataset | Mount | Role | Last measured |
 |---|---|---|---|
-| `archive-completeness.service` (`stellarindex-ops archive-completeness verify`) | `ledger/` + `history/` only | `ledger/` (fix mode pulls missing checkpoints from SDF mirrors) | Nightly timer + `fix` on detection |
-| `verify-archive-tier-a.service` (`-tier chain`) | **NOTHING from /srv/history-archive** — only LCM chain in MinIO | n/a | Nightly timer (scheduled) |
-| `verify-archive -tier checkpoint` (Tier B) | `ledger/` + `history/` | n/a | Operator-invoked only (no scheduled cron) |
-| `verify-archive -tier archivist` (Tier E) | Full archive (all subdirs) | n/a | **Operator-invoked only; never run in 30d journal** |
-| `stellarindex-ops` 5x subcommands w/ `-archive-root` flag | `ledger/` paths | n/a | Operator-invoked |
+| `data/minio` | `/var/lib/minio` | MinIO: `galexie-archive` 2,336 GiB + `galexie-live` 433 GiB | 2.70 TiB (2026-09-30, compressratio 1.27x) |
+| ClickHouse | | Tier-1 lake | 7.5 T (2026-07-17) |
+| pgBackRest | | Postgres backups | 2.49 T (2026-07-17) |
+| `data/postgres` | `/var/lib/postgresql` | TimescaleDB served tier | 1.21 T (2026-07-17). Grows indefinitely: raw trades are retained forever (migration 0031). One exception since migration 0156: `prices_1m` alone may carry a 90-day window, shipped disabled, and arming it releases 22 GB of that view's 69 GB on the first run. Every other price aggregate is still kept forever |
+| `data/archive` | `/srv/history-archive` | SDF-format history archive, `history/` + `ledger/` only | 21 GB (after Move A) |
+| `data/galexie` | `/var/lib/galexie` | Galexie captive-core working dir | 7.83 GB |
 
-### Non-touchpoints (verified)
+### `/srv/history-archive`
 
-- `stellarindex-indexer`, `stellarindex-aggregator`, `stellarindex-api`: **none read /srv/history-archive**.
-- Galexie's captive-core: uses its own ephemeral state in `/var/lib/galexie/captive*`, NOT this archive.
-- Caddy/nginx: no `/archive` routes. Not externally exposed.
-- stellarindex.toml's `history_archive_url`: points at SDF upstream (`https://history.stellar.org/prd/core-live/core_live_001`), NOT at this local path. The local mirror is a **cache**, not the canonical source.
+A local cache of the SDF archive, not the canonical source
+(`history_archive_url` points at SDF). Only `history/` and `ledger/`
+remain; ADR-0017 contracts 3+4 bind to them. `archive-completeness
+fix` is the only writer (`ledger/`, plus `history/` manifests).
+Readers: `archive-completeness verify` (nightly) and `verify-archive
+-tier checkpoint` (Tier B, operator-run) read `ledger/` + `history/`;
+`verify-archive -tier chain` (Tier A, nightly) reads only MinIO; the
+`-archive-root` subcommands read `ledger/`. The indexer, aggregator
+and API never read it. Tier E (`-tier archivist`) cannot pass locally
+since Move A and runs only against a full archive via `-archivist-url`
+([galexie-backfill.md](../operations/galexie-backfill.md) §Tier E).
+R1 can offer R2/R3 Tier B only.
 
-### Maintenance flow
+### Capacity levers
 
-- `archive-completeness fix` is the ONLY active writer to /srv/history-archive today.
-- It writes only to `ledger/XX/YY/ZZ/ledger-*.xdr.gz` (and indirectly `history/` for manifest entries).
-- `bucket/`, `transactions/`, `results/`, `scp/` are **frozen since 2026-04-23** (original one-shot mirror by `stellar-archivist mirror`).
-- No active process writes those four subdirs. They are static.
-
-### Latest completeness report (2026-05-20T02:20:54Z)
-
-```json
-{
-  "range": {"from": 2, "to": 62647853},
-  "cross_anchor": {
-    "expected": 978872,
-    "found":    978872,
-    "missing_count": 0
-  }
-}
-```
-
-ADR-0017 contracts 3+4 currently SATISFIED. Daemon is keeping `ledger/` current.
-
----
-
-## ADR cross-reference
-
-| ADR | Touches storage how |
-|---|---|
-| [ADR-0002](../adr/0002-minio-s3-compat-storage.md) | Galexie writes to S3-compat (MinIO on r1); not local FS |
-| [ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md) | Closed-bucket-only API contract = per-region storage shapes are invisible to clients |
-| [ADR-0016](../adr/0016-per-region-storage-strategy.md) | R1 = full mirror (integrity leader); R2 = AWS-hybrid; R3 = Vultr-hybrid. R2/R3 explicitly DON'T mirror /srv/history-archive — they trust R1's Tier B + E verdict (note: Tier E is dormant on R1 too) |
-| [ADR-0017](../adr/0017-archive-completeness-invariants.md) | Dual-archive completeness invariants: primary (MinIO LCMs) + cross-anchor (/srv/history-archive). Contracts 3+4 bind to `ledger/` checkpoint files |
-| [ADR-0027](../adr/0027-lcm-cache-tiering.md) | LCM hot/cold tier: galexie-archive hot (MinIO) + aws-public-blockchain cold. §Decision covers the `trim-galexie-archive` tool, the TOML enable and the operator-triggered bulk trim |
-| [ADR-0011](../adr/0011-supply-algorithm.md) | supply_snapshot.timer + asset_supply_history table — postgres growth contributor |
-
----
-
-## Trim trade-off register
-
-> Each row is a "considered move + what it would cost" so the
-> trade-offs are explicit when a decision is eventually made.
-
-### Move A: Drop /srv/history-archive `bucket/` + `transactions/` + `results/` + `scp/`
-
-**Reclaim:** ~7.1 TB → pool drops 93% → ~43%.
-
-**Touchpoints affected:**
-
-- `archive-completeness verify`: unaffected (reads only `ledger/` + `history/`).
-- `verify-archive -tier chain`: unaffected (doesn't read /srv/history-archive at all).
-- `verify-archive -tier checkpoint`: unaffected (reads only `ledger/` + `history/`).
-- `verify-archive -tier archivist` (Tier E): **WOULD FAIL with local file:// URL**. Mitigation: pass `-archivist-url https://history.stellar.org/...` to scan against SDF directly. ~10-100× slower per run but functional. Tier E has never been run in 30d of journal history.
-- ADR-0016 (R2/R3 trust R1's Tier B+E): R2/R3 not yet provisioned. Tier E being dormant on R1 means there's nothing for them to actually delegate to today.
-- Disaster recovery: "rebuild /srv/history-archive on demand" per ADR-0016 §line 168. Estimated 4-10 h via `stellar-archivist mirror` from SDF. Empirical r1-original-bringup time was 3-4 h for 5-5.5 TB; 4-10 h for current 7 TB is honest.
-
-**ADR impact:** ADR-0016 says R1 has "full SDF mirror (~7 TB)" as part of its "integrity leader" role. Trimming the 7 TB partially supersedes ADR-0016 — requires a new ADR or amendment. The trim doesn't violate ADR-0017 (contracts 3+4 still satisfied via `ledger/`).
-
-**Reversibility:** ZFS snapshot before trim → 7-day window → destroy snapshot to commit. During the 7-day window, trim is fully reversible at zero cost.
-
-**Cost in DR scenarios:**
-
-| Scenario | Probability | Cost |
+| Move | What | Status |
 |---|---|---|
-| Never need Tier E | High (never run in 30d) | Free |
-| Tier E needed once for audit | Moderate | 1 slow run against SDF (~hours not ~minutes) |
-| LCM bucket corrupted → need ledger-state reconstruction from bucket/ | Low | 4-10h rebuild before recovery work |
-| SDF deprecates `history.stellar.org` during a future DR | Very low | Fall back to peer mirrors (LOBSTR/SatoshiPay/Blockdaemon/etc.); slower |
+| A | Drop `/srv/history-archive` `bucket/` + `transactions/` + `results/` + `scp/` (~7.1 TB) | Executed 2026-05-21. Rebuild from SDF by `stellar-archivist mirror` takes 4-10 h if ever needed |
+| B | Drop `/srv/history-archive` entirely | Rejected: violates ADR-0017 contracts 3+4 and loses Tier B |
+| C | raidz2 → raidz1 | Not a lever: the pool is already raidz1, so there is no parity left to trade |
+| D | ADR-0027 cold tier + bulk trim of `galexie-archive` | Executed 2026-07-26: 780 partitions below ledger 49,984,000 deleted, 1.07 TB reclaimed against a ~3.5 TB estimate. Early history is sparse; most bytes sit in the Soroban era, so assume the same shape for any "trim old data" estimate. The trim deletes an object only after the matching AWS object HEADs OK. ADR-0043 §2 accepts the `aws-public-blockchain` dependency for `[64000, 49983999]` |
+| E | Retention on `trades` | Forbidden (see Retention). Est. 50-100 GB anyway |
+| F | Re-enable trades compression job 1000 + tighter compression | Available: ~50-150 GB, CPU cost only. Job 1000 was disabled to stop decompress-on-write storms during heavy backfills |
+| G | Decode pre-Soroban classic issuance into our own observer tables | The space half is spent (Move D); the mission half stands: it is the only way to own that history, now read from `aws-public-blockchain` |
 
-**Decision status:** EXECUTED on r1 (2026-05-21, the `/srv/history-archive`
-mtime; 21 GB remain, `history/` + `ledger/` only). Tier E consequently
-cannot pass locally — a 2026-09-29 bounded scan failed on every
-transaction/result set (`got 0000…`) — so its monthly cron and staleness
-alert were retired; see [galexie-backfill.md](../operations/galexie-backfill.md) §Tier E.
+Operator constraints that ranked these moves (May 2026; Moves A and D
+have since executed):
 
-### Move B: Drop /srv/history-archive entirely (incl. `ledger/` + `history/`)
-
-**Reclaim:** ~6.95 TB.
-
-**Touchpoints affected:** Same as Move A PLUS:
-- ADR-0017 contracts 3+4 **VIOLATED**. Cross-anchor verification permanently disabled.
-- `archive-completeness verify` would fail on next run (expected 978k files, found 0).
-- Lose Tier B (LCM-vs-SDF checkpoint hash verification) — silent corruption in LCMs becomes undetectable via this path.
-
-**Mitigation if pursued:** retain only `ledger/` + `history/` (~22 GB) under a separate trim policy. But this is essentially Move A.
-
-**Decision status:** REJECTED for now — ADR-0017's hard contracts.
-
-### Move C: raidz2 → raidz1 conversion — OBSOLETE, already the case
-
-**Status: NOT A LEVER (2026-08-29, #289).** This move was written
-against the belief that the pool ran two parity drives. It does not:
-the pool is raidz1 already (see §Topology above), so the ~7 TB this
-move promised to reclaim has already been reclaimed — it is inside
-today's ~18.3 TB usable, not on top of it. Do not plan against it,
-and do not re-derive a raidz2→raidz1 reclaim from any doc that still
-quotes 13.85 TB usable.
-
-The corollary is the part that still matters: **there is no parity
-left to trade for space.** Going below raidz1 means a stripe with
-zero redundancy on the canonical archive — rejected. Capacity relief
-is software-only (ZSTD recompression and Move F's compression
-policy) plus a second server. **NOT Moves A or D** — executed 2026-05-21
-and 2026-07-26, already spent — and **NOT Move E**, which is forbidden (raw trades are
-kept forever; see its entry). This sentence named "Moves A/D/E" until
-2026-08-31, on the doc's own most recent edit, which is how both dead
-levers kept reading as live (wave-D PS-05/PS-06).
-
-**Historical blocker (kept for the trace):** OpenZFS 2.2.2 did not
-support raidz expansion; r1 has run 2.3.4 since 2026-05-21. Even
-then, a destroy-and-recreate needed a 2-drive transit with a
-zero-parity window.
-
-### Move D: ADR-0027 cold-tier enable + bulk LCM trim
-
-**Status: EXECUTED 2026-07-26 — NO LONGER A LEVER.** Do not add its
-reclaim to any future runway estimate; the space is already spent and
-the dependency it was weighed against is already taken.
-
-**Actual reclaim: 1.07 TB, not the ~3.5 TB this entry used to
-estimate.** All 780 parity-verified partitions below ledger 49,984,000
-were deleted (996 → 216 partition dirs, 0 errors, genesis
-`FFFFFFFF--0-63999` intact). The estimate was ~3.5× too high for a
-structural reason worth keeping: **early history is sparse.** Most
-BYTES sit in the dense Soroban era ABOVE the cutoff, which was kept —
-so trimming 78% of the partitions reclaimed 22% of the estimate. Any
-future "trim old data" estimate on this archive should assume the same
-shape. Full execution record, including the 48h cold-availability soak
-and the ZFS snapshot that held the space until destroy:
-the git history of the removed `docs/operations/production-readiness-master-plan-2026-07-18.md`.
-
-**The steady-state dependency is taken and formally accepted.**
-ADR-0043 §2: `[64000, 49983999]` (~50M ledgers, ~2.3 TiB) is now
-reachable ONLY from `aws-public-blockchain`, and the ADR records
-"**Decision: accept the dependency; do not duplicate the public data
-into our own storage**" — its loss is a *time* exposure (re-export from
-a captive core replaying public history), not a *data* exposure. The
-trim tool deletes an object only after the matching AWS object HEADs
-OK.
-
-**Consequence for the tables below:** "adds an external dependency" no
-longer DISCRIMINATES between the remaining options — it is the status
-quo. Weigh what is left against today's posture, not the pre-trim one.
-
-*(Corrected 2026-08-31, wave-D PS-06. This entry read "Reclaim: TBD …
-~3.5 TB is plausible" and "Status: Tool exists … Needs to be done with
-§3+§4 together" for more than a month after execution, so a planner
-hitting the next capacity crunch — the situation this document exists
-for — would have added ~3.5 TB of already-spent runway and ruled the
-option out on a criterion that no longer applies.)*
-
-### Move E: TimescaleDB trades retention (drop oldest raw chunks)
-
-**Reclaim:** ~50-100 GB est. (trades hypertable is 588 GB total; the long tail at >2 years has lower row density per chunk after compression so the reclaim-per-month is small.)
-
-**Touchpoints affected:** `/v1/observations` raw-trades queries for windows >2 yr return empty (CAGGs still serve the same window for downsampled views). Aggregator's historical VWAP-from-raw paths lose pre-trim history.
-
-**Mechanism:** TimescaleDB `add_retention_policy` on the trades hypertable. Rolls in chunk-by-chunk over weeks; small steady cost.
-
-**Status: NOT A LEVER — trades retention is FORBIDDEN.** This entry
-read "Decision status: Lever available" until 2026-08-31 (wave-D
-PS-05), which in a register that marks its dead levers explicitly
-(Move B "REJECTED for now", Move C "NOT A LEVER") reads as
-deliberately live.
-
-Raw `trades` are kept **forever**. Migration 0031 removed the old
-90-day retention, and its own `.down.sql` names re-adding one as "the
-EXACT mechanism of the recurring 'rogue retention on trades' data-loss
-drift". AGENTS.md carries it as a standing invariant: "If you see a
-`drop_after` retention policy on `trades`, it's drift — remove it."
-the maintainer signed it again as launch decision D5 (2026-08-29).
-
-Arming it would also fire the completeness verifier immediately, not
-quietly: migration 0116 + `compute_completeness.go`'s `detectFloorLoss`
-treat a rising `MIN(ledger)` on a reconcile target as LOSS rather than
-scope, and 0116 states the rule "is unconditional because NO reconcile
-target has a retention policy". `test/integration/migrations_test.go`
-pins it (`assertPolicyAbsent(… "trades", "policy_retention")`, failing
-with "invariant 8: raw history kept forever").
-
-Kept in the register rather than deleted, because the estimate and the
-touchpoint analysis stay useful for understanding the trades hypertable
-— and because a deleted entry invites re-proposal by someone who never
-sees why it was rejected.
-
-### Move F: Re-enable trades job 1000 + tighter compression policy
-
-**Reclaim:** ~50-150 GB est. (trades is already 1.42x compressed; tighter compression marginally improves it.)
-
-**Touchpoints affected:** Job 1000 was disabled to stop decompress-on-write storms during heavy backfills (`feedback_reenable_trades_compression`). Re-enabling it after task #38 finishes is the documented next-step regardless of any other move.
-
-**Risk:** Slow CPU burn during re-compression cycle; no data risk.
-
-**Decision status:** Will happen anyway when task #38 finishes. Independent of the strategic trim question.
-
-### Move G: Decode-then-trim — ship classic-supply observers + run them + then Move D
-
-**Reclaim:** superseded — the galexie-archive half is SPENT. Move D
-executed 2026-07-26 and reclaimed 1.07 TB, not the ~3.5 TB this line
-was derived from, so the "~4 TB net" figure is doubly stale. What
-survives of Move G is its *mission* half, which never depended on the
-space: decoding pre-Soroban classic-asset issuance history into our own
-observer tables. That is still wanted, and it is now the ONLY way to
-own that history — the source LCMs below ledger 49,984,000 are already
-gone from local storage and are read from `aws-public-blockchain`.
-(Corrected 2026-08-31, wave-D PS-06.)
-
-**What it solves that Move A/D don't:** Capturing pre-Soroban classic-asset issuance history (mint/burn/clawback events for USDC, EURC, AQUA, etc. from ledger 0 → Soroban activation) into our own observer tables BEFORE deleting the source LCMs / history-archive. The granular-coverage mission says we want this regardless.
-
-**Effort:** Weeks. Three sub-tasks: (1) ship classic-supply observers (LedgerEntryChangeDecoder + sep41-supply); (2) backfill them across pre-Soroban range (50M ledgers); (3) only then do the trim.
-
-**Trade-off against operator stance:** Self-sufficient (no external dependency added); mission-aligned (we own the decoded history forever); but slow to land.
-
-**Sequencing note:** Move A doesn't block Move G. A is the immediate, self-sufficient win on /srv/history-archive (which is a *mirror*, not our decoded output). G is the long-term self-sufficiency play on galexie-archive (which is our LCMs). They compose — not compete.
-
----
-
-## Combined views
-
-| Combo | Reclaim | Sequence | External dep added? | Notes |
+| Constraint | A | D | B | C |
 |---|---|---|---|---|
-| **A alone** | ~7.1 TB | One operation, ~minutes (snapshot) + 7 days observation | No (only contingent SDF DR) | Pool 93% → ~43%. Multi-year runway. Best operator-stance fit. |
-| **A + F** | ~7.2-7.3 TB | A first, F after task #38 ends | No | F happens regardless once backfills end. |
-| **A + D** | ~10-10.5 TB | A first, D over weeks | **Yes — aws-public-blockchain for cold reads** | Skip unless A+F isn't enough. |
-| **G alone** | ~4 TB | Weeks of observer work then D | No | Self-sufficient + mission-aligned. Slow. |
-| **A + G** | ~11 TB | A this week, G over months | No | Best long-term composition. |
-| **C alone** | ~7 TB | Multi-day operator downtime | No | Equivalent reclaim to A without losing data, but higher operator risk during transit + OpenZFS 2.3 upgrade prereq. |
+| No decoder/backfill re-runs, don't lose sync data | ok | ok | ok | ok |
+| Can't expand the server | ok | ok | ok | ok |
+| Don't rely on others | ok (SDF only on DR rebuild) | steady-state `aws-public-blockchain` dep (now accepted, ADR-0043 §2) | n/a | ok |
+| Honesty | ok (ADR-0016) | ok (ADR-0027) | violates ADR-0017 contracts 3+4 | ok |
+| Reversibility | 7 d ZFS snapshot | partial | low | low (pool destroy) |
+| Operational risk | low | medium | high | medium-high |
 
----
+The Move D trim deletes only from `galexie-archive`
+(`internal/ops/archive/trim_galexie_archive.go`, `S3BucketArchive`; its
+MinIO identity is scoped to that bucket), never `galexie-live`.
 
-## Recommendation: Move A
-
-> **⚠ Historical — this comparison is dated (2026-05).** Both Move A
-> and Move D have since EXECUTED (Move D on 2026-07-26), and Move C is
-> marked NOT A LEVER. The table is kept because its *criteria* are the
-> useful part — they are how this operator weighs a capacity option —
-> but the Move D column no longer describes an available choice, and
-> its "✗ steady-state dep on aws-public-blockchain" row is now the
-> STATUS QUO rather than a cost to weigh: ADR-0043 §2 formally accepted
-> that dependency. A planner using this table today should re-run the
-> criteria against the options that actually remain (Move F, Move G's
-> mission half, ZSTD recompression, a second server), not read a
-> verdict off it. (Annotated 2026-08-31, wave-D PS-06.)
-
-**Move A was the dominant choice** in May 2026, evaluated against the
-operator's stated constraints:
-
-| Operator constraint | Move A | Move D | Move B | Move C |
-|---|---|---|---|---|
-| "Don't lose sync data — no decoder/backfill re-runs" | ✓ touches only the SDF mirror, never our decoded output | ✓ (LCMs only) | ✓ | ✓ |
-| "Can't expand the server" | ✓ reclaims on existing disk | ✓ | ✓ | ✓ |
-| "Don't like relying on anyone else" | ✓ external dep is *contingent* (SDF only if DR rebuild needed) | ✗ **steady-state** dep on aws-public-blockchain | n/a | ✓ |
-| "Honesty is very important" | ✓ ADR-0016 explicitly documents the rebuild-from-SDF fallback | ✓ ADR-0027 documents it | ✗ violates ADR-0017 contracts 3+4 | ✓ |
-| Reversibility window | ✓ 7 days (ZFS snapshot) | partial (re-mirror slow) | low | low (pool destroy) |
-| Operational risk | low (rm + observe) | medium | high | medium-high |
-
-**After Move A lands, the gated tasks (#5, #14, #30, #35) become safe to run.** Move F happens opportunistically when task #38 finishes. Move G is the long-term self-sufficiency play that can proceed without urgency in parallel.
-
----
-
-## Operational plan for Move A
-
-```bash
-# 1. Snapshot (instant, ~zero storage cost)
-ssh root@r1 'zfs snapshot data/archive@pre-trim-2026-05-20'
-
-# 2. Verify the daemon report is currently clean — sanity check before trim
-ssh root@r1 'cat /var/lib/galexie/last-completeness-report.json'
-# expected: missing_count: 0
-
-# 3. Trim the four subdirs (sequential to keep load predictable)
-ssh root@r1 'rm -rf /srv/history-archive/bucket'
-ssh root@r1 'rm -rf /srv/history-archive/transactions'
-ssh root@r1 'rm -rf /srv/history-archive/results'
-ssh root@r1 'rm -rf /srv/history-archive/scp'
-
-# 4. Verify space (note: snapshot still holds the bytes until destroyed,
-#    so `zfs list` "REFER" drops but "USED" reflects snapshot retention)
-ssh root@r1 'zpool list data; zfs list data/archive'
-
-# 5. Wait for the nightly archive-completeness run (next ~04:19 UTC)
-#    — must still report missing_count: 0
-ssh root@r1 'journalctl -u archive-completeness.service --since "2 hours ago" | tail -50'
-ssh root@r1 'cat /var/lib/galexie/last-completeness-report.json'
-
-# 6. Observation window: 7 days. Monitor for any verify-archive failures,
-#    archive-divergence alerts, or unexpected codepaths exercising
-#    /srv/history-archive/{bucket,transactions,results,scp}.
-
-# 7. Commit (free the space) after observation window passes:
-ssh root@r1 'zfs destroy data/archive@pre-trim-2026-05-20'
-ssh root@r1 'zpool list data'  # confirm pool % dropped
-```
-
-**Rollback (anytime during the 7-day window):**
-
-```bash
-ssh root@r1 'zfs rollback data/archive@pre-trim-2026-05-20'
-```
-
-This restores all four subdirs in seconds.
-
----
-
-## Open questions / things still to verify
-
-- [x] *Answered 2026-09-29:* no, and it no longer can be: Move A trimmed the mirror, so a local Tier E scan fails by construction and the monthly cron added for it was retired. Tier E is operator-run against a full archive (`-archivist-url`); see `docs/operations/galexie-backfill.md` §Tier E. Original question: has Tier E ever been documented as a routine practice anywhere we haven't searched?
-- [x] *Answered 2026-09-29:* R1 can offer R2/R3 Tier B only; Tier E's subject (the bucket bytes) no longer exists on R1 after Move A. R2/R3 remain deferred. Original question: what's the exact relationship between ADR-0016's "trust R1's Tier B + E verification" promise to R2/R3 and the operational reality that Tier E hasn't been run on R1 either?
-- [x] *Answered 2026-09-29:* only `galexie-archive`. `internal/ops/archive/trim_galexie_archive.go` deletes solely from `cfg.Storage.S3BucketArchive`, and its MinIO identity is scoped to that bucket. Original question: does the trim cover `galexie-live` too, or only `galexie-archive`? (Need to skim; relevant if we ever want to trim live bucket's older partitions.)
-- [x] *Answered 2026-09-30:* `galexie-archive` 2,336 GiB, `galexie-live` 433 GiB
-  (`du -s --block-size=1G` via the detached `minio-bucket-du.service` on R1, ~2 h; the two
-  sum to 2,769 GiB = 2.70 TiB, the whole `data/minio` dataset per `zfs list -Ho used`,
-  compressratio 1.27x). Original question: confirm MinIO du for `galexie-archive` vs
-  `galexie-live` per-bucket breakdown.
-
----
-
-## Decisions made
-
-| Date | Decision | ADR / commit | Rationale |
-|---|---|---|---|
-| 2026-05-20 | **Approved Move A** — trim /srv/history-archive/{bucket,transactions,results,scp} with ZFS-snapshot safety net + 7-day observation window | This doc + execution commit | Reclaims ~7.1 TB without losing decoded data, without adding steady-state external dependency, with full reversibility for 7 days. Best fit for operator's "no external dependency / no lost sync data / can't expand server" constraints. ADR amendment for ADR-0016 to follow once trim observation window passes. |
-
----
-
-## Change log
-
-| Date | Author | What |
-|---|---|---|
-| 2026-05-20 | Task #44 audit | Initial inventory + trade-off register |
-| 2026-05-20 | Expanded options A-G + combined views + recommendation + operational plan | Added Moves E (TimescaleDB retention), F (compression re-enable), G (decode-then-trim) for completeness. Recorded Move A as the approved decision. |
+What remains: Move F, ZSTD recompression, and a second server. Move G
+is mission work, not capacity.

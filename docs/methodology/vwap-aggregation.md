@@ -364,7 +364,7 @@ aggregation cycle on top — it is **not** a sub-30s number, and we do not
 advertise it as one. Integrators pick per use case: `/v1/price/tip` for
 a live wallet asset page, `/v1/price` for anything that must agree
 across replicas, audits, or CDN caches. Full detail:
-`docs/architecture/freshness-definition.md`.
+`docs/architecture/coverage-matrix.md#freshness-what-the-30-s-sla-means`.
 
 ## What this methodology deliberately does NOT do
 
@@ -383,5 +383,5 @@ across replicas, audits, or CDN caches. Full detail:
 - [twap-ohlc.md](twap-ohlc.md) — TWAP/OHLC compute + the no-trades contract
 - [Per-protocol verification pages](../protocols/README.md) — what feeds the exchange class + the contract-identity gating that makes each trade trustworthy
 - `docs/architecture/aggregation-plan.md` — the internal binding spec (config surface, metrics, alerts)
-- `docs/architecture/freshness-definition.md` — the two-contract freshness design
+- `docs/architecture/coverage-matrix.md#freshness-what-the-30-s-sla-means` — the two-contract freshness design
 - ADR-0003 (i128 precision), ADR-0015 (closed-bucket serving), ADR-0035 (contract-identity gating)

@@ -12,7 +12,7 @@ import (
 // #[contracttype] structs serialise as ScvMap with sorted-by-symbol
 // keys; we look up by name regardless of order to stay resilient
 // to declaration reorderings (per
-// docs/architecture/contract-schema-evolution.md).
+// docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 const (
 	auctionDataKeyBid   = "bid"
 	auctionDataKeyLot   = "lot"

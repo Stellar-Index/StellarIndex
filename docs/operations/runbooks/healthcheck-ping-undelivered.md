@@ -101,8 +101,8 @@ config change landed points at the URL.
   `heartbeat.sh`, `smoke.sh` and `sla-probe.sh` in the same directory.
 - Unit wiring: `configs/ansible/roles/archival-node/tasks/17-stellarindex-healthchecks.yml`.
 - Companion runbooks — the checks whose emails this alert qualifies:
-  [`api-smoke-failing.md`](api-smoke-failing.md),
-  [`api-smoke-stale.md`](api-smoke-stale.md).
+  [`api-smoke.md#stellarindex_api_smoke_failing`](api-smoke.md#stellarindex_api_smoke_failing),
+  [`api-smoke.md#stellarindex_api_smoke_stale`](api-smoke.md#stellarindex_api_smoke_stale).
 - Tests: `internal/ops/chops/healthcheck_ping_delivery_test.go`.
 
 ## Changelog

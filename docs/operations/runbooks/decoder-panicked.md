@@ -108,7 +108,7 @@ a code fix. What you can do now is bound it and prove it is bounded.
 - [ ] Decide the blast radius from the panic RATE. A single increment is
       one poison event. A counter climbing every ledger means the decoder
       panics on a whole event SHAPE (a contract upgraded its event
-      schema — see docs/architecture/contract-schema-evolution.md), so
+      schema — see docs/architecture/ingest-pipeline.md#contract-schema-evolution), so
       that source is effectively dark from this ledger on.
 - [ ] If the source must not run blind in the meantime, remove it from
       `ingestion.enabled_sources` in `/etc/stellarindex.toml` (via the
@@ -176,7 +176,7 @@ case it exists to catch.
   alert; every panic also increments that counter.
 - [cursor-stuck](cursor-stuck.md) — use if the cursor
   is NOT advancing (a different incident).
-- docs/architecture/contract-schema-evolution.md; ADR-0033; ADR-0034.
+- docs/architecture/ingest-pipeline.md#contract-schema-evolution; ADR-0033; ADR-0034.
 
 ## Changelog
 

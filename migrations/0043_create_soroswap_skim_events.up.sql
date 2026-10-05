@@ -22,7 +22,7 @@
 -- The decoder accepts both `skimmed_0`/`skimmed_1` and the
 -- `amount_0`/`amount_1` aliases (some Uniswap-v2 derivatives use the
 -- latter); a `to` Address field is optional and stored when present.
--- Per contract-schema-evolution.md the columns are nullable where the
+-- Per docs/architecture/ingest-pipeline.md#contract-schema-evolution the columns are nullable where the
 -- on-wire shape might evolve.
 --
 -- Identity: (ledger_close_time, ledger, tx_hash, op_index,

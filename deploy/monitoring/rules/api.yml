@@ -38,7 +38,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-down.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_down
           summary: "Every API pod is down (SEV-1)"
           description: |
             No API instance is scrape-reachable across the fleet — or the
@@ -63,7 +63,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_latency_p95_high
           summary: "API p95 {{ $value | humanizeDuration }} > 500ms"
           description: |
             The published p95 ≤ 200 ms is enforced per endpoint by
@@ -84,7 +84,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_latency_p99_high
           summary: "API p99 {{ $value | humanizeDuration }} > 2s"
           description: |
             The published p99 ≤ 500 ms is enforced per endpoint by
@@ -109,7 +109,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-stream-not-delivering.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_price_stream_not_delivering
           summary: "Aggregator publishes closed-bucket events but the API fans out none (15m)"
           description: |
             /v1/price/stream subscribers are receiving keepalives only.
@@ -129,7 +129,7 @@ groups:
           component: api
           alert_family: api_error_rate
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_error_rate_high
           summary: "API 5xx rate {{ $value | humanizePercentage }}"
           description: |
             Sustained > 1 % 5xx responses. At 5 % we escalate to SEV-1 via
@@ -146,7 +146,7 @@ groups:
           component: api
           alert_family: api_error_rate
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_error_rate_critical
           summary: "API 5xx rate {{ $value | humanizePercentage }} (SEV-1)"
           description: |
             > 5 % of requests returning 5xx. Customers are broken; declare
@@ -173,7 +173,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_price_stale
           summary: "Price for {{ $labels.asset }} in {{ $labels.quote }} is {{ $value }}s stale"
           description: |
             The most recent aggregated price observation is older than 2 min
@@ -212,7 +212,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache-miss-rate-high.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_cache_miss_rate_high
           summary: "API cache {{ $labels.cache }}/{{ $labels.op }} miss rate {{ $value | humanizePercentage }}"
           description: |
             Sustained > 50 % miss rate on the v1.Cached* wrapper for
@@ -241,7 +241,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache-miss-rate-high.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_cache_refresh_failing
           summary: "API cache {{ $labels.cache }}/{{ $labels.op }} background refresh failing"
           description: |
             The background refresh for {{ $labels.cache }}/{{ $labels.op }}
@@ -274,7 +274,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_customer_webhook_delivery_failing
           summary: "Customer webhook delivery failing at {{ printf \"%.2f\" $value }}/s"
           description: |
             The customer-webhook delivery worker has been failing
@@ -303,7 +303,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/usage-rollup-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_usage_rollup_failing
           summary: "Usage-rollup sweeps failing ({{ $value | humanize }}/s error rate)"
           description: |
             The API binary's usage-rollup worker has been failing its
@@ -337,7 +337,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_customer_webhook_delivery_exhausted
           summary: "Customer webhook deliveries permanently failed (budget exhausted)"
           description: |
             A delivery hit the 15-attempt retry budget (~8h) and
@@ -371,7 +371,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_customer_webhook_mark_errors
           summary: "Customer-webhook delivery outcomes are not being recorded — deliveries are looping"
           description: |
             stellarindex_customer_webhook_delivery_attempts_total{outcome="mark_error"}
@@ -416,7 +416,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_tls_cert_expiring_soon
           summary: "TLS cert for {{ $labels.host }} expires in <14 days"
           description: |
             The leaf certificate for {{ $labels.host }} expires at
@@ -432,7 +432,7 @@ groups:
             expired) and the value is a failure count, not a timestamp —
             read stellarindex_tls_cert_probe_total{host} by outcome.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_tls_cert_expiring_soon
 
       # C6-032 (audit-2026-07-23): stellarindex_ratelimit_fail_open_total
       # has been registered + incremented since the rate limiter shipped
@@ -463,7 +463,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ratelimit-fail-open.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_ratelimit_fail_open
           summary: "Rate limiting FAILED OPEN {{ $value | humanize }} times in 15m"
           description: |
             The API rate limiter could not reach its Redis backing store
@@ -496,7 +496,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ratelimit-fail-open.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_ratelimit_fail_closed
           summary: "Rate limiting is FAILING CLOSED — the API is 503ing rate-limited requests"
           description: |
             The rate limiter's Redis calls have been failing longer than
@@ -530,7 +530,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/monthly-quota-fail-open.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_monthly_quota_fail_open
           summary: "Monthly quota ceiling is FAILING OPEN ({{ $value | humanize }} req/s bypassing the cap)"
           description: |
             The per-key monthly request quota could not be read from its
@@ -557,7 +557,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/monthly-quota-fail-open.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_monthly_quota_fail_closed
           summary: "Monthly quota is FAILING CLOSED — metered keys are being 429'd"
           description: |
             The month-to-date usage counter has been unreadable for longer
@@ -588,7 +588,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/usage-write-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_usage_write_failing
           summary: "Usage-counter writes are failing ({{ $value | humanize }} billable units/s dropped)"
           description: |
             The API served requests it could not meter: writes to the
@@ -616,7 +616,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/after-response-tasks-dropping.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_after_response_tasks_dropping
           summary: "After-response bookkeeping tasks are being dropped ({{ $value | humanize }}/s)"
           description: |
             The shared after-response worker pool (usage-counter writes,
@@ -639,7 +639,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/scam-gate-fail-open.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_scam_gate_fail_open
           summary: "Scam-pricing gate is FAILING OPEN on {{ $labels.surface }} ({{ $value | humanize }} lookups/s serving unguarded)"
           description: |
             The scam-pricing gate could not read account_directory and
@@ -663,7 +663,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/directory-sync-unflagged.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_directory_sync_unflagged
           summary: "directory-sync cleared {{ $value }} scam-class tag(s) from {{ $labels.source }} — those issuers are priced again"
           description: |
             The most recent committed directory-sync un-flagged
@@ -696,7 +696,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/admin-audit-write-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_admin_audit_write_failing
           summary: "Admin audit trail has holes: {{ $value | humanize }} lost row(s) on {{ $labels.surface }}"
           description: |
             A privileged mutation on the `{{ $labels.surface }}` surface
@@ -726,7 +726,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/passkey-clone-warning.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_passkey_clone_warning
           summary: "Passkey clone warning: {{ $value | humanize }} sign-in(s) refused on a sign-counter regression"
           description: |
             A passkey sign-in presented a valid signature with a sign
@@ -753,7 +753,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/failed-auth-rate-high.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_failed_auth_rate_high
           summary: "Credentials rejected at {{ $value | humanize }}/s fleet-wide for 15 minutes"
           description: |
             The API has been rejecting presented credentials at more than
@@ -797,7 +797,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/login-code-lockout-table-growing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_login_code_lockout_table_growing
           summary: "login_code_lockouts is growing or its check is failing open ({{ $value | humanize }})"
           description: |
             Either `login_code_lockouts` has exceeded 10k rows — a table
@@ -810,7 +810,7 @@ groups:
             Neither is an outage. Both are silent: the fill ends at a
             disk-full page that names the wrong subsystem, and the
             fail-open ends at an account takeover with no trace.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/login-code-lockout-table-growing.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_login_code_lockout_table_growing
 
       # magic_link_tokens is keyed on an address an unauthenticated caller
       # chooses, so sustained growth is a remote table-fill. Same bound as
@@ -824,7 +824,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/auth-reaper-stalled.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_magic_link_token_table_growing
           summary: "magic_link_tokens has {{ $value | humanize }} rows (bound 10000)"
           description: |
             `magic_link_tokens` has stayed above 10k rows for 30+ minutes.
@@ -832,7 +832,7 @@ groups:
             unauthenticated, so sustained growth is a remote fill of a table
             holding email and requested_ip. The retention sweep is the only
             bound; it is either outpaced or failing.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/auth-reaper-stalled.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_magic_link_token_table_growing
 
       # ── Auth-reaper liveness (#368 M5) ─────────────────────────────────
       # The auth-table reapers (login_code_lockouts, magic_link_tokens,
@@ -856,7 +856,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/auth-reaper-stalled.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_auth_reaper_stalled
           summary: "{{ $labels.reaper }} auth reaper has not completed a sweep for {{ $value | humanizeDuration }}"
           description: |
             The {{ $labels.reaper }} reaper in the API binary last completed
@@ -867,7 +867,7 @@ groups:
             normally refreshes is FROZEN, not healthy. Check the API
             binary's log for the reaper's "sweep failed" / panic lines and
             whether the goroutine is stuck on a Postgres call.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/auth-reaper-stalled.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_auth_reaper_stalled
 
       # v0.21.4 background cache workers. The DEX TVL refresher
       # recomputes per-protocol TVL every 10 min; a failed protocol
@@ -886,7 +886,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-tvl-refresh-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_dex_tvl_refresh_failing
           summary: "DEX TVL snapshot refresher failing — TVL figures aging silently"
           description: |
             Every DEX TVL refresh in the last 15 min errored, sustained
@@ -918,7 +918,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-tvl-total-divergent.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_dex_tvl_total_divergent
           summary: "DEX TVL headline total is refusing a protocol — the published figure understates"
           description: |
             Every DEX TVL reconciliation in the last 30 min refused at
@@ -948,7 +948,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sdex-orderbook-maintain-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_sdex_orderbook_maintain_failing
           summary: "SDEX order-book maintenance failing (load, advance or verify errors 30+ min)"
           description: |
             The live order book's lake reads (initial load, the 60s
@@ -979,7 +979,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sdex-orderbook-maintain-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_sdex_orderbook_advance_held
           summary: "SDEX order-book cursor held below a lake hole for 30+ min (no errors, still stale)"
           description: |
             The order book's 60s Advance tick has made ZERO cursor progress
@@ -1006,7 +1006,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sdex-orderbook-maintain-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_sdex_orderbook_reload_failing
           summary: "SDEX order-book full load failing with no success for 2+ hours on {{ $labels.instance }}"
           description: |
             Every full-book load attempt on this instance for 2+ hours
@@ -1033,7 +1033,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sdex-orderbook-maintain-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_sdex_orderbook_crossed_book
           summary: "SDEX order book serving {{ $value }} crossed pair(s) for 30+ min"
           description: |
             The served /v1/sdex/orderbook book has at least one asset
@@ -1060,7 +1060,7 @@ groups:
           team: stellarindex
           component: api
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-probe-absent.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_ch_schema_probe_absent
           summary: "Explorer lake object {{ $labels.probe }} absent or empty on {{ $labels.instance }} for 30+ min"
           description: |
             The API's last answer from ClickHouse for the `{{ $labels.probe }}`

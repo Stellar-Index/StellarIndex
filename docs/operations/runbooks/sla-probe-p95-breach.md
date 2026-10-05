@@ -59,7 +59,7 @@ stellarindex-sla-probe -base-url https://api.stellarindex.io/v1 \
 
 ## Typical root causes (roughly in frequency order)
 
-Same as `api-latency.md` — the probe and the direct-traffic
+Same as `api.md#stellarindex_api_latency_p95_high` — the probe and the direct-traffic
 histograms see the same backend. The probe just adds:
 
 1. **Probe-host network path issue.** If only the probe is slow but
@@ -69,7 +69,7 @@ histograms see the same backend. The probe just adds:
 2. **Endpoint-specific slowness** — if `/v1/price` is fine but
    `/v1/oracle/latest` breaches, the cause is on that endpoint's
    path (e.g. SEP-40 contract read latency).
-3. Everything from `api-latency.md` ("Typical root causes").
+3. Everything from `api.md#stellarindex_api_latency_p95_high` ("Typical root causes").
 
 ## Mitigation
 
@@ -77,7 +77,7 @@ histograms see the same backend. The probe just adds:
       Quick diagnosis #2.
 - [ ] Step 2 — If probe-only: investigate the probe host's network
       path; this is a probe issue, not a real-impact alert.
-- [ ] Step 3 — If real: route to `api-latency.md` for the full
+- [ ] Step 3 — If real: route to `api.md#stellarindex_api_latency_p95_high` for the full
       latency-triage flow.
 - [ ] Verification: probe p95 returns under 200 ms for 30 min
       (2 consecutive passes — the alert clears with same `for`
@@ -92,7 +92,7 @@ histograms see the same backend. The probe just adds:
 
 ## Related
 
-- `api-latency.md` — the underlying latency-triage flow.
+- `api.md#stellarindex_api_latency_p95_high` — the underlying latency-triage flow.
 - `sla-probe-stale.md` — when the probe stops running entirely.
 
 ## Changelog

@@ -53,7 +53,7 @@ tests:
               component: archive
               alert_family: archive_completeness_stale
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-completeness-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-completeness.md#stellarindex_archive_completeness_stale
               summary: "archive-completeness verify hasn't completed cleanly in 1d 3h 0m 0s"
               description: |
                 Either the systemd timer isn't running, or every run since the
@@ -75,7 +75,7 @@ tests:
               component: archive
               alert_family: archive_completeness_stale
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-completeness-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-completeness.md#stellarindex_archive_completeness_critical_stale
               summary: "(R1 integrity-leader) archive-completeness verify stale > 48h — SEV-2"
               description: |
                 R1 is the integrity leader for the fleet (ADR-0016). 48h
@@ -114,7 +114,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-repair-source-degraded.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-completeness.md#stellarindex_archive_repair_source_degraded
               summary: "Source lobstr-v1 repair failure ratio > 10% over the last verify cycle"
               description: |
                 A specific archive source is failing > 10% of repair attempts

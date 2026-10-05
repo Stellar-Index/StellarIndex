@@ -1828,7 +1828,7 @@ shouldn't take down the API); this metric gives ops a quantitative
 signal that correlates with `redis` readyz turning red.
 
 Alert: `stellarindex_ratelimit_fail_open` →
-[ratelimit-fail-open](../../operations/runbooks/ratelimit-fail-open.md).
+[ratelimit-fail-open](../../operations/runbooks/api.md#stellarindex_ratelimit_fail_closed).
 
 ### `stellarindex_ratelimit_fail_closed_total`
 
@@ -1891,7 +1891,7 @@ trace was a `logger.Debug` line, below the API's production log
 level).
 
 Alert: `stellarindex_monthly_quota_fail_open` →
-[monthly-quota-fail-open](../../operations/runbooks/monthly-quota-fail-open.md).
+[monthly-quota-fail-open](../../operations/runbooks/api.md#stellarindex_monthly_quota_fail_closed).
 
 ### `stellarindex_monthly_quota_fail_closed_total`
 
@@ -1916,7 +1916,7 @@ worth a distinct signal. Pre-seeded at zero so "quiet" is
 distinguishable from "dead".
 
 Alert: `stellarindex_monthly_quota_fail_closed` (`> 0` for 2m, page) → runbook
-[monthly-quota-fail-open](../../operations/runbooks/monthly-quota-fail-open.md).
+[monthly-quota-fail-open](../../operations/runbooks/api.md#stellarindex_monthly_quota_fail_closed).
 
 ### `stellarindex_admin_audit_write_failures_total`
 
@@ -1951,7 +1951,7 @@ closes. All nine label values are pre-seeded at zero (C3-067,
 C3-056, audit-2026-07-23).
 
 Alert: `stellarindex_admin_audit_write_failing` →
-[admin-audit-write-failing](../../operations/runbooks/admin-audit-write-failing.md).
+[admin-audit-write-failing](../../operations/runbooks/api.md#stellarindex_admin_audit_write_failing).
 
 ### `stellarindex_passkey_login_refusals_total`
 
@@ -1966,7 +1966,7 @@ time. Each refusal also appends a `passkey.clone_warning` /
 credential. Both values are pre-seeded at zero.
 
 Alert: `stellarindex_passkey_clone_warning` (on `clone_warning` only) →
-[passkey-clone-warning](../../operations/runbooks/passkey-clone-warning.md).
+[passkey-clone-warning](../../operations/runbooks/api.md#stellarindex_passkey_clone_warning).
 
 ### `stellarindex_passkey_credential_changes_total`
 
@@ -1990,7 +1990,7 @@ at `api.failed_auth_rate_limit_per_min`. Server-side misconfiguration
 (503) is not counted. Both values are pre-seeded at zero.
 
 Alert: `stellarindex_failed_auth_rate_high` (on `rejected` only) →
-[failed-auth-rate-high](../../operations/runbooks/failed-auth-rate-high.md).
+[failed-auth-rate-high](../../operations/runbooks/api.md#stellarindex_failed_auth_rate_high).
 
 ### `stellarindex_admin_key_budget_clamps_total`
 
@@ -2298,7 +2298,7 @@ quiet because it is healthy must not look like a metric nobody emits,
 which is the exact silence this counter closes.
 
 Alert: `stellarindex_customer_webhook_fanout_failing` →
-[customer-webhook-fanout-failing](../../operations/runbooks/customer-webhook-fanout-failing.md).
+[customer-webhook-fanout-failing](../../operations/runbooks/aggregator.md#stellarindex_customer_webhook_fanout_failing).
 
 C3-023 (audit-2026-07-23).
 
@@ -2331,7 +2331,7 @@ shared pool instead; a saturated pool drops the task rather than ever
 blocking the request, and this counter is that drop's only signal.
 
 Alert: `stellarindex_after_response_tasks_dropping` →
-[after-response-tasks-dropping](../../operations/runbooks/after-response-tasks-dropping.md).
+[after-response-tasks-dropping](../../operations/runbooks/api.md#stellarindex_after_response_tasks_dropping).
 
 ### `stellarindex_usage_rollup_sweeps_total`
 
@@ -2682,7 +2682,7 @@ with recent failures, are deleted on any successful sign-in, and are
 swept once settled (48 h, live locks exempt).
 
 Alert: `stellarindex_login_code_lockout_table_growing` →
-[login-code-lockout-table-growing](../../operations/runbooks/login-code-lockout-table-growing.md).
+[login-code-lockout-table-growing](../../operations/runbooks/api.md#stellarindex_login_code_lockout_table_growing).
 
 ### `stellarindex_auth_reaper_last_sweep_unix`
 
@@ -2705,7 +2705,7 @@ timestamp is a dead reaper, not a quiet table.
 A disabled reaper (config-gated, never constructed) publishes no series.
 
 Alert: `stellarindex_auth_reaper_stalled` →
-[auth-reaper-stalled](../../operations/runbooks/auth-reaper-stalled.md).
+[auth-reaper-stalled](../../operations/runbooks/api.md#stellarindex_auth_reaper_stalled).
 
 ### `stellarindex_auth_reaper_interval_seconds`
 
@@ -2772,7 +2772,7 @@ Pre-seeded across all three ops.
 
 Alert: folded into
 `stellarindex_login_code_lockout_table_growing` (the `status_check` arm)
-→ [login-code-lockout-table-growing](../../operations/runbooks/login-code-lockout-table-growing.md).
+→ [login-code-lockout-table-growing](../../operations/runbooks/api.md#stellarindex_login_code_lockout_table_growing).
 
 ### `stellarindex_magic_link_token_rows`
 
@@ -3171,7 +3171,7 @@ this rises with request traffic. A cancelled client request is not
 counted.
 
 Alert: `stellarindex_scam_gate_fail_open` →
-[scam-gate-fail-open](../../operations/runbooks/scam-gate-fail-open.md).
+[scam-gate-fail-open](../../operations/runbooks/api.md#stellarindex_scam_gate_fail_open).
 
 ## Supply derivation (aggregator binary)
 
@@ -3830,7 +3830,7 @@ marker TTL elapsed). Steady-state rate trails
 `stellarindex_anomaly_freeze_engaged_total` by the freeze TTL plus
 the recovery-worker poll interval (default 60s). A persistent gap
 between the two indicates the recovery worker is broken — see the
-[freeze-recovery-stalled runbook](../../operations/runbooks/freeze-recovery-stalled.md).
+[freeze-recovery-stalled runbook](../../operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_recovery_stalled).
 
 ### `stellarindex_anomaly_freeze_ladder_rehydrated_total`
 
@@ -4664,7 +4664,7 @@ the object keeps that verdict until the API restarts, so an API started
 before the lake DDL stays at `0` indefinitely. Only answers move the
 gauge; the series appears when a probe is first answered. Alert:
 `stellarindex_ch_schema_probe_absent` (ticket). See
-runbooks/ch-schema-probe-absent.md.
+runbooks/api.md#stellarindex_ch_schema_probe_absent.
 
 ### `stellarindex_ch_schema_probe_unanswered_total`
 

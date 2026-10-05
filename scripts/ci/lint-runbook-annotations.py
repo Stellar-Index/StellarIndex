@@ -19,7 +19,10 @@ This check PARSES each rule and asserts, per alert:
   * a runbook_url that points at a local docs/operations/runbooks/*.md
     file resolves to a file that exists (subsumes the old §9 grep);
   * a `Runbook:` link in the description names the same local runbook
-    as `runbook_url`.
+    as `runbook_url`;
+  * a `#fragment` on that URL slugs to a heading on the target page
+    (outside code fences), so a renamed heading cannot silently drop the
+    responder at the top of the page.
 
 It FAILS if a runbook_url regresses back into `labels`. Pure-Python
 (PyYAML); mirrors lint-rule-structure.py so it runs anywhere verify.sh
@@ -29,6 +32,9 @@ import glob
 import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lint_doc_links import anchors_of, slug  # noqa: E402  (GitHub slug rules, shared)
 
 try:
     import yaml
@@ -140,6 +146,11 @@ for d in DIRS:
                 local = resolve_local_runbook(value)
                 if local is not None and not os.path.isfile(local):
                     err(path, name, f"runbook_url points to missing file: {local}")
+                elif local is not None and "#" in value:
+                    frag = value.split("#", 1)[1]
+                    if slug(frag) not in (anchors_of(local) or set()):
+                        err(path, name, f"runbook_url anchor '#{frag}' matches "
+                            f"no heading in {local}")
 
                 # Discord renders both links; a description that names a
                 # different runbook sends the responder to the wrong page.

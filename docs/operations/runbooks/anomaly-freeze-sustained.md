@@ -60,7 +60,7 @@ Key signals:
   `stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml -asset <A> -quote <Q> -reason "..." -write`
 - [ ] Step 2 — if references disagree → market really is distressed. An escalated freeze will not self-clear, so decide explicitly: keep it held and update the status page (sev-status-page-update.md), re-checking references until the pair is safe to unfreeze by hand.
 - [ ] Step 3 — if NO reference is available either (e.g. CoinGecko 429) → the divergence worker is the upstream issue; jump to `divergence.md#stellarindex_divergence_refresh_error_dominant`.
-- [ ] Verification: an escalated freeze NEVER auto-recovers — its hold slides forward every tick (`internal/aggregate/freeze/lifecycle.go`) and the marker TTL tracks the remaining hold, so `recovered_at` is stamped only by `freeze-unfreeze -write` (which clears the marker and closes the row). After unfreezing confirm `redis-cli EXISTS freeze:<asset>:<quote>` = 0, the `freeze_events` row has `recovered_at` set, and `/v1/price` no longer carries `flags.frozen`. The 60 s `internal/aggregate/freeze.Recovery` sweep applies to NON-escalated freezes whose marker lapsed (it also consults the durable ladder and leaves a row open while the hold is live); if a non-escalated row stays open past its marker TTL, see [freeze-recovery-stalled](freeze-recovery-stalled.md).
+- [ ] Verification: an escalated freeze NEVER auto-recovers — its hold slides forward every tick (`internal/aggregate/freeze/lifecycle.go`) and the marker TTL tracks the remaining hold, so `recovered_at` is stamped only by `freeze-unfreeze -write` (which clears the marker and closes the row). After unfreezing confirm `redis-cli EXISTS freeze:<asset>:<quote>` = 0, the `freeze_events` row has `recovered_at` set, and `/v1/price` no longer carries `flags.frozen`. The 60 s `internal/aggregate/freeze.Recovery` sweep applies to NON-escalated freezes whose marker lapsed (it also consults the durable ladder and leaves a row open while the hold is live); if a non-escalated row stays open past its marker TTL, see [freeze-recovery-stalled](anomaly.md#stellarindex_anomaly_freeze_recovery_stalled).
 
 ## Root cause analysis
 
@@ -77,10 +77,10 @@ Capture for postmortem:
 
 ## Related
 
-- `anomaly-freeze-engaged.md` — the per-tick alert; this runbook covers the escalated/sustained variant.
+- `anomaly.md#stellarindex_anomaly_freeze_engaged` — the per-tick alert; this runbook covers the escalated/sustained variant.
 - `stellarindex_anomaly_freeze_escalated` (`configs/prometheus/rules.r1/freeze-lifecycle.yml`) — the single P1 per escalation; its `runbook_url` and description both link here (`scripts/ci/lint-runbook-annotations.py` fails a description link that disagrees with `runbook_url`).
-- `freeze-recovery-stalled.md` — a non-escalated durable row that outlives its marker.
-- `aggregator-outlier-storm.md` — adjacent symptom when the σ-filter goes wide.
+- `anomaly.md#stellarindex_anomaly_freeze_recovery_stalled` — a non-escalated durable row that outlives its marker.
+- `aggregator.md#stellarindex_aggregator_outlier_storm` — adjacent symptom when the σ-filter goes wide.
 - `divergence.md#stellarindex_divergence_refresh_error_dominant` — upstream when references can't be fetched.
 - ADR-0019 — anomaly response + confidence scoring + the extension ladder.
 - F-1228 + F-1229 (audit-2026-05-12) — closed: `freeze_events.frozen_value` is written verbatim (0 only on a first-tick freeze with no prior bucket); `MarkRecovered` is called by `freeze.Recovery` and by `freeze-unfreeze`.

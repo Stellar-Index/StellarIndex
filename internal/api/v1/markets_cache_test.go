@@ -469,7 +469,7 @@ func TestNoDanglingPR1185Citation(t *testing.T) {
 	const stale = "#1185"
 	root := repoRoot(t)
 	files := []string{
-		filepath.Join(root, "docs", "operations", "runbooks", "cache-miss-rate-high.md"),
+		filepath.Join(root, "docs", "operations", "runbooks", "api.md"),
 		filepath.Join(root, "configs", "prometheus", "rules.r1", "api.yml"),
 	}
 	for _, f := range files {
@@ -494,7 +494,7 @@ func TestNoDanglingPR1195Citation(t *testing.T) {
 	const stale = "#1195"
 	root := repoRoot(t)
 	files := []string{
-		filepath.Join(root, "docs", "operations", "runbooks", "cache-miss-rate-high.md"),
+		filepath.Join(root, "docs", "operations", "runbooks", "api.md"),
 		filepath.Join(root, "configs", "prometheus", "rules.r1", "api.yml"),
 		filepath.Join(root, "CHANGELOG.md"),
 	}
@@ -515,7 +515,7 @@ func TestNoDanglingPR1194Citation(t *testing.T) {
 	const stale = "#1194"
 	root := repoRoot(t)
 	files := []string{
-		filepath.Join(root, "docs", "operations", "runbooks", "cache-miss-rate-high.md"),
+		filepath.Join(root, "docs", "operations", "runbooks", "api.md"),
 		filepath.Join(root, "configs", "prometheus", "rules.r1", "api.yml"),
 		filepath.Join(root, "CHANGELOG.md"),
 	}

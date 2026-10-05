@@ -260,10 +260,10 @@ and carries state forward:
 
 | Alert | Condition | Severity | Runbook |
 |---|---|---|---|
-| `stellarindex_archive_files_missing` | `archive_files_missing > 0` for 4h | ticket | [archive-files-missing](runbooks/archive-files-missing.md) |
-| `stellarindex_archive_completeness_stale` | last success > 26h, for 5m | ticket | [archive-completeness-stale](runbooks/archive-completeness-stale.md) |
-| `stellarindex_archive_completeness_critical_stale` | last success > 48h, for 5m | page | [archive-completeness-stale](runbooks/archive-completeness-stale.md) |
-| `stellarindex_archive_repair_source_degraded` | per source `increase(failures[25h]) / increase(attempts[25h]) > 0.10`, for 30m | informational | [archive-repair-source-degraded](runbooks/archive-repair-source-degraded.md) |
+| `stellarindex_archive_files_missing` | `archive_files_missing > 0` for 4h | ticket | [archive-files-missing](runbooks/archive-completeness.md#stellarindex_archive_files_missing) |
+| `stellarindex_archive_completeness_stale` | last success > 26h, for 5m | ticket | [archive-completeness-stale](runbooks/archive-completeness.md#stellarindex_archive_completeness_stale) |
+| `stellarindex_archive_completeness_critical_stale` | last success > 48h, for 5m | page | [archive-completeness-stale](runbooks/archive-completeness.md#stellarindex_archive_completeness_stale) |
+| `stellarindex_archive_repair_source_degraded` | per source `increase(failures[25h]) / increase(attempts[25h]) > 0.10`, for 30m | informational | [archive-repair-source-degraded](runbooks/archive-completeness.md#stellarindex_archive_repair_source_degraded) |
 
 ## Status-page integration (planned)
 

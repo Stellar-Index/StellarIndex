@@ -301,7 +301,7 @@ Operators see (via Prometheus + alertmanager):
   `/v1/price` response's `confidence_factors` field, not Prometheus
 - P2 alert "anomaly freeze engaged on USTRY-G..." fires within 1
   bucket of trip
-- Runbook `anomaly-freeze-engaged.md` walks through:
+- Runbook `anomaly.md#stellarindex_anomaly_freeze_engaged` walks through:
   - "Is this a real market event or manipulation?"
   - Confirm freeze (do nothing) vs override (manual unfreeze)
   - Cross-reference checks (CoinGecko, CMC, Reflector — all should
@@ -506,7 +506,7 @@ canonical case.
 
 ### Layer 8 — Decoder + WASM-version audit gating (default, shipped)
 
-Per `docs/architecture/contract-schema-evolution.md`, the
+Per `docs/architecture/ingest-pipeline.md#contract-schema-evolution`, the
 `BackfillSafe` flag in `internal/sources/external/registry.go`
 gates which Soroban contract WASM versions we trust for backfill.
 A new WASM upgrade triggers the per-WASM-hash audit procedure
@@ -584,7 +584,7 @@ list).
   thin assets that multi-source consensus can't.
 - [`docs/architecture/aggregation-plan.md`](aggregation-plan.md) —
   the policy chain underlying VWAP computation.
-- [`docs/operations/runbooks/aggregator-outlier-storm.md`](../operations/runbooks/aggregator-outlier-storm.md) —
+- [`docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_storm`](../operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_storm) —
   the runbook that fires on adversarial outlier patterns.
 - [`docs/operations/runbooks/divergence.md`](../operations/runbooks/divergence.md) —
   the runbook that fires on cross-reference divergence.

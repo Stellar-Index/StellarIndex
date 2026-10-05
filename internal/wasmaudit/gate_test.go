@@ -214,6 +214,24 @@ func TestGate_ProtocolContractsAdmittedContractIsChecked(t *testing.T) {
 	}
 }
 
+// backfill-router replays soroswap-router: an upgrade of the router to a hash
+// the manifest does not attest refuses any range it is active in.
+func TestGate_SoroswapRouterUnauditedHashRefused(t *testing.T) {
+	m := mustLoad(t)
+	audited := hashFor(t, m, soroswap_router.SourceName)
+	h := &fakeHistory{byContract: map[string][]clickhouse.ContractCodeVersion{
+		soroswap_router.MainnetRouter: {v(50_746_272, audited), v(60_000_000, hB)},
+	}}
+	src := []string{soroswap_router.SourceName}
+	err := Gate(context.Background(), Deps{}, h, m, src, 59_000_000, 61_000_000)
+	if err == nil || !strings.Contains(err.Error(), hB) || !strings.Contains(err.Error(), soroswap_router.MainnetRouter) {
+		t.Fatalf("err = %v, want refusal naming the router and %s", err, hB)
+	}
+	if err := Gate(context.Background(), Deps{}, h, m, src, 55_000_000, 59_999_999); err != nil {
+		t.Fatalf("range on the audited hash only: %v", err)
+	}
+}
+
 func TestGateReplay_UnreachableLakeRefuses(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

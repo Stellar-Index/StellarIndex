@@ -29,7 +29,7 @@ response.
 | --- | --- | --- | --- |
 | [sev1-timescale-primary-failover](scenarios/sev1-timescale-primary-failover.md) | storage, disk-full | `timescale-primary-down.md` | yes (single node) |
 | [sev1-patroni-failover](scenarios/sev1-patroni-failover.md) | storage, Patroni failover | `timescale-primary-down.md`, `replica-lag.md` | no: unvalidated draft |
-| [sev1-anomaly-freeze-stuck](scenarios/sev1-anomaly-freeze-stuck.md) | aggregator | `anomaly-freeze-engaged.md` | yes |
+| [sev1-anomaly-freeze-stuck](scenarios/sev1-anomaly-freeze-stuck.md) | aggregator | `anomaly.md#stellarindex_anomaly_freeze_engaged` | yes |
 | [sev2-source-decoder-regression](scenarios/sev2-source-decoder-regression.md) | ingest | `decode-errors.md` | yes |
 | [sev2-redis-sentinel-failover](scenarios/sev2-redis-sentinel-failover.md) | cache, master swap | `cache.md` | no: role exists (ADR-0024), not deployed |
 
@@ -90,5 +90,5 @@ postmortem ([sev-playbook.md §6](../sev-playbook.md)), shorter.
 ## References
 
 [sev-playbook.md](../sev-playbook.md) (the procedure drills exercise);
-[Coverage matrix #20](../../architecture/coverage-matrix.md);
+[Coverage matrix F3.5–F3.6](../../architecture/coverage-matrix.md);
 [SRE workbook, postmortem culture](https://sre.google/workbook/postmortem-culture/).

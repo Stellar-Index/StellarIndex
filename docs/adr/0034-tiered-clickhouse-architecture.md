@@ -39,4 +39,4 @@ Route data by access pattern.
 
 ## Evidence
 
-`deploy/clickhouse/tier1_schema.sql`, `internal/storage/clickhouse/`, `internal/config/config.go` (`ClickHouseLiveSink`, `ClickHouseProjectorSource`), `docs/architecture/clickhouse-migration-plan.md`.
+`deploy/clickhouse/tier1_schema.sql`, `internal/storage/clickhouse/`, `internal/config/config.go` (`ClickHouseLiveSink`, `ClickHouseProjectorSource`), `docs/architecture/storage-considerations.md`.

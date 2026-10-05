@@ -104,7 +104,7 @@ func FuzzSEP41Amount(f *testing.F) {
 // Map { amount: i128, to_muxed_id: String }. Field ORDER is deliberately
 // amount-first here and the sibling helper in the golden test puts
 // to_muxed_id first, because the decode is by field NAME
-// (docs/architecture/contract-schema-evolution.md) and must not depend on
+// (docs/architecture/ingest-pipeline.md#contract-schema-evolution) and must not depend on
 // position.
 func fuzzCAP67Body(t *testing.T, parts xdr.Int128Parts) xdr.ScVal {
 	t.Helper()

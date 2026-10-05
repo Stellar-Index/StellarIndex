@@ -157,7 +157,7 @@ Full evidence for each: [docs/architecture/domain-traps.md](docs/architecture/do
 
 | | |
 |---|---|
-| [docs/architecture/repo-map.md](docs/architecture/repo-map.md) | What lives in which directory |
+| [docs/architecture/overview.md](docs/architecture/overview.md) | The system, its flows, and what lives in which directory |
 | [docs/architecture/domain-traps.md](docs/architecture/domain-traps.md) | The evidence behind the domain rules above |
 | [docs/contributing/task-recipes.md](docs/contributing/task-recipes.md) | "Add a source", "add an endpoint", "recover from disaster" |
 | [docs/contributing/procedures/](docs/contributing/procedures/) | Nine step-by-step procedures with gate checklists |

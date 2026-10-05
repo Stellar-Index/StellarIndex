@@ -18,6 +18,8 @@ Aggregator metrics are on `localhost:9465`, indexer metrics on `localhost:9464`.
 
 To answer "is the flag on, and why": `redis-cli GET 'div:<base>/<quote>'` and read `warning_fired`, `success_count`, `agreement_count`, `divergence_pct`.
 
+Per-pair detail is also served by `GET /v1/divergence` (the board) and `GET /v1/divergence/series` (history).
+
 `divergence_observations` rows are NOT the flag. The worker writes one row per answering reference per refresh, `status = 'firing'` whenever that single reference's `|delta_pct|` exceeds the threshold, with no quorum, median or debounce. Firing rows with the flag off are normal; never infer the flag from the rows. There is one worker threshold; the 5 % / 10 % tiers are the Prometheus rules on `stellarindex_divergence_max_abs_fraction`.
 
 Reference set (`divergence_observations.reference`: migration 0019, widened by 0148, mirrored in `internal/api/v1/anomalies.go::divergenceReferences`): `chainlink`, `coingecko`, `reflector-cex`, `reflector-fx`, `reflector-dex`, `redstone`, `band`, `synthetic-usd-cross` (derived XLM/USD × USD/fiat cross so EUR/GBP-quoted pairs reach the trust floor). CoinMarketCap is NOT a divergence reference (there is only a disabled-by-default venue poller, `internal/sources/external/coinmarketcap`).
@@ -41,6 +43,8 @@ Refresh cadence: the orchestrator calls `divergence.Service.RefreshPair` per con
 - [`stellarindex_chainlink_feed_decimals_verify_failed`](#stellarindex_chainlink_feed_decimals_verify_failed)
 
 ## stellarindex_price_divergence_warning
+
+MTTR 15 min.
 
 Trips: `stellarindex_divergence_max_abs_fraction > 0.05`, `for: 10m`, `severity: informational`. Shared with `_critical`: the gauge is the worst `|ours - ref| / ref` per `{reference}` (bounded, no per-asset label); `stellarindex_divergence_pairs_over{threshold="5pct"}` / `{threshold="10pct"}` counts the pairs and `divergence_observations` names them. The gauge compares a shortest-window VWAP to instantaneous quotes, so `for: 10m` absorbs the lag on a fast move. Normal during rapid market moves.
 
@@ -80,9 +84,13 @@ Fix: eyeball the order of magnitude, identify the contributing sources and any s
 
 ## stellarindex_price_divergence_critical
 
+MTTR 15 min.
+
 Trips: `stellarindex_divergence_max_abs_fraction > 0.10`, `for: 10m`, `severity: ticket`. Same gauge, diagnosis and fix as [`stellarindex_price_divergence_warning`](#stellarindex_price_divergence_warning); > 10 % is usually a bad ingest (wrong decimals, a stale source contributing) rather than a market move, so go straight to causes 1-2 there.
 
 ## stellarindex_oracle_stream_rows_unparsed
+
+MTTR 17 min.
 
 Trips (`for: 10m`, `severity: ticket`):
 
@@ -117,6 +125,8 @@ Fix:
 A burst right after a deliberate schema/namespace migration is expected; if it does not stop, the rewrite missed rows. Related: [`oracle-unknown-symbols.md`](oracle-unknown-symbols.md) (a symbol that parses but maps to no canonical asset).
 
 ## stellarindex_oracle_stale
+
+MTTR 17 min.
 
 Trips (`for: 2m`, `severity: ticket`; a bare comparison, keep it bare):
 
@@ -182,6 +192,8 @@ in `/etc/stellarindex.toml` (codified in `configs/ansible/roles/archival-node/te
 
 ## stellarindex_divergence_refresh_error_dominant
 
+MTTR 17 min.
+
 Trips (`for: 30m`, `severity: ticket`; the `and` clause avoids firing at cold start when both rates are 0):
 
 ```promql
@@ -213,7 +225,7 @@ grep CHAINLINK_RPC_URL /etc/default/stellarindex
 
 | Underlying error | Cause | Fix |
 | --- | --- | --- |
-| HTTP 429 from CoinGecko | The anonymous tier allows ~30 calls/DAY; the reference batches ALL pairs into ONE `/simple/price` call per pass (cached 25 s, `internal/divergence/coingecko.go`) = ~288 calls/day at the 300 s interval. The divergence PRICE reference has NO API-key plumbing (`COINGECKO_API_KEY` reaches only the supply cross-check, `COINGECKO_DEMO_API_KEY` only the CEX poller), so a paid key does NOT help | Lengthen `[aggregate].divergence_min_interval_seconds` or disable the CG reference |
+| HTTP 429 from CoinGecko | The anonymous tier allows ~30 calls/DAY; the reference batches ALL pairs into ONE `/simple/price` call per pass (cached 25 s, `internal/divergence/coingecko.go`) = ~288 calls/day at the 300 s interval: over the anonymous ceiling but well inside a demo key's ~30/min / 10K-day quota. The divergence PRICE reference has NO API-key plumbing (`COINGECKO_API_KEY` reaches only the supply cross-check, `COINGECKO_DEMO_API_KEY` only the CEX poller), so a paid key does NOT help | Lengthen `[aggregate].divergence_min_interval_seconds` or disable the CG reference |
 | HTTP 5xx from CoinGecko | Upstream degraded, self-recovers in 5-30 min | Wait; alert auto-resolves |
 | Chainlink RPC timeout | Provider issue. TOML default `rpc_url` is `cloudflare-eth.com`; r1's env injects an Alchemy URL (key embedded in the path: treat as a secret) | Check/rotate `CHAINLINK_RPC_URL` in `/etc/default/stellarindex` or disable Chainlink temporarily |
 | Redis cache write failed | BGSAVE blocked on a full disk or Redis OOM (r1 runs one local `redis-server`: no Sentinel, no failover to wait out) | [`redis-write-blocked-disk-full.md`](redis-write-blocked-disk-full.md) |
@@ -222,6 +234,8 @@ grep CHAINLINK_RPC_URL /etc/default/stellarindex
 Fix: identify the failing reference from the logs and the `divergence refresher wired` line; probe it manually to confirm it is upstream; if recovery is slow, set the relevant `enabled = false` under `[divergence]` and restart the aggregator (the remaining references, including the zero-quota oracle ones, keep feeding the comparison). Verify `rate(stellarindex_divergence_refresh_total{outcome="ok"}[5m])` recovers above the `refresh_error` rate; the alert resolves after 30 min sustained. A fire shortly after a restart is real (refreshes are running and failing). Editing `[divergence]` on a running aggregator causes one pass of `refresh_error`; ignore short blips. For the postmortem capture the failing reference, the error class, FIRING->RESOLVED duration, and whether `flags.divergence_warning` actually went stale for consumers. See `docs/architecture/aggregation-plan.md` and ADR-0019 (divergence in the confidence score).
 
 ## stellarindex_divergence_no_reference
+
+MTTR 17 min.
 
 Trips (`for: 30m`, `severity: ticket`):
 
@@ -258,6 +272,8 @@ False positives: cold start (masked by `for: 30m`); a pair no configured referen
 
 ## stellarindex_divergence_no_ok_outcomes
 
+MTTR 17 min.
+
 Trips (`for: 15m`, `severity: ticket`; gated on the refresher being wired, so an operator who disabled every reference is not paged):
 
 ```promql
@@ -277,7 +293,7 @@ curl -fs http://localhost:9465/metrics | grep '^stellarindex_anomaly_freeze_acti
 journalctl -u stellarindex-aggregator --since '-1h' | grep -E 'divergence refresh (panicked|: no vwap)' | tail
 ```
 
-- Every pair frozen (ADR-0019): `no_vwap` climbs at full rate. The freeze is the incident; follow the freeze runbook ([`anomaly-freeze-engaged.md`](anomaly-freeze-engaged.md)); divergence recovers once a fresh VWAP is cached.
+- Every pair frozen (ADR-0019): `no_vwap` climbs at full rate. The freeze is the incident; follow the freeze runbook ([`anomaly.md#stellarindex_anomaly_freeze_engaged`](anomaly.md#stellarindex_anomaly_freeze_engaged)); divergence recovers once a fresh VWAP is cached.
 - No VWAP in cache with no freeze: `min_usd_volume` raised past real volume, or the VWAP writer regressed. Restore the `[aggregate]` volume floor or fix the writer; confirm `stellarindex_aggregator_vwap_writes_total` climbs.
 - Pass dies before counting (every outcome flat): look for `divergence refresh panicked`; capture the stack and restart the aggregator.
 - Verify `ok` climbs; resolves on the next evaluation.
@@ -285,6 +301,8 @@ journalctl -u stellarindex-aggregator --since '-1h' | grep -E 'divergence refres
 False positive: `divergence_min_interval_seconds` above 30 min makes the pass run less often than the 30 m window, so `ok` can read 0 between passes; the default (300 s) never trips it.
 
 ## stellarindex_divergence_reference_failing
+
+MTTR 17 min.
 
 Trips (`for: 30m`, `severity: ticket`):
 
@@ -305,6 +323,8 @@ sum by (reference, outcome) (rate(stellarindex_divergence_reference_total[15m]))
 
 ## stellarindex_divergence_pair_below_quorum
 
+MTTR 17 min.
+
 Trips (`for: 30m`, `severity: ticket`; `max_over_time` spans ~5 refreshes at the default cadence so one flaky answer does not trip it):
 
 ```promql
@@ -322,13 +342,15 @@ Find the dropped reference with `stellarindex_divergence_reference_total` by `ou
 
 ## stellarindex_chainlink_feed_decimals_mismatch
 
+MTTR 17 min.
+
 Trips (`for: 5m`, `severity: ticket`):
 
 ```promql
 sum by (consumer, pair) (increase(stellarindex_chainlink_feed_decimals_mismatch_total[15m])) > 0
 ```
 
-Both Chainlink readers (`internal/divergence` cross-check, `internal/sources/external/chainlink` ingest poller) verify a feed's configured `decimals` against the AggregatorV3 proxy's on-chain `decimals()`, else every reading would be scaled by `10^(configured-actual)` silently. Mismatch fails CLOSED: the `{consumer, pair}` feed is refused (`ErrPriceUnavailable`) until they agree, producing no divergence cross-check or oracle row for that pair; each refused reading increments `stellarindex_chainlink_feed_decimals_mismatch_total{consumer,pair}`. Both decimals counters are pre-seeded to zero per configured feed (`NewChainlinkReference`, `NewPoller`), so absent and healthy both read as zero.
+Both Chainlink readers (`internal/divergence` cross-check, `internal/sources/external/chainlink` ingest poller) verify a feed's configured `decimals` against the AggregatorV3 proxy's on-chain `decimals()`, else every reading would be scaled by `10^(configured-actual)` silently: a permanent false divergence, or `10^(d-8)`-off oracle rows (`d` = the configured decimals; the unit is 8 decimals), with no signal at all. Mismatch fails CLOSED: the `{consumer, pair}` feed is refused (`ErrPriceUnavailable`) until they agree, producing no divergence cross-check or oracle row for that pair; each refused reading increments `stellarindex_chainlink_feed_decimals_mismatch_total{consumer,pair}`. Both decimals counters are pre-seeded to zero per configured feed (`NewChainlinkReference`, `NewPoller`), so absent and healthy both read as zero.
 
 ```sh
 # Which consumer/pair is affected?
@@ -343,6 +365,8 @@ curl -s -X POST "$CHAINLINK_RPC_URL" -H 'content-type: application/json' \
 Fix: set the operator's `decimals` for the pair to the on-chain value, or omit the field to adopt `decimals()` automatically; restart the affected process. Verify the counter's rate returns to zero. Code: `internal/divergence/chainlink_decimals.go`, `internal/sources/external/chainlink/decimals.go`; metric definitions in `docs/reference/metrics/README.md`.
 
 ## stellarindex_chainlink_feed_decimals_verify_failed
+
+MTTR 17 min.
 
 Trips (`for: 30m`, `severity: ticket`):
 

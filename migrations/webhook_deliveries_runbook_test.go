@@ -60,7 +60,7 @@ func webhookDeliveriesColumns(t *testing.T) map[string]bool {
 // of the `_mark_errors` diagnostic query in the runbook.
 func webhookDeliveriesMarkErrorsQuery(t *testing.T) string {
 	t.Helper()
-	path := "../docs/operations/runbooks/customer-webhook-delivery-failing.md"
+	path := "../docs/operations/runbooks/api.md"
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)

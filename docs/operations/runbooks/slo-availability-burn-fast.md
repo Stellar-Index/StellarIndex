@@ -23,7 +23,7 @@ Multi-window detection: `stellarindex:api_error_ratio:5m` AND
 `stellarindex:api_error_ratio:1h` (slo `api_availability_3_nines`) both
 **> 14.4×** the budget (14.4 × 0.001 = **1.44 %** 5xx), sustained `for: 2m`.
 
-Note the alert's `runbook_url` annotation points at `api-5xx.md`, not this
+Note the alert's `runbook_url` annotation points at `api.md#stellarindex_api_error_rate_critical`, not this
 file — a responder following the page link lands there first; this runbook is
 the family-specific supplement.
 
@@ -89,14 +89,14 @@ For postmortem:
   the local API. With no min-traffic guard on the availability rules, at
   < ~5 req/s real traffic a few probe 5xx can exceed 1.44 %. Check the total
   request rate (Quick diagnosis, first block) before mitigating.
-- **Brief upstream blips** — Cloudflare → R1 has periodic single-region network interruptions; if the burn was < 60 s and recovered without intervention, it's the network, not us. The `for: 2m` window catches most cases. (Caddy-generated 502/503 when the API is unreachable are not in `http_requests_total` and don't count against this SLO — `api-down.md` covers that case.)
+- **Brief upstream blips** — Cloudflare → R1 has periodic single-region network interruptions; if the burn was < 60 s and recovered without intervention, it's the network, not us. The `for: 2m` window catches most cases. (Caddy-generated 502/503 when the API is unreachable are not in `http_requests_total` and don't count against this SLO — `api.md#stellarindex_api_down` covers that case.)
 - **Weekly k6 load test** — not a candidate, for two reasons now. `k6-weekly.yml` no longer carries a `schedule:` trigger at all (retired 2026-09-15; the Sunday slot belongs to `sla-proof-weekly.yml`, which only READS Prometheus and drives no load), and it targets **staging only** even on dispatch. It cannot trip this alert on r1. Don't attribute an r1 burn to it.
 
 ## Related
 
 - `slo-availability-burn-medium.md` / `slo-availability-burn-slow.md` — same family, slower burn.
-- `api-down.md` — when scrape `up{job="stellarindex-api"} == 0`.
-- `api-5xx.md` (the alert's `runbook_url` target) / `api-latency.md` — adjacent route-level alerts.
+- `api.md#stellarindex_api_down` — when scrape `up{job="stellarindex-api"} == 0`.
+- `api.md#stellarindex_api_error_rate_critical` (the alert's `runbook_url` target) / `api.md#stellarindex_api_latency_p95_high` — adjacent route-level alerts.
 - `wire-paging.md` — confirm the `chat-page` receiver actually reaches a human.
 - ADR-0008 — HA topology + availability target (multi-region decision amended by ADR-0050 / `docs/architecture/multi-region-ha.md`).
 - ADR-0009 — latency budget (separate from availability budget).
@@ -112,7 +112,7 @@ For postmortem:
 - 2026-08-29 — re-verified against HEAD: SLA is 99.99 % (not 99.9 %); budget
   arithmetic (5 %/hour, whole budget ≈ 2 days — not "gone in ~1 hour");
   rule path → r1 overlay primary; no-min-traffic-guard note + synthetic-probe
-  false positive; `runbook_url` → api-5xx.md note; access log has no `.err`
+  false positive; `runbook_url` → api.md#stellarindex_api_error_rate_critical note; access log has no `.err`
   field — diagnosis pipelines rewritten (`-o cat`, `[.path,.request_id,.status]`);
   unit names (`postgresql@15-main`, `redis-server`, `caddy`); pprof commands
   dropped in both places (no pprof endpoint exists in any binary) → runtime

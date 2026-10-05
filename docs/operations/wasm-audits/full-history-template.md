@@ -117,7 +117,7 @@ recorded WAT SHA. This is v3 follow-up scope.
 ## See also
 
 - Schema-evolution stance:
-  [`docs/architecture/contract-schema-evolution.md`](../../architecture/contract-schema-evolution.md)
+  [`docs/architecture/ingest-pipeline.md#contract-schema-evolution`](../../architecture/ingest-pipeline.md#contract-schema-evolution)
 - Per-source v1 audits: this directory's `<source>.md` files.
 - Subcommand:
   `cmd/stellarindex-ops/wasm_extract.go` (`extract-wasm-from-galexie`).

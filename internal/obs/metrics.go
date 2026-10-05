@@ -1044,14 +1044,14 @@ var IngestGapDetectorLastSuccessUnix = prometheus.NewGaugeVec(
 // ledgerstream tip even when the CH lake watermark clamps the scan. ADR-0032.
 //
 // Steady-state value is 0-few-ledgers when the projector is
-// keeping up. A sustained > 1000 value means the projector is
+// keeping up. A sustained > 256 value means the projector is
 // falling behind (decoder error storm, downstream sink saturated,
 // or projector stopped). Paging alert
 // `stellarindex_projector_lag_high` fires on sustained drift.
 var ProjectorLagLedgers = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_projector_lag_ledgers",
-		Help: "Per-source projector lag in ledgers (ledgerstream tip - last_projected). 0 = caught up. Sustained > 1000 = falling behind.",
+		Help: "Per-source projector lag in ledgers (ledgerstream tip - last_projected). 0 = caught up. Sustained > 256 = falling behind.",
 	},
 	[]string{"source"},
 )

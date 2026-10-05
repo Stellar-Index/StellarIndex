@@ -16,7 +16,7 @@ ssh root@136.243.90.96 "systemctl status redis-server --no-pager | head -15"
 ssh root@136.243.90.96 "journalctl -u redis-server -n 100 --no-pager"
 ```
 
-Redis loss costs cache warmth, not data: `/v1/price` entries re-derive from Timescale; rate-limit counters (~1 min TTL) reset; API keys and SEP-10 sessions are backed by Timescale (`internal/auth/`, `internal/platform/`). Related: `redis-write-blocked-disk-full.md` (`stellarindex_redis_writes_blocked`, MISCONF bgsave failure), `api-latency.md`, `docs/adr/0007-redis-cache-schema.md`.
+Redis loss costs cache warmth, not data: `/v1/price` entries re-derive from Timescale; rate-limit counters (~1 min TTL) reset; API keys and SEP-10 sessions are backed by Timescale (`internal/auth/`, `internal/platform/`). Related: `redis-write-blocked-disk-full.md` (`stellarindex_redis_writes_blocked`, MISCONF bgsave failure), `api.md#stellarindex_api_latency_p95_high`, `docs/adr/0007-redis-cache-schema.md`.
 
 ## At a glance
 
@@ -84,7 +84,7 @@ ssh root@136.243.90.96 'redis-cli --memkeys'    # redis-cli 6.0+; one big key or
 
 Root causes:
 
-1. **Legitimate growth** (steady climb over days/weeks; evictions grow with it). Raise the cap: r1's is `maxmemory {{ redis_maxmemory | default('1gb') }}` written to `/etc/redis/redis.conf` by `configs/ansible/roles/archival-node/tasks/15-log-discipline.yml` (tag `redis`). Live: `CONFIG SET maxmemory <new>` (zero-downtime with host headroom), then persist by bumping `redis_maxmemory` in the inventory and re-applying the archival-node role's `redis` tag; a hand-only change WILL page on the weekly drift check. The `redis-sentinel` role's `redis.conf.j2` is unapplied on r1; editing it changes nothing there.
+1. **Legitimate growth** (steady climb over days/weeks; evictions grow with it). Scale up `maxmemory` (host headroom) or scale out (shard). Raise the cap: r1's is `maxmemory {{ redis_maxmemory | default('1gb') }}` written to `/etc/redis/redis.conf` by `configs/ansible/roles/archival-node/tasks/15-log-discipline.yml` (tag `redis`). Live: `CONFIG SET maxmemory <new>` (zero-downtime with host headroom), then persist by bumping `redis_maxmemory` in the inventory and re-applying the archival-node role's `redis` tag; a hand-only change WILL page on the weekly drift check. The `redis-sentinel` role's `redis.conf.j2` is unapplied on r1; editing it changes nothing there.
 2. **Key explosion** (a handler writes per-request keys without TTL or with long TTLs). `info keyspace` shows a `dbN:keys=...` count far above distinct assets × 2 (price per pair + sep1 resolver per issuer + rate-limit counter per API key). Find the writer (recent PR), add TTL + cap, deploy. Do NOT `FLUSHDB` first: the bug refills it.
 3. **Redis used as queue/list.** `--memkeys`/`--bigkeys` shows one stream/list dominating. Cap with `MAXLEN ~`, truncate, or move the workload. Delete a single big key with `UNLINK <key>` (non-blocking; `DEL` blocks).
 4. **Bloated rate-limit counters.** The shipped limiter is a fixed-window INCR+EXPIRE counter (`internal/ratelimit/`; one small integer per subject per window; not a token bucket or sliding log). Keys of ~KB under the rate-limit prefix mean someone replaced it: revert to fixed-window INCR+EXPIRE.
@@ -110,7 +110,7 @@ False positives: post-deploy spike when a new cache namespace warms (should not 
 
 ## stellarindex_redis_replication_broken
 
-- **Trips (the trees DIFFER by design):** `deploy/monitoring/rules/cache.yml`: `redis_connected_slaves < 2`, `for: 2m`, `severity: ticket` (P2), against the ADR-0024 1-primary-2-replica topology. `configs/prometheus/rules.r1/cache.yml`: `redis_connected_slaves < on(instance) redis_expected_slaves`, `for: 2m`, `severity: ticket`. `redis_expected_slaves` has no producer anywhere (F-1329), so the r1 form never fires: **the alert is INERT on r1** (single node, no replicas). Drop the r1 form when r1 grows replicas. Everything below is the multi-host shape.
+- **Trips (the trees DIFFER by design):** `deploy/monitoring/rules/cache.yml`: `redis_connected_slaves < 2`, `for: 2m`, `severity: ticket` (P2), against the ADR-0024 1-primary-2-replica topology. `configs/prometheus/rules.r1/cache.yml`: `redis_connected_slaves < on(instance) redis_expected_slaves`, `for: 2m`, `severity: ticket`. `redis_expected_slaves` has no producer anywhere (F-1329), so the r1 form never fires: **the alert is INERT on r1** (single node, no replicas; `redis_expected_slaves` is tracked in the `KNOWN_INERT` list in `scripts/ci/lint-metric-refs.sh`). Drop the r1 form when r1 grows replicas. Everything below is the multi-host shape.
 - **Impact:** none immediate (reads/writes continue on the master), but Sentinel needs a healthy replica to promote; without one a master failure becomes a full cache outage (`stellarindex_redis_master_down`). MTTR 15–45 min.
 - **Signals:** `connected_slaves:` below configured in `redis-cli info replication` on the master; Sentinel logs `+sdown slave ...`.
 

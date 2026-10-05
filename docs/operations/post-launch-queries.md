@@ -33,7 +33,7 @@ suspicious if sustained.
 sum by (route) (rate(http_requests_total{status=~"5.."}[$range]))
 ```
 
-**Bar**: < 0.1% of total request rate per surface (the SLA target is ≥ 99.9% availability). Sustained 5xx on one surface is SEV-2 minimum; triage in runbook `api-5xx.md`.
+**Bar**: < 0.1% of total request rate per surface (the SLA target is ≥ 99.9% availability). Sustained 5xx on one surface is SEV-2 minimum; triage in runbook `api.md#stellarindex_api_error_rate_critical`.
 
 ## 3. p95 / p99 latency per surface
 
@@ -104,8 +104,8 @@ sum by (source) (rate(stellarindex_source_decode_errors_total[$range]))
 ```
 
 **Bar**: < 1 error/min per source in steady state. A spike on a Soroban source
-after an `update_contract` upgrade is SEV-2 (contract-schema-evolution doc for
-the pattern, `decode-errors` runbook for the response).
+after an `update_contract` upgrade is SEV-2 ([contract schema evolution](../architecture/ingest-pipeline.md#contract-schema-evolution)
+for the pattern, `decode-errors` runbook for the response).
 
 ## 9. Confidence-score distribution (spot-check)
 

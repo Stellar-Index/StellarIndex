@@ -55,7 +55,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-offsite-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-offsite.md#stellarindex_backup_offsite_stale
           summary: "No pgBackRest backup has reached the off-site repo (repo2) in > 8 d on {{ $labels.instance }}"
           description: |
             The exporter on this host is up, but no pgBackRest backup

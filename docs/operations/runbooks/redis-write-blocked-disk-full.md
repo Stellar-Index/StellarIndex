@@ -15,7 +15,7 @@ severity: P1
 | Severity | P1 |
 | Detected by | `configs/prometheus/rules.r1/storage.yml` (group `stellarindex.storage`, `stellarindex_redis_writes_blocked`: `redis_rdb_last_bgsave_status == 0`, `for: 60s`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/storage.yml`. Corroborating: `aggregator.yml`'s `sum(rate(stellarindex_aggregator_vwap_cache_write_errors_total[5m])) > 0`, `for: 2m`; and `api.yml`'s `stellarindex_ratelimit_fail_closed` once the rate limiter itself starts failing closed. |
 | Typical MTTR | 5–10 min once root cause is confirmed (free disk space → Redis re-enables writes automatically) |
-| Impact | VWAP cache writes fail → `/v1/price` on rewritten or proxy-served pairs starts 404'ing because the cache key was never written — customer-visible from the first write refusal. **If Redis stays unreachable past the rate limiter's fail-open dwell time (30s), the limiter fails CLOSED and the impact widens to the WHOLE API 503ing** on every rate-limited path, not only `/v1/price` — see `ratelimit-fail-open.md`. |
+| Impact | VWAP cache writes fail → `/v1/price` on rewritten or proxy-served pairs starts 404'ing because the cache key was never written — customer-visible from the first write refusal. **If Redis stays unreachable past the rate limiter's fail-open dwell time (30s), the limiter fails CLOSED and the impact widens to the WHOLE API 503ing** on every rate-limited path, not only `/v1/price` — see `api.md#stellarindex_ratelimit_fail_closed`. |
 
 Companion to [`db-disk-full.md`](db-disk-full.md). Different
 mechanism, same root cause: when `/` fills up, Redis can't write
@@ -200,7 +200,7 @@ happen the change is one `CONFIG SET` away.
   that runbook's write-refusal alert (OOM/READONLY/NOREPLICAS) — a
   different mechanism from this one's MISCONF/disk-full, not a
   duplicate.
-- [`ratelimit-fail-open.md`](ratelimit-fail-open.md) — where this
+- [`api.md#stellarindex_ratelimit_fail_closed`](api.md#stellarindex_ratelimit_fail_closed) — where this
   incident escalates to if Redis stays unreachable past the rate
   limiter's own dwell time: `stellarindex_ratelimit_fail_closed`,
   whole-API 503s.

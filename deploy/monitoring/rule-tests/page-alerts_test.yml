@@ -39,7 +39,7 @@ tests:
               alert_family: api_error_rate
             exp_annotations:
               description: "> 5 % of requests returning 5xx. Customers are broken; declare\nSEV-1 and follow the api-5xx runbook.\n"
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_error_rate_critical"
               summary: "API 5xx rate 9.091% (SEV-1)"
 
   - interval: 30s
@@ -68,8 +68,8 @@ tests:
               team: stellarindex
               component: aggregator
             exp_annotations:
-              description: "Zero VWAP writes for 5+ minutes. Either the orchestrator\ntick loop is wedged, the (pair, window) refresh path is\nconsistently empty, or the Redis write is erroring on every\nattempt. VWAP keys expire cachekeys.VWAPMaxAge (5 min) after\nthe last write, so /v1/price?window= has been answering 404\nfor 5-10 minutes when this fires. /v1/vwap is unaffected (it\nscans raw trades on-query).\nRunbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-silent.md\n"
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-silent.md"
+              description: "Zero VWAP writes for 5+ minutes. Either the orchestrator\ntick loop is wedged, the (pair, window) refresh path is\nconsistently empty, or the Redis write is erroring on every\nattempt. VWAP keys expire cachekeys.VWAPMaxAge (5 min) after\nthe last write, so /v1/price?window= has been answering 404\nfor 5-10 minutes when this fires. /v1/vwap is unaffected (it\nscans raw trades on-query).\nRunbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_silent\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_silent"
               summary: "Aggregator has stopped writing VWAP cache (P1)"
 
   - interval: 30s
@@ -96,8 +96,8 @@ tests:
               team: stellarindex
               component: aggregator
             exp_annotations:
-              description: "VWAP cache writes are erroring; rewritten / triangulated /\nstablecoin-proxy pairs on /v1/price are about to start\nreturning 404 (or already are). Most common cause: Redis\nBGSAVE is failing because the root FS is full\n(stop-writes-on-bgsave-error=yes default \u2014 May-10 SEV-2\nclass). Recovery: free disk \u2192 BGSAVE \u2192 cache rebuilds.\nRunbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md\n"
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md"
+              description: "VWAP cache writes are erroring; rewritten / triangulated /\nstablecoin-proxy pairs on /v1/price are about to start\nreturning 404 (or already are). Most common cause: Redis\nBGSAVE is failing because the root FS is full\n(stop-writes-on-bgsave-error=yes default \u2014 May-10 SEV-2\nclass). Recovery: free disk \u2192 BGSAVE \u2192 cache rebuilds.\nRunbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_cache_write_errors\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_cache_write_errors"
               summary: "Aggregator failing to publish VWAPs to Redis cache (P1)"
 
   - interval: 30s

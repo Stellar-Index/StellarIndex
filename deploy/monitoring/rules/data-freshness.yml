@@ -129,7 +129,7 @@ groups:
 
             Two usual causes: the protocol upgraded its contract in place and changed an
             event shape (Soroban contracts can update_contract without changing address —
-            see docs/architecture/contract-schema-evolution.md), or a new event kind shipped
+            see docs/architecture/ingest-pipeline.md#contract-schema-evolution), or a new event kind shipped
             that the decoder has no arm for.
 
             Run `stellarindex-ops ch-recognition -config /etc/stellarindex.toml -top 60` and

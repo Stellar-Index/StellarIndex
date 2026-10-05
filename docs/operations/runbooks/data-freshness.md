@@ -178,6 +178,8 @@ sudo systemctl start compute-completeness-sdex.service   # or compute-completene
 
 A window that fits the pass (re-check from `F` within a day of ledgers) is cleared by the next nightly run with no action.
 
+The exception is a `backfill -write [F,T]` window on a projected source (not sdex, band or soroswap-router). A `backfill -source soroban-events` landed raw events behind that source's projector cursor while the projector read Postgres `soroban_events`, and nothing re-projects them on its own. The backfill logged the command; run it after the backfill finishes: `stellarindex-ops projector-replay -config PATH -source <X> -from F`.
+
 ### Stale: projection evidence older than 10 d 6 h, or unknown
 
 `/v1/coverage` sets `flags.stale` when a source claiming `projection_ok` has `projection_evidenced_at` older than `MaxProjectionCarryAge` (7 d) plus three 26 h audit periods, or `null`. `computed_at` cannot show this (the nightly `-pass` restamps it while carrying the old claim). The carry detail names the proof time ("the carried prefix was last reconciled in full at …", or "has no full-range reconcile on record").
@@ -230,7 +232,7 @@ curl -s https://api.stellarindex.io/v1/coverage \
 
 Cross-reference reported `contract_id`s against the source's registry (`protocol_contracts`, or its in-code curated set); a shape whose contract belongs to the alerting source is the one to fix.
 
-Causes: (1) the contract upgraded in place (`update_contract` keeps the address; live ingest only sees the current WASM; [contract-schema-evolution](../../architecture/contract-schema-evolution.md)); (2) a new event kind the decoder has no arm for. Same fix: add the decoder arm, gate the backfill behind a per-WASM-hash audit if the range predates the current WASM ([wasm-audits](../wasm-audits/README.md)), then `projector-replay` the affected range ([adr-0033-data-recovery](../adr-0033-data-recovery.md); trap: for gated sources `backfill` writes nothing and exits 0).
+Causes: (1) the contract upgraded in place (`update_contract` keeps the address; live ingest only sees the current WASM; [contract-schema-evolution](../../architecture/ingest-pipeline.md#contract-schema-evolution)); (2) a new event kind the decoder has no arm for. Same fix: add the decoder arm, gate the backfill behind a per-WASM-hash audit if the range predates the current WASM ([wasm-audits](../wasm-audits/README.md)), then `projector-replay` the affected range ([adr-0033-data-recovery](../adr-0033-data-recovery.md); trap: for gated sources `backfill` writes nothing and exits 0).
 
 No quick mitigation. Immediately establish blast radius (events, ledger range, contract) to size the replay. Do NOT silence the alert: the verdict is capped for a real reason and `/v1/coverage` is public.
 

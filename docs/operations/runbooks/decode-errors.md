@@ -92,7 +92,7 @@ Stellar protocol bump or a known DEX redeploy: the source's WASM
 likely changed event/topic shape. **Backfill is unsafe across the
 upgrade boundary** until the WASM-hash audit re-runs (see
 [`docs/operations/wasm-audits/`](../wasm-audits/) and
-[`architecture/contract-schema-evolution.md`](../../architecture/contract-schema-evolution.md))
+[`architecture/ingest-pipeline.md#contract-schema-evolution`](../../architecture/ingest-pipeline.md#contract-schema-evolution))
 — flip `BackfillSafe = false` for that source until the audit log
 shows the new WASM hash decodes cleanly.
 

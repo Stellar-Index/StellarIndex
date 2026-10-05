@@ -24,7 +24,7 @@ Multi-window burn-rate detection: the slow-request fraction
 `api_latency_p95_under_200ms`) both **> 14.4×** the budget (14.4 × 0.001 =
 1.44 % of requests slower than 200 ms), sustained `for: 2m`.
 
-Note the alert's `runbook_url` annotation points at `api-latency.md`, not
+Note the alert's `runbook_url` annotation points at `api.md#stellarindex_api_latency_p95_high`, not
 this file — a responder following the page link lands there first; this
 runbook is the family-specific supplement.
 
@@ -110,8 +110,8 @@ Capture for postmortem:
 
 - `slo-latency-burn-medium.md` — same family at the slower burn rate (also `severity: page`).
 - `slo-latency-burn-slow.md` — same family at the slowest burn rate.
-- `api-latency.md` (the alert's `runbook_url` target) — the route-level p95/p99 alerts.
-- `pg-conns-saturated.md`, `cache-miss-rate-high.md` — common upstream causes.
+- `api.md#stellarindex_api_latency_p95_high` (the alert's `runbook_url` target) — the route-level p95/p99 alerts.
+- `pg-conns-saturated.md`, `api.md#stellarindex_api_cache_miss_rate_high` — common upstream causes.
 - `wire-paging.md` — confirm the `chat-page` receiver actually reaches a human.
 - ADR-0009 — API latency budget allocation.
 - Note: r1 currently runs at p95 = 246 ms structurally; multi-region cutover is the long-term fix.
@@ -131,7 +131,7 @@ Capture for postmortem:
 - 2026-08-29 — re-verified against HEAD: rule path → r1 overlay primary;
   budget arithmetic (5 %/hour, whole budget ≈ 2 days — not "gone in ~1
   hour"); min-traffic guard (`> 5` req/s — deliberately cannot fire on quiet
-  r1) documented; `runbook_url` → api-latency.md note; the "underlying p95
+  r1) documented; `runbook_url` → api.md#stellarindex_api_latency_p95_high note; the "underlying p95
   alert fires alongside" claim corrected (that alert is all-routes, `for:
   10m`, `severity: ticket`); PromQL `sum by (le,path)` → `sum by (le,route)`
   (the histogram has no `path` label) + r1 Prometheus curl shape; psql →

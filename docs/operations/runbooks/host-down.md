@@ -114,7 +114,7 @@ ss -ltnp | grep :9100          # expect exactly ONE listener
       status page (`sev-status-page-update.md`). The only fix is
       getting the box back (Robot Reset → KVM if it doesn't come up).
 - [ ] Step 4 — once the box is back, the fire moves to the service
-      runbooks: `api-down.md`, `all-ingestion-down.md`,
+      runbooks: `api.md#stellarindex_api_down`, `all-ingestion-down.md`,
       `galexie-catchup-refused.md`, `ch-live-sink-drops.md`. There is
       no stellar-core validator on r1 (`run_stellar_core: false`);
       galexie's captive core is the only stellar-core on the box.
@@ -142,7 +142,7 @@ ss -ltnp | grep :9100          # expect exactly ONE listener
       (`galexie-catchup-refused.md`). Watch `ingestion-lag.md` /
       `source-stopped.md` alerts clear on their own.
 - [ ] Textfile-collector-driven alerts (`sla-probe-stale.md`,
-      `supply-snapshot-stale.md`, `archive-completeness-stale.md`,
+      `supply-snapshot-stale.md`, `archive-completeness.md#stellarindex_archive_completeness_stale`,
       `binary-version-skew.md`, `stellar-stack-version-lag.md`) may
       fire until the writing timers' first post-boot run
       (`OnBootSec`: heartbeat 30 s, smoke 2 min, node-healthcheck

@@ -42,7 +42,7 @@ chunks_detailed_size (watcher)  blocked   904 s
 Nothing paged on the convoy. What fired described the wreckage —
 [`stellarindex_postgres_exporter_down`](exporter-down.md) (direct
 scrape returned HTTP 000 after 30 s; Prometheus logged `context deadline
-exceeded`) and [`stellarindex_aggregator_silent`](aggregator-silent.md)
+exceeded`) and [`stellarindex_aggregator_silent`](aggregator.md#stellarindex_aggregator_silent)
 — and **both systemd units read `active` throughout**. `/v1/status` went
 `degraded`, the restamp stalled 33 minutes, and it was cleared by hand
 with `pg_cancel_backend()` on the aggregator's `SELECT`.
@@ -200,7 +200,7 @@ restamp.
   too; that one is the meta-alert and takes precedence.
 - [exporter-down](exporter-down.md) — usually a
   consequence of this, not an independent fault.
-- [aggregator-silent](aggregator-silent.md) — the aggregator stops
+- [aggregator-silent](aggregator.md#stellarindex_aggregator_silent) — the aggregator stops
   writing VWAP when its own reads are queued.
 - [pg-conns-saturated](pg-conns-saturated.md) — a convoy pins connections
   as it grows, so the two can fire together.

@@ -11,7 +11,7 @@ WASM in place without changing the contract address). Event body
 schemas can change across an upgrade. If we decode today's WASM
 shape against a fixture captured under last month's WASM, the test
 silently mis-decodes. Per
-[docs/architecture/contract-schema-evolution.md](../../../docs/architecture/contract-schema-evolution.md)
+[docs/architecture/ingest-pipeline.md#contract-schema-evolution](../../../docs/architecture/ingest-pipeline.md#contract-schema-evolution)
 fixtures live under `<wasm_hash>/` subdirectories so the decoder
 variant and the fixture line up 1:1.
 

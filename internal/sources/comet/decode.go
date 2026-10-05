@@ -209,7 +209,7 @@ func decodeWithdraw(e *events.Event) (liquidityFields, error) {
 // (join_pool / exit_pool / deposit / withdraw) — every variant
 // shares the (caller, <token field>, <amount field>) trio; only
 // the field names differ. Decode-by-name per
-// docs/architecture/contract-schema-evolution.md keeps us resilient
+// docs/architecture/ingest-pipeline.md#contract-schema-evolution keeps us resilient
 // to future contract upgrades that add new fields.
 func decodeLiquiditySingleToken(e *events.Event, tokenField, amountField string) (liquidityFields, error) {
 	body, err := scval.Parse(e.Value)
@@ -315,7 +315,7 @@ func decodeLiquidityEvent(e *events.Event, closedAt time.Time) (LiquidityEvent, 
 var decodeSwapBody = sdkDecodeSwapBody
 
 // sdkDecodeSwapBody unpacks the SwapEvent map. Decode-by-name per
-// docs/architecture/contract-schema-evolution.md — benign field
+// docs/architecture/ingest-pipeline.md#contract-schema-evolution — benign field
 // additions in future WASM versions won't break us, unknown fields
 // are ignored.
 func sdkDecodeSwapBody(valueB64 string) (swapFields, error) {
