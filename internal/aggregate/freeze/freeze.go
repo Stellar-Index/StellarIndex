@@ -1054,7 +1054,7 @@ func windowLabel(window time.Duration) string {
 //
 // A raw `redis-cli DEL` is no longer an override, by design: it never was a
 // supported one (untyped, unlogged, un-mirrored — see the header of
-// cmd/stellarindex-ops/freeze_unfreeze.go, which exists to replace it), and
+// internal/ops/accounts/freeze_unfreeze.go, which exists to replace it), and
 // treating it as one is precisely what made a Redis flush indistinguishable
 // from an operator decision.
 //
