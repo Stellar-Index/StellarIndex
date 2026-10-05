@@ -79,7 +79,7 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	}
 	defer func() { _ = store.Close() }()
 	// Before routerWriteStart, so a refused range records no dirty window.
-	if err := gateBackfillRouter(ctx, cfg, store, uint32(*from), uint32(*to)); err != nil {
+	if err := wasmaudit.GateReplay(ctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts, []string{soroswap_router.SourceName}, uint32(*from), uint32(*to)); err != nil {
 		return err
 	}
 	// Re-derive path (INV-3 / migration 0110): stamp a positive
@@ -260,11 +260,6 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 		return fmt.Errorf("%d insert failures — see stderr above", insertFailures)
 	}
 	return nil
-}
-
-// gateBackfillRouter is the per-WASM lake gate over the walk's range.
-func gateBackfillRouter(ctx context.Context, cfg config.Config, store *timescale.Store, from, to uint32) error {
-	return wasmaudit.GateReplay(ctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts, []string{soroswap_router.SourceName}, from, to)
 }
 
 // routerCursorSource keys backfill-router's per-range resume cursor.
