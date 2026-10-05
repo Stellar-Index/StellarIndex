@@ -950,7 +950,7 @@
     group: root
     mode: "0755"
 
-- name: Install compute-trim-cutoff.sh helper (ADR-0027 §Trim operator)
+- name: Install compute-trim-cutoff.sh helper (ADR-0027 §Decision)
   # galexie-archive-trim.service's ExecStartPre derives TRIM_CUTOFF
   # = current indexer cursor − 90 days of ledgers. Same pattern as
   # compute-archive-to.sh; the trim binary requires an explicit
@@ -1333,7 +1333,7 @@
 
 # ── galexie-archive-trim — pubnet only ────────────────────────────────
 # See galexie_archive_trim_enabled in defaults/main.yml. The timer is
-# never enabled by the role (ADR-0027 §Sequencing, above).
+# never enabled by the role (ADR-0027 §Decision, above).
 - name: Install galexie-archive-trim units (pubnet)
   tags: [ops-jobs]
   when: galexie_archive_trim_enabled | bool

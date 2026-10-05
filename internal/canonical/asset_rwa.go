@@ -19,8 +19,7 @@ import "sort"
 // knownRWACodes is the allow-list of recognized RWA codes. Extension
 // is a one-line amendment to ADR-0028 (never a superseding ADR).
 // Codes chosen from RedStone's Stellar mainnet RWA push feeds
-// (captured 2026-05-22 — see ADR-0028 §The RedStone 19-feed
-// registry). The code is the human-meaningful identifier; the
+// (see ADR-0028 §Decision). The code is the human-meaningful identifier; the
 // decoder's feed registry maps the raw on-chain feed_id (which may
 // carry suffixes like `_ETHEREUM_FUNDAMENTAL`) onto it.
 var knownRWACodes = map[string]struct{}{

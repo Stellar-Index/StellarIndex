@@ -29,7 +29,7 @@ import (
 
 // ─── stellarindex-ops trim-galexie-archive ──────────────────────
 //
-// Per ADR-0027 §Step 2: the DESTRUCTIVE operator that deletes
+// Per ADR-0027 §Decision: the DESTRUCTIVE operator that deletes
 // cold-eligible LCM files from the local hot tier (galexie-archive
 // MinIO bucket on r1) once their presence in the cold tier has
 // been verified. Reclaims pool capacity by tiering off the bulky
@@ -382,7 +382,7 @@ func deleteTrimCandidates(ctx context.Context, logger *slog.Logger, del s3Object
 //	                        skipped_not_in_cold=0 verify_errors=0
 //
 // "candidates=0" is what a fully-trimmed archive looks like too. That
-// indistinguishability is why the ADR-0027 §Step 2 capacity relief
+// indistinguishability is why the ADR-0027 §Decision capacity relief
 // never happened.
 //
 // The replacement enumerates completely without brute-forcing 63,600

@@ -160,7 +160,7 @@ ADR for an addition._
   `SolvBTC_FUNDAMENTAL` is quoted `crypto:BTC` and
   `SolvBTC.BBN_FUNDAMENTAL` `crypto:SolvBTC`. This ADR governs the
   code allow-list only; the per-feed quote lives in
-  `redstone.feedRegistry` and is amended in ADR-0028 §2/§3, which
+  `redstone.feedRegistry` and is amended in ADR-0028 §Decision, which
   carries the live evidence. Note the consequence for this
   allow-list: `crypto:BTC` and `crypto:SolvBTC` are now used as
   QUOTE assets as well as bases, which the bare-ticker model already

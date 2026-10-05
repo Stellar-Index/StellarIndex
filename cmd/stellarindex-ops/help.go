@@ -1380,7 +1380,7 @@ Subcommands:
                           backfill (scans every trades chunk). Idempotent
                           — SETs not ADDs, so re-running converges.
   trim-galexie-archive -config PATH -older-than-ledger N [-dry-run|-commit] [-no-verify-upstream] [-max-files N]
-                          Per ADR-0027 §Step 2: DESTRUCTIVE — deletes
+                          Per ADR-0027 §Decision: DESTRUCTIVE — deletes
                           LCM files from the local hot tier
                           (galexie-archive on MinIO) whose ledger range
                           is entirely below -older-than-ledger, after
@@ -1409,7 +1409,7 @@ Subcommands:
                           Rollback: stellarindex-ops
                           rehydrate-galexie-archive -from N -to N.
   rehydrate-galexie-archive -config PATH -from N -to N [-write]
-                          Per ADR-0027 §Step 2: copy LCM files for the
+                          Per ADR-0027 §Decision: copy LCM files for the
                           ledger range [-from, -to] from the configured
                           cold tier (storage.s3_cold_*; production is the
                           aws-public-blockchain bucket) back into the

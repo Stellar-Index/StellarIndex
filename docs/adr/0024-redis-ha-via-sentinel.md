@@ -15,7 +15,7 @@ The hot-data set (price cache, VWAP precompute, rate-limit counters, SEP-1 and a
 
 ## Decision
 
-Redis HA is Sentinel: one primary and two replicas on three cache hosts, one Sentinel per host, `quorum=2`. No sharding; each replica holds a full async copy. Persistence is AOF `everysec` plus RDB snapshots. Failover is automatic (target 15-30 s). Clients connect through go-redis `FailoverClient`, which asks Sentinel for the primary; no HAProxy or VIP sits in front.
+Redis HA is Sentinel: one primary and two replicas on three cache hosts, one Sentinel per host, `quorum=2`. No sharding; each replica holds a full async copy. Persistence is AOF `everysec` plus RDB snapshots. Failover is automatic (target 15-30 s). Clients connect through go-redis `FailoverClient`, which asks Sentinel for the primary; no HAProxy or VIP sits in front. One vault secret authenticates the data plane and Sentinel: `requirepass`, `masterauth` and Sentinel `auth-pass` all share it.
 
 ## Invariant
 

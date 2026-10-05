@@ -121,8 +121,7 @@ func (s *Store) CountDistinctLedgers(ctx context.Context, target GapDetectorTarg
 //
 // Encoded here rather than in obs/handler so the projection's
 // numerator and denominator come from one helper, no risk of the
-// two being computed against different windows. ADR-0031 §
-// "Single SQL helper, one read path".
+// two being computed against different windows. ADR-0031 §Decision.
 func ExpectedLedgersFor(genesis, tip int64) int64 {
 	if genesis <= 0 || tip <= 0 || tip < genesis {
 		return 0

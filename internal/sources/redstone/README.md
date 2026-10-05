@@ -141,7 +141,7 @@ in the token's **reserve asset**, so `SolvBTC_FUNDAMENTAL` is quoted
 evidence in `feeds_test.go`;
 `TestFeedRegistry_NAVFeedsQuoteTheirReserveAsset` fails CI for any
 new bare `_FUNDAMENTAL` feed given a fiat quote without it. See
-`docs/protocols/redstone.md` §NAV feeds and ADR-0028 §2/§3.
+`docs/protocols/redstone.md` §NAV feeds and ADR-0028 §Decision.
 
 ### Q5 — Update cadence: 0.2% deviation OR 24h heartbeat
 

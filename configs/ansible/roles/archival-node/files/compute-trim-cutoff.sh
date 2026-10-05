@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ADR-0027 §Trim operator helper: compute TRIM_CUTOFF for the
+# ADR-0027 §Decision helper: compute TRIM_CUTOFF for the
 # monthly galexie-archive-trim.service from the indexer cursor.
 #
 # The trim-galexie-archive subcommand requires an explicit

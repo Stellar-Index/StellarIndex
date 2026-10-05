@@ -93,9 +93,10 @@ incident this session originated:
 
 ADR-0029 added `soroban_events` as a sidecar — a recovery
 landing zone that didn't replace per-source writes. The promise
-in §"Backfill path" (ADR-0029:120-128) was:
+in ADR-0029 §Consequences was that a decoder backfill becomes an
+`INSERT ... SELECT` over it, not a MinIO walk:
 
-> Future per-source decoder backfills become SQL queries
+> A decoder backfill can be an `INSERT ... SELECT` over this table
 
 and that promise has been **partially kept** (the seven
 `*-backfill` subcommands deliver it operationally). But the
