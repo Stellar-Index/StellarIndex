@@ -67,7 +67,7 @@ Currently shipped:
   (commit `a60264246`, "pkg/client/ Go SDK skeleton").
   Wire-shape types (`Envelope`, `Flags`, `Pagination`,
   `AssetDetail`, …) live in `pkg/client/types.go` rather than a
-  separate `pkg/types` package — see docs/architecture/repo-map.md for the
+  separate `pkg/types` package — see docs/architecture/overview.md#repo-map for the
   rationale. The server's `internal/api/v1` defines its own
   envelope intentionally; the duplication is the SemVer firewall
   between the SDK's public surface and internal handler shapes.

@@ -78,7 +78,7 @@ Two causes account for nearly all occurrences:
    `update_contract` without changing address, and event body schemas
    and topic shapes can change across that upgrade. Live ingest only
    ever sees the current WASM. See
-   [`../../architecture/contract-schema-evolution.md`](../../architecture/contract-schema-evolution.md).
+   [`../../architecture/ingest-pipeline.md#contract-schema-evolution`](../../architecture/ingest-pipeline.md#contract-schema-evolution).
 2. **A new event kind shipped** that the decoder has no arm for — the
    protocol added a feature.
 
@@ -102,7 +102,7 @@ served tier.
 
 - [`completeness-incomplete.md`](completeness-incomplete.md) — the
   broader ADR-0033 verdict this axis feeds.
-- [`../../architecture/contract-schema-evolution.md`](../../architecture/contract-schema-evolution.md)
+- [`../../architecture/ingest-pipeline.md#contract-schema-evolution`](../../architecture/ingest-pipeline.md#contract-schema-evolution)
   — why in-place upgrades are the usual cause.
 - [`../adr-0033-data-recovery.md`](../adr-0033-data-recovery.md) —
   replaying a range after the decoder is fixed. Note the gated-source

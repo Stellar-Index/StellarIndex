@@ -48,7 +48,7 @@ var (
 // NAME from the top-level Map, never by position: the pools have already
 // been through two WASM upgrades (ledgers 61,594,973 and 62,898,378) and a
 // positional decode would break silently the next time one lands a field
-// in a different slot (docs/architecture/contract-schema-evolution.md).
+// in a different slot (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 // Both deployed versions emit the same seven names, so one decoder covers
 // the whole history.
 func sdkDecodeSwapFields(valueB64 string) (SwapFields, error) {

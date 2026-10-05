@@ -506,7 +506,7 @@ canonical case.
 
 ### Layer 8 — Decoder + WASM-version audit gating (default, shipped)
 
-Per `docs/architecture/contract-schema-evolution.md`, the
+Per `docs/architecture/ingest-pipeline.md#contract-schema-evolution`, the
 `BackfillSafe` flag in `internal/sources/external/registry.go`
 gates which Soroban contract WASM versions we trust for backfill.
 A new WASM upgrade triggers the per-WASM-hash audit procedure

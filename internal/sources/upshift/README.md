@@ -39,7 +39,7 @@ by four distinct contracts in a 20k-ledger census.
 | File | What |
 |---|---|
 | `events.go` | Package doc (the lake evidence), source name, curated vault set, genesis, topic symbols, errors |
-| `decode.go` | `classify` + the four body decoders. Fields read BY NAME per `docs/architecture/contract-schema-evolution.md` |
+| `decode.go` | `classify` + the four body decoders. Fields read BY NAME per `docs/architecture/ingest-pipeline.md#contract-schema-evolution` |
 | `consumer.go` | The single `Event` the sink writes to `upshift_vault_events` |
 | `dispatcher_adapter.go` | `Decoder` — the identity gate, `Matches` / `Decode` / `GatedContractSet` |
 | `golden_realbytes_test.go` | Seven fixtures of real lake bytes, cited by ledger/tx/op/event index |

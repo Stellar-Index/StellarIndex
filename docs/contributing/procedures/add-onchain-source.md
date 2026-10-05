@@ -27,7 +27,7 @@ decision, and the machine checks. Template package:
    topics_xdr/data_xdr for real ledgers), not from protocol docs —
    Soroban contracts upgrade in place; decode Map-by-field-name,
    dispatch on topic[0] symbol (see
-   docs/architecture/contract-schema-evolution.md).
+   docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 
 ## 1. The package (six files) + wiring (six edits)
 

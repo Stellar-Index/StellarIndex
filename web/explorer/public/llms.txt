@@ -39,7 +39,7 @@ venue population in the underlying data.
 - [AGENTS.md](https://github.com/Stellar-Index/StellarIndex/blob/main/AGENTS.md): repo orientation, invariants, and counter-intuitive facts (start here if you're an LLM agent reading the repo cold).
 - [docs/architecture/ingest-pipeline.md](https://github.com/Stellar-Index/StellarIndex/blob/main/docs/architecture/ingest-pipeline.md): Galexie → dispatcher → decoder.
 - [docs/architecture/aggregation-plan.md](https://github.com/Stellar-Index/StellarIndex/blob/main/docs/architecture/aggregation-plan.md): VWAP / TWAP / outlier / triangulation policy chain.
-- [docs/architecture/contract-schema-evolution.md](https://github.com/Stellar-Index/StellarIndex/blob/main/docs/architecture/contract-schema-evolution.md): Soroban DeFi contracts upgrade in place; decoders must be WASM-version-aware for backfill.
+- [docs/architecture/ingest-pipeline.md#contract-schema-evolution](https://github.com/Stellar-Index/StellarIndex/blob/main/docs/architecture/ingest-pipeline.md#contract-schema-evolution): Soroban DeFi contracts upgrade in place; decoders must be WASM-version-aware for backfill.
 - [docs/adr/](https://github.com/Stellar-Index/StellarIndex/tree/main/docs/adr): all architecture decisions, immutable, accept-only-or-supersede.
 
 ## Data sources we ingest

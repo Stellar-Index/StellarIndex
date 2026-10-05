@@ -67,7 +67,7 @@ func fuzzB64(t *testing.T, sv xdr.ScVal) string {
 
 // fuzzSwapBody builds a full seven-field swap body, entries rotated by
 // rot so the decoder is exercised against every field position — decode
-// is by NAME (docs/architecture/contract-schema-evolution.md).
+// is by NAME (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 func fuzzSwapBody(t *testing.T, amount0, amount1 xdr.ScVal, liq xdr.UInt128Parts,
 	sqrt xdr.UInt256Parts, tick int32, rot int,
 ) string {

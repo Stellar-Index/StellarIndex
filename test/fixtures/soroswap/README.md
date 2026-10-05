@@ -11,7 +11,7 @@ address. The `#[contracttype]` struct serialization already matters
 (Map of field-name Symbols); any future field rename or type widen
 breaks decoders compiled against an older schema. Fixtures sit under
 `<wasm_hash>/` so regression tests can branch by version — see
-[docs/architecture/contract-schema-evolution.md](../../../docs/architecture/contract-schema-evolution.md).
+[docs/architecture/ingest-pipeline.md#contract-schema-evolution](../../../docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 
 ## Capture workflow
 

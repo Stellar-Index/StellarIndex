@@ -1,356 +1,315 @@
 ---
-title: Ingest pipeline — the one canonical data path
-last_verified: 2026-07-31
+title: Ingest pipeline — the one canonical data path, projector, replay and backfill
+last_verified: 2026-10-05
 status: binding
 ---
 
 # Ingest pipeline
 
-**Every byte of on-chain data flows through one path:**
+Binding. AGENTS.md invariants [2], [3], [6] and [7] point here. The
+decisions are ADR-0001, 0002, 0029, 0031, 0032, 0034, 0035 and 0048;
+this page holds only how the code implements them.
+
+## The path
 
 ```
-Stellar pubnet
-    │   (SCP via Galexie's captive-core)
-    ▼
-galexie                    ← the SINGLE stellar-core on r1 (ADR-0002 + CDP pattern)
-    │   (writes .xdr.zst to)
-    ▼
-MinIO galexie-live         ← S3-compatible object store
-    │
-    ▼
-internal/ledgerstream/     ← SDK BufferedStorageBackend wrapper
-    │   Stream(ctx, from, to) yields xdr.LedgerCloseMeta per ledger
-    │   (StreamArchiveThenLive seams archive replay → live tail)
-    ▼
-internal/dispatcher/       ← single consumer of ledgerstream
-    │   per tx, fed to four registered decoder seams (see Rule 3):
-    │     • Decoder                 — Soroban contract events (topic[0] byte-match)
-    │     • OpDecoder               — classic operations (e.g. SDEX, change_trust)
-    │     • ContractCallDecoder     — InvokeContract ops with no events (Band relay())
-    │     • LedgerEntryChangeDecoder — LedgerEntry mutations (supply observers)
-    ▼
-internal/sources/{soroswap,aquarius,phoenix,sushiswap_v3,sdex,band,…}/
-    │   each is a pure decoder + (optional) per-source correlation
-    │   state (Soroswap swap+sync, Phoenix 8-field assembly).
-    │   NO goroutines, NO RPC clients, NO pagination loops.
-    │   decode(...) → canonical.Trade | canonical.OracleUpdate | event
-    ▼
-internal/pipeline/sink.go  ← fans each decoded item to its destination:
-    │
-    ├─► ClickHouse structural lake (ADR-0034) ──── the CERTIFIED raw history.
-    │     LiveSink writes every ledger + contract_event to ClickHouse;
-    │     ledgers are contiguous + hash-chained to genesis. This is the
-    │     substrate that proves "100% coverage" (ADR-0033).
-    │
-    ├─► soroban_events landing zone (ADR-0029, Postgres) ── raw Soroban events.
-    │     LEGACY FALLBACK ONLY, decommission-pending (issue #803).
-    │
-    │   THE PROJECTOR'S READ SOURCE IS THE CLICKHOUSE `contract_events` LAKE
-    │   BY DEFAULT — storage.clickhouse_projector_source, default true
-    │   (internal/config/config.go:943; ADR-0041/0034). It tails the Postgres
-    │   landing zone only when that switch is turned off.
-    │     ▼
-    │   internal/projector/  ← the ONE writer for Soroban-derived per-source
-    │     │   tables (trades, blend_* incl. blend_backstop + blend_emitter,
-    │     │   phoenix_*, comet_*, aquarius_*, sushiswap_v3 (trades),
-    │     │   upshift_vault_events, defindex_* (Event/VaultEvent/
-    │     │   DFeesEvent), sorocredit_*, soroswap_skim, cctp_events,
-    │     │   rozo_events, sep41_* (supply + transfers),
-    │     │   reflector/redstone oracle_updates) — the authoritative list is
-    │     │   the switch in internal/pipeline/sink.go::IsProjectedEvent
-    │     │   (:486-502), AST-checked in lockstep with the projector registry
-    │     │   by TestLockstep_RegistrySourcesFullyWired.
-    │     │   ADR-0031/0032. Catch-up = `projector-replay -source <n> -from <l>`
-    │     │   for small rewinds, `projected-rebuild -source <n> -from <l>` for
-    │     │   anything bigger (ADR-0048 D3 — see below).
-    │     ▼
-    └─► dispatcher events-goroutine sink ── NON-projected events write here
-          directly (sdex, external CEX/FX, band, supply observers). These do
-          NOT flow through soroban_events; pipeline/sink.go::IsProjectedEvent
-          decides which path an event takes.
-              │
-              ▼
-    Postgres / TimescaleDB  ← the SERVED tier (ADR-0034): the recent working
-    │   set the API queries, NOT the full archive. Verified faithful within
-    │   what it holds (ADR-0033 projection reconcile, retention-scoped).
-    ▼
-/v1/* API
+Stellar pubnet ──(captive-core)──► galexie   the single stellar-core on r1 (ADR-0002, CDP pattern)
+    ──► MinIO galexie-live                   S3-compatible; .xdr.zst per ledger
+    ──► internal/ledgerstream                Stream(ctx, from, to) yields xdr.LedgerCloseMeta;
+    │                                        to=0 is the unbounded live tail;
+    │                                        StreamArchiveThenLive (seamed.go) seams archive → live
+    ──► internal/dispatcher                  the single consumer of ledgerstream; four decoder seams
+    ──► internal/sources/<venue>             pure decoders → canonical.Trade | OracleUpdate | event
+    ──► internal/pipeline/sink.go            fans each item out:
+          ├─► ClickHouse lake (LiveSink)     every ledger, tx, op, contract_event, ledger_entry_change;
+          │                                  contiguous + hash-chained to genesis — the CERTIFIED raw
+          │                                  history (ADR-0034) that "100% coverage" is proven on (ADR-0033)
+          ├─► soroban_events (Postgres)      ADR-0029 landing zone — legacy fallback only, decommission #803
+          ├─► projector                      reads CH contract_events; sole writer of PROJECTED domains
+          └─► dispatcher events goroutine    NON-projected domains write here directly
+    ──► Postgres/TimescaleDB                 the SERVED tier: recent working set, verified faithful within
+                                             what it holds (ADR-0033 projection reconcile)
+    ──► /v1/* API
 ```
 
-**Backfill and live-tail share the streaming code, but backfill
-re-derives from the lake, not a fresh MinIO walk.** Live tail is
-`internal/ledgerstream.Stream(ctx, from, 0)` (unbounded). Decoder
-backfills re-derive from the certified ClickHouse lake (SQL /
-`ch-rebuild`); projected-source catch-up is `projector-replay` or
-`projected-rebuild`, depending on size (see below). There are no
-separate `BackfillRange` / `StreamLive` methods on sources, and no
-per-source `<source>-backfill` subcommands (the whole family was
-deleted in rc.97 / ADR-0032 Phase 5).
+Off-chain CEX/FX connectors (`internal/sources/external`) feed the same
+event channel and are non-projected.
 
-**Projected-source catch-up: `projector-replay` vs `projected-rebuild`
-(ADR-0048 D3).** Both rewind/refill a projected source's per-source
-tables from the same certified lake, through the same decoders, into
-the same idempotent writes, each an upsert guarded by
-`derive_generation <= EXCLUDED.derive_generation`. They differ in
-mechanism, throughput ceiling, and the generation they write at:
+## Decoder seams
 
-- **`projector-replay -source <name> -from <ledger>`** rewinds the
-  LIVE projector's own cursor and lets its normal tick-cadence
-  catch-up walk the range — bound by `Interval` (5s) and
-  `PerSourceTimeout` (60s per cycle), roughly a 720k-ledger/hour
-  ceiling. The live projector writes at `derive_generation` 0, so a
-  replay cannot correct a row that a re-derive (`projected-rebuild`,
-  `ch-rebuild`) already stamped higher. Use it for small rewinds (rule
-  of thumb: under ~1M ledgers) over gen-0 rows — a short outage
-  backfill, a missing range. A post-decoder-fix re-walk must correct
-  stored rows, so it goes through `projected-rebuild -write`.
-- **`stellarindex-ops projected-rebuild -source <name> -from <ledger>
-  [-to <ledger>] [-workers K]`** runs K parallel ledger-window workers
-  with NO per-cycle deadline, each streaming the ClickHouse lake
-  through the SAME registry-built decoder + the SAME sink
-  (`pipeline.HandleEvent`) the live projector uses. Roughly 10-20x the
-  `projector-replay` rate — the r1 2026-07 held jobs (blend_backstop,
-  blend_emitter, aquarius rewards; ~11-12M ledgers each) are the
-  motivating case. One-writer discipline is enforced by a live-cursor
-  guard: it refuses to run if the live projector's cursor for that
-  source is still inside the requested range (two writers racing the
-  same range — row-safe via the generation-guarded upsert, but wasteful and
-  confusing to operate), unless the operator passes
-  `-allow-live-overlap`. It never touches the live projector's own
-  cursor — the live tail keeps running at tip throughout; the bulk job
-  only fills history strictly behind it. See
-  `internal/ops/chops/projected_rebuild.go`'s doc comment and
-  [docs/operations/runbooks/projector-replay.md](../operations/runbooks/projector-replay.md)
-  for the full operator procedure.
+`internal/dispatcher/dispatcher.go` exposes four interfaces, one per
+shape of on-chain data. Decoders register with `AddDecoder` and
+siblings; there is no `routes.go`.
 
----
+| Seam | Input | Routed by | Lake source on re-derive |
+|---|---|---|---|
+| `Decoder` | Soroban contract event | `topic[0]` byte-equality against the source's `TopicPrefix*`/`TopicSymbol*` | `contract_events` |
+| `OpDecoder` | classic op + result (SDEX, `change_trust`) | op type | `operations.body_xdr` + `operation_results.result_xdr` |
+| `ContractCallDecoder` | InvokeContract with no event (Band `relay()`/`force_relay()`) | `(contract_id, function_name)` | `operations` + op args |
+| `LedgerEntryChangeDecoder` | `LedgerEntry` mutation (account/trustline/claimable/LP-reserve supply observers) | entry type | `ledger_entry_changes` |
+
+The dispatcher is the only place that byte-matches events, walks
+classic ops, matches contract calls, routes entry changes, and feeds
+per-source correlation state. Topic routing is a pre-filter: a decoder
+still gates on contract identity (ADR-0035, `internal/contractid`).
+
+**Enrichment keeps decoders pure.** Context a decoder cannot read from
+the event body travels on `events.Event`, populated by the dispatcher
+from the LCM on the live path and rebuilt byte-identically by the
+ClickHouse readers on every re-derive path (projector CH feed,
+`compute-completeness -ch`, `projected-rebuild`):
+
+- `OpArgs` — the producing InvokeContract's args (base64 SCVals). Redstone
+  needs it: `write_prices` carries prices, the feed ids are in the args.
+  Lake column `contract_events.op_args_xdr`; the projector always reads it.
+- `StateWriteKeys` — base64 LedgerKeys of the event's own contract's
+  contract-data entries whose value the op changed (created, or `Val`
+  differs from the pre-image). Redstone uses it for exact accepted-feed
+  attribution, falling back to payload-median alignment when absent.
+  Lake: batched `(ledger_seq, tx_hash, op_index)` lookups on
+  `ledger_entry_changes` (`internal/storage/clickhouse/state_write_keys.go`);
+  per-source opt-in `projector.Source.NeedsStateWriteKeys`. The rule lives
+  in `internal/dispatcher/state_write_keys.go` and both paths MUST stay in
+  lockstep.
+
+A new tx-scoped input follows the same pattern: a field on
+`events.Event`, populated in the dispatcher AND the lake reader.
+
+The dispatcher's `contractEventToEventsEvent` and the lake extractor's
+`eventRow` (`internal/storage/clickhouse/extract.go`) both encode topics,
+data and op args as `base64.StdEncoding(scval.MarshalBinary())`, so a CH
+row converts to `events.Event` by field copy and feeds the decoders
+unchanged. Keep the two encoders identical.
+
+## Source packages are pure decoders
+
+`internal/sources/<venue>/` exports a `SourceName`, pre-encoded
+`TopicPrefix*`/`TopicSymbol*` bytes, `decode…` functions returning
+`canonical.*`, and optionally an in-memory correlation buffer (Soroswap
+swap+sync, Phoenix 8-field assembly) that lives for one dispatcher
+goroutine. A source package MUST NOT hold a `*stellarrpc.Client`,
+implement `BackfillRange`/`StreamLive`, poll, paginate, start goroutines
+or keep cursors. If you are about to add any of those, the work belongs
+in the dispatcher or `decode.go`.
+
+**Adding a source:** the decoder package; a registration on the right
+dispatcher seam; and, for a projected source, a case in
+`internal/projector/registry.go::buildSource` AND an arm in
+`internal/pipeline/sink.go::IsProjectedEvent`. The five wiring sites
+(`HandleEvent`, `IsProjectedEvent`, `tradeFromEvent`, `buildSource`,
+`BuildDispatcher`) are AST-checked together by
+`TestLockstep_RegistrySourcesFullyWired`
+(`internal/pipeline/lockstep_ast_test.go`).
+
+## The projector — one writer per projected domain
+
+`internal/projector` is the only writer of Soroban-derived per-source
+tables: trades for soroswap/aquarius/phoenix/comet/sushiswap_v3,
+`blend_*` (incl. backstop and emitter), `phoenix_*`, `comet_*`,
+`aquarius_*`, `upshift_vault_events`, `defindex_*`, `sorocredit_*`,
+`soroswap_skim`, `cctp_events`, `rozo_events`, `sep41_*`, and
+reflector/redstone `oracle_updates`. The authoritative list is
+`IsProjectedEvent`; its default branch is the non-projected list: `sdex`,
+`band`, `soroswap_router`, external CEX/FX, supply observers.
+
+- It reads ClickHouse `contract_events` by default
+  (`[storage] clickhouse_projector_source`, default true,
+  `internal/config/config.go`); it tails Postgres `soroban_events` only
+  when that is off.
+- Cadence: `Interval` 5 s, `PerSourceTimeout` 60 s per cycle
+  (`internal/projector/projector.go`), about 720k ledgers/hour.
+- Config: `[projector] enabled` (default false) starts it.
+  `persist_per_source` defaults true, parallel mode where the dispatcher
+  also writes and the generation-guarded upsert absorbs the duplicate.
+  At false the projector is sole writer, and the indexer refuses to
+  start unless every continuous aggregate's refresh `start_offset`
+  covers `pipeline.ProjectorStallBound` (15 min),
+  checked by `pipeline.VerifySoleWriterCAGGCoverage`. Low lag is not
+  enough: a lake hole stalls the projector and a shorter lookback never
+  materialises the late rows. `sep41` is projector-only whatever the
+  flag says (`pipeline.IsSoleWriterProjected`).
+- Every projected write is an upsert guarded by
+  `derive_generation <= EXCLUDED.derive_generation` (migrations 0110,
+  0141). Live ingest writes generation 0; re-derives stamp higher.
+- Alerts: `stellarindex_projector_lag_high`
+  (`deploy/monitoring/rules/projector.yml`) and
+  `stellarindex_ingest_gap_detected` (`ingestion.yml`).
+
+## The structural lake ingest
+
+Every LCM is decoded *structurally* into the `stellar.*` ClickHouse
+tables — `ledgers`, `transactions`, `operations`, `operation_results`,
+`contract_events`, `ledger_entry_changes` — with raw XDR retained, so
+every decoder class can run from the lake without touching Galexie
+again. The schema of record is `deploy/clickhouse/tier1_schema.sql`.
+Header and per-ledger counts come from `dispatcher.CensusLedger`, which
+is also the decoder-independent census oracle; fee-meta entry changes
+carry `op_index = -1`.
+
+- Tables are `ReplacingMergeTree(ingested_at)` on the row's identity, so
+  re-ingesting any range is idempotent. Unmerged parts can hold a row
+  twice: count with `FINAL` or `uniqExact` on the sort key.
+- History: `stellarindex-ops ch-backfill -config PATH -from L -to L
+  -bucket galexie-archive [-parallel N] -write`. The default bucket is the
+  trimmed live one, so historical ranges need `-bucket`.
+  `scripts/ops/ch-full-backfill.sh` drives resumable 1M-ledger windows.
+  Measured 2026-06-05: about 4,400 ledgers/s on sparse early history at
+  `-parallel 8`, about 50 ledgers/s per worker on dense recent ranges.
+- `stellarindex-ops ch-gate` checks a range against the census: every
+  ledger present and per-ledger tx/op/event/classic-trade counts equal.
+- Live: the indexer dual-sinks each ledger to the lake and the served
+  tier, so pricing latency never waits on the lake.
+
+## Re-deriving from the lake
+
+A decoder fix or a new decoder re-runs against ClickHouse and
+repopulates Postgres; it never re-walks MinIO. Backfill and live tail
+share the decoders, not a code path: there are no per-source
+`BackfillRange`/`StreamLive` methods and no `<source>-backfill`
+subcommands (deleted in ADR-0032 Phase 5; NEVER add one).
+
+**`projector-replay` vs `projected-rebuild` (ADR-0048 D3).** Both refill
+a projected source from the lake through the same decoders and the
+same generation-guarded upserts.
+
+- `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger>`
+  rewinds the LIVE projector's cursor and lets its normal cadence walk
+  forward (other flags: `-refresh-caggs -wait -wait-timeout
+  -refresh-only -refresh-to`; there is no `-to`). It writes generation 0,
+  so it cannot correct a row a re-derive already stamped higher. Use it
+  for short rewinds over gen-0 rows: an outage, a missing range.
+- `stellarindex-ops projected-rebuild -config PATH -source <name> -from <l> [-to <l>] [-workers K] [-window N] -write`
+  runs K ledger-window workers with no per-cycle deadline through the
+  same registry decoder and `pipeline.HandleEvent`, roughly 10-20× the
+  replay rate. It never moves the live cursor: it fills history strictly
+  behind it and refuses a range the live cursor is still inside unless
+  `-allow-live-overlap` is passed. `-resume` continues a run. A
+  post-decoder-fix re-walk must go through here, because only a higher
+  generation overwrites stored rows. Procedure:
+  [projector-replay runbook](../operations/runbooks/projector-replay.md)
+  and the doc comment in `internal/ops/chops/projected_rebuild.go`.
+
+**A wrong key needs a clean slate.** An upsert cannot fix a wrong PK: an
+additive `ch-rebuild -write` over rows written under the old
+`event_index = 0` collision doubled aquarius trades (1,947 → 5,090) on
+62.70–62.71M. `scripts/ops/ch-rebuild-projected.sh` DELETEs a window and
+re-derives it, and its header is the source of truth for the five rules
+that bound the DELETE:
+1. run `ch-rebuild -write -preflight` first and delete nothing without
+   its `preflight ok […] rederive=…` verdict;
+2. delete only the sources that verdict lists, in one transaction
+   (`sushiswap_v3` has no DELETE map on purpose);
+3. record `lo hi sources` in `$DIRTY` before deleting, and rebuild dirty
+   windows first on every run;
+4. file an emptied window as a projection dirty window
+   (`ch-rebuild -from LO -to HI -sources <deleted> -record-dirty-window`)
+   so the ADR-0033 verdict cannot certify it;
+5. follow any window whose `trades` changed with
+   `stellarindex-ops trades-cagg-refresh -from LO -to HI` (tracked in
+   `$STALE` until it succeeds).
+
+`stellarindex-ops ch-reproject` re-derives a range from the lake and
+diffs it against the served tables per source, as a read-only check.
+It runs soroswap unseeded, so a soroswap mismatch there is the tool,
+not the data.
+`ch-reproject` buckets re-derived output per source (applying each
+source's `contractIDs` prefilter); otherwise the three reflector variants
+merge.
 
 ## The replay decision rule
 
-**One rule, one place.** "A decoder changed — what replays history?" had
-three different answers in this repo (a `Replay-Plan:` commit trailer
-prescribing `ch-rebuild`, a runbook step prescribing `ch-rebuild`, and
-`scripts/ci/lint-replay-plan.sh`'s own FAIL example prescribing
-`backfill`), and they disagreed on a projected source. This section is
-the answer all three now point at (#333).
-
-Start by asking **who writes the domain** — the same question invariant 7
-(ADR-0031/0032, "one writer per data domain") answers. A source is
-PROJECTED if it has a case in `internal/projector/registry.go::buildSource`
-and an arm in `internal/pipeline/sink.go::IsProjectedEvent`.
+"A decoder changed — what replays history?" has one answer, and the
+`Replay-Plan:` commit trailer that `scripts/ci/lint-replay-plan.sh`
+requires on a decoder or allow-list change names a command from this
+table. First ask **who writes the domain** (invariant [7]): a source is
+PROJECTED if it has a case in `projector/registry.go::buildSource` and
+an arm in `pipeline/sink.go::IsProjectedEvent`.
 
 | The domain | The replay command |
 |---|---|
-| **Projected**, rewind ≲ 1M ledgers | `stellarindex-ops projector-replay -source <name> -from <ledger>` |
-| **Projected**, bulk (≳ 1M ledgers) | `stellarindex-ops projected-rebuild -config <toml> -source <name> -from <l> [-to <l>] -write` |
-| **Non-projected** lake re-derive (`sdex`, `band` / `soroswap-router` contract calls) | `stellarindex-ops ch-rebuild -config <toml> -from <l> -to <l> -write` with the matching pass flag (`-sdex` / `-contract-calls` / `-sep41`) |
-| `sep41` lake re-derive (`ch-rebuild -sep41 -write`) | Same command, but understand what it is: `sep41_*` is a PROJECTED domain (`projector/registry.go`, `sink.go::IsProjectedEvent`), so this pass is a second writer on it. That is precisely why `-write` refuses a range the live projector is still inside. Prefer `projector-replay` unless you specifically need the lake re-derive. |
-| Anything else | ask here first — do not invent a third path |
+| **Projected**, rewind ≲ 1M ledgers over gen-0 rows | `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger>` |
+| **Projected**, bulk (≳ 1M ledgers) or correcting stored rows | `stellarindex-ops projected-rebuild -config PATH -source <name> -from <l> [-to <l>] -write` |
+| **Non-projected** lake re-derive (`sdex`, `band` / `soroswap_router` contract calls) | `stellarindex-ops ch-rebuild -config PATH -from <l> -to <l> -write` with the pass flag `-sdex` / `-contract-calls` |
+| `sep41` lake re-derive (`ch-rebuild -sep41 -write`) | `sep41_*` is PROJECTED, so this pass is a second writer, which is why `-write` refuses a range the live projector is still inside. Prefer `projector-replay` unless you need the lake re-derive specifically. |
+| Anything else | ask first; do not invent a third path |
 
-Two corollaries, both learned the hard way:
+- **`stellarindex-ops backfill` is never the answer.** It is a MinIO walk
+  through the dispatcher, not a lake re-derive, and it refuses every
+  projected source (`checkBackfillNotProjected` in
+  `internal/ops/ingest/backfill.go`): it would be a second writer, and
+  for blend it would write nothing and exit 0.
+- **`ch-rebuild`'s event pass is guarded, not forbidden, on projected
+  domains.** Its one sanctioned projected use is the clean-slate repair
+  above. `-write` reads every projected source's live cursor and refuses
+  if any is inside `[-from,-to]`, as `projected-rebuild` does
+  (`-allow-live-overlap` overrides). A dry run writes nothing and is not
+  guarded.
 
-- **`stellarindex-ops backfill` is not a lake re-derive.** It is a MinIO
-  ledger walk (`internal/ledgerstream` → dispatcher), which invariant 8
-  rules out for decoder backfills, and on a gated projected source it
-  writes ZERO rows and still exits 0 (the cold-gate no-op documented at
-  `internal/ops/ingest/backfill.go:320-345`). It is never the answer to
-  "replay this decoder's history".
-- **`ch-rebuild`'s event pass can reach projected domains, so it is
-  guarded, not forbidden.** The one sanctioned projected use is the
-  clean-slate key repair (`scripts/ops/ch-rebuild-projected.sh`: DELETE
-  the window, then re-derive it with correct keys) — additive upserts
-  cannot fix a wrong PK. That run must stay strictly BEHIND the live
-  projector's tail, and since #333 `ch-rebuild -write` enforces it: it
-  reads the live projector's cursor for every projected source in the
-  run and refuses if any is still inside `[-from,-to]`, exactly as
-  `projected-rebuild` does (`-allow-live-overlap` is the explicit
-  operator override). Dry-run (`ch-rebuild` with no `-write`) writes
-  nothing and is never guarded.
+## Contract schema evolution
 
-The `Replay-Plan:` commit trailer that `scripts/ci/lint-replay-plan.sh`
-requires on a decoder / allow-list change should name the command from
-this table, not a hand-written variant.
+Soroban contracts upgrade in place (`update_contract`), so live ingest
+sees only the current WASM and a backfill sees every version that ever
+ran. Upgrades rename, add or reorder body fields, widen i64 → i128, or
+change topic shape (CAP-67 in P23 added a 4th topic to classic asset
+movement events). A new factory can run beside the old one for months.
 
----
+- **Decode by map field name; dispatch on `topic[0]`.** Never by field
+  position, contract address or cached WASM hash. Where a body really is
+  a positional tuple, guard its arity.
+- **Gate every replay on a per-WASM audit.** `wasmaudit.GateReplay`
+  (`internal/wasmaudit/gate.go`) refuses a range unless every WASM active
+  in it on every admitted contract is attested in
+  `internal/wasmaudit/audited_wasm.json`. It runs in `backfill` (and so
+  `resume-stalled`), `projector-replay`, `projected-rebuild` and
+  `ch-rebuild -write`. Known gaps: `backfill-router` is ungated although
+  `soroswap-router` is in the manifest, and `ch-cap67-movements` uses the
+  standard SEP-41 decoders, which the gate's policy check exempts.
+- Per-source policy is the `Backfill` field in
+  `internal/sources/external/registry.go`: `BackfillPerWASM`,
+  `BackfillNoWASM` or `BackfillUnsafe` (`upshift` today; an unknown
+  source falls back to unsafe). Admitting a source takes the WASM audit
+  under `docs/operations/wasm-audits/`, the manifest entry and the
+  registry value in one PR.
+- The WASM behind any row is derived from the lake's code history
+  (`ContractCodeHistory` in `internal/storage/clickhouse/wasm_lake_reader.go`);
+  rows carry no `contract_wasm_hash` column by decision. Live drift is
+  caught by `stellarindex-ops wasm-drift`; history is enumerated from
+  Galexie by `wasm-history`, `wasm-history-merge-jsonl` and
+  `extract-wasm-from-galexie`.
+- Aquarius has an `UPGRADE_DELAY = 259200s` (3 days) governance window
+  with an emergency-mode bypass, so an upgrade can land with no notice.
+- Per-connector WASM inventories are the audit logs and
+  [decoder-wasm-matrix.md](../operations/wasm-audits/decoder-wasm-matrix.md);
+  decoder upgrade notes live in `internal/sources/<venue>/README.md`.
+  SDEX is classic and has no WASM.
 
-## Binding rules
+Wire shapes that caught us, confirmed against mainnet captures:
 
-### 1. No stellar-rpc in production ingest
+| Source | Shape |
+|---|---|
+| Soroswap | `topic[0]` is `ScvString` `"SoroswapPair"`/`"SoroswapFactory"`, not a Symbol; the event name is a Symbol in `topic[1]`; body is an `ScvMap` keyed by Symbol field names |
+| Phoenix (legacy pools) | both topics `ScvString`; body is a bare scalar (`ScvAddress` or `ScvI128`), 8 events per swap sharing `(ledger, tx_hash, op_index)` |
+| Phoenix (map pools) | `swap` / `provide_liquidity` / `withdraw_liquidity` emit one event, a single `ScvSymbol` topic and an `ScvMap` body; `classifyAny` picks the shape |
+| Aquarius | topics `[Symbol("trade"), token_in, token_out, user]`; body is a positional `ScvVec` of 3 i128 (in, out, fee), arity-guarded with `scval.AsTupleN(body, 3)`; the "user" is usually the router contract |
+| Reflector | `#[contractevent]` wraps even one field in a Map: `{"update_data": Vec<(Val, i128)>}`; the timestamp is `topic[2]`, u64 **milliseconds**; `Asset::Other(Symbol)` is fiat or crypto, tried in that order (ADR-0010, ADR-0014) |
 
-`internal/stellarrpc/` exists only for:
-- `stellarindex-ops rpc-probe` — operator diagnostic against a
-  public endpoint.
-- Development-time fixture capture via scripts in
-  `scripts/dev/capture-*-fixtures.sh`.
+Fixtures are per version, `test/fixtures/<venue>/<wasm_hash or vN-date>/`.
+A decoder PR without the fixture it targets cannot be reviewed.
 
-`stellarindex-indexer` MUST NOT import `internal/stellarrpc`. Any
-source's ingest path that calls `rpc.GetEvents` or
-`rpc.LatestLedgerSequence` is wrong and blocks merge. This was
-established 2026-04-23 when stellar-rpc was removed from r1 (see
-`docs/operations/r1-deployment-state.md`). The fact that stellar-rpc
-returns the same base64 SCVal strings as ledger-meta decoding is a
-coincidence, not an architectural option — only one of those paths
-exists in production.
+## No stellar-rpc in production ingest
 
-### 2. Source packages are pure decoders
+`internal/stellarrpc` serves only the `rpc-probe` diagnostic, a few
+read-only ops checks and fixture capture. `stellarindex-indexer` MUST NOT
+import it. `scripts/ci/lint-imports.sh` enforces the allowlist
+(`internal/stellarrpc/`, named files under `internal/ops/`,
+`scripts/dev/`, `/decode.go`, `/factory_seed.go`, `_test.go`) together
+with the xdr-in-`internal/scval` rule (ADR-0013) and the no-Horizon rule
+(ADR-0001). Legacy violations sit in `scripts/ci/lint-imports.baseline`,
+which may only shrink. It runs as `make lint-imports` and in the
+`import-checks` CI job.
 
-Each `internal/sources/<venue>/` package exports:
-- `SourceName` constant.
-- `TopicPrefix*` / `TopicSymbol*` pre-encoded SCVal bytes (for the
-  dispatcher's byte-equality routing).
-- `decode...(event | rawPair | rawSwap) → canonical.*` functions.
-- Optional per-source correlation buffer (Soroswap swap+sync,
-  Phoenix 8-field). The buffer's state lives in memory for the
-  lifetime of one dispatcher goroutine — no per-source goroutine,
-  no RPC, no cursors.
-
-A source package MUST NOT:
-- Hold a `*stellarrpc.Client`.
-- Implement `consumer.Source.BackfillRange` / `StreamLive`.
-- Poll.
-- Paginate.
-
-### 3. Dispatcher owns routing — four decoder seams
-
-`internal/dispatcher/` is the single consumer of
-`internal/ledgerstream`. Decoders register on the dispatcher
-(`dispatcher.go`, e.g. `AddDecoder`) — there is no `routes.go`. The
-dispatcher exposes **four** decoder interfaces (`dispatcher.go`),
-matching the four shapes of on-chain data:
-
-- **`Decoder`** — Soroban contract events, routed by `topic[0]`
-  byte-equality against each source's `TopicPrefix*`/`TopicSymbol*`
-  constants (Soroswap, Phoenix, Comet, Aquarius, Reflector, …).
-- **`OpDecoder`** — classic operations (SDEX trades, `change_trust`
-  supply observers).
-- **`ContractCallDecoder`** — InvokeContract ops that update storage
-  without emitting events (Band's `relay()`/`force_relay()`; match by
-  `(contract_id, function_name)`, decode from op args).
-- **`LedgerEntryChangeDecoder`** — `LedgerEntry` mutations
-  (account/trustline/claimable/LP-reserve supply observers).
-
-It is the ONLY place where contract-event byte-matching, classic-op
-walking, contract-call matching, and ledger-entry-change routing
-happen, and where per-source correlation state is fed.
-
-**Event enrichment — decoders stay pure, the dispatcher supplies
-inputs.** Two `events.Event` fields carry per-operation context a
-decoder cannot derive from the event body alone, both populated by the
-dispatcher from the LCM on the production path and reconstructed
-byte-identically by the ClickHouse lake readers on the re-derive paths
-(projector CH feed-switch, `compute-completeness -ch`,
-`projected-rebuild`):
-
-- **`OpArgs`** — the producing InvokeContract call's argument vector
-  (base64 SCVals). Consumer: Redstone, whose `write_prices` event body
-  carries prices but no feed ids (the feed ids live in the op args).
-  Lake source: `contract_events.op_args_xdr`; per-source opt-in on
-  wide reads (`NeedOpArgs`).
-- **`StateWriteKeys`** — the base64 XDR LedgerKeys of the contract-data
-  entries whose VALUE the same operation changed (created, or updated
-  with a different `ContractDataEntry.Val` than the op's pre-image —
-  identical-value rewrites don't count), filtered to the event's own
-  contract. Consumer: Redstone's exact subset attribution — the adapter
-  rewrites every REQUESTED feed's entry but only ACCEPTED feeds' stored
-  PriceData changes (r1 ground truth, ledger 62056824), so the changed
-  keys name the accepted subset exactly when the freshness verifier
-  shortens `updated_feeds` below the op-args feed_ids; payload-median
-  alignment remains the fallback when keys are absent. Lake source:
-  `ledger_entry_changes` (batched `(ledger_seq, tx_hash, op_index)`
-  point lookups, `internal/storage/clickhouse/state_write_keys.go`);
-  per-source opt-in (`NeedStateWriteKeys` /
-  `projector.Source.NeedsStateWriteKeys`). The rule lives in
-  `internal/dispatcher/state_write_keys.go` and MUST stay in lockstep
-  on both paths.
-
-Any future decoder needing tx-scoped inputs follows the same pattern:
-plumb through `events.Event`, populate in the dispatcher AND the lake
-reader, keep the decoder a pure function of its `events.Event`.
-
-Adding a new source means:
-- Adding its decoder package under `internal/sources/<venue>/`.
-- Registering it on the dispatcher via the appropriate seam.
-- For a new Soroban-derived source: also adding a case in
-  `internal/projector/registry.go::buildSource` AND an arm in
-  `internal/pipeline/sink.go::IsProjectedEvent` (one-writer rule,
-  ADR-0031/0032).
-- That's it — no wire-layer code, no new goroutines.
-
-### 4. Fixture captures stay RPC-based
-
-`test/fixtures/<venue>/<wasm_hash>/*.json` fixtures are recorded from
-`scripts/dev/capture-*-fixtures.sh` against the public
-`mainnet.sorobanrpc.com` endpoint. This is fine because the event
-bytes are identical whether pulled from RPC or extracted from
-`LedgerCloseMeta` — both embed the same `xdr.ContractEvent` / SCVal
-payloads. Using RPC for fixture capture is a convenience for
-developers without r1 MinIO access.
-
-Integration tests that need a live Galexie source use a MinIO
-testcontainer seeded with a recorded `.xdr.zst` — never a live RPC
-call.
-
----
-
-## Why this doc exists
-
-Agent + the maintainer mistake, 2026-04-23: built Task #164 (decoders) correctly
-but wired the per-source `consumer.go` to `rpc *stellarrpc.Client` →
-`rpc.GetEvents`. This worked for tests (public RPC endpoint) but would
-never run on r1 because stellar-rpc was removed from r1 the same day.
-The mistake was *consistent extension of pre-existing RPC-based code*
-without auditing whether that code was still the production path.
-
-Preventive controls put in place:
-
-- **AGENTS.md** "Invariants — never violate these" now has a
-  dedicated rule #6 pointing at this doc.
-- **docs/architecture/domain-traps.md** highlights the 2026-
-  04-23 RPC removal.
-- **This doc** is binding (status: binding, not "living"); it gets
-  linked from every PR description that touches the ingest path.
-- **CI check (live):** `scripts/ci/lint-imports.sh` blocks
-  `internal/stellarrpc` imports outside the allowlist
-  (`cmd/stellarindex-ops/`, `scripts/dev/`, `internal/stellarrpc/`
-  itself, `*_test.go`). Soroban contract-event types now live in the
-  transport-neutral `internal/events/` package (no longer in each
-  source's `decode.go`). Also enforces rule B
-  (xdr scoped to internal/scval, ADR-0013) and rule C (no
-  Horizon, ADR-0001). Current legacy violations grandfathered in
-  `scripts/ci/lint-imports.baseline`; the lint fails on NEW
-  violations or on stale baseline entries so the baseline has to
-  shrink monotonically. Runs via `make lint-imports`,
-  `make verify`, and the `import-checks` CI job.
-
-If you find yourself adding a `rpc *stellarrpc.Client` field to a
-source struct or writing a new `BackfillRange`/`StreamLive` method:
-**stop.** Your work belongs in the dispatcher or in decode.go, not
-in a per-source poll loop.
-
----
-
-## References
-
-- [ADR-0001](../adr/0001-horizon-deprecated.md) — no Horizon.
-- [ADR-0002](../adr/0002-minio-s3-compat-storage.md) — S3-compatible
-  storage is MinIO; not local filesystem.
-- [ADR-0013](../adr/0013-go-stellar-sdk-xdr-for-scval.md) — SDK
-  dependency, which gives us `ingest.ApplyLedgerMetadata`.
-- [ADR-0029](../adr/0029-soroban-events-landing-zone.md) — the
-  `soroban_events` raw landing zone. It is the projector's **legacy
-  fallback** read source only; the default is the ClickHouse lake
-  (`clickhouse_projector_source`, `internal/config/config.go:943`) and
-  decommissioning the landing zone is issue #803.
-- [ADR-0031](../adr/0031-data-derived-coverage-signal.md) /
-  [ADR-0032](../adr/0032-per-source-tables-as-projections.md) —
-  data-derived coverage + per-source tables as projections; the
-  projector is the sole writer for Soroban-derived per-source tables.
-- [ADR-0034](../adr/0034-tiered-clickhouse-architecture.md) —
-  ClickHouse is the certified raw lake; Postgres/TimescaleDB is the
-  served tier.
-- [r1-deployment-state.md](../operations/r1-deployment-state.md) —
-  what's actually running on r1.
-  the CDP pattern.
-- [contract-schema-evolution.md](contract-schema-evolution.md) —
-  per-contract WASM versioning (unrelated to transport; still
-  applies).
+Fixtures are captured over RPC by `scripts/dev/capture-{aquarius,phoenix,reflector,soroswap}-fixtures.sh`
+against `mainnet.sorobanrpc.com`. That is fine because RPC and the LCM
+carry byte-identical `xdr.ContractEvent` payloads. Integration tests that
+need Galexie use a MinIO testcontainer seeded with a recorded `.xdr.zst`,
+never a live RPC call.

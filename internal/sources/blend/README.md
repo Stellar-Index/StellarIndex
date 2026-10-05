@@ -122,7 +122,7 @@ sorted-by-symbol keys:
 ```
 
 Decoder extracts by name, not position — resilient to field
-reordering (per `docs/architecture/contract-schema-evolution.md`).
+reordering (per `docs/architecture/ingest-pipeline.md#contract-schema-evolution`).
 
 ### Auction types
 
@@ -240,6 +240,6 @@ IS handled by `classifyAny` — no other gap found.
 ## References
 
 - Protocol verification page: [`docs/protocols/blend.md`](../../../docs/protocols/blend.md)
-- Schema-evolution stance: [`docs/architecture/contract-schema-evolution.md`](../../../docs/architecture/contract-schema-evolution.md)
+- Schema-evolution stance: [`docs/architecture/ingest-pipeline.md#contract-schema-evolution`](../../../docs/architecture/ingest-pipeline.md#contract-schema-evolution)
 - Upstream contracts: <https://github.com/blend-capital/blend-contracts-v2>
 - Local source-of-truth checkout: `.discovery-repos/blend-contracts/`

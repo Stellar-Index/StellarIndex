@@ -1,5 +1,5 @@
 // Package clickhouse is the Tier-1 raw-lake write path (ADR-0034 /
-// docs/architecture/clickhouse-tier1-decoder.md). It buffers structurally-
+// docs/architecture/ingest-pipeline.md#the-structural-lake-ingest). It buffers structurally-
 // decoded ledger rows and flushes them to the ClickHouse `stellar.*` tables
 // in native columnar batches. Rows mirror deploy/clickhouse/tier1_schema.sql
 // exactly (excluding the DEFAULT ingested_at column).

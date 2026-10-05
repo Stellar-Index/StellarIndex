@@ -161,7 +161,7 @@ in `decode.go`.
 
 ### Q5 — Two on-wire swap shapes (String 8-event vs Symbol/Map single-event)
 
-Phoenix pools upgrade in place ([contract-schema-evolution](../../../docs/architecture/contract-schema-evolution.md)),
+Phoenix pools upgrade in place ([contract-schema-evolution](../../../docs/architecture/ingest-pipeline.md#contract-schema-evolution)),
 and the newer pool WASM (first seen on mainnet 2026-07-02, pool
 `CBENABXP…`) emits a swap as a **single** `ScvSymbol("swap")` event
 whose body is an `ScvMap` of all 8 fields — Symbol keys spelled with

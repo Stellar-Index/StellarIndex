@@ -338,7 +338,7 @@ var MainnetStakeContracts = []string{
 // phoenix.md). Both schemas are gated + decoded (decode.go:
 // actionSwap / actionSwapMap). Because gating is by contract identity,
 // a curated pool that upgrades from the String to the Map shape in
-// place (contract-schema-evolution.md) is already covered — only the
+// place (ingest-pipeline.md#contract-schema-evolution) is already covered — only the
 // decode dispatch depends on the topic shape, not this list.
 // CBENABXP appeared 2026-07-02 (factory "Updated Config" + create in
 // the same window).
@@ -385,7 +385,7 @@ var (
 // schema above (disc 0x0E). The Map keys are Symbols spelled with
 // underscores ("actual_received_amount"), not the legacy spaced String
 // ("actual received amount"). Decoded by decode.go::decodeSwapMap; see
-// README Q5 and docs/architecture/contract-schema-evolution.md (Soroban
+// README Q5 and docs/architecture/ingest-pipeline.md#contract-schema-evolution (Soroban
 // pools upgrade in place and can change event SHAPE, not just fields).
 var TopicSymbolSwapMap = scval.MustEncodeSymbol(EventActionSwap)
 

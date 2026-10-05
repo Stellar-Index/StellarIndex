@@ -112,7 +112,7 @@ func classify(e *events.Event) string {
 //
 // Both are #[contracttype] structs → on the wire they're ScvMap with
 // field-name Symbol keys. We pull the four swap amount fields by
-// name (per contract-schema-evolution.md's decode-by-name rule) and
+// name (per ingest-pipeline.md#contract-schema-evolution's decode-by-name rule) and
 // derive trade direction from which side has a positive `in` +
 // matching positive `out`.
 //
@@ -282,7 +282,7 @@ type LiquidityFields struct {
 // sdkDecodeLiquidity decodes a Soroswap pair deposit/withdraw body.
 // Same Map-by-field-name path as sdkDecodeSwapAmounts — a positional
 // decode would break silently if a future WASM upgrade reorders or
-// adds a field (contract-schema-evolution.md decode-by-name rule).
+// adds a field (ingest-pipeline.md#contract-schema-evolution decode-by-name rule).
 func sdkDecodeLiquidity(valueB64 string) (LiquidityFields, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {
@@ -437,7 +437,7 @@ func sdkDecodeNewPair(valueB64 string) (NewPairFields, error) {
 //
 //	struct SkimEvent { skimmed_0: i128, skimmed_1: i128 }
 //
-// To stay decode-by-name (per contract-schema-evolution.md), the
+// To stay decode-by-name (per ingest-pipeline.md#contract-schema-evolution), the
 // decoder tolerates both the documented field names AND the common
 // Uniswap-v2-style `amount_0` / `amount_1` aliases — if a future
 // WASM upgrade renames the fields the decoder still produces a row
