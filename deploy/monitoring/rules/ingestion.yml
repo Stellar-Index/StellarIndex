@@ -79,8 +79,7 @@ groups:
           sum by (source) (rate(stellarindex_source_events_total[30h])) == 0
           and on (source) stellarindex_source_enabled == 1
           and on (source) (
-            label_replace(vector(1), "source", "ecb",  "", "") or
-            label_replace(vector(1), "source", "band", "", "")
+            label_replace(vector(1), "source", "ecb", "", "")
           )
         for: 1h
         labels:
@@ -92,9 +91,30 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
           summary: "Daily publisher {{ $labels.source }} silent 30+ hours"
           description: |
-            ECB publishes daily; Band publishes on relayer push
-            (also roughly daily). 30h gives a one-day buffer plus
+            ECB publishes daily. 30h gives a one-day buffer plus
             ample slack for upstream cadence variation.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+
+      # Hourly publishers. Band relays hourly (oracle-stale.md), so a 30h
+      # window would take a day and a half to notice a dead relayer.
+      # 6h = six missed relays; for 1h keeps a late push from ticketing.
+      - alert: stellarindex_ingestion_source_stopped_hourly_publisher
+        expr: |
+          sum by (source) (rate(stellarindex_source_events_total[6h])) == 0
+          and on (source) stellarindex_source_enabled == 1
+          and on (source) label_replace(vector(1), "source", "band", "", "")
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+          alert_family: ingestion_source_stopped
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+          summary: "Hourly publisher {{ $labels.source }} silent 6+ hours"
+          description: |
+            No events from {{ $labels.source }} in 6+ hours. Band relays
+            hourly, so this is six missed relays, not a quiet day.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
 
       - alert: stellarindex_ingestion_all_sources_stopped

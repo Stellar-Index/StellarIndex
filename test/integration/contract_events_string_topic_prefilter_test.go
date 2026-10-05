@@ -103,7 +103,7 @@ func TestClickHouseStringTopicPrefilterAdmitsPhoenixPool(t *testing.T) {
 		t.Fatalf("open sink: %v", err)
 	}
 	t.Cleanup(func() { _ = sink.Close(ctx) })
-	if err := sink.Add(ctx, ext); err != nil {
+	if err := sink.Add(ctx, withEventTxs(ext)); err != nil {
 		t.Fatalf("sink add: %v", err)
 	}
 	if err := sink.Flush(ctx); err != nil {

@@ -18,6 +18,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 )
 
 // ── mock identity-gated decoder ─────────────────────────────────────────────
@@ -238,6 +239,33 @@ func TestGatedPrefilter_identicalCountsSelfSeedPreserved(t *testing.T) {
 	}
 }
 
+// TestSorocreditCatalogue_GatedNotRootPinned guards INV-2587: sorocredit's
+// Matches admits registered Collateral children, so the catalogue must not
+// pin contractIDs to the root (a hard per-event filter in ch-rebuild /
+// ch-reproject and the re-derive prefilter) and must scope by the gated set.
+func TestSorocreditCatalogue_GatedNotRootPinned(t *testing.T) {
+	var src *reconSource
+	cat := builtCatalogue(t)
+	for i := range cat {
+		if cat[i].name == sorocredit.SourceName {
+			src = &cat[i]
+		}
+	}
+	if src == nil {
+		t.Fatal("sorocredit missing from the catalogue")
+	}
+	if len(src.contractIDs) != 0 {
+		t.Errorf("sorocredit contractIDs = %v: a static pin drops child-emitted events Matches admits", src.contractIDs)
+	}
+	if src.newGatedDec == nil || len(src.factories) != 1 || src.factories[0] != sorocredit.MainnetContract ||
+		src.creationSym != sorocredit.TopicNewCollateralContract {
+		t.Fatalf("sorocredit must be factory-anchored on its main contract with newGatedDec; got factories=%v creationSym=%q", src.factories, src.creationSym)
+	}
+	if set := src.newGatedDec().GatedContractSet(); !containsStr(set, sorocredit.MainnetContract) {
+		t.Errorf("sorocredit GatedContractSet %v omits the trust root", set)
+	}
+}
+
 // TestGatedContractSet_realDecoders proves the REAL aquarius and phoenix
 // decoders enumerate their gate as factory-trust-root ∪ curated children — the
 // set gatedPrefilter scopes the lake read to. If a decoder's seed shrinks (or
@@ -298,7 +326,7 @@ func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
 			optedIn[src.name] = true
 		}
 	}
-	for _, name := range []string{"aquarius", "phoenix", "soroswap", "sushiswap_v3", "blend"} {
+	for _, name := range []string{"aquarius", "phoenix", "soroswap", "sushiswap_v3", "blend", "sorocredit"} {
 		if !optedIn[name] {
 			t.Errorf("source %q must opt into the -ch gated prefilter (it streams the whole lake otherwise)", name)
 		}
@@ -306,9 +334,10 @@ func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
 	if optedIn["defindex"] {
 		t.Errorf("defindex must NOT opt into the gated prefilter — its decode correlates events across contracts in the same tx, which a contract-id prefilter would break")
 	}
-	// Sanity: the opt-in stays narrow — exactly the identity-gated AMMs.
-	if len(optedIn) != 5 {
-		t.Errorf("gated-prefilter opt-in set = %v, want exactly {aquarius, phoenix, soroswap, sushiswap_v3, blend}", optedIn)
+	// Sanity: the opt-in stays narrow — exactly the identity-gated
+	// factory-child sources (sorocredit decodes each event on its own).
+	if len(optedIn) != 6 {
+		t.Errorf("gated-prefilter opt-in set = %v, want exactly {aquarius, phoenix, soroswap, sushiswap_v3, blend, sorocredit}", optedIn)
 	}
 }
 

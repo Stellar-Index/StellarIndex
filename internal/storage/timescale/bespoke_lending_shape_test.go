@@ -198,6 +198,37 @@ func TestCreditUSDCDecimalsAreClassicSevenNotOffChainSix(t *testing.T) {
 	}
 }
 
+// TestCreditSettlementSumsScopedToUSDC guards INV-2586: settled_amount is
+// only summable within one debt asset, and the rows the USDC sum leaves short
+// (non-USDC or undecoded primary leg, extra legs) must be counted so the
+// served volume can be flagged a lower bound.
+func TestCreditSettlementSumsScopedToUSDC(t *testing.T) {
+	scoped := "sum(settled_amount) FILTER (WHERE debt_asset = '" + creditUSDCSAC + "')"
+	for name, q := range map[string]string{
+		"analytics": creditSettlementsAnalyticsQuery,
+		"series":    creditSettlementSeriesQuery(30),
+	} {
+		if !strings.Contains(q, scoped) {
+			t.Errorf("%s settlement sum must be scoped to the USDC debt asset, got:\n%s", name, q)
+		}
+	}
+	for _, want := range []string{"IS DISTINCT FROM '" + creditUSDCSAC + "'", "settled_amount IS NULL", "attributes->'debt_legs' IS NOT NULL"} {
+		if !strings.Contains(creditSettlementsAnalyticsQuery, want) {
+			t.Errorf("analytics query must count settlements left out of the sum (%s)", want)
+		}
+	}
+}
+
+func TestCreditSettlementVolumeKPIHint(t *testing.T) {
+	if got := creditSettlementVolumeKPIHint(0); got != creditSettlementVolumeHint {
+		t.Errorf("fully summed hint = %q, want the plain hint", got)
+	}
+	got := creditSettlementVolumeKPIHint(3)
+	if !strings.HasPrefix(got, "LOWER BOUND:") || !strings.Contains(got, "3 settlements") {
+		t.Errorf("partial hint = %q, want a LOWER BOUND naming 3 settlements", got)
+	}
+}
+
 // TestTruncLendingID guards the display truncation for pool labels
 // ("CAJJ…BXBD") and the pass-through of already-short ids.
 func TestTruncLendingID(t *testing.T) {

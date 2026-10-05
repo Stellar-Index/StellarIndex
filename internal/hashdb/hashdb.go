@@ -44,10 +44,12 @@
 // Concurrency. A *DB owns the underlying *os.File; concurrent calls
 // must be serialised by the caller. The intended usage is one writer
 // (the indexer) and one reader (the verify cron) — never both at the
-// same time. The file is left in a consistent state across crashes
-// because every record is a fixed-size atomic-write candidate
-// (sub-page) and the dense-array layout has no inter-record metadata
-// to corrupt.
+// same time. The dense-array layout has no inter-record metadata to
+// corrupt, but a record write is NOT atomic everywhere: with the 16-byte
+// header, 1 record in 128 straddles a 4 KiB page, and a torn record reads
+// as non-zero (permanent false drift). Atomic on copy-on-write
+// filesystems (ZFS, r1); on ext4/xfs (R2/R3) a torn record surfaces as
+// drift, see the hashdb-drift-detected runbook.
 package hashdb
 
 import (

@@ -200,6 +200,7 @@ expect_not "go-only: no migration gates" "lint-migrations" "$out"
 expect_not "go-only: no lint-migration-commands (Go is not in its operator corpus)" "lint-migration-commands" "$out"
 expect_not "go-only: no check-verify-parity" "check-verify-parity" "$out"
 expect_has "go-only: lint-repo-budget selected" "plan  lint-repo-budget:" "$out"
+expect_has "go-only: lint-comments selected" "plan  lint-comments:" "$out"
 
 R="$TMP/shonly"; new_repo "$R"
 put "$R" bin/x.sh $'#!/usr/bin/env bash\nset -euo pipefail\necho x'
@@ -211,6 +212,7 @@ expect_not "sh-only: no go vet" "go vet" "$out"
 expect_not "sh-only: no lint-lexicon" "lint-lexicon" "$out"
 expect_not "sh-only: no actionlint" "actionlint" "$out"
 expect_not "sh-only: no lint-repo-budget" "lint-repo-budget" "$out"
+expect_not "sh-only: no lint-comments" "lint-comments" "$out"
 
 R="$TMP/wfonly"; new_repo "$R"
 put "$R" .github/workflows/a.yml $'name: a\non: push\npermissions:\n  contents: read\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1\n      - run: |\n          set -euo pipefail\n          echo ok'

@@ -191,15 +191,15 @@ func TestOperatorDocsStateThePublishedAvailabilityFigure(t *testing.T) {
 		forbidden []string
 		required  []string
 		// quotesOriginalFigure marks a record that legitimately carries
-		// the 99.99 % wording: an ADR's accepted text is immutable and is
-		// corrected by a dated amendment, and the coverage matrix quotes
+		// the 99.99 % wording: ADR-0008 states it as the original design
+		// target beside the published figure, and the coverage matrix quotes
 		// the proposal's claim verbatim before grading it. Both are pinned
 		// on their correction instead of swept.
 		quotesOriginalFigure bool
 	}{
 		{
 			path:                 "docs/adr/0008-ha-topology.md",
-			required:             []string{"Amendment — 2026-09-04", "the published availability commitment is **≥ 99.9 %**"},
+			required:             []string{"The published commitment is ≥ 99.9 % over a 30-day month"},
 			quotesOriginalFigure: true,
 		},
 		{

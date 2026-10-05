@@ -198,3 +198,21 @@ func TestBackfillTrades_MalformedCursorStopsWithError(t *testing.T) {
 		t.Fatal("BackfillTrades with a malformed cursor returned err == nil — a multi-year walk would silently report as complete after page one")
 	}
 }
+
+func TestBackfillTrades_RESTPairIsAltname(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query().Get("pair")
+		fmt.Fprint(w, krakenTradesPage2)
+	}))
+	defer srv.Close()
+	pair, _ := canonical.NewPair(mustAsset(t, "crypto:XLM"), mustAsset(t, "fiat:USD"))
+	s := &Streamer{Endpoint: srv.URL, PairMap: map[string]canonical.Pair{"XLM/USD": pair}}
+	from := time.Date(2018, 7, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := s.BackfillTrades(context.Background(), pair, from, from.Add(24*time.Hour)); err != nil {
+		t.Fatalf("BackfillTrades: %v", err)
+	}
+	if got != "XLMUSD" {
+		t.Errorf("REST pair param = %q, want XLMUSD (no WS slash)", got)
+	}
+}

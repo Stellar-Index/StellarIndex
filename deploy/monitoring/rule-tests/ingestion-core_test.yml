@@ -143,17 +143,58 @@ tests:
         exp_alerts: []
 
   # ══ stellarindex_ingestion_source_stopped_daily_publisher ═════════
-  # ── firing: band silent across the trailing 30h window ───────────
+  # ── firing: ecb silent across the trailing 30h window ───────────
   - interval: 1m
     name: a silent daily publisher tickets after its 1h for
     input_series:
-      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="band"}'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="ecb"}'
         values: '12+0x80'
-      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="band"}'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="ecb"}'
         values: '1+0x80'
     alert_rule_test:
       - eval_time: 75m
         alertname: stellarindex_ingestion_source_stopped_daily_publisher
+        exp_alerts:
+          - exp_labels:
+              source: ecb
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+              alert_family: ingestion_source_stopped
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+              summary: "Daily publisher ecb silent 30+ hours"
+              description: |
+                ECB publishes daily. 30h gives a one-day buffer plus
+                ample slack for upstream cadence variation.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+
+  # ── near-threshold: one relay push inside the window silences it ──
+  - interval: 1m
+    name: a daily publisher that published within the window stays silent
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="ecb"}'
+        values: '12+0x30 13+0x50'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="ecb"}'
+        values: '1+0x80'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: stellarindex_ingestion_source_stopped_daily_publisher
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_source_stopped_hourly_publisher ════════
+  # band relays hourly: 6h of silence tickets after the 1h for, a missed
+  # hour or two does not, and band is no longer judged by the 30h rule.
+  - interval: 1m
+    name: band silent for 6h tickets the hourly-publisher rule, not the daily one
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="band"}'
+        values: '12+0x500'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="band"}'
+        values: '1+0x500'
+    alert_rule_test:
+      - eval_time: 420m
+        alertname: stellarindex_ingestion_source_stopped_hourly_publisher
         exp_alerts:
           - exp_labels:
               source: band
@@ -163,24 +204,25 @@ tests:
               alert_family: ingestion_source_stopped
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
-              summary: "Daily publisher band silent 30+ hours"
+              summary: "Hourly publisher band silent 6+ hours"
               description: |
-                ECB publishes daily; Band publishes on relayer push
-                (also roughly daily). 30h gives a one-day buffer plus
-                ample slack for upstream cadence variation.
+                No events from band in 6+ hours. Band relays
+                hourly, so this is six missed relays, not a quiet day.
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+      - eval_time: 420m
+        alertname: stellarindex_ingestion_source_stopped_daily_publisher
+        exp_alerts: []
 
-  # ── near-threshold: one relay push inside the window silences it ──
   - interval: 1m
-    name: a daily publisher that published within the window stays silent
+    name: band relaying hourly stays silent
     input_series:
       - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="band"}'
-        values: '12+0x30 13+0x50'
+        values: '0+1x20 20+0x59 21+0x59 22+0x59 23+0x59 24+0x59 25+0x59'
       - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="band"}'
-        values: '1+0x80'
+        values: '1+0x500'
     alert_rule_test:
-      - eval_time: 75m
-        alertname: stellarindex_ingestion_source_stopped_daily_publisher
+      - eval_time: 400m
+        alertname: stellarindex_ingestion_source_stopped_hourly_publisher
         exp_alerts: []
 
   # ══ API-hosted source: massive ════════════════════════════════════
