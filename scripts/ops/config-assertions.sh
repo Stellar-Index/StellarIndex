@@ -18,6 +18,10 @@
 # CONTENT that matters (grep), not just file existence — a truncated
 # or reverted file should fail.
 set -u
+# INV-0802: CH as ops_monitor once the role renders this file; /dev/null (no
+# credential, CH `default`) until then, so no deploy order strands this script.
+CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-monitor.netrc}"
+[[ -r "$CH_NETRC" ]] || CH_NETRC=/dev/null
 
 OUT="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}/config_assertions.prom"
 # Temp beside $OUT so the mv is a same-filesystem rename the collector never sees half-written.
@@ -357,11 +361,11 @@ assert_cmd pg_idle_in_transaction_timeout_live pg_idle_in_transaction_timeout_li
 tx_hash_index_parity() {
   local ch="http://127.0.0.1:8123/"
   local tip floor sample n in_list found
-  tip=$(curl -sS --max-time 15 "$ch" --data-binary \
+  tip=$(curl -sS --max-time 15 --netrc-file "$CH_NETRC" "$ch" --data-binary \
     'SELECT max(ledger_seq) FROM stellar.ledgers') || return 1
   [[ "$tip" =~ ^[0-9]+$ && "$tip" -gt 10000 ]] || return 1
   floor=$((tip - 10000))
-  sample=$(curl -sS --max-time 60 "$ch" --data-binary "
+  sample=$(curl -sS --max-time 60 --netrc-file "$CH_NETRC" "$ch" --data-binary "
     SELECT DISTINCT tx_hash FROM stellar.transactions
     WHERE ledger_seq > ${floor}
     ORDER BY rand() LIMIT 500
@@ -372,7 +376,7 @@ tx_hash_index_parity() {
   [[ "$n" -gt 0 ]] || return 1
   in_list=$(printf '%s\n' "$sample" | grep -E '^[0-9a-f]{64}$' \
     | sed "s/.*/'&'/" | paste -sd, -)
-  found=$(curl -sS --max-time 60 "$ch" --data-binary "
+  found=$(curl -sS --max-time 60 --netrc-file "$CH_NETRC" "$ch" --data-binary "
     SELECT uniqExact(tx_hash) FROM stellar.tx_hash_index
     WHERE tx_hash IN (${in_list})
     SETTINGS max_threads = 4, max_memory_usage = 4294967296") || return 1
@@ -418,7 +422,7 @@ CH_DROP_GUARD_MAX_BYTES="${CH_DROP_GUARD_MAX_BYTES:-53687091200}"
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 ch_drop_guard_live() {
   local rows name value seen=""
-  rows=$(curl -fsS --max-time 15 "http://127.0.0.1:8123/" --data-binary "
+  rows=$(curl -fsS --max-time 15 --netrc-file "$CH_NETRC" "http://127.0.0.1:8123/" --data-binary "
     SELECT name, value FROM system.server_settings
     WHERE name IN ('max_partition_size_to_drop', 'max_table_size_to_drop')
     ORDER BY name FORMAT TSV") || return 1

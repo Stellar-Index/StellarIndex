@@ -36,6 +36,10 @@ load_env_file() {
   done < "$1"
 }
 load_env_file /etc/default/stellarindex
+# INV-0802: CH as ops_monitor once the role renders this file; /dev/null (no
+# credential, CH `default`) until then, so no deploy order strands this script.
+CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-monitor.netrc}"
+[[ -r "$CH_NETRC" ]] || CH_NETRC=/dev/null
 
 # Debian's pg_wrapper `psql` stats the cluster data dir to pick a version and
 # aborts with "Invalid data directory for cluster 15 main" for any user that
@@ -429,7 +433,7 @@ fi
 # turns an HTTP 5xx into a failure instead of an error body that would be
 # emitted as a metric value.
 SF_AGE=""
-if ! SF_AGE=$(curl -sS -f --max-time 15 http://localhost:8123/ --data-binary \
+if ! SF_AGE=$(curl -sS -f --max-time 15 --netrc-file "$CH_NETRC" http://localhost:8123/ --data-binary \
   "SELECT toUInt64(dateDiff('second', max(ingested_at), now())) FROM stellar.supply_flows" | tr -d '[:space:]'); then
   echo "data-freshness: ClickHouse supply_flows probe failed — sep41_supply gauges skipped this tick" >&2
   SF_AGE=""

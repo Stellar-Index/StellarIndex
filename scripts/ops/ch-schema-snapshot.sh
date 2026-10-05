@@ -46,6 +46,10 @@
 set -uo pipefail
 
 CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
+# INV-0802: CH as ops_monitor once the role renders this file; /dev/null (no
+# credential, CH `default`) until then, so no deploy order strands this script.
+CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-monitor.netrc}"
+[[ -r "$CH_NETRC" ]] || CH_NETRC=/dev/null
 CH_DATABASE="${CH_DATABASE:-stellar}"
 OUT_DIR="${OUT_DIR:-/var/lib/stellarindex/ch-schema-snapshot}"
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
@@ -65,7 +69,7 @@ rc=0
 snapshot_ok=1
 
 note() { echo "ch-schema-snapshot: $*" >&2; }
-ch() { curl -sSf --max-time 120 "$CH_HTTP" --data-binary "$1"; }
+ch() { curl -sSf --max-time 120 --netrc-file "$CH_NETRC" "$CH_HTTP" --data-binary "$1"; }
 # A partial capture must not stamp a fresh last_success: half a schema
 # presented as a backup is the exact "we thought we had one" failure
 # ADR-0043 was written after. Degrade -> the staleness alert fires.

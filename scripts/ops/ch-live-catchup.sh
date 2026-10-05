@@ -50,7 +50,13 @@ OPS=${OPS:-/usr/local/bin/stellarindex-ops-ch}
 CFG=${CFG:-/etc/stellarindex.toml}
 DSN="$STELLARINDEX_POSTGRES_DSN"
 PAR=${PAR:-4}
-CH() { clickhouse-client --port "${CH_PORT:-9300}" "$@"; }
+# INV-0802: ops_batch's -C file once the role renders it. It must win over
+# root's ~/.clickhouse-client/config.xml (ops_admin, normal priority); absent,
+# the env pair above applies as before.
+CH_CFG=/etc/clickhouse-client/ops-batch.xml
+CH_AUTH=(-C "$CH_CFG")
+[[ -r "$CH_CFG" ]] || CH_AUTH=()
+CH() { clickhouse-client ${CH_AUTH[@]+"${CH_AUTH[@]}"} --port "${CH_PORT:-9300}" "$@"; }
 # LIVE_ERA_FROM is the lowest ledger the in-dispatcher dual-sink is
 # responsible for — one past the ceiling of the certified bulk backfill.
 # Everything below it was written by ch-backfill and is already contiguous;

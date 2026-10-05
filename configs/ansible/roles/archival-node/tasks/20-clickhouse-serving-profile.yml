@@ -286,10 +286,12 @@
 - name: Assert ClickHouse ops-batch profile password is set (2026-08-28 r1)
   ansible.builtin.assert:
     that:
-      - clickhouse_ops_batch_password | default('') | length > 0
+      - clickhouse_ops_batch_password | default('') is match('^[A-Za-z0-9]{16,}$')
     fail_msg: >-
-      clickhouse_ops_batch_password is not set. Generate a strong
-      password, `ansible-vault edit inventory/r1.secrets.yml` and add
+      clickhouse_ops_batch_password must be at least 16 alphanumeric
+      characters (netrc splits on whitespace and the client XML is not
+      escaped). Generate one with `openssl rand -hex 32`,
+      `ansible-vault edit inventory/r1.secrets.yml` and add
       `vault_clickhouse_ops_batch_password: "<generated>"` (mirrors
       vault_clickhouse_serving_password — see defaults/main.yml's
       clickhouse_ops_batch_password for the wiring), then re-run with
@@ -408,6 +410,37 @@
   # and 21-clickhouse-drop-guard.yml).
   tags: [clickhouse, clickhouse-ops-batch-profile]
 
+- name: Render the ops_batch client credential files (root:stellarindex 0640)
+  # For scripts that cannot use the /etc/default/stellarindex-ops env pair:
+  # run-ch-supply.sh (User=stellarindex, curl) and ch-live-catchup.sh, whose
+  # -C file must override root's ops_admin client config. Written right
+  # after the drop-in and before the reload so a rotation moves both together.
+  ansible.builtin.copy:
+    dest: "{{ item.dest }}"
+    owner: root
+    group: stellarindex
+    mode: "0640"
+    content: "{{ item.content }}"
+  loop:
+    - dest: /etc/clickhouse-client/ops-batch.xml
+      content: |
+        <config>
+            <!-- Managed by ansible (archival-node / 20-clickhouse-serving-profile.yml). -->
+            <port>{{ clickhouse_tcp_port | default(9300) }}</port>
+            <user>{{ clickhouse_ops_batch_user }}</user>
+            <password>{{ clickhouse_ops_batch_password }}</password>
+        </config>
+    - dest: /etc/clickhouse-client/ops-batch.netrc
+      content: |
+        machine 127.0.0.1 login {{ clickhouse_ops_batch_user }} password {{ clickhouse_ops_batch_password }}
+        machine localhost login {{ clickhouse_ops_batch_user }} password {{ clickhouse_ops_batch_password }}
+  loop_control:
+    label: "{{ item.dest }}"
+  when: clickhouse_ops_batch_profile_enabled | bool
+  no_log: true
+  diff: false
+  tags: [clickhouse, clickhouse-ops-batch-profile]
+
 - name: Reload ClickHouse config so the ops_batch drop-in is live (no restart)
   # Idempotent; skipped under --check (command modules do not run there).
   when:
@@ -438,6 +471,25 @@
   delay: 2
   # users,profiles — exactly one of each.
   until: ch_ops_batch_profile_live.stdout == '1,1'
+  tags: [clickhouse, clickhouse-ops-batch-profile]
+
+- name: Verify the ops_batch client files authenticate as ops_batch
+  when:
+    - clickhouse_ops_batch_profile_enabled | bool
+    - not ansible_check_mode
+  ansible.builtin.command:
+    argv: "{{ item }}"
+  loop:
+    - [timeout, "10", clickhouse-client, -C, /etc/clickhouse-client/ops-batch.xml, -q, "SELECT currentUser()"]
+    - [curl, -sS, --max-time, "10", --netrc-file, /etc/clickhouse-client/ops-batch.netrc,
+       "http://localhost:8123/", --data-binary, "SELECT currentUser()"]
+  loop_control:
+    label: "{{ item[0] }} {{ item[-3] }}"
+  register: ch_ops_batch_client_probe
+  changed_when: false
+  retries: 5
+  delay: 2
+  until: (ch_ops_batch_client_probe.stdout | trim) == clickhouse_ops_batch_user
   tags: [clickhouse, clickhouse-ops-batch-profile]
 
 # ───── live_daemon: a named identity for the live daemons ──────────────
@@ -575,10 +627,35 @@
 # inventory's secrets, set the flags, then
 #   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
 #     --tags clickhouse-ops-monitor-profile,clickhouse-ops-admin-profile --check
-# This moves no script. Its one behaviour change is root's bare
-# clickhouse-client, which becomes ops_admin (including root-run scripts
-# such as ch-live-catchup.sh: a client config with <user> makes the client
-# ignore CLICKHOUSE_USER/CLICKHOUSE_PASSWORD).
+# Root's bare clickhouse-client becomes ops_admin (a client config with
+# <user> makes the client ignore CLICKHOUSE_USER/CLICKHOUSE_PASSWORD).
+# Installed scripts pick their identity by file and fall back to `default`
+# while it is absent: read-only probes ops-monitor.netrc, ch-lake-backup.sh
+# ops-admin.netrc, ch-supply and ch-live-catchup ops_batch's files.
+
+- name: Find ops credential backups a killed run left behind
+  # A killed run skips the blocks' always:, leaving `~` copies of the
+  # previous credential. users.d ignores them; nothing else should keep them.
+  ansible.builtin.find:
+    paths: "{{ item.path }}"
+    patterns: "{{ item.pattern }}"
+  loop:
+    - {path: /etc/clickhouse-server/users.d, pattern: "ops-*.xml.*~"}
+    - {path: /etc/clickhouse-client, pattern: "ops-*.*~"}
+    - {path: /root/.clickhouse-client, pattern: "config.xml.*~"}
+  register: ch_ops_stale_backups
+  when: clickhouse_ops_monitor_profile_enabled | bool or clickhouse_ops_admin_profile_enabled | bool
+  tags: [clickhouse, clickhouse-ops-monitor-profile, clickhouse-ops-admin-profile]
+
+- name: Delete ops credential backups a killed run left behind
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ ch_ops_stale_backups.results | default([]) | selectattr('files', 'defined')
+       | map(attribute='files') | flatten | map(attribute='path') | list }}
+  when: clickhouse_ops_monitor_profile_enabled | bool or clickhouse_ops_admin_profile_enabled | bool
+  tags: [clickhouse, clickhouse-ops-monitor-profile, clickhouse-ops-admin-profile]
 
 - name: Assert ClickHouse ops_monitor password is set and netrc-safe
   ansible.builtin.assert:
@@ -596,139 +673,195 @@
   when: clickhouse_ops_monitor_profile_enabled | bool
   tags: [clickhouse, clickhouse-ops-monitor-profile]
 
-- name: Install the ops_monitor ClickHouse profile + user
-  ansible.builtin.copy:
-    dest: /etc/clickhouse-server/users.d/ops-monitor.xml
-    owner: clickhouse
-    group: clickhouse
-    mode: "0640"       # password_sha256_hex is a secret at rest
-    content: |
-      <clickhouse>
-          <!-- Managed by ansible (archival-node /
-               20-clickhouse-serving-profile.yml). Read-only identity for
-               the ops probes. Inherits the `default` profile, so priority
-               and limits match what the probes run with today; readonly=2
-               still lets a probe set per-query SETTINGS.
-               Explicit SELECT grants rather than allow_databases, which
-               would grant ALL on both databases plus KILL QUERY/SYSTEM.
-               Password: SHA-256 hex digest of clickhouse_ops_monitor_password
-               (ansible-vault — vault_clickhouse_ops_monitor_password). The
-               plaintext is rendered only into the root:stellarindex 0640
-               /etc/clickhouse-client/ops-monitor.{xml,netrc}. -->
-          <profiles>
-              <ops_monitor>
-                  <profile>default</profile>
-                  <readonly>2</readonly>
-              </ops_monitor>
-          </profiles>
-          <users>
-              <{{ clickhouse_ops_monitor_user }}>
-                  <password_sha256_hex>{{ clickhouse_ops_monitor_password | hash('sha256') }}</password_sha256_hex>
-                  <networks>
-                      <ip>127.0.0.1</ip>
-                      <ip>::1</ip>
-                  </networks>
-                  <profile>ops_monitor</profile>
-                  <quota>default</quota>
-                  <access_management>0</access_management>
-                  <grants>
-                      <query>GRANT SELECT ON stellar.*</query>
-                      <query>GRANT SELECT ON system.*</query>
-                  </grants>
-              </{{ clickhouse_ops_monitor_user }}>
-          </users>
-      </clickhouse>
+- name: Install ops_monitor and its client files together, rolled back on failure
+  # data-freshness reads the netrc every 15 min, so a rotation writes the
+  # drop-in and both client files back to back, then reloads at once: the
+  # server and the files disagree only for the seconds between two writes.
+  # A failed verify restores all three, so no reader is left on a password
+  # the server does not know.
   when: clickhouse_ops_monitor_profile_enabled | bool
-  no_log: true   # content embeds the password's SHA-256 digest
-  diff: false
-  # No restart notify: users.d is hot-reloaded; the tasks below apply and
-  # verify it (same as api_serving / ops_batch above).
   tags: [clickhouse, clickhouse-ops-monitor-profile]
+  block:
+    - name: Install the ops_monitor ClickHouse profile + user
+      ansible.builtin.copy:
+        dest: /etc/clickhouse-server/users.d/ops-monitor.xml
+        owner: clickhouse
+        group: clickhouse
+        mode: "0640"       # password_sha256_hex is a secret at rest
+        backup: true       # backups end in `~`, which users.d ignores
+        content: |
+          <clickhouse>
+              <!-- Managed by ansible (archival-node /
+                   20-clickhouse-serving-profile.yml). Read-only identity for
+                   the ops probes. Inherits the `default` profile, so priority
+                   and limits match what the probes run with today; readonly=2
+                   still lets a probe set per-query SETTINGS.
+                   Explicit SELECT grants rather than allow_databases, which
+                   would grant ALL on both databases plus KILL QUERY/SYSTEM.
+                   Password: SHA-256 hex digest of clickhouse_ops_monitor_password
+                   (ansible-vault — vault_clickhouse_ops_monitor_password). The
+                   plaintext is rendered only into the root:stellarindex 0640
+                   /etc/clickhouse-client/ops-monitor.{xml,netrc}. -->
+              <profiles>
+                  <ops_monitor>
+                      <profile>default</profile>
+                      <readonly>2</readonly>
+                  </ops_monitor>
+              </profiles>
+              <users>
+                  <{{ clickhouse_ops_monitor_user }}>
+                      <password_sha256_hex>{{ clickhouse_ops_monitor_password | hash('sha256') }}</password_sha256_hex>
+                      <networks>
+                          <ip>127.0.0.1</ip>
+                          <ip>::1</ip>
+                      </networks>
+                      <profile>ops_monitor</profile>
+                      <quota>default</quota>
+                      <access_management>0</access_management>
+                      <grants>
+                          <query>GRANT SELECT ON stellar.*</query>
+                          <query>GRANT SELECT ON system.*</query>
+                      </grants>
+                  </{{ clickhouse_ops_monitor_user }}>
+              </users>
+          </clickhouse>
+      register: ch_ops_monitor_users_d
+      no_log: true   # content embeds the password's SHA-256 digest
+      diff: false
 
-- name: Reload ClickHouse config so the ops_monitor drop-in is live (no restart)
-  when:
-    - clickhouse_ops_monitor_profile_enabled | bool
-    - not ansible_check_mode
-  ansible.builtin.command: >-
-    clickhouse-client --port {{ clickhouse_tcp_port | default(9300) }}
-    -q "SYSTEM RELOAD CONFIG"
-  changed_when: false
-  tags: [clickhouse, clickhouse-ops-monitor-profile]
+    # ops-monitor.xml is the native client's -C file; ops-monitor.netrc is
+    # curl's --netrc-file for HTTP :8123, with both hosts because the
+    # scripts use both and netrc matches the host name exactly. Group-
+    # readable because data-freshness runs as User=stellarindex.
+    - name: Render the ops_monitor native client file (root:stellarindex 0640)
+      ansible.builtin.copy:
+        dest: /etc/clickhouse-client/ops-monitor.xml
+        owner: root
+        group: stellarindex
+        mode: "0640"
+        backup: true
+        content: |
+          <config>
+              <!-- Managed by ansible (archival-node / 20-clickhouse-serving-profile.yml). -->
+              <port>{{ clickhouse_tcp_port | default(9300) }}</port>
+              <user>{{ clickhouse_ops_monitor_user }}</user>
+              <password>{{ clickhouse_ops_monitor_password }}</password>
+          </config>
+      register: ch_ops_monitor_xml
+      no_log: true
+      diff: false
 
-- name: Verify the ops_monitor profile + user are live in ClickHouse
-  # A rejected drop-in keeps the previous users config and reads as 0.
-  when:
-    - clickhouse_ops_monitor_profile_enabled | bool
-    - not ansible_check_mode
-  ansible.builtin.command: >-
-    clickhouse-client --port {{ clickhouse_tcp_port | default(9300) }}
-    -q "SELECT
-    (SELECT count() FROM system.users WHERE name = '{{ clickhouse_ops_monitor_user }}'),
-    (SELECT count() FROM system.settings_profiles WHERE name = 'ops_monitor')
-    FORMAT CSV"
-  register: ch_ops_monitor_profile_live
-  changed_when: false
-  retries: 10
-  delay: 2
-  until: ch_ops_monitor_profile_live.stdout == '1,1'
-  tags: [clickhouse, clickhouse-ops-monitor-profile]
+    - name: Render the ops_monitor netrc (root:stellarindex 0640)
+      ansible.builtin.copy:
+        dest: /etc/clickhouse-client/ops-monitor.netrc
+        owner: root
+        group: stellarindex
+        mode: "0640"
+        backup: true
+        content: |
+          machine 127.0.0.1 login {{ clickhouse_ops_monitor_user }} password {{ clickhouse_ops_monitor_password }}
+          machine localhost login {{ clickhouse_ops_monitor_user }} password {{ clickhouse_ops_monitor_password }}
+      register: ch_ops_monitor_netrc
+      no_log: true
+      diff: false
 
-- name: Render the ops_monitor client credential files (root:stellarindex 0640)
-  # ops-monitor.xml is the native client's -C file; ops-monitor.netrc is
-  # curl's --netrc-file for HTTP :8123, with both hosts because the
-  # scripts use both and netrc matches the host name exactly. Neither
-  # puts the password on argv. Group-readable because data-freshness runs
-  # as User=stellarindex; same exposure as /etc/default/stellarindex-ops.
-  # Only the verify task below reads them, so a rotation that aborts
-  # before this task leaves nothing broken that the next run won't fix.
-  ansible.builtin.copy:
-    dest: "{{ item.dest }}"
-    owner: root
-    group: stellarindex
-    mode: "0640"
-    content: "{{ item.content }}"
-  loop:
-    - dest: /etc/clickhouse-client/ops-monitor.xml
-      content: |
-        <config>
-            <!-- Managed by ansible (archival-node / 20-clickhouse-serving-profile.yml). -->
-            <port>{{ clickhouse_tcp_port | default(9300) }}</port>
-            <user>{{ clickhouse_ops_monitor_user }}</user>
-            <password>{{ clickhouse_ops_monitor_password }}</password>
-        </config>
-    - dest: /etc/clickhouse-client/ops-monitor.netrc
-      content: |
-        machine 127.0.0.1 login {{ clickhouse_ops_monitor_user }} password {{ clickhouse_ops_monitor_password }}
-        machine localhost login {{ clickhouse_ops_monitor_user }} password {{ clickhouse_ops_monitor_password }}
-  loop_control:
-    label: "{{ item.dest }}"
-  when: clickhouse_ops_monitor_profile_enabled | bool
-  no_log: true
-  diff: false
-  tags: [clickhouse, clickhouse-ops-monitor-profile]
+    - name: Reload ClickHouse config so the ops_monitor drop-in is live (no restart)
+      when: not ansible_check_mode
+      ansible.builtin.command: >-
+        clickhouse-client --port {{ clickhouse_tcp_port | default(9300) }}
+        -q "SYSTEM RELOAD CONFIG"
+      changed_when: false
 
-- name: Verify the ops_monitor client files authenticate as ops_monitor
-  # End to end: the native file carries the port (timeout turns a MinIO
-  # hang into a failure) and both netrc hosts carry the password.
-  when:
-    - clickhouse_ops_monitor_profile_enabled | bool
-    - not ansible_check_mode
-  ansible.builtin.command:
-    argv: "{{ item }}"
-  loop:
-    - [timeout, "10", clickhouse-client, -C, /etc/clickhouse-client/ops-monitor.xml, -q, "SELECT currentUser()"]
-    - [curl, -sS, --max-time, "10", --netrc-file, /etc/clickhouse-client/ops-monitor.netrc,
-       "http://127.0.0.1:8123/", --data-binary, "SELECT currentUser()"]
-    - [curl, -sS, --max-time, "10", --netrc-file, /etc/clickhouse-client/ops-monitor.netrc,
-       "http://localhost:8123/", --data-binary, "SELECT currentUser()"]
-  loop_control:
-    label: "{{ item[0] }} {{ item[-3] }}"
-  register: ch_ops_monitor_client_probe
-  changed_when: false
-  retries: 5
-  delay: 2
-  until: (ch_ops_monitor_client_probe.stdout | trim) == clickhouse_ops_monitor_user
-  tags: [clickhouse, clickhouse-ops-monitor-profile]
+    - name: Verify the ops_monitor profile + user are live in ClickHouse
+      # A rejected drop-in keeps the previous users config and reads as 0.
+      when: not ansible_check_mode
+      ansible.builtin.command: >-
+        clickhouse-client --port {{ clickhouse_tcp_port | default(9300) }}
+        -q "SELECT
+        (SELECT count() FROM system.users WHERE name = '{{ clickhouse_ops_monitor_user }}'),
+        (SELECT count() FROM system.settings_profiles WHERE name = 'ops_monitor')
+        FORMAT CSV"
+      register: ch_ops_monitor_profile_live
+      changed_when: false
+      retries: 10
+      delay: 2
+      until: ch_ops_monitor_profile_live.stdout == '1,1'
+
+    - name: Verify the ops_monitor client files authenticate as ops_monitor
+      # End to end: the native file carries the port (timeout turns a MinIO
+      # hang into a failure) and both netrc hosts carry the password.
+      when: not ansible_check_mode
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      loop:
+        - [timeout, "10", clickhouse-client, -C, /etc/clickhouse-client/ops-monitor.xml, -q, "SELECT currentUser()"]
+        - [curl, -sS, --max-time, "10", --netrc-file, /etc/clickhouse-client/ops-monitor.netrc,
+           "http://127.0.0.1:8123/", --data-binary, "SELECT currentUser()"]
+        - [curl, -sS, --max-time, "10", --netrc-file, /etc/clickhouse-client/ops-monitor.netrc,
+           "http://localhost:8123/", --data-binary, "SELECT currentUser()"]
+      loop_control:
+        label: "{{ item[0] }} {{ item[-3] }}"
+      register: ch_ops_monitor_client_probe
+      changed_when: false
+      retries: 5
+      delay: 2
+      until: (ch_ops_monitor_client_probe.stdout | trim) == clickhouse_ops_monitor_user
+
+  rescue:
+    - name: Restore the previous ops_monitor drop-in and client files
+      ansible.builtin.copy:
+        src: "{{ item.r.backup_file }}"
+        dest: "{{ item.dest }}"
+        remote_src: true
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "0640"
+      loop: &ch_ops_monitor_files
+        - {dest: /etc/clickhouse-server/users.d/ops-monitor.xml, owner: clickhouse, group: clickhouse,
+           r: "{{ ch_ops_monitor_users_d | default({}) }}"}
+        - {dest: /etc/clickhouse-client/ops-monitor.xml, owner: root, group: stellarindex,
+           r: "{{ ch_ops_monitor_xml | default({}) }}"}
+        - {dest: /etc/clickhouse-client/ops-monitor.netrc, owner: root, group: stellarindex,
+           r: "{{ ch_ops_monitor_netrc | default({}) }}"}
+      loop_control:
+        label: "{{ item.dest }}"
+      when: item.r.backup_file is defined
+      no_log: true
+      diff: false
+
+    - name: Remove an ops_monitor file this run created
+      ansible.builtin.file:
+        path: "{{ item.dest }}"
+        state: absent
+      loop: *ch_ops_monitor_files
+      loop_control:
+        label: "{{ item.dest }}"
+      when:
+        - item.r.changed | default(false)
+        - item.r.backup_file is not defined
+      no_log: true
+      diff: false
+
+    - name: Fail after restoring the previous ops_monitor credentials
+      ansible.builtin.fail:
+        msg: >-
+          ops_monitor did not verify, so users.d/ops-monitor.xml and
+          /etc/clickhouse-client/ops-monitor.{xml,netrc} were restored to
+          their previous content (or removed if this run created them).
+          Check clickhouse-server.err.log for a rejected users config, then
+          re-run with --tags clickhouse-ops-monitor-profile.
+
+  always:
+    - name: Delete the ops_monitor backups (they hold the previous credential)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: >-
+        {{ [ch_ops_monitor_users_d | default({}), ch_ops_monitor_xml | default({}),
+            ch_ops_monitor_netrc | default({})]
+           | selectattr('backup_file', 'defined') | map(attribute='backup_file') | list }}
+      no_log: true
+      diff: false
 
 - name: Assert ClickHouse ops_admin password is set and XML-safe
   ansible.builtin.assert:
@@ -822,6 +955,20 @@
       no_log: true
       diff: false
 
+    - name: Render the ops_admin netrc (root-only, for root's HTTP callers)
+      ansible.builtin.copy:
+        dest: /etc/clickhouse-client/ops-admin.netrc
+        owner: root
+        group: root
+        mode: "0600"
+        backup: true
+        content: |
+          machine 127.0.0.1 login {{ clickhouse_ops_admin_user }} password {{ clickhouse_ops_admin_password }}
+          machine localhost login {{ clickhouse_ops_admin_user }} password {{ clickhouse_ops_admin_password }}
+      register: ch_ops_admin_netrc
+      no_log: true
+      diff: false
+
     - name: Verify root's bare clickhouse-client authenticates as ops_admin
       # No SYSTEM RELOAD CONFIG: it would authenticate with the new password,
       # so it cannot succeed before the server's own users.d reload anyway.
@@ -837,6 +984,17 @@
       delay: 2
       until: (ch_ops_admin_client_probe.stdout | trim) == clickhouse_ops_admin_user
 
+    - name: Verify the ops_admin netrc authenticates as ops_admin
+      when: not ansible_check_mode
+      ansible.builtin.command:
+        argv: [curl, -sS, --max-time, "10", --netrc-file, /etc/clickhouse-client/ops-admin.netrc,
+               "http://127.0.0.1:8123/", --data-binary, "SELECT currentUser()"]
+      register: ch_ops_admin_netrc_probe
+      changed_when: false
+      retries: 5
+      delay: 2
+      until: (ch_ops_admin_netrc_probe.stdout | trim) == clickhouse_ops_admin_user
+
   rescue:
     - name: Restore the previous ops_admin drop-in and root client config
       ansible.builtin.copy:
@@ -851,6 +1009,8 @@
            r: "{{ ch_ops_admin_users_d | default({}) }}"}
         - {dest: /root/.clickhouse-client/config.xml, owner: root, group: root, mode: "0600",
            r: "{{ ch_ops_admin_root_client | default({}) }}"}
+        - {dest: /etc/clickhouse-client/ops-admin.netrc, owner: root, group: root, mode: "0600",
+           r: "{{ ch_ops_admin_netrc | default({}) }}"}
       loop_control:
         label: "{{ item.dest }}"
       when: item.r.backup_file is defined
@@ -873,8 +1033,9 @@
     - name: Fail after restoring the previous ops_admin credentials
       ansible.builtin.fail:
         msg: >-
-          ops_admin did not verify, so users.d/ops-admin.xml and
-          /root/.clickhouse-client/config.xml were restored to their previous
+          ops_admin did not verify, so users.d/ops-admin.xml,
+          /root/.clickhouse-client/config.xml and
+          /etc/clickhouse-client/ops-admin.netrc were restored to their previous
           content (or removed if this run created them). Check
           clickhouse-server.err.log for a rejected users config, then re-run
           with --tags clickhouse-ops-admin-profile.
@@ -885,7 +1046,8 @@
         path: "{{ item }}"
         state: absent
       loop: >-
-        {{ [ch_ops_admin_users_d | default({}), ch_ops_admin_root_client | default({})]
+        {{ [ch_ops_admin_users_d | default({}), ch_ops_admin_root_client | default({}),
+            ch_ops_admin_netrc | default({})]
            | selectattr('backup_file', 'defined') | map(attribute='backup_file') | list }}
       no_log: true
       diff: false

@@ -61,6 +61,10 @@ DRILL_LOG_NOTE="${DRILL_LOG_NOTE:-}"
 OPS_BIN="${OPS_BIN:-/usr/local/bin/stellarindex-ops}"
 OPS_CONFIG="${OPS_CONFIG:-/etc/stellarindex.toml}"
 CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
+# INV-0802: CH as ops_monitor once the role renders this file; /dev/null (no
+# credential, CH `default`) until then, so no deploy order strands this script.
+CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-monitor.netrc}"
+[[ -r "$CH_NETRC" ]] || CH_NETRC=/dev/null
 # Bucket the CH re-derive reads. The window is ~1M ledgers below the
 # tip, i.e. history — which on r1 lives in galexie-archive, NOT the
 # trimmed galexie-live default (the 5179250a wrong-bucket class). Passed
@@ -706,7 +710,7 @@ if [[ -n "${DRILL_CH_WINDOW:-}" ]]; then
     check "ch_rederive" 1 "window in ${ch_secs}s (${per_ledger}s/ledger → full rebuild ≈ ${full_days} days single-threaded, fetch+decode only — parallelism divides this)"
     # Reconcile against the live lake (ADR-0043 §2.2): the window we
     # just proved re-derivable must already be complete in ClickHouse.
-    ch_rows=$(curl -sf "$CH_HTTP" --data-binary \
+    ch_rows=$(curl -sf --netrc-file "$CH_NETRC" "$CH_HTTP" --data-binary \
       "SELECT count() FROM stellar.ledgers WHERE ledger_seq BETWEEN $lo AND $hi" | tr -dc '0-9')
     check "ch_lake_window_complete" "$([[ "$ch_rows" == "$DRILL_CH_WINDOW" ]] && echo 1 || echo 0)" \
       "stellar.ledgers[$lo,$hi]: lake=${ch_rows:-?} expected=$DRILL_CH_WINDOW"
