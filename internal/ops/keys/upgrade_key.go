@@ -1,4 +1,4 @@
-package main
+package keys
 
 import (
 	"context"
@@ -26,7 +26,7 @@ type keyRebudgeter interface {
 	UpdateRateLimit(ctx context.Context, keyID string, newRateLimitPerMin int) (auth.APIKeyRecord, error)
 }
 
-// upgradeKey lifts (or lowers) the per-minute rate-limit on an
+// Upgrade lifts (or lowers) the per-minute rate-limit on an
 // existing API key. Used by operators to set manual / partner
 // rate-limit budgets (calls the internal
 // `auth.RedisAPIKeyStore.UpdateRateLimit` path).
@@ -55,7 +55,7 @@ type keyRebudgeter interface {
 //	0 — upgraded
 //	1 — error (Redis unreachable, key not found, etc.)
 //	2 — usage error (missing flag)
-func upgradeKey(args []string) error {
+func Upgrade(args []string) error {
 	opts, err := parseUpgradeKeyFlags(args)
 	if err != nil {
 		return err
@@ -131,7 +131,7 @@ func parseUpgradeKeyFlags(args []string) (upgradeKeyOpts, error) {
 	if err := auth.ValidateKeyBounds(*rateLimit, nil); err != nil {
 		return upgradeKeyOpts{}, fmt.Errorf("-rate-limit-per-min: %w", err)
 	}
-	if err := validateOpsKeyReason(*reason); err != nil {
+	if err := ValidateReason(*reason); err != nil {
 		return upgradeKeyOpts{}, err
 	}
 	a, err := opsutil.ResolveActor(*actor)
@@ -143,7 +143,7 @@ func parseUpgradeKeyFlags(args []string) (upgradeKeyOpts, error) {
 
 // runUpgradeKey re-budgets the key and records it in audit_log. A change
 // whose audit row cannot be written is rolled back to the old budget.
-func runUpgradeKey(ctx context.Context, store keyRebudgeter, audit keyAuditSink, opts upgradeKeyOpts) (auth.APIKeyRecord, error) {
+func runUpgradeKey(ctx context.Context, store keyRebudgeter, audit AuditSink, opts upgradeKeyOpts) (auth.APIKeyRecord, error) {
 	prev, err := store.GetByKeyID(ctx, opts.keyID)
 	if err != nil {
 		return auth.APIKeyRecord{}, err

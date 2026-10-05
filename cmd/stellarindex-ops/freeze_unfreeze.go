@@ -12,6 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/keys"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/redisclient"
@@ -148,7 +149,7 @@ func resolveUnfreezeMutationInputs(list bool, assetFlag, quoteFlag, reasonFlag, 
 	if reason == "" {
 		return "", "", errors.New("-reason is required: an unfreeze overrides an automated safety control on a money surface, so the record has to say why")
 	}
-	if err := validateOpsKeyReason(reason); err != nil {
+	if err := keys.ValidateReason(reason); err != nil {
 		return "", "", err
 	}
 	actor, err = opsutil.ResolveActor(actorFlag)
@@ -306,7 +307,7 @@ type unfreezeRequest struct {
 // close the row on its next poll; the reverse order would leave a closed
 // timeline row next to a pair that is still frozen to every API caller,
 // which is the dishonest direction.
-func unfreezePair(ctx context.Context, audit keyAuditSink, recoverer freezeRecoverer, clearer freezeClearer, req unfreezeRequest) error {
+func unfreezePair(ctx context.Context, audit keys.AuditSink, recoverer freezeRecoverer, clearer freezeClearer, req unfreezeRequest) error {
 	asset, quote := req.asset, req.quote
 	if req.dryRun {
 		fmt.Printf("freeze-unfreeze: DRY RUN — would audit, clear the Redis marker and stamp recovered_at for %s/%s (actor: %s, reason: %s)\n",
@@ -317,7 +318,7 @@ func unfreezePair(ctx context.Context, audit keyAuditSink, recoverer freezeRecov
 		asset.String(), quote.String(), req.actor, req.reason)
 
 	target := asset.String() + "/" + quote.String()
-	if err := appendOpsAudit(ctx, audit, "freeze.unfreeze", "freeze-unfreeze", "freeze_pair", target, req.actor, req.reason, nil); err != nil {
+	if err := keys.AppendOpsAudit(ctx, audit, "freeze.unfreeze", "freeze-unfreeze", "freeze_pair", target, req.actor, req.reason, nil); err != nil {
 		return fmt.Errorf("audit_log append for %s failed, so NOTHING was changed: %w", target, err)
 	}
 	if err := clearer.RecordOverride(ctx, asset, quote, req.actor, req.reason); err != nil {

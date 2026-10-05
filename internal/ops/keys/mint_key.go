@@ -1,4 +1,4 @@
-package main
+package keys
 
 import (
 	"context"
@@ -39,7 +39,7 @@ const (
 
 // validateMintKeyIdentifierAndLabel checks -identifier and -label
 // against the shape their own help text documents. Split out of
-// mintKey to keep that function under the funlen ceiling.
+// Mint to keep that function under the funlen ceiling.
 func validateMintKeyIdentifierAndLabel(identifier, label string) error {
 	if strings.TrimSpace(identifier) == "" {
 		return errors.New("-identifier is required")
@@ -74,7 +74,7 @@ type keyMinter interface {
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
 }
 
-// mintKey issues an API key directly via the Redis API-key store.
+// Mint issues an API key directly via the Redis API-key store.
 // Operator-only path used to bootstrap a customer's first key
 // before the self-service /v1/account/keys flow can be hit (which
 // itself requires a pre-existing authenticated subject — chicken
@@ -99,7 +99,7 @@ type keyMinter interface {
 // it before persistence and there is no recovery path. Operators
 // should pipe stdout to a secure transport (encrypted email, vault,
 // 1Password) immediately.
-func mintKey(args []string) error {
+func Mint(args []string) error {
 	opts, err := parseMintKeyFlags(args)
 	if err != nil {
 		return err
@@ -173,7 +173,7 @@ func parseMintKeyFlags(args []string) (mintKeyOpts, error) {
 	if err := validateMintKeyGrant(opts, *confirmOperator); err != nil {
 		return mintKeyOpts{}, err
 	}
-	if err := validateOpsKeyReason(opts.reason); err != nil {
+	if err := ValidateReason(opts.reason); err != nil {
 		return mintKeyOpts{}, err
 	}
 	a, err := opsutil.ResolveActor(*actor)
@@ -208,7 +208,7 @@ func validateMintKeyGrant(opts mintKeyOpts, confirmOperator bool) error {
 
 // runMintKey creates the key and records it in audit_log. A key whose
 // audit row cannot be written is revoked: no record, no credential.
-func runMintKey(ctx context.Context, store keyMinter, audit keyAuditSink, opts mintKeyOpts) (auth.APIKeyRecord, string, error) {
+func runMintKey(ctx context.Context, store keyMinter, audit AuditSink, opts mintKeyOpts) (auth.APIKeyRecord, string, error) {
 	req := auth.CreateAPIKeyRequest{
 		Identifier:      opts.identifier,
 		Label:           opts.label,
