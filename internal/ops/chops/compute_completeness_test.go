@@ -2003,3 +2003,28 @@ func TestEventCensusLoss(t *testing.T) {
 		t.Error("no shortfall must not fail any source")
 	}
 }
+
+// TestPassDefersDirtyWindow_OnlyOutlastsPassSourcesInAPass: a -pass must not
+// lower sdex's floor over a backfill-sized window (INV-2600) — its own timer
+// re-proves it — while every other source, and sdex's own -source run, still
+// re-reconcile the window.
+func TestPassDefersDirtyWindow_OnlyOutlastsPassSourcesInAPass(t *testing.T) {
+	sdex := reconSource{name: "sdex", census: true}
+	sep41 := reconSource{name: "sep41_transfers", reproofOutlastsPass: "heavy"}
+	aquarius := reconSource{name: "aquarius"}
+	for _, tc := range []struct {
+		src  reconSource
+		pass bool
+		want bool
+	}{
+		{sdex, true, true},
+		{sep41, true, true},
+		{aquarius, true, false},
+		{sdex, false, false},
+		{sep41, false, false},
+	} {
+		if got := passDefersDirtyWindow(tc.src, tc.pass); got != tc.want {
+			t.Errorf("passDefersDirtyWindow(%s, pass=%v) = %v, want %v", tc.src.name, tc.pass, got, tc.want)
+		}
+	}
+}

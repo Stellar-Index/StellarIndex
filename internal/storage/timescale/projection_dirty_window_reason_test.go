@@ -28,6 +28,10 @@ func TestProjectionDirtyWindowReasonIsStableAcrossReleases(t *testing.T) {
 		"projected-rebuild -write [63419138,63671020]"; got != want {
 		t.Errorf("ProjectedRebuildReason = %q, want %q (rows written by older binaries must still classify)", got, want)
 	}
+	if got, want := BackfillWriteReason(50_000_000, 50_099_999),
+		"backfill -write [50000000,50099999]"; got != want {
+		t.Errorf("BackfillWriteReason = %q, want %q (rows written by older binaries must still classify)", got, want)
+	}
 }
 
 // TestProjectionDirtyWindowIsProjectorReplay pins the classification the
@@ -43,6 +47,7 @@ func TestProjectionDirtyWindowIsProjectorReplay(t *testing.T) {
 		{"replay as written by the pre-#325 binary", "projector-replay rewind 63550000 -> 62270000", true},
 		{"rebuild via constructor", ProjectedRebuildReason(63_419_138, 63_671_020), false},
 		{"rebuild as written by the pre-#325 binary", "projected-rebuild -write [60000000,62000000]", false},
+		{"backfill via constructor", BackfillWriteReason(50_000_000, 50_099_999), false},
 		{"empty reason (row from some future writer)", "", false},
 		{"unrecognised reason", "manual fixup by an operator", false},
 		{"mentions replay but is not one", "reverted a projector-replay rewind 1 -> 2", false},

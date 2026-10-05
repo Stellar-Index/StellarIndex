@@ -115,6 +115,12 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 		return nil
 	}
 
+	if err := recordBackfillDirtyWindows(ctx, store, cfg, backfillOpts{
+		from: uint32(*from), to: uint32(*to), sources: []string{"soroswap-router"}, dryRun: !write,
+	}); err != nil {
+		return err
+	}
+
 	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket, 1)
 
 	fmt.Fprintf(os.Stderr, "backfill-router: streaming ledgers %d..%d from bucket %q\n",

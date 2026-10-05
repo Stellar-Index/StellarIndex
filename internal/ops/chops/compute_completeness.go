@@ -644,7 +644,8 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// MUST be re-reconciled before any claim — carried or fresh — may
 		// cover it. -from can never skip past it.
 		dirtyWin, hasDirty := dirtyWindows[src.name]
-		if hasDirty {
+		deferDirty := hasDirty && passDefersDirtyWindow(src, *pass)
+		if hasDirty && !deferDirty {
 			projFrom = dirtyReconcileFloor(projFrom, genesis, dirtyWin)
 		}
 		if *useCH {
@@ -765,6 +766,10 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			if dirtyCleared {
 				detail = append(detail, fmt.Sprintf(
 					"projection: replay-rewind window [%d,%d] re-verified clean this run — clearing it",
+					dirtyWin.From, dirtyWin.To))
+			} else if deferDirty {
+				detail = append(detail, fmt.Sprintf(
+					"projection: dirty window [%d,%d] PENDING — its re-verify outlasts the pass, so this source's own timer re-proves it from genesis",
 					dirtyWin.From, dirtyWin.To))
 			} else {
 				detail = append(detail, fmt.Sprintf(
@@ -1737,53 +1742,6 @@ func projectionWithoutEvidence(projOK bool, nTargets int, servedMins []servedFlo
 	}
 	return true, fmt.Sprintf("projection: no evidence — none of this source's %d target table(s) holds a row in [%d,%d], so the clean reconcile compared nothing with nothing; "+
 		"an empty served tier matching an empty expectation is not a verification (check the catalogue's contract identities)", nTargets, genesis, hi)
-}
-
-// dirtyReconcileFloor lowers an incremental run's projection reconcile floor
-// to cover a pending replay-rewind dirty window (migration 0125) — the
-// structural fix for the carried-claim invalidation gap (2026-07-31).
-//
-// projectionClaim rule 3 lets an incremental run CARRY the prior clean
-// verdict for the prefix its -from floor skipped. That carry's premise is
-// that the served tier below the floor is immutable. A projector-replay
-// rewind breaks the premise: it rewrites served rows below the watermark,
-// so the prior verdict's evidence no longer describes what the tables hold —
-// yet nothing re-examined the range, because the daily driver's -from
-// (min(watermark)) sits above it forever. The 07-30 cctp replay wrote
-// 19,366 duplicate rows at 62.27M–63.55M and every subsequent incremental
-// run carried the pre-replay clean claim right over them.
-//
-// The floor therefore extends DOWN to the window's genesis-clamped bottom,
-// regardless of -from: the rewound range re-enters the reconcile scope and
-// the claim is re-earned rather than carried. Ground the replay did not
-// touch (below dirty.From) keeps the normal carry semantics. Pure —
-// unit-testable.
-func dirtyReconcileFloor(projFrom, genesis uint32, w timescale.ProjectionDirtyWindow) uint32 {
-	lo := w.From
-	if lo < genesis {
-		lo = genesis // nothing exists below the source's genesis to re-verify
-	}
-	if lo < projFrom {
-		return lo
-	}
-	return projFrom
-}
-
-// dirtyWindowSatisfied reports whether THIS run earned the right to clear a
-// pending replay-rewind window: its projection verdict is CLEAN (projOK —
-// which per projectionClaim requires this run's own reconcile to have found
-// nothing, never a carried claim over an unchecked range) AND the run's
-// reconcile floor reached the window's genesis-clamped bottom AND the
-// reconciled range reached the window's top. Anything less keeps the window
-// pending — a failing verdict must not erase the obligation, and a run whose
-// scope stopped short of the window proved nothing about it. Pure —
-// unit-testable.
-func dirtyWindowSatisfied(w timescale.ProjectionDirtyWindow, projOK bool, reconcileFloor, genesis, hi uint32) bool {
-	lo := w.From
-	if lo < genesis {
-		lo = genesis
-	}
-	return projOK && reconcileFloor <= lo && hi >= w.To
 }
 
 // verdictPublisher is the slice of the store [publishSourceVerdict] needs.
