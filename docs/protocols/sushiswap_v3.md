@@ -101,7 +101,7 @@ by decoding their bodies. Full hashes and per-pool lineage:
 **The swap body is field-identical across both versions.** Verified
 over the whole history: all 97,349 `swap` events carry exactly the same
 seven map entries. The decoder reads every field **by name** regardless
-(`docs/architecture/contract-schema-evolution.md`), so a future upgrade
+(`docs/architecture/ingest-pipeline.md#contract-schema-evolution`), so a future upgrade
 that appends or reorders a field stays readable.
 
 ## Events

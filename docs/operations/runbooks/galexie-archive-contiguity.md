@@ -17,7 +17,7 @@ severity: P1 | P3
 | Metric source | `node_exporter` textfile_collector reads `/var/lib/node_exporter/textfile_collector/galexie_archive_contiguity.prom`, refreshed hourly by `galexie-archive-contiguity.timer` → `/usr/local/bin/galexie-archive-contiguity` |
 | Steady-state | `galexie_archive_unexpected_gaps == 0`; 225 partitions (2026-09-05), first_ledger 0, one declared trim hole; `galexie_archive_scan_ok == 1` and `galexie_archive_scan_last_run_unix` within the hour |
 | Customer impact | None while alerting — serving unaffected. The R1 durable mirror (the source the off-site DR copy pulls from) has an integrity hole; a restore in this state would be incomplete. |
-| Companions | [galexie-archive-tip-lag](galexie-archive-tip-lag.md), [archive-files-missing](archive-files-missing.md) |
+| Companions | [galexie-archive-tip-lag](galexie-archive-tip-lag.md), [archive-files-missing](archive-completeness.md#stellarindex_archive_files_missing) |
 
 ## Why this exists
 
@@ -113,7 +113,7 @@ shipped script against a stubbed `mc`.
 
 - [galexie-archive-tip-lag](galexie-archive-tip-lag.md) — the newest
   edge advancing; this runbook covers the middle staying intact.
-- [archive-files-missing](archive-files-missing.md) — chunk-level
+- [archive-files-missing](archive-completeness.md#stellarindex_archive_files_missing) — chunk-level
   verification inside partitions.
 - `docs/architecture/multi-region-ha.md` §5 — the off-site copy this
   mirror feeds.

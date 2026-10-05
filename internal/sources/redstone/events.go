@@ -85,7 +85,7 @@ const DefaultResolutionSeconds = 24 * 60 * 60
 //
 // A same-contract non-write_prices function that passes all four while
 // emitting a REDSTONE event would be a new adapter WASM — covered by
-// docs/architecture/contract-schema-evolution.md's per-WASM-hash audit
+// docs/architecture/ingest-pipeline.md#contract-schema-evolution's per-WASM-hash audit
 // gate. Kept as documentation of the invariant this layering leans on.
 const WriteFnName = "write_prices"
 

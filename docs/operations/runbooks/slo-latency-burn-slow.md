@@ -24,7 +24,7 @@ Multi-window detection: the slow-request fraction
 `api_latency_p95_under_200ms`) both **> 1×** the budget (1 × 0.001 = 0.1 %
 of requests slower than 200 ms), sustained `for: 30m`.
 
-Note the alert's `runbook_url` annotation points at `api-latency.md`, not
+Note the alert's `runbook_url` annotation points at `api.md#stellarindex_api_latency_p95_high`, not
 this file — this runbook is the family-specific supplement.
 
 The latency burn rules carry a **min-signal guard**:
@@ -60,7 +60,7 @@ Mitigation is usually code-side — refactor the slow path or add a cache layer.
 
 - `slo-latency-burn-medium.md` — next escalation when the 30-min/6-hour windows also cross 6× (**P1** — `severity: page`).
 - `slo-latency-burn-fast.md` — the **P1** at the end of the chain.
-- `api-latency.md` (the alert's `runbook_url` target).
+- `api.md#stellarindex_api_latency_p95_high` (the alert's `runbook_url` target).
 - ADR-0009 — API latency budget allocation.
 - F-1267 (audit-2026-05-12) — r1 currently runs at p95 = 246 ms structurally.
 
@@ -81,5 +81,5 @@ Mitigation is usually code-side — refactor the slow path or add a cache layer.
   impact arithmetic — 1× burn means the budget lasts exactly 30 days (zero
   slack), not "gone in ~3 days"; rule path → r1 overlay primary;
   min-traffic guard (deliberately cannot fire on quiet r1) + `runbook_url`
-  → api-latency.md notes; medium-burn severity in Related corrected to page.
+  → api.md#stellarindex_api_latency_p95_high notes; medium-burn severity in Related corrected to page.
 - 2026-05-12 — initial draft (audit-2026-05-12 F-1237 closure).

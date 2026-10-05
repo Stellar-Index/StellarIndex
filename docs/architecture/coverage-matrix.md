@@ -380,7 +380,7 @@ operator decision 2026-04-28.
 | X3.5 | Cross-oracle factor (Phase 3 — depends on `internal/divergence/`) | [ADR-0019](../adr/0019-anomaly-response-and-confidence-scoring.md) | post-launch | `internal/aggregate/confidence` × `internal/divergence` | [ADR-0019](../adr/0019-anomaly-response-and-confidence-scoring.md) §Phase 3 | ⏳ deferred | 1 | ⏳ deferred |
 | X3.6 | Multi-window safeguard against frog-boiling (1d/7d/30d MAD) | [ADR-0019](../adr/0019-anomaly-response-and-confidence-scoring.md) | 6 | `internal/aggregate/baseline/multi.go` + `migrations/0008_add_multi_window_baseline.up.sql` | [ADR-0019](../adr/0019-anomaly-response-and-confidence-scoring.md) §"Multi-window safeguard"; `MultiBaseline` struct carries Day1/Day7/Day30 baselines | ✅ verified | 4 | 📦 code-only |
 | X3.7 | Bootstrap (warmup) policy for new assets | [ADR-0019](../adr/0019-anomaly-response-and-confidence-scoring.md) | 6 | `internal/aggregate/baseline/refresh.go` (MinSamples gate) | [ADR-0019](../adr/0019-anomaly-response-and-confidence-scoring.md) §"Bootstrap (warmup) policy"; `TestMultiBaseline_PartialBootstrap` + `_FullBootstrap` pin the n<2 fall-through | ✅ verified | 4 | 📦 code-only |
-| X3.8 | Operator runbook for freeze events | [ADR-0019](../adr/0019-anomaly-response-and-confidence-scoring.md) | 6 | runbook | [anomaly-freeze-engaged.md](../operations/runbooks/anomaly-freeze-engaged.md) | ✅ verified | 4 | 📦 doc-only |
+| X3.8 | Operator runbook for freeze events | [ADR-0019](../adr/0019-anomaly-response-and-confidence-scoring.md) | 6 | runbook | [anomaly.md#stellarindex_anomaly_freeze_engaged](../operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged) | ✅ verified | 4 | 📦 doc-only |
 
 ---
 

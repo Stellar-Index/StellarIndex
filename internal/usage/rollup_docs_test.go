@@ -23,9 +23,9 @@ func TestRollupRecoveryDocsMatchConstants(t *testing.T) {
 		fmt.Sprintf("%d per 5-minute sweep", catchUpDaysPerSweep),
 	}
 	for path, phrases := range map[string][]string{
-		"deploy/monitoring/rules/api.yml":                  want,
-		"configs/prometheus/rules.r1/api.yml":              want,
-		"docs/operations/runbooks/usage-rollup-failing.md": runbookWant,
+		"deploy/monitoring/rules/api.yml":     want,
+		"configs/prometheus/rules.r1/api.yml": want,
+		"docs/operations/runbooks/api.md":     runbookWant,
 	} {
 		b, err := os.ReadFile(filepath.Join("..", "..", path))
 		if err != nil {

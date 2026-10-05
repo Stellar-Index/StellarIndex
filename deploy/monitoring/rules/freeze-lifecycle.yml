@@ -71,7 +71,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged
           summary: "Composite-reference corroboration is suppressing more phase-2 freezes than engage (P3)"
           description: |
             Over the last hour, phase-2 freeze fires suppressed by
@@ -94,7 +94,7 @@ groups:
             log line (`phase2 freeze suppressed: composite reference
             corroborates the move`) carries the pair and the reason
             string that would have fired.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged
 
       # ─── P3: the corroboration mechanism is dead for a pair ────
       #
@@ -115,7 +115,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged
           summary: "Composite corroboration unavailable for {{ $labels.pair }} / {{ $labels.window }} for 6h (P3)"
           description: |
             Every evaluated bucket of `{{ $labels.pair }}`
@@ -130,7 +130,7 @@ groups:
             whether a no_chain target has any triangulations. The
             aggregator log reason string
             (`composite_unavailable: ...`) names the failing leg.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged
 
   - name: stellarindex.freeze_lifecycle
     interval: 30s
@@ -355,7 +355,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged
           summary: "{{ $value }} (pair, window) freeze(s) held for 5m+ (info)"
           description: |
             The aggregator is holding at least one ADR-0019 freeze and
@@ -373,4 +373,4 @@ groups:
 
             No action required. `redis-cli GET freeze:<asset>:<quote> | jq .state`
             shows which pairs and where each one is on the ladder.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged

@@ -75,7 +75,7 @@ topic[1] = ScvSymbol(event_name)
 ### Body shapes
 
 `deposit` and `withdraw` bodies are `ScvMap` keyed by field-name `Symbol`
-(decode-by-name per docs/architecture/contract-schema-evolution.md).
+(decode-by-name per docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 Phase-A pulls only the user-facing dimensions:
 
 | event | body fields decoded |

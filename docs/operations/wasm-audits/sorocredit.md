@@ -275,7 +275,7 @@ through the same zero-assertion decoder.
 - Decoder source: [`internal/sources/sorocredit/{events,decode,consumer}.go`](../../../internal/sources/sorocredit/)
 - Source-package README: [`internal/sources/sorocredit/README.md`](../../../internal/sources/sorocredit/README.md)
 - Golden fixtures: [`internal/sources/sorocredit/source_test.go`](../../../internal/sources/sorocredit/source_test.go)
-- Schema-evolution stance: [`docs/architecture/contract-schema-evolution.md`](../../architecture/contract-schema-evolution.md)
+- Schema-evolution stance: [`docs/architecture/ingest-pipeline.md#contract-schema-evolution`](../../architecture/ingest-pipeline.md#contract-schema-evolution)
 - Backfill gate: `internal/sources/external/registry.go` — `Registry["sorocredit"].BackfillSafe`
 - Raw-lake schema (ADR-0034): [`deploy/clickhouse/tier1_schema.sql`](../../../deploy/clickhouse/tier1_schema.sql)
 </content>

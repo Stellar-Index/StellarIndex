@@ -41,7 +41,7 @@ curl -s http://localhost:9090/api/v1/query --data-urlencode \
 
 - [ ] Step 1 — Confirm the breach is real (real-traffic p99 on the
       same route agrees), not a probe-host artefact.
-- [ ] Step 2 — Route to `api-latency.md` for the latency-triage flow.
+- [ ] Step 2 — Route to `api.md#stellarindex_api_latency_p95_high` for the latency-triage flow.
 - [ ] Verification: probe p99 back under 500 ms for 30 min.
 
 ## Known false-positive patterns
@@ -52,7 +52,7 @@ curl -s http://localhost:9090/api/v1/query --data-urlencode \
 ## Related
 
 - `sla-probe-p95-breach.md` — the p95 twin; same diagnostics.
-- `api-latency.md` — the underlying latency-triage flow.
+- `api.md#stellarindex_api_latency_p95_high` — the underlying latency-triage flow.
 - `sla-probe-unit-failed.md` — the umbrella verdict alert.
 
 ## Changelog

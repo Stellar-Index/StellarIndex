@@ -23,7 +23,7 @@ Multi-window detection: `stellarindex:api_error_ratio:6h` AND
 `stellarindex:api_error_ratio:24h` (slo `api_availability_3_nines`) both
 **> 1×** the budget (1 × 0.001 = 0.1 % 5xx), sustained `for: 30m`.
 
-Note the alert's `runbook_url` annotation points at `api-5xx.md`, not this
+Note the alert's `runbook_url` annotation points at `api.md#stellarindex_api_error_rate_critical`, not this
 file — this runbook is the family-specific supplement.
 
 Unlike the latency burn family, the availability burn rules have **no
@@ -61,7 +61,7 @@ This is the earliest signal in the availability burn-rate family. Treat as a pla
 
 - `slo-availability-burn-medium.md` — next escalation (30m + 6h windows at 6×, `severity: page`).
 - `slo-availability-burn-fast.md` — the **P1** at the end of the chain.
-- `api-5xx.md` (the alert's `runbook_url` target).
+- `api.md#stellarindex_api_error_rate_critical` (the alert's `runbook_url` target).
 - ADR-0008 — HA topology + availability target (multi-region decision amended by ADR-0050 / `docs/architecture/multi-region-ha.md`).
 
 ## Changelog
@@ -72,7 +72,7 @@ This is the earliest signal in the availability burn-rate family. Treat as a pla
 - 2026-08-29 — re-verified against HEAD: windows are 6h AND 24h (not 3d),
   `for: 30m`, `severity: ticket`; impact arithmetic — 1× burn means the
   budget lasts exactly 30 days (zero slack), not "gone in ~3 days"; rule
-  path → r1 overlay primary; `runbook_url` → api-5xx.md note;
+  path → r1 overlay primary; `runbook_url` → api.md#stellarindex_api_error_rate_critical note;
   no-min-traffic-guard note + synthetic-probe false positive; self-contained
   r1 diagnosis commands (`-o cat`).
 - 2026-05-12 — initial draft (audit-2026-05-12 F-1237 closure).

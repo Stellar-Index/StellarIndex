@@ -122,7 +122,7 @@ systemctl start supply-snapshot.service
   (gauge never emitted; this alert's structural blind spot).
 - `supply-refresh-stalled.md` — the aggregator-resident-path counterpart (this alert covers the systemd-timer path; that one covers the goroutine path).
 - `supply-refresh-error-dominant.md` — sibling for the goroutine-path failure mode.
-- `archive-completeness-stale.md` — same shape on the archive side.
+- `archive-completeness.md#stellarindex_archive_completeness_stale` — same shape on the archive side.
 - `docs/architecture/supply-pipeline.md` — the two-path overview both runbooks live under.
 
 ## Changelog

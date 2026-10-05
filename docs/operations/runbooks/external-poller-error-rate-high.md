@@ -164,7 +164,7 @@ For postmortem capture:
 ## Related
 
 - `external-poller-stale.md` — adjacent alert when a poller stops producing entirely. Until 2026-08-29 **this** alert's `runbook_url` pointed there instead of here; both trees now point at this file.
-- `aggregator-fx-snap-fallback-dominant.md` — fires when an FX vendor's failures push us to the snap fallback path.
+- `aggregator.md#stellarindex_aggregator_fx_snap_fallback_dominant` — fires when an FX vendor's failures push us to the snap fallback path.
 - ADR-0008 — HA topology + reduced-redundancy flag semantics.
 - AGENTS.md "External sources" surprise list — vendor-specific schema quirks.
 

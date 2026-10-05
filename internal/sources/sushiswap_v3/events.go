@@ -25,7 +25,7 @@
 //     versions — the pools were upgraded at ledger 61,594,973 and again at
 //     62,898,378 (factory `wasm_approved` → per-pool `pool_upgraded`), and
 //     the pre-upgrade bodies are field-identical. Decoding is by field
-//     name regardless (docs/architecture/contract-schema-evolution.md), so
+//     name regardless (docs/architecture/ingest-pipeline.md#contract-schema-evolution), so
 //     a future upgrade that appends a field stays readable.
 //
 // Concentrated liquidity, and what this package deliberately does NOT do:

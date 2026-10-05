@@ -15,7 +15,7 @@
 #              date like `v2-2026-04-23` until the ops CLI can
 #              resolve real WASM hashes.
 #
-# Why per-WASM layout: docs/architecture/contract-schema-evolution.md.
+# Why per-WASM layout: docs/architecture/ingest-pipeline.md#contract-schema-evolution.
 
 set -euo pipefail
 

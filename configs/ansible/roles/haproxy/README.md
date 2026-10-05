@@ -164,14 +164,14 @@ gratuitous ARP, settles within seconds).
 
 ## Companion runbook
 
-[`docs/operations/runbooks/api-down.md`](../../../../docs/operations/runbooks/api-down.md)
+[`docs/operations/runbooks/api.md#stellarindex_api_down`](../../../../docs/operations/runbooks/api.md#stellarindex_api_down)
 covers the SEV-1 "every API pod is down" case. The HAProxy-
 specific single-pod-eject scenario (HAProxy's 15-second health-
 check window flips one backend OUT but the other backends keep
 serving) is partial-degradation rather than a SEV-1 — the
 mitigation is "wait for HAProxy's 15s health-check window, then
 investigate the pod itself." Add a §"single-pod-ejected" section
-to `api-down.md` (or a sibling `api-partial-degradation.md`
+to `api.md#stellarindex_api_down` (or a sibling `api-partial-degradation.md`
 runbook) when the multi-pod HAProxy topology actually lands; the
 earlier text named a nonexistent `api-pod-down.md` (F-1274,
 2026-05-13).

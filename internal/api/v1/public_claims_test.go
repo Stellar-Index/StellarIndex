@@ -150,7 +150,7 @@ func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 			// T534: the runbook called the limiter a token bucket and said it
 			// fails open unconditionally; past DefaultDwellTime of sustained
 			// Redis errors the middleware fails CLOSED with 503.
-			path: "docs/operations/runbooks/ratelimit-fail-open.md",
+			path: "docs/operations/runbooks/api.md",
 			forbidden: []string{
 				"token-bucket",
 				"token bucket",

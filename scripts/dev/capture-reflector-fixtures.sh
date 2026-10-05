@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016 # $vars inside single quotes are jq variables, not shell ones.
 # Capture real Reflector UpdateEvent fixtures from a live stellar-rpc.
 #
 # Writes a JSON fixture per matched event to
@@ -46,7 +47,7 @@
 #     "value":        "AAAAEAAA…"
 #   }
 #
-# See docs/architecture/contract-schema-evolution.md for WHY fixtures
+# See docs/architecture/ingest-pipeline.md#contract-schema-evolution for WHY fixtures
 # are pinned per WASM hash (we need to keep decoding old ledger ranges
 # after the contract upgrades).
 
@@ -103,10 +104,7 @@ if [[ -z "$START_LEDGER" ]]; then
 fi
 
 # Resolve contract WASM hash — pins the fixture to a version per
-# docs/architecture/contract-schema-evolution.md.
-instance_key_payload="$("$JQ" -nc --arg c "$CONTRACT_ID" '
-  {keys: [("AAAAB" + "...placeholder..." )]}  # NOTE: real getLedgerEntries key
-')"
+# docs/architecture/ingest-pipeline.md#contract-schema-evolution.
 # Using a simpler approach: query getContractInfo via getLedgerEntries
 # would need an ScAddress-encoded key. For the capture script, we
 # accept a pre-supplied WASM_HASH env var so the script stays simple.

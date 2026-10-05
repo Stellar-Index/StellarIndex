@@ -3,7 +3,7 @@ title: SEV-1 tabletop — Anomaly freeze stuck-engaged on a major pair
 last_verified: 2026-10-05
 status: ratified
 severity: P1
-exercises_runbook: ../../runbooks/anomaly-freeze-engaged.md
+exercises_runbook: ../../runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged
 playbook_section: ../../sev-playbook.md#4-response-flow
 ---
 
@@ -35,7 +35,7 @@ All services up, aggregator producing closed-bucket VWAPs each minute, `flags.fr
 ## Expected response
 
 - **5 min:** acknowledge; open `#incident-<YYYY-MM-DD>-freeze-stuck`; post "stuck-frozen flag on XLM/USD, price feed may not update"; status page *Degraded performance* on API.
-- **10 min, diagnose** ([anomaly-freeze-engaged.md](../../runbooks/anomaly-freeze-engaged.md)): read the marker; check `engaged_at` and `reason`
+- **10 min, diagnose** ([anomaly.md#stellarindex_anomaly_freeze_engaged](../../runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged)): read the marker; check `engaged_at` and `reason`
   against the alert; check the class-diversity gauge for the last 15 min. If recovered, the freeze is stuck (Phase 1 does not auto-clear).
   Verify upstream recovery before clearing.
 - **20 min, mitigate:** operator clear:

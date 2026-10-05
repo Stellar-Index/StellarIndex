@@ -441,7 +441,7 @@ Capture for the postmortem:
   — sibling alert for pairs the refresher cannot evaluate
   (`missing_snapshot` / `read_error` / `misaligned`); their gauge
   series is deleted, so this alert is silent for them.
-- `aggregator-silent.md` — if the aggregator is stalled, the
+- `aggregator.md#stellarindex_aggregator_silent` — if the aggregator is stalled, the
   cross-check gauge is also stale; investigate that first.
 - `supply-refresh-stalled.md` / `supply-refresh-error-dominant.md`
   — when the refresher itself isn't producing snapshots; both

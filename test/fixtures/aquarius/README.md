@@ -11,7 +11,7 @@ governance window and bypassable emergency mode. WASM hashes rotate
 on every upgrade; event body schemas can rotate with them. Fixtures
 live under `<wasm_hash>/` subdirectories so decoders can be pinned
 to specific versions — see
-[docs/architecture/contract-schema-evolution.md](../../../docs/architecture/contract-schema-evolution.md).
+[docs/architecture/ingest-pipeline.md#contract-schema-evolution](../../../docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 
 ## Capture workflow
 

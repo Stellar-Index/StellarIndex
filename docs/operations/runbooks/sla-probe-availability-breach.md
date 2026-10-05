@@ -55,8 +55,8 @@ curl -s http://localhost:9090/api/v1/query --data-urlencode \
 - [ ] Step 1 — Split the failures by status. 429 on the probe only →
       the probe's key is missing, revoked or under-quota; fix the
       key, not the API.
-- [ ] Step 2 — 5xx → route to `api-5xx.md`.
-- [ ] Step 3 — Timeouts → route to `api-latency.md`.
+- [ ] Step 2 — 5xx → route to `api.md#stellarindex_api_error_rate_critical`.
+- [ ] Step 3 — Timeouts → route to `api.md#stellarindex_api_latency_p95_high`.
 - [ ] Verification: two consecutive probe runs at ≥ 99.9 % on the
       endpoint (the alert clears on the same 30 m `for`).
 
@@ -73,7 +73,7 @@ curl -s http://localhost:9090/api/v1/query --data-urlencode \
   `sla-probe-freshness-breach.md` — the other per-target alerts.
 - `sla-probe-unit-failed.md` — the umbrella verdict alert.
 - `slo-availability-burn-fast.md` — real-traffic availability burn.
-- `api-5xx.md` — server-error triage.
+- `api.md#stellarindex_api_error_rate_critical` — server-error triage.
 
 ## Changelog
 

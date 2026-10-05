@@ -47,7 +47,7 @@ fi
 # 1. Length ceiling.
 lines=$(wc -l < "$FILE" | tr -d ' ')
 if [ "$lines" -gt "$MAX_LINES" ]; then
-  err "$FILE is $lines lines, ceiling is $MAX_LINES. Reference material belongs in docs/ — see docs/architecture/repo-map.md, docs/architecture/domain-traps.md and docs/contributing/task-recipes.md for where the last three sections went."
+  err "$FILE is $lines lines, ceiling is $MAX_LINES. Reference material belongs in docs/ — see docs/architecture/overview.md, docs/architecture/domain-traps.md and docs/contributing/task-recipes.md for where the last three sections went."
 else
   ok "$FILE is $lines lines (ceiling $MAX_LINES)"
 fi
@@ -74,7 +74,7 @@ while IFS= read -r line; do
     *"directory layout"*|*"file layout"*|*"repo structure"*|*"where things live"*|\
     *"docs index"*|*"documentation index"*|*"task recipes"*|*"common recipes"*|\
     *"changelog"*|*"release notes"*)
-      err "$FILE has a reference section: '$heading'. That is docs/ material — link to it. See docs/architecture/repo-map.md, docs/architecture/domain-traps.md and docs/contributing/task-recipes.md for where the originals went."
+      err "$FILE has a reference section: '$heading'. That is docs/ material — link to it. See docs/architecture/overview.md, docs/architecture/domain-traps.md and docs/contributing/task-recipes.md for where the originals went."
       ref_hits=$((ref_hits + 1)) ;;
   esac
 done < "$FILE"

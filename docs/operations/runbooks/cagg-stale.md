@@ -149,9 +149,9 @@ job's `application_name`, using the commands in
 
 ## Related
 
-- `api-latency.md` — downstream effect when VWAP queries fall
+- `api.md#stellarindex_api_latency_p95_high` — downstream effect when VWAP queries fall
   back to raw aggregation.
-- `price-stale.md` — aggregator staleness visible through the API.
+- `api.md#stellarindex_api_price_stale` — aggregator staleness visible through the API.
 - `pg-conns-saturated.md` — can cascade if the refresh is holding
   connections.
 - `timescale-probe-degraded.md` — the producer side of diagnosis step 0

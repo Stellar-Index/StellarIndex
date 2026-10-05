@@ -52,7 +52,7 @@ tests:
               job: pgbackrest_exporter
               instance: r1:9854
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-offsite-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-offsite.md#stellarindex_backup_offsite_stale
               summary: "No pgBackRest backup has reached the off-site repo (repo2) in > 8 d on r1:9854"
               description: |
                 The exporter on this host is up, but no pgBackRest backup
@@ -87,7 +87,7 @@ tests:
               job: pgbackrest_exporter
               instance: r1:9854
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-offsite-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-offsite.md#stellarindex_backup_offsite_stale
               summary: "No pgBackRest backup has reached the off-site repo (repo2) in > 8 d on r1:9854"
               description: |
                 The exporter on this host is up, but no pgBackRest backup

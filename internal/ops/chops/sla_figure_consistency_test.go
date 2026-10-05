@@ -237,7 +237,7 @@ func TestOperatorDocsStateThePublishedAvailabilityFigure(t *testing.T) {
 			required:  []string{"(99.9 % non-5xx over 30 d", "slo `api_availability_3_nines`)", "1 × 0.001 = 0.1 %"},
 		},
 		{
-			path:      "docs/operations/runbooks/api-5xx.md",
+			path:      "docs/operations/runbooks/api.md",
 			forbidden: []string{"(99.99 % non-5xx over 30 d)", "14.4 × 0.0001"},
 			required:  []string{"(99.9 % non-5xx over 30 d)", "14.4 × 0.001 = 1.44 %"},
 		},

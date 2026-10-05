@@ -85,7 +85,7 @@ func decodeAmount(ev *events.Event) (*big.Int, error) {
 // of the 15 watched contracts — were lost, driving mint_total to zero
 // so `burn_total > mint_total` tripped the aggregator's dominant-burn
 // guard). Decode by Map-field-NAME (`amount`), never by position, per
-// docs/architecture/contract-schema-evolution.md.
+// docs/architecture/ingest-pipeline.md#contract-schema-evolution.
 func amountScVal(sv xdr.ScVal) (xdr.ScVal, error) {
 	switch sv.Type {
 	case xdr.ScValTypeScvI128:

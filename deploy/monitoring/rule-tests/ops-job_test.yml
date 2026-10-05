@@ -422,7 +422,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ratelimit-fail-open.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_ratelimit_fail_open
               summary: "Rate limiting FAILED OPEN 150 times in 15m"
               description: |
                 The API rate limiter could not reach its Redis backing store
@@ -471,7 +471,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ratelimit-fail-open.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_ratelimit_fail_closed
               summary: "Rate limiting is FAILING CLOSED — the API is 503ing rate-limited requests"
               description: |
                 The rate limiter's Redis calls have been failing longer than

@@ -37,7 +37,7 @@ type Decoder struct {
 // dispatches the three V1-only event kinds (update_emissions /
 // new_liquidation_auction / delete_liquidation_auction, ROADMAP #89
 // residual) alongside the V2 vocabulary. A future per-WASM-hash dispatch
-// (per docs/architecture/contract-schema-evolution.md) would still be
+// (per docs/architecture/ingest-pipeline.md#contract-schema-evolution) would still be
 // needed for a hypothetical V3.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	// The factory trust-root set is intrinsic to the protocol (verified,

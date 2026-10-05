@@ -24,7 +24,7 @@
 #              WASM hashes from the contract's instance entry.
 #
 # Rationale for per-WASM-hash fixture layout: see
-# docs/architecture/contract-schema-evolution.md — a contract
+# docs/architecture/ingest-pipeline.md#contract-schema-evolution — a contract
 # `update_contract` swap can change body field names / arity, and
 # we need decoders pinned to specific WASM versions so backfill
 # against old ledgers stays correct.

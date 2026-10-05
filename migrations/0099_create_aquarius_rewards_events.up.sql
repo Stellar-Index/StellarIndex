@@ -38,7 +38,7 @@
 -- than left as a second, separately-tracked item. 52,722+ lifetime
 -- events, 100% emitted by the canonical router.
 --
--- Per docs/architecture/contract-schema-evolution.md and the EVERY-
+-- Per docs/architecture/ingest-pipeline.md#contract-schema-evolution and the EVERY-
 -- event policy (project memory project_every_event_principle), this
 -- is decoded by Map-field-name where the body is a Map, and
 -- positionally only where the body is a Vec/tuple (the only wire

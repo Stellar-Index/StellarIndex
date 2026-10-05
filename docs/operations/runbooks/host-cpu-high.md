@@ -15,7 +15,7 @@ severity: P3
 | Severity | P3 (informational) |
 | Detected by | `configs/prometheus/rules.r1/infra.yml` (group `stellarindex.infra`; `severity: informational`, `for: 10m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/infra.yml`. |
 | Typical MTTR | 30 min – days (depends on whether it's fixable code vs scale-up) |
-| Impact | Not directly customer-visible. High CPU usually precedes latency degradation — if `api-latency.md` hasn't fired yet, you have lead time. |
+| Impact | Not directly customer-visible. High CPU usually precedes latency degradation — if `api.md#stellarindex_api_latency_p95_high` hasn't fired yet, you have lead time. |
 
 ## Symptoms
 
@@ -122,7 +122,7 @@ wrapper.
 
 ## Related
 
-- `api-latency.md` — downstream effect when CPU saturation slows
+- `api.md#stellarindex_api_latency_p95_high` — downstream effect when CPU saturation slows
   request handlers.
 - `pg-conns-saturated.md` — a common CPU-saturating scenario for
   Postgres hosts.

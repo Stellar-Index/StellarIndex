@@ -144,6 +144,6 @@ k6 archive --quiet test/load/scenarios/01-price-hot-path.js
 ## See also
 
 - [`docs/architecture/k6-load-tests-design-note.md`](../../docs/architecture/k6-load-tests-design-note.md) — full design (effort breakdown, edge cases, traffic-shape rationale).
-- [`docs/operations/runbooks/api-latency.md`](../../docs/operations/runbooks/api-latency.md) — the alert this suite proves we don't trip.
+- [`docs/operations/runbooks/api.md#stellarindex_api_latency_p95_high`](../../docs/operations/runbooks/api.md#stellarindex_api_latency_p95_high) — the alert this suite proves we don't trip.
 - [`deploy/monitoring/rules/slo.yml`](../../deploy/monitoring/rules/slo.yml) — the multi-window SLO rules whose budget this proves we stay within.
 - [Coverage matrix S9.2](../../docs/architecture/coverage-matrix.md) — Freighter SLA contract requirement.

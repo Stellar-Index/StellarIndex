@@ -48,7 +48,7 @@ tests:
               team: stellarindex
               component: aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_warn_rate
               summary: "Anomaly ActionWarn sustained on class fiat (P3)"
               description: |
                 The aggregator's anomaly checker has emitted ActionWarn
@@ -58,7 +58,7 @@ tests:
                 does not freeze or flag /v1/price — but a sustained rate
                 means either a real, building market move or warn_pct is
                 tuned too tight for this class's normal volatility.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_warn_rate
 
   # ── a one-off warn decision (no sustained rate) never fires ─────────
   - interval: 30s
@@ -107,7 +107,7 @@ tests:
               team: stellarindex
               component: aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_recovery_stalled
               summary: "Freeze recovery worker is stalled (P3)"
               description: |
                 At least one (pair, window) freeze has stayed active
@@ -125,4 +125,4 @@ tests:
                 or a Redis ACL drift. Check the recovery worker logs
                 (component=freeze-recovery) for the specific transport
                 error.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_recovery_stalled

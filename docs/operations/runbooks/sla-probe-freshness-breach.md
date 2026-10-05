@@ -93,7 +93,7 @@ reading the wrong key.
    falls back to the Postgres read which has the right value but
    slower path; freshness lags as the aggregator's tick gap grows.
    - Signal: `rate(stellarindex_aggregator_ticks_total[5m]) == 0`
-     (the [aggregator-silent](aggregator-silent.md) alert fires
+     (the [aggregator-silent](aggregator.md#stellarindex_aggregator_silent) alert fires
      on this directly via `stellarindex_aggregator_vwap_writes_total`).
    - Mitigation: restart the aggregator binary; investigate why
      it stopped.
@@ -192,7 +192,7 @@ reading the wrong key.
 
 - `cagg-stale.md` — Postgres-side staleness.
 - `core-lag.md` — indexer-side lag.
-- `aggregator-silent.md` — orchestrator not writing.
+- `aggregator.md#stellarindex_aggregator_silent` — orchestrator not writing.
 - The service freshness SLA — the 30 s spec (tip-of-chain surface).
 - ADR-0015 — the closed-bucket-only serving contract that makes
   `/v1/price` structurally 30–150 s old.

@@ -32,7 +32,7 @@ severity: P1
   The series is per-device, so the alert names the drive.
 - Write IOPS / throughput drop visibly when temperature crosses
   threshold (compare IO panels with the manual temps below).
-- Latency alerts may follow (`api-latency.md`) if the throttle is
+- Latency alerts may follow (`api.md#stellarindex_api_latency_p95_high`) if the throttle is
   heavy.
 
 ## Quick diagnosis (≤ 5 min)

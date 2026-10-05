@@ -161,7 +161,7 @@ server refusing writes.
 
 - `redis-master-down.md` — OOM-kill is a common cause of this
   escalating into a full master outage.
-- `api-latency.md` — downstream effect when eviction hits popular
+- `api.md#stellarindex_api_latency_p95_high` — downstream effect when eviction hits popular
   keys.
 - ADR-0007 (key schema + TTL conventions).
 
