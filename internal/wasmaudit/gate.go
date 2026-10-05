@@ -237,6 +237,11 @@ func ContractSet(ctx context.Context, d Deps, source string, tip uint32) ([]stri
 		add(rozo.MainnetPaymentContracts...)
 	case sorocredit.SourceName:
 		add(sorocredit.MainnetContract)
+		children, err := sorocreditEmittingChildren(ctx, d.Events, tip)
+		if err != nil {
+			return nil, err
+		}
+		add(children...)
 	case blend_backstop.SourceName:
 		add(blend_backstop.MainnetBackstopV2, blend_backstop.MainnetBackstopV1)
 	case soroswap_router.SourceName:
@@ -291,6 +296,58 @@ func walkFactory(ctx context.Context, es completeness.EventStreamer, source stri
 		return fmt.Errorf("%s factory walk: 0 %q creation events in [%d,%d]", source, sym, genesis, tip)
 	}
 	return nil
+}
+
+// sorocreditEmittingChildren returns every Collateral child the sorocredit
+// decoder admits an event from by tip. Its childgate honours any child the
+// root announced, so a child that emits runs WASM the decoder reads; gating
+// the ~139k silent children instead would cost one lake read each for no
+// coverage. One ledger-ordered pass over every emitter registers each child
+// before its own events, as a replay does.
+func sorocreditEmittingChildren(ctx context.Context, es completeness.EventStreamer, tip uint32) ([]string, error) {
+	if sorocredit.GenesisLedger >= tip {
+		return nil, nil
+	}
+	if es == nil {
+		return nil, fmt.Errorf("%s child walk: no event stream", sorocredit.SourceName)
+	}
+	dec := sorocredit.NewDecoder()
+	emitters := map[string]struct{}{}
+	created := 0
+	blind := completeness.NewBlindTracker()
+	err := es.StreamContractEvents(ctx, sorocredit.GenesisLedger, tip, nil, sorocredit.EventSymbols(), func(ev events.Event) error {
+		if perr := completeness.Guard(func() {
+			if !dec.Matches(ev) {
+				return
+			}
+			if ev.ContractID != sorocredit.MainnetContract {
+				emitters[ev.ContractID] = struct{}{}
+			}
+			outs, derr := dec.Decode(ev)
+			if derr != nil {
+				blind.Undecodable(ev.Ledger)
+				return
+			}
+			for _, o := range outs {
+				if e, ok := o.(sorocredit.Event); ok && e.EventType == sorocredit.TypeNewCollateralContract {
+					created++
+				}
+			}
+		}); perr != nil {
+			blind.Undecodable(ev.Ledger)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s child walk: %w", sorocredit.SourceName, err)
+	}
+	if b := blind.Result(); b.Any() {
+		return nil, fmt.Errorf("%s child walk is blind: %s", sorocredit.SourceName, b.Detail())
+	}
+	if created == 0 {
+		return nil, fmt.Errorf("%s child walk: 0 %q events in [%d,%d]", sorocredit.SourceName, sorocredit.TopicNewCollateralContract, sorocredit.GenesisLedger, tip)
+	}
+	return sorted(emitters), nil
 }
 
 func sorted(set map[string]struct{}) []string {

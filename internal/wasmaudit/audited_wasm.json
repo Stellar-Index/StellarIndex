@@ -7,6 +7,14 @@
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/sushiswap_v3.md"
   },
+  "00b1b70550f887bd87835270ddee76307ced7a00aa6ad354ed744bc0544a03ac": {
+    "sources": [
+      "cctp"
+    ],
+    "role": "forwarder",
+    "audited": "2026-05-26",
+    "doc": "docs/operations/wasm-audits/cctp.md"
+  },
   "11329c2469455f5a3815af1383c0cdddb69215b1668a17ef097516cde85da988": {
     "sources": [
       "defindex"

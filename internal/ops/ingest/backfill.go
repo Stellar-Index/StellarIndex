@@ -105,6 +105,23 @@ type backfillOpts struct {
 	// heartbeatPath is the -heartbeat flag: an explicit node_exporter
 	// textfile path, or "" for the auto-resolved default.
 	heartbeatPath string
+	// wasmGate runs the per-WASM replay gate once for the run's whole
+	// [from, to]; every chunk shares it. nil gates on each call.
+	wasmGate *replayGateOnce
+}
+
+// replayGateOnce memoises one run's replay-gate verdict across its chunks.
+type replayGateOnce struct {
+	once sync.Once
+	err  error
+}
+
+func (g *replayGateOnce) check(gate func() error) error {
+	if g == nil {
+		return gate()
+	}
+	g.once.Do(func() { g.err = gate() })
+	return g.err
 }
 
 // chunkRange is one sub-range of a parallel backfill: [from, to]
@@ -225,6 +242,7 @@ func backfill(args []string) error {
 	// (stalled S3 read, storage write that never returns, OOM-killed chunk
 	// goroutine) is distinguishable from a working one without tailing the
 	// journal. Inert off-r1 — see opsutil.NewJobHeartbeat.
+	opts.wasmGate = &replayGateOnce{}
 	opts.heartbeat = opsutil.NewJobHeartbeat("backfill", opts.heartbeatPath, nil)
 	opts.walkedTotal = &atomic.Uint64{}
 	if opts.heartbeat.Enabled() {
@@ -333,7 +351,9 @@ func buildChunkDispatcher(
 		return nil, nil, err
 	}
 	realSources := filterOutSorobanEventsPseudo(opts.sources)
-	if err := wasmaudit.GateReplay(ctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts, realSources, opts.from, opts.to); err != nil {
+	if err := opts.wasmGate.check(func() error {
+		return wasmaudit.GateReplay(ctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts, realSources, opts.from, opts.to)
+	}); err != nil {
 		return nil, nil, err
 	}
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
@@ -102,5 +103,16 @@ func TestReplayBackfillSafe_BackstopFollowsBlendAttestation(t *testing.T) {
 	}
 	if err := checkReplayBackfillSafe(blend_backstop.SourceName, 55_000_000); err == nil {
 		t.Errorf("replay of %s must be refused once blend is not BackfillSafe", blend_backstop.SourceName)
+	}
+}
+
+// The per-WASM gate has no skip: a BackfillPerWASM source (cctp) whose lake
+// cannot be read is refused, never admitted on the static policy alone.
+func TestProjectorReplayGate_UnreachableLakeRefusesPerWASMSource(t *testing.T) {
+	var cfg config.Config
+	cfg.Storage.ClickHouseAddr = "127.0.0.1:1"
+	err := gateProjectorReplay(cfg, nil, "cctp", 62_200_000)
+	if err == nil || !strings.Contains(err.Error(), "wasm replay gate") {
+		t.Fatalf("err = %v, want a wasm replay gate refusal", err)
 	}
 }

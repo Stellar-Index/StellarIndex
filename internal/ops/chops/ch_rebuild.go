@@ -227,6 +227,11 @@ func reDerivedSourcesInRun(cat, sep41Cat []reconSource, passes chRebuildPasses, 
 	return out
 }
 
+// gateCHRebuildLake is a -write run's per-WASM lake gate over [lo, hi].
+func gateCHRebuildLake(ctx context.Context, cfg config.Config, store *timescale.Store, sources []string, lo, hi uint32) error {
+	return wasmaudit.GateReplay(ctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts, sources, lo, hi)
+}
+
 // checkCHRebuildBackfillSafe refuses a -write run that would decode a
 // source whose decoder has not been audited against every WASM
 // generation that ran over its history (finding F050).
@@ -670,8 +675,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		if gerr := checkCHRebuildBackfillSafe(reDerivedSourcesInRun(cat, sep41Cat, passes, enabled)); gerr != nil {
 			return gerr
 		}
-		if gerr := wasmaudit.GateReplay(ctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts,
-			reDerivedSourcesInRun(cat, sep41Cat, passes, enabled), lo, hi); gerr != nil {
+		if gerr := gateCHRebuildLake(ctx, cfg, store, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled), lo, hi); gerr != nil {
 			return gerr
 		}
 		projected := projectedSourcesInRun(cfg, cat, sep41Cat, *includeSEP41, enabled)

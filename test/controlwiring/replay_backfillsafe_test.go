@@ -28,8 +28,12 @@ import (
 // local helper whose name merely ends in BackfillSafe, does not count).
 // The behavioural tests that drive each real entry point are
 // internal/ops/ingest/projector_backfillsafe_test.go,
-// internal/ops/chops/ch_rebuild_backfillsafe_test.go and
-// internal/ops/chops/projected_rebuild_backfillsafe_test.go.
+// internal/ops/chops/ch_rebuild_backfillsafe_test.go,
+// internal/ops/chops/projected_rebuild_backfillsafe_test.go and
+// internal/ops/ingest/resume_stalled_test.go (the backfill chunk path); the
+// per-WASM gate's unreachable-lake refusal is pinned per entry point in
+// projector_backfillsafe_test.go, replay_gate_unreachable_test.go and
+// resume_stalled_test.go.
 //
 // A NEW command that runs a current decoder over historical events must
 // be added to this map in the same change that adds it.
@@ -39,6 +43,8 @@ func TestK023_ReplayPathsConsultBackfillSafe(t *testing.T) {
 		"projector-replay":  {"internal/ops/ingest/projector*.go", "internal/projector/*.go"},
 		"ch-rebuild":        {"internal/ops/chops/ch_rebuild*.go"},
 		"projected-rebuild": {"internal/ops/chops/projected_rebuild*.go"},
+		// backfill and resume-stalled share runBackfillChunk -> buildChunkDispatcher.
+		"backfill": {"internal/ops/ingest/backfill*.go"},
 	}
 	// The three exported forms of the one gate in
 	// internal/sources/external/registry.go.

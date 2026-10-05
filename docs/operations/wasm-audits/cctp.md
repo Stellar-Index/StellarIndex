@@ -145,10 +145,13 @@ variants of a single template):
   with no upgrade; decoder body-shape assumptions stable.
 - **MessageTransmitter** `99bd0ddc506ee13f…`. Events:
   `message_sent`, `message_received`. Same decoder. Single deploy.
-- **CctpForwarder** `00b1b70550f887bd…`. Forwarder semantic — no
-  additional event types beyond what the upstream contracts emit
-  per Phase 1 audit; the forwarder doesn't introduce its own
-  topic namespace.
+- **CctpForwarder**
+  `00b1b70550f887bd87835270ddee76307ced7a00aa6ad354ed744bc0544a03ac`
+  (the only WASM the contract has run: `stellar.contract_instance_changes`
+  FINAL holds that hash alone over ledgers 62,146,669–62,225,207, read
+  2026-10-05). It emits `mint_and_forward` (inbound mint relayed onward)
+  plus the shared ownership/admin events; the same decoder handles both,
+  and the ROADMAP #89b/89c topic-match audits below cover its topics.
 
 Decoder coverage matches the full event set the contracts emit —
 verified against the contracts' Rust source

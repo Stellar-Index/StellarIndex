@@ -218,7 +218,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		return fmt.Errorf("-to (%d) must be >= -from (%d)", toLedger, fromLedger)
 	}
 
-	if gerr := wasmaudit.GateReplay(ctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts, []string{*sourceName}, fromLedger, toLedger); gerr != nil {
+	if gerr := gateProjectedRebuild(ctx, cfg, store, *sourceName, fromLedger, toLedger); gerr != nil {
 		return gerr
 	}
 
@@ -374,6 +374,11 @@ const (
 	// progress-log cadence.
 	projectedRebuildProgressInterval = 15 * time.Second
 )
+
+// gateProjectedRebuild is the per-WASM lake gate over the rebuild's range.
+func gateProjectedRebuild(ctx context.Context, cfg config.Config, store *timescale.Store, source string, from, to uint32) error {
+	return wasmaudit.GateReplay(ctx, cfg.Storage.ClickHouseAddr, cfg.Oracle, store.LoadProtocolContracts, []string{source}, from, to)
+}
 
 // checkProjectedRebuildBackfillSafe refuses a rebuild of a source whose
 // decoder has not been audited against every WASM generation that ran

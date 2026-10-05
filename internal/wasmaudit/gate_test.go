@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
@@ -235,5 +238,77 @@ func TestContractSet_EveryPerWASMSourceResolves(t *testing.T) {
 				t.Errorf("manifest hash %s names %s, which has no resolver", h, s)
 			}
 		}
+	}
+}
+
+// fakeStream serves evs (ledger-ordered) for any contract filter: the
+// sorocredit child walk streams every emitter of its topics.
+type fakeStream struct{ evs []events.Event }
+
+func (f fakeStream) StreamContractEvents(_ context.Context, from, to uint32, _, _ []string, fn func(events.Event) error) error {
+	for _, ev := range f.evs {
+		if ev.Ledger >= from && ev.Ledger <= to {
+			if err := fn(ev); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Real mainnet frames (internal/sources/sorocredit/source_test.go goldens).
+const (
+	soroCreateTopic1 = "AAAAEgAAAAFvwu+BE6690V76q9574JuQfy8McX+YXK2gl/mCZ70Xpw=="
+	soroCreateData   = "AAAAEAAAAAEAAAACAAAADgAAAC9Db2xsYXRlcmFsLTAzODU1MzRhLTczY2EtNDIyZi1iNDQ5LTU5YTExOTZhYWNiNgAAAAASAAAAAAAAAAB4poQ4eoY+oU3UIUJVTMJaJFQwlykKA/LmJa9ILTqSaQ=="
+	soroWithdrawData = "AAAAEAAAAAEAAAADAAAAEgAAAAGt785ZruUpaPdgYdSUwlJbdWWfpClqZfSZ7ynlZHfklgAAABIAAAAAAAAAAIbxw2DJ/zT7LB/y7us78QoFnH2oRpR8ZWw85zd37rm3AAAACgAAAAAAAAAAAAAAAAFrKMA="
+)
+
+func soroEvent(contract string, ledger uint32, topics []string, data string) events.Event {
+	return events.Event{
+		Type: "contract", ContractID: contract, Ledger: ledger, LedgerClosedAt: "2026-07-06T15:25:16Z",
+		TxHash: "6714f83ef3f94a76f0158ff4ee76a6a452cb5677cf6c10024583b2b5974ccf8a", Topic: topics, Value: data,
+	}
+}
+
+// TestGate_SorocreditChildThatEmitsIsChecked: the sorocredit childgate
+// honours events from any Collateral child the root announced, so a child
+// that emits must have its WASM gated, not only the root's.
+func TestGate_SorocreditChildThatEmitsIsChecked(t *testing.T) {
+	m := mustLoad(t)
+	ctx := context.Background()
+	create := soroEvent(sorocredit.MainnetContract, sorocredit.GenesisLedger+10,
+		[]string{scval.MustEncodeSymbol(sorocredit.TopicNewCollateralContract), soroCreateTopic1}, soroCreateData)
+	outs, err := sorocredit.NewDecoder().Decode(create)
+	if err != nil || len(outs) != 1 {
+		t.Fatalf("fixture creation event: %v, %d outs", err, len(outs))
+	}
+	child := outs[0].(sorocredit.Event).CollateralContract
+	withdraw := soroEvent(child, sorocredit.GenesisLedger+20,
+		[]string{scval.MustEncodeSymbol(sorocredit.TopicWithdrawal), soroCreateTopic1}, soroWithdrawData)
+	tip := sorocredit.GenesisLedger + 100
+	h := &fakeHistory{
+		byContract: map[string][]clickhouse.ContractCodeVersion{sorocredit.MainnetContract: {v(sorocredit.GenesisLedger, hashFor(t, m, "sorocredit"))}},
+		fallback:   []clickhouse.ContractCodeVersion{v(sorocredit.GenesisLedger+10, hB)},
+	}
+
+	silent := Deps{Events: fakeStream{evs: []events.Event{create}}}
+	if err := Gate(ctx, silent, h, m, []string{"sorocredit"}, sorocredit.GenesisLedger, tip); err != nil {
+		t.Fatalf("silent children: %v", err)
+	}
+	if strings.Contains(strings.Join(h.asked, ","), child) {
+		t.Errorf("a child that emits nothing was looked up: %v", h.asked)
+	}
+
+	emitting := Deps{Events: fakeStream{evs: []events.Event{create, withdraw}}}
+	err = Gate(ctx, emitting, h, m, []string{"sorocredit"}, sorocredit.GenesisLedger, tip)
+	if err == nil || !strings.Contains(err.Error(), child) || !strings.Contains(err.Error(), hB) {
+		t.Fatalf("err = %v, want refusal naming child %s and its WASM %s", err, child, hB)
+	}
+
+	if err := Gate(ctx, Deps{Events: fakeStream{}}, h, m, []string{"sorocredit"}, sorocredit.GenesisLedger, tip); err == nil {
+		t.Error("a child walk that saw no NewCollateralContract admitted the replay")
+	}
+	if err := Gate(ctx, Deps{}, h, m, []string{"sorocredit"}, sorocredit.GenesisLedger, tip); err == nil {
+		t.Error("no event stream admitted the replay")
 	}
 }
