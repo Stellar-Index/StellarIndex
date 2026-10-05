@@ -7,216 +7,43 @@ supersedes: []
 superseded_by: null
 ---
 
-# ADR-0040 — Completing contract-identity gating (phoenix, defindex, aquarius, comet)
-
-- **Extends:** [ADR-0035](0035-factory-anchored-contract-gating.md)
-- **Closes:** CS-026 (audit 2026-06-30) — the last four topic-shape-gated decoders
-
-> **Amendment (2026-07-24, audit-2026-07-23 wave5 AGT-06).** The
-> "Implementation tracking" section's Comet gate line below says "the
-> WASM-hash sweep is the registered upkeep loop." No such sweep exists
-> in the codebase — there is no scheduled job, ops subcommand, cron,
-> or systemd timer anywhere that walks `ledger_entries_current` /
-> `contract_code` hashes to auto-register new comet pools. What
-> shipped is exactly the curated one-pool allowlist
-> (`comet.MainnetGatedSet`, seeded via `seed-protocol-contracts
-> -source comet`) — mechanism #2 in §1 below, not mechanism #3. The
-> code comments in `internal/sources/comet/dispatcher_adapter.go` and
-> `events.go` carry the same "registered upkeep loop" claim and are
-> equally aspirational. A new mainnet comet pool today requires a
-> manual `seed-protocol-contracts -source comet` re-run, not automatic
-> discovery. Building the sweep (§1 mechanism #3's "operator sweep,
-> off the hot path") remains open work; not made here.
-
-> **Amendment (2026-09-09).** §1 mechanism 3 and §2 step 1 describe a
-> curated set as "seeded via `seed-protocol-contracts`" — an operator
-> command run once per deployment. That made the mechanism silent when
-> the command was not run: `pipeline.GatedRegistryOptions` warmed every
-> registry from the `protocol_contracts` table alone and never read
-> `GatedMeta.CuratedSet`, so a curated source's declared trust root
-> reached nothing but the CLI. Measured on r1 the day `upshift` was
-> first enabled: `protocol_contracts` held aquarius 352, blend 29,
-> defindex 16, sushiswap_v3 58 and upshift 0, `/v1/protocols/upshift`
-> served an empty contract roster, the explorer attributed neither
-> vault, and the sole log line read `gated registry warmed
-> source=upshift factories=null children=0`. The decode gate itself was
-> spared only by a redundancy — each curated decoder's own `NewDecoder`
-> re-installs its `MainnetGatedSet()` — which the layer that *declares*
-> the trust root must not depend on. The warm now seeds `CuratedSet`
-> into every registry it builds and, on the indexer path only,
-> reconciles it into `protocol_contracts` (provenance
-> `factory_id = "curated"`, unchanged), so the declared trust root
-> reaches every consumer of the warm on boot and the roster agrees with
-> the gate.
-> `seed-protocol-contracts -source <name>` remains the mechanism for
-> FACTORY-anchored sources, where the deploy-precondition framing in §2
-> step 4 still holds exactly as written.
+# ADR-0040: Completing contract-identity gating
 
 ## Context
 
-ADR-0035 established that Soroban decoders must gate `Matches()` on
-**contract identity**, not topic bytes: any pubnet contract can emit a
-colliding topic shape and inject fabricated trades under our source
-attribution. `blend` (childgate, factory-descended) and `soroswap`
-(pair/factory registry) are gated. Four sources still match on topic
-bytes alone: **phoenix, defindex, aquarius, comet**.
-
-The blocker register (audit-remediation-operator-actions.md) framed the
-remainder as "waiting on team/operator-confirmed contract data". The
-per-protocol verification pages show the picture is better than that:
-
-| Source | Enumeration state (docs/protocols/) | Gate blocker |
-|---|---|---|
-| phoenix | ✅ 11 pools + factory + multihop + 3 stake contracts, RPC `query_pools()` + lake-verified activity | none — curated set exists |
-| defindex | ⚠ REVISED 2026-07-02: lake emitters grew to 88+22 vs the 57 verified 2026-06-12, and `create` events don't carry vault addresses (the page's open question) — the deploy-graph can't verify the growth | §3-style enumeration cross-check |
-| aquarius | ⏳ pool set "not yet pinned" | enumeration work |
-| comet | ❌ no page; **no factory namespace** (shared Balancer-v1 `("POOL",…)` topics) | gate *design* |
-
-So the work splits into (1) shipping the two implementable gates, (2) an
-enumeration procedure for aquarius, (3) a new gate *mechanism* for comet.
+ADR-0035 gates decoders on contract identity, but some protocols have no usable factory namespace: comet shares Balancer-v1 `("POOL", ...)` topics across deployments, and some contracts are never announced by a factory.
+Any pubnet contract can emit a colliding shape and inject trades under our source attribution.
 
 ## Decision
 
-### 1. Gate taxonomy — three sanctioned mechanisms
+**§1 Mechanisms.** Extends ADR-0035. Three sanctioned gate mechanisms, all built on `contractid.Registry`. Per-source declarations are in `internal/pipeline/gated_registry.go`.
 
-1. **Factory-descended registry** (existing; blend/soroswap):
-   `childgate.Registry` seeded from `protocol_contracts` +
-   hard-coded factory IDs; live `deploy`/`create` events self-register
-   new children via the registry hook.
-2. **Curated-set registry** (new use of existing machinery): for
-   contracts a factory never announces, the same `childgate.Registry` is
-   used with `WithSeed(curatedSet)` + `WithFactories(factory)` so a
-   *future* creation event still registers. The curated set is the
-   protocol page's enumerated list, seeded via
-   `seed-protocol-contracts`. Fail-closed: an unlisted contract's events
-   are not attributed — and become **recognition gaps** (ADR-0033
-   Claim 2a), so a missing one is *visible*, not silent.
+1. **Factory-descended.** Seeded from `protocol_contracts` plus hard-coded factory IDs, and live creation events register new children (blend, soroswap, sushiswap_v3, phoenix pools, aquarius via the router's `add_pool` events). Aquarius also carries an in-code seed for history.
+2. **Curated set with a declared factory.** `WithSeed(curatedSet)` plus `WithFactories`, for children a factory does not announce or whose creation events are untrusted: phoenix stake contracts (the pool deploys them) and defindex (the create body's addresses are attacker-controlled, so it never admits a child).
+3. **Curated only.** No factory namespace and no creation event: comet (one mainnet pool, `comet.MainnetGatedSet`), blend_emitter and upshift. The in-code set is the whole trust root, and nothing discovers contracts at runtime. A new pool needs a code change, or an operator `seed-protocol-contracts -source <name>` for the warm table. The WASM-hash gate once proposed for comet was not built. `wasm-drift` (`internal/ops/chops/wasm_drift.go`) only checks and alerts on drift; it never admits a contract.
 
-   > **Correction (2026-09-19, audit F048).** Phoenix was placed here on
-   > the premise that its factory `create` events "are pre-50.46M so live
-   > self-registration never fires". That premise was false — the events
-   > are in the lake from ledger 51,572,026 — and because the decoder had
-   > no `create` action, `Matches()` rejected them, so the
-   > `WithFactories` anchor, the `seed-protocol-contracts` walk and the
-   > live-upsert hook were all inert rather than merely dormant. Phoenix
-   > POOLS are now mechanism 1. Its stake contracts stay here, for the
-   > sound version of this reason: the factory genuinely does not
-   > announce them (the pool deploys them), so no creation event exists
-   > to anchor on. The general lesson: "the creation events predate the
-   > lake" is a claim about data, and belongs in this taxonomy only with
-   > a ledger number and a query behind it.
-3. **WASM-code-hash gate** (new; comet): where no factory namespace
-   exists, gate on the contract's *code identity*: `Matches()` accepts
-   a contract only if its wasm hash is in the audited set. Resolution
-   order:
-   - a `protocol_contracts`-seeded allowlist of known comet pools
-     (same registry seam as #2), PLUS
-   - a `wasm_hashes` column/set for the source: at recognition/re-derive
-     time, an unseeded contract emitting comet-shaped topics is checked
-     against `ledger_entries_current` (ADR-0039 reader) for its
-     `contract_code` hash; a match against the audited Balancer-v1
-     Comet hash set (from `docs/operations/wasm-audits/comet.md`)
-     auto-registers it (with the registry hook recording provenance
-     `wasm-hash`).
-   The wasm-hash check runs OFF the hot path (recognition audit +
-   an operator sweep), not per-event: live ingest consults only the
-   registry; the sweep keeps the registry current. This bounds the
-   hot-path cost to a map lookup, identical to childgate today.
-   **Caveat named openly:** a fork that deploys byte-identical
-   Balancer-v1 code IS the same code — the wasm gate attributes it as
-   comet. For a permissionless Balancer clone that is arguably
-   correct-by-definition (comet *is* the code, not a brand); the
-   protocol page must say so.
+All three fail closed. An unlisted contract's events are not attributed and show as Claim 2a recognition gaps (ADR-0033), so a missing one is visible.
 
-### 2. Rollout order and preconditions
+The boot warm (`GatedRegistryOptions`) seeds every source's `CuratedSet` into its registry. On the indexer path it also reconciles the set into `protocol_contracts` with provenance `factory_id = "curated"`, so the declared trust root reaches the roster and the explorer. `seed-protocol-contracts` is still the operator step for factory-anchored sources.
 
-Per source, in this order (phoenix → defindex → aquarius → comet):
+**§2 Rollout per source.** Seed, gate `Matches()`, wire the gate and reconcile-catalogue entry, re-derive history from the lake (`projector-replay`), then one `compute-completeness -ch` cycle returns `complete=true`. Gate code must not deploy before its seed exists. Where the seed comes from a factory walk, run `seed-protocol-contracts` once the lake covers the factory.
 
-1. **Seed**: add the enumerated set to `seed-protocol-contracts`
-   (idempotent), with factory IDs hard-coded in the source package
-   (`phoenix.MainnetPoolFactory`, `defindex.MainnetFactories`, …) the
-   way `blend.MainnetPoolFactories` is.
-2. **Gate the decoder**: `Matches()` requires `reg.Has(contractID)`
-   (or `IsFactory` for creation events). Constructor grows a
-   `childgate.Option` variadic exactly like blend's.
-3. **Wire all five lockstep sites** — the
-   `internal/pipeline/lockstep_ast_test.go` guard plus
-   `TestReconciliationCatalogue_OracleSourcesOptOut` already fail CI on
-   a missed edit; the reconciliation catalogue entry gains
-   `factories`/`creationSym` so the daily verdict preseeds correctly
-   (CS-085 note: preseed still reads PG; the CH-native preseed is a
-   follow-up there, not here).
-4. **Lake re-derive** for the source (`projector-replay` /
-   `ch-reproject`) so history is re-attributed under the gate — the
-   deploy precondition memorialised in the ADR-0035 rollout: gate code
-   must NOT deploy before its seed exists on r1, else live ingest
-   fail-closes on every pool.
-5. **Verdict watch**: one full `compute-completeness -ch` cycle for the
-   source must return `complete=true` before the gate is called done.
+**§3 Enumerating a curated set.** Take every emitter the lake shows for the protocol and classify each against independent proofs: first event inside a factory `create` transaction, address in a factory `create` event body, live WASM hash the team publishes, listing in the team's own registry. A contract with no proof is excluded and flagged, never seeded. A proof that is weak alone (a create-body address) must not admit a contract by itself.
 
-### 3. Aquarius enumeration procedure
+## Invariant
 
-Aquarius pools all share the aquarius AMM WASM and are deployed by the
-protocol's router/factory chain. Enumerate from the lake, not from
-docs: every contract that has EVER emitted an aquarius-shaped
-`trade`/`deposit`/`withdraw` event that our ungated decoder attributed
-(`SELECT DISTINCT contract_id FROM stellar.contract_events WHERE …`),
-cross-checked two ways: (a) each candidate's creation op should chain
-to the same deployer set; (b) each candidate's wasm hash should fall in
-a small set (the aquarius pool code). Candidates failing both checks
-are *evidence of the injection risk this ADR closes* and are excluded +
-reported. Output: `docs/protocols/aquarius.md` pool table (the page's
-missing piece), then mechanism #2.
-
-### 4. What stays out of scope
-
-- Narrow-coverage downstream filtering (the AGENTS.md workaround) stays
-  documented until each gate lands, then is deleted per source.
-- sep41 firehose gating — different domain (watched-set, ADR-0031).
-- The CH-native childgate preseed (CS-085) — tracked separately.
+- A gated decoder's `Matches()` requires a registered contract, or a factory for creation events. `internal/pipeline/lockstep_ast_test.go` and `TestApplyGatedOptions_EveryGatedSourceAdmitsARegistryOnlyContract` fail CI on a missed wiring edit.
+- A curated-only entry declares a non-empty trust root (`TestGatedSources_curatedOnlyDeclaresTrustRoot`).
+- The boot warm seeds `CuratedSet` into every registry it builds, and the indexer reconciles it into `protocol_contracts` (`internal/pipeline/gated_registry_curated_test.go`).
+- A claim that creation events predate the lake is made only with a ledger number and a query behind it.
 
 ## Consequences
 
-- The injection vector closes source-by-source with a visible
-  audit artifact per step (seed rows, gated decoder tests, re-derive
-  logs, verdict green).
-- Fail-closed + recognition-gap visibility means an incomplete curated
-  set shows up as `complete=false` with named contracts — never as
-  silently attributed foreign trades.
-- Comet's wasm-hash mechanism adds a new trust-root type; the audited
-  hash set lives in `docs/operations/wasm-audits/comet.md` and its
-  changes are review-gated like any code change.
-- Protocol-team confirmations (phoenix pool list, defindex vault
-  enumeration) become *belt-and-braces ratification* of lake-derived
-  evidence rather than blocking inputs.
+- The injection vector closes source by source, each with seed rows, gated decoder tests, a re-derive and a green verdict.
+- An incomplete curated set shows as `complete=false` with named contracts, never as silently attributed foreign trades.
+- Curated sets are code and review-gated like any code change.
+- Phoenix pools moved from curated to factory-descended once its `create` events were found in the lake (from ledger 51,572,026).
 
-## Implementation tracking
+## Evidence
 
-Phoenix gate: shipped 2026-07-02 (curated-set, board #32).
-Aquarius gate: shipped 2026-07-05 — the §3 enumeration found the router's
-`add_pool` events announce a pool set byte-identical to the protocol's own
-registry API (332 pools), so the gate is router-anchored (mechanism 1 fan-out
-via event DATA + mechanism 2 in-code seed for history); a parallel
-same-WASM router deployment (72 pools), a foreign-WASM look-alike (7
-pools), and 8 pre-genesis emitters were excluded + flagged — see
-docs/protocols/aquarius.md "Verification 2026-07-05".
-Defindex gate: shipped 2026-07-05 via the §3 multi-proof classification
-(creation-tx correlation, create-body membership, team-published WASM
-hashes, team Dune registry): 101/110 emitters verified → curated seed;
-9 no-proof emitters excluded + flagged — see docs/protocols/defindex.md
-"Verification 2026-07-05". Both gates await their operator halves
-(re-derive + foreign-row cleanup + verdict watch, tracked in
-docs/operations/audit-remediation-operator-actions.md).
-Comet gate: shipped 2026-07-08 (curated one-pool allowlist — the
-wasm-audit census confirmed exactly ONE mainnet pool, Blend's BLND/USDC
-backstop `CAS3FL6T…`; `comet.MainnetGatedSet` is the in-code trust root,
-`seed-protocol-contracts -source comet` upserts it with provenance
-`curated`, and the WASM-hash sweep is the registered upkeep loop).
-
-> **See Amendment (2026-07-24) above:** the preceding sentence's "WASM-hash
-> sweep is the registered upkeep loop" is aspirational, not shipped — no
-> such sweep exists in the codebase. The curated one-pool allowlist is the
-> live mechanism.
-
-CS-026 closed — every integrated on-chain source now gates `Matches()`
-on contract identity.
+`internal/pipeline/gated_registry.go`, `internal/pipeline/gated_registry_curated_test.go`, `internal/contractid/registry.go`, `docs/protocols/aquarius.md`, `docs/protocols/defindex.md`, `docs/operations/wasm-audits/comet.md`.

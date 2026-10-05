@@ -137,9 +137,9 @@ silently attributed.
 **Admitting a future pool:** fail-closed by design. A genuinely new
 Comet pool must be operator-admitted before its events attribute —
 `stellarindex-ops seed-protocol-contracts -source comet` (after adding
-it to the curated set) or a direct `protocol_contracts` row. The
-WASM-hash sweep (ADR-0040 §1 mechanism 3) is the registered upkeep loop
-for spotting byte-identical Balancer-v1 deployments; note the named
+it to the curated set) or a direct `protocol_contracts` row. Comet is
+curated only (ADR-0040 §1 mechanism 3): no WASM-hash sweep exists, and
+`wasm-drift` alerts on drift but never admits a pool; note the named
 caveat — a byte-identical fork *is* the same code and would be
 attributed as comet once admitted. → also
 [ADR-0035](../adr/0035-factory-anchored-contract-gating.md).

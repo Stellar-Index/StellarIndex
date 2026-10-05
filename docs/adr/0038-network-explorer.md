@@ -3,7 +3,7 @@ adr: 0038
 title: Network explorer (full Stellar + Soroban) over the certified lake
 status: Accepted
 date: 2026-06-14
-supersedes: null
+supersedes: []
 superseded_by: null
 ---
 
@@ -11,180 +11,34 @@ superseded_by: null
 
 ## Context
 
-Stellar Index began as a pricing API and grew a protocol explorer
-(coins / markets / DEXes / oracles / lending / issuers). The standing
-product vision (AGENTS.md) is a **comprehensive blockchain explorer**
-— classic/native *and* Soroban. This ADR commits to that and records
-the architecture + phased build, because a one-time discovery changed
-the cost calculus dramatically.
-
-**The discovery:** the ClickHouse Tier-1 lake (ADR-0034) already holds
-the **entire chain to genesis, contiguous and hash-chain-verified** —
-not just pricing-relevant slices:
-
-| Lake table (`stellar.*`) | Range | Rows (2026-06-14) |
-|---|---|---|
-| `ledgers` | 2 → tip (0 gaps) | 63 M |
-| `transactions` | 3 → tip | 10.1 B |
-| `operations` | 3 → tip | 23.4 B |
-| `operation_results` | 3 → tip | 23.4 B |
-| `contract_events` | 3 → tip | 12.0 B |
-| `ledger_entry_changes` | **empty** | 0 |
-
-Ingesting + storing the full verified chain (23 B operations to 2015) is
-the single most expensive component of any block explorer — and it is
-**already done**. The remaining work is *serving* that data, deriving
-account *state* (the one missing table), and *rendering* it. This is a
-~3–4.5-month effort on top of today's product, not a re-platforming.
+The ClickHouse lake (ADR-0034) already holds the whole chain to genesis, contiguous and hash-chain-verified, which is the most expensive part of an explorer.
+What remained was serving it, deriving account state, and rendering it.
 
 ## Decision
 
-Build a network explorer as a **read layer over the existing lake**, in
-four phases, served by new `/v1` endpoints and rendered by new explorer
-UI routes. Postgres remains the pricing served-tier (ADR-0034); the
-explorer reads ClickHouse directly through a new
-`internal/storage/clickhouse` reader, never Postgres (the chain history
-is not in Postgres and never will be — billions of rows).
+Build a network explorer as a read layer over the lake. Postgres stays the pricing served tier, and chain history is never put in it.
 
-### Invariants (bind every phase)
+- **Phase A, read API.** `/v1/ledgers`, `/v1/ledgers/{seq}` (and `/transactions`, `/operations`), `/v1/operations`, `/v1/tx/{hash}`, `/v1/contracts/{id}` and `/v1/search` (dispatch by strkey, hash or ledger shape). Handlers live in `internal/api/v1/explorer`, reading through `clickhouse.ExplorerReader`.
+- **Phase B, account history.** `/v1/accounts/{g}/transactions` and `/operations`. An account's non-source activity (a payment to it, a crossed offer, a claimant) comes from the `stellar.operation_participants` index, derived at extract time by `xdrjson.ParticipantAccounts`. Responses stamp `scope: "all"`.
+- **Phase C, account state.** `stellar.ledger_entry_changes` is populated by `extractLedgerEntryChanges`. Current state is a `ReplacingMergeTree` projection keyed on entry key and served as `GET /v1/accounts/{g}`.
+- **Phase D, UI.** Explorer routes under `web/explorer` are static shells that fetch the API client-side, so the static-export model is kept (ADR-0044 covers the planned move off it).
+- Both operator-gated data jobs have run. Measured on r1 2026-09-30, `ledger_entry_changes` (163,658,626,082 rows) and `operation_participants` (4,513,850,669 rows) are each populated in every 1M-ledger partition 0..64 (tip about 64.69M). That is a per-partition population check, not a row-level completeness proof.
 
-- **i128 never truncates** (ADR-0003): amounts in op/entry decode are
-  `*big.Int` → strings on the wire.
-- **Explorer reads ClickHouse, not Postgres.** New read methods live in
-  `internal/storage/clickhouse`; the API wires a `ChExplorerReader`
-  alongside the existing Postgres `HistoryReader`.
-- **XDR→JSON decode is centralised** in `internal/xdrjson` (new), built
-  on `go-stellar-sdk/xdr` — one decoder per op type / entry type /
-  result, reused by every endpoint. No ad-hoc decode in handlers.
-- **No Horizon** (ADR-0001). We decode raw XDR from our own lake.
-- **Closed-bucket / region-stable** serving conventions (ADR-0015) do
-  not apply to immutable history (a closed ledger is final); explorer
-  responses are cacheable indefinitely by (ledger_seq | tx_hash).
+## Invariant
 
-### Phase A — Read-API over the lake (the fast win)
-
-Endpoints, all backed by existing lake tables (no new ingest):
-
-- `GET /v1/ledgers` — recent ledgers (paged, descending).
-- `GET /v1/ledgers/{seq}` — ledger header + tx/op counts + nav.
-- `GET /v1/ledgers/{seq}/transactions` — txs in a ledger.
-- `GET /v1/tx/{hash}` — transaction: envelope, memo, fee, result, and
-  its operations (decoded) + emitted contract events.
-- `GET /v1/operations` — browse/filter (by ledger, type).
-- `GET /v1/contracts/{c}` — contract activity: events + invocations
-  (from `contract_events` + `operations` op_args).
-- `GET /v1/search?q=` — dispatch by strkey shape (G / C / 64-hex
-  tx-hash / ledger-seq / asset id) to the right detail endpoint.
-
-The bulk of Phase A is **XDR→JSON decode breadth**: ~30 classic op
-types, tx envelopes/memos, and op results, into clean JSON. This phase
-alone is a usable explorer (any ledger / tx / contract).
-
-### Phase B — Account-scoped history + participant index
-
-The #1 explorer query — "everything involving account G" — cannot be a
-`WHERE source_account = G` scan: a payment *to* G, an offer crossing G,
-a claimant, etc. are non-source participants. Build a
-`stellar.operation_participants` table (every account touched per op,
-derived from op body + results) as a ClickHouse MV / derive over the
-23 B-op history, then:
-
-- `GET /v1/accounts/{g}/transactions|operations|payments`.
-
-### Phase C — Account state (the expensive tail)
-
-Populate the empty `stellar.ledger_entry_changes` (the
-`LedgerEntryChangeDecoder` hook exists; backfill genesis→tip — billions
-of rows, weeks of compute, meaningful storage). Current state via a
-`ReplacingMergeTree` keyed on entry-key, versioned by `ledger_seq`.
-Decode all entry types (Account / TrustLine / Offer / Data /
-ClaimableBalance / LiquidityPool / ContractData / ContractCode):
-
-- `GET /v1/accounts/{g}` — balances, signers, thresholds, sequence,
-  flags, sponsorship.
-- `GET /v1/accounts/{g}/offers`, `/trustlines`, `/data`.
-- `GET /v1/contracts/{c}/state` — current contract data entries.
-- Offer book per pair.
-
-Balance exactness (reserves, liabilities, sponsorship) is the fiddly
-part and gets dedicated tests.
-
-### Phase D — Explorer UI
-
-New routes in `web/explorer`: `/ledger/[seq]`, `/tx/[hash]`,
-`/account/[g]`, `/contract/[c]`, `/operations`, and a search bar that
-accepts G / C / tx-hash. Dynamic entity pages are **static shells that
-fetch the API client-side at runtime** (the explorer already fetches
-100 % client-side; no SSR needed). The static-export model is preserved.
+- Money is never truncated: op and entry amounts are `*big.Int` on the way in and decimal strings on the wire (ADR-0003).
+- The explorer reads ClickHouse, not Postgres, for chain history.
+- XDR to JSON decode is centralised in `internal/xdrjson`, and handlers do no ad-hoc decode. `internal/xdrjson/operation_type_parity_test.go` guards operation-type coverage.
+- No Horizon (ADR-0001): decode comes from our own raw XDR.
+- A closed ledger is final, so explorer responses are cacheable by ledger sequence or tx hash. The closed-bucket serving rules of ADR-0015 do not apply to them.
 
 ## Consequences
 
-- **Positive:** a full explorer is unlocked at ~20–30 % of from-scratch
-  cost because the verified history substrate already exists. Phase A
-  ships a real explorer in ~1 month.
-- **Cost / risk:** storage — `ledger_entry_changes` + the participant
-  index add substantial disk on top of the 23 B-op lake (needs ZFS
-  headroom); Phase-C backfill is weeks of compute; XDR decode must be
-  exhaustive + i128-correct; account-balance exactness is subtle.
-- **Sequencing:** A → B → D-for-A/B can ship and be useful before C.
-  C (account state) is the expensive tail and can trail.
+- A full explorer costs a fraction of building one from scratch because the verified substrate exists.
+- Storage is large (the entry-change and participant tables sit on top of the operation history).
+- Participants from operation results, such as path-payment intermediaries, are not indexed. Only operation-body participants are.
+- Decode must stay exhaustive and i128-correct, and account-balance exactness (reserves, liabilities, sponsorship) is the subtle part.
 
-## Status of build
+## Evidence
 
-- **Phase A unit 1 (shipped + deployed):** `clickhouse.ExplorerReader` +
-  `GET /v1/ledgers`, `/v1/ledgers/{seq}`, `/v1/ledgers/{seq}/transactions`.
-  Live on r1, verified (prev_hash chains, total_coins as string).
-- **Phase A unit 2a (shipped + deployed):** `internal/xdrjson` decoder
-  (~16 classic op types + invoke_host_function, raw fallback) +
-  `GET /v1/operations?ledger=`. Decode verified live against real ledger
-  ops (payments / offers / path-payments / change_trust).
-- **Phase A unit 2b (shipped + deployed):** `GET /v1/tx/{hash}` (summary
-  + decoded ops w/ result codes + events). Added a `tx_hash` bloom
-  skip-index to `stellar.transactions` + MATERIALIZE'd across all history
-  (~2.5 min). Verified live on a 2022 tx (ledger 40 M) — cross-history
-  hash lookup is fast.
-- **Phase A unit 3 (shipped + deployed):** `GET /v1/search` (query
-  dispatcher) + `GET /v1/contracts/{c}` (per-contract event activity, via
-  a `contract_id` bloom skip-index on `stellar.contract_events`,
-  MATERIALIZE'd).
-- **Phase A — read surface COMPLETE + live:** ledgers, transactions,
-  operations (decoded), tx, contracts, search. Remaining Phase-A polish:
-  OpenAPI spec entries for the new paths.
-- **Phase B v1 (shipped + deployed):** `GET /v1/accounts/{g}/transactions`
-  + `/operations` — an account's submitted/sourced activity, via
-  `source_account` bloom skip-indexes on transactions + operations
-  (MATERIALIZE'd). Verified live.
-- **Phase B completion (shipped):** the `stellar.operation_participants`
-  index (one row per (non-source account, op), derived in the Go extract
-  via `xdrjson.ParticipantAccounts` — payment dest / trustor / merge
-  target / clawback victim / …). The account tx/ops readers now UNION
-  `source_account = G` with a participant lookup, so the endpoints stamp
-  `scope: "all"` (sourced + incoming). **Live capture fills it going
-  forward** (the extract is shared by the live sink + ch-backfill);
-  incoming coverage for history requires re-running `ch-backfill` over
-  the range (a multi-day, operator-gated re-derive over the 23 B-op
-  history). Results-derived participants (path-payment intermediaries)
-  are a follow-up — v1 indexes op-body participants.
-- **Phase C substrate (shipped):** `extractEntryChanges` now populates
-  `ledger_entry_changes` in the lake (closes G12-03). Lives in the
-  indexer/ch-rebuild path. **Activation is operationally significant**
-  and operator-gated: (1) redeploy the indexer (starts live entry-change
-  capture — a real CH write-volume increase), (2) `ch-rebuild` the
-  history (billions of entry-change rows — multi-day compute/storage).
-- **Phase C read layer (planned):** an account-keyed current-state
-  surface (decode AccountEntry/TrustLine/Offer from the latest
-  entry-change per key) + `GET /v1/accounts/{g}` (balances) + UI account
-  page — built on the substrate once it's populated.
-- **Phase D UI (shipped):** `/ledgers`, `/ledger?seq`, `/tx?hash`,
-  `/contract?id` + search wiring (query-param pages, static-export-safe).
-- **OpenAPI (shipped):** all explorer endpoints documented.
-
-**Both operator-gated data jobs have run** (measured on r1 2026-09-30,
-active `system.parts` rows grouped by the `intDiv(ledger_seq, 1000000)`
-partition): the Phase C entry-change history backfill —
-`stellar.ledger_entry_changes`, 163,658,626,082 rows — and the Phase B
-participant-index derive — `stellar.operation_participants`,
-4,513,850,669 rows — are each populated in every 1M-ledger partition
-0..64 (tip ≈ ledger 64.69M). The Phase C read layer is served as
-`GET /v1/accounts/{g}`. This is a per-partition population check, not a
-row-level completeness proof.
+`internal/api/v1/server.go` (explorer routes), `internal/storage/clickhouse/explorer_reader.go`, `internal/storage/clickhouse/extract.go`, `internal/storage/clickhouse/extract_entry_changes.go`, `internal/xdrjson/`, `deploy/clickhouse/tier1_schema.sql`, `web/explorer/src/app/`.
