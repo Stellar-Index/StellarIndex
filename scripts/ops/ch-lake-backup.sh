@@ -177,7 +177,7 @@ prune_chains() {
 
 # Deletes partial uploads of failed runs: a path in `started` that is neither
 # in `completed`, nor a link of the current chain, nor `$1` (this run's own).
-# Concurrency is excluded by main()'s system.backups check, which runs first.
+# Concurrency is excluded by main()'s lock and system.backups check, which run first.
 # A missing/unreadable record deletes nothing. The B2 key cannot hard-delete
 # (removal only hides versions); a bucket lifecycle rule reclaims the space.
 sweep_orphans() {
@@ -215,7 +215,22 @@ main() {
     return 1
   fi
   mkdir -p "$STATE_DIR" || { note "cannot create $STATE_DIR"; write_metrics; return 1; }
-  if [[ -n "$(ch "SELECT id FROM system.backups WHERE status = 'CREATING_BACKUP' AND startsWith(name, 'Disk(\\'$BACKUP_DISK\\'') FORMAT TabSeparated")" ]]; then
+  # Serialises runs: the sweep below is only safe with no other run mid-upload.
+  exec 9>"$STATE_DIR/lock" || { note "cannot open $STATE_DIR/lock"; write_metrics; return 1; }
+  if ! flock -n 9; then
+    note "another ch-lake-backup run holds $STATE_DIR/lock — not sweeping or starting"
+    write_metrics
+    return 1
+  fi
+  # Fail closed: an unreadable system.backups must not read as "nothing running",
+  # or the sweep would remove an in-flight upload.
+  local running
+  if ! running="$(ch "SELECT id FROM system.backups WHERE status = 'CREATING_BACKUP' AND startsWith(name, 'Disk(\\'$BACKUP_DISK\\'') FORMAT TabSeparated")"; then
+    note "cannot read system.backups — not sweeping or starting"
+    write_metrics
+    return 1
+  fi
+  if [[ -n "$running" ]]; then
     note "a backup to $BACKUP_DISK is already running — not starting a second"
     write_metrics
     return 1

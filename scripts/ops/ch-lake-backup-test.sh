@@ -11,7 +11,8 @@
 #   4. an old chain is removed only AFTER a new full succeeded, and a prune
 #      failure keeps it on record rather than forgetting it;
 #   5. a base that vanished from the disk resets the chain instead of
-#      failing every night forever.
+#      failing every night forever;
+#   6. an unreadable system.backups or a held lock sweeps and starts nothing.
 #
 # ClickHouse is a fake `curl` on PATH and clickhouse-disks a logging stub;
 # ch-lake-backup-roundtrip-test.sh runs the same script against a real
@@ -51,7 +52,7 @@ while [[ $# -gt 0 ]]; do
   if [[ "$1" == "--data-binary" ]]; then q="$2"; shift 2; else shift; fi
 done
 case "$q" in
-  *"status = 'CREATING_BACKUP'"*) echo "${MOCK_RUNNING:-}" ;;
+  *"status = 'CREATING_BACKUP'"*) [[ -n "${MOCK_CURL_FAIL:-}" ]] && exit 28; echo "${MOCK_RUNNING:-}" ;;
   "BACKUP DATABASE"*)
     printf '%s\n' "$q" >> "$MOCK_LOG"
     printf 'op-1\tCREATING_BACKUP\n' ;;
@@ -64,7 +65,14 @@ cat > "$TMP/bin/disks" <<'STUB'
 printf '%s\n' "$*" >> "$MOCK_PRUNE_LOG"
 exit "${MOCK_PRUNE_RC:-0}"
 STUB
-chmod +x "$TMP/bin/curl" "$TMP/bin/disks"
+# macOS has no flock(1); a shim over perl's flock keeps the lock real there.
+if ! command -v flock >/dev/null 2>&1; then
+  cat > "$TMP/bin/flock" <<'STUB'
+#!/usr/bin/env bash
+exec perl -e 'use Fcntl qw(:flock); open(my $f, "<&=", $ARGV[1]) or exit 2; exit(flock($f, LOCK_EX|LOCK_NB) ? 0 : 1)' -- "$@"
+STUB
+fi
+chmod +x "$TMP/bin/"*
 
 run() {
   PATH="$TMP/bin:$PATH" MOCK_LOG="$TMP/queries" MOCK_PRUNE_LOG="$TMP/prunes" \
@@ -227,6 +235,34 @@ rm -f "$TMP/prunes"
 sleep 1
 run
 file_empty "$TMP/prunes" "malformed lines deleted nothing"
+
+echo "9. an unreadable system.backups fails closed"
+reset
+run
+full_path="$(cut -f2 "$TMP/state/chain")"
+orphan="stellar/20200101T000000Z/20200101T000000Z-incr"
+printf '%s\n' "$orphan" >> "$TMP/state/started"
+: > "$TMP/prunes"
+n_before="$(grep -c . "$TMP/queries")"
+sleep 1
+MOCK_CURL_FAIL=1 run; rc=$?
+expect_rc 1 "curl failure on the CREATING_BACKUP query exits 1"
+file_empty "$TMP/prunes" "nothing removed when system.backups is unreadable"
+if [[ "$(grep -c . "$TMP/queries")" -eq "$n_before" ]]; then ok "issues no BACKUP"; else bad "issues no BACKUP"; fi
+prom_unstamped "unreadable system.backups drops the success stamp"
+if grep -q 'cannot read system.backups' "$TMP/stderr"; then ok "logs the unreadable query"; else bad "logs the unreadable query"; fi
+
+echo "10. a held lock fails closed"
+n_before="$(grep -c . "$TMP/queries")"
+perl -e 'use Fcntl qw(:flock); open(F, ">", $ARGV[0]) or die; flock(F, LOCK_EX) or die; print "held\n"; sleep 30' "$TMP/state/lock" > "$TMP/held" &
+holder=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do [[ -s "$TMP/held" ]] && break; sleep 0.2; done
+run; rc=$?
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+expect_rc 1 "busy lock exits 1"
+file_empty "$TMP/prunes" "nothing removed while the lock is held"
+if [[ "$(grep -c . "$TMP/queries")" -eq "$n_before" ]]; then ok "issues no BACKUP under a held lock"; else bad "issues no BACKUP under a held lock"; fi
+prom_unstamped "busy lock drops the success stamp"
 
 echo
 echo "ch-lake-backup-test: $pass passed, $fail failed"
