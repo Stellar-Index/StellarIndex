@@ -460,7 +460,7 @@ func registerAuthReaperMetrics() {
 		RetentionReaperRowsDeletedTotal,
 		RetentionReaperErrorsTotal,
 	)
-	for _, reaper := range []string{AuthReaperSession, AuthReaperWebhookDelivery} {
+	for _, reaper := range []string{AuthReaperSession, AuthReaperWebhookDelivery, AuthReaperRegistration} {
 		RetentionReaperRowsDeletedTotal.WithLabelValues(reaper)
 		RetentionReaperErrorsTotal.WithLabelValues(reaper)
 	}
@@ -5744,10 +5744,10 @@ const (
 	AuthReaperLoginCode = "login_code"
 	AuthReaperMagicLink = "magic_link"
 	AuthReaperSignup    = "signup"
-	// The two internal/retentionreaper instances publish on the same
-	// liveness gauges so the existing stalled alert covers them.
+	// internal/retentionreaper instances share these gauges and the stalled alert.
 	AuthReaperSession         = "session"
 	AuthReaperWebhookDelivery = "webhook_delivery"
+	AuthReaperRegistration    = "registration" // unused /v1/register accounts
 )
 
 // AuthReaperLastSweepUnix — see the auth-reaper liveness note above.

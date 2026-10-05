@@ -54,6 +54,9 @@ type ErasureRequest struct {
 	ErasedSubject string
 	// Actor is recorded on the account.erase audit row.
 	Actor platform.ActorKind
+	// RequireNoUsers refuses the erase (platform.ErrConflict) if the account
+	// gained a member after the plan was read; the abandoned-registration sweep sets it.
+	RequireNoUsers bool
 }
 
 // ErasureCounts is what one EraseAccount removed, recorded on the
@@ -172,19 +175,8 @@ func (r *AccountStore) EraseAccount(ctx context.Context, req ErasureRequest) (Er
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, slugLockSQL, p.Slug); err != nil {
-		return c, fmt.Errorf("erase account: slug lock: %w", err)
-	}
-	var slug string
-	err = tx.QueryRowContext(ctx, `SELECT slug FROM accounts WHERE id = $1 FOR UPDATE`, p.AccountID).Scan(&slug)
-	if errors.Is(err, sql.ErrNoRows) {
-		return c, platform.ErrNotFound
-	}
-	if err != nil {
-		return c, fmt.Errorf("erase account: lock: %w", err)
-	}
-	if slug != p.Slug {
-		return c, fmt.Errorf("erase account: slug changed since the plan (%w)", platform.ErrConflict)
+	if err := lockAccountForErasure(ctx, tx, req); err != nil {
+		return c, err
 	}
 	users := uuidStrings(p.UserIDs)
 	keyIDs := append(append([]string{}, p.KeyIDs...), req.ExtraKeyIDs...)
@@ -261,6 +253,33 @@ func (r *AccountStore) EraseAccount(ctx context.Context, req ErasureRequest) (Er
 		return ErasureCounts{}, fmt.Errorf("erase account: commit: %w", err)
 	}
 	return c, nil
+}
+
+// lockAccountForErasure takes the slug lock and the account row lock and
+// checks the plan still describes the account.
+func lockAccountForErasure(ctx context.Context, tx *sql.Tx, req ErasureRequest) error {
+	p := req.Plan
+	if _, err := tx.ExecContext(ctx, slugLockSQL, p.Slug); err != nil {
+		return fmt.Errorf("erase account: slug lock: %w", err)
+	}
+	var slug string
+	err := tx.QueryRowContext(ctx, `SELECT a.slug FROM accounts a
+		 WHERE a.id = $1
+		   AND (NOT $2::boolean OR NOT EXISTS (SELECT 1 FROM users u WHERE u.account_id = a.id))
+		   FOR UPDATE OF a`, p.AccountID, req.RequireNoUsers).Scan(&slug)
+	if errors.Is(err, sql.ErrNoRows) {
+		if req.RequireNoUsers {
+			return fmt.Errorf("erase account: gone or gained a member since the plan (%w)", platform.ErrConflict)
+		}
+		return platform.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("erase account: lock: %w", err)
+	}
+	if slug != p.Slug {
+		return fmt.Errorf("erase account: slug changed since the plan (%w)", platform.ErrConflict)
+	}
+	return nil
 }
 
 // RenameUsageSubjects moves usage_daily rows from subjects to erased,

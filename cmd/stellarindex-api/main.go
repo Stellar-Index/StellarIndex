@@ -1960,7 +1960,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// Ended sessions and finished webhook deliveries (Q146). Ungated for
 	// the same reason as the two reapers above: a PII bound with an off
 	// switch is not a bound.
-	startRetentionReapers(rootCtx, &bgWG, logger, retentionReaperTargets(dashboardBundle, logger))
+	startRetentionReapers(rootCtx, &bgWG, logger, retentionReaperTargets(dashboardBundle, rdb, cfg.API.AuthBackend, logger))
 
 	serveErr := make(chan error, 1)
 	go func() {

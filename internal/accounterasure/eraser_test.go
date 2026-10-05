@@ -27,13 +27,22 @@ type fakeStore struct {
 	requests  []postgresstore.ErasureRequest
 	renames   []string
 	renameErr error
+	// afterPlan, when set, runs after each PlanErasure has taken its
+	// snapshot: the account changing between two reads.
+	afterPlan func(*fakeStore)
+	plans     int
 }
 
 func (f *fakeStore) PlanErasure(context.Context, uuid.UUID) (postgresstore.ErasurePlan, error) {
 	if f.gone {
 		return postgresstore.ErasurePlan{}, platform.ErrNotFound
 	}
-	return f.plan, nil
+	p := f.plan
+	f.plans++
+	if f.afterPlan != nil {
+		f.afterPlan(f)
+	}
+	return p, nil
 }
 
 func (f *fakeStore) EraseAccount(_ context.Context, req postgresstore.ErasureRequest) (postgresstore.ErasureCounts, error) {
@@ -61,9 +70,9 @@ func newRig(t *testing.T) (*Eraser, *fakeStore, *redis.Client, *miniredis.Minire
 	return &Eraser{Store: st, Redis: rdb}, st, rdb, mr
 }
 
-func mint(t *testing.T, rdb *redis.Client, slug string) (auth.APIKeyRecord, string) {
+func mint(ctx context.Context, t *testing.T, rdb *redis.Client, slug string) (auth.APIKeyRecord, string) {
 	t.Helper()
-	rec, plaintext, err := auth.NewRedisAPIKeyStore(rdb).Create(context.Background(),
+	rec, plaintext, err := auth.NewRedisAPIKeyStore(rdb).Create(ctx,
 		auth.CreateAPIKeyRequest{Identifier: auth.AccountIdentifier(slug)})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
@@ -82,9 +91,9 @@ func authenticates(rdb *redis.Client, plaintext string) bool {
 func TestErase_SecondPassCatchesAnInFlightMint(t *testing.T) {
 	e, st, rdb, _ := newRig(t)
 	ctx := context.Background()
-	rec, plaintext := mint(t, rdb, "john")
+	rec, plaintext := mint(t.Context(), t, rdb, "john")
 	var late string
-	e.betweenPasses = func() { _, late = mint(t, rdb, "john") }
+	e.betweenPasses = func() { _, late = mint(t.Context(), t, rdb, "john") }
 
 	rep, err := e.Erase(ctx, st.plan.AccountID, platform.ActorUser)
 	if err != nil {
@@ -113,7 +122,7 @@ func TestErase_SecondPassCatchesAnInFlightMint(t *testing.T) {
 func TestErase_UsageCountersAndOtherAccountsKeys(t *testing.T) {
 	e, st, rdb, mr := newRig(t)
 	ctx := context.Background()
-	_, other := mint(t, rdb, "yves")
+	_, other := mint(t.Context(), t, rdb, "yves")
 	c := usage.New(rdb)
 	_ = c.Increment(ctx, "id:acct:john")
 	_ = c.IncrementDetail(ctx, "id:acct:john", "/v1/price", usage.ClassOK)
@@ -143,7 +152,7 @@ func TestErase_UsageCountersAndOtherAccountsKeys(t *testing.T) {
 func TestErase_IsIdempotent(t *testing.T) {
 	e, st, rdb, _ := newRig(t)
 	ctx := context.Background()
-	_, plaintext := mint(t, rdb, "john")
+	_, plaintext := mint(t.Context(), t, rdb, "john")
 
 	st.eraseErr = errors.New("boom")
 	if _, err := e.Erase(ctx, st.plan.AccountID, platform.ActorUser); err == nil {
@@ -166,7 +175,7 @@ func TestErase_IsIdempotent(t *testing.T) {
 // wipe the Redis state of an account that was never erased.
 func TestFinishBySlug_RefusesALiveSlug(t *testing.T) {
 	e, _, rdb, _ := newRig(t)
-	_, plaintext := mint(t, rdb, "john")
+	_, plaintext := mint(t.Context(), t, rdb, "john")
 	if _, err := e.FinishBySlug(context.Background(), "john"); err == nil {
 		t.Fatal("FinishBySlug accepted a slug that was never erased")
 	}
