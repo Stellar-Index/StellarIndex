@@ -219,16 +219,16 @@ zfs clone -o mountpoint=/mnt/ch-restore data/clickhouse@auto-20260829-0145 data/
 # 3. Locate the table's parts. Atomic databases store data under
 #    store/<uuid-prefix>/<uuid>/ — get the path from the LIVE server
 #    (the uuid is the same in the snapshot):
-clickhouse-client -q "SELECT data_paths FROM system.tables WHERE database='tier1' AND name='trades'"
+clickhouse-client --port 9300 -q "SELECT data_paths FROM system.tables WHERE database='tier1' AND name='trades'"
 #    → ['/var/lib/clickhouse/store/3fa/3fa2…/']  ⇒ same relative path under /mnt/ch-restore/
 
 # 4. Create an empty table with the same DDL (name it *_restore), then
 #    copy the parts into its detached/ dir and ATTACH them:
-clickhouse-client -q "CREATE TABLE tier1.trades_restore AS tier1.trades"
-RESTORE_DIR=$(clickhouse-client -q "SELECT data_paths[1] FROM system.tables WHERE database='tier1' AND name='trades_restore'")
+clickhouse-client --port 9300 -q "CREATE TABLE tier1.trades_restore AS tier1.trades"
+RESTORE_DIR=$(clickhouse-client --port 9300 -q "SELECT data_paths[1] FROM system.tables WHERE database='tier1' AND name='trades_restore'")
 cp -a /mnt/ch-restore/store/3fa/3fa2…/*_*_*_* "${RESTORE_DIR}/detached/"     # part dirs only, not tmp_*/format_version.txt
 chown -R clickhouse:clickhouse "${RESTORE_DIR}/detached"
-clickhouse-client -q "ALTER TABLE tier1.trades_restore ATTACH PART '<part>'"   # per part, or loop over detached/
+clickhouse-client --port 9300 -q "ALTER TABLE tier1.trades_restore ATTACH PART '<part>'"   # per part, or loop over detached/
 #    5. Verify counts / ranges against the damaged table, then INSERT … SELECT
 #       the missing rows (or swap: EXCHANGE TABLES tier1.trades AND tier1.trades_restore).
 
