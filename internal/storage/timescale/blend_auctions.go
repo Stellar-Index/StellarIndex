@@ -137,11 +137,18 @@ func (s *Store) InsertBlendNewAuction(ctx context.Context, e blend.NewAuctionEve
 // user_address) — they're distinguished by (ledger, tx_hash,
 // op_index).
 func (s *Store) InsertBlendFillAuction(ctx context.Context, e blend.FillAuctionEvent) error {
-	bid, err := encodeBlendAssetAmounts(e.Data.Bid)
+	// A V1 fill carries no auction data (nil): bid, lot and block land NULL.
+	var data blend.AuctionData
+	var block any
+	if e.Data != nil {
+		data = *e.Data
+		block = int(e.Data.Block)
+	}
+	bid, err := encodeBlendAssetAmounts(data.Bid)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertBlendFillAuction: bid: %w", err)
 	}
-	lot, err := encodeBlendAssetAmounts(e.Data.Lot)
+	lot, err := encodeBlendAssetAmounts(data.Lot)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertBlendFillAuction: lot: %w", err)
 	}
@@ -183,7 +190,7 @@ func (s *Store) InsertBlendFillAuction(ctx context.Context, e blend.FillAuctionE
 		int(e.Ledger), e.TxHash, int(e.OpIndex), e.Timestamp.UTC(),
 		int(e.EventIndex),
 		e.Filler, fillPct,
-		int(e.Data.Block), bid, lot,
+		block, bid, lot,
 		s.deriveGeneration,
 	)
 	if err != nil {

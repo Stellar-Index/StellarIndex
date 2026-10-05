@@ -155,13 +155,21 @@ func (d *Decoder) decodeByKind(ev events.Event) ([]consumer.Event, error) { //no
 	switch kind {
 	// ─── Auction events (legacy; blend_auctions table) ────────
 	case EventNewAuction:
-		out, err := decodeNewAuction(&ev, closedAt)
+		decode := decodeNewAuction
+		if len(ev.Topic) == v1NewAuctionTopicArity {
+			decode = decodeNewAuctionV1
+		}
+		out, err := decode(&ev, closedAt)
 		if err != nil {
 			return nil, err
 		}
 		return []consumer.Event{out}, nil
 	case EventFillAuction:
-		out, err := decodeFillAuction(&ev, closedAt)
+		decode := decodeFillAuction
+		if isV1FillAuction(&ev) {
+			decode = decodeFillAuctionV1
+		}
+		out, err := decode(&ev, closedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -215,7 +223,11 @@ func (d *Decoder) decodeByKind(ev events.Event) ([]consumer.Event, error) { //no
 		}
 		return []consumer.Event{out}, nil
 	case EventBadDebt:
-		out, err := decodeBadDebt(&ev, closedAt)
+		decode := decodeBadDebt
+		if len(ev.Topic) == v1BadDebtTopicArity {
+			decode = decodeBadDebtV1
+		}
+		out, err := decode(&ev, closedAt)
 		if err != nil {
 			return nil, err
 		}
