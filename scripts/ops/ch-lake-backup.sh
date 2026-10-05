@@ -20,18 +20,24 @@
 #     chain.
 #   - Local state (STATE_DIR) records the chain; a lost or unreadable state
 #     file starts a new full, which is the expensive-but-correct direction.
+#   - A failed full leaves its partial upload on the disk and never reaches
+#     the chain record, so after each confirmed full (and on the first
+#     success with no sweep on record) every older chain directory that is
+#     not on record is deleted as an orphan.
 #
 # Emits (node_exporter textfile collector):
 #   stellarindex_ch_lake_backup_configured      1 iff BACKUP_DISK is set
 #   stellarindex_ch_lake_backup_last_success_unix   (clean runs only)
-#   stellarindex_ch_lake_backup_last_full_unix      (clean runs only)
+#   stellarindex_ch_lake_backup_full_interval_days  FULL_INTERVAL_DAYS
+#   stellarindex_ch_lake_backup_last_full_unix      the recorded chain's full (every run)
 #   stellarindex_ch_lake_backup_last_bytes          bytes written by the run
 #   stellarindex_ch_lake_backup_chain_length        links in the current chain
+#   stellarindex_ch_lake_backup_orphans_removed     (runs that swept only)
 # Alert: stellarindex_ch_lake_backup_stale (storage.yml, both trees).
 # Restore: docs/operations/runbooks/ch-lake-backup.md.
 #
 # Exit code: 0 clean; 1 the backup failed or no BACKUP_DISK is configured;
-# 2 the backup succeeded but pruning an old chain failed.
+# 2 the backup succeeded but pruning an old chain or sweeping orphans failed.
 set -uo pipefail
 
 CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
@@ -57,21 +63,26 @@ now="$(date -u +%s)"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 chain_file="$STATE_DIR/chain"
 chains_file="$STATE_DIR/chains"
+swept_file="$STATE_DIR/swept"
 backup_ok=0
 bytes=0
 chain_len=0
-full_unix=""
 last_error=""
+orphans_removed=""
 
 note() { echo "ch-lake-backup: $*" >&2; }
 ch() { curl -sSf --max-time 120 --netrc-file "$CH_NETRC" "$CH_HTTP" --data-binary "$1"; }
 disk_ref() { printf "Disk('%s', '%s')" "$BACKUP_DISK" "$1"; }
+running_backups() { ch "SELECT id FROM system.backups WHERE status = 'CREATING_BACKUP' AND startsWith(name, 'Disk(\\'$BACKUP_DISK\\'') FORMAT TabSeparated"; }
 
 write_metrics() {
   [[ "$TEXTFILE_DIR" == "/dev/null" ]] && return 0
   mkdir -p "$TEXTFILE_DIR"
-  local out="$TEXTFILE_DIR/ch_lake_backup.prom" tmp
+  local out="$TEXTFILE_DIR/ch_lake_backup.prom" tmp full_unix=""
   tmp="$out.tmp.$$"
+  # The chain file is written only after a confirmed full, so its first
+  # line names the restorable full even on a run that failed.
+  [[ -s "$chain_file" ]] && full_unix="$(head -n1 "$chain_file" | cut -f1)"
   {
     echo "# HELP stellarindex_ch_lake_backup_configured 1 if a ClickHouse lake backup disk (BACKUP_DISK) is configured on this host, else 0."
     echo "# TYPE stellarindex_ch_lake_backup_configured gauge"
@@ -80,13 +91,23 @@ write_metrics() {
     else
       echo "stellarindex_ch_lake_backup_configured 0"
     fi
+    echo "# HELP stellarindex_ch_lake_backup_full_interval_days Days between full backups (FULL_INTERVAL_DAYS)."
+    echo "# TYPE stellarindex_ch_lake_backup_full_interval_days gauge"
+    echo "stellarindex_ch_lake_backup_full_interval_days $FULL_INTERVAL_DAYS"
+    if [[ "$full_unix" =~ ^[0-9]+$ ]]; then
+      echo "# HELP stellarindex_ch_lake_backup_last_full_unix Unix time of the confirmed full backup the recorded chain is built on."
+      echo "# TYPE stellarindex_ch_lake_backup_last_full_unix gauge"
+      echo "stellarindex_ch_lake_backup_last_full_unix $full_unix"
+    fi
+    if [[ -n "$orphans_removed" ]]; then
+      echo "# HELP stellarindex_ch_lake_backup_orphans_removed Unrecorded chain directories (failed fulls) deleted by this run's sweep."
+      echo "# TYPE stellarindex_ch_lake_backup_orphans_removed gauge"
+      echo "stellarindex_ch_lake_backup_orphans_removed $orphans_removed"
+    fi
     if [[ "$backup_ok" -eq 1 ]]; then
       echo "# HELP stellarindex_ch_lake_backup_last_success_unix Unix time of the most recent BACKUP_CREATED ClickHouse lake backup."
       echo "# TYPE stellarindex_ch_lake_backup_last_success_unix gauge"
       echo "stellarindex_ch_lake_backup_last_success_unix $now"
-      echo "# HELP stellarindex_ch_lake_backup_last_full_unix Unix time of the full backup the current chain is built on."
-      echo "# TYPE stellarindex_ch_lake_backup_last_full_unix gauge"
-      echo "stellarindex_ch_lake_backup_last_full_unix $full_unix"
       echo "# HELP stellarindex_ch_lake_backup_last_bytes Compressed bytes written by the most recent successful backup."
       echo "# TYPE stellarindex_ch_lake_backup_last_bytes gauge"
       echo "stellarindex_ch_lake_backup_last_bytes $bytes"
@@ -172,6 +193,52 @@ prune_chains() {
   return "$failed"
 }
 
+# Deletes the chain directories under $CH_DATABASE/ that are not on record:
+# a failed full's partial upload never reaches $chains_file, so prune_chains
+# cannot see it. Deletes NOTHING unless the listing contains the chain just
+# written (an empty or wrong listing exits 0 too) and no backup is running.
+# Only names this script mints, older than the current chain, are candidates.
+sweep_orphans() {
+  local current="$1" listing busy id failed=0
+  orphans_removed=0
+  [[ "$CH_DATABASE" =~ ^[A-Za-z0-9_]+$ ]] || { note "SWEEP SKIPPED: unsafe CH_DATABASE '$CH_DATABASE'"; return 1; }
+  if ! grep -qxF "$current" "$chains_file" 2>/dev/null; then
+    note "SWEEP SKIPPED: chain $current is not in $chains_file — the record cannot be trusted"
+    return 1
+  fi
+  # shellcheck disable=SC2086 # CH_DISKS_CMD is a command line by design
+  if ! listing="$($CH_DISKS_CMD --disk "$BACKUP_DISK" --query "ls $CH_DATABASE")"; then
+    note "SWEEP SKIPPED: cannot list $CH_DATABASE/ on $BACKUP_DISK — nothing deleted"
+    return 1
+  fi
+  if ! grep -qxF "$current" <<<"$listing"; then
+    note "SWEEP SKIPPED: the listing of $CH_DATABASE/ lacks chain $current — nothing deleted"
+    return 1
+  fi
+  if ! busy="$(running_backups)"; then
+    note "SWEEP SKIPPED: cannot ask ClickHouse whether a backup is running — nothing deleted"
+    return 1
+  fi
+  if [[ -n "$busy" ]]; then
+    note "SWEEP SKIPPED: a backup to $BACKUP_DISK is running — nothing deleted"
+    return 1
+  fi
+  while IFS= read -r id; do
+    [[ "$id" =~ ^[0-9]{8}T[0-9]{6}Z$ && "$id" < "$current" ]] || continue
+    grep -qxF "$id" "$chains_file" && continue
+    # shellcheck disable=SC2086
+    if $CH_DISKS_CMD --disk "$BACKUP_DISK" --query "remove -r $CH_DATABASE/$id"; then
+      note "removed orphan chain $id"
+      orphans_removed=$((orphans_removed + 1))
+    else
+      note "ORPHAN REMOVAL FAILED for $id — the next sweep retries it"
+      failed=1
+    fi
+  done <<<"$listing"
+  [[ "$failed" -eq 0 ]] && date -u +%s > "$swept_file"
+  return "$failed"
+}
+
 main() {
   local plan base path chain_id rc=0
   if [[ -z "$BACKUP_DISK" ]]; then
@@ -182,7 +249,7 @@ main() {
     return 1
   fi
   mkdir -p "$STATE_DIR" || { note "cannot create $STATE_DIR"; write_metrics; return 1; }
-  if [[ -n "$(ch "SELECT id FROM system.backups WHERE status = 'CREATING_BACKUP' AND startsWith(name, 'Disk(\\'$BACKUP_DISK\\'') FORMAT TabSeparated")" ]]; then
+  if [[ -n "$(running_backups)" ]]; then
     note "a backup to $BACKUP_DISK is already running — not starting a second"
     write_metrics
     return 1
@@ -216,7 +283,9 @@ main() {
   else
     printf '%s\t%s\n' "$now" "$path" >> "$chain_file"
   fi
-  full_unix="$(head -n1 "$chain_file" | cut -f1)"
+  if [[ "$plan" == full || ! -e "$swept_file" ]]; then
+    sweep_orphans "$chain_id" || rc=2
+  fi
   chain_len="$(grep -c . "$chain_file")"
   note "backup $path created ($bytes bytes written; chain length $chain_len)"
   write_metrics
