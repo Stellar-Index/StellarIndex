@@ -50,7 +50,10 @@
 #      not run, while any other heavy job holds the host-wide lock; a
 #      scheduled launch defers (exit 75, payload not run) beside an
 #      operator job and beside another scheduled job, or queues when it
-#      sets HEAVY_JOB_LOCK_WAIT; a released lock is free at once; a
+#      sets HEAVY_JOB_LOCK_WAIT; a wait that runs out behind an operator
+#      job defers (exit 75: planned work, the job's output staleness alert
+#      bounds it), behind another scheduled job fails loud (exit 1); a
+#      released lock is free at once; a
 #      lock file the caller cannot write still locks (it is opened
 #      read-only, never O_CREAT
 #      on an existing file: fs.protected_regular refuses that across
@@ -442,7 +445,8 @@ lrun sched-c scheduled
 if [ "$rc" -eq 0 ] && ran; then ok "scheduled job runs once the other scheduled job has exited"; else bad "scheduled job refused after the holder exited (rc=$rc, err='$(errs)')"; fi
 
 # HEAVY_JOB_LOCK_WAIT on a scheduled job queues behind a scheduled holder
-# and then runs; a wait that runs out fails loud (exit 1), never 75.
+# and then runs; a wait that runs out behind a scheduled holder fails loud
+# (exit 1), behind an operator holder defers (exit 75).
 hold_start h4 sched-q scheduled
 ( /bin/sleep 1; : > "$TMP/h4.release" ) &
 lrun sched-w scheduled HEAVY_JOB_LOCK_WAIT=20 INVOCATION_ID=0123456789abcdef
@@ -454,7 +458,7 @@ if [ "$rc" -eq 1 ] && ! ran && err_has "FAILED to start" && err_has "scheduled h
 hold_stop h5
 hold_start h6 op-q exclusive
 lrun sched-y scheduled HEAVY_JOB_LOCK_WAIT=1 INVOCATION_ID=0123456789abcdef
-if [ "$rc" -eq 1 ] && ! ran && err_has "FAILED to start" && err_has "operator heavy job held"; then ok "an expired wait on the host-wide lock exits 1, payload not run"; else bad "expired host-wide wait not a loud failure (rc=$rc, err='$(errs)')"; fi
+if [ "$rc" -eq 75 ] && ! ran && err_has "deferring sched-y (scheduled): an operator heavy job holds" && err_has "after waiting 1s"; then ok "an operator job outlasting the wait defers the scheduled job (exit 75, payload not run)"; else bad "expired wait behind an operator job did not defer (rc=$rc, err='$(errs)')"; fi
 hold_stop h6
 
 lrun op-e bogus
