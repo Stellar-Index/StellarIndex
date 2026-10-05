@@ -48,7 +48,7 @@ confidence < 0.45 AND z_score > 5.0 AND source_count <= 1
 - Confidence is graded, so sophisticated consumers gate on it; the freeze is the safety net for consumers who do not read it. It does not defend against multi-source manipulation across several CEXes; that needs the Phase 3 cross-oracle reference.
 - A freeze serves a stale last-known-good price, which is its own money bug (MNY-22); the short uncorroborated hold and the corroboration-gated release trade that against a false-freeze on thin books.
 - A pair without a baseline publishes no `confidence`; its absence is the signal consumers gate on.
-- Operators get alerts `stellarindex_anomaly_freeze_escalated` (P1), `stellarindex_anomaly_freeze_extension_rate` (P3) and `stellarindex_anomaly_freeze_active`, and the runbook [anomaly-freeze-engaged](../operations/runbooks/anomaly-freeze-engaged.md).
+- Operators get alerts `stellarindex_anomaly_freeze_escalated` (P1), `stellarindex_anomaly_freeze_extension_rate` (P3) and `stellarindex_anomaly_freeze_active`, and the runbook [anomaly-freeze-engaged](../operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged).
 - Alternatives rejected: permanent per-asset fixed percentages, a hard 503 on anomaly, Pyth-style range pricing as the default wire shape, always-publish-never-freeze, sigma instead of MAD, a single rolling window, and skipping Phase 1.
 
 ## Evidence

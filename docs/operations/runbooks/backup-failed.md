@@ -85,7 +85,7 @@ cat /var/lib/node_exporter/textfile_collector/pgbackrest_backup.prom
    - S3 credential / bucket-policy / endpoint failures only affect
      `repo2` — `stellarindex_pgbackrest_backup_last_rc{repo="2"}` non-zero
      while `{repo="1"}` is 0. repo1 keeps landing, so the 24 h alerts stay
-     green; `stellarindex_backup_offsite_stale` (`backup-offsite-stale.md`)
+     green; `stellarindex_backup_offsite_stale` (`backup-offsite.md#stellarindex_backup_offsite_stale`)
      is the signal for a repo2 that keeps failing.
 
 2. **Primary resource pressure** — backup can't get a backup
@@ -234,7 +234,7 @@ usually explain both symptoms together.
   NOT deployed on single-host r1; primary must be reachable to take backups.
 - `docs/operations/pgbackrest-encryption.md` — repo cipher / re-create procedure.
 - `docs/operations/off-site-backup-plan.md` — repo2 (offsite S3), live on r1 2026-08-29.
-- `backup-offsite-stale.md` — `stellarindex_backup_offsite_stale`, the repo2-specific staleness page.
+- `backup-offsite.md#stellarindex_backup_offsite_stale` — `stellarindex_backup_offsite_stale`, the repo2-specific staleness page.
 - `docs/operations/runbooks/account-erasure.md` — a restore brings erased accounts back; replay the
   erasures before the API serves, and what backups keep after an erasure.
 - `docs/adr/0043-backup-and-restore-strategy.md`.

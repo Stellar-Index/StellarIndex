@@ -14,7 +14,7 @@ import (
 //
 // `sudo touch /etc/caddy/MAINTENANCE_MODE` is the documented way to
 // stop serving during a live data-integrity incident
-// (docs/operations/runbooks/api-down.md). It answered 503 on
+// (docs/operations/runbooks/api.md). It answered 503 on
 // /v1/price — and kept streaming the wrong prices on
 // /v1/price/stream, /v1/price/tip/stream, /v1/observations/stream and
 // /v1/ledger/stream, with no signal that the switch was partial.

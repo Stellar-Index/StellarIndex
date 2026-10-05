@@ -96,7 +96,7 @@ Reduce concurrent walk parallelism per `docs/operations/backfill-with-live-inges
 ## Related
 
 - `ingest-gap-detected.md` — the paging alert this meta-alert protects from going silent.
-- `aggregator-silent.md` — sibling meta-alert for the aggregator binary itself.
+- `aggregator.md#stellarindex_aggregator_silent` — sibling meta-alert for the aggregator binary itself.
 - `docs/operations/backfill-with-live-ingest.md` — F-0020 posture for managing Postgres pool pressure.
 
 ## Changelog

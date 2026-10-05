@@ -46,7 +46,7 @@
 // to the time-local filter and to the served-VWAP guard's MAD arm
 // (6.75% at its K=10), and docs/methodology/vwap-aggregation.md
 // describes the symmetric band. On-call guidance lives in
-// docs/operations/runbooks/aggregator-outlier-storm.md.
+// docs/operations/runbooks/aggregator.md.
 //
 // Corrected 2026-08-04: this block used to describe a sigma-threshold
 // filter around the unweighted MEAN and said "the σ form is what the

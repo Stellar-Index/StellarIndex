@@ -24,7 +24,7 @@ Multi-window detection: the slow-request fraction
 `api_latency_p95_under_200ms`) both **> 6×** the budget (6 × 0.001 = 0.6 %
 of requests slower than 200 ms), sustained `for: 5m`.
 
-Note the alert's `runbook_url` annotation points at `api-latency.md`, not
+Note the alert's `runbook_url` annotation points at `api.md#stellarindex_api_latency_p95_high`, not
 this file — a responder following the page link lands there first; this
 runbook is the family-specific supplement.
 
@@ -74,7 +74,7 @@ Same as fast-burn — capture p95 trend graphs, recent deploy timestamps, and `p
 
 - `slo-latency-burn-fast.md` — escalation when the 5-min/1-hour windows also cross 14.4×.
 - `slo-latency-burn-slow.md` — earliest signal, longer windows.
-- `api-latency.md` (the alert's `runbook_url` target).
+- `api.md#stellarindex_api_latency_p95_high` (the alert's `runbook_url` target).
 - `wire-paging.md` — confirm the `chat-page` receiver actually reaches a human.
 - ADR-0009 — API latency budget allocation.
 
@@ -94,7 +94,7 @@ Same as fast-burn — capture p95 trend graphs, recent deploy timestamps, and `p
   P1** (the rule label is `severity: page` in both rule trees, `for: 5m`);
   budget arithmetic (5 % per 6 h, whole budget ≈ 5 days — not "budget in
   ~6 hours"); rule path → r1 overlay primary; min-traffic guard
-  (deliberately cannot fire on quiet r1) + `runbook_url` → api-latency.md
+  (deliberately cannot fire on quiet r1) + `runbook_url` → api.md#stellarindex_api_latency_p95_high
   notes; CPU-profile step replaced with route-level Prometheus +
   pg_stat_statements (no pprof endpoint exists); k6-weekly false positive
   corrected (scheduled, staging-only — not in-band r1 traffic).

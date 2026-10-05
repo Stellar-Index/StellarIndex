@@ -177,7 +177,7 @@ role and reapplying (`--check --diff` first) — **never** a live-only
 
 ## Related
 
-- `api-latency.md` — upstream symptom.
+- `api.md#stellarindex_api_latency_p95_high` — upstream symptom.
 - `postgres-ping-failing.md` — the indexer-side page that fires when
   saturation becomes unavailability.
 - `db-disk-full.md` — writes blocked → xacts can't commit →

@@ -173,9 +173,9 @@ this doc's policy chain feeds:
 
 Alert runbooks at:
 
-- [`aggregator-silent.md`](../operations/runbooks/aggregator-silent.md) — P1
-- [`aggregator-outlier-storm.md`](../operations/runbooks/aggregator-outlier-storm.md) — P3
-- [`aggregator-class-drop-spike.md`](../operations/runbooks/aggregator-class-drop-spike.md) — P3
+- [`aggregator.md#stellarindex_aggregator_silent`](../operations/runbooks/aggregator.md#stellarindex_aggregator_silent) — P1
+- [`aggregator.md#stellarindex_aggregator_outlier_storm`](../operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_storm) — P3
+- [`aggregator.md#stellarindex_aggregator_class_drop_spike`](../operations/runbooks/aggregator.md#stellarindex_aggregator_class_drop_spike) — P3
 
 Baseline-comparator alerts use `offset 1h` to auto-tune to operator
 traffic. Suppress for the first hour after deploy — the comparator

@@ -30,13 +30,13 @@ func TestUsageRollupBackfillUsageDocumentsWriteFlag(t *testing.T) {
 // that no catch-up step exists.
 func TestUsageRollupBackfillRunbookDocumentsCatchup(t *testing.T) {
 	root := repoRootForOpsTest(t)
-	runbook, err := os.ReadFile(filepath.Join(root, "docs/operations/runbooks/usage-rollup-failing.md"))
+	runbook, err := os.ReadFile(filepath.Join(root, "docs/operations/runbooks/api.md"))
 	if err != nil {
 		t.Fatalf("read runbook: %v", err)
 	}
 	rb := string(runbook)
 	if !strings.Contains(rb, "usage-rollup-backfill") {
-		t.Error("docs/operations/runbooks/usage-rollup-failing.md never mentions usage-rollup-backfill, " +
+		t.Error("docs/operations/runbooks/api.md never mentions usage-rollup-backfill, " +
 			"the manual path for folding a skipped range now")
 	}
 	if strings.Contains(rb, `No operator "catch-up" step exists or is needed`) {

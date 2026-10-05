@@ -62,7 +62,7 @@ target (`defaultClosedBucketFreshTarget`) — a
 - [ ] Step 2 — Route to the corresponding per-breach runbook:
   - p95 / p99 → `sla-probe-p95-breach.md`
   - freshness → `sla-probe-freshness-breach.md`
-  - availability → `api-5xx.md` (the probe's "availability" maps
+  - availability → `api.md#stellarindex_api_error_rate_critical` (the probe's "availability" maps
     to 2xx-success rate, which is the same signal as the API
     error-rate alert).
 - [ ] Verification: `unit_failed` drops to 0 for ≥ 30 min.
@@ -93,7 +93,7 @@ companion, that's a signal to add the per-breach rule.
 
 - `sla-probe-p95-breach.md` — specific p95 breach.
 - `sla-probe-freshness-breach.md` — specific freshness breach.
-- `api-5xx.md` — the availability path.
+- `api.md#stellarindex_api_error_rate_critical` — the availability path.
 
 ## Changelog
 

@@ -46,7 +46,7 @@ sum by (route) (rate(http_requests_total{status=~"5.."}[$range]))
 
 **Bar**: < 0.1% of total request rate per surface (the SLA target
 is ≥ 99.9% availability). Sustained 5xx on any one surface is a
-SEV-2 minimum. The runbook `api-5xx.md` covers triage.
+SEV-2 minimum. The runbook `api.md#stellarindex_api_error_rate_critical` covers triage.
 
 ## 3. p95 / p99 latency per surface
 

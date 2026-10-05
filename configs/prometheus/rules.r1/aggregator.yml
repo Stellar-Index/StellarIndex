@@ -26,7 +26,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-silent.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_silent
           summary: "Aggregator has stopped writing VWAP cache (P1)"
           description: |
             Zero VWAP writes for 5+ minutes. Either the orchestrator
@@ -36,7 +36,7 @@ groups:
             the last write, so /v1/price?window= has been answering 404
             for 5-10 minutes when this fires. /v1/vwap is unaffected (it
             scans raw trades on-query).
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-silent.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_silent
 
       # 2026-08-28 REDESIGN (was: sum by (pair) rate(dropped_trades_total
       # {reason="outlier"}[10m]) > 10, for 2h — itself the 2026-08-26 rescope
@@ -75,7 +75,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_storm
           summary: "{{ $labels.pair }} venues disagree >1% on the 5m VWAP for 15m — persistent price dispersion (P3)"
           description: |
             The highest and lowest per-venue 5m VWAP feeding
@@ -90,7 +90,7 @@ groups:
             — the odd one out is the venue to investigate. Check the pair's
             div:<pair> Redis flag / API flags.divergence_warning for actual
             price impact.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_storm
 
       # Successor to the counter-based storm gate for what venue
       # disagreement cannot see: a SINGLE-venue pair (SDEX-only token,
@@ -128,7 +128,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_trim_fraction
           summary: "{{ $labels.pair }} outlier filter rejecting >20% of the 24h window for 30m — in-window price dispersion (P3)"
           description: |
             More than 20% of {{ $labels.pair }}'s 24h VWAP input has been
@@ -143,7 +143,7 @@ groups:
             is protected by the trim; the risk is a thin surviving sample
             (see min_usd_volume gating). Diagnose from the trades table
             for the pair; see the spam-wave signature in the runbook.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_trim_fraction
 
       # The count share above cannot see WHICH prints were trimmed: the
       # outlier centre is a per-print median, so a few wash prints can
@@ -171,7 +171,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_volume_trim_fraction
           summary: "{{ $labels.pair }} outlier filter removing >20% of the {{ $labels.window }} window's volume for 15m (P3)"
           description: |
             The outlier filter has removed more than 20% of the base volume
@@ -184,7 +184,7 @@ groups:
             many prints but little volume removed is dust; few prints and
             much volume is a large print outside the band. Diagnose from
             the trades table for the pair.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_volume_trim_fraction
 
       - alert: stellarindex_aggregator_fx_snap_fallback_dominant
         expr: |
@@ -200,7 +200,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_fx_snap_fallback_dominant
           summary: "FX snap fallback >50% of triangulations for 30m+ (P3)"
           description: |
             The X2.5 forex-factor-snap path is failing for more than
@@ -210,7 +210,7 @@ groups:
             consistency. Investigate FX ingestion: exchangeratesapi /
             exchangeratesapi connector health, and the trades hypertable's
             FX rows.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_fx_snap_fallback_dominant
 
       # ─── Triangulation chains configured but their legs are dry ──────
       # Residual risk of e9803e69 (the four default triangulation chains:
@@ -254,7 +254,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-triangulation-chains-dry.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_triangulation_chains_dry
           summary: "Triangulation chains configured but legs dry — zero successful triangulations for 30m+ (P3)"
           description: |
             Every configured triangulation chain has been failing on a
@@ -278,7 +278,7 @@ groups:
             leg has no fx_quotes row inside the 7-day lookback. Check
             stellarindex_external_fx_last_quote_unix per source, the
             massive worker in the API binary, then the chain config.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-triangulation-chains-dry.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_triangulation_chains_dry
 
       # A released pair re-caps only once its 30-day bucket density falls
       # under the ADR-0019 hysteresis edge (27 days-equivalent). Several
@@ -300,7 +300,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_bootstrap_cap_reengaged
           summary: "{{ $value }} pairs re-entered the bootstrap confidence cap within 1h (P3)"
           description: |
             {{ $value }} pairs whose last state before the past hour was
@@ -313,7 +313,7 @@ groups:
             baseline window, not one thin pair. Served confidence stays at
             0.5 for them until the gap is repaired or rolls out of the
             30-day window.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_bootstrap_cap_reengaged
 
       - alert: stellarindex_aggregator_class_drop_spike
         expr: |
@@ -325,7 +325,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-class-drop-spike.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_class_drop_spike
           summary: "Class-filter drop rate >10× baseline (P3)"
           description: |
             The class filter is dropping trades at >10× its baseline
@@ -335,7 +335,7 @@ groups:
             fail-closed fallback IncludeInVWAP=false). Less common:
             an existing aggregator/oracle source unexpectedly
             increased volume.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-class-drop-spike.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_class_drop_spike
 
       # F-1253 (audit-2026-05-12): explicit alert on aggregator
       # cache-write-error rate. The May-10 SEV-2 (root-FS full →
@@ -360,7 +360,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_cache_write_errors
           summary: "Aggregator failing to publish VWAPs to Redis cache (P1)"
           description: |
             VWAP cache writes are erroring; rewritten / triangulated /
@@ -369,7 +369,7 @@ groups:
             BGSAVE is failing because the root FS is full
             (stop-writes-on-bgsave-error=yes default — May-10 SEV-2
             class). Recovery: free disk → BGSAVE → cache rebuilds.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_cache_write_errors
 
       # ─── 78dff337b: protocol-events rollup worker ────────────────────
       # The aggregator's protoeventsrollup worker folds the
@@ -386,7 +386,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/protocol-events-rollup-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_protocol_events_rollup_failing
           summary: "Protocol-events rollup sweeps failing ({{ $value | humanize }}/s error rate)"
           description: |
             The aggregator's protocol-events rollup worker has been
@@ -412,7 +412,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/asset-volume-rollup-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_asset_volume_rollup_failing
           summary: "Asset-volume rollup sweeps failing ({{ $value | humanize }}/s error rate)"
           description: |
             The aggregator's asset-volume rollup worker has been failing
@@ -439,7 +439,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/asset-character-rollup-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_asset_character_rollup_failing
           summary: "Asset-character rollup failing: errors with no successful sweep in 13h"
           description: |
             The aggregator's asset-volume-character rollup worker (6h
@@ -514,7 +514,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_correction_failing
           summary: "Non-7-decimals correction sweep failing, serving declining, or decimals resolvers out of lockstep — tokens at risk of silent price skew (P2)"
           description: |
             Either the aggregator's nonstandard_decimals_assets
@@ -538,7 +538,7 @@ groups:
             the aggregator's
             decimals-guard component (internal/decimalsguard) and the
             nonstandard_decimals_assets table directly.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_correction_failing
 
       # ─── Decimals-guard sweep heartbeat (audit-2026-09-02 F040) ───
       # The offender counters above (correction_failing and its inputs)
@@ -581,7 +581,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_decimals_guard_sweep_stale
           summary: "Decimals-guard sweep has not completed in over 45 min — guard health is unknown"
           description: |
             The aggregator's decimals-assumption guard
@@ -624,7 +624,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-fanout-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_customer_webhook_fanout_failing
           summary: "Customer webhook fan-out lost {{ $value | humanize }} {{ $labels.event_type }} event(s) ({{ $labels.reason }})"
           description: |
             A customer subscribed to `{{ $labels.event_type }}` did not
@@ -644,7 +644,7 @@ groups:
             (freeze_events / divergence_runs / the incident markdown),
             so the customer-visible gap can be closed by re-emitting
             once the store is healthy.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-fanout-failing.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_customer_webhook_fanout_failing
 
       # The explorer delta-strip worker (internal/aggregate/changesummary)
       # has stopped upserting change_summary_5m: every list view and detail
@@ -664,7 +664,7 @@ groups:
           team: stellarindex
           component: aggregator
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/change-summary-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_change_summary_stale
           summary: "change_summary_5m has not been refreshed in over 30 min — explorer deltas are frozen"
           description: |
             No change-summary pass has upserted a single entity in over
@@ -674,4 +674,4 @@ groups:
             the aggregator's `change-summary pass had failures` warns for
             `first_err`, and
             stellarindex_change_summary_passes_total{outcome="failed"}.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/change-summary-stale.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_change_summary_stale

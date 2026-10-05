@@ -273,7 +273,7 @@ ledger(s) before detection.
 - `internal/archivecompleteness/hashdb_verify.go` — the
   transport-agnostic `HashDBWindowVerifier` that tallies
   Verified/Drifted/Missing/OutOfRange for a window.
-- [archive-files-missing](archive-files-missing.md) — the sibling
+- [archive-files-missing](archive-completeness.md#stellarindex_archive_files_missing) — the sibling
   ADR-0017 alert for archive *presence* gaps (this alert is about
   content *fidelity*, a different failure mode).
 - [galexie-archive-tip-lag](galexie-archive-tip-lag.md) — check this

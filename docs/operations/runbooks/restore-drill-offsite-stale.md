@@ -88,7 +88,7 @@ sudo -u postgres pgbackrest --stanza=stellarindex info --repo=2
    - Signal: `pgbackrest info --repo=2` errors (`403`, `AccessDenied`,
      `unable to resolve`, cipher); `/var/log/restore-drill-offsite.log`
      shows the pgbackrest output in full.
-   - Mitigation: route to [backup-offsite-stale](backup-offsite-stale.md)
+   - Mitigation: route to [backup-offsite-stale](backup-offsite.md#stellarindex_backup_offsite_stale)
      — the credential / endpoint / cipher table there is the same for a
      restore as for a backup.
 
@@ -197,7 +197,7 @@ sudo systemctl reset-failed restore-drill-offsite.service
 - [restore-drill-failed](restore-drill-failed.md) —
   `stellarindex_restore_drill_failed`, per repo; the immediate signal when
   the most recent run of either drill recorded failures > 0.
-- [backup-offsite-stale](backup-offsite-stale.md) — the repo2 *backup*
+- [backup-offsite-stale](backup-offsite.md#stellarindex_backup_offsite_stale) — the repo2 *backup*
   stream; this ticket proves the copy that stream writes actually
   restores.
 - [dr-activation](dr-activation.md) — the procedure that restores from

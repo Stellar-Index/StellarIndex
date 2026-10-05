@@ -27,7 +27,7 @@ replacement per-source lag signal lands.
 - (historical) the per-source lag gauge exceeding 1000 for ≥ 10 min.
 - `source_last_event_unix` still advancing (so the source isn't
   stopped — it's just slow).
-- `price-stale.md` may also fire for assets that source quotes.
+- `api.md#stellarindex_api_price_stale` may also fire for assets that source quotes.
 
 ## Quick diagnosis (≤ 5 min)
 

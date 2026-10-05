@@ -6,7 +6,7 @@ related:
   - docs/architecture/ha-plan.md §3.1 (api-tier topology)
   - docs/architecture/patroni-ansible-role-design-note.md (sister role)
   - docs/architecture/redis-sentinel-ansible-role-design-note.md (sister role)
-  - docs/operations/runbooks/api-down.md (SEV-1; nearest neighbour. The HAProxy-specific single-pod-eject scenario is partial degradation, not SEV-1 — add a §"single-pod-ejected" section to api-down.md when multi-pod HAProxy topology lands; the earlier related-link named a nonexistent `api-pod-down.md`, F-1274 2026-05-13)
+  - docs/operations/runbooks/api.md#stellarindex_api_down (SEV-1; nearest neighbour. The HAProxy-specific single-pod-eject scenario is partial degradation, not SEV-1 — add a §"single-pod-ejected" section to api.md#stellarindex_api_down when multi-pod HAProxy topology lands; the earlier related-link named a nonexistent `api-pod-down.md`, F-1274 2026-05-13)
 ---
 
 # HAProxy ansible role — design note
@@ -297,11 +297,11 @@ Pattern matches the Patroni and Redis-Sentinel roles for consistency.
 
 ## Once HAProxy lands, what changes elsewhere
 
-Runbook coverage: `docs/operations/runbooks/api-down.md` covers
+Runbook coverage: `docs/operations/runbooks/api.md#stellarindex_api_down` covers
 the SEV-1 case. The HAProxy-specific single-pod-eject scenario
 (HAProxy's 15-second health-check window flips one backend OUT
 while others keep serving) is partial degradation rather than
-SEV-1 — add a §"single-pod-ejected" section to `api-down.md`
+SEV-1 — add a §"single-pod-ejected" section to `api.md#stellarindex_api_down`
 when multi-pod HAProxy topology lands. F-1274 (2026-05-13)
 corrected an earlier reference to a nonexistent `api-pod-down.md`.
 

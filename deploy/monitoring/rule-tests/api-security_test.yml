@@ -23,7 +23,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-cors-wildcard.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-security.md#stellarindex_api_cors_wildcard_in_prod
               summary: "Wildcard CORS policy is serving real cross-origin requests in prod (P3)"
               description: |
                 stellarindex_api_cors_decisions_total{outcome="allowed_wildcard"}
