@@ -1,7 +1,7 @@
 ---
 title: Pre-P23 classic-asset-movement reconstruction (+ pre-P18 ClaimAtom coverage) — research
 last_verified: 2026-10-05
-status: research — consumed by ADR-0047 (Accepted); Phase 1 shipped 2026-07-10
+status: research — consumed by ADR-0047 (Accepted); Phases 1-4 shipped in code (Phase 1 on 2026-07-10)
 ---
 
 # Pre-P23 classic-asset-movement reconstruction — research
@@ -11,15 +11,17 @@ Evidence base for [ADR-0047](../adr/0047-pre-p23-classic-movement-reconstruction
 phasing, verification, precedent). This page keeps the evidence and
 reasoning. Pipeline basics: [ingest-pipeline.md](ingest-pipeline.md).
 
-Shipped: Phase 1 (Payment + CreateAccount), 2026-07-10 (`13b6db0d`), as
+Shipped: Phase 1 (Payment + CreateAccount), 2026-07-10 (`13b6db0d`); Phases 2-4
+are also in code (`internal/sources/classicmovements/doc.go`: nine op types;
+Phase 2 in `decode.go`, Phase 4 in `entrychanges.go`). Phase 1 shipped as
 `stellarindex-ops classic-movements-backfill`, writing ClickHouse
 `stellar.account_movements` only (Postgres `classic_movements`, migration
 0105, was superseded by ADR-0048 D2 and dropped in migration 0113).
 
-Later check (INV-0967/INV-1128, r1 ClickHouse, 2026-09-27): `min(ledger_seq)` of
-`stellar.ledger_entry_changes` is 3 and `min(ledger)` of `stellar.account_movements`
-is 3, so both reach genesis; the §3.2 table is the earlier (2026-07) measurement
-that showed the gap.
+Later check (INV-1073, r1 ClickHouse, 2026-10-02): `stellar.ledger_entry_changes`
+holds 163.86B rows over ledgers 3 to 64,730,073 and verify-lake reports zero
+entry_changes deficiency; the Phase C backfill was run (INV-1251, #2018). The
+§3.2 table is the earlier (2026-07) measurement that showed the gap.
 
 Method: `go-stellar-sdk@v0.6.0` XDR, our code, and bounded read-only
 queries on r1's ClickHouse (`stellar` DB, HTTP `:8123`).
@@ -31,10 +33,11 @@ queries on r1's ClickHouse (`stellar` DB, HTTP `:8123`).
   `stellar.operation_results` alone** (populated to genesis). Only
   `LiquidityPoolDeposit`/`LiquidityPoolWithdraw` (and one CAP-0038 revocation
   edge) need `ledger_entry_changes`; their results carry no amounts.
-- **`stellar.ledger_entry_changes` is not backfilled pre-P23.** The extractor
-  exists and is wired into `ch-backfill`; it has not been run over history.
-  Live-fidelity rows start at about ledger 61,996,000 (~2026-04-06). A
-  scheduling gap, not an engineering gap, and the top prerequisite (§3.2).
+- **`stellar.ledger_entry_changes` was not backfilled pre-P23 when this was
+  written (2026-07).** The extractor existed and was wired into `ch-backfill`
+  but had not been run over history; live-fidelity rows started at about ledger
+  61,996,000 (~2026-04-06). A scheduling gap, not an engineering gap; it was
+  the top prerequisite (§3.2) and has since been closed (INV-1073, INV-1251).
 - **ClaimableBalance create/claim/clawback needs no new substrate**
   (`CreateClaimableBalanceResult` carries `BalanceId`; correlate against our
   create table). **`AccountMerge` neither**
@@ -190,11 +193,12 @@ almost all legacy census.
 `LiquidityPoolWithdraw` ops) returned **zero rows**: absent, not under-sampled.
 
 **Verdict.** Sufficient once backfilled (schema and extractor already capture
-`ReserveA`/`ReserveB` and before/after balances), but a bulk historical run is
-a hard prerequisite for any path-(c) type and a free cross-check for the rest.
+`ReserveA`/`ReserveB` and before/after balances); a bulk historical run was a
+hard prerequisite for any path-(c) type and is a free cross-check for the rest.
+That run has since happened (INV-1073, INV-1251).
 Tool: `stellarindex-ops ch-backfill -config PATH -from N -to N [-parallel N]`
 (`internal/ops/chops/ch_backfill.go`) walks galexie and calls
-`clickhouse.ExtractLedger`; idempotent (`ReplacingMergeTree`). Multi-day, `run-heavy-job.sh`-wrapped, operator-gated.
+`clickhouse.ExtractLedger`; idempotent (`ReplacingMergeTree`). The run was multi-day, `run-heavy-job.sh`-wrapped and operator-gated.
 ADR-0047 D3 sets the range `[38115806, 61999000]`.
 
 ### 3.3 Not in the lake
@@ -284,11 +288,12 @@ Each phase ships alone; order is by need for the `ledger_entry_changes`
 backfill x product value x row cost. Adopted in ADR-0047 D3 (Phase 0 range
 narrowed to P18 onward).
 
-- **Phase 0, prerequisite:** `ch-backfill` over the §3.2 gap (`[2, 61999000]`
-  here; ADR `[38115806, 61999000]`). No new code; multi-day,
-  `run-heavy-job.sh`-wrapped, one job at a time. Unblocks Phase 4 and gives
-  every phase a derived-amount vs balance-delta cross-check.
-- **Phase 1, `Payment` + `CreateAccount`** (shipped 2026-07-10). Path (a), no
+- **Phase 0, prerequisite (done):** `ch-backfill` over the §3.2 gap (`[2, 61999000]`
+  here; ADR `[38115806, 61999000]`). No new code; it was multi-day,
+  `run-heavy-job.sh`-wrapped, one job at a time. It unblocked Phase 4 and gives
+  every phase a derived-amount vs balance-delta cross-check. Run per INV-1251
+  (#2018); lake state per INV-1073.
+- **Phase 1, `Payment` + `CreateAccount`** (shipped 2026-07-10; Phases 2-4 also in code). Path (a), no
   Phase 0 dependency; ~4.0B + ~24M rows; highest product value. Verification:
   substrate reconcile only (every such op in `stellar.operations` processed).
 - **Phase 2, path payments.** Path (b) on SDEX's decoded `ClaimAtom`s; new
@@ -385,7 +390,7 @@ Status per ADR-0047 D3/D4:
 
 1. **Pre-P18 history for LP?** AMMs did not exist before P18; the question is
    whether Phase 0 reaches ledger 2 or stops at 38,115,806. *Resolved:* ADR
-   uses `[38115806, 61999000]`.
+   uses `[38115806, 61999000]`; the backfill since ran (INV-1073, INV-1251).
 2. **CAP-0038 revocation edge: first cut or deferred?** Sample data suggests
    a small share of a small op count, but no query measured it (needs decoding
    `ledger_entry_changes` `entry_xdr`). *Resolved in scope:* Phase 4. Its
@@ -396,11 +401,11 @@ Status per ADR-0047 D3/D4:
    renders per row. *Resolved:* `stellar.account_movements`, two rows per
    movement (ADR-0047 D1).
 5. **Phase 0 window and cost.** The row cost of a full-history backfill was
-   not estimated (the table is 3.05B rows for the ~1.4M ledgers it covers;
-   ~62M ledgers is far larger and needs an operator sizing pass). *Window
-   resolved* (P18 onward); *cost still open*.
+   not estimated at the time (the table was 3.05B rows for the ~1.4M ledgers it
+   covered). *Window resolved* (P18 onward); *cost resolved by the run*: 163.86B
+   rows over ledgers 3 to 64,730,073 (INV-1073).
 
-For the account-page lifetime-authority program (INV-2140/INV-2141 A1/A2
-movements and entry-changes views): §2 inventory and paths, §3.2 cutover
-(before ledger ~61,996,000 `ledger_entry_changes` is census-only), §7.4
-single-feed merge.
+For the asset-page slices A1/A2 (INV-2140/INV-2141, under INV-2138) and the
+account-page program (INV-2128): §2 inventory and paths, §3.2 cutover (as
+measured 2026-07, before ledger ~61,996,000 `ledger_entry_changes` was
+census-only), §7.4 single-feed merge.

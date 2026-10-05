@@ -45,7 +45,7 @@ One site, no mode toggle: the answer is above the fold, deep data one click belo
 
 ## 3. Design principles
 
-1. **Panels are API queries, 1:1.** No client-side joins; a UI gap becomes a gap-list entry. If a panel needs three things, add an endpoint that returns three things.
+1. **Panels are API queries, 1:1.** No client-side joins; a UI gap becomes a gap-list entry. If a panel needs three things, add an endpoint that returns three things. Aggregations read per-protocol hourly rollup tables, never live OLAP against the lake.
 2. **`<>` reveals the request** on every card (exact `curl` or `wscat`). Shipped as `web/explorer/src/components/reveal/Panel.tsx`.
 3. **URL state is config.** Every selection lives in the query string so pages are reload-safe, shareable and deep-linkable (`useSearchParams` + `router.replace`).
 4. **Anonymous-readable.** The free tier (anonymous floor 60/min, keyed tier 1000/min by default; config `anon_rate_limit_per_min`) covers browsing; only the dashboard needs sign-in.
@@ -53,7 +53,7 @@ One site, no mode toggle: the answer is above the fold, deep data one click belo
 6. **Desktop-first, dark default**; mobile gets search, asset pages and the pulse.
 7. **Performance is a feature**: LCP < 1.5 s on 3G (p95), < 100 KB gzipped JS per route, API p95 < 200 ms, Lightweight Charts (~30 KB) not TradingView's hosted library (~2 MB), skeleton states (no layout shift), single-weight Latin font subset, no third-party trackers. Not verified as achieved.
 8. **Sortable by default**, sort reflected in the URL (`sort=<col>:asc|desc`).
-9. **Open Graph card on every page** (see §16).
+9. **Open Graph card on every page** (see §14).
 10. **Never render an in-progress bucket** (ADR-0015): live where it is real (SSE price tip, trade tape, ledger tip), everything else closed-bucket with an explicit timestamp. Confidence is always visible.
 
 ## 4. URL scheme
@@ -103,8 +103,8 @@ Endpoints below are verified present in `openapi/stellar-index.v1.yaml` unless m
 Pulse banner, trade tape (`GET /v1/observations/stream`), movers and volume leaders (`/v1/assets`, `/v1/markets`), protocol leaderboard (`/v1/protocols`), live anomaly banner (`/v1/anomalies`), network strip (`/v1/network/stats`, `/v1/ledger/tip`). Gaps: `/v1/diagnostics/pulse`, `/v1/tvl`, `/v1/tvl/flow` (Sankey), `/v1/network/volume`, `/v1/network/health`, wildcard `observations/stream?asset=*`, `/v1/discovered` (new SEP-41 listings), `/v1/contracts/wasm-upgrades`, sortable `delta_24h` on the asset list.
 
 ### 7.2-7.3 Assets (`/assets`, `/assets/[slug]`; plan: coins)
-Directory and detail serve from `GET /v1/assets`, `/v1/assets/{asset_id}` (+ `/metadata`, `/supply`, `/supply/flows`, `/holders`), `/v1/assets/verified`, `/v1/external/assets`, `/v1/price` (closed bucket plus `confidence_factors`), `/v1/price/tip`, `/v1/price/changes`, `/v1/chart`, `/v1/ohlc`, `/v1/vwap`, `/v1/twap`, `/v1/history` (`?source=` per-source overlay, on-chain venues only), `/v1/history/since-inception`, `/v1/changes/{entity_type}/{id}`, `/v1/pairs`, `/v1/markets`, `/v1/sdex/orderbook`, `/v1/contracts/{contract_id}/transfers`. Tabs: overview, chart, markets, history, supply, issuer (classic only), liquidity, oracles, on-chain, API. The volatility band is computed client-side from `/v1/ohlc` bars (INV-1087); per-source overlay is INV-1086. Detail pages are keyed `(code, issuer)`, SAC or `native`, never code alone; the bare-code slug belongs to a hand-vetted `internal/currency/data/seed.yaml` entry (§20 q7).
-Gaps: `/v1/spread`, `/v1/slippage`, `/v1/volatility`, supply history and breakdown by algorithm component (SDF reserves, locked, claimable, LP), SEP-41 mint/burn/clawback timeline, trustline-growth and holder-count history, annotation `events`, cross-protocol comparison, multi-asset `?compare=` (needs composition), TWAP on the chart (deferred), `/v1/coins/{slug}/stats` (24h volume, trades, high/low, dominant pair).
+Directory and detail serve from `GET /v1/assets`, `/v1/assets/{asset_id}` (+ `/metadata`, `/supply`, `/supply/flows`, `/holders`), `/v1/assets/verified`, `/v1/external/assets`, `/v1/price` (closed bucket plus `confidence_factors`), `/v1/price/tip`, `/v1/price/changes`, `/v1/chart`, `/v1/ohlc`, `/v1/vwap`, `/v1/twap`, `/v1/history` (`?source=` per-source overlay, on-chain venues only), `/v1/history/since-inception`, `/v1/changes/{entity_type}/{id}`, `/v1/pairs`, `/v1/markets`, `/v1/sdex/orderbook`, `/v1/contracts/{contract_id}/transfers`. Tabs: overview, chart, markets, history, supply, issuer (classic only), liquidity, oracles, on-chain, API. The volatility band is computed client-side from `/v1/ohlc` bars (INV-1087); per-source overlay is INV-1086. Detail pages are keyed `(code, issuer)`, SAC or `native`, never code alone; the bare-code slug belongs to a hand-vetted `internal/currency/data/seed.yaml` entry (§18 q7).
+Gaps: `/v1/spread`, `/v1/slippage`, `/v1/volatility`, supply history and breakdown by algorithm component (SDF reserves, locked, claimable, LP), SEP-41 mint/burn/clawback timeline, trustline-growth and holder-count history, annotation `events`, cross-protocol comparison, multi-asset `?compare=` (needs composition), TWAP on the chart (deferred), `/v1/coins/{slug}/stats` (24h volume, trades, high/low, dominant pair). Asset-page slices under INV-2138: A1 (INV-2140) and A2 (INV-2141), movements and entry-changes views, open pending Ash's v1 call and the sizing brief (see [pre-p23-classic-movements-research.md](pre-p23-classic-movements-research.md)).
 
 ### 7.4 Pair (`/markets/[pair]`)
 VWAP line, per-venue candles, live tape (`observations/stream?asset=&quote=`), VWAP/TWAP on a chosen window, triangulation path with bucket timestamp for indirect pairs (the convert engine, `/convert/{from}/{to}`). Why per-venue: one aggregated view is insufficient for researchers. Gaps: `/v1/pairs/{base}/{quote}/venues`, `/spread` (arbitrage signal), `/liquidity-flow`, a "routed via Soroswap" tape badge (§7.9.1).
@@ -113,7 +113,7 @@ VWAP line, per-venue candles, live tape (`observations/stream?asset=&quote=`), V
 `GET /v1/markets`, `/v1/markets/sources`, `/v1/pools`, `/v1/pools/reserves`. Gap: base-by-quote 24h-change heatmap (`/v1/markets/heatmap`).
 
 ### 7.6-7.7 Sources (`/sources`, `/sources/[name]`)
-Health sits beside static metadata so weak sources are identified operationally, not only by exclusion. Serves `GET /v1/sources`, `/v1/sources/{name}/health`, `/v1/diagnostics/cursors`. Gaps: `GET /v1/sources/{name}` (class, weight, vwap-included, BackfillSafe, paid, contracts), `/race` (publish-latency profile), `/reliability?window=30d`, `/weight-history`, per-source WASM history, per-source `/v1/diagnostics/decoders` rows (decode errors, orphans, unmatched hits).
+Health sits beside static metadata so weak sources are identified operationally, not only by exclusion. Serves `GET /v1/sources`, `/v1/sources/{name}/health`, `/v1/diagnostics/cursors`. Gaps: `GET /v1/sources/{name}` is mostly served by `/v1/sources/{name}/health`; only weight, paid and contracts remain, `/race` (publish-latency profile), `/reliability?window=30d`, `/weight-history`, per-source WASM history, per-source `/v1/diagnostics/decoders` rows (decode errors, orphans, unmatched hits).
 
 ### 7.8-7.9 Protocols (`/protocols`, `/protocols/[name]`)
 Serves `GET /v1/protocols` (directory, KPIs, coverage tier), `/v1/protocols/{name}`, `/v1/protocols/{name}/tvl`, `/v1/lending/pools`, `/v1/lending/pools/{pool}/reserves`, `/v1/liquidity-pools`. Template: header (identity, verified factories as ADR-0035 trust roots, genesis ledger, coverage badge), KPIs (24h/7d volume, events/day, active instances, TVL where derivable), instances table, decoded-event tape, coverage tab. Signature panels: Blend liquidation terminal (auctions with fill curves, bad debt, flows, emissions), pools with reserves and swap flow (Soroswap, Aquarius, Phoenix, Comet), DeFindex vaults, CCTP/Rozo bridge net flow, SDEX top books, oracle feed boards, SEP-41 transfer volume and supply changes.
@@ -121,7 +121,7 @@ Status badge rules (plan, not shipped): Surging = d7 > +10% and d24h > 0; Growin
 Gaps: `/protocols/{slug}/instances`, `/contracts`, `/pairs`, `/tvl/history`, `/rank-history`, `/wasm-history`, `/pair-cadence`, `/efficiency` (volume/TVL), `/yields` (pool fee APR), `/events` (filterable decoded tape plus SSE), `/stats` (timeseries), `/protocols/tvl-share`, `/protocols?sort=acceleration`, per-protocol `router-attribution`, `routed-in`, `exposure`, `vaults`, `vaults/{contract_id}[/exposure]`.
 
 ### 7.9.1 Router and aggregator attribution
-Decision: post-hoc additive tagging, not a separate dimension. `trades.routed_via` (nullable) carries the router name; the underlying venue's own volume is unchanged (Phoenix volume stays Phoenix volume) and `routed_via` is an extra grouping axis. Mechanism: a `routers` registry `(contract_id, name, kind, protocol_slug)`; the dispatcher's ContractCallDecoder fires on a router invocation and pushes the tag into per-tx context; every trade in that tx batch gets it (multi-hop shares one tag; for nested routers the outermost wins, `internal/pipeline/routedvia.go`). Intended consumers: router-attribution donut on the Soroswap page, DeFindex exposure chart, routed-in share on Phoenix/Aquarius/SDEX/Blend, per-pair badge. The registry and tag are live; the four endpoints are gaps (§7.9).
+Decision: post-hoc additive tagging, not a separate dimension. `trades.routed_via` (nullable) carries the router name; the underlying venue's own volume is unchanged (Phoenix volume stays Phoenix volume) and `routed_via` is an extra grouping axis. Mechanism: a `routers` registry `(contract_id, name, kind, protocol_slug)`; the dispatcher's ContractCallDecoder fires on a router invocation and pushes the tag into per-tx context; every trade in that tx batch gets it (multi-hop shares one tag; for nested routers the outermost wins, `internal/pipeline/routedvia.go`). Intended consumers: router-attribution donut on the Soroswap page, DeFindex exposure chart, routed-in share on Phoenix/Aquarius/SDEX/Blend, per-pair badge. The registry and tag are live; `GET /v1/aggregators` serves the registry with a 24h routed-via rollup; the four per-protocol endpoints are gaps (§7.9).
 Open: per-WASM-hash decoder audit for router WASM versions (gate backfill against an unaudited router WASM); DeFindex vault discovery is a curated allowlist at v1 (INV-1088, blocked: auto-discovery heuristic is a follow-up, candidates are contracts invoking two or more underlying-protocol contracts in single tx batches, promoted by an operator); arbitrary router nesting is unsupported until seen in the wild. The DeFindex exposure tracker (periodic per-vault on-chain state into `aggregator_exposures`, 1-minute cadence) was never built and the table was dropped (§9.9).
 
 ### 7.10 Contract (`/contracts/[id]`): the hinge
@@ -138,7 +138,7 @@ Serves `GET /v1/issuers`, `/v1/issuers/{g_strkey}` from `issuers` and `classic_a
 `GET /v1/tx/{hash}` (header, per-op breakdown, status). Gaps: `/tx/{hash}/trades`, `/events`, `/changes` (LedgerEntry diff), path-payment route diagram.
 
 ### 7.16 Account (`/accounts/[g]`)
-The account page is the lifetime authority on an account (programme INV-2140/INV-2141; coverage in [coverage-matrix.md](coverage-matrix.md)). Serves `GET /v1/accounts`, `/v1/accounts/{g}`, `/transactions`, `/operations`, `/movements`, `/positions` (cross-protocol DeFi positions: Blend, LP shares, vault shares), `/trades`, `/activity`, `/graph`, `/graph/history`, `/graph/cohort`, plus `/v1/accounts/stats|creators|sponsors`, `/v1/directory`. Pre-P23 classic movements come from the lake reconstruction in [pre-p23-classic-movements-research.md](pre-p23-classic-movements-research.md). Gaps: `/accounts/{g}/trustlines` and `/accounts/{g}/flow` (asset in/out chart).
+The account page is the lifetime authority on an account (programme INV-2128; coverage in [coverage-matrix.md](coverage-matrix.md)). Serves `GET /v1/accounts`, `/v1/accounts/{g}`, `/transactions`, `/operations`, `/movements`, `/positions` (cross-protocol DeFi positions: Blend, LP shares, vault shares), `/trades`, `/activity`, `/graph`, `/graph/history`, `/graph/cohort`, plus `/v1/accounts/stats|creators|sponsors`, `/v1/directory`. Pre-P23 classic movements come from the lake reconstruction in [pre-p23-classic-movements-research.md](pre-p23-classic-movements-research.md). `/v1/accounts/{g}` also serves the account's trustlines and offers inline, so a separate `/trustlines` is not needed. Gap: `/accounts/{g}/flow` (asset in/out chart).
 
 ### 7.17-7.19 Path payments, anomalies, divergences
 - `/path-payments` (heatmap, recent, success rate): gap, no endpoint and no `path_payments` observer.
@@ -149,20 +149,20 @@ The account page is the lifetime authority on an account (programme INV-2140/INV
 `GET /v1/mev` over `mev_events` (§9.5), worker `internal/aggregate/mev/`. Candidates, not verdicts. Rule (INV-1090, discarded as already honoured): never promote MEV to the home page or top of a page until the p95 false-positive rate is under 5%; today `/mev` is a separate page with link cards only. Gaps: `/v1/mev/tally`, `/v1/mev/{event_id}`.
 
 ### 7.21 Network (`/network`)
-Serves `GET /v1/network/stats`, `/v1/network/throughput`, `/v1/ledger/tip`, `/v1/ledger/stream`, `/v1/ledgers`, `/v1/ledgers/{seq}` (+ `/transactions`, `/operations`), `/v1/operations`. Gaps (all `/v1/network/...` unless noted): `tvl`, `volume`, `soroban-activity`, `freeze-rate`, `source-diversity` (Shannon entropy of pricing), `peg-health` (stablecoin deviations), `ops-per-ledger`, `fee-market` (base plus Soroban inclusion fee), `active-addresses`, `new-contracts`, `health`; `/v1/ledgers/at?ts=` (timestamp to ledger).
+Serves `GET /v1/network/stats`, `/v1/network/throughput`, `/v1/ledger/tip`, `/v1/ledger/stream`, `/v1/ledgers`, `/v1/ledgers/{seq}` (+ `/transactions`, `/operations`), `/v1/operations`. Gaps (all `/v1/network/...` unless noted): `tvl`, `volume`, `soroban-activity`, `freeze-rate`, `source-diversity` (Shannon entropy of pricing), `peg-health` (stablecoin deviations), `ops-per-ledger`, `fee-market` (base plus Soroban inclusion fee), `active-addresses`, `new-contracts`, `health`; `/v1/ledgers/at?ts=` (timestamp to ledger). Planned observer: `internal/sources/network_meta/` writing a `network_meta_5m` rollup (fee-market plus active-address counters) to back the fee-market and active-addresses panels.
 Honest phasing (UX plan): the PG served tier holds the recent window, the CH lake everything to genesis. N1 = point lookups (exact ledger/tx/contract is a cheap CH point query) plus recent-window browsing; N2 = history-scale browse and filter (INV-1093, blocked, post-launch residual filters; needs a CH-backed read path and pagination design). Never fake it: a range not yet servable says so, and the coverage story says what exists.
 
 ### 7.22 Diagnostics (`/diagnostics`)
-Public, no PII; demonstrates operational rigour. Serves `GET /v1/diagnostics/cursors`, `/ingestion`, `/archive`, `/backups`, `/v1/coverage`, `/v1/status`, `/v1/incidents`. Gaps: `/diagnostics/pulse`, `/decoders` (reads `decoder_stats_5m`, §9.4), `/archive-completeness`, `/cross-region` (ADR-0015 check), `/wasm-coverage`, `/slo` (multi-window burn rates, ADR-0009).
+Public, no PII; demonstrates operational rigour. Serves `GET /v1/diagnostics/cursors`, `/ingestion`, `/archive`, `/backups`, `/v1/coverage`, `/v1/status`, `/v1/incidents`. Gap: `/coverage/{source}` page and `GET /v1/coverage/{source}` (per-protocol verification as product, live verdicts, a "for the protocol team" confirmation CTA; UX plan P3). Gaps: `/diagnostics/pulse`, `/decoders` (reads `decoder_stats_5m`, §9.4), `/archive-completeness`, `/cross-region` (ADR-0015 check), `/wasm-coverage`, `/slo` (multi-window burn rates, ADR-0009).
 
 ### 7.23 Research and blog (`/research`, `/blog`)
 `/research` renders ADRs and architecture/operations docs; `/blog` renders `docs/blog/YYYY-MM-DD-<slug>.md` via `web/explorer/src/lib/blog.ts` and `src/lib/markdown.tsx` (plain Markdown, no MDX pipeline; decision, in-tree and no separate content repo). The plan's embedded `<RatesLink>`/`<RatesPanel>`/`<TxLink>` components that bake `as_of_ledger` into links are not built; `Panel.tsx` only anticipates `<RatesPanel anchorId=...>`. Publishing = git commit plus CI rebuild.
 
 ### 7.24 Customer account (`/dashboard/*`, `/signin`)
-Not part of the public-data surface: keys, usage, settings, price alerts, webhooks, staff admin (`/v1/dashboard/*`, `/v1/account/*`, `/v1/auth/*`). SEP-10 challenge/token (`/v1/auth/sep10/challenge`, `/token`) is the wallet sign-in. Wallets: Freighter only at v1; Albedo and Lobstr are a follow-up (INV-1092, blocked: close as post-v1 backlog if no wallet sign-in is planned). Usage is a live trailing-30-day count from the Redis-backed `usage.Counter`.
+Not part of the public-data surface: keys, usage, settings, price alerts, webhooks, staff admin (`/v1/dashboard/*`, `/v1/account/*`, `/v1/auth/*`). Explorer sign-in is email code plus passkey (`web/explorer/src/lib/webauthn.ts`); there is no wallet sign-in in the explorer. SEP-10 (`/v1/auth/sep10/challenge`, `/token`) is a programmatic API auth path. Freighter/Albedo/Lobstr wallet sign-in is INV-1092 (blocked, post-v1). Usage is a live trailing-30-day count from the Redis-backed `usage.Counter`.
 
 ### 7.25 Search
-`GET /v1/search`. Top-of-page categorised type-ahead (assets, issuers, anchors, contracts, tx, accounts, articles) and Cmd-K on every page. Ranking: exact match first, then trigram similarity, recency boost, popularity boost. Plan: tsvector columns plus GIN and `pg_trgm` for fuzzy ticker/name match (§11.7).
+`GET /v1/search`. Top-of-page categorised type-ahead (assets, issuers, anchors, contracts, tx, accounts, articles) and Cmd-K on every page. Ranking: exact match first, then trigram similarity, recency boost, popularity boost. Plan: tsvector columns plus GIN and `pg_trgm` for fuzzy ticker/name match (§11.7); target p95 < 100 ms for a typical query.
 
 ## 8. Time machine (not built)
 
@@ -176,7 +176,7 @@ Not part of the public-data surface: keys, usage, settings, price alerts, webhoo
 | Live tip (`/v1/price/tip`) | for historical N return the closed bucket containing N |
 | WASM detail | hash-keyed, no time dependency |
 
-Implementation notes: CAGG reads align `time_bucket()` to N's wall clock; trades filter `ledger <= N`; registries filter `first_seen_ledger <= N`. UX: global widget (live = no badge; pinned = off-tone page with "viewing as of ledger N" and back-to-live), ledger picker accepting ledger number, ISO date or "N hours ago", live-tape panels disabled when pinned, URL-shareable. Why not now: it multiplies every handler's test surface, and the risk is user confusion about live vs historical. Open post-v1 (§20 q10).
+Implementation notes: CAGG reads align `time_bucket()` to N's wall clock; trades filter `ledger <= N`; registries filter `first_seen_ledger <= N`. UX: global widget (live = no badge; pinned = off-tone page with "viewing as of ledger N" and back-to-live), ledger picker accepting ledger number, ISO date or "N hours ago", live-tape panels disabled when pinned, URL-shareable. Why not now: it multiplies every handler's test surface, and the risk is user confusion about live vs historical. Open post-v1 (§18 q10).
 
 ## 9. Schema
 
@@ -214,9 +214,9 @@ Always empty; the stats were moved onto a `prices_1m` UNION CTE (commit `2f06533
 
 ## 10. API gap list (plan endpoints absent from the spec)
 
-Shipped under a different name: coins to `/v1/assets*`; `/v1/orderbook` to `/v1/sdex/orderbook`; `/v1/divergences*` to `/v1/divergence`, `/v1/divergence/series`; contract WASM history to `/v1/contracts/{id}/wasm` and `/code-history`; `/v1/oracles` directory to `/v1/oracle/streams`.
+Shipped under a different name: coins to `/v1/assets*`; `/v1/orderbook` to `/v1/sdex/orderbook`; `/v1/divergences*` to `/v1/divergence`, `/v1/divergence/series`; contract WASM history to `/v1/contracts/{id}/wasm` and `/code-history`; `/v1/oracles` directory to `/v1/oracle/streams`; `/v1/routers` to `GET /v1/aggregators` (registry plus 24h routed-via rollup).
 
-Not in the spec (each is a gap, not a decision to skip, unless §20 says so): sparkline, `/v1/tvl[/flow]`, `/v1/volatility`, `/v1/spread`, `/v1/slippage`, `/v1/price/{base}/{quote}/sources` and `/why`, `/v1/pairs/{base}/{quote}[/venues|/spread|/liquidity-flow]`, `/v1/markets/heatmap`, `/v1/sources/{name}[/race|/reliability|/weight-history|/wasm-history]`, the `/v1/protocols/{slug}/...` family (§7.8-7.9), `/v1/routers[/{contract_id}]`, `/v1/contracts/{id}/{storage-transitions,events,invocations,resources}`, `/wasm/{hash}[/wat|/diff/{prev_hash}]`, `/v1/contracts/wasm-upgrades`, `/v1/issuers/{g}/{assets,auth-history}`, `/v1/anchors/*`, `/v1/tx/{hash}/{trades,events,changes}`, `/v1/accounts/{g}/{trustlines,flow}`, `/v1/path-payments/*`, `/v1/ledgers/at`, `/v1/anomalies/{event_id,by-asset,by-reason}`, `/v1/mev/{tally,event_id}`, `/v1/network/*` (§7.21), `/v1/diagnostics/{pulse,decoders,archive-completeness,cross-region,wasm-coverage,slo}`, `/v1/oracles[/{name}|/compare]`, `/v1/discovered`, `/v1/coins/{slug}/{stats,events,protocols,sep41-events,trustlines/history,holders/history,supply/history,supply/breakdown}`. Do not add any without a consumer; a panel whose endpoint is absent says so rather than faking data.
+Not in the spec (each is a gap, not a decision to skip, unless §18 says so): sparkline, `/v1/tvl[/flow]`, `/v1/volatility`, `/v1/spread`, `/v1/slippage`, `/v1/price/{base}/{quote}/sources` and `/why`, `/v1/pairs/{base}/{quote}[/venues|/spread|/liquidity-flow]`, `/v1/markets/heatmap`, `/v1/sources/{name}[/race|/reliability|/weight-history|/wasm-history]` (the bare `{name}` is mostly served by `/health`; only weight, paid and contracts are missing), the `/v1/protocols/{slug}/...` family (§7.8-7.9), `/v1/contracts/{id}/{storage-transitions,events,invocations,resources}`, `/wasm/{hash}[/wat|/diff/{prev_hash}]`, `/v1/contracts/wasm-upgrades`, `/v1/issuers/{g}/{assets,auth-history}`, `/v1/anchors/*`, `/v1/tx/{hash}/{trades,events,changes}`, `/v1/accounts/{g}/flow`, `/v1/path-payments/*`, `/v1/ledgers/at`, `/v1/anomalies/{event_id,by-asset,by-reason}`, `/v1/mev/{tally,event_id}`, `/v1/network/*` (§7.21), `/v1/diagnostics/{pulse,decoders,archive-completeness,cross-region,wasm-coverage,slo}`, `/v1/oracles[/{name}|/compare]`, `/v1/discovered`, `/v1/coins/{slug}/{stats,events,protocols,sep41-events,trustlines/history,holders/history,supply/history,supply/breakdown}`. Do not add any without a consumer; a panel whose endpoint is absent says so rather than faking data.
 
 Streams: Last-Event-ID resume is implemented on the SSE streams (`internal/api/v1/stream_resume_spec_test.go`). Embeds are frontend routes (`/embed/asset|currency|pair`), not API endpoints.
 
@@ -244,7 +244,7 @@ A typical URL: `/assets/<slug>?tab=chart&granularity=1m&timeframe=1h&sources=bin
 
 ## 14. Embeds, Open Graph, integrations
 
-- Iframe embeds on arbitrary domains: `/embed/asset/[slug]`, `/embed/currency/[ticker]`, `/embed/pair/[pair]`. `frame-ancestors` is deliberately absent from `web/explorer/public/_headers` (site-audit S14) so embeds frame everywhere; whitelist later if abused.
+- Iframe embeds on arbitrary domains: `/embed/asset/[slug]`, `/embed/currency/[ticker]`, `/embed/pair/[pair]`. `/embed/*` sends `frame-ancestors *`; only the `/*` rule omits `frame-ancestors` (site-audit S14: Pages applies every matching rule and two CSPs intersect), so non-embed pages are protected by `X-Frame-Options: DENY` (`web/explorer/public/_headers`). Whitelist embedders later if abused.
 - Open Graph: Satori via `workers-og` in the Pages Function `web/explorer/functions/og/[[path]].js`, linked through `ogImageFor` in `web/explorer/src/lib/seo.ts`; site-wide fallback is the static `/og.png`. Chosen over build-time `satori + resvg` (pre-render plus a Worker for the long tail) and over `@vercel/og` (Vercel runtime).
 - Wallet portfolio (read-only balances, total USD value, 24h change from the price endpoints plus `/v1/accounts/{g}`) and a SEP-40 oracle reader demo on `/oracles` hitting `/v1/oracle/lastprice` are planned and not built.
 
@@ -276,7 +276,7 @@ Why not Vercel: brand fit and vendor consolidation ("we run our own everything")
 ## 18. Resolved questions of record
 
 1. Hosting: Cloudflare Pages static export, edge SSR via ADR-0044.
-2. Wallet UX: Freighter only at v1 (INV-1092 for the rest).
+2. Wallet UX: none in the explorer at v1 (sign-in is email code plus passkey); Freighter/Albedo/Lobstr are INV-1092, post-v1.
 3. Repo layout: monorepo, generated typed client.
 4. Content: in-tree Markdown, no content repo.
 5. Brand: [design-system.md](design-system.md) (palette and tokens); fonts in `src/app/layout.tsx`.
@@ -285,6 +285,10 @@ Why not Vercel: brand fit and vendor consolidation ("we run our own everything")
 8. MEV thresholds: algorithmic, no allowlist, no score; unverified candidates (§11.4).
 9. OG generator: §14.
 10. `as_of_ledger` UX: point-in-time mode not built, open post-v1 (§8).
+
+Deferred product (UX plan P6): watchlist to alerts, compare tooling, embeds v2, CSV/bulk export; each needs platform-account integration and is a gap, not built.
+
+Thresholds of record (impl plan): WAT diff response capped at 5 MB; SDEX order book 20 levels per side; wildcard observations stream (`asset=*`) load-tested at 100 trades/s; Lighthouse mobile >= 90, CLS < 0.1, axe-core in CI (WCAG 2.1 AA). No CI step enforces the Lighthouse, axe-core or bundle gates today (§17).
 
 UX decisions log (do not re-litigate): one unified asset namespace, no separate "currencies" world; canonical entity URLs with `/contract` as the attribution hinge; coverage badges backed by real verdicts, never a static trusted sticker; closed-bucket-only price rendering with explicit timestamps and visible confidence; protocol pages follow one template plus a per-protocol signature panel; network explorer phased point-lookups first with no fake full-history browsing before the CH read path exists; desktop-first and dark-default with API transparency universal; `/research` stays because it is part of the trust story.
 
@@ -295,7 +299,7 @@ UX decisions log (do not re-litigate): one unified asset namespace, no separate 
 | INV-1088 DeFindex vault auto-discovery | blocked, follow-up after v1 curated allowlist (§7.9.1) |
 | INV-1092 Albedo + Lobstr wallets | blocked, post-v1 (§7.24) |
 | INV-1093 history-scale browse/filter (Phase N2) | blocked, post-launch (§7.21) |
-| Account lifetime authority INV-2140/INV-2141 (A1/A2 movements and entry-changes views) | open, see [pre-p23-classic-movements-research.md](pre-p23-classic-movements-research.md) |
+| Asset-page slices INV-2140/INV-2141 (A1/A2 movements and entry-changes views, under INV-2138; account-page program is INV-2128) | open, see [pre-p23-classic-movements-research.md](pre-p23-classic-movements-research.md) |
 | API and panel gaps | §6, §7, §10 |
 
 ## 20. Cross-references
