@@ -139,7 +139,11 @@ func (e *Eraser) erase(
 	rep.ErasedSubject = erased
 	rep.Counts, err = e.Store.EraseAccount(ctx, postgresstore.ErasureRequest{
 		Plan: plan, ExtraKeyIDs: extra, ErasedSubject: erased, Actor: actor,
+		RequireNoUsers: admit != nil,
 	})
+	if admit != nil && errors.Is(err, platform.ErrConflict) {
+		return Report{}, errNotAdmitted
+	}
 	if errors.Is(err, platform.ErrNotFound) {
 		return Report{AlreadyErased: true}, nil
 	}

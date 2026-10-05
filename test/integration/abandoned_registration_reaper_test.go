@@ -7,11 +7,15 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/Stellar-Index/StellarIndex/internal/accounterasure"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
@@ -95,5 +99,25 @@ func TestAbandonedRegistrationSweep(t *testing.T) {
 	}
 	if n, err := eraser.SweepAbandonedRegistrations(ctx, accounts, cutoff); err != nil || n != 0 {
 		t.Errorf("second sweep: erased %d, err %v; want 0, nil", n, err)
+	}
+
+	// A member who joins between the plan and the erase must stop the erase.
+	seed("raced", old, false, false, false, true, "free")
+	var racedID uuid.UUID
+	if err := db.QueryRowContext(ctx, `SELECT id FROM accounts WHERE slug = 'raced'`).Scan(&racedID); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := accounts.PlanErasure(ctx, racedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, ctx, db, `INSERT INTO users (account_id, email, role) VALUES ($1, 'raced@example.com', 'owner')`, racedID)
+	_, err = accounts.EraseAccount(ctx, postgresstore.ErasureRequest{Plan: plan, ErasedSubject: "erased:x", Actor: platform.ActorSystem, RequireNoUsers: true})
+	if !errors.Is(err, platform.ErrConflict) {
+		t.Errorf("erase after a member joined: err %v, want ErrConflict", err)
+	}
+	var left int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM accounts WHERE id = $1 AND status = 'active'`, racedID).Scan(&left); err != nil || left != 1 {
+		t.Errorf("raced account active rows = %d (err %v), want 1", left, err)
 	}
 }

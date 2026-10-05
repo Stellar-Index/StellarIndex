@@ -54,6 +54,9 @@ type ErasureRequest struct {
 	ErasedSubject string
 	// Actor is recorded on the account.erase audit row.
 	Actor platform.ActorKind
+	// RequireNoUsers refuses the erase (platform.ErrConflict) if the account
+	// gained a member after the plan was read; the abandoned-registration sweep sets it.
+	RequireNoUsers bool
 }
 
 // ErasureCounts is what one EraseAccount removed, recorded on the
@@ -176,8 +179,14 @@ func (r *AccountStore) EraseAccount(ctx context.Context, req ErasureRequest) (Er
 		return c, fmt.Errorf("erase account: slug lock: %w", err)
 	}
 	var slug string
-	err = tx.QueryRowContext(ctx, `SELECT slug FROM accounts WHERE id = $1 FOR UPDATE`, p.AccountID).Scan(&slug)
+	err = tx.QueryRowContext(ctx, `SELECT a.slug FROM accounts a
+		 WHERE a.id = $1
+		   AND (NOT $2::boolean OR NOT EXISTS (SELECT 1 FROM users u WHERE u.account_id = a.id))
+		   FOR UPDATE OF a`, p.AccountID, req.RequireNoUsers).Scan(&slug)
 	if errors.Is(err, sql.ErrNoRows) {
+		if req.RequireNoUsers {
+			return c, fmt.Errorf("erase account: gone or gained a member since the plan (%w)", platform.ErrConflict)
+		}
 		return c, platform.ErrNotFound
 	}
 	if err != nil {
