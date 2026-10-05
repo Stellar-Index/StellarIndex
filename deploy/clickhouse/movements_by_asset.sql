@@ -60,10 +60,12 @@ FROM stellar.account_movements;
 --       WHERE ledger >= $((P * 1000000)) AND ledger < $(((P + 1) * 1000000))
 --       SETTINGS max_threads = 4, max_memory_usage = 8000000000,
 --                max_bytes_before_external_sort = 4000000000"
---     # Let merges drain before the next partition: 100 active parts is a
---     # tenth of parts_to_delay_insert (1000), so inserts never throttle.
+--     # Let this partition's merges drain before the next one. The count is
+--     # per partition, like parts_to_delay_insert (1000): a table-wide count
+--     # grows with the 65 settled partitions and would never fall below 100.
 --     while [ "$(clickhouse-client --port 9300 -q "SELECT count() FROM system.parts
---         WHERE database = 'stellar' AND table = 'movements_by_asset' AND active")" -ge 100 ]; do
+--         WHERE database = 'stellar' AND table = 'movements_by_asset' AND active
+--           AND partition_id = '$P'")" -ge 100 ]; do
 --       sleep 60
 --     done
 --   done
