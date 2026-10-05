@@ -13,6 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
+var xlmSAC = canonical.NativeSACContractID()
+
 // tOpt is the synthetic-trade spec for the pattern tests — the arb
 // tests' fixed-tx `trade` helper can't express cross-tx patterns.
 type tOpt struct {

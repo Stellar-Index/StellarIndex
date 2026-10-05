@@ -59,7 +59,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/accounts"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/archive"
@@ -266,6 +268,7 @@ func realMain() int {
 		printUsage()
 		return 2
 	}
+	installNetworkFromArgs(args[1:])
 	return dispatchExitCode(args[0], run(args), os.Stderr)
 }
 
@@ -300,4 +303,37 @@ func dispatchExitCode(name string, err error, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %v\n", name, err)
 	}
 	return 1
+}
+
+// installNetworkFromArgs installs the configured network (passphrase and
+// alias registry) once, before any subcommand runs, from the -config flag
+// every config-reading subcommand shares. A subcommand without -config, or
+// one whose config does not load, is left on the pubnet default; the
+// subcommand reports its own config error.
+func installNetworkFromArgs(args []string) {
+	path := configPathFromArgs(args)
+	if path == "" {
+		return
+	}
+	cfg, err := config.LoadWithEnv(path)
+	if err != nil {
+		return
+	}
+	if err := canonical.InstallNetwork(cfg.Stellar.Passphrase(), cfg.Supply.SACWrappers); err != nil {
+		fmt.Fprintf(os.Stderr, "stellarindex-ops: install network: %v\n", err)
+	}
+}
+
+// configPathFromArgs returns the value of -config/--config (space or = form).
+func configPathFromArgs(args []string) string {
+	for i, a := range args {
+		a = strings.TrimLeft(a, "-")
+		if a == "config" && i+1 < len(args) && strings.HasPrefix(args[i], "-") {
+			return args[i+1]
+		}
+		if v, ok := strings.CutPrefix(a, "config="); ok && strings.HasPrefix(args[i], "-") {
+			return v
+		}
+	}
+	return ""
 }

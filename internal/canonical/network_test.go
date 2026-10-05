@@ -62,3 +62,58 @@ func TestSacContractID_NetworkAware(t *testing.T) {
 		t.Errorf("testnet native SAC == pubnet SAC (%q) — SacContractID is not network-aware; a testnet asset detail would serve the pubnet contract address", pub)
 	}
 }
+
+// testnetNativeSAC is the well-known testnet XLM Stellar Asset Contract.
+const testnetNativeSAC = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+
+func TestNativeSACContractID_PubnetUnchangedAndNetworkAware(t *testing.T) {
+	t.Cleanup(func() { canonical.InstallNetworkPassphrase("") })
+
+	canonical.InstallNetworkPassphrase("")
+	if got := canonical.NativeSACContractID(); got != "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" {
+		t.Errorf("uninstalled NativeSACContractID() = %q, want the pre-change pubnet literal", got)
+	}
+	canonical.InstallNetworkPassphrase(canonical.PubnetPassphrase)
+	if got := canonical.NativeSACContractID(); got != canonical.XLMSacContractID {
+		t.Errorf("pubnet NativeSACContractID() = %q, want %q", got, canonical.XLMSacContractID)
+	}
+
+	canonical.InstallNetworkPassphrase(testnetPassphrase)
+	want, err := canonical.NativeAsset().SacContractID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := canonical.NativeSACContractID()
+	if got != want || got != testnetNativeSAC {
+		t.Errorf("testnet NativeSACContractID() = %q, SDK derivation %q, known %q", got, want, testnetNativeSAC)
+	}
+}
+
+func TestInstallNetwork_TestnetAliasFamilyUsesTestnetSAC(t *testing.T) {
+	t.Cleanup(func() {
+		canonical.InstallNetworkPassphrase("")
+		canonical.InstallAliasRegistry(nil)
+	})
+	if err := canonical.InstallNetwork(testnetPassphrase, nil); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, a := range canonical.AssetAliases(canonical.NativeAsset()) {
+		got = append(got, a.String())
+	}
+	want := []string{"native", "crypto:XLM", testnetNativeSAC}
+	if len(got) != len(want) {
+		t.Fatalf("testnet XLM family = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("testnet XLM family = %v, want %v", got, want)
+			break
+		}
+	}
+	for _, s := range got {
+		if s == canonical.XLMSacContractID {
+			t.Errorf("testnet XLM family contains the pubnet SAC: %v", got)
+		}
+	}
+}

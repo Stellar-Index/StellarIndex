@@ -303,7 +303,7 @@ func DEXSourceNames() []string { return dexSourceNames() }
 // can carry. Mirrors [isXLMAsset]; kept as a function so the SQL scan and
 // [xlmBaseTierFor]'s Go gate cannot drift.
 func xlmAssetForms() []string {
-	return []string{canonical.NativeAsset().String(), nativeXLMSAC}
+	return []string{canonical.NativeAsset().String(), canonical.NativeSACContractID()}
 }
 
 // xlmBaseRestampSources resolves the scan's source list: the DEX registry

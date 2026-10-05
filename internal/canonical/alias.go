@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 )
 
-// XLMSacContractID is the pubnet Stellar Asset Contract address that
+// XLMSacContractID is the PUBNET Stellar Asset Contract address that
 // wraps native XLM — XLM's third canonical identity, alongside `native`
 // (the per-network strkey-less form SDEX writes) and `crypto:XLM` (the
 // cross-network ticker form every CEX writes).
@@ -18,10 +18,9 @@ import (
 // `NativeAsset().SacContractID()` against [PubnetPassphrase], pinned
 // both by TestSacContractID_Golden (sac_test.go) and by
 // TestXLMSacContractID_MatchesDerivation here, so the literal can never
-// drift from the derivation. The literal is kept as a constant rather
-// than derived at init because [Asset.SacContractID] returns an error
-// and this value is needed in constant position (SQL predicates,
-// orientation ranking).
+// drift from the derivation. It is the pubnet default only; Go code that
+// must follow the configured network calls [NativeSACContractID], never this. The
+// constant remains for SQL text built at init.
 const XLMSacContractID = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 
 // xlmAliasFamily is the XLM equivalence class in CANONICAL PRIORITY
@@ -31,10 +30,14 @@ const XLMSacContractID = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOW
 // Constructed as struct literals rather than through the New* helpers
 // because those return errors and this must be a package-level var;
 // TestXLMAliasFamily_IsValid pins that every member passes Validate().
-var xlmAliasFamily = []Asset{
-	{Type: AssetNative},
-	{Type: AssetCrypto, Code: "XLM"},
-	{Type: AssetSoroban, ContractID: XLMSacContractID},
+var xlmAliasFamily = xlmAliasFamilyFor(XLMSacContractID)
+
+func xlmAliasFamilyFor(sac string) []Asset {
+	return []Asset{
+		{Type: AssetNative},
+		{Type: AssetCrypto, Code: "XLM"},
+		{Type: AssetSoroban, ContractID: sac},
+	}
 }
 
 // eurcAliasFamily is Circle's EUROC→EURC rename: the verified catalogue
@@ -53,8 +56,12 @@ var eurcAliasFamily = []Asset{
 // config, so they are unified here unconditionally and form the
 // baseline every [AliasRegistry] starts from. Config-declared
 // classic↔SAC pairs are layered on top by [NewAliasRegistry].
-var baseAliasFamilies = func() map[string][]Asset {
-	compileTimeFamilies := [][]Asset{xlmAliasFamily, eurcAliasFamily}
+var baseAliasFamilies = baseAliasFamiliesFor(XLMSacContractID)
+
+// baseAliasFamiliesFor is [baseAliasFamilies] with the XLM family's SAC
+// member set to the given network's native SAC.
+func baseAliasFamiliesFor(xlmSAC string) map[string][]Asset {
+	compileTimeFamilies := [][]Asset{xlmAliasFamilyFor(xlmSAC), eurcAliasFamily}
 	m := make(map[string][]Asset)
 	for _, fam := range compileTimeFamilies {
 		for _, a := range fam {
@@ -62,7 +69,7 @@ var baseAliasFamilies = func() map[string][]Asset {
 		}
 	}
 	return m
-}()
+}
 
 // AliasRegistry is an immutable asset equivalence-class table: it maps
 // every canonical FORM that belongs to a multi-form asset to that
@@ -139,8 +146,13 @@ func NewAliasRegistry(passphrase string, sacWrappers map[string]string) (*AliasR
 	if passphrase == "" {
 		return nil, fmt.Errorf("alias registry: empty network passphrase")
 	}
-	families := make(map[string][]Asset, len(baseAliasFamilies)+2*len(sacWrappers))
-	for k, v := range baseAliasFamilies {
+	xlmSAC, err := NativeAsset().sacContractIDOn(passphrase)
+	if err != nil {
+		return nil, fmt.Errorf("alias registry: native SAC: %w", err)
+	}
+	base := baseAliasFamiliesFor(xlmSAC)
+	families := make(map[string][]Asset, len(base)+2*len(sacWrappers))
+	for k, v := range base {
 		families[k] = v
 	}
 
