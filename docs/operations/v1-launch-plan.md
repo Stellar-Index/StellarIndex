@@ -13,7 +13,7 @@ severity: P1
 > resuming: read §0 (verified state), then execute §2 in order.
 >
 > Superseded by this doc (banners added; keep for history/recipes only):
-> `production-readiness-master-plan-2026-07-18.md` (the campaign log),
+> the 2026-07-18 production-readiness master plan (the campaign log, since removed),
 > `production-readiness-remaining.md`, `docs/audit/audit-2026-07-16/go-live-master-plan.md`,
 > `launch-todo.md`, `launch-day-checklist.md`, `public-flip.md`,
 > `notes/ROADMAP.md`, `notes/BACKLOG.md`.

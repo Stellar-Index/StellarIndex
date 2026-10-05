@@ -1,175 +1,82 @@
 ---
-title: Operator runbook — 2026-08 usd_volume re-derive + CAGG rebuild (tier-3b poisoning, exact tiers, XLM-base anchor)
-last_verified: 2026-09-03
-status: ready-to-execute
+title: Operator runbook — re-derive and re-stamp trades.usd_volume, rebuild the CAGGs
+last_verified: 2026-10-05
+status: reference
 ---
 
-# 2026-08 historical remediation: re-derive `trades.usd_volume`, rebuild the CAGGs
+# Re-derive and re-stamp `trades.usd_volume`, rebuild the CAGGs
 
-**What happened.** Commit `87b8a203` (2026-07-22) introduced the tier-3b
-XLM bridge: an on-chain trade with no recognised USD peg is valued as
-`token/XLM × XLM/USD`, with the `token/XLM` rate read from `prices_1m` —
-**a continuous aggregate over `trades` itself**. The rate for a thin
-token is therefore whatever the last trader wrote, up to 24h stale, and
-one honest ~$9 seed trade valued a 5-XLM dump at **$8,559,224**
-(reproduced digit-for-digit; see `NEXT-SESSION.md` §1 and memory
-`project_valuation_identity_fixes_2026_08_04.md`). Fleet-wide, ~$21.4M
-of the ~$22M reported 24h on-Stellar XLM `usd_volume` was artifact.
+Use this when `verify-usd-volume` reports violations, or a valuation fix
+lands that changes how stored `usd_volume` is computed. Two tools, two
+classes of row:
 
-**Code fixes already on `main`** (all `verify.sh`-green):
+| class | tool | why |
+|---|---|---|
+| ESTIMATED tier (tier-3b FX/XLM bridge; needs the resolver waterfall) | `ch-rebuild` (Step 2) | one valuation implementation, `tradeUSDVolume`, shared with the insert path |
+| EXACT tier (USD-pegged leg; a SQL identity `pegged_leg / 10^decimals`) | `usd-volume-restamp -tier exact` (Step 5) | |
+| tier-4 XLM anchor (base leg is XLM) | `usd-volume-restamp -tier xlm-base` (Step 6) | needs `prices_1m` at the row's `ts`, so not spellable in SQL |
 
-| commit | what |
-|---|---|
-| `fd1860bd` | XLM-based trades valued off their measured XLM leg (tier-4 anchor now BEATS the bridge) — the insert-time fix |
-| `52b04a63` + follow-up | every verified ticker flaggable as impersonation; reference-only warning restored; caps suppressed on collisions |
-| this session | serving-side thin-market substance gate (`[pricing_guard]`); orchestrator `min_usd_volume` fail-closed; explorer chart/provenance |
+`usd-volume-restamp` has two more tiers (`xlm-quote`, `cex-fx`); see
+`stellarindex-ops usd-volume-restamp -h`.
 
-**Poisoned population.** Rows inserted while `87b8a203` was live and
-`fd1860bd` was not: `ts >= '2026-07-22'` up to the deploy of the fixed
-indexer — ~2.5M trades, ~1,650 materially (>10×) wrong, errors in BOTH
-directions. The CAGGs built over them (`prices_1m/15m/1h/4h/1d/1w/1mo`
-`volume_usd`, `dex_volume_by_pair_1d`, `source_volume_1h`,
-`pools_per_source_1h`) and the `asset_volume_24h` rollup inherit the
-poison.
+Invariants:
 
----
+- Never hand-write SQL for a heterogeneous class; use the Go path.
+- Every rewritten row carries the run's `derive_generation` (`now.Unix()`),
+  and the upsert/UPDATE is guarded by `derive_generation <= gen`. A live
+  gen-0 replay can never claw a correction back, and re-running a window is
+  idempotent.
+- Fix the insert path and deploy it FIRST (indexer + api + aggregator as
+  needed). Until it is live the dirty span has no right edge. Record
+  `SELECT max(ledger) FROM trades;` at deploy time as `L_HI`; pin the left
+  edge with `SELECT min(ledger), min(ts) FROM trades WHERE ts >= '<first dirty day>';`.
+- One heavy job at a time, ONE job name for every window and attempt of a
+  run (`run-heavy-job.sh` locks per name and host-wide; exit 75 = the
+  previous attempt or another heavy job is still alive).
+- Source the env file first or the run fails 28P01 (the TOML's
+  `postgres_dsn` carries a placeholder password):
+  `set -a; . /etc/default/stellarindex; set +a`.
+- Never inline `$$` SQL over ssh; ship SQL by `scp` + `-f file.sql`.
+- Any hand SQL DML into compressed chunks: one transaction per window,
+  `SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0`
+  (never session-wide `SET`, which rides the pooled connection past
+  COMMIT), predicate bound to the window's `ts` range.
 
-## Step 0 — DEPLOY FIRST (hard prerequisite)
-
-**r1 is still running v0.22.0 binaries and is writing mispriced
-`usd_volume` on every new XLM-based trade right now.** Until the fixed
-indexer is deployed, the dirty span has no right edge and any re-derive
-chases a moving target.
-
-1. Cut the release per `/cut-release` (CHANGELOG `[Unreleased]` already
-   carries this session's entries):
-   ```sh
-   git checkout main && git pull --ff-only origin main
-   bash scripts/dev/cut-release.sh vX.Y.Z --dry-run   # then for real
-   ```
-2. Deploy per `/deploy-r1` — **indexer + api + aggregator** (the gate
-   lives in api+aggregator, the valuation fix in the indexer's insert
-   path via the shared store):
-   ```sh
-   gh workflow run deploy.yml -f region=r1 -f version=vX.Y.Z \
-     -f binaries=stellarindex-indexer,stellarindex-aggregator,stellarindex-api
-   ```
-   No new migrations in this batch. Post-deploy: run the r1-smoke
-   battery, then confirm the gate is live —
-   `curl -s .../v1/price?asset=<known-dust-pair>&quote=native` must
-   return the `price-withheld` problem type, and
-   `stellarindex_price_serve_substance_withheld_total` must be moving.
-3. **Record the deploy ledger** — the re-derive's right edge:
-   ```sql
-   SELECT max(ledger) FROM trades;  -- call this L_HI, at deploy time
-   ```
-
-## Step 1 — pin the dirty range precisely
-
-```sql
--- left edge: first ledger valued under 87b8a203 (deployed 2026-07-22)
-SELECT min(ledger) AS l_lo, min(ts) FROM trades WHERE ts >= '2026-07-22';
--- right edge: L_HI from step 0.
-```
-
-Sanity-size it (expected ~2.5M):
-
-```sql
-SELECT count(*) FROM trades WHERE ts >= '2026-07-22' AND ledger <= <L_HI>;
-```
-
-## Step 2 — re-derive via `ch-rebuild` (the Go path, NOT hand SQL)
-
-Use the ONE valuation implementation (`tradeUSDVolume` — same function
-insert-time and re-derive-time; the verifier's header explicitly warns
-against SQL reimplementations for heterogeneous classes, and this class
-IS heterogeneous: post-fix values depend on tier ordering + per-source
-decimals + the XLM/USD series at each trade's ts).
-
-Mechanics (verified in repo, 2026-08-04):
-
-- `stellarindex-ops ch-rebuild -config /etc/stellarindex.toml
-  -ch-addr 127.0.0.1:9300 -from <L_LO> -to <L_HI> -sdex -write`
-  re-decodes from the ClickHouse lake and upserts through
-  `InsertTrade`/`BatchInsertTrades`.
-- It calls `SetDeriveGeneration(now.Unix())` + installs the FX/peg
-  resolvers itself (`ch_rebuild.go:162-172`) — the
-  `reDeriveNullVolumeGuard` fail-closed check is satisfied; if it ever
-  fires, STOP: it means the config's peg lists are missing on the host.
-- The upsert guard is `derive_generation <= EXCLUDED.derive_generation`,
-  so re-running a window is safe/idempotent, and live gen-0 writes can
-  never claw a corrected row back.
-- Add `-sources` only if you want to scope; default = all event-based
-  sources. `-sdex` includes the op-derived SDEX trades (needed — SDEX
-  is most of the volume).
-
-Execution learnings (2026-08-04 run — folded in so the next operator
-doesn't rediscover them):
-
-- **Source the env file first**: the TOML's `postgres_dsn` carries a
-  placeholder password; the real one is injected via
-  `/etc/default/stellarindex` (systemd EnvironmentFile). A bare
-  one-shot fails 28P01. `set -a; . /etc/default/stellarindex; set +a`.
-- **DECOMPRESS FIRST** (the projector-replay lesson generalises):
-  upserting into a COMPRESSED trades chunk crawls — the calibration
-  window ran ~10× slower than the uncompressed-path precedent
-  (per-batch segment decompression). Post-consolidation trades chunks
-  are 7-DAY, so only `_hyper_1_31953_chunk` (07-16→07-23, 1.8 GB
-  compressed / 31 GB raw) overlapped this range compressed.
-  `decompress_chunk(...)` it under the heavy wrapper (5.2 TB free on
-  the pool — headroom is not a concern), and **pause the trades
-  compression policy first** (`SELECT alter_job(1000, scheduled =>
-  false)`) so it can't recompress the chunk mid-run — then re-enable
-  (`scheduled => true`) after the final window and let it drain.
-
-Operational discipline (ALL are prior-incident lessons):
+## Step 2 — re-derive ESTIMATED-tier rows via `ch-rebuild`
 
 ```sh
-# per window, on r1 — ONE job name for every window and attempt (exit
-# 75 = the previous window, or another heavy job, is still running):
 /usr/local/sbin/run-heavy-job.sh ch-rebuild-sdex \
   /usr/local/bin/stellarindex-ops ch-rebuild \
     -config /etc/stellarindex.toml -ch-addr 127.0.0.1:9300 \
-    -from <W_LO> -to <W_HI> -sdex -write
+    -from <W_LO> -to <W_HI> -sdex -sources sdex -write
 ```
 
-- **Windows of ≤50,000 ledgers** — the sdex read OOMs the 10 GiB client
-  pin above that (measured 2026-07-30). The 13-day span is ~190k
-  ledgers → ~4 windows.
-- **Oldest → newest**, one window at a time (one heavy job at a time is
-  the standing rule).
-- Throughput reality: ~620 rows/s into compressed chunks was measured;
-  2.5M rows ≈ **~70–90 min of writes**, plus decode time. Budget a few
-  hours wall.
-- Chunks in the span older than 7 days are compressed. `ch-rebuild`
-  writes through the normal upsert (no bulk-UPDATE GUC needed by the Go
-  path); if you fall back to any SQL step, scope the cap like the Go
-  tool does (INV-3, #312) — one transaction per window, `SET LOCAL` (never
-  session-wide `SET`, which rides the pooled connection past COMMIT), and
-  the UPDATE/DELETE predicate bound to that window's `[<W_LO_TS>, <W_HI_TS>]`
-  close-time range, never an unbounded chunk-wide statement:
-  ```sql
-  BEGIN;
-  SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0;
-  -- your UPDATE/DELETE here, scoped to ts BETWEEN <W_LO_TS> AND <W_HI_TS>
-  COMMIT;
-  ```
-  and ship SQL by `scp` + `-f file.sql` — never inline `$$` over ssh.
-- After each window, **refresh `prices_1m` over that window's time
-  range before starting the next** (step 3 command, scoped) — this
-  breaks the tier-3b circularity for any remaining bridge-valued rows
-  in later windows: their `prices_1m` inputs are then already
-  corrected.
+- `ch-rebuild` stamps `derive_generation` and installs the FX/peg
+  resolvers itself. If `reDeriveNullVolumeGuard` fires, STOP: the host
+  config's peg lists are missing.
+- Windows of at most 50,000 ledgers (the SDEX read OOMs the 10 GiB client
+  pin above that). Oldest to newest, one window at a time.
+- `-sdex` is needed (SDEX is most of the volume). Under `-write`, scope
+  with `-sources <name>` as the F050 BackfillSafe gate requires; see
+  [history-completeness-plan.md](history-completeness-plan.md) §2.2.
+- Decompress first: upserting into a compressed trades chunk crawls
+  (~620 rows/s measured; ~100x faster after decompress). Pause the
+  compression policy (`SELECT alter_job(<job_id>, scheduled => false)`),
+  `decompress_chunk(...)` the overlapping chunks under the heavy wrapper,
+  and re-enable (`scheduled => true`) after the last window.
+- After each window, refresh `prices_1m` over that window's range before
+  the next: it breaks the tier-3b circularity (the bridge reads `prices_1m`,
+  a CAGG over `trades`) for later windows.
 
 ## Step 3 — CAGG rebuild over the span
 
-`ch-rebuild` refreshes **nothing**; `prices_1m/15m` and all four
-volume/derived CAGGs are OUTSIDE the Go allow-list — psql only. With
-`[T_LO, T_HI]` = the span's time range (pad ≥ 2× bucket per
-`PadRefreshWindow` semantics):
+`ch-rebuild` and `usd-volume-restamp` refresh nothing. The Go allow-list (`allowedCAGGViews`) is built from all 12
+trades views plus the oracle and supply CAGGs, but this refresh runs as psql
+on r1, under a heavy-job scope, over `[T_LO, T_HI]`
+(pad at least 2x the bucket). The ORDER matters: `twap_1h`/`twap_1d` read
+`prices_1m`, so refresh `prices_1m` first and the two `twap_*` last.
 
 ```sql
--- interleaved per-window during step 2, then once over the full span:
 CALL refresh_continuous_aggregate('prices_1m',  '<T_LO>', '<T_HI>');
 CALL refresh_continuous_aggregate('prices_15m', '<T_LO>', '<T_HI>');
 CALL refresh_continuous_aggregate('prices_1h',  '<T_LO>', '<T_HI>');
@@ -177,319 +84,174 @@ CALL refresh_continuous_aggregate('prices_4h',  '<T_LO>', '<T_HI>');
 CALL refresh_continuous_aggregate('prices_1d',  '<T_LO>', '<T_HI>');
 CALL refresh_continuous_aggregate('prices_1w',  '<T_LO>', '<T_HI>');
 CALL refresh_continuous_aggregate('prices_1mo', '<T_LO>', '<T_HI>');
-CALL refresh_continuous_aggregate('twap_1h',    '<T_LO>', '<T_HI>');
-CALL refresh_continuous_aggregate('twap_1d',    '<T_LO>', '<T_HI>');
--- volume/derived (names verified against migrations 0036/0064/0068):
 CALL refresh_continuous_aggregate('dex_volume_by_pair_1d', '<T_LO>', '<T_HI>');
 CALL refresh_continuous_aggregate('source_volume_1h',      '<T_LO>', '<T_HI>');
 CALL refresh_continuous_aggregate('pools_per_source_1h',   '<T_LO>', '<T_HI>');
+CALL refresh_continuous_aggregate('twap_1h',    '<T_LO>', '<T_HI>');
+CALL refresh_continuous_aggregate('twap_1d',    '<T_LO>', '<T_HI>');
 ```
 
-Run under a heavy-job scope too; a `55P03` concurrent-refresh conflict
-just means the policy job is running — retry. Then force the
-`asset_volume_24h` rollup refresh (it re-sums `prices_1m.volume_usd`;
-it self-heals on its cadence but verify it did).
+Then force the `asset_volume_24h` rollup (it re-sums `prices_1m.volume_usd`
+and self-heals on its cadence; verify it did). `55P03` on a refresh means
+the policy job holds it: retry. Never refresh concurrently with a
+backfill. A restamp-tool run prints these 12 refreshes in this order; its
+`acceptance:` line reads `trades` directly and cannot see them, so served
+volume surfaces keep the pre-restamp numbers until they run. Run them
+AFTER the whole span is restamped, never interleaved.
 
-Compression backlog after the writes self-drains via the policy; check
-`timescaledb_information.jobs` / the `compression-lag` runbook if
-chunks stay uncompressed >1 day.
+Compression backlog after the writes drains via the policy; if chunks stay
+uncompressed for more than a day see the `compression-lag` runbook.
 
-## Step 4 — verification (acceptance gates)
+## Step 4 — acceptance
 
-1. **Exact tiers**: `stellarindex-ops verify-usd-volume -config
-   /etc/stellarindex.toml -days 30` → **0 violations** (structurally
-   blind to tier 3/4 — necessary, not sufficient).
-2. **XLM-base identity** (the class that was wrong; the check the
-   verifier doesn't have yet). For the span, estimated-tier rows whose
-   base is `native` must satisfy
-   `usd_volume ≈ base_amount/1e7 × XLM/USD(ts)`:
-   ```sql
-   -- spot-verify per day; xlm_usd from the crypto:XLM/fiat:USD or
-   -- native/USDC-GA5Z… prices_1m series at the trade's minute.
-   -- Expect |delta|/usd_volume < 1% except genuine bridge-tier rows.
-   ```
-   (Queue the durable version: extend `USDVolumeTier.Exact()`'s
-   companion with a `TierXLMBase` checkable identity —
-   `usd_volume_reconcile.go:85` is the seam. That closes the
-   13-days-invisible blindness class for good.)
-3. **Fleet-wide magnitude**: re-run the incident measurement — 24h
-   `sum(usd_volume)` for `base_asset='native'` vs `sum(base_amount/1e7
-   × xlm_usd)`. Pre-fix these differed **$21.96M vs $0.60M**; post-
-   re-derive they must agree to within FX noise. Also: zero rows >10×
-   off their XLM leg (was 225 over, 11 under).
-4. **Served surfaces**: `/v1/assets?code=XRP` → no `market_cap_usd`,
-   flag present; a dust pair's `/v1/price` → `price-withheld`;
-   explorer `/assets/USDT` after the next Pages deploy shows the
-   provenance caption and a USD-quoted chart.
-5. **Determinism spot-check** (2026-07-29 precedent): re-run one
-   already-corrected window; row md5s must be byte-identical.
+1. `stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml -days 30`
+   returns 0 violations. It is blind to tier 3/4: necessary, not sufficient.
+2. XLM-base identity: for the span, estimated-tier rows with base `native`
+   satisfy `usd_volume ~ base_amount/1e7 x XLM/USD(ts)` (expect under 1%
+   relative delta except genuine bridge-tier rows).
+3. Fleet magnitude: 24h `sum(usd_volume)` for `base_asset='native'` agrees
+   with `sum(base_amount/1e7 x xlm_usd)` to within FX noise, and no row is
+   more than 10x off its XLM leg.
+4. Served surfaces: a dust pair's `/v1/price` returns the `price-withheld`
+   problem type; `stellarindex_price_serve_substance_withheld_total` moves.
+5. Determinism: re-run one already-corrected window; row md5s are
+   byte-identical.
 
-## Step 5 — W5.3: re-stamp the pre-07-23 EXACT-tier rows (`usd-volume-restamp`)
+## Step 5 — re-stamp EXACT-tier rows (`usd-volume-restamp`)
 
-A different class from steps 1–4 and a different tool. Steps 1–4 re-derive
-ESTIMATED-tier rows (the tier-3b bridge) through the resolver-backed
-waterfall; that needs `ch-rebuild`. This step repairs EXACT-tier rows —
-quote leg or base leg USD-pegged — that were stamped before the peg
-identity was the insert path: the 2026-07-30 sweep measured
-**[2026-05-12, 2026-07-22], 66 dirty days, every violation a
-`[base_pegged] sdex` USDC-base row** valued by the resolver's VWAP
-(~+0.7%) instead of `base_amount / 10^7` (evidence:
-[2026-07-30-verify-usd-volume-30d.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-07-30-verify-usd-volume-30d.md)). That night's fix was a
-hand SQL UPDATE; `usd-volume-restamp` is that UPDATE as a tool, with the
-discipline built in — use it for any exact-tier violation
-`verify-usd-volume` reports from now on.
+Repairs rows whose quote or base leg is USD-pegged but whose stored
+`usd_volume` differs from `pegged_leg / 10^decimals`. Use it for any
+exact-tier violation `verify-usd-volume` reports.
 
-What it does (per `internal/ops/chops/usd_volume_restamp.go`):
+The tool (`internal/ops/chops/usd_volume_restamp.go`):
 
-- classifies every (source, base, quote) group of each UTC day with the
-  SAME `ClassifyUSDVolumeTier` + peg inputs (`trades.usd_pegged_classic_assets`
-  + `supply.sac_wrappers`) as the insert path and the verifier — the tool
-  never decides "which leg / which scale" itself;
-- rewrites only rows whose stored `usd_volume` differs from
-  `pegged_leg / 10^decimals` (`IS DISTINCT FROM`), to exactly the value the
-  insert path writes (`round(leg / 10^d, 8)` == `big.Rat.FloatString(8)`);
-- stamps every rewritten row with the run's `derive_generation`
-  (`now.Unix()`, like `ch-rebuild`) guarded by `derive_generation <= gen`
-  — INV-3: a live gen-0 replay can never claw the correction back;
-- leaves correct rows untouched (value AND generation), so a re-run
-  reports 0 — idempotent;
-- leaves NULL rows alone unless `-fill-null` (a coverage change, opt-in);
-- walks `-from..-to` (inclusive UTC days, never today) oldest → newest in
-  `-slice` windows (default 1h), each window one transaction with
-  `SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0`
-  — the 2026-07-30 lesson, no manual GUC step. LOCAL, so Postgres unwinds
-  the lifted cap at COMMIT and it can never ride the pooled connection
-  into a later statement (#312);
-- copies every rewritten row's prior `usd_volume` and `derive_generation`
+- classifies each (source, base, quote) group per UTC day with the same
+  `ClassifyUSDVolumeTier` and peg inputs as the insert path and verifier;
+- rewrites only rows where the stored value `IS DISTINCT FROM` the
+  identity, to the value the insert path writes (`round(leg / 10^d, 8)`),
+  stamped with the run's generation under the `derive_generation <= gen`
+  guard. Correct rows are untouched, so a re-run reports 0;
+- leaves NULL rows alone unless `-fill-null` (a coverage change);
+- walks `-from..-to` (inclusive UTC days, never today) oldest to newest in
+  `-slice` windows (default 1h), one transaction each, with the `SET LOCAL`
+  decompression cap lifted inside it;
+- copies each rewritten row's prior `usd_volume` and `derive_generation`
   into `usd_volume_restamp_log` (migration 0175) in the same REPEATABLE
-  READ transaction, and refuses to commit a window whose before-image and
-  UPDATE row counts differ. Every tier does this, `-tier xlm-base` and its
-  mirrors included. To undo a run, apply the statement in 0175's header
-  with the run's generation (the tool prints it; a resumed run reuses it):
-  it restores each row's earliest before-image of that run, and only rows
-  still at that generation;
-- dry-run by default; `-write` applies; ch-backfill-style heartbeat
-  (`ops_job="usd-volume-restamp"`, the standing stall alerts apply).
-
-Mechanics:
+  READ transaction and refuses to commit a window whose before-image and
+  UPDATE counts differ. To undo a run, apply the statement in 0175's
+  header with the run's generation (the tool prints it);
+- is dry-run by default; `-write` applies. Heartbeat is
+  `ops_job="usd-volume-restamp"`, so the standing stall alerts apply.
 
 ```sh
-# 0. size it (read-only; run anywhere with the config):
-stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml \
-  -day 2026-07-22 -days 72
-# 1. dry run — per-day candidate counts, Σ|Δ| before, no writes:
-stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
-  -from 2026-05-12 -to 2026-07-22
-# 2. apply, under the heavy wrapper, the SAME job name on every attempt
-#    (the lock is per name), env file sourced (28P01 trap), one window at a time:
+# 0. size it (read-only)
+stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml -day <LAST_DAY> -days <N>
+# 1. dry run: per-day candidate counts, sum|delta| before, no writes
+stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml -from <D0> -to <D1>
+# 2. apply under the heavy wrapper, env sourced, same job name every attempt
 set -a; . /etc/default/stellarindex; set +a
 /usr/local/sbin/run-heavy-job.sh usd-volume-restamp \
   /usr/local/bin/stellarindex-ops usd-volume-restamp \
-    -config /etc/stellarindex.toml -from 2026-05-12 -to 2026-05-31 -write
-# 3. acceptance — the tool prints this line for the window it ran:
-stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml \
-  -day 2026-07-22 -days 72        # → 0 violations
+    -config /etc/stellarindex.toml -from <D0> -to <D1> -write
+# 3. acceptance: verify-usd-volume as in step 0 -> 0 violations
 ```
 
-- Windows: any size is safe (the tool slices internally), but keep a
-  heavy job to ~2–3 weeks so a failed attempt is cheap to re-run — and
-  re-running IS cheap: repaired rows are skipped, only the remainder is
-  written.
-- DECOMPRESS FIRST still applies for throughput (not correctness): the
-  tool raises the decompression cap itself, but DML into a compressed
-  chunk is ~10× slower than into a decompressed one. Pause the trades
-  compression policy, `decompress_chunk` the span, re-enable after.
-- CAGG rebuild (step 3 above) over the restamped span afterwards — the
-  tool refreshes nothing; `prices_1m`'s `volume_usd` and everything above
-  it inherit the corrected column only on refresh.
-- Do NOT pass `-fill-null` on the first pass. Unpriced exact-tier rows are
-  the coverage alerts' population; fill them as a deliberate second pass
-  once the value repair has been accepted.
-- Tier-3b (quote-side FX bridge) violations are NOT this tool's job —
-  steps 0–4 (`ch-rebuild`). The tier-4 XLM anchor IS, via `-tier
-  xlm-base` — Step 6.
+- Keep one heavy job to about 2-3 weeks of days; a re-run skips repaired rows.
+- Do NOT pass `-fill-null` on the first pass: unpriced exact-tier rows are
+  the coverage alerts' population. Fill them as a deliberate second pass
+  after the value repair is accepted.
+- Tier-3b (quote-side FX bridge) violations are `ch-rebuild`'s, not this
+  tool's. The tier-4 XLM anchor is `-tier xlm-base` (Step 6).
 
-### Step 5, chunk mode — `-chunks` with `-tier exact`
+### Step 5, chunk mode
 
-The "DECOMPRESS FIRST still applies for throughput" bullet above is the
-by-hand version of this. `-chunks` is the same remedy inside the tool,
-and it is the SAME walk Step 6 uses: one driver
-(`internal/ops/chops/usd_volume_restamp_chunks.go`) takes the run lock,
-pauses the `trades` compression policy, and for each chunk in the window
-decompresses it, restamps inside it, and re-compresses it — with every
-guard that section documents (free-space pre-flight re-checked before
-each decompress, live-adjacent refusal, re-compress on failure, policy
-re-enable on every exit path, probe-and-skip resume carrying
-`-generation`).
-
-Use it for any exact-tier window older than the policy's 7 days. In-place
-UPDATEs into compressed chunks measured ~1,574 rows/min on 2026-09-03,
-and the pre-07-23 exact-tier population is ~10M rows across 2026-03..07
-(2,306,054 in March alone) — 100+ hours in place.
+In-place UPDATEs into compressed chunks run at roughly 1,574 rows/min
+(measured 2026-09-03). For any window older than the compression policy's
+7 days use `-chunks`: the same driver as Step 6, which decompresses each
+chunk, restamps inside it, and re-compresses it (guards below).
 
 ```sh
-# dry run first: the chunk plan, the pre-flight verdict, the candidate
-# counts per chunk. Nothing is decompressed, nothing is paused.
 stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
-  -tier exact -chunks -from 2026-03-01 -to 2026-03-31
-# apply, on r1, under the heavy wrapper, the SAME job name every attempt:
-set -a; . /etc/default/stellarindex; set +a
-/usr/local/sbin/run-heavy-job.sh usd-volume-restamp \
+  -tier exact -chunks -from <D0> -to <D1>            # dry run: chunk plan only
+HEAVY_JOB_STOP_TIMEOUT=2h /usr/local/sbin/run-heavy-job.sh usd-volume-restamp \
   /usr/local/bin/stellarindex-ops usd-volume-restamp \
-    -config /etc/stellarindex.toml -tier exact -chunks \
-    -from 2026-03-01 -to 2026-03-31 -write
+    -config /etc/stellarindex.toml -tier exact -chunks -from <D0> -to <D1> -write
 ```
 
-Differences from Step 6's chunk mode:
+`-chunk-batch`, `-report`, `-sample`, `-batch`, `-min-rel-delta` and
+`-max-generation` are refused with `-tier exact`; `-slice` is the
+per-transaction bound (narrow it, e.g. `-slice 15m`, for a busy span).
 
-- `-chunk-batch` is REFUSED with `-tier exact`. There is no row batch
-  here: one `-slice` window is one UPDATE is one transaction, so `-slice`
-  is the per-transaction bound. Narrow it (`-slice 15m`) for a busy span.
-- so are `-report`, `-sample`, `-batch`, `-min-rel-delta` and
-  `-max-generation` — an identity has no relative-move distribution to
-  threshold or report, and the walk's generation guard is the run's own
-  generation.
-- the run prints the same 12 CAGG refreshes Step 6 prints. The
-  `acceptance:` line reads `trades` directly and CANNOT see them; until
-  they run, every served volume surface keeps serving pre-restamp
-  numbers.
+## Step 6 — re-derive tier-4 XLM-base rows (`-tier xlm-base`)
 
-## Step 6 — #372: re-derive the pre-`fd1860bd` XLM-base rows (`usd-volume-restamp -tier xlm-base`)
+Population: on-chain DEX trades whose BASE leg is XLM (`native` or its SAC)
+and whose QUOTE leg is not USD-pegged, written before the anchor became the
+first route (`fd1860bd`, v0.25.0). The tool
+(`internal/storage/timescale/usd_volume_restamp_xlmbase.go`):
 
-A third class again. Step 5 repairs a SQL identity; this one RE-DERIVES
-the tier-4 XLM anchor, which is a function of `prices_1m` at the row's
-own timestamp and therefore cannot be spelled in SQL without
-re-implementing the waterfall.
-
-**The population.** Every on-chain DEX trade whose BASE leg is XLM
-(`native` or its SAC) and whose QUOTE leg is not USD-pegged, written
-before `fd1860bd` (2026-08-04, v0.25.0). Until that commit the waterfall
-reached the QUOTE side first, so the trade was valued through the token's
-own thin `<token>/USDC` `prices_1m` bucket — a rate its counterparties
-author — instead of off the XLM leg, which is the measured side of the
-trade and whose rate is a direct market. `a7892962` (2026-07-09) added
-the anchor only as a FALLBACK after the quote leg, so the whole
-2026-03-12 → 2026-07-21 span is dirty; every row is at
-`derive_generation = 0` (the 2026-08-05 re-derive covered `ts >=
-2026-07-22` only).
-
-**What the tool does** (`internal/storage/timescale/usd_volume_restamp_xlmbase.go`):
-
-- scans `(source ∈ the DEX registry, base_asset ∈ the two XLM wire forms,
-  derive_generation <= -max-generation)` per `-slice` window, and decides
-  the tier in GO with the insert path's own `usdVolumeDecimals` — a
-  USD-pegged quote is EXACT-tier and belongs to Step 5, never to this
-  one, so the two tools cannot undo each other;
-- rebuilds each row into its `canonical.Trade` and calls the store's own
-  `tradeUSDVolumeViaXLMBaseAnchor` with the resolver installed by
-  `InstallUSDVolumeResolution` — the same function `InsertTrade` calls.
-  The resolver is time-anchored to the ROW's `ts`, not to `now()`, so the
-  re-derive is deterministic given `prices_1m`;
-- **stops at the anchor.** The live insert path, when the anchor declines,
-  falls through to the quote side — the route that wrote the defect. This
-  tool reports such a row instead (`anchor declined, stored NULL` /
-  `stored VALUE`): a stored NULL stays NULL, and a stored value is never
-  blanked. An unpriced row stays recoverable; a confidently-wrong row at a
-  winning `derive_generation` does not;
-- INV-3, idempotence, the `SET LOCAL` decompression cap and the dry-run
-  default are exactly as Step 5, plus a `-batch` bound (default 2000 rows
-  per UPDATE transaction) and a live-overlap refusal: the window's top
-  on-chain ledger must be at or below the live `ledgerstream` cursor
-  (`-allow-live-overlap` overrides).
-
-**Measured on r1, read-only, 2026-09-03** (`-report`, three sample days):
-
-| day | scanned | quote-pegged (Step 5) | already correct | would change | of which NULL→value | anchor declined | Σ stored → Σ want |
-|---|---|---|---|---|---|---|---|
-| 2026-03-12 | 69,907 | 11,966 | 567 | 57,374 | 57,374 | 0 | $0.00 → $119,793.50 |
-| 2026-05-19 | 353,444 | 68,076 | 1,770 | 283,598 | 87,387 | 0 | $101,854.74 → $132,704.79 |
-| 2026-07-20 | 250,439 | 50,135 | 7,248 | 193,056 | 0 | 0 | $134,120.82 → $133,697.73 |
-
-Read that as three eras. **March**: the anchor did not exist at insert
-time and the quote side priced almost nothing, so 99% of the day's
-non-pegged XLM-base rows are NULL and $119,793 of one day's volume is
-invisible. **May**: mixed — 87,387 NULL plus a priced population that
-moves, with 23,442 rows ≥ 10% and 5 rows ≥ 10× (the largest, a `BUCK`
-row, from $0.0065 to $1.299). **July** (post-`a7892962`): no NULLs left,
-but 193,056 rows still differ because the anchor was only a fallback;
-722 move ≥ 10%, 35 ≥ 100%, and the day's total barely moves (−$423).
-`anchor declined = 0` on all three days — the anchor can price the entire
-population, so this re-derive leaves no residue.
-
-Mechanics:
+- decides the tier in Go with the insert path's own `usdVolumeDecimals`; a
+  USD-pegged quote is exact-tier and belongs to Step 5, so the tools cannot
+  undo each other;
+- rebuilds each row into a `canonical.Trade` and calls the store's own
+  `tradeUSDVolumeViaXLMBaseAnchor` with the resolver from
+  `InstallUSDVolumeResolution`, time-anchored to the ROW's `ts` (so the
+  result is deterministic given `prices_1m`);
+- stops at the anchor: when the anchor declines it reports the row
+  (`anchor declined, stored NULL` / `stored VALUE`) and never falls through
+  to the quote side, and never blanks a stored value;
+- refuses a window whose top on-chain ledger is above the live
+  `ledgerstream` cursor (`-allow-live-overlap` overrides);
+- takes `-max-generation`, `-batch` (default 2000 rows/UPDATE), `-report`
+  and `-min-rel-delta` (narrow a first pass to large moves; prefer the full
+  pass).
 
 ```sh
-# 1. REPORT first (read-only; refuses -write). This is the decision input.
+# 1. REPORT first (read-only, refuses -write): the decision input
 stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
-  -tier xlm-base -from 2026-05-19 -to 2026-05-19 -report -fill-null
-# 2. value repair, oldest → newest, one heavy job per ~2-3 weeks,
-#    the SAME job name on every attempt, env file sourced:
-set -a; . /etc/default/stellarindex; set +a
+  -tier xlm-base -from <D> -to <D> -report -fill-null
+# 2. value repair, oldest to newest, same job name each attempt, env sourced
 /usr/local/sbin/run-heavy-job.sh usd-volume-restamp \
   /usr/local/bin/stellarindex-ops usd-volume-restamp \
-    -config /etc/stellarindex.toml -tier xlm-base \
-    -from 2026-03-12 -to 2026-03-31 -write
-# 3. coverage fill as a DELIBERATE second pass, same windows:
-/usr/local/sbin/run-heavy-job.sh usd-volume-restamp \
-  /usr/local/bin/stellarindex-ops usd-volume-restamp \
-    -config /etc/stellarindex.toml -tier xlm-base \
-    -from 2026-03-12 -to 2026-03-31 -fill-null -write
-# 4. CAGG refresh over the span — Step 3's list, in Step 3's ORDER.
-# 5. acceptance:
-stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml \
-  -day 2026-07-21 -days 132
+    -config /etc/stellarindex.toml -tier xlm-base -from <D0> -to <D1> -write
+# 3. coverage fill as a deliberate second pass (or -fill-null in step 2 with -chunks)
+#    same command with -fill-null
+# 4. CAGG refresh over the span (Step 3, in Step 3's order)
+# 5. acceptance
+stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml -day <LAST_DAY> -days <N>
 ```
 
-- **Resuming.** The tool is idempotent — a row already holding the
-  anchor's value is not a candidate — so an interrupted run is resumed by
-  re-running it from the day it stopped on. It prints that command on
-  failure. There is no cursor to reset.
-- **DECOMPRESS FIRST** applies here even more than in Step 5: this rewrites
-  ~28M rows across 132 days.
-- **`-min-rel-delta`** narrows a first pass to the large moves (e.g.
-  `0.1` for ≥ 10%), at the cost of leaving the rest at their old value and
-  the group at mixed generations. Prefer the full pass; the flag exists
-  for a load-constrained window, not as the default.
-- **CAGG ordering matters and is not alphabetical.** `prices_1m/15m/1h/4h/1d/1w/1mo`,
-  `pools_per_source_1h`, `dex_volume_by_pair_1d` and `source_volume_1h`
-  read `trades` DIRECTLY; `twap_1h` and `twap_1d` read `prices_1m`
-  (migration 0147). Refresh `prices_1m` first and the two `twap_*` LAST,
-  or the TWAP views inherit the pre-restamp `volume_usd`. Step 3's list is
-  already in that order.
-- **The refresh changes more than `volume_usd`.** Since migration 0115/0147
-  the price CAGGs compute `high_price`/`low_price`/`first_price`/`last_price`
-  with a `FILTER (WHERE usd_volume >= 0.01)` dust floor, so filling ~7M
-  NULL rows admits trades into the OHLC extremes that were previously
-  excluded. Expect historical highs/lows on thin XLM pairs to MOVE (they
-  become more complete, not less), and diff a few before/after.
-- **Feedback loop, deliberately one-way.** `prices_1m.volume_usd` is read
-  back by the resolver's tier-3b bridge leg (`queryXLMLeg`,
-  `volume_usd >= 0.01`), so the refresh does change which buckets can
-  price OTHER tokens later. The XLM anchor itself is NOT affected: it
-  resolves `native` through `queryDB`, whose floor is `vwap * volume`
-  (the bucket's own quote notional), not `volume_usd`. So the restamp
-  cannot move its own inputs — but a LATER `ch-rebuild` over the same era
-  will now be able to price token/token rows it previously could not.
-  That is a coverage gain, and it is why the CAGG refresh belongs AFTER
-  the whole span is restamped, not interleaved.
-- `asset_volume_character` needs no action: it is a trailing-14-day
-  rollup on a 15-minute cadence and the span is months old.
+Resume = rerun the same command from the day it stopped on (the tool prints
+it; there is no cursor).
 
-### Step 6, chunk mode — `-chunks` (USE THIS for the 2026-01-01 → 2026-07-21 span)
+CAGG caveats for this tier:
 
-**Measured 2026-09-03.** The mechanics above, run as written
-(`-from 2026-01-01 -to 2026-07-21 -fill-null -write`, 28.6M rows), moved
-at **~1,574 rows/min** — one 2,000-row UPDATE took over 14 minutes — and
-was stopped with 0 rows committed (the generation guard held). All 90
-`trades` chunks in the window are compressed (policy `compress_after
-7 days`; TimescaleDB 2.26.4;
-`max_tuples_decompressed_per_dml_transaction = 100000`), and the dry run
-only reads, so it never showed it. The "DECOMPRESS FIRST" bullet above
-was the by-hand remedy; `-chunks` is the same remedy inside the tool,
-one chunk at a time, so no more than one chunk is ever decompressed —
-and with the compression policy paused for the run, which the by-hand
-path already required (Step 3's execution learnings,
-`alter_job(…, scheduled => false)`).
+- The price CAGGs compute `high/low/first/last_price` with a
+  `FILTER (WHERE usd_volume >= 0.01)` dust floor (migrations 0115/0147), so
+  filling NULL rows admits trades into OHLC extremes that were excluded:
+  historical highs/lows on thin XLM pairs will move. Diff a few before/after.
+- `prices_1m.volume_usd` feeds the resolver's tier-3b bridge leg
+  (`queryXLMLeg`, `volume_usd >= 0.01`); the XLM anchor reads `native`
+  through `queryDB` (floor `vwap * volume`), so the restamp cannot move its
+  own inputs. A LATER `ch-rebuild` over the era may price token/token rows
+  it could not before: a coverage gain, and the reason the refresh runs
+  after the whole span, not interleaved.
+- `asset_volume_character` needs no action (trailing-14-day rollup, 15-min
+  cadence).
+
+### Chunk mode (`-chunks`, both tiers)
+
+Required for any window older than the compression policy's 7 days. In-place
+DML on compressed chunks converges at ~1,574 rows/min; a first attempt over
+28.6M rows was stopped with 0 rows committed.
+
+The statement must carry a `ts` range. The batch UPDATE names the hypertable
+and used to constrain `ts` only through the join (`t.ts = v.ts`), which
+chunk exclusion cannot read: the planner targeted all 260 chunks (258
+compressed), decompressing them wholesale (WAL archiving 5-6 to 240-417
+segments/min, ~270 GB in an hour). `applyXLMBaseRestampBatch` now binds
+`t.ts >= $2 AND t.ts <= $3` to the batch's own earliest and latest row,
+binds `tx_hash` as `bpchar` (so `trades_pkey` serves the join), and pins
+`SET LOCAL plan_cache_mode = force_custom_plan`. Keep all three.
 
 **The cause was NOT the targeted chunk (measured 2026-09-06).** A second
 attempt in `-chunks` mode reached chunk 1 of 91 — the smallest,
@@ -497,152 +259,71 @@ attempt in `-chunks` mode reached chunk 1 of 91 — the smallest,
 (`timescaledb_information.chunks` read `is_compressed = false` for the
 whole UPDATE), and then one **23-row** UPDATE ran for 60 minutes on CPU
 with no wait event and was stopped, again with nothing committed. The
-statement, not the chunk, is what does not converge:
+statement, not the chunk, is what does not converge.
 
-- `trades` holds 260 chunks, 258 of them compressed, and the batch UPDATE
-  named the HYPERTABLE while constraining `ts` only through its join
-  (`t.ts = v.ts`). Chunk exclusion cannot read a join clause, so
-  `EXPLAIN` on the real schema returns 260 `Update on …_chunk` targets
-  over an Append of 260 sequential scans — 61.9M estimated rows, cost
-  **10,040,409** — for a 23-row write set.
-- None of the join clauses can be turned into a scan key on a
-  `segmentby` (`base_asset, quote_asset, source`) or `orderby`
-  (`ts, ledger`) column, so servicing the DML on each compressed chunk in
-  that list decompresses it WHOLESALE. The run's own
-  `SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0`
-  removes the limit that would otherwise have surfaced this in seconds.
-- The fingerprint on the box: WAL archiving went from 5-6 segments a
-  minute to 240-417 for exactly the statement's hour (~270 GB) and back
-  to 13 the second it was cancelled; and 55 COMPRESSED chunks spanning
-  2026-03-12 → 2026-05-21 — none of which held a row of the batch — were
-  left holding **119.7M dead tuples** and 36 GB of heap in their
-  uncompressed relations, from decompression that the rollback undid.
-- So the earlier `~1,574 rows/min` figure is the same defect, not a
-  different one: the day walk was decompressing the whole hypertable per
-  batch as well. Chunk mode decompressed the right chunk and the
-  statement went after all the others anyway.
+What the driver (`internal/ops/chops/usd_volume_restamp_chunks.go`,
+`internal/storage/timescale/trades_chunks.go`) does on `-write`:
 
-The fix is in the statement (`applyXLMBaseRestampBatch`): each batch
-carries `t.ts >= $2 AND t.ts <= $3`, bound to the batch's own earliest
-and latest row. It is redundant against `t.ts = v.ts` — every matched
-row's `ts` is already one of the batch's values — so it excludes nothing
-and only tells the planner what it could not infer. The same batch then
-plans as ONE result relation: cost **61.99** at 23 rows, **18,614** at
-10,000. `tx_hash` also binds as `bpchar` rather than `text` (as `text`
-the comparison is `(t.tx_hash)::text = v.tx_hash`, which no index on a
-`char(64)` column can serve; as `bpchar` the join rides `trades_pkey` on
-all five key columns), and the write transaction pins
-`SET LOCAL plan_cache_mode = force_custom_plan`, because the pruning
-exists only in a custom plan and equal-length batches share one prepared
-statement.
+1. Resolves the `trades` compression policy job and refuses to start if
+   there is none; takes the session advisory lock
+   `hashtext('usd-volume-restamp:trades')` (one `-write` run per database;
+   dropped with the connection, so SIGKILL cannot leave it); refuses if the
+   policy is already unscheduled unless `-resume-paused-policy`; prints the
+   re-enable statement; pauses the job (`alter_job(id, scheduled => false)`);
+   waits up to 10 minutes for an in-flight policy fire to finish; re-lists
+   chunks.
+2. Per chunk, oldest first: probe read-only and skip chunks with nothing to
+   change without decompressing (this is the resume mechanism); check free
+   space against that chunk; `decompress_chunk(..., if_compressed => true)`;
+   restamp in `-chunk-batch` UPDATE transactions (default 20,000, clamped to
+   10,922 by the 65,535-placeholder protocol limit), reading `is_compressed`
+   before each batch and STOPPING if something re-compressed the chunk;
+   `compress_chunk(..., if_not_compressed => true)` as a deferred call. The
+   bracket restores the state it found: an uncompressed chunk stays
+   uncompressed.
+3. On every exit (success, failure, SIGTERM) re-enables the policy on a
+   context that survives cancellation, then releases the lock.
 
-**Budget the bracket, not the UPDATE.** With the statement pruned, the
-cost of a full-window `-chunks` run is the decompress/re-compress
-bracket over 378.6 GB, not the writes. The runaway measured decompression
-at roughly 36 GB of heap an hour on this box under normal load, so the
-one-way decompress of the window is of the order of **10 hours** and the
-round trip plus the re-compress is **one to three days**, walked chunk by
-chunk under `run-heavy-job.sh`. Plan the attempt as a multi-day resumable
-walk (the tool probes and skips finished chunks) and carry `-generation`
-across restarts so the span lands at one generation.
+The pause is not optional: the policy selects chunks that are not fully
+compressed, so a 12-hourly fire would re-compress the open chunk between
+batches and the next batch would crawl with no error.
 
-Sizing at the time: 90 chunks, 379 GB uncompressed / 25 GB compressed,
-largest chunk 160 GB, pool 4.69 TB free.
+Guards:
 
-What `-chunks` does (`internal/ops/chops/usd_volume_restamp_chunks.go`,
-`internal/storage/timescale/trades_chunks.go`):
+- The dry run prints the chunk plan (count, compressed/uncompressed totals,
+  largest chunk, per chunk line) and the pre-flight verdict; it decompresses
+  and pauses nothing and takes no lock.
+- Pre-flight: free space on the data volume must EXCEED 2 x the largest
+  chunk's uncompressed size, re-checked before each decompress. Run it ON
+  r1 as a role that can read `data_directory`. `-min-free-bytes N`
+  overrides (loudly) after you have checked `zfs list` / `df`; it is then
+  not re-measured.
+- A window whose `-to` + 1 day is past `now() - compress_after` is refused
+  (those chunks are deliberately uncompressed); `-allow-live-adjacent`
+  overrides.
+- `-generation` in the future is refused (it would lock out every default
+  run on a money column). Carry `-generation N` across restarts so the span
+  ends at ONE generation; the `RESUME:` line printed on failure does this.
+- A failed chunk is re-compressed before a non-zero exit; a failed
+  re-compress says `LEFT DECOMPRESSED`, a failed re-enable says
+  `LEFT PAUSED`, each with the by-hand command.
+- `-batch` is refused with `-chunks` (use `-chunk-batch`); `-chunk-batch`,
+  `-min-free-bytes`, `-generation`, `-allow-live-adjacent` and
+  `-resume-paused-policy` are refused without it.
 
-0. resolve the `trades` compression policy job
-   (`timescaledb_information.jobs WHERE proc_name = 'policy_compression'
-   AND hypertable_name = 'trades'`) — **refuses to start if there is
-   none** — and check the window against its lag (below). A `-write`
-   run then, in this order: takes the run lock
-   (`pg_try_advisory_lock(hashtext('usd-volume-restamp:trades'))` on a
-   dedicated connection, held for the whole run — **refuses if another
-   session holds it**); reads the policy again under the lock and
-   **refuses if it is already unscheduled** unless
-   `-resume-paused-policy`; prints the re-enable statement to stderr;
-   PAUSES the job (`alter_job(id, scheduled => false)`); waits — at most
-   10 minutes, one progress line per poll — while
-   `timescaledb_information.job_stats` still reports the job's proc
-   running (the pause stops the NEXT fire; one in flight finishes on
-   its own, and a decompress beside it would race it); then lists the
-   chunks AGAIN and walks that listing, not the one the plan was
-   printed from;
-1. per `trades` chunk intersecting the window, oldest first: probe the
-   chunk READ-ONLY, slice by slice, stopping at the first slice that
-   would change a row — a chunk with nothing to change (rows already at
-   the run's generation, or already holding the anchor's value) is
-   **skipped without being decompressed** (this is what makes a rerun
-   resume);
-2. re-measure free space against THIS chunk, then
-   `SELECT decompress_chunk(<chunk>, if_compressed => true)` — for a
-   chunk that was compressed when the run listed it;
-3. the SAME plan + apply as the day walk (same anchor, same
-   `derive_generation` guard), restricted to that chunk's slice of the
-   window, in `-chunk-batch` UPDATE transactions (default 20,000,
-   clamped to 10,922 — the statement binds 6 placeholders a row and the
-   extended query protocol carries 65,535 — a plain heap UPDATE now).
-   **Ahead of every batch the chunk's
-   `is_compressed` is read**; `true` means something took the chunk
-   back underneath the run (a by-hand `compress_chunk`, a fire that
-   slipped the pause), and the walk STOPS there — the batch is not
-   written, the error names the chunk, the `RESUME:` line is printed —
-   because an UPDATE into a compressed chunk does not fail, it crawls;
-4. `SELECT compress_chunk(<chunk>, if_not_compressed => true)` — again
-   only for a chunk that was compressed at listing, and as a DEFERRED
-   call, so a failed batch, a SIGTERM and a Go panic inside the work all
-   reach it. **The bracket restores the state it found**: a chunk that
-   was uncompressed at listing is restamped in place and left
-   uncompressed; the policy compresses it on its own schedule once
-   re-enabled;
-5. a heartbeat tick and one progress line: rows changed, seconds, bytes
-   before → decompressed → after;
-6. on EVERY exit — success, failure, SIGTERM — re-enable the policy
-   (`alter_job(id, scheduled => true)`) on a context that survives the
-   cancellation, and THEN release the run lock, so a run waiting on the
-   lock never inherits a paused policy. After a `-chunks -write` run has
-   exited on its own, the policy is scheduled. A run that finds the
-   policy already unscheduled at start does NOT take it over silently:
-   it refuses, naming the by-hand re-enable and `-resume-paused-policy`.
-   After a previous attempt was killed before its re-enable, either
-   re-enable by hand first (the SQL checks under SIGKILL below) or rerun
-   with `-resume-paused-policy`, which owns the paused policy for the
-   run and re-enables it at exit.
+Cost on the serving database: the heavy-job wrapper's `IOWeight`/`CPUWeight`
+throttle only the ops binary; decompress, UPDATE and compress run in the
+Postgres backend at serving priority. `decompress_chunk` takes an
+`ExclusiveLock` then an `AccessExclusiveLock` at the end; `compress_chunk`
+holds an `ExclusiveLock` throughout. Queries spanning the open chunk wait.
+A decompressed chunk is about 15x larger (379 GB vs 25 GB across the 90
+chunks of the 2026-01..07 window; largest 160 GB). Budget days, not hours
+(measured decompress ~36 GB/h under load); read the first few chunks'
+progress lines (seconds and bytes) and extrapolate before the largest one.
 
-Why the pause is not optional: the policy proc selects
-`show_chunks(older_than => lag) … WHERE status != fully_compressed` and
-compresses each — a chunk this tool has just decompressed IS selected.
-Over a multi-day run the 12-hourly fire would re-compress the open chunk
-between two batches, and the next batch would then run its `SET LOCAL
-max_tuples_decompressed_per_dml_transaction = 0` UPDATE against a
-compressed chunk: no error, just the ~1,574 rows/min path this mode
-exists to escape. The integration harness runs
-`timescaledb.max_background_workers = 0`, so no test can watch the race
-fire; the unit tests pin the ORDER (pause before the first decompress;
-re-enable after the last chunk, on failure, and on a cancelled
-context), and the integration test pins that the real job is paused
-while the run is in flight and scheduled again after it.
-
-**Two attempts at once.** `run-heavy-job.sh`'s per-job lock is per
-NAME; its host-wide lock refuses a second operator heavy job of any name
-(exit 75), but a caller that sets `HEAVY_JOB_CLASS=scheduled` shares that
-lock, so the tool does not rely on it. Without a guard the second would read the
-policy as already unscheduled, walk beside the first, and re-enable the
-policy at ITS exit while the first was still inside a chunk: the first
-run's open chunk goes to the policy's next fire, its next batch crawls at
-~1,574 rows/min with no error, and the span ends at two generations.
-Two guards, both in the tool: the session advisory lock (one `-write`
-run per database; a held lock is a refusal before the policy is
-touched, and the server drops the lock with its connection, so a
-SIGKILL cannot leave it behind), and the already-unscheduled refusal (a
-paused policy is evidence of another actor — a killed attempt or a
-by-hand pause — and the run will not guess which without
-`-resume-paused-policy`). The integration test pins both: a `-write`
-started while a second session holds the lock is refused and touches
-nothing; a `-write` against an unscheduled policy is refused and leaves
-it unscheduled, and succeeds with the flag and re-enables it. To find
-the holder of the lock:
+Two attempts at once: the advisory lock and the already-unscheduled refusal
+exist because a second run would otherwise re-enable the policy at its exit
+while the first is mid-chunk. To find a lock holder:
 
 ```sql
 SELECT a.pid, a.application_name, a.backend_start, a.state, l.classid, l.objid
@@ -650,126 +331,42 @@ SELECT a.pid, a.application_name, a.backend_start, a.state, l.classid, l.objid
  WHERE l.locktype = 'advisory';
 ```
 
-Guards, in addition to everything Step 6 already has (dry-run default,
-`-from/-to` closed days only, live-tail refusal, INV-3):
+For the #372 xlm-base tier (the one-pass `-fill-null` run):
 
-- **The dry run prints the chunk plan** — count, compressed and
-  uncompressed totals, the largest chunk, one line per chunk — the
-  pre-flight verdict and what it would do to the policy, then walks the
-  window read-only on the chunks as they are. Nothing is decompressed,
-  nothing is paused.
-- **Pre-flight.** `-write` refuses to start unless free space on the
-  data volume EXCEEDS 2 × the largest chunk's uncompressed size, and the
-  same check runs against each chunk right before its decompress. 2 × is
-  a GUARD, not a bound: the decompress peaks at about 1 × plus the
-  compressed copy; the UPDATEs add a new tuple version per changed row
-  (non-HOT after a decompress, so heap AND index growth, up to about
-  1 × more); and `compress_chunk` writes the compressed copy beside the
-  bloated heap before truncating it — worst case ≈ 2 × plus the WAL all
-  three generate. Free space is `statfs` on the directory the database
-  reports for `trades` (`pg_tablespace_location` or `data_directory`) —
-  **so run it ON r1**, as a role that can read `data_directory`. Where
-  it cannot be measured the tool refuses; `-min-free-bytes N` overrides
-  with a loud warning after you have checked `zfs list` / `df` yourself,
-  and is then NOT re-measured per chunk.
-- **Live-adjacent refusal.** A window whose `-to` + 1 day is past
-  `now() - compress_after` is refused: the chunks there are deliberately
-  uncompressed (the ledgerstream cursor-regression replay upserts into
-  them) and the in-place walk is the right tool for them.
-  `-allow-live-adjacent` walks them anyway; they are restamped in place
-  and stay uncompressed.
-- **`-generation` in the future is refused.** A typo there would stamp
-  rows above every default run's `-max-generation` — a permanent
-  lock-out on a money column.
-- **A failed chunk is re-compressed before the tool exits non-zero**, on
-  a context that survives SIGTERM. Only a failed re-compress leaves a
-  chunk decompressed, and the error then says `LEFT DECOMPRESSED` with
-  the `compress_chunk` to run by hand. A failed re-enable of the policy
-  says `LEFT PAUSED` the same way.
-- **Resume** = rerun the same command. The tool prints it on failure as
-  `RESUME:`, carrying `-generation N` (so the whole span ends at ONE
-  generation) and every flag that shaped the population (`-fill-null`,
-  `-sources`, `-max-generation`, `-min-rel-delta`, `-slice`). Finished
-  chunks are probed at dry-run cost and skipped.
-- `-batch` does not apply with `-chunks` (it is refused; use
-  `-chunk-batch`); `-chunk-batch`, `-min-free-bytes`, `-generation`,
-  `-allow-live-adjacent` and `-resume-paused-policy` are refused without
-  `-chunks`.
-- `-chunks` is available to BOTH tiers (see "Step 5, chunk mode" below).
-  Everything in this section — the lock, the policy pause and guaranteed
-  re-enable, the free-space pre-flight, the live-adjacent refusal, the
-  per-chunk re-compress on failure, the probe-and-skip resume, the
-  `RESUME:` line — is one tier-agnostic driver
-  (`internal/ops/chops/usd_volume_restamp_chunks.go`); each tier supplies
-  only what it does inside a decompressed chunk
-  (`…_chunks_xlmbase.go`, `…_chunks_exact.go`).
-
-**What it does to the serving database while it runs.** None of this is
-throttled by the heavy-job wrapper: `IOWeight=50` / `CPUWeight=50` apply
-to the ops binary's own cgroup, and the decompress, the UPDATEs and the
-compress are executed by the Postgres backend, at serving priority.
-
-- `decompress_chunk` holds an `ExclusiveLock` on the chunk while it
-  copies and takes an `AccessExclusiveLock` at the end — it waits for
-  in-flight readers of that chunk and queues new ones behind it for that
-  moment. `compress_chunk` holds an `ExclusiveLock` for its duration.
-  Readers of OTHER chunks are unaffected; a query that spans the open
-  chunk (a long `/v1/history` range, a CAGG refresh reaching back that
-  far) waits.
-- While a chunk is decompressed, every scan over it reads a heap an order
-  of magnitude larger (15 × on the window's totals: 379 GB / 25 GB;
-  160 GB for the largest chunk). Nothing in the serving path reads
-  months-old `trades` rows routinely, but a CAGG refresh over that span
-  would — do the Step 3 refreshes AFTER the run, never interleaved.
-- I/O: each chunk is written out once (the decompress, about its
-  uncompressed size), rewritten in part (the UPDATEs), then read and
-  written again (the compress) — about 379 GB × 2 of writes over the
-  window plus WAL. Budget the run in DAYS, not hours. There is no
-  measured per-chunk figure yet: the first chunks in range order are the
-  small ones, and **their progress lines print seconds and bytes for
-  exactly this — read the first few and extrapolate before the 160 GB
-  chunk starts.**
-
-**SIGKILL.** `systemctl stop <unit>.scope` — the watchdog's low-disk
-trip, or a by-hand stop — is SIGTERM, then SIGKILL when the scope's
-`TimeoutStopSec` expires. SIGTERM cancels the run: the batch in flight
-rolls back (the committed ones stay committed), then the tool
-re-compresses the open chunk and re-enables the policy. That cleanup is
-what the bound has to cover, and it is why `run-heavy-job.sh` now
-renders the scope with `-p TimeoutStopSec=` from
-`HEAVY_JOB_STOP_TIMEOUT` instead of leaving it on systemd's 90 s
-default — 90 s cannot re-compress a 160 GB chunk. **The wrapper's own
-default is `5min`**, which is right for the payloads that die on SIGTERM
-at once and wrong for this one, so **this job's launch line sets
-`HEAVY_JOB_STOP_TIMEOUT=2h` itself** (step 2 below). 2h is a budget, not
-a measurement (160 GB at ~22 MB/s of uncompressed input); the per-chunk
-progress lines print seconds and bytes, so **record the largest chunk's
-re-compress from the first run** and tighten the launch value to it. A
-value below 90 s, or one systemd would read as a different unit than you
-meant (a bare integer is SECONDS — `2` is two seconds, not two hours),
-is refused by the wrapper before the job starts. The bound is host
-state: r1 has it only after `--tags heavy-job-wrapper` is applied (see
-`docs/operations/runbooks/ops-job-stalled.md` § "Stopping a wrapped job"
-for the by-scope stop, the pre-apply `systemd-run --scope` smoke check,
-what the long bound disarms in the disk watchdog, and the post-kill
-checks), and a scope already running keeps the 90 s it was created with.
-
-If the kill does land — an unapplied host, a run started before the
-apply, a re-compress that outlives the bound — SIGKILL drops the
-connection, the server aborts `compress_chunk` (the chunk stays
-DECOMPRESSED, not corrupt), and the process is gone before it can print
-`LEFT DECOMPRESSED` or `RESUME:`, or re-enable the policy. For exactly
-this the tool prints the by-hand repair to stderr BEFORE each decompress
-and each re-compress:
-
-```
-chunk 41/90 _timescaledb_internal._hyper_1_31000_chunk [...]: re-compressing — ...
-    SELECT compress_chunk('_timescaledb_internal._hyper_1_31000_chunk');
-    SELECT alter_job(1000, scheduled => true);
+```sh
+#    Value repair AND coverage fill in one pass (-fill-null): each chunk
+#    is decompressed once; a second -fill-null pass would decompress all
+#    90 again. ONE attempt at a time: the tool refuses a second while
+#    the first holds the run lock.
+HEAVY_JOB_STOP_TIMEOUT=2h /usr/local/sbin/run-heavy-job.sh usd-volume-restamp /usr/local/bin/stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml -tier xlm-base -chunks -from <D0> -to <D1> -fill-null -write
 ```
 
-After ANY exit that did not end in the tool's own summary, check both,
-from the job log or directly:
+#### Stopping and SIGKILL
+
+SIGTERM cancels the run: the batch in flight rolls back (committed ones
+stay), the tool re-compresses the open chunk and re-enables the policy.
+`run-heavy-job.sh` renders the scope with `-p TimeoutStopSec=` from
+`HEAVY_JOB_STOP_TIMEOUT` (default `5min`, refused below 90 s; a bare integer
+is SECONDS, write `2h` never `2`). This job's launch line sets
+`HEAVY_JOB_STOP_TIMEOUT=2h` because re-compressing a 160 GB chunk outlives
+the default; 2h is a budget, so record the largest chunk's measured
+re-compress and tighten it. The bound is host state: r1 has it only after
+`--tags heavy-job-wrapper` is applied (`grep -c TimeoutStopSec
+/usr/local/sbin/run-heavy-job.sh` reads 1 when applied), and a scope already
+running keeps the 90 s it was created with. See
+[runbooks/ops-job-stalled.md](runbooks/ops-job-stalled.md) § "Stopping a
+wrapped job".
+
+After a SIGKILL the chunk stays DECOMPRESSED (not corrupt), the process
+prints no summary, and the policy stays paused. The tool prints the by-hand
+repair to stderr before each decompress and re-compress:
+
+```
+    SELECT compress_chunk('_timescaledb_internal._hyper_1_<id>_chunk');
+    SELECT alter_job(<job_id>, scheduled => true);
+```
+
+After ANY exit that did not end in the tool's own summary, check:
 
 ```sql
 -- chunks the policy would have compressed by now and has not:
@@ -782,119 +379,19 @@ SELECT job_id, scheduled FROM timescaledb_information.jobs
  WHERE proc_name = 'policy_compression' AND hypertable_name = 'trades';
 ```
 
-Compress a listed chunk by hand, or let the re-enabled policy do it at
-its next fire — a rerun of the tool will NOT: it restores the state it
-lists, and that chunk now lists as uncompressed. The run lock is gone
-with the killed connection; the policy is NOT — it stays paused, and a
-rerun REFUSES while it is. Either set `scheduled` back to true by hand
-and run the `RESUME:` command (or the same command again), or run it
-with `-resume-paused-policy` and let the tool own the paused policy and
-re-enable it at exit. The `RESUME:` line never carries
-`-resume-paused-policy`: it is printed only on an exit that has already
-re-enabled the policy.
-(The follow-up this section carried — give the heavy-job scope a stop
-timeout long enough for the largest re-compress — is codified as of
-2026-09-04 in
-`configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`
-and covered by `scripts/ci/run-heavy-job-test.sh`: the wrapper takes the
-bound from `HEAVY_JOB_STOP_TIMEOUT` and validates it, and this job's
-launch line carries `2h`. It is host state until the
-`heavy-job-wrapper` tag is applied to r1 — `grep -c TimeoutStopSec
-/usr/local/sbin/run-heavy-job.sh` reads `0` there as of 2026-09-04, so
-until it reads `1` a stop of this job still SIGKILLs at 90 s.)
+Compress a listed chunk by hand or let the re-enabled policy do it (a rerun
+of the tool will not: it restores the state it lists). The policy stays
+paused until you set `scheduled` back to true and run the `RESUME:` command,
+or rerun with `-resume-paused-policy` so the tool owns the paused policy and
+re-enables it at exit. `RESUME:` never carries `-resume-paused-policy`.
 
-Operator sequence (replaces steps 2–5 of the Step 6 mechanics for this
-span). **The right edge is `-to 2026-07-21`** — the window issue #372
-reconciled against (fills with `-fill-null` = +$27.17M). 2026-07-20 and
-2026-07-21 are not free of changes: the `-report` table above measured
-193,056 rows differing on 2026-07-20 (net −$423, the long tail of small
-wrong-leg corrections), and both days sit in the same 7-day chunk
-`[07-16, 07-23)` the run decompresses for 07-19 anyway, so they cost a
-scan, not a decompress. The acceptance window is the write set:
-`-day 2026-07-21 -days 202` is exactly [2026-01-01, 2026-07-21] (`-day`
-is the LAST day, `-days` counts back from it), and it is byte-for-byte
-the `acceptance:` line the tool prints in its summary.
+Acceptance is the `acceptance:` line the tool prints, byte for byte
+(`verify-usd-volume ... -day <LAST_DAY> -days <N>`; `-day` is the LAST day,
+`-days` counts back from it). Then Step 3.
 
-What the command touches, and what it deliberately leaves:
-
-- **touched**: every `trades` row with `ts` in [2026-01-01, 2026-07-22)
-  whose source is in the DEX registry, whose base leg is an XLM form
-  (`native` or its SAC), whose quote leg is not a declared USD peg,
-  whose `derive_generation` is at or below the run's, and whose stored
-  `usd_volume` differs from the anchor's value — including, with
-  `-fill-null`, rows stored NULL that the anchor can price;
-- **left, by design**: rows at `ts ≥ 2026-07-22`, already at
-  `derive_generation` 1785871528 from the 2026-08 re-derive and outside
-  the window; exact-tier rows (a USD-pegged quote) — Step 5's
-  population, never this one's; rows outside the DEX / XLM-base /
-  non-pegged population (CEX and FX rows, token/token pairs, pairs with
-  XLM on the quote side); rows the anchor declines (reported, never
-  blanked); and the chunks in [2026-01-01, 2026-03-12), which have no
-  candidate — they are probed read-only and skipped without a
-  decompress, which is why `-from 2026-01-01` costs a scan and nothing
-  else.
-
-```sh
-# 0. on r1, as root; env sourced (28P01 trap)
-set -a; . /etc/default/stellarindex; set +a
-# 1. dry run — chunk plan + pre-flight verdict + policy job + per-chunk
-#    row counts; decompresses nothing, pauses nothing, takes no lock:
-stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
-  -tier xlm-base -chunks -from 2026-01-01 -to 2026-07-21 -fill-null
-# 2. the run, under the heavy wrapper, the SAME job name every attempt.
-#    Value repair AND coverage fill in one pass (-fill-null): each chunk
-#    is decompressed once; a second -fill-null pass would decompress all
-#    90 again. ONE attempt at a time: the tool refuses a second while
-#    the first holds the run lock.
-#    HEAVY_JOB_STOP_TIMEOUT=2h: this job's SIGTERM cleanup is a
-#    re-compress of the open chunk (up to 160 GB), which the wrapper's
-#    5min default would SIGKILL through. It is a budget, not a
-#    measurement — tighten it to the largest chunk's measured
-#    re-compress after the first run. The wrapper prints the bound it
-#    used; the value is refused below 90 s, and a bare integer is
-#    SECONDS (write "2h", never "2").
-HEAVY_JOB_STOP_TIMEOUT=2h \
-/usr/local/sbin/run-heavy-job.sh usd-volume-restamp \
-  /usr/local/bin/stellarindex-ops usd-volume-restamp \
-    -config /etc/stellarindex.toml -tier xlm-base -chunks \
-    -from 2026-01-01 -to 2026-07-21 -fill-null -write
-#    on a non-zero exit: read the error (LEFT DECOMPRESSED? LEFT PAUSED?
-#    STOPPED — re-compressed underneath?), then run the RESUME: line it
-#    printed, with a NEW job name. After a SIGKILL (no summary, no RESUME
-#    line): the two SQL checks above first; the rerun refuses while the
-#    policy is unscheduled unless -resume-paused-policy.
-# 3. the 12 CAGG refreshes the tool prints at the end, in the ORDER it
-#    prints them (prices_1m first, twap_1h/twap_1d last), psql on r1,
-#    under a heavy-job scope; then force the asset_volume_24h rollup.
-# 4. acceptance — byte-for-byte the command the tool prints in its summary:
-stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml -day 2026-07-21 -days 202
-```
-
-`-chunks` now covers `-tier exact` (Step 5) as well — see the section
-below. The paragraph that used to stand here said the exact tier was out
-of scope because it is a set-based UPDATE per slice rather than a per-row
-write; that turned out not to be the thing that matters. A DML into a
-compressed chunk is serviced by decompressing that chunk inside the
-transaction whatever shape the statement has, and the exact tier's own
-repair population — ~10M rows across 2026-03..07, 2,306,054 in March
-alone — is 100+ hours at the ~1,574 rows/min measured in place.
-
-## Explicitly OUT of scope here (queued, do not silently absorb)
-
-- **`classic_assets.slug` backfill** (194,057 rows, all NULL → CODE is
-  the public slug; root enabler of the `/assets/USDT` impersonator
-  page). Needs a disambiguation scheme decision — coupled fix with the
-  explorer's build-cache winner-picking (`page.tsx` `bySlug`
-  last-write-wins vs `bySlugCI` first-wins is case-dependent).
-- **Catalogue-listing `price_usd` gating**: the `/v1/assets` listing
-  SQL computes `price_usd` from a 7-day `prices_1m` window +
-  XLM-triangulation, outside the substance gate. The explorer now
-  LABELS it; gating it server-side (same substance predicate, SQL-side
-  or post-query) is the remaining ungated aggregated-price surface.
-- ~~**`usd-volume-restamp` ops tool** (launch-plan §"queued buildable")
-  for the pre-07-23 pegged-row era — unrelated class, still open.~~
-  BUILT — see Step 5 below. Still a separate class from the tier-3b
-  re-derive above; run it as its own heavy job.
-- Pre-deploy dirty tail: any rows written between this doc's authoring
-  and the step-0 deploy join the span automatically (the range is
-  pinned at execution time by L_HI).
+What a run touches: `trades` rows in the window whose source is in the DEX
+registry, base leg an XLM form, quote leg not a declared USD peg,
+`derive_generation` at or below the run's, stored value differing from the
+anchor's (with `-fill-null`, also NULL rows the anchor can price). It leaves
+rows outside the window, exact-tier rows (Step 5), CEX/FX rows, token/token
+pairs, pairs with XLM on the quote side, and rows the anchor declines.

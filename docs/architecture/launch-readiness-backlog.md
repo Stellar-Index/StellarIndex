@@ -34,8 +34,7 @@ status: superseded — see docs/operations/v1-launch-plan.md
 >   The gate ran weekly and passed, weekly, on frozen rows;
 > - it named `production-readiness-master-plan-2026-07-18.md` as the "current,
 >   actively-maintained source of truth" — that document was itself superseded
->   on 2026-07-27 by `v1-launch-plan.md` and now carries its own SUPERSEDED
->   banner.
+>   on 2026-07-27 by `v1-launch-plan.md` and has since been removed.
 >
 > **Where the still-open rows went.** This mapping is the only current part of
 > the file:

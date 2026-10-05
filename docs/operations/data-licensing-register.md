@@ -104,6 +104,6 @@ licences (MIT, BSD) and MPL both require their notices to travel with a binary w
 - INV-2126 — the code-dependency licence scan above.
 - INV-1198 — gating raw source-attributed CEX endpoints; decided 2026-09-30: keep, accepted risk.
 - [history-completeness-plan §9.5–9.6](history-completeness-plan.md#95-free-and-open-sources--every-one-fails-on-terms)
-  — vendor terms for historical XLM data, quoted in full.
+  — vendor terms for historical XLM data, summarised with clause references.
 - [add-cex-connector procedure](../contributing/procedures/add-cex-connector.md) — the vendor
   ToS note every new connector must satisfy.
