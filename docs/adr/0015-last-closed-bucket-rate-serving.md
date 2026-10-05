@@ -18,7 +18,7 @@ A closed aggregation window has a fixed identity once it closes, so serving only
 
 API rate endpoints serve the most recent closed aggregate bucket and never the in-progress one.
 
-- `/v1/price` serves the aggregator's cached VWAP (below) and falls back to the last closed 1-minute bucket in the Timescale `prices_1m` continuous aggregate; with neither it returns 404. There is no client-selectable `window`, and the response carries `observed_at` and `window_seconds`.
+- `/v1/price` serves the aggregator's cached VWAP (below) and falls back to the last closed 1-minute bucket in the Timescale `prices_1m` continuous aggregate; with neither it falls back to the last trade and sets `flags.stale = true` (ADR-0018), and returns 404 only when the pair has no trade at all. There is no client-selectable `window`, and the response carries `observed_at` and `window_seconds`.
 - `/v1/ohlc` and the chart/history reads return only closed rows. `/v1/vwap` and `/v1/twap` compute on query from `trades` and clamp `to` to the last closed boundary (`clamped: true`).
 - The aggregator's cached VWAP is a rolling window `[bucketEnd - W, bucketEnd)` with `bucketEnd` truncated to the last closed minute (`closedBucket`, `internal/aggregate/orchestrator/orchestrator.go`), default 5 minutes. It lives in Redis only.
 - The aggregator writes no CAGG rows. `prices_1m` and its rollups (`prices_15m` through `prices_1mo`) are materialised by TimescaleDB refresh policies over `trades`, declared in `migrations/`.
@@ -28,8 +28,9 @@ API rate endpoints serve the most recent closed aggregate bucket and never the i
 
 ## Invariant
 
-- No served price, OHLC or windowed rate value comes from a bucket that is still filling, apart from `/v1/price/tip`.
+- No served OHLC, history or windowed rate value comes from a bucket that is still filling. `/v1/price` is the same apart from its flagged `stale` last-trade fallback, and `/v1/price/tip` is the declared exception.
 - Rate reads clamp their time range to the last closed boundary; `internal/api/v1/closed_bucket_internal_test.go` pins the parameter clamp and `internal/storage/timescale/closed_bucket_guard_test.go` pins the query guard.
+- Migration 0172 pins `timescaledb.materialized_only = true` on every served CAGG, so an unguarded reader never sees an open bucket; `v1.NewClosedBucketChecker` (`cmd/stellarindex-api/main.go`) is a readiness check that drains the API if an out-of-band `ALTER` undoes it.
 - A closed bucket's value never changes after it closes, so any region serves identical bytes for it.
 
 ## Consequences
@@ -37,8 +38,7 @@ API rate endpoints serve the most recent closed aggregate bucket and never the i
 Served rates are up to one bucket (1 minute) old, and fast moves show only when the bucket closes; sub-bucket data comes from the tip and SSE surfaces.
 Any region can answer any query, so routing needs no primary affinity.
 This rule is the whole consistency mechanism of independent per-region ingest (ADR-0050), which is deferred past v1.0; today one region, R1, is deployed, with no Postgres replication.
-The closed-bucket guard is still spelled several ways and not every read goes through one chokepoint (tracked as #689).
 
 ## Evidence
 
-`internal/storage/timescale/aggregates.go`, `internal/api/v1/closed_bucket_internal_test.go`, `internal/storage/timescale/closed_bucket_guard_test.go`, `internal/aggregate/orchestrator/closed_bucket_test.go`, and `migrations/0002_create_price_aggregates.up.sql`.
+`internal/storage/timescale/aggregates.go`, `internal/api/v1/closed_bucket_internal_test.go`, `internal/storage/timescale/closed_bucket_guard_test.go`, `internal/aggregate/orchestrator/closed_bucket_test.go`, `TestClosedBucketGuardSpelling` (`closed_vwap_at_test.go`), `migrations/0172_pin_cagg_materialized_only.up.sql`, and `migrations/0002_create_price_aggregates.up.sql`.

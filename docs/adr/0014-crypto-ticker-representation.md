@@ -32,7 +32,7 @@ These fit none of native, classic, soroban or fiat (ADR-0010), and the decoder w
 - `crypto:USDC` is never the same asset as Circle's classic `USDC:GA5Z...`; keys stay `crypto:` prefixed and are never matched on bare ticker.
 - A crypto asset has no issuer or contract id and an allow-listed code, and it round-trips through `String` and `ParseAsset`; `asset_crypto_test.go` enforces it.
 - An unmapped oracle symbol is recorded as `raw:<symbol>`, never dropped (AGENTS.md domain rules).
-- Every `AssetType` switch handles the variant; `TestAssetTypeExhaustiveGuard` enforces it.
+- Every `AssetType` switch covers the variant, has a real-bodied `default`, or carries an `//exhaustive:ignore` marker; `TestAssetTypeExhaustiveGuard` enforces it.
 
 ## Consequences
 

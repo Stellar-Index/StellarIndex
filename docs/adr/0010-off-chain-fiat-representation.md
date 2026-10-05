@@ -29,12 +29,12 @@ The first oracle code faked it as a classic asset with an empty issuer, which re
 
 - A fiat asset has no issuer or contract id and an allow-listed code; `Asset.Validate` enforces it.
 - `Asset.String()` and `ParseAsset` round-trip every asset shape including fiat; the `asset_test.go` and `asset_fiat_test.go` tables enforce it.
-- Every `switch` over `AssetType` handles every variant, including one with a `default`; `TestAssetTypeExhaustiveGuard` in `internal/canonical/asset_type_exhaustive_guard_test.go` enforces it.
+- Every `switch` over `AssetType` either covers every variant, has a `default` with a real body (not empty or only `fallthrough`/`break`), or carries an `//exhaustive:ignore` marker with prose; `TestAssetTypeExhaustiveGuard` in `internal/canonical/asset_type_exhaustive_guard_test.go` enforces it.
 - No code accepts an empty-issuer classic asset as fiat.
 
 ## Consequences
 
-Each new `AssetType` variant forces a case in every switch, which the guard finds.
+Each new `AssetType` variant forces every switch that lacks a real `default` to add a case, which the guard finds.
 Fiat-quoted API responses are self-describing (`"quote": "fiat:USD"`), and triangulation can treat the USD anchor as a real value.
 The pre-v1 sentinel was never shipped, so no data migration was needed.
 
