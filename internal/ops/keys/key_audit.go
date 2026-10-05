@@ -1,4 +1,4 @@
-package main
+package keys
 
 import (
 	"context"
@@ -16,15 +16,15 @@ import (
 // opsKeyReasonMaxLen bounds the -reason stored in one audit_log row.
 const opsKeyReasonMaxLen = 512
 
-// keyAuditSink is the audit_log writer mint-key and upgrade-key record
+// AuditSink is the audit_log writer mint-key and upgrade-key record
 // through (postgresstore.AuditStore in production).
-type keyAuditSink interface {
+type AuditSink interface {
 	Append(ctx context.Context, e platform.AuditEntry) error
 }
 
-// validateOpsKeyReason requires the -reason recorded with every CLI key
+// ValidateReason requires the -reason recorded with every CLI key
 // action, the counterpart of the admin API's X-Reason header.
-func validateOpsKeyReason(reason string) error {
+func ValidateReason(reason string) error {
 	r := strings.TrimSpace(reason)
 	if r == "" {
 		return errors.New("-reason is required: it is recorded in audit_log with the actor")
@@ -38,7 +38,7 @@ func validateOpsKeyReason(reason string) error {
 // openKeyAudit opens the audit_log writer. The key commands refuse to run
 // without it: their stderr is the only other record and does not outlive
 // the terminal.
-func openKeyAudit(ctx context.Context, dsn string) (keyAuditSink, func(), error) {
+func openKeyAudit(ctx context.Context, dsn string) (AuditSink, func(), error) {
 	if dsn == "" {
 		return nil, nil, errors.New("storage.postgres_dsn is empty — key commands record to audit_log and refuse to run without it")
 	}
@@ -54,13 +54,13 @@ func openKeyAudit(ctx context.Context, dsn string) (keyAuditSink, func(), error)
 }
 
 // appendKeyAudit writes one staff-actor audit_log row for a CLI key action.
-func appendKeyAudit(ctx context.Context, sink keyAuditSink, action, command, keyID, actor, reason string, detail map[string]any) error {
-	return appendOpsAudit(ctx, sink, action, command, "api_key", keyID, actor, reason, detail)
+func appendKeyAudit(ctx context.Context, sink AuditSink, action, command, keyID, actor, reason string, detail map[string]any) error {
+	return AppendOpsAudit(ctx, sink, action, command, "api_key", keyID, actor, reason, detail)
 }
 
-// appendOpsAudit writes one staff-actor audit_log row for a privileged CLI
+// AppendOpsAudit writes one staff-actor audit_log row for a privileged CLI
 // action on (targetKind, targetID).
-func appendOpsAudit(ctx context.Context, sink keyAuditSink, action, command, targetKind, targetID, actor, reason string, detail map[string]any) error {
+func AppendOpsAudit(ctx context.Context, sink AuditSink, action, command, targetKind, targetID, actor, reason string, detail map[string]any) error {
 	meta := map[string]any{"actor": actor, "reason": strings.TrimSpace(reason), "via": "stellarindex-ops " + command}
 	for k, v := range detail {
 		meta[k] = v

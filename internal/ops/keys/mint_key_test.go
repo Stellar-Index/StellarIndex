@@ -1,4 +1,4 @@
-package main
+package keys
 
 import (
 	"strings"
@@ -35,12 +35,12 @@ func TestMintKey_RejectsMalformedIdentifier(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append(append([]string{}, baseArgs...), "-identifier", tc.identifier)
-			err := mintKey(args)
+			err := Mint(args)
 			if err == nil {
-				t.Fatalf("mintKey(-identifier=%q): expected an error, got nil", tc.identifier)
+				t.Fatalf("Mint(-identifier=%q): expected an error, got nil", tc.identifier)
 			}
 			if !strings.Contains(err.Error(), tc.wantSubstr) {
-				t.Errorf("mintKey(-identifier=%q): error = %q, want substring %q",
+				t.Errorf("Mint(-identifier=%q): error = %q, want substring %q",
 					tc.identifier, err.Error(), tc.wantSubstr)
 			}
 		})
@@ -53,7 +53,7 @@ func TestMintKey_RejectsMalformedIdentifier(t *testing.T) {
 // not the identifier/label validation — i.e. the pattern isn't
 // accidentally rejecting the very shape it documents as valid.
 func TestMintKey_AcceptsWellFormedIdentifier_PastValidation(t *testing.T) {
-	err := mintKey([]string{
+	err := Mint([]string{
 		"-config", "/nonexistent.toml",
 		"-identifier", "customer-acme-corp",
 		"-label", "Acme Corp - production",
@@ -70,7 +70,7 @@ func TestMintKey_AcceptsWellFormedIdentifier_PastValidation(t *testing.T) {
 
 // TestMintKey_RejectsOverlongLabel.
 func TestMintKey_RejectsOverlongLabel(t *testing.T) {
-	err := mintKey([]string{
+	err := Mint([]string{
 		"-config", "/nonexistent.toml",
 		"-identifier", "customer-acme-corp",
 		"-label", strings.Repeat("a", mintKeyLabelMaxLen+1),
@@ -100,16 +100,16 @@ func TestMintKey_RequiresReasonAckAndBounds(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := mintKey(append(append([]string{}, base...), tc.extra...))
+			err := Mint(append(append([]string{}, base...), tc.extra...))
 			if err == nil || !strings.Contains(err.Error(), tc.wantSubstr) {
-				t.Fatalf("mintKey(%v) = %v, want an error containing %q", tc.extra, err, tc.wantSubstr)
+				t.Fatalf("Mint(%v) = %v, want an error containing %q", tc.extra, err, tc.wantSubstr)
 			}
 		})
 	}
 
 	// Acknowledged operator mint with a reason clears validation and fails
 	// only at config load.
-	err := mintKey(append(append([]string{}, base...), "-reason", "r", "-tier", "operator", "-confirm-operator", "-scopes", "admin"))
+	err := Mint(append(append([]string{}, base...), "-reason", "r", "-tier", "operator", "-confirm-operator", "-scopes", "admin"))
 	if err == nil || strings.Contains(err.Error(), "-reason") || strings.Contains(err.Error(), "-confirm-operator") ||
 		strings.Contains(err.Error(), "scope") {
 		t.Fatalf("valid operator mint rejected by validation: %v", err)
@@ -118,11 +118,11 @@ func TestMintKey_RequiresReasonAckAndBounds(t *testing.T) {
 
 func TestUpgradeKey_RequiresReasonAndCeiling(t *testing.T) {
 	base := []string{"-config", "/nonexistent.toml", "-key-id", "kid_x", "-actor", "alice"}
-	if err := upgradeKey(append(append([]string{}, base...), "-rate-limit-per-min", "5000")); err == nil ||
+	if err := Upgrade(append(append([]string{}, base...), "-rate-limit-per-min", "5000")); err == nil ||
 		!strings.Contains(err.Error(), "-reason is required") {
 		t.Errorf("upgrade-key without -reason = %v, want -reason is required", err)
 	}
-	if err := upgradeKey(append(append([]string{}, base...), "-reason", "r", "-rate-limit-per-min", "10000000")); err == nil ||
+	if err := Upgrade(append(append([]string{}, base...), "-reason", "r", "-rate-limit-per-min", "10000000")); err == nil ||
 		!strings.Contains(err.Error(), "must be in [0, 100000]") {
 		t.Errorf("upgrade-key above the ceiling = %v, want a bound error", err)
 	}
