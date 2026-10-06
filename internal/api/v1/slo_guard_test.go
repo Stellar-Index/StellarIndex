@@ -63,21 +63,10 @@ func TestSLORoutesNeverTouchTheLake(t *testing.T) {
 				if len(fn.Recv.List) > 0 && len(fn.Recv.List[0].Names) > 0 {
 					recv = fn.Recv.List[0].Names[0].Name
 				}
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					sel, ok := n.(*ast.SelectorExpr)
-					if !ok {
-						return true
-					}
-					ident, ok := sel.X.(*ast.Ident)
-					if !ok || ident.Name != recv {
-						return true
-					}
-					if forbidden[sel.Sel.Name] {
-						t.Errorf("SLO'd handler %s reads lake-backed field %s.%s at %s — the p95≤200ms routes must never depend on the ClickHouse lake (ADR-0050 §3a; see this test's doc comment)",
-							fn.Name.Name, recv, sel.Sel.Name, fset.Position(sel.Pos()))
-					}
-					return true
-				})
+				for _, sel := range lakeFieldReads(fn.Body, recv, forbidden) {
+					t.Errorf("SLO'd handler %s reads lake-backed field %s at %s — the p95≤200ms routes must never depend on the ClickHouse lake (ADR-0050 §3a; see this test's doc comment)",
+						fn.Name.Name, sel.Sel.Name, fset.Position(sel.Pos()))
+				}
 			}
 		}
 	}
@@ -133,6 +122,46 @@ func TestSLORoutesMatchTheCacheBand(t *testing.T) {
 	for _, route := range strings.Split(string(m[1]), "|") {
 		if !inBand[route] {
 			t.Errorf("slo.yml route %s is not in middleware.SLOPriceRoutes", route)
+		}
+	}
+}
+
+// lakeFieldReads returns the reads of a forbidden field off recv, as
+// `recv.X` or through the embedded Options (`recv.Options.X`).
+func lakeFieldReads(body ast.Node, recv string, forbidden map[string]bool) []*ast.SelectorExpr {
+	var out []*ast.SelectorExpr
+	ast.Inspect(body, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok || !forbidden[sel.Sel.Name] {
+			return true
+		}
+		x := sel.X
+		if inner, ok := x.(*ast.SelectorExpr); ok && inner.Sel.Name == "Options" {
+			x = inner.X
+		}
+		if id, ok := x.(*ast.Ident); ok && id.Name == recv {
+			out = append(out, sel)
+		}
+		return true
+	})
+	return out
+}
+
+func TestLakeFieldReadsCatchesOptionsForm(t *testing.T) {
+	const src = `package v1
+func (s *Server) direct()  { _ = s.Explorer }
+func (s *Server) viaOpts() { _ = s.Options.Explorer }
+func (s *Server) other()   { _ = s.Options.Logger; _ = s.Logger }`
+	f, err := parser.ParseFile(token.NewFileSet(), "x.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int{"direct": 1, "viaOpts": 1, "other": 0}
+	for _, d := range f.Decls {
+		fn := d.(*ast.FuncDecl)
+		got := len(lakeFieldReads(fn.Body, "s", map[string]bool{"Explorer": true}))
+		if got != want[fn.Name.Name] {
+			t.Errorf("%s: %d flagged reads, want %d", fn.Name.Name, got, want[fn.Name.Name])
 		}
 	}
 }
