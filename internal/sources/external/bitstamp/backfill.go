@@ -3,6 +3,7 @@ package bitstamp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -113,8 +114,11 @@ func appendPageTrades(out *[]canonical.Trade, candles []bitstampCandle, symbol s
 			continue
 		}
 		trade, err := bitstampCandleToTrade(c, symbol, pair, stepSec)
-		if err != nil {
+		if errors.Is(err, errZeroVolume) || errors.Is(err, ErrDustTrade) {
 			continue
+		}
+		if err != nil {
+			return 0, fmt.Errorf("bitstamp.Backfill: candle %+v: %w", c, err)
 		}
 		*out = append(*out, trade)
 	}
@@ -178,6 +182,9 @@ func fetchBitstampOHLC(ctx context.Context, endpoint string, q url.Values) ([]bi
 	return r.Data.OHLC, nil
 }
 
+// errZeroVolume marks an empty candle, an expected skip.
+var errZeroVolume = errors.New("zero volume")
+
 // bitstampCandleToTrade synthesises a canonical.Trade from one
 // candle. Bitstamp publishes no VWAP or quote volume, so the trade is
 // priced at the close (the Backfiller "close when VWAP unavailable"
@@ -196,7 +203,7 @@ func bitstampCandleToTrade(c bitstampCandle, symbol string, pair canonical.Pair,
 		return canonical.Trade{}, fmt.Errorf("volume %q: %w", c.Volume, err)
 	}
 	if base.Sign() == 0 {
-		return canonical.Trade{}, fmt.Errorf("zero volume")
+		return canonical.Trade{}, errZeroVolume
 	}
 	price, err := scale.DecimalStringToScaledInt(c.Close, externalAmountDecimals)
 	if err != nil {
