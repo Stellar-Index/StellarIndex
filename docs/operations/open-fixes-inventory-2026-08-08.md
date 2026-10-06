@@ -20,11 +20,11 @@ status: point-in-time audit
 | 7 — per-account deep trade history | W8 item 13; inventory INV-0902 (CH account-keyed mirror vs bounded horizon) |
 | 12 residual — r1 `[supply].sac_wrappers` for USDC/AQUA (code shipped, r1 landing unconfirmed) | W2 + r1 config confirm (INV-0902 evidence) |
 | 14 — SEP-41 genesis rollup resets (12 of 13 remain) | W5.4, gated on the `ops_batch` ClickHouse profile on r1 |
-| 15 — LP reserve/trustline backfill | ACCEPTED: documented cutoff, no backfill (W8-12) |
+| 15 — LP reserve/trustline backfill | ACCEPTED: documented cutoff, no backfill (W8-12, cited row in `v1-launch-plan.md`) |
 | 18 residual — `MinBatchLimit` wedge | W8 item 9 (INV-0880, done) |
 | 22 residual — sub-$100M base-unresolvable prints stay unchallenged | W6.5 accepted-risk register (INV-0839) |
 | 31 — Cloudflare zone cache rule + purge | `audit-remediation-operator-actions.md` |
-| 33 — CoinGecko Pro key | `v1-launch-plan.md` §3 `[OP]` item 2 |
+| 33 — CoinGecko Pro key | the inventory (CoinGecko licence is HELD; see `v1-launch-plan.md` Open) |
 | 34 — GCP SA key rotation | `audit-remediation-operator-actions.md` CS-001 |
 | 35 — privacy/GDPR review | decision D10 (documentation sign-off) |
 
