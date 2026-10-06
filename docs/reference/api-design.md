@@ -378,6 +378,12 @@ data: {"asset_id":"XLM-native","price":"0.12421","as_of":"2026-04-22T14:30:00.12
 
 `id` is a ULID; resume by passing `Last-Event-ID` header.
 
+A bucket the anomaly freeze (ADR-0019) refused is published as
+`event: price_frozen` in place of its `price_update`: the bucket's
+identity (`asset_id`, `quote`, `observed_at`, `window_seconds`) with no
+price, and `flags.frozen: true`. A withheld pair's buckets become
+`price_withheld`. The OpenAPI spec has the exact payloads.
+
 ### 5.6 Markets (liquidity + venue breakdown)
 
 | Method | Path | Purpose | Req |

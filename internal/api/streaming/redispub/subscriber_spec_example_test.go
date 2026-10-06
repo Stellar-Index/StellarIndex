@@ -23,9 +23,22 @@ import (
 // emits it as both timestamps, with no flags. A client that keyed on the
 // documented discriminator was reading a contract nobody produces.
 func TestPriceStreamSpecExampleMatchesTheWire(t *testing.T) {
-	wire := bridgedFrame(t)
+	bridged := map[string]map[string]any{
+		"price_update": bridgedFrame(t, func(ctx context.Context, pub *redispub.Publisher, pair canonical.Pair, bucketEnd time.Time) error {
+			return pub.PublishClosedBucket(ctx, pair, 5*time.Minute, "0.159608357106", bucketEnd, nil)
+		}),
+		"price_frozen": bridgedFrame(t, func(ctx context.Context, pub *redispub.Publisher, pair canonical.Pair, bucketEnd time.Time) error {
+			return pub.PublishFrozenBucket(ctx, pair, 5*time.Minute, bucketEnd, bucketEnd)
+		}),
+	}
 
-	for i, frame := range specStreamFrames(t) {
+	for i, sf := range specStreamFrames(t) {
+		frame := sf.body
+		wire, ok := bridged[sf.eventType]
+		if !ok {
+			t.Errorf("spec frame %d has event type %q, which the bridge never emits", i, sf.eventType)
+			continue
+		}
 		if got, want := keySet(frame), keySet(wire); got != want {
 			t.Errorf("spec frame %d top-level keys = %s, wire emits %s", i, got, want)
 		}
@@ -46,7 +59,7 @@ func TestPriceStreamSpecExampleMatchesTheWire(t *testing.T) {
 
 // bridgedFrame publishes one event the way the aggregator does (stamped
 // with a minute-aligned bucket end) and returns what the Hub received.
-func bridgedFrame(t *testing.T) map[string]any {
+func bridgedFrame(t *testing.T, publish func(context.Context, *redispub.Publisher, canonical.Pair, time.Time) error) map[string]any {
 	t.Helper()
 	_, rdb := newRedis(t)
 	hub := &fakeHub{}
@@ -72,8 +85,8 @@ func bridgedFrame(t *testing.T) map[string]any {
 		t.Fatal(err)
 	}
 	bucketEnd := time.Now().UTC().Truncate(time.Minute)
-	if err := pub.PublishClosedBucket(ctx, pair, 5*time.Minute, "0.159608357106", bucketEnd, nil); err != nil {
-		t.Fatalf("PublishClosedBucket: %v", err)
+	if err := publish(ctx, pub, pair, bucketEnd); err != nil {
+		t.Fatalf("publish: %v", err)
 	}
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) && len(hub.Calls()) == 0 {
@@ -90,9 +103,14 @@ func bridgedFrame(t *testing.T) map[string]any {
 	return frame
 }
 
+type specFrame struct {
+	eventType string
+	body      map[string]any
+}
+
 // specStreamFrames returns the decoded `data:` lines of the /price/stream
-// 200 example in the source OpenAPI spec.
-func specStreamFrames(t *testing.T) []map[string]any {
+// 200 example in the source OpenAPI spec, each with its `event:` type.
+func specStreamFrames(t *testing.T) []specFrame {
 	t.Helper()
 	raw, err := os.ReadFile("../../../../openapi/stellar-index.v1.yaml")
 	if err != nil {
@@ -113,8 +131,13 @@ func specStreamFrames(t *testing.T) []map[string]any {
 		t.Fatalf("parse spec: %v", err)
 	}
 	example, _ := spec.Paths["/price/stream"].Get.Responses["200"].Content["text/event-stream"].Example.(string)
-	var frames []map[string]any
+	var frames []specFrame
+	eventType := ""
 	for _, line := range strings.Split(example, "\n") {
+		if et, ok := strings.CutPrefix(line, "event: "); ok {
+			eventType = et
+			continue
+		}
 		body, ok := strings.CutPrefix(line, "data: ")
 		if !ok {
 			continue
@@ -123,7 +146,7 @@ func specStreamFrames(t *testing.T) []map[string]any {
 		if err := json.Unmarshal([]byte(body), &frame); err != nil {
 			t.Fatalf("spec example frame is not JSON: %v (%s)", err, body)
 		}
-		frames = append(frames, frame)
+		frames = append(frames, specFrame{eventType: eventType, body: frame})
 	}
 	if len(frames) == 0 {
 		t.Fatal("no data: frames in the /price/stream example — the scan is broken")

@@ -2033,7 +2033,7 @@ paths:
           `as_of`); `flags` / `sources` are present only when the
           publishing path evaluated them — absent flags mean "not
           evaluated", never "fresh". The aggregator's 300 / 3600 /
-          86400 series carry neither.
+          86400 series carry neither on `price_update`.
         - The 60-second series (`window_seconds=60`, operator-configured
           pairs) carries `flags.stale`, and `flags.frozen_checked: true`
           when the ADR-0019 freeze marker was read for every spelling
@@ -2046,6 +2046,16 @@ paths:
           would have carried) — because that
           bucket is the value the freeze refused (`/v1/price` serves
           the held value or refuses instead).
+        - The aggregator's 300 / 3600 / 86400 series do the same: a
+          bucket the ADR-0019 anomaly freeze refused is published as a
+          `price_frozen` event in place of its `price_update`, once per
+          bucket, with the same `data` fields and no `price`, plus
+          `frozen_since` — the `observed_at` of the first bucket the
+          freeze refused (absent when the aggregator does not know it).
+          `flags` is `{"frozen": true, "frozen_checked": true}`; `stale`
+          is not evaluated on these series and is absent. A frozen
+          series is therefore never silent: heartbeats alone mean no
+          bucket closed, not a freeze.
         - `observed_at` and `as_of` are both the END of the closed
           1-minute bucket the event was computed at, so they are
           equal on every event. `price` is the VWAP over
@@ -2109,6 +2119,10 @@ paths:
                 id: 0198a4203f100002
                 event: price_update
                 data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159701882234","price_type":"vwap","observed_at":"2026-05-05T14:36:00Z","window_seconds":300},"as_of":"2026-05-05T14:36:00Z"}
+
+                id: 0198a4203f100003
+                event: price_frozen
+                data: {"data":{"asset_id":"native","quote":"fiat:USD","observed_at":"2026-05-05T14:37:00Z","window_seconds":300,"frozen_since":"2026-05-05T14:37:00Z"},"as_of":"2026-05-05T14:37:00Z","flags":{"frozen":true,"frozen_checked":true}}
 
         "400":        { $ref: "#/components/responses/BadRequest" }
         "404":        { $ref: "#/components/responses/NotFound" }
@@ -15795,9 +15809,8 @@ components:
           answer 503 `price-unavailable` and `/v1/price/batch` omits
           the row, rather than publish the refused bucket. Only fires
           on `/v1/price`, `/v1/price/batch`, `/v1/oracle/lastprice` +
-          `/v1/oracle/x_last_price`, and on the 60-second
-          `/v1/price/stream` series' `price_frozen` event (which
-          carries no value); tip, observations and the `/v1/assets`
+          `/v1/oracle/x_last_price`, and on `/v1/price/stream`'s
+          `price_frozen` event (which carries no value); tip, observations and the `/v1/assets`
           price columns ignore freeze.
         - `frozen_checked` — true only when the freeze marker was
           actually read (looker wired and the read succeeded). When
