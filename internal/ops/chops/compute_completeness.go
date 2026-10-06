@@ -1685,7 +1685,7 @@ func buildPriorVerdicts(snaps []timescale.CompletenessSnapshot) (priorProj, prio
 // The regression was real and in the hot path: completeness-incremental.sh
 // passes `-from = min(watermark)`, but watermark_ledger is the LAKE
 // (substrate∧recognition) axis, which sits AT tip whenever the lake is clean.
-// So the hourly run reconciled only the newest ~hour of ledgers, never re-saw
+// So the incremental run reconciled only the newest ledgers, never re-saw
 // the projection mismatch that had pinned `complete=false`, and wrote
 // complete=true — a verdict improving with no evidence, which ADR-0033 forbids
 // (complete through W requires every claim to hold contiguously to W).

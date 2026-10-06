@@ -143,7 +143,6 @@ func TestOpsBatchIdentityNeverReachesLiveDaemons(t *testing.T) {
 			"configs/ansible/roles/archival-node/templates/systemd/cap67-movements.service.j2",
 			"configs/ansible/roles/archival-node/templates/systemd/ch-supply.service.j2",
 			"configs/ansible/roles/archival-node/templates/systemd/compute-completeness.service.j2",
-			"deploy/systemd/stellarindex-completeness.service",
 		})
 		if live != nil {
 			requireExamined(t, "live_daemon-authenticated", liveNamed, []string{

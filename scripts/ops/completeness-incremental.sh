@@ -13,8 +13,8 @@
 # Healthchecks.io) surface it — the repair (ch-rebuild -write over that range)
 # stays a deliberate, reviewed action, never automatic.
 #
-# Installed as stellarindex-completeness.service, fired hourly by
-# stellarindex-completeness.timer. A full genesis→tip sweep (catches the rarer
+# Not installed on r1 (the deployed job is the daily compute-completeness
+# timer from the archival-node role); run it by hand. A full genesis→tip sweep (catches the rarer
 # case where OLD data changed underneath us) is a separate periodic/manual run:
 #   stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch
 set -uo pipefail

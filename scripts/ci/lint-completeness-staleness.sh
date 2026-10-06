@@ -20,10 +20,9 @@
 # ansible-drift.yml):
 #   configs/ansible/roles/archival-node/templates/systemd/compute-completeness.timer.j2
 # (templated + enabled in tasks/14-stellarindex-services.yml). NOTE:
-# deploy/systemd/stellarindex-completeness.timer is a STALE, non-deployed
-# reference file (still OnUnitActiveSec=1h from the retired hourly design;
-# not installed by any Ansible task) and the code comment's reference to
-# it is out of date — do NOT calibrate against it.
+# The retired hourly deploy/systemd/stellarindex-completeness.timer was
+# never deployed and has been deleted; the code comment's reference to it
+# is out of date.
 #
 # This lint parses both constants and the timer's period and asserts:
 #   AGE (hard, both directions):

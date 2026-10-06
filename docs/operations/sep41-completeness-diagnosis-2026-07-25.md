@@ -29,12 +29,12 @@ status: living
 
 `scripts/ops/completeness-incremental.sh` passes `-from` = `min(watermark)` over
 non-recognition sources. The watermark is the lake axis, so on a clean lake it sits at tip and
-the hourly run reconciles about `[tip, tip]` (`runFrom > servedFrom`). A source whose prior
-`projection_ok = false` therefore hits P3 every hour. By INV-5 design:
+the daily run (05:30 UTC) reconciles about `[tip, tip]` (`runFrom > servedFrom`). A source whose prior
+`projection_ok = false` therefore hits P3 on every daily run. By INV-5 design:
 
-- The hourly timer cannot clear a failing projection verdict. Only a full run (no `-from`) can.
+- The daily timer cannot clear a failing projection verdict. Only a full run (no `-from`) can.
 - "Still red" says nothing about data health until a full run has been done.
-- Each hourly run overwrites `detail`, erasing the original P1 first-mismatch ledger.
+- Each daily run overwrites `detail`, erasing the original P1 first-mismatch ledger.
 
 ## 2. Ruled out
 
@@ -173,7 +173,7 @@ stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml -write
 ```
 
 **Step 1, capture Q1's two `detail` strings** before anything overwrites them. Optionally
-`systemctl stop stellarindex-completeness.timer`.
+`systemctl stop compute-completeness.timer`.
 
 **Step 2, full source-scoped re-verify** (the diagnostic and the only cure for the latch):
 
@@ -220,7 +220,7 @@ Re-run Q1. `complete=true` means the latch was the whole story: restart the time
   (`internal/storage/clickhouse/completeness.go`); it affects every event source, so confirm blast radius first.
 - Floor loss (Q6 plus P5): served rows were deleted. Escalate; do not re-record the floor (`recordFloors` refuses so the evidence survives).
 
-**Step 4:** `systemctl start stellarindex-completeness.timer`; the next hourly run carries the clean verdict forward. Confirm with Q1 and `/v1/coverage`.
+**Step 4:** `systemctl start compute-completeness.timer`; for an immediate run use `systemctl start compute-completeness.service` (oneshot). Otherwise the next daily run (05:30 UTC, up to 5 min random delay) carries the clean verdict forward. Confirm with Q1 and `/v1/coverage`.
 
 ## 6. Not established
 

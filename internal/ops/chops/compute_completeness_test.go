@@ -522,9 +522,9 @@ func TestTargetScope_IncrementalOnlyRaises(t *testing.T) {
 // TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict pins INV-5:
 // the served (`complete`) axis silently regressed from false to TRUE.
 //
-// completeness-incremental.sh (hourly) passes `-from = min(watermark)`, but
+// completeness-incremental.sh passes `-from = min(watermark)`, but
 // watermark_ledger is the LAKE (substrate∧recognition) axis, which sits AT tip
-// whenever the lake is clean. So the run reconciled only the newest ~hour of
+// whenever the lake is clean. So the run reconciled only the newest
 // ledgers, never re-saw the projection mismatch that had pinned complete=false,
 // and published complete=true — a verdict improving with no evidence, which
 // ADR-0033 forbids (complete through W requires every claim to hold
