@@ -2536,6 +2536,11 @@ jobs:
         # Structural grep, no hosts, no network.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-caddy-key-pipefail-test.sh
+      - name: galexie-backfill-status empty-log test
+        # now_epoch was assigned only when the log had a start timestamp;
+        # an empty log died under set -u.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-galexie-backfill-status-test.sh
       - name: promtail server listen-address test (T573/T594)
         # The archival-node role's rendered promtail config and its r1
         # hand-installed twin set http_listen_port/grpc_listen_port with
