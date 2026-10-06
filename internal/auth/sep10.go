@@ -33,7 +33,7 @@ import (
 // fallback used when the deployment hasn't configured the required
 // env vars (signing seed + JWT secret), Redis for the replay guard, or
 // the ClickHouse lake the signer-threshold check reads; every method returns
-// [ErrNotImplemented] so `/v1/auth/sep10/*` responds 503 while the
+// [ErrNotImplemented] so `/v1/auth/sep10/*` responds 404 sep10-unavailable while the
 // rest of the API still serves. With `auth_mode=sep10` the
 // missing-config path is a hard startup failure instead.
 //
@@ -106,10 +106,10 @@ type Token struct {
 // the production [internal/auth/sep10] validator can't be built
 // (missing signing seed or JWT secret) AND `auth_mode` is not
 // `sep10` — the API binary swaps in this Noop so unrelated
-// endpoints keep serving while `/v1/auth/sep10/*` returns 503. With
+// endpoints keep serving while `/v1/auth/sep10/*` returns 404. With
 // `auth_mode=sep10` the same missing-config path is a hard startup
 // failure instead. Every method returns [ErrNotImplemented]; the
-// challenge/token handlers translate to 503 Service Unavailable.
+// challenge/token handlers translate to 404 sep10-unavailable.
 type NoopSEP10Validator struct{}
 
 // Challenge implements [SEP10Validator].

@@ -433,7 +433,7 @@ API keys are:
 SEP-10 (Stellar keypair auth) is implemented — challenge, signature
 verification, replay guard and JWT issuance all ship in the binary —
 but it is NOT enabled on the hosted deployment, where both routes
-answer `503 sep10-unavailable` for want of a provisioned signing seed.
+answer `404 sep10-unavailable` (unless `[api.sep10]` is configured) for want of a provisioned signing seed.
 Two things follow for anyone reading this as a contract:
 
 - Nothing on `api.stellarindex.io` can be authenticated with a SEP-10

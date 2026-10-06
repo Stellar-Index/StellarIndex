@@ -4661,8 +4661,8 @@ export interface paths {
          *
          *     **Not enabled on the hosted deployment.** The server-side
          *     verifier is implemented, but `api.stellarindex.io` has no
-         *     signing seed provisioned, so this route answers `503
-         *     sep10-unavailable`. Enabling it is an operator action, not a
+         *     signing seed provisioned, so this route answers `404
+         *     sep10-unavailable` (non-retryable) unless `[api.sep10]` is configured. Enabling it is an operator action, not a
          *     code change: set the `STELLARINDEX_SEP10_SEED` (server signing
          *     S-strkey) and `STELLARINDEX_SEP10_JWT_SECRET` (≥32 bytes)
          *     environment variables — their names are configurable via
@@ -4699,7 +4699,7 @@ export interface paths {
          *     carries `{transaction: <base64-XDR>}`. Unauthenticated by
          *     design — the SEP-10 protocol IS the authentication.
          *
-         *     **Not enabled on the hosted deployment** — answers `503
+         *     **Not enabled on the hosted deployment** — answers `404
          *     sep10-unavailable` for the same reason as
          *     `/v1/auth/sep10/challenge`, which carries the operator
          *     configuration this route needs.
@@ -23773,7 +23773,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
-            503: components["responses"]["ServiceUnavailable"];
+            404: components["responses"]["NotFound"];
         };
     };
     createSep10Token: {
@@ -23830,6 +23830,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            404: components["responses"]["NotFound"];
             /** @description Challenge time-bounds expired; request a fresh challenge. */
             410: {
                 headers: {
@@ -23839,7 +23840,6 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            503: components["responses"]["ServiceUnavailable"];
         };
     };
     listLedgers: {
