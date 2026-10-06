@@ -20,8 +20,8 @@ import (
 // refresh gate: the query never ran, so nothing was spent on the caller.
 type saturatedReader struct{ *capReader }
 
-func (r *saturatedReader) AccountOperations(context.Context, string, int, clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error) {
-	return nil, errRefreshSaturated
+func (r *saturatedReader) AccountOperations(context.Context, string, int, clickhouse.ExplorerCursor) ([]clickhouse.OpRow, clickhouse.ExplorerCursor, error) {
+	return nil, clickhouse.ExplorerCursor{}, errRefreshSaturated
 }
 
 // billedAccountOperations serves one metered GET /v1/accounts/{g}/operations

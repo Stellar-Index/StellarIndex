@@ -71,7 +71,7 @@ func TestAccountOperations_WatermarkBoundsEachArmResolve(t *testing.T) {
 		watermark = uint32(63_411_270)
 	)
 	conn := watermarkStubConn(watermark, &stubRows{})
-	if _, err := (&ExplorerReader{conn: conn}).AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
+	if _, _, err := (&ExplorerReader{conn: conn}).AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
 	// BOTH arms must carry the bound — a bound on one arm, or on the
@@ -110,7 +110,7 @@ func TestAccountOperations_WatermarkPreservesCursorArgOrder(t *testing.T) {
 func TestAccountOperations_NoWatermarkFallsBackUnbounded(t *testing.T) {
 	const limit = 37
 	conn := watermarkStubConn(0, &stubRows{})
-	if _, err := (&ExplorerReader{conn: conn}).AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
+	if _, _, err := (&ExplorerReader{conn: conn}).AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
 	qs, _ := keyReads(conn)

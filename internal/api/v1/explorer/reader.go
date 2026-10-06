@@ -252,8 +252,10 @@ type ExplorerReader interface {
 	// since_ledger, not the one they asked for.
 	ContractInteractions(ctx context.Context, contractID string, limit int, sinceLedger uint32) ([]clickhouse.ContractEdgeRow, uint32, error)
 	ContractCodeHistory(ctx context.Context, contractID string) ([]clickhouse.ContractCodeVersion, error)
-	AccountTransactions(ctx context.Context, account string, limit int, cur clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error)
-	AccountOperations(ctx context.Context, account string, limit int, cur clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error)
+	// AccountTransactions' resume, when set, is the next page's cursor: the
+	// page stopped at a scan frontier and may be short without being last.
+	AccountTransactions(ctx context.Context, account string, limit int, cur clickhouse.ExplorerCursor) (_ []clickhouse.TxSummary, resume clickhouse.ExplorerCursor, _ error)
+	AccountOperations(ctx context.Context, account string, limit int, cur clickhouse.ExplorerCursor) (_ []clickhouse.OpRow, resume clickhouse.ExplorerCursor, _ error)
 	// AccountOperationTypeCounts is the whole-history aggregate variant
 	// of AccountOperations (same two UNION arms, GROUP BY op_type) —
 	// scan-shaped, so callers must run it under a detached budget (the

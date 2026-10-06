@@ -1417,31 +1417,41 @@ func sourcedTxKeysExactQuery(hasCursor bool) string {
 // the success filter anyone could plant rows in any account's history for a
 // fee.
 //
+// resume is set when the participant arm spent its query budget before the
+// page filled (participantKeys): the page may then be short, and resume —
+// the arm's scan frontier, not the last row — is the next page's cursor.
+//
 // Incoming coverage tracks the participant-index capture + backfill: a tx
 // whose only link to the account predates participant capture surfaces once
 // the historical re-derive lands.
-func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string, limit int, cur ExplorerCursor) ([]TxSummary, error) {
+func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string, limit int, cur ExplorerCursor) (_ []TxSummary, resume ExplorerCursor, _ error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	if !r.opsBySourceAvailable(ctx) {
-		return nil, errOpsBySourceMissing
+		return nil, resume, errOpsBySourceMissing
 	}
 	sourced, err := r.sourcedTxKeys(ctx, account, limit, cur)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
+		return nil, resume, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
 	}
 	var from *accountTxKey
 	if cur.IsSet() {
 		from = &accountTxKey{cur.Ledger, cur.A}
 	}
-	part, err := participantKeys(ctx, r.conn, account, limit, txParticipantArm, "", nil, from)
+	part, frontier, err := participantKeys(ctx, r.conn, account, limit, txParticipantArm, "", nil, from)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
+		return nil, resume, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
+	}
+	if frontier != nil {
+		sourced = notOlderThan(sourced, *frontier, accountTxKey.after)
 	}
 	keys := mergeKeysDesc(append(sourced, part...), limit, accountTxKey.after)
+	if frontier != nil && len(keys) < limit {
+		resume = ExplorerCursor{Ledger: frontier.ledger, A: frontier.txIndex}
+	}
 	if len(keys) == 0 {
-		return nil, nil
+		return nil, resume, nil
 	}
 	// FINAL: ingested_at is one-second resolution, so a same-second re-derive
 	// can leave two RMT parts a bare SELECT cannot order (see
@@ -1451,10 +1461,11 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 		ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?` + explorerScanSettings
 	rows, err := r.conn.Query(ctx, q, limit)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
+		return nil, resume, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanTxSummaries(rows)
+	txs, err := scanTxSummaries(rows)
+	return txs, resume, err
 }
 
 // accountTxKey is one transaction's (ledger_seq, tx_index) listing key.
@@ -1545,6 +1556,18 @@ func mergeKeysDesc[K comparable](keys []K, n int, after func(a, b K) bool) []K {
 	return out
 }
 
+// notOlderThan keeps the keys at or newer than f: past an arm's scan frontier
+// the other arm's keys cannot be ordered against keys not yet read.
+func notOlderThan[K comparable](keys []K, f K, after func(a, b K) bool) []K {
+	out := keys[:0:0]
+	for _, k := range keys {
+		if !after(f, k) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // participantArm describes one listing's stellar.operation_participants key.
 type participantArm[K comparable] struct {
 	cols, order string
@@ -1575,25 +1598,33 @@ var (
 	}
 )
 
-// maxParticipantWindow caps the doubling window participantKeys reads.
-const maxParticipantWindow = 1 << 14
+// participantQueryBudget caps the queries (window reads plus visibility
+// lookups) one participantKeys call issues. A page normally costs two; the
+// cap bounds what planted failed txs (a fee each) can make one page cost to
+// ~4–8k skipped rows instead of the request deadline.
+const participantQueryBudget = 16
 
 // participantKeys returns the account's newest `limit` participant keys
 // older than `from` whose transaction is visible (visibleParticipantKeys),
-// paging the account's rows in sort-key order. Exact by construction: every
-// key read is checked, in order, until the page is full or the arm is
-// exhausted, so a failed tx can neither reach the page nor shorten it — the
-// filter runs here, inside the arm, because filtering at hydration would
-// serve short pages (#290). Each step is bounded (one window read plus point
-// lookups, chunked by visibilityChunk); the cost grows only with the failed
-// participant rows skipped. `fixed` carries predicates every read must
-// keep (the activity-watermark bound).
+// paging the account's rows in sort-key order. Every key read is checked, in
+// order, so a failed tx never reaches the page — the filter runs here, inside
+// the arm, because filtering at hydration would serve short pages (#290).
+// Each window is read and resolved whole, sized to the budget left; when the
+// budget runs out first, frontier is the oldest key scanned: the keys
+// returned are exact for everything at or newer than it, and the caller
+// resumes strictly below it. `fixed` carries predicates every read must keep
+// (the activity-watermark bound).
 func participantKeys[K comparable](ctx context.Context, conn driver.Conn, account string, limit int,
 	arm participantArm[K], fixed string, fixedArgs []any, from *K,
-) ([]K, error) {
+) (keys []K, frontier *K, err error) {
 	var out []K
 	window := windowRows(limit, windowFactorKeys)
-	for {
+	for budget := participantQueryBudget; ; window *= 2 {
+		// The read plus its ≤ ceil(window/visibilityChunk) lookups must fit.
+		window = min(window, (budget-1)*visibilityChunk)
+		if window <= 0 {
+			return out, from, nil
+		}
 		q := `SELECT ` + arm.cols + ` FROM stellar.operation_participants WHERE account = ?` + fixed
 		args := append([]any{account}, fixedArgs...)
 		if from != nil {
@@ -1603,7 +1634,7 @@ func participantKeys[K comparable](ctx context.Context, conn driver.Conn, accoun
 		}
 		raw, err := queryKeys(ctx, conn, q+` ORDER BY `+arm.order+` LIMIT ?`+explorerScanSettings, append(args, window), arm.scan)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		// Adjacent rows repeat a key (several ops of one tx, un-merged RMT
 		// parts); the strict cursor below skips any repeats past the window.
@@ -1613,16 +1644,16 @@ func participantKeys[K comparable](ctx context.Context, conn driver.Conn, accoun
 				keys = append(keys, k)
 			}
 		}
-		kept, err := visibleParticipantKeys(ctx, conn, account, keys, arm.tx)
+		kept, lookups, err := visibleParticipantKeys(ctx, conn, account, keys, arm.tx)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		budget -= 1 + lookups
 		out = append(out, kept[:min(len(kept), limit-len(out))]...)
 		if len(out) >= limit || len(raw) < window {
-			return out, nil
+			return out, nil, nil
 		}
 		from = &raw[len(raw)-1]
-		window = min(2*window, maxParticipantWindow)
 	}
 }
 
@@ -1638,10 +1669,10 @@ const visibilityChunk = 500
 // visibleParticipantKeys keeps, in order, the keys whose transaction
 // succeeded or was sourced by the account itself (its own failed txs stay in
 // its history). Resolves every distinct tx of keys in ceil(txs/visibilityChunk)
-// point lookups on the stellar.transactions primary key. No FINAL: successful
-// and source_account are ledger facts, so every un-merged version of a key
-// carries the same values.
-func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn, account string, keys []K, tx func(K) accountTxKey) ([]K, error) {
+// point lookups on the stellar.transactions primary key, and reports how many
+// it ran. No FINAL: successful and source_account are ledger facts, so every
+// un-merged version of a key carries the same values.
+func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn, account string, keys []K, tx func(K) accountTxKey) (_ []K, lookups int, _ error) {
 	seen := make(map[accountTxKey]struct{}, len(keys))
 	var txs []accountTxKey
 	for _, k := range keys {
@@ -1659,8 +1690,9 @@ func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn,
 		  AND ` + visibleTxPredicate + explorerScanSettings
 		ok, err := queryKeys(ctx, conn, q, []any{account}, scanTxKey)
 		if err != nil {
-			return nil, err
+			return nil, lookups, err
 		}
+		lookups++
 		for _, k := range ok {
 			visible[k] = struct{}{}
 		}
@@ -1672,7 +1704,7 @@ func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn,
 			out = append(out, k)
 		}
 	}
-	return out, nil
+	return out, lookups, nil
 }
 
 // sourcedOpKeysExactQuery is the sourced op arm's LIMIT 1 BY form (exact,
@@ -1709,20 +1741,21 @@ func sourcedOpKeysExactQuery(hasCursor, hasBound bool) string {
 // arms never overlap at op granularity: operationParticipantRows excludes the
 // op's own resolved source (TestOperationParticipantRows_SkipsSource). When
 // the account has an activity watermark (stellar.account_activity, #31) both
-// arms are additionally bounded by `ledger_seq <= watermark`.
-func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, limit int, cur ExplorerCursor) ([]OpRow, error) {
+// arms are additionally bounded by `ledger_seq <= watermark`. resume: see
+// AccountTransactions.
+func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, limit int, cur ExplorerCursor) (_ []OpRow, resume ExplorerCursor, _ error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	if !r.opsBySourceAvailable(ctx) {
-		return nil, errOpsBySourceMissing
+		return nil, resume, errOpsBySourceMissing
 	}
 	// No watermark (table absent, backfill pending, or no row for the
 	// account) → the unbounded read.
 	bound, hasBound := r.accountActivityWatermark(ctx, account)
 	sourced, err := r.sourcedOpKeys(ctx, account, limit, cur, bound, hasBound)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
+		return nil, resume, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
 	}
 	fixed, fixedArgs := "", []any(nil)
 	if hasBound {
@@ -1732,13 +1765,19 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	if cur.IsSet() {
 		from = &accountOpKey{cur.Ledger, cur.A, cur.B}
 	}
-	part, err := participantKeys(ctx, r.conn, account, limit, opParticipantArm, fixed, fixedArgs, from)
+	part, frontier, err := participantKeys(ctx, r.conn, account, limit, opParticipantArm, fixed, fixedArgs, from)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
+		return nil, resume, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
+	}
+	if frontier != nil {
+		sourced = notOlderThan(sourced, *frontier, accountOpKey.after)
 	}
 	keys := mergeKeysDesc(append(sourced, part...), limit, accountOpKey.after)
+	if frontier != nil && len(keys) < limit {
+		resume = ExplorerCursor{Ledger: frontier.ledger, A: frontier.txIndex, B: frontier.opIndex}
+	}
 	if len(keys) == 0 {
-		return nil, nil
+		return nil, resume, nil
 	}
 	// FINAL for the same tie-break reason as AccountTransactions' hydration;
 	// opCols carries body_xdr, which is why it is read only here, once.
@@ -1747,10 +1786,11 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 		ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?` + explorerScanSettings
 	rows, err := r.conn.Query(ctx, q, limit)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
+		return nil, resume, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanOps(rows)
+	ops, err := scanOps(rows)
+	return ops, resume, err
 }
 
 // accountOpKey is one operation's (ledger_seq, tx_index, op_index) key.

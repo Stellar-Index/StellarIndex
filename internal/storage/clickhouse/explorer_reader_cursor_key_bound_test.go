@@ -45,7 +45,7 @@ func TestKeysetCursors_LeadingKeyBoundBindsCursorLedger(t *testing.T) {
 	t.Run("account transactions", func(t *testing.T) {
 		conn := &stubConn{respond: withOpsBySourceRows(empty)}
 		cur := ExplorerCursor{Ledger: 63_000_000, A: 4}
-		if _, err := (&ExplorerReader{conn: conn}).AccountTransactions(ctx, "GTEST", limit, cur); err != nil {
+		if _, _, err := (&ExplorerReader{conn: conn}).AccountTransactions(ctx, "GTEST", limit, cur); err != nil {
 			t.Fatalf("AccountTransactions: %v", err)
 		}
 		// An empty window proves an exhausted arm, so the last query is the

@@ -333,7 +333,7 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 		return out
 	}
 	opsSeen := walk("operations", func(cur chstore.ExplorerCursor) ([]key, []key) {
-		got, err := er.AccountOperations(ctx, hot, pageSize, cur)
+		got, _, err := er.AccountOperations(ctx, hot, pageSize, cur)
 		if err != nil {
 			t.Fatalf("AccountOperations (cursor %+v): %v", cur, err)
 		}
@@ -400,7 +400,7 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 	}
 
 	readerTxs, readerShort := txWalk("transactions (reader)", func(cur chstore.ExplorerCursor) []chstore.TxSummary {
-		got, err := er.AccountTransactions(ctx, hot, pageSize, cur)
+		got, _, err := er.AccountTransactions(ctx, hot, pageSize, cur)
 		if err != nil {
 			t.Fatalf("AccountTransactions (cursor %+v): %v", cur, err)
 		}
@@ -430,12 +430,12 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 
 	// A cursor set MID-page (not at a page boundary): the next page must
 	// start exactly at the following row, identically on both paths.
-	first, err := er.AccountOperations(ctx, hot, 10, chstore.ExplorerCursor{})
+	first, _, err := er.AccountOperations(ctx, hot, 10, chstore.ExplorerCursor{})
 	if err != nil || len(first) != 10 {
 		t.Fatalf("first page: %v (%d rows)", err, len(first))
 	}
 	mid := chstore.ExplorerCursor{Ledger: first[3].Seq, A: first[3].TxIndex, B: first[3].OpIndex}
-	fromMid, err := er.AccountOperations(ctx, hot, 10, mid)
+	fromMid, _, err := er.AccountOperations(ctx, hot, 10, mid)
 	if err != nil {
 		t.Fatalf("mid-page cursor: %v", err)
 	}
@@ -455,7 +455,7 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 	// found through the log_comment this context stamps on each of them.
 	readerTag := uuid.NewString()
 	readerCtx := clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"log_comment": readerTag}))
-	if _, err := er.AccountOperations(readerCtx, hot, limit, chstore.ExplorerCursor{}); err != nil {
+	if _, _, err := er.AccountOperations(readerCtx, hot, limit, chstore.ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountOperations read_rows page: %v", err)
 	}
 	mustExec(`SYSTEM FLUSH LOGS`)

@@ -103,12 +103,12 @@ func (downReader) ContractCodeHistory(context.Context, string) ([]clickhouse.Con
 	return nil, errLakeDown
 }
 
-func (downReader) AccountTransactions(context.Context, string, int, clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error) {
-	return nil, errLakeDown
+func (downReader) AccountTransactions(context.Context, string, int, clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, clickhouse.ExplorerCursor, error) {
+	return nil, clickhouse.ExplorerCursor{}, errLakeDown
 }
 
-func (downReader) AccountOperations(context.Context, string, int, clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error) {
-	return nil, errLakeDown
+func (downReader) AccountOperations(context.Context, string, int, clickhouse.ExplorerCursor) ([]clickhouse.OpRow, clickhouse.ExplorerCursor, error) {
+	return nil, clickhouse.ExplorerCursor{}, errLakeDown
 }
 
 func (downReader) AccountOperationTypeCounts(context.Context, string) ([]clickhouse.OpTypeCount, error) {

@@ -139,7 +139,7 @@ func TestClickHouseAccountHistoryServesNewestUnmergedVersion(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = er.Close() })
 
-	txs, err := er.AccountTransactions(ctx, account, 50, chstore.ExplorerCursor{})
+	txs, _, err := er.AccountTransactions(ctx, account, 50, chstore.ExplorerCursor{})
 	if err != nil {
 		t.Fatalf("AccountTransactions: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestClickHouseAccountHistoryServesNewestUnmergedVersion(t *testing.T) {
 		}
 	}
 
-	ops, err := er.AccountOperations(ctx, account, 50, chstore.ExplorerCursor{})
+	ops, _, err := er.AccountOperations(ctx, account, 50, chstore.ExplorerCursor{})
 	if err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}

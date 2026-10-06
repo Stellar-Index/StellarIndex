@@ -62,7 +62,7 @@ func TestAccountTransactions_PageIsShortOnlyAtEndOfHistory(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			router := &txArmRouter{sourced: tc.sourced, participant: tc.participant}
 			conn := &stubConn{respond: withOpsBySourceRows(router.respond)}
-			if _, err := (&ExplorerReader{conn: conn}).AccountTransactions(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
+			if _, _, err := (&ExplorerReader{conn: conn}).AccountTransactions(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 				t.Fatalf("AccountTransactions: %v", err)
 			}
 			if last := conn.queries[len(conn.queries)-1]; !strings.Contains(last, tc.want) {

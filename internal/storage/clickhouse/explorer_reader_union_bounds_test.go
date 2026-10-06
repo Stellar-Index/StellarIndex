@@ -48,7 +48,7 @@ func exactOpsArm(t *testing.T, base func(string) (driver.Rows, error), limit int
 		}
 		return base(q)
 	}}
-	if _, err := (&ExplorerReader{conn: conn}).AccountOperations(context.Background(), "GTEST", limit, cur); err != nil {
+	if _, _, err := (&ExplorerReader{conn: conn}).AccountOperations(context.Background(), "GTEST", limit, cur); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
 	for i, q := range conn.queries {

@@ -313,12 +313,12 @@ func (s *stubExplorerReader) AccountsByWealthCached(_ context.Context, _, _ []st
 	}, true
 }
 
-func (s *stubExplorerReader) AccountTransactions(_ context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error) {
-	return s.txs, s.err
+func (s *stubExplorerReader) AccountTransactions(_ context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, clickhouse.ExplorerCursor, error) {
+	return s.txs, clickhouse.ExplorerCursor{}, s.err
 }
 
-func (s *stubExplorerReader) AccountOperations(_ context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error) {
-	return s.ops, s.err
+func (s *stubExplorerReader) AccountOperations(_ context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.OpRow, clickhouse.ExplorerCursor, error) {
+	return s.ops, clickhouse.ExplorerCursor{}, s.err
 }
 
 func (s *stubExplorerReader) AccountMovements(_ context.Context, _ string, _ int, _ clickhouse.AccountMovementCursor, _ clickhouse.AccountMovementFilter) ([]clickhouse.AccountMovementRow, error) {

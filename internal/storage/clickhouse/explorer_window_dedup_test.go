@@ -3,6 +3,8 @@ package clickhouse
 import (
 	"context"
 	"math/big"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -55,14 +57,32 @@ func isVisibilityLookup(q string) bool {
 	return strings.Contains(q, visibleTxPredicate) && !strings.Contains(q, "uniqExact")
 }
 
-// visibleTxKeys answers the visibility lookup with the tx key of every
-// participant row not in failed; the reader intersects it with its own keys.
-func visibleTxKeys(participant [][]any, failed map[[2]uint32]bool) *stubRows {
+// inTuples parses the literal key tuples of a query's `IN ((a,b),…)` list.
+func inTuples(q string) [][]uint32 {
+	var out [][]uint32
+	for _, m := range tupleRE.FindAllStringSubmatch(q, -1) {
+		var t []uint32
+		for _, f := range strings.Split(m[1], ",") {
+			n, err := strconv.ParseUint(f, 10, 32)
+			if err != nil {
+				panic(err)
+			}
+			t = append(t, uint32(n))
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+var tupleRE = regexp.MustCompile(`\((\d+(?:,\d+)+)\)`)
+
+// visibleTxKeys answers a visibility lookup the way stellar.transactions
+// would: only for the tx keys the query sent, minus the failed ones.
+func visibleTxKeys(q string, failed map[[2]uint32]bool) *stubRows {
 	var out [][]any
-	for _, r := range participant {
-		k := [2]uint32{r[0].(uint32), r[1].(uint32)}
-		if !failed[k] {
-			out = append(out, []any{k[0], k[1]})
+	for _, t := range inTuples(q) {
+		if !failed[[2]uint32{t[0], t[1]}] {
+			out = append(out, []any{t[0], t[1]})
 		}
 	}
 	return &stubRows{data: out}
@@ -78,7 +98,7 @@ type opsArmRouter struct {
 func (a *opsArmRouter) respond(q string) (driver.Rows, error) {
 	switch {
 	case isVisibilityLookup(q):
-		return visibleTxKeys(a.participant, a.failed), nil
+		return visibleTxKeys(q, a.failed), nil
 	case strings.Contains(q, "FROM stellar.ops_by_source WHERE source_account"):
 		return &stubRows{data: a.sourced}, nil
 	case strings.Contains(q, "FROM stellar.operation_participants WHERE account"):
@@ -101,7 +121,7 @@ func TestAccountOperations_WindowedReadHasNoLimit1By(t *testing.T) {
 	conn := &stubConn{respond: withOpsBySourceRows(router.respond)}
 	r := &ExplorerReader{conn: conn}
 
-	rows, err := r.AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{Ledger: 200, A: 1, B: 2})
+	rows, _, err := r.AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{Ledger: 200, A: 1, B: 2})
 	if err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
@@ -154,7 +174,7 @@ func TestAccountOperations_UnprovenWindowFallsBackToExactQuery(t *testing.T) {
 	conn := &stubConn{respond: withOpsBySourceRows(router.respond)}
 	r := &ExplorerReader{conn: conn}
 
-	if _, err := r.AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
+	if _, _, err := r.AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
 	if exactQueries(conn, sourcedOpKeysExactQuery(false, false)) != 1 {
@@ -182,7 +202,7 @@ type txArmRouter struct {
 func (a *txArmRouter) respond(q string) (driver.Rows, error) {
 	switch {
 	case isVisibilityLookup(q):
-		return visibleTxKeys(a.participant, a.failed), nil
+		return visibleTxKeys(q, a.failed), nil
 	case strings.Contains(q, "FROM stellar.ops_by_source WHERE source_account"):
 		return &stubRows{data: a.sourced}, nil
 	case strings.Contains(q, "FROM stellar.operation_participants WHERE account"):
@@ -206,7 +226,7 @@ func TestAccountTransactions_WindowedMergeCollapsesDuplicatesAndOverlap(t *testi
 	conn := &stubConn{respond: withOpsBySourceRows(router.respond)}
 	r := &ExplorerReader{conn: conn}
 
-	if _, err := r.AccountTransactions(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
+	if _, _, err := r.AccountTransactions(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountTransactions: %v", err)
 	}
 	last := conn.queries[len(conn.queries)-1]
@@ -230,7 +250,7 @@ func TestAccountTransactions_UnprovenWindowFallsBackToExactQuery(t *testing.T) {
 	conn := &stubConn{respond: withOpsBySourceRows(router.respond)}
 	r := &ExplorerReader{conn: conn}
 
-	if _, err := r.AccountTransactions(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
+	if _, _, err := r.AccountTransactions(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountTransactions: %v", err)
 	}
 	if exactQueries(conn, sourcedTxKeysExactQuery(false)) != 1 {

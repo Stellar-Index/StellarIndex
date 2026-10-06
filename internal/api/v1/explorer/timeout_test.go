@@ -201,14 +201,14 @@ func (r *capReader) ContractCodeHistory(ctx context.Context, _ string) ([]clickh
 	return nil, nil
 }
 
-func (r *capReader) AccountTransactions(ctx context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error) {
+func (r *capReader) AccountTransactions(ctx context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, clickhouse.ExplorerCursor, error) {
 	r.probe.record(ctx)
-	return nil, nil
+	return nil, clickhouse.ExplorerCursor{}, nil
 }
 
-func (r *capReader) AccountOperations(ctx context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error) {
+func (r *capReader) AccountOperations(ctx context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.OpRow, clickhouse.ExplorerCursor, error) {
 	r.probe.record(ctx)
-	return nil, nil
+	return nil, clickhouse.ExplorerCursor{}, nil
 }
 
 func (r *capReader) AccountState(ctx context.Context, _ string) (clickhouse.AccountState, error) {

@@ -88,7 +88,7 @@ func TestAccountOperations_DedupsOnThePrimaryKey(t *testing.T) {
 		}
 		return router.respond(q)
 	})}
-	rows, err := (&ExplorerReader{conn: conn}).AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{})
+	rows, _, err := (&ExplorerReader{conn: conn}).AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{})
 	if err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}

@@ -38,11 +38,11 @@ func TestAccountListings_ArmsPageAccountKeyedTables(t *testing.T) {
 		run          func(*ExplorerReader) error
 	}{
 		"operations": {"FROM stellar.operations", "(ledger_seq, tx_index, op_index) < (?, ?, ?)", func(r *ExplorerReader) error {
-			_, err := r.AccountOperations(context.Background(), "GTEST", 9, cur)
+			_, _, err := r.AccountOperations(context.Background(), "GTEST", 9, cur)
 			return err
 		}},
 		"transactions": {"FROM stellar.transactions", "(ledger_seq, tx_index) < (?, ?)", func(r *ExplorerReader) error {
-			_, err := r.AccountTransactions(context.Background(), "GTEST", 9, cur)
+			_, _, err := r.AccountTransactions(context.Background(), "GTEST", 9, cur)
 			return err
 		}},
 	} {

@@ -82,12 +82,12 @@ func (r *timeoutReader) ContractCodeHistory(context.Context, string) ([]clickhou
 	return nil, context.DeadlineExceeded
 }
 
-func (r *timeoutReader) AccountTransactions(context.Context, string, int, clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error) {
-	return nil, context.DeadlineExceeded
+func (r *timeoutReader) AccountTransactions(context.Context, string, int, clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, clickhouse.ExplorerCursor, error) {
+	return nil, clickhouse.ExplorerCursor{}, context.DeadlineExceeded
 }
 
-func (r *timeoutReader) AccountOperations(context.Context, string, int, clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error) {
-	return nil, context.DeadlineExceeded
+func (r *timeoutReader) AccountOperations(context.Context, string, int, clickhouse.ExplorerCursor) ([]clickhouse.OpRow, clickhouse.ExplorerCursor, error) {
+	return nil, clickhouse.ExplorerCursor{}, context.DeadlineExceeded
 }
 
 func (r *timeoutReader) AccountStateCached(context.Context, string) (clickhouse.AccountState, bool, error) {
