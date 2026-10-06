@@ -325,10 +325,17 @@ func TestStoreReadScansCatchMethodValues(t *testing.T) {
 	for _, src := range []string{
 		`func (s *Server) h() { s.triangulated.Lookup(a, b) }`,
 		`func (s *Server) h() { f := s.triangulated.Lookup; f(a, b) }`,
+		`func (s *Server) h() { c := s.triangulated; c.Lookup(a, b) }`,
+		`func (s *Server) h() { var c = s.triangulated; f := c.Lookup; f(a, b) }`,
+		`func (s *Server) h(l TriangulatedPriceLooker) { l.Lookup(a, b) }`,
 	} {
 		if sc.earliestRead(&v1Func{decl: plantedFunc(t, src)}) == token.NoPos {
 			t.Errorf("earliestRead missed the cache read in %q", src)
 		}
+	}
+	// A package function that shares the method's name is not the cache.
+	if sc.earliestRead(&v1Func{decl: plantedFunc(t, `func (s *Server) h() { dns.Lookup(a, b) }`)}) != token.NoPos {
+		t.Error("earliestRead counted a package-qualified call as a cache read")
 	}
 }
 
@@ -799,14 +806,16 @@ func (sc *v1Scan) recordCalls(fn *v1Func) {
 // cache is a read: it is the price-serving call, just deferred.
 func (sc *v1Scan) earliestRead(fn *v1Func) token.Pos {
 	first := token.NoPos
+	locals := declaredNames(fn.decl)
 	ast.Inspect(fn.decl.Body, func(n ast.Node) bool {
 		sel, ok := n.(*ast.SelectorExpr)
 		if !ok || !sc.reads[sel.Sel.Name] {
 			return true
 		}
-		// A field read (s.triangulated.Lookup…), never a package
-		// function that happens to share the name.
-		if _, ok := sel.X.(*ast.SelectorExpr); !ok {
+		// A bare identifier must be one fn declares (c := s.triangulated;
+		// c.Lookup…); any other is taken as a package qualifier, so a
+		// package function sharing the name is not a read.
+		if id, ok := sel.X.(*ast.Ident); ok && !locals[id.Name] {
 			return true
 		}
 		if first == token.NoPos || sel.Pos() < first {
@@ -815,6 +824,62 @@ func (sc *v1Scan) earliestRead(fn *v1Func) token.Pos {
 		return true
 	})
 	return first
+}
+
+// declaredNames returns every name fn binds: receiver, parameters,
+// results (its own and its closures'), and locals.
+func declaredNames(fn *ast.FuncDecl) map[string]bool {
+	out := map[string]bool{}
+	for _, id := range fieldNames(fn.Recv) {
+		out[id.Name] = true
+	}
+	ast.Inspect(fn, func(n ast.Node) bool {
+		for _, id := range boundIdents(n) {
+			out[id.Name] = true
+		}
+		return true
+	})
+	return out
+}
+
+// boundIdents returns the names n declares.
+func boundIdents(n ast.Node) []*ast.Ident {
+	switch d := n.(type) {
+	case *ast.FuncType:
+		return append(fieldNames(d.Params), fieldNames(d.Results)...)
+	case *ast.ValueSpec:
+		return d.Names
+	case *ast.AssignStmt:
+		if d.Tok == token.DEFINE {
+			return identsOf(d.Lhs...)
+		}
+	case *ast.RangeStmt:
+		if d.Tok == token.DEFINE {
+			return identsOf(d.Key, d.Value)
+		}
+	}
+	return nil
+}
+
+func fieldNames(fl *ast.FieldList) []*ast.Ident {
+	if fl == nil {
+		return nil
+	}
+	var out []*ast.Ident
+	for _, f := range fl.List {
+		out = append(out, f.Names...)
+	}
+	return out
+}
+
+func identsOf(exprs ...ast.Expr) []*ast.Ident {
+	var out []*ast.Ident
+	for _, e := range exprs {
+		if id, ok := e.(*ast.Ident); ok {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func (sc *v1Scan) cacheSeams() []*v1Func {

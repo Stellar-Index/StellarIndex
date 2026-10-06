@@ -109,7 +109,7 @@ func TestRawPrices1mReadersPassTheGuard(t *testing.T) {
 		}
 		for _, d := range f.Decls {
 			fn, ok := d.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || !bodyCallsAnyMethod(fn.Body, rawPrices1mReads) {
+			if !ok || fn.Body == nil || !bodyReferencesAnyMethod(fn.Body, rawPrices1mReads) {
 				continue
 			}
 			readers++
@@ -132,18 +132,39 @@ func TestRawPrices1mReadersPassTheGuard(t *testing.T) {
 	}
 }
 
-// bodyCallsAnyMethod reports whether body calls x.m for any m in names.
-func bodyCallsAnyMethod(body *ast.BlockStmt, names []string) bool {
+// bodyReferencesAnyMethod reports whether body references x.m for any m in
+// names, on any receiver. A method value (f := r.s.ClosedVWAPAtOrBefore)
+// or a store alias (st := r.s; st.ClosedVWAPAtOrBefore(...)) reads the
+// same raw bucket as a direct call.
+func bodyReferencesAnyMethod(body *ast.BlockStmt, names []string) bool {
 	found := false
 	ast.Inspect(body, func(n ast.Node) bool {
-		if call, ok := n.(*ast.CallExpr); ok {
-			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && slices.Contains(names, sel.Sel.Name) {
-				found = true
-			}
+		if sel, ok := n.(*ast.SelectorExpr); ok && slices.Contains(names, sel.Sel.Name) {
+			found = true
 		}
 		return !found
 	})
 	return found
+}
+
+// TestRawPrices1mReadScanCatchesMethodValues pins that a raw prices_1m
+// read is seen however it is spelled, not only as a direct call.
+func TestRawPrices1mReadScanCatchesMethodValues(t *testing.T) {
+	cases := []struct {
+		name, src string
+		want      bool
+	}{
+		{"direct call", `func (r R) f() { r.s.ClosedVWAPAtOrBefore(ctx, a, b, at) }`, true},
+		{"method value", `func (r R) f() { g := r.s.ClosedVWAPAtOrBefore; g(ctx, a, b, at) }`, true},
+		{"method passed as an argument", `func (r R) f() { apply(r.S.RecentClosedVWAP1mForPair) }`, true},
+		{"store alias", `func (r R) f() { st := r.s; st.LatestClosedVWAP1mForPair(ctx, a, b) }`, true},
+		{"unrelated store read", `func (r R) f() { r.s.LatestTrade(ctx, a, b) }`, false},
+	}
+	for _, c := range cases {
+		if got := bodyReferencesAnyMethod(plantedFunc(t, c.src).Body, rawPrices1mReads); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
 }
 
 // funcDisplayName renders fn as Recv.Name (or Name for a plain function).
