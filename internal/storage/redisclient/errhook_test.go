@@ -92,10 +92,8 @@ func TestErrorHook_NilAndNoscriptAreNotErrors(t *testing.T) {
 }
 
 func TestErrorHook_TransportFailureIsIOAndCountsPipelineOnce(t *testing.T) {
-	mr := miniredis.RunT(t)
-	addr := mr.Addr()
-	mr.Close()
-	c := redisclient.Build(config.StorageConfig{RedisAddr: addr})
+	// Port 0 is refused on every dial; a closed miniredis address could be rebound by another process.
+	c := redisclient.Build(config.StorageConfig{RedisAddr: "127.0.0.1:0"})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
 	before := redisErrs("io")

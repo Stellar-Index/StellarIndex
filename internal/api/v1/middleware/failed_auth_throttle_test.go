@@ -54,7 +54,7 @@ func TestAuth_FailedAuthThrottle_FailsClosedOnSustainedOutage(t *testing.T) {
 	}
 
 	// Blow up the backing miniredis — every future Take() call errors.
-	mr.Close()
+	mr.Kill()
 
 	// First failure only ARMS the dwell-time clock (elapsed=0 < 30s):
 	// the bucket still returns a plain wrapped error, so the throttle

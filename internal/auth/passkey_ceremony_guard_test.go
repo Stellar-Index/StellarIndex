@@ -8,6 +8,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/Stellar-Index/StellarIndex/internal/redistest"
 )
 
 // TestRedisPasskeyCeremonyGuard_ConsumeIsOneShot — the adapter's
@@ -82,12 +84,10 @@ func TestRedisPasskeyCeremonyGuard_KeyNamespace(t *testing.T) {
 // surface as an error, never as "claimed". The caller fails closed on
 // it; a swallowed error would silently disable replay protection.
 func TestRedisPasskeyCeremonyGuard_ErrorPropagates(t *testing.T) {
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
-	mr.Close() // the store is now unreachable
+	mr := redistest.Run(t)
+	mr.Kill() // the store is now unreachable
 
-	claimed, err := NewRedisPasskeyCeremonyGuard(rdb).Consume(context.Background(), "digest", time.Minute)
+	claimed, err := NewRedisPasskeyCeremonyGuard(mr.Client).Consume(context.Background(), "digest", time.Minute)
 	if err == nil {
 		t.Fatal("unreachable Redis returned no error")
 	}
