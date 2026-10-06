@@ -994,6 +994,10 @@ func (o *Orchestrator) inheritLegFreeze(
 	// does (F-1345).
 	o.keepFrozenVWAPAlive(ctx, chain.Target, window, cachekeys.FreezeTTL)
 
+	// The target has no lifecycle of its own, so frozen_since is the leg's.
+	legFiredAt := o.freezeStates[leg.String()+":"+window.String()].FiredAt
+	o.streamFrozenOnce(ctx, chain.Target, window, o.tickClock().Truncate(closedBucket), legFiredAt)
+
 	if o.cfg.FreezeWriter == nil {
 		return
 	}
