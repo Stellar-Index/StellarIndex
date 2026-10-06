@@ -9,6 +9,8 @@
 # is only effective where intra_ledger_seq is populated in the source
 # append-log (D2 partitions 39–53, Phase-0 re-derived ranges, live ingest
 # ≥~63,550,000). Run `probe-ordinals` first to see actual coverage.
+# cutover swaps the SERVED current-state table: ATTENDED ONLY. Acceptance:
+# `reconcile-balances -sample 50` reports 0 mismatches (it was 19/50 before).
 #
 # Phases (run in order; each is independently resumable/idempotent):
 #   probe-ordinals            cheap per-partition sample of ordinal coverage

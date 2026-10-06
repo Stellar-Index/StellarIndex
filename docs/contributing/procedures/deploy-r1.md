@@ -9,6 +9,8 @@ Full runbook: `docs/operations/deploy-workflow.md`. Deploys are
 operator-triggered, never automatic on tag. Confirm with the maintainer before
 deploying anything he hasn't asked to ship.
 
+Ansible config apply: the tag is `--tags stellarindex`, not `stellarindex-services` (matches no task and reports a misleading `changed=0`).
+
 ## Invoke
 
 ```sh
