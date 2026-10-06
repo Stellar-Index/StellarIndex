@@ -59,6 +59,27 @@
       };
       Unattended-Upgrade::Automatic-Reboot "false";
 
+# Ubuntu's needrestart apt hook defaults to restarting every daemon on an
+# outdated library after an upgrade, Postgres and heavy-job units included.
+# List-only keeps security patches installing; restarts wait for maintenance.
+- name: Create the needrestart conf.d directory
+  ansible.builtin.file:
+    path: /etc/needrestart/conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Set needrestart to list pending service restarts only
+  ansible.builtin.copy:
+    dest: /etc/needrestart/conf.d/50-stellarindex-list-only.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (archival-node 12-hardening.yml).
+      $nrconf{restart} = 'l';
+
 # ── CIS L2 minimum set: kernel info-leak sysctls + auditd ────────────
 # Scope is deliberately
 # narrow: kernel hardening + an auth/sudo-exec audit trail ONLY — no
