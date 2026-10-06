@@ -594,7 +594,7 @@ groups:
           team: stellarindex
           component: infra
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#applying-pending-service-restarts-maintenance-step
           summary: "{{ $labels.instance }} has needed a reboot for 7d+ (running superseded libraries or kernel)"
           description: |
             node_reboot_required has been 1 for a week: an unattended
