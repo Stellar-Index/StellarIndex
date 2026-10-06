@@ -66,7 +66,7 @@ type adminCreateKeyRequest struct {
 // exists only on staff-issued credentials seeded via
 // stellarindex-ops; it is never granted to public callers).
 //
-// Requires an `X-Reason` header (platform-spec §7.2), the same contract
+// Requires an `X-Reason` header, the same contract
 // as PATCH /v1/admin/accounts and DELETE /v1/admin/keys/{keyID}. Minting
 // a privileged credential is at least as consequential as setting a
 // per-account override or killing a key, and it was the one admin write
@@ -301,8 +301,8 @@ func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, 
 // reaching into a different customer's account. Operators read both off
 // GET /v1/account/keys or the audit row for the mint.
 //
-// Operator-tier only; requires an `X-Reason` header (platform-spec §7.2,
-// same contract as PATCH /v1/admin/accounts). 204 only when a key was
+// Operator-tier only; requires an `X-Reason` header (same contract as
+// PATCH /v1/admin/accounts). 204 only when a key was
 // actually revoked; 404, with no audit row, when no key matches
 // (identifier, keyID). This is the emergency containment path, so a
 // typo'd identifier must read as a failure, never as a contained leak.

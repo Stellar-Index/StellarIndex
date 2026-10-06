@@ -106,7 +106,7 @@ Pool free low / critical:
       it is genuinely no longer needed (confirm with the person who
       took it; automation will never do this for you).
 - [ ] Otherwise treat as the pool-capacity runbook
-      ([zfs-pool-full](zfs-pool-full.md)): archive → S3, galexie trim.
+      ([zfs-pool-full](infra.md#stellarindex_zfs_pool_low_space)): archive → S3, galexie trim.
       **Never propose a drive upgrade for r1** — capacity is software-only.
 - [ ] If the pool is healthy but the floor is wrong for this host, change
       `zfs_snapshot_min_free_bytes` in the inventory and re-apply
@@ -425,8 +425,8 @@ pushes its WAL into the live pgBackRest stanza.
   `scripts/ci/zfs-snapshot-test.sh`.
 - Role: `configs/ansible/roles/archival-node/tasks/21-zfs-snapshots.yml`,
   tag `zfs-snapshots`; vars `zfs_snapshot_*` in `defaults/main.yml`.
-- Companion runbooks: [zfs-pool-full](zfs-pool-full.md) (pool
-  capacity, the percentage-based alert), [backup-failed](backup-failed.md)
+- Companion runbooks: [zfs-pool-full](infra.md#stellarindex_zfs_pool_low_space) (pool
+  capacity, the percentage-based alert), [backup-failed](infra.md#stellarindex_timescale_backup_none_24h)
   / [restore-drill-stale](restore-drill-stale.md) (pgBackRest, the
   off-host path), [ch-schema-restore](ch-schema-restore.md) (schema,
   not data).

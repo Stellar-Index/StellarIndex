@@ -152,6 +152,13 @@ one commit, and `make hooks-remove` takes it out. It honours an existing
 `core.hooksPath` and refuses to overwrite a pre-commit hook it did not write,
 printing the one line to add to it instead.
 
+## Reading a gate's verdict
+
+A gate passes on its literal line, not its exit code: `ALL REQUIRED CHECKS
+PASSED` from `make prepush`, `ALL CHECKS PASSED` from `verify.sh`, the
+failure count from `r1-smoke.sh`. Piping a gate through `tee`, `head` or
+`sed` reports the pipe's status, not the gate's.
+
 ## Which gate for a given change
 
 Gate depth follows blast radius; state which row a diff falls in before

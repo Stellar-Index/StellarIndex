@@ -26,7 +26,7 @@ type HashDBVerifyResult struct {
 	// exists to surface. Non-zero means either upstream rewrote a
 	// previously-fetched ledger's bytes, or the copy we're reading
 	// now is locally corrupted; either way, escalate (see the
-	// hashdb-drift-detected runbook).
+	// hashdb runbook).
 	Drifted int
 
 	// Missing counts ledgers hashdb has no record for (never

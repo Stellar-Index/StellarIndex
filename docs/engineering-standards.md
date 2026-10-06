@@ -33,6 +33,9 @@ cleverness is justified.
 The rest of this doc is mostly mechanical enforcement of this
 principle.
 
+- No development command may need manual network access; one that does is a bug.
+- State a measurement with its units and the command that produced it.
+
 ---
 
 ## 2. Technical debt prevention
@@ -166,8 +169,6 @@ switch is a config-level kill-switch:
   and its "off" branch.
 - An ops kill-switch meant to be flipped during an incident is also
   documented in the relevant runbook.
-
-Full policy: [repo-hygiene-plan.md §6](architecture/repo-hygiene-plan.md#6-feature-flags).
 
 ### 2.7. No "temporary" workarounds
 

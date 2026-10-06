@@ -128,8 +128,7 @@ to the `#[contractevent]` types in
 [`circlefin/stellar-cctp/contracts/{token-messenger-minter-v2,message-transmitter-v2}/src/lib.rs`](https://github.com/circlefin/stellar-cctp)
 (most of the 16 lower-signal events have no upstream doc; schemas
 were reverse-engineered directly from real mainnet lake events —
-`max_message_body_size_updated` is the one exception, previously
-design-documented in `docs/architecture/cctp-stellar-coverage.md`).
+`max_message_body_size_updated` is the one exception).
 All 26 project into the same `cctp_events` row shape (`Event` in
 `consumer.go`), discriminated by `event_type`.
 
@@ -283,7 +282,7 @@ topic; there is no currently-known gap.
 
 ## References
 
-- Architecture doc: [`docs/architecture/cctp-stellar-coverage.md`](../../../docs/architecture/cctp-stellar-coverage.md)
+- Architecture doc: [`docs/protocols/cctp.md`](../../../docs/protocols/cctp.md)
 - Upstream source: https://github.com/circlefin/stellar-cctp
 - Circle developer docs: https://developers.circle.com/cctp/references/stellar-contracts
 - Class taxonomy: `internal/sources/external/framework.go` `ClassBridge`

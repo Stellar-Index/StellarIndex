@@ -40,7 +40,7 @@ tests:
               component: external-poller
               source: tiingo
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_poller_stale_tiingo
               summary: "Tiingo poller has not succeeded in 2+ h (>2x poll interval)"
               description: |
                 Tiingo's 1h poll interval skipped at least one whole cycle.

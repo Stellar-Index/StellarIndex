@@ -43,7 +43,7 @@ Schedule: `restore-drill.timer` (repo1, first Saturday of the month, 04:00 UTC) 
 
 | Layer | What restores it | Runbook |
 | ----- | ---------------- | ------- |
-| Postgres (served tier) | `pgbackrest restore` into a scratch datadir, `scripts/ops/restore-drill.sh` phases 1-3 | `runbooks/backup-failed.md` |
+| Postgres (served tier) | `pgbackrest restore` into a scratch datadir, `scripts/ops/restore-drill.sh` phases 1-3 | `runbooks/infra.md#stellarindex_timescale_backup_none_24h` |
 | ClickHouse **schema + state** | replay `schema.sql` from the daily §2.1 snapshot, then re-derive the data | `runbooks/ch-schema-restore.md` |
 | ClickHouse **data** | `ch-full-backfill.sh` against `galexie-archive`, bounded by `ch-backfill-done-windows.txt` from the same snapshot | `runbooks/ch-schema-restore.md` §"Restore path" |
 

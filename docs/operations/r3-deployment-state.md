@@ -7,8 +7,8 @@ status: skeleton — fill in after L4.15 provisioning
 # r3-01 (Singapore) deployment state
 
 > **Skeleton.** R3 has not yet been provisioned at the time this
-> file was written. The L4.15 row in
-> [`launch-readiness-backlog.md`](../architecture/launch-readiness-backlog.md)
+> file was written. The R3 item in
+> [`v1-launch-plan.md`](v1-launch-plan.md)
 > tracks the spinup. Replace the `{{TBD}}` placeholders below as
 > the operator works through
 > [`multi-region-cutover.md` §Stage 2](multi-region-cutover.md)
@@ -148,4 +148,3 @@ Vultr Object Storage) — see
   region variations — R3 — Vultr Singapore" — per-host details.
 - [ADR-0016](../adr/0016-per-region-storage-strategy.md) §"R3 —
   Vultr-hybrid" — design intent.
-- L4.15 in [`launch-readiness-backlog.md`](../architecture/launch-readiness-backlog.md).

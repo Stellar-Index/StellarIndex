@@ -109,7 +109,7 @@ cat /var/lib/node_exporter/textfile_collector/restore_drill.prom
    - Signal: `restore_drill.prom` has `stellarindex_restore_drill_failures > 0`
      and no `..._last_success_unix` line; `/var/log/restore-drill.log`
      names the failing check.
-   - Mitigation: route to `backup-failed.md` for the specific check.
+   - Mitigation: route to `infra.md#stellarindex_timescale_backup_none_24h` for the specific check.
 
 4. **Evidence unwritable** — the drill passed all checks but could not
    write `/var/lib/stellarindex/restore-drills/restore-drills.md`, which
@@ -154,7 +154,7 @@ cat /var/lib/node_exporter/textfile_collector/restore_drill.prom
   same ticket for the OFF-SITE repo2/S3 drill (`restore-drill-offsite.timer`,
   the 15th, `repo="2"`, 35 d). Both timers run the same script, one
   drill at a time.
-- `backup-failed.md` — when a drill's individual restore/verify checks
+- `infra.md#stellarindex_timescale_backup_none_24h` — when a drill's individual restore/verify checks
   fail.
 - `ch-schema-restore.md` — the ClickHouse half of a restore; the
   restore-drill's optional CH re-derive stage exercises the same path.

@@ -205,7 +205,7 @@ linked design doc has the full detail.
   wire-shape discriminators (`ticker` + `price_usd` vs `asset_id`
   + `type`). The old cross-chain `networks[]` array + the
   `/v1/assets/{slug}/{network}` drill-down were removed in the
-  Stellar-focus refactor (docs/architecture/stellar-focus-refactor-plan.md).
+  Stellar-focus refactor.
 - **`internal/currency` is the verified-currency trust surface.**
   Hand-curated YAML at `internal/currency/data/seed.yaml`, embedded
   in the binary via `//go:embed`. Adding a verified currency means

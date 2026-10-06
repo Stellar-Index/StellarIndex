@@ -1,5 +1,4 @@
-// Package platform models the customer + staff dashboard primitives
-// from docs/architecture/platform-spec.md.
+// Package platform models the customer + staff dashboard primitives.
 //
 // AGT-08 (audit-2026-07-23): this doc previously narrated the auth
 // flow, key management, and Postgres cutover as future per-week

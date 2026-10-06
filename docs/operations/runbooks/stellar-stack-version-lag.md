@@ -276,7 +276,7 @@ the service and the file's mtime, then re-run the probe by hand.
 
 ## Related
 
-- [galexie-catchup-refused](galexie-catchup-refused.md) — the
+- [galexie-archive](galexie-archive.md#stellarindex_galexie_catchup_refused) — the
   2026-07-05 captive-core wedge; a different failure mode in the same
   subsystem (galexie/captive-core health, not version currency).
 - `configs/ansible/roles/archival-node/tasks/07-galexie.yml` — the

@@ -107,7 +107,7 @@ round-trip on rule-syntax errors.
 
 ## Adding an alert
 
-Per [repo-hygiene-plan.md §16](../../docs/architecture/repo-hygiene-plan.md#16-observability-discipline):
+Every alert needs a runbook (see [alerts-catalog.md](../../docs/operations/alerts-catalog.md)):
 
 1. Expose the metric in `internal/obs/*.go` (Prometheus registry).
 2. Add the rule to the appropriate file under `rules/` **and** its

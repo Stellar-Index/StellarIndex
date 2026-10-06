@@ -29,7 +29,7 @@ tests:
               team: stellarindex
               component: external-poller
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_fx_fixings_refresh_stale
               summary: "fx_fixings appender has not completed a cycle in 3+ h"
               description: |
                 The forex worker has not finished an fx_fixings append cycle
@@ -53,7 +53,7 @@ tests:
               team: stellarindex
               component: external-poller
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_fx_fixings_series_stale
               summary: "newest fx_fixings bar is 4+ h old on a trading day"
               description: |
                 The appender runs but has stored no bar newer than 4 h on a
@@ -82,7 +82,7 @@ tests:
               team: stellarindex
               component: external-poller
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_fx_fixings_series_stale
               summary: "newest fx_fixings bar is 4+ h old on a trading day"
               description: |
                 The appender runs but has stored no bar newer than 4 h on a
@@ -109,7 +109,7 @@ tests:
               team: stellarindex
               component: external-poller
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-rate-rejected.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_fx_fixings_quote_disagreement
               summary: "fx_fixings bars for UZS disagree with the guarded daily rate"
               description: |
                 An hourly fixing for UZS sits outside [0.5, 1.5]

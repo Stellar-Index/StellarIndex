@@ -355,23 +355,6 @@ lint-golangci-config: ## Offline JSON-Schema check of .golangci.yml (#317 — no
 lint-openapi-urls: ## ADR-0018 URL-discipline + served-host check on the OpenAPI spec
 	@$(GO) run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
 
-# The default backlog (docs/architecture/launch-readiness-backlog.md) was
-# RETIRED 2026-08-29 (#321) — these targets now exit non-zero with a pointer
-# to docs/operations/v1-launch-plan.md rather than certifying frozen rows.
-# Pass -path to run the checker against a live L-numbered readiness doc.
-.PHONY: verify-launch-ready
-verify-launch-ready: ## Single-pane status check on an L-numbered readiness backlog (default doc is retired — see #321)
-	@$(GO) run ./scripts/ci/verify-launch-ready
-
-.PHONY: verify-launch-ready-all
-verify-launch-ready-all: ## verify-launch-ready with full per-row listing
-	@$(GO) run ./scripts/ci/verify-launch-ready -all
-
-.PHONY: verify-launch-ready-single-region
-verify-launch-ready-single-region: ## verify-launch-ready against the project's "live-in-development on R1" posture (skips R2/R3 + chaos + external-security rows)
-	@$(GO) run ./scripts/ci/verify-launch-ready \
-		-skip-ids L4.14,L4.15,L4.16,L4.17,L5.6,L5.8
-
 .PHONY: lint-metric-refs
 lint-metric-refs: ## F-1329 dead-alert guard: every stellarindex_* expr token must resolve to an emitter or KNOWN_INERT
 	@./scripts/ci/lint-metric-refs.sh

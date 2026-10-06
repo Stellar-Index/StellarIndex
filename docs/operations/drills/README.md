@@ -79,7 +79,7 @@ sev-playbook §5.3 internal-channel template cross-linked from its mitigation;
 Withdrawn: the quarterly drill that runs `drop_chunks` on staging. The old SEV-1
 mitigation (`drop_chunks('prices_1m', '30 days')`, ~120 GB freed) is no longer
 sanctioned: [db-disk-full.md](../runbooks/db-disk-full.md) forbids `drop_chunks` on
-data tables and disk relief is pool-level ([zfs-pool-full.md](../runbooks/zfs-pool-full.md)).
+data tables and disk relief is pool-level ([infra.md#stellarindex_zfs_pool_low_space](../runbooks/infra.md#stellarindex_zfs_pool_low_space)).
 
 ## Writeups
 

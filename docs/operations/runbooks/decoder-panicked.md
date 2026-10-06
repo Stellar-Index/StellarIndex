@@ -169,7 +169,7 @@ case it exists to catch.
   four dispatch seams are where it is installed.
 - `internal/completeness/reconcile.go` — `safeDecode`, the ADR-0033 arm
   that turns the same panic into a visible blind spot.
-- [worker-panicked](worker-panicked.md) — the sibling alert for a
+- [worker-panicked](infra.md#stellarindex_worker_panicked) — the sibling alert for a
   panicking background WORKER (that one stops the worker; this one skips
   one input).
 - [decode-errors](decode-errors.md) — the per-source decode-error-rate

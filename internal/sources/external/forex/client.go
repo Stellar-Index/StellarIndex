@@ -20,7 +20,7 @@
 // FXQuoteWriter seam rather than implementing Streamer/Poller/Backfiller.
 // forex ("massive" in [external.Registry]) is the ACTIVE feed, run as a
 // goroutine in the API binary (not the indexer) — see
-// docs/operations/runbooks/fx-feed-stale.md. [ecb] and
+// docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_feed_stale. [ecb] and
 // [exchangeratesapi] ARE Connector-framework poller implementations,
 // wired into the indexer, and currently disabled by default. ecb is
 // ALSO ECB-backed like [frankfurter], so both packages read the same

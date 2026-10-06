@@ -127,8 +127,6 @@ Capture for the postmortem: the underlying error class, whether the
 
 ## Related
 
-- [`docs/architecture/platform-spec.md`](../../architecture/platform-spec.md)
-  — §5.3 customer webhooks (the delivery side price alerts reuse).
 - `internal/pricealerts/` — the evaluator package.
 - `internal/api/v1/dashboardpricealerts/` — the CRUD surface.
 - Sibling alert: `postgres-ping-failing` (the broader "aggregator can't

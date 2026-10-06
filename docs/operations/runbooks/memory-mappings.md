@@ -17,7 +17,7 @@ severity: P1 | P3
 | Metric source | `node_exporter` textfile_collector reads `/var/lib/node_exporter/textfile_collector/memory_mappings.prom`, refreshed every 5 min by `memory-mappings.timer` → `/usr/local/bin/memory-mappings` (`configs/ansible/roles/archival-node/files/memory-mappings.sh`) |
 | Steady-state | ~47,000–50,000 mappings for ClickHouse against `vm.max_map_count` = 1,048,576 — about **4.5 %** of the limit (measured on r1, 2026-09-10, immediately after the restart) |
 | Customer impact | None while the ticket is firing. At exhaustion the process cannot `mmap` at all: ClickHouse crashes, and the jobs behind it fail (`holders-rollup.service` did on 2026-09-10) |
-| Companions | [host-memory-high](host-memory-high.md), [systemd-unit-failed](systemd-unit-failed.md) |
+| Companions | [host-memory-high](infra.md#stellarindex_host_memory_high), [systemd-unit-failed](infra.md#stellarindex_systemd_unit_failed) |
 
 ## Why this exists
 
@@ -160,12 +160,12 @@ ssh r1 'bash scripts/ci/memory-mappings-test.sh'   # from a checkout: pins the s
 
 ## Related
 
-- [host-memory-high](host-memory-high.md) — RSS pressure, a different
+- [host-memory-high](infra.md#stellarindex_host_memory_high) — RSS pressure, a different
   resource from mapping count: many small mappings are cheap in resident
   bytes and expensive in map count, so these two can move independently.
-- [systemd-unit-failed](systemd-unit-failed.md) — the catch-all that
+- [systemd-unit-failed](infra.md#stellarindex_systemd_unit_failed) — the catch-all that
   picks up `memory-mappings.service` when it refuses to publish.
-- [zfs-pool-full](zfs-pool-full.md) — the other substrate limit that
+- [zfs-pool-full](infra.md#stellarindex_zfs_pool_low_space) — the other substrate limit that
   takes ClickHouse down.
 - `docs/reference/metrics/README.md` — the metric family's reference entry.
 

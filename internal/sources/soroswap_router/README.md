@@ -43,7 +43,7 @@ router traffic does NOT arrive as a top-level op: aggregator
 contracts wrap the router as a nested call inside their own
 authorized call tree (the 2026-05-21 census measured an **8,729×
 undercount** when only top-level ops were walked —
-`docs/architecture/contract-call-coverage-audit.md`). The dispatcher
+`docs/adr/0052-contract-call-tree-routing.md`). The dispatcher
 walks the **full Soroban auth tree** per op
 (`extractInvokeContractCallTrees`: every
 `SorobanAuthorizedInvocation` root + transitively-nested

@@ -645,7 +645,7 @@ func parseCreateKeyRequest(w http.ResponseWriter, r *http.Request) (createKeyReq
 }
 
 // operatorReasonOK enforces the admin-write X-Reason contract
-// (platform-spec §7.2) on the self-service key routes when — and only
+// on the self-service key routes when — and only
 // when — the caller is operator-tier. Customer callers are untouched:
 // their mints/revokes are bounded to their own identifier and tier and
 // are not staff actions. Returns ok=false when it has already written

@@ -147,4 +147,3 @@ DNS → api → Proxy status: DNS only (grey cloud)
 - Origin middleware: `internal/api/v1/middleware/cachecontrol.go`
 - Per-surface policy decisions: [ADR-0018](../adr/0018-api-consistency-surfaces.md)
 - Multi-region origin layout: [multi-region-topology.md](../architecture/infrastructure/multi-region-topology.md)
-- Launch-readiness row: L3.14 in [launch-readiness-backlog.md](../architecture/launch-readiness-backlog.md)

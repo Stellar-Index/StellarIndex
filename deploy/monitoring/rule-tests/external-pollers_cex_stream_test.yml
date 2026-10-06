@@ -34,7 +34,7 @@ tests:
               source: kraken
               symbol: XLM/GBP
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cex-stream-silent-pair.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_cex_stream_subscription_rejected
               summary: "kraken rejected the trade subscription for XLM/GBP"
               description: |
                 The venue answered our subscribe request for
@@ -75,7 +75,7 @@ tests:
               source: kraken
               reason: unknown_symbol
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cex-stream-silent-pair.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_cex_stream_entry_skips
               summary: "kraken is skipping trade entries (unknown_symbol)"
               description: |
                 kraken has dropped trade entries with reason

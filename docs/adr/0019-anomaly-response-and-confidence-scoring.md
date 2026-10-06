@@ -15,7 +15,7 @@ Fresh, complete data can still be manipulated: a thin single-venue asset (USTRY)
 
 ## Decision
 
-Anomaly response is a continuous confidence score plus a freeze policy on the closed-bucket surface, not a binary published/not-published decision on a fixed threshold. Formulas, factor shapes, thresholds and the freeze lifecycle are in [anomaly-freeze-and-confidence.md](../architecture/anomaly-freeze-and-confidence.md).
+Anomaly response is a continuous confidence score plus a freeze policy on the closed-bucket surface, not a binary published/not-published decision on a fixed threshold. Formulas, factor shapes, thresholds and the freeze lifecycle are in [oracle-manipulation-defense.md](../architecture/oracle-manipulation-defense.md#freeze-layer-9).
 
 1. **Per-asset baseline.** Per `(base, quote)` pair, rolling 30-day robust statistics: `return_median` and `return_mad` (MAD scaled by 1.4826, not sigma, because sigma inflates after the first attack and hides the next), plus typical source count and liquidity. `z_score = abs(return_pct - return_median) / return_mad`. `return_mad` is computed at 1d, 7d and 30d, and the anomaly fires on the LARGEST z across windows holding enough samples (frog-boiling defence).
 2. **Confidence.** Every published price carries `confidence` in [0, 1], the normalised weighted geometric mean `prod(factor_i ^ weight_i) ^ (1 / sum(weights))` of seven factors: z-score, source count, source-class diversity, liquidity (log-saturating up to $1,000,000), cross-oracle agreement, triangulation agreement (weight 0.5, weight 0 when unchecked, never counted as a source) and baseline quality. The wire carries `confidence_factors`, the per-factor decomposition.
