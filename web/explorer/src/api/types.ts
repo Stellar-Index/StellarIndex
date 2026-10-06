@@ -4788,6 +4788,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ledgers/at": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The ledger closed at or before a timestamp.
+         * @description Resolves a timestamp to the ledger the network had closed at that
+         *     instant: the highest-sequence ledger whose `close_time` is at or
+         *     before `ts`, in the same shape as `/v1/ledgers/{seq}`.
+         *
+         *     - **Ties:** a ledger closed exactly at `ts` is returned. Close times
+         *       strictly increase, so no two ledgers share one.
+         *     - **Between closes:** the earlier ledger is returned, never the
+         *       next one. Close times are whole seconds; sub-second `ts` is honoured.
+         *     - **Gaps:** the answer is served only when it is proven from the
+         *       lake, meaning that ledger and its successor (unless it is the tip)
+         *       are both captured. When a gap in the lake makes it unprovable, the
+         *       response is 404, never a neighbouring ledger.
+         *
+         *     404 when `ts` is before the first captured ledger or after the
+         *     ingest tip's close time (a ledger not yet captured may still close
+         *     at or before it). The lookup is a binary search of point reads on
+         *     the ledger sequence, at most ~32 per request.
+         */
+        get: operations["getLedgerAt"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ledgers/{seq}": {
         parameters: {
             query?: never;
@@ -24094,6 +24130,45 @@ export interface operations {
                         };
                     };
                 };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLedgerAt: {
+        parameters: {
+            query: {
+                /**
+                 * @description RFC 3339 (`2024-06-01T12:00:00Z`; percent-encode a `+` offset
+                 *     as `%2B`) or non-negative unix seconds (`1717243200`). Anything
+                 *     else is a 400.
+                 * @example 2026-07-03T22:37:01Z
+                 */
+                ts: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ledger header of the ledger closed at or before `ts`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: components["schemas"]["Ledger"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No captured ledger provably closed at or before `ts`: before the first captured ledger, after the tip, or across a lake gap. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             503: components["responses"]["ServiceUnavailable"];
         };

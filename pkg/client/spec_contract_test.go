@@ -132,6 +132,7 @@ var uncoveredOperations = map[string]string{
 	// Explorer read surface (ADR-0038) — served to the web explorer;
 	// SDK is pricing-first. Deliberate until a customer asks.
 	"GET /ledgers":                              "explorer surface — SDK is pricing-first",
+	"GET /ledgers/at":                           "explorer surface — SDK is pricing-first",
 	"GET /ledgers/{seq}":                        "explorer surface — SDK is pricing-first",
 	"GET /ledgers/{seq}/transactions":           "explorer surface — SDK is pricing-first",
 	"GET /ledgers/{seq}/operations":             "explorer surface — SDK is pricing-first",
