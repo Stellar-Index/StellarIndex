@@ -44,7 +44,7 @@ Wiring edits — miss one and the source silently emits nothing:
 5. `internal/projector/registry.go` buildSource
 6. `internal/sources/external/registry.go` Metadata
 (+ a `reconSource` entry in
-`cmd/stellarindex-ops/reconciliation_catalogue.go` so the ADR-0033
+`internal/ops/chops/reconciliation_catalogue.go` so the ADR-0033
 verdict covers it, + migration for the table — see
 docs/contributing/add-migration.md.)
 

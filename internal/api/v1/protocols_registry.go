@@ -21,7 +21,7 @@ import (
 // this at request time by the /v1/protocols handlers.
 //
 // Deliberately boring: a flat struct in a package-level slice. Genesis
-// ledgers mirror cmd/stellarindex-ops/reconciliation_catalogue.go (the
+// ledgers mirror internal/ops/chops/reconciliation_catalogue.go (the
 // WASM-audit-sourced first-possible-data ledgers); factory sets come
 // from the per-source packages so a factory amendment there (e.g. a
 // Blend factory redeploy) propagates here without a second edit.

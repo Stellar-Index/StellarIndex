@@ -212,21 +212,11 @@ the tracked issue above, not CI.
 
 ### 3.1. SLOs as code
 
-- Every customer-facing endpoint has an SLO defined in
-  `internal/obs/slo.go`:
-
-  ```go
-  var APIv1TradesSLO = obs.SLO{
-      Name:           "api.v1.trades.latency.p95",
-      Target:         200 * time.Millisecond,
-      Window:         30 * 24 * time.Hour,
-      ErrorBudget:    1.0 - 0.999,
-      PageOnBurn:     obs.BurnRate2xOver1h,
-  }
-  ```
-
-- Prometheus alerts are derived from this struct. Runbooks are
-  linked from the struct's `Runbook` field.
+- **Gap** by design: there is no `internal/obs/slo.go` struct and no
+  Prometheus derivation from one. SLOs are hand-written multi-window
+  burn-rate rules in `configs/prometheus/rules.r1/slo.yml`; each alert
+  carries a `runbook_url` that `scripts/ci/lint-runbook-annotations.py`
+  and `scripts/ci/lint-alerts-catalog.py` check.
 
 - No ad-hoc alerts; everything flows from an SLO.
 
@@ -383,7 +373,7 @@ openapi/            the API spec (source of truth for reference docs)
 
 - SoroswapPair.SwapEvent has no reserves — use the sibling SyncEvent
   correlated by (ledger, tx, op_index). See internal/sources/soroswap/README.md.
-- Phoenix emits 8 events per swap — use internal/sources/phoenix/correlator.go.
+- Phoenix emits 8 events per swap — group by `groupKey` in internal/sources/phoenix/decode.go.
 - Reflector v3 has no on-chain twap/x_*. We compute locally.
 
 ## Where to ask for help
@@ -451,23 +441,12 @@ of truth is the doc.go so drift is impossible.
 
 ### 4.4. Structured logs with stable field names
 
-Every log call uses a slog-style structured logger. Field names
-are enumerated in `internal/obs/logfields.go`:
-
-```go
-const (
-    FieldSource      = "source"        // always the source name
-    FieldLedgerSeq   = "ledger_seq"    // uint32
-    FieldTxHash      = "tx_hash"       // string, hex
-    FieldOpIndex     = "op_index"      // int
-    FieldAssetKey    = "asset_key"     // canonical asset identifier
-    FieldError       = "error"         // %w-wrapped
-    // ...
-)
-```
-
-Any new log field added in a PR must first appear here. Grep
-across the repo by field name is reliable, for humans and agents.
+Every log call uses the shared `log/slog` logger from
+`internal/obs/log.go` (`NewLogger`). **Gap** by design: there is no
+field-name registry (`internal/obs/logfields.go`) and no CI check on
+log field names; keep names consistent with neighbouring calls
+(`source`, `ledger_seq`, `tx_hash`, `op_index`, `asset_key`, `error`)
+and grep for the name before inventing a new one.
 
 ### 4.5. Explicit error types
 
@@ -581,7 +560,7 @@ One of three, never unlabelled.
 
 ### 5.2. Three enforcement layers
 
-1. **CI lint.** `scripts/ci/check-doc-freshness.sh` scans all
+1. **CI lint.** `scripts/ci/lint-docs.sh` scans all
    `current` docs, warns at 90 days stale, fails at 180.
 2. **Reviewer checklist.** Every PR touching code in a package
    must confirm the package's doc is current (box ticked in PR
@@ -649,19 +628,19 @@ mechanism in the codebase.
 | Boring-over-clever | Code review | CODEOWNERS |
 | Definition of Done | CI + PR template | `.github/` |
 | Forbidden patterns | `golangci-lint` custom rules | `.golangci.yml` |
-| TODO discipline | CI regex check | `scripts/ci/check-todo-tracking.sh` |
+| TODO discipline | CI regex check | `scripts/ci/lint-docs.sh` (TODO discipline) |
 | Deprecation policy | CI scan: every `// Deprecated:` names a removal version | `scripts/ci/check-deprecations.sh` |
 | Dependency minimalism | `go mod tidy` + `govulncheck` | `security.yml` |
 | Feature flag hygiene | **Gap** by design: no flag registry or age scan; kill-switches are config booleans, and CI checks each key is in the config reference | `scripts/ci/lint-docs.sh` (see §2.6) |
-| SLOs as code | `internal/obs/slo.go` struct + Prometheus derivation | `docker/prometheus/` |
-| Runbook ↔ alert link | CI bidirectional check | `scripts/ci/check-runbook-links.sh` |
-| Doc freshness | CI scan | `scripts/ci/check-doc-freshness.sh` |
-| Doc-code citation validity | CI scan | `scripts/ci/check-doc-code-links.sh` |
+| SLO burn-rate alerts | **Gap** by design: hand-written rules, no SLO struct | `configs/prometheus/rules.r1/slo.yml` |
+| Runbook ↔ alert link | CI check | `scripts/ci/lint-runbook-annotations.py`, `scripts/ci/lint-alerts-catalog.py` |
+| Doc freshness | CI scan | `scripts/ci/lint-docs.sh` (frontmatter freshness) |
+| Doc link validity | CI scan (doc links only; no code-path citation check) | `scripts/ci/lint-doc-links.sh` |
 | `canonical.AssetType` switch exhaustiveness | `go test` (go/types AST walk, scoped to one enum) | `internal/canonical/asset_type_exhaustive_guard_test.go` |
 | Never two sources of truth | Generated-file regen on release | `release.yml` |
-| Generated-file banner | CI scan for banner | `scripts/ci/check-generated-banner.sh` |
+| Generated-file banner | CI scan for banner | `scripts/ci/lint-docs.sh` (generated-file banners) |
 | Agent orientation | `AGENTS.md` + `doc.go` per package | convention + CI |
-| Structured log fields | Grep-based check in CI | `scripts/ci/check-log-fields.sh` |
+| Structured log fields | **Gap** by design: convention only | `internal/obs/log.go` |
 
 If a mechanism doesn't exist, it's a gap to be filled — we don't
 rely on reviewer vigilance alone for anything in this table.
@@ -730,7 +709,7 @@ Quarterly doc-hygiene sweep touches this file too.
 
 ### 9.1. Weekly (15 min, Friday)
 
-- Run `scripts/ci/check-doc-freshness.sh` locally; note anything
+- Run `scripts/ci/lint-docs.sh` locally; note anything
   approaching 90-day stale.
 - Skim `docs/reference/config/README.md` for dead kill-switches (§2.6).
 - Review any `P0 cleanup` issues opened during the week.

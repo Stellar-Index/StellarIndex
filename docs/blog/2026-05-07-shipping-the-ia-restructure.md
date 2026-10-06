@@ -137,8 +137,10 @@ data:
   forex feed.
 - **Pure SEP-41/SEP-41 swap USD volume.** Our XLM/USD fallback
   prices any trade touching XLM but token↔token Soroban swaps
-  contribute zero to USD volume until a per-token oracle layer
-  wires in.
+  contribute zero to USD volume. The per-token oracle pages have
+  since shipped (the `/oracles` page and each asset's oracle panel,
+  reading `/v1/oracle/latest`), but they are display-only: no oracle
+  price feeds `usd_volume`, so those swaps still contribute zero.
 
 These are documented in [the launch-readiness backlog][backlog] and
 the per-page "what's not on this page yet" footers.
