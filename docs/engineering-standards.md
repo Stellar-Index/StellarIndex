@@ -1023,3 +1023,7 @@ failure surfaces. Binding detail:
   standards reinforce.
 - [docs/architecture/semver-policy.md](architecture/semver-policy.md)
   — the versioning policy these standards back.
+
+## Do not measure production latency from a box your own agents are working
+
+On 2026-09-03 an audit read the API as `degraded` and a 6-hour p99 of 566.2 ms. Ten of our own subagents were saturating r1 with cold scans; the clean figure was 48.6 ms. A read-only agent wave alone produced a regression-shaped number that was not a regression. Measure latency in a window with no agent load, and say so in the claim. Source: `git show 52aacb972:docs/operations/v1-launch-plan.md`, lines 25-63 and Tier 0 row 0.3.

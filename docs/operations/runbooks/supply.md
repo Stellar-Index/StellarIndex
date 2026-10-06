@@ -1024,6 +1024,10 @@ False positive: a single failure during an intense re-derive that the next daily
 
 Script: `configs/ansible/roles/archival-node/files/run-ch-supply.sh`; unit: `templates/systemd/ch-supply.service.j2`. Sibling failed-unit alert: [`verify-archive.md#stellarindex_verify_archive_unit_failed`](verify-archive.md#stellarindex_verify_archive_unit_failed). Architecture: `docs/architecture/storage-considerations.md#supply-flows-in-the-lake`.
 
+## CS-102: quiet is not stale
+
+The stale-supply anchor for a quiet asset must be the observer watermark, not the asset's own last activity. A quiet asset has an old last-activity ledger and is still fresh. Regression tests for both storage paths were run with a full red/green proof on 2026-07-29: with the defect re-introduced they fail with `quiet asset anchor = 1000, want 5000 (the observer watermark)`, and they pass with the fix. PHO's +157% divergence is a separate cause (archived SAC entries seeded as live; see `docs/architecture/domain-traps.md`). Source: `git show 52aacb972:docs/operations/v1-launch-plan.md`, lines 2636-2700 and 2823-2830.
+
 ## Shared context: Supply snapshot alerts
 
 _Source page `supply.md`: status living, severity P3, last verified 2026-10-06._

@@ -4795,3 +4795,123 @@ Open lane: #261 (mapped-flag contract now implemented on the API side), #265 + #
 Testnet backfill: resumed from 2,254,080 after the 5G-cap OOM; ~56% at 10:30Z, 0 restarts.
 
 Progress: Wave A 100% · Wave B ~92% · Wave C ~85% · Wave D 0% · overall ≈ 73%.
+
+---
+
+# Forwarding sections (INV-0897 PR 1, additive)
+
+Everything above this line is the pre-cut plan and is being deleted in stages (INV-0897). The sections below are where live items, code and docs are forwarded. Nothing above was edited.
+
+## Cut: header
+
+- Pre-cut sha: `52aacb972a5be5fe65e9d608227e8fe06dfe7fe2`. Read the full old plan with `git show 52aacb972:docs/operations/v1-launch-plan.md`.
+- Every old `:NNN` line cite and `#L<n>` inventory pointer resolves at that sha, not at HEAD. Migrations 0051, 0106 and 0107 cite `:2486`: that means the "no unbounded trade-scan queries" rule, now in [domain-traps.md](../architecture/domain-traps.md#unbounded-trade-scans-cancelled-refreshes-and-aggregation-pitfalls).
+- Old row ids (1.x, W-x, D-x) cited by code resolve in "Cut: cited rows" and "Cut: decisions of record" below.
+- Commit ids older than the 2026 history rewrite may not resolve; find the successor with `git log` by date and subject.
+- Go-live gate and launch sequence: §0 above is the gate (an index of INV items), and the launch sequence is §2.8 plus INV-2707, INV-2708 and INV-2709 below.
+
+## Cut: open work not in §0
+
+One line per item; the INV item is the authority.
+
+| INV | Item |
+|---|---|
+| INV-2689 | `GetAssetBySlug` and `ListAssetsExt` are alias-blind readers |
+| INV-2690 | W8-15 CI/test gaps residue: goleak, revocation drift, TWAP coverage, lint-metric-refs comments |
+| INV-2691 | W8-16 CS-068 live-ingest half: late trades never re-materialise in `prices_1m` |
+| INV-2692 | `sep41_supply_events` never vacuumed (42/130 chunks, 276M rows) |
+| INV-2693 | Orphan k6 API key and ephemeral k6 dirs on r1 |
+| INV-2694 | Pin `stellar_archivist_version` for `stellar_stack_lagging` |
+| INV-2695 | Pending r1 applies: CH drop-guard #286, `ops_batch`, ZFS snapshots |
+| INV-2696 | Ops-CLI write-gate unification (about 15 money-path defaults) |
+| INV-2697 | A failed classic op still lands a public participant row (no tx-success filter) |
+| INV-2698 | W5.7 CEX dust DELETE (destructive, last) |
+| INV-2699 | Update blog and methodology copy: the per-token oracle layer has shipped |
+| INV-2700 | Top-50 prices check (CoinGecko key) |
+| INV-2701 | `verify-usd-volume` estimated-tier alert at about $10M/day |
+| INV-2702 | migrations-sync step may re-orphan the migrations dir uid |
+| INV-2703 | Runbook lore: unattended-upgrades libc6 bounces Postgres about 06:24 and kills heavy jobs |
+| INV-2704 | Root disk at 80%; durable fix is operator item #64 |
+| INV-2705 | `WithMaxDormantComponentLedgers` calibration |
+| INV-2706 | Distinct RedStone registry-stale signal |
+| INV-2707 | Launch sequence step 2: `sip_` SLA-probe smoke and outside-internet `make smoke` 13/13 |
+| INV-2708 | Launch sequence step 3: refresh `post-launch-queries.md`, Grafana launch-watch board, F-0100 PromQL check |
+| INV-2709 | Forced re-login of every dashboard user after cutover (migration 0143) |
+| INV-2710 | L5.8 and L4.15-L4.17 carried to W9 (gated on D2) |
+| INV-1046, INV-1048, INV-0978 | Patroni cluster playbooks and replica-promote decision for single-node r1 |
+| INV-0934 | Narrow `allowed_ssh_cidrs` (C6-041); IP rotation is its stable-admin-range precondition |
+| INV-0596 | W3.3 cold-read residue: census, account family, holders, refresh gate |
+| INV-0923 | DeFindex no-event vaults and the vault registry |
+| INV-2157, INV-1313 | Re-extract and re-derive lake entry changes after the eviction phase (INV-2156 shipped) |
+| INV-0846, INV-0848, INV-0849, INV-0874 | RWA open items; evidence moved to [rwa-coverage-reconciliation.md](../methodology/rwa-coverage-reconciliation.md#moved-from-the-launch-plan-what-stands-between-the-served-total-and-the-4087b-a-third-party-reports) |
+| INV-0856, INV-1813 | SDEX history backfill driver; test-net lake writer can skip the in-flight ledger |
+| INV-0885, INV-0887, INV-0894, INV-0902, INV-2140 | Sub-$100M SDEX price gating; per-view CAGG refresh lock; residual DeFi decoders; per-account deep trade history; `movements_by_asset` view |
+| INV-0695, INV-0839, INV-0840, INV-0841, INV-0871, INV-0873, INV-0877, INV-1009 | Gate and launch rows (§0): deploy approval flag, accepted-risk register, restore drill units, SEV drill, security review, announcement, W7.2 visuals pass, HAProxy phase 1 |
+
+## Cut: deferred post-v1
+
+- HA, R2/R3 and ClickHouse HA (INV-0890, INV-1048, INV-1070, INV-1101, INV-1389). D2 accepts a single box per region with a tested restore; multi-region (ADR-0050) is post-v1 with the reasoning in `docs/architecture/ha-plan.md` §10.
+- R1 is NOT hardware-upgradeable. Never propose drives.
+- W9: DeFindex vault registry and unproven emitters (INV-0923), residual DeFi decoders (INV-0894), L4.14-L4.17 and L5.8 (INV-2710).
+- CH Phase 8 `soroban_events` decommission (#803): destructive, last.
+- Credential rotation is one batch after inventory closure (Ash, 2026-09-30). The MinIO root exposure of 2026-07-25 is closed: root is `stellarindex-admin`, the old key is rejected, and moving services off root remains hygiene (verified 2026-09-28).
+- Intra-ledger-seq historical backfill: INV-1023 (blocked; its `blocked_on` names this plan).
+
+## Cut: decisions of record
+
+Copied from the 2026-08-29 table (old lines 1545-1570); text is condensed, the full rows are at the pre-cut sha.
+
+| # | Decision |
+|---|---|
+| D1 | RATIFIED. Anomaly-freeze is implemented by shipping composite-reference corroboration (#288), not by editing the alert. Live in v0.50.0 on r1 since 2026-08-29. Verify with `increase(stellarindex_anomaly_freeze_engaged_total[24h])` plus `stellarindex_aggregator_composite_freeze_suppressed_total > 0` (the second proves the mechanism engaged rather than the market being calm). |
+| D2 | ACCEPTED-RISK plus a tested restore at v1. Single box per region; multi-region (ADR-0050) deferred post-v1. |
+| D3 | SIGNED OFF. ClickHouse posture is ADR-0043 §2.1 schema-and-state snapshot plus re-derive, plus rolling ZFS snapshots (live 2026-08-29). Do NOT resurrect full-lake copies. |
+| D4 | BUILD ALL THREE: order-book depth (#337), DEX TVL (#338), per-token oracle pages (#336). No retraction of site copy. This overrides any "[DECIDE build-or-drop]" text. |
+| D5 | ACCEPTED. The retention contract is "we retain everything we index", not a set of windows. `trades` holds 2018-07-01 to now (738,248,187 rows on 2026-08-29). Migration 0031 removed retention from `trades`, `prices_1m`, `prices_15m`; 0040 from `oracle_updates`. Amended 2026-09-26 (#1168): the authoritative list of retention policies is `TestRetentionPolicies_AreExactlyTheDeclaredSet`; Go-side age deletes are in `TestGoAgePruners_AreExactlyTheDeclaredSet`; the MEV pruner was removed, so `mev_events` is retained. The limits worth telling customers are coverage: on-chain SDEX trades begin 2026-03-12 (#349); CEX series begin 2018-07-01 (Kraken) and 2026-05-05 (Binance, Coinbase, Bitstamp). |
+| D6 | ACCEPTED as documented-unfillable: genesis edge [2 to 287,404]; recover via op-replay if ever needed. |
+| D7 | Not a decision but owed work: the third-alias thin-pool VWAP review. DONE 2026-09-04, see row 1.9. |
+| D8 | OVERRIDDEN to FIX FOR v1: `*_FUNDAMENTAL` RedStone feeds publish a NAV ratio in BTC but were registered `quote=fiat:USD`. Contained (`IncludeInVWAP=false`). |
+| D9 | DROPPED. Stripe C3-081 reconcile closed as a formal DROP citing ADR-0049. |
+| D10 | Privacy review reduced to a sign-off; PR #237 was closed unmerged, terms and privacy are live (INV-0150). |
+| DR | SIGNED OFF. Off-site posture: pgBackRest repo2 plus rolling ZFS snapshots; the nightly job writes every configured repo. Superseded by the B2-only off-site decision of 2026-10-02 (INV-1475, INV-1181 done). |
+| W6.1 | CLOSED. Paging wired and proven: Discord (pages and alerts) and a Healthchecks.io dead-man. |
+| W8-13 | Decided: `stellar.trades_by_account` in ClickHouse for per-account trade history (old line 4745; INV-0902 tracks the open storage-design question). |
+| RWA basis | See INV-1036 and the RWA section in [rwa-coverage-reconciliation.md](../methodology/rwa-coverage-reconciliation.md). |
+
+## Cut: cited rows
+
+Code, workflows and docs cite these ids. Full text is at the pre-cut sha (old line in brackets).
+
+| Id | Gist | Cited by |
+|---|---|---|
+| 1.4 [81] | One live SEV drill and one rollback rehearsal against wired paging; not yet run (INV-0841) | postmortems/2026-09-16-r1-pg-wal-fills-root.md:61,75 |
+| 1.7 [84] | Test nets behind r1: CLOSED 2026-09-16. Both served v0.85.0 on every binary the region runs. `stellarindex-aggregator` is deliberately not deployed there (`scripts/dev/region-binaries.tsv`). The fleet-release-drift tripwire means something only when test nets deploy via `deploy.yml` | ci.yml:1490, deploy.yml:1589, fleet-release-drift.yml:3, check-fleet-release-drift.sh:3 (test :14, :285) |
+| 1.9 [86] | D7 thin-pool third-alias VWAP review DONE 2026-09-04; `/v1/price/tip` merge walk fixed (`tipMergePairs`). Artefact: [d7 review](../methodology/d7-thin-pool-third-alias-vwap-review-2026-09-04.md) | d7 review |
+| 1.12 [89] | ClickHouse schema snapshot has an off-site target (resolved 2026-09-15; `SNAPSHOT_MC_TARGET=offsite/stellarindex-pgbackrest-r1/ch-schema`, 8 objects verified) | 18-pgbackrest-backup.yml (4 lines), ch-schema-restore.md, audit-remediation-operator-actions.md:81 |
+| 1.14 [91] | Single-bar `/v1/ohlc`, `/v1/vwap`, `/v1/twap` read the SAC forms of USD-pegged constituents; gate per bucket at 1m (DONE 2026-09-05, with 1.15) | internal/api/v1 (coverage_floor, ohlc_fiat_combine, fiat_series_sac_reach_test, market_dedupe_internal_test) |
+| 1.15 [92] | Fiat-quoted `/v1/ohlc` series reaches SAC-quoted Soroban pools. r1 measure: 43 counterparties with SAC-only USD depth, 260,833 prints, $14,630,761.46 (DONE 2026-09-05) | same files; timescale pair_direction_guard and trades_direction tests |
+| 1.16 [93] | Both stored orientations of a market are read; `1fca7bceb` (v0.61.0) made `Store.TradesInRange` two-armed. Verified 2026-09-16: 7,256 forward + 1,173 reverse = 8,429 served `trade_count` | same files |
+| W1.1 [1107] | `/v1/status` incidents: a failed Prometheus query must not serialise as zero counts; `87e5b1aa` (#73) | internal/api/v1/status.go:63 |
+| W3.1, W3.2 [1191, 1200] | Contract pages cold: 23/25 breaching to 6/25. W3.2 page-type audit harness is `scripts/ops/contract-page-audit.py --type` | scripts/ops/contract-page-audit.py:19 |
+| W5.3 [1425] | Pre-07-23 usd-volume restamp verified a NO-OP 2026-08-30; tool `usd-volume-restamp` (#251). The #372 restamp ran 2026-09-06 (26,231,575 rows, $30,601,931.62) | usd_volume_restamp.go:24, usd_volume_restamp_test.go:16 |
+| W5.4 [1437] | Reset the 13 supply rollups (EURC done 2026-08-05); retry gated on `ops_batch` on r1 (INV-2695) | runbooks/supply-verify-rollup-unit-failed.md:54 |
+| W8-12 [1738] | LP reserves are live-only from ledger 63,300,828; ACCEPTED 2026-10-02, no backfill ([supply-pipeline.md](../architecture/supply-pipeline.md#lp-reserve-history-cutoff)) | open-fixes-inventory-2026-08-08.md:23 |
+| W8-17, W8-20 [1786, 358] | `/v1/ohlc` 500 at 2h/12h/3d/2w; one interval ladder (`AllHistoryGranularities`) now drives validation, routing and the fold allow-list. CLOSED | aggregates.go:2381, ohlc_routes.go:44, ohlc_routes_test.go:21, ohlc_intervals_test.go:20-21, test/integration/ohlc_fold_intervals_test.go:59 |
+| W8-19 [1807] | A single `refresh_continuous_aggregate` call needs a timeout bound: `CAGGRefreshTimeout` 5 min per hour of window, floor 10 min, ceiling 4 h | cagg_refresh_timeout.go:16 |
+| L4.14, L4.15 [4738] | R2/R3 are not provisioned, so `flags.reduced_redundancy` has no producer (ADR-0017); carried to W9, gated on D2 (INV-2710) | runbooks/verify-archive.md:131 |
+| CS-102 [2636] | Quiet assets anchor on the observer watermark; see [supply.md](runbooks/supply.md#cs-102-quiet-is-not-stale) | runbooks/supply-assets-stale.md:123 |
+| D1, D5, DR gate | See "Cut: decisions of record". The DR gate half "restore-drill timer re-enabled" is INV-0840 | freeze-lifecycle.yml:52 (both copies), retention_policy_test.go:644, 18-pgbackrest-backup.yml:698 |
+| k6 loop entry 2026-07-30 ~14:40Z [2176] | k6-weekly failed silently after the org migration dropped its secrets; load key restored. The suite's prod-host guard refuses `api.stellarindex.io`, so AC2 evidence (p95 54.4 ms) was captured on r1 against localhost. Orphan key and dirs: INV-2693 | .github/workflows/k6-weekly.yml:149 |
+
+## Cut: moved evidence
+
+| Lesson | Now lives in | Old lines |
+|---|---|---|
+| No unbounded trade-scan queries; `XX000` vs `57014`; argMax-tuple; #475 EPIPE under pipefail; PHO +157% seed cause | [domain-traps.md](../architecture/domain-traps.md#unbounded-trade-scans-cancelled-refreshes-and-aggregation-pitfalls) | 3279, 1834, 4100, 728, 3440 |
+| Agent load contaminates p99 (48.6 ms to 566.2 ms); INV-0675 | [engineering-standards.md](../engineering-standards.md#do-not-measure-production-latency-from-a-box-your-own-agents-are-working) | 25-63 |
+| sep41 zero-writer hole | [ingest-pipeline.md](../architecture/ingest-pipeline.md#the-sep41-zero-writer-hole-2026-07-13-to-2026-07-27) | 3822 |
+| Restore-drill `PrivateTmp` / `NoNewPrivileges` blockers | [restore-drill.md](runbooks/restore-drill.md#why-the-scheduled-drill-never-ran-until-2026-09) | 1270 |
+| CS-102 | [supply.md](runbooks/supply.md#cs-102-quiet-is-not-stale) | 2636, 2823 |
+| CCTP projection started after first event | [cctp.md](../protocols/cctp.md#projected-history-started-after-the-contracts-first-event-found-2026-07-30) | 2142 |
+| RWA coverage evidence ($2,535,764,187.91, 29 assets, 18 issuers; real estate 13 of 15 scam-flagged; money-fund issuer's other 3 tokens $82.0M) | [rwa-coverage-reconciliation.md](../methodology/rwa-coverage-reconciliation.md) | 95-224 |
+| Export-429 backoff design (own 8-wait budget, honour `Retry-After` capped 60 s, else exponential to 30 s with jitter; `3422b150`), #336 impersonator oracle-row root cause (gated on the verified catalogue), D3 rebuild recipe (`scripts/ops/d3-lecur-v2-rebuild.sh`), Galexie stale-binary near-miss | Pre-cut sha only; no better home | 3945, 736, 4017-4100, 3804 |

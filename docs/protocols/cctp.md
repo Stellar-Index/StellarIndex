@@ -78,3 +78,7 @@ the same full `topic_0_sym` census periodically (or after any Circle
 contract upgrade — AGENTS.md "Soroban DeFi contracts upgrade in
 place") to catch a genuinely new topic; there is no currently-known
 gap.
+
+## Projected history started after the contract's first event (found 2026-07-30)
+
+CCTP's projected history began 121k ledgers (about 8 days) after the contract's first on-chain event, leaving 86 head events unprojected. The cursor was rewound to genesis ledger 62,146,641 and the head landed. An address that looks like it has "CCTP usage" but no matched event may route through a forwarder (the activity endpoint's bridge note documents that structural limit). `trades` has no `source_account` column. Source: `git show 52aacb972:docs/operations/v1-launch-plan.md`, lines 2142-2152.

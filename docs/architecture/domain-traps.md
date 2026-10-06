@@ -220,6 +220,16 @@ linked design doc has the full detail.
 
 ---
 
+## Unbounded trade scans, cancelled refreshes and aggregation pitfalls
+
+Carried from the launch plan before its cut (`git show 52aacb972:docs/operations/v1-launch-plan.md`, line refs below).
+
+- **No unbounded trade-scan queries.** Scope every scan by ledger or an index-bounded per-contract lookup. An unbounded join over `sep41_supply_events` ran 11 minutes on r1 with no output and was cancelled with `pg_cancel_backend`; the index-bounded per-contract version answered in 96 ms. The rule applies to `sep41_supply_events` too (L3279-3284). Migrations 0051, 0106 and 0107 cite this rule as `v1-launch-plan.md:2486`, which was already wrong; their comments are SHA-pinned and cannot be edited, so `:2486` means this rule.
+- **A cancelled `refresh_continuous_aggregate` re-throws as `XX000`, not `57014`.** Recorded by `TestRefreshContinuousAggregate_PerCallBound` (1 ms bound, real TimescaleDB). Match the timeout by the typed `*CAGGRefreshTimeoutError`, never by SQLSTATE (L1834).
+- **ClickHouse latest-wins over several columns must be ONE `argMax` over a column tuple.** Per-column `argMax` can resolve a same-key tie differently for each column and stitch a row from two different changes. Found in `supply seed-sac-balances -full-history` (fix `7bede7e7`, validated on 38/38 SAC wrappers, L4092-4100).
+- **`sort | head` under `pipefail` fails about 1 run in 3 in a systemd unit.** `head` closes the pipe, `IgnoreSIGPIPE` turns the signal into EPIPE and `sort` exits 2. A retry helper cannot fix it because the AWS call succeeded. #475 fixed five scripts, including the ZFS prune loop, and added a lint for the class (L724-730).
+- **A SAC seed that takes the latest `contract_data` state per key with no liveness check writes archived (evicted) entries as live.** It made PHO read +157% against Horizon (sac component 123,520,184.77 vs 1,372,101.36; the live observer was correct to 0.009%). Seeded rows carry `intra_ledger_seq = 4294967295` (`SeedIntraLedgerSeq`), which separates them from observer rows (L3440-3470).
+
 The one-line rule form of each of these is in `AGENTS.md`. This page is
 the evidence and the reasoning behind the rules; read it when you need to
 know *why*, or when the rule does not obviously cover your case.
