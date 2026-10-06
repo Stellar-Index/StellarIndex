@@ -59,7 +59,7 @@ Subcommands:
                           holder count into staging and atomically exchange
                           live (asset_holders_rollup). Run from the 30-min
                           timer; backs sub-second /v1/assets/{id}/holders.
-  ch-creators-rollup -ch-addr ADDR [-config PATH]
+  ch-creators-rollup -ch-addr ADDR [-config PATH] (-write | -dry-run)
                           Recompute the account-creator league table
                           (funder -> accounts created, plus the created
                           set's surviving accounts and current XLM) into
@@ -73,7 +73,7 @@ Subcommands:
                           ledger; default pubnet's). Also writes the
                           ledger span it covered. Backs
                           /v1/accounts/creators. Issue #351.
-  ch-sponsors-rollup -ch-addr ADDR
+  ch-sponsors-rollup -ch-addr ADDR (-write | -dry-run)
                           Recompute the sponsor league table (sponsorship
                           arrangements started, distinct accounts
                           sponsored, revocations issued) into staging and
@@ -86,7 +86,7 @@ Subcommands:
                           reads no operation bodies. History only, never a
                           live sponsored set. Backs /v1/accounts/sponsors.
                           Issues #351, #494.
-  ch-cohort-rollup -ch-addr ADDR -config PATH
+  ch-cohort-rollup -ch-addr ADDR -config PATH (-write | -dry-run)
                           Recompute what the accounts each sponsor and
                           each creator (>= 10 accounts) went on to hold
                           and do: current holdings per asset, monthly

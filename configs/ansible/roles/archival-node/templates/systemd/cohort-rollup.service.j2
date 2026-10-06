@@ -27,6 +27,7 @@ Environment=EXTRA_FLAGS=
 ExecStart=/usr/local/bin/stellarindex-ops ch-cohort-rollup \
   -ch-addr ${CH_ADDR} \
   -config ${CONFIG_PATH} \
+  -write \
   $EXTRA_FLAGS
 User=stellarindex
 Group=stellarindex
