@@ -42,6 +42,13 @@ func usageEntryVerbs(line string) []string {
 // stderr, where flag.FlagSet writes its defaults.
 func helpOutput(t *testing.T, verbs []string) string {
 	t.Helper()
+	out, _ := helpResult(t, verbs)
+	return out
+}
+
+// helpResult is helpOutput plus the handler's return value.
+func helpResult(t *testing.T, verbs []string) (string, error) {
+	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -54,9 +61,10 @@ func helpOutput(t *testing.T, verbs []string) string {
 	oldErr, oldOut := os.Stderr, os.Stdout
 	os.Stderr, os.Stdout = w, devNull
 	done := make(chan struct{})
+	var herr error
 	go func() {
 		defer close(done)
-		_ = subcommands[verbs[0]](append(append([]string{}, verbs...), "-h"))
+		herr = subcommands[verbs[0]](append(append([]string{}, verbs...), "-h"))
 	}()
 	select {
 	case <-done:
@@ -68,7 +76,7 @@ func helpOutput(t *testing.T, verbs []string) string {
 	var buf bytes.Buffer
 	_, _ = io.Copy(&buf, r)
 	_ = r.Close()
-	return buf.String()
+	return buf.String(), herr
 }
 
 // TestUsageBodyNamesWriteForEveryWriteGatedCommand pins the write gate's
