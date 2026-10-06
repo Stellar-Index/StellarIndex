@@ -18,6 +18,7 @@ package pipeline
 // dropping rows.
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -326,13 +327,32 @@ func specEventNames(projected bool) map[string]bool {
 	return out
 }
 
+// unlistedEventError explains why full, a consumer.Event type defined in a
+// package some SourceSpec draws events from, is not wired, or returns "".
+// In a projected package only a projected spec or a notProjectedEvents
+// entry clears it: a non-projected listing there is the same silent
+// Phase-4 drop the allowlist exists to make a conscious decision.
+func unlistedEventError(full string, projectedPkg bool, projected, dispatched map[string]bool, allow map[string]string) string {
+	if projected[full] {
+		return ""
+	}
+	if !projectedPkg {
+		if dispatched[full] {
+			return ""
+		}
+		return fmt.Sprintf("%s implements consumer.Event but no SourceSpec lists it. Add it to the spec's Events", full)
+	}
+	if _, ok := allow[full]; ok {
+		return ""
+	}
+	return fmt.Sprintf("%s implements consumer.Event in a PROJECTED source package but no projected SourceSpec lists it — Phase-4 ingest silently drops it (F-1316 class). Add it to the projected spec's Events, or register it in notProjectedEvents with a reason", full)
+}
+
 // TestLockstep_SpecsListEveryEventType guards against silent drops. For every
 // package a SourceSpec draws events from, every consumer.Event type the
-// package defines must be listed by a spec (or, for a projected package,
-// carry a notProjectedEvents entry). An unlisted type in a projected
-// package is skipped by no one and projected by no one: Phase-4 ingest
-// drops it silently. Each spec must list at least one event and have a
-// decoder for every writer it claims.
+// package defines must be listed by a spec; in a projected package, by a
+// projected spec or a notProjectedEvents entry. Each spec must list at least
+// one event and have a decoder for every writer it claims.
 func checkSpecShape(t *testing.T, s *SourceSpec) {
 	t.Helper()
 	if len(s.Events) == 0 {
@@ -348,7 +368,8 @@ func checkSpecShape(t *testing.T, s *SourceSpec) {
 
 func TestLockstep_SpecsListEveryEventType(t *testing.T) {
 	projected, dispatched := specEventNames(true), specEventNames(false)
-	pkgDirs := map[string]bool{} // import path -> projected
+	pkgDirs := map[string]bool{}       // import path -> projected
+	projectedPkgs := map[string]bool{} // package basename, for stale allowlist entries
 	const modPrefix = "github.com/Stellar-Index/StellarIndex/"
 	for i := range specs {
 		s := &specs[i]
@@ -362,19 +383,45 @@ func TestLockstep_SpecsListEveryEventType(t *testing.T) {
 		pkg := path.Base(imp)
 		dir := repoDir(filepath.FromSlash(strings.TrimPrefix(imp, modPrefix)))
 		for _, typ := range sortedKeys(eventTypesInPackage(t, dir)) {
-			full := pkg + "." + typ
-			if projected[full] || dispatched[full] {
-				continue
+			if msg := unlistedEventError(pkg+"."+typ, pkgDirs[imp], projected, dispatched, notProjectedEvents); msg != "" {
+				t.Error(msg)
 			}
-			if _, allowed := notProjectedEvents[full]; allowed && pkgDirs[imp] {
-				continue
-			}
-			t.Errorf("%s implements consumer.Event but no SourceSpec lists it — if %s is projected, Phase-4 ingest silently drops it (F-1316 class). Add it to the spec's Events, or register it in notProjectedEvents with a reason", full, pkg)
+		}
+		if pkgDirs[imp] {
+			projectedPkgs[pkg] = true
 		}
 	}
 	for full := range notProjectedEvents {
 		if projected[full] {
 			t.Errorf("notProjectedEvents entry %q is listed by a projected spec — stale entry", full)
+		}
+		if !projectedPkgs[strings.SplitN(full, ".", 2)[0]] {
+			t.Errorf("notProjectedEvents entry %q names no projected source package — stale entry", full)
+		}
+	}
+}
+
+// TestUnlistedEventError_ProjectedPackageNeedsProjectedSpec pins the
+// allowlist's strength: a projected package's type listed only by a
+// non-projected spec still needs a notProjectedEvents entry.
+func TestUnlistedEventError_ProjectedPackageNeedsProjectedSpec(t *testing.T) {
+	projected := map[string]bool{"p.Projected": true}
+	dispatched := map[string]bool{"p.Dispatched": true, "d.Dispatched": true}
+	allow := map[string]string{"p.Allowed": "reason"}
+	for _, tc := range []struct {
+		full         string
+		projectedPkg bool
+		ok           bool
+	}{
+		{"p.Projected", true, true},
+		{"p.Allowed", true, true},
+		{"p.Dispatched", true, false},
+		{"p.Unlisted", true, false},
+		{"d.Dispatched", false, true},
+		{"d.Unlisted", false, false},
+	} {
+		if got := unlistedEventError(tc.full, tc.projectedPkg, projected, dispatched, allow) == ""; got != tc.ok {
+			t.Errorf("%s (projected package %v): cleared = %v, want %v", tc.full, tc.projectedPkg, got, tc.ok)
 		}
 	}
 }

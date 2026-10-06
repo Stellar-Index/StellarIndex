@@ -324,7 +324,9 @@ var specs = []SourceSpec{
 		Name:       rozo.SourceName,
 		Events:     []consumer.Event{rozo.Event{}},
 		NewDecoder: decoderOf(rozo.NewDecoder),
-		Projector:  excludeFirehose(),
+		// First promotion past sep41: one table no aggregate reads, a static
+		// contract set, and the served history is already a projector replay.
+		Projector: &ProjectorSpec{ExcludeTopic0Syms: firehoseExcludeSyms, SoleWriter: true},
 	},
 	{
 		// Its topic[0] symbols are not in the firehose, so an include

@@ -120,7 +120,7 @@ var goldenDispatcherWrittenEvents = map[string]consumer.Event{
 }
 
 // goldenSoleWriterEvents: the projector alone writes these, even in Phase 3.
-var goldenSoleWriterEvents = []string{"sep41_supply.Event", "sep41_transfers.Event"}
+var goldenSoleWriterEvents = []string{"rozo.Event", "sep41_supply.Event", "sep41_transfers.Event"}
 
 // goldenProjectorSources is projector.KnownProjectorSources, i.e. buildSource's cases.
 var goldenProjectorSources = []string{

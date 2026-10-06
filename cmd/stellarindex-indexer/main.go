@@ -640,7 +640,7 @@ func run(cfgPath string, dryRun bool) error {
 	//     everything (only writer).
 	//   - projector enabled, persist_per_source=true → SinkModeSkipSoleWriter:
 	//     Phase-3 parallel for un-promoted sources, but the projector
-	//     owns the sole-writer domains (sep41) outright.
+	//     owns the SoleWriter specs (pipeline/source_spec.go) outright.
 	//   - projector enabled, persist_per_source=false → SinkModeSkipProjected:
 	//     Phase-4, projector is sole writer for all projected sources.
 	// Non-Soroban events (sdex, external, band, supply observers)
@@ -653,7 +653,7 @@ func run(cfgPath string, dryRun bool) error {
 	case pipeline.SinkModeSkipProjected:
 		logger.Info("dispatcher events-goroutine: SKIP-PROJECTED mode — projector is sole writer for Soroban-derived events (ADR-0032 Phase 4)")
 	case pipeline.SinkModeSkipSoleWriter:
-		logger.Info("dispatcher events-goroutine: SKIP-SOLE-WRITER mode — projector is sole writer for the sep41 domain; other projected sources double-write in Phase-3 parallel (ADR-0032 / F-1316)")
+		logger.Info("dispatcher events-goroutine: SKIP-SOLE-WRITER mode — projector is sole writer for the SoleWriter source specs; other projected sources double-write in Phase-3 parallel (ADR-0032 / F-1316)")
 	case pipeline.SinkModeAll:
 		// Projector disabled — events-goroutine writes every class.
 	}

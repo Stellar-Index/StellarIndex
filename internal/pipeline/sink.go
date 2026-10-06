@@ -77,8 +77,8 @@ const (
 
 	// SinkModeSkipSoleWriter skips ONLY the events whose domain the
 	// projector has EARNED sole-writer status for (see
-	// [IsSoleWriterProjected]) — currently just the sep41 domain
-	// (F-1316 / TASK #16b). It's the Phase-3 parallel mode for every
+	// [IsSoleWriterProjected]): the specs with [ProjectorSpec.SoleWriter]
+	// set. It's the Phase-3 parallel mode for every
 	// OTHER projected source (those still double-write for the
 	// duplicate-absorbing ON CONFLICT soak) while the promoted
 	// sole-writer domains are owned by the projector outright — so
@@ -102,7 +102,7 @@ const (
 //     ONLY writer, so it must persist every class (including sep41).
 //   - projector enabled, persist_per_source=true → SinkModeSkipSoleWriter:
 //     Phase-3 parallel for un-promoted sources, but the projector owns
-//     the sole-writer domains (sep41) outright — the events-goroutine
+//     the sole-writer domains outright — the events-goroutine
 //     skips them so they are never double-written and never at risk of
 //     the flag being flipped.
 //   - projector enabled, persist_per_source=false → SinkModeSkipProjected:
@@ -612,7 +612,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 // IsSoleWriterProjected reports whether the projector owns ev's write
 // even in Phase-3 parallel mode ([ProjectorSpec.SoleWriter]), so the
 // events goroutine skips it whatever PersistPerSource says. A subset of
-// [IsProjectedEvent] by construction. Today only the sep41 domain.
+// [IsProjectedEvent] by construction.
 func IsSoleWriterProjected(ev consumer.Event) bool {
 	return eventRoles[reflect.TypeOf(ev)].soleWriter
 }
