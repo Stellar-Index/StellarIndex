@@ -1323,9 +1323,10 @@ func (d *Dispatcher) noteLedgerUpgrades(ups []xdr.UpgradeEntryMeta, ledgerSeq ui
 // Keys of entry types no decoder watches (the paired TTL keys, contract
 // code) fall out at each decoder's Matches — same as any unmatched change.
 //
-// The lake walker (clickhouse.extractLedgerEntryChanges) records the same
-// phase as `removed` rows at the same positions; entry_walk_parity_test.go
-// pins the two together.
+// The lake walker (clickhouse.extractLedgerEntryChanges) gives every evicted
+// key the same position but writes a `removed` row only for a deleted entry:
+// an archived persistent entry or contract code keeps its last live row.
+// entry_walk_parity_test.go pins the positions together.
 //
 // An LCM whose evicted keys cannot be read yields none. The SDK panics
 // rather than erroring on an unknown version, and ProcessLedger has already
