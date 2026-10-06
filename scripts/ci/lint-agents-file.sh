@@ -33,7 +33,7 @@ cd "$(dirname "$0")/../.." || exit 1
 
 FILE="AGENTS.md"
 MAX_LINES=150
-MIN_DIRECTIVES=20
+MIN_DIRECTIVES=24
 FAILURES=0
 
 err() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; FAILURES=$((FAILURES + 1)); }

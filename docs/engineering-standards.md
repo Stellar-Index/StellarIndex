@@ -33,6 +33,9 @@ cleverness is justified.
 The rest of this doc is mostly mechanical enforcement of this
 principle.
 
+- No development command may need manual network access; one that does is a bug.
+- State a measurement with its units and the command that produced it.
+
 ---
 
 ## 2. Technical debt prevention

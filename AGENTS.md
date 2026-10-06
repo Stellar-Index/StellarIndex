@@ -22,8 +22,7 @@ make lint-changed      # the lints for the files you changed
 - **CI on the pull request is the landing gate.** Every change lands as a PR that merges only when
   CI is green. Locally, run `make lint-changed` and `make check` before pushing; that is the whole
   local requirement.
-- ALWAYS run `make lint-changed` before committing. `make hooks` installs it as the pre-commit hook
-  (`scripts/dev/install-hooks.sh`).
+- ALWAYS run `make lint-changed` before committing; `make hooks` installs it as the pre-commit hook.
 - Run `make prepush` only when CI cannot answer the question (CI down or billing-capped, or a local
   repro of a CI failure). It needs its literal `ALL REQUIRED CHECKS PASSED` and runs in the
   BACKGROUND. Profiles: [docs/contributing/local-verification.md](docs/contributing/local-verification.md).
@@ -31,8 +30,7 @@ make lint-changed      # the lints for the files you changed
 - ALWAYS re-run all three generators together after editing `openapi/stellar-index.v1.yaml`:
   `make docs-api && make docs-postman && make web-generate-api`. Enforced by
   `scripts/ci/lint-docs.sh` (API reference) and the Postman and TS-types drift jobs in `ci.yml`.
-- Check a live deployment with `bash scripts/dev/r1-smoke.sh` (`API_BASE_URL=https://api.stellarindex.io`
-  for production). Exit code is the number of failed assertions.
+- Check a live deployment: `bash scripts/dev/r1-smoke.sh` (exit code = failed assertions).
 
 ## Money — invariant 1 (ADR-0003), the rule we reject PRs over
 
@@ -50,11 +48,13 @@ amount := canonical.FromUInt128Parts(uint64(p.Hi), uint64(p.Lo)) // u128
 ```
 
 - NEVER compare or accumulate money in `float64`. Use `*big.Int` or `*big.Rat`.
-  `scripts/ci/lint-migrations.sh` rejects float money columns; Go code has no lint, and a wrong
+  `scripts/ci/lint-migrations.sh` rejects float money columns; for Go only
+  `internal/canonical/i128_truncation_guard_test.go` (Float64 narrowing) guards it, and a wrong
   served number cannot be recalled.
 - ALWAYS render a partial total as a lower bound, never as a total: set the response's
   `lower_bound` flag and name what was excluded, as `/v1/protocols`'s `tvl_total` does
   (`internal/api/v1/dex_tvl_identity_internal_test.go`).
+- NEVER make a number faster by making it less true. An honest slow answer beats a fast wrong one.
 
 ## Architectural invariants (ADR-backed; long-form in `docs/adr/`)
 
@@ -63,53 +63,53 @@ error string cite "AGENTS.md invariant N" — do not renumber these.
 
 - **[2]** **NEVER integrate via Horizon** (ADR-0001). We do not run it, ingest from it, or proxy to
   it. If a protocol's only path to us is Horizon, we do not integrate it.
-  `lint-imports.sh` rule C/no-horizon.
+  `lint-imports.sh` rule C/no-horizon bans client imports only; HTTP use is caught in review.
 - **[6]** **NEVER ingest via stellar-rpc.** Production ingest is
   `Galexie MinIO → internal/ledgerstream → internal/dispatcher → internal/sources/<venue>/decode`.
-  A source with an `rpc *stellarrpc.Client` field, a `BackfillRange` or a `StreamLive` method is
-  wrong. stellar-rpc survives only for `rpc-probe` and fixture capture.
-  `lint-imports.sh` rule A/no-rpc-in-ingest.
+  A new source with an `rpc *stellarrpc.Client` field, a `BackfillRange` or a `StreamLive` method
+  is wrong. stellar-rpc survives only for `rpc-probe` and fixture capture.
+  `lint-imports.sh` rule A/no-rpc-in-ingest bans the import; the methods are caught in review.
 - **[3]** **ALWAYS use S3-compatible storage, never Galexie's local filesystem backend**
-  (ADR-0002). That backend silently drops per-object metadata; a lake written through it cannot
-  be repaired. No lint.
+  (ADR-0002). That backend silently drops per-object metadata; repairing a lake written
+  through it means a full re-export. No lint.
 - **[7]** **ONE writer per data domain** (ADR-0031/0032). A **projected** Soroban source is written
   by `internal/projector` and only by it; adding one means a case in
   `projector/registry.go::buildSource` AND an arm in `pipeline/sink.go::IsProjectedEvent`
-  (`internal/pipeline/sole_writer_test.go`). `band`, `soroswap_router`, `sdex`, the external
+  (`internal/pipeline/lockstep_ast_test.go`). `band`, `soroswap_router`, `sdex`, the external
   CEX/FX connectors and the supply observers write through the dispatcher instead;
   `IsProjectedEvent`'s default branch is the list.
 - **[7]** **Catch-up depends on which side of that line you are on.** A projected domain uses
   `stellarindex-ops projector-replay`; a non-projected one uses `ch-rebuild` (`-sdex`,
   `-contract-calls`). NEVER add a bespoke `<source>-backfill` subcommand: it is a second writer.
-  `backfill` and `ch-rebuild -write` refuse projected sources and live ranges
-  (`TestBackfill_RefusesProjectedSources`, `internal/ops/chops/ch_rebuild_test.go`). Decision
-  table: [docs/architecture/ingest-pipeline.md](docs/architecture/ingest-pipeline.md#the-replay-decision-rule).
+  `backfill` refuses projected sources (`TestBackfill_RefusesProjectedSources`); `ch-rebuild
+  -write` refuses a range the live projector is still inside. Decision table: [docs/architecture/ingest-pipeline.md](docs/architecture/ingest-pipeline.md#the-replay-decision-rule).
 - **[8]** **ClickHouse is the raw lake; Postgres is the SERVED tier** (ADR-0034) — the recent
-  working set, not the full archive. `/v1/coverage` publishes both axes: `lake_complete` is the
-  archive's genesis-to-tip claim, `complete` is additionally gated by the projection window.
+  working set, not the full archive. "100% coverage" means the ClickHouse substrate captured
+  everything; "retention-scoped" means scoped to what has been PROJECTED, not a drop policy.
+  `/v1/coverage`: `lake_complete` is the genesis-to-tip claim, `complete` adds the projection window.
 - **[8]** **NEVER put a retention policy on `trades`.** Storage is not a constraint
   (`internal/storage/timescale/retention_policy_test.go`).
 - **[4]** **`internal/` is private, `pkg/` is the public SemVer surface** (ADR-0005). One Go module.
   `lint-imports.sh` rule L/pkg-purity.
-- **[5]** **NEVER put a validator key on disk unencrypted** (ADR-0004). No lint; a leaked key
-  cannot be un-leaked.
+- **[5]** **NEVER put a validator key on disk unencrypted** (ADR-0004). No lint; leaks are permanent.
 
 ## Domain rules that will catch you out
 
 Evidence for each: [docs/architecture/domain-traps.md](docs/architecture/domain-traps.md).
 
 - **ALWAYS key an asset on `(code, issuer)`, a SAC address, or `native` — NEVER on code alone.**
-  A scam token can claim `USDC` (`internal/api/v1/oracle_identity_gate_test.go`).
+  A scam token can claim `USDC` (example test, `internal/api/v1/oracle_identity_gate_test.go`; no repo-wide guard).
 - **ALWAYS loop `canonical.AssetAliases` on every asset-id read path.** XLM has three disjoint
   identities (`native`, `crypto:XLM`, its SAC); handling one silently under-reports
-  (`internal/canonical/alias_registry_test.go`).
+  (example test, `internal/canonical/alias_registry_test.go`; no repo-wide guard).
 - **ALWAYS correlate a Soroswap `SwapEvent` with the immediately-following `SyncEvent`** by
   `(ledger, tx_hash, op_index)` (`internal/sources/soroswap/adapter_test.go`).
 - **ALWAYS group all 8 Phoenix events** to reconstruct one swap
   (`TestDecoder_Decode_completesAfterEighthField`).
 - **ALWAYS gate a decoder on contract identity, never on topic alone** (ADR-0035). Comet's
-  `("POOL", <event>)` topic is shared by every Balancer-v1 deployment. Each source's
-  `adapter_test.go` carries a foreign-contract gate test.
+  `("POOL", <event>)` topic is shared by every Balancer-v1 deployment. Each gated decoder
+  package has a foreign-contract rejection test (e.g. `TestDecoder_GateRejectsForeignContract` in
+  `comet/adapter_test.go`); no lint requires one.
 - **ALWAYS type-test a SEP-41 `transfer` body before `MustI128()`** — it is a bare `i128` or a map
   carrying `amount` + `to_muxed_id` (`FuzzTransferAmount`, `FuzzTransferBodyShapes`).
 - **NEVER assume off-chain amount scaling is uniform.** CEX and aggregators use 10^8, FX 10^6;
@@ -125,13 +125,13 @@ Evidence for each: [docs/architecture/domain-traps.md](docs/architecture/domain-
   (`ch_rebuild_backfillsafe_test.go`).
 - **ALWAYS collapse `stellar.operations` and `stellar.transactions` on their identity before
   aggregating** — they are `ReplacingMergeTree` and hold rows twice
-  (`scripts/ci/lint-lake-dedup.sh`; [docs/contributing/lake-reads.md](docs/contributing/lake-reads.md)).
+  (`scripts/ci/lint-lake-dedup.sh`, .go/.sql only; ad-hoc queries: FINAL or uniqExact; [docs/contributing/lake-reads.md](docs/contributing/lake-reads.md)).
 
 ## Working style
 
 - Dry and concise. No preambles, no flattery. Comments explain *why*, not *what*.
 - Smallest PR that advances one thing. Every pushed branch gets a PR in the same session.
-- Commit messages, prior art and the changelog policy: [CONTRIBUTING.md](CONTRIBUTING.md#commit-messages).
+- Commit messages: [CONTRIBUTING.md](CONTRIBUTING.md#commit-messages); changelog (never per PR): [#changelog](CONTRIBUTING.md#changelog).
 
 ## Where the reference material is
 

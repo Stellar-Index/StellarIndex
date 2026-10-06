@@ -164,10 +164,6 @@ nobody can see is not).
 Check an instrument against a known case before trusting its verdict, and
 when two measurements disagree, suspect your own first.
 
-- A gate passes on its literal line, not its exit code: `ALL REQUIRED CHECKS
-  PASSED` from `make prepush`, `ALL CHECKS PASSED` from `verify.sh`, the
-  failure count from `r1-smoke.sh`. Piping a gate through `tee`, `head` or
-  `sed` reports the pipe's status, not the gate's.
 - A systemd oneshot's `Result` is the PREVIOUS run's, and `is-active` is
   non-zero while it runs; use `wait_for_oneshot` in
   `scripts/ops/ops-verdict.sh`.

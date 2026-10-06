@@ -14,8 +14,8 @@ import (
 // Matching is by topic[0] symbol AND contract id. The backstop's
 // symbols (claim / withdraw / queue_withdrawal / gulp_emissions)
 // OVERLAP with Blend POOL event symbols, so the contract-id gate is
-// LOAD-BEARING — never match on the symbol alone (AGENTS.md "Comet
-// uses a shared topic" + ADR-0035 factory-anchored gating).
+// LOAD-BEARING — never match on the symbol alone (docs/architecture/domain-traps.md "Comet
+// shared topic" + ADR-0035 factory-anchored gating).
 type Decoder struct{}
 
 // NewDecoder constructs a Backstop Decoder. Stateless — the returned
