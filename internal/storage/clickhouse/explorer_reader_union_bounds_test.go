@@ -16,12 +16,10 @@ import (
 // the KB-scale body_xdr blob) before the outer LIMIT 50 discarded almost all of
 // it; live-measured at 5–6 s on an otherwise idle box.
 //
-// These use the stubConn/stubRows harness from tx_hash_index_test.go. stubConn
-// does not execute SQL, so the first two tests are query-SHAPE assertions
-// (proof that the emitted SQL bounds each arm, and binds the arms to the SAME
-// page size as the outer query). TestUnionArmTopN_MatchesUnboundedMerge then
-// proves the correctness half — that bounding the arms cannot lose a row —
-// against the per-arm limits the reader actually emitted.
+// These use the stubConn/stubRows harness from tx_hash_index_test.go.
+// TestAccountListings_ExactSourcedArmIsBounded pins the bounded shape;
+// TestUnionArmTopN_MatchesUnboundedMerge proves bounding each arm cannot lose
+// a row, against the per-arm limit the reader actually binds.
 
 // armBodies splits the emitted UNION query into its two arm bodies (the text
 // between the parens either side of UNION ALL). Fails the test if the query
@@ -35,129 +33,52 @@ func armBodies(t *testing.T, q string) (string, string) {
 	return parts[0], parts[1]
 }
 
-// countPerArmLimitArgs returns how many of the bound args equal the page size —
-// one per bounded arm plus one for the outer LIMIT.
-func countPerArmLimitArgs(args []any, limit int) int {
-	n := 0
-	for _, a := range args {
-		if v, ok := a.(int); ok && v == limit {
-			n++
+// exactOpsArm runs AccountOperations with a filled sourced window, which
+// forces the exact sourced arm, and returns that query and its args. base
+// answers every other query.
+func exactOpsArm(t *testing.T, base func(string) (driver.Rows, error), limit int, cur ExplorerCursor) (string, []any) {
+	t.Helper()
+	filled := make([][]any, windowRows(limit, windowFactorKeys))
+	for i := range filled {
+		filled[i] = keyRow(100, 0, 0)
+	}
+	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
+		if !isOpsBySourceProbe(q) && strings.Contains(q, "FROM stellar.ops_by_source WHERE source_account") {
+			return &stubRows{data: filled}, nil
 		}
-	}
-	return n
-}
-
-func TestAccountOperations_BoundsEachUnionArm(t *testing.T) {
-	const limit = 37
-	conn := &stubConn{}
-	conn.respond = func(string) (driver.Rows, error) {
-		return &stubRows{data: [][]any{opRowFor(100, 0, 0)}}, nil
-	}
-	r := &ExplorerReader{conn: conn}
-
-	if _, err := r.accountOperationsExact(context.Background(), "GTEST", limit, ExplorerCursor{}, 0, false); err != nil {
+		return base(q)
+	}}
+	if _, err := (&ExplorerReader{conn: conn}).AccountOperations(context.Background(), "GTEST", limit, cur); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
-	q := conn.queries[len(conn.queries)-1]
-	arm1, arm2 := armBodies(t, q)
-
-	// Both arms must ORDER BY the full sort key and take their own LIMIT.
-	// Without this the arm reads every matching op — body_xdr included —
-	// before the outer LIMIT throws it away (C-F1a).
-	for i, arm := range []string{arm1, arm2} {
-		if !strings.Contains(arm, "ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC") {
-			t.Errorf("arm %d has no per-arm ORDER BY — it cannot read in reverse primary-key order and stop early: %s", i+1, arm)
-		}
-		if !strings.Contains(arm, "LIMIT ?") {
-			t.Errorf("arm %d has no per-arm LIMIT — the whole matching history materialises before the outer LIMIT: %s", i+1, arm)
-		}
-		// The DAT-10 dedup must still run BEFORE the arm's LIMIT, so the
-		// arm's N slots hold N DISTINCT primary keys.
-		if !strings.Contains(arm, "LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?") {
-			t.Errorf("arm %d must dedup (LIMIT 1 BY) before taking its LIMIT, else an un-merged duplicate part eats a slot: %s", i+1, arm)
+	for i, q := range conn.queries {
+		if strings.Contains(q, "LIMIT 1 BY") && strings.Contains(q, "stellar.ops_by_source") {
+			return q, conn.args[i]
 		}
 	}
-	// Four bound page sizes since the two-phase rewrite: one per arm, the
-	// keyset merge, and the hydration pass. A per-arm limit SMALLER than
-	// the merge would silently drop rows at the seam.
-	if n := countPerArmLimitArgs(conn.args[len(conn.args)-1], limit); n != 4 {
-		t.Errorf("bound page-size args = %d, want 4 (arm1, arm2, keyset, hydration); args: %v", n, conn.args[len(conn.args)-1])
-	}
+	t.Fatalf("no exact sourced arm among %v", conn.queries)
+	return "", nil
 }
 
-func TestAccountTransactions_BoundsEachUnionArm(t *testing.T) {
+// The exact sourced arms (audit C-F1a) must ORDER BY the full sort key and
+// dedupe on it BEFORE their own LIMIT, else an un-merged duplicate part eats a
+// slot (DAT-10) or the account's whole history materialises.
+func TestAccountListings_ExactSourcedArmIsBounded(t *testing.T) {
+	for name, tc := range map[string]struct{ q, order, dedupe string }{
+		"transactions": {sourcedTxKeysExactQuery(true), "ORDER BY ledger_seq DESC, tx_index DESC", "LIMIT 1 BY ledger_seq, tx_index LIMIT ?"},
+		"operations": {
+			sourcedOpKeysExactQuery(true, true), "ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC",
+			"LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?",
+		},
+	} {
+		if !strings.Contains(tc.q, tc.order) || !strings.Contains(tc.q, tc.dedupe) {
+			t.Errorf("%s exact arm lost its ORDER BY / LIMIT 1 BY … LIMIT:\n%s", name, tc.q)
+		}
+	}
 	const limit = 37
-	conn := &stubConn{}
-	conn.respond = func(string) (driver.Rows, error) {
-		return &stubRows{data: [][]any{txRowFor(100, testTxHash)}}, nil
-	}
-	r := &ExplorerReader{conn: conn}
-
-	if _, err := r.accountTransactionsExact(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
-		t.Fatalf("AccountTransactions: %v", err)
-	}
-	q := conn.queries[len(conn.queries)-1]
-	arm1, arm2 := armBodies(t, q)
-
-	for i, arm := range []string{arm1, arm2} {
-		if !strings.Contains(arm, "ORDER BY ledger_seq DESC, tx_index DESC") {
-			t.Errorf("arm %d has no per-arm ORDER BY: %s", i+1, arm)
-		}
-		if !strings.Contains(arm, "LIMIT 1 BY ledger_seq, tx_index LIMIT ?") {
-			t.Errorf("arm %d must dedup on the primary key and then take its own LIMIT — otherwise an un-merged duplicate part consumes a slot and the page comes back short: %s", i+1, arm)
-		}
-	}
-	// Four bound page sizes since the two-phase rewrite (2026-08-13):
-	// arm1, arm2, the KEYSET limit, and the HYDRATION limit.
-	if n := countPerArmLimitArgs(conn.args[len(conn.args)-1], limit); n != 4 {
-		t.Errorf("bound page-size args = %d, want 4 (arm1, arm2, keyset, hydration); args: %v", n, conn.args[len(conn.args)-1])
-	}
-	// The cross-arm dedup must survive: a tx can be BOTH sourced by the
-	// account and carry it as a non-source participant. The two-phase
-	// shape collapses those by KEY — the hydration pass selects from
-	// stellar.transactions filtered by a (ledger_seq, tx_index) set and
-	// re-applies LIMIT 1 BY — which subsumes the old outer DISTINCT
-	// (identical keys can no longer produce two rows). Assert the
-	// mechanism that actually provides the property.
-	if !strings.Contains(q, "LIMIT 1 BY ledger_seq, tx_index LIMIT ?"+explorerScanSettings) &&
-		!strings.HasSuffix(strings.TrimSpace(q), "LIMIT 1 BY ledger_seq, tx_index LIMIT ?") {
-		t.Errorf("hydration pass lost its key dedupe — cross-arm duplicates would be served twice: %s", q)
-	}
-	// And the wide column set must appear EXACTLY once: carrying it
-	// inside both arms is the 1.48s→0.22s regression this shape fixed.
-	if n := strings.Count(q, "memo_type"); n != 1 {
-		t.Errorf("wide tx columns appear %d times, want 1 — hydrate once, not per arm (r1: 6.7x): %s", n, q)
-	}
-}
-
-// TestAccountOperations_PerArmLimitPreservesCursorArgOrder guards the bind
-// order: the arms' new LIMIT placeholders sit between the existing
-// account/cursor placeholders, so a mis-ordered args slice would bind a ledger
-// number as a page size (and vice versa) the moment a cursor page is served.
-func TestAccountOperations_PerArmLimitPreservesCursorArgOrder(t *testing.T) {
-	const limit = 9
-	conn := &stubConn{}
-	conn.respond = withOpsBySourceRows(func(string) (driver.Rows, error) { return &stubRows{}, nil })
-	r := &ExplorerReader{conn: conn}
-
-	cur := ExplorerCursor{Ledger: 63_000_000, A: 4, B: 2}
-	if _, err := r.accountOperationsExact(context.Background(), "GTEST", limit, cur, 0, false); err != nil {
-		t.Fatalf("AccountOperations: %v", err)
-	}
-	want := []any{
-		"GTEST", cur.Ledger, cur.Ledger, cur.A, cur.B, limit, // arm 1: account, leading-key bound, cursor, page size
-		"GTEST", cur.Ledger, cur.Ledger, cur.A, cur.B, limit, // arm 2: same
-		limit, // keyset merge
-		limit, // hydration pass (two-phase, 2026-08-13)
-	}
-	got := conn.args[len(conn.args)-1]
-	if len(got) != len(want) {
-		t.Fatalf("bound %d args, want %d: %v", len(got), len(want), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("arg %d = %v, want %v (full: %v)", i, got[i], want[i], got)
-		}
+	_, args := exactOpsArm(t, withOpsBySourceRows(func(string) (driver.Rows, error) { return &stubRows{}, nil }), limit, ExplorerCursor{})
+	if got := args[len(args)-1]; got != limit {
+		t.Errorf("exact arm page size = %v, want %d — a smaller per-arm limit drops rows at the merge seam", got, limit)
 	}
 }
 
@@ -212,16 +133,10 @@ func TestUnionArmTopN_MatchesUnboundedMerge(t *testing.T) {
 
 	// Read the per-arm page size out of the query the reader emits, so this
 	// property is anchored to the implementation rather than to a constant.
-	conn := &stubConn{}
-	conn.respond = withOpsBySourceRows(func(string) (driver.Rows, error) { return &stubRows{}, nil })
-	r := &ExplorerReader{conn: conn}
-	if _, err := r.accountOperationsExact(context.Background(), "GTEST", limit, ExplorerCursor{}, 0, false); err != nil {
-		t.Fatalf("AccountOperations: %v", err)
-	}
-	args := conn.args[len(conn.args)-1]
-	armLimit, ok := args[1].(int) // arm 1: [account, LIMIT]
+	_, args := exactOpsArm(t, withOpsBySourceRows(func(string) (driver.Rows, error) { return &stubRows{}, nil }), limit, ExplorerCursor{})
+	armLimit, ok := args[len(args)-1].(int) // [account, LIMIT]
 	if !ok {
-		t.Fatalf("arm-1 limit arg is %T, want int (args: %v)", args[1], args)
+		t.Fatalf("exact arm limit arg is %T, want int (args: %v)", args[len(args)-1], args)
 	}
 
 	k := func(l, t, o uint32) opKey { return opKey{l, t, o} }
@@ -296,7 +211,12 @@ func TestAccountOpTypeCounts_QueryShape(t *testing.T) {
 	if !strings.Contains(arm2, "operation_participants WHERE account = ?") {
 		t.Errorf("arm 2 must resolve via the account-prefixed participant index:\n%s", arm2)
 	}
-	for i, arm := range []string{arm1, arm2} {
+	// INV-2697: the participant arm counts only ops of successful txs or txs
+	// the account sourced, resolved over the arm's own participant keys.
+	if !strings.Contains(arm2, "FROM stellar.transactions") || !strings.Contains(arm2, visibleTxPredicate) {
+		t.Errorf("arm 2 must keep only visible txs (%s):\n%s", visibleTxPredicate, arm2)
+	}
+	for i, arm := range []string{arm1, strings.ReplaceAll(arm2, visibleTxPredicate, "")} {
 		if !strings.Contains(arm, "uniqExact((ledger_seq, tx_index, op_index))") {
 			t.Errorf("arm %d must uniqExact-dedup the RMT primary key:\n%s", i+1, arm)
 		}

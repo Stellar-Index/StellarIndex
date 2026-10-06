@@ -1368,138 +1368,58 @@ type ContractEventsCursor struct {
 // IsSet reports whether the cursor points past the newest row.
 func (c ContractEventsCursor) IsSet() bool { return c.Ledger > 0 }
 
-// accountTransactionsQuery builds AccountTransactions' SQL.
+// Account listings (AccountTransactions, AccountOperations) resolve a page
+// KEYSET from two account-keyed arms, merge it in Go, then hydrate the wide
+// columns once over the ≤limit surviving keys:
 //
-// Two index-friendly arms UNION'd, NOT `source_account = ? OR … IN (…)`:
-// an OR with a subquery defeats index use and full-scans the 23 B-row
-// table. BOTH arms are now PK-shaped (2026-07-30): arm 1 (sourced) gets
-// its (ledger, tx) keys from the slim stellar.ops_by_source projection
-// (deploy/clickhouse/ops_by_source.sql — its tx-MV rows carry the
-// sentinel op_index, its ops-MV rows real ones; the DISTINCT prefix read
-// covers both, so a tx surfaces whether the account sourced the tx or any
-// op in it); arm 2 (participant) via the account-prefixed
-// operation_participants. The old arm 1 rode the source_account bloom
-// skip-index over the whole table — granule-pruned but scan-shaped,
-// measured 6.17 s vs 0.056 s for the participant arm on the SAME account
-// (r1, 2026-07-30) — the whole reason these routes sat in the 8s 503
-// class. DISTINCT dedups the rare tx that is BOTH sourced by the account
-// AND has it as a non-source participant of one of its ops.
+//   - sourced: stellar.ops_by_source (deploy/clickhouse/ops_by_source.sql;
+//     its tx-MV rows carry the sentinel op_index, its ops-MV rows real ones).
+//   - participant: stellar.operation_participants, restricted to
+//     transactions that succeeded or that the account itself sourced
+//     (participantKeys).
 //
-// The cursor tuple comparison is strictly older than the (ledger, tx_index)
-// last served — never re-emits a served row, never skips an unserved one.
+// Both tables are ORDER BY (account, ledger_seq, tx_index[, op_index]), so
+// each arm is a primary-key-prefix range read of the account's own rows and
+// stellar.transactions/operations are touched only by point lookups over
+// page-sized key lists. Resolving `pk IN (SELECT … FROM ops_by_source …)`
+// over the wide tables instead prunes to one granule PER KEY before the
+// LIMIT — a hot account's page then cost its whole history (164–238 M rows,
+// ~8 s).
 //
-// Each arm carries its OWN `ORDER BY … LIMIT ?` (audit C-F1a) — without
-// it only the outer query was bounded, so an account with a long history
-// materialised EVERY transaction it ever touched before the outer LIMIT
-// 50 threw all but a page away.
-//
-// INVARIANT that makes this exact, not an approximation: the union of two
-// individually-top-N arms provably CONTAINS the union's top N. Any row in
-// the true top N has at most N-1 distinct rows ahead of it across both
-// arms, hence at most N-1 ahead of it WITHIN its own arm, so it survives
-// that arm's top-N cut. The outer merge-sort + LIMIT then picks the same N
-// rows it always did.
-//
-// The per-arm `LIMIT 1 BY ledger_seq, tx_index` is what keeps the cut
-// exact rather than merely correct-order: stellar.transactions is
-// ReplacingMergeTree, so an un-merged duplicate PART could otherwise
-// consume slots in an arm's top-N and hand back a SHORT page while
-// further rows existed (no row is lost — the keyset cursor still advances
-// off the last served row — but a client that stops on a short page would
-// truncate its own history). It also strengthens the outer DISTINCT,
-// which only ever collapsed byte-identical duplicates.
-//
-// explorerScanSettings: arm 1 is a bloom-skip-index probe over the whole
-// transactions table — granule-pruned but still scan-shaped, and the
-// 40× thread-fan-out memory trap applies at default threads (route-sweep
-// 2026-07-29: /v1/accounts/{g}/transactions was in the 8s 503 class).
-func accountTransactionsQuery(hasCursor bool) string {
+// Exactness: each arm yields its own exact top `limit` keys, and the union
+// of two individually-top-N sets contains the union's top N (a row in the
+// true top N has at most N-1 rows ahead of it within its own arm).
+// mergeKeysDesc drops cross-arm duplicates BEFORE cutting to `limit` — a tx
+// can be both sourced by the account and carry it as a participant, and a
+// duplicate that ate a slot would serve a short page, which the handler
+// reads as end of history (#290).
+
+// sourcedTxKeysExactQuery is the sourced tx arm's LIMIT 1 BY form: exact on
+// every input but O(account history), so it only runs when the windowed read
+// cannot prove a full page (a run of many-op transactions fills the window).
+// The cursor's leading `ledger_seq <= ?` is redundant but required:
+// KeyCondition does not prune on a tuple comparison.
+func sourcedTxKeysExactQuery(hasCursor bool) string {
 	cursorClause := ""
 	if hasCursor {
-		// Redundant leading-key bound: KeyCondition does not prune on a tuple
-		// comparison, so without it a deep page reads every row above the cursor.
 		cursorClause = ` AND ledger_seq <= ? AND (ledger_seq, tx_index) < (?, ?)`
 	}
-	// TWO-PHASE (sub-second audit 2026-08-13): resolve the KEYSET in the
-	// union, then hydrate the wide columns ONCE over the surviving ≤limit
-	// keys. Selecting txCols inside both arms made each arm carry
-	// memo/result_code/source_account/… through its own scan and sort of
-	// stellar.transactions, and the outer DISTINCT then materialised both
-	// wide sets. Measured on r1 (GATL account, 50 rows): wide-in-arms
-	// 1.479s vs two-phase 0.219s — 6.7x, identical rows. The endpoint was
-	// 1.5-2.0s and is now dominated by neither arm.
-	//
-	// The narrow arms keep their own LIMIT + LIMIT 1 BY (the per-arm
-	// dedupe of a tx whose account appears in several of its operations),
-	// and the hydration pass repeats LIMIT 1 BY as belt-and-braces
-	// against duplicate lake parts.
-	//
-	// The KEYSET MERGE carries `LIMIT 1 BY` TOO, and it has to run BEFORE
-	// the merge's own LIMIT (#290). The two arms legitimately overlap:
-	// a tx the account SOURCED can also carry it as a NON-source
-	// participant of one of that tx's operations (an op with its own
-	// source_account naming the tx's source — batch/sponsored txs), so
-	// both arms emit the SAME (ledger_seq, tx_index) key. With the dedupe
-	// only in the hydration pass, every such key ate TWO of the merge's
-	// LIMIT slots and the page came back SHORT — and the handler emits
-	// next_cursor ONLY on a full page (internal/api/v1/explorer/
-	// accounts.go, the documented `absent on the last page` contract), so
-	// a client's history walk stopped there with older txs unreached:
-	// SILENT TRUNCATION, not a cosmetic short page. Deduping at the merge
-	// makes the keyset exactly min(limit, distinct keys older than the
-	// cursor) — which is what "a short page means end of history" needs
-	// in order to be true.
-	//
-	// The other way a page could be short — a key resolving to no
-	// stellar.transactions row — cannot happen: Sink.Flush sends
-	// transactions BEFORE operations/participants and stellar.ledgers
-	// last (its ORDERING note), and ops_by_source is an MV fed by those
-	// same inserts, so every key either arm can resolve already has its
-	// hydration row durable.
-	//
-	// The arms page the ACCOUNT-KEYED tables directly (same rewrite as
-	// accountOperationsQuery, 2026-08-28): resolving `(ledger_seq,
-	// tx_index) IN (SELECT … FROM ops_by_source WHERE source_account = ?)`
-	// over stellar.transactions prunes to one granule per key in the set
-	// BEFORE the LIMIT, so a hot account's page cost its whole history.
-	// `LIMIT 1 BY ledger_seq, tx_index` on the key table replaces the old
-	// DISTINCT: it collapses the several ops_by_source rows one tx
-	// contributes (tx-sentinel + per-op) to one key before the arm's LIMIT.
-	//
-	// FINAL on the hydration, not a plain SELECT (same tie-break argument
-	// txByLedgerAndHash documents in full: ingested_at is one-second
-	// resolution, so a same-second re-derive can leave two ReplacingMergeTree
-	// parts a bare SELECT can't correctly order, and this route would then
-	// silently keep serving the stale pre-fix row while /v1/tx/{hash} — which
-	// DOES use FINAL — served the corrected one). Stays cheap for the same
-	// reason: the WHERE is a bounded IN over at most `limit` PK points, each
-	// pruned by partition + primary-key prefix, so FINAL only merges the
-	// handful of parts those specific keys touch, not the table.
-	return `SELECT ` + txCols + ` FROM stellar.transactions FINAL
-		WHERE (ledger_seq, tx_index) IN (
-		  SELECT ledger_seq, tx_index FROM (
-		    (SELECT ledger_seq, tx_index FROM stellar.ops_by_source
-		       WHERE source_account = ?` + cursorClause + `
-		       ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
-		    UNION ALL
-		    (SELECT ledger_seq, tx_index FROM stellar.operation_participants
-		       WHERE account = ?` + cursorClause + `
-		       ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
-		  ) ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
+	return `SELECT ledger_seq, tx_index FROM stellar.ops_by_source
+		WHERE source_account = ?` + cursorClause + `
 		ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?` + explorerScanSettings
 }
 
-// AccountTransactions returns transactions INVOLVING an account — both those
-// it sourced (source/fee-payer) and those where it's a non-source participant
-// in any operation (payment destination, trustor, merge target, …) — newest
-// first, keyset-paged by the composite (ledger_seq, tx_index) cursor (ADR-0038
-// Phase B). Sourced via the source_account skip-index; incoming via an
-// account-prefixed lookup of stellar.operation_participants.
+// AccountTransactions returns transactions INVOLVING an account — those it
+// sourced (tx or any op in it) and SUCCESSFUL ones where it is a non-source
+// participant of an operation (payment destination, trustor, merge target, …)
+// — newest first, keyset-paged by the composite (ledger_seq, tx_index) cursor
+// (ADR-0038 Phase B). A failed tx still writes participant rows, so without
+// the success filter anyone could plant rows in any account's history for a
+// fee.
 //
-// Incoming coverage tracks the participant-index capture + backfill: live
-// ingest fills operation_participants going forward, so a tx whose only link
-// to the account predates participant capture surfaces once the historical
-// re-derive lands.
+// Incoming coverage tracks the participant-index capture + backfill: a tx
+// whose only link to the account predates participant capture surfaces once
+// the historical re-derive lands.
 func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string, limit int, cur ExplorerCursor) ([]TxSummary, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -1507,10 +1427,34 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 	if !r.opsBySourceAvailable(ctx) {
 		return nil, errOpsBySourceMissing
 	}
-	if rows, ok, err := r.accountTransactionsWindowed(ctx, account, limit, cur); err != nil || ok {
-		return rows, err
+	sourced, err := r.sourcedTxKeys(ctx, account, limit, cur)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
 	}
-	return r.accountTransactionsExact(ctx, account, limit, cur)
+	var from *accountTxKey
+	if cur.IsSet() {
+		from = &accountTxKey{cur.Ledger, cur.A}
+	}
+	part, err := participantKeys(ctx, r.conn, account, limit, txParticipantArm, "", nil, from)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
+	}
+	keys := mergeKeysDesc(append(sourced, part...), limit, accountTxKey.after)
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	// FINAL: ingested_at is one-second resolution, so a same-second re-derive
+	// can leave two RMT parts a bare SELECT cannot order (see
+	// txByLedgerAndHash). Cheap here: a bounded IN over ≤limit PK points.
+	q := `SELECT ` + txCols + ` FROM stellar.transactions FINAL
+		WHERE (ledger_seq, tx_index) IN (` + tupleList(keys, func(k accountTxKey) []uint32 { return []uint32{k.ledger, k.txIndex} }) + `)
+		ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?` + explorerScanSettings
+	rows, err := r.conn.Query(ctx, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanTxSummaries(rows)
 }
 
 // accountTxKey is one transaction's (ledger_seq, tx_index) listing key.
@@ -1520,16 +1464,17 @@ func (k accountTxKey) after(o accountTxKey) bool {
 	return k.ledger > o.ledger || (k.ledger == o.ledger && k.txIndex > o.txIndex)
 }
 
-// accountTransactionsWindowed pages the two account-keyed arms by reading a
-// bounded window of each in sort-key order (no LIMIT 1 BY, so the read stops
-// early), collapses the per-tx rows in Go, merges the arms and hydrates the
-// surviving keys. ok=false means a window could not prove it held `limit`
-// distinct transactions; the caller then runs the exact query.
-//
-// Exactness: an arm whose window was not filled is exhausted; a filled arm
-// proved >= limit distinct keys, so every key it omitted ranks below `limit`
-// keys already in hand and cannot enter the merged top `limit`.
-func (r *ExplorerReader) accountTransactionsWindowed(ctx context.Context, account string, limit int, cur ExplorerCursor) ([]TxSummary, bool, error) {
+func scanTxKey(rows driver.Rows) (accountTxKey, error) {
+	var k accountTxKey
+	err := rows.Scan(&k.ledger, &k.txIndex)
+	return k, err
+}
+
+// sourcedTxKeys is the sourced arm's exact top `limit` tx keys: a bounded
+// window read in sort-key order (no LIMIT 1 BY, so the read stops early),
+// falling back to sourcedTxKeysExactQuery when the window cannot prove a
+// full page.
+func (r *ExplorerReader) sourcedTxKeys(ctx context.Context, account string, limit int, cur ExplorerCursor) ([]accountTxKey, error) {
 	window := windowRows(limit, windowFactorTxArm)
 	cursorClause := ""
 	var cursorArgs []any
@@ -1537,39 +1482,37 @@ func (r *ExplorerReader) accountTransactionsWindowed(ctx context.Context, accoun
 		cursorClause = ` AND ledger_seq <= ? AND (ledger_seq, tx_index) < (?, ?)`
 		cursorArgs = []any{cur.Ledger, cur.Ledger, cur.A}
 	}
-	arms := [...]string{
-		`SELECT ledger_seq, tx_index FROM stellar.ops_by_source WHERE source_account = ?`,
-		`SELECT ledger_seq, tx_index FROM stellar.operation_participants WHERE account = ?`,
+	args := append(append([]any{account}, cursorArgs...), window)
+	keys, ok, err := windowedKeyRead(ctx, r.conn,
+		`SELECT ledger_seq, tx_index FROM stellar.ops_by_source WHERE source_account = ?`+cursorClause+
+			` ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?`+explorerScanSettings,
+		args, window, limit, scanTxKey)
+	if err != nil || ok {
+		return keys, err
 	}
-	var merged []accountTxKey
-	for _, arm := range arms {
-		args := append([]any{account}, cursorArgs...)
-		args = append(args, window)
-		keys, ok, err := windowedKeyRead(ctx, r.conn, arm+cursorClause+` ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?`+explorerScanSettings,
-			args, window, limit, func(rows driver.Rows) (accountTxKey, error) {
-				var k accountTxKey
-				err := rows.Scan(&k.ledger, &k.txIndex)
-				return k, err
-			})
-		if err != nil || !ok {
-			return nil, false, err
-		}
-		merged = append(merged, keys...)
-	}
-	keys := mergeKeysDesc(merged, limit, accountTxKey.after)
-	if len(keys) == 0 {
-		return nil, true, nil
-	}
-	q := `SELECT ` + txCols + ` FROM stellar.transactions FINAL
-		WHERE (ledger_seq, tx_index) IN (` + tupleList(keys, func(k accountTxKey) []uint32 { return []uint32{k.ledger, k.txIndex} }) + `)
-		ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?` + explorerScanSettings
-	rows, err := r.conn.Query(ctx, q, limit)
+	args = append(append([]any{account}, cursorArgs...), limit)
+	return queryKeys(ctx, r.conn, sourcedTxKeysExactQuery(cur.IsSet()), args, scanTxKey)
+}
+
+// queryKeys runs a key query and scans every row.
+func queryKeys[K any](ctx context.Context, conn driver.Conn, q string, args []any, scan func(driver.Rows) (K, error)) ([]K, error) {
+	rows, err := conn.Query(ctx, q, args...)
 	if err != nil {
-		return nil, false, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
+		return nil, fmt.Errorf("clickhouse: key read: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	out, err := scanTxSummaries(rows)
-	return out, err == nil, err
+	var out []K
+	for rows.Next() {
+		k, err := scan(rows)
+		if err != nil {
+			return nil, fmt.Errorf("clickhouse: scan key: %w", err)
+		}
+		out = append(out, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("clickhouse: key read: %w", err)
+	}
+	return out, nil
 }
 
 // windowedKeyRead runs one windowed key read and collapses adjacent duplicate
@@ -1577,21 +1520,9 @@ func (r *ExplorerReader) accountTransactionsWindowed(ctx context.Context, accoun
 func windowedKeyRead[K comparable](ctx context.Context, conn driver.Conn, q string, args []any, window, limit int,
 	scan func(driver.Rows) (K, error),
 ) ([]K, bool, error) {
-	rows, err := conn.Query(ctx, q, args...)
+	raw, err := queryKeys(ctx, conn, q, args, scan)
 	if err != nil {
-		return nil, false, fmt.Errorf("clickhouse: windowed key read: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var raw []K
-	for rows.Next() {
-		k, err := scan(rows)
-		if err != nil {
-			return nil, false, fmt.Errorf("clickhouse: scan windowed key: %w", err)
-		}
-		raw = append(raw, k)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, false, fmt.Errorf("clickhouse: windowed key read: %w", err)
+		return nil, false, err
 	}
 	keys, ok := dedupWindow(raw, window, limit, func(k K) K { return k }, nil)
 	return keys, ok, nil
@@ -1614,165 +1545,156 @@ func mergeKeysDesc[K comparable](keys []K, n int, after func(a, b K) bool) []K {
 	return out
 }
 
-// accountTransactionsExact is the LIMIT 1 BY form: exact on every input but
-// O(account history) per page, so it only runs when the windowed read cannot
-// prove a full page.
-func (r *ExplorerReader) accountTransactionsExact(ctx context.Context, account string, limit int, cur ExplorerCursor) ([]TxSummary, error) {
-	var cursorArgs []any
-	if cur.IsSet() {
-		cursorArgs = []any{cur.Ledger, cur.Ledger, cur.A}
-	}
-	q := accountTransactionsQuery(cur.IsSet())
-	args := []any{account}
-	args = append(args, cursorArgs...)
-	args = append(args, limit)
-	args = append(args, account)
-	args = append(args, cursorArgs...)
-	args = append(args, limit)
-	// Two placeholders trail the arms: the keyset LIMIT and the
-	// hydration LIMIT (see accountTransactionsQuery).
-	args = append(args, limit)
-	args = append(args, limit)
-	rows, err := r.conn.Query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
-	}
-	defer func() { _ = rows.Close() }()
-	return scanTxSummaries(rows)
+// participantArm describes one listing's stellar.operation_participants key.
+type participantArm[K comparable] struct {
+	cols, order string
+	older       func(K) (string, []any) // strictly-older-than-k predicate (keyset cursor)
+	scan        func(driver.Rows) (K, error)
+	tx          func(K) accountTxKey
 }
 
-// accountOperationsQuery builds AccountOperations' SQL.
-//
-// UNION of two index-friendly arms (see accountTransactionsQuery for why an
-// `OR … IN (…)` is wrong). Arm 1 (sourced) uses the source_account
-// index; arm 2 (participant) matches operations on its PRIMARY KEY
-// (ledger_seq, tx_index, op_index) via op-keys from the account-prefixed
-// operation_participants. No DISTINCT needed for cross-arm overlap: an op
-// is sourced XOR has the account as a NON-source participant
-// (participants exclude the op's own source), so the arms never overlap.
-//
-// Each arm DOES carry its own `LIMIT 1 BY ledger_seq, tx_index, op_index`
-// (audit DAT-10): stellar.operations is ReplacingMergeTree(ingested_at),
-// so a re-ingested op leaves an un-merged duplicate PART — identical to
-// the original bar ingested_at — until a background merge; unlike
-// AccountTransactions' outer DISTINCT (which AccountTransactions'
-// narrower, blob-free txCols makes cheap), opCols here carries body_xdr
-// (KB-scale), so a DISTINCT comparing full wide rows is the wrong tool —
-// LIMIT 1 BY only tracks the 3-column primary key and dedups per arm
-// before the UNION ALL, cheaply.
-//
-// Each arm carries its OWN `ORDER BY … LIMIT ?` (audit C-F1a). This
-// matters more here than on AccountTransactions: opCols carries body_xdr
-// (KB-scale), and with only the OUTER query bounded a high-activity
-// account materialised every op it ever sourced — blobs and all — before
-// the outer LIMIT 50 discarded ~all of it (live-measured 5–6 s on an idle
-// box). Bounded arms let each side read in reverse primary-key order and
-// stop after N rows.
-//
-// INVARIANT: the union of two individually-top-N arms provably CONTAINS
-// the union's top N — any row in the true top N has at most N-1 rows
-// ahead of it across both arms, hence at most N-1 within its own arm, so
-// it survives that arm's cut. The outer merge-sort + LIMIT then selects
-// exactly the rows it selected before. The pre-existing per-arm
-// `LIMIT 1 BY` (DAT-10) runs BEFORE the per-arm LIMIT, so each arm's N
-// slots hold N DISTINCT primary keys — a duplicate un-merged part can't
-// eat a slot and shorten the page.
-//
-// explorerScanSettings: same rationale as accountTransactionsQuery, with
-// the wide body_xdr column raising the per-stream buffer stakes further.
-//
-// hasBound adds ` AND ledger_seq <= ?` to EACH arm's resolve over
-// stellar.operations (#31): the arm reads `ORDER BY pk DESC LIMIT n`,
-// which streams granules backwards FROM THE TIP until it accumulates the
-// account's rows — for a long-idle account that walk covers every granule
-// between the tip and its last activity (~4s live for a 46d-idle account,
-// 2026-08-24; the scan that ate the 8s budget behind PR #155's symptom).
-// The bound is the account's activity watermark
-// (accountActivityWatermark, stellar.account_activity), so partition +
-// primary-key pruning starts the reverse read AT the account's real last
-// activity. EXACT, not an approximation: every key either arm can emit
-// comes from a row whose insert also raised the watermark to >= its own
-// ledger_seq (the watermark MVs fire on the same tables that feed
-// ops_by_source and operation_participants — tier1_schema.sql documents
-// the data-hiding invariant), so `ledger_seq <= watermark` can never
-// exclude a returnable row. Callers must ONLY pass a bound derived from
-// that watermark — an under-estimate silently HIDES history.
-func accountOperationsQuery(hasCursor, hasBound bool) string {
-	cursorClause := ""
-	if hasCursor {
-		// Redundant leading-key bound — see accountTransactionsQuery.
-		cursorClause = ` AND ledger_seq <= ? AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
+var (
+	txParticipantArm = participantArm[accountTxKey]{
+		cols:  "ledger_seq, tx_index",
+		order: "ledger_seq DESC, tx_index DESC",
+		older: func(k accountTxKey) (string, []any) {
+			return ` AND ledger_seq <= ? AND (ledger_seq, tx_index) < (?, ?)`, []any{k.ledger, k.ledger, k.txIndex}
+		},
+		scan: scanTxKey,
+		tx:   func(k accountTxKey) accountTxKey { return k },
 	}
-	boundClause := ""
+	opParticipantArm = participantArm[accountOpKey]{
+		cols:  "ledger_seq, tx_index, op_index",
+		order: "ledger_seq DESC, tx_index DESC, op_index DESC",
+		older: func(k accountOpKey) (string, []any) {
+			return ` AND ledger_seq <= ? AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`,
+				[]any{k.ledger, k.ledger, k.txIndex, k.opIndex}
+		},
+		scan: scanOpKey,
+		tx:   func(k accountOpKey) accountTxKey { return accountTxKey{k.ledger, k.txIndex} },
+	}
+)
+
+// maxParticipantWindow caps the doubling window participantKeys reads.
+const maxParticipantWindow = 1 << 14
+
+// participantKeys returns the account's newest `limit` participant keys
+// older than `from` whose transaction is visible (visibleParticipantKeys),
+// paging the account's rows in sort-key order. Exact by construction: every
+// key read is checked, in order, until the page is full or the arm is
+// exhausted, so a failed tx can neither reach the page nor shorten it — the
+// filter runs here, inside the arm, because filtering at hydration would
+// serve short pages (#290). Each step is bounded (one window read plus point
+// lookups over ≤limit keys); the cost grows only with the failed
+// participant rows skipped. `fixed` carries predicates every read must
+// keep (the activity-watermark bound).
+func participantKeys[K comparable](ctx context.Context, conn driver.Conn, account string, limit int,
+	arm participantArm[K], fixed string, fixedArgs []any, from *K,
+) ([]K, error) {
+	var out []K
+	window := windowRows(limit, windowFactorKeys)
+	for {
+		q := `SELECT ` + arm.cols + ` FROM stellar.operation_participants WHERE account = ?` + fixed
+		args := append([]any{account}, fixedArgs...)
+		if from != nil {
+			c, a := arm.older(*from)
+			q += c
+			args = append(args, a...)
+		}
+		raw, err := queryKeys(ctx, conn, q+` ORDER BY `+arm.order+` LIMIT ?`+explorerScanSettings, append(args, window), arm.scan)
+		if err != nil {
+			return nil, err
+		}
+		// Adjacent rows repeat a key (several ops of one tx, un-merged RMT
+		// parts); the strict cursor below skips any repeats past the window.
+		var keys []K
+		for i, k := range raw {
+			if i == 0 || raw[i-1] != k {
+				keys = append(keys, k)
+			}
+		}
+		for len(keys) > 0 && len(out) < limit {
+			n := min(len(keys), limit-len(out))
+			kept, err := visibleParticipantKeys(ctx, conn, account, keys[:n], arm.tx)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, kept...)
+			keys = keys[n:]
+		}
+		if len(out) >= limit || len(raw) < window {
+			return out, nil
+		}
+		from = &raw[len(raw)-1]
+		window = min(2*window, maxParticipantWindow)
+	}
+}
+
+// visibleTxPredicate is the stellar.transactions filter a participant row's
+// tx must pass to be listed; its one placeholder binds the listed account.
+const visibleTxPredicate = `(successful = 1 OR source_account = ?)`
+
+// visibleParticipantKeys keeps, in order, the keys whose transaction
+// succeeded or was sourced by the account itself (its own failed txs stay in
+// its history). A point lookup on the stellar.transactions primary key over
+// ≤limit keys. No FINAL: successful and source_account are ledger facts, so
+// every un-merged version of a key carries the same values.
+func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn, account string, keys []K, tx func(K) accountTxKey) ([]K, error) {
+	q := `SELECT ledger_seq, tx_index FROM stellar.transactions
+		WHERE (ledger_seq, tx_index) IN (` + tupleList(keys, func(k K) []uint32 { t := tx(k); return []uint32{t.ledger, t.txIndex} }) + `)
+		  AND ` + visibleTxPredicate + explorerScanSettings
+	ok, err := queryKeys(ctx, conn, q, []any{account}, scanTxKey)
+	if err != nil {
+		return nil, err
+	}
+	visible := make(map[accountTxKey]struct{}, len(ok))
+	for _, k := range ok {
+		visible[k] = struct{}{}
+	}
+	out := keys[:0:0]
+	for _, k := range keys {
+		if _, v := visible[tx(k)]; v {
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
+
+// sourcedOpKeysExactQuery is the sourced op arm's LIMIT 1 BY form (exact,
+// O(account history)), used when the windowed read cannot prove a full page.
+// The sentinel op_index rows (tx-sourced) are excluded.
+//
+// hasBound adds ` AND ledger_seq <= ?` (#31): the account's activity
+// watermark (accountActivityWatermark), so a long-idle account's reverse
+// read starts at its real last activity instead of walking every granule
+// from the tip (~4 s for a 46d-idle account). EXACT, not an
+// approximation: every key either arm can emit comes from a row whose insert
+// also raised the watermark to >= its own ledger_seq (tier1_schema.sql
+// documents the data-hiding invariant). Callers must ONLY pass a bound
+// derived from that watermark — an under-estimate silently HIDES history.
+func sourcedOpKeysExactQuery(hasCursor, hasBound bool) string {
+	clauses := ""
 	if hasBound {
-		boundClause = ` AND ledger_seq <= ?`
+		clauses += ` AND ledger_seq <= ?`
 	}
-	// TWO-PHASE, same as accountTransactionsQuery (sub-second audit
-	// 2026-08-13) and with more at stake here: opCols carries body_xdr,
-	// which opColsLight's own doc measures at ~600ms over this 24B-row /
-	// 2TiB table. Carrying it through BOTH arms' scans and sorts paid
-	// that twice; the keyset union below is narrow and the wide read
-	// happens once over ≤limit keys.
-	//
-	// KEYSET FROM THE ACCOUNT-KEYED TABLES, NOT FROM stellar.operations
-	// (r1 503s 2026-08-28): each arm used to re-resolve its keys over
-	// stellar.operations — `WHERE pk IN (SELECT pk FROM ops_by_source
-	// WHERE source_account = ?) ORDER BY pk DESC LIMIT n`. ClickHouse's
-	// set-based index analysis DOES prune that to exact granules, but it
-	// prunes to ONE GRANULE PER KEY IN THE SET, before the LIMIT: a hot
-	// account's page cost its whole history in granules (11,925 sourced +
-	// 26,064 participant keys × 8192-row granules ≈ 164–238 M rows /
-	// ~8 s per page, live query_log) — the deadline-exceeded class, on a
-	// page of 50. Both ops_by_source and operation_participants are
-	// ORDER BY (account, ledger_seq, tx_index, op_index), so the cursor,
-	// bound and LIMIT apply DIRECTLY on a primary-key-prefix range read
-	// of the account's own rows, and stellar.operations is touched ONCE,
-	// by the hydration pass, over ≤ 3×limit keys — the page is bounded by
-	// the page size, not by the account's activity. Exactness: the
-	// per-arm `LIMIT 1 BY` collapses an un-merged RMT duplicate in the
-	// key table (both are ReplacingMergeTree) before the arm's LIMIT, and
-	// the top-N-union invariant above holds unchanged since each arm's
-	// keys are exactly the rows the old arm resolved.
-	//
-	// The merge below needs NO cross-arm dedupe (unlike
-	// accountTransactionsQuery's, #290): these arms are disjoint at op
-	// granularity — an op is sourced by the account XOR carries it as a
-	// non-source participant, because operationParticipantRows excludes
-	// the op's own resolved source (pinned by
-	// TestOperationParticipantRows_SkipsSource). The full-history walk
-	// asserts every non-final page of this listing is FULL
-	// (test/integration/account_operations_pk_pruning_test.go), which is
-	// what would catch a violation of that invariant.
-	//
-	// FINAL on the hydration — same rationale as accountTransactionsQuery's
-	// (and txByLedgerAndHash's) tie-break argument, and equally cheap here:
-	// the WHERE is a bounded IN over at most `limit` PK points.
-	return `SELECT ` + opCols + ` FROM stellar.operations FINAL
-		WHERE (ledger_seq, tx_index, op_index) IN (
-		  SELECT ledger_seq, tx_index, op_index FROM (
-		    (SELECT ledger_seq, tx_index, op_index FROM stellar.ops_by_source
-		       WHERE source_account = ? AND op_index != 4294967295` + boundClause + cursorClause + `
-		       ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
-		       LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
-		    UNION ALL
-		    (SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants
-		       WHERE account = ?` + boundClause + cursorClause + `
-		       ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
-		       LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
-		  ) ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?)
+	if hasCursor {
+		clauses += ` AND ledger_seq <= ? AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
+	}
+	return `SELECT ledger_seq, tx_index, op_index FROM stellar.ops_by_source
+		WHERE source_account = ? AND op_index != 4294967295` + clauses + `
 		ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
 		LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?` + explorerScanSettings
 }
 
-// AccountOperations returns operations INVOLVING an account — both those it
-// sourced (effective op source) and those where it's a non-source participant
-// — newest first, keyset-paged by the composite (ledger_seq, tx_index,
-// op_index) cursor (ADR-0038 Phase B). Sourced via the source_account
-// skip-index on stellar.operations; incoming via an account-prefixed lookup of
-// stellar.operation_participants. Incoming coverage tracks the participant-
-// index capture + backfill (see AccountTransactions). When the account has
-// an activity watermark (stellar.account_activity, #31) both arms' resolves
-// are additionally bounded by `ledger_seq <= watermark`.
+// AccountOperations returns operations INVOLVING an account — those it
+// sourced (effective op source) and those where it is a non-source
+// participant of a transaction that succeeded or that it sourced itself (see
+// AccountTransactions) — newest first, keyset-paged by the
+// composite (ledger_seq, tx_index, op_index) cursor (ADR-0038 Phase B). The
+// arms never overlap at op granularity: operationParticipantRows excludes the
+// op's own resolved source (TestOperationParticipantRows_SkipsSource). When
+// the account has an activity watermark (stellar.account_activity, #31) both
+// arms are additionally bounded by `ledger_seq <= watermark`.
 func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, limit int, cur ExplorerCursor) ([]OpRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -1780,16 +1702,40 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	if !r.opsBySourceAvailable(ctx) {
 		return nil, errOpsBySourceMissing
 	}
-	// The activity watermark bounds each arm's resolve (`ledger_seq <= ?`)
-	// so a long-idle account's page stops at its real last activity —
-	// exact, never row-hiding (see accountOperationsQuery). No watermark
-	// (table absent, backfill pending, or the account has no row) → the
-	// unbounded resolve, exactly as before the watermark existed.
+	// No watermark (table absent, backfill pending, or no row for the
+	// account) → the unbounded read.
 	bound, hasBound := r.accountActivityWatermark(ctx, account)
-	if rows, ok, err := r.accountOperationsWindowed(ctx, account, limit, cur, bound, hasBound); err != nil || ok {
-		return rows, err
+	sourced, err := r.sourcedOpKeys(ctx, account, limit, cur, bound, hasBound)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
 	}
-	return r.accountOperationsExact(ctx, account, limit, cur, bound, hasBound)
+	fixed, fixedArgs := "", []any(nil)
+	if hasBound {
+		fixed, fixedArgs = ` AND ledger_seq <= ?`, []any{bound}
+	}
+	var from *accountOpKey
+	if cur.IsSet() {
+		from = &accountOpKey{cur.Ledger, cur.A, cur.B}
+	}
+	part, err := participantKeys(ctx, r.conn, account, limit, opParticipantArm, fixed, fixedArgs, from)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
+	}
+	keys := mergeKeysDesc(append(sourced, part...), limit, accountOpKey.after)
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	// FINAL for the same tie-break reason as AccountTransactions' hydration;
+	// opCols carries body_xdr, which is why it is read only here, once.
+	q := `SELECT ` + opCols + ` FROM stellar.operations FINAL
+		WHERE (ledger_seq, tx_index, op_index) IN (` + tupleList(keys, func(k accountOpKey) []uint32 { return []uint32{k.ledger, k.txIndex, k.opIndex} }) + `)
+		ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?` + explorerScanSettings
+	rows, err := r.conn.Query(ctx, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanOps(rows)
 }
 
 // accountOpKey is one operation's (ledger_seq, tx_index, op_index) key.
@@ -1805,10 +1751,14 @@ func (k accountOpKey) after(o accountOpKey) bool {
 	return k.opIndex > o.opIndex
 }
 
-// accountOperationsWindowed is accountTransactionsWindowed for operations: the
-// sourced and participant arms are read as bounded sort-key-ordered windows,
-// merged in Go and hydrated once. ok=false sends the caller to the exact query.
-func (r *ExplorerReader) accountOperationsWindowed(ctx context.Context, account string, limit int, cur ExplorerCursor, bound uint32, hasBound bool) ([]OpRow, bool, error) {
+func scanOpKey(rows driver.Rows) (accountOpKey, error) {
+	var k accountOpKey
+	err := rows.Scan(&k.ledger, &k.txIndex, &k.opIndex)
+	return k, err
+}
+
+// sourcedOpKeys is sourcedTxKeys for operations.
+func (r *ExplorerReader) sourcedOpKeys(ctx context.Context, account string, limit int, cur ExplorerCursor, bound uint32, hasBound bool) ([]accountOpKey, error) {
 	window := windowRows(limit, windowFactorKeys)
 	clauses := ""
 	var extra []any
@@ -1820,100 +1770,34 @@ func (r *ExplorerReader) accountOperationsWindowed(ctx context.Context, account 
 		clauses += ` AND ledger_seq <= ? AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
 		extra = append(extra, cur.Ledger, cur.Ledger, cur.A, cur.B)
 	}
-	arms := [...]string{
-		`SELECT ledger_seq, tx_index, op_index FROM stellar.ops_by_source WHERE source_account = ? AND op_index != 4294967295`,
-		`SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?`,
+	args := append(append([]any{account}, extra...), window)
+	keys, ok, err := windowedKeyRead(ctx, r.conn,
+		`SELECT ledger_seq, tx_index, op_index FROM stellar.ops_by_source WHERE source_account = ? AND op_index != 4294967295`+clauses+
+			` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?`+explorerScanSettings,
+		args, window, limit, scanOpKey)
+	if err != nil || ok {
+		return keys, err
 	}
-	var merged []accountOpKey
-	for _, arm := range arms {
-		args := append(append([]any{account}, extra...), window)
-		keys, ok, err := windowedKeyRead(ctx, r.conn, arm+clauses+` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?`+explorerScanSettings,
-			args, window, limit, func(rows driver.Rows) (accountOpKey, error) {
-				var k accountOpKey
-				err := rows.Scan(&k.ledger, &k.txIndex, &k.opIndex)
-				return k, err
-			})
-		if err != nil || !ok {
-			return nil, false, err
-		}
-		merged = append(merged, keys...)
-	}
-	keys := mergeKeysDesc(merged, limit, accountOpKey.after)
-	if len(keys) == 0 {
-		return nil, true, nil
-	}
-	q := `SELECT ` + opCols + ` FROM stellar.operations FINAL
-		WHERE (ledger_seq, tx_index, op_index) IN (` + tupleList(keys, func(k accountOpKey) []uint32 { return []uint32{k.ledger, k.txIndex, k.opIndex} }) + `)
-		ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?` + explorerScanSettings
-	rows, err := r.conn.Query(ctx, q, limit)
-	if err != nil {
-		return nil, false, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
-	}
-	defer func() { _ = rows.Close() }()
-	out, err := scanOps(rows)
-	return out, err == nil, err
-}
-
-// accountOperationsExact is the LIMIT 1 BY form (exact, O(account history)
-// per page), used when the windowed read cannot prove a full page.
-func (r *ExplorerReader) accountOperationsExact(ctx context.Context, account string, limit int, cur ExplorerCursor, bound uint32, hasBound bool) ([]OpRow, error) {
-	var cursorArgs []any
-	if cur.IsSet() {
-		cursorArgs = []any{cur.Ledger, cur.Ledger, cur.A, cur.B}
-	}
-	q := accountOperationsQuery(cur.IsSet(), hasBound)
-	args := []any{account}
-	if hasBound {
-		args = append(args, bound)
-	}
-	args = append(args, cursorArgs...)
-	args = append(args, limit)
-	args = append(args, account)
-	if hasBound {
-		args = append(args, bound)
-	}
-	args = append(args, cursorArgs...)
-	args = append(args, limit)
-	args = append(args, limit)
-	// Two trailing placeholders: the keyset LIMIT and the hydration
-	// LIMIT (see accountOperationsQuery).
-	args = append(args, limit)
-	rows, err := r.conn.Query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
-	}
-	defer func() { _ = rows.Close() }()
-	return scanOps(rows)
+	args = append(append([]any{account}, extra...), limit)
+	return queryKeys(ctx, r.conn, sourcedOpKeysExactQuery(cur.IsSet(), hasBound), args, scanOpKey)
 }
 
 // accountOpTypeCountsQuery is AccountOperationTypeCounts' SQL.
 //
-// The SAME two index-friendly arms as accountOperationsQuery — sourced
-// via the source_account skip-index, participant via an account-prefixed
-// operation_participants lookup resolved on the operations PRIMARY KEY —
-// UNION'd, NOT `source_account = ? OR … IN (…)`: an OR with a subquery
-// defeats the source_account skip-index and full-scans the multi-billion-
-// row table (see accountTransactionsQuery's doc comment). The arms never
-// overlap (an op is sourced XOR has the account as a NON-source
-// participant — participants exclude the op's own source), so the outer
-// sum() over both arms counts every involving op exactly once.
+// The SAME two arms as AccountOperations, UNION'd, NOT `source_account = ? OR
+// … IN (…)`: an OR with a subquery defeats index use and full-scans the
+// multi-billion-row table. The arms never overlap (see AccountOperations), so
+// the outer sum() counts every involving op exactly once. The participant
+// arm keeps only ops of transactions that succeeded or that the account
+// sourced; that semi-join is bounded by the same participant key
+// set the arm already resolves.
 //
-// uniqExact over the 3-column primary key, not count(): stellar.operations
-// is ReplacingMergeTree(ingested_at), so a re-ingested op leaves an
-// un-merged duplicate PART until a background merge — a plain count()
-// would inflate per-type totals (the aggregate twin of the per-row
-// LIMIT 1 BY dedup accountOperationsQuery carries; FINAL is the wrong
-// tool here for the same O(table)-merge reason recentOperationsQuery
-// documents). uniqExact's state is bounded by the ACCOUNT's own op
-// count, and the explorerScanSettings external-spill pair converts a
-// whale account's aggregation state into a disk-backed success instead
-// of an OOM (the same posture as the contracts-directory GROUP BY).
-//
-// Arm 1's keys come from the slim stellar.ops_by_source projection
-// (2026-07-30, same rewrite as accountOperationsQuery — the bloom probe
-// over the whole operations table measured 6.17s; the PK-prefixed slim
-// read is ms). The sentinel op_index rows (tx-sourced) are excluded:
-// this aggregate counts OPERATIONS the account sourced.
+// uniqExact over the 3-column primary key, not count(): stellar.operations is
+// ReplacingMergeTree(ingested_at), so an un-merged duplicate PART would
+// inflate per-type totals (FINAL is the wrong tool here for the
+// O(table)-merge reason recentOperationsQuery documents). explorerScanSettings'
+// external-spill pair turns a whale account's aggregation state into a
+// disk-backed success instead of an OOM.
 const accountOpTypeCountsQuery = `SELECT op_type, toInt64(sum(c)) AS n FROM (
 		(SELECT op_type, uniqExact((ledger_seq, tx_index, op_index)) AS c
 		   FROM stellar.operations
@@ -1926,6 +1810,11 @@ const accountOpTypeCountsQuery = `SELECT op_type, toInt64(sum(c)) AS n FROM (
 		   FROM stellar.operations
 		  WHERE (ledger_seq, tx_index, op_index) IN (
 		        SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?)
+		    AND (ledger_seq, tx_index) IN (
+		        SELECT ledger_seq, tx_index FROM stellar.transactions
+		         WHERE (ledger_seq, tx_index) IN (
+		               SELECT ledger_seq, tx_index FROM stellar.operation_participants WHERE account = ?)
+		           AND ` + visibleTxPredicate + `)
 		  GROUP BY op_type)
 	) GROUP BY op_type ORDER BY n DESC` + explorerScanSettings
 
@@ -1940,7 +1829,7 @@ func (r *ExplorerReader) AccountOperationTypeCounts(ctx context.Context, account
 	if !r.opsBySourceAvailable(ctx) {
 		return nil, errOpsBySourceMissing
 	}
-	rows, err := r.conn.Query(ctx, accountOpTypeCountsQuery, account, account)
+	rows, err := r.conn.Query(ctx, accountOpTypeCountsQuery, account, account, account, account)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: account %s op-type counts: %w", account, err)
 	}

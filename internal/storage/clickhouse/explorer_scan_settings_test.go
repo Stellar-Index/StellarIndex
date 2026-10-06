@@ -36,11 +36,11 @@ func TestExplorerScanQueries_CarryBoundedSettings(t *testing.T) {
 		"recentOperationsQuery(cursor, unbounded fallback)":     recentOperationsQuery(true, false),
 		"opTypeStatsQuery":                                      opTypeStatsQuery,
 		"accountOpTypeCountsQuery":                              accountOpTypeCountsQuery,
-		"accountTransactionsQuery(first page)":                  accountTransactionsQuery(false),
-		"accountTransactionsQuery(cursor)":                      accountTransactionsQuery(true),
-		"accountOperationsQuery(first page)":                    accountOperationsQuery(false, false),
-		"accountOperationsQuery(cursor)":                        accountOperationsQuery(true, false),
-		"accountOperationsQuery(watermark)":                     accountOperationsQuery(true, true),
+		"sourcedTxKeysExactQuery(first page)":                   sourcedTxKeysExactQuery(false),
+		"sourcedTxKeysExactQuery(cursor)":                       sourcedTxKeysExactQuery(true),
+		"sourcedOpKeysExactQuery(first page)":                   sourcedOpKeysExactQuery(false, false),
+		"sourcedOpKeysExactQuery(cursor)":                       sourcedOpKeysExactQuery(true, false),
+		"sourcedOpKeysExactQuery(watermark)":                    sourcedOpKeysExactQuery(true, true),
 		"contractEventsRecentQuery(first page)":                 contractEventsRecentQuery(false, false),
 		"contractEventsRecentQuery(cursor)":                     contractEventsRecentQuery(true, false),
 		"recentContractsQuery":                                  recentContractsQuery,
@@ -104,45 +104,27 @@ func TestClassicCirculatingSupplyQuery_Bounds(t *testing.T) {
 // CORRECTNESS regression, not just a perf one (per-arm LIMITs, LIMIT 1 BY
 // dedup, the cursor tuple comparisons).
 func TestExplorerScanQueries_ShapePreserved(t *testing.T) {
-	txQ := accountTransactionsQuery(true)
-	// Tx-key dedupe inside the arms is `LIMIT 1 BY ledger_seq, tx_index`
-	// over the account-keyed tables (2026-08-28 — it replaced the
-	// `SELECT DISTINCT` of the old resolve-over-stellar.transactions arms;
-	// see TestAccountListings_ArmsPageAccountKeyedTables).
-	for _, s := range []string{
-		"UNION ALL",
-		"(ledger_seq, tx_index) < (?, ?)",
-		"LIMIT 1 BY ledger_seq, tx_index",
-		"operation_participants",
+	for name, tc := range map[string]struct {
+		q      string
+		shapes []string
+	}{
+		"sourcedTxKeysExactQuery": {sourcedTxKeysExactQuery(true), []string{
+			"(ledger_seq, tx_index) < (?, ?)", "LIMIT 1 BY ledger_seq, tx_index LIMIT ?", "FROM stellar.ops_by_source",
+		}},
+		"sourcedOpKeysExactQuery": {sourcedOpKeysExactQuery(true, false), []string{
+			"(ledger_seq, tx_index, op_index) < (?, ?, ?)", "LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?", "op_index != 4294967295",
+		}},
 	} {
-		if !strings.Contains(txQ, s) {
-			t.Errorf("accountTransactionsQuery missing %q:\n%s", s, txQ)
+		for _, s := range tc.shapes {
+			if !strings.Contains(tc.q, s) {
+				t.Errorf("%s missing %q:\n%s", name, s, tc.q)
+			}
 		}
 	}
-	// Each arm carries its own cursor clause (two occurrences).
-	if got := strings.Count(txQ, "(ledger_seq, tx_index) < (?, ?)"); got != 2 {
-		t.Errorf("accountTransactionsQuery cursor clause count = %d, want 2 (one per arm)", got)
+	if strings.Contains(sourcedTxKeysExactQuery(false), "< (?, ?)") || strings.Contains(sourcedOpKeysExactQuery(false, true), "< (?, ?, ?)") {
+		t.Error("a first-page exact arm must not carry a cursor clause")
 	}
 
-	opQ := accountOperationsQuery(true, false)
-	for _, s := range []string{
-		"UNION ALL",
-		"(ledger_seq, tx_index, op_index) < (?, ?, ?)",
-		"LIMIT 1 BY ledger_seq, tx_index, op_index",
-		"operation_participants",
-	} {
-		if !strings.Contains(opQ, s) {
-			t.Errorf("accountOperationsQuery missing %q:\n%s", s, opQ)
-		}
-	}
-	if got := strings.Count(opQ, "(ledger_seq, tx_index, op_index) < (?, ?, ?)"); got != 2 {
-		t.Errorf("accountOperationsQuery cursor clause count = %d, want 2 (one per arm)", got)
-	}
-
-	// First pages carry no cursor clause.
-	if strings.Contains(accountTransactionsQuery(false), "< (?, ?)") {
-		t.Error("accountTransactionsQuery(false) must not carry a cursor clause")
-	}
 	// A first page carries no CURSOR clause on either arm. (Until
 	// 2026-09-02 this was asserted as "no WHERE at all", which was a
 	// faithful proxy only while the query had no lower bound either — the

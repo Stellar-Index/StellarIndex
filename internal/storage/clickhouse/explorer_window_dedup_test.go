@@ -50,14 +50,35 @@ func TestDedupWindow(t *testing.T) {
 	})
 }
 
+// isVisibilityLookup reports the participant arm's tx-visibility lookup.
+func isVisibilityLookup(q string) bool {
+	return strings.Contains(q, visibleTxPredicate) && !strings.Contains(q, "uniqExact")
+}
+
+// visibleTxKeys answers the visibility lookup with the tx key of every
+// participant row not in failed; the reader intersects it with its own keys.
+func visibleTxKeys(participant [][]any, failed map[[2]uint32]bool) *stubRows {
+	var out [][]any
+	for _, r := range participant {
+		k := [2]uint32{r[0].(uint32), r[1].(uint32)}
+		if !failed[k] {
+			out = append(out, []any{k[0], k[1]})
+		}
+	}
+	return &stubRows{data: out}
+}
+
 // opsArmRouter answers the account-operations key arms and the hydration read.
 type opsArmRouter struct {
 	sourced, participant [][]any
 	hydrated             [][]any
+	failed               map[[2]uint32]bool
 }
 
 func (a *opsArmRouter) respond(q string) (driver.Rows, error) {
 	switch {
+	case isVisibilityLookup(q):
+		return visibleTxKeys(a.participant, a.failed), nil
 	case strings.Contains(q, "FROM stellar.ops_by_source WHERE source_account"):
 		return &stubRows{data: a.sourced}, nil
 	case strings.Contains(q, "FROM stellar.operation_participants WHERE account"):
@@ -89,7 +110,7 @@ func TestAccountOperations_WindowedReadHasNoLimit1By(t *testing.T) {
 	}
 	var arms, hydrations int
 	for i, q := range conn.queries {
-		if isOpsBySourceProbe(q) || strings.Contains(q, "account_activity") {
+		if isOpsBySourceProbe(q) || strings.Contains(q, "account_activity") || isVisibilityLookup(q) {
 			continue
 		}
 		if strings.Contains(q, "LIMIT 1 BY") {
@@ -136,19 +157,32 @@ func TestAccountOperations_UnprovenWindowFallsBackToExactQuery(t *testing.T) {
 	if _, err := r.AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
-	last := conn.queries[len(conn.queries)-1]
-	if n := strings.Count(last, "LIMIT 1 BY ledger_seq, tx_index, op_index"); n != 3 {
-		t.Fatalf("last query is not the exact LIMIT 1 BY form (%d clauses): %s", n, last)
+	if exactQueries(conn, sourcedOpKeysExactQuery(false, false)) != 1 {
+		t.Fatalf("the sourced arm did not fall back to its exact LIMIT 1 BY query: %v", conn.queries)
 	}
+}
+
+// exactQueries counts the emitted queries equal to the exact form q.
+func exactQueries(conn *stubConn, q string) int {
+	n := 0
+	for _, got := range conn.queries {
+		if got == q {
+			n++
+		}
+	}
+	return n
 }
 
 // txArmRouter answers the account-transactions key arms and hydration.
 type txArmRouter struct {
 	sourced, participant [][]any
+	failed               map[[2]uint32]bool
 }
 
 func (a *txArmRouter) respond(q string) (driver.Rows, error) {
 	switch {
+	case isVisibilityLookup(q):
+		return visibleTxKeys(a.participant, a.failed), nil
 	case strings.Contains(q, "FROM stellar.ops_by_source WHERE source_account"):
 		return &stubRows{data: a.sourced}, nil
 	case strings.Contains(q, "FROM stellar.operation_participants WHERE account"):
@@ -199,9 +233,8 @@ func TestAccountTransactions_UnprovenWindowFallsBackToExactQuery(t *testing.T) {
 	if _, err := r.AccountTransactions(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountTransactions: %v", err)
 	}
-	last := conn.queries[len(conn.queries)-1]
-	if !strings.Contains(last, "LIMIT 1 BY ledger_seq, tx_index LIMIT ?") || !strings.Contains(last, "UNION ALL") {
-		t.Fatalf("last query is not the exact two-arm form: %s", last)
+	if exactQueries(conn, sourcedTxKeysExactQuery(false)) != 1 {
+		t.Fatalf("the sourced arm did not fall back to its exact LIMIT 1 BY query: %v", conn.queries)
 	}
 }
 
