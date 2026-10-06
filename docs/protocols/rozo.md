@@ -26,8 +26,10 @@ status: current
 
 Rozo is an intent-bridge protocol on Stellar. Coverage is scoped to
 **v1 Payment** — the only mainnet-live Rozo contract shape at time of
-writing. v2 Forwarder + IntentBridge are pre-mainnet (design-stage) and
-documented for follow-up in `docs/architecture/rozo-stellar-coverage.md`.
+writing. v2 Forwarder + IntentBridge are not on mainnet (INV-1132). Their
+upstream shapes (`forward`/`memo_set`/`memo_rm`/`proxy_set`; `created`/`filled`/`refunded`;
+a newer `intent_*` set) are unverified, so nothing decodes them until a live
+deployment is confirmed.
 
 ## Contracts (4 — v1 Payment)
 
@@ -88,6 +90,18 @@ golden test now pins this (`internal/sources/rozo/decode_test.go`
 occurrences** across all 4 gated contracts as of the same census —
 `DecodeFlush` remains verified only against synthetic fixtures.
 
+## Relayer accounts
+
+There is no relayer decoder or table. Classic USDC/EURC payments on
+`rozo.MainnetRelayerAccounts` are served by `GET /v1/accounts/{g}/movements`
+(`received` = user deposit, `sent` = payout). They are not in `rozo_events` or
+the protocol stats, so a volume derived from them is a lower bound.
+Pre-P23 rows exist only where `classic-movements-backfill` has run over an
+account's range (the older relayer account predates P23); that coverage is
+unverified for both accounts. Open item: relayer accounts can rotate (the list
+is a code constant, redeploy to change); consider an alert when a new
+high-volume USDC/EURC counterparty of the known accounts appears.
+
 ## Aggregator treatment — not counted
 
 Class `Bridge` / `IncludeInVWAP=false`, `DefaultWeight=0`
@@ -113,5 +127,4 @@ false` language — the authoritative value is the registry entry
 ## References
 
 - Source package: `internal/sources/rozo/README.md`
-- Architecture: `docs/architecture/rozo-stellar-coverage.md`
 - Sibling bridge: [cctp.md](cctp.md)

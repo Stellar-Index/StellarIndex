@@ -51,7 +51,7 @@ import (
 //     honest — it never claims a SPECIFIC wrapper it doesn't have
 //     evidence for — at the cost of conflating three cases that all
 //     read the same from the API today. See
-//     docs/architecture/contract-call-coverage-audit.md.
+//     docs/adr/0052-contract-call-tree-routing.md.
 
 // routedViaTsSlack widens the trades.ts chunk-pruning bound relative
 // to the router-swap window. Generous (well beyond any close-time

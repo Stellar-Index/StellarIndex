@@ -110,9 +110,6 @@ hammered), separate from the reaper's own health.
 
 ## Related
 
-- [`docs/architecture/platform-spec.md`](../../architecture/platform-spec.md)
-  — the accounts/users platform schema (migration 0027) the reaper
-  operates on.
 - `internal/signupreaper/` — the reaper package.
 - `internal/api/v1/dashboardauth/` — the `/v1/auth/callback`
   provisioning path that produces the signup-race orphans (F-1255).

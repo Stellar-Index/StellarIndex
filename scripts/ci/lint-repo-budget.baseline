@@ -1,6 +1,5 @@
 # Regenerate with: scripts/ci/lint-repo-budget.sh --write
 # dated-md <path> | go-lines <path> <max-lines>
-dated-md docs/architecture/residual-defi-census-2026-07.md
 dated-md docs/methodology/d7-thin-pool-third-alias-vwap-review-2026-09-04.md
 dated-md docs/operations/incidents/sev-drill-2026-06-13.md
 dated-md docs/operations/lake-dedup-2026-07.md

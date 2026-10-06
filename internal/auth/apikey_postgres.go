@@ -173,7 +173,7 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 	// report "your limit" resolve it exactly as enforced here.
 	monthlyQuota := acct.ResolveKeyMonthlyQuota(pgKey.MonthlyQuota)
 
-	// Account-level rate-limit override (platform-spec accounts.
+	// Account-level rate-limit override (accounts.
 	// rate_limit_per_min_override, "when set, replaces the tier
 	// default"). Symmetric with the monthly-quota cascade above, but
 	// the per-key `rate_limit_per_min` column is NOT NULL CHECK (> 0)

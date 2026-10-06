@@ -2315,7 +2315,6 @@ internal/sources/external/registry.go	2026-05-26
 internal/sources/external/registry.go	2026-07-07
 internal/sources/external/registry.go	2026-07-10
 internal/sources/external/registry.go	2026-07-10
-internal/sources/external/registry.go	2026-08-03
 internal/sources/external/registry.go	CS-040
 internal/sources/external/registry.go	F050
 internal/sources/external/runner.go	2026-07-23
@@ -2660,7 +2659,6 @@ internal/storage/clickhouse/ops_auth.go	#292
 internal/storage/clickhouse/ops_auth.go	2026-08-28
 internal/storage/clickhouse/phoenix_pool_state_reader.go	2026-07-29
 internal/storage/clickhouse/phoenix_pool_state_reader.go	2026-07-29
-internal/storage/clickhouse/protocol_reader.go	2026-07-09
 internal/storage/clickhouse/protocol_reader.go	2026-07-31
 internal/storage/clickhouse/protocol_reader.go	2026-09-03
 internal/storage/clickhouse/recognition.go	2026-07-08
@@ -3349,8 +3347,6 @@ scripts/ci/lint-golangci-config/main.go	2026-08-28
 scripts/ci/lint-pk-discriminators/main.go	F-1324
 scripts/ci/lint-rule-equivalence/main.go	CS-098
 scripts/ci/lint-rule-equivalence/main.go	F-1222
-scripts/ci/verify-launch-ready/main.go	#321
-scripts/ci/verify-launch-ready/main.go	2026-05-13
 scripts/ops/circulation-fetch/main.go	2026-05-08
 scripts/ops/fx-history-backfill/main.go	2026-08-14
 scripts/ops/fx-history-backfill/main.go	INV-3

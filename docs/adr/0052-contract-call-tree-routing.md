@@ -40,4 +40,4 @@ Event-based decoders are unaffected: `tx.GetTransactionEvents()` already include
 
 ## Evidence
 
-`internal/dispatcher/dispatcher.go` (`ContractCallDecoder`, `ContractCallContext`, `ExecutionCorroborationRequirer`, `walkAuthEntries`), `internal/sources/soroswap_router/events.go` (`CallSig`), `docs/architecture/contract-call-coverage-audit.md`.
+`internal/dispatcher/dispatcher.go` (`ContractCallDecoder`, `ContractCallContext`, `ExecutionCorroborationRequirer`, `walkAuthEntries`), `internal/sources/soroswap_router/events.go` (`CallSig`).

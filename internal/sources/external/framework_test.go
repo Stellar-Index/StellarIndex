@@ -117,7 +117,7 @@ func TestRegistry_ClassPolicy(t *testing.T) {
 // ClassBridge constant so a downstream rename / accidental
 // removal would surface as a build break here rather than as a
 // silent classification miss in the registry. The dependent
-// docs (cctp-stellar-coverage.md, rozo-stellar-coverage.md)
+// docs (protocols/cctp.md, protocols/rozo.md)
 // reference this class by name; if it disappears the docs lie.
 func TestClassBridge_Defined(t *testing.T) {
 	t.Parallel()

@@ -7,8 +7,8 @@ status: skeleton — fill in after L4.14 provisioning
 # r2-01 (us-east-1) deployment state
 
 > **Skeleton.** R2 has not yet been provisioned at the time this
-> file was written. The L4.14 row in
-> [`launch-readiness-backlog.md`](../architecture/launch-readiness-backlog.md)
+> file was written. The R2 item in
+> [`v1-launch-plan.md`](v1-launch-plan.md)
 > tracks the spinup. Replace the `{{TBD}}` placeholders below as
 > the operator works through
 > [`multi-region-cutover.md` §Stage 1](multi-region-cutover.md)
@@ -118,4 +118,3 @@ aws-public-blockchain S3 ─┐ (free egress, sub-15ms RTT)
   region variations — R2 — AWS-hybrid" — per-host details.
 - [ADR-0016](../adr/0016-per-region-storage-strategy.md) §"R2 —
   AWS-hybrid" — design intent.
-- L4.14 in [`launch-readiness-backlog.md`](../architecture/launch-readiness-backlog.md).

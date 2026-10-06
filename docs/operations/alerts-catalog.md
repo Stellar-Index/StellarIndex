@@ -7,8 +7,7 @@ status: ratified — incremental growth
 # Alerts Catalogue
 
 **Ratified:** 2026-04-22 (table shape); entries grow with each
-feature PR per repo-hygiene-plan.md §16 ("no alert without a
-runbook").
+feature PR ("no alert without a runbook").
 
 Every row is a Prometheus / AlertManager rule. The `Runbook` column
 links to `docs/operations/runbooks/<name>.md`; a missing runbook
@@ -895,8 +894,6 @@ has none — write it anyway as part of the same PR.
   renumbering repair surfaces later as a widening
   `stellarindex_supply_divergence`, and the obvious fix (re-derive) is
   silently discarded by the `intra_ledger_seq` guard.
-- [repo-hygiene-plan.md §16](../architecture/repo-hygiene-plan.md#16-observability-discipline) —
-  "no alert without a runbook" rule.
 - External:
   - Prometheus best practices — <https://prometheus.io/docs/practices/alerting/>
   - The "USE method" — utilisation / saturation / errors.

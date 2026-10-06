@@ -9,7 +9,7 @@ import (
 // These tests cover the Upsert defensive guards — the real round-trip
 // against Postgres (an upsert overwriting the singleton row, not
 // duplicating it) needs testcontainers-go and lives in test/integration/
-// (per the Test conventions in AGENTS.md), mirroring
+// (per CONTRIBUTING.md §Testing), mirroring
 // TestClaimableSeedProvenanceRoundTrip.
 
 func TestUpsertAccountObservationSeedProvenance_RejectsNoWatchlist(t *testing.T) {

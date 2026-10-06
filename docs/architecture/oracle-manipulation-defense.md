@@ -9,8 +9,8 @@ status: living document — thresholds, metric and alert names checked against c
 Three questions: how a manipulated venue price is kept out of what we
 serve; how SEP-40 oracles are read and served; how a new oracle gets
 found and onboarded. The aggregation chain these defenses sit in is
-[aggregation-plan.md](aggregation-plan.md); the freeze ladder is
-[anomaly-freeze-and-confidence.md](anomaly-freeze-and-confidence.md);
+[aggregation-plan.md](aggregation-plan.md); the confidence score and
+freeze ladder are [below](#freeze-layer-9) (policy: ADR-0019);
 ingest is [ingest-pipeline.md](ingest-pipeline.md); the oracle decoder
 traps (Reflector's three contracts, Band at E18 with zero events,
 RedStone's feed attribution) are in [domain-traps.md](domain-traps.md).
@@ -104,7 +104,85 @@ Thresholds (`internal/config/config.go`):
 
 Baselines are a rolling 30 days. The Phase 3 cross-oracle factor is
 wired (`CrossOracleDivergencePct` in `orchestrator/confidence.go`);
-production-quality divergence coverage for it is L7.3, post-launch.
+production-quality divergence coverage for it is post-launch work.
+
+#### Baseline and z-score
+
+Per `(base, quote)` pair, over 1-minute buckets: `return_median`, `return_mad`
+(MAD scaled by 1.4826; MAD rather than sigma because sigma inflates after the first
+manipulation in the window and hides the next), `source_count_p50`, `liquidity_p50_usd`.
+`z_score = abs(return_pct - return_median) / return_mad`. `MultiBaseline.MaxZScore`
+(`internal/aggregate/baseline/multi.go`) takes the largest z across the 1d, 7d and 30d
+windows. It sees spikes, not slow drift; `MaxDriftZScore` covers drift, latches about 30
+days, and so stays out of the fire, extend and release decisions.
+
+#### Confidence score
+
+`confidence in [0, 1]` is a normalised weighted geometric mean,
+`prod(factor_i ^ weight_i) ^ (1 / sum(weights))` (`internal/aggregate/confidence.Compute`):
+
+```
+confidence = (
+  z_score_factor(z_score)                    ^ w_z       *
+  source_count_factor(n_sources)             ^ w_src     *
+  diversity_factor(class_count)              ^ w_div     *
+  liquidity_factor(bucket_volume)            ^ w_liq     *
+  cross_oracle_factor(divergence_pct)        ^ w_xoracle *
+  triangulation_agreement_factor(divergence) ^ w_tri     *
+  baseline_quality_factor(days_history)      ^ w_qual
+) ^ (1 / (w_z + w_src + w_div + w_liq + w_xoracle + w_tri + w_qual))
+```
+
+Weights are `[anomaly.weights]`, default 1.0 except `w_tri` (0.5). Factor shapes (`confidence/factors.go`):
+
+- `z_score_factor`: 1.0 at z=0, sigmoid decay to ~0 at z=10.
+- `source_count_factor`: logistic with inflection at n=3; `SourceCountFactor(1)` ≈ 0.119.
+- `diversity_factor`: 0.5 for one source class, 1.0 for two or more.
+- `liquidity_factor`: log-saturating between $1K and a **$1,000,000** ceiling, because
+  BTC/USD's 5m bucket p50 is $123,678 and a lower ceiling saturated on the median bucket.
+  Volume that cannot be valued in USD reads `LiquidityUnmeasuredFactor` = 0.5.
+- `cross_oracle_factor`: 1.0 within 1% of the cross-oracle median, decaying; 0.7 with no data.
+- `triangulation_agreement_factor`: the same shape against the composite a configured chain
+  implies (1.0 within 2%); default weight 0.5, since a composite reuses our own legs.
+  **Weight 0 when unchecked**, so an un-triangulated pair scores exactly as before. A composite
+  never feeds `source_count`: counting it as a venue would disarm the `source_count <= 1` leg.
+- `baseline_quality_factor`: 0.5 with no baseline, ramping to 1.0 over 30 days.
+
+Calibration: ADR-0019's original `confidence < 0.10` needed z ≈ 15 for a single-source $12K
+bucket and never fired; at 0.45 the confidence leg crosses at z ≈ 4.8–5.9, so the independent
+`z > 5.0` leg decides. `TestPhase2FreezeFires_CalibratedToADRZBand` pins that band both ways.
+Wire: `confidence` plus `confidence_factors` (the seven factor values, the `*_checked` evidence
+flags, `liquidity_measured`, and `baseline_age_days` and `bootstrap_capped`.) A chained pair's
+confidence is its weakest leg's (`RouteConfidence`).
+
+#### Bootstrap gate
+
+A pair with no usable baseline publishes no `confidence` and is not Phase 2 eligible; the Phase 1
+class thresholds (`[anomaly.thresholds]` `warn_pct` / `freeze_pct`: stablecoin and treasury 1/3,
+crypto 20/50, governance 50/100, default 30/75) can still freeze it. With a baseline, confidence
+is capped at 0.5 until baseline density (1-minute buckets / 1440) clears the gate: the cap releases
+at `BootstrapDensityDays` = 28.5 and re-engages only below `BootstrapReengageDensityDays` = 27.
+Gate state is in aggregator memory, so a restart re-applies the 28.5 gate.
+
+#### Freeze lifecycle
+
+`internal/aggregate/freeze.Policy`; durations are `[anomaly.phase2]` tunables.
+
+- Initial hold 30 minutes, or 10 for a pair with no corroborating lens ("corroborated" means a
+  second lens produced a reading this bucket, not that it agreed).
+- At each expiry, if the condition still holds, extend 30 minutes, up to 4 times. After 2 hours
+  the freeze escalates (P1, `stellarindex_anomaly_freeze_escalated`) and never auto-unfreezes.
+- Auto-unfreeze needs the table's thresholds for two consecutive buckets AND `release_corroborated`:
+  a lens reading that agrees within 5% with the fresh candidate (calm alone cannot tell "repriced"
+  from "manipulation parked"). A pair with no lens rides the ladder to a human.
+- Composite reference (`[aggregate.composite_reference]`): a same-bucket composite agreeing within
+  `tolerance_bps` (75) suppresses the fire; agreeing within `release_band_pct` (2%) releases. It
+  never counts as a second source.
+- Durability: Redis is a cache. `freeze_events` (migrations 0119, 0163 `window_ladders`) is the
+  record; a missing marker is rehydrated from an open row, bounded by `hold_until` + 5 minutes grace.
+  The aggregator runs one ladder per (pair, window) for 5m, 1h and 24h; the last window to release
+  deletes the marker. The override is `stellarindex-ops freeze-unfreeze -reason ...`; a bare
+  `redis-cli DEL` is not one, because the next tick rehydrates.
 
 ### Engineering observability
 
@@ -142,8 +220,7 @@ confidence > 0.30, so a single-source asset sitting at 0.20 does not
 auto-release until its confidence recovers (for example, a second
 source). Release also needs a corroborating lens that agrees with the
 candidate level (`release_corroborated`, `internal/aggregate/freeze/lifecycle.go`):
-a held manipulation is calm too. See
-[anomaly-freeze-and-confidence.md](anomaly-freeze-and-confidence.md). Reflector's only observed venue was the manipulated pool, so it
+a held manipulation is calm too ([freeze lifecycle](#freeze-lifecycle)). Reflector's only observed venue was the manipulated pool, so it
 published the spike; its value carries no weight here (Layer 2).
 
 ## Open gaps
@@ -154,7 +231,7 @@ published the spike; its value carries no weight here (Layer 2).
 | Auto-exclude the offending source on an outlier storm | not built; trimming is per print, not per source, so exclusion is a manual runbook step | — |
 | Stablecoin-depeg auto-gating (a depegged stablecoin used as collateral) | not built; manual policy through the class system | INV-1122 |
 | Adversarial-testing exercises (below) | recommended, not scheduled | INV-1123 |
-| Production-quality divergence coverage for the Phase 3 factor | wired; coverage tuning post-launch, L7.3 | — |
+| Production-quality divergence coverage for the Phase 3 factor | wired; coverage tuning post-launch | — |
 | SEP-50 (NFT) decoder | none exists; out of current scope | INV-1095 |
 
 Adversarial exercises, each with its pass condition:

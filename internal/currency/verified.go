@@ -395,8 +395,8 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 //
 // Policy for a legitimately-anchored wrapper (DOM-02): there is no separate
 // anchor allowlist, and there must not be one — internal/currency is a
-// hand-vetted trust surface (AGENTS.md: "NEVER auto-populate ... adding a
-// currency is a code change") and an allowlist keyed on ticker alone would
+// hand-vetted trust surface (docs/architecture/domain-traps.md: adding a
+// currency is a code change; never auto-populate it) and an allowlist keyed on ticker alone would
 // reopen exactly the impersonation vector this function closes. The
 // mechanism is the one already used for every other reclassification: if
 // an anchor issues a genuine bridged/wrapped form of a ticker-only entry

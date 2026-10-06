@@ -49,7 +49,7 @@
 // MintAndWithdraw).
 //
 // Design rationale and full per-event schemas extracted from the
-// contracts' Rust source: docs/architecture/cctp-stellar-coverage.md.
+// contracts' Rust source: docs/protocols/cctp.md.
 //
 // Wiring (1b9a594b4): decode.go decodes; consumer.go projects each event
 // into the canonical cctp.Event row; dispatcher_adapter.go is the
@@ -471,8 +471,7 @@ type MessageReceived struct {
 // single-digit-to-low-double-digit occurrence counts; schemas below
 // were reverse-engineered directly from the real lake events (no
 // upstream doc for most of these — `max_message_body_size_updated` is
-// the one exception, previously documented in
-// docs/architecture/cctp-stellar-coverage.md).
+// the one exception).
 
 // AdminChangeStarted is the canonical projection of one
 // `admin_change_started` event — the 2-step counterpart to
@@ -625,8 +624,7 @@ type FeeRecipientSet struct {
 // MaxMessageBodySizeUpdated is the canonical projection of one
 // `max_message_body_size_updated` event — MessageTransmitter's message
 // size ceiling changed. Only ever observed from MessageTransmitter.
-// Previously documented (design-only) in
-// docs/architecture/cctp-stellar-coverage.md; verified against a real
+// Verified against a real
 // mainnet event 2026-07-09: ledger 62146641 (new value 8192 bytes).
 //
 // Wire shape (single-topic event; body ScMap):

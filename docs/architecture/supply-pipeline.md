@@ -449,7 +449,7 @@ the divergence alert cannot fire for a pair it is not evaluating.
   change. A CoinGecko augmentation worker was planned and dropped for that
   reason. Non-Stellar entries (BTC, ETH, …) are `reference_only`: pricing
   references, not browseable assets. The cross-chain `networks[]` model was
-  removed ([stellar-focus-refactor-plan.md](stellar-focus-refactor-plan.md)).
+  removed.
   `internal/canonical/asset_fiat.go` stays the source of truth for allowed
   fiat codes; the catalogue refers to fiat by ISO code.
 - `CoinGeckoIDs()` feeds the CoinGecko poller's `TickerToID`, and

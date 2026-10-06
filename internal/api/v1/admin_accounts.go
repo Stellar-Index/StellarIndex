@@ -151,8 +151,8 @@ func (s *Server) requireOperator(w http.ResponseWriter, r *http.Request, instanc
 	return subject, true
 }
 
-// requireReason enforces the admin-write X-Reason contract (platform-spec
-// §7.2) shared by every unconditional operator-tier write: POST/DELETE
+// requireReason enforces the admin-write X-Reason contract
+// shared by every unconditional operator-tier write: POST/DELETE
 // /v1/admin/keys, PATCH /v1/admin/accounts/{id} and the status-notice
 // create/resolve routes. Returns the reason + ok=true when present; on
 // ok=false a problem+json has already been written. Operator-conditional
@@ -208,8 +208,8 @@ func (s *Server) handleAdminAccountGet(w http.ResponseWriter, r *http.Request) {
 
 // handleAdminAccountOverrides serves PATCH /v1/admin/accounts/{id} —
 // set the account tier and/or the rate-limit / monthly-quota overrides.
-// Operator-tier only; requires an `X-Reason` header (platform-spec
-// §7.2: every write endpoint captures a reason into the audit log).
+// Operator-tier only; requires an `X-Reason` header
+// (every write endpoint captures a reason into the audit log).
 // Every successful mutation lands an "account.override.set" audit row.
 func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Request) {
 	subject, ok := s.requireOperator(w, r, "/v1/admin/accounts/{id}")

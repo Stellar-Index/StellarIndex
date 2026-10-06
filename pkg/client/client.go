@@ -39,7 +39,7 @@ const DefaultTimeout = 30 * time.Second
 // Unit-D wire-collapse breaking change that already shipped
 // (9442d311, 2026-06-16) — because no pkg/client/vX.Y.Z tag has ever
 // actually been cut; see docs/architecture/semver-policy.md's
-// tagging mechanics, which this change is the first real exercise of.
+// opening section (one root tag clock, no pkg/* tags).
 const userAgent = "stellarindex-go-sdk/0.2.0"
 
 // Options configures a [Client] at construction.

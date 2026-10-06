@@ -162,5 +162,5 @@ Soroswap and Aquarius (lower-bound-honest where legs are unpriceable),
 and SDEX order-book depth is live from the ledger's own offer entries.
 The daily-grain forex shim remains the honest remaining gap.
 
-[backlog]: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/architecture/launch-readiness-backlog.md
+[backlog]: https://github.com/Stellar-Index/StellarIndex/blob/8585fcdbcbf70a5ef172ff29e5bfb9d651b051d9/docs/architecture/launch-readiness-backlog.md
 [feed]: https://stellarindex.io/changelog.atom

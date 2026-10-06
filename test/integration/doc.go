@@ -25,6 +25,4 @@
 // (`make test-integration`) is operator-/local-invoked; there is no
 // scheduled nightly Docker job today (the GitHub Actions spend cap keeps
 // heavy scheduled jobs off — see the k6-weekly precedent).
-//
-// See docs/architecture/repo-hygiene-plan.md §9 (testing discipline).
 package integration
