@@ -18,8 +18,8 @@ import (
 // Price is the volume-weighted mean as a decimal string (10-digit
 // precision, consistent with /v1/history + /v1/ohlc). Volumes are raw
 // smallest-unit integer strings at the per-SOURCE scale of the venues in
-// the window (7 on-chain, 8 CEX, 6 FX), lifted to one common scale when a
-// fiat quote merges venues; BaseVolumeDecimals / QuoteVolumeDecimals
+// the window (7 on-chain, 8 CEX, 6 FX), lifted to one common scale when
+// the window mixes venues; BaseVolumeDecimals / QuoteVolumeDecimals
 // state that scale, as [OHLCBar] does.
 //
 // OutliersFiltered reports how many trades the sigma filter
@@ -147,23 +147,24 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	const maxTrades = 10000
-	trades, triangulated, ok := s.fetchVWAPTrades(ctx, w, r, pair, from, to, maxTrades)
+	window, triangulated, ok := s.fetchVWAPTrades(ctx, w, r, pair, from, to, maxTrades)
 	if !ok {
 		return
 	}
 
-	// Before FilterOutliers: the filter drops trades but does not un-lift
-	// the survivors, so only the fetched slice states their scale (F096).
-	volumeDecimals := commonAmountScaleDecimals(trades)
+	// Over the fetched window: an unregistered source among the trades the
+	// filter drops still leaves the survivors lifted against its guessed scale.
+	volumeDecimals := commonAmountScaleDecimals(window)
 
-	pre := len(trades)
-	fetched := trades
+	pre := window.Len()
+	fetched := window.Trades()
 	if sigma > 0 {
-		trades = aggregate.FilterOutliers(trades, sigma)
+		window = window.FilterOutliers(sigma)
 	}
+	trades := window.Trades()
 	outliersFiltered := pre - len(trades)
 
-	price, err := aggregate.VWAP(trades)
+	price, err := aggregate.VWAP(window)
 	if err != nil {
 		s.writeVWAPError(w, r, err, pair, from, to, pre, sigma)
 		return
@@ -286,19 +287,19 @@ func parseVWAPOutlierSigma(w http.ResponseWriter, r *http.Request) (float64, boo
 func (s *Server) fetchVWAPTrades(
 	ctx context.Context, w http.ResponseWriter, r *http.Request,
 	pair canonical.Pair, from, to time.Time, maxTrades int,
-) ([]canonical.Trade, bool, bool) {
-	trades, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTrades)
+) (aggregate.ScaledWindow, bool, bool) {
+	window, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTrades)
 	if err == nil {
-		return trades, triangulated, true
+		return window, triangulated, true
 	}
 	if clientAborted(r, err) {
-		return nil, false, false
+		return aggregate.ScaledWindow{}, false, false
 	}
 	if IsCacheUnavailable(err) {
 		s.logger.Warn("TradesInRange cache unavailable for VWAP",
 			"err", err, "base", pair.Base.String(), "quote", pair.Quote.String())
 		writeCacheUnavailableProblem(w, r)
-		return nil, false, false
+		return aggregate.ScaledWindow{}, false, false
 	}
 	s.logger.Error("TradesInRange failed for VWAP",
 		"err", err, "base", pair.Base.String(), "quote", pair.Quote.String(),
@@ -306,14 +307,16 @@ func (s *Server) fetchVWAPTrades(
 	writeProblemErr(w, r, err,
 		"https://api.stellarindex.io/errors/internal",
 		"Internal error", http.StatusInternalServerError, "")
-	return nil, false, false
+	return aggregate.ScaledWindow{}, false, false
 }
 
 // tradesInRangeWithStablecoinFallback is the single raw-trade fetch behind
 // every single-shot ("point") rate endpoint: /v1/vwap, /v1/twap and the
-// single-bar /v1/ohlc. Returns (trades, triangulated, err), trades sorted by
-// close time ascending as [aggregate.ComputeOHLC] / [aggregate.TWAP]
-// require.
+// single-bar /v1/ohlc. Returns (window, triangulated, err), the window's
+// trades sorted by close time ascending as [aggregate.ComputeOHLC] /
+// [aggregate.TWAP] require and lifted to one amount scale on both branches:
+// a uniform window comes back byte-identical, a mixed one weighted by real
+// volume rather than by each source's smallest-unit magnitude.
 //
 // A fiat-denominated quote (fiat:USD, fiat:EUR, …) has almost no trade
 // stream of its own — the depth sits under the fiat's pegged stablecoin
@@ -338,7 +341,7 @@ func (s *Server) fetchVWAPTrades(
 // point lookup.
 func (s *Server) tradesInRangeWithStablecoinFallback(
 	ctx context.Context, pair canonical.Pair, from, to time.Time, maxTrades int,
-) ([]canonical.Trade, bool, error) {
+) (aggregate.ScaledWindow, bool, error) {
 	if pair.Quote.Type == canonical.AssetFiat {
 		return s.fiatCombinedTrades(ctx, pair, from, to, maxTrades)
 	}
@@ -359,12 +362,12 @@ func (s *Server) tradesInRangeWithStablecoinFallback(
 			}
 			trades, err := s.history.TradesInRange(ctx, ap, from, to, maxTrades)
 			if err != nil {
-				return nil, false, err
+				return aggregate.ScaledWindow{}, false, err
 			}
 			if len(trades) > 0 {
-				return trades, false, nil
+				return aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor), false, nil
 			}
 		}
 	}
-	return nil, false, nil
+	return aggregate.ScaledWindow{}, false, nil
 }

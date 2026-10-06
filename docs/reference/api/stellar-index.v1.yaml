@@ -21071,7 +21071,7 @@ components:
             Σ base_amount as a raw smallest-unit integer. The smallest
             unit is NOT a fixed stroop — it is the per-SOURCE scale of the
             venues in the window (on-chain DEX 7 decimals, CEX 8, FX feeds
-            6), lifted to one common scale when a fiat quote merges
+            6), lifted to one common scale when the window mixes
             venues. Divide by 10^`base_volume_decimals` to get asset
             units; dividing by a hardcoded 1e7 overstates any window
             holding a CEX trade tenfold.

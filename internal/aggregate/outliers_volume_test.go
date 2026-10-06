@@ -54,7 +54,7 @@ func TestFilterOutliersLocal_DustCountMajorityCannotOverrideVolumeMajority(t *te
 
 	out := FilterOutliersLocal(trades, LocalOutlierOptions{Sigma: 4})
 	if len(out) != 0 {
-		v, _ := VWAP(out)
+		v, _ := VWAPOf(out)
 		t.Fatalf("contested window published %d of %d prints (%s of %s base units), VWAP %v; want it withheld",
 			len(out), len(trades), baseSum(out), baseSum(trades), v)
 	}
@@ -65,7 +65,7 @@ func TestFilterOutliers_DustCountMajorityCannotOverrideVolumeMajority(t *testing
 
 	out := FilterOutliers(trades, 4)
 	if len(out) != 0 {
-		v, _ := VWAP(out)
+		v, _ := VWAPOf(out)
 		t.Fatalf("contested window published %d of %d prints, VWAP %v; want it withheld", len(out), len(trades), v)
 	}
 }

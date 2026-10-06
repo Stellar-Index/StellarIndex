@@ -99,7 +99,7 @@ func (s *Server) vwapBreakdown(
 			aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base),
 			aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Quote))
 	}
-	return buildVWAPBreakdown(pre, post, *interval, from, to, pair.Quote.Type != canonical.AssetFiat, adjust, truncated)
+	return buildVWAPBreakdown(pre, post, *interval, from, to, adjust, truncated)
 }
 
 // vwapBucketBounds returns the UTC-aligned bounds of the bucket holding t.
@@ -131,7 +131,7 @@ type vwapBucketTrades struct {
 // nonstandard-decimals price correction as the headline price.
 func buildVWAPBreakdown(
 	pre, post []canonical.Trade, interval ohlcInterval, from, to time.Time,
-	needsScaling bool, adjust func(*big.Rat) *big.Rat, truncated bool,
+	adjust func(*big.Rat) *big.Rat, truncated bool,
 ) *VWAPBreakdown {
 	buckets := map[time.Time]*vwapBucketTrades{}
 	get := func(t time.Time) *vwapBucketTrades {
@@ -163,24 +163,17 @@ func buildVWAPBreakdown(
 		out.Interval = &s
 	}
 	for _, b := range ordered {
-		out.Buckets = append(out.Buckets, vwapBucket(b, needsScaling, adjust))
+		out.Buckets = append(out.Buckets, vwapBucket(b, adjust))
 	}
 	return out
 }
 
-func vwapBucket(b *vwapBucketTrades, needsScaling bool, adjust func(*big.Rat) *big.Rat) VWAPBreakdownBucket {
+func vwapBucket(b *vwapBucketTrades, adjust func(*big.Rat) *big.Rat) VWAPBreakdownBucket {
+	// b.post is already at the window's one scale, so the weights compare
+	// like with like and the volumes match the headline sums.
 	contribs := aggregate.SourceContributions(b.post)
-	// Weights must compare like with like. A fiat-quote fetch is already
-	// lifted to one scale; any other fetch is raw per-source, so lift a
-	// copy for the weights only and leave the volumes matching the
-	// headline sums.
-	weightSrc := contribs
-	if needsScaling {
-		weightSrc = aggregate.SourceContributions(
-			aggregate.NormalizeAmountScale(b.post, amountScaleDecimalsFor))
-	}
-	weights := make(map[string]*big.Rat, len(weightSrc))
-	for _, c := range weightSrc {
+	weights := make(map[string]*big.Rat, len(contribs))
+	for _, c := range contribs {
 		weights[c.Source] = c.Weight
 	}
 	preBySrc, postBySrc := map[string]int{}, map[string]int{}

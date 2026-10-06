@@ -847,8 +847,6 @@ internal/api/v1/ohlc.go	F-0072
 internal/api/v1/ohlc.go	F-1319
 internal/api/v1/ohlc.go	F096
 internal/api/v1/ohlc.go	F096
-internal/api/v1/ohlc.go	F096
-internal/api/v1/ohlc.go	F096
 internal/api/v1/ohlc_fiat_combine.go	2026-07-17
 internal/api/v1/ohlc_fiat_combine.go	2026-07-22
 internal/api/v1/ohlc_fiat_combine.go	2026-07-23
@@ -1097,7 +1095,6 @@ internal/api/v1/vwap.go	F-0089
 internal/api/v1/vwap.go	F-1319
 internal/api/v1/vwap.go	F-1319
 internal/api/v1/vwap.go	F-1340
-internal/api/v1/vwap.go	F096
 internal/api/wiretime/wiretime.go	2026-06
 internal/archivecompleteness/cross_anchor_fill.go	2026-04-28
 internal/archivecompleteness/cross_anchor_fill.go	2026-04-28

@@ -1862,9 +1862,7 @@ func (o *Orchestrator) computeNormalizedVWAP(trades []canonical.Trade, pair cano
 	// internal/api/v1's price_tip.go and ohlc_fiat_combine.go already apply
 	// on their VWAP paths; a single-scale window (today's common case) is
 	// returned byte-identical.
-	trades = aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor)
-
-	vwap, err := aggregate.VWAP(trades)
+	vwap, err := aggregate.VWAP(aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor))
 	if err != nil {
 		return nil, err
 	}

@@ -63,7 +63,7 @@ func TestNormalizeAmountScale_MixedWindowFixesVWAP(t *testing.T) {
 
 	// The bug, pinned: over raw amounts VWAP = (10^9+1.2·10^10)/(10^10+10^11)
 	// = 13/110, the 10×-over-weighted-CEX answer.
-	rawVWAP, err := aggregate.VWAP(raw)
+	rawVWAP, err := aggregate.VWAPOf(raw)
 	if err != nil {
 		t.Fatalf("VWAP(raw): %v", err)
 	}
@@ -98,7 +98,7 @@ func TestNormalizeAmountScale_UniformWindowByteIdentical(t *testing.T) {
 				scaleTrade(src, big.NewInt(100), big.NewInt(300)),
 				scaleTrade(src, big.NewInt(7), big.NewInt(3)),
 			}
-			out := aggregate.NormalizeAmountScale(in, scaleDecimals)
+			out := aggregate.NormalizeAmountScale(in, scaleDecimals).Trades()
 			if len(out) != len(in) {
 				t.Fatalf("len(out) = %d, want %d", len(out), len(in))
 			}
@@ -125,7 +125,7 @@ func TestNormalizeAmountScale_PreservesPerTradeRatio(t *testing.T) {
 		scaleTrade("cex", new(big.Int).Mul(big.NewInt(5), pow10(8)), new(big.Int).Mul(big.NewInt(11), pow10(8))),
 		scaleTrade("fx", new(big.Int).Mul(big.NewInt(2), pow10(6)), new(big.Int).Mul(big.NewInt(9), pow10(6))),
 	}
-	out := aggregate.NormalizeAmountScale(in, scaleDecimals)
+	out := aggregate.NormalizeAmountScale(in, scaleDecimals).Trades()
 	for i := range in {
 		want := new(big.Rat).SetFrac(in[i].QuoteAmount.BigInt(), in[i].BaseAmount.BigInt())
 		got := new(big.Rat).SetFrac(out[i].QuoteAmount.BigInt(), out[i].BaseAmount.BigInt())
@@ -174,12 +174,62 @@ func TestNormalizeAmountScale_TWAPUnaffected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TWAP(raw): %v", err)
 	}
-	normTWAP, err := aggregate.TWAP(norm, windowEnd)
+	normTWAP, err := aggregate.TWAP(norm.Trades(), windowEnd)
 	if err != nil {
 		t.Fatalf("TWAP(normalized): %v", err)
 	}
 	if rawTWAP.Cmp(normTWAP) != 0 {
 		t.Errorf("TWAP moved under normalization (%s -> %s); TWAP is time-weighted and "+
 			"must be scale-invariant", rawTWAP.FloatString(12), normTWAP.FloatString(12))
+	}
+}
+
+// TestScaledWindow_FilterKeepsLiftTarget pins that the outlier filter
+// cannot strip a window's scale: dropping the only 8dp print leaves the
+// 7dp survivors lifted ×10, so the window must still state 8 and price
+// them at their own (scale-invariant) ratio.
+func TestScaledWindow_FilterKeepsLiftTarget(t *testing.T) {
+	var raw []canonical.Trade
+	for _, q := range []int64{100, 101, 99, 100} {
+		raw = append(raw, scaleTrade("onchain",
+			new(big.Int).Mul(big.NewInt(1000), pow10(7)), new(big.Int).Mul(big.NewInt(q), pow10(7))))
+	}
+	raw = append(raw, scaleTrade("cex",
+		new(big.Int).Mul(big.NewInt(1000), pow10(8)), new(big.Int).Mul(big.NewInt(5000), pow10(8))))
+
+	window := aggregate.NormalizeAmountScale(raw, scaleDecimals)
+	if window.Decimals() != 8 {
+		t.Fatalf("Decimals() = %d, want 8 (the cex scale)", window.Decimals())
+	}
+	kept := window.FilterOutliers(3)
+	if kept.Len() != 4 {
+		t.Fatalf("kept %d trades, want 4 (the cex print is the outlier)", kept.Len())
+	}
+	if kept.Decimals() != 8 {
+		t.Errorf("Decimals() after filter = %d, want 8: the survivors are still lifted to it", kept.Decimals())
+	}
+	if got, want := kept.Trades()[0].BaseAmount.BigInt(), new(big.Int).Mul(big.NewInt(1000), pow10(8)); got.Cmp(want) != 0 {
+		t.Errorf("survivor base = %s, want %s (lifted once, not un-lifted)", got, want)
+	}
+	got, err := aggregate.VWAP(kept)
+	if err != nil {
+		t.Fatalf("VWAP: %v", err)
+	}
+	if got.Cmp(big.NewRat(1, 10)) != 0 {
+		t.Errorf("VWAP = %s, want 0.1", got.FloatString(10))
+	}
+}
+
+// TestNormalizeAmountScale_UniformWindowStatesItsScale pins Decimals() on
+// windows nothing was lifted in, including the empty one.
+func TestNormalizeAmountScale_UniformWindowStatesItsScale(t *testing.T) {
+	for src, want := range map[string]int{"cex": 8, "onchain": 7, "fx": 6} {
+		w := aggregate.NormalizeAmountScale([]canonical.Trade{scaleTrade(src, big.NewInt(2), big.NewInt(3))}, scaleDecimals)
+		if w.Decimals() != want {
+			t.Errorf("%s: Decimals() = %d, want %d", src, w.Decimals(), want)
+		}
+	}
+	if w := aggregate.NormalizeAmountScale(nil, scaleDecimals); w.Len() != 0 || w.Decimals() != 0 {
+		t.Errorf("empty window = (len %d, decimals %d), want (0, 0)", w.Len(), w.Decimals())
 	}
 }

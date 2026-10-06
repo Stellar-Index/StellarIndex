@@ -10,7 +10,7 @@ decode, VWAP, email, XDR decode) — it almost certainly exists. Check here firs
 Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified present (D4).
 
 ## Prices / aggregation math — pure funcs, `internal/aggregate`
-- VWAP over a trade slice → `aggregate.VWAP(trades)` (`*big.Rat`, never float)
+- VWAP over a trade slice → `aggregate.VWAP(aggregate.NormalizeAmountScale(trades, decimalsFor))` (`*big.Rat`, never float; the `ScaledWindow` type keeps mixed source scales out)
 - TWAP over a window → `aggregate.TWAP(trades, windowEnd)`
 - OHLC bar → `aggregate.ComputeOHLC(trades)`
 - Drop fat-tail outliers → `aggregate.FilterOutliers(trades, sigma)`

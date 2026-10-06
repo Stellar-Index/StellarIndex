@@ -198,7 +198,7 @@ func TestFilterOutliers_ZeroMADKeepsHonestDispersion(t *testing.T) {
 		t.Errorf("kept %d/%d — the 101 is honest dispersion, not an outlier", len(got), len(trades))
 	}
 
-	vwap, err := aggregate.VWAP(got)
+	vwap, err := aggregate.VWAPOf(got)
 	if err != nil {
 		t.Fatalf("VWAP: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestFilterOutliers_ZeroMADStillDropsFatFinger(t *testing.T) {
 	if len(got) != 4 {
 		t.Fatalf("kept %d/5, want 4 — a 10%% print off a zero-MAD majority is an outlier", len(got))
 	}
-	vwap, err := aggregate.VWAP(got)
+	vwap, err := aggregate.VWAPOf(got)
 	if err != nil {
 		t.Fatalf("VWAP: %v", err)
 	}
