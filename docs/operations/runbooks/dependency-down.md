@@ -126,7 +126,7 @@ The API's in-process copy of `nonstandard_decimals_assets` has never
 loaded since the process started: the synchronous startup load failed and
 no 60 s periodic refresh has succeeded since. Until one does, every
 confirmed non-7-decimal asset serves its raw, power-of-ten-skewed price
-(see [`dex-nonstandard-decimals.md`](dex-nonstandard-decimals.md)). Look
+(see [`dex.md#dex-nonstandard-decimals`](dex.md#dex-nonstandard-decimals)). Look
 for `nonstandard-decimals cache initial refresh failed` in the API log and
 `stellarindex_nonstandard_decimals_cache_refresh_failures_total` rising.
 A refresh failure after a successful load keeps the last-good snapshot
@@ -167,7 +167,7 @@ healthy dependency — the metric is written for failing checks too, and
 
 ## Related
 
-- [`timescale-primary-down.md`](timescale-primary-down.md) — fires alongside
+- [`postgres.md#stellarindex_timescale_primary_down`](postgres.md#stellarindex_timescale_primary_down) — fires alongside
   this alert when `dependency="postgres"`, and carries the exporter detail.
 - [`../maintainer-workflow.md`](../maintainer-workflow.md) — the heavy-job
   wrapper, whose absence is a recurring cause of ClickHouse pressure.

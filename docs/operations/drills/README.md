@@ -27,8 +27,8 @@ response.
 
 | Script | Tier covered | Exercises runbook | Infra deployed today |
 | --- | --- | --- | --- |
-| [sev1-timescale-primary-failover](scenarios/sev1-timescale-primary-failover.md) | storage, disk-full | `timescale-primary-down.md` | yes (single node) |
-| [sev1-patroni-failover](scenarios/sev1-patroni-failover.md) | storage, Patroni failover | `timescale-primary-down.md`, `replica-lag.md` | no: unvalidated draft |
+| [sev1-timescale-primary-failover](scenarios/sev1-timescale-primary-failover.md) | storage, disk-full | `postgres.md` | yes (single node) |
+| [sev1-patroni-failover](scenarios/sev1-patroni-failover.md) | storage, Patroni failover | `postgres.md`, `postgres.md` | no: unvalidated draft |
 | [sev1-anomaly-freeze-stuck](scenarios/sev1-anomaly-freeze-stuck.md) | aggregator | `anomaly.md#stellarindex_anomaly_freeze_engaged` | yes |
 | [sev2-source-decoder-regression](scenarios/sev2-source-decoder-regression.md) | ingest | `decode-errors.md` | yes |
 | [sev2-redis-sentinel-failover](scenarios/sev2-redis-sentinel-failover.md) | cache, master swap | `cache.md` | no: role exists (ADR-0024), not deployed |
@@ -72,7 +72,7 @@ are tracked; a new drill keeps its writeup file until then.
 - stellar-core / developers.stellar.org release-notes watcher (INV-1222, discarded in the inventory; no watcher exists).
 - Wire a per-source `-source` flag for `stellarindex-ops backfill` (INV-1223, discarded: bespoke backfills were removed by ADR-0032; projected sources recover with `projector-replay`, see [decode-errors.md](../runbooks/decode-errors.md)).
 
-Done in the drill PRs: `timescale-primary-down.md` quick-diagnosis leads with `/v1/readyz`;
+Done in the drill PRs: `postgres.md` quick-diagnosis leads with `/v1/readyz`;
 sev-playbook §5.3 internal-channel template cross-linked from its mitigation;
 `decode-errors.md` mitigation notes elevated `flags.divergence_warning` when
 `stellarindex_aggregator_class_drop_spike` fires; Patroni scenario drafted.

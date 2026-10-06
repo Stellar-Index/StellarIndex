@@ -602,7 +602,7 @@ type Server struct {
 	coverageFloorCache  *coverageFloorCache
 	// nonstandardDecimals backs the read-time dex-nonstandard-decimals
 	// forward normalization (docs/operations/runbooks/
-	// dex-nonstandard-decimals.md): every price-shaped serving path
+	// dex.md): every price-shaped serving path
 	// resolves per-leg decimals through it (aggregate.ResolveDecimals)
 	// and scales the finished ratio via aggregate.AdjustPrice. Nil
 	// disables normalization entirely — every asset resolves to the
@@ -1676,7 +1676,7 @@ type Options struct {
 	// has confirmed as non-7-decimal (aggregate.AdjustPrice). Nil
 	// disables normalization — every request serves the raw ratio,
 	// the pre-guard behaviour. See [NonstandardDecimalsCache] and
-	// docs/operations/runbooks/dex-nonstandard-decimals.md.
+	// docs/operations/runbooks/dex.md.
 	NonstandardDecimals *NonstandardDecimalsCache
 
 	// GlobalPrice, when non-nil, powers the price block on

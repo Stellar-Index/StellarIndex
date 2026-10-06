@@ -325,7 +325,7 @@ func (r *CrossCheckRefresher) tickOne(ctx context.Context, p CrossCheckPair) Cro
 		"divergence_stroops", result.DivergenceStroops.String(),
 		// Leg 2 (escrow excess) is what breached: mints are missing or
 		// burns double-counted. Leg 1 (over-mint) is diagnostic context
-		// only. See the supply-cross-check-divergence runbook.
+		// only. See the supply runbook (supply.md).
 		"over_mint_stroops", bigOrUnset(result.OverMintStroops),
 		"escrow_excess_stroops", bigOrUnset(result.EscrowExcessStroops),
 		"subset_bound_checked", result.SubsetBoundChecked,

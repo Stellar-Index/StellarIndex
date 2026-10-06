@@ -179,7 +179,7 @@ Prints `total_supply` / `circulating` / `max_supply` / `basis` /
 `ledger_sequence` / `observed_at`. A second daily run should show the
 same `circulating_supply` (same config) and a newer `ledger_sequence`.
 Divergence with no config edit: see
-[supply-cross-check-divergence](runbooks/supply-cross-check-divergence.md).
+[supply-cross-check-divergence](runbooks/supply.md#stellarindex_supply_cross_check_divergence).
 
 ## Why daily, not hourly
 

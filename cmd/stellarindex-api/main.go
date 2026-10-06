@@ -1026,7 +1026,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 
 	// Read-time dex-nonstandard-decimals serving guard (confirmed
 	// production bug 2026-07-08 — see docs/operations/runbooks/
-	// dex-nonstandard-decimals.md). Mirrors `nonstandard_decimals_assets`
+	// dex.md). Mirrors `nonstandard_decimals_assets`
 	// (migration 0093, upserted by the aggregator's decimals-guard sweep)
 	// in-process so /v1/price, /v1/vwap, /v1/history, /v1/ohlc can decline
 	// a pair with a confirmed-offending leg without a per-request DB

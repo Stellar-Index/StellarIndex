@@ -21,7 +21,7 @@ type NonstandardDecimalsReader interface {
 // NonstandardDecimalsRefreshInterval is the cadence the background
 // goroutine in main.go calls Refresh at. This is the READ side of the
 // dex-nonstandard-decimals guard
-// (docs/operations/runbooks/dex-nonstandard-decimals.md): the aggregator's
+// (docs/operations/runbooks/dex.md): the aggregator's
 // decimals-guard sweep (internal/decimalsguard) writes confirmed non-7-
 // decimal assets into `nonstandard_decimals_assets` (migration 0093); this
 // cache mirrors that table in-process so /v1/price, /v1/vwap, /v1/history,

@@ -56,4 +56,4 @@ This check is the live-state backstop between those runs.
 ## Related
 
 - [node-root-disk-filling-fast](node-root-disk.md#stellarindex_node_root_disk_filling_fast) — what several of these guards prevent.
-- [redis-write-blocked-disk-full](redis-write-blocked-disk-full.md)
+- [redis-write-blocked-disk-full](cache.md#stellarindex_redis_writes_blocked)

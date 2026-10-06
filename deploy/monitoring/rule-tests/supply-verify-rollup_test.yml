@@ -35,7 +35,7 @@ tests:
               team: stellarindex
               component: supply
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-verify-rollup-unit-failed.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_verify_rollup_unit_failed_alert
               summary: "supply verify-rollup most recent run failed \u2014 the SEP-41 supply rollup is not certified clean"
               description: |
                 The daily `stellarindex-ops supply verify-rollup` run exited
@@ -78,7 +78,7 @@ tests:
               team: stellarindex
               component: supply
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-verify-rollup-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_verify_rollup_stale
               summary: "supply verify-rollup has not passed clean for 1d 13h 0m 0s (cadence 24h, threshold 36h)"
               description: |
                 Either the supply-verify-rollup timer isn't running, or every
@@ -106,7 +106,7 @@ tests:
               team: stellarindex
               component: supply
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-verify-rollup-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_verify_rollup_stale
               summary: "supply verify-rollup has not passed clean in the last 36h \u2014 or has never run"
               description: |
                 stellarindex_supply_verify_rollup_last_success_timestamp has been

@@ -9,14 +9,14 @@ related:
   - docs/adr/0016-per-region-storage-strategy.md
   - docs/operations/sev-playbook.md
   - docs/operations/archival-node-bringup.md
-  - docs/operations/runbooks/timescale-primary-down.md
+  - docs/operations/runbooks/postgres.md#stellarindex_timescale_primary_down
 ---
 
 # Runbook — DR (disaster-recovery) activation
 
 The procedure for cutting traffic over to a standby region when
 the primary region (R1 today) is partially or fully unrecoverable.
-Sister to [`timescale-primary-down.md`](timescale-primary-down.md) §D
+Sister to [`postgres.md#stellarindex_timescale_primary_down`](postgres.md#stellarindex_timescale_primary_down) §D
 "Complete cluster loss (asteroid scenario)", which references this
 runbook explicitly.
 
@@ -92,7 +92,7 @@ Activate when ANY of these is true AND no faster recovery exists:
 - **Primary region's storage tier is unrecoverable.** Patroni
   has no quorum-eligible replicas; pgBackRest restore is failing
   or estimated > 4 h; the disk-failure mode in
-  [`timescale-primary-down.md`](timescale-primary-down.md) §A
+  [`postgres.md#stellarindex_timescale_primary_down`](postgres.md#stellarindex_timescale_primary_down) §A
   cannot promote a replica.
 - **Primary region's network is partitioned for > 30 min and
   external monitoring confirms the partition is regional, not
@@ -114,7 +114,7 @@ behind them yet):
 - Patroni is mid-failover (give it 60 s; it's designed to handle
   this without operator intervention).
 - A single Timescale primary is down but the replica is healthy
-  — [`timescale-primary-down.md`](timescale-primary-down.md) §A
+  — [`postgres.md#stellarindex_timescale_primary_down`](postgres.md#stellarindex_timescale_primary_down) §A
   is the right runbook (faster + lossless).
 - Redis cluster lost a master (Sentinel handles; see
   [`scenarios/sev2-redis-sentinel-failover.md`](../drills/scenarios/sev2-redis-sentinel-failover.md)).
@@ -442,7 +442,7 @@ healthz returns 5xx, etc.):
 - **Bringing up a fresh region** — see
   [`archival-node-bringup.md`](../archival-node-bringup.md).
 - **Per-component HA failover** (Patroni primary swap, Sentinel
-  Redis swap) — see [`timescale-primary-down.md`](timescale-primary-down.md)
+  Redis swap) — see [`postgres.md#stellarindex_timescale_primary_down`](postgres.md#stellarindex_timescale_primary_down)
   and [`scenarios/sev2-redis-sentinel-failover.md`](../drills/scenarios/sev2-redis-sentinel-failover.md).
 - **Annual DR exercise procedure** — same flip, but pre-
   announced + conducted on staging-equivalent traffic. See

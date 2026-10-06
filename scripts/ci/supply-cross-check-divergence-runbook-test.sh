@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # supply-cross-check-divergence-runbook-test.sh — proves the
 # mandatory re-seed commands in
-# docs/operations/runbooks/supply-cross-check-divergence.md actually
+# docs/operations/runbooks/supply.md#stellarindex_supply_cross_check_divergence actually
 # EXECUTE against the shipped run-heavy-job.sh wrapper (F155).
 #
 # The wrapper's contract (configs/ansible/roles/archival-node/tasks/
@@ -27,7 +27,7 @@ set -uo pipefail
 
 cd "$(dirname "$0")/../.." || exit 1
 TASKS="$PWD/configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml"
-RUNBOOK="$PWD/docs/operations/runbooks/supply-cross-check-divergence.md"
+RUNBOOK="$PWD/docs/operations/runbooks/supply.md"
 [[ -r "$TASKS" ]] || { echo "supply-cross-check-divergence-runbook-test: missing $TASKS" >&2; exit 2; }
 [[ -r "$RUNBOOK" ]] || { echo "supply-cross-check-divergence-runbook-test: missing $RUNBOOK" >&2; exit 2; }
 

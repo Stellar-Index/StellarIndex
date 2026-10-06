@@ -164,7 +164,7 @@ This section also serves the SLO availability burn alerts `stellarindex_slo_avai
    #   "checks": [ { "name": "postgres", "ok": true }, ... ] }
    ```
 
-   - `postgres.ok == false`: [timescale-primary-down](timescale-primary-down.md).
+   - `postgres.ok == false`: [timescale-primary-down](postgres.md#stellarindex_timescale_primary_down).
    - `redis.ok == false`: [redis-master-down](cache.md#stellarindex_redis_master_down).
    - All OK but 5xx elevated: handler bug (Fix B).
 4. Log patterns. Access-log lines carry method/path/status/latency_ms/request_id but no `.level` and no `.err`; the ERROR-level lines with the underlying error are separate lines. This filter selects the latter:
@@ -211,7 +211,7 @@ This section also serves the SLO availability burn alerts `stellarindex_slo_avai
   2. Feature-flag deny (if a flag exists for the endpoint): edit `/etc/stellarindex.toml` (via the ansible overlay), then `systemctl restart stellarindex-api`.
 
   If the bug hits every handler (e.g. middleware panic), treat as A even if the deploy is not recent: roll back to last-known-good; you cannot path-gate around middleware.
-- **C. Dependency failure.** Follow the dependency's runbook: [timescale-primary-down](timescale-primary-down.md), [redis-master-down](cache.md#stellarindex_redis_master_down), [all-ingestion-down](all-ingestion-down.md). This alert auto-resolves once the dep recovers.
+- **C. Dependency failure.** Follow the dependency's runbook: [timescale-primary-down](postgres.md#stellarindex_timescale_primary_down), [redis-master-down](cache.md#stellarindex_redis_master_down), [all-ingestion-down](all-ingestion-down.md). This alert auto-resolves once the dep recovers.
 - **D. Load-induced** (viral traffic, DDoS): error rate climbs with no deploy, dep failure or log pattern; `stellarindex_api_latency_p99_high` fires in tandem; `http_requests_total` rate sharply above baseline. Bare metal does not auto-scale and r1 is fixed capacity [multi-host: fixed per ADR-0008 section 4], so shed load:
   1. Tighten edge rate limits: Cloudflare WAF short-TTL per-IP rule (the API is CF-fronted; the Caddyfile `trusted_proxies` block exists for this).
   2. Drop the heaviest non-essential paths (SSE `/v1/price/stream`, batch reads) with a temporary Caddy `handle`/`respond 503` gate as in B.1 [multi-host: HAProxy 503 equivalent].
@@ -234,7 +234,7 @@ Common patterns:
 
 **False positives.** Synthetic monitoring 4xx to unknown assets is not 5xx and does not trigger this. Minute-zero after a release: the restarted host briefly serves 503 until `/v1/readyz` is green (on r1 Caddy's 10s `/v1/healthz` active check bounds it; Caddy-generated 502/503 are not in `http_requests_total`). The 2 min window means a normal release does not trip it [multi-host: HAProxy 10s `slowstart` + readyz bound it to seconds per host]. If it fires during a planned rollout, the deploy script should silence the alert.
 
-**Related.** [api_down](#stellarindex_api_down) (every backend down, not just erroring); [api_latency_p95_high](#stellarindex_api_latency_p95_high) (parallel when 5xx is timeouts); [timescale-primary-down](timescale-primary-down.md); [release-process.md](../release-process.md) -> Rollback; [sev-playbook](../sev-playbook.md) sections 3 (detection), 4 (response flow), 5 (public-comms templates); [alerts-catalog](../alerts-catalog.md); [ha-plan.md](../../architecture/ha-plan.md) section 9 (degradation flags `stale`, `reduced_redundancy`).
+**Related.** [api_down](#stellarindex_api_down) (every backend down, not just erroring); [api_latency_p95_high](#stellarindex_api_latency_p95_high) (parallel when 5xx is timeouts); [timescale-primary-down](postgres.md#stellarindex_timescale_primary_down); [release-process.md](../release-process.md) -> Rollback; [sev-playbook](../sev-playbook.md) sections 3 (detection), 4 (response flow), 5 (public-comms templates); [alerts-catalog](../alerts-catalog.md); [ha-plan.md](../../architecture/ha-plan.md) section 9 (degradation flags `stale`, `reduced_redundancy`).
 
 ## stellarindex_api_error_rate_high
 
@@ -290,14 +290,14 @@ curl -sS http://127.0.0.1:3000/v1/readyz | jq '.data.status, .data.checks'
 | `postgres` (`storeChecker`) | yes | 503 |
 | `schema` (`v1.NewSchemaVersionChecker`) | yes | 503: applied schema (dirty rollbacks resolved to their pre-attempt version) is below what the binary was built against, or the dirty migration is the non-atomic exception (`nonAtomicMigrationVersions`, currently only 0030) whose state cannot be inferred |
 | `schema-dirty` (`v1.NewSchemaDirtyChecker`) | no | 200 + `status="degraded"`: `schema_migrations` dirty but rollback was atomic and applied schema still satisfies the binary; needs an operator `force`, API keeps serving |
-| `nonstandard_decimals` (`nonstandardDecimalsChecker`) | yes | 503: cache never loaded, so confirmed non-7-decimal assets would serve raw prices; see [`dex-nonstandard-decimals.md`](dex-nonstandard-decimals.md) |
+| `nonstandard_decimals` (`nonstandardDecimalsChecker`) | yes | 503: cache never loaded, so confirmed non-7-decimal assets would serve raw prices; see [`dex.md#dex-nonstandard-decimals`](dex.md#dex-nonstandard-decimals) |
 | `closed_buckets` (`v1.NewClosedBucketChecker`) | yes | 503: a continuous aggregate outside the real-time allowlist has `materialized_only = false`, so unguarded readers serve its open bucket; see [`dependency-down.md`](dependency-down.md#if-dependencyclosed_buckets) |
 | `redis` (`redisChecker`) | no | 200 + `status="degraded"` |
 | `clickhouse` (`clickhouseChecker`, only when `storage.clickhouse_addr` is set) | no | 200 + degraded; lake routes 503 separately via their own readiness probe |
 
 Caddy's active health check probes `/v1/healthz` only (`health_uri /v1/healthz`, Caddyfile.j2), so a readyz 503 does not drop the upstream; customers get the real 5xx from the API. If readyz is red:
 
-- `postgres`: [`timescale-primary-down.md`](timescale-primary-down.md).
+- `postgres`: [`postgres.md#stellarindex_timescale_primary_down`](postgres.md#stellarindex_timescale_primary_down).
 - `schema`: migrations vs binary mismatch. Compare applied migration head with the deployed tag (`cat /var/lib/stellarindex/deployed-versions/stellarindex-api`, `curl -sf http://127.0.0.1:3000/v1/version`); run `stellarindex-migrate` for the deployed tag (or roll the binary back) before restarting.
 - `redis`: API serves fail-open for rate limiting and degraded envelope for price; this should not take the host out of Ready. If it does, file a bug.
 
@@ -344,7 +344,7 @@ Caddy's active health check probes `/v1/healthz` only (`health_uri /v1/healthz`,
 - Any API restart over 60 s: single host, so every deploy/restart briefly drives `up == 0` and `for: 60s` means a restart exceeding 60 s (StartLimit exhaustion, slow startup) pages. Check `journalctl -u stellarindex-api` for a deploy-workflow restart before treating it as an incident.
 - Scrape-path breakage: if Prometheus cannot reach `127.0.0.1:3000`, `up == 0` looks like a real outage. Cross-check Caddy's journald access log (real traffic) and sla-probe metrics (`stellarindex_sla_probe_availability_pct`, `stellarindex_sla_probe_unit_failed`, `rules.r1/sla-probe.yml`); `stellarindex_prometheus_scrape_failing` (`rules.r1/meta.yml`) discriminates the scrape path. Caddy serving 200s while Prometheus says `up==0` = scrape path, not the API.
 
-**Related.** [stellarindex_api_error_rate_critical](#stellarindex_api_error_rate_critical) (handlers erroring, hosts healthy); [stellarindex_api_latency_p95_high](#stellarindex_api_latency_p95_high); [`timescale-primary-down.md`](timescale-primary-down.md), [`cache.md#stellarindex_redis_master_down`](cache.md#stellarindex_redis_master_down); [`binary-version-skew.md`](binary-version-skew.md); [HA plan section 9](../../architecture/ha-plan.md); [`release-process.md`](../release-process.md) -> Rollback.
+**Related.** [stellarindex_api_error_rate_critical](#stellarindex_api_error_rate_critical) (handlers erroring, hosts healthy); [stellarindex_api_latency_p95_high](#stellarindex_api_latency_p95_high); [`postgres.md#stellarindex_timescale_primary_down`](postgres.md#stellarindex_timescale_primary_down), [`cache.md#stellarindex_redis_master_down`](cache.md#stellarindex_redis_master_down); [`binary-version-skew.md`](binary-version-skew.md); [HA plan section 9](../../architecture/ha-plan.md); [`release-process.md`](../release-process.md) -> Rollback.
 
 ## stellarindex_api_latency_p95_high
 
@@ -392,7 +392,7 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
 **Fix.**
 
 1. Narrow to the slow endpoint (above); walk causes in order, each has a faster check than the next.
-2. Redis-driven: `cache.md#stellarindex_redis_memory_saturated`. Timescale-driven: `pg-conns-saturated.md` or `replica-lag.md` (replica-lag is multi-host only; inert on r1, no replica).
+2. Redis-driven: `cache.md#stellarindex_redis_memory_saturated`. Timescale-driven: `postgres.md#stellarindex_timescale_connections_saturated` or `postgres.md#stellarindex_timescale_replica_lag` (replica-lag is multi-host only; inert on r1, no replica).
 3. Scale the API up only if the hot path is CPU-bound and other causes are ruled out; it is a bandaid, file a follow-up.
 4. Verify: p95 back under 200 ms (SLA target, not the 500 ms alarm threshold) for 15 min; do not leave it oscillating between 200 and 500 ms.
 
@@ -404,7 +404,7 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
 - Large `limit=500` `/v1/markets` scan after a fresh deploy with cold Timescale buffers; warms within a minute.
 - `/v1/markets` baseline above 200 ms: it does `GROUP BY base_asset, quote_asset` across the 14-day chunk window of the trades hypertable. Baseline about 540 ms cold / 50 ms warm; during a concurrent heavy backfill cold balloons to about 7 s and warm settles about 400 ms (backfill writes evict recent chunks from shared buffers; columnstore-compress policy lags). Per-route SLA carve-out p95 <= 300 ms / p99 <= 1 s; during backfill it is exceeded and the global p95 > 500 ms alert may fire on the first request after a deploy or buffer churn. Transient load artefact, not a route regression; warm returns to about 50 ms once the backfill completes.
 
-**Related.** [stellarindex_api_error_rate_critical](#stellarindex_api_error_rate_critical) (errors, not slowness); `cache.md#stellarindex_redis_memory_saturated`, `timescale.md#stellarindex_timescale_cagg_stale`, `pg-conns-saturated.md`.
+**Related.** [stellarindex_api_error_rate_critical](#stellarindex_api_error_rate_critical) (errors, not slowness); `cache.md#stellarindex_redis_memory_saturated`, `timescale.md#stellarindex_timescale_cagg_stale`, `postgres.md#stellarindex_timescale_connections_saturated`.
 
 ## stellarindex_api_latency_p99_high
 

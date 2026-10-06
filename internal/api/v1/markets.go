@@ -357,7 +357,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	}
 	// dex-nonstandard-decimals forward normalization (2026-07-10, closing
 	// the deferred CAGG-reading tail from docs/operations/runbooks/
-	// dex-nonstandard-decimals.md): /v1/pools's last_price was never
+	// dex.md): /v1/pools's last_price was never
 	// guarded at all — pools_per_source_1h's bucket_last_price is the
 	// same raw quote/base ratio /v1/price's closed-1m-bucket path serves.
 	// See adjustListingPriceStrings for the byte-identical-on-7dp contract.
@@ -926,7 +926,7 @@ func compareVolumeUSD(a, b *string) int {
 // the wire: the scam-issuer withholding decision first, then the
 // dex-nonstandard-decimals forward normalization — see handleMarkets /
 // handlePools / pairs.go's handlePairs call sites for the full
-// rationale (docs/operations/runbooks/dex-nonstandard-decimals.md).
+// rationale (docs/operations/runbooks/dex.md).
 //
 // Withholding returns nil, so the row still lists (the market exists;
 // its trade count and volume are activity, not a price) but carries no

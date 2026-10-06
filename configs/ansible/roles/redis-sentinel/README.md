@@ -17,7 +17,7 @@ in
 Pairs with the `patroni` role: together they make
 [`docs/operations/runbooks/cache.md#stellarindex_redis_master_down`](../../../../docs/operations/runbooks/cache.md#stellarindex_redis_master_down)
 and
-[`timescale-primary-down.md`](../../../../docs/operations/runbooks/timescale-primary-down.md)
+[`postgres.md`](../../../../docs/operations/runbooks/postgres.md#stellarindex_timescale_primary_down)
 runbooks' *automatic-failover* sections the actual default, not
 aspirational.
 

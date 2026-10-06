@@ -63,7 +63,7 @@ systemctl status stellarindex-aggregator stellarindex-indexer postgresql@15-main
 
 Key signals:
 
-- **`/v1/price` 5xx**: upstream Postgres or Redis failed; jump to `timescale-primary-down.md` or `cache.md`.
+- **`/v1/price` 5xx**: upstream Postgres or Redis failed; jump to `postgres.md#stellarindex_timescale_primary_down` or `cache.md`.
 - **All routes 5xx**: the API process itself is sick; check OOM (`dmesg | grep -i kill`) and the runtime gauges the API already exports (there is no pprof endpoint in the binary): `curl -s http://localhost:3000/metrics | grep -E '^go_goroutines|^go_memstats_heap_inuse'`.
 - **Recent deploy**: roll back via `gh workflow run deploy.yml -f region=r1 -f version=<previous-tag> -f binaries=stellarindex-api`.
 
@@ -173,7 +173,7 @@ Mitigation (<= 15 min):
 
 - [ ] Step 1: if the slowness coincides with a recent deploy, roll back via `gh workflow run deploy.yml -f region=r1 -f version=<previous-tag> -f binaries=stellarindex-api` (per `deploy-workflow.md`).
 - [ ] Step 2: if no recent deploy and a single route is dominant, attribute it with the route-level Prometheus quantile above plus a `pg_stat_statements` snapshot for that route's queries. There is no pprof endpoint in any binary, so profiling is not an available step; the runtime gauges on `:3000/metrics` (`go_goroutines`, `go_memstats_*`) are the in-process signal.
-- [ ] Step 3: if all routes slow and postgres connections are saturated, jump to `pg-conns-saturated.md`.
+- [ ] Step 3: if all routes slow and postgres connections are saturated, jump to `postgres.md#stellarindex_timescale_connections_saturated`.
 - [ ] Step 4: if all routes slow and Redis latency is high, check Redis health (RDB BGSAVE blocked? memory saturated?); jump to the `cache.md` family.
 - [ ] Verification: the 5m slow fraction back under 1.44 % (equivalently `histogram_quantile(0.95, ...)` on the SLO routes back < 0.20 s), sustained >= 5 min. The alert itself resolves only once the 1h window also drains.
 
@@ -216,7 +216,7 @@ False positive: **steady traffic growth**. As customer adoption grows, baseline 
 
 ## Related
 
-- `api.md#stellarindex_api_error_rate_critical` / `api.md#stellarindex_api_latency_p95_high` (the `runbook_url` targets) and `api.md#stellarindex_api_down`; for the latency family also `api.md#stellarindex_api_cache_miss_rate_high` and `pg-conns-saturated.md` as common upstream causes. `api.md#stellarindex_api_error_rate_critical` still uses HA hostnames (`api-01`, `api-XX`); on r1 run its commands locally.
+- `api.md#stellarindex_api_error_rate_critical` / `api.md#stellarindex_api_latency_p95_high` (the `runbook_url` targets) and `api.md#stellarindex_api_down`; for the latency family also `api.md#stellarindex_api_cache_miss_rate_high` and `postgres.md#stellarindex_timescale_connections_saturated` as common upstream causes. `api.md#stellarindex_api_error_rate_critical` still uses HA hostnames (`api-01`, `api-XX`); on r1 run its commands locally.
 - Escalation chain for both families: [burn_slow](#stellarindex_slo_availability_burn_slow) (ticket) -> [burn_medium](#stellarindex_slo_availability_burn_medium) (30m + 6h at 6x, page) -> [burn_fast](#stellarindex_slo_availability_burn_fast) (P1); latency: [slow](#stellarindex_slo_latency_burn_slow) -> [medium](#stellarindex_slo_latency_burn_medium) -> [fast](#stellarindex_slo_latency_burn_fast).
 - `wire-paging.md`: confirm the `chat-page` receiver actually reaches a human.
 - ADR-0008: HA topology + availability target (multi-region decision amended by ADR-0050 / `docs/architecture/ha-plan.md`). ADR-0009: API latency budget allocation (separate from the availability budget).

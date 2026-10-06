@@ -151,7 +151,7 @@ func TestPrice_NonstandardDecimals_NoCacheWired_ServesNormally(t *testing.T) {
 // declines a confirmed non-7-decimals pair — since 2026-07-10 it computes
 // entirely from raw trades at query time, so the fix is to serve the
 // CORRECTED price (aggregate.AdjustPrice) rather than 422. See
-// docs/operations/runbooks/dex-nonstandard-decimals.md "Root cause
+// docs/operations/runbooks/dex.md "Root cause
 // analysis". flaggedAsset is declared decimals()=18 here; base_amount =
 // 2.5*10^18, quote_amount = 1.242*10^7 (USDC, 7dp) → true price 0.4968,
 // the SAME golden case as internal/aggregate's TestAdjustPrice_Golden18DecimalToken.

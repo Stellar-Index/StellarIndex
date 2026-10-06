@@ -15,7 +15,7 @@ The static thresholds are too slow for a log-flood, hence the trend alert. Order
 
 "Page" tier on r1 currently means Discord `#stellarindex-pages` only; no PagerDuty is wired (see `deploy/monitoring/README.md`), so nobody is automatically woken.
 
-At HEAD the `runbook_url` for `node_root_disk_full` and `node_root_disk_warning` in both rule files still points at `redis-write-blocked-disk-full.md` (the 2026-05-10 incident procedure), so those pages do NOT link here; `docs/operations/alerts-catalog.md` does. If you arrived via the alert link, you are in the right place now.
+At HEAD the `runbook_url` for `node_root_disk_full` and `node_root_disk_warning` in both rule files still points at `cache.md#stellarindex_redis_writes_blocked` (the 2026-05-10 incident procedure), so those pages do NOT link here; `docs/operations/alerts-catalog.md` does. If you arrived via the alert link, you are in the right place now.
 
 ## At a glance
 
@@ -47,7 +47,7 @@ Remediation:
 1. **If the flooder is clickhouse-server** (the known wedge): freeing space does NOT unwedge the log channel; **restart CH**: `systemctl restart clickhouse-server`. Then free space (step 3).
 2. **Any other flooder**: stop or restart the unit; its journald output is rate-limited but check `/var/log/syslog` growth. If the unit is not covered by `/etc/rsyslog.d/10-suppress-noisy-units.conf`, add a `stop` rule there (and to ansible role 15-log-discipline.yml).
 3. **Free space fast**: `journalctl --vacuum-size=200M`; `rm /var/log/syslog.1` (already-rotated copy); truncate the live offender file if needed: `: > /var/log/<offender>`.
-4. Verify Redis + Postgres recovered: `redis-cli ping`, `systemctl is-active postgresql` (see [redis-write-blocked-disk-full](redis-write-blocked-disk-full.md)).
+4. Verify Redis + Postgres recovered: `redis-cli ping`, `systemctl is-active postgresql` (see [redis-write-blocked-disk-full](cache.md#stellarindex_redis_writes_blocked)).
 
 Prevention state (2026-07-03):
 
@@ -212,7 +212,7 @@ False positive: **one-time large captures**. Manual debug captures and one-shot 
 
 ## Related
 
-- [redis-write-blocked-disk-full](redis-write-blocked-disk-full.md): the downstream cascade when these alerts were missed; the May-10 incident's primary remediation, and the `runbook_url` the full and warning rules currently link to.
+- [redis-write-blocked-disk-full](cache.md#stellarindex_redis_writes_blocked): the downstream cascade when these alerts were missed; the May-10 incident's primary remediation, and the `runbook_url` the full and warning rules currently link to.
 - `db-disk-full.md`: sibling for the postgres data volume (`stellarindex_timescale_disk_full` / `_warning`; separate ZFS dataset per `configs/ansible/roles/archival-node/defaults/main.yml` `zfs_datasets`).
 - `docs/operations/r1-ansible-drift-2026-07-03.md`: why hand-applied guards and the ansible role disagree.
 - ADR-0008: HA topology + DR posture (single-host R1 today; fewer fail-safes than R2/R3 will have).

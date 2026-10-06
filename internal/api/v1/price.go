@@ -1045,7 +1045,7 @@ func (s *Server) resolvePriceServeThin(r *http.Request, reader PriceReader, asse
 func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, quote, served canonical.Asset, snapshot PriceSnapshot, sources []string, stale, triangulated, viaFallback, frozen, frozenChecked bool, adm *ThinAdmission) {
 	// dex-nonstandard-decimals forward normalization (2026-07-10, closing
 	// the deferred CAGG-reading tail from docs/operations/runbooks/
-	// dex-nonstandard-decimals.md): only when the snapshot came from the
+	// dex.md): only when the snapshot came from the
 	// RAW closed-1m prices_1m bucket read (or its raw last-trade
 	// fallback inside LatestPrice) — not from priceFallback, whose Redis-
 	// VWAP branch is already normalized upstream by the orchestrator
@@ -1503,7 +1503,7 @@ func (s *Server) readPriceWithAliasesServedOnce(ctx context.Context, reader Pric
 // fallback (LastTradeToSnapshot, which formats the same raw ratio at a
 // fixed digit count — no decimals correction of its own). This is the
 // deferred CAGG-reading tail closed 2026-07-10; see
-// docs/operations/runbooks/dex-nonstandard-decimals.md "Root cause
+// docs/operations/runbooks/dex.md "Root cause
 // analysis" for why a post-hoc scalar multiply on the finished ratio is
 // exact here, same as the query-time paths normalized on 2026-07-09.
 //

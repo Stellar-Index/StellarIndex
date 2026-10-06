@@ -178,6 +178,6 @@ Mitigation:
 - [core_peers_low](#stellarindex_stellar_core_peers_low) and [core_ledger_age](#stellarindex_stellar_core_ledger_age): losing peers escalates to losing sync.
 - `source-stopped.md`: downstream effect when the RPC is completely unavailable vs just lagging.
 - `all-ingestion-down.md`: its "RPC failure takes ALL sources down" branch is historical; production ingest no longer flows through stellar-rpc.
-- `archive-publish.md`: a core_ledger_age stall can cascade into it.
+- `archive.md#stellarindex_stellar_archive_publish_fail`: a core_ledger_age stall can cascade into it.
 - `infra.md#stellarindex_host_down`: if the host hosting stellar-core is down, peers-low is redundant (the bigger problem).
 - ADR-0004 (three-validator aspiration). stellar-rpc docs: `https://developers.stellar.org/docs/data/rpc/` for operator-side recovery guidance.

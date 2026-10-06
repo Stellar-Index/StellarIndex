@@ -323,7 +323,7 @@ The direct-read path serves the `prices_*` continuous aggregates
   confirmed non-7-decimals leg via a read-time `10^(dec_base−dec_quote)`
   scalar (`internal/aggregate.AdjustPrice`) applied to the finished
   ratio at serve time; a price no longer declines for this reason — see
-  `docs/operations/runbooks/dex-nonstandard-decimals.md`. This is scoped
+  `docs/operations/runbooks/dex.md#dex-nonstandard-decimals`. This is scoped
   to the price ratio only: `market_cap_usd`/`fdv_usd` is a separate
   computation and is still withheld when the decimals resolver
   disagrees with the on-chain value (`MarketCapDecimalsMismatch`,

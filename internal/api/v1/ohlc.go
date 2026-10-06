@@ -188,7 +188,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		// quote/base ratio for a confirmed non-7-decimals leg — same as
 		// the single-bar branch below, normalized via aggregate.AdjustPrice
 		// inside handleOHLCSeries rather than declined. See
-		// docs/operations/runbooks/dex-nonstandard-decimals.md "Root
+		// docs/operations/runbooks/dex.md "Root
 		// cause analysis".
 		s.handleOHLCSeries(w, r, pair, interval)
 		return

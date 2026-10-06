@@ -114,7 +114,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// /v1/ohlc's multi-bar series mode — it no longer needs the decline
 	// guard. The price is normalized below via aggregate.AdjustPrice
 	// instead of declined. See docs/operations/runbooks/
-	// dex-nonstandard-decimals.md "Root cause analysis".
+	// dex.md "Root cause analysis".
 
 	// Clamped to a closed-bucket boundary per ADR-0015 — guarantees
 	// cross-region answer agreement — whether `to` was defaulted or

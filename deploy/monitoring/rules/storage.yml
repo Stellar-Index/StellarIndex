@@ -20,7 +20,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-primary-down.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_timescale_primary_down
           summary: "TimescaleDB primary is down (SEV-1)"
           description: |
             Postgres primary {{ $labels.instance }} has been unreachable for
@@ -54,7 +54,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres-ping-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_postgres_ping_failing
           summary: "Indexer postgres pool ping failing (F-0151)"
           description: |
             The indexer's resilience-ping goroutine is reporting
@@ -74,7 +74,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/replica-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_timescale_replica_lag
           summary: "Postgres sync replica lagging {{ $value }}s"
           description: |
             Replica {{ $labels.instance }} is more than 5 s behind the primary
@@ -98,7 +98,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/patroni-textfile-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_patroni_textfile_stale
           summary: "patroni-textfile-scraper has not run for 10m on {{ $labels.instance }}"
           description: |
             patroni.prom has not been rewritten in 10+ minutes despite
@@ -145,7 +145,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/pg-conns-saturated.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#lock-table-pressure-stellarindex_timescale_lock_table_pressure
           summary: "Postgres lock-table > 70% saturated (P3)"
           description: |
             Lock-table utilisation is {{ $value | humanizePercentage }}.
@@ -337,7 +337,7 @@ groups:
           team: stellarindex
           component: cache
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache.md#stellarindex_redis_writes_blocked
           summary: "Redis BGSAVE failing on {{ $labels.instance }} (SEV-1) — writes blocked"
           description: |
             Redis BGSAVE on {{ $labels.instance }} has been failing
@@ -359,7 +359,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/pg-conns-saturated.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_timescale_connections_saturated
           summary: "Postgres connection pool {{ $value | humanize }}% used"
           description: |
             > 80 % of max_connections in use for 5+ minutes. PgBouncer should
@@ -1243,7 +1243,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-mirror.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive.md#stellarindex_galexie_archive_mirror_stale
           summary: "Galexie archive has no verified off-site mirror younger than 48 h on {{ $labels.instance }}"
           description: |
             No galexie-archive-mirror run has completed and verified clean
@@ -1519,7 +1519,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
           summary: "textfile-collector file {{ $labels.file }} has not been refreshed in 24h+ on {{ $labels.instance }}"
           description: |
             node_exporter has not seen a fresh mtime on {{ $labels.file }}

@@ -1080,7 +1080,7 @@ if [ -d docs/operations/runbooks ] && [ -d internal/ops ]; then
     # and does not; a command that says -dry-run is a deliberate
     # preview, and several runbooks correctly show the dry run
     # immediately before the -write run (see
-    # supply-cross-check-divergence.md §Mitigation). Flagging those
+    # supply.md §Mitigation). Flagging those
     # would train responders to ignore this check.
     offenders=$(grep -E "run-heavy-job\.sh.*stellarindex-ops[[:space:]]+${sub}([[:space:]]|\$)" "$wrapped" | \
       grep -vE '(^|[[:space:]])-{1,2}write([[:space:]]|$)' | \

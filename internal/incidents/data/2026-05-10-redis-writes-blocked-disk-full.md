@@ -97,7 +97,7 @@ Operational follow-ups:
 - [~] Move WASM-audit one-time stderr captures to a dedicated dir
       (acknowledged 2026-06-10 — deferred cosmetic hygiene)
 - [x] Document the recovery sequence (this incident notes done):
-      `docs/operations/runbooks/redis-write-blocked-disk-full.md`
+      `docs/operations/runbooks/cache.md`
       — runbook landed in commit 7843ec721dfcafa3c510d614d3bb61d97e8023f6.
 
 ## Lessons learned

@@ -13,7 +13,7 @@ cutover) is post-launch.
 | Scenario | Kills | Expected | Runbook validated |
 | --- | --- | --- | --- |
 | `01-redis-down` | Redis container | `/v1/healthz` 200; `/v1/price/*` 200 or documented 503 (rate limit fails open, VWAP falls through to Postgres) | [cache](runbooks/cache.md#stellarindex_redis_master_down) |
-| `02-timescale-down` | Timescale container | readiness flips; `/v1/price` 503 with structured envelope (no 5xx leak); recovers within 30s of restart | [timescale-primary-down](runbooks/timescale-primary-down.md) |
+| `02-timescale-down` | Timescale container | readiness flips; `/v1/price` 503 with structured envelope (no 5xx leak); recovers within 30s of restart | [timescale-primary-down](runbooks/postgres.md#stellarindex_timescale_primary_down) |
 | `03-redis-network-partition` | iptables-drops Redis from API host | same as 01 | same as 01 |
 
 ## Run

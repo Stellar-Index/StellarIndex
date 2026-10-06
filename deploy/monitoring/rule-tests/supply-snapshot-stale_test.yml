@@ -27,7 +27,7 @@ tests:
               alert_family: supply_snapshot_stale
             exp_annotations:
               description: "Three days without a successful supply snapshot is enough\nthat the F2 fields on /v1/assets/{id} are visibly old to\ncustomers. Escalate per the SEV-3 playbook.\n"
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot.md#stellarindex_supply_snapshot_critical_stale"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_snapshot_critical_stale"
               summary: "supply snapshot for  stale > 72h \u2014 escalate"
 
   - interval: 1h

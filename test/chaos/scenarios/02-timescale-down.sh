@@ -23,7 +23,7 @@
 #      trades legitimately caches `data: []`).
 #   4. After Timescale restart, /v1/healthz returns 200 within 60s.
 #
-# Runbook: docs/operations/runbooks/timescale-primary-down.md
+# Runbook: docs/operations/runbooks/postgres.md
 # (covers production HA case; this scenario verifies the dev stack's
 # behaviour without HA — fail-loud is the contract).
 

@@ -14,7 +14,7 @@ etcd as the DCS. Implements the topology pinned in
 This role is **stage 1** of a two-stage Postgres front
 (stage 2 is the PgBouncer / HAProxy front role, separate).
 Implementing this role makes the
-[`timescale-primary-down.md`](../../../../docs/operations/runbooks/timescale-primary-down.md)
+[`postgres.md`](../../../../docs/operations/runbooks/postgres.md#stellarindex_timescale_primary_down)
 runbook's *§A Automatic Patroni failover* path the actual default,
 rather than aspirational.
 
@@ -157,6 +157,6 @@ ssh db-01 patronictl -c /etc/patroni/patroni.yml list
 ## See also
 
 - [`docs/architecture/ha-plan.md §3.3`](../../../../docs/architecture/ha-plan.md) — topology.
-- [`docs/operations/runbooks/timescale-primary-down.md`](../../../../docs/operations/runbooks/timescale-primary-down.md) — the runbook this role makes work.
+- [`docs/operations/runbooks/postgres.md#stellarindex_timescale_primary_down`](../../../../docs/operations/runbooks/postgres.md#stellarindex_timescale_primary_down) — the runbook this role makes work.
 - [`docs/operations/drills/scenarios/sev1-timescale-primary-failover.md`](../../../../docs/operations/drills/scenarios/sev1-timescale-primary-failover.md) — the SEV-1 drill scenario whose Validation #6 closes when this role lands.
 - ADR-0008 (HA topology) — the architectural ratification of the 3-node-DB-cluster choice.

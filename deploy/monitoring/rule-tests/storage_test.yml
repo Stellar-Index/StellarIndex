@@ -47,7 +47,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-primary-down.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_timescale_primary_down
               summary: "TimescaleDB primary is down (SEV-1)"
               description: |
                 Postgres primary r1:9187 has been unreachable for
@@ -85,7 +85,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres-ping-failing.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_postgres_ping_failing
               summary: "Indexer postgres pool ping failing (F-0151)"
               description: |
                 The indexer's resilience-ping goroutine is reporting
@@ -126,7 +126,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/replica-lag.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_timescale_replica_lag
               summary: "Postgres sync replica lagging 12s"
               description: |
                 Replica r1:9187 is more than 5 s behind the primary
@@ -188,7 +188,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/pg-conns-saturated.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#lock-table-pressure-stellarindex_timescale_lock_table_pressure
               summary: "Postgres lock-table > 70% saturated (P3)"
               description: |
                 Lock-table utilisation is 75%.
@@ -490,7 +490,7 @@ tests:
               team: stellarindex
               component: cache
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache.md#stellarindex_redis_writes_blocked
               summary: "Redis BGSAVE failing on r1:9121 (SEV-1) — writes blocked"
               description: |
                 Redis BGSAVE on r1:9121 has been failing
@@ -533,7 +533,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/pg-conns-saturated.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_timescale_connections_saturated
               summary: "Postgres connection pool 85% used"
               description: |
                 > 80 % of max_connections in use for 5+ minutes. PgBouncer should
@@ -1711,7 +1711,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
               summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/some_other_producer.prom has not been refreshed in 24h+ on r1:9100"
               description: |
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/some_other_producer.prom
@@ -1728,7 +1728,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
               summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/ops_job_projector_replay.prom has not been refreshed in 24h+ on r1:9100"
               description: |
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/ops_job_projector_replay.prom
@@ -1751,7 +1751,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
               summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/some_other_producer.prom has not been refreshed in 24h+ on r1:9100"
               description: |
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/some_other_producer.prom
@@ -1768,7 +1768,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
               summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/ops_job_projector_replay.prom has not been refreshed in 24h+ on r1:9100"
               description: |
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/ops_job_projector_replay.prom
@@ -1853,7 +1853,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
               summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/some_other_producer.prom has not been refreshed in 24h+ on r1:9100"
               description: |
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/some_other_producer.prom
@@ -1911,7 +1911,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
               summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/archive_completeness.prom has not been refreshed in 24h+ on r1:9100"
               description: |
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/archive_completeness.prom
@@ -1928,7 +1928,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
               summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/verify_archive_tier_a.prom has not been refreshed in 24h+ on r1:9100"
               description: |
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/verify_archive_tier_a.prom
@@ -1945,7 +1945,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
               summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/ops_job_asset_registry_backfill.prom has not been refreshed in 24h+ on r1:9100"
               description: |
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/ops_job_asset_registry_backfill.prom
@@ -1962,7 +1962,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
               summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/some_other_producer.prom has not been refreshed in 24h+ on r1:9100"
               description: |
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/some_other_producer.prom
@@ -1994,7 +1994,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
               summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/archive_completeness.prom has not been refreshed in 24h+ on r1:9100"
               description: |
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/archive_completeness.prom
@@ -2011,7 +2011,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
               summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/verify_archive_tier_a.prom has not been refreshed in 24h+ on r1:9100"
               description: |
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/verify_archive_tier_a.prom
@@ -2028,7 +2028,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
               summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/ops_job_asset_registry_backfill.prom has not been refreshed in 24h+ on r1:9100"
               description: |
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/ops_job_asset_registry_backfill.prom
@@ -2045,7 +2045,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_textfile_producer_stale
               summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/some_other_producer.prom has not been refreshed in 24h+ on r1:9100"
               description: |
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/some_other_producer.prom

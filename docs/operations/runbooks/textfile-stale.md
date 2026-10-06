@@ -1,13 +1,24 @@
 ---
-title: Runbook — textfile-producer-stale
-last_verified: 2026-09-25
-status: current
+title: Runbook — textfile-stale
+last_verified: 2026-10-06
+status: living
 severity: P3
 ---
 
-# Runbook — `stellarindex_textfile_producer_stale`
+# Runbook — textfile-stale alerts
+
+Textfile-collector staleness alerts. Merged from two former pages.
 
 ## At a glance
+
+- [`stellarindex_textfile_producer_stale`](#stellarindex_textfile_producer_stale)
+- [`stellarindex_patroni_textfile_stale`](#stellarindex_patroni_textfile_stale)
+
+## stellarindex_textfile_producer_stale
+
+_Source page `textfile-stale.md#stellarindex_textfile_producer_stale`: status current, severity P3, last verified 2026-09-25._
+
+### At a glance
 
 | Field | Value |
 | ----- | ----- |
@@ -17,7 +28,7 @@ severity: P3
 | Typical MTTR | 5–30 min |
 | Impact | Every family in the stale `.prom` file is frozen at its last-written value; node_exporter keeps re-serving it, so nothing that only reads those series would otherwise notice. |
 
-## Why this exists
+### Why this exists
 
 GH-899: 60 of 66 producers in `scripts/ci/textfile-producers.manifest`
 had no staleness alert at all — a dead timer or crashed producer went
@@ -74,7 +85,7 @@ or a gated producer with no lock held, still alerts: check
 `heavy_job_*.prom` files are excluded from the catch-all themselves. A
 non-root wrapper launch execs the payload and does not publish the metric.
 
-## Diagnosis
+### Diagnosis
 
 ```sh
 # $labels.file is the full textfile-collector path, e.g.
@@ -89,17 +100,7 @@ that didn't restart it, the producer script erroring before its
 atomic `mv` of the rendered file, or a dependency (patroni's REST
 API, ClickHouse, S3/MinIO) it queries being unreachable.
 
-## Related
-
-- [patroni-textfile-stale](patroni-textfile-stale.md),
-  [config-assertion-failed](config-assertion-failed.md),
-  [restore-drill-stale](restore-drill.md#stellarindex_restore_drill_stale) — the dedicated,
-  tighter (or, for restore-drill, more patient) alerts this backstop
-  defers to.
-- `scripts/ci/textfile-producers.manifest` — every producer this
-  alert covers.
-
-## Changelog
+### Changelog
 
 - **2026-09-25** — created (GH-899): backstop for the 60 producers
   with no dedicated staleness alert.
@@ -113,3 +114,67 @@ API, ClickHouse, S3/MinIO) it queries being unreachable.
   `ops_job_backfill.prom`.
 - **2026-10-02** — excluded `ops_job_projected_rebuild_<source>.prom`,
   the per-source one-shot rebuild heartbeats.
+
+## stellarindex_patroni_textfile_stale
+
+_Source page `textfile-stale.md#stellarindex_patroni_textfile_stale`: status current, severity P3, last verified 2026-09-22._
+
+### At a glance
+
+| Field | Value |
+| ----- | ----- |
+| Alert | `stellarindex_patroni_textfile_stale` |
+| Severity | **P3** (ticket) |
+| Detected by | `deploy/monitoring/rules/storage.yml` + `configs/prometheus/rules.r1/storage.yml`; producer is `patroni-textfile-scraper.timer` (30s, patroni role `11-monitoring.yml`) running `/usr/local/bin/patroni-textfile-scraper` |
+| Typical MTTR | 5–15 min |
+| Impact | `stellarindex_patroni_role` / `stellarindex_patroni_running` are frozen at their last-reported value, not live cluster state — a real role change (failover) during the outage is invisible to anything reading these gauges. |
+
+### Why this exists
+
+node_exporter re-serves a textfile's last written values on every
+scrape regardless of whether the process that writes it is still
+running. If `patroni-textfile-scraper.timer` dies, `patroni.prom`
+stops being rewritten but keeps being scraped, so
+`stellarindex_patroni_role`/`_running` alone can never detect the
+scraper's own death — only a change it reported before dying. This
+alert watches `node_textfile_mtime_seconds{file="patroni.prom"}`
+directly: the file's real mtime stops advancing the moment the timer
+stops rewriting it, same mechanism as
+`stellarindex_config_assertions_stale`.
+
+### Diagnosis
+
+```sh
+systemctl status patroni-textfile-scraper.timer
+systemctl status patroni-textfile-scraper.service
+journalctl -u patroni-textfile-scraper.service -n 50
+/usr/local/bin/patroni-textfile-scraper   # run by hand, inspect the error
+```
+
+Common causes: `curl` to `127.0.0.1:8008/cluster` failing (patroni's
+REST API down), `jq` missing, or the timer itself disabled by an
+ansible re-apply that didn't restart it.
+
+### Changelog
+
+- **2026-09-22** — created (T586): patroni.prom was one of four
+  manifest producers with no staleness guard of any kind.
+
+## Related
+
+**stellarindex_textfile_producer_stale**
+
+- [patroni-textfile-stale](textfile-stale.md#stellarindex_patroni_textfile_stale),
+  [config-assertion-failed](config-assertion-failed.md),
+  [restore-drill-stale](restore-drill.md#stellarindex_restore_drill_stale) — the dedicated,
+  tighter (or, for restore-drill, more patient) alerts this backstop
+  defers to.
+- `scripts/ci/textfile-producers.manifest` — every producer this
+  alert covers.
+
+**stellarindex_patroni_textfile_stale**
+
+- [config-assertion-failed](config-assertion-failed.md) — the alert
+  this pattern is modelled on.
+- `configs/ansible/roles/patroni/tasks/11-monitoring.yml` — scraper,
+  service and timer definitions.

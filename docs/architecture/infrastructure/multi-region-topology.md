@@ -163,7 +163,7 @@ policy) — SDF's Tier-1 Orgs doc is the reference shape.
 > which publish `stellarindex_verify_archive_mismatches_total`
 > through node_exporter's textfile collector and feed the P1
 > `stellarindex_stellar_archive_divergence` page. See
-> [runbooks/archive-divergence.md](../../operations/runbooks/archive-divergence.md).
+> [runbooks/archive.md#stellarindex_stellar_archive_divergence](../../operations/runbooks/archive.md#stellarindex_stellar_archive_divergence).
 
 `scripts/ops/archive-cross-check.sh` — runs hourly from an `ops-01`
 host in each region:
@@ -562,7 +562,7 @@ They have:
    per-region L4 (`configs/ansible/roles/haproxy/`).
 5. **Regional failover alerting** — no page during the 30 s Patroni
    window per design (the system heals). A P2 ticket fires on
-   sustained replica-promotion churn (`replica-lag.md`).
+   sustained replica-promotion churn (`postgres.md`).
 
 ---
 

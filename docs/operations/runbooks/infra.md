@@ -70,8 +70,8 @@ Fix:
 1. Exporter only: `systemctl restart prometheus-node-exporter`, `curl -s localhost:9100/metrics | head -1`, wait one 15 s scrape for `up` = 1.
 2. Host down: r1 has no failover; API, indexer, aggregator, galexie, ClickHouse, Postgres, Redis, MinIO, Prometheus and Alertmanager are all down and alerting is dark. Treat as SEV-1 manually: post in Discord #stellarindex-pages, update the status page (`sev-status-page-update.md`), Robot Reset → KVM. If nftables locked you out: `bootstrap-archival-node.md` §"Firewall locked us out".
 3. After return: `zpool status -x` shows `data` ONLINE (else zfs-degraded section) and `zfs list -o name,mountpoint,mounted` shows every `data/*` mounted; `systemctl --failed` empty; `systemctl is-active clickhouse-server postgresql@15-main redis-server galexie minio caddy cap67-movements stellarindex-indexer stellarindex-aggregator stellarindex-api prometheus-node-exporter prometheus` and `ss -ltnp | grep :9093` (Alertmanager). Caddy (:80/:443 → loopback API :3000, `tasks/19-caddy.yml`) returns with the host.
-4. Then service runbooks: `api.md#stellarindex_api_down`, `all-ingestion-down.md`, `galexie-archive.md#stellarindex_galexie_catchup_refused`, `ch-live-sink.md#stellarindex_ingestion_ch_live_sink_drops`. galexie needs ~9 min cold captive-core catchup before the indexer resumes: do not restart it repeatedly; `ingestion-lag.md` / `source-stopped.md` clear on their own.
-5. Textfile-driven alerts (`sla-probe.md#stellarindex_sla_probe_stale`, `supply-snapshot.md#stellarindex_supply_snapshot_stale`, `archive-completeness.md#stellarindex_archive_completeness_stale`, `binary-version-skew.md`, `stellar-stack-version-lag.md`) may fire until the writing timers' first post-boot run (`OnBootSec`: heartbeat 30 s, smoke 2 min, node-healthcheck 2 min, sla-probe 3 min; daily `OnCalendar` ones at their time). Don't chase them for ~15 min.
+4. Then service runbooks: `api.md#stellarindex_api_down`, `all-ingestion-down.md`, `archive.md#stellarindex_galexie_catchup_refused`, `ch-live-sink.md#stellarindex_ingestion_ch_live_sink_drops`. galexie needs ~9 min cold captive-core catchup before the indexer resumes: do not restart it repeatedly; `ingestion-lag.md` / `source-stopped.md` clear on their own.
+5. Textfile-driven alerts (`sla-probe.md#stellarindex_sla_probe_stale`, `supply.md#stellarindex_supply_snapshot_stale`, `archive.md#stellarindex_archive_completeness_stale`, `binary-version-skew.md`, `stellar-stack-version-lag.md`) may fire until the writing timers' first post-boot run (`OnBootSec`: heartbeat 30 s, smoke 2 min, node-healthcheck 2 min, sla-probe 3 min; daily `OnCalendar` ones at their time). Don't chase them for ~15 min.
 6. Verify: `up{job="node_exporter"}` = 1, scrape_failing clears, deadmansswitch resumed, Healthchecks.io green.
 
 RCA: Robot KVM / status page and Hetzner network status for FSN1; `journalctl -b -1`; `smartctl` / `nvme smart-log` on all four NVMes; `dmesg | grep -i oom`.
@@ -91,12 +91,12 @@ ssh root@136.243.90.96 'mpstat 1 5'     # user vs system vs iowait vs softirq; %
 
 Causes: one pegged process (hot path, unbounded goroutines, bad SQL plan); galexie captive-core catchup (CPU-bound; resolves in 30–120 min; it has no `/info` endpoint, so end-state is fresh objects in `galexie-live`; `stellar-node.md#stellarindex_stellar_core_ledger_age` / `stellar-node.md#stellarindex_stellar_rpc_lag` are inert on r1); Postgres plan regression (`pg_stat_statements` high `mean_exec_time`); pgBackRest `--process-max=4` or Timescale compression (CPU-heavy on purpose); an unwrapped heavy one-shot (shared context). `pg_repack` and `pg_hint_plan` are not installed.
 
-Fix: identify consumer; legitimate load → scale up, bug → incident; catchup → wait; plan regression → `runuser -u postgres -- psql -d stellarindex -c 'ANALYZE <table>'`, then rewrite the query; backup/compression running for hours → lower `--process-max`. Verify CPU < 70 % sustained and alert clears. Related: `pg-conns-saturated.md`, `all-ingestion-down.md`.
+Fix: identify consumer; legitimate load → scale up, bug → incident; catchup → wait; plan regression → `runuser -u postgres -- psql -d stellarindex -c 'ANALYZE <table>'`, then rewrite the query; backup/compression running for hours → lower `--process-max`. Verify CPU < 70 % sustained and alert clears. Related: `postgres.md#stellarindex_timescale_connections_saturated`, `all-ingestion-down.md`.
 
 ## stellarindex_host_memory_high
 
 - Trips: `(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 90`, `for: 10m`, `severity: informational`.
-- Meaning: allocation-failure risk (strict overcommit, see context). Any sustained swap in/out (`vmstat 1` si/so) is itself a red flag at swappiness 1; `galexie-archive.md#stellarindex_host_swap_activity` covers that half (`rate(node_vmstat_pswpout[10m]) > 100`). Follow-ons: host-cpu-high, then service alerts.
+- Meaning: allocation-failure risk (strict overcommit, see context). Any sustained swap in/out (`vmstat 1` si/so) is itself a red flag at swappiness 1; `archive.md#stellarindex_host_swap_activity` covers that half (`rate(node_vmstat_pswpout[10m]) > 100`). Follow-ons: host-cpu-high, then service alerts.
 
 ```sh
 ssh root@136.243.90.96 'ps auxww --sort=-%mem | head -10'
@@ -114,7 +114,7 @@ Causes and fixes:
 4. ZFS ARC: capped at 32 GiB (floor 8 GiB) via `/etc/modprobe.d/zfs.conf` (role vars `zfs_arc_max_bytes` / `zfs_arc_min_bytes`), read only at module load: a new cap needs a reboot or a write to `/sys/module/zfs/parameters/zfs_arc_max`. Check `arcstat` / `/proc/spl/kstat/zfs/arcstats`; change the cap in the role, not by hand.
 5. Genuine undersize: scale up or move workloads.
 
-Verify `available` > 20 % and no new ENOMEM/OOM lines for 1 h. False positives: ARC counted as used on older kernels (6.x fixed); a freshly started process warming caches. Related: `timescale-primary-down.md` (Postgres OOM-kill path).
+Verify `available` > 20 % and no new ENOMEM/OOM lines for 1 h. False positives: ARC counted as used on older kernels (6.x fixed); a freshly started process warming caches. Related: `postgres.md#stellarindex_timescale_primary_down` (Postgres OOM-kill path).
 
 ## stellarindex_zfs_pool_degraded
 
@@ -378,7 +378,7 @@ Root causes:
 
 False positives: exporter down makes the freshness alerts blind rather than false-firing (`stellarindex_pgbackrest_exporter_down` in `rules.r1/meta.yml`, `meta.md#stellarindex_redis_exporter_down`); the metric can read stale up to 10 min after it returns; `_metrics_absent` deliberately does not fire while `up == 0` so they never double-page. The first backup after a repo re-create (`pgbackrest-encryption.md`) legitimately resets the age series and resolves on the first completed backup.
 
-Related: `restore-drill.md#stellarindex_restore_drill_stale` (`stellarindex_restore_drill_stale`; monthly first-Saturday 04:00 UTC drill proves repo1 restores), `timescale-primary-down.md` (Patroni failover; not deployed on r1), `account-erasure.md` (a restore brings erased accounts back; replay erasures before the API serves), `docs/adr/0043-backup-and-restore-strategy.md`, `docs/architecture/ha-plan.md` §3.3 and §8. Promtool coverage: `deploy/monitoring/rule-tests/storage-backup_test.yml`.
+Related: `restore-drill.md#stellarindex_restore_drill_stale` (`stellarindex_restore_drill_stale`; monthly first-Saturday 04:00 UTC drill proves repo1 restores), `postgres.md#stellarindex_timescale_primary_down` (Patroni failover; not deployed on r1), `account-erasure.md` (a restore brings erased accounts back; replay erasures before the API serves), `docs/adr/0043-backup-and-restore-strategy.md`, `docs/architecture/ha-plan.md` §3.3 and §8. Promtool coverage: `deploy/monitoring/rule-tests/storage-backup_test.yml`.
 
 ## stellarindex_timescale_backup_none_24h
 

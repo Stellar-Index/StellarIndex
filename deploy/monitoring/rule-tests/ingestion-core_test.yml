@@ -607,7 +607,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/orphan-events.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_orphan_events
               summary: "Source soroswap orphan events 500m/sec"
               description: |
                 Source soroswap has events arriving without their
@@ -1253,7 +1253,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-trade-unit-ratio.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex.md#stellarindex_dex_trade_unit_ratio_detected
               summary: "Source phoenix producing a sustained stream of unit-ratio (1:1) trades"
               description: |
                 Source phoenix has landed > 25 on-chain DEX
@@ -1267,7 +1267,7 @@ tests:
                 the decoder's amount field mapping against the contract's
                 event definition.
 
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-trade-unit-ratio.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex.md#stellarindex_dex_trade_unit_ratio_detected
 
   # ── guard: the fraction arm — busy parity morning, 2% of flow ─────
   # The 2026-07-31 sdex wrapper-morning shape: 60 unit-ratio trades in
@@ -1416,7 +1416,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detected.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detected
               summary: "Data-coverage gap of 5000 ledgers in source=soroswap"
               description: |
                 max by (source) (stellarindex_ingest_gap_max_size_ledgers{source="soroswap"})
@@ -1432,7 +1432,7 @@ tests:
                 For non-projected sources (sdex / soroban-events):
                   stellarindex-ops backfill -write --source <name> --from F --to T
 
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detected.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detected
 
   # ── near-threshold: an 800-ledger gap sits under the 1000 floor ───
   - interval: 1m
@@ -1467,7 +1467,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
               summary: "Data-gap detector hasn't scanned sdex/trades successfully in >8h (above the 6h sdex/soroban scan cadence)"
               description: |
                 The aggregator's data-gap detector goroutine appears
@@ -1498,7 +1498,7 @@ tests:
                 `stellarindex_ingest_gap_detector_runs_total{outcome="error"}`
                 climbing?
 
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
 
   # ── firing, absent arm: the detector metric family disappears ─────
   # Only an unrelated series exists, so absent_over_time() fires with
@@ -1517,7 +1517,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
               summary: "Data-gap detector hasn't scanned / successfully in >8h (above the 6h sdex/soroban scan cadence)"
               description: |
                 The aggregator's data-gap detector goroutine appears
@@ -1548,7 +1548,7 @@ tests:
                 `stellarindex_ingest_gap_detector_runs_total{outcome="error"}`
                 climbing?
 
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
 
   # ── guard: restart with no scan due (2026-08-29 09:55Z r1 false-fire)
   # The seeded schedule (persisted scan cursor) defers every scan for

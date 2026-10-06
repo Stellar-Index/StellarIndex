@@ -104,10 +104,10 @@ groups:
       # (persist_drop, trade_buffer_drop, projector row_quarantined,
       # ledgerstream tier_both_missing) are `for: 0m`. Pinned both ways in
       # deploy/monitoring/rule-tests/tripwire-isolated-increment*_test.yml.
-      # Here the runbook (archive-publish.md, "Known false-positive
+      # Here the runbook (archive.md, "Known false-positive
       # patterns") relies on it: one transient S3 503 that core retries
       # successfully bumps the counter and must NOT notify.
-      # lint-tripwire-window:sustained: archive-publish.md relies on
+      # lint-tripwire-window:sustained: archive.md relies on
       # `for: 1h` to filter one S3 503 that core retries successfully
       - alert: stellarindex_stellar_archive_publish_fail
         expr: increase(stellarindex_stellar_archive_publish_errors_total[1h]) > 0
@@ -117,7 +117,7 @@ groups:
           team: stellarindex
           component: stellar
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-publish.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive.md#stellarindex_stellar_archive_publish_fail
           summary: "Archive-publish errors in the last hour"
           description: |
             stellar-core failed to publish a checkpoint to our history archive.
@@ -148,7 +148,7 @@ groups:
           team: stellarindex
           component: stellar
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-divergence.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive.md#stellarindex_stellar_archive_divergence
           summary: "Archive hash divergence detected (SEV-1)"
           description: |
             Our published archive's bucket hash differs from at least one

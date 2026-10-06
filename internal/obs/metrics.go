@@ -1490,7 +1490,7 @@ var SourceUncorroboratedCallsTotal = prometheus.NewCounterVec(
 //
 // Alert consumer: `stellarindex_ingestion_oracle_unknown_symbols`
 // (deploy/monitoring/rules/ingestion.yml + the R1 overlay; runbook
-// docs/operations/runbooks/oracle-unknown-symbols.md). The cold audit of
+// docs/operations/runbooks/ingestion-events.md). The cold audit of
 // 2026-08-04 found NO rule evaluated this counter — an earlier version
 // of this comment claimed one in external-pollers.yml that never
 // existed — while r1 already carried
@@ -1953,7 +1953,7 @@ var (
 //
 // Alert consumer: `stellarindex_ingestion_oracle_unrepresentable_symbols`
 // (deploy/monitoring/rules/ingestion.yml + the R1 overlay; runbook
-// docs/operations/runbooks/oracle-unknown-symbols.md).
+// docs/operations/runbooks/ingestion-events.md).
 var SourceUnrepresentableSymbolsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_unrepresentable_symbols_total",

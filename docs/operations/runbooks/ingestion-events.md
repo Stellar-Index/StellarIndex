@@ -1,13 +1,127 @@
 ---
-title: Runbook — oracle-unknown-symbols
-last_verified: 2026-09-08
-status: current
+title: Runbook — ingestion-events
+last_verified: 2026-10-06
+status: living
 severity: P3
 ---
 
-# Runbook — `stellarindex_ingestion_oracle_unknown_symbols`
+# Runbook — ingestion-events alerts
+
+Ingestion event-quality alerts: orphan events, oracle symbols, uncorroborated calls. Merged from three former pages.
 
 ## At a glance
+
+- [`stellarindex_ingestion_orphan_events`](#stellarindex_ingestion_orphan_events)
+- [`stellarindex_ingestion_oracle_unknown_symbols`](#stellarindex_ingestion_oracle_unknown_symbols)
+- [`stellarindex_ingestion_oracle_unrepresentable_symbols`](#sibling-alert--stellarindex_ingestion_oracle_unrepresentable_symbols)
+- [`stellarindex_ingestion_uncorroborated_calls`](#stellarindex_ingestion_uncorroborated_calls)
+
+## stellarindex_ingestion_orphan_events
+
+_Source page `ingestion-events.md#stellarindex_ingestion_orphan_events`: status current, severity P3, last verified 2026-08-29._
+
+### At a glance
+
+| Field | Value |
+| ----- | ----- |
+| Alert | `stellarindex_ingestion_orphan_events` |
+| Severity | P3 (`severity: ticket`) |
+| Detected by | `configs/prometheus/rules.r1/ingestion.yml` (group `stellarindex.ingestion`, `severity: ticket`, `for: 15m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/ingestion.yml`. |
+| Typical MTTR | hours-to-days (investigation) |
+| Impact | Losing individual swap / oracle updates. Not urgent unless the rate spikes to double-digit events/sec. |
+
+### Symptoms
+
+- `sum by (source) (rate(stellarindex_source_orphan_events_total[10m])) > 10/60` sustained 15 min.
+- Per-source breakdown in the alert label shows WHICH source is dropping events.
+- `stellarindex_source_events_total` for the same source may still rise — orphans are a subset of pulled events that couldn't be completed.
+
+### Context — what counts as an orphan?
+
+Depends on the source:
+
+- **soroswap** — a `swap` event without its matching `sync` (or vice versa), correlated by `(ledger, tx_hash, op_index)`. Both are emitted in the same Soroban transaction and arrive adjacent in the dispatcher's in-order per-ledger stream — so an orphan implies the decoder rejected one half or the contract's event shape shifted, not transport reordering.
+- **phoenix** — one swap emits 8 separate events (one per field). An orphan is an incomplete N-of-8 set that aged past the buffer's `defaultOrphanMaxAge` (5 min) without the missing fields arriving.
+- **aquarius, reflector** — N/A. These sources are 1-event-per-observation and can't produce orphans.
+
+### Quick diagnosis (≤ 10 min)
+
+```sh
+# Which source is orphaning? (alert label also tells you this;
+# 9464 = the indexer's metrics port on r1)
+ssh root@136.243.90.96 'curl -s localhost:9464/metrics | grep stellarindex_source_orphan_events_total'
+
+# Look at the indexer's logs for the affected source — orphans get
+# logged at debug level with the group key.
+ssh root@136.243.90.96 "journalctl -u stellarindex-indexer -n 1000 --no-pager" \
+  | grep -E "orphan|evicted" | tail -20
+
+# Compare to the decode-error rate and the event-rate over the
+# same window:
+#   rate(stellarindex_source_events_total[10m])
+#   rate(stellarindex_source_decode_errors_total[10m])
+#   rate(stellarindex_source_orphan_events_total[10m])
+# Orphan-rate rising while event-rate is flat → a decoder is
+# rejecting one half of the pair (check decode_errors) or the
+# contract's event schema shifted (contracts upgrade in place).
+# Event-rate + orphan-rate both rising → source volume spike with
+# ordering happening to fall outside our buffer window.
+```
+
+### Mitigation (≤ 15 min)
+
+**No live-fix path** — this is a `severity: ticket` alert, not a
+page. Don't restart or roll back on the basis of orphan-events alone;
+orphans are a subset of events that couldn't be correlated, not a
+blocking failure. The conventional mitigation step is "investigate
+upstream" — see the next section.
+
+If the rate is genuinely catastrophic (`> 100/sec`, see "When to
+escalate" below), promote to a `source-stopped` response: the
+source is effectively not working, not just dropping a few rows.
+
+### Investigation
+
+This alert is a ticket, not a page; there's no live-fix path. Instead, gather:
+
+- [ ] Sample a few orphan group-keys from the logs. Query a public
+      stellar-rpc directly for their tx_hash (r1 doesn't run its
+      own stellar-rpc — removed 2026-04-23, see
+      [r1-deployment-state.md](../r1-deployment-state.md)):
+  ```sh
+  curl -X POST https://mainnet.sorobanrpc.com \
+    -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"getTransaction","params":{"hash":"<tx>"}}'
+  ```
+  If the tx is retention-window-NOT_FOUND, RPC already dropped it.
+- [ ] Check the contract ID's event stream on stellar.expert or via `getEvents` with the specific filter. A contract that changed its event shape would show up as phoenix decode_errors AND soroswap orphans simultaneously.
+- [ ] If the phoenix orphan rate > soroswap's: the 5-min buffer `defaultOrphanMaxAge` may be too short. Phoenix's 8-event emission can span multiple transactions in pathological cases.
+
+### When to escalate
+
+- `> 100/sec` sustained — the source is effectively not working. Treat as `source-stopped`, not `orphan-events`.
+- Orphan-rate matches event-rate — the correlation logic is broken (every event gets orphaned). Revert the most recent source-package change.
+
+### Changelog
+
+- 2026-04-23 — initial draft alongside the orphan-events metric wiring.
+- 2026-04-30 — getTransaction probe URL points at a public
+  stellar-rpc; r1 doesn't run its own (removed 2026-04-23).
+- 2026-08-29 — re-verified against HEAD: "same RPC page" /
+  "RPC drops or reorders" framing replaced (swap+sync are adjacent
+  in the dispatcher's in-order per-ledger stream — an orphan means
+  a decode rejection or a contract-schema shift, not transport
+  reordering), r1 command shapes (indexer :9464, r1 IP), dual-tree
+  Detected-by. Status draft → current.
+- 2026-09-24 — corrected `severity: informational` to `severity: ticket`
+  throughout; both rule trees have always set `ticket` for this alert
+  (#1354).
+
+## stellarindex_ingestion_oracle_unknown_symbols
+
+_Source page `ingestion-events.md#stellarindex_ingestion_oracle_unknown_symbols`: status current, severity P3, last verified 2026-09-08._
+
+### At a glance
 
 | Field | Value |
 | ----- | ----- |
@@ -17,7 +131,7 @@ severity: P3
 | Typical MTTR | Not an outage clock. `unknown_symbols` earns a mapping *at leisure* — hours to days is fine, and the alert stays open meanwhile. `unrepresentable_symbols` is a registry entry plus a replay. |
 | Impact | `unknown_symbols`: **nothing is lost.** An oracle published a symbol / feed_id the canonical allow-list does not map, and the slot was recorded verbatim as a `raw:<symbol>` row (`canonical.AssetOracleRaw`). The observation is record-layer-only until mapped: it is not a pair leg, not a VWAP input, and not visible on any keyed price surface. `unrepresentable_symbols`: the slot was **dropped with no row written** — that one IS a hole in the record. |
 
-## The two alerts mean opposite things
+### The two alerts mean opposite things
 
 Read the alertname before anything else.
 
@@ -31,7 +145,7 @@ Read the alertname before anything else.
 
 Everything down to "Sibling alert" below is about `unknown_symbols`.
 
-## Why `unknown_symbols` is informational, not a ticket
+### Why `unknown_symbols` is informational, not a ticket
 
 Changed 2026-09-08 (was `ticket`). The policy is deliberate and the
 runbook should not be read as an incident:
@@ -62,7 +176,7 @@ Delivery and the full triage rationale live in
 [alerts-catalog.md](../alerts-catalog.md) — the informational delivery
 register — which is the source of truth for severity and routing.
 
-## Why this alert exists at all
+### Why this alert exists at all
 
 `stellarindex_source_unknown_symbols_total{source}` was added for
 F-1234 (codex audit-2026-05-12) so an oracle expanding its feed set
@@ -79,7 +193,7 @@ closed that: the record layer is now total. This alert survives as the
 *mapping-gap* signal, which is why it no longer carries ticket
 severity.
 
-## Symptoms
+### Symptoms
 
 - `sum by (source) (increase(stellarindex_source_unknown_symbols_total[25h])) > 0`
   sustained 30 min for one of `reflector`, `redstone`, `band`. (The
@@ -102,7 +216,7 @@ false. The symbol's identity comes from the **record layer**, below.
 (The unrepresentable path is the exception: it *does* log — see the
 sibling section.)
 
-## Quick diagnosis (≤ 5 min)
+### Quick diagnosis (≤ 5 min)
 
 1. **Which source, and is it still growing?** The indexer's metrics
    listener is `:9464` (`metrics_listen`); `:9100` on r1 is
@@ -146,7 +260,7 @@ sibling section.)
    one event is a different problem — the oracle changed its schema;
    treat as a decoder regression ([decode-errors](decode-errors.md)).
 
-## Mitigation
+### Mitigation
 
 Nothing to mitigate at runtime, and nothing is degrading while this is
 open. The work is a mapping decision plus a code change, and it can
@@ -195,7 +309,7 @@ wait for a convenient moment.
 - [ ] Verification: `increase(stellarindex_source_unknown_symbols_total{source="<src>"}[1h]) == 0`,
       and the `asset LIKE 'raw:%'` count for that symbol is 0.
 
-## Sibling alert — `stellarindex_ingestion_oracle_unrepresentable_symbols`
+### Sibling alert — `stellarindex_ingestion_oracle_unrepresentable_symbols`
 
 One rung worse, and still a `ticket`.
 `stellarindex_source_unknown_symbols_total` means the slot **was
@@ -236,7 +350,7 @@ the slot stays absent — record that decision on the ticket rather than
 widening `canonical.validateRawSymbol`, which bounds what a buggy or
 malicious relayer can make us persist.
 
-## Root cause analysis
+### Root cause analysis
 
 Only worth writing up for the `unrepresentable` case, or when a symbol
 turns out to matter commercially.
@@ -249,7 +363,7 @@ turns out to matter commercially.
 - Row growth per source over the window
   (`SELECT source, count(*) FROM oracle_updates WHERE ts > now() - interval '1 day' GROUP BY 1`).
 
-## Known false-positive patterns
+### Known false-positive patterns
 
 - **Counter reset on indexer restart** — `increase()` handles resets;
   no false fire.
@@ -262,26 +376,7 @@ turns out to matter commercially.
 - **"I grepped the logs and found nothing"** — not a false positive.
   The unmapped branch does not log at all; see Symptoms.
 
-## Related
-
-- Metric: `internal/obs/metrics.go` `SourceUnknownSymbolsTotal`;
-  emitters `internal/sources/reflector/decode.go`,
-  `internal/sources/redstone/decode.go`, `internal/sources/band/decode.go`.
-- Metric: `internal/obs/metrics.go` `SourceUnrepresentableSymbolsTotal`;
-  sole emitter `internal/sources/redstone/decode.go`
-  (`noteUnrepresentableFeed`).
-- Severity + delivery source of truth: [alerts-catalog.md](../alerts-catalog.md),
-  including the informational delivery register.
-- Design: `docs/design/oracle-capture-totality-design.md`; the
-  `canonical.AssetOracleRaw` variant in `internal/canonical/asset_raw.go`.
-- Companion runbook (whole-event decode failures, a *different* cause
-  since capture-totality): [decode-errors](decode-errors.md).
-- Companion runbook (a stored row whose asset text will not parse on
-  read): [oracle-stream-rows-unparsed](divergence.md#stellarindex_oracle_stream_rows_unparsed).
-- Feed registries: ADR-0010 (fiat), ADR-0014 (crypto), ADR-0028 (RWA);
-  `internal/sources/redstone/README.md` §RWA feeds.
-
-## Changelog
+### Changelog
 
 - 2026-08-28 — initial draft (oracle capture-totality PR-1; the counter
   had no alert consumer since F-1234).
@@ -301,3 +396,123 @@ turns out to matter commercially.
   channel, not an incident; the sibling's `ticket` contrast made
   explicit. Dropped the pre-capture-totality "until the decoders record
   such slots" hedging — they do, at HEAD, in all three decoders.
+
+## stellarindex_ingestion_uncorroborated_calls
+
+_Source page `ingestion-events.md#stellarindex_ingestion_uncorroborated_calls`: status current, severity P3, last verified 2026-09-28._
+
+### At a glance
+
+| Field | Value |
+| ----- | ----- |
+| Alert | `stellarindex_ingestion_uncorroborated_calls` |
+| Severity | P3 (`severity: ticket`) |
+| Detected by | `deploy/monitoring/rules/ingestion.yml` and the R1 overlay `configs/prometheus/rules.r1/ingestion.yml` (group `stellarindex.ingestion`, `for: 0m`) |
+| Typical MTTR | 15–60 min |
+| Impact | An oracle-class `ContractCall` was declared in a transaction's auth tree but never executed, so the dispatcher (`internal/dispatcher/dispatcher.go`) refused it before `Decode` (W8.4a). Either a price-forgery attempt was rejected, or the legitimate routing shape changed and started refusing calls that should decode. |
+
+### What this fires on
+
+`stellarindex_source_uncorroborated_calls_total`, a per-source counter
+incremented in `internal/dispatcher/dispatcher.go`'s `bumpUncorroborated`
+whenever the auth-tree walk finds an oracle-class `ContractCallDecoder`
+invocation declared but never corroborated by an executed call in the
+same transaction — the defence W8.4a added against a forged auth entry
+naming an oracle contract with fake price args.
+
+`internal/dispatcher/statsflush/flusher.go` mirrors each source's delta
+as a WARN log on every 5-minute flush window; this alert is the
+Prometheus-side signal so a rejected forgery attempt doesn't depend on
+someone tailing logs.
+
+### Quick diagnosis (≤ 5 min)
+
+```sh
+# Which source(s) moved, and by how much?
+ssh root@136.243.90.96 'curl -s localhost:9464/metrics | grep stellarindex_source_uncorroborated_calls_total'
+
+# The exact tx is in the indexer's logs — statsflush's WARN fires the
+# same window this alert does.
+journalctl -u stellarindex-indexer --since -2h | grep "dispatcher: uncorroborated oracle calls"
+```
+
+- A single isolated increment on `band` (the only current oracle-class
+  source) with no accompanying routing or deploy change → treat as a
+  rejected forgery attempt. The dispatcher already refused it; no data
+  was corrupted. Confirm by cross-referencing the tx hash from the WARN
+  against the source ledger for anything else unusual in the same auth
+  tree.
+- A sustained climb correlated with a recent contract upgrade or a new
+  legitimate call pattern → the routing shape changed and the
+  corroboration check (W8.4a) is now false-positiving on real calls.
+  Check the oracle contract's current WASM against the corroboration
+  logic's assumptions.
+
+### Mitigation (≤ 15 min)
+
+- [ ] Step 1 — pull the WARN-logged tx hash(es) for the flush window and
+      inspect the auth tree: does the declared call plausibly belong to
+      an attacker, or does it look like normal traffic the corroboration
+      check now misclassifies?
+- [ ] Step 2 — forgery attempt: no mitigation needed, the call was
+      already refused; file it for the security log and move on.
+- [ ] Step 3 — routing-shape change: this is a code fix (adjust the
+      corroboration check for the new legitimate shape), not an
+      operational mitigation. Ship a dispatcher release once confirmed.
+
+### Root cause analysis
+
+For the postmortem, gather:
+- The WARN-logged tx hash(es) and their full auth trees.
+- Whether the oracle contract's WASM changed recently (ADR-0035: gate on
+  contract identity, not topic alone — a WASM upgrade can change the
+  shape corroboration expects).
+- Whether the increment was isolated (one-off, consistent with a probed
+  and rejected attack) or sustained (consistent with a routing change).
+
+### Known false-positive patterns
+
+- None yet. Steady state is zero; any nonzero increase needs eyes —
+  either outcome (forgery or routing change) warrants review, so this
+  alert does not distinguish them at fire time.
+
+### Changelog
+
+- 2026-09-28 — created (the counter existed with no metric, WARN, or
+  alert consumer; added all three).
+
+## Related
+
+**stellarindex_ingestion_orphan_events**
+
+- `source-stopped.md` — adjacent alert for the "no events at all" case.
+- `decode-errors.md` — different failure mode (events arrive but don't parse).
+- `internal/sources/soroswap/consumer.go` — correlation buffer + age eviction.
+- `internal/sources/phoenix/consumer.go` — same, for the 8-field fan-in.
+
+**stellarindex_ingestion_oracle_unknown_symbols**
+
+- Metric: `internal/obs/metrics.go` `SourceUnknownSymbolsTotal`;
+  emitters `internal/sources/reflector/decode.go`,
+  `internal/sources/redstone/decode.go`, `internal/sources/band/decode.go`.
+- Metric: `internal/obs/metrics.go` `SourceUnrepresentableSymbolsTotal`;
+  sole emitter `internal/sources/redstone/decode.go`
+  (`noteUnrepresentableFeed`).
+- Severity + delivery source of truth: [alerts-catalog.md](../alerts-catalog.md),
+  including the informational delivery register.
+- Design: `docs/design/oracle-capture-totality-design.md`; the
+  `canonical.AssetOracleRaw` variant in `internal/canonical/asset_raw.go`.
+- Companion runbook (whole-event decode failures, a *different* cause
+  since capture-totality): [decode-errors](decode-errors.md).
+- Companion runbook (a stored row whose asset text will not parse on
+  read): [oracle-stream-rows-unparsed](divergence.md#stellarindex_oracle_stream_rows_unparsed).
+- Feed registries: ADR-0010 (fiat), ADR-0014 (crypto), ADR-0028 (RWA);
+  `internal/sources/redstone/README.md` §RWA feeds.
+
+**stellarindex_ingestion_uncorroborated_calls**
+
+- `dispatcher-tx-skips.md` — the sibling dispatcher-level tripwire for
+  whole-transaction skips; this one is per-source and oracle-specific.
+- ADR-0035 (contract-identity gating) — why a shared topic across
+  deployments can't be trusted alone, the same class of assumption
+  W8.4a's corroboration check protects.

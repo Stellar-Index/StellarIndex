@@ -79,7 +79,7 @@ Route by the result:
 
 - Galexie isn't producing fresh objects in `galexie-live` → galexie's captive-core stalled or upstream network issue. Check `journalctl -u galexie`; if galexie itself is healthy, fall back to the public-rpc probe to confirm the network is closing ledgers.
 - Galexie healthy + fresh objects in MinIO but indexer not reading → networking issue between indexer and MinIO, or indexer's MinIO credentials / endpoint config wrong. Check firewall, DNS, the `[storage]` section of `/etc/stellarindex.toml` (`s3_endpoint`, `s3_bucket_live`) and `STELLARINDEX_S3_ACCESS_KEY` / `STELLARINDEX_S3_SECRET_KEY` in `/etc/default/stellarindex`.
-- psql INSERT fails → Timescale issue. Jump to [timescale-primary-down](timescale-primary-down.md).
+- psql INSERT fails → Timescale issue. Jump to [timescale-primary-down](postgres.md#stellarindex_timescale_primary_down).
 - All probes pass but indexer produces no events → the indexer is alive but wedged. Likely deadlock or internal bug.
 
 ## Mitigation (≤ 15 min)
@@ -107,7 +107,7 @@ Route by the result:
 
 ### B. Timescale is the problem
 
-- Proceed to [timescale-primary-down](timescale-primary-down.md).
+- Proceed to [timescale-primary-down](postgres.md#stellarindex_timescale_primary_down).
 
 ### C. Indexer itself is wedged
 
@@ -215,7 +215,7 @@ Patterns observed:
 - [ledgerstream-tier-both-missing](ledgerstream-tier-both-missing.md) — reader can find the ledger in neither MinIO tier.
 - [exporter-down](meta.md#stellarindex_redis_exporter_down) / [minio-metrics-403](minio-metrics-403.md) — MinIO monitoring.
 - [binary-version-skew](binary-version-skew.md) — expected after a partial rollback.
-- [timescale-primary-down](timescale-primary-down.md) — next step when DB is the root cause.
+- [timescale-primary-down](postgres.md#stellarindex_timescale_primary_down) — next step when DB is the root cause.
 - [ingestion-lag](ingestion-lag.md) — single-source-lag runbook.
 - [cursor-stuck](ledger-ingest.md#stellarindex_ingestion_cursor_stuck) — cursor-specific diagnosis.
 - Internal docs:

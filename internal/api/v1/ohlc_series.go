@@ -247,7 +247,7 @@ func (s *Server) handleOHLCSeries(
 
 	// dex-nonstandard-decimals forward normalization (2026-07-10, closing
 	// the deferred CAGG-reading tail from docs/operations/runbooks/
-	// dex-nonstandard-decimals.md): the SAME per-pair scalar factor that
+	// dex.md): the SAME per-pair scalar factor that
 	// corrects a single-bar OHLC's open/high/low/close corrects every bar
 	// here too — K = 10^(baseDec-quoteDec) is a constant for the whole
 	// requested pair, so applying it once to the FINISHED series (rather

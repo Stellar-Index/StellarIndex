@@ -473,7 +473,7 @@ type DecimalsGuardConfig struct {
 	// trades-history DISTINCT. 0 => library default (90,
 	// decimalsguard.DefaultBackfillWindow). A token that hasn't traded in
 	// longer than this window is not caught by the backfill pass; the
-	// dex-nonstandard-decimals runbook's manual hand-seed step remains
+	// dex runbook (dex.md)'s manual hand-seed step remains
 	// the fallback for that residual, long-dormant case.
 	BackfillWindowDays int `toml:"backfill_window_days" doc:"How many days of trade history the decimals-guard's one-time startup backfill pass scans for distinct Soroban-legged (source, asset) pairs, to self-seed nonstandard_decimals_assets for tokens that traded and then went dormant. 0 = library default (90)." default:"90"`
 }

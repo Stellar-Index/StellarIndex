@@ -1885,7 +1885,7 @@ func crossThroughPivot(basePerPivot, pivotPerQuote string) (string, bool) {
 // adjustHistoryPointPrices applies the dex-nonstandard-decimals forward
 // normalization to every point's VWAP field — see the call sites in
 // handleChart / handleChartTWAP / handleChartMarketCapCrypto for the full
-// rationale (docs/operations/runbooks/dex-nonstandard-decimals.md).
+// rationale (docs/operations/runbooks/dex.md).
 //
 // VolumeUSD is intentionally NOT touched — prices_<gran>'s volume_usd
 // column is already USD-denominated (Σ usd_volume, computed upstream at

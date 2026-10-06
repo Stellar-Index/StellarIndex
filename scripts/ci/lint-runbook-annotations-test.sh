@@ -33,7 +33,7 @@ check "unmodified rule files pass" ok
 # Turn one real runbook_url into a bare repo-relative path — the exact
 # file still exists, only the scheme is dropped.
 sed -i.tmp \
-  's#runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#runbook_url: docs/operations/runbooks/galexie-archive.md#g' \
+  's#runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive.md#runbook_url: docs/operations/runbooks/archive.md#g' \
   "$FIXTURE"
 rm -f "${FIXTURE}.tmp"
 check "bare repo-relative runbook_url is rejected" red
@@ -42,7 +42,7 @@ restore
 # Point only the description's Runbook: line at a different (existing)
 # runbook; runbook_url stays correct.
 sed -i.tmp \
-  's#^\( *\)Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#\1Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#' \
+  's#^\( *\)Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive.md#\1Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#' \
   "$FIXTURE"
 rm -f "${FIXTURE}.tmp"
 check "description Runbook: link disagreeing with runbook_url is rejected" red
@@ -50,7 +50,7 @@ restore
 
 # Point the fragment at a heading that does not exist on the target page.
 sed -i.tmp \
-  's|\(runbooks/galexie-archive.md#[a-z_0-9]*\)$|\1_no_such_heading|' \
+  's|\(runbooks/archive.md#[a-z_0-9]*\)$|\1_no_such_heading|' \
   "$FIXTURE"
 rm -f "${FIXTURE}.tmp"
 check "runbook_url fragment matching no heading is rejected" red

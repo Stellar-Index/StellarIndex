@@ -523,7 +523,7 @@ func run(cfgPath string, dryRun bool) error {
 	// the orchestrator can scale a window's raw VWAP by the correct
 	// 10^(base_decimals-quote_decimals) factor before publishing — see
 	// aggregate.AdjustPrice and docs/operations/runbooks/
-	// dex-nonstandard-decimals.md. One blocking refresh here so the very
+	// dex.md. One blocking refresh here so the very
 	// first Tick (fired synchronously by orchestrator.Run, before this
 	// cache's own background loop gets a chance to run) isn't working
 	// from an empty snapshot.

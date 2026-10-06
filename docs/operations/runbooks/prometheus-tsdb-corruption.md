@@ -165,7 +165,7 @@ For a postmortem, capture:
 
 ## Related
 
-- `docs/operations/runbooks/redis-write-blocked-disk-full.md` —
+- `docs/operations/runbooks/cache.md#stellarindex_redis_writes_blocked` —
   same disk-full SEV-2 family.
 - `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`
   — original incident post-mortem (embedded; served via

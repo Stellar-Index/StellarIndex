@@ -126,7 +126,7 @@ tests:
               asset_key: XLM
             exp_annotations:
               description: "Per ADR-0011 native XLM circulating = total - \u03a3(SDF reserves).\nA zero or negative value means either the operator-managed\nreserve_balances_stroops sum exceeds the frozen total\n(config error), or the XLMComputer math is broken (bug).\nRunbook: dry-run the writer with the live config; check\nthe operator-supplied balances against SDF's latest\nannouncement.\n"
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot.md#stellarindex_supply_snapshot_circulating_zero"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_snapshot_circulating_zero"
               summary: "XLM circulating supply gauge is 0 \u2014 operator config or computer bug"
 
   - interval: 30s
@@ -326,7 +326,7 @@ tests:
               alert_family: galexie_archive_tip_lag
             exp_annotations:
               description: "galexie-archive is 200000 ledgers behind galexie-live\n\u2014 more than two full 64,000-ledger partitions. The hourly\ngalexie-archive-fill.timer has clearly broken \u2014 same\nfailure class as the original 23-day stall the hourly\ntimer was added for. Customer impact: local WASM-walks +\nhistorical backfills past the gap will fail; R1's\nfull-mirror integrity-leader role is broken until repair.\nRunbook: same as above.\n"
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_archive_tip_lag_severe"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive.md#stellarindex_galexie_archive_tip_lag_severe"
               summary: "galexie-archive >2 partitions behind live (200000 ledgers, P1)"
 
   - interval: 30s

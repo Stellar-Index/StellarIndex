@@ -333,7 +333,7 @@ record why, because the range is then knowingly un-backfilled.
 
 ## Related
 
-- [ingest-gap-detector-silent](ingest-gap-detector-silent.md) — the
+- [ingest-gap-detector-silent](ingest-gap.md#stellarindex_ingest_gap_detector_silent) — the
   detector that eventually finds the hole a stalled backfill left.
 - [zfs-pool-full](infra.md#stellarindex_zfs_pool_low_space) — a full pool is a common cause of a
   hung write.

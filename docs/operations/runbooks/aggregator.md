@@ -498,7 +498,7 @@ The warn carries `first_err`. `no closed observations in window` for every entit
 journalctl -u stellarindex-aggregator | grep decimals-guard
 ```
 
-Look for `decimals-guard: ClickHouse decimals resolver unavailable` / `decimals-guard started` / `decimals-guard exited with error`, and check ClickHouse reachability. Restart the aggregator if wedged. Rest: [dex-nonstandard-decimals.md](dex-nonstandard-decimals.md).
+Look for `decimals-guard: ClickHouse decimals resolver unavailable` / `decimals-guard started` / `decimals-guard exited with error`, and check ClickHouse reachability. Restart the aggregator if wedged. Rest: [dex.md#dex-nonstandard-decimals](dex.md#dex-nonstandard-decimals).
 
 ## stellarindex_nonstandard_decimals_correction_failing
 
@@ -511,7 +511,7 @@ curl -s http://localhost:9465/metrics | grep -E 'nonstandard_decimals_cache_refr
 journalctl -u stellarindex-aggregator | grep decimals-guard
 ```
 
-For a lockstep hit read the ERROR line `decimals-guard: nonstandard_decimals_assets row DISAGREES with the lake` for `persisted_decimals` vs `lake_decimals`. Mitigation, hand-seeding and the lockstep `site` meanings: [dex-nonstandard-decimals.md](dex-nonstandard-decimals.md).
+For a lockstep hit read the ERROR line `decimals-guard: nonstandard_decimals_assets row DISAGREES with the lake` for `persisted_decimals` vs `lake_decimals`. Mitigation, hand-seeding and the lockstep `site` meanings: [dex.md#dex-nonstandard-decimals](dex.md#dex-nonstandard-decimals).
 
 ## stellarindex_customer_webhook_fanout_failing
 
@@ -603,5 +603,5 @@ sudo -u postgres psql stellarindex -c 'SELECT source, events_24h FROM protocol_e
 
 ## Related
 
-- [dex-nonstandard-decimals](../runbooks/dex-nonstandard-decimals.md) (`docs/operations/runbooks/dex-nonstandard-decimals.md`): full decimals-guard procedure.
-- [redis-write-blocked-disk-full](redis-write-blocked-disk-full.md): shared with the storage family.
+- [dex-nonstandard-decimals](../runbooks/dex.md#dex-nonstandard-decimals) (`docs/operations/runbooks/dex.md#dex-nonstandard-decimals`): full decimals-guard procedure.
+- [redis-write-blocked-disk-full](cache.md#stellarindex_redis_writes_blocked): shared with the storage family.

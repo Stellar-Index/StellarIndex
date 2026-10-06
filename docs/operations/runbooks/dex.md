@@ -1,11 +1,24 @@
 ---
-title: Runbook — dex-nonstandard-decimals
-last_verified: 2026-07-15
-status: ratified
+title: Runbook — dex
+last_verified: 2026-10-06
+status: living
 severity: P2
 ---
 
-# Runbook — `stellarindex_dex_nonstandard_decimals_detected` / `stellarindex_nonstandard_decimals_correction_failing`
+# Runbook — dex alerts
+
+DEX data-quality alerts. Merged from two former pages (dex-nonstandard-decimals, dex-trade-unit-ratio).
+
+## At a glance
+
+- [`dex-nonstandard-decimals`](#dex-nonstandard-decimals)
+- [`stellarindex_dex_trade_unit_ratio_detected`](#stellarindex_dex_trade_unit_ratio_detected)
+
+## dex-nonstandard-decimals
+
+**Runbook — `stellarindex_dex_nonstandard_decimals_detected` / `stellarindex_nonstandard_decimals_correction_failing`**
+
+_Source page `dex.md#dex-nonstandard-decimals`: status ratified, severity P2, last verified 2026-07-15._
 
 This runbook now covers **two** alerts that share the same root cause
 area but have very different action profiles:
@@ -28,7 +41,7 @@ area but have very different action profiles:
   non-7-decimal tokens don't get corrected and serve the raw, skewed
   ratio the detection alert above exists to warn about.
 
-## Why this exists
+### Why this exists
 
 The served price is `Σ(quote_amount) / Σ(base_amount)` computed on **raw
 smallest-unit integers** — both in the `prices_*` continuous aggregates
@@ -60,7 +73,7 @@ exactly 100x wrong (`41.32` vs true `~4132`) for 35 trades since
 this runbook now has a real stop-serving lever (2026-07-09) instead of
 only a detector — see "Mitigation" below.
 
-## At a glance
+### At a glance
 
 | Field | Value |
 | ----- | ----- |
@@ -71,7 +84,7 @@ only a detector — see "Mitigation" below.
 | Impact (detection) | A **real, live pair** has a leg with confirmed non-7 `decimals()`. As of 2026-07-10 (second wave), **every serving path is decimals-corrected**: `/v1/vwap`, `/v1/twap`, `/v1/history`, `/v1/ohlc` (BOTH single-bar and `interval=` series modes), `/v1/price` (closed-1m CAGG bucket, batch, and windowed), `/v1/price/tip` (+ SSE), `/v1/chart` (vwap/twap/market-cap price legs), `/v1/markets` / `/v1/pools` / `/v1/pairs` `last_price`, the SEP-40 oracle passthroughs (`/v1/oracle/lastprice`, `/v1/oracle/prices`), and the aggregator's own published VWAP (feeds `/v1/price/stream` + the Redis fallback). Nothing declines anymore — the 422 guard was removed once every path served the corrected value. For any deployment that hasn't run migration 0093 / doesn't wire `NonstandardDecimals`, every path still serves the raw (wrong) ratio with no warning — normalization fails OPEN to 7dp. |
 | Impact (correction failing) | The `nonstandard_decimals_assets` refresh sweep is erroring (`stellarindex_nonstandard_decimals_cache_refresh_failures_total`), a serving path is actively declining (`stellarindex_price_serve_declined_nonstandard_decimals_total`, dormant since the 422 removal but a real signal if it ever increments), or the two decimals resolvers disagreed for an asset (`stellarindex_nonstandard_decimals_lockstep_mismatch_total{site,asset}` — see "Decimals lockstep" below). While the first fires, newly-detected non-7-decimal tokens do NOT get a correction entry, so their pairs revert to the raw, silently-skewed ratio — this is the actual mispricing risk the detection alert warns about. While the lockstep arm fires, `GET /v1/assets/{id}` withholds `market_cap_usd` / `fdv_usd` for the named token (`market_cap_decimals_mismatch: true`) rather than publish a figure off by a power of ten; the aggregator repairs the row on its next 15m tick. |
 
-## Symptoms
+### Symptoms
 
 **`stellarindex_dex_nonstandard_decimals_detected`:**
 
@@ -151,7 +164,7 @@ backfill window (a dormant token trades nowhere the guard enumerates —
 hand-seed the row per "Mitigation" and the refusal clears within one 60s
 cache refresh).
 
-## Quick diagnosis (≤ 5 min)
+### Quick diagnosis (≤ 5 min)
 
 ```sh
 # 1. What decimals does the offending token declare? (the guard already
@@ -173,7 +186,7 @@ psql "$PG" -c "SELECT DISTINCT base_asset, quote_asset, source
 If the token genuinely declares `decimals != 7`, this is a **true positive** —
 the served price for those pairs is wrong. Proceed to mitigation.
 
-## Mitigation (≤ 15 min)
+### Mitigation (≤ 15 min)
 
 **If `stellarindex_nonstandard_decimals_correction_failing` is firing**
 (the action item — start here):
@@ -313,7 +326,7 @@ reading tail later the same day):
       but a non-XLM fallback leg would need the same treatment if ever
       added.
 
-## Root cause analysis
+### Root cause analysis
 
 **Why a read-time scalar multiply is exact, and why it doesn't need to
 touch the CAGGs at all:** every trade contributing to one VWAP/TWAP/OHLC
@@ -375,7 +388,7 @@ For the postmortem, gather: the offending contract id, its declared
 `decimals()`, the list of affected pairs + their 24h volume, and how long the
 skew was live before normalization/suppression.
 
-## Known false-positive patterns
+### Known false-positive patterns
 
 - **None expected.** The guard alarms only on a **confirmed** non-7
   `decimals()` (a successful lake read returning a value != 7). A resolution
@@ -403,72 +416,7 @@ skew was live before normalization/suppression.
   predates migration 0093 / hasn't wired `NonstandardDecimals` serves raw
   indefinitely.
 
-## Related
-
-- Detection: `internal/decimalsguard/guard.go` (the periodic sweep,
-  `Guard.Sweep`, AND the one-time startup self-seed pass, `Guard.Backfill`
-  — both share the same classify+report path), `internal/storage/timescale/soroban_dex_assets.go`
-  (the shared time-bounded enumerator both call with different windows),
-  `internal/storage/clickhouse/token_decimals_reader.go` (the resolver).
-  Backfill's lookback window is config-surfaced:
-  `internal/config.DecimalsGuardConfig.BackfillWindowDays` (`[decimals_guard]`
-  in `configs/example.toml`), default 90 days
-  (`decimalsguard.DefaultBackfillWindow`).
-- Enforcement (historical — the 422 decline, 2026-07-09 → 2026-07-10):
-  `internal/api/v1/nonstandard_decimals_guard.go` was DELETED on
-  2026-07-10 when the last declining paths gained normalization; the
-  cache it consulted remains the live source of truth:
-  `internal/api/v1/nonstandard_decimals_cache.go` (`NonstandardDecimalsCache`),
-  `internal/storage/timescale/nonstandard_decimals_assets.go`
-  (`UpsertNonstandardDecimalsAsset` / `LoadNonstandardDecimalsAssets`),
-  `migrations/0093_create_nonstandard_decimals_assets.up.sql`.
-- Normalization (correcting, 2026-07-10): `internal/aggregate/decimals.go`
-  (`AdjustPrice` / `ResolveDecimals` / `DecimalsLookup` — the shared
-  primitive), `internal/aggregate/orchestrator.go` (`Config.DecimalsLookup`,
-  applied in `refreshPairWindow`), `cmd/stellarindex-aggregator/decimals_cache.go`
-  (the aggregator binary's own mirror of `nonstandard_decimals_assets`),
-  `internal/api/v1/vwap.go` / `twap.go` / `ohlc.go` (single-bar mode) /
-  `history.go` / `price_tip.go` (each applies `AdjustPrice` after computing
-  from raw trades), and — CAGG-reading tail, 2026-07-10 —
-  `internal/api/v1/price.go` (`normalizeRawPriceSnapshot`: closed-1m
-  bucket + batch + last-trade fallback), `ohlc_series.go`
-  (`adjustOHLCSeriesBars`), `chart.go` (`adjustHistoryPointPrices`),
-  `markets.go` / `pairs.go` (`adjustListingPrice` on `last_price`),
-  `oracle_sep40.go` (SEP-40 passthroughs).
-- Lockstep (C1-050, 2026-09-18): `internal/decimalsguard/guard.go`
-  (`Guard.Reconcile`, run after every `Sweep` from `Guard.Run`'s tick;
-  `DecimalsAssetReconciler` seam satisfied by `*timescale.Store`, pinned at
-  compile time), `internal/storage/timescale/nonstandard_decimals_assets.go`
-  (`DeleteNonstandardDecimalsAsset`), `internal/api/v1/assets.go`
-  (`applyTokenDecimals` compares the lake reading with the projection and
-  sets `AssetDetail.MarketCapDecimalsMismatch`), `internal/api/v1/assets_f2.go`
-  (`populateMarketCap` refuses the cap on the flag). Tests:
-  `internal/decimalsguard/lockstep_test.go`
-  (`TestLockstep_EveryPersistedRowMatchesTheLake` is the invariant),
-  `internal/api/v1/assets_decimals_lockstep_test.go` (null-not-a-number on
-  every disagreement shape), `test/integration/nonstandard_decimals_assets_test.go`
-  (reconcile through the real store on Postgres).
-- Metrics: `stellarindex_dex_trade_nonstandard_decimals_total` (detection),
-  `stellarindex_price_serve_declined_nonstandard_decimals_total` (live
-  enforcement impact), `stellarindex_nonstandard_decimals_cache_refresh_failures_total`
-  (cache infra health), `stellarindex_nonstandard_decimals_lockstep_mismatch_total{site,asset}`
-  (resolver disagreement, repaired or refused) — `docs/reference/metrics/README.md`.
-- Alerting: `stellarindex_nonstandard_decimals_correction_failing` (ticket;
-  three arms — refresh failures, serving declines, lockstep mismatches) is
-  defined in `deploy/monitoring/rules/aggregator.yml` and mirrored in
-  `configs/prometheus/rules.r1/aggregator.yml`, unit-tested in
-  `deploy/monitoring/rule-tests/aggregator_test.yml`, and catalogued in
-  `docs/operations/alerts-catalog.md`. The former informational
-  `stellarindex_dex_nonstandard_decimals_detected` rule was removed
-  2026-08-05 (it compared an all-time counter to zero and never resolved);
-  the detection counter itself remains a dashboard signal.
-- The correctness invariant it protects: ADR-0003 (i128/decimals discipline)
-  and the "external-source amount scaling is NOT uniform" note in `AGENTS.md`.
-- Companion serving-sanity guard: `internal/pricingguard` (guards the raw
-  closed-bucket `prices_1m` serving path against a different failure mode —
-  gross single-bucket manipulation, not a per-asset decimals mismatch).
-
-## Changelog
+### Changelog
 
 - 2026-09-24 — the API's first cache load is synchronous and gated by the
   critical `nonstandard_decimals` readiness check; the restart window in
@@ -561,3 +509,226 @@ skew was live before normalization/suppression.
   once the durable normalization ships and the row is removed.
 - 2026-07-07 — initial draft alongside the decimals-guard (decoder-correctness
   audit Finding 2).
+
+## stellarindex_dex_trade_unit_ratio_detected
+
+_Source page `dex.md#stellarindex_dex_trade_unit_ratio_detected`: status ratified, severity P2, last verified 2026-07-09._
+
+### Why this exists
+
+On 2026-07-07 every Phoenix DEX trade — 237,000 rows — was found with
+`base_amount == quote_amount`: a decoder field-mapping bug had collapsed
+every trade's implied price to an exact 1:1 ratio. It went unnoticed for
+months because ADR-0033 completeness checks verify **presence** (a row
+landed for every event) not **plausibility** (does the row's number make
+sense). A 100%-complete decoder can still be economically wrong.
+
+`stellarindex_dex_trade_unit_ratio_total{source}` is the cheap sentinel
+that closes that gap: it counts every landed, on-chain trade whose
+`base_amount` exactly equals its `quote_amount` (both nonzero). It's
+emitted from `internal/storage/timescale`'s `InsertTrade` +
+`BatchInsertTrades` — the one seam every trade write funnels through
+exactly once, regardless of whether it arrived via the dispatcher's live
+batch path, the projector's per-event sink, or a `stellarindex-ops
+ch-rebuild` / backfill re-derive. This alert fires when one source
+produces these as a **majority of its flow** — the decode-bug
+fingerprint makes EVERY trade 1:1. Genuine 1:1 trades are common and
+can arrive in bursts (yUSDC/USDC and yETH/ETH wrapper redemptions,
+EUR-stable crosses like EURC/EURMTL — a busy wrapper morning on sdex
+tripped the original absolute-count threshold on 2026-07-31 at ~2% of
+flow), so the alert requires BOTH >25 unit-ratio trades in 30m AND
+>50% of the source's total inserts in the same window.
+
+### At a glance
+
+| Field | Value |
+| ----- | ----- |
+| Alert | `stellarindex_dex_trade_unit_ratio_detected` |
+| Severity | P2 (ticket, not page — data-quality signal, not an outage) |
+| Detected by | Prometheus rule in `deploy/monitoring/rules/ingestion.yml` (and `configs/prometheus/rules.r1/ingestion.yml`) |
+| Typical MTTR | Minutes to confirm + suppress; the decoder fix itself is a code change + redeploy + historical re-derive |
+| Impact | Every price derived from the affected source's trades is wrong — served `/v1/price`, `/v1/vwap`, `/v1/history`, `/v1/ohlc` for pairs involving that source are silently skewed toward 1:1. |
+
+### Symptoms
+
+- The alert names a `source` (the on-chain DEX connector — soroswap /
+  aquarius / phoenix / comet / sdex).
+- `sum by (source) (increase(stellarindex_dex_trade_unit_ratio_total[30m]))`
+  is above 25 AND above 50% of
+  `sum by (source) (increase(stellarindex_trade_inserts_total[30m]))`
+  for that source.
+- Prices for pairs traded predominantly on that source look "too close to
+  1" relative to other sources or reference prices (cross-check
+  `divergence.md`).
+
+### Quick diagnosis (≤ 5 min)
+
+```sh
+# 1. Check the source's recent trades ratio distribution — is this
+#    systemic (every trade 1:1) or a handful of genuine equal-value
+#    fills?
+psql "$PG" -c \
+  "SELECT base_asset, quote_asset, base_amount, quote_amount, ts
+     FROM trades
+    WHERE source = '<source>'
+      AND ts > now() - interval '30 minutes'
+    ORDER BY ts DESC LIMIT 50;"
+
+# 2. Quantify: what fraction of the source's recent on-chain trades are
+#    unit-ratio?
+psql "$PG" -c \
+  "SELECT count(*) FILTER (WHERE base_amount = quote_amount) AS unit_ratio,
+          count(*) AS total
+     FROM trades
+    WHERE source = '<source>' AND ledger <> 0
+      AND ts > now() - interval '1 hour';"
+
+# 3. If step 2 shows this is systemic (most/all trades unit-ratio),
+#    check the decoder's amount field mapping against the contract's
+#    ACTUAL event definition — the 2026-07-07 root cause was exactly
+#    this class of bug (a field-mapping swap/collapse in decode.go).
+#    Soroban contracts upgrade in place (AGENTS.md) — verify against
+#    the currently-deployed WASM, not stale docs.
+grep -n "BaseAmount\|QuoteAmount" internal/sources/<source>/decode.go
+```
+
+If step 2 shows the source's recent trades are overwhelmingly
+unit-ratio (not a handful), this is a **true positive** — proceed to
+mitigation. A low, steady background rate on a source with genuinely
+frequent equal-value fills is the known false-positive pattern below.
+
+### Mitigation (≤ 15 min)
+
+- [ ] Step 1 — confirm systemic vs occasional via the diagnosis above.
+- [ ] Step 2 — if systemic: compare `decode.go`'s field mapping against
+      the contract's actual event schema and fix it.
+- [ ] Step 3 — if the mispricing is live and customer-facing while the
+      fix is prepared, suppress the source from serving (same
+      suppression path as `dex.md#dex-nonstandard-decimals`: pull it from
+      `[aggregate].pairs` / the serving denylist so a declined price
+      ships instead of a wrong one).
+- [ ] Step 4 — after the decoder fix ships, purge the corrupted rows for
+      the affected range and re-derive the source's history from the
+      ClickHouse lake (ADR-0034). Non-projected sources use `ch-rebuild`
+      over the purged range — `stellarindex-ops ch-rebuild -config
+      /etc/stellarindex.toml -from <ledger> -to <ledger> -sources sdex -sdex
+      -write` for SDEX, or `-sources <name> -contract-calls` for a
+      ContractCall source. Always pass `-sources`: without it the run
+      re-derives every event-based source over the range. Projected sources use `stellarindex-ops
+      projector-replay -config /etc/stellarindex.toml -source <name> -from
+      <ledger> -write`. Which side a source is on:
+      [the replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule). Don't merge fixed and corrupted rows for the same range.
+- [ ] Verification:
+      `increase(stellarindex_dex_trade_unit_ratio_total{source="<source>"}[30m])`
+      drops back under the 25-count / 50%-of-flow thresholds and
+      stays there.
+
+### Root cause analysis
+
+For the postmortem, gather: the affected source + how long the bug was
+live, the exact decoder diff that introduced it, the number of
+corrupted rows (`SELECT count(*) FROM trades WHERE source = '<source>'
+AND base_amount = quote_amount AND ts BETWEEN <window>`), and whether
+any downstream aggregate (VWAP, continuous aggregates) needs
+recomputation after the re-derive.
+
+### Known false-positive patterns
+
+- **Genuine equal-value cross-asset fills.** A source that legitimately
+  trades near-1:1 pairs (e.g. two USD-pegged stablecoins) can produce a
+  real `base_amount == quote_amount` trade occasionally. The
+  50%-of-flow fraction is sized to absorb this; a source crossing
+  it repeatedly across *multiple, unrelated* pairs — not one recurring
+  stablecoin pair — is the real signal.
+- **Dust / extreme-edge amounts** rounding to equal integers by
+  coincidence — rare, but check trade size before treating a single hit
+  as systemic.
+
+### Changelog
+
+- 2026-07-09 — initial draft alongside the unit-ratio sentinel.
+  Founding incident: the 2026-07-07 Phoenix decoder field-mapping bug
+  (237k trades collapsed to an exact 1:1 price for months).
+
+## Related
+
+**dex-nonstandard-decimals**
+
+- Detection: `internal/decimalsguard/guard.go` (the periodic sweep,
+  `Guard.Sweep`, AND the one-time startup self-seed pass, `Guard.Backfill`
+  — both share the same classify+report path), `internal/storage/timescale/soroban_dex_assets.go`
+  (the shared time-bounded enumerator both call with different windows),
+  `internal/storage/clickhouse/token_decimals_reader.go` (the resolver).
+  Backfill's lookback window is config-surfaced:
+  `internal/config.DecimalsGuardConfig.BackfillWindowDays` (`[decimals_guard]`
+  in `configs/example.toml`), default 90 days
+  (`decimalsguard.DefaultBackfillWindow`).
+- Enforcement (historical — the 422 decline, 2026-07-09 → 2026-07-10):
+  `internal/api/v1/nonstandard_decimals_guard.go` was DELETED on
+  2026-07-10 when the last declining paths gained normalization; the
+  cache it consulted remains the live source of truth:
+  `internal/api/v1/nonstandard_decimals_cache.go` (`NonstandardDecimalsCache`),
+  `internal/storage/timescale/nonstandard_decimals_assets.go`
+  (`UpsertNonstandardDecimalsAsset` / `LoadNonstandardDecimalsAssets`),
+  `migrations/0093_create_nonstandard_decimals_assets.up.sql`.
+- Normalization (correcting, 2026-07-10): `internal/aggregate/decimals.go`
+  (`AdjustPrice` / `ResolveDecimals` / `DecimalsLookup` — the shared
+  primitive), `internal/aggregate/orchestrator.go` (`Config.DecimalsLookup`,
+  applied in `refreshPairWindow`), `cmd/stellarindex-aggregator/decimals_cache.go`
+  (the aggregator binary's own mirror of `nonstandard_decimals_assets`),
+  `internal/api/v1/vwap.go` / `twap.go` / `ohlc.go` (single-bar mode) /
+  `history.go` / `price_tip.go` (each applies `AdjustPrice` after computing
+  from raw trades), and — CAGG-reading tail, 2026-07-10 —
+  `internal/api/v1/price.go` (`normalizeRawPriceSnapshot`: closed-1m
+  bucket + batch + last-trade fallback), `ohlc_series.go`
+  (`adjustOHLCSeriesBars`), `chart.go` (`adjustHistoryPointPrices`),
+  `markets.go` / `pairs.go` (`adjustListingPrice` on `last_price`),
+  `oracle_sep40.go` (SEP-40 passthroughs).
+- Lockstep (C1-050, 2026-09-18): `internal/decimalsguard/guard.go`
+  (`Guard.Reconcile`, run after every `Sweep` from `Guard.Run`'s tick;
+  `DecimalsAssetReconciler` seam satisfied by `*timescale.Store`, pinned at
+  compile time), `internal/storage/timescale/nonstandard_decimals_assets.go`
+  (`DeleteNonstandardDecimalsAsset`), `internal/api/v1/assets.go`
+  (`applyTokenDecimals` compares the lake reading with the projection and
+  sets `AssetDetail.MarketCapDecimalsMismatch`), `internal/api/v1/assets_f2.go`
+  (`populateMarketCap` refuses the cap on the flag). Tests:
+  `internal/decimalsguard/lockstep_test.go`
+  (`TestLockstep_EveryPersistedRowMatchesTheLake` is the invariant),
+  `internal/api/v1/assets_decimals_lockstep_test.go` (null-not-a-number on
+  every disagreement shape), `test/integration/nonstandard_decimals_assets_test.go`
+  (reconcile through the real store on Postgres).
+- Metrics: `stellarindex_dex_trade_nonstandard_decimals_total` (detection),
+  `stellarindex_price_serve_declined_nonstandard_decimals_total` (live
+  enforcement impact), `stellarindex_nonstandard_decimals_cache_refresh_failures_total`
+  (cache infra health), `stellarindex_nonstandard_decimals_lockstep_mismatch_total{site,asset}`
+  (resolver disagreement, repaired or refused) — `docs/reference/metrics/README.md`.
+- Alerting: `stellarindex_nonstandard_decimals_correction_failing` (ticket;
+  three arms — refresh failures, serving declines, lockstep mismatches) is
+  defined in `deploy/monitoring/rules/aggregator.yml` and mirrored in
+  `configs/prometheus/rules.r1/aggregator.yml`, unit-tested in
+  `deploy/monitoring/rule-tests/aggregator_test.yml`, and catalogued in
+  `docs/operations/alerts-catalog.md`. The former informational
+  `stellarindex_dex_nonstandard_decimals_detected` rule was removed
+  2026-08-05 (it compared an all-time counter to zero and never resolved);
+  the detection counter itself remains a dashboard signal.
+- The correctness invariant it protects: ADR-0003 (i128/decimals discipline)
+  and the "external-source amount scaling is NOT uniform" note in `AGENTS.md`.
+- Companion serving-sanity guard: `internal/pricingguard` (guards the raw
+  closed-bucket `prices_1m` serving path against a different failure mode —
+  gross single-bucket manipulation, not a per-asset decimals mismatch).
+
+**stellarindex_dex_trade_unit_ratio_detected**
+
+- Implementation: `internal/storage/timescale/trades.go`
+  (`isDexUnitRatioTrade`, `InsertTrade`, `BatchInsertTrades`).
+- Metric: `stellarindex_dex_trade_unit_ratio_total` —
+  `docs/reference/metrics/README.md`.
+- Sibling silent-mispricing detector: `dex.md#dex-nonstandard-decimals`
+  (decimals-assumption landmine — same "presence != plausibility" class
+  of bug).
+- `divergence.md` — the downstream symptom this can cause on a
+  liquid pair.
+- ADR-0033 (completeness verification) — what this alert complements:
+  completeness proves row presence, not economic correctness.
+- AGENTS.md "Soroban DeFi contracts upgrade in place" — the schema-drift
+  trap that most often produces this class of decoder bug.
