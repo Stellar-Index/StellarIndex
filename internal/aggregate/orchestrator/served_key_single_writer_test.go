@@ -53,7 +53,7 @@ type streamEvent struct {
 type recordingStream struct{ events []streamEvent }
 
 func (s *recordingStream) PublishClosedBucket(
-	_ context.Context, pair canonical.Pair, _ time.Duration, value string, observedAt time.Time,
+	_ context.Context, pair canonical.Pair, _ time.Duration, value string, observedAt time.Time, _ *cachekeys.WindowCoverage,
 ) error {
 	s.events = append(s.events, streamEvent{pair.String(), value, observedAt})
 	return nil
@@ -90,6 +90,12 @@ func TestTriangulationTarget_ServedKeyNeverHoldsTheDirectPrintUnderTheComposite(
 	if err := mr.Set(cachekeys.VWAP(leg2.Base, leg2.Quote, window).String(), "0.900000000000"); err != nil {
 		t.Fatal(err)
 	}
+	// A direct print's coverage left under the composite would describe
+	// a value that is not served.
+	covKey := cachekeys.VWAPCoverage(target.Base, target.Quote, window).String()
+	if err := mr.Set(covKey, cachekeys.FormatVWAPCoverage(cachekeys.WindowCoverage{})); err != nil {
+		t.Fatal(err)
+	}
 
 	direct := formatRatFixed(big.NewRat(2, 1), 12)
 	composite := formatRatFixed(big.NewRat(9, 10), 12)
@@ -100,6 +106,9 @@ func TestTriangulationTarget_ServedKeyNeverHoldsTheDirectPrintUnderTheComposite(
 		}
 		if got, _ := mr.Get(targetKey); got != composite {
 			t.Fatalf("tick %d: served %q, want the composite %q", i+1, got, composite)
+		}
+		if mr.Exists(covKey) {
+			t.Errorf("tick %d: coverage key survives beside the composite; want it deleted (unknown)", i+1)
 		}
 	}
 	for _, v := range cache.values {

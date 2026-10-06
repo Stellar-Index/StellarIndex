@@ -39,7 +39,7 @@ type ClosedBucketEvent struct {
 
 	// ObservedAt is the end of the closed 1-minute bucket the
 	// aggregator computed this VWAP at; the VWAP covers
-	// [ObservedAt-WindowSeconds, ObservedAt). RFC 3339 UTC.
+	// [ObservedAt-WindowSeconds, ObservedAt), unless Truncated. RFC 3339 UTC.
 	// With the topic it is the event's identity: the subscriber
 	// forwards one event per (topic, ObservedAt) and drops a repeat or
 	// an older bucket.
@@ -49,4 +49,11 @@ type ClosedBucketEvent struct {
 	// per [Publisher]). Never forwarded to clients; the subscriber uses
 	// it to report two aggregators publishing the same bucket.
 	ProducerID string `json:"producer_id,omitempty"`
+
+	// Truncated is the value's window coverage: true when its trade read
+	// hit the row cap, so the value covers only trades after CoveredFrom
+	// completely, not the whole window. Both absent when coverage is
+	// unknown (a triangulated composite).
+	Truncated   *bool      `json:"truncated,omitempty"`
+	CoveredFrom *time.Time `json:"covered_from,omitempty"`
 }

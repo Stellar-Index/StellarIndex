@@ -239,6 +239,68 @@ func ParseVWAPObservedAt(raw string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
+// ─── VWAP Coverage — did the value read its whole window? ──────────
+//
+// Wire shape: `vwap:<base>:<quote>:<window-seconds>:coverage`
+// Value: [FormatVWAPCoverage] — "complete", or the RFC 3339 covered_from
+// of a window whose trade read hit the per-query row cap.
+// TTL: matches the VWAP value key, including the freeze keep-alive.
+//
+// Writer: the direct per-pair refresh writes it in the value's
+// MULTI/EXEC; the triangulation pass deletes it there, because a
+// composite does not track its legs' coverage.
+//
+// Reader: the API surfaces it as `truncated` / `covered_from`. An absent
+// or unreadable key is "unknown", never "complete".
+
+// VWAPCoverageKey is the typed Redis key for the
+// `vwap:<base>:<quote>:<window>:coverage` family.
+type VWAPCoverageKey string
+
+// String returns the wire-format key.
+func (k VWAPCoverageKey) String() string { return string(k) }
+
+// VWAPCoverage returns the cache key for the window coverage of the
+// `vwap:<base>:<quote>:<window>` value.
+func VWAPCoverage(base, quote canonical.Asset, window time.Duration) VWAPCoverageKey {
+	return VWAPCoverageKey(fmt.Sprintf("vwap:%s:%s:%d:coverage",
+		base.String(), quote.String(), int(window.Seconds())))
+}
+
+// WindowCoverage is how much of its window a published VWAP was
+// computed over.
+type WindowCoverage struct {
+	// Truncated is true when a trade read hit the row cap, so trades
+	// before CoveredFrom may be missing from the value.
+	Truncated bool
+	// CoveredFrom is the newest of the capped reads' oldest trade
+	// timestamps: every trade after it is in the value. Zero unless
+	// Truncated.
+	CoveredFrom time.Time
+}
+
+const vwapCoverageComplete = "complete"
+
+// FormatVWAPCoverage encodes c as the [VWAPCoverage] cache value.
+func FormatVWAPCoverage(c WindowCoverage) string {
+	if !c.Truncated {
+		return vwapCoverageComplete
+	}
+	return c.CoveredFrom.UTC().Format(time.RFC3339Nano)
+}
+
+// ParseVWAPCoverage decodes a [VWAPCoverage] cache value.
+func ParseVWAPCoverage(raw string) (WindowCoverage, error) {
+	if raw == vwapCoverageComplete {
+		return WindowCoverage{}, nil
+	}
+	t, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return WindowCoverage{}, fmt.Errorf("cachekeys: decode vwap coverage: %w", err)
+	}
+	return WindowCoverage{Truncated: true, CoveredFrom: t.UTC()}, nil
+}
+
 // ─── VWAP Composite Meta — router quality flags for a composite ────
 //
 // Wire shape: `vwap:<base>:<quote>:<window-seconds>:composite_meta`

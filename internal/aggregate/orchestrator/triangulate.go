@@ -452,11 +452,15 @@ func (o *Orchestrator) publishComposite(
 	// or stamp, and a failed write leaves the previous state whole.
 	provKey := cachekeys.VWAPProvenance(chain.Target.Base, chain.Target.Quote, window)
 	atKey := cachekeys.VWAPObservedAt(chain.Target.Base, chain.Target.Quote, window)
+	covKey := cachekeys.VWAPCoverage(chain.Target.Base, chain.Target.Quote, window)
 	bucketEnd := o.tickClock().Truncate(closedBucket)
 	if _, err := o.cache.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.Set(ctx, metaKey.String(), metaBody, ttl)
 		p.Set(ctx, provKey.String(), cachekeys.VWAPProvenanceTriangulated, ttl)
 		p.Set(ctx, atKey.String(), cachekeys.FormatVWAPObservedAt(bucketEnd), ttl)
+		// A composite does not track its legs' coverage: unknown, never a
+		// direct print's coverage left beneath it.
+		p.Del(ctx, covKey.String())
 		p.Set(ctx, key.String(), value, ttl)
 		return nil
 	}); err != nil {
@@ -467,7 +471,7 @@ func (o *Orchestrator) publishComposite(
 
 	// The stream carries the value /v1/price serves at this window, on the
 	// same once-per-closed-bucket contract as the direct path.
-	o.streamBucketOnce(ctx, chain.Target, window, value, bucketEnd)
+	o.streamBucketOnce(ctx, chain.Target, window, value, bucketEnd, nil)
 
 	// The served VWAP key was just written, so this pair published this
 	// tick: stamp the pair-level write clock the staleness gauge reads

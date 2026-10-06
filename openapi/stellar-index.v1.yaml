@@ -2091,7 +2091,11 @@ paths:
           description: Opaque ID for resuming a previously-broken stream.
       responses:
         "200":
-          description: SSE stream of price_update (and price_frozen / price_withheld) events.
+          description: >-
+            SSE stream of price_update (and price_frozen / price_withheld)
+            events. A `price_update` carries `truncated` (and
+            `covered_from` when true) under the same contract as the
+            Price schema; both are absent when coverage is unknown.
           content:
             text/event-stream:
               schema: { type: string }
@@ -20240,6 +20244,27 @@ components:
             timestamps sit close again, and `price_type: peg` is the
             durable signal that nothing was observed.
         window_seconds:    { type: integer, description: "Window size for vwap/twap; omitted for last_trade." }
+        truncated:
+          type: boolean
+          description: >-
+            Present only when the value was served from the aggregator's
+            rolling-window VWAP (a frozen pair's held value, the cache
+            fallback, and `price_update` events on `/v1/price/stream`) and
+            its coverage is known. Same meaning as `/v1/vwap`'s
+            `truncated`: true when the window's trade read hit the
+            server's row cap, so the oldest trades are missing and the
+            value is NOT the full-window VWAP; see `covered_from`. False
+            means the whole window was read. Absent means unknown (a
+            triangulated composite does not track its legs' coverage) or
+            not a rolling-window value.
+        covered_from:
+          type: string
+          format: date-time
+          description: >-
+            Present only with `truncated: true`. Every trade after this
+            instant is in the value; trades at or before it may be
+            missing. With stablecoin-proxy legs it is the newest of the
+            capped legs' cut-off points.
         fx_rate:
           type: string
           description: >-

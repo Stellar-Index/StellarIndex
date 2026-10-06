@@ -546,7 +546,8 @@ func (o *Orchestrator) engageFreeze(
 // value and answers 503 for the rest of the hold. SetNX: a surviving value or
 // stamp is never overwritten. The stamp is the held bucket's own end, never
 // the reseed time, so the served age stays honest; with no known end the
-// reseed is skipped.
+// reseed is skipped. The held value's coverage is reseeded beside it when
+// known; otherwise it reads as unknown.
 func (o *Orchestrator) reseedFrozenVWAP(ctx context.Context, pair canonical.Pair, window time.Duration, stateKey string, ttl time.Duration) {
 	// Read the last PUBLISHED value, not the caller's comparator: mid-freeze
 	// that is the previous refused bucket and must never be served as held.
@@ -560,8 +561,13 @@ func (o *Orchestrator) reseedFrozenVWAP(ctx context.Context, pair canonical.Pair
 	}
 	key := cachekeys.VWAP(pair.Base, pair.Quote, window).String()
 	atKey := cachekeys.VWAPObservedAt(pair.Base, pair.Quote, window).String()
+	coverage, coverageKnown := o.prevVWAPCoverage[stateKey]
 	if _, err := o.cache.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.SetNX(ctx, atKey, cachekeys.FormatVWAPObservedAt(heldEnd), ttl)
+		if coverageKnown {
+			p.SetNX(ctx, cachekeys.VWAPCoverage(pair.Base, pair.Quote, window).String(),
+				cachekeys.FormatVWAPCoverage(coverage), ttl)
+		}
 		p.SetNX(ctx, key, formatRatFixed(held, 12), ttl)
 		return nil
 	}); err != nil {

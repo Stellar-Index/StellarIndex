@@ -1167,16 +1167,18 @@ func TestKeepFrozenVWAPAlive_ExtendsCompositeQualifiers(t *testing.T) {
 	atKey := cachekeys.VWAPObservedAt(pair.Base, pair.Quote, window).String()
 	provKey := cachekeys.VWAPProvenance(pair.Base, pair.Quote, window).String()
 	metaKey := cachekeys.VWAPCompositeMeta(pair.Base, pair.Quote, window).String()
+	covKey := cachekeys.VWAPCoverage(pair.Base, pair.Quote, window).String()
 	const meta = `{"path_count":2,"diverged":true}`
 	cache.Set(ctx, valKey, "1.000000000000", ttl)
 	cache.Set(ctx, atKey, cachekeys.FormatVWAPObservedAt(time.Now().Truncate(time.Minute)), ttl)
 	cache.Set(ctx, provKey, cachekeys.VWAPProvenanceTriangulated, ttl)
 	cache.Set(ctx, metaKey, meta, ttl)
+	cache.Set(ctx, covKey, cachekeys.FormatVWAPCoverage(cachekeys.WindowCoverage{}), ttl)
 
 	hold := 35 * time.Minute
 	o.keepFrozenVWAPAlive(ctx, pair, window, hold)
 
-	for _, k := range []string{valKey, atKey, provKey, metaKey} {
+	for _, k := range []string{valKey, atKey, provKey, metaKey, covKey} {
 		if got := mr.TTL(k); got != hold {
 			t.Errorf("TTL(%s) = %v after keepalive; want the hold %v", k, got, hold)
 		}
@@ -2129,6 +2131,7 @@ type recordedPublish struct {
 	window     time.Duration
 	value      string
 	observedAt time.Time
+	coverage   *cachekeys.WindowCoverage
 }
 
 func (r *recordingStreamPublisher) PublishClosedBucket(
@@ -2137,9 +2140,10 @@ func (r *recordingStreamPublisher) PublishClosedBucket(
 	window time.Duration,
 	valueDecimal string,
 	observedAt time.Time,
+	coverage *cachekeys.WindowCoverage,
 ) error {
 	r.calls = append(r.calls, recordedPublish{
-		pair: pair, window: window, value: valueDecimal, observedAt: observedAt,
+		pair: pair, window: window, value: valueDecimal, observedAt: observedAt, coverage: coverage,
 	})
 	return r.err
 }
