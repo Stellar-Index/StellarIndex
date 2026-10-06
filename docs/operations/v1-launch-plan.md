@@ -22,7 +22,7 @@ severity: P1
 > gitignored `production-remediation-ledger-2026-07-23.md` (finding-status
 > authority). Runbooks under `runbooks/` remain the execution recipes.
 
-## THE PLAN — refreshed 2026-09-03 (this section supersedes every section below it)
+## THE PLAN — refreshed 2026-09-03 (supersedes every section below it, except §0 where they disagree)
 
 > **RE-VERIFIED 2026-09-08 against live r1 and repo HEAD.** Rows corrected in that pass: **1.7**
 > (test nets were NOT behind — all three hosts level at v0.63.0/schema 155) and the retention claims
@@ -3870,84 +3870,34 @@ capacity/HA posture, paging wired to a human, and the v1.0 wire shape frozen
 (ADR-0042 — **Accepted and implemented**; the `kind` discriminator is live in
 the spec, so the wire-freeze prerequisite is met).
 
-## 0. Verified current state — REFRESHED 2026-07-29 ~07:50Z (overnight autonomous run)
+## 0. Verified current state — REFRESHED 2026-10-06 against the inventory
 
-> **⭐ The overnight loop (2026-07-28 19:00Z → 2026-07-29 07:50Z) cleared
-> the critical path.** Current verified state:
->
-> | Gate | State |
-> |---|---|
-> | **D2+D3 (C2-4c)** | ✅ DONE end-to-end: reproject (29.5h) + bounded verify (66,539 keys, 0 ledger-diff) + cutover executed; **50-account reconcile vs Horizon: 0 mismatches** (was 38%). `_old` table retained (finalize deferred — it is the 40× investigation baseline) |
-> | **v0.21.2** | ✅ cut + deployed + verified (smoke 13/13); `ops-ch` refreshed |
-> | **Supply** | ✅ **7/8 vs Horizon** (PHO +157%→−0.0002%); 39 freeze alerts cleared; approved phantom-row DELETE executed (54,863 rows, provenance-verified); USDC +1.12% dispositioned (re-seed parked on the diagnosed CH blocker below) |
-> | **Completeness** | ✅ **16/17 sources `complete=t`** (sep41×2 restored after the 14-day hole: projector at tip + full-substrate runs green). Sole exception: **redstone** — 866 undecodable events, decoder fix rides next release |
-> | **Explorer routes** | 🔵 21×5xx → **10×5xx** (serving flip landed); residual = slow-read timeout class, see 40× investigation |
-> | **⚠️ OPEN INVESTIGATION (top §2.4 item)** | The post-D3 `ledger_entries_current` costs **~40× more memory to read** than `_old` (measured: same probe 122 MiB vs 4.76 GiB; same ORDER BY, both merged). Blocks the SAC re-seed (classifier OOMs the client-pinned 10 GiB openRead cap) and is prime suspect for the 10 route timeouts |
-> | **Alerts** | Residual: anomaly-freeze family (known [DECIDE]), dex informational ×6, cross-check ×3 (partial_wrap, dispositioned — Horizon-verified correct), compression pair (post-D4 item), metrics_registry_absent (informational), completeness (clears at next snapshot for sep41; redstone until decoder fix) |
-> | **Loop infra** | caffeinate held (workstation sleep killed timers 4×); cron guard hourly; unattended-upgrades bounced PG 04:24Z (libc — routine, non-incident) |
->
-> **the maintainer's three items stand** (top of OPERATOR INBOX): wire paging,
-> book the security review, — and the SAC delete is now DONE/superseded.
-> **Next-release queue (code, no more tags this session):** redstone
-> decoder fix, TTL-classifier batch+settings fix, 40× table regression
-> root-cause, /accounts snapshot reader.
+Each row points at live items in the private inventory
+(`inventory/items.jsonl`, snapshot `323689bf`, 2026-10-06 01:49 +01:00).
+The item is the authority; this table is an index. A row goes when its last
+item closes. The 2026-07-29 snapshot this replaces cited no items; it is in
+git history.
 
-<details><summary>(superseded 2026-07-28 §0 — kept for history)</summary>
+§0 (dated 2026-10-06) overrides THE PLAN (2026-09-03) and every older row where they disagree.
 
-> **⚠️ (historical) four blockers found 2026-07-27/28:**
->
-> 1. **The explorer is DOWN in production.** 21 of 94 GET routes return
->    503 (all of `/accounts`, `/contracts`, `/ledgers`, `/tx`,
->    `/operations`, `/liquidity-pools`, plus `/assets/{id}/supply` and
->    `/holders`). Cause is one unflipped flag; the fix is dry-run
->    verified and waits only for an ATTENDED apply (§2.4). User-visible
->    on stellarindex.io today.
-> 2. **~38% of sampled accounts serve a STALE pre-transaction balance**
->    (C2-4c reproduced live). Needs the ordinal re-derive BEFORE D3 —
->    D3 alone cannot fix it (§2.3.1, §2.4).
-> 3. **Claimable balances were never seeded** → 30,748 assets
->    understated (AQUA −13.2%). Seed built, dry-run clean, **live seed
->    running now** (§2.3.3).
-> 4. **We never ingest Soroban state eviction**, so archived entries
->    read as live — PHO supply +156.9% (§2.4). [DECIDE] interim TTL
->    filter vs real eviction ingest.
->    **Partly closed 2026-09-19 (Q119):** the live dispatcher now walks
->    the evicted-keys list and observes each as a removal; the lake
->    walker does not, so this line still holds for
->    `ledger_entries_current` and all history (§2.4). The SAC seed is no
->    longer exposed — it drops positively-archived keys through
->    `ClassifyTTLLiveness` (v0.21.4).
->
-> Two tools were added to stop this class recurring:
-> `scripts/ops/route-sweep.sh` (every OpenAPI GET) and
-> `scripts/ops/reconcile-supply-vs-horizon.sh` (all classic assets vs
-> Horizon's FULL component sum). Both exit non-zero on failure and
-> belong in the post-deploy battery — the existing 13-GET smoke passed
-> throughout every one of the failures above.
-
-| Area | State |
-|---|---|
-| **Explorer** | 🔴 **21/94 GET routes 503** — whole tier dark. One-line fix dry-run verified, ATTENDED (§2.4) |
-| **Balances** | 🔴 **C2-4c live**: ~38% of sampled accounts serve a before-image. Ordinal re-derive → D3 → re-verify (§2.3.1) |
-| **Claimable** | ✅ SEED DONE — 3,694,623 rows / 30,753 assets; AQUA DB now 41,783 balances = 13.90B (Horizon 13.74B). Data gap CLOSED |
-| **Supply refresh** | 🔴 **CS-102 — 37 of 48 watched assets serve FROZEN supply. ROOT-CAUSED + FIXED in code (`e21fa3d0`), pending the v0.21.2 deploy.** The freshness anchor measured per-ASSET last activity instead of the OBSERVER watermark, so quiet assets read as stalled and every snapshot was refused. Un-latented by the claimable seed. NO operator decision needed (the earlier dormancy-horizon ask is retracted). My earlier "0% success / 966 dormancy rejections" line was two measurement errors: cumulative counters read as a rate, and `dormant` (an ACCEPTED outcome) counted as a rejection |
-| **Eviction** | 🟡 **LIVE PATH FIXED 2026-09-19 (Q119)** — the dispatcher walks the LedgerCloseMeta evicted-keys list and observes each as a removal, so an archived SAC balance leaves the served supply from the next deploy (§2.4). The LAKE walker still has no eviction phase, so `ledger_entries_current` keeps archived contract_data as its current version and history (PHO +157%) is unchanged until that lands + a re-derive; the seed and pool-state readers already filter it at read time (`ClassifyTTLLiveness`, v0.21.4). Row was: 🔴 Not ingested at all [DECIDE] |
-| Deployed | **v0.21.1** (cut + deployed 2026-07-27, all 6 binaries, edge smoke 13/13, `-ch` copy done). Main is ahead with **v0.21.2 material NOT yet deployed**: sep41 projector wiring `ae7a082d`, redstone registry `9bfcf5da`, SAC seed windowing `7bede7e7`, claimable seed `120bf7c3`, **CS-102 supply-freshness `e21fa3d0`** |
-| Lake | Dedup complete; post-dedup completeness re-audit PASSED; CH ingest at tip (lag seconds) |
-| Galexie trim | Done + verified; cold reads OK. **Soak 8× PASS / 0 FAIL — evidence half MET**; now waiting only on the clock (treat as 17:00 **UTC**, see §2.5); snapshot `data/minio@pre-trim-2026-07-26` held (3.2 T) |
-| D-series | D1 ✅, D2 ✅ (all partitions, 2026-07-23), CAGG re-mat ✅ ("ALL CAGG REMAT DONE" 2026-07-26). **D3: no run evidence on r1** — confirm need. **D4 NOT run** |
-| Supply | REFRAMED — the 39 alerts decompose into the sep41 wiring bug (fixed, pending deploy) + **CS-102** (fixed, pending deploy), NOT a stall and NOT a calibration question. Historical note: `account_observations` **frozen at 63,632,946** (lake tip 63,669,421); guard correctly refusing stale snapshots → **39 `supply_refresh_error_dominant` alerts**. Fix = D4 (§2.3). `seed-sep41-genesis` WAS run 2026-07-26 (overriding the 2026-07-07 "do not run" verdict — verify AQUA in §2.6) |
-| Completeness | All 3 ROOT-CAUSED + fixed in code 2026-07-27, pending the v0.21.2 deploy. sep41 ×2 = a 14-day ZERO-WRITER wiring hole (rebuilds cut mismatches 249,436→891 and 652, residual = post-rebuild tail only). redstone = upstream relayer added 11 feed_ids on 2026-07-24, NOT a regression; needs replay from 63,624,934 |
-| Alerts | Above, plus `dex_nonstandard_decimals_detected` ×5 (informational — genuine non-7dp aquarius C-tokens, working as designed) + deadmansswitch (by design) |
-| GH secrets | Deploy + Cloudflare + `R1_INVENTORY_B64` ✅. `ANSIBLE_VAULT_PASSWORD` / `ANSIBLE_VAULT_FILE_B64` ✅ set 2026-07-27 (drift now runs) |
-| **Vault password** | ✅ **REBUILT + ROTATED 2026-07-27.** The old password (clobbered 2026-07-25 by a locally-run CI syntax step) was unrecoverable, so the vault was rebuilt from live r1 rendered values (26 keys; secret-template re-render proven byte-identical), encrypted under a NEW operator-held passphrase, pass file locked (`chflags uchg`), CI clobber-path guarded (2a23698e). Fresh creds generated for not-yet-deployed components (patroni ×2, CH serving profile, pgbackrest repo2 cipher, core placeholder); repo1 cipher + webhook keys empty matching live. Old vault kept as `.lost-password-2026-07-27`. GH secrets `ANSIBLE_VAULT_PASSWORD`/`ANSIBLE_VAULT_FILE_B64` set |
-| Config drift | ✅ **GREEN 2026-07-27** (run 7) — apply landed, baseline 3→1, §1 gate CHECKED. History below: ✅ **`ansible-drift` FUNCTIONAL again** (first complete verdict since the rotation, 2026-07-27): `ok=243 changed=69 failed=0`. Three check-mode bugs fixed en route (timer-enables on unitless hosts e5edb17a/10802588; version-probe skip 2309f4d0 — which also proved the galexie drift-guard constants ALREADY agree, closing that "open operator action"). The red verdict is now REAL drift: **69 changed tasks = the pending config apply** (grown from the "33-task" estimate; incl. archivewriter cred fix, captive-core 18-validator quorum — 24 still live, triangulation chains, z=5.0, cold-tier render, postgres conf, ownership flips, timescale-jobs-probe + CH schema-snapshot units). Apply is §2.2 step 3, [ATTENDED] — service restarts incl. galexie (~1–3 min tip pause) + postgres |
-| Deploy gate | `DEPLOY_APPROVAL_RELAXED=true` still set — **re-arm at launch** (§2.7) |
-| Feeds | `COINGECKO_API_KEY` **not set** (feed dead since 2026-06-19, [OP]). `min_usd_volume=10000` since 2026-07-01 (older docs claiming 0 are stale) |
-| Paging | 🔴 **NOT wired** — now TURNKEY via [runbooks/wire-paging.md](runbooks/wire-paging.md) (~20 min, [OP]); a silent-failure trap in the secrets file was fixed 2026-07-27. Baseline `pre-launch-check.sh` = 4 FAILs, 0 is the acceptance test. Original detail: (corrected 2026-07-27 — the env files exist but every value is EMPTY: 5× `HEALTHCHECKS_URL_*`, `HEALTHCHECKS_DEADMANSSWITCH_URL`, `SLACK_WEBHOOK_URL` all blank; only the node-level `HEALTHCHECK_PING_URL` is populated). Alert pages currently route to nobody — the original [OP] item stands: create Healthchecks.io checks + chat webhooks, paste URLs into `/etc/default/stellarindex-healthchecks` + `/etc/default/alertmanager-secrets` (then codify in the vault), rerun `pre-launch-check.sh` |
-| ADRs | 0040–0048 ALL Accepted (incl. **ADR-0042 v1 wire shape** — the old "biggest unsigned gate" is resolved). hashdb wired but `enabled=false` on r1 |
-
-</details>
+| Gate | Items (status) | State |
+|---|---|---|
+| Launch cutover | INV-1201 (blocked), INV-0873 (open), INV-0839 (blocked, Ash) | Cutover waits on Ash's GO, a launch date and CDN provisioning. Announcement copy and the first-24h watch need Ash. Accepted-risk register sign-off deferred by Ash 2026-10-03 |
+| Security review | INV-0871 (blocked, Ash), INV-0696 (blocked) | External review deferred by Ash to after the v1.0 launch. The private report's child findings are still open |
+| Credential rotation | INV-0744, INV-0919 (Ash), INV-1178 (Ash), INV-1479, INV-1516, INV-2091 (all blocked) | One batch after inventory closure (Ash's 2026-09-30 rule). INV-1479 also waits on the verified B2 backup |
+| r1 security defects | INV-0802 (in-progress), INV-1184 (blocked) | ClickHouse `default` user is unauthenticated; the ops users landed in #2380, operator steps remain. pgBackRest repo1 is `cipher-type=none`; the live re-encrypt is pending |
+| Deploy approval gate | INV-0695 (blocked) | `DEPLOY_APPROVAL_RELAXED` is still set; deleting it is an r1 step |
+| Paging + SEV drill | INV-0841 (blocked), INV-2615 (open) | Drill waits on inventory closure and 0 r1 alerts. Healthchecks check `stellarindex-futurenet-indexer` is not up |
+| r1 alerts firing | INV-2548 (open), INV-2675 (open) | `stellarindex_zfs_pool_fill_90pct_within_7d`; `stellarindex_verify_archive_run_stale` |
+| Capacity + backup | INV-2178 (blocked), INV-2524 (open), INV-0986 (blocked) | r1 pool reaches 85% around 2026-11-07 at 0.61 TiB/month. First full CH lake backup to B2 failed after 16 h on a 14 GiB limit. Off-site secrets backup waits on Ash's age/gpg choice |
+| Config drift | INV-1911 (blocked), INV-0798 (blocked) | Scheduled `ansible-drift` is red; needs `redis_password` in the r1 vault |
+| Lake entry ordering | INV-2567 (open), INV-1313 (blocked) | `ledger_entry_changes` rows extracted before `c4ab63e45` carry `intra_ledger_seq=0`; the reproject waits on the Go-walk re-derive |
+| Eviction + restores | INV-2532 (in-progress), INV-2157 (open), INV-2159 (blocked), INV-2533 (open) | Lake writes persistent evictions as removed. Restored entries for ledgers 58,762,517–64,673,495 need re-extract. Lumen conservation residual +119,100,885,352 stroops (11,910 XLM) at ledger 64,767,268 |
+| Explorer performance | INV-0596 (blocked), INV-0675 (in-progress) | Sub-second cold contract pages and the p95/p99 target both wait on a clean-window r1 re-measure |
+| Oracle data | INV-2590 (in-progress) | RedStone Invert feeds store the reciprocal while `price_raw` claims the raw value; Fix merged in #2420; waits on deploy plus the redstone projected-rebuild on r1 |
+| Catalogue pricing | INV-0202 (blocked, critical) | The XLM→USD catalogue anchor is keyed `base='native'` with a dead `fiat:USD` arm; needs a plan and adversarial review |
+| Dashboard auth | INV-0768 (open, high; Ash disclosure decision) | Unauthenticated dashboard sign-in lockout; disclosure and remediation sequencing are Ash's call |
+| SEV comms | INV-0145 (blocked, high, Ash) | Every SEV comms path depends on the live API; needs an out-of-band channel Ash chooses |
 
 ## 1. Go-live gate (all must be true)
 
@@ -4045,7 +3995,7 @@ sep41 zero-writer wiring hole since ~2026-07-13. Remaining chain:
    deploy-gap tail → redstone replay from 63624934 (§2.4).
 
 ### 2.2 Restore the vault password → drift → config apply
-1. ✅ ~~Vault password~~ — rebuilt + rotated 2026-07-27 (see §0).
+1. ✅ ~~Vault password~~ — rebuilt + rotated 2026-07-27 (see git history of §0 before 2026-10-06).
 2. ✅ ~~GH secrets + drift run~~ — drift functional, verdict `changed=69`.
 3. ✅ **Config batch APPLIED 2026-07-27** (~14:00Z, two passes: pass 1
    died on the galexie stale-artifact guard — near-miss documented in
@@ -4767,8 +4717,7 @@ are obsolete — repo has been public since 2026-07-03):
 
 - `min_usd_volume=10000`, ADR-0042 signing, comet gating, deploy/CF secrets,
   k6 cron, branch protection: **DONE** — older docs listing them open are
-  wrong. (Healthchecks/Discord wiring is NOT done — see §0 Paging; the env
-  files exist but all values are empty.)
+  wrong.
 - `seed-sep41-genesis`: the 2026-07-07 "❌ do not run" verdict was
   overridden in practice (run 2026-07-26). The honesty check moves to §2.6.
 - "Deploy pipeline can't authenticate" / "capacity 94%" / "Phase 0 running":
