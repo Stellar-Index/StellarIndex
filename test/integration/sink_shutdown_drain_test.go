@@ -77,7 +77,7 @@ func TestSinkShutdownDrain_PersistsAllInFlight(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		pipeline.PersistEvents(sinkCtx, logger, store, in, pipeline.SinkModeAll)
+		pipeline.PersistEvents(sinkCtx, logger, store, in, pipeline.SinkModeAll, nil)
 	}()
 
 	select {

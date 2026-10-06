@@ -459,7 +459,7 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		// in the indexer, not in `stellarindex-ops backfill`, so this
 		// subcommand keeps writing every event class itself. See
 		// ADR-0032 § "Out of scope for projector".
-		persistLoss = pipeline.PersistEvents(ctx, logger, store, events, pipeline.SinkModeAll)
+		persistLoss = pipeline.PersistEvents(ctx, logger, store, events, pipeline.SinkModeAll, nil)
 	}()
 
 	// Ctx-cancel safety net for the raw-event sink (ADR-0029).

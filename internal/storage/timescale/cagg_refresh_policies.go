@@ -22,6 +22,8 @@ type CAGGRefreshWindow struct {
 	// every refresh reaches back to the start of the data.
 	Unbounded   bool
 	StartOffset time.Duration
+	// ScheduleInterval is how often the policy runs; zero without one.
+	ScheduleInterval time.Duration
 }
 
 // caggRefreshWindowsSelect lists every continuous aggregate with its
@@ -31,7 +33,8 @@ type CAGGRefreshWindow struct {
 const caggRefreshWindowsSelect = `
 	SELECT c.view_name,
 	       j.job_id IS NOT NULL AS has_policy,
-	       EXTRACT(EPOCH FROM (j.config->>'start_offset')::interval)::bigint AS start_offset_seconds
+	       EXTRACT(EPOCH FROM (j.config->>'start_offset')::interval)::bigint AS start_offset_seconds,
+	       COALESCE(EXTRACT(EPOCH FROM j.schedule_interval)::bigint, 0) AS schedule_interval_seconds
 	  FROM timescaledb_information.continuous_aggregates c
 	  LEFT JOIN timescaledb_information.jobs j
 	    ON j.proc_name = 'policy_refresh_continuous_aggregate'
@@ -50,14 +53,16 @@ func (s *Store) CAGGRefreshWindows(ctx context.Context) ([]CAGGRefreshWindow, er
 	var out []CAGGRefreshWindow
 	for rows.Next() {
 		var (
-			w       CAGGRefreshWindow
-			seconds sql.NullInt64
+			w        CAGGRefreshWindow
+			seconds  sql.NullInt64
+			schedule int64
 		)
-		if err := rows.Scan(&w.View, &w.HasPolicy, &seconds); err != nil {
+		if err := rows.Scan(&w.View, &w.HasPolicy, &seconds, &schedule); err != nil {
 			return nil, fmt.Errorf("timescale: scan cagg refresh policy: %w", err)
 		}
 		w.Unbounded = w.HasPolicy && !seconds.Valid
 		w.StartOffset = time.Duration(seconds.Int64) * time.Second
+		w.ScheduleInterval = time.Duration(schedule) * time.Second
 		out = append(out, w)
 	}
 	if err := rows.Err(); err != nil {

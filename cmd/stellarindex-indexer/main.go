@@ -657,6 +657,14 @@ func run(cfgPath string, dryRun bool) error {
 	case pipeline.SinkModeAll:
 		// Projector disabled — events-goroutine writes every class.
 	}
+	// Both live trade writers below report their writes here, so trades
+	// landed after an outage longer than a policy's lookback still reach
+	// prices_1m and the other trades aggregates.
+	lateTrades := pipeline.NewLateTradeRefresher(store, pipeline.LateTradeRefresherOptions{Logger: logger.With("component", "late-trade-refresh")})
+	go func() {
+		defer worker.Recover(logger, "late-trade-refresh")
+		lateTrades.Run(rootCtx)
+	}()
 	events := make(chan consumer.Event, 256)
 	sinkDone := make(chan struct{})
 	var sinkLoss pipeline.ShutdownLoss // read only after <-sinkDone
@@ -681,7 +689,7 @@ func run(cfgPath string, dryRun bool) error {
 		//     separate path, so systemd's restart re-reads from the last
 		//     cursor.
 		defer close(sinkDone)
-		sinkLoss = pipeline.PersistEvents(rootCtx, logger, store, events, sinkMode)
+		sinkLoss = pipeline.PersistEvents(rootCtx, logger, store, events, sinkMode, lateTrades)
 	}()
 
 	// ─── Projector (ADR-0032) ──────────────────────────────────
@@ -698,9 +706,9 @@ func run(cfgPath string, dryRun bool) error {
 		// Sink wraps the same pipeline.HandleEvent the events
 		// goroutine uses; decoded rows take the same per-source
 		// write path. See internal/pipeline/sink.go.
-		sinkFn := func(ctx context.Context, ev consumer.Event) error {
+		sinkFn := lateTrades.ObservingSink(func(ctx context.Context, ev consumer.Event) error {
 			return pipeline.HandleEvent(ctx, logger, store, ev)
-		}
+		})
 		proj := projector.New(store, registry, sinkFn, logger.With("component", "projector"))
 		// soroban_events mode only: the ledgerstream cursor advances when a
 		// ledger's rows are enqueued to rawEventSink, not when they commit.
@@ -1041,6 +1049,7 @@ func run(cfgPath string, dryRun bool) error {
 	if safeToClose {
 		close(events)
 	}
+	writersStopped := true // both live trade writers; read by the late-trade flush below
 	select {
 	case <-sinkDone:
 		logger.Info("clean shutdown")
@@ -1050,6 +1059,7 @@ func run(cfgPath string, dryRun bool) error {
 		rewindCursorForSinkLoss(rctx, store, sinkLoss, streamExited, logger) //nolint:contextcheck // deliberate fresh ctx, see above
 		rcancel()
 	case <-shutdownCtx.Done():
+		writersStopped = false
 		logger.Warn("drain timeout exceeded — hard exit")
 	}
 
@@ -1061,9 +1071,23 @@ func run(cfgPath string, dryRun bool) error {
 		case <-projectorDone:
 			logger.Info("projector drained")
 		case <-shutdownCtx.Done():
+			writersStopped = false
 			logger.Warn("projector drain timeout — hard exit")
 		}
 	}
+	// Run stopped on rootCtx; flush the late trades the writers' shutdown
+	// drain landed. After a drain timeout a writer may still be running,
+	// so flush what is pending anyway and say what it cannot cover. Fresh
+	// ctx for the same reason as the rewind above; ~70s of systemd's 120s
+	// TimeoutStopSec is the worst case to here.
+	if !writersStopped {
+		logger.Error("late-trade cagg flush runs before every trade writer stopped (drain timeout); " +
+			"late trades written after it may be unrefreshed — refresh the trades caggs over the outage window by hand")
+	}
+	lctx, lcancel := context.WithTimeout(context.Background(), pipeline.LateTradeShutdownFlushBudget)
+	lateTrades.FlushOnShutdown(lctx) //nolint:contextcheck // deliberate fresh ctx, see above
+	lcancel()
+
 	// Shut the metrics server down last, after the drain sequence above
 	// has run to completion (or timed out). Doing this earlier — right
 	// after cancel() — made /metrics unscrapable for the entire drain

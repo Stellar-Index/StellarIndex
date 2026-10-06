@@ -2054,3 +2054,71 @@ tests:
                 this file and `systemctl status` its unit. This is a catch-all:
                 most producers should have fired their own, tighter alert long
                 before this one does.
+
+  # ══ stellarindex_late_trade_cagg_refresh_failing ══════════════════
+  # Emitted by the indexer itself: the age in seconds of the oldest
+  # due late-trade window, 0 when none.
+  - interval: 1m
+    name: late-trade refresh erroring at 11/23/37/55/75m tickets
+    input_series:
+      # Errors do not reset the age; only a success does, so a run of
+      # spaced errors (timeout + backoff) reads as one climbing age.
+      - series: 'stellarindex_late_trade_cagg_refresh_overdue_seconds{job="stellarindex_indexer",instance="r1:9464"}'
+        values: '0+60x90'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_late_trade_cagg_refresh_failing
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: stellarindex_late_trade_cagg_refresh_failing
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9464
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_late_trade_cagg_refresh_failing
+              summary: "Late-trade cagg refresh failing on r1:9464"
+              description: |
+                A late-trade window of the trades continuous aggregates has been
+                due for 45m 0s without a successful
+                refresh. Those buckets under-report until one succeeds; the
+                indexer log names the view and window of each failure.
+
+  - interval: 1m
+    name: late-trade refresh hung without erroring tickets
+    input_series:
+      # A hang never increments an error counter; the age still climbs.
+      - series: 'stellarindex_late_trade_cagg_refresh_overdue_seconds{job="stellarindex_indexer",instance="r1:9464"}'
+        values: '0x5 60+60x60'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: stellarindex_late_trade_cagg_refresh_failing
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9464
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_late_trade_cagg_refresh_failing
+              summary: "Late-trade cagg refresh failing on r1:9464"
+              description: |
+                A late-trade window of the trades continuous aggregates has been
+                due for 45m 0s without a successful
+                refresh. Those buckets under-report until one succeeds; the
+                indexer log names the view and window of each failure.
+
+  - interval: 1m
+    name: healthy late-trade catch-up and a slow refresh that succeeds stay quiet
+    input_series:
+      # Sawtooth of a busy catch-up, then one 20-minute refresh that succeeds.
+      - series: 'stellarindex_late_trade_cagg_refresh_overdue_seconds{job="stellarindex_indexer",instance="r1:9464"}'
+        values: '0 60 120 0 60 120 0 60 120 0 60+60x20 0x30'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_late_trade_cagg_refresh_failing
+        exp_alerts: []

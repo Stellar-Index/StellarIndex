@@ -208,8 +208,8 @@ func countReceived(source string) {
 // ON CONFLICT DO NOTHING. There is no ordering constraint at the
 // storage layer that a parallel drain breaks.
 //
-// `mode` semantics unchanged from the single-goroutine version.
-func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode) ShutdownLoss {
+// late (nil in the backfill, which refreshes its own chunks) observes committed trade writes.
+func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode, late *LateTradeRefresher) ShutdownLoss {
 	lt := &lossTracker{}
 	// Bounded async retry buffer for external (CEX/FX) trades that hit
 	// an infrastructure fault (ADR-0041 / 2026-07-06 Postgres outage).
@@ -222,7 +222,7 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 	var bufWG sync.WaitGroup
 	var bufCancel context.CancelFunc
 	if store != nil {
-		extBuf = newExternalRetryBuffer(store, logger, externalRetryBufferMaxDepth)
+		extBuf = newExternalRetryBuffer(late.writer(store), logger, externalRetryBufferMaxDepth)
 		// A-CRIT-3 (audit-2026-07-24): run the retry buffer under a context DERIVED
 		// from ctx and tied to worker lifetime, not ctx itself. extBuf.run only
 		// returns on <-ctx.Done() (→ finalDrain). Under ctx, a BACKFILL — whose
@@ -253,7 +253,7 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 			// by storeEventPersister — as the non-trade event persister.
 			// Both seams exist so the shutdown-race tests can intercept a
 			// write with a fake.
-			persistWorker(ctx, logger, storeEventPersister(logger, store), store, in, mode, workerID, extBuf, lt)
+			persistWorker(ctx, logger, storeEventPersister(logger, store), late.writer(store), in, mode, workerID, extBuf, lt)
 		}(i)
 	}
 	wg.Wait()
