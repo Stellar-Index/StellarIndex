@@ -24,10 +24,10 @@ route absent on a test net is correct, not a gap.
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **139** |
+| Paths in the OpenAPI contract | **140** |
 | Level 3 — reachable | **111** |
 | Level 2 — consumed but unreachable | **0** |
-| Level 1 — not consumed | **24** |
+| Level 1 — not consumed | **25** |
 | Deliberately excluded (operational) | **4** |
 
 Level 2 is empty and enforced: `src/lib/route-reachability.test.ts` walks the
@@ -87,6 +87,7 @@ call site; `hooks.ts:useX` is a shared hook.
 | `/assets/{asset_id}/metadata` | GET | 1 | — |
 | `/assets/{asset_id}/supply` | GET | 3 | hooks.ts:useAssetSupply |
 | `/assets/{asset_id}/supply/flows` | GET | 1 | — |
+| `/assets/{asset_id}/movements` | GET | 1 | — |
 | `/assets/{asset_id}/holders` | GET | 3 | app/assets/[slug]/HoldersTabPanel.tsx |
 | `/price` | GET | 3 | ../functions/og/[[path]].js |
 | `/price/at` | GET | 1 | — |
@@ -213,12 +214,12 @@ call site; `hooks.ts:useX` is a shared hook.
 | `/accounts/{g_strkey}/graph/cohort` | GET | 3 | app/insights/AccountRelationCohort.tsx |
 | `/search` | GET | 3 | components/nav/SearchModal.tsx |
 
-## Level 1 — the 24 stranded endpoints
+## Level 1 — the 25 stranded endpoints
 
 All probed live 2026-09-09; none 404s at the route level. Building pages for
 them is a product decision, not made here.
 
-### Public data with no surface (9)
+### Public data with no surface (10)
 
 | Endpoint | What is stranded | Rough cost |
 |---|---|---|
@@ -231,6 +232,7 @@ them is a product decision, not made here.
 | `/directory` | Curated address labels with tags and provenance. `src/components/DirectoryLabel.tsx` renders the `directory` field embedded in other responses; the bulk endpoint is never called. | Small. |
 | `/ledgers/{seq}/operations` | One ledger's decoded operations with `total`/`truncated`; the only per-ledger operations read (`/operations` refuses `?ledger=`). | Small: tab on `/ledgers/[seq]`. |
 | `/assets/{asset_id}/supply/flows` | Daily mint / burn / clawback from the `supply_flows` lake, with `net` and `history_incomplete` (SDK `AssetSupplyFlows`). | Small: chart beside the supply card. |
+| `/assets/{asset_id}/movements` | Per-asset movements read from the ClickHouse lake. | Small: tab on `/assets/[slug]`. |
 
 ### `/methodology`
 
