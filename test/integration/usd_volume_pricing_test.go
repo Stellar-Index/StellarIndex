@@ -13,7 +13,7 @@ import (
 
 // TestUsdVolumePricingStats seeds priced, unpriced and same-issuer classic
 // trades inside the window, plus rows outside it and from a source not asked
-// for, and pins the exact counts.
+// for, and pins the exact counts. A requested source with no rows (kraken) still gets a zero row.
 func TestUsdVolumePricingStats(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -64,6 +64,7 @@ func TestUsdVolumePricingStats(t *testing.T) {
 	}
 	want := []timescale.UsdVolumePricingRow{
 		{Source: "binance", Trades: 3, Priced: 2, Unpriced: 1, Unroutable: 0},
+		{Source: "kraken"},
 		{Source: "sdex", Trades: 5, Priced: 1, Unpriced: 2, Unroutable: 2},
 	}
 	if len(got) != len(want) {

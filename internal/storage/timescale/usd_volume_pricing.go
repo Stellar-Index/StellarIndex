@@ -3,6 +3,7 @@ package timescale
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -42,20 +43,38 @@ SELECT source,
  ORDER BY source`
 
 // UsdVolumePricingStats counts priced, unpriced and unroutable trades per
-// source for sources over [from, to).
+// source for sources over [from, to). Every requested source gets a row, in
+// name order; one with no trades in the window has all counts zero, so a
+// silent venue is visible rather than absent.
 func (s *Store) UsdVolumePricingStats(ctx context.Context, from, to time.Time, sources []string) ([]UsdVolumePricingRow, error) {
 	rows, err := s.db.QueryContext(ctx, usdVolumePricingSQL, from, to, sources)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: UsdVolumePricingStats: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var out []UsdVolumePricingRow
+	seen := make(map[string]UsdVolumePricingRow, len(sources))
 	for rows.Next() {
 		var r UsdVolumePricingRow
 		if err := rows.Scan(&r.Source, &r.Trades, &r.Priced, &r.Unpriced, &r.Unroutable); err != nil {
 			return nil, fmt.Errorf("timescale: UsdVolumePricingStats scan: %w", err)
 		}
+		seen[r.Source] = r
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	names := append([]string(nil), sources...)
+	sort.Strings(names)
+	out := make([]UsdVolumePricingRow, 0, len(names))
+	for i, name := range names {
+		if i > 0 && name == names[i-1] {
+			continue
+		}
+		r, ok := seen[name]
+		if !ok {
+			r = UsdVolumePricingRow{Source: name}
+		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	return out, nil
 }

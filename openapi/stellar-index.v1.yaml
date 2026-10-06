@@ -14038,11 +14038,11 @@ components:
                 description: Unpriced, both classic legs from one issuer; excluded from the ratio.
               priced_ratio:
                 type: string
-                description: priced / (trades - unroutable), decimal string. Omitted when that denominator is zero.
+                description: priced / (trades - unroutable), decimal string truncated (never rounded up) to 6 dp so it never exceeds the true ratio. Omitted when that denominator is zero.
               bar: { type: string, description: "Decimal string; matches the usd-volume-coverage alert rules." }
               meets_bar:
                 type: boolean
-                description: External venues only; omitted for on-chain until per-row thin status is stored, and when there is nothing to judge.
+                description: External venues only; omitted for on-chain until per-row thin status is stored. False for an external venue with nothing to price (no trades in the window), so a silent venue never passes.
     PasskeyCredential:
       type: object
       description: >

@@ -83,8 +83,8 @@ func TestCoverage_usdVolumePricingBelowBarLeavesHeadlineUnchanged(t *testing.T) 
 	if s := by["sdex"]; s.MeetsBar != nil || s.PricedRatio != "0.918367" || s.Class != "onchain" {
 		t.Errorf("sdex = %+v", s)
 	}
-	// empty window: no ratio, no verdict, no divide by zero.
-	if k := by["kraken"]; k.PricedRatio != "" || k.MeetsBar != nil {
+	// empty window: no ratio, and a silent external venue fails the bar.
+	if k := by["kraken"]; k.PricedRatio != "" || k.MeetsBar == nil || *k.MeetsBar {
 		t.Errorf("kraken = %+v", k)
 	}
 }
@@ -121,5 +121,58 @@ func TestCoverage_usdVolumePricingNullKeyPresentWhenCacheEmpty(t *testing.T) {
 		if d.UsdVolumePricing != nil {
 			t.Errorf("%s: want nil view", name)
 		}
+	}
+}
+
+// 0.99899999 must not display as 0.999000 beside meets_bar=false.
+func TestCoverage_usdVolumePricingRatioTruncatesNeverRoundsUp(t *testing.T) {
+	cache := v1.NewUsdVolumePricingCache(stubUsdVolumePricingReader{rows: []timescale.UsdVolumePricingRow{
+		{Source: "binance", Trades: 100_000_000, Priced: 99_899_999, Unpriced: 100_001},
+	}}, nil)
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := coverageWithPricing(t, completeSnap(time.Now().UTC()), cache)
+	b := d.UsdVolumePricing.Sources[0]
+	if b.PricedRatio != "0.998999" || b.MeetsBar == nil || *b.MeetsBar {
+		t.Fatalf("binance = %+v", b)
+	}
+}
+
+type flakyUsdVolumePricingReader struct {
+	rows []timescale.UsdVolumePricingRow
+	err  error
+}
+
+func (f *flakyUsdVolumePricingReader) UsdVolumePricingStats(context.Context, time.Time, time.Time, []string) ([]timescale.UsdVolumePricingRow, error) {
+	return f.rows, f.err
+}
+
+func TestCoverage_usdVolumePricingFailedRefreshKeepsLastGoodSnapshot(t *testing.T) {
+	r := &flakyUsdVolumePricingReader{rows: []timescale.UsdVolumePricingRow{{Source: "binance", Trades: 5, Priced: 5}}}
+	cache := v1.NewUsdVolumePricingCache(r, nil)
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	r.rows, r.err = nil, errors.New("boom")
+	if err := cache.Refresh(context.Background()); err == nil {
+		t.Fatal("want refresh error")
+	}
+	d, _ := coverageWithPricing(t, completeSnap(time.Now().UTC()), cache)
+	if d.UsdVolumePricing == nil || len(d.UsdVolumePricing.Sources) != 1 || d.UsdVolumePricing.Sources[0].Trades != 5 {
+		t.Fatalf("last good snapshot lost: %+v", d.UsdVolumePricing)
+	}
+}
+
+func TestCoverage_usdVolumePricingUnroutableOnlySetsLowerBound(t *testing.T) {
+	cache := v1.NewUsdVolumePricingCache(stubUsdVolumePricingReader{rows: []timescale.UsdVolumePricingRow{
+		{Source: "sdex", Trades: 10, Priced: 8, Unroutable: 2},
+	}}, nil)
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := coverageWithPricing(t, completeSnap(time.Now().UTC()), cache)
+	if p := d.UsdVolumePricing; p == nil || !p.LowerBound || p.Excluded == "" {
+		t.Fatalf("want lower_bound from unroutable only, got %+v", p)
 	}
 }

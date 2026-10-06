@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"sync"
 	"time"
@@ -115,11 +116,13 @@ type UsdVolumePricingSource struct {
 	// from the ratio.
 	Unroutable int64 `json:"unroutable"`
 	// PricedRatio is priced / (trades - unroutable) as a decimal string;
+	// truncated (never rounded up) to 6 dp so it never exceeds the true ratio;
 	// omitted when that denominator is zero.
 	PricedRatio string `json:"priced_ratio,omitempty"`
 	Bar         string `json:"bar"`
 	// MeetsBar is set for external venues only; on-chain is deferred until
-	// per-row thin status is stored. Null when there is nothing to judge.
+	// per-row thin status is stored. An external venue with nothing to price
+	// (no trades, or only unroutable ones) is false: a silent venue must not pass.
 	MeetsBar *bool `json:"meets_bar,omitempty"`
 }
 
@@ -154,14 +157,18 @@ func buildUsdVolumePricingView(snap *usdVolumePricingSnapshot) *UsdVolumePricing
 			Source: r.Source, Class: cl, Trades: r.Trades, Priced: r.Priced,
 			Unpriced: r.Unpriced, Unroutable: r.Unroutable, Bar: bar,
 		}
-		if denom := r.Trades - r.Unroutable; denom > 0 {
+		barRat, _ := new(big.Rat).SetString(bar)
+		denom := r.Trades - r.Unroutable
+		if denom > 0 {
 			ratio := big.NewRat(r.Priced, denom)
-			out.PricedRatio = ratio.FloatString(6)
+			out.PricedRatio = floorRatio6(ratio)
 			if cl == "external" {
-				barRat, _ := new(big.Rat).SetString(bar)
 				met := ratio.Cmp(barRat) >= 0
 				out.MeetsBar = &met
 			}
+		} else if cl == "external" {
+			met := false
+			out.MeetsBar = &met
 		}
 		if r.Unpriced > 0 || r.Unroutable > 0 {
 			v.LowerBound = true
@@ -172,4 +179,12 @@ func buildUsdVolumePricingView(snap *usdVolumePricingSnapshot) *UsdVolumePricing
 		v.Excluded = usdVolumePricingExcluded
 	}
 	return v
+}
+
+// floorRatio6 renders r (>= 0) truncated toward zero at 6 decimal places.
+func floorRatio6(r *big.Rat) string {
+	scaled := new(big.Int).Mul(r.Num(), big.NewInt(1_000_000))
+	scaled.Quo(scaled, r.Denom())
+	q, m := new(big.Int).QuoRem(scaled, big.NewInt(1_000_000), new(big.Int))
+	return fmt.Sprintf("%s.%06d", q, m.Int64())
 }
