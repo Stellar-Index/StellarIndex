@@ -126,6 +126,24 @@ export async function logout(): Promise<void> {
   clearSessionHint();
 }
 
+/** GET /v1/dashboard/account/export — everything held about the account (owner, session < 10 min old). */
+export async function exportAccount(): Promise<unknown> {
+  return accountFetch<unknown>('/dashboard/account/export');
+}
+
+/**
+ * DELETE /v1/dashboard/account — irreversible erasure. `confirm` must be the
+ * account slug. Throws ApiError: 401 reauth-required, 403 not owner, 409 blocked.
+ */
+export async function deleteAccount(confirm: string): Promise<void> {
+  await accountFetch<void>('/dashboard/account', {
+    method: 'DELETE',
+    body: { confirm },
+    idempotencyKey: newIdempotencyKey(),
+  });
+  clearSessionHint();
+}
+
 /**
  * POST /v1/auth/verify-code — exchange the 6-digit email code for a
  * session. Credentialed (via accountFetch) so the Set-Cookie sticks;
