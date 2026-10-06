@@ -146,10 +146,10 @@ func TestShutdownWithAnAttachedStreamIsPrompt(t *testing.T) {
 	ts := startSSEServer(t, drain)
 	openStream(t, ts)
 
+	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTestBudget)
 	defer cancel()
 
-	start := time.Now()
 	err := ts.srv.Shutdown(ctx)
 	elapsed := time.Since(start)
 
@@ -175,10 +175,10 @@ func TestShutdownWithoutTheDrainSignalBurnsTheBudget(t *testing.T) {
 	ts := startSSEServer(t, nil)
 	openStream(t, ts)
 
+	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTestBudget)
 	defer cancel()
 
-	start := time.Now()
 	err := ts.srv.Shutdown(ctx)
 	elapsed := time.Since(start)
 
@@ -200,10 +200,10 @@ func TestShutdownWithNoStreamsStaysFast(t *testing.T) {
 	drain := streaming.NewDrain()
 	ts := startSSEServer(t, drain)
 
+	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTestBudget)
 	defer cancel()
 
-	start := time.Now()
 	err := ts.srv.Shutdown(ctx)
 	elapsed := time.Since(start)
 
