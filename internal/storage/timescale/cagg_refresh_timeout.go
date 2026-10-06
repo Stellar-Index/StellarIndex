@@ -35,17 +35,10 @@ import (
 //     the connection carried before — "0" on the ops pool, the
 //     connector's backstop on an [OpenBackground] pool — so nothing
 //     leaks onto a connection that later serves other work.
-//   - A Go-side context deadline alone does NOT stop the refresh. The
-//     pgx stdlib driver's default context watcher
-//     (pgconn.DeadlineContextWatcherHandler) closes the socket, which
-//     frees the goroutine but leaves the backend materialising, holding
-//     the view's refresh lock, until it next tries to write to the
-//     dead socket — and the next chunk's refresh of the same view then
-//     loses to that zombie with 55P03. statement_timeout makes the
-//     BACKEND cancel the statement (query_canceled — see
-//     isStatementTimeoutErr for the code it actually arrives under):
-//     the lock is released, the connection stays healthy, the pool is
-//     not poisoned.
+//   - statement_timeout is kept although pgx also cancels the backend on
+//     a Go deadline: the server enforces the bound itself (query_canceled
+//     — see isStatementTimeoutErr for the code it arrives under), and
+//     the pooled connection stays healthy instead of being closed.
 //
 // The Go-side deadline is kept as the second line, sized bound + grace,
 // so a backend that has stopped answering altogether (not merely slow)
