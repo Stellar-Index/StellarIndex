@@ -1049,6 +1049,7 @@ func run(cfgPath string, dryRun bool) error {
 	if safeToClose {
 		close(events)
 	}
+	writersStopped := true // both live trade writers; read by the late-trade flush below
 	select {
 	case <-sinkDone:
 		logger.Info("clean shutdown")
@@ -1058,6 +1059,7 @@ func run(cfgPath string, dryRun bool) error {
 		rewindCursorForSinkLoss(rctx, store, sinkLoss, streamExited, logger) //nolint:contextcheck // deliberate fresh ctx, see above
 		rcancel()
 	case <-shutdownCtx.Done():
+		writersStopped = false
 		logger.Warn("drain timeout exceeded — hard exit")
 	}
 
@@ -1069,13 +1071,19 @@ func run(cfgPath string, dryRun bool) error {
 		case <-projectorDone:
 			logger.Info("projector drained")
 		case <-shutdownCtx.Done():
+			writersStopped = false
 			logger.Warn("projector drain timeout — hard exit")
 		}
 	}
-	// Both trade writers have stopped, so late trades the sink's shutdown
-	// drain wrote are pending here and Run stopped on rootCtx. Fresh
+	// Run stopped on rootCtx; flush the late trades the writers' shutdown
+	// drain landed. After a drain timeout a writer may still be running,
+	// so flush what is pending anyway and say what it cannot cover. Fresh
 	// ctx for the same reason as the rewind above; ~70s of systemd's 120s
 	// TimeoutStopSec is the worst case to here.
+	if !writersStopped {
+		logger.Error("late-trade cagg flush runs before every trade writer stopped (drain timeout); " +
+			"late trades written after it may be unrefreshed — refresh the trades caggs over the outage window by hand")
+	}
 	lctx, lcancel := context.WithTimeout(context.Background(), pipeline.LateTradeShutdownFlushBudget)
 	lateTrades.FlushOnShutdown(lctx) //nolint:contextcheck // deliberate fresh ctx, see above
 	lcancel()

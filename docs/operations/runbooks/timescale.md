@@ -7,7 +7,7 @@ severity: P3
 
 # Runbook — TimescaleDB job, cagg and compression alerts
 
-Seven storage alerts, rules in `configs/prometheus/rules.r1/storage.yml` (group `stellarindex.storage`, the file r1 actually loads) with a multi-host twin in `deploy/monitoring/rules/storage.yml`. The first five are TimescaleDB's own job state: four of them read ONE textfile, `/var/lib/node_exporter/textfile_collector/timescale_jobs.prom`, written by `timescale-jobs-probe.timer` (every 60 s on r1), a shell probe installed by `configs/ansible/roles/archival-node/tasks/10-observability.yml` (task `TimescaleDB job/CAGG health probe (script)`). If that probe stops, or its query fails or returns nothing, the series go **absent** and those alerts go blind rather than quiet; that state is alerted as [`stellarindex_timescale_probe_degraded`](#stellarindex_timescale_probe_degraded). Whenever a series flat-lines, check probe health first: silence from the other four is not evidence of health while the probe is degraded.
+Six storage alerts, rules in `configs/prometheus/rules.r1/storage.yml` (group `stellarindex.storage`, the file r1 actually loads) with a multi-host twin in `deploy/monitoring/rules/storage.yml`. The first five are TimescaleDB's own job state: four of them read ONE textfile, `/var/lib/node_exporter/textfile_collector/timescale_jobs.prom`, written by `timescale-jobs-probe.timer` (every 60 s on r1), a shell probe installed by `configs/ansible/roles/archival-node/tasks/10-observability.yml` (task `TimescaleDB job/CAGG health probe (script)`). If that probe stops, or its query fails or returns nothing, the series go **absent** and those alerts go blind rather than quiet; that state is alerted as [`stellarindex_timescale_probe_degraded`](#stellarindex_timescale_probe_degraded). Whenever a series flat-lines, check probe health first: silence from the other four is not evidence of health while the probe is degraded.
 
 ## At a glance
 
@@ -18,8 +18,7 @@ Seven storage alerts, rules in `configs/prometheus/rules.r1/storage.yml` (group 
 | [`stellarindex_timescale_compression_lag`](#stellarindex_timescale_compression_lag) | P3 (`severity: informational`), `for: 24h` | `stellarindex_timescale_chunks_overdue_compression{hypertable="X"} > 0` sustained 24 h |
 | [`stellarindex_timescale_cagg_stale`](#stellarindex_timescale_cagg_stale) | P2 ticket, `for: 5m` | a cagg's refresh is > 5x its interval overdue |
 | [`stellarindex_timescale_cagg_refresh_missing`](#stellarindex_timescale_cagg_refresh_missing) | P2 ticket, `for: 15m` | a cagg's series existed within the last day and is absent now |
-| [`stellarindex_late_trade_cagg_refresh_failing`](#stellarindex_late_trade_cagg_refresh_failing) | ticket | the indexer's late-trade cagg refresh failed >= 3 times in 30 min |
-| [`stellarindex_late_trade_cagg_refresh_abandoned`](#stellarindex_late_trade_cagg_refresh_abandoned) | ticket | the indexer stopped with a late-trade window it could not refresh |
+| [`stellarindex_late_trade_cagg_refresh_failing`](#stellarindex_late_trade_cagg_refresh_failing) | ticket, `for: 30m` | a late-trade window has been due for refresh > 10 min without one succeeding |
 
 ## stellarindex_timescale_job_failures_climbing
 
@@ -358,7 +357,7 @@ Diagnose with step 0 and the `policy_refresh_continuous_aggregate` job listing i
 
 ## stellarindex_late_trade_cagg_refresh_failing
 
-Ticket. Source: `stellarindex_late_trade_cagg_refresh_total{outcome="error"}`, emitted by the indexer itself, not the probe. Each trades cagg policy re-aggregates only its last `start_offset` (`prices_1m`: 15 min), so trades the live writers land later than that, after a projector or dispatcher outage, are materialised only by the indexer's late-trade refresher (`internal/pipeline/late_trade_refresh.go`). It refreshes each affected view at most once per its policy's `schedule_interval`, non-forced, and retries a failure with backoff up to 10 min, so a single error is noise and a run of them means those buckets are under-reported now.
+Ticket, `for: 30m` on `stellarindex_late_trade_cagg_refresh_overdue_seconds > 600`, emitted by the indexer itself, not the probe. Each trades cagg policy re-aggregates only its last `start_offset` (`prices_1m`: 15 min), so trades the live writers land later than that, after a projector or dispatcher outage, are materialised only by the indexer's late-trade refresher (`internal/pipeline/late_trade_refresh.go`). It refreshes each affected view at most once per its policy's `schedule_interval`, non-forced, and retries a failure with backoff up to 10 min; one view's failure does not hold the others, except that `twap_1h` / `twap_1d` wait on `prices_1m`. The gauge is the age of the oldest window past its view's rate limit and not yet refreshed, computed at scrape time: it climbs through errors and through a refresh that hangs without erroring, and drops to 0 when the refresh succeeds. Firing means those buckets have been under-reported for 40+ min.
 
 Diagnose: `journalctl -u stellarindex-indexer --since -1h | grep 'late-trade cagg refresh failed'` names the view, the refresh window and the trades window. The usual causes are the ones in [cagg_stale](#stellarindex_timescale_cagg_stale) (lock conflict with the policy job, `55P03`; statement timeout on a wide window). It clears on its own once a refresh succeeds (`outcome="ok"` increments). If it does not, refresh by hand over the logged window, non-forced, padded to the view's MinWindow:
 
@@ -369,15 +368,13 @@ runuser -u postgres -- psql -d stellarindex -c \
 
 Refresh `prices_1m` before `twap_1h` / `twap_1d`: the twaps are materialised from it.
 
-## stellarindex_late_trade_cagg_refresh_abandoned
-
-Ticket. Source: `stellarindex_late_trade_cagg_refresh_total{outcome="abandoned"}`. At shutdown the indexer flushes the late-trade window once more, bounded at 30 s; if that fails or times out it counts `abandoned` and logs every pending window at ERROR. The increment happens just before `/metrics` shuts down, so a scrape can miss it: the log line is the record. A crash or SIGKILL skips the flush and leaves no record at all; after one that followed an outage, refresh the trades caggs over the outage window by hand.
+No alert covers shutdown. The indexer flushes the late-trade window once more at shutdown, bounded at 30 s; if that fails or times out it logs every pending window at ERROR, and after a drain timeout it also logs that late writes after the flush may be unrefreshed. The pending windows are held in memory only, so after any restart that followed an outage, check the log:
 
 ```sh
-journalctl -u stellarindex-indexer --since -2h | grep 'late-trade cagg refresh abandoned'
+journalctl -u stellarindex-indexer --since -2h | grep -E 'late-trade cagg (refresh abandoned|flush runs before)'
 ```
 
-Each line carries `view`, `trades_from` and `trades_to`. Refresh each view over that window as in [the section above](#stellarindex_late_trade_cagg_refresh_failing), `prices_1m` first. Nothing else will: no policy reaches those buckets.
+Each `abandoned` line carries `view`, `trades_from` and `trades_to`; refresh each view over that window as above, `prices_1m` first. Nothing else will: no policy reaches those buckets. A crash or SIGKILL skips the flush and leaves no line at all; after one that followed an outage, refresh the trades caggs over the outage window by hand.
 
 ## Related
 

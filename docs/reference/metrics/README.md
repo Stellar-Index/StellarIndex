@@ -241,17 +241,25 @@ alert (on `error`).
 
 ### `stellarindex_late_trade_cagg_refresh_total`
 
-Counter, label `outcome` ∈ {`ok`, `error`, `abandoned`}, pre-seeded at 0. The indexer's
+Counter, label `outcome` ∈ {`ok`, `error`}, pre-seeded at 0. The indexer's
 live trade writers (dispatcher sink and projector) refresh the `trades`
 continuous aggregates themselves when they land a trade older than a view's
 refresh policy reaches back — after an outage longer than `prices_1m`'s
 15-minute `start_offset`, nothing else would materialise those buckets.
 Refreshes are coalesced, so one counts a cycle, not a batch, and each view is
 refreshed at most once per its policy's `schedule_interval`. `error` means
-the buckets are not yet materialised; the window is kept and retried with
-backoff, and the indexer log names it. `abandoned` means the final flush at
-shutdown failed or timed out; the indexer logs each view's window at ERROR
-and it needs a manual refresh. Alert: `LateTradeCAGGRefreshFailing`.
+some buckets are not yet materialised; the window is kept and retried with
+backoff, and the indexer log names it. A failed final flush at shutdown is
+not counted (the process exits next); it is logged at ERROR per view.
+
+### `stellarindex_late_trade_cagg_refresh_overdue_seconds`
+
+Gauge, computed at scrape time: seconds since the oldest late-trade window
+still unrefreshed fell due — past its view's `schedule_interval` rate limit
+(and, for `twap_1h` / `twap_1d`, `prices_1m`'s). 0 when none is due. It
+climbs through refresh errors and hangs alike and drops to 0 when the
+refresh succeeds; a healthy catch-up keeps it under about 2 minutes. Alert:
+`stellarindex_late_trade_cagg_refresh_failing` (> 600 for 30m).
 
 ### `stellarindex_projector_events_decoded_total`
 

@@ -33,8 +33,9 @@ type refreshCall struct {
 type fakeLateCAGGStore struct {
 	mu        sync.Mutex
 	calls     []refreshCall
-	failFirst int  // fail this many refresh calls before succeeding
-	block     bool // every refresh waits for its ctx to end
+	failFirst int    // fail this many refresh calls before succeeding
+	failView  string // every refresh of this view fails
+	block     bool   // every refresh waits for its ctx to end
 	onRefresh func(view string)
 }
 
@@ -67,6 +68,7 @@ func (f *fakeLateCAGGStore) record(ctx context.Context, view string, from, to ti
 	if fail {
 		f.failFirst--
 	}
+	fail = fail || view == f.failView
 	f.mu.Unlock()
 	if block {
 		<-ctx.Done()
@@ -294,7 +296,6 @@ func TestLateTradeRefresh_FlushOnShutdownRefreshesWhatRunLeft(t *testing.T) {
 	<-runDone
 	// Written by the sink's shutdown drain, after Run stopped.
 	r.ObserveTrades(tradesAt(20 * time.Minute)...)
-	abandonedBefore := testutil.ToFloat64(obs.LateTradeCAGGRefreshTotal.WithLabelValues("abandoned"))
 	r.FlushOnShutdown(context.Background())
 	if got := viewsOf(f.snapshot()); len(got) != 1 || got[0] != "prices_1m" {
 		t.Fatalf("shutdown flush refreshed %v, want [prices_1m]", got)
@@ -302,24 +303,17 @@ func TestLateTradeRefresh_FlushOnShutdownRefreshesWhatRunLeft(t *testing.T) {
 	if r.anyPendingLocked() {
 		t.Fatal("window still pending after the shutdown flush")
 	}
-	if d := testutil.ToFloat64(obs.LateTradeCAGGRefreshTotal.WithLabelValues("abandoned")) - abandonedBefore; d != 0 {
-		t.Fatalf("abandoned rose by %v on a successful shutdown flush", d)
-	}
 }
 
-func TestLateTradeRefresh_ShutdownTimeoutIsAbandonedAndLogged(t *testing.T) {
+func TestLateTradeRefresh_ShutdownTimeoutIsLogged(t *testing.T) {
 	f := &fakeLateCAGGStore{block: true}
 	r := newTestLateRefresher(f)
 	var logs bytes.Buffer
 	r.logger = slog.New(slog.NewTextHandler(&logs, nil))
 	r.ObserveTrades(tradesAt(20 * time.Minute)...)
-	before := testutil.ToFloat64(obs.LateTradeCAGGRefreshTotal.WithLabelValues("abandoned"))
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	r.FlushOnShutdown(ctx)
-	if d := testutil.ToFloat64(obs.LateTradeCAGGRefreshTotal.WithLabelValues("abandoned")) - before; d != 1 {
-		t.Fatalf("abandoned rose by %v, want 1", d)
-	}
 	out := logs.String()
 	wantFrom := lateTestNow.Add(-20 * time.Minute).Format(time.RFC3339)
 	if !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "view=prices_1m") || !strings.Contains(out, "trades_from="+wantFrom) {
@@ -329,12 +323,93 @@ func TestLateTradeRefresh_ShutdownTimeoutIsAbandonedAndLogged(t *testing.T) {
 
 func TestLateTradeRefresh_ShutdownWithNothingPendingIsNotAbandoned(t *testing.T) {
 	r := newTestLateRefresher(&fakeLateCAGGStore{block: true})
-	before := testutil.ToFloat64(obs.LateTradeCAGGRefreshTotal.WithLabelValues("abandoned"))
+	var logs bytes.Buffer
+	r.logger = slog.New(slog.NewTextHandler(&logs, nil))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	r.FlushOnShutdown(ctx)
-	if d := testutil.ToFloat64(obs.LateTradeCAGGRefreshTotal.WithLabelValues("abandoned")) - before; d != 0 {
-		t.Fatalf("abandoned rose by %v with nothing pending", d)
+	if out := logs.String(); strings.Contains(out, "level=ERROR") {
+		t.Fatalf("nothing pending, but logged:\n%s", out)
+	}
+}
+
+func TestLateTradeRefresh_FailedViewDoesNotStopTheOthers(t *testing.T) {
+	f := &fakeLateCAGGStore{failView: "prices_15m"}
+	r := newTestLateRefresher(f)
+	r.ObserveTrades(tradesAt(6 * time.Hour)...)
+	if _, err := r.flush(context.Background(), true); err == nil || !strings.Contains(err.Error(), "prices_15m") {
+		t.Fatalf("err = %v, want prices_15m's failure", err)
+	}
+	got := viewsOf(f.snapshot())
+	for _, v := range []string{"prices_1m", "prices_15m", "prices_1h", "twap_1h"} {
+		if !slices.Contains(got, v) {
+			t.Fatalf("refreshed %v; %s missing after prices_15m failed", got, v)
+		}
+	}
+	if !r.views["prices_15m"].pending || r.views["prices_1h"].pending {
+		t.Fatal("want only the failed view kept pending")
+	}
+}
+
+func TestLateTradeRefresh_Prices1mFailureHoldsOnlyTheTwaps(t *testing.T) {
+	f := &fakeLateCAGGStore{failView: "prices_1m"}
+	r := newTestLateRefresher(f)
+	r.ObserveTrades(tradesAt(6 * time.Hour)...)
+	if _, err := r.flush(context.Background(), true); err == nil {
+		t.Fatal("prices_1m's failure was not returned")
+	}
+	got := viewsOf(f.snapshot())
+	if slices.Contains(got, "twap_1h") || !slices.Contains(got, "prices_1h") {
+		t.Fatalf("refreshed %v; want twap_1h held and prices_1h refreshed", got)
+	}
+	if !r.views["twap_1h"].pending {
+		t.Fatal("twap_1h dropped its window while prices_1m failed")
+	}
+}
+
+func overdueSince(r *LateTradeRefresher) time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.overdueSince
+}
+
+func TestLateTradeRefresh_OverdueAgeGrowsThroughFailuresAndClearsOnSuccess(t *testing.T) {
+	clock := &lateClock{t: lateTestNow}
+	f := &fakeLateCAGGStore{failFirst: 2}
+	r := newTestLateRefresher(f)
+	r.now = clock.now
+	r.ObserveTrades(tradesAt(20 * time.Minute)...)
+	if got := overdueSince(r); !got.Equal(lateTestNow) {
+		t.Fatalf("overdue since %s on observe, want %s", got, lateTestNow)
+	}
+	for range 2 {
+		clock.advance(11 * time.Minute)
+		if _, err := r.flush(context.Background(), true); err == nil {
+			t.Fatal("want the injected failure")
+		}
+		if got := overdueSince(r); !got.Equal(lateTestNow) {
+			t.Fatalf("a failed refresh moved overdue since to %s, want %s", got, lateTestNow)
+		}
+	}
+	flushOK(t, r)
+	if got := overdueSince(r); !got.IsZero() {
+		t.Fatalf("overdue since %s after success, want cleared", got)
+	}
+}
+
+func TestLateTradeRefresh_RateLimitedViewIsNotOverdue(t *testing.T) {
+	clock := &lateClock{t: lateTestNow}
+	f := &fakeLateCAGGStore{}
+	r := newTestLateRefresher(f)
+	r.now = clock.now
+	r.ObserveTrades(canonical.Trade{Timestamp: lateTestNow.Add(-6 * 24 * time.Hour)})
+	flushOK(t, r)
+	clock.advance(time.Minute)
+	r.ObserveTrades(canonical.Trade{Timestamp: clock.now().Add(-6 * 24 * time.Hour)})
+	flushOK(t, r)
+	// Held: prices_15m (5m schedule) is the first to fall due, 4m from now.
+	if got, want := overdueSince(r), lateTestNow.Add(5*time.Minute); !got.Equal(want) {
+		t.Fatalf("overdue since %s, want %s", got, want)
 	}
 }
 
