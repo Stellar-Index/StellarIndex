@@ -179,10 +179,11 @@ func fetchBitstampOHLC(ctx context.Context, endpoint string, q url.Values) ([]bi
 }
 
 // bitstampCandleToTrade synthesises a canonical.Trade from one
-// candle. Bitstamp doesn't publish a VWAP or quote-volume field —
-// we use close price + base volume and derive quote as
-// close × volume. Close-weighted is not strictly VWAP but for
-// 1h/1d buckets it's a reasonable approximation.
+// candle. Bitstamp publishes no VWAP or quote volume, so the trade is
+// priced at the close (the Backfiller "close when VWAP unavailable"
+// contract): base volume is exact, while quote = close × volume is an
+// estimate whose true value lies anywhere in [low × volume, high × volume].
+// poloniex_via_btc depends on this price being the close.
 func bitstampCandleToTrade(c bitstampCandle, symbol string, pair canonical.Pair, stepSec int) (canonical.Trade, error) {
 	openSec, err := strconv.ParseInt(c.Timestamp, 10, 64)
 	if err != nil {
