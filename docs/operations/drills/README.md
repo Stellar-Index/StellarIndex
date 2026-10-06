@@ -62,7 +62,7 @@ are tracked; a new drill keeps its writeup file until then.
 | --- | --- | --- | --- |
 | 2026-04-30 | SEV-1 tabletop | Timescale primary failover (disk-full) | Overall pass, solo (1 participant, not the 3-person minimum). Simulated T+0:30 ack, T+5:00 root cause, T+18:00 mitigated, T+22:00 5xx under 0.5%. Scores 7 pass, 1 partial (criterion 3, `/v1/readyz` ordering; fixed). |
 | 2026-04-30 | SEV-2 tabletop | Soroswap decoder regression after protocol upgrade | Overall pass, solo. Simulated T+2:30 ack, T+5:00 pattern recognised, T+10:00 decoder-side confirmed, T+15:00 status *Degraded*, T+24h backfill. 8 of 8 criteria pass. |
-| 2026-06-13 | SEV-1 / SEV-2 live | API outage on r1, latency tabletop | Pass; see [incidents/sev-drill-2026-06-13.md](../incidents/sev-drill-2026-06-13.md). Detection 90 s against a 15 min target. |
+| 2026-06-13 | SEV-1 / SEV-2 live | API outage on r1, latency tabletop | Pass; record at [permalink](https://github.com/Stellar-Index/StellarIndex/blob/0c6739b12c6bee486301c9b5b490130abe4865f0/docs/operations/incidents/sev-drill-2026-06-13.md). Detection 90 s against a 15 min target. |
 
 ### Open items from the 2026-04-30 drills
 
