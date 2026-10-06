@@ -8,6 +8,7 @@ import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { useSACWrappers } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
+import { isNativeXlmSac } from '@/lib/asset-label';
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
 import { Container, PageHeader, Segmented } from '@/components/ui';
 import { categoryTone, protocolMeta } from '../protocols/registry';
@@ -202,11 +203,9 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
                         from the operator wrapper map already cached
                         sitewide — name them instead of bare hashes. */}
                     {(() => {
-                      const wrapped =
-                        c.contract_id ===
-                        'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA'
-                          ? 'native'
-                          : sacMap?.[c.contract_id ?? ''];
+                      const wrapped = isNativeXlmSac(c.contract_id)
+                        ? 'native'
+                        : sacMap?.[c.contract_id ?? ''];
                       if (!wrapped) return null;
                       const code =
                         wrapped === 'native' ? 'XLM' : wrapped.split(/[:-]/)[0];

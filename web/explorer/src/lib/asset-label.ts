@@ -4,6 +4,24 @@
 // RSC turns client-module exports into throwing client references. The
 // implementations live here; AssetLink re-exports them for client code.
 
+import { CURRENT_NETWORK_ID, type NetworkId } from '@/lib/networks';
+
+// The native-XLM Stellar Asset Contract is a pure function of the network
+// passphrase, so each network has its own id.
+const NATIVE_XLM_SAC: Record<NetworkId, string> = {
+  mainnet: 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA',
+  testnet: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+  futurenet: 'CB64D3G7SM2RTH6JSGG34DDTFTQ5CFDKVDZJZSODMCX4NJ2HV2KN7OHT',
+};
+
+/** True when `id` is the native-XLM SAC of the network this build serves. */
+export function isNativeXlmSac(
+  id: string | null | undefined,
+  network: NetworkId = CURRENT_NETWORK_ID,
+): boolean {
+  return !!id && id === NATIVE_XLM_SAC[network];
+}
+
 /**
  * normalizeColonForm rewrites a classic-asset id served in the colon
  * form (`CODE:G...`) to the canonical dash form (`CODE-G...`). Only
