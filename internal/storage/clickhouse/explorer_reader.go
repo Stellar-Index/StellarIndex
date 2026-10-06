@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -920,23 +921,25 @@ func (r *ExplorerReader) RecentOperations(ctx context.Context, limit int, cur Ex
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := r.recentOperationsPage(ctx, limit, cur, true)
+	rows, err := r.recentOperationsPage(ctx, limit, cur, true, nil)
 	if err != nil {
 		return nil, err
 	}
 	if len(rows) >= limit {
 		return rows, nil
 	}
-	return r.recentOperationsPage(ctx, limit, cur, false)
+	return r.recentOperationsPage(ctx, limit, cur, false, nil)
 }
 
 // recentOperationsPage runs ONE RecentOperations pass, bounded to the tail
-// window or not. It reads a small window in sort-key order (read-in-order
-// early exit) and dedups adjacent duplicate keys in Go; only a window that
-// cannot prove a full page falls back to the exact LIMIT 1 BY query.
-func (r *ExplorerReader) recentOperationsPage(ctx context.Context, limit int, cur ExplorerCursor, bounded bool) ([]OpRow, error) {
+// window or not, optionally restricted to opTypes. It reads a small window in
+// sort-key order (read-in-order early exit) and dedups adjacent duplicate keys
+// in Go; only a window that cannot prove a full page falls back to the exact
+// LIMIT 1 BY query.
+func (r *ExplorerReader) recentOperationsPage(ctx context.Context, limit int, cur ExplorerCursor, bounded bool, opTypes []string) ([]OpRow, error) {
 	window := windowRows(limit, windowFactorKeys)
-	rows, err := r.queryRecentOperations(ctx, recentOperationsWindowQuery(cur.IsSet(), bounded), cur, bounded, window)
+	typed := len(opTypes) > 0
+	rows, err := r.queryRecentOperations(ctx, recentOperationsSQL(cur.IsSet(), bounded, false, typed), cur, bounded, opTypes, window)
 	if err != nil {
 		return nil, err
 	}
@@ -947,15 +950,15 @@ func (r *ExplorerReader) recentOperationsPage(ctx context.Context, limit int, cu
 		}
 		return deduped, nil
 	}
-	return r.queryRecentOperations(ctx, recentOperationsQuery(cur.IsSet(), bounded), cur, bounded, limit)
+	return r.queryRecentOperations(ctx, recentOperationsSQL(cur.IsSet(), bounded, true, typed), cur, bounded, opTypes, limit)
 }
 
 func opRowKey(o OpRow) [3]uint32 { return [3]uint32{o.Seq, o.TxIndex, o.OpIndex} }
 
 // queryRecentOperations runs one recentOperationsQuery-shaped statement
 // reading `n` rows. Arg order mirrors the clause order: the cursor tuple,
-// then the window's lower bound, then n.
-func (r *ExplorerReader) queryRecentOperations(ctx context.Context, q string, cur ExplorerCursor, bounded bool, n int) ([]OpRow, error) {
+// then the window's lower bound, then the op-type list, then n.
+func (r *ExplorerReader) queryRecentOperations(ctx context.Context, q string, cur ExplorerCursor, bounded bool, opTypes []string, n int) ([]OpRow, error) {
 	args := []any{}
 	switch {
 	case cur.IsSet():
@@ -964,16 +967,13 @@ func (r *ExplorerReader) queryRecentOperations(ctx context.Context, q string, cu
 		// tuple comparison to a single ledger (#484).
 		args = append(args, cur.Ledger, cur.Ledger, cur.A, cur.B)
 		if bounded {
-			// Clamp at 0 — uint32 underflow near genesis would wrap and
-			// return nothing (the RecentLedgers cursor branch's lesson).
-			lower := uint32(0)
-			if cur.Ledger > uint32(recentLedgersTailWindow) {
-				lower = cur.Ledger - uint32(recentLedgersTailWindow)
-			}
-			args = append(args, lower)
+			args = append(args, tailWindowFloor(cur.Ledger))
 		}
 	case bounded:
 		args = append(args, uint32(recentLedgersTailWindow))
+	}
+	if len(opTypes) > 0 {
+		args = append(args, opTypes)
 	}
 	args = append(args, n)
 	rows, err := r.conn.Query(ctx, q, args...)
@@ -992,7 +992,8 @@ func (r *ExplorerReader) queryRecentOperations(ctx context.Context, q string, cu
 }
 
 // recentOperationsQuery builds RecentOperations' exact-dedup SQL, the fallback
-// when a windowed read (recentOperationsWindowQuery) cannot prove a full page.
+// when a windowed read (recentOperationsSQL without exactDedup) cannot prove a
+// full page.
 //
 // LIMIT 1 BY the operations primary key (audit DAT-10): stellar.operations
 // is ReplacingMergeTree(ingested_at); a re-ingested operation leaves an
@@ -1026,24 +1027,25 @@ func (r *ExplorerReader) queryRecentOperations(ctx context.Context, q string, cu
 // the reason that #444 bound now actually bites — see #484) plus
 // recentOperationsCursorRowCeiling. Both are documented on their consts.
 func recentOperationsQuery(hasCursor, bounded bool) string {
-	return recentOperationsSQL(hasCursor, bounded, true)
+	return recentOperationsSQL(hasCursor, bounded, true, false)
 }
 
-// recentOperationsWindowQuery is the same read without the LIMIT 1 BY, so the
-// reverse read-in-order early exit applies; the caller dedups the window.
-func recentOperationsWindowQuery(hasCursor, bounded bool) string {
-	return recentOperationsSQL(hasCursor, bounded, false)
-}
-
-func recentOperationsSQL(hasCursor, bounded, exactDedup bool) string {
-	q := `SELECT ` + opColsLight + ` FROM stellar.operations`
+func recentOperationsSQL(hasCursor, bounded, exactDedup, typed bool) string {
+	var conds []string
 	switch {
 	case hasCursor && bounded:
-		q += ` WHERE ` + recentOperationsCursorPredicate + ` AND ledger_seq >= ?`
+		conds = append(conds, recentOperationsCursorPredicate, `ledger_seq >= ?`)
 	case hasCursor:
-		q += ` WHERE ` + recentOperationsCursorPredicate
+		conds = append(conds, recentOperationsCursorPredicate)
 	case bounded:
-		q += ` WHERE ledger_seq > (SELECT max(ledger_seq) FROM stellar.operations) - ?`
+		conds = append(conds, `ledger_seq > (SELECT max(ledger_seq) FROM stellar.operations) - ?`)
+	}
+	if typed {
+		conds = append(conds, `op_type IN (?)`)
+	}
+	q := `SELECT ` + opColsLight + ` FROM stellar.operations`
+	if len(conds) > 0 {
+		q += ` WHERE ` + strings.Join(conds, ` AND `)
 	}
 	q += ` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC`
 	if exactDedup {

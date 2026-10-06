@@ -124,6 +124,10 @@ func (s *stubExplorerReader) OperationsByLedger(_ context.Context, _ uint32, _ i
 	return s.ops, s.err
 }
 
+func (s *stubExplorerReader) RecentOperationsOfType(_ context.Context, _ int, _ clickhouse.ExplorerCursor, _ []string) (clickhouse.OpTypePage, error) {
+	return clickhouse.OpTypePage{Rows: s.ops}, s.err
+}
+
 func (s *stubExplorerReader) RecentOperations(_ context.Context, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error) {
 	return s.ops, s.err
 }

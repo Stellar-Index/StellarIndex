@@ -4906,6 +4906,13 @@ export interface paths {
          *
          *     A `ledger` query parameter is refused with 400: one ledger's
          *     operations are `GET /v1/ledgers/{seq}/operations` (ADR-0018).
+         *
+         *     `?type=` restricts the listing to one or more operation types. The
+         *     lake cannot index by type, so each filtered page scans at most 5,000
+         *     ledgers below its anchor (the tip, or the cursor). A filtered page can
+         *     therefore hold FEWER than `limit` operations, or none, and still carry
+         *     `next_cursor`: keep paging until `next_cursor` is absent. Filtered
+         *     pages omit `op_type_stats`.
          */
         get: operations["listOperations"];
         put?: never;
@@ -24392,6 +24399,13 @@ export interface operations {
             query?: {
                 /** @description Opaque keyset cursor for the next older page. */
                 cursor?: string;
+                /**
+                 * @description Operation types to keep, comma-separated and/or repeated
+                 *     (e.g. `type=payment,path_payment_strict_send`). Each must be a
+                 *     snake_case type as served in `operations[].type`; any other value
+                 *     is a 400.
+                 */
+                type?: ("create_account" | "payment" | "path_payment_strict_receive" | "path_payment_strict_send" | "manage_sell_offer" | "manage_buy_offer" | "create_passive_sell_offer" | "set_options" | "change_trust" | "allow_trust" | "account_merge" | "inflation" | "manage_data" | "bump_sequence" | "create_claimable_balance" | "claim_claimable_balance" | "begin_sponsoring_future_reserves" | "end_sponsoring_future_reserves" | "revoke_sponsorship" | "clawback" | "clawback_claimable_balance" | "set_trust_line_flags" | "liquidity_pool_deposit" | "liquidity_pool_withdraw" | "invoke_host_function" | "extend_footprint_ttl" | "restore_footprint")[];
                 /** @description Page size: default 50, cap 200 (400 above). */
                 limit?: number;
             };
@@ -24448,9 +24462,9 @@ export interface operations {
                             /** @description Always 0: the directory spans ledgers. */
                             ledger?: number;
                             operations?: components["schemas"]["Operation"][];
-                            /** @description Opaque cursor for the next older page; absent on the last page. */
+                            /** @description Opaque cursor for the next older page; absent on the last page. With `type`, present on a short or empty page until the scan reaches genesis. */
                             next_cursor?: string;
-                            /** @description First page only: per-op-type counts over the trailing ~24h. */
+                            /** @description First unfiltered page only: per-op-type counts over the trailing ~24h. */
                             op_type_stats?: {
                                 type?: string;
                                 /** Format: int64 */
