@@ -1088,6 +1088,43 @@ tests:
                 upstream store (Postgres / ClickHouse) for that op.
                 See the cache-miss-rate-high runbook, "Refresh failures".
 
+  # A `*_redis` cache misses by design (60 s TTL vs a 2 min in-memory
+  # refresh cadence), so a sustained all-miss series must not ticket;
+  # the same series on an in-memory cache is the control that does.
+  - interval: 1m
+    name: redis read-through caches are exempt from the miss-rate alert
+    input_series:
+      - series: 'stellarindex_api_cache_ops_total{job="stellarindex_api",instance="r1:8080",cache="markets_redis",op="all_pools",result="miss"}'
+        values: '0+20x40'
+      - series: 'stellarindex_api_cache_ops_total{job="stellarindex_api",instance="r1:8080",cache="markets",op="all_pools",result="miss"}'
+        values: '0+20x40'
+
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_api_cache_miss_rate_high
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              cache: markets
+              op: all_pools
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_cache_miss_rate_high
+              summary: "API cache markets/all_pools miss rate 100%"
+              description: |
+                Sustained > 50 % miss rate on the v1.Cached* wrapper for
+                markets/all_pools. The prewarm goroutine
+                should keep hot ops > 90 % hit. Likely cause: the prewarm
+                is calling the cached reader with a slightly-different
+                argument tuple than the handler does (see
+                cmd/stellarindex-api/main.go prewarmCaches + the cached
+                wrappers at internal/api/v1/markets_cache.go and
+                asset_catalogue_cache.go). Cache key is a
+                stringified tuple of all args; one drifted dimension
+                (Order, Sources, Limit, …) means a phantom warmed slot.
+                Follow the cache-miss-rate-high runbook.
+
   # A single transient refresh failure must not ticket.
   - interval: 1m
     name: a single cache refresh failure is absorbed

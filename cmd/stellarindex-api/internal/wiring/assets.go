@@ -122,26 +122,37 @@ type listCachePayload[T any] struct {
 	NextCursor string `json:"next"`
 }
 
-// readListCache is the shared Redis read path; it records hit, miss, or
-// error (read failure or undecodable payload) on APICacheOpsTotal.
+// countRedisRead records a Redis GET outcome on APICacheOpsTotal: hit,
+// miss (redis.Nil) or error.
+func countRedisRead(cache, op string, err error) {
+	result := "hit"
+	switch {
+	case errors.Is(err, redis.Nil):
+		result = "miss"
+	case err != nil:
+		result = "error"
+	}
+	obs.APICacheOpsTotal.WithLabelValues(cache, op, result).Inc()
+}
+
+// readListCache is the shared Redis read path for the list caches; an
+// undecodable payload counts as error.
 func readListCache[T any](ctx context.Context, rdb redis.UniversalClient, log *slog.Logger, cache, op string, key fmt.Stringer) ([]T, string, bool) {
 	raw, err := rdb.Get(ctx, key.String()).Bytes()
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			obs.APICacheOpsTotal.WithLabelValues(cache, op, "miss").Inc()
-			return nil, "", false
+		countRedisRead(cache, op, err)
+		if !errors.Is(err, redis.Nil) {
+			log.Warn("list cache read failed", "cache", cache, "op", op, "key", key, "err", err)
 		}
-		obs.APICacheOpsTotal.WithLabelValues(cache, op, "error").Inc()
-		log.Warn("list cache read failed", "cache", cache, "op", op, "key", key, "err", err)
 		return nil, "", false
 	}
 	var p listCachePayload[T]
 	if jerr := json.Unmarshal(raw, &p); jerr != nil {
-		obs.APICacheOpsTotal.WithLabelValues(cache, op, "error").Inc()
+		countRedisRead(cache, op, jerr)
 		log.Warn("list cache decode failed", "cache", cache, "op", op, "key", key)
 		return nil, "", false
 	}
-	obs.APICacheOpsTotal.WithLabelValues(cache, op, "hit").Inc()
+	countRedisRead(cache, op, nil)
 	return p.Items, p.NextCursor, true
 }
 

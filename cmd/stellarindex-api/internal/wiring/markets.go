@@ -229,7 +229,7 @@ func (r CachedMarketsReader) DistinctPairsExt(ctx context.Context, cursor string
 		return r.Inner.DistinctPairsExt(ctx, cursor, limit, order)
 	}
 	cacheKey := cachekeys.MarketsListOrdered(cursor, limit, marketsOrderKey(order))
-	if items, next, ok := readListCache[v1.Market](ctx, r.RDB, r.Log, "markets_redis", "distinct_pairs_ext", cacheKey); ok {
+	if items, next, ok := readListCache[v1.Market](ctx, r.RDB, r.Log, "markets_redis", "distinct_pairs", cacheKey); ok {
 		return items, next, nil
 	}
 

@@ -4,12 +4,15 @@ import (
 	"context"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -45,8 +48,12 @@ func TestRedisListCachesEmitCacheOps(t *testing.T) {
 			_, _, err := CachedAssetReader{Inner: stubAssets{}, RDB: rdb, Log: log}.ListAssets(ctx, "", 10)
 			return err
 		}},
-		{"markets", "markets_redis", "distinct_pairs_ext", func() error {
+		{"markets", "markets_redis", "distinct_pairs", func() error {
 			_, _, err := CachedMarketsReader{Inner: stubMarkets{}, RDB: rdb, Log: log}.DistinctPairsExt(ctx, "", 10, timescale.MarketsOrderVolume24hDesc)
+			return err
+		}},
+		{"oracle", "oracle_redis", "latest", func() error {
+			_, _, err := CachedOracleReader{Inner: &countingOracleReader{}, RDB: rdb, Log: log}.LatestOracleUpdatesForAssetsAt(ctx, []canonical.Asset{canonical.NativeAsset()}, "")
 			return err
 		}},
 	}
@@ -74,5 +81,43 @@ func TestRedisListCachesEmitCacheOps(t *testing.T) {
 				t.Fatalf("error = %v, want %v", got, errs+1)
 			}
 		})
+	}
+}
+
+func TestRedisCompositeMetaEmitsCacheOps(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	ctx := context.Background()
+	l := RedisTriangulatedLooker{RDB: rdb}
+	n := canonical.NativeAsset()
+	const cache, op = "prices_redis", "composite_meta"
+
+	miss := cacheOps(cache, op, "miss")
+	if _, ok, err := l.LookupCompositeMeta(ctx, n, n, time.Minute); err != nil || ok {
+		t.Fatalf("miss lookup: ok=%v err=%v", ok, err)
+	}
+	if got := cacheOps(cache, op, "miss"); got != miss+1 {
+		t.Fatalf("miss = %v, want %v", got, miss+1)
+	}
+
+	if err := rdb.Set(ctx, cachekeys.VWAPCompositeMeta(n, n, time.Minute).String(), "{}", time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+	hit := cacheOps(cache, op, "hit")
+	if _, ok, err := l.LookupCompositeMeta(ctx, n, n, time.Minute); err != nil || !ok {
+		t.Fatalf("hit lookup: ok=%v err=%v", ok, err)
+	}
+	if got := cacheOps(cache, op, "hit"); got != hit+1 {
+		t.Fatalf("hit = %v, want %v", got, hit+1)
+	}
+
+	errs := cacheOps(cache, op, "error")
+	mr.SetError("boom")
+	if _, _, err := l.LookupCompositeMeta(ctx, n, n, time.Minute); err == nil {
+		t.Fatal("want error")
+	}
+	if got := cacheOps(cache, op, "error"); got != errs+1 {
+		t.Fatalf("error = %v, want %v", got, errs+1)
 	}
 }

@@ -96,6 +96,7 @@ func (r RedisTriangulatedLooker) LookupCompositeMeta(
 	}
 	key := cachekeys.VWAPCompositeMeta(base, quote, window)
 	val, err := r.RDB.Get(ctx, key.String()).Bytes()
+	countRedisRead("prices_redis", "composite_meta", err)
 	if errors.Is(err, redis.Nil) {
 		return nil, false, nil
 	}

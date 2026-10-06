@@ -1246,7 +1246,7 @@ var HTTPRequestSuccessDuration = prometheus.NewHistogramVec(
 var APICacheOpsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_cache_ops_total",
-		Help: "Cache operations in API in-memory cache wrappers, labelled by cache name + op + result (read outcomes hit|miss|stale, side-events refresh_error|evicted).",
+		Help: "Cache operations in API cache wrappers (in-memory and *_redis read-through), labelled by cache name + op + result (read outcomes hit|miss|stale|error, side-events refresh_error|evicted).",
 	},
 	[]string{"cache", "op", "result"},
 )
