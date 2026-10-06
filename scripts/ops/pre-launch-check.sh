@@ -246,10 +246,14 @@ echo "  USD volume pricing"
 cov="$(curl -fsS --max-time 10 http://localhost:3000/v1/coverage 2>/dev/null)"
 if [ -z "$cov" ]; then
   fail "/v1/coverage" "not responding — cannot read usd_volume_pricing"
+elif ! command -v jq >/dev/null 2>&1; then
+  fail "usd_volume_pricing" "jq is not installed — cannot parse /v1/coverage"
 elif ! printf '%s' "$cov" | jq -e '.data | has("usd_volume_pricing")' >/dev/null 2>&1; then
   fail "usd_volume_pricing" "absent from /v1/coverage — API predates the axis"
 elif printf '%s' "$cov" | jq -e '.data.usd_volume_pricing == null' >/dev/null 2>&1; then
-  warn "usd_volume_pricing not computed yet" "first refresh runs at API start; re-run in a few minutes"
+  fail "usd_volume_pricing not computed" "no snapshot yet (null stays null while refreshes fail) — re-run after the API's first refresh"
+elif ! printf '%s' "$cov" | jq -e '(.data.usd_volume_pricing.sources | type == "array") and (.data.usd_volume_pricing.sources | length > 0)' >/dev/null 2>&1; then
+  fail "usd_volume_pricing.sources" "null, missing or empty — no venues to check"
 else
   below="$(printf '%s' "$cov" | jq -r '.data.usd_volume_pricing.sources[]
     | select(.meets_bar == false)
@@ -273,7 +277,9 @@ else
     pass "no usd-volume-coverage alerts firing" ""
   else
     while IFS= read -r line; do
-      fail "firing: ${line%% *}" "source=${line#* }"
+      detail=""
+      [ "${line#* }" != "" ] && detail="source=${line#* }"
+      fail "firing: ${line%% *}" "$detail"
     done <<<"$names"
   fi
 fi

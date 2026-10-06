@@ -118,9 +118,11 @@ sdex="$(src sdex onchain 100 90 0.900000 0.995 '')"
 cov "$green_ext,$sdex" >"$TMP/cov-green"
 cov "$green_ext,$(src kraken external 1000 990 0.990000 0.999 ',"meets_bar":false')" >"$TMP/cov-kraken"
 printf '{"data":{"usd_volume_pricing":null}}' >"$TMP/cov-null"
+printf '{"data":{"usd_volume_pricing":{"sources":null}}}' >"$TMP/cov-nosrc"
+printf '{"data":{"usd_volume_pricing":{"lower_bound":false}}}' >"$TMP/cov-nosrc2"
 printf '{"data":{"network":"pubnet"}}' >"$TMP/cov-absent"
 printf '{"status":"success","data":{"resultType":"vector","result":[]}}' >"$TMP/prom-quiet"
-printf '{"status":"success","data":{"resultType":"vector","result":[{"metric":{"alertname":"stellarindex_onchain_usd_volume_coverage_low","source":"sdex"},"value":[0,"1"]}]}}' >"$TMP/prom-sdex"
+printf '{"status":"success","data":{"resultType":"vector","result":[{"metric":{"alertname":"stellarindex_onchain_usd_volume_coverage_low"},"value":[0,"1"]}]}}' >"$TMP/prom-sdex"
 
 # expect_usd <name> <out> <want-fails> <want-warns> [grep-pattern-that-must-match]
 expect_usd() {
@@ -136,14 +138,18 @@ expect_usd "external bars met, no alerts → passes (on-chain has no meets_bar)"
   "$(run_usd "$TMP/cov-green" "$TMP/prom-quiet")" 0 0 'ok .*external venues meet'
 expect_usd "external venue below bar → FAIL names it" \
   "$(run_usd "$TMP/cov-kraken" "$TMP/prom-quiet")" 1 0 'FAIL .*below bar: kraken .*0\.990000'
-expect_usd "axis not computed yet → WARN, not a pass" \
-  "$(run_usd "$TMP/cov-null" "$TMP/prom-quiet")" 0 1
+expect_usd "axis null (no snapshot yet) → FAIL, fail-closed" \
+  "$(run_usd "$TMP/cov-null" "$TMP/prom-quiet")" 1 0 'FAIL +usd_volume_pricing not computed.*first refresh'
+expect_usd "sources null → FAIL, never a pass" \
+  "$(run_usd "$TMP/cov-nosrc" "$TMP/prom-quiet")" 1 0 'FAIL +usd_volume_pricing.sources'
+expect_usd "sources missing → FAIL, never a pass" \
+  "$(run_usd "$TMP/cov-nosrc2" "$TMP/prom-quiet")" 1 0 'FAIL +usd_volume_pricing.sources'
 expect_usd "axis absent from /v1/coverage → FAIL" \
   "$(run_usd "$TMP/cov-absent" "$TMP/prom-quiet")" 1 0 'FAIL +usd_volume_pricing'
 expect_usd "/v1/coverage unreachable → FAIL" \
   "$(run_usd "" "$TMP/prom-quiet")" 1 0 'FAIL +/v1/coverage'
 expect_usd "on-chain coverage alert firing → FAIL names it" \
-  "$(run_usd "$TMP/cov-green" "$TMP/prom-sdex")" 1 0 'FAIL .*stellarindex_onchain_usd_volume_coverage_low .*source=sdex'
+  "$(run_usd "$TMP/cov-green" "$TMP/prom-sdex")" 1 0 'FAIL .*stellarindex_onchain_usd_volume_coverage_low'
 expect_usd "Prometheus unreachable → FAIL, never a silent pass" \
   "$(run_usd "$TMP/cov-green" "")" 1 0 'cannot query Prometheus'
 
