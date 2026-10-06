@@ -152,9 +152,6 @@ var subcommandClasses = map[string]subcommandClass{
 // writer.
 var pinnedPendingGate = []string{
 	"backfill-index",
-	"ch-cohort-rollup",
-	"ch-creators-rollup",
-	"ch-sponsors-rollup",
 	"ch-supply",
 	"classic-movements-backfill",
 	"compute-completeness",
