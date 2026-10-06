@@ -281,6 +281,16 @@ func (r *capReader) AccountMovements(ctx context.Context, _ string, _ int, _ cli
 	return nil, nil
 }
 
+func (r *capReader) AssetMovements(ctx context.Context, _ string, _ int, _ clickhouse.AccountMovementCursor, _ uint32) ([]clickhouse.AssetMovementRow, error) {
+	r.probe.record(ctx)
+	return nil, nil
+}
+
+func (r *capReader) AssetMovementsBackfilledThru(ctx context.Context) (uint32, error) {
+	r.probe.record(ctx)
+	return 0, nil
+}
+
 // capPositions is a PositionsReader that shares the same probe — the positions
 // endpoint's lake dependency is Postgres (this seam), so its bounded context
 // arrives here rather than at capReader.

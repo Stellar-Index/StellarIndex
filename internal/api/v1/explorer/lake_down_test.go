@@ -167,6 +167,14 @@ func (downReader) AccountMovements(context.Context, string, int, clickhouse.Acco
 	return nil, errLakeDown
 }
 
+func (downReader) AssetMovements(context.Context, string, int, clickhouse.AccountMovementCursor, uint32) ([]clickhouse.AssetMovementRow, error) {
+	return nil, errLakeDown
+}
+
+func (downReader) AssetMovementsBackfilledThru(context.Context) (uint32, error) {
+	return 0, errLakeDown
+}
+
 func (downReader) Cap67MovementsWatermark(context.Context) (uint32, error) {
 	return 0, errLakeDown
 }
@@ -267,6 +275,7 @@ func lakeDownCases() []lakeDownCase {
 		{"AccountGraphHistory", "/v1/accounts/" + validTestAccount + "/graph/history", acct, (*Handler).AccountGraphHistory},
 		{"AccountGraphCohort", "/v1/accounts/" + validTestAccount + "/graph/cohort?relation=created", acct, (*Handler).AccountGraphCohort},
 		{"AssetHolders", "/v1/assets/native/holders", map[string]string{"asset_id": "native"}, (*Handler).AssetHolders},
+		{"AssetMovements", "/v1/assets/native/movements", map[string]string{"asset_id": "native"}, (*Handler).AssetMovements},
 	}
 }
 
