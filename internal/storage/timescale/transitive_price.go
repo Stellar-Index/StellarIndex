@@ -116,18 +116,8 @@ func (s *Store) TransitiveUSDPriceCandidates(ctx context.Context, assetID string
 // to a package constant so the function body stays under the funlen
 // threshold (same convention as getNativeAssetSQL). $1 = asset_id,
 // $2 = candidate limit, $3 = the network's native-XLM SAC.
-const transitiveUSDPriceSQL = `
-WITH xlm_usd AS (
-    SELECT vwap
-      FROM prices_1m
-     WHERE base_asset = 'native'
-       AND quote_asset IN (` + usdProxyQuotes + `)
-       AND bucket <= now() - INTERVAL '1 minute'
-       AND bucket >= now() - INTERVAL '24 hours'
-       AND vwap IS NOT NULL
-     ` + xlmUSDNewest + `
-     LIMIT 1
-),
+var transitiveUSDPriceSQL = `
+WITH xlm_usd AS (` + xlmUSDAnchorAt("now()", "$3::text") + `),
 -- Every counterparty this asset traded against in the window, in BOTH
 -- stored directions, with the depth of the asset<->hop market.
 hops AS (
@@ -140,22 +130,22 @@ hops AS (
      GROUP BY 1
 ),
 -- The hop's OWN USD price, in preference order:
---   1. the hop IS XLM (either identity form) — its price is xlm_usd.
---      XLM/USD is keyed base_asset='native', so the SAC form can never
---      satisfy arm 2 or 3; without this arm an asset whose only market
---      is against the XLM SAC had no route (r1 2026-08-28, CBIJ…).
+--   1. the hop IS XLM (either identity form) — its price is xlm_usd, or
+--      none: never a raw XLM/USD row older than the anchor's freshness.
+--      Without this arm an asset whose only market is against the XLM
+--      SAC had no route (r1 2026-08-28, CBIJ…).
 --   2. direct against a USD proxy;
---   3. against XLM, times xlm_usd: the hop's latest bucket in EITHER
---      stored direction (hop/XLM as is, XLM/hop inverted — the shape
---      swap-direction sources such as aquarius write). A stale direction
---      must not outrank a fresher one; the hop/XLM row wins a tied bucket.
+--   3. against XLM (hx), times the XLM/USD anchor as of hx's own minute
+--      (hxa): the hop's latest bucket in EITHER stored direction (hop/XLM
+--      as is, XLM/hop inverted — the shape swap-direction sources such as
+--      aquarius write). A stale direction must not outrank a fresher one;
+--      the hop/XLM row wins a tied bucket.
 hop_usd AS (
     SELECT h.hop,
            h.hop_vol,
-           COALESCE(
-             CASE WHEN h.hop IN (` + xlmQuotesBound3 + `)
-                  THEN (SELECT vwap FROM xlm_usd)
-             END,
+           CASE WHEN h.hop IN (` + xlmQuotesBound3 + `)
+                THEN (SELECT vwap FROM xlm_usd)
+           ELSE COALESCE(
              (SELECT p.vwap FROM prices_1m p
                WHERE p.base_asset = h.hop
                  AND p.quote_asset IN (` + usdProxyQuotes + `)
@@ -163,28 +153,31 @@ hop_usd AS (
                  AND p.bucket >= now() - INTERVAL '24 hours'
                  AND p.vwap IS NOT NULL
                ORDER BY p.bucket DESC, ` + usdQuotePref + ` LIMIT 1),
-             (SELECT e.v FROM (
-                (SELECT p.vwap AS v, p.bucket, 1 AS pref FROM prices_1m p
-                  WHERE p.base_asset = h.hop
-                    AND p.quote_asset IN (` + xlmQuotesBound3 + `)
-                    AND p.bucket <= now() - INTERVAL '1 minute'
-                    AND p.bucket >= now() - INTERVAL '24 hours'
-                    AND p.vwap IS NOT NULL
-                  ORDER BY p.bucket DESC, ` + xlmFormPrefOpenBound3 + `p.quote_asset) LIMIT 1)
-                UNION ALL
-                (SELECT 1 / NULLIF(p.vwap, 0), p.bucket, 2 FROM prices_1m p
-                  WHERE p.base_asset IN (` + xlmQuotesBound3 + `)
-                    AND p.quote_asset = h.hop
-                    AND p.bucket <= now() - INTERVAL '1 minute'
-                    AND p.bucket >= now() - INTERVAL '24 hours'
-                    AND p.vwap IS NOT NULL
-                  ORDER BY p.bucket DESC, ` + xlmFormPrefOpenBound3 + `p.base_asset) LIMIT 1)
-              ) e
-              WHERE e.v IS NOT NULL
-              ORDER BY e.bucket DESC, e.pref LIMIT 1)
-             * (SELECT vwap FROM xlm_usd)
-           ) AS hop_usd
+             hx.v * hxa.vwap
+           ) END AS hop_usd
       FROM hops h
+      LEFT JOIN LATERAL (
+        SELECT e.v, e.bucket FROM (
+          (SELECT p.vwap AS v, p.bucket, 1 AS pref FROM prices_1m p
+            WHERE p.base_asset = h.hop
+              AND p.quote_asset IN (` + xlmQuotesBound3 + `)
+              AND p.bucket <= now() - INTERVAL '1 minute'
+              AND p.bucket >= now() - INTERVAL '24 hours'
+              AND p.vwap IS NOT NULL
+            ORDER BY p.bucket DESC, ` + xlmFormPrefOpenBound3 + `p.quote_asset) LIMIT 1)
+          UNION ALL
+          (SELECT 1 / NULLIF(p.vwap, 0), p.bucket, 2 FROM prices_1m p
+            WHERE p.base_asset IN (` + xlmQuotesBound3 + `)
+              AND p.quote_asset = h.hop
+              AND p.bucket <= now() - INTERVAL '1 minute'
+              AND p.bucket >= now() - INTERVAL '24 hours'
+              AND p.vwap IS NOT NULL
+            ORDER BY p.bucket DESC, ` + xlmFormPrefOpenBound3 + `p.base_asset) LIMIT 1)
+        ) e
+        WHERE e.v IS NOT NULL
+        ORDER BY e.bucket DESC, e.pref LIMIT 1
+      ) hx ON true
+      LEFT JOIN LATERAL (` + xlmUSDAnchorAt("hx.bucket", "$3::text") + `) hxa ON true
 ),
 -- This asset's price IN the hop: the latest bucket in either direction,
 -- (asset, hop) as is or (hop, asset) inverted, so a stale row in one

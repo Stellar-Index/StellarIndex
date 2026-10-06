@@ -90,16 +90,23 @@ func TestListAssetsBaseSelect_NoPerRequestPriceScan(t *testing.T) {
 func TestPriceArms_UnionBothDirectionsAndPickByRecency(t *testing.T) {
 	t.Parallel()
 	usdList := strings.Join(strings.Fields(usdProxyQuotes), " ")
-	for name, q := range map[string]string{
-		"rollup": refreshAssetPriceSnapshotUpsert,
-		"detail": getAssetBySlugSQL,
+	fold := func(q string) string { return strings.Join(strings.Fields(sqlWithoutComments(q)), " ") }
+	for name, c := range map[string]struct{ q, arms, joins string }{
+		"rollup": {refreshAssetPriceSnapshotUpsert, assetPriceArmCTEs("", xlmQuotes), priceArmJoins(xlmUSDGridJoin)},
+		"detail": {
+			getAssetBySlugSQL, assetPriceArmCTEs("(SELECT asset_id FROM chosen)", xlmQuotesBound(2)),
+			priceArmJoins(xlmUSDLateralJoin("$2::text")),
+		},
 	} {
-		sql := strings.Join(strings.Fields(sqlWithoutComments(q)), " ")
+		sql, arms := fold(c.q), fold(c.arms)
+		if !strings.Contains(sql, arms) {
+			t.Fatalf("%s: does not splice its eight price arms", name)
+		}
 		for _, want := range []string{
 			"quote_asset IN (" + usdList + ")",
 			"base_asset IN (" + usdList + ")",
 		} {
-			if got := strings.Count(sql, want); got != 4 {
+			if got := strings.Count(arms, want); got != 4 {
 				t.Errorf("%s: %d direct_usd* arms read %q, want 4 (now, 1h, 24h, 7d)", name, got, want)
 			}
 		}
@@ -110,8 +117,8 @@ func TestPriceArms_UnionBothDirectionsAndPickByRecency(t *testing.T) {
 			t.Errorf("%s: the price is still a fixed-order COALESCE across arms", name)
 		}
 		for _, want := range []string{
-			strings.Join(strings.Fields(priceArmJoins), " "),
-			"direct.bucket >= LEAST(vs_xlm.bucket, (SELECT bucket FROM xlm_usd))",
+			fold(c.joins),
+			"AND (ax.vwap IS NULL OR direct.bucket >= vs_xlm.bucket)",
 		} {
 			if !strings.Contains(sql, want) {
 				t.Errorf("%s: missing the shared arm pick %.80q", name, want)
