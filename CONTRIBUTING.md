@@ -350,8 +350,7 @@ Welcome aboard.
 
 Every new page (or major page rework) in `web/explorer` ships against
 this checklist — it exists because the 2026-07-03 site audit found a
-class of pages that rendered data without answering their visitor
-(full rubric: `docs/audit-2026-07-03-site/PLAN.md`):
+class of pages that rendered data without answering their visitor:
 
 1. What question does a visitor arrive with — is it answered above the fold?
 2. Does every nav label pointing here promise what the page delivers?
