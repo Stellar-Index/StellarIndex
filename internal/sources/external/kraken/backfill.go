@@ -138,7 +138,7 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 		for _, c := range candles {
 			openTs, ok := c.openTimeSec()
 			if !ok {
-				continue
+				return out, fmt.Errorf("kraken.Backfill: candle %v: missing open time", c)
 			}
 			// Kraken's last row is the still-open frame; candles are ascending.
 			if !scale.CandleClosed(time.Unix(openTs+intervalSec, 0), to, now) {
@@ -146,8 +146,11 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 			}
 			closeTs := openTs + intervalSec - 1
 			trade, err := krakenCandleToTrade(c, symbol, pair, closeTs, granularity)
-			if err != nil {
+			if errors.Is(err, errZeroVolume) || errors.Is(err, ErrDustTrade) {
 				continue
+			}
+			if err != nil {
+				return out, fmt.Errorf("kraken.Backfill: candle %v: %w", c, err)
 			}
 			out = append(out, trade)
 		}
@@ -270,6 +273,9 @@ func fetchKrakenOHLC(ctx context.Context, endpoint string, q url.Values) ([]krak
 	return candles, last, nil
 }
 
+// errZeroVolume marks an empty candle, an expected skip.
+var errZeroVolume = errors.New("zero volume")
+
 // krakenCandleToTrade synthesises a canonical.Trade from a Kraken
 // candle. Price is the candle's VWAP (authoritative for the
 // bucket); quote amount is computed as price × base volume.
@@ -292,7 +298,7 @@ func krakenCandleToTrade(c krakenCandle, symbol string, pair canonical.Pair, clo
 		return canonical.Trade{}, fmt.Errorf("volume %q: %w", volStr, err)
 	}
 	if base.Sign() == 0 {
-		return canonical.Trade{}, fmt.Errorf("zero volume")
+		return canonical.Trade{}, errZeroVolume
 	}
 	price, err := scale.DecimalStringToScaledInt(vwapStr, externalAmountDecimals)
 	if err != nil {

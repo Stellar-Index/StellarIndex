@@ -280,3 +280,30 @@ func TestBitstampBackfill_CursorIgnoredFailsClosed(t *testing.T) {
 		t.Fatalf("Backfill err = %v (%d trades), want cursor-not-honoured error", err, len(trades))
 	}
 }
+
+func TestBitstampBackfill_UnparseableCandleFailsPage(t *testing.T) {
+	const startSec = int64(1_745_000_000)
+	const hourSec = int64(3_600)
+	m, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, _ := canonical.NewPair(xlm, usd)
+	for name, mutate := range map[string]func(*bitstampCandle){
+		"bad volume": func(c *bitstampCandle) { c.Volume = "not-a-number" },
+		"bad close":  func(c *bitstampCandle) { c.Close = "1.2.3" },
+	} {
+		candles := synthesiseBitstampCandles(4, startSec, hourSec)
+		mutate(&candles[1])
+		srv := newTestBitstampREST(t, "xlmusd", candles)
+		s := NewStreamer(m)
+		s.Endpoint = srv.URL
+		trades, err := s.Backfill(context.Background(), pair, time.Unix(startSec, 0), time.Unix(startSec+10*hourSec, 0), time.Hour)
+		srv.Close()
+		if err == nil {
+			t.Fatalf("%s: got %d trades and no error, want a failed page", name, len(trades))
+		}
+	}
+}

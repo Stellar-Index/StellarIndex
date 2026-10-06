@@ -3,6 +3,7 @@ package binance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -90,7 +91,11 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 			break
 		}
 
-		out = append(out, klinesToTrades(candles, symbol, pair, granularity, to, now)...)
+		trades, err := klinesToTrades(candles, symbol, pair, granularity, to, now)
+		if err != nil {
+			return out, fmt.Errorf("binance.Backfill: %w", err)
+		}
+		out = append(out, trades...)
 
 		next, done, err := advanceBackfillCursor(candles, startMs, granularity)
 		if err != nil {
@@ -129,27 +134,34 @@ func (s *Streamer) resolveBackfillSymbol(pair canonical.Pair, granularity time.D
 	return symbol, nil
 }
 
-// klinesToTrades converts one page of candles into trades, skipping
-// (not failing) any candle klineToTrade can't represent — the
-// surrounding range still produces useful output, and the caller sees
-// the gap via trade count vs expected range; backfill is a
-// best-effort op tool anyway. A candle not closed by min(to, now) is
-// dropped; see scale.CandleClosed.
-func klinesToTrades(candles []kline, symbol string, pair canonical.Pair, granularity time.Duration, to, now time.Time) []canonical.Trade {
+// klinesToTrades converts one page of candles into trades. A zero-volume
+// candle is skipped; any other candle that can't be converted fails the
+// page, so a malformed row can never shrink the range silently. A candle
+// not closed by min(to, now) is dropped; see scale.CandleClosed.
+func klinesToTrades(candles []kline, symbol string, pair canonical.Pair, granularity time.Duration, to, now time.Time) ([]canonical.Trade, error) {
 	out := make([]canonical.Trade, 0, len(candles))
 	for _, c := range candles {
 		openMs, ok := c.openTimeMs()
-		if !ok || !scale.CandleClosed(time.UnixMilli(openMs).Add(granularity), to, now) {
+		if !ok {
+			return nil, fmt.Errorf("kline %v: missing open time", c)
+		}
+		if !scale.CandleClosed(time.UnixMilli(openMs).Add(granularity), to, now) {
 			continue
 		}
 		trade, err := klineToTrade(c, symbol, pair, granularity)
-		if err != nil {
+		if errors.Is(err, errZeroVolume) {
 			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("kline %v: %w", c, err)
 		}
 		out = append(out, trade)
 	}
-	return out
+	return out, nil
 }
+
+// errZeroVolume marks an empty candle, an expected skip.
+var errZeroVolume = errors.New("zero volume")
 
 // advanceBackfillCursor computes the next page's startTime: one interval
 // past the last candle's open time. Binance returns candles with
@@ -294,7 +306,7 @@ func klineToTrade(c kline, symbol string, pair canonical.Pair, granularity time.
 	// Skip empty-volume candles — they add no price signal and
 	// would divide-by-zero in downstream VWAP math.
 	if base.Sign() == 0 || quote.Sign() == 0 {
-		return canonical.Trade{}, fmt.Errorf("kline zero volume")
+		return canonical.Trade{}, errZeroVolume
 	}
 
 	txHash, err := backfillTxHash(symbol, closeMs, granularity)
