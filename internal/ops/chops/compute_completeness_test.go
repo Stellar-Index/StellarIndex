@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -1844,7 +1845,7 @@ func TestPassProjection_RepairedSourceIsReVerifiedNotCarriedRed(t *testing.T) {
 	if verifiedFrom != sushiFirstTrade {
 		t.Errorf("projection_verified_from = %d, want %d (the served tier's own bottom edge)", verifiedFrom, sushiFirstTrade)
 	}
-	want := fmt.Sprintf("projection: verified [%d,%d] over the served range of the reconciled tables — %s", sushiFirstTrade, sushiTip, testScope)
+	want := fmt.Sprintf("projection: verified [%d,%d] over the served range of the reconciled tables — %s", sushiFirstTrade, sushiTip, testScope.text)
 	if detail != want {
 		t.Errorf("detail = %q, want %q", detail, want)
 	}
@@ -2163,15 +2164,97 @@ func TestServedAxisVerdict_DeferredNeverAboveWindow(t *testing.T) {
 	}
 }
 
-const testScope = "scope: reconciled 1 table(s) [t]"
+var testScope = claimScope{text: "scope: reconciled 1 table(s) [t]"}
 
 func TestProjectionClaim_Rule2NamesScopeNotOverclaim(t *testing.T) {
 	ok, d := projectionClaim(100, 100, 200, true, "", priorProjection{}, testScope)
-	if !ok || !strings.Contains(d, testScope) || strings.Contains(d, "the full range the served tier holds") {
+	if !ok || !strings.Contains(d, testScope.text) || strings.Contains(d, "the full range the served tier holds") {
 		t.Errorf("ok=%v detail=%q", ok, d)
 	}
 	_, c := projectionClaim(100, 150, 200, true, "", priorProjection{known: true, ok: true, tip: 199, verifiedFrom: 100}, testScope)
-	if !strings.HasSuffix(c, "— "+testScope) {
+	if !strings.HasSuffix(c, "— "+testScope.text) {
 		t.Errorf("carried detail lacks scope: %q", c)
+	}
+}
+
+// INV-0210 PR B: a carried prefix is only as proven as its least-proven
+// target. completeness_target_floors records a target only after a clean
+// reconcile reached its bottom edge, so a present target without such a
+// floor was never reconciled over the prefix a carry would vouch for.
+func TestUnprovenCarryTargets(t *testing.T) {
+	src := reconSource{name: "soroswap", targets: []reconTarget{
+		{table: "trades", whereFilter: "source = 'soroswap'"},
+		{table: "soroswap_skim_events"},
+	}}
+	keyTrades := timescale.TargetFloorKey("soroswap", "trades", "source = 'soroswap'")
+	keySkim := timescale.TargetFloorKey("soroswap", "soroswap_skim_events", "")
+	const genesis, runFrom, hi = uint32(100), uint32(500), uint32(600)
+	inc := func(served []servedFloor) []projectionScope {
+		sc, _, _ := scopesFromServed(src, served, genesis, runFrom, hi)
+		return sc
+	}
+	present := []servedFloor{{min: 150, present: true}, {min: 200, present: true}}
+	tests := []struct {
+		name   string
+		served []servedFloor
+		floors map[string]uint32
+		want   []string
+	}{
+		{"skim never floored", present, map[string]uint32{keyTrades: 150}, []string{"soroswap_skim_events"}},
+		{"both floored", present, map[string]uint32{keyTrades: 150, keySkim: 200}, nil},
+		{"rows projected below the floor since", present, map[string]uint32{keyTrades: 150, keySkim: 300}, []string{"soroswap_skim_events"}},
+		{"empty target has no floor to compare", []servedFloor{{min: 150, present: true}, {}}, map[string]uint32{keyTrades: 150}, nil},
+		{"this run reached the target's bottom edge", []servedFloor{{min: 150, present: true}, {min: 550, present: true}}, map[string]uint32{keyTrades: 150}, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			floors := map[string]timescale.CompletenessTargetFloor{}
+			for k, v := range tc.floors {
+				floors[k] = timescale.CompletenessTargetFloor{VerifiedFrom: v}
+			}
+			if got := unprovenCarryTargets(src, inc(tc.served), tc.served, floors); !slices.Equal(got, tc.want) {
+				t.Errorf("unprovenCarryTargets = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The run-level path: the claim scope built at the call site must refuse a
+// carry over a target no clean reconcile ever covered, and name it.
+func TestProjectionClaim_CarryRefusesUnprovenTarget(t *testing.T) {
+	src := reconSource{name: "soroswap", targets: []reconTarget{
+		{table: "trades", whereFilter: "source = 'soroswap'"},
+		{table: "soroswap_skim_events"},
+	}}
+	const genesis, runFrom, hi = uint32(100), uint32(500), uint32(600)
+	served := []servedFloor{{min: 150, present: true}, {min: 200, present: true}}
+	scopes, servedFrom, runLo := scopesFromServed(src, served, genesis, runFrom, hi)
+	prior := priorProjection{known: true, ok: true, tip: runFrom - 1, verifiedFrom: genesis}
+	floors := map[string]timescale.CompletenessTargetFloor{
+		timescale.TargetFloorKey("soroswap", "trades", "source = 'soroswap'"): {VerifiedFrom: 150},
+	}
+
+	ok, d := projectionClaim(servedFrom, runLo, hi, true, "", prior, newClaimScope(src, scopes, served, floors))
+	if ok || !strings.Contains(d, "never reconciled soroswap_skim_events") || !strings.Contains(d, "re-run without -from") {
+		t.Fatalf("carry over an unfloored present target: ok=%v detail=%q, want false naming soroswap_skim_events", ok, d)
+	}
+
+	floors[timescale.TargetFloorKey("soroswap", "soroswap_skim_events", "")] = timescale.CompletenessTargetFloor{VerifiedFrom: 200}
+	if ok, d := projectionClaim(servedFrom, runLo, hi, true, "", prior, newClaimScope(src, scopes, served, floors)); !ok {
+		t.Fatalf("every present target floored: carry refused: %q", d)
+	}
+}
+
+// The scope may name as reconciled only a target the run counted:
+// reconcileTarget skips an empty scope without counting it.
+func TestProjectionScope_NamesOnlyCountedTargets(t *testing.T) {
+	src := reconSource{name: "soroswap", targets: []reconTarget{
+		{table: "trades", whereFilter: "source = 'soroswap'"},
+		{table: "soroswap_skim_events"},
+	}}
+	got := src.projectionScope([]projectionScope{{From: 1, To: 9}, {From: 10, To: 9}})
+	want := "scope: reconciled 1 table(s) [trades[source = 'soroswap']], not reconciled: soroswap_skim_events (empty scope this run)"
+	if got != want {
+		t.Errorf("projectionScope = %q, want %q", got, want)
 	}
 }
