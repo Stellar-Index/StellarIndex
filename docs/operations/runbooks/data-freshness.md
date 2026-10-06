@@ -65,7 +65,7 @@ journalctl -u stellarindex-indexer -u stellarindex-api --since '2 hours ago' | g
 
 Fix, by domain:
 
-- External API quota/auth (oracle `coingecko`, FX `massive`, `chainlink`): `429`/`401` in the poller logs = key exhausted/expired. Restore the paid key in `/etc/default/stellarindex` and restart the owning binary (CoinGecko Pro purchase: launch-todo P0-3).
+- External API quota/auth (oracle `coingecko`, FX `massive`, `chainlink`): `429`/`401` in the poller logs = key exhausted/expired. Restore the paid key in `/etc/default/stellarindex` and restart the owning binary.
 - `verdict`: `compute-completeness.timer` not running; `systemctl status compute-completeness.service`.
 - `sep1`: no issuer stellar.toml fetched successfully for 48 h. The probe reads `max(sep1_payload_fetched_at)`, stamped only on success, so it fires both when `sep1-refresh.timer` isn't running and when the refresh runs but every fetch fails (our DNS/egress). `systemctl status sep1-refresh.service`; `journalctl -u sep1-refresh --since -24h | grep -E 'SYSTEMIC|FAIL'`. The job also exits non-zero when its failure rate over previously-served domains crosses 90% over 50+ of them, tripping `stellarindex_systemd_unit_failed`.
 - `trades` (CEX/DEX): venue connector/dispatcher stopped; check the indexer. For `phoenix`/`comet` first confirm it is not a quiet market (query the lake for swap events on any known pool) before chasing a decoder.
