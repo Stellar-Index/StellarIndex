@@ -112,7 +112,7 @@ Automatic:
   for Go modules, GitHub Actions, Docker base images and both web apps.
 - `govulncheck` runs in `ci.yml` on every pull request that changes Go code,
   gated by the accepted-risk allowlist `scripts/ci/govulncheck-allow.txt`.
-- Trivy scans the web lockfiles on every pull request (`ci.yml`) and the
+- Trivy scans the web lockfiles on every pull request that changes `web/` (`ci.yml`) and the
   whole filesystem weekly, Mondays 06:17 UTC (`security.yml`).
 
 Human: the maintainer reviews open advisories monthly. That covers open
