@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // serveThrough sends one GET through the full middleware stack, ETag included.
@@ -117,4 +119,87 @@ func TestSources_UncachedReaderStampsNow(t *testing.T) {
 	if got.Before(before) {
 		t.Errorf("as_of = %s, want the response time", got)
 	}
+}
+
+// assertAsOf checks the envelope as_of is exactly want: the cache fill
+// time, which a request-time stamp could never equal.
+func assertAsOf(t *testing.T, rec *httptest.ResponseRecorder, want time.Time) {
+	t.Helper()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	got, err := time.Parse(time.RFC3339Nano, envelopeAsOf(t, rec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Equal(want) {
+		t.Errorf("as_of = %s, want the fill time %s", got, want)
+	}
+}
+
+// filledAt is a fill time inside every cache's TTL and well before any request.
+func filledAt() time.Time { return time.Now().UTC().Add(-30 * time.Second).Truncate(time.Second) }
+
+func TestIssuers_AsOfIsFillTime(t *testing.T) {
+	up := &fakeIssuersUpstream{rows: []timescale.IssuerSummary{{GStrkey: "GISSUER"}}}
+	c := NewCachedIssuersReader(up, time.Minute)
+	h := New(Options{Issuers: c}).Handler()
+	const target = "/v1/issuers?limit=10"
+	serveThrough(t, h, target, "")
+
+	at := filledAt()
+	c.mu.Lock()
+	for _, e := range c.entries {
+		e.at = at
+	}
+	c.mu.Unlock()
+	assertAsOf(t, serveThrough(t, h, target, ""), at)
+	assertUnchangedPayloadAnswers304(t, h, target)
+	if n := up.listCalls.Load(); n != 1 {
+		t.Fatalf("upstream list calls = %d, want 1", n)
+	}
+}
+
+func TestProtocolDetail_AsOfIsBuildTime(t *testing.T) {
+	s := New(Options{})
+	name := protocolRegistry[0].Name
+	at := filledAt()
+	s.protoDetailMu.Lock()
+	s.protoDetailInitLocked()
+	s.protoDetailCache[protocolDetailCacheKey(name, protocolActivityWindowDays)] = protoDetailEntry{
+		view: ProtocolDetailView{
+			ProtocolView: ProtocolView{Name: name},
+			Analytics:    &ProtocolAnalyticsStatus{Status: protocolAnalyticsOK},
+		},
+		at: at,
+	}
+	s.protoDetailMu.Unlock()
+	h := s.Handler()
+	target := "/v1/protocols/" + name
+	assertAsOf(t, serveThrough(t, h, target, ""), at)
+	assertUnchangedPayloadAnswers304(t, h, target)
+}
+
+func TestProtocolTVL_AsOfIsRefreshTime(t *testing.T) {
+	name := protocolRegistry[0].Name
+	c := NewDEXTVLCache(DEXTVLSources{})
+	at := filledAt()
+	c.snapshot = map[string]ProtocolTVLView{name: {TVLUSD: "1"}}
+	c.fetchedAt = at
+	h := New(Options{DEXTVL: c}).Handler()
+	target := "/v1/protocols/" + name + "/tvl"
+	assertAsOf(t, serveThrough(t, h, target, ""), at)
+	assertUnchangedPayloadAnswers304(t, h, target)
+}
+
+// A kept last-good snapshot keeps its build time even though the
+// refresher re-stamps computedAt.
+func TestDiagnosticsIngestion_AsOfIsBuildTime(t *testing.T) {
+	s := New(Options{})
+	at := filledAt()
+	s.ingestionSnapshot.Store(&ingestionSnapshotEntry{computedAt: time.Now(), builtAt: at})
+	h := s.Handler()
+	const target = "/v1/diagnostics/ingestion"
+	assertAsOf(t, serveThrough(t, h, target, ""), at)
+	assertUnchangedPayloadAnswers304(t, h, target)
 }

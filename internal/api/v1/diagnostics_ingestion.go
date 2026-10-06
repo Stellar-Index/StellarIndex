@@ -507,7 +507,7 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 	// and a dead-refresher request are never stuck on frozen data.
 	if entry := s.freshIngestionSnapshot(); entry != nil {
 		w.Header().Set("Cache-Control", "public, max-age=15, s-maxage=15")
-		writeJSON(w, entry.snap, ingestionFlags(entry.snap))
+		writeEnvelope(w, Envelope{Data: entry.snap, AsOf: WireTime(entry.builtAt.UTC()), Flags: ingestionFlags(entry.snap)})
 		return
 	}
 
@@ -553,9 +553,12 @@ func ingestionFlags(snap IngestionDiagnostics) Flags {
 // ingestionSnapshotEntry wraps a computed IngestionDiagnostics for
 // atomic storage, plus computedAt so the handler can tell a fresh
 // snapshot from one the background refresher stopped updating.
+// builtAt is when snap was built (the served as_of); a kept last-good
+// snapshot carries its original builtAt while computedAt moves on.
 type ingestionSnapshotEntry struct {
 	snap       IngestionDiagnostics
 	computedAt time.Time
+	builtAt    time.Time
 }
 
 // ingestionSnapshotCadence is how often StartIngestionSnapshotRefresh
@@ -621,11 +624,12 @@ func (s *Server) StartIngestionSnapshotRefresh(ctx context.Context) {
 				// flag fires regardless of the prior build's flag.
 				keep := prev.snap
 				keep.degraded = true
-				s.ingestionSnapshot.Store(&ingestionSnapshotEntry{snap: keep, computedAt: time.Now()})
+				s.ingestionSnapshot.Store(&ingestionSnapshotEntry{snap: keep, computedAt: time.Now(), builtAt: prev.builtAt})
 				return
 			}
 		}
-		s.ingestionSnapshot.Store(&ingestionSnapshotEntry{snap: out, computedAt: time.Now()})
+		now := time.Now()
+		s.ingestionSnapshot.Store(&ingestionSnapshotEntry{snap: out, computedAt: now, builtAt: now})
 	}
 	doRefresh()
 	t := time.NewTicker(cadence)

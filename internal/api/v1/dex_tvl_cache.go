@@ -276,6 +276,7 @@ func (c *DEXTVLCache) Protocol(name string) (DEXTVLProtocolSnapshot, bool) {
 		TVL:            view,
 		Pools:          c.pools[name],
 		CarriedForward: c.carried[name],
+		FetchedAt:      c.fetchedAt,
 	}, true
 }
 
