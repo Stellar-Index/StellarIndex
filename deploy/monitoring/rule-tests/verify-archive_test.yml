@@ -50,7 +50,7 @@ tests:
         team: stellarindex
         component: archive
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-run-stale.md
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_run_stale
         summary: (R1 integrity-leader) verify-archive Tier A hasn't run cleanly in 1d 15h 59m 0s
         description: "R1 is the integrity leader per ADR-0016 — its nightly chain-link\nverification is what R2/R3 trust. 36h without a clean run means\neither the timer isn't enabled or every recent attempt failed.\nEscalate immediately; the cross-region trust property degrades\nwith each missed cycle. Diagnosis:\n  - `systemctl status verify-archive-tier-a.timer` — is it active?\n  - `journalctl -u verify-archive-tier-a.service` — what's failing?\n  - check `archive_files_missing` — a gap upstream blocks verify.\n"
 - interval: 1m
@@ -79,9 +79,9 @@ tests:
         team: stellarindex
         component: archive
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-b.md
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_tier_b_run_stale
         summary: verify-archive Tier B checkpoint anchor hasn't run cleanly in 1d 15h 59m 0s
-        description: "The Tier B checkpoint-anchor timer hasn't fired cleanly in 36h+\n(24h cadence + 12h cushion) — either the timer isn't enabled or\nevery recent attempt failed. The single-source-corruption anchor\ncheck is not running. Lower urgency than the Tier A chain staleness\npage (Tier B is defence-in-depth), but investigate. Diagnosis:\n  - `systemctl status verify-archive-tier-b.timer` — is it active?\n  - `journalctl -u verify-archive-tier-b.service` — what's failing?\n  - is the /srv/history-archive mirror synced to the checked range?\n\nRunbook: docs/operations/runbooks/verify-archive-tier-b.md\n"
+        description: "The Tier B checkpoint-anchor timer hasn't fired cleanly in 36h+\n(24h cadence + 12h cushion) — either the timer isn't enabled or\nevery recent attempt failed. The single-source-corruption anchor\ncheck is not running. Lower urgency than the Tier A chain staleness\npage (Tier B is defence-in-depth), but investigate. Diagnosis:\n  - `systemctl status verify-archive-tier-b.timer` — is it active?\n  - `journalctl -u verify-archive-tier-b.service` — what's failing?\n  - is the /srv/history-archive mirror synced to the checked range?\n\nRunbook: docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_tier_b_unit_failed\n"
 
 # ── Q280: textfile never written at all (series absent, not stale) ──
 - interval: 1h
@@ -99,7 +99,7 @@ tests:
         component: archive
         tier: chain
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-run-stale.md
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_run_stale
         summary: "(R1 integrity-leader) verify-archive Tier A hasn't run cleanly in 1s"
         description: |
           R1 is the integrity leader per ADR-0016 — its nightly chain-link
@@ -126,7 +126,7 @@ tests:
         component: archive
         tier: checkpoint
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-b.md
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_tier_b_run_stale
         summary: "verify-archive Tier B checkpoint anchor hasn't run cleanly in 1s"
         description: |
           The Tier B checkpoint-anchor timer hasn't fired cleanly in 36h+
@@ -138,4 +138,4 @@ tests:
             - `journalctl -u verify-archive-tier-b.service` — what's failing?
             - is the /srv/history-archive mirror synced to the checked range?
 
-          Runbook: docs/operations/runbooks/verify-archive-tier-b.md
+          Runbook: docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_tier_b_unit_failed

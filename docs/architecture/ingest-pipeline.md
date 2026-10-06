@@ -186,7 +186,7 @@ same generation-guarded upserts.
   `-allow-live-overlap` is passed. `-resume` continues a run. A
   post-decoder-fix re-walk must go through here, because only a higher
   generation overwrites stored rows. Procedure:
-  [projector-replay runbook](../operations/runbooks/projector-replay.md)
+  [projector-replay runbook](../operations/runbooks/projector.md#stellarindex_projector_replay_stalled)
   and the doc comment in `internal/ops/chops/projected_rebuild.go`.
 
 **A wrong key needs a clean slate.** An upsert cannot fix a wrong PK: an

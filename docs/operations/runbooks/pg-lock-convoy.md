@@ -40,7 +40,7 @@ chunks_detailed_size (watcher)  blocked   904 s
 ```
 
 Nothing paged on the convoy. What fired described the wreckage —
-[`stellarindex_postgres_exporter_down`](exporter-down.md) (direct
+[`stellarindex_postgres_exporter_down`](meta.md#stellarindex_redis_exporter_down) (direct
 scrape returned HTTP 000 after 30 s; Prometheus logged `context deadline
 exceeded`) and [`stellarindex_aggregator_silent`](aggregator.md#stellarindex_aggregator_silent)
 — and **both systemd units read `active` throughout**. `/v1/status` went
@@ -198,7 +198,7 @@ restamp.
 - [timescale-probe-degraded](timescale-probe-degraded.md) — the same
   producer's self-report. If the probe is degraded, this alert is blind
   too; that one is the meta-alert and takes precedence.
-- [exporter-down](exporter-down.md) — usually a
+- [exporter-down](meta.md#stellarindex_redis_exporter_down) — usually a
   consequence of this, not an independent fault.
 - [aggregator-silent](aggregator.md#stellarindex_aggregator_silent) — the aggregator stops
   writing VWAP when its own reads are queued.

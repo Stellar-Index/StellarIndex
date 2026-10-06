@@ -93,7 +93,7 @@ API, ClickHouse, S3/MinIO) it queries being unreachable.
 
 - [patroni-textfile-stale](patroni-textfile-stale.md),
   [config-assertion-failed](config-assertion-failed.md),
-  [restore-drill-stale](restore-drill-stale.md) — the dedicated,
+  [restore-drill-stale](restore-drill.md#stellarindex_restore_drill_stale) — the dedicated,
   tighter (or, for restore-drill, more patient) alerts this backstop
   defers to.
 - `scripts/ci/textfile-producers.manifest` — every producer this

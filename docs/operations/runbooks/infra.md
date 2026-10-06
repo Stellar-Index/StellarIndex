@@ -50,8 +50,8 @@ Alerts live in `configs/prometheus/rules.r1/infra.yml` and `storage.yml` (the fi
 ## stellarindex_host_down
 
 - Trips: `up{job="node_exporter"} == 0 OR absent_over_time(up{job="node_exporter"}[5m]) == 1`, `for: 2m`, `severity: ticket`.
-- Meaning: on r1 Prometheus and Alertmanager run on the box (`configs/prometheus/prometheus.r1.yml` → `localhost:9093`), so this can only fire while the host is alive. Being paged by it means the exporter or the scrape path is broken, not the box. `stellarindex_prometheus_scrape_failing` (`rules.r1/meta.yml`, `scrape-failing.md`) fires alongside; expected.
-- A genuine r1 outage surfaces only through out-of-band Healthchecks.io checks going red: `stellarindex-heartbeat@{indexer,aggregator,api}.timer` (60 s, `configs/healthchecks/stellarindex-heartbeat@.timer`), `stellarindex_deadmansswitch` heartbeat (Alertmanager → Healthchecks.io every 60 s, `deadmansswitch.md`), `node-healthcheck.timer` (5 min, `tasks/13-healthcheck.yml`), `stellarindex-smoke.timer` (5 min), `stellarindex-sla-probe.timer` (15 min). Each is silently disabled if its URL in `/etc/default/{node-healthcheck,stellarindex-healthchecks}` is empty; if none fired in a real outage, check that afterwards.
+- Meaning: on r1 Prometheus and Alertmanager run on the box (`configs/prometheus/prometheus.r1.yml` → `localhost:9093`), so this can only fire while the host is alive. Being paged by it means the exporter or the scrape path is broken, not the box. `stellarindex_prometheus_scrape_failing` (`rules.r1/meta.yml`, `meta.md#stellarindex_prometheus_scrape_failing`) fires alongside; expected.
+- A genuine r1 outage surfaces only through out-of-band Healthchecks.io checks going red: `stellarindex-heartbeat@{indexer,aggregator,api}.timer` (60 s, `configs/healthchecks/stellarindex-heartbeat@.timer`), `stellarindex_deadmansswitch` heartbeat (Alertmanager → Healthchecks.io every 60 s, `meta.md#stellarindex_deadmansswitch`), `node-healthcheck.timer` (5 min, `tasks/13-healthcheck.yml`), `stellarindex-smoke.timer` (5 min), `stellarindex-sla-probe.timer` (15 min). Each is silently disabled if its URL in `/etc/default/{node-healthcheck,stellarindex-healthchecks}` is empty; if none fired in a real outage, check that afterwards.
 
 Diagnose:
 
@@ -71,7 +71,7 @@ Fix:
 2. Host down: r1 has no failover; API, indexer, aggregator, galexie, ClickHouse, Postgres, Redis, MinIO, Prometheus and Alertmanager are all down and alerting is dark. Treat as SEV-1 manually: post in Discord #stellarindex-pages, update the status page (`sev-status-page-update.md`), Robot Reset → KVM. If nftables locked you out: `bootstrap-archival-node.md` §"Firewall locked us out".
 3. After return: `zpool status -x` shows `data` ONLINE (else zfs-degraded section) and `zfs list -o name,mountpoint,mounted` shows every `data/*` mounted; `systemctl --failed` empty; `systemctl is-active clickhouse-server postgresql@15-main redis-server galexie minio caddy cap67-movements stellarindex-indexer stellarindex-aggregator stellarindex-api prometheus-node-exporter prometheus` and `ss -ltnp | grep :9093` (Alertmanager). Caddy (:80/:443 → loopback API :3000, `tasks/19-caddy.yml`) returns with the host.
 4. Then service runbooks: `api.md#stellarindex_api_down`, `all-ingestion-down.md`, `galexie-archive.md#stellarindex_galexie_catchup_refused`, `ch-live-sink-drops.md`. galexie needs ~9 min cold captive-core catchup before the indexer resumes: do not restart it repeatedly; `ingestion-lag.md` / `source-stopped.md` clear on their own.
-5. Textfile-driven alerts (`sla-probe-stale.md`, `supply-snapshot-stale.md`, `archive-completeness.md#stellarindex_archive_completeness_stale`, `binary-version-skew.md`, `stellar-stack-version-lag.md`) may fire until the writing timers' first post-boot run (`OnBootSec`: heartbeat 30 s, smoke 2 min, node-healthcheck 2 min, sla-probe 3 min; daily `OnCalendar` ones at their time). Don't chase them for ~15 min.
+5. Textfile-driven alerts (`sla-probe.md#stellarindex_sla_probe_stale`, `supply-snapshot.md#stellarindex_supply_snapshot_stale`, `archive-completeness.md#stellarindex_archive_completeness_stale`, `binary-version-skew.md`, `stellar-stack-version-lag.md`) may fire until the writing timers' first post-boot run (`OnBootSec`: heartbeat 30 s, smoke 2 min, node-healthcheck 2 min, sla-probe 3 min; daily `OnCalendar` ones at their time). Don't chase them for ~15 min.
 6. Verify: `up{job="node_exporter"}` = 1, scrape_failing clears, deadmansswitch resumed, Healthchecks.io green.
 
 RCA: Robot KVM / status page and Hetzner network status for FSN1; `journalctl -b -1`; `smartctl` / `nvme smart-log` on all four NVMes; `dmesg | grep -i oom`.
@@ -285,7 +285,7 @@ Fix: first confirm the device is not failing (if it is, replace hardware first: 
 ## stellarindex_systemd_unit_failed
 
 - Trips: `max_over_time(node_systemd_unit_state{state="failed",name!~"verify-archive-tier-a\\.service|verify-archive-tier-b\\.service|ch-supply\\.service|pgbackrest-backup\\.service|ch-schema-snapshot\\.service|verify-served-values\\.service"}[10m]) == 1`, `for: 25m`, `severity: ticket`. Producer: node_exporter systemd collector (`node_systemd_unit_state`).
-- Meaning: any systemd unit `failed` for 15 m+, or failing every run while its timer restarts it within 10 m (`max_over_time[10m]` bridges the `activating` dips; `for:` grows by the same 10 m so a single failure must still persist 15 m+). Catch-all: everything is covered unless it has a better dedicated alert (exclusions in `scripts/ci/unit-failed-dedicated.baseline`: `verify-archive-unit-failed.md`; `## stellarindex_pgbackrest_backup_unit_failed`; `divergence.md` is where stale `account_directory` eventually shows).
+- Meaning: any systemd unit `failed` for 15 m+, or failing every run while its timer restarts it within 10 m (`max_over_time[10m]` bridges the `activating` dips; `for:` grows by the same 10 m so a single failure must still persist 15 m+). Catch-all: everything is covered unless it has a better dedicated alert (exclusions in `scripts/ci/unit-failed-dedicated.baseline`: `verify-archive.md#stellarindex_verify_archive_unit_failed`; `## stellarindex_pgbackrest_backup_unit_failed`; `divergence.md` is where stale `account_directory` eventually shows).
 - Key idea: most of these oneshots write data something else reads and trusts, so a failure surfaces as a consumer serving stale data confidently, possibly days later. Ask "what has been reading its output since it stopped?" `directory-sync` is the sole writer of `account_directory` (consulted by the scam-pricing gate on every aggregated serve; `Type=oneshot`, no `OnFailure`, no metric).
 
 ```sh
@@ -365,7 +365,7 @@ journalctl -u pgbackrest-backup.service --since '48 hours ago' --no-pager | tail
 ls -ld /var/lib/pgbackrest; zfs list data/pgbackrest data/postgres; df -h /var/lib/pgbackrest
 sudo -u postgres psql -Atc "SELECT archived_count, failed_count, last_archived_time, last_failed_time FROM pg_stat_archiver;"
 sudo -u postgres psql -Atc "SELECT now(), pg_is_in_recovery();"  # backup needs primary access
-curl -s http://127.0.0.1:9854/metrics | grep pgbackrest_backup_since_last_completion_seconds   # if absent: exporter-down.md
+curl -s http://127.0.0.1:9854/metrics | grep pgbackrest_backup_since_last_completion_seconds   # if absent: meta.md#stellarindex_redis_exporter_down
 cat /var/lib/node_exporter/textfile_collector/pgbackrest_backup.prom   # which repo failed (rc per repo)
 ```
 
@@ -376,9 +376,9 @@ Root causes:
 4. pgBackRest binary vs repo format mismatch after a major upgrade; a repo cipher mismatch after a repo re-create (`docs/operations/pgbackrest-encryption.md`) looks identical.
 5. Scheduler did not run: timer disabled/absent (`18-pgbackrest-backup.yml` removes it where `pgbackrest_backup_enabled=false`; a missing timer is a documented past cause of `_none_24h`); host down at 02:00 UTC (`Persistent=true` catches up on boot); unit exit 127 (pgbackrest not installed: the testnet/futurenet shape).
 
-False positives: exporter down makes the freshness alerts blind rather than false-firing (`stellarindex_pgbackrest_exporter_down` in `rules.r1/meta.yml`, `exporter-down.md`); the metric can read stale up to 10 min after it returns; `_metrics_absent` deliberately does not fire while `up == 0` so they never double-page. The first backup after a repo re-create (`pgbackrest-encryption.md`) legitimately resets the age series and resolves on the first completed backup.
+False positives: exporter down makes the freshness alerts blind rather than false-firing (`stellarindex_pgbackrest_exporter_down` in `rules.r1/meta.yml`, `meta.md#stellarindex_redis_exporter_down`); the metric can read stale up to 10 min after it returns; `_metrics_absent` deliberately does not fire while `up == 0` so they never double-page. The first backup after a repo re-create (`pgbackrest-encryption.md`) legitimately resets the age series and resolves on the first completed backup.
 
-Related: `restore-drill-stale.md` (`stellarindex_restore_drill_stale`; monthly first-Saturday 04:00 UTC drill proves repo1 restores), `timescale-primary-down.md` (Patroni failover; not deployed on r1), `account-erasure.md` (a restore brings erased accounts back; replay erasures before the API serves), `docs/adr/0043-backup-and-restore-strategy.md`, `docs/architecture/ha-plan.md` §3.3 and §8. Promtool coverage: `deploy/monitoring/rule-tests/storage-backup_test.yml`.
+Related: `restore-drill.md#stellarindex_restore_drill_stale` (`stellarindex_restore_drill_stale`; monthly first-Saturday 04:00 UTC drill proves repo1 restores), `timescale-primary-down.md` (Patroni failover; not deployed on r1), `account-erasure.md` (a restore brings erased accounts back; replay erasures before the API serves), `docs/adr/0043-backup-and-restore-strategy.md`, `docs/architecture/ha-plan.md` §3.3 and §8. Promtool coverage: `deploy/monitoring/rule-tests/storage-backup_test.yml`.
 
 ## stellarindex_timescale_backup_none_24h
 
@@ -397,7 +397,7 @@ Related: `restore-drill-stale.md` (`stellarindex_restore_drill_stale`; monthly f
      sudo -u postgres pgbackrest --stanza=stellarindex --repo=1 --type=full backup
      sudo -u postgres pgbackrest --stanza=stellarindex --repo=2 --type=full backup
      ```
-     `repo1-retention-full=2` (`repo2-retention-full=1`): an extra full expires the oldest chain; make sure the restore drill (`restore-drill-stale.md`) validated the newest chain before relying on it.
+     `repo1-retention-full=2` (`repo2-retention-full=1`): an extra full expires the oldest chain; make sure the restore drill (`restore-drill.md#stellarindex_restore_drill_stale`) validated the newest chain before relying on it.
   6. Verify: `info` shows a backup with stop time < 24 h AND `pgbackrest_backup_since_last_completion_seconds` dropped in Prometheus (allow up to 10 min exporter lag) AND both alerts resolved in Alertmanager.
 - RCA: backup log from last success through first failure; ZFS/kernel logs for `data` in the window; secret/config/binary upgrade around the failure; RPO math (what would be lost if primary failed).
 

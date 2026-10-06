@@ -35,7 +35,7 @@ Trips: `sum by (pair, metric) (rate(stellarindex_cross_region_divergences_total[
 
 Two regions disagreed on a closed bucket's served value. `stellarindex_cross_region_checks_total{outcome="divergence"}` per region shows which side moved.
 
-Fix: identify which region's pipeline produced the wrong value, comparing against the certified raw ledger lake, not the other region (both could be behind a since-fixed defect), and re-run its ingest/projection for the affected range ([projector-replay](projector-replay.md)).
+Fix: identify which region's pipeline produced the wrong value, comparing against the certified raw ledger lake, not the other region (both could be behind a since-fixed defect), and re-run its ingest/projection for the affected range ([projector-replay](projector.md#stellarindex_projector_replay_stalled)).
 
 ## stellarindex_cross_region_fetch_errors
 

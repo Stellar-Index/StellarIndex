@@ -69,8 +69,8 @@ psql -d stellarindex -c \
 
 - **`misaligned` or `missing_snapshot` on one side.** That side's supply
   refresher is not producing snapshots. Follow
-  [`supply-refresh-stalled`](supply-refresh-stalled.md) or
-  [`supply-refresh-error-dominant`](supply-refresh-error-dominant.md)
+  [`supply-refresh-stalled`](supply-refresh.md#stellarindex_aggregator_supply_refresh_stalled) or
+  [`supply-refresh-error-dominant`](supply-refresh.md#stellarindex_aggregator_supply_refresh_error_dominant)
   for the stale asset. The cross-check recovers on the first tick after
   both sides are within 1000 ledgers of each other.
 - **`missing_snapshot` on a newly added pair.** Wait one refresh cadence

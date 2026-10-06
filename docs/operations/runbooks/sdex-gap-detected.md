@@ -95,7 +95,7 @@ There is no per-source `*-backfill` subcommand for any source — the whole `*-b
 ## Related
 
 - [ingest-gap-detected.md](ingest-gap-detected.md) — the parent alert (matches any `source=` label)
-- [projector-replay.md](projector-replay.md) — Soroban equivalent for the per-source projection tables (ADR-0032 supersedes the former `cascade-window-drain` subcommand)
+- [projector.md#stellarindex_projector_replay_stalled](projector.md#stellarindex_projector_replay_stalled) — Soroban equivalent for the per-source projection tables (ADR-0032 supersedes the former `cascade-window-drain` subcommand)
 - ADR-0030 — per-source coverage invariant; SDEX target is the canonical example of a non-Soroban source registered in the same scheme
 - ADR-0033 — the completeness verdict that owns deep-history assurance beyond the detector's trailing scan window
 

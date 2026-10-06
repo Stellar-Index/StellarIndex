@@ -13,7 +13,7 @@ severity: P1
 | ----- | ----- |
 | Symptom | Prometheus targets API shows `minio` job `down` with `lastError: server returned HTTP status 401 Unauthorized` or `403 Forbidden`. MinIO answers 401 for a missing/empty bearer file and 403 for a token whose service account lacks `admin:Prometheus`; both land here. |
 | Severity | P1 (page) — matches `stellarindex_minio_exporter_down`, which is what actually detects this |
-| Detected by | `stellarindex_minio_exporter_down` (`deploy/monitoring/rules/meta.yml` + the r1 overlay: `up{job="minio"} == 0 OR absent_over_time(up{job="minio"}[5m]) == 1`, `for: 2m`, **`severity: page`**). Its `runbook_url` points at [exporter-down.md](exporter-down.md) — that is the alert's first-response page; come here for the token-provisioning procedure. |
+| Detected by | `stellarindex_minio_exporter_down` (`deploy/monitoring/rules/meta.yml` + the r1 overlay: `up{job="minio"} == 0 OR absent_over_time(up{job="minio"}[5m]) == 1`, `for: 2m`, **`severity: page`**). Its `runbook_url` points at [meta.md#stellarindex_redis_exporter_down](meta.md#stellarindex_redis_exporter_down) — that is the alert's first-response page; come here for the token-provisioning procedure. |
 | Typical MTTR | 10 minutes (provision token + restart Prometheus) |
 | Impact | MinIO observability gap: no bucket-usage, replication, or write-latency metrics scraped. Operator can't alert on disk exhaustion of the MinIO data partition until the token is wired. |
 
@@ -176,7 +176,7 @@ reading it — see the same doc.
 - F-0152 closure — sibling exporters (redis / postgres /
   pgbackrest) now installed; MinIO's token is the last piece,
   closed by the Group D task above (INV-0981/INV-1144).
-- [exporter-down.md](exporter-down.md) — where
+- [meta.md#stellarindex_redis_exporter_down](meta.md#stellarindex_redis_exporter_down) — where
   `stellarindex_minio_exporter_down` routes; its per-exporter notes
   carry the day-to-day `Authorization: Bearer $(cat
   /etc/prometheus/minio.token)` probe.
@@ -190,12 +190,12 @@ reading it — see the same doc.
   `stellarindex_minio_exporter_down`, is `severity: page` in both
   `deploy/monitoring/rules/meta.yml` and the alerts catalog, and the
   body already said as much (see the 2026-08-29 entry below and
-  [exporter-down.md](exporter-down.md)). The header disagreed with
-  its own body and with the sibling `exporter-down.md` runbook.
+  [meta.md#stellarindex_redis_exporter_down](meta.md#stellarindex_redis_exporter_down)). The header disagreed with
+  its own body and with the sibling `meta.md#stellarindex_redis_exporter_down` runbook.
 - 2026-08-29 — re-verified against HEAD (runbook Wave L, #319): "Detected by"
   named operator inspection / a bare `up{job="minio"} == 0` — the real detector
   is the P1 `stellarindex_minio_exporter_down` (page, `for: 2m`, with an
-  `absent_over_time` arm), whose `runbook_url` routes to `exporter-down.md`;
+  `absent_over_time` arm), whose `runbook_url` routes to `meta.md#stellarindex_redis_exporter_down`;
   the symptom is 401 **or** 403 depending on whether the token is missing or
   under-privileged; the Ansible-gap section re-confirmed (no task owns
   `/etc/prometheus/minio.token`) and the stale "rendered by ansible" comment in

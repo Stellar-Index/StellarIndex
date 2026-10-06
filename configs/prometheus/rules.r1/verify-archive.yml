@@ -41,7 +41,7 @@ groups:
           team: stellarindex
           component: archive
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-unit-failed.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_unit_failed
           summary: "verify-archive Tier A nightly run failed on {{ $labels.instance }}"
           description: |
             The most-recent run of `verify-archive-tier-a.service` exited
@@ -111,7 +111,7 @@ groups:
           team: stellarindex
           component: archive
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-run-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_run_stale
           summary: "(R1 integrity-leader) verify-archive Tier A hasn't run cleanly in {{ $value | humanizeDuration }}"
           description: |
             R1 is the integrity leader per ADR-0016 — its nightly chain-link
@@ -142,7 +142,7 @@ groups:
           team: stellarindex
           component: archive
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-b.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_tier_b_unit_failed
           summary: "verify-archive Tier B checkpoint anchor failed on {{ $labels.instance }}"
           description: |
             The most-recent run of `verify-archive-tier-b.service` exited in the
@@ -163,7 +163,7 @@ groups:
                 `fuser -v /run/lock/stellarindex-heavy-verify-archive.lock`.
             Customer impact: zero immediate; the API serves from existing data.
 
-            Runbook: docs/operations/runbooks/verify-archive-tier-b.md
+            Runbook: docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_tier_b_unit_failed
 
       # Same absent_over_time branch as the Tier A staleness rule above
       # (OBS-2 pattern) — `time() - x` over an empty vector is empty, so
@@ -186,7 +186,7 @@ groups:
           team: stellarindex
           component: archive
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-b.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_tier_b_run_stale
           summary: "verify-archive Tier B checkpoint anchor hasn't run cleanly in {{ $value | humanizeDuration }}"
           description: |
             The Tier B checkpoint-anchor timer hasn't fired cleanly in 36h+
@@ -198,7 +198,7 @@ groups:
               - `journalctl -u verify-archive-tier-b.service` — what's failing?
               - is the /srv/history-archive mirror synced to the checked range?
 
-            Runbook: docs/operations/runbooks/verify-archive-tier-b.md
+            Runbook: docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_tier_b_unit_failed
 
       # Tier D (multi-peer fork-detection, weekly). Mirror of the rule in
       # deploy/monitoring/rules/verify-archive.yml. `-tier peers` samples
@@ -227,7 +227,7 @@ groups:
           team: stellarindex
           component: archive
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-d.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_tier_d_run_stale
           summary: "verify-archive Tier D (multi-peer fork-detection) has recorded no success in >8d (weekly cron, Sunday)"
           description: |
             The weekly multi-peer fork-detection sweep (`-tier peers`,
@@ -246,4 +246,4 @@ groups:
               - re-run by hand: `stellarindex-ops verify-archive -tier
                 peers -peer-samples 50 -from <hot floor>`.
 
-            Runbook: docs/operations/runbooks/verify-archive-tier-d.md
+            Runbook: docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_tier_d_run_stale

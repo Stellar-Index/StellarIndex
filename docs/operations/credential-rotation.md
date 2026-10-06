@@ -114,7 +114,7 @@ then `ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags ex
 (`--tags minio` does not reach Group D) to mint a new one and restart Prometheus.
 
 Symptoms: `minio_exporter_down` in
-[runbooks/exporter-down.md](runbooks/exporter-down.md#per-exporter-notes); the 403 case in
+[runbooks/meta.md#stellarindex_redis_exporter_down](runbooks/meta.md#stellarindex_minio_exporter_down); the 403 case in
 [runbooks/minio-metrics-403.md](runbooks/minio-metrics-403.md). The hourly
 `minio_prometheus_token_present` check in `scripts/ops/config-assertions.sh` catches a
 missing, empty or wrong-owner file (stat only; never reads the token).
@@ -192,7 +192,7 @@ not configured. After deploying, confirm one full timer cycle.
 ## Related
 
 - [runbooks/config-assertion-failed.md](runbooks/config-assertion-failed.md)
-- [runbooks/exporter-down.md](runbooks/exporter-down.md)
+- [runbooks/meta.md#stellarindex_redis_exporter_down](runbooks/meta.md#stellarindex_redis_exporter_down)
 - [runbooks/minio-metrics-403.md](runbooks/minio-metrics-403.md)
 - [r1-ansible-drift-2026-07-03.md](r1-ansible-drift-2026-07-03.md)
 - `configs/ansible/roles/archival-node/tasks/09-minio.yml`

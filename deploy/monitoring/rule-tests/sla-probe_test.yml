@@ -67,7 +67,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe.md#stellarindex_sla_probe_stale
               summary: "SLA probe has recorded no passing run in ≥ 90m (cadence 15m) — timer dead or every run failing"
               description: |
                 Either the systemd timer isn't running, or every run since
@@ -110,7 +110,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe.md#stellarindex_sla_probe_freshness_breach
               summary: "price-tip price freshness 45s over its bound (30s SLA; /price 150s closed-bucket) sustained 30m"
               description: |
                 The SLA probe's stalest observed_at freshness for
@@ -161,7 +161,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe.md#stellarindex_sla_probe_freshness_breach
               summary: "oracle-latest price freshness 120s over its bound (30s SLA; /price 150s closed-bucket) sustained 30m"
               description: |
                 The SLA probe's stalest observed_at freshness for
@@ -198,7 +198,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe.md#stellarindex_sla_probe_freshness_breach
               summary: "price price freshness 200s over its bound (30s SLA; /price 150s closed-bucket) sustained 30m"
               description: |
                 The SLA probe's stalest observed_at freshness for
@@ -240,7 +240,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe.md#stellarindex_sla_probe_freshness_breach
               summary: "price price freshness 170s over its bound (30s SLA; /price 150s closed-bucket) sustained 30m"
               description: |
                 The SLA probe's stalest observed_at freshness for
@@ -279,7 +279,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-availability-breach.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe.md#stellarindex_sla_probe_availability_breach
               summary: "price probe availability 99.333% below SLA target (99.9%) sustained 30m"
               description: |
                 The SLA probe's per-endpoint 2xx share has been below the
@@ -318,7 +318,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-p99-breach.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe.md#stellarindex_sla_probe_p99_breach
               summary: "price p99 latency 600ms exceeds SLA target (500ms) sustained 30m"
               description: |
                 The SLA probe's per-endpoint p99 has been above the published
@@ -349,7 +349,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-p95-breach.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe.md#stellarindex_sla_probe_p95_breach
               summary: "price p95 latency 250ms exceeds SLA target (200ms) sustained 30m"
               description: |
                 The SLA probe's per-endpoint p95 has been above the SLA-stated
@@ -392,7 +392,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-unit-failed.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe.md#stellarindex_sla_probe_unit_failed_alert
               summary: "SLA probe verdict has been fail for ≥ 30m — at least one SLA breached"
               description: |
                 The probe's overall verdict gauge has been 1 (fail) for

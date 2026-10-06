@@ -82,7 +82,7 @@ func TestK023_VerifyArchiveCheckpointUnitsFailOnMissed(t *testing.T) {
 // command added later cannot drop the flag either.
 func TestVerifyArchiveTierBRunbook_ManualRerunFailsOnMissed(t *testing.T) {
 	t.Parallel()
-	const rel = "docs/operations/runbooks/verify-archive-tier-b.md"
+	const rel = "docs/operations/runbooks/verify-archive.md"
 	checkpointCmds := 0
 	for _, argv := range verifyArchiveRunbookCommands(readRepoFile(t, rel)) {
 		tier, ok := flagValue(argv, "-tier")

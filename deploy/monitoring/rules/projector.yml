@@ -43,7 +43,7 @@ groups:
           team: stellarindex
           component: projector
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_lag_high
           summary: "Projector source {{ $labels.source }} lagging > 256 ledgers"
           description: |
             The ADR-0032 projector's per-source cursor for {{ $labels.source }}
@@ -52,7 +52,7 @@ groups:
             so per-source projections (trades, blend_*, phoenix_*, ...) will
             increasingly diverge from the raw store.
 
-            Runbook: docs/operations/runbooks/projector-lag.md
+            Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_lag_high
 
       # The other half of the #325 replay pair: the lag rule above stops
       # ticketing while a replay is climbing, so THIS rule is what keeps a
@@ -95,7 +95,7 @@ groups:
           team: stellarindex
           component: projector
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-replay.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled
           summary: "Projector replay for {{ $labels.source }} has STOPPED advancing"
           description: |
             An operator-initiated projector-replay is in progress for
@@ -111,7 +111,7 @@ groups:
             first — a floored window or a held sink is the usual cause — and
             follow the replay runbook's decompress-first pre-flight.
 
-            Runbook: docs/operations/runbooks/projector-replay.md
+            Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled
 
       # Cycle failures bumping `outcome="error"`. Single hiccups
       # (postgres restart, MinIO blip) are harmless — the projector
@@ -127,13 +127,13 @@ groups:
           team: stellarindex
           component: projector
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_error_rate_high
           summary: "Projector source {{ $labels.source }} cycle errors sustained"
           description: |
             The projector for {{ $labels.source }} is failing > 5% of cycles
             for 15+ minutes. Cursor is not advancing — backlog is growing.
 
-            Runbook: docs/operations/runbooks/projector-lag.md
+            Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_lag_high
 
       # COR-11/COR-01 (audit-2026-07-23): the projector's poison-row escape
       # hatch (quarantineCandidate) gives up on at most ONE un-processable
@@ -171,7 +171,7 @@ groups:
           team: stellarindex
           component: projector
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-row-quarantined.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_row_quarantined
           summary: "Projector quarantined a row on {{ $labels.source }} — poison-row escape hatch fired"
           description: |
             stellarindex_projector_events_decoded_total{source="{{ $labels.source }}",outcome="sink_quarantined"}
@@ -183,7 +183,7 @@ groups:
             {{ $labels.source }}` after the underlying defect is fixed.
             Any nonzero rate needs eyes.
 
-            Runbook: docs/operations/runbooks/projector-row-quarantined.md
+            Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_row_quarantined
 
       # RLT-131 (audit-2026-09-18). The SISTER of the quarantine rule above,
       # and the gap that made this finding "high": the skip arm — a
@@ -215,7 +215,7 @@ groups:
           team: stellarindex
           component: projector
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-row-quarantined.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_row_dropped_permanent
           summary: "Projector permanently dropped a row on {{ $labels.source }} — the sink rejected its VALUES"
           description: |
             stellarindex_projector_events_decoded_total{source="{{ $labels.source }}",outcome="sink_permanent"}
@@ -239,7 +239,7 @@ groups:
             (runs_total{outcome="sink_retry"}, rising lag) while it holds the
             window. Fix the schema before that budget expires.
 
-            Runbook: docs/operations/runbooks/projector-row-quarantined.md
+            Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_row_quarantined
 
       # RLT-131 / ADR-0003 (docs/adr/0003-i128-no-truncation.md, §Consequences):
       # "any observed errors.Is(err, canonical.ErrI128Overflow) in
@@ -273,7 +273,7 @@ groups:
           team: stellarindex
           component: projector
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-row-quarantined.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_i128_overflow
           summary: "i128 OVERFLOW on {{ $labels.source }} — an int64 has reached an amount path (ADR-0003 SEV-1)"
           description: |
             stellarindex_projector_events_decoded_total{source="{{ $labels.source }}",outcome="sink_i128_overflow"}
@@ -292,7 +292,7 @@ groups:
             rows that did NOT overflow are the dangerous ones, because they
             landed.
 
-            Runbook: docs/operations/runbooks/projector-row-quarantined.md
+            Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_row_quarantined
 
       # DATA-6 / NS-2 (audit-2026-08-14): a projector decode soft-fail (a
       # returned decode error or a recovered decoder panic) SKIPS the row and
@@ -322,7 +322,7 @@ groups:
           team: stellarindex
           component: projector
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-decode-error-rate.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_decode_error_rate_high
           summary: "Projector source {{ $labels.source }} decode errors sustained — likely a decoder regression"
           description: |
             The ADR-0032 projector for {{ $labels.source }} is failing to decode
@@ -336,7 +336,7 @@ groups:
             range with `stellarindex-ops projector-replay -source
             {{ $labels.source }}`.
 
-            Runbook: docs/operations/runbooks/projector-decode-error-rate.md
+            Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_decode_error_rate_high
 
       # The rate rule above cannot see a sparse source: a total loss on a
       # source emitting a few events an hour stays under 0.1/s. This compares
@@ -357,7 +357,7 @@ groups:
           team: stellarindex
           component: projector
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-decode-error-rate.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_decode_error_ratio_high
           summary: "Projector source {{ $labels.source }} is dropping {{ $value | humanizePercentage }} of its events at decode"
           description: |
             Over the last hour the ADR-0032 projector for {{ $labels.source }}
@@ -369,7 +369,7 @@ groups:
             Fix the decoder, then re-drive with `stellarindex-ops
             projector-replay -source {{ $labels.source }}`.
 
-            Runbook: docs/operations/runbooks/projector-decode-error-rate.md
+            Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_decode_error_rate_high
 
       # PROJECTOR WEDGE (task #33 / W8 recon 9b). The adaptive window halves
       # on a per-cycle deadline down to the MinBatchLimit floor (25 ledgers).
@@ -393,7 +393,7 @@ groups:
           team: stellarindex
           component: projector
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-wedged.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_wedged
           summary: "Projector source {{ $labels.source }} is WEDGED — cursor stuck at the window floor"
           description: |
             The ADR-0032 projector for {{ $labels.source }} has shrunk its
@@ -408,4 +408,4 @@ groups:
             per-cycle budget (PerSourceTimeout) or decompress the offending
             range, then confirm the wedge clears.
 
-            Runbook: docs/operations/runbooks/projector-wedged.md
+            Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_wedged

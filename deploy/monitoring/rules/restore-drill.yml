@@ -76,7 +76,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill.md#stellarindex_restore_drill_stale
           summary: "pgBackRest restore-drill has recorded no success in >40d (monthly timer) — DR evidence is going stale"
           description: |
             The monthly pgBackRest restore-drill
@@ -110,7 +110,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-offsite-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill.md#stellarindex_restore_drill_offsite_stale
           summary: "off-site pgBackRest restore-drill (repo2, S3) has recorded no success in >35d (monthly timer, the 15th) — the survival copy is not currently proven restorable"
           description: |
             The monthly OFF-SITE restore-drill (restore-drill-offsite.timer,
@@ -146,7 +146,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-failed.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill.md#stellarindex_restore_drill_failed
           summary: "the most recent pgBackRest restore-drill FAILED ({{ $value }} check(s)) — the backup chain is not currently proven restorable"
           description: |
             The most recent restore-drill run (restore-drill.timer, first

@@ -41,7 +41,7 @@ tests:
               team: stellarindex
               component: supply
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh-stalled.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh.md#stellarindex_aggregator_supply_refresh_stalled
               summary: "supply refresher has recorded no successful tick across any watched asset in the last 30m (cadence 5m)"
               description: |
                 The aggregator-resident supply refresher emits
@@ -105,7 +105,7 @@ tests:
               team: stellarindex
               component: supply
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh-error-dominant.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh.md#stellarindex_aggregator_supply_refresh_dormant_fleet
               summary: "supply refresher: 2 assets reporting dormant together for ≥ 30m — a component observer has likely stalled"
               description: |
                 2 watched assets are reporting outcome `dormant`
@@ -151,7 +151,7 @@ tests:
               team: stellarindex
               component: supply
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sep41-supply-rollup-no-cursor.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh.md#stellarindex_sep41_supply_rollup_no_cursor
               summary: "sep41 supply rollup for CPINNED pinned for ≥ 30m: projector cursor (projector, sep41_supply) is absent"
               description: |
                 Every rollup pass for CPINNED in the last

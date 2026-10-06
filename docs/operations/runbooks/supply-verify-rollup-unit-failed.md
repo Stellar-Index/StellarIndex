@@ -56,7 +56,7 @@ The journal names every drifted `(contract, kind)` and every missing contract.
   `unit_failed 0`.
 - **Missing:** the contract is in `[supply] watched_sep41_contracts` but has
   never been folded. Check the rollup worker first —
-  [sep41-supply-rollup-no-cursor](sep41-supply-rollup-no-cursor.md) — then
+  [sep41-supply-rollup-no-cursor](supply-refresh.md#stellarindex_sep41_supply_rollup_no_cursor) — then
   seed it as above.
 - **Nothing checked:** the role installs this job only where
   `stellarindex_watched_sep41_contracts` is non-empty
@@ -77,5 +77,5 @@ None known. A failed run is never promoted to clean.
 - Unit: `configs/ansible/roles/archival-node/templates/systemd/supply-verify-rollup.{service,timer}.j2`.
 - Companion: [supply-verify-rollup-stale](supply-verify-rollup-stale.md) —
   no clean run for 36 h, or never.
-- [sep41-supply-rollup-no-cursor](sep41-supply-rollup-no-cursor.md) — the
+- [sep41-supply-rollup-no-cursor](supply-refresh.md#stellarindex_sep41_supply_rollup_no_cursor) — the
   fold is not advancing at all.
