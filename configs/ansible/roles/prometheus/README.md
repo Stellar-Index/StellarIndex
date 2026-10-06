@@ -15,7 +15,7 @@ Deploy a 2-host Prometheus + AlertManager pair per
 Pairs with `patroni` (965eed22e), `redis-sentinel` (bb2f4d29e), and
 `haproxy` (1836fced9) — this role is the consumer of all three's
 emitted metrics. Design rationale lives in
-[`docs/architecture/prometheus-ansible-role-design-note.md`](../../../../docs/architecture/prometheus-ansible-role-design-note.md).
+[`docs/architecture/ha-plan.md` §7.1](../../../../docs/architecture/ha-plan.md#71-metrics-and-alerting).
 
 ## Prerequisites
 

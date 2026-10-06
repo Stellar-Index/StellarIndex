@@ -138,7 +138,7 @@ func TestChartFiatProxyPairs_ReachIsUnchanged(t *testing.T) {
 // orders of magnitude thinner than the book of the same family, so one
 // family's SAC form reached before another family's classic form would
 // let a handful of prints own a bucket the book can answer — the
-// +37.32% bar aggregate-alias-folding.md §7.5 measured on r1.
+// +37.32% bar aggregation-plan.md §"The fiat quote leg, per bucket" measured on r1.
 func TestChartFiatProxyPairs_EveryEstablishedSpellingBeforeAnyHeldBack(t *testing.T) {
 	s := chartConstServer(t)
 	pair := chartConstNativeUSD(t)

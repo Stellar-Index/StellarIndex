@@ -11,11 +11,11 @@ import (
 //     SEP-41 event symbols (transfer/mint/burn/clawback). Populates
 //     Hit.EventType (legacy field, unchanged) as well as Hit.Symbol.
 //   - [KindOracleEvent] — the broader oracle-suggestive topic[0]
-//     sniffer added per docs/architecture/generic-oracle-sep-onboarding.md
-//     §3(b)(1). Only Hit.Symbol is populated.
+//     sniffer added per docs/architecture/oracle-manipulation-defense.md
+//     §"Event-shaped discovery". Only Hit.Symbol is populated.
 //   - [KindOracleCall] — the ContractCallContext-path sniffer for
 //     event-less oracles (the Band pattern), added per the same
-//     note's §3(b)(2). Only Hit.Symbol is populated.
+//     note's §"Event-less discovery". Only Hit.Symbol is populated.
 //
 // Stable string values appear in discovered_assets.discovery_kind —
 // renaming a value is a wire break.
@@ -196,7 +196,7 @@ func classifySymbol(sym string) (SEP41EventType, bool) {
 
 // oracleEventSymbols is the oracle-suggestive topic[0] symbol set
 // from the 2026-07-10 investigation's ClickHouse lake census
-// (docs/architecture/generic-oracle-sep-onboarding.md §2 — the exact
+// (docs/architecture/oracle-manipulation-defense.md §"Lake census" — the exact
 // `WHERE topic_0_sym IN (...)` list the census ran against r1's
 // `stellar.contract_events` table). Sighting one of these on a
 // contract we don't already track flags it for operator review; it
@@ -240,7 +240,7 @@ var oracleEventSymbols = map[string]struct{}{
 // SniffOracleEvent inspects an event and reports whether its topic[0]
 // matches the oracle-suggestive symbol set in [oracleEventSymbols].
 // This is the event-path half of the discovery broadening described
-// in docs/architecture/generic-oracle-sep-onboarding.md §3(b)(1): a
+// in docs/architecture/oracle-manipulation-defense.md §"Event-shaped discovery": a
 // NEW oracle deploying tomorrow with an event shape resembling
 // SEP-40/RedStone/Band gets sighted here even though its contract id
 // is unknown to every real decoder.
@@ -271,7 +271,7 @@ func SniffOracleEvent(ev events.Event) (Hit, bool) {
 
 // oracleCallFunctions is the oracle-suggestive InvokeContract
 // function-name allow-list from
-// docs/architecture/generic-oracle-sep-onboarding.md §3(b)(2) — the
+// docs/architecture/oracle-manipulation-defense.md §"Event-less discovery" — the
 // curated candidate list the investigation named for the
 // ContractCallContext path: `lastprice`, `price`, `prices`, `relay`,
 // `force_relay`, `write_prices`, `x_last_price`. Every entry here is
@@ -304,7 +304,7 @@ type OracleCallInput struct {
 // name only — args are NOT inspected) and reports whether the
 // invoked function name matches [oracleCallFunctions]. This is the
 // event-less-oracle half of the discovery broadening
-// (docs/architecture/generic-oracle-sep-onboarding.md §3(b)(2)): the
+// (docs/architecture/oracle-manipulation-defense.md §"Event-less discovery"): the
 // seam Band uses (relay/force_relay update storage without
 // publishing an event), generalized so a FUTURE event-less oracle
 // under a different function name still gets sighted instead of

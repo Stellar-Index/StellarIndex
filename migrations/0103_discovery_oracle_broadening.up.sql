@@ -1,6 +1,6 @@
 -- 0103 up — broaden `discovered_assets` for the generic-oracle
--- discovery extension (docs/architecture/generic-oracle-sep-onboarding.md
--- §3(b), option (b) recommendation: extend the existing SEP-41
+-- discovery extension (docs/architecture/oracle-manipulation-defense.md
+-- §"Discovery pipeline", option (b) recommendation: extend the existing SEP-41
 -- sighting-only sniffer rather than build a curated read-adapter).
 --
 -- internal/canonical/discovery gained two new sniffers:
@@ -53,7 +53,7 @@ ALTER TABLE discovered_assets ADD CONSTRAINT discovered_assets_first_seen_event_
     'burn',
     'clawback',
     -- Oracle-suggestive topic[0] / function-name set — exact list
-    -- from docs/architecture/generic-oracle-sep-onboarding.md §2's
+    -- from docs/architecture/oracle-manipulation-defense.md §"Lake census"'s
     -- ClickHouse census (also internal/canonical/discovery's
     -- oracleEventSymbols/oracleCallFunctions maps; the latter is a
     -- subset of the former, so this single list covers both).

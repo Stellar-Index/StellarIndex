@@ -26,7 +26,7 @@ If built, it uses the Soroban contract state reader (ADR-0039, read-time decode 
 
 ## Consequences
 
-- No speculative infrastructure; the design note `docs/architecture/sep40-oracle-read-adapter.md` is the starting point for a future build.
+- No speculative infrastructure; the design note `docs/architecture/oracle-manipulation-defense.md` §"SEP-40" is the starting point for a future build.
 - A SEP-40 oracle that emits no events and is not band cannot be ingested until the adapter exists.
 - Rejected: building the reader now (a wrong-schema decoder risk), closing the item as covered (the serve surface is covered, the read adapter is absent), and polling over stellar-rpc.
 

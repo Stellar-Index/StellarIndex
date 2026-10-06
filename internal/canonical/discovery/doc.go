@@ -17,8 +17,8 @@
 //     registration, asset-detail metadata fetch) without manual
 //     contract-id curation.
 //
-// Broadened 2026-07-10 (docs/architecture/generic-oracle-sep-onboarding.md
-// §3(b)) with two oracle-suggestive sniffers, same table, same
+// Broadened (docs/architecture/oracle-manipulation-defense.md
+// §"Discovery pipeline") with two oracle-suggestive sniffers, same table, same
 // sighting-only discipline:
 //
 //   - [SniffOracleEvent] — a wider topic[0] symbol set drawn from

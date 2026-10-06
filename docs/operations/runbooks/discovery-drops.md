@@ -15,7 +15,7 @@ severity: P3
 | Severity | P3 (informational) |
 | Detected by | `deploy/monitoring/rules/ingestion.yml` |
 | Typical MTTR | minutes-to-hours |
-| Impact | Discovery coverage is degrading — SEP-41 token sightings AND the oracle-suggestive event/call sightings added per docs/architecture/generic-oracle-sep-onboarding.md §3(b) share one sink. The main ingest path keeps running, but some discovery hits are being dropped before they reach Postgres. |
+| Impact | Discovery coverage is degrading — SEP-41 token sightings AND the oracle-suggestive event/call sightings added per docs/architecture/oracle-manipulation-defense.md §"Discovery pipeline" share one sink. The main ingest path keeps running, but some discovery hits are being dropped before they reach Postgres. |
 
 ## Symptoms
 

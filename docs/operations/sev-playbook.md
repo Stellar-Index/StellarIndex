@@ -155,7 +155,7 @@ It refuses impossible combinations (sev1 on a resolved incident, resolved on an 
 non-SEV-1 entry) before any network I/O. Zero subscribers is a successful no-op with a stderr line.
 
 Shipped behaviour (decisions:
-[`status-page-hosting-comparison.md`](../architecture/status-page-hosting-comparison.md#open-questions-for-the-implementer--resolved)):
+[`ha-plan.md` §7.4](../architecture/ha-plan.md#74-status-page)):
 
 - **Severity to state:** `severity:` sets the card: SEV-1 major, SEV-2 minor, SEV-3 maintenance. No PagerDuty or vendor webhook.
 - **Subscribers:** no email list (zero PII). Atom feed `GET /v1/incidents.atom`; dashboard webhooks for push.

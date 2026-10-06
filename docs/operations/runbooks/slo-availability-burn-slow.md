@@ -62,7 +62,7 @@ This is the earliest signal in the availability burn-rate family. Treat as a pla
 - `slo-availability-burn-medium.md` — next escalation (30m + 6h windows at 6×, `severity: page`).
 - `slo-availability-burn-fast.md` — the **P1** at the end of the chain.
 - `api.md#stellarindex_api_error_rate_critical` (the alert's `runbook_url` target).
-- ADR-0008 — HA topology + availability target (multi-region decision amended by ADR-0050 / `docs/architecture/multi-region-ha.md`).
+- ADR-0008 — HA topology + availability target (multi-region decision amended by ADR-0050 / `docs/architecture/ha-plan.md`).
 
 ## Changelog
 

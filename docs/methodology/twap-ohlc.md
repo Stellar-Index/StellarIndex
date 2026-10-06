@@ -123,7 +123,7 @@ via `usdPeggedConstituentSets` + `combineConstituentBars`) and
 `::fiatCombinedTrades` (point), reached from the shared point-path
 fetch `vwap.go::tradesInRangeWithStablecoinFallback` used by
 `/v1/vwap`, `/v1/twap` and single-bar `/v1/ohlc`. See
-`docs/architecture/aggregate-alias-folding.md` §7.5 for the
+`docs/architecture/aggregation-plan.md` §"The fiat quote leg, per bucket" for the
 established/held-back split's rationale.
 
 This proxy fallback is *not* an LKG fallback — it answers the

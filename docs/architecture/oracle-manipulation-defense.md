@@ -1,602 +1,312 @@
 ---
-title: Oracle manipulation — attack catalogue and defensive layers
-last_verified: 2026-05-03
-status: living document — Layers 4/5 and the freeze thresholds corrected against code 2026-09-02 (#361); the attack catalogue itself not re-derived
+title: Oracles — manipulation defense, SEP-40 and onboarding a generic oracle
+last_verified: 2026-10-05
+status: living document — thresholds, metric and alert names checked against code 2026-10-05; the attack catalogue is not re-derived
 ---
 
-# Oracle manipulation — attack catalogue and defensive layers
+# Oracles: manipulation defense, SEP-40, onboarding
 
-A risk-and-defense reference for the engineering team. Documents
-known oracle-manipulation incidents in the broader DeFi space, the
-attack patterns common to them, and which layers of the Stellar
-Index architecture defend against each.
+Three questions: how a manipulated venue price is kept out of what we
+serve; how SEP-40 oracles are read and served; how a new oracle gets
+found and onboarded. The aggregation chain these defenses sit in is
+[aggregation-plan.md](aggregation-plan.md); the freeze ladder is
+[anomaly-freeze-and-confidence.md](anomaly-freeze-and-confidence.md);
+ingest is [ingest-pipeline.md](ingest-pipeline.md); the oracle decoder
+traps (Reflector's three contracts, Band at E18 with zero events,
+RedStone's feed attribution) are in [domain-traps.md](domain-traps.md).
 
-This doc is a **living** piece, not a frozen reference. It lives
-in `docs/architecture/` specifically because the threat model
-evolves — new incidents inform new defenses, and this doc is the
-place to record both.
+## Oracle ingest rules
 
-## Attack pattern (canonical shape)
+- Oracle outputs are **record-layer only**. Reflector, Band, RedStone,
+  CoinGecko and CMC never carry VWAP weight; they are `ClassOracle` /
+  aggregator class in `internal/sources/external/registry.go` and appear
+  in `sources`, not in the price.
+- **Never drop an unmapped symbol.** Record it verbatim as `raw:<symbol>`
+  (`canonical.AssetOracleRaw`, `internal/canonical/asset_raw.go`). A raw
+  row never reaches VWAP, divergence, a pair leg or a supply key: filter
+  on `Asset.IsMapped()` or `asset NOT LIKE 'raw:%'`.
+- **Gate on contract identity**, never topic alone (ADR-0035/0040,
+  `internal/contractid`), and gate every backfill on a per-WASM-hash
+  decoder audit.
+- Prices stay full `i128` end to end (ADR-0003).
 
-Every oracle-manipulation exploit observed in DeFi follows the
-same five-step shape:
+## Attack pattern
 
-1. **Identify a low-liquidity asset** whose price feeds a
-   downstream protocol's collateral / liquidation / borrowing
-   logic.
-2. **Take a position** in the downstream protocol — usually a
-   borrow against the to-be-manipulated asset as collateral, or a
-   short-side bet that benefits from a price dislocation.
-3. **Manipulate the asset's price** on a thin venue (small DEX
-   pool, single-source CEX, sandwich on an AMM). Often via a flash
-   loan to inflate purchasing power without permanent capital.
-4. **Trigger the oracle to read the manipulated price.** The
-   oracle pushes the bad value to the downstream protocol, which
-   uses it for collateral valuation or liquidation pricing.
-5. **Withdraw value** from the downstream protocol against the
-   inflated valuation, before fair-market price re-asserts via
-   arbitrage. Walk away with the spread; the protocol absorbs the
-   loss.
+1. Identify a low-liquidity asset whose price feeds a downstream
+   protocol's collateral, liquidation or borrowing logic.
+2. Take a position in that protocol (a borrow against the asset, or a
+   bet that profits from a dislocation).
+3. Manipulate the price on a thin venue (small DEX pool, single-source
+   CEX, AMM sandwich), often with a flash loan.
+4. The oracle reads the manipulated price and pushes it downstream.
+5. Withdraw value against the inflated valuation before arbitrage
+   restores the fair price; the protocol absorbs the loss.
 
-The exploitable surface is the gap between **the oracle's price**
-and **the asset's fair market price**. Every defensive layer in
-this doc closes some part of that gap.
+The exploitable surface is the gap between the oracle's price and the
+fair market price; each layer below closes part of it.
 
-## Known incidents
+### Known incidents
 
-A non-exhaustive catalogue of historically-significant oracle
-manipulations. The "what should have stopped it" column is what
-maps to our defensive layers below.
+Reflector/USTRY (Stellar, 2026); Mango Markets (Solana,
+Oct 2022, ~$117M); Cream Finance (Ethereum, Oct 2021, ~$130M); Inverse
+Finance (Ethereum, Apr 2022, ~$15M); Polter Finance (Fantom, Nov 2024,
+~$12M); Harvest Finance (Ethereum, Oct 2020, ~$24M); bZx (Ethereum,
+Feb 2020, ~$1M across several incidents).
 
-### Reflector / USTRY (Stellar, 2026)
+## Defensive layers
 
-- **Attack:** Manipulation of eTherFuse USTRY (tokenised US
-  Treasury) price on a thin venue. Reflector reported the
-  manipulated value; a downstream lending protocol used it as
-  collateral pricing. Attacker borrowed against inflated
-  collateral, withdrew, left bad debt.
-- **What the oracle did wrong:** Reflector v3's TWAP and cross-pair
-  computation are local — Reflector v3 has no on-chain `twap` or
-  `x_*` methods, so we compute them ourselves. For a thin asset like USTRY, the
-  cross-source consensus that protects liquid assets degrades to
-  near-single-source reads. A manipulation on the only venue
-  Reflector observed was sufficient.
-- **What should have stopped it:** Multi-venue consensus. Liquidity
-  floor per source per bucket. Divergence cross-check against
-  alternative reference oracles. Per-asset risk tier with stricter
-  thresholds for thin-liquidity assets.
-- **Status in this codebase:** Reflector is `ClassOracle` in our
-  `external.Registry` — its outputs are reported alongside our
-  computed VWAP but **excluded from VWAP weight**. So a similar
-  USTRY-shaped manipulation would not propagate into our prices.
-  We'd report Reflector's diverging value as a separate source and
-  trip a divergence warning.
+| # | Layer | Status | Mechanism |
+|---|---|---|---|
+| 1 | Multi-source consensus | shipped | VWAP across every `ClassExchange` venue; one venue is diluted by the rest. With one contributing venue it degrades to trusting that venue — the USTRY case |
+| 2 | Source-class exclusion | shipped | only `ClassExchange` (verified CEX + DEX trades) weighs; oracle and aggregator classes are excluded so an oracle attack cannot move our price, only lower confidence through the cross-oracle factor (Layer 5) |
+| 3 | Liquidity floor per source per bucket | **not shipped** | weight is volume-proportional with no absolute floor; ADR-0019's `liquidity_factor` partly covers it. Proposed: `aggregate.min_pool_tvl_usd` (~$10K), `aggregate.min_per_bucket_volume_usd` (~$1K) |
+| 4 | Outlier trimming | shipped, **active** | median + 1.4826·MAD at `outlier_sigma_threshold` 4, plus the time-local test (`outliers_local.go`) and `keepIfVolumeMajority`; trades are dropped before VWAP, not just alerted on |
+| 5 | Cross-reference divergence | shipped | every `divergence_min_interval_seconds` (300) against the references below; see below |
+| 6 | Closed-bucket serving | shipped | ADR-0015; a single-block spike is diluted across the 1-minute bucket |
+| 7 | TWAP alongside VWAP | shipped | `/v1/twap` lets a consumer use a manipulation-resistant mean |
+| 8 | Decoder + WASM-version audit gating | shipped | `Backfill: BackfillPerWASM` in `registry.go`; a new or upgraded DEX contract is caught at audit time, not after an exploit |
+| 9 | Per-asset confidence + freeze | shipped (ADR-0019 Phases 1–2) | `internal/aggregate/anomaly/`, `baseline/`, `confidence/` |
 
-### Mango Markets (Solana, October 2022)
+Layer 5 references, each behind its `[divergence.*]` switch
+(`internal/config/config.go`, `cmd/stellarindex-aggregator/main.go`):
+CoinGecko (`coingecko`, default on), Chainlink-HTTP (`chainlink`, default
+off, needs a feed map), the on-chain oracles read from our ingested
+`oracle_updates` rows — Reflector dex/cex/fx (`reflector`), RedStone
+(`redstone`), Band (`band`), all default on — and a synthetic USD-cross
+reference derived from whichever of those are enabled. The CMC poller is
+not wired. Oracles are references only: a compromised oracle cannot move
+our VWAP (Layer 2) but can lower confidence through the cross-oracle
+factor, and with two or more references disagreeing, set the warning. The
+worker writes `div:<pair>` (`internal/cachekeys/keys.go`, 5-minute TTL); `/v1/price`
+surfaces `flags.divergence_warning`. The bounded gauge
+`stellarindex_divergence_max_abs_fraction` (worst |ours−ref|/ref per
+reference, no asset label) feeds `stellarindex_price_divergence_warning`
+(> 0.05 for 10m) and `stellarindex_price_divergence_critical` (> 0.10 for
+10m) in `deploy/monitoring/rules/divergence.yml`; per-pair detail stays in
+`divergence_observations`.
 
-- **Attack:** Avraham Eisenberg manipulated MNGO perpetual price
-  on Mango Markets itself by aggressively buying MNGO-PERP, then
-  borrowed against the inflated collateral on the same protocol.
-  ~$117M in losses across the protocol. Eisenberg later argued in
-  court the manipulation was a "highly profitable trading strategy."
-- **What the oracle did wrong:** Mango's collateral pricing read
-  from Mango's own market data — a circular dependency. The oracle
-  was reading the price of an asset on the venue that was being
-  manipulated.
-- **What should have stopped it:** External oracle reference.
-  Liquidity-weighted contribution that downweights low-volume
-  trades.
-- **Status in this codebase:** Our VWAP is computed across multiple
-  external venues (CEX + DEX), not from any single protocol's
-  internal data. The class-exclusion rule means our pricing for an
-  asset cannot be manipulated by trading on the asset's own
-  derivatives market.
+### Freeze (Layer 9)
 
-### Cream Finance (Ethereum, October 2021)
+Applies to `/v1/price` only. `/v1/price/tip` and `/v1/observations` show
+anomalies as they happen; their consistency contracts allow it. A frozen
+price serves the last known-good value, never the manipulated one.
+Thresholds (`internal/config/config.go`):
 
-- **Attack:** Multi-step flash-loan attack manipulating yUSD price
-  oracle by depositing yUSD into a Curve pool, then triggering
-  oracle re-read. ~$130M lost.
-- **What the oracle did wrong:** Single-pool price read. The
-  oracle queried one Curve pool's spot price; the attacker only
-  needed to manipulate that one pool.
-- **What should have stopped it:** TWAP instead of spot.
-  Multi-pool aggregation. Closed-bucket evaluation rather than
-  block-level.
-- **Status in this codebase:** Our default 1m VWAP requires
-  sustained manipulation across the full bucket window — single-
-  block flash-loan attacks dilute across all OTHER trades in the
-  bucket. The TWAP option (also computed) makes multi-block
-  manipulation similarly expensive.
-
-### Inverse Finance (Ethereum, April 2022)
-
-- **Attack:** Manipulated INV price on a thin SushiSwap pool, then
-  borrowed against it on Inverse's lending market. ~$15M lost.
-- **What the oracle did wrong:** Read SushiSwap's spot price for
-  INV without considering pool depth or alternative sources.
-- **What should have stopped it:** Liquidity floor per pool.
-  Multi-source consensus.
-- **Status in this codebase:** Multi-source aggregation is default;
-  the gap is the absence of an explicit liquidity floor per source
-  per bucket (a planned hardening — see "Gap analysis" below).
-
-### Polter Finance (Fantom, November 2024)
-
-- **Attack:** Manipulation of BOO token price oracle, used to
-  borrow against inflated collateral on Polter's lending market.
-  ~$12M lost.
-- **What the oracle did wrong:** Single-DEX-pool read for a
-  thin-liquidity asset.
-- **What should have stopped it:** Same as Inverse — liquidity
-  floor + multi-source consensus.
-
-### Harvest Finance (Ethereum, October 2020)
-
-- **Attack:** Flash-loan manipulation of stablecoin prices on
-  Curve, used to drain Harvest's vaults. ~$24M lost.
-- **What the oracle did wrong:** Read price from a single Curve
-  pool that was the manipulation target.
-- **What should have stopped it:** Multi-pool aggregation; TWAP;
-  cross-reference against external stablecoin price feeds.
-
-### bZx (Ethereum, February 2020 — multiple incidents)
-
-- **Attack:** Flash-loan manipulation of Uniswap pair prices, then
-  borrow against inflated collateral on bZx. Multiple incidents
-  totalling ~$1M.
-- **What the oracle did wrong:** Single-source spot price.
-- **What should have stopped it:** TWAP, multi-source aggregation.
-
-## USTRY scenario walkthrough — concrete demonstration
-
-To make the defense layers concrete, this section walks through
-exactly how the system reacts to a USTRY-shaped attack at each
-phase of our rollout. ADR-0019 specifies the policy below; this
-section shows what it looks like in practice.
-
-### Pre-attack state
-
-USTRY trading at ~$1.00 on a single venue (Aquarius) with low
-volume (~$50K daily). System state:
-
-- VWAP from `prices_1m` CAGG: $1.0023 ± 0.0008 over recent buckets
-- Sources contributing: `["aquarius"]` — single source
-- Liquidity per bucket: ~$2K
-- Per-asset baseline (Phase 2+): `return_mad ≈ 0.05%`, established
-  over 30+ days
-- Current confidence (Phase 2+): ~0.20 (single-source caps it,
-  even though the baseline is well-established and z-score is
-  near-zero)
-
-### Attack window (T+0 through T+5min)
-
-| Time | Observed bucket VWAP | z-score vs baseline | Source count | Computed confidence | Freeze? |
-|---|---|---|---|---|---|
-| T-1m | $1.0023 | 0.3 | 1 | 0.20 | No |
-| T+0 | $5.00 | 80σ | 1 | 0.04 | **Yes** |
-| T+1m | $20.00 | 380σ | 1 | 0.03 | **Yes** |
-| T+3m | $100.00 | 1980σ | 1 | 0.02 | **Yes** |
-| T+5m | $50.00 | 980σ | 1 | 0.02 | **Yes** |
-
-Freeze condition `confidence < 0.45 AND z_score > 5σ AND source_count
-<= 1` trips at T+0 and stays tripped throughout the attack window.
-(**Corrected 2026-09-02:** the confidence leg is **0.45**, not the 0.10
-this doc and ADR-0019 originally specified —
-`internal/config/config.go:1096`, `confidence_max_freeze`, changed by
-operator decision on 2026-07-25 because "0.10 in practice required
-z ≈ 15 and never fired". Note the deliberate hysteresis against
-`unfreeze_confidence_min` = 0.30, `config.go:1120`.)
-
-### Per-surface response during the attack
-
-**`/v1/price?asset=USTRY-G...&quote=fiat:USD`** (closed-bucket):
-
-```json
-{
-  "data": {
-    "asset_id": "USTRY-G...",
-    "quote": "fiat:USD",
-    "price": "1.0023",
-    "price_type": "vwap",
-    "confidence": 0.20,
-    "observed_at": "2026-04-28T08:30:00.000Z",
-    "sources": ["aquarius"]
-  },
-  "flags": {
-    "stale": true,
-    "frozen": true,
-    "single_source": true,
-    "divergence_warning": true
-  }
-}
-```
-
-`observed_at` reflects the LAST GOOD bucket (pre-attack). `price`
-is the pre-attack VWAP. Lending protocols consuming `/v1/price`
-see no apparent change throughout the attack — exactly the
-defense we want. The flags loudly signal that something is wrong;
-operators get a P2 alert.
-
-**`/v1/price/tip?asset=USTRY-G...&quote=fiat:USD`** (live):
-
-```json
-{
-  "data": {
-    "asset_id": "USTRY-G...",
-    "quote": "fiat:USD",
-    "price": "50.0000",
-    "price_type": "vwap",
-    "window_seconds": 5,
-    "confidence": 0.02,
-    "confidence_factors": {
-      "z_score": 980,
-      "source_count": 1,
-      "source_diversity": 1,
-      "liquidity_usd": 5000,
-      "cross_oracle_divergence_pct": 0.0,
-      "baseline_age_days": 187
-    },
-    "observed_at": "2026-04-28T08:35:42.351Z",
-    "sources": ["aquarius"]
-  },
-  "flags": {
-    "realtime": true,
-    "single_source": true,
-    "divergence_warning": true
-  }
-}
-```
-
-Tip surface shows the manipulated value transparently —
-"what's happening right now" includes the manipulation. Confidence
-is 0.02 (catastrophic), `single_source` flag fires, operators see
-the drop in confidence immediately. UI consumers can render
-"$50.00 (very low confidence — possibly manipulated)" as a price
-+ explicit warning.
-
-**`/v1/observations?asset=USTRY-G...&quote=fiat:USD`** (raw):
-
-```json
-{
-  "data": [
-    {
-      "source": "aquarius",
-      "price": "50.0000",
-      "observed_at": "2026-04-28T08:35:42.351Z"
-    }
-  ],
-  "flags": { "realtime": true, "single_source": true }
-}
-```
-
-Raw surface shows what we observed, with no aggregation, no
-confidence, no freeze. Customer computes their own response.
-
-### Post-attack recovery
-
-After the attacker exits the position and arbitrage corrects the
-on-chain price back to ~$1.00:
-
-- Closed-bucket freeze evaluates at expiry (every 30 min during
-  freeze): confidence still low (still single-source), but z-score
-  drops below 3.0
-- Two consecutive buckets at z-score < 3.0 → auto-unfreeze
-- `/v1/price` resumes normal serving with `flags.frozen: false`
-  and `confidence: 0.20`
-- A postmortem is filed; the Reflector / USTRY incident is added
-  to the "Known incidents" list above for future reference
-
-### Engineering observability during the event
-
-Operators see (via Prometheus + alertmanager):
-- `stellarindex_anomaly_freeze_engaged_total{...}` counter increments
-  and `stellarindex_anomaly_freeze_active{...}` gauge reads 1
-  (`internal/obs/metrics.go:3037` and `:3146` — **corrected 2026-09-02**;
-  the single `stellarindex_anomaly_freeze_engaged` gauge this line used
-  to name does not exist)
-- No Prometheus series carries the z-score or confidence value itself
-  (`stellarindex_anomaly_z_score` / `stellarindex_anomaly_confidence` do
-  not exist in `internal/obs/metrics.go`); operators read those from the
-  `/v1/price` response's `confidence_factors` field, not Prometheus
-- P2 alert "anomaly freeze engaged on USTRY-G..." fires within 1
-  bucket of trip
-- Runbook `anomaly.md#stellarindex_anomaly_freeze_engaged` walks through:
-  - "Is this a real market event or manipulation?"
-  - Confirm freeze (do nothing) vs override (manual unfreeze)
-  - Cross-reference checks (CoinGecko, CMC, Reflector — all should
-    show similar manipulation if it's network-wide; only Aquarius
-    here means it's venue-specific)
-  - File postmortem + add to incident catalogue
-
-### Phase 1 vs Phase 2 vs Phase 3 — what changes for USTRY
-
-The walkthrough above assumes Phase 2 is shipped (full statistical
-baseline). The system would also defend USTRY in Phase 1 (with
-slightly cruder mechanics) and provides additional protection in
-Phase 3:
-
-| Phase | What detects USTRY attack | What protects |
+| Key | Default | Meaning |
 |---|---|---|
-| Phase 1 (per-class thresholds) | USTRY classified as `treasury` (warn 1%, freeze 3%); 100x movement blows past freeze threshold | Same freeze policy; binary trip rather than continuous confidence |
-| Phase 2 (statistical baseline) | z-score 1000σ from MAD-derived baseline; `confidence_factors` exposed on wire | Continuous confidence + decomposition factors visible to consumers |
-| Phase 3 (cross-oracle integration) | `cross_oracle_factor` brings external oracle disagreement into the confidence | Strongest protection; would catch even a coordinated multi-venue manipulation if peer oracles disagreed |
+| `confidence_max_freeze` | 0.45 | freeze when confidence < this. ADR-0019 said 0.10, which needed z ≈ 15 and never fired |
+| `z_score_min_freeze` | 5.0 | freeze when z > this |
+| `source_count_max_freeze` | 1 | freeze when sources ≤ this |
+| `extension_minutes` | 30 | hold extension at each expiry not yet earned |
+| `unfreeze_confidence_min` | 0.30 | auto-unfreeze needs confidence > this |
+| `unfreeze_z_score_max` | 3.0 | … and z < this |
+| `unfreeze_buckets` | 2 | … for this many consecutive buckets |
 
-So even at Phase 1 (the stop-gap), USTRY is protected on the
-closed-bucket surface. Phase 2 makes the same protection
-self-tuning. Phase 3 hardens against the next class of attacks
-(multi-venue coordinated).
+Baselines are a rolling 30 days. The Phase 3 cross-oracle factor is
+wired (`CrossOracleDivergencePct` in `orchestrator/confidence.go`);
+production-quality divergence coverage for it is L7.3, post-launch.
 
-## Defensive layers (mapped to attack steps)
+### Engineering observability
 
-How each layer closes part of the gap between manipulated venue
-price and fair-market price:
+- `stellarindex_anomaly_freeze_engaged_total` (counter) and
+  `stellarindex_anomaly_freeze_active` (gauge) track freezes; runbook
+  [anomaly.md](../operations/runbooks/anomaly.md).
+- `stellarindex_aggregator_dropped_trades_total` and
+  `stellarindex_aggregator_window_base_volume` show trimming;
+  `stellarindex_aggregator_outlier_storm`,
+  `stellarindex_aggregator_outlier_trim_fraction` (24h) and
+  `stellarindex_aggregator_outlier_volume_trim_fraction` (per window) alert on it
+  ([runbook](../operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_storm)).
+  Divergence alerts: [divergence.md](../operations/runbooks/divergence.md).
+- `stellarindex_anomaly_z_score` and `stellarindex_anomaly_confidence` do not exist in `internal/obs/metrics.go`; read z-score and confidence from the `/v1/price` response (`confidence_factors`) instead.
 
-### Layer 1 — Multi-source consensus (default, shipped)
+### Worked example: USTRY
 
-Every asset's VWAP is computed across **all known venues that
-contribute trades**. Per `internal/sources/external/registry.go`,
-only `ClassExchange` (CEX + DEX with verified trade-level data)
-contributes weight. Aggregator outputs (CoinGecko / CMC), oracles
-(Reflector / Band / Redstone), and authority-sanity sources (ECB)
-are reported alongside but excluded from VWAP weight.
+A thin RWA token: $1.00, ~$50K daily volume, ~$2K per bucket,
+`return_mad` 0.05%, confidence 0.20 before the attack. An attacker
+prints on its Aquarius pool:
 
-**Defends against:** Steps 3–4. A single-venue manipulation gets
-diluted against all other contributing venues.
+| Time | Bucket VWAP | z | Confidence |
+|---|---|---|---|
+| T+0 | $5.00 | 80σ | 0.04 |
+| T+1m | $20.00 | 380σ | 0.03 |
+| T+3m | $100.00 | 1980σ | 0.02 |
+| T+5m | $50.00 | 980σ | — |
 
-**Limitation:** For an asset with only one contributing venue,
-this defense degrades to "trust that one venue."
+`/v1/price` freezes on the first closed bucket (z > 5, confidence < 0.45)
+and serves the last good $1.00 with `flags.frozen`, `stale` and
+`single_source` set and `observed_at` held at the last good bucket;
+`/v1/price/tip` and `/v1/observations` show the spike as it happens.
+Auto-release needs two consecutive buckets with z < 3.0 **and**
+confidence > 0.30, so a single-source asset sitting at 0.20 does not
+auto-release until its confidence recovers (for example, a second
+source). Release also needs a corroborating lens that agrees with the
+candidate level (`release_corroborated`, `internal/aggregate/freeze/lifecycle.go`):
+a held manipulation is calm too. See
+[anomaly-freeze-and-confidence.md](anomaly-freeze-and-confidence.md). Reflector's only observed venue was the manipulated pool, so it
+published the spike; its value carries no weight here (Layer 2).
 
-### Layer 2 — Source-class exclusion (default, shipped)
+## Open gaps
 
-We deliberately do NOT consume Reflector / Band / Redstone /
-CoinGecko / CMC outputs as VWAP inputs. Their prices appear in
-the response's `sources` array (alongside our computed value) and
-in our divergence-monitoring outputs, but they cannot move our
-VWAP.
+| Gap | Status | Ref |
+|---|---|---|
+| Liquidity floor per source per bucket (Layer 3) | not built | — |
+| Auto-exclude the offending source on an outlier storm | not built; trimming is per print, not per source, so exclusion is a manual runbook step | — |
+| Stablecoin-depeg auto-gating (a depegged stablecoin used as collateral) | not built; manual policy through the class system | INV-1122 |
+| Adversarial-testing exercises (below) | recommended, not scheduled | INV-1123 |
+| Production-quality divergence coverage for the Phase 3 factor | wired; coverage tuning post-launch, L7.3 | — |
+| SEP-50 (NFT) decoder | none exists; out of current scope | INV-1095 |
 
-**Defends against:** Reflector-shape attacks specifically. If
-Reflector is compromised tomorrow, our VWAP for the affected
-asset doesn't change — we compute from raw exchange data and
-report the divergence.
+Adversarial exercises, each with its pass condition:
 
-**Why this matters:** This is the layer that would have isolated
-us from the USTRY / Reflector incident. Our pricing cannot be
-manipulated by manipulating Reflector.
+1. **Thin-pool simulation** — a synthetic 50% spike in a small DEX pool
+   (captive-core replay against synthetic ledgers): outlier storm fires
+   within one bucket, VWAP barely moves, `flags.divergence_warning` flips.
+2. **Single-source compromise** — a stub venue returning price ×2: the
+   storm fires, the σ-filter excludes the source, the runbook walks an
+   operator through disabling it.
+3. **Coordinated multi-source attack** — divergence monitoring fires,
+   operators notice within minutes, the response is flagged rather than
+   silently wrong.
+4. **External-oracle compromise** — point an oracle source at a
+   manipulated value: our VWAP does not change; confidence may drop via the
+   cross-oracle factor and the divergence warning may fire.
 
-### Layer 3 — Liquidity floor per source per bucket (planned, NOT shipped)
+## SEP-40: what we serve and why there is no generic reader
 
-What's missing: a per-source per-bucket minimum-USD-volume
-threshold. A pool with $500 of TVL contributing one trade
-shouldn't be voting on the asset's VWAP. Today our trade-volume
-weighting partially addresses this (small-volume trades get small
-weight) but doesn't reject thin-pool sources outright.
+SEP-40 is a **read interface** (`lastprice`, `price`, `prices`, `assets`,
+`base`, `decimals`, optional `resolution`, `x_*` cross-pair methods), not
+an event schema. Only `lastprice`, `prices`, `assets` and `decimals` are
+safe to assume: Reflector v3 claims SEP-40 yet has no `twap` or `x_*`.
 
-**Defends against:** Step 3. Thin-pool manipulation can't slip
-contributions through if the pool's depth is below the floor.
+- **Serve side: done.** `/v1/oracle/lastprice`, `/v1/oracle/prices` (≤200
+  records), `/v1/oracle/x_last_price`, `/v1/oracle/latest`
+  (`internal/api/v1/oracle_sep40.go`) answer in SEP-40 shape over our
+  VWAP/TWAP.
+- **Ingest side: native per source.** `reflector` (`("REFLECTOR","update")`
+  events; DEX/CEX/FX contracts), `redstone` (`"REDSTONE"` batch events),
+  `band` (`ContractCallDecoder` on `relay()`/`force_relay()`, because Band
+  emits no events). All sink `canonical.OracleUpdate` through
+  `persistOracle`; a new oracle reuses that sink, not a new hypertable.
+- **Generic state-read adapter: deferred** (ADR-0045). Reasons: no
+  concrete target to design the storage-key layout and state-read
+  completeness against; state-read completeness is a different claim
+  from event coverage (ADR-0033); and guessing a layout repeats the
+  DeFindex tag-1.0.0-vs-mainnet mistake. If built, it lives in
+  `internal/sources/sep40/`, rides the ADR-0039 contract state reader
+  (lake-native, never stellar-rpc), is gated by a `contractid.Registry`
+  allow-list (fail-closed), triggers on `LedgerEntryChangeDecoder` rather
+  than polling (a periodic `stellarindex-ops` snapshot only as fallback),
+  registers with `IsProjectedEvent` / `notSunkEvents` like any source,
+and sits behind a `[sources.sep40]` config gate whose recognition gap
+stays fail-closed until the allow-list is seeded.
 
-**Concrete proposal:** Add `aggregate.min_pool_tvl_usd` config
-default ~$10K and `aggregate.min_per_bucket_volume_usd` ~$1K.
-Sources/pools below the floor are excluded from VWAP for that
-bucket but still recorded in raw trades for audit.
+## Generic oracle discovery
 
-### Layer 4 — Outlier trimming (ACTIVE — trades are dropped, not just alerted)
+### SEP inventory
 
-**Corrected 2026-09-02: this layer is NOT alert-only.** The filter
-actively DROPS prints before they reach VWAP. `outlier_sigma_threshold`
-(default **4**, `internal/config/config.go:1150`) rejects a trade that
-sits more than N robust scales from *every* reference it is scored
-against, and the implementation is a masking-resistant **median +
-1.4826·MAD**, not mean+stdev — plus a **time-local** neighbourhood test
-so an *agreed* regime shift survives while a lone wild print does not
-(`internal/aggregate/outliers_local.go`). Drops are counted at
-`internal/aggregate/orchestrator/orchestrator.go:1086` as
-`stellarindex_aggregator_dropped_trades_total{reason="outlier",pair=…}`.
+Of 59 SEPs (17 Active, 7 Final, 26 Draft, 3 Abandoned at 2026-07-10)
+only SEP-40 (oracle) and SEP-41 (token) are load-bearing for generic
+interpretation. SEP-50 (NFT) and SEP-56 (tokenized vault) are the next
+plausible analogues, but their `Deposit`/`Withdraw`-style topics collide
+with Blend and DeFindex. SEP-45 and SEP-57 are niche or unconfirmed on
+mainnet; revisit if a deployment appears. SEP-49 (upgradeable contracts)
+would need `ContractEventTypeSystem` events, which
+`internal/dispatcher/census.go` (`captureEligible`) does not capture.
 
-**Defends against:** Step 3, *before* the bucket lands, for prints that
-disagree with both the window and their own neighbourhood.
+SEP-46/47/48 self-declared metadata (`sep` Wasm-meta entry,
+`contractspecv0`) is **not a trust source**: their own specs say a
+declaration does not prove implementation, and method names have twice
+diverged from deployed behaviour (Reflector v3; DeFindex). It is an
+enrichment hint for operator triage only.
 
-**Known limit (not a hardening idea — a live property):** the robust
-centre is per-print — one price per trade — so a count majority can
-trim a volume majority. The filter refuses to publish such a trim: when
-the survivors carry less base volume than the dropped prints, the
-window is withheld (`keepIfVolumeMajority`, `internal/aggregate/outliers.go`),
-so a dust burst cannot outvote a large block and one large print cannot
-outvote the rest. Withheld windows surface as all-dropped `outlier`
-drops, empty windows, and a `stellarindex_aggregator_window_base_volume`
-of 0 at the `outlier` stage against a non-zero `class` stage.
-The alerting half is three rules,
-`stellarindex_aggregator_outlier_storm` (venue disagreement, ≥ 2 venues),
-`..._outlier_trim_fraction` (trade-count trim share, 24h window) and
-`..._outlier_volume_trim_fraction` (base-volume trim share on every
-window, so a single-venue withhold on 5m or 1h is visible)
-(`configs/prometheus/rules.r1/aggregator.yml`).
-**Still not built:** automatic *source*-level exclusion on sustained
-outlier-storm; that remains an operator action per runbook.
+### Lake census
 
-### Layer 5 — Cross-reference divergence monitoring — **SHIPPED**
+Run 2026-07-10 against r1's `stellar.contract_events` over ClickHouse
+HTTP (`:8123`, read-only `SELECT` via file + scp): 12,393,496,593 rows,
+ledgers 2 → 63,407,342, 2m06s under `max_threads=2,
+max_memory_usage=8GiB`. `topic_0_sym` is a decoded plaintext column
+(`DistinctTopicShapes`, `internal/storage/clickhouse/recognition.go`),
+so the scan is one narrow column:
 
-**Corrected 2026-09-02: this layer is shipped and wired, not planned.**
-`internal/divergence/` exists, runs on the aggregator's tick (gated by
-`divergence_min_interval_seconds`, default 300s), and publishes to Redis
-under `div:<pair>` — **keyed by PAIR, not by asset**
-(`internal/cachekeys/keys.go:409`, `DivergenceKey("div:" + pair.String())`,
-e.g. `div:native/fiat:USD`; the pre-fix `div:<base>` key let the last pair
-win, see the comment at `:390`). Live sources are CoinGecko and
-Chainlink-HTTP. What it does:
+```sql
+WHERE topic_0_sym IN ('price','prices','lastprice','last_price',
+  'x_last_price','set_price','update_price','price_update','new_price',
+  'oracle','Oracle','ORACLE','feed','PriceData','resolution',
+  'write_prices','relay','force_relay','REFLECTOR','REDSTONE','rate',
+  'rates','set_rate','symbol_rates','StandardReference','update','base',
+  'decimals','assets')
+-- grouped by (contract_id, topic_0_sym)
+```
 
-- Cross-check our computed VWAP against **CoinGecko and Chainlink-HTTP**
-  (as wired today — a CMC poller exists under `internal/sources/external/`
-  but is **not** wired into divergence; Reflector / Band / Redstone are
-  ingested oracles, not divergence references)
-- Set `flags.divergence_warning: true` on the response when
-  divergence > threshold — this half is live end-to-end
-- **NOT live:** the Prometheus half. `stellarindex_price_divergence_warning`
-  and `..._critical` exist as rules in both trees but are **INERT** — no
-  metric produces the series they match (F-1329;
-  `configs/prometheus/rules.r1/divergence.yml:25,44`, and
-  `aggregator.yml:184` warns operators not to wait on them). The wire flag
-  is the only working signal today.
+Known contracts excluded: Reflector DEX
+`CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M`, CEX
+`CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN`, FX
+`CBKGPWGKSKZF52CFHMTRR23TBWTPMRDIYZ4O2P5VS65BMHYH4DXMCJZC`; RedStone
+Adapter `CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG`; Band
+StandardReference `CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M`
+(zero events, confirming Band emits none).
 
-**Defends against:** Steps 4–5, by giving downstream consumers a
-wire-level signal that we disagree with the broader oracle
-consensus.
+Candidates, none a live un-ingested oracle:
 
-**Why this matters:** Even if our internal layers all somehow
-fail to detect a manipulation (e.g. coordinated multi-venue
-manipulation across our entire source set), the divergence layer
-catches the case where our computation diverges from everyone
-else's. That's the last line of defense.
+| Contract / pattern | Events | Seen | Verdict |
+|---|---|---|---|
+| `CCWKKEQTMGBNLHDKSYWFOA4IFFR2GT6FRYSHIXQQGNVB64AQHCFXLL4S` (`update`: `doc_id`, `ipfs_cid`) | 2,237 | 2026-02-15 → 07-08 | false positive: beef traceability |
+| `CAHDGXF64LG4PA45PPCDFQYRYWH3X33G7JJFGJTKMFMQIFUKNBONLGHD` (`update`, supply-chain IDs) | 250 | 2025-11-18 → 11-25 | false positive |
+| `CDFMV3EI2FEGKHQYZXFSKPBEXO2MXKRMQRXK5SM4DVWWHMGEJTH6JVK2` (string `price`) | 151 | 2025-05-14 → 05-23 | dormant test oracle |
+| 11 RedStone-Adapter-shaped contracts | 27 (2–4 each) | 2025-09-08 → 2026-05-13 | test deployments |
+| 2 rational-price contracts (`price_update`: `price_num`/`price_den`) | 2 | 2026-06-04 | tests |
+| 2 developer oracles (`asset`/`oracle`/`added`/`enabled`) | 2–3 each | 2026-03 and 2026-06 | tests |
 
-### Layer 6 — Closed-bucket policy (default, shipped)
+Verdict: no sustained un-ingested SEP-40 oracle existed at census time,
+which reaffirmed the ADR-0045 deferral. Scope limit: the census only sees
+event-emitting contracts. `stellar.operations.body_xdr` has no plaintext
+function-name column, so a Band-alike that emits nothing is invisible to
+SQL.
 
-Per ADR-0015, the API only serves closed buckets. A bucket is
-"closed" when its window-end timestamp has passed plus the CAGG
-refresh delay (~30s for the 1m bucket).
+### Discovery pipeline (shipped 2026-07-10)
 
-**Defends against:** Step 3. Single-block manipulation is averaged
-across all OTHER trades in the bucket, dramatically diluting its
-effect. To move the bucket's VWAP meaningfully, an attacker must
-sustain manipulation across the entire window — which is far more
-expensive than a single-block flash-loan attack.
+Option (b) of the three considered ((a) and (c) are under Rejected
+options): `internal/canonical/discovery` (see its `doc.go`) extends the
+SEP-41 sniffer. Both halves are **sighting-only**: they write `discovered_assets`
+and never decode, attribute or emit `canonical.OracleUpdate`
+(ADR-0035). An operator triages each sighting (`stellarindex-ops discovery`) — 2 of
+the census's 6 candidate patterns were false positives and none was a
+live oracle — and a confirmed oracle follows
+[add-onchain-source.md](../contributing/add-onchain-source.md): contract
+identity gating, every-event completeness, a per-WASM audit before
+backfill is enabled.
 
-### Layer 7 — TWAP availability (default, shipped — alongside VWAP)
+#### Event-shaped discovery
 
-The CAGG schema (`migrations/0002_create_price_aggregates.up.sql`)
-computes both VWAP and TWAP at every granularity. Customers who
-need additional time-resilience (e.g. for liquidation pricing)
-can request TWAP at a longer window.
+`SniffOracleEvent`, hooked in `dispatchOne` (`internal/dispatcher/dispatcher.go`),
+records `(contract_id, topic_0_sym, ledger)` for the census symbol set
+above, so the census is continuous instead of ad hoc. A new oracle with a
+SEP-40/RedStone/Band-like event shape is sighted although its contract id
+is unknown to every decoder.
 
-**Defends against:** Step 3 with even greater dilution. A 1-minute
-manipulation barely affects a 1h TWAP.
+#### Event-less discovery
 
-### Layer 9 — Per-asset confidence + freeze policy (per ADR-0019)
+`SniffOracleCall` is the symmetric hook on the `ContractCallContext` path
+(the seam Band's `ContractCallDecoder` uses). It matches function names
+against `lastprice`, `price`, `prices`, `relay`, `force_relay`,
+`write_prices`, `x_last_price`, so a future event-less oracle under
+another contract id is still sighted.
 
-The defenses above protect well when an asset has multiple liquid
-sources. They fail for thin, single-source assets like USTRY where
-multi-source consensus simply doesn't exist. ADR-0019 specifies an
-additional layer that protects single-source assets:
+### Rejected options
 
-- **Per-asset rolling statistical baseline** — for each
-  `(base, quote)` pair, compute `return_mad` (median absolute
-  deviation, robust σ-equivalent) over a rolling 30-day window.
-  z-scores against this baseline detect anomalies relative to the
-  asset's *own normal volatility*, regardless of absolute
-  percentage.
-- **Multi-factor confidence score** — combine
-  z-score, source count, source diversity, liquidity, cross-oracle
-  agreement, and baseline data quality into a single
-  `data.confidence ∈ [0, 1]` value on every published price.
-- **Freeze policy on closed-bucket surface only** — when
-  `confidence < 0.45 AND z_score > 5σ AND source_count <= 1`
-  (`confidence_max_freeze` default 0.45 since 2026-07-25; was 0.10),
-  `/v1/price` returns last-known-good with `flags.frozen: true`.
-  `/v1/price/tip` and `/v1/observations` ignore freeze
-  (their consistency contracts permit anomalous data).
+- **(a) Generic SEP-40 poll/read adapter now** — the ADR-0045 shape; no
+  target to design against (see above).
+- **(c) Generic decode-by-interface** — decoding anything that claims an
+  interface repeats the Reflector-v3 and DeFindex failures mechanically,
+  at scale, and breaks contract-identity gating.
 
-**Defends against:** Steps 3–5 for thin-asset / single-source
-attacks where multi-source consensus (Layers 1, 2) provides no
-protection. The USTRY scenario (worked example above) is the
-canonical case.
-
-**Phased rollout** per ADR-0019:
-- Phase 1: per-asset-class default thresholds (operator config), binary warn/freeze.
-- Phase 2: full per-asset statistical baseline + continuous confidence.
-- Phase 3: cross-oracle factor wired in once `internal/divergence/` ships.
-
-### Layer 8 — Decoder + WASM-version audit gating (default, shipped)
-
-Per `docs/architecture/ingest-pipeline.md#contract-schema-evolution`, the
-`BackfillSafe` flag in `internal/sources/external/registry.go`
-gates which Soroban contract WASM versions we trust for backfill.
-A new WASM upgrade triggers the per-WASM-hash audit procedure
-(`docs/operations/wasm-audits/`) before we'll replay against it.
-
-**Defends against:** Step 3 via a different vector — malicious WASM
-upgrade. An attacker who deploys a backdoored WASM upgrade for a
-known DEX contract gets caught at audit time, not after exploit.
-
-## Gap analysis
-
-Defenses architecturally specified, with current shipped status.
-ADR-0019 supersedes the earlier "per-asset risk tier" gap with a
-properly-scoped statistical approach (Phases 1 + 2 are live;
-Phase 3 cross-oracle factor is the remaining piece).
-
-| Defense | ADR | Phase | Status | Priority |
-|---|---|---|---|---|
-| **Per-asset confidence + freeze policy (Phase 1)** | ADR-0019 | Phase 1 transitional | **Shipped** — `internal/aggregate/anomaly/` (per-class thresholds + freeze action) | **High** — minimum stop-gap before production oracle anchoring |
-| **Per-asset confidence + freeze policy (Phase 2 statistical baselines)** | ADR-0019 | Phase 2 | **Shipped** — `internal/aggregate/baseline/` (Median/MAD/ZScore + multi-window refresh) + `internal/aggregate/confidence/` (six-factor weighted-geomean score) | **High** — replaces operator thresholds with per-asset learned thresholds; the proper protection against USTRY-shape attacks |
-| **`internal/divergence/` cross-reference** | ADR-0019 | Phase 3 | **Wired** — divergence worker writes `cachekeys.Divergence(asset)`; orchestrator reads it via `lookupDivergencePct` and feeds `confidence.CrossOracleFactor`. Production-quality operational coverage tracked as L7.3 (post-launch). | **High** — last line of defense; the post-launch L7.3 work tunes divergence-source coverage, not the wiring itself |
-| **Liquidity floor per source per bucket** | (planned) | — | Trade-volume weighted, no absolute floor | **Medium** — partially covered by ADR-0019's `liquidity_factor` in confidence; an explicit hard floor is complementary |
-| **Outlier trimming** | ADR-0019 | — | **Shipped and ACTIVE** — median+1.4826·MAD, σ=4, time-local (`internal/aggregate/outliers_local.go`); drops prints before VWAP | — |
-| **Auto-exclude the offending SOURCE in outlier-storm** | (planned) | — | Not built — trimming is per-print, not per-source; source exclusion is still a manual runbook step | **Medium** — detect-and-react vs detect-and-prevent |
-| **Stablecoin depeg auto-gating** | (planned) | — | Manual policy via aggregator class system | **Low** — depeg detection works; auto-gating during severe depegs would prevent stablecoin-as-collateral exploits |
-
-## Adversarial-testing exercises (recommended, not yet scheduled)
-
-Concrete tests that would exercise these defenses against
-realistic manipulation attempts:
-
-1. **Thin-pool simulation.** Inject a fabricated trade into a
-   small DEX pool (via captive-core replay against synthetic
-   ledgers) representing a 50% price spike. Confirm:
-   - Outlier-storm alert fires within 1 bucket
-   - VWAP barely moves (other sources dominate)
-   - `flags.divergence_warning` flips on the affected pair (the
-     divergence service writes to `div:<pair>` Redis keys —
-     `internal/cachekeys/keys.go:409`; the `/v1/price` handler surfaces
-     the flag)
-
-2. **Single-source compromise.** Configure a "malicious binance"
-   stub that returns price ×2 on all trades. Confirm:
-   - Outlier-storm fires
-   - VWAP weight on the bad source decays as σ-filter excludes it
-   - Operator runbook walks through identification + disabling
-
-3. **Multi-source coordinated attack.** Inject divergent prices
-   into N sources simultaneously. Confirm:
-   - Divergence monitoring fires
-   - Operators notice within minutes
-   - System fails-safe: clearly-flagged response > silently-wrong response
-
-4. **Reflector / Band / external-oracle compromise.** Point our
-   external-oracle source's output at a manipulated value.
-   Confirm: our VWAP doesn't change. Our wire response shows the
-   divergence as a source-level note.
-
-These exercises would make valuable additions to a chaos-testing
-suite once `internal/divergence/` ships (item #24 in the work
-list).
+When a new incident becomes public: add it under Known incidents, add any
+new gap to Open gaps, bump `last_verified`, and cross-reference it from
+each affected runbook.
 
 ## References
 
-- [ADR-0010](../adr/0010-off-chain-fiat-representation.md) — source
-  classification (`exchange` / `aggregator` / `oracle` /
-  `authority_sanity`); the foundation of class-based exclusion.
-- [ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md) —
-  closed-bucket policy; raises the cost of single-block manipulation.
-- [ADR-0018](../adr/0018-api-consistency-surfaces.md) — three
-  consistency surfaces; `flags.divergence_warning` is wired across
-  all three.
-- [ADR-0019](../adr/0019-anomaly-response-and-confidence-scoring.md) —
-  per-asset confidence + freeze policy; protects single-source
-  thin assets that multi-source consensus can't.
-- [`docs/architecture/aggregation-plan.md`](aggregation-plan.md) —
-  the policy chain underlying VWAP computation.
-- [`docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_storm`](../operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_storm) —
-  the runbook that fires on adversarial outlier patterns.
-- [`docs/operations/runbooks/divergence.md`](../operations/runbooks/divergence.md) —
-  the runbook that fires on cross-reference divergence.
-
-## Maintenance
-
-When a new oracle-manipulation incident becomes public:
-
-1. Add an entry under "Known incidents" with the same
-   attack / oracle-error / what-should-have-stopped-it / status
-   columns
-2. If the incident reveals a defense gap not in our list,
-   add it to "Gap analysis"
-3. Update the `last_verified` date in frontmatter
-4. Cross-reference from any newly-affected runbook
+ADR-0010, ADR-0015, ADR-0018, ADR-0019, ADR-0033, ADR-0035, ADR-0039, ADR-0040, ADR-0045;
+SEP specs at github.com/stellar/stellar-protocol/tree/master/ecosystem;
+[docs/operations/wasm-audits/defindex.md](../operations/wasm-audits/defindex.md).

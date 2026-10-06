@@ -37,7 +37,7 @@ const CURATED: { slug: string; description: string }[] = [
   {
     slug: 'aggregation-plan',
     description:
-      'The policy chain from raw trade to served price — class filter, outlier filter, VWAP, freeze gate. Every load-bearing decision the aggregator makes.',
+      'The policy chain from raw trade to served price — class filter, outlier filter, VWAP, freeze gate — plus how a market\'s directions and aliases fold together, cross-rate routing and thin markets.',
   },
   {
     slug: 'supply-pipeline',
@@ -47,12 +47,12 @@ const CURATED: { slug: string; description: string }[] = [
   {
     slug: 'oracle-manipulation-defense',
     description:
-      'Attack catalogue: TWAP-window stuffing, single-block manipulation, oracle drift. The defensive layers we run, ordered by how cheap they are to detect.',
+      'Attack catalogue and the defensive layers we run, the SEP-40 serve surface, and how a new on-chain oracle is discovered and onboarded.',
   },
   {
     slug: 'ha-plan',
     description:
-      'Per-region high-availability topology — colo primary + cloud DR, three-tier hot/warm/cold storage, the failover decision tree.',
+      'What keeps the service up today, the planned in-region HA build and R2/R3 regions, failure modes, backups and the decisions that bind them.',
   },
   {
     slug: 'semver-policy',

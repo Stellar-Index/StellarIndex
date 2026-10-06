@@ -364,7 +364,7 @@ func TestChart_ThinPoolNeverDisplacesAnAnsweredBucket(t *testing.T) {
 
 // TestChart_ABucketRendersTheSameInEveryWindow pins the property that
 // made per-bucket the right rule rather than a per-response first-hit
-// (aggregate-alias-folding.md §7.5): a bucket must depend only on
+// (aggregation-plan.md §"The fiat quote leg, per bucket"): a bucket must depend only on
 // itself, never on what else the requested window happens to contain.
 //
 // RED under a per-response first-hit: asked over 1y the pool's days are

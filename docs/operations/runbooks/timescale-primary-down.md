@@ -216,8 +216,8 @@ Common root causes observed in similar systems:
 
 - ADR-0006 (TimescaleDB) — storage choice.
 - HA plan §3.3 — Patroni topology (**design only — NOT deployed on r1**, see
-  `docs/architecture/ha-plan.md` "DEPLOYMENT STATE" banner).
-- ADR-0050 / `docs/architecture/multi-region-ha.md` — no cross-region
+  `docs/architecture/ha-plan.md` §2.1).
+- ADR-0050 / `docs/architecture/ha-plan.md` §1 — no cross-region
   Postgres replication; the older `multi-region-topology.md` §5 is superseded.
 - [`postgres-ping-failing.md`](postgres-ping-failing.md),
   [`db-disk-full.md`](db-disk-full.md), [`infra.md#stellarindex_timescale_backup_none_24h`](infra.md#stellarindex_timescale_backup_none_24h),

@@ -7,7 +7,7 @@ severity: P1
 
 # Off-site (S3) backup plan
 
-r1 is a single point of failure: pgBackRest repo1 sits on the same ZFS pool as the data it protects. This plan puts a durable copy off-box. The long-term answer is the HA warm standby ([`../architecture/multi-region-ha.md`](../architecture/multi-region-ha.md) §5, ADR-0050), which fails over in minutes; off-site backup is the interim and the "both boxes lost" floor.
+r1 is a single point of failure: pgBackRest repo1 sits on the same ZFS pool as the data it protects. This plan puts a durable copy off-box. The long-term answer is the HA warm standby ([`../architecture/ha-plan.md`](../architecture/ha-plan.md#23-planned-regions) §2.3, ADR-0050), which fails over in minutes; off-site backup is the interim and the "both boxes lost" floor.
 
 ## Principle: RTO-driven — re-derivability is a *last resort*, not a recovery plan
 

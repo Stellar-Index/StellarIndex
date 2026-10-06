@@ -379,7 +379,7 @@ Every step is idempotent and skips completed work; re-run on failure.
 
 > **Historical: [ADR-0016](../adr/0016-per-region-storage-strategy.md) is `Superseded`** by
 > [ADR-0050](../adr/0050-multi-region-ha-architecture.md) /
-> [multi-region-ha.md](../architecture/multi-region-ha.md) (2026-08-21). ADR-0050 rejects its
+> [ha-plan.md](../architecture/ha-plan.md#23-planned-regions) (2026-08-21). ADR-0050 rejects its
 > Model A (Postgres replication from R1 as canonical history), the R2-on-AWS shape and the
 > ClickHouse-blind sizing. **Do not provision R2 or R3 from this section**; derive the recipe
 > from ADR-0050. It is kept as a record, and because §Per-region trust + verification model is

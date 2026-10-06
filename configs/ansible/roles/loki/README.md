@@ -11,7 +11,7 @@ Promtail agents on every other host that produces logs. Per
 **Closes Task #72** — the fifth and final sub-role after Patroni
 (965eed22e), Redis Sentinel (bb2f4d29e), HAProxy (1836fced9), and Prometheus
 (d770270b3). Design rationale lives in
-[`docs/architecture/loki-ansible-role-design-note.md`](../../../../docs/architecture/loki-ansible-role-design-note.md).
+[`docs/architecture/ha-plan.md` §7.2](../../../../docs/architecture/ha-plan.md#72-logs).
 
 ## Prerequisites
 

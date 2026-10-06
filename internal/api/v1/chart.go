@@ -882,7 +882,7 @@ func chartGranularityGrace(gran string) time.Duration {
 // suppressed for that bucket AND FOR NO OTHER.
 //
 // That per-bucket rule is the one
-// [docs/architecture/aggregate-alias-folding.md] §7.5 settled for the
+// [docs/architecture/aggregation-plan.md] §"The fiat quote leg, per bucket" settled for the
 // fiat OHLC series, applied at this surface's own grain. The chart used
 // to resolve first-hit ONCE PER RESPONSE — the first source pair holding
 // any bucket at all served the whole window — and §7.5's objection to
@@ -1548,7 +1548,7 @@ func (s *Server) chartStablecoinFallback(ctx context.Context, w *chartWalk) erro
 // than the book of the same family: a per-family ordering would let one
 // family's SAC pool own a bucket another family's classic book can
 // answer, which is the +37.32% bar
-// [docs/architecture/aggregate-alias-folding.md] §7.5 measured. Ranking
+// [docs/architecture/aggregation-plan.md] §"The fiat quote leg, per bucket" measured. Ranking
 // every established spelling ahead of every held-back one keeps a
 // held-back source to the buckets where the alternative is nothing.
 //
