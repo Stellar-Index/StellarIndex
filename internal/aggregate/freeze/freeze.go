@@ -153,9 +153,9 @@ type RedisCache interface {
 // `internal/storage/timescale.FreezeEventSink` here; tests pass
 // either nil or a fake.
 //
-// Per docs/architecture/explorer-implementation-plan.md
-// Phase 2: this is what migrates the Redis-only freeze state into
-// a queryable postgres timeline that powers /v1/anomalies.
+// Per docs/architecture/explorer-data-inventory.md §11.3: this
+// migrates the Redis-only freeze state into a queryable postgres
+// timeline that powers /v1/anomalies.
 type EventSink interface {
 	// RecordFreeze persists a freeze event. Idempotent against the
 	// "currently firing" row for (asset, quote): if a row with
