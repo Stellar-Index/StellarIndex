@@ -11,7 +11,7 @@ Rule file: `configs/prometheus/rules.r1/supply-snapshot.yml` (group `stellarinde
 
 All five alerts watch the **systemd-timer path**: `supply-snapshot.timer` -> `supply-snapshot.service` -> `stellarindex-ops supply snapshot` (native XLM, daily). There is no wrapper script. The binary writes `/var/lib/node_exporter/textfile_collector/supply_snapshot.prom` itself (`internal/supply/textfile.go`, gated on `-textfile-output` / the unit's `TEXTFILE_OUTPUT` env; metric names and labels are defined there). On r1 `/etc/default/supply-snapshot` is ansible-managed with `TEXTFILE_OUTPUT` set (`10-observability.yml`); finding it unset is config drift to codify and fix.
 
-The second producer of `asset_supply_history` is the aggregator-resident goroutine (`runSupplyRefresh` in `cmd/stellarindex-aggregator`, gated by `[supply] aggregator_refresh_enabled = true`, emits `stellarindex_aggregator_supply_refresh_total{outcome=...}`). It is tracked by [supply-refresh.md#stellarindex_aggregator_supply_refresh_stalled](supply-refresh.md#stellarindex_aggregator_supply_refresh_stalled) / `supply-refresh.md#stellarindex_aggregator_supply_refresh_error_dominant`, not by these alerts. A goroutine-only deployment cannot trip `unit_failed` or `circulating_zero` (no textfile, series absent). On r1 BOTH paths are live (timer for native XLM; goroutine at 5 min cadence for the watched classic assets, `stellarindex.toml.j2` `[supply]` block). They are complementary: do NOT silence an alert here on the theory that the goroutine path covers it. Overview: [supply-pipeline.md](../../architecture/supply-pipeline.md).
+The second producer of `asset_supply_history` is the aggregator-resident goroutine (`runSupplyRefresh` in `cmd/stellarindex-aggregator`, gated by `[supply] aggregator_refresh_enabled = true`, emits `stellarindex_aggregator_supply_refresh_total{outcome=...}`). It is tracked by [supply-refresh.md#stellarindex_aggregator_supply_refresh_stalled](supply-refresh.md#stellarindex_aggregator_supply_refresh_stalled) / `supply-refresh.md#stellarindex_aggregator_supply_refresh_error_dominant`, not by these alerts. A goroutine-only deployment cannot trip `unit_failed` or `circulating_zero` (no textfile, series absent); its equivalent of `unit_failed` is [`_error_dominant`](supply-refresh.md#stellarindex_aggregator_supply_refresh_error_dominant) (at least 50 % of refresher ticks with a non-`ok` outcome). On r1 BOTH paths are live (timer for native XLM; goroutine at 5 min cadence for the watched classic assets, `stellarindex.toml.j2` `[supply]` block). They are complementary: do NOT silence an alert here on the theory that the goroutine path covers it. Overview: [supply-pipeline.md](../../architecture/supply-pipeline.md).
 
 Shared impact: `/v1/assets/{id}` F2 fields (total / circulating / max / market_cap_usd / fdv_usd) go stale or wrong.
 
@@ -102,7 +102,7 @@ Same expression and diagnosis as [`_stale`](#stellarindex_supply_snapshot_stale)
 
 `absent_over_time(stellarindex_supply_snapshot_last_success_timestamp[36h]) == 1`, `for: 5m`, `severity: ticket`. Typical MTTR 10 min (one-shot operator action). Impact: F2 fields (circulating / total / max / market_cap_usd / fdv_usd) render as `null` for every asset.
 
-Why separate from `_stale`: `time() - <missing>` is no data, not infinity, so a deployment that never wrote a snapshot is invisible to `_stale`. The 36 h window matches `_stale`'s cushion so a fresh install awaiting its first daily fire does not false-positive. The aggregator alert `stellarindex_aggregator_supply_refresh_never_initialized` (`rules.r1/supply-refresh.yml`) deliberately routes its `runbook_url` to this page; its own section lives in `supply-refresh.md`.
+Why separate from `_stale`: `time() - <missing>` is no data, not infinity, so a deployment that never wrote a snapshot is invisible to `_stale`. The 36 h window matches `_stale`'s cushion so a fresh install awaiting its first daily fire does not false-positive. The aggregator alert `stellarindex_aggregator_supply_refresh_never_initialized` (`rules.r1/supply-refresh.yml`) is the goroutine-path sibling; its section lives in [supply-refresh.md](supply-refresh.md#stellarindex_aggregator_supply_refresh_never_initialized).
 
 Symptoms:
 
@@ -177,7 +177,7 @@ curl -s 'https://api.stellarindex.io/v1/assets/native' | jq '.data.circulating_s
 
 ## stellarindex_supply_snapshot_circulating_zero
 
-`stellarindex_supply_snapshot_circulating_xlm{asset_key="XLM"} <= 0`, `for: 5m`, `severity: page` (P2). Typical MTTR 15-60 min. Impact: `/v1/assets/native` reports `circulating_supply: 0`, a customer-visible data-quality incident. Timer-path-only (live on r1): the gauge comes from `internal/supply/textfile.go`; an absent series is owned by [`_never_initialized`](#stellarindex_supply_snapshot_never_initialized).
+`stellarindex_supply_snapshot_circulating_xlm{asset_key="XLM"} <= 0`, `for: 5m`, `severity: page` (P2). Typical MTTR 15-60 min. Impact: `/v1/assets/native` reports `circulating_supply: 0`, a customer-visible data-quality incident. Timer-path-only (live on r1): the gauge comes from `internal/supply/textfile.go`; an absent series is owned by [`_never_initialized`](#stellarindex_supply_snapshot_never_initialized). This alert presumes the writer ran successfully but produced a wrong value; writer failures are [`unit_failed`](#stellarindex_supply_snapshot_unit_failed_alert).
 
 Per ADR-0011 native XLM circulating = total - sum(SDF reserves). Non-positive means either the reserve-balance sum (live observer OR static fallback) equals or exceeds the frozen total, or the XLMComputer math is broken (regression).
 
@@ -235,6 +235,6 @@ False positive: none realistic. A zero would be correct only if every XLM were b
 
 - `supply-cross-check-divergence.md` - when the value itself looks wrong (classic vs SAC divergence).
 - `pg-conns-saturated.md` - Postgres reachability.
-- [supply-refresh.md#stellarindex_aggregator_supply_refresh_stalled](supply-refresh.md#stellarindex_aggregator_supply_refresh_stalled), `supply-refresh.md#stellarindex_aggregator_supply_refresh_error_dominant` - goroutine-path counterparts.
+- [supply-refresh.md#stellarindex_aggregator_supply_refresh_stalled](supply-refresh.md#stellarindex_aggregator_supply_refresh_stalled), [supply-refresh.md#stellarindex_aggregator_supply_refresh_error_dominant](supply-refresh.md#stellarindex_aggregator_supply_refresh_error_dominant) - goroutine-path counterparts.
 - `archive-completeness.md#stellarindex_archive_completeness_stale` - same shape on the archive side.
 - [supply-pipeline.md](../../architecture/supply-pipeline.md) (incl. "The chained-fallback reader pattern"), [ADR-0011](../../adr/0011-supply-algorithm.md) (Algorithm 1, native XLM), ADR-0021 (chained-fallback reserve reader).

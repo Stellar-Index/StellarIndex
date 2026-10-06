@@ -107,10 +107,11 @@ groups:
             path), or the orchestrator hasn't fired its first tick.
             Distinct from `_stalled` (which requires the metric to
             have existed at some point); together they cover both
-            "was working, stopped" and "never worked." Routes to
-            the same runbook as the timer-path equivalent
-            (`supply-snapshot-never-initialized`) since the fix is
-            symmetric: pick Path A or Path B.
+            "was working, stopped" and "never worked." Runbook is
+            the supply-refresh page; the timer-path sibling is
+            `stellarindex_supply_snapshot_never_initialized`. Only
+            enabling the goroutine path clears this one; r1 runs
+            both paths.
 
       - alert: stellarindex_aggregator_supply_refresh_error_dominant
         # F-1320: aggregate PER ASSET (`by (asset_key)`), not fleet-wide —

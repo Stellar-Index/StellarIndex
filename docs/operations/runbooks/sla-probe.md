@@ -1,6 +1,6 @@
 ---
 title: Runbook — sla-probe
-last_verified: 2026-10-06
+last_verified: 2026-08-28
 status: living
 severity: P2
 ---
@@ -61,7 +61,10 @@ curl -s http://localhost:9090/api/v1/query --data-urlencode \
   'query=histogram_quantile(0.95, sum by (route, le) (rate(http_request_duration_seconds_bucket{job=~"stellarindex[_-]api"}[5m])))' | \
   jq -r '.data.result[] | "\(.metric.route): \(.value[1])s"' | sort -k2 -rn | head
 
-# 3. One-off probe from another network to see if it is regional
+# 3. One-off probe from another network to see if it is regional.
+# Keep -concurrency 1 and authenticate: a keyless run hits the anonymous
+# 60/min limit and 429s read as an availability failure (F-1311).
+export STELLARINDEX_PROBE_API_KEY=<key>   # or pass -api-key
 stellarindex-sla-probe -base-url https://api.stellarindex.io/v1 \
   -duration 10s -concurrency 1 -report-format text
 ```
@@ -126,7 +129,7 @@ Mitigation (<= 15 min):
 - [ ] Split the failures by status. 429 on the probe only: the probe's key is missing, revoked or under-quota; fix the key, not the API.
 - [ ] 5xx: route to `api.md#stellarindex_api_error_rate_critical`.
 - [ ] Timeouts: route to `api.md#stellarindex_api_latency_p95_high`.
-- [ ] Verification: two consecutive probe runs at >= 99.9 % on the endpoint.
+- [ ] Verification: two consecutive probe runs at >= 99.9 % on the endpoint (the alert clears on the same 30 m `for`).
 
 False positives: probe-side 429s (F-1311; API healthy, measurement not), a deploy restart inside a run (a handful of connection refusals; one run only).
 
@@ -243,7 +246,7 @@ The 30 s freshness target applies to `price-tip`; `price` is measured against th
 Mitigation:
 
 - [ ] Read `failed_reasons` to identify the breach kind.
-- [ ] Route: p95 / p99 to [p95](#stellarindex_sla_probe_p95_breach); freshness to [freshness](#stellarindex_sla_probe_freshness_breach); availability to [availability](#stellarindex_sla_probe_availability_breach).
+- [ ] Route: p95 / p99 to [p95](#stellarindex_sla_probe_p95_breach); freshness to [freshness](#stellarindex_sla_probe_freshness_breach); availability to [availability](#stellarindex_sla_probe_availability_breach) (the probe's availability is the 2xx-success rate, the same signal as `api.md#stellarindex_api_error_rate_critical`).
 - [ ] Verification: `unit_failed` at 0 for >= 30 min.
 
 Why it exists alongside the per-breach alerts: it catches a new endpoint or pair-specific threshold not yet wired into a per-breach rule. If it fires without a per-breach companion, add the per-breach rule. (p99 and availability now have their own rules.)

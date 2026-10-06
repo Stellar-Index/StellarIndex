@@ -11,7 +11,7 @@ Alerts that watch Prometheus, Alertmanager and the exporters themselves. Rule fi
 
 r1 shape: there are no `mon-01` / `mon-02` hosts (OBS-02). Prometheus (`prometheus.service`, scrape config `configs/prometheus/prometheus.r1.yml` installed to `/etc/prometheus/`) and Alertmanager (`prometheus-alertmanager.service`, NOT `alertmanager`, which is an inactive unit that reads as a false confirmation) are apt-installed systemd units on the one archival host; every scrape target is `localhost:<port>`. The `prometheus` ansible role and `monitoring.yml` playbook are the multi-host shape and are not runnable against r1.
 
-Alertmanager config: source of truth `configs/alertmanager/alertmanager.r1.yml`; live file `/etc/prometheus/alertmanager.yml` (`0640 root:prometheus`, embeds webhook URLs). Secrets live in `/etc/default/alertmanager-secrets` (root:root, `0600`), never committed: `HEALTHCHECKS_DEADMANSSWITCH_URL`, `DISCORD_WEBHOOK_URL_PAGES`, `DISCORD_WEBHOOK_URL_ALERTS`, optional `DISCORD_WEBHOOK_URL_INFORMATIONAL` and `HEALTHCHECKS_ALERT_DELIVERY_URL`. `bash configs/alertmanager/apply.sh` renders (an empty URL makes the renderer drop that receiver's `*_configs` block, leaving a no-op stub), amtool-validates, installs and reloads. Never hand-edit the rendered file; every r1 config change lands in the repo in the same PR. See `configs/alertmanager/README.md`.
+Alertmanager config: source of truth `configs/alertmanager/alertmanager.r1.yml`; live file `/etc/prometheus/alertmanager.yml` (`0640 root:prometheus`, embeds webhook URLs). Secrets live in `/etc/default/alertmanager-secrets` (root:root, `0600`), never committed: `HEALTHCHECKS_DEADMANSSWITCH_URL`, `DISCORD_WEBHOOK_URL_PAGES`, `DISCORD_WEBHOOK_URL_ALERTS`, optional `DISCORD_WEBHOOK_URL_INFORMATIONAL` and `HEALTHCHECKS_ALERT_DELIVERY_URL`. `bash configs/alertmanager/apply.sh` renders (an empty OPTIONAL URL makes the renderer drop that receiver's `*_configs` block, leaving a no-op stub; an empty required URL is refused unless `ALERTMANAGER_ALLOW_EMPTY` waives it), amtool-validates, installs and reloads. Never hand-edit the rendered file; every r1 config change lands in the repo in the same PR. See `configs/alertmanager/README.md`.
 
 Shared commands (host `ssh root@136.243.90.96`):
 
@@ -55,7 +55,7 @@ systemctl status <exporter-unit> --no-pager | head -15
 
 Causes and fixes:
 
-1. Host rebooted or unit restarted (ansible upgrades). `for: 2m` absorbs this; if it fires the unit is staying down.
+1. Host rebooted or unit restarted (ansible upgrades). Prometheus's static-config discovery re-resolves on each scrape, so recovery is bounded by the scrape interval. `for: 2m` absorbs this; if it fires the unit is staying down.
 2. Exporter crash: `systemctl restart <exporter>`.
 3. Static-config drift (target added to inventory without re-applying the role, or removed but still scraped): on r1 install the updated `configs/prometheus/prometheus.r1.yml` to `/etc/prometheus/` and SIGHUP the unit; multi-host re-apply the `prometheus` role.
 4. Auth drift: exporter credentials rotated in vault without re-applying; Prometheus gets 401. Rotate the vault entry, re-apply.
@@ -66,7 +66,7 @@ Verify: `up` returns to 1 and metrics resume. False positives: a Prometheus relo
 
 ## stellarindex_alertmanager_config_bad
 
-Fires on `alertmanager_config_last_reload_successful == 0` for 5 min. A reload after a config push failed, so changes since the last good load are NOT live; existing routes keep working from the previous in-memory config, new routes go nowhere. Log shows `error loading config: ...`. Typical MTTR 5-30 min. The alert is live on r1 via the `alertmanager` self-scrape job in `prometheus.r1.yml` (`localhost:9093`).
+Fires on `alertmanager_config_last_reload_successful == 0` for 5 min. A reload after a config push failed, so changes since the last good load are NOT live; existing routes keep working from the previous in-memory config, new routes go nowhere. Log shows `error loading config: ...`; a recent edit or hand apply whose new route does not fire is the other symptom. Typical MTTR 5-30 min. The alert is live on r1 via the `alertmanager` self-scrape job in `prometheus.r1.yml` (`localhost:9093`).
 
 Diagnosis: `journalctl -u prometheus-alertmanager -n 100 --no-pager | grep -iE 'reload|error'` and `amtool check-config /etc/prometheus/alertmanager.yml`.
 
@@ -74,13 +74,13 @@ Causes:
 
 1. YAML typo (`amtool check-config` catches it). A malformed edit that breaks `apply.sh`'s block-stripper indentation assumptions can instead produce a validating but receiver-less config (the pre-#275 incident class): a silent no-fanout, not a `config_bad` firing.
 2. Template-expansion error: malformed `{{ ... }}` parses fine; reference errors only fire at send time, and watch for silent "expanded to empty string".
-3. Secret resolution is NOT a load failure on r1. An unset secret drops that receiver's `*_configs` block (no-op stub): alerts accumulate in the AM UI but never reach Discord/Healthchecks. If fan-out is missing but this alert is green, check the env file for empty URLs and re-run `apply.sh` (see [not_notifying](#stellarindex_alertmanager_not_notifying)).
+3. Secret resolution is NOT a load failure on r1. An unset optional (or explicitly waived) secret drops that receiver's `*_configs` block (no-op stub): alerts accumulate in the AM UI but never reach Discord/Healthchecks. If fan-out is missing but this alert is green, check the env file for empty URLs and re-run `apply.sh` (see [not_notifying](#stellarindex_alertmanager_not_notifying)).
 4. Version skew: new AM binary vs old config syntax, or a hand-upgraded amtool disagreeing with the running binary (the apt package pins the distro's AM version).
 
 Mitigation:
 
 1. Validate the checked-in source: `ALERTMANAGER_SECRETS=/dev/null bash configs/alertmanager/apply.sh --check-only`; fix syntax in `alertmanager.r1.yml`.
-2. Confirm `/etc/default/alertmanager-secrets` sets the three required URLs (any empty means a no-op stub receiver).
+2. Confirm `/etc/default/alertmanager-secrets` sets the three required URLs (`apply.sh` refuses an empty one unless `ALERTMANAGER_ALLOW_EMPTY` waives it; only the optional receivers silently become stubs).
 3. Apply: `bash configs/alertmanager/apply.sh` (render, amtool-validate, install `0640 root:prometheus`, reload).
 4. Manual reload: `systemctl reload prometheus-alertmanager`. Do not `curl -XPOST http://localhost:9093/-/reload`: the apt unit runs without `--web.enable-lifecycle` (`/etc/default/prometheus-alertmanager` carries only `ARGS="--cluster.listen-address="`, per `configs/prometheus/README.md`).
 5. Verify `alertmanager_config_last_reload_successful == 1`; the alert clears within one evaluation interval.
@@ -89,7 +89,9 @@ CI guard (#275): the `monitoring-rules` job runs `apply.sh --check-only` on both
 
 False positive: `last_reload_successful` is 0 until the first load completes, so a cold start can trip briefly; `for: 5m` absorbs it.
 
-Future multi-host pair (not runnable today): live config at `/etc/alertmanager/alertmanager.yml` rendered from the role's `alertmanager.yml.j2`; push via the prometheus role (handler reloads); diff the live config across `mon-01`/`mon-02` (must agree); verify `alertmanager_config_last_reload_successful == 1` on both.
+Dependency: this alert relies on Alertmanager being up enough to serve metrics; a totally broken Alertmanager is caught by [deadmansswitch](#stellarindex_deadmansswitch) and [scrape_failing](#stellarindex_prometheus_scrape_failing).
+
+Future multi-host pair (not runnable today): live config at `/etc/alertmanager/alertmanager.yml` rendered from the role's `alertmanager.yml.j2`; push via the prometheus role (handler reloads); diff the live config across the pair (ADR-0008 section 3; `diff <(ssh root@mon-01 cat /etc/alertmanager/alertmanager.yml) <(ssh root@mon-02 cat /etc/alertmanager/alertmanager.yml)`, they must agree); verify `alertmanager_config_last_reload_successful == 1` on both.
 
 ## stellarindex_alertmanager_down
 
@@ -116,7 +118,7 @@ Recover: `systemctl restart prometheus-alertmanager`, then `curl -s localhost:90
 
 Fires (page) when `sum(increase(alertmanager_notifications_total{job="alertmanager",integration="webhook"}[15m])) == 0` or that series is absent for 15 min, sustained 10 min. Both arms are needed: during the 31-day outage the webhook series was present and flat at 0 while the discord series was entirely absent. `sum()` with no `by` is load-bearing (GH-1173): the webhook integration backs two receivers (`deadmansswitch`, `alert-delivery-failure`), each its own series; unaggregated, the idle `alert-delivery-failure` series would sit at 0 permanently and page forever once wired, muting the deadman via the `component: meta` inhibit rule.
 
-Why zero is always wrong: `stellarindex_deadmansswitch` fires permanently with `repeat_interval: 1m`, so the webhook integration produces roughly 30 notifications an hour forever (measured steady state on r1: `30.0/hour`). Zero means notifications are not leaving the process, never a quiet estate. While this alert fires it cannot reach you; the external Healthchecks.io check on the deadman's switch is the out-of-band path that should have paged first (see step 4).
+Why zero is always wrong: `stellarindex_deadmansswitch` fires permanently with `repeat_interval: 1m`, so the webhook integration produces roughly 30 notifications an hour forever (measured steady state on r1: `30.0/hour`). Zero means notifications are not leaving the process, never a quiet estate. While this alert fires it cannot reach you, so treat the Prometheus UI (`http://localhost:9090/alerts`), not Discord, as the source of truth; the external Healthchecks.io check on the deadman's switch is the out-of-band path that should have paged first (see step 4).
 
 1. Confirm and find which leg:
 
@@ -275,7 +277,7 @@ Specifics: unit `minio`, port 9000. Bearer token at `/etc/prometheus/minio.token
 
 Inverted semantics: fires constantly by design (`expr: vector(1)`, `for: 0s`); you page when it STOPS. The alert being visible in Prometheus is the positive case (pipeline healthy). Its `severity` label is `informational` on purpose: the Alertmanager routing tree matches on `alertname`, not severity, to send it to the watchdog receiver, and `informational` keeps it out of the page/ticket fanout. P1 when it stops, escalated by the external watchdog. If it stops, the primary alerting pipeline is lost and every other alert is invisible. MTTR is however long it takes to restore Prometheus or Alertmanager (minutes to an hour).
 
-How it works: routed via `configs/alertmanager/alertmanager.r1.yml` to a Healthchecks.io `https://hc-ping.com/<uuid>` check that expects a heartbeat every repeat interval; if it stops hearing, it pages on a separate channel independent of our Alertmanager. To rotate or fix the watchdog URL edit `HEALTHCHECKS_DEADMANSSWITCH_URL` in `/etc/default/alertmanager-secrets` and re-run `apply.sh` (format `'https://hc-ping.com/<uuid>'`).
+How it works: routed via `configs/alertmanager/alertmanager.r1.yml` to a Healthchecks.io `https://hc-ping.com/<uuid>` check that expects a heartbeat every repeat interval; if it stops hearing, it pages on a separate channel independent of our Alertmanager. The checked-in config holds only the placeholder `${HEALTHCHECKS_DEADMANSSWITCH_URL}`; the real URL is never committed. To rotate or fix the watchdog URL edit `HEALTHCHECKS_DEADMANSSWITCH_URL` in `/etc/default/alertmanager-secrets` and re-run `apply.sh` (format `'https://hc-ping.com/<uuid>'`).
 
 Symptoms: a secondary-channel page "deadmansswitch heartbeat missed"; Prometheus/Alertmanager dashboards may look green or offline; the primary on-call tool is silent.
 
@@ -292,7 +294,7 @@ Causes:
 1. Prometheus down or unreachable (cannot evaluate `vector(1)`).
 2. Alertmanager down or unreachable (cannot route it).
 3. Network path to the watchdog broken (DNS, proxy, TLS to `hc-ping.com`).
-4. Watchdog URL empty or wrong in the rendered config: an empty `HEALTHCHECKS_DEADMANSSWITCH_URL` renders a no-op stub receiver (valid config, zero pings). Check the secrets file and re-run `apply.sh`.
+4. Watchdog URL empty or wrong in the rendered config: an empty `HEALTHCHECKS_DEADMANSSWITCH_URL` is refused by `apply.sh` unless `ALERTMANAGER_ALLOW_EMPTY` waives it, and then renders a no-op stub receiver (valid config, zero pings). Check the secrets file and re-run `apply.sh`.
 5. Someone silenced the alert in Alertmanager; it should never be silenced.
 6. The `stellarindex.meta` rule group is disabled (misconfig or rule-load error); `alertmanager_config_last_reload_successful` and `prometheus_rule_group_iterations_total` tell you.
 

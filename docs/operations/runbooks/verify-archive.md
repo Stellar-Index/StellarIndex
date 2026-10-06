@@ -15,7 +15,7 @@ Four alerts cover the archive verification tiers. Rules: `configs/prometheus/rul
 | B (`-tier checkpoint`) | Header-hash of every 64-ledger checkpoint vs the local `/srv/history-archive` mirror | `verify-archive-tier-b.service`/`.timer`, nightly 04:37 UTC | `_tier_b_unit_failed`, `_tier_b_run_stale` (ticket) |
 | D (`-tier peers`) | Sampled peer archives' checkpoint hashes vs ours | root cron, Sunday 16:23 UTC | `_tier_d_run_stale` (ticket) |
 
-Impact of all of them: none immediate, the API serves correct data from existing bytes. R1 is the integrity leader (ADR-0016); the cross-region trust property degrades with each missed cycle. Staleness alerts read `stellarindex_verify_archive_last_success_unix{tier=...}`, a node_exporter textfile gauge the binary advances ONLY on a clean exit (`internal/ops/archive/verify_archive_textfile.go`); a failed run carries the prior value forward. Each has an `absent_over_time` branch so a never-written textfile also fires; the `> 0` guard means a fresh host that never completed a run does not fire.
+Ticket alerts: no immediate impact, the API serves correct data from existing bytes (the P2 `_run_stale` page has its own impact note below). R1 is the integrity leader (ADR-0016); the cross-region trust property degrades with each missed cycle. Staleness alerts read `stellarindex_verify_archive_last_success_unix{tier=...}`, a node_exporter textfile gauge the binary advances ONLY on a clean exit (`internal/ops/archive/verify_archive_textfile.go`); a failed run carries the prior value forward. Each has an `absent_over_time` branch so a never-written textfile also fires; the `> 0` guard means a fresh host that never completed a run does not fire.
 
 A missing-file gap in the archive is the most common cause of a verify-archive failure; `stellarindex_archive_files_missing` (see [archive-completeness](archive-completeness.md#stellarindex_archive_files_missing)) often co-fires.
 
@@ -25,7 +25,7 @@ Shared lock: Tier A, Tier B and manual runs share the `verify-archive` heavy-job
 fuser -v /run/lock/stellarindex-heavy-verify-archive.lock
 ```
 
-Do not start manual runs while a timer is active, and always wrap manual runs as `/usr/local/sbin/run-heavy-job.sh verify-archive ...` (the name must match the unit; `scripts/ci/lint-verify-archive-lock-name.sh` enforces it).
+Do not start manual runs while a timer is active, and always wrap manual Tier A/B runs as `/usr/local/sbin/run-heavy-job.sh verify-archive ...` (the name must match the unit; `scripts/ci/lint-verify-archive-lock-name.sh` enforces it). Tier D deliberately uses its own lock, `verify-archive-tier-d`, so a long Tier A walk cannot swallow the weekly fork check.
 
 Shared access and units:
 
@@ -102,7 +102,7 @@ False positives: a manual run holding the lock (shared lock above); a MinIO rest
 
 ## stellarindex_verify_archive_run_stale
 
-P2 (`severity: page`), `for: 10m` (rules out a node_exporter scrape blip). `verify-archive-tier-a` (`tier="chain"`) has had no clean completion for 36h (24h cadence + 12h cushion), or never. MTTR about 1h. Impact: R2/R3 trust R1 for chain integrity (ADR-0016); the longer R1 goes without a clean nightly verify, the further the fleet drifts from byte-identical everywhere. Usually preceded by `_unit_failed` on each earlier night; this page means that ticket was not actioned in time.
+P2 (`severity: page`), `for: 10m` (rules out a node_exporter scrape blip). `verify-archive-tier-a` (`tier="chain"`) has had no clean completion for 36h (24h cadence + 12h cushion), or the series is absent. MTTR about 1h. Impact: R2/R3 trust R1 for chain integrity (ADR-0016); the longer R1 goes without a clean nightly verify, the further the fleet drifts from byte-identical everywhere. Usually preceded by `_unit_failed` on each earlier night; this page means that ticket was not actioned in time.
 
 Because the gauge advances only on a clean exit, "timer fires but every run fails" DOES trip this page (it did not when the expr read the timer's last trigger).
 
@@ -164,7 +164,8 @@ Mitigation:
 - [ ] Anchor MISMATCH: STOP. Compare the offending checkpoint's header-hash against a peer archive (SDF / Lobstr / SatoshiPay) and escalate per the [RCA](#root-cause-analysis-chain-break-or-anchor-mismatch).
 - [ ] Inconclusive / all-missed (mirror gap): advance the mirror (the rs-stellar-archivist sync that backfills `/srv/history-archive`), then re-run Tier B manually. Never pass `-fail-on-missed=false` here (ADR-0017 X1.7): with it, a partial miss inside the mirror's coverage span exits 0 and prints `checkpoint anchor OK`, so the mitigation looks resolved while a hole goes unreported:
   ```sh
-  /usr/local/bin/stellarindex-ops verify-archive \
+  /usr/local/sbin/run-heavy-job.sh verify-archive \
+    /usr/local/bin/stellarindex-ops verify-archive \
     -config /etc/stellarindex.toml \
     -tier checkpoint -archive-root /srv/history-archive \
     -from 2 -workers 8 -max-runtime 1h \
@@ -174,7 +175,7 @@ Mitigation:
 
 ## stellarindex_verify_archive_tier_b_run_stale
 
-Same family and diagnosis as [tier_b_unit_failed](#stellarindex_verify_archive_tier_b_unit_failed); differences: P3 ticket, `for: 10m`, fires when `tier="checkpoint"` has no clean completion for 36h+ (24h cadence + 12h cushion) or never recorded one, i.e. the timer is disabled or every recent run failed, so the single-source anchor check is not running. Lower urgency than the Tier A staleness page.
+Same family and diagnosis as [tier_b_unit_failed](#stellarindex_verify_archive_tier_b_unit_failed); differences: P3 ticket, `for: 10m`, fires when `tier="checkpoint"` has no clean completion for 36h+ (24h cadence + 12h cushion) or the series is absent, i.e. the timer is disabled or every recent run failed, so the single-source anchor check is not running. Lower urgency than the Tier A staleness page.
 
 Diagnose: `systemctl status verify-archive-tier-b.timer` (active?), `journalctl -u verify-archive-tier-b.service` (what's failing?), is the `/srv/history-archive` mirror synced to the checked range?
 
@@ -182,14 +183,14 @@ Mitigation: confirm the timer is enabled (`systemctl enable --now verify-archive
 
 ## stellarindex_verify_archive_tier_d_run_stale
 
-P3 (`severity: ticket`), `for: 30m`. No clean exit for `tier="peers"` in over 8 days (weekly cycle plus one day slack), or none ever recorded. MTTR 30 min diagnosis; a re-run takes minutes to an hour. Impact: the weekly multi-peer cross-check hasn't confirmed our archive against the network; a genuine divergence would surface only in journald until the next success. Tier A's nightly chain-link carries the page-level signal.
+P3 (`severity: ticket`), `for: 30m`. No clean exit for `tier="peers"` in over 8 days (weekly cycle plus one day slack), or the series is absent. MTTR 30 min diagnosis; a re-run takes minutes to an hour. Impact: the weekly multi-peer cross-check hasn't confirmed our archive against the network; a genuine divergence would surface only in journald until the next success. Tier A's nightly chain-link carries the page-level signal.
 
 Tier D (`stellarindex-ops verify-archive -tier peers`) samples 50 peer archives and compares their checkpoint hashes with ours, the failure mode Tier A/B cannot see because both anchor on our own mirror (ADR-0016 section 7.4). It is a weekly cron entry (`stellarindex-verify-archive-tier-d`, Sunday 16:23 UTC, `configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`), not a systemd timer, so there is no `node_systemd_unit_state` series; staleness is the only signal, covering both "every run failed" and "cron entry never installed" (gated on `verify_archive_tier_d_enabled`, pubnet only, since a single-region testnet/futurenet host has no peer region).
 
 Diagnose (5 min):
 
 ```sh
-crontab -l -u root | grep verify-archive-tier-d
+grep verify-archive-tier-d /etc/cron.d/stellarindex-verify-archive-tier-d
 journalctl -t stellarindex-tier-d --since "-10 days" --no-pager | tail -80
 # or, depending on syslog routing: grep stellarindex-tier-d /var/log/syslog
 ```
@@ -206,7 +207,7 @@ Mitigation:
 
 - [ ] Peers disagree: STOP, do not auto-recover. Compare the disputed checkpoint against a second and third peer to determine which side diverges.
 - [ ] Cron entry missing: re-run the archival-node role's `14-stellarindex-services.yml` tasks (tag `ops-jobs`) with `verify_archive_tier_d_enabled: true` in inventory.
-- [ ] Manual re-run: `stellarindex-ops verify-archive -tier peers -peer-samples 50 -from <hot floor>`.
+- [ ] Manual re-run: use the cron's exact command line (task "Install Tier D verify-archive weekly cron" in `configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`): `HEAVY_JOB_CLASS=scheduled /usr/local/sbin/run-heavy-job.sh verify-archive-tier-d /usr/local/bin/stellarindex-ops verify-archive -config /etc/stellarindex.toml -tier peers -peer-samples 50 -from <hot floor> -textfile-output /var/lib/node_exporter/textfile_collector/verify_archive_tier_d.prom`, with the ops environment file loaded first and `-to <live seam ledger - 1>` if the cron renders one. Without `-textfile-output` a hand run cannot clear the alert.
 - [ ] Verify: the next scheduled (or hand) run completes cleanly and advances `stellarindex_verify_archive_last_success_unix{tier="peers"}`.
 
 ## Root cause analysis: chain break or anchor mismatch
@@ -217,7 +218,7 @@ A real mismatch means the archive's trust anchor is in question. Candidates:
 2. Mirror corruption in transit: re-fetch the offending range; confirm the new copy verifies.
 3. Decoder bug: check git log for recent decoder changes; reproduce against the same range under the previous binary.
 
-Gather: `journalctl -u verify-archive-tier-a.service --since '24h ago'`; the offending hash and expected hash for the reported ledger pair; another archive's same-range hashes; recent commits to `cmd/stellarindex-ops/`, `internal/ops/archive/` (verify code) and `internal/ledgerstream/`.
+Gather: `journalctl -u verify-archive-tier-a.service --since '24h ago'` (Tier B: `-u verify-archive-tier-b.service`); the offending hash and expected hash for the reported ledger pair; another archive's same-range hashes; recent commits to `cmd/stellarindex-ops/`, `internal/ops/archive/` (verify code) and `internal/ledgerstream/`.
 
 ## Operator hygiene: /tmp/va-*.log cleanup
 

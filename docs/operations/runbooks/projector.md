@@ -9,7 +9,7 @@ severity: P3
 
 Rule file: `configs/prometheus/rules.r1/projector.yml` (same rules as `deploy/monitoring/rules/projector.yml`), `component: projector`. All alerts are `severity: ticket` (P3) except `stellarindex_projector_i128_overflow`, which is `page` (SEV-1). Implementation: `internal/projector/`; design: ADR-0032 (per-source tables as projections), ADR-0029 (soroban_events landing zone, the legacy raw store), ADR-0034 #10 / ADR-0041 (ClickHouse `contract_events` feed switch).
 
-Why P3: under Phase-3 parallel mode the dispatcher's per-source sink is still primary for most sources, so projector trouble is mostly visibility-only. **Exception: `sep41`.** Since F-1316 the indexer runs `SinkModeSkipSoleWriter`: the projector is the SOLE writer for the sep41 domain, so trouble there is real, customer-visible data lag, and "disable the projector" is not a safe lever for it (it stops the only writer). Re-promote the family to P2 once `[ingestion.persist_per_source]=false` (Phase 4, `SinkModeSkipProjected`); flipping the writer is unsafe while lag is unbounded.
+Why P3: under Phase-3 parallel mode the dispatcher's per-source sink is still primary for most sources, so `lag_high` and `error_rate_high` are mostly visibility-only; `row_quarantined`, `decode_error_rate_high`, `wedged` and the other row/decode alerts below can lose or freeze served data. **Exception: `sep41`.** Since F-1316 the indexer runs `SinkModeSkipSoleWriter`: the projector is the SOLE writer for the sep41 domain, so trouble there is real, customer-visible data lag, and "disable the projector" is not a safe lever for it (it stops the only writer). Re-promote the family to P2 once `[ingestion.persist_per_source]=false` (Phase 4, `SinkModeSkipProjected`); flipping the writer is unsafe while lag is unbounded.
 
 **Where the projector reads from.** By default it tails the ClickHouse Tier-1 lake's `contract_events`: `storage.clickhouse_projector_source` defaults to **true** (it requires `clickhouse_live_sink`). Postgres `soroban_events` is the legacy fallback, used only when that flag is off. Both paths share the same `ingestion_cursors` rows and the same lag gauge. Confirm which this host is on:
 
@@ -19,7 +19,7 @@ journalctl -u stellarindex-indexer --no-pager | \
 # present = CH lake (default);  absent = legacy soroban_events read
 ```
 
-**Skip semantics (shared by the row and decode alerts).** The projector's per-row failure paths skip the row and advance the cursor, because holding would re-wedge a sole-writer source on a deterministic failure (COR-11). The raw event always survives in the lake and is re-driven with `stellarindex-ops projector-replay -source <name> -from <ledger> -write` once the defect is fixed (see [the replay section](#stellarindex_projector_replay_stalled)). Re-driving without fixing the defect just re-drops the same rows. A sustained skip on a source eventually shows as `complete=false` on the ADR-0033 completeness verdict (`data-freshness.md#stellarindex_completeness_incomplete`); after a repair, the verdict returns to `complete=true` at the next `compute-completeness` run.
+**Skip semantics (shared by the row and decode alerts).** The projector's per-row failure paths eventually skip the row (after the retry budget, one row per cycle; `sink_permanent` holds the cursor for about 1 h first) and advance the cursor, because holding would re-wedge a sole-writer source on a deterministic failure (COR-11). The raw event always survives in the lake and is re-driven with `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <name> -from <ledger> -write` once the defect is fixed (see [the replay section](#stellarindex_projector_replay_stalled)). Re-driving without fixing the defect just re-drops the same rows. A sustained skip on a source eventually shows as `complete=false` on the ADR-0033 completeness verdict (`data-freshness.md#stellarindex_completeness_incomplete`); after a repair, the verdict returns to `complete=true` at the next `compute-completeness` run.
 
 Shared commands:
 
@@ -62,7 +62,7 @@ Symptoms:
 - `stellarindex_projector_lag_ledgers{source="<name>"}` > 256 for 10+ min.
 - `stellarindex_projector_cycle_duration_seconds_bucket{source="<name>"}` p99 > 30 s (`projector.PerSourceTimeout` is 60 s).
 
-Quick diagnosis (5 min): run the shared cursor and tip queries above, then tail the log for the lagging source: `journalctl -u stellarindex-indexer -n 200 | grep "projector cycle" | grep <source>`. If the cursor isn't moving at all, go to mitigation. If it moves but slower than the live tip, this is honest catch-up after an outage; let it run unless lag exceeds a few hours.
+Quick diagnosis (5 min): run the shared cursor and tip queries above, then tail the log for the lagging source: `ssh root@136.243.90.96 'journalctl -u stellarindex-indexer -n 200 | grep "projector cycle" | grep <source>'`. If the cursor isn't moving at all, go to mitigation. If it moves but slower than the live tip, this is honest catch-up after an outage; let it run unless lag exceeds a few hours.
 
 **Held at a lake hole.** In ClickHouse read mode the scan is clamped to the lake's contiguous-completeness watermark, so a missing lake ledger stops the source there on purpose (reading past it would lose that ledger's events). Such a cycle counts as `outcome="watermark_held"`, not `idle`, and the lag gauge still measures against the ledgerstream tip, so it grows:
 
@@ -88,7 +88,7 @@ Mitigation (15 min):
     -source <name> -from <ledger> -write
   ```
 
-  The projector goroutine in `stellarindex-indexer` does the re-projection on its next cycle; every per-source writer's generation-guarded upsert makes it idempotent. The projector writes at `derive_generation` 0, so a replay cannot correct a row a re-derive stamped higher; use `projected-rebuild -write` for that. An unknown `-source` fails loudly. A whole-history re-derive is `projected-rebuild`, run under `run-heavy-job.sh`. Full procedure: [replay section](#stellarindex_projector_replay_stalled).
+  This is a one-shot cursor rewind, not a heavy job (it does block while the projector catches up; see the timeout below). The projector goroutine in `stellarindex-indexer` does the re-projection on its next cycle; every per-source writer's generation-guarded upsert makes it idempotent. The projector writes at `derive_generation` 0, so a replay cannot correct a row a re-derive stamped higher; use `projected-rebuild -write` for that. An unknown `-source` fails loudly. A whole-history re-derive is `projected-rebuild`, run under `run-heavy-job.sh`. Full procedure: [replay section](#stellarindex_projector_replay_stalled).
 - [ ] Step 4: if the projector is wedged on one source, go to [stellarindex_projector_wedged](#stellarindex_projector_wedged) FIRST. Disabling the projector (`[ingestion.projector] enabled = false` in `/etc/stellarindex.toml` + `systemctl restart stellarindex-indexer.service`) is a last resort; for sep41 it STOPS the only writer.
 - [ ] Verification: `stellarindex_projector_lag_ledgers` drops below 256 within 30 minutes (or the alert clears).
 
@@ -106,7 +106,7 @@ Known false positives:
 
 ## stellarindex_projector_error_rate_high
 
-Trips: `sum by (source) (rate(stellarindex_projector_runs_total{outcome="error"}[15m])) > 0.05` for `15m`. Same impact, severity and runbook body as [stellarindex_projector_lag_high](#stellarindex_projector_lag_high); the difference is that this fires on failing cycles rather than on distance from the tip. The cursor is not advancing, so the backlog is growing.
+Trips: `sum by (source) (rate(stellarindex_projector_runs_total{outcome="error"}[15m])) > 0.05` for `15m`. Same impact, severity and runbook body as [stellarindex_projector_lag_high](#stellarindex_projector_lag_high); the difference is that this fires on failing cycles rather than on distance from the tip. The cursor may not be advancing; check before assuming the backlog is growing.
 
 Work it from lag_high's mitigation Step 2 (inspect `component=projector` log lines for the failing source: postgres connection saturation, PK constraint failure on a malformed event, decoder panic) and its root-cause queries (`runs_total` and `events_decoded_total` by outcome). Verification: the `outcome="error"` rate returns to ~0 and lag falls. If one source's cursor is pinned at the window floor, see [stellarindex_projector_wedged](#stellarindex_projector_wedged).
 
@@ -123,7 +123,7 @@ The rest of this section is the operator reference for `projector-replay`.
 | Field | Value |
 | ----- | ----- |
 | Trigger | Per-source projection is stale or missing rows for a known ledger range (e.g. an outage gap; a post-decoder-fix re-walk over rows a re-derive already stamped needs `projected-rebuild -write`). |
-| Tool | `stellarindex-ops projector-replay -source <name> -from <ledger> -write` (fail-closed: no `-write` = dry run) |
+| Tool | `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <name> -from <ledger> -write` (fail-closed: no `-write` = dry run) |
 | Typical wall time | The rewind is at most 5 s of SQL, but the command does **not** return then: by default it blocks until the projector has re-walked the range (about 1 min per 100k ledgers per source, bounded by `-wait-timeout`, default 30 min) and then re-materializes the seven `prices_*` continuous aggregates over it (its context allows a further 30 min). Run it under `tmux`/`screen`, not a bare ssh session. `-wait=false` or `-refresh-caggs=false` return immediately and hand the refresh to you; see [After the rewind](#after-the-rewind-the-command-waits-then-refreshes-the-price-caggs). |
 | Impact | Data-safe, not load-free. The rewind only moves a cursor, and the per-source writers' generation-guarded upsert makes re-writes idempotent. The load is what follows: the projector re-walks the range (a replay through compressed chunks livelocks; see the pre-flight below), and the post-replay refresh runs seven `refresh_continuous_aggregate` calls over the replayed time range. Each is padded to its view's minimum window (up to about 93 days for `prices_1mo`), reads `trades`, and can contend with that view's own refresh policy (Timescale rejects the loser with 55P03; the store retries within a bound). |
 
@@ -131,7 +131,7 @@ The rest of this section is the operator reference for `projector-replay`.
 
 `projector-replay` is bound by the live projector's tick cadence (5s `Interval`) and 60s `PerSourceTimeout` per cycle: roughly a 720k-ledger/hour ceiling. For a rewind bigger than about **1M ledgers**, use **`stellarindex-ops projected-rebuild`** (ADR-0048 D3): parallel workers, no per-cycle deadline, 10-20x the throughput, same decoders and idempotent writes. See [docs/architecture/ingest-pipeline.md](../../architecture/ingest-pipeline.md#re-deriving-from-the-lake) ("`projector-replay` vs `projected-rebuild`") and the doc comment in `internal/ops/chops/projected_rebuild.go` for the one-writer contract (the two tools must never run concurrently against overlapping history for the same source). `projected-rebuild` exits non-zero when a run held any window (un-checkpointed after failed inserts; re-run to retry) or permanently dropped any trade; its summary says which.
 
-This holds for a migration's follow-up too: one written as `projector-replay -source X -from N` (0137, 0164, 0203) goes through `projected-rebuild` when `N` is more than about 1M ledgers behind the tip.
+This holds for a migration's follow-up too: one written as `projector-replay -config /etc/stellarindex.toml -source X -from N` (0137, 0164, 0203) goes through `projected-rebuild` when `N` is more than about 1M ledgers behind the tip.
 
 `projected-rebuild -resume` (the default) skips every window that has a checkpoint (`ingestion_cursors`, `source = 'projected-rebuild'`, `sub_source = 'X:<from>-<to>'`) without checking the table still holds its rows. A migration that empties a projected table therefore deletes that source's checkpoints in the same file (0206 did it for comet, cctp, rozo and sushiswap_v3; `lint-migrations.sh` pass 10 enforces it). Do not run a `projected-rebuild` for that source while the migration applies: a window it checkpoints before the `DELETE` is skipped afterwards. If a table is empty over a range its checkpoints claim, delete that source's `projected-rebuild` rows from `ingestion_cursors` by hand, in the shape of 0206's `DELETE`, then re-run.
 
@@ -202,7 +202,7 @@ The dry run prints the wait-and-refresh it would perform.
 - *cursor still short of the pre-rewind ledger after `-wait-timeout`*: the projector is slow or wedged (check the pre-flight below and [lag_high](#stellarindex_projector_lag_high)). No view was refreshed.
 - *post-replay CAGG refresh ... failed*: every view is still attempted after one fails, and the error names the ones that did not materialize.
 
-Either way, once the projector has caught up, finish one of two ways. Re-running with the same `-from` works and is idempotent, but it **rewinds again**: the projector re-walks the whole range a second time before the refresh. For a large range, refresh the `trades` rollups instead with `stellarindex-ops trades-cagg-refresh -config PATH -from <ledger> -to <ledger>`, which runs the same safe order.
+Either way, once the projector has caught up, finish one of two ways. Do NOT re-run with the same `-from`: a plain re-run recomputes the rewind target from the now partially-advanced cursor and re-walks the whole range again, never refreshing the gap left by the timed-out run. Recover with `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <name> -from <ledger> -refresh-only -refresh-to <ledger>` (refuses until the projector has re-walked up to `-refresh-to`). For a large range you can also refresh the `trades` rollups with `stellarindex-ops trades-cagg-refresh -config PATH -from <ledger> -to <ledger>`, which runs the same safe order.
 
 The refresh set is the one `backfill` uses: every `trades` rollup (`timescale.TradesCAGGs`, including `twap_1h` / `twap_1d` after a forced `prices_1m`) and, if the range wrote oracle rows, every `oracle_prices_*` rung (`timescale.OracleCAGGs`). While `prices_1m`'s retention policy (migration 0156) is armed the twap refresh is refused and the command fails naming them; disarm it as that migration states and re-run.
 
@@ -268,7 +268,7 @@ Quarantine is always the SECOND-order signal; the `err` names the real defect (`
 Mitigation:
 
 - [ ] Read the `err` field to learn WHY the row was un-processable. Fix that first; re-driving without a fix re-quarantines the same row.
-- [ ] Re-drive: `stellarindex-ops projector-replay -source <X> -from <ledger> -write`.
+- [ ] Re-drive: `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <X> -from <ledger> -write`.
 - [ ] Verification: the re-drive succeeds, no new `sink_quarantined` increments for the source, and the completeness verdict returns to `complete=true` after the next `compute-completeness` run.
 
 ## stellarindex_projector_row_dropped_permanent
@@ -279,7 +279,7 @@ Trips: same shape as quarantine but on `outcome="sink_permanent"` (15m increase,
 
 **Read the rate, not just the event.** One row is a poison value. A burst across many ledgers of one source is the GLOBAL form of the same SQLSTATE, usually a migration whose NOT NULL / CHECK the live rows violate (class 22/23 errors are not always row-local). The projector stalls (`runs_total{outcome="sink_retry"}`, rising lag) while it holds the window, then bleeds one row per cycle. Fix the schema before that budget expires.
 
-Diagnose and fix as for [row_quarantined](#stellarindex_projector_row_quarantined): find the log line and its error, fix the defect (value or schema), then re-drive with `stellarindex-ops projector-replay -source <X> -from <ledger> -write`. The source's metric is `{source="X",outcome="sink_permanent"}`.
+Diagnose and fix as for [row_quarantined](#stellarindex_projector_row_quarantined): find the log line and its error, fix the defect (value or schema), then re-drive with `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <X> -from <ledger> -write`. The source's metric is `{source="X",outcome="sink_permanent"}`.
 
 ## stellarindex_projector_i128_overflow
 
@@ -290,7 +290,7 @@ It is NOT a data-quality verdict. i128 is the width every canonical amount is ca
 Response:
 
 - [ ] Find the conversion (`git log` the decoder and the sink for the source; look for `int64(parts.Lo)`-style narrowing; use `canonical.FromInt128Parts` / `FromUInt128Parts`).
-- [ ] Fix it, then re-drive the WHOLE affected range with `stellarindex-ops projector-replay -source <X> -from <ledger> -write` (or `projected-rebuild` if over about 1M ledgers; see the replay section).
+- [ ] Fix it, then re-drive the WHOLE affected range with `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <X> -from <ledger> -write` (or `projected-rebuild` if over about 1M ledgers; see the replay section).
 
 ## stellarindex_projector_decode_error_rate_high
 
@@ -309,7 +309,7 @@ Symptoms:
 
 - `rate(stellarindex_projector_events_decoded_total{source="X",outcome="decode_error"}[10m])` sustained above 0.1/s.
 - `stellarindex_projector_runs_total{source="X",outcome="decode_degraded"}` incrementing.
-- Journal: `decode failed; row SKIPPED` (carries `err`), `decoder panicked; row SKIPPED` (carries `stack`), or `malformed landing-zone row - skipped` (ledger/tx/op_index/event_index/contract/err; logged for the first and every 20th failure per cycle); cycle summary shows nonzero `decode_errors` or `reconstruct_errors`.
+- Journal: `decode failed; row SKIPPED` (carries `err`), `decoder panicked; row SKIPPED` (carries `stack`), or `malformed landing-zone row — skipped` (ledger/tx/op_index/event_index/contract/err; logged for the first and every 20th failure per cycle); cycle summary shows nonzero `decode_errors` or `reconstruct_errors`.
 - Lag may look HEALTHY: the cursor advances normally. That is the trap this alert closes.
 
 Diagnosis (5 min):
@@ -326,7 +326,7 @@ Mitigation:
 
 - [ ] Identify the offending decoder from the panic/error (`internal/sources/<protocol>/decode.go`); if the spike started at a deploy, diff that decoder against the previous release.
 - [ ] Fix the regression (or roll back the change). Re-driving without a fix re-drops the same class.
-- [ ] Re-drive: `stellarindex-ops projector-replay -source <X> -from <ledger>` (add `-write`).
+- [ ] Re-drive: `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <X> -from <ledger>` (add `-write`).
 - [ ] Verification: `decode_error` rate ~0, no new `decode_degraded` cycles, completeness verdict back to `complete=true` after the next `compute-completeness` run.
 
 Known false positive: a brief burst during a genuinely novel contract deployment (an event shape no decoder handles yet) can trip it. Still worth a ticket (a real class of events is unprojected) but the fix is a decoder addition, not a rollback.

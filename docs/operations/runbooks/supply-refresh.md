@@ -53,7 +53,7 @@ Root causes:
 3. **Every tick failing.** Goroutine alive but every per-asset tick has a non-ok outcome. `error_dominant` should also be firing; go there.
 4. **Refresher disabled cannot be what fired this.** With the `changes()` expr a disabled refresher leaves the series ABSENT, which is [never_initialized](#stellarindex_aggregator_supply_refresh_never_initialized). If `_stalled` fired, the refresher was recently alive.
 
-Mitigation: check process health; if up but stalled and `ticks_total` is also stalled, restart; if the orchestrator ticks but supply does not, confirm `aggregator_refresh_enabled = true` and look for repeated outcome labels. Restart is the safe mitigation, then investigate from journald. Verification: `outcome="ok"` increments resume within one cadence (5 min); the alert clears once any `ok` increment lands inside the trailing 30 min window.
+Mitigation: check process health; if up but stalled and `ticks_total` is also stalled, restart; if the orchestrator ticks but supply does not, confirm `aggregator_refresh_enabled = true` and look for repeated outcome labels. Restart is the safe mitigation (take a pprof goroutine dump first if available), then investigate from journald. Verification: `outcome="ok"` increments resume within one cadence (5 min); the alert clears once any `ok` increment lands inside the trailing 30 min window.
 
 False positives: the first minutes after an aggregator restart have no observations; `for: 5m` absorbs about one cadence, longer restarts still trip it. A disabled refresher does not fire here (see cause 4).
 
@@ -61,7 +61,7 @@ Also see [`aggregator.md#stellarindex_aggregator_silent`](aggregator.md#stellari
 
 ## stellarindex_aggregator_supply_refresh_never_initialized
 
-Severity P3 (`ticket`), `for: 5m`. MTTR 15-60 min. The rule lives in the supply-refresh rule file in both trees (not `aggregator.yml`). Its `runbook_url` deliberately points at [supply-snapshot.md#stellarindex_supply_snapshot_never_initialized](supply-snapshot.md#stellarindex_supply_snapshot_never_initialized), the shared cold-deploy page covering both refresh paths; this section is self-sufficient for the aggregator alert.
+Severity P3 (`ticket`), `for: 5m`. MTTR 15-60 min. The rule lives in the supply-refresh rule file in both trees (not `aggregator.yml`). Its `runbook_url` points at this section. The timer-path sibling, [supply-snapshot.md#stellarindex_supply_snapshot_never_initialized](supply-snapshot.md#stellarindex_supply_snapshot_never_initialized), covers the daily writer; this section is self-sufficient for the aggregator alert.
 
 Impact: the supply-refresh goroutine has never produced a successful tick; F2 fields on `/v1/assets/{id}` are NULL for every asset.
 
@@ -168,7 +168,7 @@ The gate compares the always-advancing chain tip against `MinComponentLedger`, s
    - Mitigation: treat as an observer-ingest stall; confirm the indexer is healthy and the observer progressing; route to the ingest-pipeline runbooks. Do NOT relax the gate to mask a stalled producer.
 2. **Dormant asset (not staleness, F-1320; bounded to about 24 h, R-002).** A low-activity asset (governance tokens like PHO, niche classic credits) had no balance change, so `MinComponentLedger` is frozen and its last observation IS the current supply. Under the pre-F-1320 gate every future tick was rejected and the row went permanently stale (observed on PHO: gap 1017 -> 1324 and climbing). The refresher now treats an unchanged `MinComponentLedger` as dormant and accepts the snapshot (`outcome="dormant"`, row inserted) while the gap since it last moved stays within `DefaultMaxDormantComponentLedgers` (17,280 ledgers, about 24 h at 5 s close). Expect a single `stale_component` on the first tick after an aggregator restart for a quiet asset (cold start: dormant vs stalled is indistinguishable until a second tick), then it flips to `dormant`.
 
-   Past the 24 h horizon the gate fails closed: a frozen `MinComponentLedger` is what a dead observer also looks like, so the tick is rejected with `stale_component`, publishing STOPS for that asset, and this alert fires. A sustained `stale_component` stream for one asset is therefore case 1 or a dormant asset past the horizon.
+   Past the 24 h horizon the gate fails closed: a frozen `MinComponentLedger` is what a dead observer also looks like, so the tick is rejected with `stale_component`, publishing STOPS for that asset, and this alert fires. A sustained `stale_component` stream for one asset is therefore case 1 or a dormant asset past the horizon. The `stalled observer, not a dormant asset` log line marks the post-horizon case, not a fresh case-1 rejection.
    - Signal: in the WARN log `min_component_ledger` is constant across ticks while `gap` climbs; `first_observation` is logged on the cold-start tick. Once `gap` exceeds the horizon the line becomes `supply refresh: rejecting snapshot — component ledger frozen past the dormancy horizon (stalled observer, not a dormant asset)` with a `dormancy_horizon` field instead of `first_observation`.
    - Discriminator (quiet asset vs dead observer): check the component observer itself. When did `min_component_ledger` last advance, and is the indexer's per-source freshness for the relevant observer hypertable otherwise healthy? Healthy and nothing to write = dormant; observer ingest stalled = case 1 even though the alert looks identical (route to ingest-pipeline runbooks). Do not widen the horizon to silence the alert without checking.
    - Mitigation: for the pre-horizon cold-start blip (or a binary predating F-1320), raise that asset's threshold (see [per-asset threshold override](#per-asset-threshold-override-stale_component-remedy)). For an asset confirmed legitimately dormant beyond 24 h (and monitored by other means), `[supply] max_dormant_component_ledgers = 0` restores legacy unbounded dormancy; it is global with no per-asset equivalent, so prefer raising that asset's `stale_component_ledgers` when only one asset needs it.
@@ -280,6 +280,6 @@ Script: `configs/ansible/roles/archival-node/files/run-ch-supply.sh`; unit: `tem
 
 ## Related
 
-- [`supply-snapshot.md#stellarindex_supply_snapshot_never_initialized`](supply-snapshot.md#stellarindex_supply_snapshot_never_initialized): the timer-path never-initialized alert and the `runbook_url` target for `_never_initialized`.
+- [`supply-snapshot.md#stellarindex_supply_snapshot_never_initialized`](supply-snapshot.md#stellarindex_supply_snapshot_never_initialized): the timer-path never-initialized alert (the sibling of `_never_initialized` here).
 - `supply-snapshot.md#stellarindex_supply_snapshot_stale`: systemd-timer-path equivalent (different metric, different expectation).
 - ADR-0011 (three-domain supply algorithm), ADR-0021, ADR-0022, ADR-0023: algorithms and observer designs the refresher consumes.
