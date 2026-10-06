@@ -657,6 +657,14 @@ func run(cfgPath string, dryRun bool) error {
 	case pipeline.SinkModeAll:
 		// Projector disabled — events-goroutine writes every class.
 	}
+	// Both live trade writers below report their writes here, so trades
+	// landed after an outage longer than a policy's lookback still reach
+	// prices_1m and the other trades aggregates.
+	lateTrades := pipeline.NewLateTradeRefresher(store, pipeline.LateTradeRefresherOptions{Logger: logger.With("component", "late-trade-refresh")})
+	go func() {
+		defer worker.Recover(logger, "late-trade-refresh")
+		lateTrades.Run(rootCtx)
+	}()
 	events := make(chan consumer.Event, 256)
 	sinkDone := make(chan struct{})
 	var sinkLoss pipeline.ShutdownLoss // read only after <-sinkDone
@@ -681,7 +689,7 @@ func run(cfgPath string, dryRun bool) error {
 		//     separate path, so systemd's restart re-reads from the last
 		//     cursor.
 		defer close(sinkDone)
-		sinkLoss = pipeline.PersistEvents(rootCtx, logger, store, events, sinkMode)
+		sinkLoss = pipeline.PersistEvents(rootCtx, logger, store, events, sinkMode, lateTrades)
 	}()
 
 	// ─── Projector (ADR-0032) ──────────────────────────────────
@@ -699,7 +707,11 @@ func run(cfgPath string, dryRun bool) error {
 		// goroutine uses; decoded rows take the same per-source
 		// write path. See internal/pipeline/sink.go.
 		sinkFn := func(ctx context.Context, ev consumer.Event) error {
-			return pipeline.HandleEvent(ctx, logger, store, ev)
+			err := pipeline.HandleEvent(ctx, logger, store, ev)
+			if err == nil {
+				lateTrades.ObserveEvent(ev)
+			}
+			return err
 		}
 		proj := projector.New(store, registry, sinkFn, logger.With("component", "projector"))
 		// soroban_events mode only: the ledgerstream cursor advances when a

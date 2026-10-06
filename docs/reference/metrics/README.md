@@ -239,6 +239,17 @@ into a live contract gate, e.g. a factory-created pool, so the cursor
 held for one re-read of the window with the widened prefilter). Drives the `stellarindex_projector_error_rate_high`
 alert (on `error`).
 
+### `stellarindex_late_trade_cagg_refresh_total`
+
+Counter, label `outcome` ∈ {`ok`, `error`}, pre-seeded at 0. The indexer's
+live trade writers (dispatcher sink and projector) refresh the `trades`
+continuous aggregates themselves when they land a trade older than a view's
+refresh policy reaches back — after an outage longer than `prices_1m`'s
+15-minute `start_offset`, nothing else would materialise those buckets.
+Refreshes are coalesced, so one counts a cycle, not a batch. `error` means
+the buckets are not yet materialised; the window is kept and retried with
+backoff, and the indexer log names it.
+
 ### `stellarindex_projector_events_decoded_total`
 
 Counter, labels `source`, `outcome`.
