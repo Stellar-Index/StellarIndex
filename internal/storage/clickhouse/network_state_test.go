@@ -143,6 +143,47 @@ func TestFoldNativeHolding_UnreadableEntriesError(t *testing.T) {
 	}
 }
 
+// A key newer than the tally ledger needs a pre-image only if its entry can
+// hold native XLM. An evicted temporary allowance has a `removed` row and no
+// pre-image; it must resolve to zero from its key, not abort the run.
+func TestKeyHoldsNativeLumens(t *testing.T) {
+	sac := xdr.ContractId{0x5a}
+	allowance := xdr.ScSymbol("Allowance")
+	allowanceKey := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &allowance}
+	key := func(contract xdr.ContractId, k xdr.ScVal, d xdr.ContractDataDurability) string {
+		s, err := xdr.MarshalBase64(xdr.LedgerKey{
+			Type: xdr.LedgerEntryTypeContractData,
+			ContractData: &xdr.LedgerKeyContractData{
+				Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &contract},
+				Key:        k,
+				Durability: d,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	for _, c := range []struct {
+		name, entryType, key string
+		want                 bool
+	}{
+		{"native SAC balance", "contract_data", key(sac, lumenTestBalanceKey(), xdr.ContractDataDurabilityPersistent), true},
+		{"evicted native SAC allowance", "contract_data", key(sac, allowanceKey, xdr.ContractDataDurabilityTemporary), false},
+		{"other contract's balance", "contract_data", key(xdr.ContractId{0x5a, 0x01}, lumenTestBalanceKey(), xdr.ContractDataDurabilityPersistent), false},
+		{"account", "account", "", true},
+		{"claimable balance", "claimable_balance", "", true},
+	} {
+		got, err := keyHoldsNativeLumens(c.entryType, c.key, sac)
+		if err != nil || got != c.want {
+			t.Errorf("%s: = (%v, %v), want %v", c.name, got, err, c.want)
+		}
+	}
+	if _, err := keyHoldsNativeLumens("contract_data", "not-xdr", sac); err == nil {
+		t.Error("undecodable contract_data key accepted")
+	}
+}
+
 func TestNativeSACKey(t *testing.T) {
 	want := xdr.ContractId{0x5a, 0x02}
 	id, err := strkey.Encode(strkey.VersionByteContract, want[:])
