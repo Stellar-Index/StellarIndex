@@ -1,7 +1,11 @@
 'use client';
 
 import { useIssuerLookup, useSACWrappers } from '@/api/hooks';
-import { isRawOracleAsset, rawOracleSymbol } from '@/lib/asset-label';
+import {
+  isNativeXlmSac,
+  isRawOracleAsset,
+  rawOracleSymbol,
+} from '@/lib/asset-label';
 import { truncateMiddle } from '@/lib/format';
 
 /**
@@ -136,9 +140,7 @@ export function AssetLabel({
     // validator rejects mapping it). Hardcode the well-known C-strkey
     // here so Soroban DEX rows that emit XLM as base/quote render
     // "XLM" instead of a truncated SAC fingerprint.
-    if (
-      canonical === 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA'
-    ) {
+    if (isNativeXlmSac(canonical)) {
       return (
         <div>
           <div className="font-medium">XLM</div>
