@@ -377,7 +377,7 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 				ErrInvalidConfig)
 		}
 	}
-	// ClickHouse feed-switch dependency (ADR-0034 #10, C3-20): the
+	// ClickHouse feed-switch dependency (ADR-0041 feed-switch, C3-20): the
 	// projector reads forward events from the CH lake's contract_events,
 	// so CH must actually be BEING WRITTEN — i.e. the real-time dual-sink
 	// must be on. projector_source=true with live_sink=false silently

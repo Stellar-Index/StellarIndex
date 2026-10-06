@@ -59,7 +59,7 @@ func (s ReconcileEventStreamer) StreamContractEvents(ctx context.Context, from, 
 // ContiguousWatermark returns the highest ledger L such that stellar.ledgers
 // contains every ledger in [from, L] with NO hole — i.e. the lake is provably
 // complete from `from` up to L. It is the real-time projector's safe upper read
-// bound when reading forward events from CH (ADR-0034 #10 feed-switch).
+// bound when reading forward events from CH (ADR-0041 feed-switch).
 //
 // Why it's needed: the live dual-sink (LiveSink) is best-effort — it DROPS whole
 // ledgers under buffer pressure and a flush can partially fail — so CH can have

@@ -12,7 +12,7 @@ import (
 // GateCounts is the read-back of a ledger range's Tier-1 counts from
 // ClickHouse — both the per-ledger STORED counts (the ledgers row the
 // extractor wrote) and the ACTUAL row counts of the child tables. The
-// completeness gate (ADR-0034 Phase 2 §6 gate 2) asserts these agree with
+// completeness gate (chGate gate 2, internal/ops/chops/ch_gate.go) asserts these agree with
 // each other AND with the decoder-independent census oracle. All reads use
 // FINAL so concurrent/duplicate ReplacingMergeTree parts dedup at read time.
 type GateCounts struct {
