@@ -9,7 +9,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
@@ -70,7 +69,7 @@ func TestCycle_DroppedOutputDoesNotAbortTheRowsOtherOutputs(t *testing.T) {
 	permBefore := decodedCount(t, source, "sink_permanent")
 	retryBefore := decodedCount(t, source, "sink_retry")
 
-	h := newWedgeHarness(t, source, []sorobanevents.Row{lakeRow(101, 1)}, 105, nil)
+	h := newWedgeHarness(t, source, []events.Event{lakeEvent(101, 1)}, 105, nil)
 	h.src.Decoder = &scriptedDecoder{build: []func(events.Event) consumer.Event{poisonTrade, echoOutput}}
 	siblingSunk := 0
 	h.proj.sink = productionTradeSink(func(consumer.Event) error { siblingSunk++; return nil })
@@ -102,7 +101,7 @@ func TestCycle_PermanentDropsAreCountedPerOutput(t *testing.T) {
 	okBefore := decodedCount(t, source, "ok")
 	permBefore := decodedCount(t, source, "sink_permanent")
 
-	h := newWedgeHarness(t, source, []sorobanevents.Row{lakeRow(101, 1)}, 105, nil)
+	h := newWedgeHarness(t, source, []events.Event{lakeEvent(101, 1)}, 105, nil)
 	h.src.Decoder = &scriptedDecoder{build: []func(events.Event) consumer.Event{poisonTrade, echoOutput, poisonTrade}}
 	h.proj.sink = productionTradeSink(func(consumer.Event) error { return nil })
 
@@ -129,7 +128,7 @@ func TestCycle_RetryableFaultAfterADropStillHoldsTheRow(t *testing.T) {
 	permBefore := decodedCount(t, source, "sink_permanent")
 	retryBefore := decodedCount(t, source, "sink_retry")
 
-	h := newWedgeHarness(t, source, []sorobanevents.Row{lakeRow(101, 1)}, 105, nil)
+	h := newWedgeHarness(t, source, []events.Event{lakeEvent(101, 1)}, 105, nil)
 	h.src.Decoder = &scriptedDecoder{build: []func(events.Event) consumer.Event{poisonTrade, echoOutput, echoOutput}}
 	offered := 0
 	h.proj.sink = productionTradeSink(func(consumer.Event) error {

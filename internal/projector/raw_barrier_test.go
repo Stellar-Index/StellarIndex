@@ -17,11 +17,12 @@ import (
 // barrier must land those rows before the scan.
 func TestCycle_SorobanEventsModeWaitsForBufferedRawRows(t *testing.T) {
 	var sunk []uint32
-	h := newWedgeHarness(t, "raw-barrier", []sorobanevents.Row{lakeRow(150, 1)}, 200,
+	h := newWedgeHarness(t, "raw-barrier", nil, 200,
 		func(ev consumer.Event) error {
 			sunk = append(sunk, ev.(ledgerEvent).ledger)
 			return nil
 		})
+	h.sorobanEventsMode(lakeRow(150, 1))
 	buffered := []sorobanevents.Row{lakeRow(200, 2)}
 	h.proj.SetRawEventBarrier(func(context.Context) error {
 		h.store.mu.Lock()
@@ -45,8 +46,9 @@ func TestCycle_SorobanEventsModeWaitsForBufferedRawRows(t *testing.T) {
 // cycle and holds the cursor: advancing past unsettled rows is the loss.
 func TestCycle_SorobanEventsBarrierFailureHoldsCursor(t *testing.T) {
 	const src = "raw-barrier-fail"
-	h := newWedgeHarness(t, src, []sorobanevents.Row{lakeRow(150, 1)}, 200,
+	h := newWedgeHarness(t, src, nil, 200,
 		func(consumer.Event) error { return nil })
+	h.sorobanEventsMode(lakeRow(150, 1))
 	h.proj.SetRawEventBarrier(func(context.Context) error {
 		return errors.New("sorobanevents: waiting for accepted rows to settle: context deadline exceeded")
 	})

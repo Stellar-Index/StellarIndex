@@ -288,14 +288,14 @@ type Projector struct {
 	sink     SinkFunc
 	logger   *slog.Logger
 
-	// chAddr, when non-empty, switches the per-source read from the Postgres
+	// lakeEvents, when non-nil, switches the per-source read from the Postgres
 	// soroban_events landing zone to the ClickHouse Tier-1 lake's
 	// contract_events (ADR-0034 #10 feed-switch — the dual-sink feeds CH
 	// inline, so CH is authoritative for forward events and soroban_events can
 	// be decommissioned). The per-source cursor (last_ledger) is
-	// source-agnostic, so the switch is seamless. Empty = legacy
+	// source-agnostic, so the switch is seamless. Nil = legacy
 	// soroban_events read.
-	chAddr string
+	lakeEvents eventSource
 
 	// rawSettled, in soroban_events mode, blocks until every raw row pushed
 	// before the call is committed (the in-process raw sink's Sync). The
@@ -386,7 +386,13 @@ func (p *Projector) emitDecoderLossDeltas(src Source) {
 // SetClickHouseSource switches the projector to read forward events from the
 // ClickHouse lake at addr instead of Postgres soroban_events (ADR-0034 #10).
 // Call before Run. Empty addr keeps the legacy soroban_events source.
-func (p *Projector) SetClickHouseSource(addr string) { p.chAddr = addr }
+func (p *Projector) SetClickHouseSource(addr string) {
+	if addr == "" {
+		p.lakeEvents = nil
+		return
+	}
+	p.lakeEvents = chEventSource{addr: addr}
+}
 
 // SetRawEventBarrier installs the soroban_events completeness barrier
 // resolveTip waits on in soroban_events mode. Call before Run. Without it
@@ -833,13 +839,7 @@ func (p *Projector) runOneSource(ctx context.Context, src Source) {
 	// This source's own ClickHouse connection (CH feed-switch mode), owned
 	// here for the same reason: no dial per cycle, and a slow watermark scan
 	// on one source never queues another source behind a shared pool.
-	lake := &sourceLake{open: func(ctx context.Context) (lakeReader, error) {
-		r, err := clickhouse.NewWatermarkReader(ctx, p.chAddr)
-		if err != nil {
-			return nil, err
-		}
-		return r, nil
-	}}
+	lake := p.newSourceLake()
 	defer lake.close()
 	// First cycle runs immediately so a fresh deploy starts
 	// catching up without waiting Interval.
@@ -860,6 +860,60 @@ type lakeReader interface {
 	ContiguousWatermark(ctx context.Context, from, to uint32) (uint32, error)
 	LakeMinLedger(ctx context.Context) (uint32, error)
 	Close() error
+}
+
+// eventSource is the projector's read of the ClickHouse lake: the per-cycle
+// contract_events scan, a cursor-less source's first-event seek, and the
+// per-source watermark connection. Production uses [chEventSource]; tests
+// inject an in-memory fake.
+type eventSource interface {
+	StreamEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string,
+		withStateWriteKeys bool, fn func(events.Event) error) error
+	FirstEventLedger(ctx context.Context, from, to uint32,
+		contractIDs, topic0Syms, excludeTopic0Syms []string) (uint32, bool, error)
+	OpenLake(ctx context.Context) (lakeReader, error)
+}
+
+// chEventSource is the [eventSource] over the ClickHouse lake at addr.
+type chEventSource struct{ addr string }
+
+// StreamEvents reads contract_events directly (already an events.Event, no
+// Reconstruct). No FINAL: the forward window is BatchLimit-small and
+// downstream writes are idempotent, so a duplicate is absorbed.
+func (s chEventSource) StreamEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string,
+	withStateWriteKeys bool, fn func(events.Event) error,
+) error {
+	return clickhouse.StreamContractEventsFiltered(ctx, s.addr, from, to,
+		contractIDs, topic0Syms, excludeTopic0Syms,
+		false,              // no FINAL: idempotent writes absorb dups
+		true,               // withOpArgs: the projector routes every source, incl. OpArgs consumers (redstone)
+		withStateWriteKeys, // per-source: only redstone reads written contract-data keys
+		fn)
+}
+
+func (s chEventSource) FirstEventLedger(ctx context.Context, from, to uint32,
+	contractIDs, topic0Syms, excludeTopic0Syms []string,
+) (uint32, bool, error) {
+	return clickhouse.FirstContractEventLedgerFiltered(ctx, s.addr, from, to, contractIDs, topic0Syms, excludeTopic0Syms)
+}
+
+func (s chEventSource) OpenLake(ctx context.Context) (lakeReader, error) {
+	r, err := clickhouse.NewWatermarkReader(ctx, s.addr)
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// newSourceLake returns one source goroutine's lake connection, opened on
+// first use. Only CH feed-switch mode ever opens it.
+func (p *Projector) newSourceLake() *sourceLake {
+	return &sourceLake{open: func(ctx context.Context) (lakeReader, error) {
+		if p.lakeEvents == nil {
+			return nil, errors.New("projector: no ClickHouse lake configured")
+		}
+		return p.lakeEvents.OpenLake(ctx)
+	}}
 }
 
 // sourceLake is one source goroutine's lazily-opened lake connection. A
@@ -1293,15 +1347,10 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	}
 
 	prefilter := src.PrefilterContractIDs()
-	if p.chAddr != "" {
-		// CH feed-switch (ADR-0034 #10): read contract_events directly (already an
-		// events.Event, no Reconstruct). No FINAL — small forward window +
-		// idempotent downstream writes absorb any duplicate.
-		err = clickhouse.StreamContractEventsFiltered(cycleCtx, p.chAddr, fromLedger, toLedger,
-			prefilter, src.Topic0Syms, src.ExcludeTopic0Syms,
-			false,                   // no FINAL: idempotent writes absorb dups
-			true,                    // withOpArgs: the projector routes every source, incl. OpArgs consumers (redstone); windows are BatchLimit-small
-			src.NeedsStateWriteKeys, // per-source: only redstone reads written contract-data keys
+	if p.lakeEvents != nil {
+		// CH feed-switch (ADR-0034 #10): read contract_events (see chEventSource).
+		err = p.lakeEvents.StreamEvents(cycleCtx, fromLedger, toLedger,
+			prefilter, src.Topic0Syms, src.ExcludeTopic0Syms, src.NeedsStateWriteKeys,
 			func(ev events.Event) error {
 				rowsScanned++
 				if ev.Ledger > lastSeenLedger {
@@ -1720,8 +1769,8 @@ func (p *Projector) findSeed(ctx context.Context, src Source, lake *sourceLake) 
 	}
 	var first uint32
 	var found bool
-	if p.chAddr != "" {
-		first, found, err = clickhouse.FirstContractEventLedgerFiltered(ctx, p.chAddr, floor, tip,
+	if p.lakeEvents != nil {
+		first, found, err = p.lakeEvents.FirstEventLedger(ctx, floor, tip,
 			src.ContractIDs, src.Topic0Syms, src.ExcludeTopic0Syms)
 	} else {
 		first, found, err = p.store.FirstSorobanEventLedger(ctx, floor, tip,
@@ -1754,7 +1803,7 @@ func (p *Projector) holdForWidenedGate(source string, from, to uint32, added []s
 // approach as the gap detector (gap_detector.go::resolveGapDetectorTip)
 // — so the projector never gets ahead of durably-ingested ledgers.
 //
-// In CH feed-switch mode (chAddr set) the bound is additionally
+// In CH feed-switch mode (lakeEvents set) the bound is additionally
 // clamped to the lake's contiguous-completeness watermark for
 // [from, …]: the live dual-sink can drop or partially write ledgers,
 // so reading past the first hole would silently lose that ledger's
@@ -1786,7 +1835,7 @@ func (p *Projector) resolveTip(ctx context.Context, lake *sourceLake, from, scan
 	}
 	durableTip = c.LastLedger
 	scanTip = durableTip
-	if p.chAddr != "" {
+	if p.lakeEvents != nil {
 		reader, rerr := lake.reader(ctx)
 		if rerr != nil {
 			return 0, durableTip, fmt.Errorf("ch watermark conn: %w", rerr)
@@ -1818,7 +1867,7 @@ func saturatingAdd(a, b uint32) uint32 {
 // first ledger (as ch-cap67-movements' resolveStart does) — a floor below the
 // lake's start is a boundary hole the watermark would stall on forever.
 func (p *Projector) freshSourceStart(ctx context.Context, src Source, lake *sourceLake) (uint32, error) {
-	if p.chAddr == "" {
+	if p.lakeEvents == nil {
 		return src.Genesis, nil
 	}
 	floor, err := freshSourceFloor(ctx, lake)

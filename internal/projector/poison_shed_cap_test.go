@@ -8,7 +8,6 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 )
 
 // notNullViolation is the verbatim shape a migration that adds a NOT NULL
@@ -46,8 +45,8 @@ func notNullViolation() error {
 // poison_shed_health_proof_test.go for the single-row form.
 func TestCycle_GlobalPermanentFaultShedsAtMostOneRowPerCycle(t *testing.T) {
 	const source = "rlt131-global-not-null"
-	rows := []sorobanevents.Row{
-		lakeRow(101, 1), lakeRow(102, 2), lakeRow(103, 3), lakeRow(104, 4), lakeRow(105, 5),
+	rows := []events.Event{
+		lakeEvent(101, 1), lakeEvent(102, 2), lakeEvent(103, 3), lakeEvent(104, 4), lakeEvent(105, 5),
 	}
 	okRunsBefore := runsCount(t, source, "ok")
 	retryRunsBefore := runsCount(t, source, "sink_retry")
@@ -107,7 +106,7 @@ func TestCycle_PoisonOutputOnAHeldRowDoesNotResetItsRetryBudget(t *testing.T) {
 	const source = "rlt131-drop-plus-held"
 	quarantinedBefore := decodedCount(t, source, "sink_quarantined")
 
-	h := newWedgeHarness(t, source, []sorobanevents.Row{lakeRow(101, 1)}, 105, nil)
+	h := newWedgeHarness(t, source, []events.Event{lakeEvent(101, 1)}, 105, nil)
 	h.src.Decoder = &scriptedDecoder{build: []func(events.Event) consumer.Event{poisonTrade, echoOutput}}
 	h.proj.sink = productionTradeSink(func(consumer.Event) error {
 		// Unclassified: neither a positively permanent data fault nor a
@@ -145,7 +144,7 @@ func TestCycle_PoisonOutputOnAHeldRowDoesNotResetItsRetryBudget(t *testing.T) {
 // one pass produced.
 func TestCycle_PoisonShedTakesTheLowestLedgerAndKeepsGoodRowsFlowing(t *testing.T) {
 	const source = "rlt131-lowest-ledger-first"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2), lakeRow(103, 3), lakeRow(104, 4)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2), lakeEvent(103, 3), lakeEvent(104, 4)}
 	okBefore := decodedCount(t, source, "ok")
 
 	h := newWedgeHarness(t, source, rows, 110, func(ev consumer.Event) error {

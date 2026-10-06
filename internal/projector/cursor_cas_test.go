@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -73,7 +73,7 @@ func TestCycle_ReplayRewindMidCycleIsNotClobbered(t *testing.T) {
 		sunk   []uint32
 		rewind func()
 	)
-	h := newWedgeHarness(t, "cas", []sorobanevents.Row{lakeRow(rewoundLedger, 1), lakeRow(inFlightLedger, 2)}, tip,
+	h := newWedgeHarness(t, "cas", []events.Event{lakeEvent(rewoundLedger, 1), lakeEvent(inFlightLedger, 2)}, tip,
 		func(ev consumer.Event) error {
 			mu.Lock()
 			sunk = append(sunk, ev.(ledgerEvent).ledger)
@@ -116,7 +116,7 @@ func TestCycle_ReplayRewindMidCycleIsNotClobbered(t *testing.T) {
 // over a row someone else created meanwhile.
 func TestCycle_FirstCycleSeedDoesNotOverwriteARowThatAppeared(t *testing.T) {
 	var appear func()
-	h := newWedgeHarness(t, "cas-seed", []sorobanevents.Row{lakeRow(110, 1)}, 120,
+	h := newWedgeHarness(t, "cas-seed", []events.Event{lakeEvent(110, 1)}, 120,
 		func(consumer.Event) error {
 			if appear != nil {
 				appear()
@@ -136,7 +136,7 @@ func TestCycle_FirstCycleSeedDoesNotOverwriteARowThatAppeared(t *testing.T) {
 	}
 
 	// And the plain seed still works when nothing races it.
-	h2 := newWedgeHarness(t, "cas-seed-plain", []sorobanevents.Row{lakeRow(110, 1)}, 120,
+	h2 := newWedgeHarness(t, "cas-seed-plain", []events.Event{lakeEvent(110, 1)}, 120,
 		func(consumer.Event) error { return nil })
 	h2.store.haveCursor, h2.store.projectorCursor = false, 0
 	h2.window = 200 // [0, 120] in one cycle
@@ -167,7 +167,7 @@ func (s ctxStore) AdvanceCursorFrom(ctx context.Context, source, sub string, exp
 // committed work was re-projected, identically, on every later cycle.
 func TestCycle_SpentBudgetStillCommitsDurableProgress(t *testing.T) {
 	const source = "t066-spent-budget-commit"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 	h := newWedgeHarness(t, source, rows, 2000, func(ev consumer.Event) error {
 		if ev.(ledgerEvent).ledger == 101 {
 			return nil // landed before the budget ran out

@@ -30,7 +30,8 @@ func TestCycle_MalformedRowIsLoggedWithIdentity(t *testing.T) {
 	beforeDecode := decodedCount(t, source, "decode_error")
 	beforeDegraded := runsCount(t, source, "decode_degraded")
 
-	h := newWedgeHarness(t, source, rows, uint32(101+bad+5), func(consumer.Event) error { return nil })
+	h := newWedgeHarness(t, source, nil, uint32(101+bad+5), func(consumer.Event) error { return nil })
+	h.sorobanEventsMode(rows...)
 	var logs bytes.Buffer
 	h.proj.logger = slog.New(slog.NewTextHandler(&logs, nil))
 	h.cycle()

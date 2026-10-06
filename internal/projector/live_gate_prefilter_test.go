@@ -3,6 +3,8 @@ package projector
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -12,7 +14,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 )
@@ -24,33 +26,6 @@ const (
 	sushiPoolCreatedB64 = "AAAAEQAAAAEAAAAGAAAADwAAAANmZWUAAAAAAwAAC7gAAAAPAAAADHBvb2xfYWRkcmVzcwAAABIAAAABo6EfhoVFk5viOWrGgaJXOip0dVXyhCJjzAFNiInP4wMAAAAPAAAABnNlbmRlcgAAAAAAEgAAAAH2qKjDjWz71Dut10ZBTL+vn0NH3viK5Hy92gYqUawX0wAAAA8AAAAMdGlja19zcGFjaW5nAAAABAAAADwAAAAPAAAABnRva2VuMAAAAAAAEgAAAAEltPzYWa7C+mNIQ4xImzw8EMmLbSG+T9PLMMtolT75dwAAAA8AAAAGdG9rZW4xAAAAAAASAAAAAa3vzlmu5Slo92Bh1JTCUlt1ZZ+kKWpl9JnvKeVkd+SW"
 	sushiSwapB64        = "AAAAEQAAAAEAAAAHAAAADwAAAAdhbW91bnQwAAAAAAoAAAAAAAAAAAAAAAAFuAFpAAAADwAAAAdhbW91bnQxAAAAAAr/////////////////CT5hAAAADwAAAAlsaXF1aWRpdHkAAAAAAAAJAAAAAAAAAAAAAAAAHZIo3QAAAA8AAAAJcmVjaXBpZW50AAAAAAAAEgAAAAAAAAAAxRy/OA51yJ4u3YL0mKNf2jKqkAy3kYfYMFIdzMphcBgAAAAPAAAABnNlbmRlcgAAAAAAEgAAAAAAAAAAxRy/OA51yJ4u3YL0mKNf2jKqkAy3kYfYMFIdzMphcBgAAAAPAAAADnNxcnRfcHJpY2VfeDk2AAAAAAALAAAAAAAAAAAAAAAAAAAAAAAAAABlKxxd8TMIn9sIRdQAAAAPAAAABHRpY2sAAAAE//+3dw=="
 )
-
-// prefilterStore is fakeStore with a StreamSorobanEvents that honours the
-// contract-id prefilter the way the real SQL / ClickHouse reads do.
-type prefilterStore struct {
-	*fakeStore
-	mu      sync.Mutex
-	filters [][]string
-}
-
-func (s *prefilterStore) StreamSorobanEvents(ctx context.Context, from, to uint32,
-	contractIDs, topics, exclude []string, fn func(row sorobanevents.Row) error,
-) error {
-	s.mu.Lock()
-	s.filters = append(s.filters, append([]string(nil), contractIDs...))
-	s.mu.Unlock()
-	allowed := make(map[string]bool, len(contractIDs))
-	for _, c := range contractIDs {
-		allowed[c] = true
-	}
-	return s.fakeStore.StreamSorobanEvents(ctx, from, to, nil, topics, exclude,
-		func(r sorobanevents.Row) error {
-			if len(contractIDs) > 0 && !allowed[r.ContractID] {
-				return nil
-			}
-			return fn(r)
-		})
-}
 
 func mustDecodeB64(t *testing.T, s string) []byte {
 	t.Helper()
@@ -93,18 +68,17 @@ func withContractField(t *testing.T, bodyB64, field, contract string) []byte {
 	return b
 }
 
-func sushiRow(t *testing.T, ledger uint32, contract, topic0B64 string, body []byte) sorobanevents.Row {
-	t.Helper()
+func sushiEvent(ledger uint32, contract, topic0B64 string, body []byte) events.Event {
 	txHash := make([]byte, 32)
 	txHash[0] = byte(ledger)
-	return sorobanevents.Row{
-		Ledger:          ledger,
-		LedgerCloseTime: time.Unix(1_750_000_000+int64(ledger), 0).UTC(),
-		TxHash:          txHash,
-		ContractID:      contract,
-		TopicCount:      1,
-		Topic0XDR:       mustDecodeB64(t, topic0B64),
-		BodyXDR:         body,
+	return events.Event{
+		Type:           "contract",
+		Ledger:         ledger,
+		LedgerClosedAt: time.Unix(1_750_000_000+int64(ledger), 0).UTC().Format(time.RFC3339),
+		ContractID:     contract,
+		TxHash:         hex.EncodeToString(txHash),
+		Topic:          []string{topic0B64},
+		Value:          base64.StdEncoding.EncodeToString(body),
 	}
 }
 
@@ -127,33 +101,29 @@ func TestCycle_PrefilterTracksLiveFactorySeededGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &prefilterStore{fakeStore: &fakeStore{
-		projectorCursor: 100, haveCursor: true, tipLedger: 105,
-		rows: []sorobanevents.Row{
-			sushiRow(t, 101, sushiswap_v3.MainnetFactory, sushiswap_v3.TopicSymbolPoolCreated, poolCreatedFor(t, newPool)),
-			sushiRow(t, 102, newPool, sushiswap_v3.TopicSymbolSwap, mustDecodeB64(t, sushiSwapB64)),
-		},
-	}}
-	var mu sync.Mutex
-	var trades []uint32
-	p := &Projector{
-		store:  store,
-		logger: discardLog(),
-		sink: func(_ context.Context, ev consumer.Event) error {
-			if te, ok := ev.(sushiswap_v3.TradeEvent); ok {
-				mu.Lock()
-				trades = append(trades, te.Trade.Ledger)
-				mu.Unlock()
-			}
-			return nil
+	store := &fakeStore{projectorCursor: 100, haveCursor: true, tipLedger: 105}
+	lakeEvs := &fakeEvents{
+		evs: []events.Event{
+			sushiEvent(101, sushiswap_v3.MainnetFactory, sushiswap_v3.TopicSymbolPoolCreated, poolCreatedFor(t, newPool)),
+			sushiEvent(102, newPool, sushiswap_v3.TopicSymbolSwap, mustDecodeB64(t, sushiSwapB64)),
 		},
 	}
+	var mu sync.Mutex
+	var trades []uint32
+	p, lake := newLakeEventsProjector(store, lakeEvs, func(_ context.Context, ev consumer.Event) error {
+		if te, ok := ev.(sushiswap_v3.TradeEvent); ok {
+			mu.Lock()
+			trades = append(trades, te.Trade.Ledger)
+			mu.Unlock()
+		}
+		return nil
+	})
 	widenedBefore := runsCount(t, src.Name, "gate_widened")
 	window := uint32(BatchLimit)
 	var tracker poisonTracker
 	var wedge wedgeTracker
 	for i := 0; i < 3 && store.cursor() < 105; i++ {
-		p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge, nil)
+		p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge, lake)
 	}
 
 	if got := store.cursor(); got != 105 {
@@ -163,7 +133,7 @@ func TestCycle_PrefilterTracksLiveFactorySeededGate(t *testing.T) {
 	defer mu.Unlock()
 	if len(trades) == 0 {
 		t.Fatalf("the swap of pool %s (created at 101, traded at 102) was never projected; prefilters used: %v",
-			newPool, store.filters)
+			newPool, lakeEvs.filters)
 	}
 	for _, l := range trades {
 		if l != 102 {
@@ -192,16 +162,11 @@ var spectraTransferTopics = []string{
 	"AAAAEgAAAAGU1wln9BCzS8bGbMh5Ij2Fof+uEjsVheKhflTNzWyFnA==",
 }
 
-func spectraRow(t *testing.T, ledger uint32, eventIndex int16, contract string, topicsB64 []string, body []byte) sorobanevents.Row {
-	t.Helper()
-	r := sushiRow(t, ledger, contract, topicsB64[0], body)
-	r.EventIndex = eventIndex
-	r.TopicCount = int16(len(topicsB64))
-	r.TopicsXDR = nil
-	for _, tb := range topicsB64 {
-		r.TopicsXDR = append(r.TopicsXDR, mustDecodeB64(t, tb))
-	}
-	return r
+func spectraEvent(ledger uint32, eventIndex int, contract string, topicsB64 []string, body []byte) events.Event {
+	ev := sushiEvent(ledger, contract, topicsB64[0], body)
+	ev.EventIndex = eventIndex
+	ev.Topic = slices.Clone(topicsB64)
+	return ev
 }
 
 func testContract(t *testing.T, seed byte) string {
@@ -229,36 +194,32 @@ func TestCycle_PrefilterTracksSpectraSecondHop(t *testing.T) {
 	src := reg.Sources[0]
 
 	pt, yt := testContract(t, 0x6a), testContract(t, 0x6b)
-	store := &prefilterStore{fakeStore: &fakeStore{
-		projectorCursor: 100, haveCursor: true, tipLedger: 105,
-		rows: []sorobanevents.Row{
-			spectraRow(t, 101, 4, pt, []string{spectraYTDeployedTopic},
+	store := &fakeStore{projectorCursor: 100, haveCursor: true, tipLedger: 105}
+	lakeEvs := &fakeEvents{
+		evs: []events.Event{
+			spectraEvent(101, 4, pt, []string{spectraYTDeployedTopic},
 				withContractField(t, spectraYTDeployedB64, "address", yt)),
-			spectraRow(t, 101, 6, spectra.MainnetFactory, []string{spectraPTDeployedTopic},
+			spectraEvent(101, 6, spectra.MainnetFactory, []string{spectraPTDeployedTopic},
 				withContractField(t, spectraPTDeployedB64, "pt", pt)),
-			spectraRow(t, 102, 2, yt, spectraTransferTopics, mustDecodeB64(t, spectraTransferB64)),
-		},
-	}}
-	var mu sync.Mutex
-	projected := map[string]uint32{}
-	p := &Projector{
-		store:  store,
-		logger: discardLog(),
-		sink: func(_ context.Context, ev consumer.Event) error {
-			if se, ok := ev.(spectra.Event); ok {
-				mu.Lock()
-				projected[se.Kind+"@"+se.ContractID] = se.Ledger
-				mu.Unlock()
-			}
-			return nil
+			spectraEvent(102, 2, yt, spectraTransferTopics, mustDecodeB64(t, spectraTransferB64)),
 		},
 	}
+	var mu sync.Mutex
+	projected := map[string]uint32{}
+	p, lake := newLakeEventsProjector(store, lakeEvs, func(_ context.Context, ev consumer.Event) error {
+		if se, ok := ev.(spectra.Event); ok {
+			mu.Lock()
+			projected[se.Kind+"@"+se.ContractID] = se.Ledger
+			mu.Unlock()
+		}
+		return nil
+	})
 	widenedBefore := runsCount(t, src.Name, "gate_widened")
 	window := uint32(BatchLimit)
 	var tracker poisonTracker
 	var wedge wedgeTracker
 	for i := 0; i < 5 && store.cursor() < 105; i++ {
-		p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge, nil)
+		p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge, lake)
 	}
 
 	if got := store.cursor(); got != 105 {
@@ -274,7 +235,7 @@ func TestCycle_PrefilterTracksSpectraSecondHop(t *testing.T) {
 	for k, l := range want {
 		if got, ok := projected[k]; !ok || got != l {
 			t.Errorf("%s projected at %d (present=%v), want ledger %d; prefilters used: %v",
-				k, got, ok, l, store.filters)
+				k, got, ok, l, lakeEvs.filters)
 		}
 	}
 	if len(projected) != len(want) {

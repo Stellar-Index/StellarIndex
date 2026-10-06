@@ -73,11 +73,11 @@ error string cite "AGENTS.md invariant N" — do not renumber these.
   (ADR-0002). That backend silently drops per-object metadata; repairing a lake written
   through it means a full re-export. No lint.
 - **[7]** **ONE writer per data domain** (ADR-0031/0032). A **projected** Soroban source is written
-  by `internal/projector` and only by it; adding one means a case in
-  `projector/registry.go::buildSource` AND an arm in `pipeline/sink.go::IsProjectedEvent`
-  (`internal/pipeline/lockstep_ast_test.go`). `band`, `soroswap_router`, `sdex`, the external
-  CEX/FX connectors and the supply observers write through the dispatcher instead;
-  `IsProjectedEvent`'s default branch is the list.
+  by `internal/projector`; adding one means a case in `projector/registry.go::buildSource` AND an
+  arm in `pipeline/sink.go::IsProjectedEvent` (`internal/pipeline/lockstep_ast_test.go`). `band`,
+  `soroswap_router`, `sdex`, CEX/FX connectors and supply observers write through the dispatcher
+  (`IsProjectedEvent`'s default branch is the list). Until per-source promotion (ADR-0032 Phase 3,
+  `persist_per_source=true` in every host's template) the dispatcher also writes them, except sep41.
 - **[7]** **Catch-up depends on which side of that line you are on.** A projected domain uses
   `stellarindex-ops projector-replay`; a non-projected one uses `ch-rebuild` (`-sdex`,
   `-contract-calls`). NEVER add a bespoke `<source>-backfill` subcommand: it is a second writer.

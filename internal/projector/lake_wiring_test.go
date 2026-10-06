@@ -36,15 +36,15 @@ func (f *fakeLake) Close() error {
 	return nil
 }
 
-// newLakeProjector points chAddr at a port nothing listens on, so any
-// ClickHouse read that bypasses the source's lake connection and dials
-// p.chAddr itself fails the cycle instead of reaching the fake.
+// newLakeProjector's lake source has no connection of its own, so a cycle
+// that bypasses the source's lake connection and opens another fails instead
+// of reaching the fake.
 func newLakeProjector(store *fakeStore) *Projector {
 	return &Projector{
-		store:  store,
-		logger: discardLog(),
-		chAddr: "127.0.0.1:1",
-		sink:   func(context.Context, consumer.Event) error { return nil },
+		store:      store,
+		logger:     discardLog(),
+		lakeEvents: &fakeEvents{},
+		sink:       func(context.Context, consumer.Event) error { return nil },
 	}
 }
 

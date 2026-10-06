@@ -6,7 +6,6 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 )
 
 type carriedEvent struct{ ledger uint32 }
@@ -62,7 +61,7 @@ func (d *carryDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
 
 func carryHarness(t *testing.T, source string) *wedgeHarness {
 	t.Helper()
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2), lakeRow(103, 3)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2), lakeEvent(103, 3)}
 	h := newWedgeHarness(t, source, rows, 105, func(ev consumer.Event) error {
 		if _, ok := ev.(carriedEvent); ok {
 			return errors.New("unclassified store fault")
