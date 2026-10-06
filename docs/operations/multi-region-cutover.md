@@ -1,12 +1,12 @@
 ---
 title: Multi-region cutover runbook (L4.14 → L4.17 + L5.8)
 last_verified: 2026-05-03
-status: superseded by ADR-0050 / [multi-region-ha.md](../architecture/multi-region-ha.md) (2026-08-21) — see the banner below; do not run
+status: superseded by ADR-0050 / [ha-plan.md](../architecture/ha-plan.md) (2026-08-21) — see the banner below; do not run
 ---
 
 # Multi-region cutover runbook
 
-> ⛔ **SUPERSEDED by ADR-0050 / [`../architecture/multi-region-ha.md`](../architecture/multi-region-ha.md) (2026-08-21). Do not run this runbook.** It sequenced a Model A cutover (Patroni cross-region replicas, `pg_is_in_recovery()=t` gates, a 5-node etcd quorum R1×2/R2×2/R3×1) through `configs/ansible/site.yml`, which does not exist. The current bring-up is Model B (independent per-region ingest): the plan doc's Phase 2/3.
+> ⛔ **SUPERSEDED by ADR-0050 / [`../architecture/ha-plan.md`](../architecture/ha-plan.md) (2026-08-21). Do not run this runbook.** It sequenced a Model A cutover (Patroni cross-region replicas, `pg_is_in_recovery()=t` gates, a 5-node etcd quorum R1×2/R2×2/R3×1) through `configs/ansible/site.yml`, which does not exist. The current bring-up is Model B (independent per-region ingest): the plan doc's Phase 2/3.
 
 What remains useful is the region-independent material below: per-host
 provisioning shapes, the Cloudflare load-balancer design and the

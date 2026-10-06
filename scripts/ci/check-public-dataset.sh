@@ -41,7 +41,7 @@
 #   PUBLIC_DATASET_TIP      integer ledger tip. Unset → Horizon.
 #   TRIM_LO / TRIM_HI       trimmed range (default 64000 / 49983999 —
 #                           the [genesis-chunk, hot-floor) window from
-#                           docs/architecture/multi-region-ha.md §5).
+#                           docs/architecture/ha-plan.md §3.2).
 #   GITHUB_OUTPUT           when set, partition_count= / last_partition=
 #                           / tip= / verdict= are appended for the
 #                           workflow's step summary.

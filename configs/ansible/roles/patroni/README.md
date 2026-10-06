@@ -19,9 +19,7 @@ runbook's *§A Automatic Patroni failover* path the actual default,
 rather than aspirational.
 
 Design rationale lives in
-[`docs/architecture/patroni-ansible-role-design-note.md`](../../../../docs/architecture/patroni-ansible-role-design-note.md)
-(local-only branch — pushed alongside the implementation when this
-role lands as a complete PR).
+[`docs/architecture/ha-plan.md` §3.3](../../../../docs/architecture/ha-plan.md#33-postgres--timescaledb).
 
 ## Prerequisites
 

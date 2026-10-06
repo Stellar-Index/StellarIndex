@@ -1,12 +1,12 @@
 ---
 title: R2 / R3 multi-region bringup
 last_verified: 2026-05-12
-status: superseded by ADR-0050 / [multi-region-ha.md](multi-region-ha.md) (2026-08-21) — see the banner below; do not implement
+status: superseded by ADR-0050 / [ha-plan.md](ha-plan.md) (2026-08-21) — see the banner below; do not implement
 ---
 
 # R2 / R3 bringup — multi-region cutover playbook
 
-> ⛔ **SUPERSEDED by ADR-0050 / [`multi-region-ha.md`](multi-region-ha.md) (2026-08-21). Do not implement from this doc.** It describes rejected architectures (Model A cross-region replication, per-region S3 lake, R2-on-AWS) and dead scaffolding (a `multi-region/` inventory dir and a `site.yml` playbook that don't exist; an r1-only deploy enum). The current bring-up sequence is in the plan doc's Phase 2/3.
+> ⛔ **SUPERSEDED by ADR-0050 / [`ha-plan.md`](ha-plan.md) (2026-08-21). Do not implement from this doc.** It describes rejected architectures (Model A cross-region replication, per-region S3 lake, R2-on-AWS) and dead scaffolding (a `multi-region/` inventory dir and a `site.yml` playbook that don't exist; an r1-only deploy enum). The current bring-up sequence is in the plan doc's Phase 2/3.
 
 R1 (Hetzner FSN1) is the only deployed region as of 2026-05-12.
 The multi-region architecture per [ADR-0008](../adr/0008-ha-topology.md)

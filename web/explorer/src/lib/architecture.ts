@@ -52,7 +52,7 @@ const CURATED: { slug: string; description: string }[] = [
   {
     slug: 'ha-plan',
     description:
-      'Per-region high-availability topology — colo primary + cloud DR, three-tier hot/warm/cold storage, the failover decision tree.',
+      'What keeps the service up today, the planned in-region HA build and R2/R3 regions, failure modes, backups and the decisions that bind them.',
   },
   {
     slug: 'semver-policy',

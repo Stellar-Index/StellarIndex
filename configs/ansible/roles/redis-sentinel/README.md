@@ -22,7 +22,7 @@ runbooks' *automatic-failover* sections the actual default, not
 aspirational.
 
 Design rationale lives in
-[`docs/architecture/redis-sentinel-ansible-role-design-note.md`](../../../../docs/architecture/redis-sentinel-ansible-role-design-note.md).
+[`docs/architecture/ha-plan.md` §3.4](../../../../docs/architecture/ha-plan.md#34-redis).
 
 ## Why Sentinel, not Cluster
 

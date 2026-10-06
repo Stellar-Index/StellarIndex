@@ -123,8 +123,8 @@ groups:
       # permitted hole) and counts every other discontinuity or overlap.
       # A partition deleted by a bad trim cutoff, a manual mc rm, or a
       # MinIO heal failure would otherwise surface at RESTORE time —
-      # the worst possible moment for the mirror the off-site DR copy
-      # is pulled from (docs/architecture/multi-region-ha.md §5).
+      # the worst possible moment for the archive a rebuild reads
+      # from (docs/architecture/ha-plan.md §3.2).
       - alert: stellarindex_galexie_archive_gap
         expr: galexie_archive_unexpected_gaps > 0
         for: 1h

@@ -1,806 +1,675 @@
 ---
-title: High-Availability Infrastructure Plan
-last_verified: 2026-07-25
-status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, §8/§3.3's backup deployment status corrected 2026-07-25, audit-2026-07-23 DOC-05/DOC-06). 2026-09-02 (#361): §2 diagram, §3.4, §3.8, §6 and the §8/restore-drill "reality check" blocks corrected against code — those blocks had INVERTED (repo2 + restore drill are live). §3.11 now covers the ClickHouse tier; cost/RTO tables NOT re-verified. 2026-09-03: §3.3's retention block no longer claims daily OHLC back to 2015 — `prices_1d` starts 2018-07-01. 2026-09-20 (HO-361): every `file:line` citation in this doc re-checked against HEAD; two had drifted from code moving underneath them (§0 availability banner's `sla-probe.sh` line, §3.3's `18-pgbackrest-backup.yml` restore-drill-enable range) and are corrected — no prose claim changed. 2026-09-24 (T639): the §2 diagram and the §5 failure-matrix aggregator row still showed the leader-elected active/standby aggregator that §3.7 had retracted; both now match §3.7 (one instance, Postgres instance lock, no standby)
+title: High-Availability and Infrastructure Plan
+last_verified: 2026-10-06
+status: current — the one HA/infra page. What runs today is checked against configs/, deploy/ and test/load/; the multi-region plan is ratified by ADR-0050 and deferred post-v1.0.
 ---
 
-> ⚠️ **Multi-region content superseded by ADR-0050 / [`multi-region-ha.md`](multi-region-ha.md) (2026-08-21).** This plan's multi-region framing (and its "active/active out of scope for v1" stance) is overturned. The **single-region HA design** below (HAProxy / Patroni / Redis-Sentinel) remains current and is **Phase 1** of the multi-region plan — read it for that, not for the multi-region shape.
+# High-Availability and Infrastructure Plan
 
-> **AVAILABILITY IS NOT EXTERNALLY MEASURED (2026-09-03, #345).** No
-> availability figure for any period can be produced today. All five
-> `HEALTHCHECKS_URL_*` heartbeat URLs on R1 are **empty**, so no
-> Healthchecks.io history exists for the indexer, aggregator, API,
-> smoke or SLA-probe checks; the only external signal is the
-> Alertmanager dead-man's-switch, which detects a hard outage but does
-> not compute a percentage. `stellarindex-sla-probe` runs **on the API
-> host against `http://localhost:3000/v1`** (`configs/healthchecks/sla-probe.sh:27`,
-> unset on R1), so its availability tally cannot see a Caddy, TLS, DNS
-> or network failure. Any published availability number must therefore
-> be stated as an objective, not a measurement, until an off-host probe
-> ships. See [`../operations/sla-probe.md`](../operations/sla-probe.md).
+This page is the single source for how Stellar Index stays up: what runs
+today, what is planned for in-region HA and for R2/R3, and the decisions
+that bind both. Decision records: [ADR-0008](../adr/0008-ha-topology.md)
+(single-region topology),
+[ADR-0024](../adr/0024-redis-ha-via-sentinel.md) (Redis Sentinel),
+[ADR-0043](../adr/0043-backup-and-restore-strategy.md) (backup) and
+[ADR-0050](../adr/0050-multi-region-ha-architecture.md) (multi-region).
+Where an older document disagrees with this page, this page wins.
 
-> **DEPLOYMENT STATE (audit 2026-07-16):** the HAProxy/Patroni/Redis-Sentinel HA
-> below is a **ratified DESIGN, not deployed.** The roles exist under
-> `configs/ansible/roles/{haproxy,patroni,redis-sentinel}/` but **NO playbook
-> invokes them** — R1 runs a single unclustered Postgres and a single
-> internal-bind no-AUTH Redis today. Any operator/runbook that assumes Patroni
-> or multi-node Redis on R1 is describing the target, not reality.
+**Status in one line.** Production is one box (r1). Every HA component
+beyond it — HAProxy, Patroni, Redis Sentinel, the Prometheus pair, the Loki
+role, R2 and R3 — is designed, mostly has role code in
+`configs/ansible/roles/`, and is **deferred until after v1.0**
+(INV-0834, INV-1048).
 
-> **⚠️ ARCHITECTURE-STALENESS AMENDMENT (2026-07-18).** This plan predates the ADR-0034
-> **ClickHouse tier-1 lake** — now the largest store (8.6 TiB) and the primary serving
-> path. **§4.3 (storage/capacity) and §8 (backup) have been rewritten** to current
-> reality. §3.11 adds the ClickHouse tier: one instance per region, cross-region
-> failover per ADR-0050, and snapshot-restore bootstrap. The in-region lake is still a
-> SPOF by design. Background: `docs/operations/off-site-backup-plan.md`.
+---
 
-# High-Availability Infrastructure Plan
+## 0. Service targets
 
-**Owner:** the maintainer (arch) + @alex (ops).
-**Ratification:** binding decisions accepted as
-[ADR-0008](../adr/0008-ha-topology.md) on 2026-04-27. Per-component
-implementation lives in the relevant ansible roles
-(`configs/ansible/roles/{patroni,redis-sentinel,haproxy,prometheus,loki}/`)
-and the per-region storage strategy is captured in
-[ADR-0016](../adr/0016-per-region-storage-strategy.md). This plan
-is the **umbrella** that binds them.
-
-The HA story is constrained by three non-negotiable service targets:
-
-- **p95 ≤ 200 ms, p99 ≤ 500 ms** (Performance SLA).
+- **p95 ≤ 200 ms, p99 ≤ 500 ms** on `/v1/price` and `/v1/oracle/*`
+  ([ADR-0009](../adr/0009-latency-budget.md)). Measured p95 68 ms / p99 98 ms
+  (k6, see [coverage-matrix.md](coverage-matrix.md#service-objectives-and-their-proof)).
 - **≥ 99.9 % availability** — the figure published to customers at
-  [stellarindex.io/sla](https://stellarindex.io/sla), an error budget
-  of ~43 min per 30-day month. The **99.99 %** number that appears in
-  [ADR-0008](../adr/0008-ha-topology.md) (amended 2026-09-04, #487) is
-  the *internal design target this topology was sized against* — it is
-  not a customer commitment, nothing external measures it today (see
-  the availability-instrumentation banner at the top of this file), and
-  since 2026-09-04 the burn-rate alerts in
-  `deploy/monitoring/rules/slo.yml` budget against the published 99.9 %,
-  not this figure.
-- **≤ 30 s data freshness** on `/v1/price/tip`. `/v1/price` serves the
-  last closed bucket per [ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md)
-  and is structurally 30–150 s old.
+  [stellarindex.io/sla](https://stellarindex.io/sla), an error budget of
+  ~43 min per 30-day month. The 99.99 % in ADR-0008 is the internal target
+  the topology was sized against, not a commitment. The burn-rate alerts in
+  `deploy/monitoring/rules/slo.yml` budget against 99.9 %.
+- **≤ 30 s freshness** on `/v1/price/tip`. `/v1/price` serves the last
+  closed bucket ([ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md))
+  and is 30–150 s old by design.
 
-Every topology decision below is traced back to which of these numbers
-it protects.
+**Availability is not externally measured.** `stellarindex-sla-probe` runs
+on the API host against `http://localhost:3000/v1`
+(`configs/healthchecks/sla-probe.sh:27`), so it cannot see a Caddy, TLS, DNS
+or network failure. The Alertmanager dead-man's switch catches a hard
+outage but computes no percentage. Until an off-host probe ships, any
+published availability figure is an objective, not a measurement. See
+[`../operations/sla-probe.md`](../operations/sla-probe.md).
 
 ---
 
-## 1. Design principles
+## 1. Decisions that still bind
 
-1. **Single-region HA first; multi-region DR second.** The initial
-   build window forces us to ship a strong single-region
-   deployment at launch, with cold DR in cloud. Multi-region active/
-   active is explicitly out of scope for v1.
-2. **Ingest must never block serving.** If the ingestion plane slows,
-   the serving plane serves stale-marked responses — it does not error.
-3. **Decouple hot from cold.** Anything in the 30-second serving
-   hot path lives in Redis; everything older reads from TimescaleDB;
-   archive + replay source is MinIO. Three tiers, three failure
-   domains.
-4. **No single machine's failure takes us below SLA.** Redundancy is
-   N+1 at minimum for every stateful component; the Tier-1
-   three-validator aspiration (ADR-0004) provides N+2 for the
-   validator / history-archive layer.
-   > **Update (2026-04-23):** stellar-rpc was **removed from
-   > production ingest** and is now diagnostics-only (`rpc-probe` +
-   > fixture capture). The N+2 redundancy goal applies to the
-   > validators per ADR-0004; it does **not** describe stellar-rpc,
-   > which is no longer on the ingest path. The §3.2 sizing below
-   > predates this removal — see `docs/operations/r1-deployment-state.md`.
-5. **Every component has a "degraded mode" defined up front.** If
-   Aquarius ingestion dies, what does `/v1/price?asset=…` return?
-   The answer is in §9, not invented during an incident.
-6. **We own the hardware we need to own.** Captive-core + Galexie on
-   colocated R640s (per ADR). Everything stateless lives in cloud.
-   Cloud is DR target; colo is primary.
+| Area | Decision | Rejected | Source |
+|---|---|---|---|
+| HA model | HA by **cross-region failover, one box per region** | Full per-region fleets (Patroni 3 + HAProxy 2 + Sentinel 3 per region, ~$180–288 K/yr) | ADR-0050 §8 |
+| Region consistency | **Model B**: each region ingests the chain itself; answers match by determinism (closed buckets) | Cross-region Postgres replication; a Patroni/etcd cluster stretched across regions | ADR-0050 §2, ADR-0015 |
+| Lake | **R1 is the lake authority**; other regions proxy lake routes to R1; object storage is a fallback only while R1 is unreachable | Per-region S3-tiered ClickHouse (1,000–8,000 GETs per cold page, breaks the 8 s budget) | ADR-0050 §3b |
+| Product priority | **API first**: pricing serves locally in every region; no SLO'd route crosses a region | Hot lake set on R2 | ADR-0050 §0b, §3a |
+| Providers | R1 Hetzner FSN1; R2 Vultr US bare metal; R3 Vultr Singapore | R2 on AWS (only made sense holding the full lake) | ADR-0050 §4 |
+| Postgres HA | Patroni 3.x + etcd, 3 nodes, per region | Stolon; TimescaleDB native multi-node | ADR-0008 |
+| Redis HA | **Sentinel** (1 primary + 2 replicas), client-side discovery, no VIP | Redis Cluster (sharding) | ADR-0024 |
+| Load balancer | HAProxy + keepalived VRRP, 2 hosts | nginx; Kubernetes ingress | ADR-0008 |
+| Aggregator, indexer | **One instance each**, enforced by a Postgres advisory lock; no standby | Redis-lease leader election | §3.7, §3.8 |
+| Metrics | Two independent Prometheus instances + gossiped Alertmanager | Clustered Prometheus; Thanos (deferred) | §7 |
+| Logs | Single-host Loki, chunks in S3-compatible storage | Paired Loki for v1 | §7 |
+| Status page | Self-hosted in the explorer; incidents are Markdown in git | Instatus or another SaaS; Cachet | §7.4 |
+| Load testing | k6, self-hosted runner, arrival-rate scenarios | Vegeta, Gatling, wrk2, custom Go | §7.3 |
+| Backups | Off-site copies of the ClickHouse lake and Postgres on Backblaze B2; the raw archive is re-pulled from SDF's public dataset | Mirroring public data off-site | ADR-0043, §8 |
 
 ---
 
 ## 2. Physical topology
 
-**Cross-region context:** this section shows the **per-region**
-layout — one full stack, as deployed in each of three regions. The
-3-region architecture (primary / sync-replica / async-replica,
-graceful degradation across regions) lives in
-[infrastructure/multi-region-topology.md](infrastructure/multi-region-topology.md).
-The phased 1 → 3 validator rollout lives in
-[infrastructure/validator-rollout.md](infrastructure/validator-rollout.md).
-Per-node hardware spec is in
-[infrastructure/archival-node-spec.md](infrastructure/archival-node-spec.md).
-At launch we run exactly **one** region (R1, Hetzner FSN1 in
-Falkenstein, DE) with this topology; R2 (AWS us-east-1) and R3
-(Vultr Singapore) join post-launch with the same per-region
-shape, modified per
-[ADR-0016](../adr/0016-per-region-storage-strategy.md) for each
-provider's storage economics.
+### 2.1 Today: r1, one box
 
-### 2.1 Primary (colo)
+r1 is a Hetzner dedicated server in FSN1 (Falkenstein, DE) with a ZFS pool
+`data` of 4 × 7.68 TB NVMe in **raidz1**. Everything runs on it:
 
 ```
-                          ┌──────────────────────────────┐
-                          │ Internet (Anycast + CDN/WAF) │
-                          └──────────────┬───────────────┘
+   Internet ── Caddy (TLS, :443) ── stellarindex-api (one process)
                                          │
-                ┌────────────────────────┴─────────────────────────┐
-                │                                                  │
-         ┌──────┴──────┐                                    ┌──────┴──────┐
-         │  HAProxy-A  │                                    │  HAProxy-B  │
-         │  (keepalived VIP)                                │             │
-         └──────┬──────┘                                    └──────┬──────┘
-                │                                                  │
-                └─────────────────────┬────────────────────────────┘
-                                      │
-            ┌─────────────────────────┴─────────────────────────┐
-            │           stellarindex-api pool (N=3)              │   stateless
-            └─────────────────────────┬─────────────────────────┘
-                                      │
-       ┌──────────────────────────────┼────────────────────────────┐
-       │                              │                            │
-┌──────┴───────┐          ┌───────────┴──────────┐       ┌─────────┴────────┐
-│ Redis cluster│          │ TimescaleDB          │       │ MinIO (erasure)  │
-│ (3 masters,  │          │ Patroni-managed HA:  │       │ EC(6+3) on 9     │
-│  3 replicas, │          │ 1 primary +          │       │ hosts; bucket    │
-│  Sentinel)   │          │ 2 sync replicas      │       │ versioning on.   │
-└──────┬───────┘          └───────────┬──────────┘       └─────────┬────────┘
-       │                              │                            │
-       └──────────────────────────────┼────────────────────────────┘
-                                      │
-                      ┌───────────────┴──────────────┐
-                      │   stellarindex-aggregator    │   ONE process; a
-                      │   (Postgres instance lock)   │   second refuses to
-                      │                              │   start; no standby
-                      └───────────────┬──────────────┘
-                                      │
-                      ┌───────────────┴──────────────┐
-                      │   stellarindex-indexer       │   ONE process; the
-                      │   (dispatcher → decoders)    │   dispatcher fans out,
-                      └───────┬──────────────┬───────┘   no per-source shard
-                              │              │
-                        ┌─────┴───┐    ┌─────┴───┐
-                        │ galexie │    │ galexie │   captive core is a
-                        │+captive │    │+captive │   SUBPROCESS of galexie
-                        │  core   │    │  core   │   — no standalone core,
-                        │ (R640)  │    │ (R640)  │   no stellar-rpc service
-                        └─────────┘    └─────────┘   (removed 2026-04-23)
+             ┌───────────────────────────┼──────────────────────────┐
+     Redis (single node,         Postgres 15 + Timescale      ClickHouse lake
+     internal bind, no AUTH)     (postgresql@15-main,         (one instance,
+                                  no replicas)                 non-replicated)
+             └───────────────────────────┼──────────────────────────┘
+                         stellarindex-aggregator (one, instance lock)
+                         stellarindex-indexer    (one, instance lock)
+                                         │
+                         MinIO (galexie-live, galexie-archive)
+                                         │
+                         galexie (captive core is its subprocess)
 ```
 
-Component counts in §3. Each box is ≥ N+1; the stellar-core nodes are
-N+2 because the Tier-1 aspiration (ADR-0004) requires three independent
-archives post-launch.
+- The public edge is Caddy
+  (`configs/ansible/roles/archival-node/tasks/19-caddy.yml`), not HAProxy.
+- `configs/ansible/roles/archival-node` is the only role any playbook
+  applies to r1. `playbooks/monitoring.yml` targets a `prometheus_pair`
+  group r1's inventory does not define, so it matches no hosts. No
+  playbook invokes `haproxy`, `patroni` or `redis-sentinel`
+  (INV-0978).
+- `deploy.yml` deploys to `r1`, `testnet` and `futurenet`. `r2` and `r3`
+  exist only as `configs/ansible/inventory/r{2,3}.example.yml`.
+- No stellar-rpc on the ingest path (AGENTS.md invariant 6). It survives
+  only for `rpc-probe` and fixture capture.
 
-### 2.2 DR (cloud — AWS primary)
+### 2.2 Planned in-region shape
 
-- Stateless services (`stellarindex-api`, `stellarindex-aggregator`)
-  warm-standby in AWS. Scale-to-zero when not failing over; scale-out
-  on DNS flip.
-- TimescaleDB **async logical replica** (not streaming — crosses a WAN,
-  pg_logical is resilient) at AWS RDS with 5-minute RPO budget.
-- Redis **not replicated cross-region**: warm-standby is cold.
-  Acceptable because Redis is cache; re-hydrates from Timescale after
-  failover within minutes.
-- MinIO **Veeam-style replicated** to S3 via `mc mirror --overwrite`;
-  RPO 1h for the archive bucket. `galexie-live/` replicated at 5 min.
-- stellar-core and stellar-rpc **not** replicated to cloud — they are
-  rebuilt from our own MinIO archive on DR activation (~4 hours to
-  CATCHUP_RECENT). This is intentional: running captive-cores in AWS
-  violates our cost envelope.
+ADR-0050 §10 Phase 1 is an in-region HA build on R1. It is a
+procure-and-build, not role wiring: the roles hard-gate on inventory groups
+(`postgres_cluster` = 3, `haproxy_lb` = 2, `redis_cluster` = 3,
+`prometheus_pair` = 2) that need several hosts, and the archival-node role
+does not install ClickHouse or Redis (it overlays config on a hand-built
+box), so that automation must be written too.
 
-### 2.3 Why colo primary, cloud DR
+```
+                 Cloudflare (WAF, cache, cross-region LB)
+                                 │
+                      keepalived VIP (VRRP)
+                     HAProxy-A ─── HAProxy-B
+                                 │
+                 stellarindex-api × 3 (stateless, /v1/readyz)
+                                 │
+     ┌───────────────────────────┼──────────────────────────────┐
+ Redis Sentinel             Patroni: primary + 2 sync        ClickHouse
+ 1 primary + 2 replicas,    replicas, etcd × 3               (one instance;
+ 3 Sentinels co-located     (per region, never stretched)    HA is cross-region)
+     └───────────────────────────┼──────────────────────────────┘
+                aggregator (one) · indexer (one) · galexie + captive core
+```
 
-Already ratified in ADR-0002 alternatives: captive-cores at 8 vCPU /
-32 GB / large NVMe scale are ~3× cheaper on dedicated hardware than
-cloud IOPS-matched instances. The colocated R640 fleet is already
-provisioned; cloud is pay-as-you-use for DR.
+ADR-0050 §8 makes one box per region the default. Whether Phase 1 is still
+wanted once R2 provides cross-region failover is open (§11).
+
+### 2.3 Planned regions
+
+| | R1 — Hetzner FSN1 | R2 — Vultr US | R3 — Vultr Singapore |
+|---|---|---|---|
+| Role | primary, lake authority, integrity leader | active pricing, lake proxy | active pricing, lake proxy |
+| Pricing (Timescale + Redis) | full local | full local | full local |
+| Lake (ClickHouse) | full local | none; all lake routes proxy to R1 | none; all lake routes proxy to R1 |
+| Raw archive | local MinIO | re-pulled from SDF's public dataset | re-pulled from SDF's public dataset |
+| Verification tiers | all (A/B/D/E), trust anchor | A + D local, trusts R1 for B + E | same as R2 |
+| Disk | existing | ~2 TB is generous (Timescale + Redis + OS) | same |
+
+R2 and R3 have the same shape. The explorer accepts one extra
+transatlantic round trip per lake-backed page; the API does not.
 
 ---
 
-## 3. Component-by-component HA
+## 3. Component by component
 
-### 3.1 stellar-core + galexie fleet
+### 3.1 Edge and load balancer
 
-- **Instances:** 3 × R640 (`core-01`, `core-02`, `core-03`). Each
-  runs captive-core in `CATCHUP_RECENT` mode + galexie in
-  live-export mode writing to the shared MinIO `galexie-live/`.
-- **Quorum set:** our 3 nodes vote with the public SDF + 3 Tier-1
-  organisations (SDF, LOBSTR, Satoshipay) per the Tier-1 aspiration
-  (ADR-0004).
-- **Failure mode:** 1 captive-core down → aggregator continues
-  reading from the surviving 2 nodes' Galexie output (dedup by
-  `(ledger, hash)` on ingest). 2 captive-cores down → SEV-1; the
-  third + SDF public quorum keeps us writing ledgers but freshness
-  degrades toward 30 s ceiling.
-- **RPO:** 0 for live ledger (captive-core replays on restart from
-  local state); 5 min for galexie export (configurable).
-- **RTO:** 2 min failover (the ingester stops reading node X and
-  starts reading node Y). Captive-core restart: 10–20 min from cold
-  to catchup-recent if local state is intact; 4 h if it has to
-  rebuild from our MinIO archive.
+**Today:** Caddy on r1 terminates TLS and proxies to the single API
+process. It does not expose `/metrics`.
 
-### 3.2 stellar-rpc
+**Planned:** HAProxy + keepalived on two hosts (`lb-01`, `lb-02`), public
+DNS on the keepalived VIP. Role: `configs/ansible/roles/haproxy/` (no
+playbook).
 
-- **Instances:** 2 × stellar-rpc on `core-01` and `core-02` (one
-  captive-core each).
-- **Why 2 not 3:** stellar-rpc's SQLite is not a cluster; each
-  instance is independent. Two is enough for serving live-event
-  subscriptions.
-- **Failure mode:** 1 rpc down → `stellarindex-indexer` switches its
-  `getEvents` stream to the survivor via configured
-  `[stellar_rpc].endpoints` array.
-- **Historic event retention:** we **do not** rely on stellar-rpc
-  for historic event queries. Historic goes through Galexie → our
-  own `events` hypertable. This sidesteps the SQLite ceiling
-  flagged in the adversarial audit §6c.
+- **Health check:** `GET /v1/readyz`, `inter 5s fall 3 rise 2 slowstart 10s`
+  (`templates/haproxy.cfg.j2`). Postgres is critical (503); Redis and
+  ClickHouse are non-critical (200 with `status="degraded"`), so a cache or
+  lake outage does not drain the pool. `GET /v1/livez/lake` is the
+  lake-only signal (503 while ClickHouse is unreachable) for steering lake
+  routes separately.
+- **Failover:** one API instance down → ejected after ~15 s; HAProxy host or
+  process down → VIP moves in 1–4 s; both LB hosts down → manual, same blast
+  radius as a region outage.
+- **Gotchas the role handles or documents:** `net.ipv4.ip_nonlocal_bind=1`
+  so HAProxy can bind the VIP before keepalived assigns it; VRRP multicast
+  (224.0.0.18) is blocked on some clouds, so use `unicast_peer`; keepalived
+  silently truncates `auth_pass` to 8 bytes; config changes `reload`, never
+  `restart`; the stats endpoint stays on `127.0.0.1:8404`; use HAProxy's
+  built-in Prometheus exporter, not `haproxy_exporter`.
+- **Not in the role:** certificate automation — the operator drops a cert
+  in `/etc/haproxy/certs/` (INV-1050). PgBouncer — a separate role not yet
+  written; each process's `pgxpool` pools for now (INV-1049).
+- **Cross-region (planned):** Cloudflare routes to the nearest healthy
+  region. The explorer can follow because ADR-0044's edge SSR resolves the
+  API region at request time.
 
-### 3.3 TimescaleDB cluster
+### 3.2 Ingest: galexie and captive core
 
-- **Topology:** Patroni-managed primary + 2 synchronous replicas on
-  3 separate R640s (`db-01`, `db-02`, `db-03`).
-  `synchronous_commit=remote_apply`, `synchronous_standby_names='ANY 1 (db-02, db-03)'`.
-- **Etcd quorum:** 3 nodes for Patroni leader election.
-- **PgBouncer:** a pair with keepalived VIP in front of the
-  Patroni cluster. Transaction-mode pooling. Pool size sized against
-  PostgreSQL `max_connections` and the api-pod count.
-- **Hypertables:**
-  - `trades` — partitioned by `ts` daily; **raw rows kept forever**
-    (migration 0031 removed the old 90-day retention — invariant 8:
-    storage is not a constraint, and Postgres is the served tier, not
-    the full archive). Compression still applies for space.
-  - `oracle_updates` — same shape as `trades`, smaller volume.
-  - `prices_1m`, `prices_15m`, `prices_1h`, `prices_4h`,
-    `prices_1d`, `prices_1w`, `prices_1mo` — continuous
-    aggregates (CAGGs) with `add_continuous_aggregate_policy`.
-  - `soroban_events` — the ADR-0029 Soroban-event landing zone the
-    projector tails (compressed after a window).
-  - `asset_supply_history` — supply-history hypertable; retention
-    indefinite.
-  - `asset_metadata` — ordinary table (small).
-- **Retention policy** (invariant 8 — ADR-0034):
-  - `trades` raw: **indefinite** (no `drop_after`; migration 0031
-    removed the rogue 90-day policy — if you see one on `trades`,
-    it's drift, remove it).
-  - `prices_1m`, `prices_15m`: retention also removed — indefinite.
-  - `prices_1h`, `prices_4h`, `prices_1d`, `prices_1w`,
-    `prices_1mo`: **indefinite** (no `drop_after`). The oldest bar is a
-    COVERAGE floor, not a retention one, and it is much later than the
-    chain's: `prices_1d` starts **2018-07-01** with a single pair
-    (`crypto:XLM`/`fiat:USD`, 946 daily bars) and then holds nothing at
-    all between 2021-02-01 and 2024-03-10 (measured on r1 2026-09-03).
-    Sizing a restore or a backfill off "daily OHLC since 2015" plans for
-    history that was never materialised.
-- **Backup** (target design; see §8's ⛔ block for what is actually
-  provisioned):
-  - `pgBackRest` with WAL-stream, `--type=full` weekly,
-    `--type=diff` daily, `--type=incr` hourly.
-  - **RPO 5 min** (WAL archiving lag SLA).
-  - **Restore test:** automated on a timer, evidence appended to
-    `docs/operations/drills/` per
-    [ADR-0043](../adr/0043-backup-and-restore-strategy.md) §3.
-    **Corrected 2026-09-02:** the claimed weekly-vs-monthly drift does
-    not exist — the shipped timer is *monthly*
-    (`configs/ansible/roles/archival-node/templates/systemd/restore-drill.timer.j2:27`,
-    `OnCalendar=Sat *-*-01..07 04:00:00 UTC`), matching the ADR. There is
-    still no ops dashboard for drill results, here or anywhere in the repo.
-  > **Reality check (2026-07-25, audit-2026-07-23 DOC-06).** On R1
-  > today: the repo is `repo1` at `/var/lib/pgbackrest` — a local ZFS
-  > dataset on the same `data` pool as the DB, **not** MinIO and not
-  > off-site (§8). `pgbackrest-backup.timer` is enabled and runs
-  > **full Sunday / diff Mon–Sat at 02:00 UTC** — there is no hourly
-  > `incr`. WAL archiving is continuous (`archive-async=y`), so the
-  > 5-min RPO holds for repo1; repo2 (off-site S3, 2026-08-29) is
-  > backed up nightly on its own schedule.
-  >
-  > **CORRECTED 2026-09-02 — this paragraph was inverted.** The restore
-  > drill **is** automated. `restore-drill.timer` was ENABLED on
-  > 2026-07-27 once the galexie trim cleared the capacity condition it
-  > was gated on, and its cadence is **monthly** (first Saturday, 04:00
-  > UTC) per ADR-0043 §1/§3 —
-  > `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:707-732`
-  > carries the enable task and the dated rationale. The drill's own
-  > precondition check still refuses (exit 2, uncounted) if free space
-  > regresses, so it is safe under capacity pressure.
-- **Failover:** Patroni leader election. Target RTO 60 s.
-- **Connection secret:** read via secret manager at startup, never
-  on disk.
-- **Cross-region consistency:** API endpoints reading from the CAGG
-  tables serve only **closed** buckets per
-  [ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md); the
-  in-progress window is never exposed. This makes "all 3 regions
-  return the same rate" a property of the design rather than a
-  hopeful side-effect of replication latency. See the ADR for
-  trade-offs and the ≤30 s freshness contract it implies.
+**Today:** one galexie on r1, captive core as its subprocess, writing to
+MinIO; one `stellarindex-indexer` reads it via `internal/ledgerstream` →
+`internal/dispatcher`. Recovery from a dead galexie is a systemd restart
+plus catch-up from local state.
 
-### 3.4 Redis Sentinel cluster
+**Planned (Model B):** every region runs its own galexie + captive core
+(~10.5 GiB) and indexer, and builds its own stores. There is no ingest
+failover between regions; a region whose ingest stalls serves stale-flagged
+data until it catches up.
 
-> **Amended 2026-05-01** to remove the Cluster-vs-Sentinel
-> contradiction the original draft had. Ratified by
-> [ADR-0024](../adr/0024-redis-ha-via-sentinel.md). The
-> `redis-sentinel` ansible role
-> ([role docs](../../configs/ansible/roles/redis-sentinel/README.md))
-> deploys this exact topology.
+**Archive contents (gap-scan 2026-08-21):** r1's `galexie-archive` holds the
+genesis chunk `[0, 63999]` and `[49984000, tip]`. The middle
+`[64000, 49983999]` was capacity-trimmed and is read through the
+`aws-public-blockchain` cold tier
+([ADR-0027](../adr/0027-lcm-cache-tiering.md)), with SDF
+`history.stellar.org` as the canonical upstream. `public-dataset-check.yml`
+monitors that dataset weekly. Run a genesis-to-tip gap scan before trusting
+any archive copy as a rebuild source.
 
-- **Topology:** 1 primary + 2 replicas, Redis Sentinel mode (no
-  sharding). 3 Sentinels co-located on the same 3 cache hosts;
-  Sentinel quorum = 2.
-- **Why Sentinel, not Cluster:** our hot-set is small
-  (~few GB across all categories below); sharding adds
-  operational tax without solving capacity. Sentinel is simpler
-  at SEV-1 time and the migration to Cluster, if we ever need
-  it, is a one-time cost rather than an ongoing tax. Full
-  reasoning in ADR-0024.
-- **Client connection model:** clients use `go-redis/v9`'s
-  `NewFailoverClient` and ask any Sentinel for the current
-  primary. There is no VIP or HAProxy in front of Redis — the
-  client SDK does the discovery itself. (This is why the
-  Redis sub-role of Task #72 ships standalone: no companion
-  HAProxy role is required for cache, only for Postgres.)
-- **Data categories:**
-  - **Hot prices** — key `price:<asset>` → latest aggregated price
-    JSON, TTL 60 s (refreshed by aggregator).
-  - **VWAP precompute** — key `vwap:<pair>:<tf>` → value+
-    computed-at, TTL matches the window.
-  - **Rate-limit buckets** — key `rl:<api_key>:<min>`, TTL 120 s.
-  - **SEP-1 / home-domain cache** — key `toml:<domain>`, TTL 15 min.
-  - **Asset-metadata cache** — key `meta:<asset>`, TTL 5 min.
-  - **SSE subscriber registry** — key `sub:<channel>`, no TTL
-    (heartbeat).
-- **Failure mode:** master down → Sentinel failover, 15–30 s
-  window. During the window `stellarindex-api` returns `stale: true`
-  on affected keys (pulls from Timescale as fallback).
-- **Persistence:** AOF every-second. RDB nightly. We **do not**
-  rely on Redis persistence for correctness — a wiped Redis
-  re-hydrates from Timescale within 2 min (the
-  `stellarindex-aggregator` re-warms).
-- **Caveat:** the rate-limit counter resets on a wipe (users get a grace
-  minute). Acceptable. Note the limiter is a **fixed-window** Redis
-  counter (INCR+EXPIRE), *not* a token bucket — `internal/ratelimit/doc.go:1-3`
-  states the choice and its rationale.
+### 3.3 Postgres / TimescaleDB
 
-### 3.5 MinIO
+**Today:** one `postgresql@15-main` on r1. No replicas, slots or
+publications. Backups in §8.
 
-- **Topology:** 9 nodes with EC(6+3) erasure coding. Tolerates 3
-  node failures before losing availability, 6 node failures before
-  losing data.
-- **Buckets:**
-  - `galexie-live/` — current captive-core exports, versioning on,
-    object-lock mode `COMPLIANCE` disabled (we may re-export).
-  - `galexie-archive/` — immutable past exports, object-lock
-    `COMPLIANCE` **on**, 1-year retention.
-  - `backups/` — Timescale `pgBackRest`, object-lock off.
-  - `docs/` — docs site build artefacts, public-read.
-- **Replication:** bucket-level replication to AWS S3 via `mc mirror`
-  every 5 min for live, 1 h for archive. Runs from `ops-01` with
-  circuit-breaker (if replication lag > 30 min, page).
-- **Upgrade strategy:** rolling, one node at a time; Galexie
-  retries transient writes with exponential backoff.
+**Hypertables and retention (AGENTS.md invariant 8):** `trades` keeps raw
+rows forever — migration 0031 removed the old 90-day policy, and a
+`drop_after` on `trades` is drift. `prices_1m` … `prices_1mo` are
+continuous aggregates with no `drop_after`. Their oldest bar is a coverage
+floor, not a retention one: `prices_1d` starts **2018-07-01** with a single
+pair (`crypto:XLM`/`fiat:USD`) and holds nothing between 2021-02-01 and
+2024-03-10 (measured on r1 2026-09-03). Size a restore or backfill off
+that, not off chain genesis.
 
-### 3.6 stellarindex-api pool
+**Planned (Patroni, role `configs/ansible/roles/patroni/`):**
 
-- **Instances:** 3 pods on 3 hosts, stateless, behind HAProxy.
-- **Health checks:** HTTP `/healthz` (shallow: process up) and
-  `/readyz` (deep: every registered `ReadyChecker` polled in
-  parallel; wave-110 split into critical (Postgres → 503) vs
-  non-critical (Redis → 200 with `status="degraded"`). HAProxy
-  routes only to `readyz=200`, so a Redis-only outage no
-  longer drains the pool — cache misses fall through to
-  Timescale per ADR-0007.
-- **Autoscaling:** static 3 at launch; target 50% CPU. Scale-up
-  requires an operational decision; we do not let the autoscaler
-  paper over a bug.
-- **Rolling deploy:** 1-at-a-time, 60 s drain, 30 s settle.
-- **Graceful shutdown:** 30 s for in-flight requests + SSE
-  connections (SSE peers re-connect to the new pod automatically).
-- **Clock skew is a CORRECTNESS precondition here, not just a
-  hygiene one.** `chartWindow.covered` (`internal/api/v1/chart.go`)
-  stops a chart's multi-source walk once the merge holds as many
-  distinct buckets as the window's closed-bucket count. That count is
-  computed from the API host's clock. Today the predicate is exact —
-  verified over 155 holed-set variants — but only because the API and
-  Postgres sit on ONE host at UTC, measured 23 ms apart, so the
-  reader's closed-bucket clock can never be ahead of the handler's.
-  Split the API onto its own pods and that stops being structural.
-  With NTP skew of **one bucket width or more** an incomplete set —
-  26 of 27 buckets — satisfies the predicate, the walk stops early,
-  and the series is silently truncated **with no wire signal**: a
-  clean `covered` stop deliberately does not set `flags.stale`, so
-  nothing distinguishes it from a complete answer. Both failure modes
-  were demonstrated when the predicate was written.
-  **Before this section is implemented:** pin every API pod and the
-  database to the same NTP source, alert on offset exceeding the
-  narrowest served granularity (60 s for `1m`), and treat that alert
-  as chart-correctness, not host hygiene. The same precondition
-  breaks if a non-CAGG reader is ever wired into the walk — see the
-  note at `covered` — because it assumes every claimed bucket is a
-  `time_bucket` grid point.
+- Primary + 2 synchronous replicas (`db-01..03`),
+  `synchronous_commit=remote_apply`,
+  `synchronous_standby_names='ANY 1 (db-02, db-03)'`. Failover RTO 60 s.
+- etcd, 3 nodes, one cluster per region. `patroni_cluster_name` and
+  `etcd_cluster_token` differ per region so clusters cannot join across
+  regions. etcd client and peer traffic use TLS with client-cert auth by
+  default (`etcd_tls_enabled: true`); the role refuses to render without
+  the PEM material from vault.
+- Preflight requires 3 nodes and ≥ 32 GB RAM.
+- Bootstrap: `db-01` initialises, the others join; reruns detect a running
+  cluster via Patroni's REST API (`:8008/cluster`) and do nothing. DR
+  rebuild: set `patroni_bootstrap_method: pgbackrest` (default `initdb`)
+  and the primary restores from pgBackRest; replicas then
+  `pg_basebackup` from it.
+- Operating risks: losing 2 of 3 etcd nodes stops writes (correct; restore
+  quorum first). With `remote_apply`, two slow replicas raise commit
+  latency — alert on sustained replica lag > 5 s. Pin the `timescaledb`
+  package version identically on every node. A crashed primary may not be
+  `pg_rewind`-eligible; Patroni re-images it, which is slower. Gate the
+  REST API behind the firewall and Basic Auth from vault.
+- Implementer questions (INV-1053), with the current default: Patroni from
+  apt, not PyPI; etcd 3.5; 3 etcd nodes, not 5; write routing via a
+  Patroni-aware PgBouncer sidecar watching `/leader` rather than a bare
+  keepalived VIP.
+
+**Control-plane data** (accounts, API keys, sessions, WebAuthn, alerts,
+webhooks) is non-chain state that determinism cannot reproduce. It is
+region-local today, so a key minted on R1 would 401 on R2. It needs its own
+small replicated store before a second region serves authenticated traffic
+(ADR-0050 §3c, covering ADR-0049's tables). Until then only anonymous
+traffic fails over cleanly.
+
+### 3.4 Redis
+
+**Today:** a single `redis-server` on r1, internal bind, no AUTH.
+`internal/storage/redisclient` builds a `go-redis` `FailoverClient` when
+`[storage] redis_sentinel_addrs` and `redis_master_name` are set, and a
+plain client otherwise. r1 sets neither, so the Sentinel branch is shipped
+but dormant.
+
+**Planned (Sentinel, ADR-0024, role `configs/ansible/roles/redis-sentinel/`):**
+
+- 1 primary + 2 replicas, 3 Sentinels co-located on the same hosts, quorum
+  2. Sentinel, not Cluster: the hot set is a few GB, and sharding adds
+  operational cost without solving a capacity problem.
+- No VIP or HAProxy in front: clients ask any Sentinel for the primary.
+- Failover takes 15–30 s; affected responses carry `stale: true` and fall
+  back to Timescale. Replicas serve pre-failover data during the window
+  (`replica-serve-stale-data yes`).
+- Persistence is AOF every second plus RDB. Correctness never depends on
+  it: a wiped Redis is re-warmed by the aggregator from Postgres within
+  minutes. Rate-limit counters reset on a wipe.
+- Auth: the role templates `requirepass` + `masterauth`, a Sentinel
+  password, and an optional ACL lockdown (`redis_acl_lockdown`). A password
+  change needs all three nodes rolled before Sentinel re-converges. Use
+  `redis_exporter` for metrics (INV-1058).
+- **No TLS** in the role (TODO in `defaults/main.yml`); the Go client dials
+  plain `host:port`. Decide `tls-port`/`tls-replication` plus client TLS
+  when replication leaves one host. Redis never spans regions, so this is
+  in-region traffic only.
+- Never replicated cross-region.
+
+**Rate limits and quotas** count in the serving region's Redis, keyed per
+principal without a region dimension
+(`internal/api/v1/middleware/ratelimit.go`, `monthly_quota.go`). The limiter
+is a fixed-window counter (INCR + EXPIRE), not a token bucket. With N
+regions a caller gets N × the limit; see §11.
+
+### 3.5 Object storage (MinIO)
+
+**Today:** one MinIO on r1's ZFS pool holding `galexie-live` and
+`galexie-archive`. It is protected by local ZFS snapshots
+(`zfs_snapshot_datasets`, 7-day retention), not by an off-site copy (§8).
+
+ADR-0008 sized a 9-node EC(6+3) MinIO cluster. Nothing in the ADR-0050
+phasing procures it, and the raw archive is re-pullable public data, so it
+is not on the current plan.
+
+### 3.6 API pool
+
+**Today:** one `stellarindex-api` on r1 (`Restart=on-failure`,
+`RestartSec=5s`).
+
+**Planned:** 3 stateless instances behind HAProxy; static count, no
+autoscaling (scaling up is an operator decision so an autoscaler cannot
+hide a bug); rolling deploy one at a time with a 60 s drain; 30 s graceful
+shutdown for in-flight requests and SSE (clients reconnect).
+
+**Clock skew is a correctness precondition, not hygiene.**
+`chartWindow.covered` (`internal/api/v1/chart.go`) stops a chart's
+multi-source walk once it holds as many distinct buckets as the window's
+closed-bucket count, computed from the API host's clock. It is exact today
+only because the API and Postgres share one host. Once API instances run on
+other hosts, NTP skew of one bucket width or more lets an incomplete set
+(26 of 27 buckets) satisfy the predicate, and the series is silently
+truncated: a clean `covered` stop does not set `flags.stale`. Before
+splitting the API out: pin every API host and the database to the same NTP
+source, and alert when offset exceeds the narrowest served granularity
+(60 s for `1m`), as a chart-correctness alert. The same precondition breaks
+if a non-CAGG reader joins the walk.
 
 ### 3.7 stellarindex-aggregator
 
-- **Instances (corrected 2026-09-22):** **one**. There is no
-  leader-election path in `cmd/stellarindex-aggregator` — no Redis
-  lease, no `SET key NX EX`, no Sentinel-aware failover code —
-  and `deploy/systemd/stellarindex-aggregator.service` runs it as a
-  single long-running daemon on one host. The Redis `SET key NX EX 30`
-  active/standby pair this section used to prescribe was never
-  implemented and is not the Phase-1 target: a second aggregator
-  against the same database refuses to start (below).
-- **Enforcement:** the one-instance rule is enforced, not assumed.
-  At startup the aggregator takes the Postgres session advisory lock
+- **One instance.** `cmd/stellarindex-aggregator` has no leader election
+  and no standby. At startup it takes the Postgres session advisory lock
   `hashtext('instance:stellarindex-aggregator')`
-  (`timescale.Store.HoldInstanceLock`). While another process holds
-  it, the aggregator refuses to start and exits non-zero. It checks
-  the lock every 30 s. If the holding session dies, the aggregator
-  takes the lock again on a new session. If another process got there
-  first, it shuts down and exits non-zero. `-dry-run` takes no lock.
-  This is exclusivity, not failover: a standby cannot take over while
-  the holder is alive.
-- **Role:** on each tick (default 30 s) reads `trades`/indexer output,
-  computes VWAP/TWAP + confidence, writes the result to Redis and to
-  Timescale precompute tables.
-- **Why single-instance instead of leader-elected or sharded:**
-  aggregation compute load is small (< 1 core per second on current
-  market volume); a single active instance is simpler and preserves
-  strict ordering.
-- **Failure mode:** the process dies → no standby takes over. Prices
-  serve stale cached values from Redis until the host's supervisor
-  (systemd `Restart=`) or an operator restarts the unit; there is
-  currently no automatic failover for this component.
+  (`timescale.Store.HoldInstanceLock`). While another process holds it, the
+  aggregator exits non-zero. It re-checks every 30 s, re-takes the lock on
+  a new session if its session dies, and exits if another process got
+  there first. `-dry-run` takes no lock. This is exclusivity, not failover.
+- **Role:** each tick (default 30 s) computes VWAP/TWAP and confidence from
+  the indexer's output and writes Redis and Timescale.
+- **Failure:** prices serve stale cached values until systemd
+  (`Restart=on-failure`, `RestartSec=10s`) or an operator restarts it.
 
-### 3.8 stellarindex-indexer fleet
+### 3.8 stellarindex-indexer
 
-- **Topology (corrected 2026-09-02):** **one** `stellarindex-indexer`
-  process, not one per source. It walks ledgers once via
-  `internal/ledgerstream` and the `internal/dispatcher` fans each ledger
-  to every registered decoder. The per-source `Source`/`Orchestrator`
-  goroutine seam this bullet described was **deleted in 2026-07** —
-  `internal/consumer/` is now `doc.go` + `event.go` (the transport-neutral
-  `consumer.Event` contract) and no `StreamLive` exists anywhere in the
-  tree. Off-chain CEX/FX connectors still run their own goroutines, but
-  inside the same binary and outside the dispatcher path.
-- **Enforcement:** as in §3.7, with the lock
-  `hashtext('instance:stellarindex-indexer')`. A second indexer against
-  the same database refuses to start.
-- **Cursors:** persisted in Timescale per-source
-  (`cursor(<source_id>)`). On restart the indexer resumes from the
-  saved cursor.
-- **Backfill:** triggered via `stellarindex-ops backfill` subcommand;
-  writes into the same hypertable with idempotent upserts keyed on
-  `(source, ledger, tx_hash, op_index, ts)`.
-- **Failure mode:** one source dies → others continue. The dead
-  source's freshness timer in Prometheus breaches the 60 s alarm;
-  `/v1/price` for pairs that rely on that source sets
-  `reduced_redundancy=true` in the envelope.
+- **One process**, not one per source. It walks ledgers once and the
+  dispatcher fans each ledger to every registered decoder. Off-chain
+  CEX/FX connectors run as goroutines in the same binary, outside the
+  dispatcher.
+- **Enforcement:** as §3.7, with `hashtext('instance:stellarindex-indexer')`.
+- **Cursors** persist per source in Postgres; a restart resumes from them.
+- **Catch-up** follows the replay rule in
+  [ingest-pipeline.md](ingest-pipeline.md#the-replay-decision-rule):
+  `projector-replay` for projected domains, `ch-rebuild` for the rest.
+- **Failure:** one source stalls → its freshness alert fires and affected
+  pairs lose redundancy; other sources continue.
 
-### 3.9 stellarindex-migrate
+### 3.9 ClickHouse lake
 
-Not a long-running process. Runs before each deploy in a
-pre-start job. Uses PostgreSQL advisory lock `pg_try_advisory_lock(...)`
-to prevent two migrators from racing.
+- **One instance per region**, not a cluster: plain/Replacing/Aggregating
+  MergeTree on one local disk, no `Replicated*` tables, no Keeper. In a
+  region the lake is a single point of failure by design; HA comes from
+  cross-region failover (§1).
+- **Blast radius:** the API's ClickHouse readiness check is non-critical
+  (`clickhouseChecker.Critical()` in `cmd/stellarindex-api/main.go`). With
+  ClickHouse down, `/readyz` returns 200 `degraded`, pricing serves from
+  Postgres + Redis, and lake routes return 503.
+- **Cross-region:** R2 and R3 proxy every lake route to R1's API (one extra
+  round trip per request, not per query). Object storage is read only while
+  R1 is unreachable. An R1 lake outage degrades deep-history reads
+  everywhere; it does not take pricing down anywhere.
+- **Recovery and bootstrap:** restore the latest `ch-lake-backup` chain
+  (§8), pass `stellarindex-ops verify-lake`, then follow live ingest.
+  Re-deriving from the archive (~1–2 weeks per region) is the last resort.
+  A new region bootstraps only from R1's verified lake; seeding from an
+  unverified one copies its gaps.
 
-### 3.10 stellarindex-ops
+### 3.10 Migrations and the ops CLI
 
-Admin CLI. Runs from an operator's SSH session on `ops-01`. Top-level
-subcommands cover backfill, gap-detection, archive-completeness
-verify/check/fix, source decoder verification, RPC probe, archive
-hash-walking, and supply-snapshot generation. The authoritative
-list is the binary's own help output (`stellarindex-ops --help`)
-and the source at
-[`cmd/stellarindex-ops/main.go`](../../cmd/stellarindex-ops/main.go);
-operator runbooks under
-[`docs/operations/runbooks/`](../operations/runbooks/) cite the
-specific subcommand each playbook needs (e.g. `runbooks/all-ingestion-down.md`
-references `stellarindex-ops backfill`).
-
-### 3.11 ClickHouse lake
-
-- **Topology:** **one** ClickHouse instance per region, not a cluster.
-  Every lake table uses a non-replicated MergeTree-family engine
-  (`MergeTree`, `ReplacingMergeTree`, `AggregatingMergeTree`) on a single
-  local disk; there are no `Replicated*` tables and no Keeper. Within a region
-  the lake is a single point of failure by design: ADR-0050 gets HA from
-  cross-region failover, one box per region, not from per-region
-  clusters ([`multi-region-ha.md`](multi-region-ha.md) §8).
-- **Blast radius:** the API's ClickHouse readiness check is
-  non-critical (`clickhouseChecker.Critical()` in
-  `cmd/stellarindex-api/main.go`). With ClickHouse down, `/readyz`
-  returns 200 `degraded`, pricing keeps serving from Timescale + Redis,
-  and the lake routes return 503. `GET /v1/livez/lake` is the
-  lake-specific signal. It returns 503 while ClickHouse is unreachable,
-  so a load balancer can steer lake routes away without pulling pricing
-  out of the pool.
-- **Cross-region shape:** R1 holds the full lake and is the lake
-  authority. R2 may hold a hot recent set; R3 holds none. Both proxy
-  cold reads to R1, and fall back to object storage only while R1 is
-  unreachable ([`multi-region-ha.md`](multi-region-ha.md) §3b). A lake
-  outage on R1 therefore degrades deep-history reads everywhere. It
-  does not take them down.
-- **Recovery and region bootstrap:** restore a snapshot, don't
-  re-derive. A new or rebuilt lake restores the latest backup chain
-  from `scripts/ops/ch-lake-backup.sh` (native `BACKUP DATABASE` to an
-  off-site `s3_plain` disk, ADR-0043 §2.4). It must pass `stellarindex-ops
-  verify-lake` before it serves, then follows live ingest. Re-walking
-  the archive (~1–2 weeks per region, with divergence risk) is the last
-  resort. Restore steps are in
-  [`runbooks/ch-lake-backup.md`](../operations/runbooks/ch-lake-backup.md).
-  §8 records whether the chain is running.
-- **Sequencing:** R2/R3 lakes are bootstrapped from R1's verified
-  snapshot only after R1's lake is complete and verified. A region
-  seeded from an unverified lake would carry the same gaps as R1.
+`stellarindex-migrate` runs before each deploy under a Postgres advisory
+lock, so two migrators cannot race. `stellarindex-ops` is the operator CLI;
+the runbooks name the subcommand each needs.
 
 ---
 
-## 4. Capacity planning — napkin math
+## 4. Capacity
 
-These are lower-bound estimates. Week 9 load-test supersedes them.
+**Traffic envelope.** Target 500 rps sustained and 2,000 rps burst, about
+30× a 10,000-daily-active baseline (~6 rps). Most handlers are a Redis read
+plus JSON encode.
 
-### 4.1 Traffic envelope
+**r1 footprint.** Storage is the binding constraint. The pool is 4 ×
+7.68 TB NVMe in raidz1; the ClickHouse lake is the dominant store
+(14.6 TiB `bytes_on_disk`, 2026-09-28), then the galexie archive, then
+Postgres and pgBackRest. Live ingest adds roughly 10–20 GiB/day. Current
+figures: [`../operations/r1-deployment-state.md`](../operations/r1-deployment-state.md).
 
-Assume 50 wallets × 200 active users each = 10 000 daily actives.
-A typical wallet asset-detail page makes ~5 API calls per render.
-Assume 10 renders per user per active day.
+### Headroom levers
 
-- Baseline: 10 000 × 10 × 5 = **500 000 requests/day** = ~6 rps.
-- Peak (everyone checks during a market move): ~60 rps.
-- Service requirement: 1 000 req/min per client = ~17 rps per client.
+r1 is not hardware-upgradeable: fixed 4 × 7.68 TB NVMe, no fifth drive,
+no raidz expansion (ADR-0027). The levers are software-only, in priority
+order:
 
-Capacity target: **500 rps sustained, 2 000 rps burst**. That is
-~30× baseline; headroom protects us through a year of growth.
-
-### 4.2 Per-component headroom
-
-| Component | Sustained need | Headroom target |
-| --------- | -------------- | --------------- |
-| `stellarindex-api` pods (Go, `net/http`) | 500 rps | 2 000 rps (4×) |
-| PgBouncer | 500 qps most cached, ~100 qps actual Timescale | 1 000 qps (2×) |
-| Timescale primary | 100 write-tps (trades) + ~50 read-qps | 500 write-tps (5×) |
-| Redis | 5 000 ops/s (pre-+post-cache) | 50 000 ops/s (10×) |
-| MinIO | 10 MB/s Galexie write, 50 MB/s backup replication | 400 MB/s (4×) |
-
-Single-pod Go `net/http` routinely serves 10 000 rps on a modern
-host for lightweight handlers. Our handlers are mostly
-"Redis GET → JSON encode → return." Hitting 2 000 rps per pod with 3
-pods is comfortable.
-
-### 4.3 Storage growth — REWRITTEN 2026-07-18, corrected 2026-07-24 (the original was pre-ClickHouse and wrong; the 2026-07-18 rewrite then re-asserted a hardware fix that's since been explicitly ruled out — audit-2026-07-23 DOC-05)
-
-> ⚠️ The original estimate here ("~500 GB/year, a single TB NVMe lasts 2 years, storage is not a constraint") sized storage off the Timescale `trades` table and **predates the ADR-0034 ClickHouse tier-1 lake.** It is the likely root cause of R1 reaching **94% unplanned** — the capacity model was never redone after the architecture changed. Real, live-verified numbers:
-
-**Actual footprint (R1, 2026-07-18):** ZFS pool `data` = 27.7 TB raw (4× 7.68 TB NVMe, **raidz1**), **94% full**. Datasets: **ClickHouse 8.6 TiB** (the tier-1 lake — the dominant store), MinIO galexie-archive **5.56 TiB**, Postgres **676 GiB**, pgBackRest **2.6 TiB**, rest small. **Storage is the binding production constraint**, not an afterthought. **Update:** Phase A of the capacity-relief campaign (ZSTD-recompressing the four largest ClickHouse tables) has since **completed**, reclaiming ~3.8 TiB and taking the pool from 94% to ~75% before Phase D's comprehensive backfill began drawing that headroom back down — this architecture doc intentionally doesn't chase the day-to-day figure.
-
-**Growth:** live ingest adds ~10–20 GiB/day (full-fidelity `ledger_entry_changes` dominate) + a one-time multi-TiB draw from the Phase-D comprehensive backfill.
-
-**Headroom levers — software-only. Hardware expansion is ruled out, not a lever:** `docs/operations/production-readiness-remaining.md` §4 states it plainly — *"⛔ R1 is NOT hardware-upgradeable. Fixed 4× 7.68 TB NVMe, no 5th drive, no raidz expansion. Never propose a drive upgrade."* — a standing operator constraint also recorded verbatim in [ADR-0027](../adr/0027-lcm-cache-tiering.md): *"I cannot expand the capacity of this server."* **Correction:** this section previously listed "(3) A 5th NVMe … the durable fix" as a live option. That was wrong and is removed. The real levers, in priority order:
-
-1. **`galexie-archive` → cold S3, then trim local** — the biggest single lever (**~5.5 TiB**). Already config-supported (`s3_cold_bucket_archive`; reads fall through transparently, cold default = the free AWS public dataset) via [ADR-0027](../adr/0027-lcm-cache-tiering.md)'s dual-source hot/cold tiering — implemented and in-tree, gated behind an operator flag not yet enabled in production. Scheduled for after the Phase-D backfill completes.
-2. **`tx_hash` → `FixedString(32)`** (~0.6–1 TiB) — stored as 64-char hex today; a Stellar tx hash is 32 raw bytes, so this is a real schema + binary migration, not yet started.
-3. **ZSTD recompress** of the CH XDR columns — measured **1.75×** on `entry_xdr`; the four biggest tables are **done** (~3.8 TiB reclaimed, see the Update above); `tx_hash`/`tx_hash_index` and other still-LZ4 columns remain (~0.3–0.5 TiB more).
-4. **TimescaleDB compression policies** (~0.2–0.4 TiB) — 19 hypertables are compression-eligible but have no policy attached yet.
-5. **pgBackRest diff-retention prune** (~1 TiB, deferred until off-site backup exists — see §8).
-6. **Horizontal growth — a second server, not a bigger R1.** R1 is one region of the multi-region design in §2; the durable answer to R1 filling up is R2 coming online (per [ADR-0016](../adr/0016-per-region-storage-strategy.md); `production-readiness-remaining.md` §5c: "R2 provisioning … unblocks HA/DR *and* capacity") and eventual R1 retirement — not more drives in this chassis.
-
-Detail + live capacity table: `docs/operations/runbooks/phase-a-capacity-relief-2026-07-18.md` (its own "5th NVMe" line carried the same stale claim and has since been corrected the same way — the runbook is safe to follow) + `docs/operations/production-readiness-remaining.md` §4 (the current, hardware-ruled-out version). Launch source of truth: `docs/operations/v1-launch-plan.md`.
+1. **Trim local `galexie-archive`** behind the ADR-0027 cold tier
+   (`s3_cold_bucket_archive`; reads fall through to the free public
+   dataset). Biggest single lever.
+2. **`tx_hash` → `FixedString(32)`** in ClickHouse (~0.6–1 TiB). A schema
+   and binary migration, not started (INV-1098).
+3. **ZSTD recompression** of the remaining LZ4 XDR and hash columns. The
+   four largest tables are done (~3.8 TiB reclaimed).
+4. **TimescaleDB compression policies** on the compression-eligible
+   hypertables that have none (~0.2–0.4 TiB).
+5. **pgBackRest diff-retention prune** on repo1 (~1 TiB), only once the
+   off-site repo has a verified restore (INV-1100).
+6. **Horizontal growth:** R2 coming online, not a bigger r1.
 
 ---
 
 ## 5. Failure matrix
 
-| Component dies | Blast radius | Behaviour | Time-to-recover |
-| -------------- | ------------ | --------- | --------------- |
-| 1 `stellarindex-api` pod | 33% reduced serving capacity | HAProxy routes to other 2; auto-restart | < 30 s |
-| 2 `stellarindex-api` pods | 66% reduced | degraded SLA warning alert | 1–5 min manual intervention |
-| Redis master | One hash slot unavailable for ~30 s | `stale: true` on affected keys; `/v1/readyz` returns 200 with `status="degraded"` during the window (wave-110 critical/non-critical split — Redis is non-critical, cache misses fall through to Timescale); HAProxy keeps the backend in service | Sentinel failover 15–30 s |
-| Timescale primary | Writes fail | Patroni elects replica; api switches read pool via PgBouncer | 30–60 s |
-| PgBouncer pair | All DB access fails | Depends on keepalived VIP failover timing | 5–15 s |
-| 1 stellar-core | Aggregator loses one ingest source | duplicate stream from others; dedup by hash | instant |
-| All 3 stellar-core | No new ledger events | API returns `stale: true` and 30 s-old data from cache | minutes–hours |
-| 1 stellar-rpc | `getEvents` subscribers fall over to survivor | automatic | < 10 s |
-| MinIO 1–3 nodes | EC(6+3) preserves reads/writes | auto-heal on replacement | hours |
-| MinIO 4–6 nodes | Writes fail; reads OK | alert SEV-1 | hours–days |
-| HAProxy active | Keepalived VIP failover to peer | < 2 s drop | < 2 s |
-| Aggregator process | Price hot keys stop refreshing; reads serve `stale: true` | No standby (§3.7). systemd `Restart=on-failure`, `RestartSec=10s` | ~10 s; until an operator intervenes if it crash-loops |
-| Colo power | Full primary outage | manual DR activation to cloud | 4 h (per DR runbook) |
-| Internet link to colo | API unreachable | DNS failover to cloud DR | 5 min |
+| Component dies | Today (r1) | Planned (Phase 1 / multi-region) |
+|---|---|---|
+| API process | systemd restarts in ~5 s; full outage meanwhile | HAProxy ejects it within ~15 s; the other instances serve |
+| Edge | Caddy down = full outage | HAProxy host → VIP moves in 1–4 s; region → Cloudflare fails over to another region |
+| Redis | Cache misses fall through to Postgres; `/readyz` 200 `degraded`; pricing serves | Sentinel failover 15–30 s, `stale: true` on affected keys |
+| Postgres | Full outage of served data; restore from pgBackRest (§8) | Patroni promotes a replica, 30–60 s |
+| ClickHouse | Lake routes 503; pricing unaffected | Same in-region; other regions keep serving recent data and lose deep history until R1 returns |
+| Galexie / captive core | Ingest stops; API serves stale-flagged data; systemd restart + catch-up | Same per region; other regions unaffected |
+| Indexer | Ingest stops; restart resumes from cursors | Same per region |
+| Aggregator process | Price hot keys stop refreshing; reads serve `stale: true`; no standby (§3.7); systemd `RestartSec=10s` | Same — one instance per region |
+| Whole r1 | Total outage; rebuild from off-site backups (§8), hours to days | Traffic fails over to R2/R3 for pricing; lake routes degrade to the object-storage fallback |
 
-No single-component failure breaches 99.9% monthly (≤ 43 min/month),
-with one exception: the aggregator has no standby, so a crash-looping
-aggregator leaves prices stale until an operator fixes it.
-Two-component failures can breach; catalogued above with response
-times.
+No single-component failure in the Phase 1 shape breaches 99.9 % a month,
+except a crash-looping aggregator, which leaves prices stale until an
+operator fixes it. Today r1 is a single point of failure for everything.
 
 ---
 
 ## 6. Security posture
 
-Not the full threat model — **note (2026-09-02): `docs/operations/threat-model.md`
-does not exist and never has**; there is no consolidated threat model in the
-repo, so treat the list below as the only written HA-security posture:
-
-- **Secrets:** Vault (colo) + AWS Secrets Manager (cloud), cross-
-  replicated via periodic sync. Application reads at startup via a
-  sidecar; no secret ever on a disk outside Vault.
-- **TLS everywhere internal and external.** Internal: mTLS between
-  api↔pgbouncer↔timescale and api↔redis. External: Let's Encrypt +
-  HSTS.
-- **Network segmentation:** Management VLAN, data VLAN, DMZ for
-  HAProxy. api pool has no egress except to Timescale, Redis, and
-  logging. Indexers have egress only to pinned CEX/FX IP ranges +
-  `stellar-rpc.publicnode.com` fallback.
-- **HSM for validator keys** (ADR-0004) — YubiHSM-2 on two physical
-  hosts.
-- **Audit log:** every `stellarindex-ops` command recorded to an
-  append-only bucket. Admin surface requires 2FA via the jump host.
+- **Secrets:** Ansible Vault; `configs/ansible/inventory/<region>.secrets.yml`
+  holds them and is never committed. Validator keys are never on disk
+  unencrypted (ADR-0004).
+- **External TLS:** Caddy on r1; HAProxy in the Phase 1 shape.
+- **Internal traffic today** stays on one host. In the multi-host build:
+  etcd uses TLS + client certs (on by default); the Patroni REST API is
+  firewalled with Basic Auth; Redis authenticates but has no TLS (open,
+  §3.4); Promtail → Loki is HTTP on the internal network.
+- **Loopback-only admin surfaces:** HAProxy stats `:8404`, Prometheus
+  `:9090`, Alertmanager `:9093`, Loki `:3100`. Operators SSH-tunnel.
+- **Firewall:** each role opens its ports to the internal range only.
 
 ---
 
 ## 7. Observability
 
-- **Metrics:** Prometheus pair (primary + replica); federated from
-  cloud Prometheus for DR. Retention: 30 d local, 1 y downsampled
-  to MinIO via Thanos.
-- **Dashboards:** Grafana — one dashboard per component + one
-  "Golden Signals" board (latency p50/p95/p99, error rate,
-  saturation, traffic).
-- **Alerts:** AlertManager → PagerDuty. Tiers:
-  - **P1:** 99.9 % SLA-breaking; pages immediately.
-  - **P2:** degraded; pages during business hours + daily summary.
-  - **P3:** informational; ticketed.
-- **Tracing:** OpenTelemetry → Tempo. Sampling 100 % at development,
-  10 % at production, 100 % on errors.
-- **Logs:** structured JSON via zerolog; shipped to Loki with
-  14-day retention + 1 y cold.
+### 7.1 Metrics and alerting
 
-Alerts already sketched in `docs/operations/alerts-catalog.md` (Week 9).
+**Today (r1, managed outside the roles):**
+- Prometheus: `configs/prometheus/prometheus.r1.yml`, rules in
+  `configs/prometheus/rules.r1/`, kept in lockstep with
+  `deploy/monitoring/rules/` by `scripts/ci/lint-rule-equivalence`.
+- Alertmanager: `configs/alertmanager/alertmanager.r1.yml` → Discord
+  receivers plus a dead-man's-switch webhook.
+- Healthchecks.io pushes catch total death only.
+- `archival-node/tasks/23-local-prometheus.yml` is an optional
+  single-host scrape path (`run_local_prometheus`, default false).
+- No distributed tracing.
+
+**Planned (role `configs/ansible/roles/prometheus/`):** two independent
+Prometheus + Alertmanager hosts (`prometheus_pair`). Each scrapes every
+target; Alertmanagers gossip on `:9094` and dedupe. Prometheus does not
+cluster, and two independent copies survive one host's loss without
+Thanos. Retention 30 days. Rule files are copied from
+`deploy/monitoring/rules/` and validated with `promtool` before reload.
+Scrape targets come from inventory groups (no service discovery), so adding
+a host means re-running the role. The role cannot run on r1 without a
+single-host code path. Deferred: Thanos long-term storage (INV-1054) and
+cloud-Prometheus federation for DR, which needs a second region
+(INV-1055).
+
+### 7.2 Logs
+
+**Today:** a hand-installed single-host Loki on r1
+([`configs/loki/README.md`](../../configs/loki/README.md)). Promtail is
+ansible-managed by `archival-node/tasks/10-observability.yml`.
+
+**Planned (role `configs/ansible/roles/loki/`):** single-host Loki, chunks
+in an S3-compatible `loki-chunks` bucket the operator creates first (the
+role only probes it), BoltDB index, 30-day retention owned by the
+compactor — never add a bucket lifecycle rule, it races the compactor.
+Preflight checks time sync and ≥ 50 GB free on `/var`. Promtail needs
+`systemd-journal` group membership; wiping
+`/var/lib/promtail/positions.yaml` re-ships the whole journal. The
+server/agent playbooks are still placeholders (INV-1045). HA path when
+needed (INV-1062): `replication_factor` 2, `memberlist` KV, TSDB index on
+S3, a second host; existing chunks need no migration.
+
+### 7.3 Load testing (k6)
+
+Built in `test/load/`: scenarios `00`–`09` and `99-spike` under
+`test/load/scenarios/`, shared thresholds and the production-target guard
+in `scenarios/lib/`. Run with `make test-load` / `test-load-mixed` /
+`test-load-<name>` against `$K6_TARGET`; `make test-load-check`
+compile-checks every scenario without a target.
+
+- **Canonical proof:** `06-mixed-realistic.js`. Its weighted endpoint
+  mix and the reasoning behind it are in the file header.
+- **Decisions:** k6 because its Prometheus remote-write output graphs a
+  load run on the same dashboards as production; self-hosted runner;
+  `ramping-arrival-rate` rather than VU-count control; warm the cache
+  before measuring; the spike scenario posts an Alertmanager silence for
+  its window.
+- **Where it runs:** `k6-weekly.yml` is manual-dispatch only. No
+  production-shaped load target exists (`K6_TARGET_STAGING` is unset on
+  purpose), and the guard refuses production. The weekly SLA proof comes
+  from `sla-proof-weekly.yml`, which renders
+  `docs/operations/sla-proof-<date>.md` from the on-host SLA probe's
+  series. Procedure:
+  [`../operations/sla-proof-procedure.md`](../operations/sla-proof-procedure.md).
+
+### 7.4 Status page
+
+Built: `stellarindex.io/status` is a route in the explorer
+(`web/explorer/src/app/status/`, postmortems at `status/incident/[slug]`).
+Incidents are Markdown files in `internal/incidents/data/`, rendered by
+`web/explorer/src/lib/incidents.ts` and embedded in the API binary so
+`stellarindex-ops emit-incident` sends `incident.sev1` /
+`incident.resolved` webhooks from the same source. `status.stellarindex.io`
+is a redirect-only Cloudflare Pages stub (`web/status/public/_redirects`).
+Operator steps: [`runbooks/sev-status-page-update.md`](../operations/runbooks/sev-status-page-update.md).
+
+Why not a SaaS (Instatus was the original pick): webhooks are the primary
+channel, so the page is an archive, not a live UI, and one commit drives
+both page and webhook. Behaviour: `severity:` sets the card (SEV-1 major,
+SEV-2 minor, SEV-3 maintenance); no email list (no PII) — subscribers use
+the Atom feed `GET /v1/incidents.atom` or dashboard webhooks; the git
+corpus is the permanent record. Revisit if the team opens 5+ incidents a
+week; migrating is "replay the Markdown corpus into the vendor".
 
 ---
 
-## 8. Backup & restore — TARGET DESIGN (rewritten 2026-07-18; deployment status verified 2026-07-25)
+## 8. Backup & restore
 
-> **⛔ NOT DEPLOYED — none of the off-site streams in the table below exist yet (verified against config AND against the live host, 2026-07-25).**
->
-> Live evidence from R1, not inference from the repo:
-> ```
-> $ grep repo /etc/pgbackrest/pgbackrest.conf
-> repo1-path=/var/lib/pgbackrest          # no repo2, no S3, no azure/gcs
->
-> $ df -h /var/lib/pgbackrest /var/lib/postgresql
-> data/pgbackrest  2.0T  1019G  948G  52%  /var/lib/pgbackrest
-> data/postgres    1.7T   695G  948G  43%  /var/lib/postgresql
-> ```
-> Identical `Avail` on both rows is the point: **the only backup shares one
-> ZFS pool with the database it protects.** `systemctl list-timers` shows
-> `pgbackrest-backup.timer` and nothing else — no `clickhouse-backup`, no
-> `restore-drill`.
->
-> **UPDATED 2026-09-02 — the Postgres half of this block is no longer true.** During an incident, plan recovery from what is actually on the box, not from this table. **What exists today on R1:** pgBackRest `repo1` at `/var/lib/pgbackrest` — a ZFS dataset on the *same* `data` pool as the database it protects (`templates/pgbackrest.conf.j2`), full Sunday + differential Mon–Sat at 02:00 UTC with continuous WAL archiving — **plus `repo2`, an encrypted off-site S3 repo provisioned 2026-08-29** (ADR-0043 §2.2). Backups run per-repo nightly and staleness is alerted (`stellarindex_backup_offsite_stale`, `deploy/monitoring/rules/backup-offsite.yml`); the role gates repo2 rendering on `pgbackrest_repo2_s3_bucket` being set (`configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:132`), and the `pgbackrest_offsite_ack: true` escape hatch is no longer what r1 relies on. So a pool/box loss no longer takes Postgres with it. Still not provisioned:
->
-> - **ClickHouse — no DATA backup running yet.** The job exists (`scripts/ops/ch-lake-backup.sh`, ADR-0043 §2.4: native `BACKUP DATABASE` to an off-site `s3_plain` disk, installed by `tasks/18-pgbackrest-backup.yml`) but backs nothing up until `ch_lake_backup_s3_endpoint` and its vault key pair are set; `stellarindex_ch_lake_backup_stale` tickets each lake host until then. Until a chain exists the lake's only recovery path is re-derivation from the galexie archive (~1–2 weeks).
-> - **Galexie archive off-site — not backed up by design.** Raw ledgers are re-pulled from SDF's public AWS bucket (`galexie-archive-fill.sh`, inbound). Off-site copies are B2-only (lake + Postgres); AWS repo2 is retiring and there is no BX41 lake copy. The archive is in the local ZFS auto-snapshot net (`zfs_snapshot_datasets`, 7-day retention); total loss means a days–weeks re-pull, not unrecoverable.
-> - **Config / vault / secrets tarball — no such job exists.**
->
-> Design, provider choice, cost and sequencing: **`docs/operations/off-site-backup-plan.md` (status: §2 Postgres repo2 live; §1 archive mirror retired; §4 lake backup committed, waiting on its B2 bucket).** Anything below is the target that plan builds toward.
+Current state on r1:
 
-> ⚠️ The original table (in git history) had two gaps that make it unsafe as-is: **(1) no ClickHouse** — the largest store and primary serving path, omitted because this predates ADR-0034; **(2) backups landed on the *same box's* MinIO**, so a single ZFS-pool/box loss takes the data *and* its backups. The design below corrects both; note that gap (2) is still the LIVE situation until the streams above are provisioned.
+| Asset | Mechanism | Off-site | RPO | Restore |
+|---|---|---|---|---|
+| Postgres | pgBackRest `repo1` at `/var/lib/pgbackrest` (same ZFS pool as the DB): full Sunday, diff Mon–Sat 02:00 UTC, continuous async WAL archiving | **Live:** `repo2`, encrypted, on AWS S3 since 2026-08-29, moving to B2. Rendered only when `pgbackrest_repo2_s3_bucket` is set (`configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:132`); staleness alert `stellarindex_backup_offsite_stale` | 5 min (WAL) | ~1–3 h |
+| ClickHouse lake | `scripts/ops/ch-lake-backup.sh`: native `BACKUP DATABASE` to an `s3_plain` disk, 28-day full + daily incrementals | **Not running:** installed, but backs nothing up until `ch_lake_backup_s3_endpoint` and its vault keys are set; `stellarindex_ch_lake_backup_stale` tickets each lake host until then | daily (target) | ~4–36 h (10 Gbps / 1 Gbps); re-derivation ~1–2 weeks is the last resort |
+| Raw galexie archive | Not backed up by design; re-pulled from `aws-public-blockchain` (`galexie_archive_mirror_enabled: false`) | — | — | days to weeks |
+| Config, vault, systemd | No job exists | — | — | — |
+| Redis | AOF only; cache | — | — | re-warms from Postgres |
 
-| Asset | Tool (PLANNED) | Off-site target (PLANNED — none provisioned) | RPO (target) | Restore (RTO, target) |
-| --- | --- | --- | --- | --- |
-| **ClickHouse lake (14.6 TiB ≈ 16.1 TB, `bytes_on_disk`)** | native `BACKUP DATABASE` (`scripts/ops/ch-lake-backup.sh`; 28-day full + daily incrementals) | Backblaze B2 — see [off-site-backup-plan.md §Provider](../operations/off-site-backup-plan.md#provider) | daily | **~4–36 h restore** (10 Gbps / 1 Gbps). Re-derive from the archive is the *last resort* (~1–2 wk), NOT the plan |
-| Postgres (served money state) | pgBackRest **`repo2-type=s3`** (off-site) + `repo1` local | Backblaze B2 (repo2 moves there from its current S3 bucket) | 5 min (WAL) | ~1–3 h |
-| Galexie archive | none — re-pulled from `aws-public-blockchain` (mirror retired) | — | — | days–weeks |
-| Config / vault / secrets / systemd | encrypted tarball (`age`/`gpg`) | S3 | daily | minutes; **keep the vault passphrase off-R1** |
-| Redis | AOF (cache only — not backed up) | — | — | rehydrates from CH/PG |
+Provider, cost and sequencing:
+[`../operations/off-site-backup-plan.md`](../operations/off-site-backup-plan.md#provider).
 
-**Design principle — back up the source of truth + the RTO tiers.** The archive is irreplaceable; PG + CH are the served/RTO tiers. The CH lake is *also* re-derivable from the archive, but that path is weeks, so it's backed up in full for a ~half-day RTO. **The off-site CH snapshot doubles as the region-bootstrap + cross-region consistency baseline** — R2/R3 restore from it and keep up live, rather than each independently re-deriving (see the ADR-0008 amendment / §2). RTOs: Postgres PITR ~1–3 h; full CH restore ~½ day; total-loss (both copies gone) → re-derive from a Stellar history archive, days.
+**Restore drill.** Automated and monthly, per ADR-0043 §3. The timer fires
+on the first Saturday at 04:00 UTC
+(`configs/ansible/roles/archival-node/templates/systemd/restore-drill.timer.j2:27`);
+the enable task and its rationale are at
+`configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:707-732`.
+The drill's precondition check refuses (exit 2, not counted) when free
+space is short. It emits only `last_success_unix` and `failures`, not
+throughput, so a lake-scale restore time is unmeasured. Evidence goes to
+`docs/operations/drills/`.
 
-> **Better than backups for downtime: the HA warm standby** (§2, §3.3). An S3 restore is still hours dark; a warm standby (PG Patroni + a CH replica that bootstraps from the snapshot) fails over in minutes and removes the single-box SPOF. Full S3 backup = the durable floor; the standby = the real production target.
+**Principle.** Back up what is costly to rebuild. The archive is public
+data and is re-pulled. Postgres and the lake are derived, but rebuilding
+them takes days to weeks, so they are backed up for RTO. The off-site lake
+snapshot doubles as the R2/R3 bootstrap source. A warm standby beats any
+restore for downtime; backups are the floor.
 
 ---
 
 ## 9. Degradation modes (what we promise under failure)
 
-We document "what happens when prices become unavailable, sources start
-to differ, etc." The API envelope
-(to be specified in [api-design.md](../reference/api-design.md) §Error envelope)
-carries four boolean flags:
+Responses carry advisory flags; none is an error. The authoritative list
+and wording is the `Flags` schema in
+[`openapi/stellar-index.v1.yaml`](../../openapi/stellar-index.v1.yaml).
+The ones failure produces:
 
-| Flag | Meaning | When we set it |
-| ---- | ------- | -------------- |
-| `stale` | Price > 30 s old | Redis hot key TTL expired + aggregator hasn't written new value |
-| `reduced_redundancy` | Price derived from fewer sources than normal | Any configured source for this asset is unhealthy (cursor lag > 60 s) |
-| `triangulated` | Price derived via a USD/BTC hop, not direct | Pair has no direct market meeting min-volume threshold |
-| `divergence_warning` | Sources disagree > configured threshold | Cross-check against CoinGecko / CMC / Chainlink-HTTP fails bound |
+| Flag | Set when |
+|---|---|
+| `stale` | The response is below its surface's freshness baseline, e.g. the aggregator stopped refreshing or Redis failed over |
+| `reduced_redundancy` | Cross-region redundancy is degraded (R2/R3 set it when R1's last completeness run is stale, ADR-0017) |
+| `frozen` | Anomaly detection refused to publish a new value (ADR-0019) |
+| `divergence_warning` | An anomaly check or cross-reference failed its bound |
 
-No flag is a response-level error; they're advisory. Clients decide
-whether to accept. The `price` value is always best-available;
-`stale: true` means "here's the last known good, fix your
-decision-making accordingly."
-
-Specific "everything is on fire" scenarios:
+The value is always the best available. `stale: true` means "last known
+good, decide accordingly".
 
 | Scenario | Response |
-| -------- | -------- |
-| Full primary-colo outage | DNS flip to cloud DR → API serves from AWS + last-synced Timescale replica (RPO 5 min) with `stale: true` on every response until ingest is re-established. |
-| One critical source (e.g., Reflector) offline | Affected assets get `reduced_redundancy=true`; others unaffected. |
-| Divergence: Redstone vs CEX > 5% | `divergence_warning=true` on affected assets; internal alert to the maintainer for market-event sanity check. |
-| TimescaleDB read-replica lag > 10 s | API briefly reads from primary (via PgBouncer session-mode pool); alert if sustained. |
+|---|---|
+| Ingest down in a region | Pricing serves the last closed buckets with `stale: true` until ingest catches up |
+| ClickHouse down | Lake routes 503; pricing and `/readyz` (200 `degraded`) unaffected |
+| Redis down | Reads fall through to Postgres; slower, still correct |
+| R1 down (multi-region) | R2/R3 serve pricing from local stores; lake routes read the object-storage fallback; authenticated traffic fails until control-plane replication exists (§3.3) |
+| Reconnecting SSE client | Ledger and observation streams have no replay (gap on reconnect); price-stream resume tokens are per region |
 
 ---
 
-## 10. Launch checklist (HA subset)
+## 10. Roadmap and launch checklist
 
-- [ ] All 3 stellar-core + galexie instances running stably for 7 days with no crashes.
-- [ ] Patroni failover drilled end-to-end in staging (simulate primary OOM).
-- [ ] Redis Sentinel failover drilled (kill master during load).
-- [ ] Load test hits 2 000 rps with p95 ≤ 200 ms on cached endpoints.
-- [ ] Restore drill: point-in-time recovery to 24 h ago, < 2 h wall-clock.
-- [ ] DR drill: DNS-flip to cloud, serve for 1 h, flip back.
-- [ ] Alerts catalogue reviewed — every alert has a runbook link.
-- [ ] SEV-1 + SEV-2 playbooks rehearsed with a tabletop exercise.
+R2/R3 and in-region HA are deferred past v1.0 (ADR-0050 §0c). The real
+exposure is r1 as a single point of failure, so a second origin is bought
+for availability first.
 
-None of these are green today (Week 1). Every line becomes a PR
-checklist at its owning week.
+**Prerequisites** (nothing multi-region lands before these):
 
----
+| Workstream | State |
+|---|---|
+| Off-site DR | Postgres `repo2` live; lake backup waits on its B2 bucket (§8) |
+| Determinism hardening | OHLC tiebreak shipped (`migrations/0147_ohlc_deterministic_tiebreak.up.sql`); `account_movements` FINAL closed as not needed (duplicates are identical tuples); stripping wall-clock watermarks from served responses still open; a cross-region divergence prober is the evidence it holds |
+| SLO guard | Shipped: `internal/api/v1/slo_guard_test.go` fails if an SLO'd handler gains a remote-ClickHouse, cross-region or S3 dependency |
+| Lake-aware health and routing | Signal shipped (`/v1/livez/lake`); path-steering not built |
+| Control-plane replication | Not started (§3.3) |
+| Multi-region inventory and deploy | r2/r3 not in `deploy.yml`; inventories are examples only |
 
-## 11. Open questions — closed
+**Sequence when it resumes**, cheapest first:
 
-The Week-1 plan called for these to land as ADRs or design docs by
-end of Week 2. They have:
+1. Cloudflare in front (WAF + cache).
+2. Test a 1–5 s `s-maxage` on `/v1/price` and `/v1/oracle/latest`. We serve
+   closed buckets, so this may be inside the contract; if it holds, much of
+   the API becomes edge-servable and R3's case weakens.
+3. R2 (US): removes the single point of failure and covers the likeliest
+   customers. Independent ingest, pricing active/active, lake proxy to R1,
+   control-plane replication, added to the LB.
+4. R3 (Singapore), only on evidence of Asian API usage by endpoint.
+5. Global failover: lake-aware routing for API and explorer, scheduled
+   failover drills.
 
-1. **Colo provider + physical locations** — Hetzner FSN1 (Falkenstein, DE)
-   for R1; AWS for R2; Vultr for R3. See
-   [r1-deployment-state.md](../operations/r1-deployment-state.md) +
-   [ADR-0016](../adr/0016-per-region-storage-strategy.md).
-2. **Patroni vs Stolon vs native TimescaleDB HA** — Patroni; landed
-   as `configs/ansible/roles/patroni/`.
-3. **MinIO EC(6+3) vs EC(4+2)** — EC(6+3); fixed in ADR-0008 §2.
-4. **Cloud DR region** — AWS eu-west-1 (matching the colo latency
-   profile for European users); ADR-0008 §5.
-5. **Secret-manager choice** — Ansible Vault for inventory secrets;
-   `configs/ansible/inventory/r1.secrets.yml` is the source of
-   truth, per the playbook README.
-6. **Observability stack** — self-hosted Prometheus + Grafana +
-   Loki; ansible roles
-   `configs/ansible/roles/{prometheus,loki}/` deploy them.
+In-region HA on R1 (ADR-0050 Phase 1) slots in before R2 if it is still
+wanted (§11).
 
-Anything new that surfaces post-ratification gets a fresh ADR rather
-than an entry here.
+**Launch checklist for the HA build** (INV-1101; none green yet):
 
----
+- [ ] Patroni failover drilled end to end in staging (primary OOM).
+- [ ] Redis Sentinel failover drilled under load.
+- [ ] Load test at 2,000 rps with p95 ≤ 200 ms on cached endpoints.
+- [ ] Point-in-time restore to 24 h ago in under 2 h wall clock.
+- [ ] DR drill: fail over to another region, serve for 1 h, fail back.
+- [ ] Every alert has a runbook link.
+- [ ] SEV-1 and SEV-2 playbooks rehearsed as a tabletop.
 
-## 12. Cost envelope
-
-Order-of-magnitude; concrete per-line numbers live in the operator's
-own cost spreadsheet (not checked into the repo). Below is the
-shape used to size hardware in ADR-0008.
-
-| Line | Monthly | Notes |
-| ---- | ------- | ----- |
-| 3 × R640 colo + power + bandwidth | $1.5–2k | existing footprint, already owned; incremental |
-| 9 × MinIO nodes (smaller chassis) | $2–3k | 180 TB raw, ~120 TB usable after EC |
-| 3 × Timescale hosts | already covered by R640s | |
-| Cloud DR (AWS) | $1–2k warm, $5k+ on failover | RDS async + stateless scale-to-zero |
-| Observability (Grafana Cloud or self-hosted) | $500 | |
-| CDN (Cloudflare) | $200 | |
-| Domain + TLS + GitHub | $100 | |
-| **Total steady state** | **~$5–8k / month** | | 
-
-Revenue model is out of scope (free public API; SDF grant funds).
-Cost envelope checked against the infrastructure budget.
+The load-test and restore items can be pulled forward on a single box.
 
 ---
 
-## 13. Appendix — tooling
+## 11. Open decisions
 
-- **HAProxy** — 2.9 LTS.
-- **keepalived** — for VRRP VIPs.
-- **Patroni** — 3.x with etcd3 DCS.
-- **PgBouncer** — transaction mode.
-- **Redis** — 7.x with Sentinel.
-- **MinIO** — current RELEASE.* on the docker-compose profile;
-  baremetal RPMs in production.
-- **pgBackRest** — with MinIO as the repo backend.
-- **Prometheus + AlertManager + Grafana + Loki + Tempo** — "grafana
-  stack." Possibly replaced with Grafana Cloud depending on
-  cost model.
+1. **Rate limit and quota across regions** (ADR-0050 §3d). Due before a
+   second region serves authenticated traffic. Options: publish limits as
+   per region (the 429 body must say so); configure limit ÷ N per region
+   (a failover then cuts a caller to 1/N); reconcile the monthly quota
+   through the replicated control plane with bounded lag. Rejected: a
+   synchronous cross-region counter, which puts a WAN round trip on every
+   request.
+2. **Is in-region HA on R1 still wanted** once R2 provides cross-region
+   failover? ADR-0050 §8 says one box per region; §10 still lists the
+   Phase 1 build.
+3. **Redis in-flight encryption** for the multi-host build (§3.4).
+4. **Cross-region SSE resume**: accept the gap, or add a portable
+   `Last-Event-ID` cursor.
+5. **Patroni implementer questions** (INV-1053) and **PgBouncer**
+   (INV-1049): see §3.3.
 
-All tools are Apache-2.0 / MIT / PostgreSQL / BSD-compatible. No
-copyleft dependencies in the serving path.
+---
+
+## 12. Cost
+
+Annual, list price (committed pricing ~30–40 % lower), verified 2026-08-21:
+
+| Region | Shape | ~Annual |
+|---|---|---|
+| R1 (Hetzner, existing) | primary + lake authority | ~$5,000 |
+| R2 (Vultr US bare metal) | pricing + lake proxy | ~$4,200 |
+| R3 (Vultr SG bare metal) | pricing + lake proxy | ~$4,500 |
+| Off-site backups | lake + Postgres on B2 | see the backup plan |
+| **Fleet, one box per region** | | **~$15,000–18,000** |
+
+Excluded: user-facing egress, and the one-time ~1–2 week backfill per
+region. The $180–288 K/yr figure in older documents is the per-region HA
+fleet ADR-0050 rejected.

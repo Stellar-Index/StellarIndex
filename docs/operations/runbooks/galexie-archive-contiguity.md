@@ -22,8 +22,8 @@ severity: P1 | P3
 ## Why this exists
 
 `galexie-archive` on R1's MinIO is the ADR-0016 durable ledger mirror
-and the source the multi-region off-site DR copy is pulled from
-(`docs/architecture/multi-region-ha.md` §5). Its **declared shape** is
+and the source local rebuilds read from
+(`docs/architecture/ha-plan.md` §3.2; it is re-pulled, not backed up, per §8). Its **declared shape** is
 the genesis partition `[0, 63999]` plus `[ARCHIVE_FROM = 49,984,000 →
 tip]`; the middle is a **deliberate capacity trim** (recoverable only
 from `aws-public-blockchain`).
@@ -115,5 +115,5 @@ shipped script against a stubbed `mc`.
   edge advancing; this runbook covers the middle staying intact.
 - [archive-files-missing](archive-completeness.md#stellarindex_archive_files_missing) — chunk-level
   verification inside partitions.
-- `docs/architecture/multi-region-ha.md` §5 — the off-site copy this
-  mirror feeds.
+- `docs/architecture/ha-plan.md` §3.2 and §8 — archive contents, and why
+  the archive is re-pulled rather than backed up off-site.

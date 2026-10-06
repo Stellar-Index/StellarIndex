@@ -246,8 +246,7 @@ Operator steps:
 
 4. **Layer-2 monitoring (Prometheus on a separate box)**: roles
    `configs/ansible/roles/prometheus/` (+ AlertManager) and Loki/Promtail
-   exist; notes in `docs/architecture/prometheus-ansible-role-design-note.md`
-   and `docs/architecture/loki-ansible-role-design-note.md`. Layer-1
+   exist; see `docs/architecture/ha-plan.md` §7.1 and §7.2. Layer-1
    (Healthchecks.io) catches total death only.
 
 5. ~~pgBackRest~~ **RESOLVED (verified 2026-06-30).** Config

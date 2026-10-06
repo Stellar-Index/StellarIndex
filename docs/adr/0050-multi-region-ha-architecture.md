@@ -13,7 +13,7 @@ superseded_by: []
 ## Context
 
 No cross-region replication exists or is buildable for the 14.6 TiB ClickHouse lake, and a per-region S3-tiered lake fails on cost, latency and R3's disk. ADR-0008 had ruled multi-region active/active out of v1 and ADR-0016's Model A (R1-canonical Postgres replication) does not exist.
-The full plan, cost model and phasing live in `docs/architecture/multi-region-ha.md`; implementation is deferred until after v1.0 (plan §0c), so the build is not in the tree yet.
+The full plan, cost model and phasing live in `docs/architecture/ha-plan.md`; implementation is deferred until after v1.0 (plan §10), so the build is not in the tree yet.
 
 ## Decision
 
@@ -46,4 +46,4 @@ Section labels match the plan doc and are cited from code.
 
 ## Evidence
 
-`docs/architecture/multi-region-ha.md`, `internal/api/v1/slo_guard_test.go`, `internal/api/v1/livez_lake_test.go`, `internal/api/v1/server.go` (`/v1/livez/lake` route).
+`docs/architecture/ha-plan.md`, `internal/api/v1/slo_guard_test.go`, `internal/api/v1/livez_lake_test.go`, `internal/api/v1/server.go` (`/v1/livez/lake` route).

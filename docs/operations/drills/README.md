@@ -13,7 +13,7 @@ cadence pinned in [sev-playbook.md §8](../sev-playbook.md):
 | --- | --- | --- | --- | --- |
 | Monthly tabletop | every month | ~30 min | no | writeup + log row |
 | Quarterly chaos | every quarter | ~2 h | yes (staging only) | writeup + log row |
-| Annual DR | every year | ~4 h | yes (production failover, ~1 h; protocol in [sev-playbook.md §8.3](../sev-playbook.md) and [ha-plan.md §6](../../architecture/ha-plan.md)) | writeup + log row |
+| Annual DR | every year | ~4 h | yes (production failover, ~1 h; protocol in [sev-playbook.md §8.3](../sev-playbook.md) and [ha-plan.md §10](../../architecture/ha-plan.md#10-roadmap-and-launch-checklist)) | writeup + log row |
 
 Action items from a drill go to the issue tracker (label `drill-action`)
 with owner and due date, and feed back into the playbook and runbooks.

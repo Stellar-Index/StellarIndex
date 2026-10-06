@@ -5,7 +5,6 @@ status: ratified
 related:
   - docs/architecture/ha-plan.md
   - docs/adr/0008-ha-topology.md
-  - docs/architecture/multi-region-ha.md
   - docs/adr/0050-multi-region-ha-architecture.md
   - docs/adr/0016-per-region-storage-strategy.md
   - docs/operations/sev-playbook.md
@@ -56,10 +55,10 @@ HAProxy VIPs, no Cloudflare load-balancer pool. The `patroni` /
 wired playbooks (`configs/ansible/README.md`). `api.stellarindex.io`
 is a bare A record to r1's Caddy (`Caddyfile.j2`). The current
 multi-region program is
-[`multi-region-ha.md`](../../architecture/multi-region-ha.md)
+[`ha-plan.md`](../../architecture/ha-plan.md)
 (ratified by ADR-0050, 2026-08-21; supersedes ADR-0016 and ADR-0008's
-multi-region decision) — its §6 "Failover design" is the cutover
-model this runbook will eventually execute, and its §3c notes the
+multi-region decision) — its §3.1 and §9 describe the cross-region
+failover this runbook will eventually execute, and its §3.3 notes the
 control plane is region-local, so API keys minted in the primary
 return **401** in a DR region until control-plane replication lands.
 
@@ -108,7 +107,7 @@ Activate when ANY of these is true AND no faster recovery exists:
   the only option that doesn't propagate the corruption.
 
 **Don't activate when** (applies once Patroni / Sentinel exist per
-[`multi-region-ha.md`](../../architecture/multi-region-ha.md) §7
+[`ha-plan.md`](../../architecture/ha-plan.md#10-roadmap-and-launch-checklist) §10
 prerequisites; on 2026-08-28 r1 is a single Postgres + single Redis
 with no failover automation, so these bullets have no live component
 behind them yet):
@@ -121,7 +120,7 @@ behind them yet):
   [`scenarios/sev2-redis-sentinel-failover.md`](../drills/scenarios/sev2-redis-sentinel-failover.md)).
 - One of the three regions is degraded but R1 is healthy —
   R2/R3 are independent-ingest regions in the current design (Model B,
-  [`multi-region-ha.md`](../../architecture/multi-region-ha.md) §2;
+  [`ha-plan.md`](../../architecture/ha-plan.md#1-decisions-that-still-bind) §1;
   ADR-0016 is superseded by ADR-0050) and don't need DR activation;
   they self-heal once the partition clears.
 
@@ -237,8 +236,8 @@ yet — that goes in the **Identified** entry after flip succeeds.
 > is no Cloudflare LB pool, no HAProxy VIP and no `cf-cli` tooling
 > anywhere in the repo; `api.stellarindex.io` is a bare A record →
 > r1's Caddy (`Caddyfile.j2`, `136.243.90.96`). Both mechanisms below
-> are the [`multi-region-ha.md`](../../architecture/multi-region-ha.md)
-> §6 model. TODO(maintainer): decide the interim flip mechanism (manual
+> are the [`ha-plan.md`](../../architecture/ha-plan.md#31-edge-and-load-balancer)
+> §3.1 model. TODO(maintainer): decide the interim flip mechanism (manual
 > Cloudflare-dashboard A-record change is the only option today) and
 > where the Cloudflare API token lives — `deploy/ops-keys.md` never
 > existed.
@@ -349,7 +348,7 @@ stellarindex-ops detect-gaps -config /etc/stellarindex.toml
 If the indexer's cursors aren't advancing, check Galexie's
 read connectivity to MinIO — the DR region's MinIO bucket
 should be writable + readable per
-[`multi-region-ha.md`](../../architecture/multi-region-ha.md) §4/§5
+[`ha-plan.md`](../../architecture/ha-plan.md#23-planned-regions) §2.3
 (ADR-0050; ADR-0016 is superseded).
 
 ### 4.3 Customer-visible flag rates
@@ -463,7 +462,7 @@ Run quarterly:
   silently).
 - pgBackRest stanza fresh in BOTH regions (not just primary).
 - `dr-activation.md` itself reflects
-  [`multi-region-ha.md`](../../architecture/multi-region-ha.md) /
+  [`ha-plan.md`](../../architecture/ha-plan.md) /
   ADR-0050 — re-read on each change to those docs.
 
 A failed drift signal is a launch-readiness regression — file
