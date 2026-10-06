@@ -78,6 +78,8 @@ error string cite "AGENTS.md invariant N" — do not renumber these.
   (`internal/pipeline/lockstep_ast_test.go`). `band`, `soroswap_router`, `sdex`, the external
   CEX/FX connectors and the supply observers write through the dispatcher instead;
   `IsProjectedEvent`'s default branch is the list.
+  Under ADR-0032 Phase 3 (`persist_per_source=true`, the r1 default) the dispatcher and the
+  projector both write the projected sources except sep41, by design until per-source promotion.
 - **[7]** **Catch-up depends on which side of that line you are on.** A projected domain uses
   `stellarindex-ops projector-replay`; a non-projected one uses `ch-rebuild` (`-sdex`,
   `-contract-calls`). NEVER add a bespoke `<source>-backfill` subcommand: it is a second writer.
