@@ -133,7 +133,7 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 // tx_hash so ClickHouse streams in read order, and scanInApplyOrder re-sorts
 // each ledger by stellar.transactions.tx_index before fn sees it.
 // StreamContractEventsFiltered is the projector's forward-read source (ADR-0034
-// ADR-0034 #10 feed-switch): it streams contract_events for [from,to] narrowed by a
+// ADR-0041 feed-switch): it streams contract_events for [from,to] narrowed by a
 // per-source prefilter (contract_id IN / topic_0_sym IN — mirrors the Postgres
 // soroban_events path's prefilter), reconstructing each as an events.Event for
 // the source's decoder. NO FINAL: the projector reads small forward windows and

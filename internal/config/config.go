@@ -1196,7 +1196,7 @@ type StorageConfig struct {
 	// deployment that cannot run ClickHouse opts OUT here rather than in.
 	ClickHouseAddr     string `toml:"clickhouse_addr" doc:"ClickHouse native address host:port for the Tier-1 lake (ADR-0034); used by the indexer real-time dual-sink." default:"127.0.0.1:9300"`
 	ClickHouseLiveSink bool   `toml:"clickhouse_live_sink" doc:"Enable the real-time ClickHouse dual-sink: the indexer writes each ledger's structural extract to CH inline (non-blocking), keeping the lake within ~seconds of the chain. ON by default (ADR-0041): the certified-lake substrate backs the coverage claim, the CH completeness path, and lake-derived supply — opt out only on deployments that cannot run ClickHouse, accepting the loss of all three." default:"true"`
-	// ClickHouseProjectorSource feed-switch (ADR-0034 #10): when true, the
+	// ClickHouseProjectorSource feed-switch (ADR-0041): when true, the
 	// projector reads forward events from the CH lake's contract_events instead
 	// of the Postgres soroban_events landing zone, so soroban_events can be
 	// decommissioned. Requires the dual-sink (ClickHouseLiveSink) so CH is

@@ -596,7 +596,7 @@ func run(cfgPath string, dryRun bool) error {
 	logger.Info("soroban-events sink wired",
 		"buffer_size", 4096, "batch_size", 1000)
 
-	// ─── ClickHouse real-time dual-sink (ADR-0034 #18) ─────────
+	// ─── ClickHouse real-time dual-sink (ADR-0041) ─────────
 	// When enabled, each ledger's structural extract is pushed to ClickHouse
 	// inline (non-blocking), keeping the Tier-1 lake within ~seconds of the
 	// chain for the real-time block explorer — vs the ~10-min ch-live-catchup
@@ -714,7 +714,7 @@ func run(cfgPath string, dryRun bool) error {
 		// soroban_events mode only: the ledgerstream cursor advances when a
 		// ledger's rows are enqueued to rawEventSink, not when they commit.
 		proj.SetRawEventBarrier(rawEventSink.Sync)
-		// Feed-switch (ADR-0034 #10): read forward events from the CH lake
+		// Feed-switch (ADR-0041): read forward events from the CH lake
 		// (dual-sink-fed) instead of Postgres soroban_events, so the latter can
 		// be decommissioned. ON since ADR-0041; requires the dual-sink running,
 		// so it goes off wherever clickhouse_live_sink does.
@@ -1620,7 +1620,7 @@ const (
 	chLiveSinkDialMaxBackoff = time.Minute
 )
 
-// startCHLiveSink dials the ClickHouse real-time dual-sink (ADR-0034 #18)
+// startCHLiveSink dials the ClickHouse real-time dual-sink (ADR-0041)
 // in its own goroutine, retrying with backoff until it succeeds or ctx
 // ends, and only then starts it and its metrics watcher — see the K024
 // docstring at the call site for why the dial must not be able to fail the

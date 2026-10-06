@@ -5131,7 +5131,7 @@ var MintScopeClampRefusedTotal = prometheus.NewCounterVec(
 )
 
 // ChLiveSinkLedgersTotal — count of ledgers processed by the
-// ClickHouse real-time dual-sink (ADR-0034 #18), labelled by
+// ClickHouse real-time dual-sink (ADR-0041), labelled by
 // `outcome`:
 //   - "written"  — durably flushed to ClickHouse (post-Flush).
 //   - "buffered" — accepted into the in-memory buffer (pre-flush);

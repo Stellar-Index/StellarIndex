@@ -600,7 +600,7 @@ func TestValidate_ReflectorDecimalsCeiling(t *testing.T) {
 }
 
 // TestValidate_ClickHouseProjectorSourceRequiresLiveSink locks the
-// ADR-0034 #10 feed-switch dependency (C3-20): the projector reading
+// ADR-0041 feed-switch dependency (C3-20): the projector reading
 // forward events FROM ClickHouse only makes sense if the dual-sink is
 // WRITING them. The invariant is documented on the field ("Requires
 // clickhouse_live_sink") but was never enforced — a misconfig

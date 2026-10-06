@@ -290,7 +290,7 @@ type Projector struct {
 
 	// lakeEvents, when non-nil, switches the per-source read from the Postgres
 	// soroban_events landing zone to the ClickHouse Tier-1 lake's
-	// contract_events (ADR-0034 #10 feed-switch — the dual-sink feeds CH
+	// contract_events (ADR-0041 feed-switch — the dual-sink feeds CH
 	// inline, so CH is authoritative for forward events and soroban_events can
 	// be decommissioned). The per-source cursor (last_ledger) is
 	// source-agnostic, so the switch is seamless. Nil = legacy
@@ -384,7 +384,7 @@ func (p *Projector) emitDecoderLossDeltas(src Source) {
 }
 
 // SetClickHouseSource switches the projector to read forward events from the
-// ClickHouse lake at addr instead of Postgres soroban_events (ADR-0034 #10).
+// ClickHouse lake at addr instead of Postgres soroban_events (ADR-0041 feed-switch).
 // Call before Run. Empty addr keeps the legacy soroban_events source.
 func (p *Projector) SetClickHouseSource(addr string) {
 	if addr == "" {
@@ -1348,7 +1348,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 
 	prefilter := src.PrefilterContractIDs()
 	if p.lakeEvents != nil {
-		// CH feed-switch (ADR-0034 #10): read contract_events (see chEventSource).
+		// CH feed-switch (ADR-0041): read contract_events (see chEventSource).
 		err = p.lakeEvents.StreamEvents(cycleCtx, fromLedger, toLedger,
 			prefilter, src.Topic0Syms, src.ExcludeTopic0Syms, src.NeedsStateWriteKeys,
 			func(ev events.Event) error {
@@ -1809,7 +1809,7 @@ func (p *Projector) holdForWidenedGate(source string, from, to uint32, added []s
 // so reading past the first hole would silently lose that ledger's
 // events (the cursor advances to the bound unconditionally). Clamping
 // to the watermark stalls the source AT a hole until the catch-up
-// timer heals it, instead of skipping over it (ADR-0034 #10).
+// timer heals it, instead of skipping over it (ADR-0041 feed-switch).
 //
 // In soroban_events mode the same hazard has a different shape: the raw
 // sink commits asynchronously after the cursor advances, so the tip's own
