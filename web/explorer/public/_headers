@@ -91,8 +91,8 @@
 # nothing to intersect it away. Because a CSP frame-ancestors IS
 # present on /embed/* responses, browsers ignore X-Frame-Options
 # entirely for them — which is what makes the parent rule's
-# `X-Frame-Options: DENY` harmless here. ALLOWALL is still set for
-# pre-CSP browsers.
+# `X-Frame-Options: DENY` harmless here. No X-Frame-Options is set on
+# this rule: ALLOWALL is not a valid value (only DENY/SAMEORIGIN are).
 #
 # DO NOT reintroduce frame-ancestors to the /* rule. CF Pages applies
 # every matching rule, both CSP headers reach the browser, and two
@@ -100,7 +100,6 @@
 # entire embed product came to be silently unframeable.
 /embed/*
   X-Content-Type-Options: nosniff
-  X-Frame-Options: ALLOWALL
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()
   # HSTS repeated so it applies regardless of how the host merges

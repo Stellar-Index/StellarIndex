@@ -34,11 +34,10 @@ const SECURITY_HEADERS = {
       "default-src 'self'; connect-src 'self' https://api.stellarindex.io https://api.testnet.stellarindex.io https://api.futurenet.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'",
   },
   // /embed/* is designed to be iframed by customer sites (see
-  // public/_headers) — ALLOWALL + `frame-ancestors *` instead of the
-  // default block's DENY, mirroring the static rule exactly.
+  // public/_headers) — `frame-ancestors *` and no X-Frame-Options (ALLOWALL
+  // is not a valid value), mirroring the static rule exactly.
   embed: {
     'X-Content-Type-Options': 'nosniff',
-    'X-Frame-Options': 'ALLOWALL',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Permissions-Policy':
       'accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()',
