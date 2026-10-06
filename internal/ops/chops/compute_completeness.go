@@ -693,7 +693,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				// the check is blind to. pdetail already leads with the
 				// blind-spot summary (reconcileProjectionAggregate).
 				var claimDetail string
-				projOK, claimDetail = projectionClaim(servedFrom, runFrom, srW.Ledger, delta == 0 && !blind.Any(), pdetail, priorProj[src.name])
+				projOK, claimDetail = projectionClaim(servedFrom, runFrom, srW.Ledger, delta == 0 && !blind.Any(), pdetail, priorProj[src.name], src.projectionScope())
 				detail = append(detail, claimDetail)
 				if len(floorLoss) > 0 {
 					projOK = false
@@ -1704,12 +1704,12 @@ func buildPriorVerdicts(snaps []timescale.CompletenessSnapshot) (priorProj, prio
 // served tier legitimately holds no sdex trades below ledger 61,609,957, and
 // each source's floor differs — soroswap's is 50,746,445; the genesis claim is
 // the separate lake_complete axis).
-func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail string, prior priorProjection) (bool, string) {
+func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail string, prior priorProjection, scope string) (bool, string) {
 	if !runClean {
 		return false, "projection: " + runDetail
 	}
 	if runFrom <= servedFrom {
-		return true, fmt.Sprintf("projection: verified [%d,%d] — the full range the served tier holds", servedFrom, hi)
+		return true, fmt.Sprintf("projection: verified [%d,%d] over the served range of the reconciled tables — %s", servedFrom, hi, scope)
 	}
 	skipped := fmt.Sprintf("[%d,%d]", servedFrom, runFrom-1)
 	switch {
@@ -1722,7 +1722,7 @@ func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail st
 	case prior.verifiedFrom > servedFrom:
 		return false, fmt.Sprintf("projection: verified only [%d,%d]; the prior clean verdict only covered from ledger %d, leaving [%d,%d] verified by nobody — not claiming it (re-run without -from)", runFrom, hi, prior.verifiedFrom, servedFrom, prior.verifiedFrom-1)
 	default:
-		return true, fmt.Sprintf("projection: verified [%d,%d]; %s carried from the prior clean verdict (tip=%d), not re-verified this run", runFrom, hi, skipped, prior.tip)
+		return true, fmt.Sprintf("projection: verified [%d,%d]; %s carried from the prior clean verdict (tip=%d), not re-verified this run — %s", runFrom, hi, skipped, prior.tip, scope)
 	}
 }
 

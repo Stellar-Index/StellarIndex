@@ -207,6 +207,46 @@ const blendEmitterDropWaiver = "fan-out: one drop event → N recipient rows " +
 	"(whereFilter event_kind <> 'drop') and omits the drop kind so the 1:1 " +
 	"distribute/swap_config rows still reconcile per-ledger; density gap-detector covers drop"
 
+// projectionScope renders which served tables the projection reconcile counted
+// and which it waived, for the verdict detail. The text carries no "; ": detail
+// is joined on that separator.
+func (s reconSource) projectionScope() string {
+	tbl := func(table, filter string) string {
+		if filter == "" {
+			return table
+		}
+		return table + "[" + filter + "]"
+	}
+	rec := make([]string, 0, len(s.targets))
+	for _, t := range s.targets {
+		rec = append(rec, tbl(t.table, t.whereFilter))
+	}
+	sort.Strings(rec)
+	out := fmt.Sprintf("scope: reconciled %d table(s) [%s]", len(rec), strings.Join(rec, ", "))
+	if s.aggregate != nil {
+		out += fmt.Sprintf(", window totals at ledgers <= %d", s.aggregate.boundary)
+	}
+	if len(s.waived) == 0 {
+		return out
+	}
+	byReason := map[string][]string{}
+	for _, w := range s.waived {
+		r := strings.TrimSpace(strings.SplitN(w.reason, ":", 2)[0])
+		byReason[r] = append(byReason[r], tbl(w.table, w.whereFilter))
+	}
+	reasons := make([]string, 0, len(byReason))
+	for r := range byReason {
+		reasons = append(reasons, r)
+	}
+	sort.Strings(reasons)
+	parts := make([]string, 0, len(reasons))
+	for _, r := range reasons {
+		sort.Strings(byReason[r])
+		parts = append(parts, strings.Join(byReason[r], ", ")+" ("+r+")")
+	}
+	return out + ", not reconciled: " + strings.Join(parts, ", ")
+}
+
 // outlastsPass reports whether the daily -pass must not force this source's
 // from-genesis re-proof (the SDEX census, or a named heavy source).
 func (s reconSource) outlastsPass() bool { return s.census || s.reproofOutlastsPass != "" }
