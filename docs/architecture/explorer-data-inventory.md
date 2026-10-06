@@ -11,30 +11,30 @@ related:
 
 # Explorer — data, IA and gaps
 
-The explorer is `web/explorer/` (stellarindex.io, Cloudflare Pages). The API contract is `openapi/stellar-index.v1.yaml`; this page does not restate it. It records the intent, which entity page serves what from which endpoint or table, and the **gap list**: things the 2026-05 plan promised that the spec still does not contain.
+The explorer is `web/explorer/` (stellarindex.io, Cloudflare Pages). The API contract is `openapi/stellar-index.v1.yaml`, not restated here. This page records the intent, which page serves what from which endpoint or table, and the **gap list**: things the 2026-05 plan promised that the spec still lacks.
 
 Section numbers are cited from migrations and Go comments (§3, §6.1, §7, §9.1, §9.6, §11); keep them stable.
 
-The plan's `/coins/*` tree never shipped: routes are `/assets/*` and there is no `/v1/coins` (see [supply-pipeline.md § Asset identity](supply-pipeline.md#asset-identity)); `/coins` and `/coins/` 301 to `/assets` in `web/explorer/public/_redirects`. Old `/v1/coins...` paths map to `/v1/assets...` or are gaps below.
+The plan's `/coins/*` tree never shipped: routes are `/assets/*` and there is no `/v1/coins` (see [supply-pipeline.md § Asset identity](supply-pipeline.md#asset-identity)); `/coins` 301s to `/assets` in `web/explorer/public/_redirects`. Old `/v1/coins...` paths map to `/v1/assets...` or are gaps below.
 
 ## 1. Mission
 
-Two goals, weighted equally. (1) Showcase the API: every visible number is one copy-pasteable public call, exposed by the `<>` reveal. (2) Be useful: holders, researchers, integrators and operators should each get real answers. A feature that serves only one goal is a v2 candidate.
+Two goals, weighted equally: (1) showcase the API, so every visible number is one copy-pasteable public call, exposed by the `<>` reveal; (2) be useful to holders, researchers, integrators and operators. A feature serving only one goal is a v2 candidate.
 
-Product shape (UX design of record, 2026-06): the index in the literal sense. Every entity has one canonical page, built from verified data, linking to the API call that produced it. Four lenses:
+Product shape (2026-06): every entity has one canonical page, built from verified data, linking to the API call that produced it. Four lenses:
 
 - **Prices**: what is anything worth (Stellar assets plus global crypto, fiat, RWA).
 - **Protocols**: per-protocol deep dives backed by per-source tables and the ADR-0035 verified contract registries.
 - **Network**: ledgers, transactions, accounts, contracts and events from the certified lake.
 - **Coverage**: why to believe it (ADR-0033 verdicts, rendered as product).
 
-Differentiators: protocol-aware attribution (`/contract` is the hinge, §7.10), provable completeness (coverage badges backed by `completeness_snapshots`) and independent cross-venue pricing (VWAP with confidence, oracle cross-checks).
+Differentiators: protocol-aware attribution (`/contract` is the hinge, §7.10), provable completeness (badges backed by `completeness_snapshots`) and independent cross-venue pricing (VWAP with confidence, oracle cross-checks).
 
 ## 2. Audiences
 
 Audiences: traders and holders, DeFi users, builders, issuers and protocol teams, researchers and journalists, operators and auditors.
 
-One site, no mode toggle: the answer is above the fold, deep data one click below.
+The answer is above the fold, deep data one click below.
 
 ## 3. Design principles
 
@@ -45,19 +45,19 @@ One site, no mode toggle: the answer is above the fold, deep data one click belo
 5. **No mode toggle.** Same site for everyone.
 6. **Desktop-first, dark default**; mobile gets search, asset pages and the pulse.
 7. **Performance is a feature**: LCP < 1.5 s on 3G (p95), < 100 KB gzipped JS per route, API p95 < 200 ms, skeleton states, no third-party trackers. Not verified as achieved.
-8. **Sortable by default**, sort reflected in the URL (`sort=<col>:asc|desc`).
+8. **Sortable by default**, sort in the URL (`sort=<col>:asc|desc`).
 9. **Open Graph card on every page** (see §14).
 10. **Never render an in-progress bucket** (ADR-0015): live where it is real (SSE price tip, trade tape, ledger tip), everything else closed-bucket with an explicit timestamp. Confidence is always visible.
 
 ## 4. URL scheme
 
-Shipped route tree: every `page.tsx` under `web/explorer/src/app/` (~80); the lens groups in §5 name the main entry points. Dynamic segments are keyed `(code, issuer)`, SAC, `native`, contract id, G-strkey, tx hash or ledger sequence.
+Shipped route tree: every `page.tsx` under `web/explorer/src/app/` (~80); §5 names the main entry points. Dynamic segments are keyed `(code, issuer)`, SAC, `native`, contract id, G-strkey, tx hash or ledger sequence.
 
 Not shipped from the plan's route tree: `/anchors/{home_domain}`, `/path-payments`, `/pairs/{base}/{quote}` (the pair view is `/markets/[pair]`), `/oracles/{name}`, `/search` as a page (the endpoint exists), `/coverage` and `/coverage/{source}` as pages (data is `GET /v1/coverage`; the verdict table renders on `/diagnostics`).
 
-The omnibox design routes by input shape: `G...` (56 chars) to the account, `C...` to the contract, 64-hex to the tx, integer to the ledger, asset code or name to asset results (verified first, then by class), `XLM/USD`-shaped to the pair, protocol name to `/protocols/{name}`, anything else to grouped full-text. Backed by `GET /v1/search`.
+The omnibox routes by input shape: `G...` (56 chars) to the account, `C...` to the contract, 64-hex to the tx, integer to the ledger, asset code or name to asset results (verified first, then by class), `XLM/USD`-shaped to the pair, protocol name to `/protocols/{name}`, anything else to grouped full-text. Backed by `GET /v1/search`.
 
-URL state parameters (plan; each is honoured only where the page implements it): `from`/`to` (ISO 8601), `granularity` (1m|15m|1h|4h|1d|1w|1mo), `timeframe` (1h|24h|7d|30d|1y|all), `sources` (csv), `compare` (csv), `sort`, `q`, `quote`, `tab`, `panel` (anchored sub-view, `#confidence-card`). `as_of_ledger` / `as_of` are NOT a point-in-time pin today (§8).
+URL state parameters (plan; honoured only where a page implements them): `from`/`to` (ISO 8601), `granularity` (1m|15m|1h|4h|1d|1w|1mo), `timeframe` (1h|24h|7d|30d|1y|all), `sources` (csv), `compare` (csv), `sort`, `q`, `quote`, `tab`, `panel` (anchored sub-view, `#confidence-card`). `as_of_ledger` / `as_of` are NOT a point-in-time pin today (§8).
 
 ## 5. Site map by lens
 
@@ -66,15 +66,15 @@ URL state parameters (plan; each is honoured only where the page implements it):
 - **Network**: `/network`, `/ledgers/[seq]`, `/tx`, `/accounts/[g]`, `/contracts/[id]`.
 - **Coverage**: `GET /v1/coverage` verdicts plus `docs/protocols/` verification pages rendered as product.
 
-Home is mission control: omnibox, network pulse strip, price board (XLM, majors, movers, confidence-aware), protocol leaderboard, bridge net flow, trust strip (sources verified, coverage %, last audit run), recent blog.
+Home: omnibox, network pulse strip, confidence-aware price board (XLM, majors, movers), protocol leaderboard, bridge net flow, trust strip (sources verified, coverage %, last audit run), recent blog.
 
-Global patterns: API transparency on every panel; export CSV/JSON on every table and embed on every chart (partial; embeds exist); watchlist in localStorage (no account); consistent badges (verified asset, coverage tier, frozen/anomaly state, stale oracle).
+Global patterns: API transparency on every panel; CSV/JSON export on every table and embed on every chart (partial; embeds exist); localStorage watchlist (no account); consistent badges (verified asset, coverage tier, frozen/anomaly state, stale oracle).
 
 **Coverage badge system**: green = verified complete (reconciled vs lake); blue = verified within window (retention-scoped, see AGENTS.md invariant 8); yellow = enumerated, pending verification; grey = best-effort (external venue data). Badges link to the per-source verdict.
 
 ## 6. Cross-cutting view primitives
 
-Server-shaped data everywhere; no client transform beyond what the API returns, which keeps the reveal honest and forces API completeness.
+Data is server-shaped, no client transform beyond the API response; this keeps the reveal honest and forces API completeness.
 
 | § | Primitive | Source | Status |
 |---|---|---|---|
@@ -97,7 +97,7 @@ Directory and detail serve from `/v1/assets*` (metadata, supply, holders, verifi
 Asset-page slices under INV-2138: A1 (INV-2140) and A2 (INV-2141), movements and entry-changes views, open pending Ash's v1 call and the sizing brief (operation inventory: [classicmovements README](../../internal/sources/classicmovements/README.md)).
 
 ### 7.4 Pair (`/markets/[pair]`)
-VWAP line, per-venue candles, live tape (`observations/stream?asset=&quote=`), VWAP/TWAP on a chosen window, triangulation path with bucket timestamp for indirect pairs (the convert engine, `/convert/{from}/{to}`). Why per-venue: one aggregated view is insufficient for researchers. Gaps: `/v1/pairs/{base}/{quote}/venues`, `/spread` (arbitrage signal), `/liquidity-flow`, a "routed via Soroswap" tape badge (§7.9.1).
+VWAP line, per-venue candles, live tape (`observations/stream?asset=&quote=`), VWAP/TWAP on a chosen window, triangulation path with bucket timestamp for indirect pairs (the convert engine, `/convert/{from}/{to}`). Gaps: `/v1/pairs/{base}/{quote}/venues`, `/spread` (arbitrage signal), `/liquidity-flow`, a "routed via Soroswap" tape badge (§7.9.1).
 
 ### 7.5 Markets (`/markets`, `/dexes/[source]`, `/exchanges/[name]`)
 `GET /v1/markets`, `/v1/markets/sources`, `/v1/pools`, `/v1/pools/reserves`. Gap: base-by-quote 24h-change heatmap (`/v1/markets/heatmap`).
@@ -137,10 +137,11 @@ The account page is the lifetime authority on an account (programme INV-2128; co
 
 ### 7.21 Network (`/network`)
 Serves `GET /v1/network/stats`, `/v1/network/throughput`, `/v1/ledger/tip`, `/v1/ledger/stream`, `/v1/ledgers`, `/v1/ledgers/{seq}` (+ `/transactions`, `/operations`), `/v1/operations`.
-Honest phasing: the PG served tier holds the recent window, the CH lake everything to genesis. N1 = point lookups plus recent-window browsing; N2 = history-scale browse and filter (INV-1093, blocked, post-launch). A range not yet servable says so; never fake it.
+Gaps: `/v1/network/{fee-market,peg-health,source-diversity,...}` (§10) and `/v1/ledgers/at?ts=`; a planned `network_meta_5m` observer would back fee-market and active-addresses.
+Phasing: the PG served tier holds the recent window, the CH lake everything to genesis. N1 = point lookups plus recent-window browsing; N2 = history-scale browse and filter (INV-1093, blocked, post-launch). A range not yet servable says so, never fakes it.
 
 ### 7.22 Diagnostics (`/diagnostics`)
-Public, no PII. Serves `GET /v1/diagnostics/cursors`, `/ingestion`, `/archive`, `/backups`, `/v1/coverage`, `/v1/status`, `/v1/incidents`. Gaps: per-source `/v1/coverage/{source}` and the extra `/v1/diagnostics/*` panels (§10); `/decoders` would read `decoder_stats_5m` (§9.4).
+Public, no PII. Serves `GET /v1/diagnostics/cursors`, `/ingestion`, `/archive`, `/backups`, `/v1/coverage`, `/v1/status`, `/v1/incidents`. Gaps: per-source `/v1/coverage/{source}` and `/v1/diagnostics/{pulse,archive-completeness,cross-region,wasm-coverage,slo}` (§10); `/decoders` would read `decoder_stats_5m` (§9.4).
 
 ### 7.23 Research and blog (`/research`, `/blog`)
 `/research` renders ADRs and architecture/operations docs; `/blog` renders `docs/blog/YYYY-MM-DD-<slug>.md` via `web/explorer/src/lib/blog.ts` and `src/lib/markdown.tsx` (plain Markdown, no MDX pipeline; decision, in-tree and no separate content repo). Publishing = git commit plus CI rebuild.
@@ -153,7 +154,7 @@ Not part of the public-data surface: keys, usage, settings, price alerts, webhoo
 
 ## 8. Time machine (not built)
 
-`as_of_ledger` in responses is the lake watermark freshness stamp (ADR-0041), not a point-in-time query; no `timepin` helper exists in `internal/api/v1/`. If built: one `pinTime(ctx, asOfLedger)` helper every handler inherits (lint-enforced), `as_of` resolved to a ledger via `/v1/ledgers/at?ts=` (gap); point and range reads use the closed bucket containing ledger N, lists filter `first_seen_ledger <= N`. Why not now: it multiplies every handler's test surface, and users may confuse live with historical. Open post-v1 (§18 q10).
+`as_of_ledger` in responses is the lake watermark freshness stamp (ADR-0041), not a point-in-time query; no `timepin` helper exists in `internal/api/v1/`. If built: one `pinTime(ctx, asOfLedger)` helper every handler inherits (lint-enforced), `as_of` resolved to a ledger via `/v1/ledgers/at?ts=` (gap); point and range reads use the closed bucket containing ledger N, lists filter `first_seen_ledger <= N`. Why not now: it multiplies every handler's test surface, and users may confuse live with historical. Open post-v1 (§18 q6).
 
 ## 9. Schema
 
@@ -193,9 +194,9 @@ Always empty; the stats were moved onto a `prices_1m` UNION CTE (commit `2f06533
 
 Renamed: coins to `/v1/assets*`; `/v1/orderbook` to `/v1/sdex/orderbook`; `/v1/divergences*` to `/v1/divergence*`; WASM history to `/v1/contracts/{id}/wasm`, `/code-history`; `/v1/oracles` to `/v1/oracle/streams`; `/v1/routers` to `/v1/aggregators`.
 
-Not in the spec: the rest of the plan's endpoint families (TVL, volatility, spread, slippage, per-pair and per-source detail, protocol and contract drill-downs, issuers, path payments, anomalies, MEV, network, diagnostics extras, oracle compare, coin sub-resources). Each is a gap, not a decision to skip, unless §18 says so. Add none without a consumer; an absent endpoint's panel says so, never fakes data.
+Not in the spec: the rest of the plan's endpoint families `/v1/tvl[/flow]`, `/volatility`, `/spread`, `/slippage`, `/price/{base}/{quote}/sources|why`, `/pairs/{base}/{quote}/...`, `/markets/heatmap`, `/sources/{name}/...`, `/protocols/{slug}/...`, `/contracts/{id}/{storage-transitions,events,invocations,resources}`, `/wasm/{hash}/...`, `/contracts/wasm-upgrades`, `/issuers/{g}/...`, `/anchors/*`, `/tx/{hash}/{trades,events,changes}`, `/accounts/{g}/flow`, `/path-payments/*`, `/ledgers/at`, `/anomalies/*`, `/mev/*`, `/network/*`, `/diagnostics/{pulse,decoders,archive-completeness,cross-region,wasm-coverage,slo}`, `/oracles/*`, `/discovered`, `/coins/{slug}/...` (detail per page in §7). Each is a gap, not a decision to skip, unless §18 says so. Add none without a consumer; an absent endpoint's panel says so, never fakes data.
 
-Streams: Last-Event-ID resume is implemented on the SSE streams. Embeds are frontend routes, not API endpoints.
+Streams: Last-Event-ID resume exists on the SSE streams. Embeds are frontend routes, not endpoints.
 
 ## 11. Decoder and writer extensions
 
@@ -228,12 +229,10 @@ Next.js 16 app router with RSC (`web/explorer/package.json`), TypeScript strict,
 
 Hosting: static export (`output: 'export'`) on Cloudflare Pages with Pages Functions for dynamic shells; an OpenNext edge-SSR build is selectable with `OPEN_NEXT=1` ([ADR-0044](../adr/0044-explorer-edge-rendering.md)). API origin `api.stellarindex.io`; `docs.stellarindex.io` serves the generated reference; the customer dashboard is in-site (`stellarindex.io/dashboard`; the standalone `app.` SPA was retired, see [cf-pages-setup.md](../operations/cf-pages-setup.md)). Dynamic long-tail routes (`/contracts/{id}`, `/tx/{hash}`, `/accounts/{g}`) render client-side via TanStack Query; the high-traffic set is pre-rendered via `generateStaticParams` for SEO.
 
-Why a monorepo: one PR changes handler, spec and UI, and the generated client stays in lockstep.
-
 ## 16. Cross-cutting
 
 - **Caching** (ADR-0018, [cdn-setup.md](../operations/cdn-setup.md)): closed-bucket VWAP, history, OHLC, since-inception: `public, max-age=60, s-maxage=300`; tip prices `public, max-age=1`; catalogues `public, max-age=60, s-maxage=300`; account, auth and OG: `private, no-store`; SSE `no-store`; immutable WASM bytecode `public, max-age=31536000, immutable`.
-- **Rate limits**: anonymous 60/min, keyed 1000/min; embeds use the anonymous tier, so embedders should cache.
+- **Rate limits**: limits in §3; embeds use the anonymous tier, so embedders should cache.
 - **Auth**: only `/dashboard` and `/v1/account/*` require it (SEP-10 challenge to JWT, or API key).
 - **Per-region consistency** (ADR-0015/0018): closed-bucket endpoints are identical across regions; tip and raw surfaces are explicitly per-region; the UI shows a freshness badge.
 - **i18n and accessibility**: English only at v1 (URLs are i18n-ready); WCAG 2.1 AA target with colour-blind-safe palettes and keyboard navigation.
@@ -250,14 +249,14 @@ Why a monorepo: one PR changes handler, spec and UI, and the generated client st
 
 1. Hosting: Cloudflare Pages static export, edge SSR via ADR-0044.
 2. Wallet UX: none at v1 (sign-in is email code plus passkey); Freighter/Albedo/Lobstr are INV-1092, post-v1.
-3. Repo layout: monorepo, generated typed client. Content: in-tree Markdown. Brand: [design-system.md](design-system.md). Embeds: arbitrary domains.
+3. Repo layout: monorepo (one PR changes handler, spec and UI; the generated client stays in lockstep). Content: in-tree Markdown. Brand: [design-system.md](design-system.md). Embeds: arbitrary domains.
 4. Slug ownership: a bare code slug (`usdc`) is a hand-vetted `internal/currency/data/seed.yaml` entry, never a volume pick (impersonation vector, see AGENTS.md). Other classic assets get a per-`(code, issuer)` slug in `classic_assets.slug` (migration 0134, UNIQUE per 0023), used when the catalogue misses.
 5. MEV thresholds: algorithmic, no allowlist, no score; unverified candidates (§11.4).
 6. `as_of_ledger` UX: point-in-time mode not built, open post-v1 (§8).
 
 Thresholds of record: WAT diff response capped at 5 MB; SDEX order book 20 levels per side; wildcard observations stream (`asset=*`) load-tested at 100 trades/s; Lighthouse mobile >= 90, CLS < 0.1, axe-core in CI. No CI step enforces the Lighthouse, axe-core or bundle gates today (§17).
 
-UX decisions log (do not re-litigate): one unified asset namespace; canonical entity URLs with `/contract` as the attribution hinge; coverage badges backed by real verdicts; closed-bucket-only price rendering with explicit timestamps and visible confidence; one protocol-page template plus a per-protocol signature panel; no fake full-history network browsing before the CH read path exists; desktop-first, dark-default; `/research` stays as part of the trust story.
+UX decisions log (do not re-litigate; the rest are in §1, §3 and §7.21): one unified asset namespace; canonical entity URLs with `/contract` as the attribution hinge; one protocol-page template plus a per-protocol signature panel; `/research` stays as part of the trust story.
 
 ## 19. Open work (inventory)
 

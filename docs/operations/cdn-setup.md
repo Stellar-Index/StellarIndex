@@ -69,8 +69,8 @@ one panel for DNS + TLS; rules port to Bunny/CloudFront later).
 ```
 0. Pre-reqs
    - DNS for stellarindex.io is already in Cloudflare.
-   - Origin reachable at the per-region HAProxy frontends
-     (api-r1.stellarindex.io etc., per ha-plan.md §2.3).
+   - Origin reachable at each region's API origin
+     (per ha-plan.md §2.3).
 
 1. Create the proxied DNS record
    - Type: CNAME (or A if pointing at a single region pre-multi-region)

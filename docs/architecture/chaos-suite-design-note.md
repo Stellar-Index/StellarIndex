@@ -10,24 +10,19 @@ related:
 
 # Chaos suite — design note
 
-Forced-failure smoke for the Stellar Index stack, run as a deliberate
-"break one component, assert sane behaviour" exercise. Companion to
-the [k6 load suite](ha-plan.md#73-load-testing-k6) — load proves
-"healthy stack stays within SLA," chaos proves "broken stack fails
-in documented ways."
+Forced-failure smoke: break one component, assert sane behaviour.
+Companion to the [k6 load suite](ha-plan.md#73-load-testing-k6): load
+proves a healthy stack stays within SLA, chaos proves a broken stack
+fails in documented ways.
 
 ## Goal
 
-One of the strongest guarantees the API makes is this: **when a
-backing service fails, the API never silently serves bad data** — the
-response either degrades-with-flag (documented) or 5xxs loud
-(unmistakable). A 200-with-empty-`data` or 200-with-stale-stamps is
-the nightmare. This suite is the behavioural fence for that specific
-guarantee — backing-service-failure degradation — not a proof that no
-other silent-failure path exists anywhere in the system; see
-`docs/operations/production-confidence-campaign-2026-07-23.md` for the
-tracked ledger of currently-open silent-failure-shaped findings from
-the cold audit.
+**When a backing service fails, the API never silently serves bad
+data**: the response either degrades with a documented flag or 5xxs loud.
+A 200 with empty `data` or stale stamps is the failure to catch. This suite
+fences backing-service-failure degradation only, not every silent-failure
+path; open ones are tracked in
+`docs/operations/production-confidence-campaign-2026-07-23.md`.
 
 ## Scope (Wave 1 — this PR)
 
@@ -43,7 +38,7 @@ In:
   - `03-redis-network-partition.sh` — Redis container reachable but
     silent (network partition / pumba pause). Exercises go-redis's
     timeout path, distinct from connection-refused.
-- A bash runner (`run.sh`) with a production-safety guard, shared `lib/common.sh`, and gitignored per-run reports under `reports/`.
+- Bash runner `run.sh` with a production-safety guard, shared `lib/common.sh`, gitignored reports under `reports/`.
 
 Out (deferred to Wave 2): HA-shaped scenarios (Patroni promotion, Sentinel failover, VRRP VIP flip; they need the staging bare-metal stack), cross-region chaos, API mid-stream kill with cursor resume, and aggregator tick stall with alert fire-time measurement (needs Prometheus and AlertManager in the dev stack).
 

@@ -39,7 +39,7 @@ Section labels match the plan doc and are cited from code.
 ## Consequences
 
 - ADR-0008's single-region HA topology and DR principle carry forward; only its multi-region decision is overturned, and ADR-0016 is superseded.
-- the retired multi-region topology doc, `r2-r3-bringup.md` and `multi-region-cutover.md` describe rejected architectures and are banner-marked; implement from the plan doc.
+- the multi-region topology doc is deleted; `r2-r3-bringup.md` and `multi-region-cutover.md` describe rejected architectures and are banner-marked; implement from the plan doc.
 - ADR-0044 explorer edge rendering is the enabler for runtime cross-region explorer failover.
 - Lake failover is fast when R1 is healthy and degraded during an R1 outage; fleet cost is about $15-18K/yr against $180-288K/yr for per-region HA fleets.
 - Until a second region serves authenticated traffic the published limits are exact (N = 1).

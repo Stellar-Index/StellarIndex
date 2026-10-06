@@ -10,8 +10,7 @@ Where each kind of data lives, what "retention" means here, and the
 capacity facts for r1. The decision of record is
 [ADR-0034](../adr/0034-tiered-clickhouse-architecture.md); the ingest
 and re-derive paths are in [ingest-pipeline.md](ingest-pipeline.md).
-Read this before recommending a trim, a retention change or a move of a
-read path between tiers.
+Read before recommending a trim, a retention change or a read-path move.
 
 ## The tiers
 
@@ -72,9 +71,6 @@ and `backfill -source soroban-events` are still present. When that
 work runs, it also purges the orphan `ingestion_cursors` rows of
 deleted subsources and reverts trades-chunk tuning
 (`max_locks_per_transaction`) that no longer applies.
-
-The original plan said to drop and rebuild `trades` with a retention
-window. That was overtaken: see the next section.
 
 ## Retention: what is kept, and what "retention-scoped" means
 

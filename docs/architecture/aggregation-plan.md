@@ -180,7 +180,7 @@ parses every SQL literal so a new one-direction CAGG read fails CI).
 A classic market and its SAC-wrapped twin (`native/USDC-GA5Z…` vs
 `<XLM SAC>/<USDC SAC>`) are different venues. Merging them is a liquidity
 decision, not completeness: a thin pool beside a deep book sets the bar's
-extremes. a +37% high from one $0.60 pool print beside $140 of book prints.
+extremes: r1 measured a +37.32% high from one $0.60 pool print beside $140 of book prints.
 Migration 0115's `usd_volume >= 0.01` floor does not stop it ($0.60 is
 60× the floor).
 

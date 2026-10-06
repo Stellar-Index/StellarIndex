@@ -7,17 +7,16 @@ status: current — the one HA/infra page. What runs today is checked against co
 # High-Availability and Infrastructure Plan
 
 This page is the single source for how Stellar Index stays up: what runs
-today, what is planned for in-region HA and for R2/R3, and the decisions
-that bind both. Decision records: [ADR-0008](../adr/0008-ha-topology.md)
+today, the planned in-region HA and R2/R3, and the decisions that bind both. Decision records: [ADR-0008](../adr/0008-ha-topology.md)
 (single-region topology),
 [ADR-0024](../adr/0024-redis-ha-via-sentinel.md) (Redis Sentinel),
 [ADR-0043](../adr/0043-backup-and-restore-strategy.md) (backup) and
 [ADR-0050](../adr/0050-multi-region-ha-architecture.md) (multi-region).
-Where an older document disagrees with this page, this page wins.
+This page wins over any older document.
 
 **Status in one line.** Production is one box (r1). Every HA component
-beyond it — HAProxy, Patroni, Redis Sentinel, the Prometheus pair, the Loki
-role, R2 and R3 — is designed, mostly has role code in
+beyond it (HAProxy, Patroni, Redis Sentinel, the Prometheus pair, the Loki
+role, R2, R3) is designed, mostly has role code in
 `configs/ansible/roles/`, and is **deferred until after v1.0**
 (INV-0834, INV-1048).
 
@@ -93,24 +92,20 @@ r1 is a Hetzner dedicated server in FSN1 (Falkenstein, DE) with a ZFS pool
 
 - The public edge is Caddy
   (`configs/ansible/roles/archival-node/tasks/19-caddy.yml`), not HAProxy.
-- `configs/ansible/roles/archival-node` is the only role any playbook
-  applies to r1. `playbooks/monitoring.yml` targets a `prometheus_pair`
-  group r1's inventory does not define, so it matches no hosts. No
-  playbook invokes `haproxy`, `patroni` or `redis-sentinel`
-  (INV-0978).
-- `deploy.yml` deploys to `r1`, `testnet` and `futurenet`. `r2` and `r3`
+- `configs/ansible/roles/archival-node` is the only role applied to r1.
+  `playbooks/monitoring.yml` targets a `prometheus_pair` group r1 does not
+  define, so it matches no hosts; no playbook invokes `haproxy`, `patroni`
+  or `redis-sentinel` (INV-0978).
+- `deploy.yml` deploys to `r1`, `testnet` and `futurenet`; `r2` and `r3`
   exist only as `configs/ansible/inventory/r{2,3}.example.yml`.
-- No stellar-rpc on the ingest path (AGENTS.md invariant 6). It survives
-  only for `rpc-probe` and fixture capture.
 
 ### 2.2 Planned in-region shape
 
-ADR-0050 §10 Phase 1 is an in-region HA build on R1. It is a
-procure-and-build, not role wiring: the roles hard-gate on inventory groups
-(`postgres_cluster` = 3, `haproxy_lb` = 2, `redis_cluster` = 3,
-`prometheus_pair` = 2) that need several hosts, and the archival-node role
-does not install ClickHouse or Redis (it overlays config on a hand-built
-box), so that automation must be written too.
+ADR-0050 §10 Phase 1 is an in-region HA build on R1: procure and build, not
+role wiring. The roles hard-gate on inventory groups (`postgres_cluster` = 3,
+`haproxy_lb` = 2, `redis_cluster` = 3, `prometheus_pair` = 2), and the
+archival-node role installs neither ClickHouse nor Redis (it overlays config
+on a hand-built box), so that automation must be written too.
 
 ```
                  Cloudflare (WAF, cache, cross-region LB)
@@ -147,12 +142,10 @@ transatlantic round trip per lake-backed page; the API does not.
 
 Region notes that hold under this shape:
 
-- Stellar-core nodes are SCP peers, never primary/replica; "primary" means
-  the Timescale writer only. Duplicate cross-node ingest is a no-op on the
-  trade key `(ledger, tx_hash, op_index, ts)`.
-- Tier D (R2/R3, weekly) cross-compares checkpoint hashes from ~6 Tier-1
+- Stellar-core nodes are SCP peers, not primary/replica.
+- Tier D (every region, weekly) cross-compares checkpoint hashes from ~6 Tier-1
   archives against each other. It catches forks, not local byte drift (Tier B, R1).
-- Edge failover: Cloudflare geo steering, `/readyz` check every 15 s, a region
+- Edge failover: Cloudflare geo steering, `/v1/readyz` check every 15 s, a region
   is pulled after 3 failures, DNS TTL 60 s.
 
 ---
@@ -174,18 +167,18 @@ playbook).
   lake outage does not drain the pool. `GET /v1/livez/lake` is the
   lake-only signal (503 while ClickHouse is unreachable) for steering lake
   routes separately.
-- **Failover:** one API instance down → ejected after ~15 s; HAProxy host or
-  process down → VIP moves in 1–4 s; both LB hosts down → manual, same blast
+- **Failover:** API instance down: ejected after ~15 s; HAProxy host or
+  process down: VIP moves in 1–4 s; both LB hosts down: manual, same blast
   radius as a region outage.
 - **Gotchas the role handles or documents:** `net.ipv4.ip_nonlocal_bind=1`
-  so HAProxy can bind the VIP before keepalived assigns it; VRRP multicast
-  (224.0.0.18) is blocked on some clouds, so use `unicast_peer`; keepalived
-  silently truncates `auth_pass` to 8 bytes; config changes `reload`, never
-  `restart`; the stats endpoint stays on `127.0.0.1:8404`; use HAProxy's
-  built-in Prometheus exporter, not `haproxy_exporter`.
-- **Not in the role:** certificate automation — the operator drops a cert
-  in `/etc/haproxy/certs/` (INV-1050). PgBouncer — a separate role not yet
-  written; each process's `pgxpool` pools for now (INV-1049).
+  (bind the VIP before keepalived assigns it); VRRP multicast (224.0.0.18)
+  is blocked on some clouds, so use `unicast_peer`; keepalived silently
+  truncates `auth_pass` to 8 bytes; `reload`, never `restart`; stats stay on
+  `127.0.0.1:8404`; use HAProxy's built-in Prometheus exporter, not
+  `haproxy_exporter`.
+- **Not in the role:** certificate automation (the operator drops a cert in
+  `/etc/haproxy/certs/`, INV-1050) and PgBouncer (no role yet; each
+  process's `pgxpool` pools, INV-1049).
 - **Cross-region (planned):** Cloudflare routes to the nearest healthy
   region. The explorer can follow because ADR-0044's edge SSR resolves the
   API region at request time.
@@ -222,25 +215,24 @@ rows forever — migration 0031 removed the old 90-day policy, and a
 continuous aggregates with no `drop_after`. Their oldest bar is a coverage
 floor, not a retention one: `prices_1d` starts **2018-07-01** with a single
 pair (`crypto:XLM`/`fiat:USD`) and holds nothing between 2021-02-01 and
-2024-03-10 (measured on r1 2026-09-03). Size a restore or backfill off
-that, not off chain genesis.
+2024-03-10 (measured on r1 2026-09-03). Size a restore or backfill off that, not
+chain genesis.
 
 **Planned (Patroni, role `configs/ansible/roles/patroni/`):**
 
 - Primary + 2 synchronous replicas (`db-01..03`),
   `synchronous_commit=remote_apply`,
   `synchronous_standby_names='ANY 1 (db-02, db-03)'`. Failover RTO 60 s.
-- etcd, 3 nodes, one cluster per region. `patroni_cluster_name` and
+- etcd, 3 nodes, one cluster per region; `patroni_cluster_name` and
   `etcd_cluster_token` differ per region so clusters cannot join across
-  regions. etcd client and peer traffic use TLS with client-cert auth by
-  default (`etcd_tls_enabled: true`); the role refuses to render without
-  the PEM material from vault.
+  regions. etcd traffic uses TLS with client-cert auth by default
+  (`etcd_tls_enabled: true`); the role refuses to render without the PEM
+  material from vault.
 - Preflight requires 3 nodes and ≥ 32 GB RAM.
 - Bootstrap: `db-01` initialises, the others join; reruns detect a running
-  cluster via Patroni's REST API (`:8008/cluster`) and do nothing. DR
-  rebuild: set `patroni_bootstrap_method: pgbackrest` (default `initdb`)
-  and the primary restores from pgBackRest; replicas then
-  `pg_basebackup` from it.
+  cluster via the REST API (`:8008/cluster`) and do nothing. DR rebuild:
+  set `patroni_bootstrap_method: pgbackrest` (default `initdb`); the primary
+  restores from pgBackRest, replicas `pg_basebackup` from it.
 - Operating risks: losing 2 of 3 etcd nodes stops writes (correct; restore
   quorum first). With `remote_apply`, two slow replicas raise commit
   latency — alert on sustained replica lag > 5 s. Pin the `timescaledb`
@@ -256,7 +248,7 @@ that, not off chain genesis.
 webhooks) is non-chain state that determinism cannot reproduce. It is
 region-local today, so a key minted on R1 would 401 on R2. It needs its own
 small replicated store before a second region serves authenticated traffic
-(ADR-0050 §3c, covering ADR-0049's tables). Until then only anonymous
+(ADR-0050 §3c, covering ADR-0049's tables); until then only anonymous
 traffic fails over cleanly.
 
 ### 3.4 Redis
@@ -600,6 +592,11 @@ good, decide accordingly".
 | R1 down (multi-region) | R2/R3 serve pricing from local stores; lake routes read the object-storage fallback; authenticated traffic fails until control-plane replication exists (§3.3) |
 | Reconnecting SSE client | Ledger and observation streams have no replay (gap on reconnect); price-stream resume tokens are per region |
 
+What multi-region does not buy:
+
+- An application-layer bug (a miscomputed VWAP) or a poisoned upstream replicates to every region.
+- Cloudflare is the single edge dependency (no multi-CDN at launch), and writing endpoints such as `/v1/account/keys` are read-only during failover.
+
 ---
 
 ## 10. Roadmap and launch checklist
@@ -622,18 +619,17 @@ for availability first.
 **Sequence when it resumes**, cheapest first:
 
 1. Cloudflare in front (WAF + cache).
-2. Test a 1–5 s `s-maxage` on `/v1/price` and `/v1/oracle/latest`. We serve
-   closed buckets, so this may be inside the contract; if it holds, much of
-   the API becomes edge-servable and R3's case weakens.
-3. R2 (US): removes the single point of failure and covers the likeliest
-   customers. Independent ingest, pricing active/active, lake proxy to R1,
-   control-plane replication, added to the LB.
+2. Test a 1–5 s `s-maxage` on `/v1/price` and `/v1/oracle/latest`. Closed
+   buckets may allow it; if so, much of the API is edge-servable and R3's
+   case weakens.
+3. R2 (US): removes the single point of failure. Independent ingest,
+   pricing active/active, lake proxy to R1, control-plane replication,
+   added to the LB.
 4. R3 (Singapore), only on evidence of Asian API usage by endpoint.
 5. Global failover: lake-aware routing for API and explorer, scheduled
    failover drills.
 
-In-region HA on R1 (ADR-0050 Phase 1) slots in before R2 if it is still
-wanted (§11).
+In-region HA on R1 (ADR-0050 Phase 1) goes before R2 if still wanted (§11).
 
 **Launch checklist for the HA build** (INV-1101; none green yet):
 
@@ -646,19 +642,18 @@ wanted (§11).
 - [ ] SEV-1 and SEV-2 playbooks rehearsed as a tabletop.
 - [ ] Pre-flip gate for a new region: `scripts/dev/verify-cross-region.sh` and `stellarindex-ops cross-region-check` show byte-identical closed-bucket VWAPs, then hold DNS for a 24 h clean window.
 
-The load-test and restore items can be pulled forward on a single box.
+The load-test and restore items can run on a single box now.
 
 ---
 
 ## 11. Open decisions
 
-1. **Rate limit and quota across regions** (ADR-0050 §3d). Due before a
-   second region serves authenticated traffic. Options: publish limits as
-   per region (the 429 body must say so); configure limit ÷ N per region
-   (a failover then cuts a caller to 1/N); reconcile the monthly quota
-   through the replicated control plane with bounded lag. Rejected: a
-   synchronous cross-region counter, which puts a WAN round trip on every
-   request.
+1. **Rate limit and quota across regions** (ADR-0050 §3d), due before a
+   second region serves authenticated traffic. Options: per-region limits
+   (the 429 body must say so); limit ÷ N per region (a failover cuts a
+   caller to 1/N); monthly quota reconciled through the replicated control
+   plane with bounded lag. Rejected: a synchronous cross-region counter (a
+   WAN round trip on every request).
 2. **Is in-region HA on R1 still wanted** once R2 provides cross-region
    failover? ADR-0050 §8 says one box per region; §10 still lists the
    Phase 1 build.

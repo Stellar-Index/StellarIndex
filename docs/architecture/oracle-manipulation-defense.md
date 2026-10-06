@@ -271,27 +271,35 @@ stays fail-closed until the allow-list is seeded.
 
 Of 59 SEPs (17 Active, 7 Final, 26 Draft, 3 Abandoned at 2026-07-10)
 only SEP-40 (oracle) and SEP-41 (token) are load-bearing for generic
-interpretation. SEP-50 (NFT) and SEP-56 (tokenized vault) are the next
-plausible analogues, but their `Deposit`/`Withdraw`-style topics collide
-with Blend and DeFindex. SEP-45 and SEP-57 are niche or unconfirmed on
-mainnet; revisit if a deployment appears. SEP-49 (upgradeable contracts)
-would need `ContractEventTypeSystem` events, which
+interpretation. SEP-50 (NFT) and SEP-56 (vault) are the next analogues, but
+their `Deposit`/`Withdraw`-style topics collide with Blend and DeFindex.
+SEP-45 and SEP-57 are niche or unconfirmed on mainnet. SEP-49 (upgradeable
+contracts) would need `ContractEventTypeSystem` events, which
 `internal/dispatcher/census.go` (`captureEligible`) does not capture.
 
 SEP-46/47/48 self-declared metadata (`sep` Wasm-meta entry,
-`contractspecv0`) is **not a trust source**: their own specs say a
-declaration does not prove implementation, and method names have twice
-diverged from deployed behaviour (Reflector v3; DeFindex). It is an
-enrichment hint for operator triage only.
+`contractspecv0`) is **not a trust source**: a declaration does not prove
+implementation, and method names have twice diverged from deployed
+behaviour (Reflector v3; DeFindex). It is an operator-triage hint only.
 
 ### Lake census
 
-A one-off scan of r1's `stellar.contract_events` (12.4 billion rows, ledgers
+A one-off scan of r1's `stellar.contract_events` (12.4B rows, ledgers
 2 to 63,407,342, 2026-07-10) on the decoded `topic_0_sym` column
 (`DistinctTopicShapes`, `internal/storage/clickhouse/recognition.go`),
-filtered to oracle-shaped topics with the ingested Reflector, RedStone and
-Band contracts excluded. All six candidate patterns were false positives or
-dormant test deployments. No sustained un-ingested SEP-40 oracle existed,
+filtered to these `topic_0_sym` values: price, prices, lastprice, last_price, x_last_price, set_price, update_price, price_update, new_price, oracle, Oracle, ORACLE, feed, PriceData, resolution, write_prices, relay, force_relay, REFLECTOR, REDSTONE, rate, rates, set_rate, symbol_rates, StandardReference, update, base, decimals, assets,
+with the ingested Reflector, RedStone and Band contracts excluded. All six
+candidate patterns were false positives or dormant test deployments:
+
+| Contract / pattern | Events | Verdict |
+|---|---|---|
+| `CCWKKEQTMGBNLHDKSYWFOA4IFFR2GT6FRYSHIXQQGNVB64AQHCFXLL4S` (`update`: `doc_id`, `ipfs_cid`) | 2,237 | false positive: beef traceability |
+| `CAHDGXF64LG4PA45PPCDFQYRYWH3X33G7JJFGJTKMFMQIFUKNBONLGHD` (`update`, supply-chain IDs) | 250 | false positive |
+| `CDFMV3EI2FEGKHQYZXFSKPBEXO2MXKRMQRXK5SM4DVWWHMGEJTH6JVK2` (string `price`) | 151 | dormant test oracle |
+| 11 RedStone-Adapter-shaped contracts | 27 | tests |
+| 2 rational-price (`price_num`/`price_den`) and 2 developer oracles | 2-3 each | tests |
+
+ No sustained un-ingested SEP-40 oracle existed,
 which reaffirmed the ADR-0045 deferral. Scope limit: the census only sees
 event-emitting contracts. `stellar.operations.body_xdr` has no plaintext
 function-name column, so a Band-alike that emits nothing is invisible to
@@ -312,9 +320,8 @@ backfill is enabled.
 
 `SniffOracleEvent`, hooked in `dispatchOne` (`internal/dispatcher/dispatcher.go`),
 records `(contract_id, topic_0_sym, ledger)` for the census symbol set
-above, so the census is continuous instead of ad hoc. A new oracle with a
-SEP-40/RedStone/Band-like event shape is sighted although its contract id
-is unknown to every decoder.
+above, so the census is continuous. A new oracle with a SEP-40/RedStone/Band-like
+event shape is sighted although no decoder knows its contract id.
 
 #### Event-less discovery
 
