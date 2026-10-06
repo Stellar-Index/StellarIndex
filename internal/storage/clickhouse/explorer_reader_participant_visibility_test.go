@@ -188,8 +188,8 @@ func TestParticipantKeys_BudgetEndsPageAtFrontier(t *testing.T) {
 	if len(seen) != failed+limit {
 		t.Fatalf("looked up %d txs, want every one of %d exactly once", len(seen), failed+limit)
 	}
-	// Every lookup but the last of each window is a full chunk.
-	if bound := (failed+limit+visibilityChunk-1)/visibilityChunk + lake.reads; len(lake.lookups) > bound {
+	// Per window: a need-sized first lookup, then full chunks and a remainder.
+	if bound := (failed+limit+visibilityChunk-1)/visibilityChunk + 2*lake.reads; len(lake.lookups) > bound {
 		t.Fatalf("%d visibility lookups over %d window reads, want <= %d", len(lake.lookups), lake.reads, bound)
 	}
 }

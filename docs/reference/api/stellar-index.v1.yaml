@@ -12566,6 +12566,10 @@ paths:
         with `?cursor=<opaque>` (echo back `next_cursor`). The cursor is the
         composite `(ledger, tx_index)`.
 
+        A page can hold fewer than `limit` items (even zero) while
+        `next_cursor` is present; clients must keep paging until
+        `next_cursor` is absent.
+
         SCOPE: `scope: "all"` (ADR-0038 Phase B) — both transactions the
         account SOURCED (source/fee-payer) AND those where it's a non-source
         PARTICIPANT in any operation (payment destination, trustor, merge
@@ -12627,6 +12631,10 @@ paths:
         fields), newest first, keyset-paged with `?cursor=<opaque>` (echo back
         `next_cursor`). The cursor is the composite `(ledger, tx_index,
         op_index)`.
+
+        A page can hold fewer than `limit` items (even zero) while
+        `next_cursor` is present; clients must keep paging until
+        `next_cursor` is absent.
 
         SCOPE: `scope: "all"` (ADR-0038 Phase B) — operations the account
         SOURCED plus those where it's a non-source PARTICIPANT — see the
