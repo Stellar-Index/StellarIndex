@@ -24,10 +24,10 @@ route absent on a test net is correct, not a gap.
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **140** |
+| Paths in the OpenAPI contract | **141** |
 | Level 3 — reachable | **111** |
 | Level 2 — consumed but unreachable | **0** |
-| Level 1 — not consumed | **25** |
+| Level 1 — not consumed | **26** |
 | Deliberately excluded (operational) | **4** |
 
 Level 2 is empty and enforced: `src/lib/route-reachability.test.ts` walks the
@@ -187,6 +187,7 @@ call site; `hooks.ts:useX` is a shared hook.
 | `/auth/sep10/challenge` | GET | 3 | app/status/StatusPageClient.tsx |
 | `/auth/sep10/token` | POST | 1 | — |
 | `/ledgers` | GET | 3 | app/ledgers/LedgersTable.tsx |
+| `/ledgers/at` | GET | 1 | — |
 | `/ledgers/{seq}` | GET | 3 | app/ledger/LedgerView.tsx |
 | `/ledgers/{seq}/transactions` | GET | 3 | app/ledger/LedgerView.tsx |
 | `/ledgers/{seq}/operations` | GET | 1 | — |
@@ -230,6 +231,7 @@ them is a product decision, not made here.
 | `/protocols/{name}/tvl` | Per-protocol TVL with per-leg reserves and pricing basis (soroswap: 125 pools, $1.25 M, 11 priced / 114 unpriced, a completeness signal nothing surfaces). | Small: `/protocols/[name]` exists. Lending protocols (blend) return typed 404 `protocol-tvl-not-derived`; handle it, not an error. |
 | `/pairs` | Per-pair `trade_count_24h`, `volume_24h_usd`; both params required. | Small; overlaps `/markets`, likely redundant. |
 | `/directory` | Curated address labels with tags and provenance. `src/components/DirectoryLabel.tsx` renders the `directory` field embedded in other responses; the bulk endpoint is never called. | Small. |
+| `/ledgers/at` | Resolves a timestamp to the ledger closed at or before it, so a date can be turned into a ledger sequence. | Small: date input on `/ledgers`, linking to `/ledgers/[seq]`. |
 | `/ledgers/{seq}/operations` | One ledger's decoded operations with `total`/`truncated`; the only per-ledger operations read (`/operations` refuses `?ledger=`). | Small: tab on `/ledgers/[seq]`. |
 | `/assets/{asset_id}/supply/flows` | Daily mint / burn / clawback from the `supply_flows` lake, with `net` and `history_incomplete` (SDK `AssetSupplyFlows`). | Small: chart beside the supply card. |
 | `/assets/{asset_id}/movements` | Per-asset movements read from the ClickHouse lake. | Small: tab on `/assets/[slug]`. |
