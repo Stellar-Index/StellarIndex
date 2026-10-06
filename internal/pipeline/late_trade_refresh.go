@@ -275,14 +275,7 @@ func (r *LateTradeRefresher) flush(ctx context.Context, rateLimited bool) (next 
 	}
 	r.mu.Lock()
 	policies := r.policies
-	if r.pending {
-		for _, c := range timescale.TradesCAGGs {
-			if w, ok := policies[c.Name]; ok && w.HasPolicy && !w.Unbounded {
-				r.viewLocked(c.Name).widen(r.lo, r.hi, r.since)
-			}
-		}
-		r.pending = false
-	}
+	r.distributePendingLocked(policies)
 	r.mu.Unlock()
 	defer r.publishOverdueLocked(policies)
 
@@ -290,51 +283,86 @@ func (r *LateTradeRefresher) flush(ctx context.Context, rateLimited bool) (next 
 	refreshed := 0
 	prices1mWaiting := false // held or failed: the twaps built on it wait
 	for _, c := range timescale.TradesCAGGs {
-		v := r.views[c.Name]
-		if v == nil || !v.pending {
-			continue
-		}
-		w := policies[c.Name]
-		// Read per view: the twaps' cutoffs are planned after prices_1m's
-		// refresh has returned, not before it started.
-		now := r.now()
-		st, ok := lateTradeRefreshStep(c, w, v.lo, v.hi, now)
-		if !ok {
-			v.pending = false
-			continue
-		}
-		if lateTradeHierarchical[c.Name] && prices1mWaiting {
-			continue
-		}
-		if due := v.lastRefreshed.Add(w.ScheduleInterval); rateLimited && now.Before(due) {
-			if wait := due.Sub(now); next == 0 || wait < next {
+		out, wait, err := r.flushView(ctx, c, policies[c.Name], rateLimited, prices1mWaiting)
+		switch out {
+		case viewHeld:
+			if next == 0 || wait < next {
 				next = wait
 			}
-			prices1mWaiting = prices1mWaiting || c.Name == "prices_1m"
-			continue
+		case viewFailed:
+			errs = append(errs, err)
+		case viewRefreshed:
+			refreshed++
 		}
-		// Never forced: the invalidation log holds exactly the late rows,
-		// and a forced pass would rebuild every bucket in the window.
-		if err := timescale.RunCAGGRefreshStep(ctx, r.store, st, false); err != nil {
-			errs = append(errs, fmt.Errorf("refresh %s over [%s, %s) for trades at [%s, %s]: %w", st.View,
-				st.From.UTC().Format(time.RFC3339), st.To.UTC().Format(time.RFC3339),
-				v.lo.UTC().Format(time.RFC3339), v.hi.UTC().Format(time.RFC3339), err))
-			if ctx.Err() != nil {
-				break
-			}
+		if out == viewHeld || out == viewFailed {
 			prices1mWaiting = prices1mWaiting || c.Name == "prices_1m"
-			continue
 		}
-		r.logger.Info("late-trade cagg refresh done", "view", st.View,
-			"trades_from", v.lo.UTC().Format(time.RFC3339), "trades_to", v.hi.UTC().Format(time.RFC3339))
-		v.pending = false
-		v.lastRefreshed = r.now()
-		refreshed++
+		if out == viewFailed && ctx.Err() != nil {
+			break
+		}
 	}
 	if refreshed > 0 {
 		obs.LateTradeCAGGRefreshTotal.WithLabelValues("ok").Inc()
 	}
 	return next, errors.Join(errs...)
+}
+
+// distributePendingLocked moves the undistributed window onto every bounded
+// view. Needs r.mu.
+func (r *LateTradeRefresher) distributePendingLocked(policies map[string]timescale.CAGGRefreshWindow) {
+	if !r.pending {
+		return
+	}
+	for _, c := range timescale.TradesCAGGs {
+		if w, ok := policies[c.Name]; ok && w.HasPolicy && !w.Unbounded {
+			r.viewLocked(c.Name).widen(r.lo, r.hi, r.since)
+		}
+	}
+	r.pending = false
+}
+
+type viewOutcome int
+
+const (
+	viewSkipped viewOutcome = iota
+	viewHeld
+	viewFailed
+	viewRefreshed
+)
+
+// flushView refreshes one view's pending window. wait is how long a held view
+// has left on its rate limit. Needs r.flushMu; takes no r.mu.
+func (r *LateTradeRefresher) flushView(ctx context.Context, c timescale.CAGGSpec, w timescale.CAGGRefreshWindow, rateLimited, prices1mWaiting bool) (out viewOutcome, wait time.Duration, err error) {
+	v := r.views[c.Name]
+	if v == nil || !v.pending {
+		return viewSkipped, 0, nil
+	}
+	// Read per view: the twaps' cutoffs are planned after prices_1m's
+	// refresh has returned, not before it started.
+	now := r.now()
+	st, ok := lateTradeRefreshStep(c, w, v.lo, v.hi, now)
+	if !ok {
+		v.pending = false
+		return viewSkipped, 0, nil
+	}
+	if lateTradeHierarchical[c.Name] && prices1mWaiting {
+		return viewSkipped, 0, nil
+	}
+	if due := v.lastRefreshed.Add(w.ScheduleInterval); rateLimited && now.Before(due) {
+		return viewHeld, due.Sub(now), nil
+	}
+	// Never forced: the invalidation log holds exactly the late rows,
+	// and a forced pass would rebuild every bucket in the window.
+	if err := timescale.RunCAGGRefreshStep(ctx, r.store, st, false); err != nil {
+		return viewFailed, 0, fmt.Errorf("refresh %s over [%s, %s) for trades at [%s, %s]: %w", st.View,
+			st.From.UTC().Format(time.RFC3339), st.To.UTC().Format(time.RFC3339),
+			v.lo.UTC().Format(time.RFC3339), v.hi.UTC().Format(time.RFC3339), err)
+	}
+	r.logger.Info("late-trade cagg refresh done", "view", st.View,
+		"trades_from", v.lo.UTC().Format(time.RFC3339), "trades_to", v.hi.UTC().Format(time.RFC3339))
+	v.pending = false
+	v.lastRefreshed = r.now()
+	return viewRefreshed, 0, nil
 }
 
 // publishOverdueLocked recomputes when the oldest pending view window fell
