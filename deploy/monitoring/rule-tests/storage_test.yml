@@ -313,7 +313,7 @@ tests:
               component: storage
               alert_family: node_root_disk
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-full.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk.md#stellarindex_node_root_disk_full
               summary: "Root filesystem on r1:9100 5% free (SEV-1)"
               description: |
                 Root FS (/) under 10 % free on r1:9100.
@@ -351,7 +351,7 @@ tests:
               component: storage
               alert_family: node_root_disk
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-warning.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk.md#stellarindex_node_root_disk_warning
               summary: "Root filesystem on r1:9100 15% free"
               description: |
                 Root FS (/) under 20 % on r1:9100.
@@ -396,7 +396,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-filling-fast.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk.md#stellarindex_node_root_disk_filling_fast
               summary: "Root filesystem on r1:9100 trending to FULL within 30 min"
               description: |
                 Root FS (/) on r1:9100 is filling fast enough
@@ -573,7 +573,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cagg-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_cagg_stale
               summary: "Continuous aggregate prices_1m hasn't refreshed"
               description: |
                 Refresh for prices_1m is 5× its configured interval
@@ -615,7 +615,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cagg-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_cagg_stale
               summary: "Continuous aggregate prices_1m has stopped reporting refresh status"
               description: |
                 prices_1m was reporting
@@ -640,7 +640,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cagg-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_cagg_stale
               summary: "Continuous aggregate prices_1m has stopped reporting refresh status"
               description: |
                 prices_1m was reporting
@@ -707,7 +707,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/compression-lag.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_compression_lag
               summary: "trades: 3 chunks past their compression policy's own window"
               description: |
                 Chunks on trades are still uncompressed more than
@@ -750,7 +750,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/compression-lag.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_compression_lag
               summary: "trades: 2 chunks past their compression policy's own window"
               description: |
                 Chunks on trades are still uncompressed more than
@@ -806,7 +806,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-probe-degraded.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_probe_degraded
               summary: "TimescaleDB job/CAGG probe is not producing usable metrics (compression)"
               description: |
                 timescale-jobs-probe.timer is not producing a usable
@@ -856,7 +856,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-probe-degraded.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_probe_degraded
               summary: "TimescaleDB job/CAGG probe is not producing usable metrics (compression)"
               description: |
                 timescale-jobs-probe.timer is not producing a usable
@@ -904,7 +904,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-probe-degraded.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_probe_degraded
               summary: "TimescaleDB job/CAGG probe is not producing usable metrics"
               description: |
                 timescale-jobs-probe.timer is not producing a usable
@@ -942,7 +942,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-probe-degraded.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_probe_degraded
               summary: "TimescaleDB job/CAGG probe is not producing usable metrics"
               description: |
                 timescale-jobs-probe.timer is not producing a usable
@@ -1424,7 +1424,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-job-failures-climbing.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_job_failures_climbing
               summary: "TimescaleDB job policy_compression failing repeatedly (trades)"
               description: |
                 Job 1000 (policy_compression on
@@ -1500,7 +1500,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-job-failures-climbing.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_job_failures_climbing
               summary: "TimescaleDB job policy_retention failing repeatedly (fx_quotes)"
               description: |
                 Job 1002 (policy_retention on
@@ -1596,7 +1596,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-job-failures-climbing.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_job_failures_climbing
               summary: "TimescaleDB job policy_refresh_continuous_aggregate failing repeatedly (prices_5m)"
               description: |
                 Job 1089 (policy_refresh_continuous_aggregate on
@@ -1634,7 +1634,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-job-failures-climbing.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_job_failures_climbing
               summary: "TimescaleDB job policy_refresh_continuous_aggregate failing repeatedly (prices_15m)"
               description: |
                 Job 1090 (policy_refresh_continuous_aggregate on

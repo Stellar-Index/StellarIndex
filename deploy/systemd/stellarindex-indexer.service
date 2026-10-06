@@ -77,7 +77,7 @@ Requires=postgresql.service
 # what keeps it honest.
 #
 # The cover is `stellarindex_ingestion_ledger_stalled` (page, ~10 min,
-# docs/operations/runbooks/ledger-ingest-stalled.md): the committed
+# docs/operations/runbooks/ledger-ingest.md#stellarindex_ingestion_ledger_stalled): the committed
 # LEDGER cursor stops advancing. It is deliberately not
 # `all_sources_stopped`, which this comment named until 2026-09-03 and
 # which cannot cover a lake outage on this deployment — the CEX/FX

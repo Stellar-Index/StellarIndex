@@ -2160,7 +2160,7 @@ var LedgerstreamColdReadDurationSeconds = prometheus.NewHistogramVec(
 // now stalls and retries instead, and this counter is what stops that
 // stall being silent.
 //
-// When to look at it: the first branch of the ledger-ingest-stalled
+// When to look at it: the first branch of the ledger-ingest.md
 // runbook. A cursor that has stopped advancing while this counter climbs
 // is a lake-reachability problem (MinIO down, credentials rejected,
 // bucket gone) — not Postgres, not a decoder, not the dispatcher. A

@@ -174,7 +174,7 @@ case it exists to catch.
   one input).
 - [decode-errors](decode-errors.md) — the per-source decode-error-rate
   alert; every panic also increments that counter.
-- [cursor-stuck](cursor-stuck.md) — use if the cursor
+- [cursor-stuck](ledger-ingest.md#stellarindex_ingestion_cursor_stuck) — use if the cursor
   is NOT advancing (a different incident).
 - docs/architecture/ingest-pipeline.md#contract-schema-evolution; ADR-0033; ADR-0034.
 

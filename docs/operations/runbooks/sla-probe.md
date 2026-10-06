@@ -182,9 +182,9 @@ Root causes (roughly in frequency order):
    - Mitigation: restart the aggregator binary; investigate why it stopped.
 2. Indexer lag. The dispatcher is behind on LCM consumption, so no closed buckets form.
    - Signal: [source-stopped](source-stopped.md) (`stellarindex_ingestion_source_stopped`) fires when `sum by (source) (rate(stellarindex_source_events_total[30m])) == 0` for 15m, gated on `stellarindex_source_enabled == 1` and the rule's continuous-source allowlist (binance, bitstamp, coinbase, kraken, sdex, aquarius, reflector-dex/cex/fx, redstone, coingecko). Sporadic sources (band, blend, comet, ecb, phoenix, ...) are excluded and will not page.
-   - Mitigation: see `core-lag.md`.
+   - Mitigation: see `stellar-node.md#stellarindex_stellar_core_ledger_age`.
 3. CAGG refresh policy paused or lagging. `prices_1m` is not materializing recent buckets although raw trades exist.
-   - Signal: `stellarindex_timescale_cagg_stale` fires too. Mitigation: see `cagg-stale.md`.
+   - Signal: `stellarindex_timescale_cagg_stale` fires too. Mitigation: see `timescale.md#stellarindex_timescale_cagg_stale`.
 4. No trades for the pair in the tip's escalation window. Most common cause on `price-tip`, and in-contract. `computeTip` tries the caller's window (5 s), escalates to 30 s, then falls back to `PriceReader.LatestPrice` (the CLOSED bucket). A pair with no trade for 30+ s serves a 60-120 s `observed_at` on the tip surface exactly as ADR-0018 describes, and the probe correctly records it over the 30 s SLA. The tell: `price` and `price-tip` report the SAME freshness to three decimals (both serve one closed bucket). Seen on r1 2026-09-05 07:19 UTC: both read `109.156` because XLM/`fiat:USD` had a 67 s CEX trade gap (07:18:31 to 07:19:38) covering two thirds of the 30 s run.
    - Signal: bounded trade query over the run window:
 
@@ -315,7 +315,7 @@ False positive: fresh deploy of the probe. The series is absent (an absent serie
 
 - `api.md#stellarindex_api_latency_p95_high` - underlying latency triage.
 - `api.md#stellarindex_api_error_rate_critical` - server-error triage.
-- `slo-availability-burn-fast.md` - real-traffic availability burn.
-- `cagg-stale.md`, `core-lag.md`, `aggregator.md#stellarindex_aggregator_silent` - freshness chain stages.
+- `slo.md#stellarindex_slo_availability_burn_fast` - real-traffic availability burn.
+- `timescale.md#stellarindex_timescale_cagg_stale`, `stellar-node.md#stellarindex_stellar_core_ledger_age`, `aggregator.md#stellarindex_aggregator_silent` - freshness chain stages.
 - ADR-0015 - closed-bucket-only serving that makes `/v1/price` structurally 30-150 s old.
 - The service freshness SLA - the 30 s spec (tip-of-chain surface).
