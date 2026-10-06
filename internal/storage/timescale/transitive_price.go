@@ -110,6 +110,8 @@ func (s *Store) TransitiveUSDPriceCandidates(ctx context.Context, assetID string
 // to a package constant so the function body stays under the funlen
 // threshold (same convention as getNativeAssetSQL). $1 = asset_id,
 // $2 = candidate limit, $3 = the network's native-XLM SAC.
+//
+//nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var transitiveUSDPriceSQL = `
 WITH xlm_usd AS (` + xlmUSDAnchorAt("now()", "$3::text") + `),
 -- Every counterparty this asset traded against in the window, in BOTH

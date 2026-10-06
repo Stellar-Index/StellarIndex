@@ -1176,6 +1176,8 @@ func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]
 // getAssetPriceHistory24hSQL is GetAssetPriceHistory24h's query,
 // hoisted to a package constant so the function body stays under the
 // funlen threshold (same treatment as getNativeAssetSQL).
+//
+//nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var getAssetPriceHistory24hSQL = `
 		WITH hours AS (
 		  SELECT generate_series(
@@ -1305,6 +1307,8 @@ func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]A
 // getAssetPriceHistory7dSQL is GetAssetPriceHistory7d's query, hoisted
 // to a package constant so TestProxyQuoteLists_Lockstep can pin its XLM
 // arms alongside getAssetPriceHistory24hSQL.
+//
+//nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var getAssetPriceHistory7dSQL = `
 		WITH days AS (
 		  SELECT generate_series(
@@ -2166,6 +2170,8 @@ func (s *Store) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []st
 
 // getAssetsPriceHistory24hBatchSQL is GetAssetsPriceHistory24hBatch's
 // query, hoisted so TestProxyQuoteLists_Lockstep can pin its XLM arms.
+//
+//nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var getAssetsPriceHistory24hBatchSQL = `
 		WITH hours AS (
 		  SELECT generate_series(
@@ -2284,6 +2290,8 @@ func (s *Store) GetAssetsPriceHistory7dBatch(ctx context.Context, assetIDs []str
 
 // getAssetsPriceHistory7dBatchSQL is GetAssetsPriceHistory7dBatch's
 // query, hoisted so TestProxyQuoteLists_Lockstep can pin its XLM arms.
+//
+//nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var getAssetsPriceHistory7dBatchSQL = `
 		WITH days AS (
 		  SELECT generate_series(
