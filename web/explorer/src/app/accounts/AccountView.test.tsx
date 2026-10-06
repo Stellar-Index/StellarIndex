@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
@@ -123,5 +123,63 @@ describe('AccountView operations history — failed-tx transparency (D-PART-FAIL
     // No degraded read → no banner.
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.queryByText('unknown')).not.toBeInTheDocument();
+  });
+});
+
+describe('AccountView history paging — empty page with next_cursor', () => {
+  function mockEmptyPage(next_cursor?: string) {
+    vi.mocked(apiGet).mockImplementation((path: string) => {
+      if (path.endsWith('/operations')) {
+        return Promise.resolve({
+          data: {
+            account: G,
+            operations: [],
+            scope: 'all',
+            ...(next_cursor ? { next_cursor } : {}),
+          },
+        });
+      }
+      if (path.endsWith('/transactions')) {
+        return Promise.resolve({
+          data: {
+            account: G,
+            transactions: [],
+            ...(next_cursor ? { next_cursor } : {}),
+          },
+        });
+      }
+      return new Promise(() => {});
+    });
+  }
+
+  it('keeps the Older button and a neutral line when the page is empty but next_cursor is set', async () => {
+    mockEmptyPage('cur-1');
+    renderWithClient(<AccountView id={G} />);
+
+    const notes = await screen.findAllByText(
+      'No visible items on this page — older history continues.',
+    );
+    expect(notes).toHaveLength(2);
+    expect(screen.queryByText(/observed for this account yet/)).toBeNull();
+    const older = screen.getAllByRole('button', { name: /Load older/ });
+    expect(older).toHaveLength(2);
+    fireEvent.click(older[0]);
+    expect(vi.mocked(apiGet)).toHaveBeenCalledWith(
+      expect.stringContaining('/transactions'),
+      expect.anything(),
+    );
+  });
+
+  it('shows the empty state only when the page is empty and there is no next_cursor', async () => {
+    mockEmptyPage();
+    renderWithClient(<AccountView id={G} />);
+
+    expect(
+      await screen.findByText('No transactions observed for this account yet.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('No operations observed for this account yet.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Load older/ })).toBeNull();
   });
 });
