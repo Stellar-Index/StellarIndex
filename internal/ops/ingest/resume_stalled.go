@@ -692,12 +692,9 @@ func resumeStalled(args []string) error {
 	}
 	gateCtx, gateCancel := newDataGapGateContext(rootCtx)
 	defer gateCancel()
-	var dataGaps []timescale.LedgerGap
-	if anyPlanHasSorobanEventsPseudo(plans) {
-		dataGaps, err = store.FindSorobanEventsLedgerGaps(gateCtx, 0, int64(tipCursor.LastLedger), opts.dataGapMinSize)
-		if err != nil {
-			return fmt.Errorf("find data gaps for gate: %w", err)
-		}
+	dataGaps, err := rawSorobanEventsGaps(gateCtx, store, plans, tipCursor.LastLedger, opts.dataGapMinSize)
+	if err != nil {
+		return err
 	}
 	decoderGaps, err := buildDecoderGapIndex(gateCtx, store, plans, dataGaps, tipCursor.LastLedger, opts.dataGapMinSize)
 	if err != nil {
@@ -942,6 +939,19 @@ func planResumeStalled(
 		plans = append(plans, parseStalledCursor(c))
 	}
 	return plans, nil
+}
+
+// rawSorobanEventsGaps runs the soroban_events gap scan only when a live
+// plan is a raw soroban-events cursor; no other plan reads its result.
+func rawSorobanEventsGaps(ctx context.Context, store *timescale.Store, plans []stalledCursorPlan, tip uint32, minGapSize int64) ([]timescale.LedgerGap, error) {
+	if !anyPlanHasSorobanEventsPseudo(plans) {
+		return nil, nil
+	}
+	gaps, err := store.FindSorobanEventsLedgerGaps(ctx, 0, int64(tip), minGapSize)
+	if err != nil {
+		return nil, fmt.Errorf("find data gaps for gate: %w", err)
+	}
+	return gaps, nil
 }
 
 // anyPlanHasSorobanEventsPseudo reports whether a not-yet-skipped plan is
