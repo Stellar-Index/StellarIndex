@@ -258,7 +258,9 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 		return "no-store", true
 	case ledgerDetailPath.MatchString(path), txDetailPath.MatchString(path):
 		return closedLedgerPolicy(cdnEnabled), true
-	case path == "/v1/ledgers", path == "/v1/network/throughput",
+	// /v1/ledgers/at 404s for a ts past the tip until that ledger lands,
+	// so it takes the short band rather than the closed-ledger one.
+	case path == "/v1/ledgers", path == "/v1/ledgers/at", path == "/v1/network/throughput",
 		path == "/v1/operations", path == "/v1/contracts",
 		contractDetailPath.MatchString(path),
 		// Network-stats strip (#1070): a 30s SWR cache carrying

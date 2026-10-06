@@ -42445,6 +42445,226 @@
           }
         },
         {
+          "name": "at",
+          "description": "",
+          "item": [
+            {
+              "name": "The ledger closed at or before a timestamp.",
+              "request": {
+                "name": "The ledger closed at or before a timestamp.",
+                "description": {
+                  "content": "Resolves a timestamp to the ledger the network had closed at that\ninstant: the highest-sequence ledger whose `close_time` is at or\nbefore `ts`, in the same shape as `/v1/ledgers/{seq}`.\n\n- **Ties:** a ledger closed exactly at `ts` is returned. Close times\n  strictly increase, so no two ledgers share one.\n- **Between closes:** the earlier ledger is returned, never the\n  next one. Close times are whole seconds; sub-second `ts` is honoured.\n- **Gaps:** the answer is served only when it is proven from the\n  lake, meaning that ledger and its successor (unless it is the tip)\n  are both captured. When a gap in the lake makes it unprovable, the\n  response is 404, never a neighbouring ledger.\n\n404 when `ts` is before the first captured ledger or after the\ningest tip's close time (a ledger not yet captured may still close\nat or before it). The lookup is a binary search of point reads on\nthe ledger sequence, at most ~32 per request.\n",
+                  "type": "text/plain"
+                },
+                "url": {
+                  "path": [
+                    "ledgers",
+                    "at"
+                  ],
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "query": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "(Required) RFC 3339 (`2024-06-01T12:00:00Z`; percent-encode a `+` offset\nas `%2B`) or non-negative unix seconds (`1717243200`). Anything\nelse is a 400.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "ts",
+                      "value": "<string>"
+                    }
+                  ],
+                  "variable": []
+                },
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "method": "GET",
+                "body": {},
+                "auth": null
+              },
+              "response": [
+                {
+                  "name": "Ledger header of the ledger closed at or before `ts`.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "ledgers",
+                        "at"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) RFC 3339 (`2024-06-01T12:00:00Z`; percent-encode a `+` offset\nas `%2B`) or non-negative unix seconds (`1717243200`). Anything\nelse is a 400.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "ts",
+                          "value": "<string>"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "OK",
+                  "code": 200,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"sequence\": \"<integer>\",\n    \"close_time\": \"<dateTime>\",\n    \"hash\": \"<string>\",\n    \"prev_hash\": \"<string>\",\n    \"protocol_version\": \"<integer>\",\n    \"tx_count\": \"<integer>\",\n    \"op_count\": \"<integer>\",\n    \"soroban_event_count\": \"<integer>\",\n    \"total_coins\": \"<string>\",\n    \"fee_pool\": \"<string>\",\n    \"base_fee\": \"<string>\",\n    \"base_reserve\": \"<string>\"\n  }\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Client-supplied parameters didn't validate.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "ledgers",
+                        "at"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) RFC 3339 (`2024-06-01T12:00:00Z`; percent-encode a `+` offset\nas `%2B`) or non-negative unix seconds (`1717243200`). Anything\nelse is a 400.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "ts",
+                          "value": "<string>"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Bad Request",
+                  "code": 400,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"span\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"fx_leg_unavailable\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "No captured ledger provably closed at or before `ts`: before the first captured ledger, after the tip, or across a lake gap.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "ledgers",
+                        "at"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) RFC 3339 (`2024-06-01T12:00:00Z`; percent-encode a `+` offset\nas `%2B`) or non-negative unix seconds (`1717243200`). Anything\nelse is a 400.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "ts",
+                          "value": "<string>"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Not Found",
+                  "code": 404,
+                  "header": [],
+                  "cookie": [],
+                  "_postman_previewlanguage": "text"
+                },
+                {
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "ledgers",
+                        "at"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) RFC 3339 (`2024-06-01T12:00:00Z`; percent-encode a `+` offset\nas `%2B`) or non-negative unix seconds (`1717243200`). Anything\nelse is a 400.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "ts",
+                          "value": "<string>"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Service Unavailable",
+                  "code": 503,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"span\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"fx_leg_unavailable\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                }
+              ],
+              "event": [],
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              }
+            }
+          ]
+        },
+        {
           "name": "{seq}",
           "description": "",
           "item": [

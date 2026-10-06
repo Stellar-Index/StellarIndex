@@ -2120,6 +2120,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// Handler implementations live in internal/api/v1/explorer (D1 M1-7
 	// extraction); this is still the sole place they're mounted.
 	s.mux.HandleFunc("GET /v1/ledgers", s.explorerHandler.LedgersList)
+	s.mux.HandleFunc("GET /v1/ledgers/at", s.explorerHandler.LedgerAt)
 	s.mux.HandleFunc("GET /v1/ledgers/{seq}", s.explorerHandler.LedgerDetail)
 	s.mux.HandleFunc("GET /v1/ledgers/{seq}/transactions", s.explorerHandler.LedgerTransactions)
 	s.mux.HandleFunc("GET /v1/ledgers/{seq}/operations", s.explorerHandler.LedgerOperations)
