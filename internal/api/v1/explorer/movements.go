@@ -617,30 +617,39 @@ func (h *Handler) mapSEP41RowsToMovements(ctx context.Context, address string, r
 // to the raw contract_id — the spoof renders as itself, never as the
 // asset it impersonated. A proven SAC is memoised across requests.
 func (h *Handler) resolveSEP41MovementAsset(ctx context.Context, contractID string) string {
-	if name, ok := h.sacNames.get(contractID); ok {
-		return name
-	}
-	name := h.resolveSEP41AssetUncached(ctx, contractID)
-	if name != contractID {
-		h.sacNames.put(contractID, name)
-	}
+	name, _ := h.resolveSEP41MovementAssetChecked(ctx, contractID)
 	return name
 }
 
-func (h *Handler) resolveSEP41AssetUncached(ctx context.Context, contractID string) string {
-	if name, ok, err := h.Reader.SACClassicAssetName(ctx, contractID); err == nil && ok {
+// resolveSEP41MovementAssetChecked also reports lookupFailed: the SAC
+// metadata read errored and no event-topic proof recovered, so the returned
+// contract id may be a SAC we could not fold, not a proven non-SAC.
+func (h *Handler) resolveSEP41MovementAssetChecked(ctx context.Context, contractID string) (name string, lookupFailed bool) {
+	if name, ok := h.sacNames.get(contractID); ok {
+		return name, false
+	}
+	name, lookupFailed = h.resolveSEP41AssetUncached(ctx, contractID)
+	if name != contractID {
+		h.sacNames.put(contractID, name)
+	}
+	return name, lookupFailed
+}
+
+func (h *Handler) resolveSEP41AssetUncached(ctx context.Context, contractID string) (string, bool) {
+	name, ok, err := h.Reader.SACClassicAssetName(ctx, contractID)
+	if err == nil && ok {
 		// The instance METADATA name is colon form ("USDC:GA5Z…", exactly
 		// as the CAP-67 topic carries it) — normalize to the canonical
 		// dash form the CH side of the merge stores, so one ?asset= value
 		// matches both sides and the response's asset field doesn't flip
 		// spelling across the P23 boundary (cold audit 2026-08-03). An
 		// unparseable name passes through verbatim (status quo).
-		return canonicalizeSACName(name)
+		return canonicalizeSACName(name), false
 	}
 	if name, ok := h.sacAssetViaEvents(ctx, contractID); ok {
-		return name // already canonical — asset.String()
+		return name, false // already canonical — asset.String()
 	}
-	return contractID
+	return contractID, err != nil
 }
 
 // sacNameMemoMax bounds the SAC memo; a full memo is emptied, so a flood

@@ -23,6 +23,7 @@ type assetArmReader struct {
 	backfilledThru uint32
 	markerErr      error
 	sacNames       map[string]string
+	sacErr         error
 	rows           []clickhouse.AssetMovementRow
 
 	gotAsset   string
@@ -45,6 +46,9 @@ func (r *assetArmReader) AssetMovementsBackfilledThru(context.Context) (uint32, 
 }
 
 func (r *assetArmReader) SACClassicAssetName(_ context.Context, contractID string) (string, bool, error) {
+	if r.sacErr != nil {
+		return "", false, r.sacErr
+	}
 	name, ok := r.sacNames[contractID]
 	return name, ok, nil
 }
@@ -55,8 +59,19 @@ func newAssetArmReader(wm uint32) *assetArmReader {
 
 func callAssetMovements(t *testing.T, reader *assetArmReader, assetID string, limit int) (int, AssetMovementsView) {
 	t.Helper()
+	code, view, _ := callAssetMovementsDegraded(t, reader, assetID, limit)
+	return code, view
+}
+
+func callAssetMovementsDegraded(t *testing.T, reader *assetArmReader, assetID string, limit int) (int, AssetMovementsView, bool) {
+	t.Helper()
 	var view AssetMovementsView
+	var degraded bool
 	h := newProbeHandler(reader, nil)
+	h.WriteJSONAt = func(w http.ResponseWriter, v any, _, d bool, _ time.Time) {
+		view, degraded = v.(AssetMovementsView), d
+		w.WriteHeader(http.StatusOK)
+	}
 	h.ParseLimit = func(http.ResponseWriter, *http.Request, int, int) (int, bool) { return limit, true }
 	h.WriteJSON = func(w http.ResponseWriter, v any, _ bool) {
 		view = v.(AssetMovementsView)
@@ -66,7 +81,7 @@ func callAssetMovements(t *testing.T, reader *assetArmReader, assetID string, li
 	r.SetPathValue("asset_id", assetID)
 	rec := httptest.NewRecorder()
 	h.AssetMovements(rec, r)
-	return rec.Code, view
+	return rec.Code, view, degraded
 }
 
 // Every spelling of one asset must reach the store as the single id the
@@ -163,7 +178,33 @@ func TestAssetMovements_WatermarkErrorCeilingsAtP23(t *testing.T) {
 	reader := newAssetArmReader(timescale.MovementsFloor() + 500)
 	reader.wmErr = errors.New("connection reset")
 	if code, view := callAssetMovements(t, reader, "native", 25); code != http.StatusOK ||
-		reader.gotCeiling != timescale.MovementsFloor()-1 || !strings.Contains(view.CoverageNote, "no post-P23") {
-		t.Fatalf("code=%d ceiling=%d note=%q, want P23-1 and the no-archive note", code, reader.gotCeiling, view.CoverageNote)
+		reader.gotCeiling != timescale.MovementsFloor()-1 || !strings.Contains(view.CoverageNote, "coverage read failed") ||
+		strings.Contains(view.CoverageNote, "no post-P23") {
+		t.Fatalf("code=%d ceiling=%d note=%q, want P23-1 and the coverage-read-failed note", code, reader.gotCeiling, view.CoverageNote)
+	}
+}
+
+// A failed SAC lookup leaves the C... id unfolded, so the empty page is not
+// proof the asset has no movements: it must be degraded and a lower bound.
+func TestAssetMovements_SACLookupFailureIsDegraded(t *testing.T) {
+	usdc, err := canonical.ParseAsset("USDC-" + testUSDCIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sac, err := usdc.SacContractID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := newAssetArmReader(timescale.MovementsFloor() + 500)
+	reader.backfilledThru = 1
+	reader.sacErr = errors.New("connection reset")
+	code, view, degraded := callAssetMovementsDegraded(t, reader, sac, 25)
+	if code != http.StatusOK || !degraded || !view.LowerBound {
+		t.Fatalf("code=%d degraded=%v lower_bound=%v, want 200 degraded lower bound", code, degraded, view.LowerBound)
+	}
+	reader.sacErr = nil
+	reader.sacNames = map[string]string{sac: "USDC:" + testUSDCIssuer}
+	if _, view, degraded = callAssetMovementsDegraded(t, reader, sac, 25); degraded || view.LowerBound {
+		t.Fatalf("healthy lookup: degraded=%v lower_bound=%v, want neither", degraded, view.LowerBound)
 	}
 }

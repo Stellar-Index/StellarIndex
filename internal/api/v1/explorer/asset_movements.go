@@ -62,7 +62,7 @@ func (h *Handler) AssetMovements(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
-	asset, ok := h.assetMovementsID(ctx, w, r)
+	asset, lookupFailed, ok := h.assetMovementsID(ctx, w, r)
 	if !ok {
 		return
 	}
@@ -88,43 +88,46 @@ func (h *Handler) AssetMovements(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lowerBound, markerFailed := h.assetMovementsLowerBound(ctx)
+	// An unresolved SAC id keys no rows, so the empty page is not an answer.
+	lowerBound = lowerBound || lookupFailed
 	out := AssetMovementsView{
 		Asset:         asset,
 		Movements:     h.assetMovementEntries(ctx, asset, rows),
 		ThroughLedger: ceiling,
 		LowerBound:    lowerBound,
-		CoverageNote:  assetMovementsNote(wm, ceiling, lowerBound, h.movementsSupplyRange(ctx, wm)),
+		CoverageNote:  assetMovementsNote(wm, ceiling, lowerBound, wmFailed, h.movementsSupplyRange(ctx, wm)),
 	}
 	if len(rows) == limit {
 		last := rows[len(rows)-1]
 		out.NextCursor = fmt.Sprintf("%d.%s.%d.%d", last.Ledger, last.TxHash, last.OpIndex, last.LegIndex)
 	}
-	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed || markerFailed, time.Time{})
+	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed || markerFailed || lookupFailed, time.Time{})
 }
 
 // assetMovementsID folds the path asset to the one id the movement tables
 // store for it: XLM's alias forms to "native", and a SAC address to the
 // classic asset it wraps (cross-checked, so a token claiming a trusted name
 // stays its own contract id). Off-chain ids have no movements: 400.
-func (h *Handler) assetMovementsID(ctx context.Context, w http.ResponseWriter, r *http.Request) (string, bool) {
+func (h *Handler) assetMovementsID(ctx context.Context, w http.ResponseWriter, r *http.Request) (asset string, lookupFailed, ok bool) {
 	raw := r.PathValue("asset_id")
 	parsed, err := canonical.ParseAsset(raw)
 	if err == nil && isNativeHoldersAsset(parsed) {
-		return canonical.NativeAsset().String(), true
+		return canonical.NativeAsset().String(), false, true
 	}
 	if err == nil {
 		switch parsed.Type {
 		case canonical.AssetClassic:
-			return parsed.String(), true
+			return parsed.String(), false, true
 		case canonical.AssetSoroban:
-			return h.resolveSEP41MovementAsset(ctx, parsed.ContractID), true
+			asset, failed := h.resolveSEP41MovementAssetChecked(ctx, parsed.ContractID)
+			return asset, failed, true
 		case canonical.AssetNative, canonical.AssetCrypto, canonical.AssetFiat, canonical.AssetRWA, canonical.AssetOracleRaw:
 			// Native was folded above; the rest are off-chain and never move on the ledger.
 		}
 	}
 	h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-asset-id", "Invalid asset", http.StatusBadRequest,
 		"asset_id must be an on-chain asset: 'native', 'CODE-ISSUER' or a C… contract id; got "+raw)
-	return "", false
+	return "", false, false
 }
 
 // assetMovementsLowerBound reports whether the history copy is unverified.
@@ -140,10 +143,13 @@ func (h *Handler) assetMovementsLowerBound(ctx context.Context) (lowerBound, fai
 
 // assetMovementsNote states what the feed covers: the archive span, the
 // backfill caveat while it is a lower bound, and the kinds it serves.
-func assetMovementsNote(wm, ceiling uint32, lowerBound bool, supply supplyRange) string {
+func assetMovementsNote(wm, ceiling uint32, lowerBound, wmFailed bool, supply supplyRange) string {
 	note := fmt.Sprintf("movements through ledger %d from the movement archive derived from the CAP-67 event lake "+
 		"(derive progress, not a verified completeness verdict); newer movements appear as the archive follows the tip", ceiling)
-	if wm == 0 {
+	if wm == 0 && wmFailed {
+		note = fmt.Sprintf("the movement archive coverage read failed, so movements are served only through ledger %d "+
+			"(2025-09-03, P23)", ceiling)
+	} else if wm == 0 {
 		note = fmt.Sprintf("this deployment has no post-P23 movement archive, so movements end at ledger %d "+
 			"(2025-09-03, P23)", ceiling)
 	}

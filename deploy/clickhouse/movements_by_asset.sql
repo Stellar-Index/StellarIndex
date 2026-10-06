@@ -110,3 +110,4 @@ FROM stellar.account_movements;
 -- ── ROLLBACK ────────────────────────────────────────────────────────────────
 --   DROP TABLE IF EXISTS stellar.movements_by_asset_mv;
 --   DROP TABLE IF EXISTS stellar.movements_by_asset SYNC;
+--   ALTER TABLE stellar.cap67_movements_watermark DELETE WHERE name = 'movements_by_asset_backfill'
