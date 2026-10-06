@@ -3,7 +3,6 @@ package wiring
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"time"
 
@@ -162,14 +161,8 @@ func (r CachedMarketsReader) AllPools(ctx context.Context, filter timescale.Pool
 		return r.Inner.AllPools(ctx, filter, cursor, limit, order)
 	}
 	cacheKey := cachekeys.MarketsListPools(cursor, limit, marketsOrderKey(order), filter.Sources, filter.Base, filter.Quote, filter.Asset)
-	if raw, err := r.RDB.Get(ctx, cacheKey.String()).Bytes(); err == nil {
-		var p listCachePayload[v1.Pool]
-		if jerr := json.Unmarshal(raw, &p); jerr == nil {
-			return p.Items, p.NextCursor, nil
-		}
-		r.Log.Warn("pools cache decode failed", "key", cacheKey)
-	} else if !errors.Is(err, redis.Nil) {
-		r.Log.Warn("pools cache read failed", "key", cacheKey, "err", err)
+	if items, next, ok := readListCache[v1.Pool](ctx, r.RDB, r.Log, "markets_redis", "all_pools", cacheKey); ok {
+		return items, next, nil
 	}
 	items, next, err := r.Inner.AllPools(ctx, filter, cursor, limit, order)
 	if err != nil {
@@ -191,14 +184,8 @@ func (r CachedMarketsReader) SourceMarkets(ctx context.Context, source, cursor s
 		return r.Inner.SourceMarkets(ctx, source, cursor, limit, order)
 	}
 	cacheKey := cachekeys.MarketsListBySource(cursor, limit, marketsOrderKey(order), source)
-	if raw, err := r.RDB.Get(ctx, cacheKey.String()).Bytes(); err == nil {
-		var p listCachePayload[v1.Market]
-		if jerr := json.Unmarshal(raw, &p); jerr == nil {
-			return p.Items, p.NextCursor, nil
-		}
-		r.Log.Warn("source-markets cache decode failed", "key", cacheKey)
-	} else if !errors.Is(err, redis.Nil) {
-		r.Log.Warn("source-markets cache read failed", "key", cacheKey, "err", err)
+	if items, next, ok := readListCache[v1.Market](ctx, r.RDB, r.Log, "markets_redis", "source_markets", cacheKey); ok {
+		return items, next, nil
 	}
 
 	items, next, err := r.Inner.SourceMarkets(ctx, source, cursor, limit, order)
@@ -221,14 +208,8 @@ func (r CachedMarketsReader) AssetMarkets(ctx context.Context, asset, cursor str
 		return r.Inner.AssetMarkets(ctx, asset, cursor, limit, order)
 	}
 	cacheKey := cachekeys.MarketsListByAsset(cursor, limit, marketsOrderKey(order), asset)
-	if raw, err := r.RDB.Get(ctx, cacheKey.String()).Bytes(); err == nil {
-		var p listCachePayload[v1.Market]
-		if jerr := json.Unmarshal(raw, &p); jerr == nil {
-			return p.Items, p.NextCursor, nil
-		}
-		r.Log.Warn("asset-markets cache decode failed", "key", cacheKey)
-	} else if !errors.Is(err, redis.Nil) {
-		r.Log.Warn("asset-markets cache read failed", "key", cacheKey, "err", err)
+	if items, next, ok := readListCache[v1.Market](ctx, r.RDB, r.Log, "markets_redis", "asset_markets", cacheKey); ok {
+		return items, next, nil
 	}
 
 	items, next, err := r.Inner.AssetMarkets(ctx, asset, cursor, limit, order)
@@ -248,14 +229,8 @@ func (r CachedMarketsReader) DistinctPairsExt(ctx context.Context, cursor string
 		return r.Inner.DistinctPairsExt(ctx, cursor, limit, order)
 	}
 	cacheKey := cachekeys.MarketsListOrdered(cursor, limit, marketsOrderKey(order))
-	if raw, err := r.RDB.Get(ctx, cacheKey.String()).Bytes(); err == nil {
-		var p listCachePayload[v1.Market]
-		if jerr := json.Unmarshal(raw, &p); jerr == nil {
-			return p.Items, p.NextCursor, nil
-		}
-		r.Log.Warn("markets cache decode failed", "key", cacheKey)
-	} else if !errors.Is(err, redis.Nil) {
-		r.Log.Warn("markets cache read failed", "key", cacheKey, "err", err)
+	if items, next, ok := readListCache[v1.Market](ctx, r.RDB, r.Log, "markets_redis", "distinct_pairs", cacheKey); ok {
+		return items, next, nil
 	}
 
 	items, next, err := r.Inner.DistinctPairsExt(ctx, cursor, limit, order)

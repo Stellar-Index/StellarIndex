@@ -377,15 +377,18 @@ F-0105 (audit 2026-05-26) — pre-this-PR the SLO ratio reported a
 
 Counter, labels `cache`, `op`, `result`.
 
-Every read through the API's in-memory cache wrappers
-(`v1.CachedMarketsReader`, future `v1.CachedCoinsReader`, …)
-increments this counter. `cache` is the wrapper name (e.g.
-`markets`); `op` is the cached method (`distinct_pairs` /
+Every read through the API's cache wrappers (in-memory
+`v1.CachedMarketsReader`, …, and the Redis read-through readers in
+`cmd/stellarindex-api/internal/wiring`) increments this counter. `cache` is the wrapper name (e.g.
+`markets`; the Redis layers are `assets_redis`, `markets_redis`,
+`oracle_redis`, `prices_redis`, and are exempt from the miss-rate
+alert); `op` is the cached method (`distinct_pairs` /
 `source_markets` / `asset_markets` / `all_pools`). `result` is a
 READ outcome — `hit` (returned cached value, including
 single-flight-wait callers that piggy-backed on an in-progress
 upstream call), `stale` (served an expired value while a background
-refresh runs) or `miss` (called upstream) — or one of two
+refresh runs) or `miss` (called upstream) — `error` (a Redis read failed or its
+payload did not decode; Redis caches only) — or one of two
 side-events: `refresh_error` (a background refresh failed) and
 `evicted` (a bounded cache dropped its oldest entry to admit a new
 key; emitted by the `observations` and `oracle` wrappers, which cap
