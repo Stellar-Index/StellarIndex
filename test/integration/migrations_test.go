@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +17,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -520,17 +522,7 @@ func TestMigration0112DownOnCompressedChunks(t *testing.T) {
 		}
 	}
 	for _, tbl := range []string{"cctp_events", "rozo_events"} {
-		if _, err := db.ExecContext(ctx, `SELECT compress_chunk(c) FROM show_chunks('`+tbl+`') c`); err != nil {
-			t.Fatalf("compress %s: %v", tbl, err)
-		}
-		var n int
-		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM timescaledb_information.chunks
-			WHERE hypertable_name = $1 AND is_compressed`, tbl).Scan(&n); err != nil {
-			t.Fatalf("count compressed %s chunks: %v", tbl, err)
-		}
-		if n < 1 {
-			t.Fatalf("%s has no compressed chunk; the test would not exercise compressed chunks", tbl)
-		}
+		compressAllChunks(t, ctx, db, tbl, 1)
 	}
 
 	if err := applyMigrationsUpToErr(dsn, 111); err != nil {
@@ -1020,4 +1012,342 @@ func configAssertionSQL(t *testing.T, name, marker string) string {
 		t.Fatalf("%s in %s is unterminated or lacks %q: %q", name, path, marker, query)
 	}
 	return query
+}
+
+// compressedDownCase describes one down migration over a hypertable that
+// holds compressed chunks. Rows are inserted and compressed right after the
+// table's creating migration (stageA) and again just before the migration
+// under test (stageB); `reject` must be refused by the restored schema.
+type compressedDownCase struct {
+	version uint
+	table   string
+	stageA  uint
+	rowA    map[string]string
+	rowB    map[string]string
+	reject  map[string]string // row the post-down schema must refuse
+	check   string            // constraint that must refuse reject (SQLSTATE 23514)
+	verify  func(t *testing.T, ctx context.Context, db *sql.DB)
+}
+
+// insertGenericRow inserts one row into table, filling every NOT NULL
+// column that has no default from its type; over wins. seq keeps rows
+// distinct on ledger / tx_hash / numeric key columns.
+func insertGenericRow(t *testing.T, ctx context.Context, db *sql.DB, table string, seq int, ts string, over map[string]string) {
+	t.Helper()
+	if err := tryInsertGenericRow(ctx, db, table, seq, ts, over); err != nil {
+		t.Fatalf("insert into %s: %v", table, err)
+	}
+}
+
+func tryInsertGenericRow(ctx context.Context, db *sql.DB, table string, seq int, ts string, over map[string]string) error {
+	rows, err := db.QueryContext(ctx, `SELECT column_name, data_type, is_nullable, column_default IS NOT NULL
+		FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1
+		  AND is_generated = 'NEVER' ORDER BY ordinal_position`, table)
+	if err != nil {
+		return fmt.Errorf("columns of %s: %w", table, err)
+	}
+	var cols, vals []string
+	for rows.Next() {
+		var name, typ, nullable string
+		var hasDefault bool
+		if err := rows.Scan(&name, &typ, &nullable, &hasDefault); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan: %w", err)
+		}
+		v, ok := over[name]
+		if !ok {
+			if nullable == "YES" || hasDefault {
+				continue
+			}
+			switch {
+			case strings.Contains(typ, "timestamp"):
+				v = "'" + ts + "'"
+			case name == "tx_hash":
+				v = fmt.Sprintf("repeat('%d', 64)", seq%10)
+			case typ == "text" || strings.HasPrefix(typ, "character"):
+				v = "'x'"
+			case typ == "boolean":
+				v = "false"
+			case typ == "jsonb" || typ == "json":
+				v = "'{}'"
+			default: // integer family and numeric
+				v = fmt.Sprint(seq)
+			}
+		}
+		cols = append(cols, name)
+		vals = append(vals, v)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("columns of %s: %w", table, err)
+	}
+	rows.Close()
+	_, err = db.ExecContext(ctx, `INSERT INTO `+table+` (`+strings.Join(cols, ",")+`) VALUES (`+strings.Join(vals, ",")+`)`)
+	return err
+}
+
+// compressAllChunks compresses every chunk of table and requires at least
+// min. It counts from compress_chunk itself: reading
+// timescaledb_information.chunks before a DDL hides the TimescaleDB crash
+// these tests exist to catch.
+func compressAllChunks(t *testing.T, ctx context.Context, db *sql.DB, table string, min int) {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM (
+		SELECT compress_chunk(c, true) FROM show_chunks('`+table+`') c) s`).Scan(&n); err != nil {
+		t.Fatalf("compress %s: %v", table, err)
+	}
+	if n < min {
+		t.Fatalf("%s has %d compressed chunks, want >= %d; the test would not exercise compressed chunks", table, n, min)
+	}
+}
+
+func assertColumnNullable(t *testing.T, ctx context.Context, db *sql.DB, table, col, want string) {
+	t.Helper()
+	var got string
+	if err := db.QueryRowContext(ctx, `SELECT is_nullable FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`, table, col).Scan(&got); err != nil {
+		t.Fatalf("nullable %s.%s: %v", table, col, err)
+	}
+	if got != want {
+		t.Fatalf("%s.%s is_nullable = %s, want %s", table, col, got, want)
+	}
+}
+
+// TestDownsOnCompressedChunks pins INV-2684: a down on a hypertable with
+// compressed chunks restores the schema without losing or changing rows;
+// any error, including a Timescale internal one, fails the case.
+//
+// Most CHECK columns here are segmentby; only freeze_events.reason and
+// defindex_flows.direction are compressed columns. No case seeds a row that
+// the restored CHECK would refuse, so a refusal is never a pass.
+//
+// The compressed-chunk state is never read from
+// timescaledb_information.chunks before a DDL: that read masks the crash
+// TestCompressedAlterControl0174 proves this harness can see.
+func TestDownsOnCompressedChunks(t *testing.T) {
+	const tsA, tsA2, tsB, tsC, tsD = "2020-01-01T00:00:00Z", "2020-01-01T01:00:00Z", "2026-01-01T00:00:00Z", "2027-06-01T00:00:00Z", "2028-01-01T00:00:00Z"
+	enum := func(col, v string) map[string]string { return map[string]string{col: "'" + v + "'"} }
+	with := func(m map[string]string, kv ...string) map[string]string {
+		out := map[string]string{}
+		for k, v := range m {
+			out[k] = v
+		}
+		for i := 0; i < len(kv); i += 2 {
+			out[kv[i]] = kv[i+1]
+		}
+		return out
+	}
+	phoenixBond := map[string]string{"action": "'bond'", "user_addr": "'U'", "amount": "1", "lp_token": "'L'"}
+	cases := []compressedDownCase{
+		{version: 70, table: "cctp_events", stageA: 38, rowA: enum("event_type", "deposit_for_burn"), rowB: enum("event_type", "deposit_for_burn"), reject: enum("event_type", "mint_and_forward"), check: "cctp_events_event_type_check"},
+		{version: 92, table: "cctp_events", stageA: 38, rowA: enum("event_type", "deposit_for_burn"), rowB: enum("event_type", "deposit_for_burn"), reject: enum("event_type", "token_pair_linked"), check: "cctp_events_event_type_check"},
+		{version: 94, table: "cctp_events", stageA: 38, rowA: enum("event_type", "deposit_for_burn"), rowB: enum("event_type", "deposit_for_burn"), reject: enum("event_type", "pauser_changed"), check: "cctp_events_event_type_check"},
+		{version: 95, table: "blend_backstop_events", stageA: 63, rowA: enum("event_kind", "deposit"), rowB: enum("event_kind", "deposit"), reject: enum("event_kind", "rw_zone"), check: "blend_backstop_events_event_kind_check"},
+		{version: 97, table: "blend_emissions", stageA: 45, rowA: enum("event_kind", "gulp"), rowB: enum("event_kind", "gulp"), reject: enum("event_kind", "update_emissions"), check: "blend_emissions_event_kind_check"},
+		{version: 97, table: "blend_admin", stageA: 45, rowA: enum("event_kind", "set_admin"), rowB: enum("event_kind", "set_admin"), reject: enum("event_kind", "new_liquidation_auction"), check: "blend_admin_event_kind_check"},
+		{
+			version: 98, table: "phoenix_stake_events", stageA: 44, rowA: phoenixBond, rowB: phoenixBond, reject: with(phoenixBond, "action", "'withdraw_rewards'"), check: "phoenix_stake_events_action_check",
+			verify: func(t *testing.T, ctx context.Context, db *sql.DB) {
+				assertColumnNullable(t, ctx, db, "phoenix_stake_events", "user_addr", "NO")
+				assertColumnNullable(t, ctx, db, "phoenix_stake_events", "amount", "NO")
+			},
+		},
+		{version: 124, table: "freeze_events", stageA: 18, rowA: enum("reason", "single_source"), rowB: enum("reason", "single_source"), reject: enum("reason", "other"), check: "freeze_events_reason_check"},
+		{version: 138, table: "defindex_flows", stageA: 50, rowA: map[string]string{"direction": "'deposit'", "layer": "'vault'"}, rowB: map[string]string{"direction": "'deposit'", "layer": "'vault'"}, reject: map[string]string{"direction": "'harvest'", "layer": "'vault'"}, check: "defindex_flows_direction_check"},
+		{version: 145, table: "credit_events", stageA: 90, rowA: enum("event_type", "withdrawal"), rowB: enum("event_type", "withdrawal"), reject: enum("event_type", "treasury_updated"), check: "credit_events_event_type_check"},
+		{
+			version: 195, table: "phoenix_stake_events", stageA: 44, rowA: phoenixBond, rowB: phoenixBond, reject: with(phoenixBond, "action", "'migration_started'"), check: "phoenix_stake_events_action_check",
+			verify: func(t *testing.T, ctx context.Context, db *sql.DB) {
+				assertColumnNullable(t, ctx, db, "phoenix_stake_events", "lp_token", "NO")
+			},
+		},
+		{
+			version: 195, table: "phoenix_admin_events", stageA: 132, rowA: enum("admin_action", "undo"), rowB: enum("admin_action", "undo"), reject: enum("admin_action", "blend_set_delegate"), check: "phoenix_admin_events_admin_action_check",
+			verify: func(t *testing.T, ctx context.Context, db *sql.DB) {
+				var n int
+				if err := db.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns
+					WHERE table_name = 'phoenix_admin_events' AND column_name = 'value'`).Scan(&n); err != nil || n != 0 {
+					t.Fatalf("phoenix_admin_events.value after down: n=%d err=%v, want column dropped", n, err)
+				}
+			},
+		},
+		{
+			version: 207, table: "price_source_contributions", stageA: 169, rowA: map[string]string{"window_seconds": "300", "weight": "0.5"}, rowB: map[string]string{"window_seconds": "300", "weight": "0.5"},
+			verify: func(t *testing.T, ctx context.Context, db *sql.DB) {
+				assertColumnNullable(t, ctx, db, "price_source_contributions", "window_seconds", "YES")
+				var n int
+				if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pg_constraint
+					WHERE conrelid = 'price_source_contributions'::regclass AND contype = 'p'`).Scan(&n); err != nil || n != 1 {
+					t.Fatalf("primary key after down: n=%d err=%v, want 1", n, err)
+				}
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%04d/%s", c.version, c.table), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			dsn := startTimescale(t, ctx)
+			db, err := sql.Open("pgx", dsn)
+			if err != nil {
+				t.Fatalf("sql.Open: %v", err)
+			}
+			defer db.Close()
+
+			applyMigrationsUpTo(t, dsn, c.stageA)
+			insertGenericRow(t, ctx, db, c.table, 1, tsA, c.rowA)
+			compressAllChunks(t, ctx, db, c.table, 1)
+			applyMigrationsUpTo(t, dsn, c.version-1)
+			var defBefore string
+			if c.check != "" {
+				defBefore = constraintDef(t, ctx, db, c.table, c.check)
+			}
+			applyMigrationsUpTo(t, dsn, c.version)
+			insertGenericRow(t, ctx, db, c.table, 2, tsB, c.rowB)
+			compressAllChunks(t, ctx, db, c.table, 2)
+			// A new uncompressed chunk, and a row inside an already compressed one.
+			insertGenericRow(t, ctx, db, c.table, 4, tsC, c.rowB)
+			insertGenericRow(t, ctx, db, c.table, 5, tsA2, c.rowA)
+			var before int
+			if err := db.QueryRowContext(ctx, `SELECT count(*) FROM `+c.table).Scan(&before); err != nil {
+				t.Fatalf("count: %v", err)
+			}
+			snap := "zz_snap_" + c.table
+			if _, err := db.ExecContext(ctx, `CREATE TABLE `+snap+` AS SELECT * FROM `+c.table); err != nil {
+				t.Fatalf("snapshot: %v", err)
+			}
+			colsBefore := tableColumns(t, ctx, db, c.table)
+
+			if err := applyMigrationsUpToErr(dsn, c.version-1); err != nil {
+				t.Fatalf("down %d on compressed %s: %v", c.version, c.table, err)
+			}
+			var after int
+			if err := db.QueryRowContext(ctx, `SELECT count(*) FROM `+c.table).Scan(&after); err != nil {
+				t.Fatalf("count after: %v", err)
+			}
+			if after != before {
+				t.Fatalf("%s rows after down = %d, want %d", c.table, after, before)
+			}
+			common := commonColumns(colsBefore, tableColumns(t, ctx, db, c.table))
+			if hb, ha := rowsDigest(t, ctx, db, snap, common), rowsDigest(t, ctx, db, c.table, common); hb != ha {
+				t.Fatalf("%s row digest changed across the down: %s -> %s", c.table, hb, ha)
+			}
+			var compressed int
+			if err := db.QueryRowContext(ctx, `SELECT count(*) FROM _timescaledb_catalog.chunk ch
+				JOIN _timescaledb_catalog.hypertable h ON h.id = ch.hypertable_id
+				WHERE h.table_name = $1 AND ch.compressed_chunk_id IS NOT NULL`, c.table).Scan(&compressed); err != nil {
+				t.Fatalf("read catalog compression state: %v", err)
+			}
+			if compressed < 1 {
+				t.Fatalf("%s has %d compressed chunks after the down, want >= 1", c.table, compressed)
+			}
+			if c.check != "" {
+				if got := constraintDef(t, ctx, db, c.table, c.check); got != defBefore {
+					t.Fatalf("%s definition after down = %s, want %s", c.check, got, defBefore)
+				}
+			}
+			if c.reject != nil {
+				err := tryInsertGenericRow(ctx, db, c.table, 3, tsD, c.reject)
+				var pgErr *pgconn.PgError
+				if !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != c.check {
+					t.Fatalf("insert %v after down: err = %v, want SQLSTATE 23514 on %s", c.reject, err, c.check)
+				}
+			}
+			if c.verify != nil {
+				c.verify(t, ctx, db)
+			}
+		})
+	}
+}
+
+func constraintDef(t *testing.T, ctx context.Context, db *sql.DB, table, name string) string {
+	t.Helper()
+	var def string
+	if err := db.QueryRowContext(ctx, `SELECT pg_get_constraintdef(oid) FROM pg_constraint
+		WHERE conrelid = $1::regclass AND conname = $2`, table, name).Scan(&def); err != nil {
+		t.Fatalf("constraint %s on %s: %v", name, table, err)
+	}
+	return def
+}
+
+func tableColumns(t *testing.T, ctx context.Context, db *sql.DB, table string) []string {
+	t.Helper()
+	rows, err := db.QueryContext(ctx, `SELECT column_name FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = $1 ORDER BY column_name`, table)
+	if err != nil {
+		t.Fatalf("columns of %s: %v", table, err)
+	}
+	defer rows.Close()
+	var cols []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			t.Fatalf("scan column: %v", err)
+		}
+		cols = append(cols, c)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("columns of %s: %v", table, err)
+	}
+	return cols
+}
+
+func commonColumns(a, b []string) []string {
+	in := map[string]bool{}
+	for _, c := range b {
+		in[c] = true
+	}
+	var out []string
+	for _, c := range a {
+		if in[c] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// rowsDigest hashes the listed columns of every row, ordered by the row's own
+// text so the digest does not depend on a primary key the down may change.
+func rowsDigest(t *testing.T, ctx context.Context, db *sql.DB, table string, cols []string) string {
+	t.Helper()
+	q := `SELECT coalesce(md5(string_agg(r, E'\n' ORDER BY r)), '') FROM (SELECT ROW(` + strings.Join(cols, ",") + `)::text AS r FROM ` + table + `) s`
+	var d string
+	if err := db.QueryRowContext(ctx, q).Scan(&d); err != nil {
+		t.Fatalf("digest of %s: %v", table, err)
+	}
+	return d
+}
+
+// TestCompressedAlterControl0174 is the positive control for the instrument
+// above: the v0.92.0 body of 0174, a bare ADD CONSTRAINT over compressed
+// sep41_transfers chunks, crashes TimescaleDB (SQLSTATE 57P03, "in recovery
+// mode"). If this ALTER succeeds the harness cannot see that failure.
+func TestCompressedAlterControl0174(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+
+	applyMigrationsUpTo(t, dsn, 173)
+	if err := insertSEP41TransferAmount(ctx, db, 1, "transfer", "7"); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	seedCompressedSEP41TransferChunk(t, ctx, db)
+
+	db2, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open (second connection): %v", err)
+	}
+	defer db2.Close()
+	_, err = db2.ExecContext(ctx, `ALTER TABLE sep41_transfers ADD CONSTRAINT sep41_transfers_amount_check
+		CHECK ((amount IS NULL OR amount >= 0)
+		       AND (event_kind NOT IN ('transfer', 'approve') OR amount IS NOT NULL))`)
+	if err == nil {
+		t.Fatal("bare 0174 ALTER over compressed chunks succeeded; the control no longer reproduces the crash")
+	}
+	t.Logf("control ALTER failed as required: %v", err)
 }
