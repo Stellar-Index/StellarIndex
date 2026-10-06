@@ -138,7 +138,7 @@ ADR-0033 verdict once ingest has caught up.
 - [cursor-stuck.md](cursor-stuck.md) — the per-SOURCE cursor ticket. It
   cannot fire for `source="ledgerstream"` (no `source_enabled` series to
   join against), which is the gap this page fills.
-- [systemd-unit-failed.md](systemd-unit-failed.md) — ticket, 15 m; will
+- [infra.md#stellarindex_systemd_unit_failed](infra.md#stellarindex_systemd_unit_failed) — ticket, 15 m; will
   not fire while the unit is restart-looping inside its StartLimit
   budget.
 - Implementation: `cmd/stellarindex-indexer/main.go`

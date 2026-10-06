@@ -37,7 +37,7 @@ tests:
               team: stellarindex
               component: hashdb
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb-drift-detected.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb.md#stellarindex_hashdb_append_failing
               summary: "hashdb per-ledger Append failing more often than it succeeds (P3)"
               description: |
                 More error-outcome hashdb.Append calls than ok-outcome ones
@@ -98,7 +98,7 @@ tests:
               team: stellarindex
               component: hashdb
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb-drift-detected.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb.md#stellarindex_hashdb_verify_stale
               summary: "hashdb periodic verify sweep has recorded no outcome in 6h+ (T132)"
               description: |
                 hashdb.Append has been recording ledgers on this region for
@@ -271,7 +271,7 @@ tests:
               team: stellarindex
               component: hashdb
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb-drift-detected.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb.md#stellarindex_hashdb_history_verify_failing
               summary: "hashdb history-slice verify has errored with no clean run in 6h (P3)"
               description: |
                 Every sweep re-verifies a random slice of pre-window history

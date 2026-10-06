@@ -38,7 +38,7 @@ tests:
         team: stellarindex
         component: external-poller
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-error-rate-high.md
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_poller_error_rate_high
         summary: external poller coingecko error rate > 50 % (15 min)
         description: 'More than half of recent coingecko polls returned
 

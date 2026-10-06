@@ -335,7 +335,7 @@ record why, because the range is then knowingly un-backfilled.
 
 - [ingest-gap-detector-silent](ingest-gap-detector-silent.md) — the
   detector that eventually finds the hole a stalled backfill left.
-- [zfs-pool-full](zfs-pool-full.md) — a full pool is a common cause of a
+- [zfs-pool-full](infra.md#stellarindex_zfs_pool_low_space) — a full pool is a common cause of a
   hung write.
 - [ch-schema-restore](ch-schema-restore.md) — ADR-0043's lake-protection
   story, which the re-derive path depends on.

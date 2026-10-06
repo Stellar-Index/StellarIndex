@@ -131,5 +131,5 @@ deliberately and schedule it.
 
 - `docs/operations/off-site-backup-plan.md` — repo2, and why it lands first.
 - `docs/operations/drills/restore-drills.md` — the drill evidence log.
-- `docs/operations/runbooks/backup-failed.md` — the alert this can trip if it runs long.
+- `docs/operations/runbooks/infra.md#stellarindex_timescale_backup_none_24h` — the alert this can trip if it runs long.
 - `docs/adr/0043-backup-and-restore-strategy.md` — the strategy this closes a gap in.

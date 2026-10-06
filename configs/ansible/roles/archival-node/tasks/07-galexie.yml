@@ -103,7 +103,7 @@
       and galexie is active: the rebuild + install would restart it (a
       ~9-minute mainnet captive-core cold catchup). Nothing has been built.
       Re-run in a maintenance window with `-e galexie_restart_ack=true`
-      (docs/operations/runbooks/galexie-catchup-refused.md).
+      (docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_catchup_refused).
   when:
     - not ansible_check_mode
     - galexie_active_for_upgrade.stdout | default('') not in ['inactive', 'failed']

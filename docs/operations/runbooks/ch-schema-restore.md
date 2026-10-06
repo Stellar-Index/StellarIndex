@@ -467,7 +467,7 @@ at a time and asserts each is caught).
 - ADR-0027 — the `aws-public-blockchain` cold tier that makes the raw
   ledgers independently recoverable.
 - `docs/operations/drills/restore-drills.md` — the drill evidence log.
-- `backup-failed.md` — the Postgres half of the same ADR.
+- `infra.md#stellarindex_timescale_backup_none_24h` — the Postgres half of the same ADR.
 
 ## Changelog
 

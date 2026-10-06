@@ -29,7 +29,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_poller_stale
           summary: "external poller {{ $labels.source }} has not succeeded in 30+ min"
           description: |
             stellarindex_external_poller_last_success_unix for source
@@ -53,7 +53,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_poller_stale_ecb
           summary: "ECB FX poller has not succeeded in 12+ h (>2x poll interval)"
           description: |
             ECB's 6h poll interval skipped at least one whole cycle.
@@ -73,7 +73,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_poller_stale_tiingo
           summary: "Tiingo poller has not succeeded in 2+ h (>2x poll interval)"
           description: |
             Tiingo's 1h poll interval skipped at least one whole cycle.
@@ -95,7 +95,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/chainlink-feed-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_chainlink_feed_stale
           summary: "Chainlink feed {{ $labels.pair }} has returned no current round in 30+ min"
           description: |
             The Chainlink ingest poller has written no current round
@@ -132,7 +132,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_feed_stale
           summary: "active fiat-FX feed has committed no fresh upstream rate in 6+ h"
           description: |
             The freshest stellarindex_external_fx_last_quote_unix across
@@ -168,7 +168,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_feed_absent
           summary: "active fiat-FX feed has never written an fx_quote since startup"
           description: |
             stellarindex_external_fx_last_quote_unix has no series for
@@ -216,7 +216,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-rate-rejected.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_rate_rejections
           summary: "forex sanity band is rejecting upstream rates ({{ $labels.reason }})"
           description: |
             The forex worker refused more than 2 upstream rates in 3 h
@@ -247,7 +247,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_fx_fixings_refresh_stale
           summary: "fx_fixings appender has not completed a cycle in 3+ h"
           description: |
             The forex worker has not finished an fx_fixings append cycle
@@ -266,7 +266,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_fx_fixings_series_stale
           summary: "newest fx_fixings bar is 4+ h old on a trading day"
           description: |
             The appender runs but has stored no bar newer than 4 h on a
@@ -284,7 +284,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-rate-rejected.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_fx_fixings_quote_disagreement
           summary: "fx_fixings bars for {{ $labels.ticker }} disagree with the guarded daily rate"
           description: |
             An hourly fixing for {{ $labels.ticker }} sits outside [0.5, 1.5]
@@ -332,7 +332,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-error-rate-high.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_poller_error_rate_high
           summary: "external poller {{ $labels.source }} error rate > 50 % (15 min)"
           description: |
             More than half of recent {{ $labels.source }} polls returned
@@ -354,7 +354,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cex-stream-silent-pair.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_cex_stream_subscription_rejected
           summary: "{{ $labels.source }} rejected the trade subscription for {{ $labels.symbol }}"
           description: |
             The venue answered our subscribe request for
@@ -376,7 +376,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cex-stream-silent-pair.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_cex_stream_entry_skips
           summary: "{{ $labels.source }} is skipping trade entries ({{ $labels.reason }})"
           description: |
             {{ $labels.source }} has dropped trade entries with reason
@@ -400,7 +400,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cex-stream-disconnect-storm.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_cex_stream_stalled
           summary: "{{ $labels.source }} CEX stream stalled (half-open socket)"
           description: |
             {{ $labels.source }}'s WebSocket stream has stopped
@@ -422,7 +422,7 @@ groups:
           team: stellarindex
           component: external-poller
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cex-stream-disconnect-storm.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_dust_dropped_high
           summary: "{{ $labels.source }} dropping trades as dust at a high sustained rate"
           description: |
             {{ $labels.source }} has dropped more than 1 trade/s as

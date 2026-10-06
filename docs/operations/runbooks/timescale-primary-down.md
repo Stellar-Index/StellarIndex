@@ -28,7 +28,7 @@ severity: P1
 | Alert | `stellarindex_timescale_primary_down` — `configs/prometheus/rules.r1/storage.yml` (group `stellarindex.storage`, `severity: page`, `for: 30s`) |
 | Severity | **P1** (SEV-1) |
 | Detected by | Prometheus rule `pg_up == 0` from the `postgres_exporter` scrape job (`localhost:9187`, `configs/prometheus/prometheus.r1.yml`). Companions: `stellarindex_postgres_ping_failing` (page, `for: 2m`) within ~2–3 min; `stellarindex_api_price_stale` + `stellarindex_api_error_rate_critical` (`rules.r1/api.yml`) as served data goes stale. |
-| Typical MTTR | **No automatic failover on r1.** MTTR is time-to-restart `postgresql@15-main.service` (minutes) when the data dir is intact, or a pgBackRest restore (hours — see [`backup-failed.md`](backup-failed.md) and [`../drills/restore-drills.md`](../drills/restore-drills.md)) when it is not. |
+| Typical MTTR | **No automatic failover on r1.** MTTR is time-to-restart `postgresql@15-main.service` (minutes) when the data dir is intact, or a pgBackRest restore (hours — see [`infra.md#stellarindex_timescale_backup_none_24h`](infra.md#stellarindex_timescale_backup_none_24h) and [`../drills/restore-drills.md`](../drills/restore-drills.md)) when it is not. |
 | Impact | Writes halt everywhere (trade ingestion, API-key mint, usage rollups). Reads: the Redis hot path keeps serving cached prices with `stale_flag=true`; ClickHouse-backed lake/explorer endpoints keep working; Timescale-backed endpoints 5xx and `/v1/readyz` returns 503. |
 
 ## Symptoms
@@ -99,7 +99,7 @@ ssh root@r1 'journalctl -u postgresql@15-main.service --since "1 hour ago" --no-
 
 - Disk full → follow [`db-disk-full.md`](db-disk-full.md) first; a restart
   onto a full volume will just crash again.
-- ZFS pool degraded / NVMe dropped → [`zfs-degraded.md`](zfs-degraded.md);
+- ZFS pool degraded / NVMe dropped → [`infra.md#stellarindex_zfs_pool_degraded`](infra.md#stellarindex_zfs_pool_degraded);
   do not restart until the pool is online.
 - OOM-killed → restart (B) is safe; capture `dmesg` for RCA.
 
@@ -147,7 +147,7 @@ ssh root@r1 'systemctl list-timers pgbackrest-backup.timer restore-drill.timer -
 
 Declare the incident on the status page ([`sev-status-page-update.md`](sev-status-page-update.md))
 — writes are unavailable for the duration. Restore per
-[`backup-failed.md`](backup-failed.md) and the rehearsed procedure in
+[`infra.md#stellarindex_timescale_backup_none_24h`](infra.md#stellarindex_timescale_backup_none_24h) and the rehearsed procedure in
 [`../drills/restore-drills.md`](../drills/restore-drills.md)
 (`scripts/ops/restore-drill.sh`). RPO is the age of the last successful
 backup, not seconds. On return, the indexer's idempotent upserts
@@ -220,7 +220,7 @@ Common root causes observed in similar systems:
 - ADR-0050 / `docs/architecture/ha-plan.md` §1 — no cross-region
   Postgres replication; the older `multi-region-topology.md` §5 is superseded.
 - [`postgres-ping-failing.md`](postgres-ping-failing.md),
-  [`db-disk-full.md`](db-disk-full.md), [`backup-failed.md`](backup-failed.md),
+  [`db-disk-full.md`](db-disk-full.md), [`infra.md#stellarindex_timescale_backup_none_24h`](infra.md#stellarindex_timescale_backup_none_24h),
   [`exporter-down.md`](exporter-down.md).
 - Postmortems: `docs/operations/postmortems/` (none yet; first one goes here).
 

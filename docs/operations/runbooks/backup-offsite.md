@@ -47,7 +47,7 @@ curl -s localhost:9854/metrics | grep 'pgbackrest_backup_info' | grep 'repo_key=
 - Bucket quota / lifecycle rule deleted objects (`info --repo=2` lists no backups; provider console shows bucket empty or capped): raise quota / fix the lifecycle rule, then `pgbackrest --stanza=stellarindex --repo=2 --type=full backup`.
 - Endpoint DNS / TLS (`unable to resolve` / TLS handshake errors): fix `pgbackrest_repo2_s3_endpoint`; verify with `curl -sI https://<endpoint>`.
 - repo2 never configured (no `repo2-*` in `pgbackrest.conf`; inventory `pgbackrest_offsite_ack: true`): provision repo2 (set `pgbackrest_repo2_s3_bucket` + other repo2 vars, `pgbackrest_manage_conf: true`, then `stanza-upgrade` + a full backup; see `docs/operations/off-site-backup-plan.md`). Do NOT silence the alert: the ack records the gap, this alert prices it.
-- Backups genuinely stopped (`stellarindex_timescale_backup_none_24h` ALSO firing): follow [backup-failed](backup-failed.md); that is the root cause and this clears once a backup reaches repo2.
+- Backups genuinely stopped (`stellarindex_timescale_backup_none_24h` ALSO firing): follow [backup-failed](infra.md#stellarindex_timescale_backup_none_24h); that is the root cause and this clears once a backup reaches repo2.
 
 **Recover**
 

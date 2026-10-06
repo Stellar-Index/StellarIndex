@@ -114,7 +114,7 @@
       it is never applied unacknowledged: re-run in a maintenance window
       with `-e galexie_restart_ack=true` to render the change AND restart
       galexie together, then watch the tip for ~10 min and do not
-      re-restart mid-catchup (docs/operations/runbooks/galexie-catchup-refused.md).
+      re-restart mid-catchup (docs/operations/runbooks/galexie-archive.md#applying-galexie-config-with-ansible-restart-ack).
   when:
     - not ansible_check_mode
     - galexie_effective_changed | length > 0

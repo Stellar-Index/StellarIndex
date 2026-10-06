@@ -66,7 +66,7 @@ sudo -u postgres pgbackrest --stanza=stellarindex info
    `/var/log/restore-drill.log` is the diagnostic.
    - Mitigation: `pgbackrest --stanza=stellarindex check`; for a repo2
      (offsite) drill confirm credentials + reachability; route to
-     `backup-failed.md` if the chain itself is broken.
+     `infra.md#stellarindex_timescale_backup_none_24h` if the chain itself is broken.
 
 2. **`ABORTED at pg_start`** — the restored cluster never reached
    consistency within `PG_START_TIMEOUT` (7200 s): a missing WAL
@@ -76,7 +76,7 @@ sudo -u postgres pgbackrest --stanza=stellarindex info
    delete it once read.
    - Mitigation: read `pgdata-*/log/` or the unit log for the recovery
      error; `pgbackrest --stanza=stellarindex info` + the archive check
-     in `backup-failed.md` for a WAL gap.
+     in `infra.md#stellarindex_timescale_backup_none_24h` for a WAL gap.
 
 3. **A verification check failed** (`core_tables`, `wal_drain`,
    `tip_lag`, `hash_chain_sample`, `trades_window_match`,
@@ -117,8 +117,8 @@ sudo -u postgres pgbackrest --stanza=stellarindex info
 - [restore-drill-offsite-stale](restore-drill-offsite-stale.md) — the
   35-day backstop for the off-site repo2 drill; S3 credential / endpoint
   / cipher causes for a `repo="2"` failure are triaged there.
-- `backup-failed.md` — the backup chain itself.
-- `zfs-pool-full.md` — the drill restores onto the shared pool; its
+- `infra.md#stellarindex_timescale_backup_none_24h` — the backup chain itself.
+- `infra.md#stellarindex_zfs_pool_low_space` — the drill restores onto the shared pool; its
   capacity floor is sized from the backup for exactly this reason.
 
 ## Changelog

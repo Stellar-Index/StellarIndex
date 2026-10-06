@@ -26,7 +26,7 @@ tier, or operation label, add a per-class reference matrix
 instead of (or alongside) the "Quick diagnosis" section. See
 `decode-errors.md` (per-source decode-regression matrix),
 `source-stopped.md` (per-source cadence reference),
-`external-poller-error-rate-high.md` (vendor-specific 429
+`external-pollers.md` (vendor-specific 429
 patterns), and `stripe-platform-sync-errors.md`
 (per-`operation` triage paths) for the established pattern.
 
