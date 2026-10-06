@@ -4780,13 +4780,12 @@ are obsolete — repo has been public since 2026-07-03):
   regression of the AdjustPrice normalization work.
 - **Two planning inventories retired 2026-08-29 (issue #321) — this plan is
   now the only launch ledger.**
-  - `docs/architecture/launch-readiness-backlog.md` (the L-numbered tracker):
+  - `docs/architecture/launch-readiness-backlog.md` (the L-numbered tracker; since removed):
     zero rows added since 2026-05-13 and none of the real W-gate in it, while
     every L1–L5 row kept its last-written ✅ — so the weekly
     `launch-readiness.yml` workflow republished *"✓ Engineering surface ready"*
-    over a frozen document. Workflow deleted;
-    `scripts/ci/verify-launch-ready` now refuses to emit a verdict for a doc
-    whose frontmatter says `status: superseded` (exit 3). Its still-open rows
+    over a frozen document. Workflow deleted; `scripts/ci/verify-launch-ready`
+    has since been removed too. Its still-open rows
     carry here: **L4.14–L4.17 + L5.8 → W9** (gated on **D2**), **L5.6 → W6.2**,
     **L6.4 → §2.8**, **L6.6/L6.7 → W6.7**. The company page's public "roadmap
     to v1" link now points at this file.

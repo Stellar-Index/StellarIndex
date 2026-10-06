@@ -53,6 +53,7 @@ rational arithmetic (ADR-0003). Everything is served through a public
   on the ordinary 30-day session, with no IP allowlist or separate admin host.
 - `audit_log` is append-only (migration 0179) with no retention job; erasure
   scrubs rows in place (0188).
+- Open decisions: `audit_log` retention period (#346 F1); MFA proposal is TOTP plus 10 single-use recovery codes.
 
 ## Repo map
 

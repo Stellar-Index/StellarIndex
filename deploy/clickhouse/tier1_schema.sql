@@ -443,8 +443,9 @@ ORDER BY (contract_id, ledger_seq, tx_hash, op_index, event_index);
 -- survey for the full evidence chain.
 --
 -- Historical fill (run ONCE after creating, off-peak, windowed by
--- ledger_seq on a large existing lake — see the redesign doc's runbook
--- for the run-heavy-job-wrapped windowed form):
+-- ledger_seq on a large existing lake — see
+-- deploy/clickhouse/contract_events_daily_v2.sql for the run-heavy-job-wrapped
+-- windowed form):
 --   INSERT INTO stellar.contract_events_daily
 --   SELECT toDate(close_time) AS day, contract_id, event_type,
 --          topic_0_sym, if(topic_0_sym = '', topics_xdr[2], '') AS t1_xdr,

@@ -133,7 +133,7 @@ confidence = (
 ) ^ (1 / (w_z + w_src + w_div + w_liq + w_xoracle + w_tri + w_qual))
 ```
 
-Weights are `[anomaly.weights]`, default 1.0. Factor shapes (`confidence/factors.go`):
+Weights are `[anomaly.weights]`, default 1.0 except `w_tri` (0.5). Factor shapes (`confidence/factors.go`):
 
 - `z_score_factor`: 1.0 at z=0, sigmoid decay to ~0 at z=10.
 - `source_count_factor`: logistic with inflection at n=3; `SourceCountFactor(1)` ≈ 0.119.

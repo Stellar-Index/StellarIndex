@@ -96,6 +96,11 @@ There is no relayer decoder or table. Classic USDC/EURC payments on
 `rozo.MainnetRelayerAccounts` are served by `GET /v1/accounts/{g}/movements`
 (`received` = user deposit, `sent` = payout). They are not in `rozo_events` or
 the protocol stats, so a volume derived from them is a lower bound.
+Pre-P23 rows exist only where `classic-movements-backfill` has run over an
+account's range (the older relayer account predates P23); that coverage is
+unverified for both accounts. Open item: relayer accounts can rotate (the list
+is a code constant, redeploy to change); consider an alert when a new
+high-volume USDC/EURC counterparty of the known accounts appears.
 
 ## Aggregator treatment — not counted
 

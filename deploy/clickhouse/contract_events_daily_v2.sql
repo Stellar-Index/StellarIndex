@@ -80,12 +80,14 @@ FROM stellar.contract_events
 GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 
 -- ── Step 2: windowed historical backfill (run under run-heavy-job.sh,
--- one window at a time — see the runbook for the exact loop). Bound
+-- one window at a time, 1M-ledger windows from 2 to <swap_ledger>, each
+-- wrapped as `run-heavy-job.sh contract-events-daily-v2-backfill
+-- clickhouse-client --query ...`; resumable). Bound
 -- every window by ledger_seq (contract_events is PARTITION BY
 -- intDiv(ledger_seq,1000000), so a bounded window prunes partitions
 -- instead of scanning the full ~12B-row table) and cap the upper bound
--- at the ledger_seq that was live at v2-MV-creation time (see the
--- runbook for how to read that back from system.tables) — no need to
+-- at the ledger_seq that was live at v2-MV-creation time (<swap_ledger>;
+-- read it back from stellar.contract_events before step 1) — no need to
 -- re-cover ledgers the v2 MV already captured live, though doing so is
 -- SAFE (uniqCombinedMerge is a set-union merge: re-inserting an
 -- overlapping/duplicate window does not inflate the estimate — verified
@@ -101,9 +103,11 @@ GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 --   GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 --
 -- ── Step 3: verify v2 against v1 (spot-check a handful of hot
--- contract_id/day pairs — expect v2 within ~0.5% of v1's exact count):
+-- contract_id/day pairs — expect rel_err well under 1%, measured 0.1-0.5%;
+-- v2's (contract_id, day) key set should be a superset of v1's):
 --
---   SELECT v1.contract_id, v1.day, v1.c AS v1_exact, v2.c AS v2_approx
+--   SELECT v1.contract_id, v1.day, v1.c AS v1_exact, v2.c AS v2_approx,
+--          abs(v2.c - v1.c) / v1.c AS rel_err
 --   FROM (SELECT contract_id, day, uniqExactMerge(events) AS c
 --         FROM stellar.contract_events_daily GROUP BY contract_id, day) v1
 --   JOIN (SELECT contract_id, day, uniqCombinedMerge(17)(events) AS c
@@ -111,15 +115,32 @@ GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 --     USING (contract_id, day)
 --   ORDER BY v1_exact DESC LIMIT 20;
 --
--- ── Step 4: cutover (see the runbook for the FULL sequence — capturing
--- the pre-cutover ledger_seq tip, the exact DROP/RENAME/CREATE ordering,
--- and the post-cutover gap-closing catch-up insert). Short version: drop
--- both MVs (a renamed table does NOT drag its MV's stored target
+-- ── Step 4: cutover. Capture the ledger_seq tip first (<swap_ledger>).
+-- Drop both MVs (a renamed table does NOT drag its MV's stored target
 -- reference along — verified; the MV would error INSERTs with "Target
 -- table ... doesn't exist" otherwise), atomically double-RENAME
 -- (v1 → _old, v2 → canonical), recreate the MV under the canonical
 -- name/target, then run ONE small overlapping catch-up backfill for the
--- brief DDL gap.
+-- brief DDL gap (safe if the gap was zero-width):
+--
+--   DROP VIEW stellar.contract_events_daily_v2_mv;
+--   DROP VIEW stellar.contract_events_daily_mv;
+--   RENAME TABLE
+--     stellar.contract_events_daily TO stellar.contract_events_daily_old,
+--     stellar.contract_events_daily_v2 TO stellar.contract_events_daily;
+--   CREATE MATERIALIZED VIEW stellar.contract_events_daily_mv
+--   TO stellar.contract_events_daily AS <the step-1 v2 MV SELECT>;
+--   INSERT INTO stellar.contract_events_daily <the step-2 SELECT>
+--   WHERE ledger_seq >= <swap_ledger> GROUP BY ...;
+--
+-- Then restart stellarindex-api (its DailyActivityAvailable probe is a
+-- sync.Once) and confirm GET /v1/protocols/{name} still returns
+-- event_breakdown.
+--
+-- Rollback: up to step 3, DROP TABLE contract_events_daily_v2_mv,
+-- contract_events_daily_v2 (v1 never stopped serving). After step 4 and
+-- before step 5, re-run the drop/rename/create in reverse (_old is
+-- untouched data, so this is lossless).
 --
 -- ── Step 5: DROP TABLE stellar.contract_events_daily_old SYNC — and only
 -- now is it safe to consider the incident's `max_bytes_to_merge_at_max_-
