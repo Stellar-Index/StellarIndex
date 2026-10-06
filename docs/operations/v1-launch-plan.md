@@ -22,7 +22,7 @@ severity: P1
 > gitignored `production-remediation-ledger-2026-07-23.md` (finding-status
 > authority). Runbooks under `runbooks/` remain the execution recipes.
 
-## THE PLAN — refreshed 2026-09-03 (this section supersedes every section below it)
+## THE PLAN — refreshed 2026-09-03 (supersedes every section below it, except §0 where they disagree)
 
 > **RE-VERIFIED 2026-09-08 against live r1 and repo HEAD.** Rows corrected in that pass: **1.7**
 > (test nets were NOT behind — all three hosts level at v0.63.0/schema 155) and the retention claims
@@ -3878,6 +3878,8 @@ The item is the authority; this table is an index. A row goes when its last
 item closes. The 2026-07-29 snapshot this replaces cited no items; it is in
 git history.
 
+§0 (dated 2026-10-06) overrides THE PLAN (2026-09-03) and every older row where they disagree.
+
 | Gate | Items (status) | State |
 |---|---|---|
 | Launch cutover | INV-1201 (blocked), INV-0873 (open), INV-0839 (blocked, Ash) | Cutover waits on Ash's GO, a launch date and CDN provisioning. Announcement copy and the first-24h watch need Ash. Accepted-risk register sign-off deferred by Ash 2026-10-03 |
@@ -3892,7 +3894,10 @@ git history.
 | Lake entry ordering | INV-2567 (open), INV-1313 (blocked) | `ledger_entry_changes` rows extracted before `c4ab63e45` carry `intra_ledger_seq=0`; the reproject waits on the Go-walk re-derive |
 | Eviction + restores | INV-2532 (in-progress), INV-2157 (open), INV-2159 (blocked), INV-2533 (open) | Lake writes persistent evictions as removed. Restored entries for ledgers 58,762,517–64,673,495 need re-extract. Lumen conservation residual +119,100,885,352 stroops (11,910 XLM) at ledger 64,767,268 |
 | Explorer performance | INV-0596 (blocked), INV-0675 (in-progress) | Sub-second cold contract pages and the p95/p99 target both wait on a clean-window r1 re-measure |
-| Oracle data | INV-2590 (in-progress) | RedStone Invert feeds store the reciprocal while `price_raw` claims the raw value; waits on Ash's decision |
+| Oracle data | INV-2590 (in-progress) | RedStone Invert feeds store the reciprocal while `price_raw` claims the raw value; Fix merged in #2420; waits on deploy plus the redstone projected-rebuild on r1 |
+| Catalogue pricing | INV-0202 (blocked, critical) | The XLM→USD catalogue anchor is keyed `base='native'` with a dead `fiat:USD` arm; needs a plan and adversarial review |
+| Dashboard auth | INV-0768 (open, high; Ash disclosure decision) | Unauthenticated dashboard sign-in lockout; disclosure and remediation sequencing are Ash's call |
+| SEV comms | INV-0145 (blocked, high, Ash) | Every SEV comms path depends on the live API; needs an out-of-band channel Ash chooses |
 
 ## 1. Go-live gate (all must be true)
 
@@ -3990,7 +3995,7 @@ sep41 zero-writer wiring hole since ~2026-07-13. Remaining chain:
    deploy-gap tail → redstone replay from 63624934 (§2.4).
 
 ### 2.2 Restore the vault password → drift → config apply
-1. ✅ ~~Vault password~~ — rebuilt + rotated 2026-07-27 (see §0).
+1. ✅ ~~Vault password~~ — rebuilt + rotated 2026-07-27 (see git history of §0 before 2026-10-06).
 2. ✅ ~~GH secrets + drift run~~ — drift functional, verdict `changed=69`.
 3. ✅ **Config batch APPLIED 2026-07-27** (~14:00Z, two passes: pass 1
    died on the galexie stale-artifact guard — near-miss documented in
@@ -4712,8 +4717,7 @@ are obsolete — repo has been public since 2026-07-03):
 
 - `min_usd_volume=10000`, ADR-0042 signing, comet gating, deploy/CF secrets,
   k6 cron, branch protection: **DONE** — older docs listing them open are
-  wrong. (Healthchecks/Discord wiring is NOT done — see §0 Paging; the env
-  files exist but all values are empty.)
+  wrong.
 - `seed-sep41-genesis`: the 2026-07-07 "❌ do not run" verdict was
   overridden in practice (run 2026-07-26). The honesty check moves to §2.6.
 - "Deploy pipeline can't authenticate" / "capacity 94%" / "Phase 0 running":
