@@ -46,7 +46,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-smoke.md#stellarindex_api_smoke_stale
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe.md#stellarindex_api_smoke_stale
               summary: "the API smoke has not recorded a run in ≥ 30m (cadence 5m) — the shape-assertion layer is dark"
               description: |
                 No API-smoke run has stamped `last_run_unix` in over 30
@@ -80,7 +80,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-smoke.md#stellarindex_api_smoke_stale
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe.md#stellarindex_api_smoke_stale
               summary: "the API smoke has not recorded a run in ≥ 30m (cadence 5m) — the shape-assertion layer is dark"
               description: |
                 No API-smoke run has stamped `last_run_unix` in over 30
@@ -125,7 +125,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-smoke.md#stellarindex_api_smoke_failing
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe.md#stellarindex_api_smoke_failing
               summary: "the API smoke has failed 1 check(s) for ≥ 30m — the public surface is returning something the shape assertions reject"
               description: |
                 The 5-minute API smoke (stellarindex-smoke.timer →

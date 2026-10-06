@@ -28,7 +28,7 @@ groups:
           team: stellarindex
           component: notify
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
           summary: "Transactional email ({{ $labels.template }}) failing > 50% of sends"
           description: |
             More than half of {{ $labels.template }} email sends have failed
@@ -39,7 +39,7 @@ groups:
             delivering — existing sessions and API keys are unaffected. Check
             the Resend status + credentials per the runbook.
 
-            Runbook: docs/operations/runbooks/notify-send-failure.md
+            Runbook: docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
 
       # Mirror of the rule in deploy/monitoring/rules/notify.yml (Q268/
       # RLT-324). The ratio rule above is 0/0 = NaN whenever a template has
@@ -58,7 +58,7 @@ groups:
           team: stellarindex
           component: notify
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
           summary: "{{ $value | humanize }} sign-in/signup requests in 6h, but no transactional email send attempts"
           description: |
             POST /v1/auth/login and POST /v1/signup answered 2xx
@@ -71,7 +71,7 @@ groups:
             internal/notify.Sender.Send, and that the signup verification
             emailer is configured.
 
-            Runbook: docs/operations/runbooks/notify-send-failure.md
+            Runbook: docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
 
       # Any failed send in the last hour. The ratio rule is NaN when a
       # template has no attempts and needs >50% failures; the sustained rule
@@ -87,7 +87,7 @@ groups:
           team: stellarindex
           component: notify
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
           summary: "Transactional email ({{ $labels.template }}) had {{ $value | humanize }} failed send(s) in the last hour"
           description: |
             At least one {{ $labels.template }} email send failed in the
@@ -95,7 +95,7 @@ groups:
             alerts, so this is the only signal for them. A user did not get
             their magic link or confirmation email.
 
-            Runbook: docs/operations/runbooks/notify-send-failure.md
+            Runbook: docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
 
       # Mirror of the rule in deploy/monitoring/rules/notify.yml (Q268/
       # RLT-324). Absolute-rate companion to the ratio rule: a persistent
@@ -109,7 +109,7 @@ groups:
           team: stellarindex
           component: notify
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
           summary: "Transactional email ({{ $labels.template }}) has been failing continuously for 1h"
           description: |
             {{ $labels.template }} email sends have included at least one
@@ -118,7 +118,7 @@ groups:
             threshold if send volume is high, but still means some fraction
             of users never received their magic link or confirmation email.
 
-            Runbook: docs/operations/runbooks/notify-send-failure.md
+            Runbook: docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
 
       # Mirror of the rule in deploy/monitoring/rules/notify.yml. Global
       # ceiling on mail actually sent: the login throttles are per inbox and
@@ -131,7 +131,7 @@ groups:
           team: stellarindex
           component: notify
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
           summary: "Transactional email is going out at {{ $value | humanize }}/h (ceiling 300/h)"
           description: |
             Successful transactional email sends, summed across every
@@ -142,4 +142,4 @@ groups:
             for many addresses from many IPs. Sustained high volume spends
             the sending domain's reputation for every recipient.
 
-            Runbook: docs/operations/runbooks/notify-send-failure.md
+            Runbook: docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high

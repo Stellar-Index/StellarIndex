@@ -211,7 +211,7 @@ This section also serves the SLO availability burn alerts `stellarindex_slo_avai
   2. Feature-flag deny (if a flag exists for the endpoint): edit `/etc/stellarindex.toml` (via the ansible overlay), then `systemctl restart stellarindex-api`.
 
   If the bug hits every handler (e.g. middleware panic), treat as A even if the deploy is not recent: roll back to last-known-good; you cannot path-gate around middleware.
-- **C. Dependency failure.** Follow the dependency's runbook: [timescale-primary-down](postgres.md#stellarindex_timescale_primary_down), [redis-master-down](cache.md#stellarindex_redis_master_down), [all-ingestion-down](all-ingestion-down.md). This alert auto-resolves once the dep recovers.
+- **C. Dependency failure.** Follow the dependency's runbook: [timescale-primary-down](postgres.md#stellarindex_timescale_primary_down), [redis-master-down](cache.md#stellarindex_redis_master_down), [all-ingestion-down](ingestion.md#stellarindex_ingestion_all_sources_stopped). This alert auto-resolves once the dep recovers.
 - **D. Load-induced** (viral traffic, DDoS): error rate climbs with no deploy, dep failure or log pattern; `stellarindex_api_latency_p99_high` fires in tandem; `http_requests_total` rate sharply above baseline. Bare metal does not auto-scale and r1 is fixed capacity [multi-host: fixed per ADR-0008 section 4], so shed load:
   1. Tighten edge rate limits: Cloudflare WAF short-TTL per-IP rule (the API is CF-fronted; the Caddyfile `trusted_proxies` block exists for this).
   2. Drop the heaviest non-essential paths (SSE `/v1/price/stream`, batch reads) with a temporary Caddy `handle`/`respond 503` gate as in B.1 [multi-host: HAProxy 503 equivalent].
@@ -501,7 +501,7 @@ ssh root@<host> "journalctl -u stellarindex-aggregator -n 200 --output=cat | gre
 
 **Typical causes.**
 
-1. Source quoting the asset is stopped: no new trade, aggregator has nothing fresh, API serves the last trade with aging `observed_at`. Signal: `stellarindex_source_last_event_unix{source=<X>}` frozen; `stellarindex_ingestion_source_stopped` may fire (it uses `for: 15m`, so it can lag this alert). Also compare `stellarindex_source_last_insert_unix` (both on the indexer at `127.0.0.1:9464`): events advancing while inserts are frozen is the stuck-cursor / duplicate-flood signature, see `ledger-ingest.md#stellarindex_ingestion_cursor_stuck`, `ingestion-sink.md#stellarindex_ingestion_duplicate_flood` and the `stellarindex_serving_insert_frozen` alert. Fix: `source-stopped.md`.
+1. Source quoting the asset is stopped: no new trade, aggregator has nothing fresh, API serves the last trade with aging `observed_at`. Signal: `stellarindex_source_last_event_unix{source=<X>}` frozen; `stellarindex_ingestion_source_stopped` may fire (it uses `for: 15m`, so it can lag this alert). Also compare `stellarindex_source_last_insert_unix` (both on the indexer at `127.0.0.1:9464`): events advancing while inserts are frozen is the stuck-cursor / duplicate-flood signature, see `ledger-ingest.md#stellarindex_ingestion_cursor_stuck`, `ingestion-sink.md#stellarindex_ingestion_duplicate_flood` and the `stellarindex_serving_insert_frozen` alert. Fix: `ingestion.md#stellarindex_ingestion_source_stopped`.
 2. Aggregator running but not writing CAGGs / hot cache (CAGG refresh jobs failing: schedule misfire, SQL error in the window function). Signal: `stellarindex_timescale_cagg_stale`. Fix: `timescale.md#stellarindex_timescale_cagg_stale`.
 3. Aggregator running but the pair has had no VWAP write for over 120 s. The gauge is emitted at the end of every tick for every configured pair (`internal/aggregate/orchestrator/orchestrator.go` `emitStalenessGauges`, reset on each VWAP cache write); not request-driven, no `change()` in the rule, so a reading > 120 s means the pair genuinely was not published. Causes: pair not clearing the `min_usd_volume` publication gate (`$10k`/window in `/etc/stellarindex.toml`), empty windows, outlier filtering dropping everything, anomaly freeze engaged. Signal: `stellarindex_aggregator_empty_windows_total` climbing; freeze alerts (`anomaly.md#stellarindex_anomaly_freeze_engaged`); `external-pollers.md` for fiat legs.
 4. Pair that no longer trades on-chain (long-tail asset, last trade days ago): data reality, not a bug. Only configured pair bases carry this gauge, so long-tail classic assets can never fire this alert; their staleness shows via the API `stale` flag and the sla-probe / served-value-drift alerts. Consider de-listing or flagging `stale=true`.
@@ -511,7 +511,7 @@ ssh root@<host> "journalctl -u stellarindex-aggregator -n 200 --output=cat | gre
 
 1. No `asset` label (absent branch): `aggregator.md#stellarindex_aggregator_silent`.
 2. Confirm which sources quote the asset and which stopped (diagnosis above).
-3. One source dead: `source-stopped.md`. Aggregation pipeline problem: `timescale.md#stellarindex_timescale_cagg_stale`.
+3. One source dead: `ingestion.md#stellarindex_ingestion_source_stopped`. Aggregation pipeline problem: `timescale.md#stellarindex_timescale_cagg_stale`.
 4. Genuinely no on-chain activity: decide with product whether to de-list or keep the stale number with `stale=true`.
 5. Verify: `stellarindex_price_staleness_seconds{asset=<X>,quote=<Q>}` back under 120 s and the alert clears (`for: 5m` lets you confirm it is not a flap).
 
@@ -522,7 +522,7 @@ ssh root@<host> "journalctl -u stellarindex-aggregator -n 200 --output=cat | gre
 - Aggregator restart: `lastWriteAt` resets so every pair reports about 0 then climbs; a newly configured pair is stamped "just observed" on first sighting. If no VWAP write lands within 2 min of restart, the alert is real.
 - Chain halt: if Stellar mainnet stops producing ledgers every asset goes stale at once; correlates with `stellar-node.md#stellarindex_stellar_core_ledger_age` / `stellar-node.md#stellarindex_stellar_rpc_lag`, which are the real alerts.
 
-**Related.** `aggregator.md#stellarindex_aggregator_silent` (absent branch); `source-stopped.md`; `timescale.md#stellarindex_timescale_cagg_stale`; `divergence.md#stellarindex_oracle_stale`; `sla-probe.md#stellarindex_sla_probe_freshness_breach` (customer-facing freshness: `/v1/price/tip` > 30 s, other endpoints > 180 s); `data-freshness.md#stellarindex_data_source_stale`, `data-freshness.md#stellarindex_served_value_drift`; `binary-version-skew.md`; HA plan section 9: `docs/architecture/ha-plan.md`.
+**Related.** `aggregator.md#stellarindex_aggregator_silent` (absent branch); `ingestion.md#stellarindex_ingestion_source_stopped`; `timescale.md#stellarindex_timescale_cagg_stale`; `divergence.md#stellarindex_oracle_stale`; `sla-probe.md#stellarindex_sla_probe_freshness_breach` (customer-facing freshness: `/v1/price/tip` > 30 s, other endpoints > 180 s); `data-freshness.md#stellarindex_data_source_stale`, `data-freshness.md#stellarindex_served_value_drift`; `binary-version-skew.md`; HA plan section 9: `docs/architecture/ha-plan.md`.
 
 ## stellarindex_api_price_stream_not_delivering
 
@@ -997,7 +997,7 @@ Keep BOTH predicates: the second protects a live lock, which must never be delet
 - After recovery: decide whether any customer materially exceeded their cap. Metering is a separate write path and the usage rows are intact, so reconcile from the usage rollup, not this counter.
 - Do NOT shorten the dwell time to fail closed sooner (a 429 on a read error hard-denies every metered customer, including those far under cap). Do NOT silence while Redis is down.
 
-**Related** [stellarindex_usage_write_failing](#stellarindex_usage_write_failing) (write-side twin); [stellarindex_admin_audit_write_failing](api.md#stellarindex_admin_audit_write_failing); [metrics-registry-absent](metrics-registry-absent.md).
+**Related** [stellarindex_usage_write_failing](#stellarindex_usage_write_failing) (write-side twin); [stellarindex_admin_audit_write_failing](api.md#stellarindex_admin_audit_write_failing); [metrics-registry-absent](meta.md#stellarindex_metrics_registry_absent).
 
 ## stellarindex_passkey_clone_warning
 
@@ -1076,7 +1076,7 @@ The window is bounded: once a bucket's Redis calls have failed for longer than `
 - Sustained abuse while open: the limiter cannot help; block the offending source at the edge (Caddy/HAProxy) per the traffic-shedding section of [api-latency](api.md#stellarindex_api_latency_p99_high).
 - Do NOT remove the fail-open window (zero dwell time turns every Redis blip into an outage). Do NOT silence while Redis is down.
 
-**Related** [metrics-registry-absent](metrics-registry-absent.md).
+**Related** [metrics-registry-absent](meta.md#stellarindex_metrics_registry_absent).
 
 ## stellarindex_scam_gate_fail_open
 

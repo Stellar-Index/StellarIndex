@@ -218,7 +218,7 @@ None of this is visible from outside the wrapper, so it is stated here:
 ### A ClickHouse merge outlives its client
 
 `scripts/ops/recompress-lec.sh`, `scripts/ops/recompress-others.sh` and
-[phase-a-capacity-relief-2026-07-18.md](phase-a-capacity-relief-2026-07-18.md)
+the retired phase-a-capacity-relief runbook (git history)
 Step 3 issue `OPTIMIZE TABLE … PARTITION … FINAL` from a client (`curl`
 on `:8123`, `clickhouse-client`). The merge runs inside the ClickHouse
 server, so stopping the scope kills the client and returns while the

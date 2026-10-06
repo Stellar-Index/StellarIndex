@@ -701,7 +701,7 @@
 #
 # Original deferral, kept for the record: R1 was mid Phase-A capacity
 # relief (ZFS pool ~94% full,
-# docs/operations/runbooks/phase-a-capacity-relief-2026-07-18.md) when
+# the retired phase-a-capacity-relief runbook, in git history) when
 # this landed, and starting a NEW heavy recurring job while capacity
 # was that tight was an operator call.
 - name: Enable + start the restore-drill timer

@@ -70,7 +70,7 @@ Quick diagnosis (5 min): run the shared cursor and tip queries above, then tail 
 sum by (source) (increase(stellarindex_projector_runs_total{outcome="watermark_held"}[15m]))
 ```
 
-Non-zero means the lake has a hole, not the projector: the log line `held at the lake's contiguous watermark` names the `watermark` ledger, and every source that has reached it stops at the same one. Heal the lake with the `ch-live-catchup` timer ([ch-live-sink-drops](ch-live-sink.md#stellarindex_ingestion_ch_live_sink_drops)); the projector resumes on its own once the watermark moves. Do not rewind the projector cursor for this.
+Non-zero means the lake has a hole, not the projector: the log line `held at the lake's contiguous watermark` names the `watermark` ledger, and every source that has reached it stops at the same one. Heal the lake with the `ch-live-catchup` timer ([ch-live-sink-drops](clickhouse.md#stellarindex_ingestion_ch_live_sink_drops)); the projector resumes on its own once the watermark moves. Do not rewind the projector cursor for this.
 
 Mitigation (15 min):
 
@@ -377,7 +377,7 @@ Once the density/compression cause is fixed, re-drive with `projector-replay` (s
 ## Related
 
 - `data-freshness.md#stellarindex_completeness_incomplete`: ADR-0033 completeness verdict that sustained skips eventually flip to `complete=false`.
-- `source-stopped.md`: per-source ingest cadence alerts (live-ingest writes, not projection).
+- `ingestion.md#stellarindex_ingestion_source_stopped`: per-source ingest cadence alerts (live-ingest writes, not projection).
 - `docs/architecture/ingest-pipeline.md`: `projector-replay` vs `projected-rebuild`.
 - ADR-0048 D3: the `projected-rebuild` bulk catch-up path.
 - `internal/projector/` (`projector.go`, `sinkfault.go`, `registry.go`), `internal/ops/chops/projected_rebuild.go`.

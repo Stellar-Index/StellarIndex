@@ -47,7 +47,7 @@ groups:
           team: stellarindex
           component: observability
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/metrics-registry-absent.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_metrics_registry_absent
           summary: "Component {{ $labels.component }} is running WITHOUT a metrics Registry — its metrics + dependent alerts are dead"
           description: |
             stellarindex_metrics_registry_present{component="{{ $labels.component }}"} = 0
@@ -68,4 +68,4 @@ groups:
             obs.Registry through LedgerstreamConfig — after which this gauge
             flips to 1 and the alert clears.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/metrics-registry-absent.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_metrics_registry_absent

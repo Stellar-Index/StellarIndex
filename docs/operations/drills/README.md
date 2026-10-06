@@ -70,7 +70,7 @@ are tracked; a new drill keeps its writeup file until then.
 - 3-person SEV-2 tabletop with status-page state-transition rehearsal (*Degraded, Identified, Mitigated, Operational*), due 2026-Q3 (INV-1224; same blocker).
 - Per-source decode-error alert: done (INV-1221), shipped as `stellarindex_projector_decode_error_rate_high` (`deploy/monitoring/rules/projector.yml:316`, >0.1/s per source for 15m, ticket). It is a rate, not a ratio; the 5% `decode_errors / events_total` form was not built.
 - stellar-core / developers.stellar.org release-notes watcher (INV-1222, discarded in the inventory; no watcher exists).
-- Wire a per-source `-source` flag for `stellarindex-ops backfill` (INV-1223, discarded: bespoke backfills were removed by ADR-0032; projected sources recover with `projector-replay`, see [decode-errors.md](../runbooks/decode-errors.md)).
+- Wire a per-source `-source` flag for `stellarindex-ops backfill` (INV-1223, discarded: bespoke backfills were removed by ADR-0032; projected sources recover with `projector-replay`, see [decode-errors.md](../runbooks/ingestion.md#stellarindex_ingestion_decode_error)).
 
 Done in the drill PRs: `postgres.md` quick-diagnosis leads with `/v1/readyz`;
 sev-playbook §5.3 internal-channel template cross-linked from its mitigation;
@@ -78,7 +78,7 @@ sev-playbook §5.3 internal-channel template cross-linked from its mitigation;
 `stellarindex_aggregator_class_drop_spike` fires; Patroni scenario drafted.
 Withdrawn: the quarterly drill that runs `drop_chunks` on staging. The old SEV-1
 mitigation (`drop_chunks('prices_1m', '30 days')`, ~120 GB freed) is no longer
-sanctioned: [db-disk-full.md](../runbooks/db-disk-full.md) forbids `drop_chunks` on
+sanctioned: [db-disk-full.md](../runbooks/postgres.md#stellarindex_timescale_disk_full) forbids `drop_chunks` on
 data tables and disk relief is pool-level ([infra.md#stellarindex_zfs_pool_low_space](../runbooks/infra.md#stellarindex_zfs_pool_low_space)).
 
 ## Writeups

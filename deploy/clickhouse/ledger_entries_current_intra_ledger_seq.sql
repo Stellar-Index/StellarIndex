@@ -152,8 +152,8 @@ FROM stellar.ledger_entry_changes;
 -- range is PROVEN narrower: [287404->38M] has ZERO same-ledger ties (full scan);
 -- they begin in (38M,40M]. So THIS current-state reproject's Step-2 windows only
 -- need [38M->tip]. Run the re-derive BEFORE the windows. The DDL itself ran
--- clean end-to-end (cutover + both rollbacks verified). See the runbook
--- docs/operations/runbooks/post-phase0-deploy-sequence.md Step 3a. ***
+-- clean end-to-end (cutover + both rollbacks verified). See the retired
+-- post-phase0-deploy-sequence runbook (git history) Step 3a. ***
 --
 --   SELECT key_xdr,
 --          v1.change_type AS v1_ct, v1.ledger_seq AS v1_ledger,

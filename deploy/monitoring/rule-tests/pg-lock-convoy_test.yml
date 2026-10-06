@@ -79,7 +79,7 @@ tests:
               instance: r1:9100
               job: node_exporter
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/pg-lock-convoy.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_pg_lock_convoy
               summary: "Postgres lock convoy: a backend has waited 5m 0s behind a blocker that is itself blocked"
               description: |
                 5m 0s is the longest wait among the
@@ -109,7 +109,7 @@ tests:
               instance: r1:9100
               job: node_exporter
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/pg-lock-convoy.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_pg_lock_convoy
               summary: "Postgres lock convoy: a backend has waited 19m 0s behind a blocker that is itself blocked"
               description: |
                 19m 0s is the longest wait among the

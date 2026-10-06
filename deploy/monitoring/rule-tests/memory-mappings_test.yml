@@ -89,7 +89,7 @@ tests:
               process: clickhouse
               alert_family: process_mappings/clickhouse
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#process-mappings
               summary: "clickhouse holds 30% of vm.max_map_count — 5x its normal mapping count"
               description: |
                 clickhouse has been over 25 % of the per-process
@@ -143,7 +143,7 @@ tests:
               process: clickhouse
               alert_family: process_mappings/clickhouse
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#process-mappings
               summary: "clickhouse holds 60% of vm.max_map_count (SEV-1 risk)"
               description: |
                 clickhouse is over half the per-process mapping
@@ -192,7 +192,7 @@ tests:
               component: infra
               process: clickhouse
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#process-mappings
               summary: "clickhouse is on course to exhaust vm.max_map_count within the hour (1.145M projected)"
               description: |
                 On the last 30 minutes of slope, clickhouse reaches
@@ -235,7 +235,7 @@ tests:
               component: infra
               process: clickhouse
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#process-mappings
               summary: "mapping-headroom probe is not reporting usable data"
               description: |
                 One of four things: memory_mappings.prom has not been
@@ -284,7 +284,7 @@ tests:
               team: stellarindex
               component: infra
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#process-mappings
               summary: "mapping-headroom probe is not reporting usable data"
               description: |
                 One of four things: memory_mappings.prom has not been
@@ -327,7 +327,7 @@ tests:
               team: stellarindex
               component: infra
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#process-mappings
               summary: "mapping-headroom probe is not reporting usable data"
               description: |
                 One of four things: memory_mappings.prom has not been
@@ -366,7 +366,7 @@ tests:
               component: infra
               process: clickhouse
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#process-mappings
               summary: "mapping-headroom probe is not reporting usable data"
               description: |
                 One of four things: memory_mappings.prom has not been

@@ -28,7 +28,7 @@ groups:
           team: stellarindex
           component: pricing-coverage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/assets-popular-priceless.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_assets_popular_priceless
           summary: "Market-popular assets have no price and no withheld verdict (P3)"
           description: |
             stellarindex_assets_popular_priceless > 0 for 1h+ — at least one
@@ -64,7 +64,7 @@ groups:
           team: stellarindex
           component: pricing-coverage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/assets-popular-priceless.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_assets_popular_priceless
           summary: "Priceless-popular coverage tripwire has stopped sweeping (P3)"
           description: |
             The priceless-popular coverage sweep has not succeeded in over
@@ -88,7 +88,7 @@ groups:
           team: stellarindex
           component: pricing-coverage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/assets-popular-priceless.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_assets_popular_priceless
           summary: "Priceless-popular coverage sweep is erroring (P3)"
           description: |
             stellarindex_priceless_coverage_check_runs_total{outcome="error"}

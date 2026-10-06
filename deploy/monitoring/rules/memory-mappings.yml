@@ -3,7 +3,7 @@
 # Producer: configs/ansible/roles/archival-node/files/memory-mappings.sh
 # (installed by the archival-node role, tag memory-mappings) writing
 # /var/lib/node_exporter/textfile_collector/memory_mappings.prom every
-# 5 minutes. Runbook: docs/operations/runbooks/memory-mappings.md.
+# 5 minutes. Runbook: docs/operations/runbooks/infra.md#process-mappings.
 #
 # WHY THESE EXIST. On 2026-09-10 13:53 CEST ClickHouse on r1 hit the
 # kernel's per-process mapping limit and said so itself:
@@ -68,7 +68,7 @@ groups:
           component: infra
           alert_family: "process_mappings/{{ $labels.process }}"
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#process-mappings
           summary: "{{ $labels.process }} holds {{ $value | humanizePercentage }} of vm.max_map_count — 5x its normal mapping count"
           description: |
             {{ $labels.process }} has been over 25 % of the per-process
@@ -102,7 +102,7 @@ groups:
           component: infra
           alert_family: "process_mappings/{{ $labels.process }}"
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#process-mappings
           summary: "{{ $labels.process }} holds {{ $value | humanizePercentage }} of vm.max_map_count (SEV-1 risk)"
           description: |
             {{ $labels.process }} is over half the per-process mapping
@@ -145,7 +145,7 @@ groups:
           team: stellarindex
           component: infra
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#process-mappings
           summary: "{{ $labels.process }} is on course to exhaust vm.max_map_count within the hour ({{ $value | humanize }} projected)"
           description: |
             On the last 30 minutes of slope, {{ $labels.process }} reaches
@@ -181,7 +181,7 @@ groups:
           team: stellarindex
           component: infra
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#process-mappings
           summary: "mapping-headroom probe is not reporting usable data"
           description: |
             One of four things: memory_mappings.prom has not been

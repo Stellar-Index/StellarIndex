@@ -166,7 +166,7 @@ _Source page `cache.md#stellarindex_redis_writes_blocked`: status living procedu
 | Typical MTTR | 5–10 min once root cause is confirmed (free disk space → Redis re-enables writes automatically) |
 | Impact | VWAP cache writes fail → `/v1/price` on rewritten or proxy-served pairs starts 404'ing because the cache key was never written — customer-visible from the first write refusal. **If Redis stays unreachable past the rate limiter's fail-open dwell time (30s), the limiter fails CLOSED and the impact widens to the WHOLE API 503ing** on every rate-limited path, not only `/v1/price` — see `api.md#stellarindex_ratelimit_fail_closed`. |
 
-Companion to [`db-disk-full.md`](db-disk-full.md). Different
+Companion to [`postgres.md#stellarindex_timescale_disk_full`](postgres.md#stellarindex_timescale_disk_full). Different
 mechanism, same root cause: when `/` fills up, Redis can't write
 RDB snapshots; with the default `stop-writes-on-bgsave-error yes`
 it then refuses every subsequent write. The aggregator's VWAP
@@ -290,7 +290,7 @@ curl -sS "https://api.stellarindex.io/v1/price?asset=native&quote=<USDC-classic-
 
 Once both pass, the customer-visible side is restored. The
 underlying disk-full state may still need addressing — see
-`db-disk-full.md` for postgres-side considerations and
+`postgres.md#stellarindex_timescale_disk_full` for postgres-side considerations and
 follow-up rotation policy.
 
 ### Why this happens
@@ -369,7 +369,7 @@ happen the change is one `CONFIG SET` away.
 
 **`stellarindex_redis_writes_blocked`**
 
-- [`db-disk-full.md`](db-disk-full.md) — postgres-side disk pressure.
+- [`postgres.md#stellarindex_timescale_disk_full`](postgres.md#stellarindex_timescale_disk_full) — postgres-side disk pressure.
 - [`cache.md`](cache.md#stellarindex_redis_master_down) — different shape:
   Redis process exited rather than rejecting writes.
 - [`cache.md`](cache.md#stellarindex_redis_memory_saturated) — memory pressure (eviction

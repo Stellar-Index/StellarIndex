@@ -48,7 +48,7 @@ groups:
           team: stellarindex
           component: ledgerstream
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledgerstream-tier-both-missing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ledgerstream_tier_both_missing
           summary: "LCM read missed BOTH tiers in the last 5 min — indexer cannot progress"
           description: |
             The TieredDataStore tried to read at least one
