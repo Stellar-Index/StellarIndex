@@ -56,6 +56,10 @@ var Registry = map[string]Metadata{
 	// the default for on-chain Soroban sources.
 	"upshift": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillUnsafe},
 
+	// Spectra yield-tokenisation markets: ClassRouter because PT/YT swaps and
+	// wraps are derivative of the underlying IBT, so they never feed a price.
+	"spectra": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillUnsafe},
+
 	// ─── On-chain oracles ────────────────────────────────────────
 	// Excluded from VWAP by default — they publish already-aggregated
 	// derived prices with their own governance and methodology. Reported

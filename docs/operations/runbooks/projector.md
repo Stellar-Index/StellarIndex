@@ -374,6 +374,16 @@ Known false positives: a single very slow cycle does NOT wedge (needs 5 consecut
 
 Once the density/compression cause is fixed, re-drive with `projector-replay` (see [replay](#stellarindex_projector_replay_stalled)). Lag is the softer, self-recovering signal ([lag_high](#stellarindex_projector_lag_high)); a wedge is where lag stops falling for good.
 
+## stellarindex_spectra_unlisted_infrastructure
+
+Trips: a Spectra registry `*_change` event named a factory, router, order engine or token WASM that is not in the hand-kept audited set. The gate is incomplete until it is listed; events from the new contract are not decoded meanwhile.
+
+Response:
+
+- [ ] Identify the id from the indexer log line for the event (`kind` label says which class).
+- [ ] A new id needs a code change in `internal/sources/spectra/events.go` plus a WASM audit (string-check the bytes, record it in `internal/wasmaudit/audited_wasm.json`). It cannot be admitted at runtime.
+- [ ] After it ships, re-drive with `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source spectra -from <ledger of the change> -write`.
+
 ## Related
 
 - `data-freshness.md#stellarindex_completeness_incomplete`: ADR-0033 completeness verdict that sustained skips eventually flip to `complete=false`.

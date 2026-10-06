@@ -4,10 +4,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
@@ -113,14 +115,19 @@ func (r *reader) addr(name string) string {
 	return addr
 }
 
-func (r *reader) u64(name string) uint64 {
+// duration reads a u64 that lands in a bigint column, so a value above
+// MaxInt64 is a schema break rather than a wrapped negative.
+func (r *reader) duration(name string) uint64 {
 	fv, ok := r.field(name)
 	if !ok {
 		return 0
 	}
 	v, err := scval.AsU64(fv)
-	if err != nil {
+	switch {
+	case err != nil:
 		r.fail("%s: %v", name, err)
+	case v > math.MaxInt64:
+		r.fail("%s %d overflows int64", name, v)
 	}
 	return v
 }
@@ -137,23 +144,24 @@ func (r *reader) hash(name string) string {
 	return hex.EncodeToString(b)
 }
 
-func (r *reader) signed(name string) canonical.Amount {
+func (r *reader) signed(name string) *canonical.Amount {
 	fv, ok := r.field(name)
 	if !ok {
-		return canonical.Amount{}
+		return nil
 	}
 	amt, err := scval.AsAmountFromI128(fv)
 	if err != nil {
 		r.fail("%s: %v", name, err)
+		return nil
 	}
-	return amt
+	return &amt
 }
 
 // amount reads an i128 the protocol only ever emits as a quantity, so a
 // negative value is a schema break, not a row (the column is >= 0).
-func (r *reader) amount(name string) canonical.Amount {
+func (r *reader) amount(name string) *canonical.Amount {
 	amt := r.signed(name)
-	if r.err == nil && amt.Sign() < 0 {
+	if amt != nil && amt.Sign() < 0 {
 		r.fail("%s is negative (%s)", name, amt)
 	}
 	return amt
@@ -176,25 +184,25 @@ func (r *reader) mapBody() {
 // transferAmount reads a SEP-41 `transfer` body: a bare i128, or the
 // CAP-67 Map carrying `amount` (and `to_muxed_id`). The type is tested
 // before the value is read.
-func (r *reader) transferAmount() canonical.Amount {
+func (r *reader) transferAmount() *canonical.Amount {
 	if r.err != nil {
-		return canonical.Amount{}
+		return nil
 	}
 	sv, err := scval.Parse(r.e.Value)
 	if err != nil {
 		r.fail("parse body: %v", err)
-		return canonical.Amount{}
+		return nil
 	}
 	v, err := scval.SEP41BalanceAmount(sv)
 	if err != nil {
 		r.fail("body is neither an i128 nor a Map carrying amount: %v", err)
-		return canonical.Amount{}
+		return nil
 	}
 	amt := canonical.NewAmount(v)
 	if amt.Sign() < 0 {
 		r.fail("amount is negative (%s)", amt)
 	}
-	return amt
+	return &amt
 }
 
 // decodeRow decodes a row kind into out, whose identity, Kind, Role and
@@ -205,7 +213,7 @@ func decodeRow(e *events.Event, out Event) (Event, error) {
 	case EventPTDeployed:
 		r = newReader(e, out.Kind, 1)
 		out.Caller = r.addr("deployer")
-		out.DurationSeconds = r.u64("duration")
+		out.DurationSeconds = r.duration("duration")
 		out.IBT = r.addr("ibt")
 		out.MarketPT = r.addr("pt")
 	case EventYTDeployed:
@@ -305,6 +313,7 @@ func checkRegistryChange(e *events.Event, kind string) error {
 		return r.err
 	}
 	if !slices.Contains(known, got) {
+		obs.SpectraUnlistedInfrastructureTotal.WithLabelValues(kind).Inc()
 		return fmt.Errorf("%w: %s new = %s at ledger %d", ErrUnlistedInfrastructure, kind, got, e.Ledger)
 	}
 	return nil

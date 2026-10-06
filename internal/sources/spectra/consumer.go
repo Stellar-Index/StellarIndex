@@ -25,7 +25,9 @@ import (
 //	order_cancelled   Maker, OrderID
 //
 // Amounts are raw i128 (NUMERIC downstream); the market's decimals live in
-// [MainnetContracts], never assumed uniform.
+// [MainnetContracts], never assumed uniform. An amount is a pointer so a
+// kind that should carry it but left it unset is refused by the store
+// rather than written as 0.
 type Event struct {
 	ContractID string
 
@@ -51,11 +53,11 @@ type Event struct {
 	YT              string
 	DurationSeconds uint64
 
-	Shares      canonical.Amount
-	VaultShares canonical.Amount
-	Assets      canonical.Amount
-	Amount      canonical.Amount
-	YieldInIBT  canonical.Amount
+	Shares      *canonical.Amount
+	VaultShares *canonical.Amount
+	Assets      *canonical.Amount
+	Amount      *canonical.Amount
+	YieldInIBT  *canonical.Amount
 }
 
 // EventKind implements [consumer.Event].

@@ -13,6 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 )
 
@@ -63,11 +64,17 @@ func mustDecodeB64(t *testing.T, s string) []byte {
 // poolCreatedFor rewrites the real pool_created body to announce pool.
 func poolCreatedFor(t *testing.T, pool string) []byte {
 	t.Helper()
+	return withContractField(t, sushiPoolCreatedB64, "pool_address", pool)
+}
+
+// withContractField rewrites the contract-address field of a real map body.
+func withContractField(t *testing.T, bodyB64, field, contract string) []byte {
+	t.Helper()
 	var sv xdr.ScVal
-	if err := sv.UnmarshalBinary(mustDecodeB64(t, sushiPoolCreatedB64)); err != nil {
+	if err := sv.UnmarshalBinary(mustDecodeB64(t, bodyB64)); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := strkey.Decode(strkey.VersionByteContract, pool)
+	raw, err := strkey.Decode(strkey.VersionByteContract, contract)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +82,7 @@ func poolCreatedFor(t *testing.T, pool string) []byte {
 	copy(cid[:], raw)
 	for i := range **sv.Map {
 		e := &(**sv.Map)[i]
-		if string(*e.Key.Sym) == "pool_address" {
+		if string(*e.Key.Sym) == field {
 			e.Val.Address.ContractId = &cid
 		}
 	}
@@ -165,5 +172,115 @@ func TestCycle_PrefilterTracksLiveFactorySeededGate(t *testing.T) {
 	}
 	if got := runsCount(t, src.Name, "gate_widened") - widenedBefore; got != 1 {
 		t.Errorf("gate_widened cycles = %v, want 1 (one held re-read, then convergence)", got)
+	}
+}
+
+// Real Spectra mainnet bodies (test/fixtures/spectra): the factory's
+// pt_deployed and the PT's yt_deployed from the USDC market's creation
+// transaction (ledger 63,782,624), and a YT transfer.
+const (
+	spectraPTDeployedTopic = "AAAADwAAAAtwdF9kZXBsb3llZAA="
+	spectraPTDeployedB64   = "AAAAEQAAAAEAAAAEAAAADwAAAAhkZXBsb3llcgAAABIAAAAAAAAAAJovmvVGl4o2X6sTeIxd+eulvvp97zlWCE+aU/YQs1qKAAAADwAAAAhkdXJhdGlvbgAAAAUAAAAAAHanAAAAAA8AAAADaWJ0AAAAABIAAAABYz4ToD62ZkYI+fx4W7w7BsVwWtudoRG9cexHSjgMMiYAAAAPAAAAAnB0AAAAAAASAAAAAQDo9LzZpQzhJJHRVZshYdh90qlkgkOVQqBU6kJZZAXa"
+	spectraYTDeployedTopic = "AAAADwAAAAt5dF9kZXBsb3llZAA="
+	spectraYTDeployedB64   = "AAAAEQAAAAEAAAABAAAADwAAAAdhZGRyZXNzAAAAABIAAAABRwyW2P77E+3wW1XAoc745pxzMLK7gZRZ+RC+jA7Xffk="
+	spectraTransferB64     = "AAAACgAAAAAAAAAAAAAAAAAAnEA="
+)
+
+var spectraTransferTopics = []string{
+	"AAAADwAAAAh0cmFuc2Zlcg==",
+	"AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo=",
+	"AAAAEgAAAAGU1wln9BCzS8bGbMh5Ij2Fof+uEjsVheKhflTNzWyFnA==",
+}
+
+func spectraRow(t *testing.T, ledger uint32, eventIndex int16, contract string, topicsB64 []string, body []byte) sorobanevents.Row {
+	t.Helper()
+	r := sushiRow(t, ledger, contract, topicsB64[0], body)
+	r.EventIndex = eventIndex
+	r.TopicCount = int16(len(topicsB64))
+	r.TopicsXDR = nil
+	for _, tb := range topicsB64 {
+		r.TopicsXDR = append(r.TopicsXDR, mustDecodeB64(t, tb))
+	}
+	return r
+}
+
+func testContract(t *testing.T, seed byte) string {
+	t.Helper()
+	var raw [32]byte
+	raw[0] = seed
+	c, err := strkey.Encode(strkey.VersionByteContract, raw[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// TestCycle_PrefilterTracksSpectraSecondHop is the two-hop form of the test
+// above. Spectra's gate grows twice in a market's creation transaction: the
+// factory's pt_deployed admits the PT, then the PT's yt_deployed admits the
+// YT. The PT's yt_deployed is emitted BEFORE the factory's pt_deployed, so
+// the first read cannot see it; each widening must hold the window for a
+// re-read, or the YT and its transfer one ledger later are lost.
+func TestCycle_PrefilterTracksSpectraSecondHop(t *testing.T) {
+	reg, err := BuildRegistry([]string{spectra.SourceName}, config.OracleConfig{}, nil, nil)
+	if err != nil || len(reg.Sources) != 1 {
+		t.Fatalf("BuildRegistry: %v (%d sources)", err, len(reg.Sources))
+	}
+	src := reg.Sources[0]
+
+	pt, yt := testContract(t, 0x6a), testContract(t, 0x6b)
+	store := &prefilterStore{fakeStore: &fakeStore{
+		projectorCursor: 100, haveCursor: true, tipLedger: 105,
+		rows: []sorobanevents.Row{
+			spectraRow(t, 101, 4, pt, []string{spectraYTDeployedTopic},
+				withContractField(t, spectraYTDeployedB64, "address", yt)),
+			spectraRow(t, 101, 6, spectra.MainnetFactory, []string{spectraPTDeployedTopic},
+				withContractField(t, spectraPTDeployedB64, "pt", pt)),
+			spectraRow(t, 102, 2, yt, spectraTransferTopics, mustDecodeB64(t, spectraTransferB64)),
+		},
+	}}
+	var mu sync.Mutex
+	projected := map[string]uint32{}
+	p := &Projector{
+		store:  store,
+		logger: discardLog(),
+		sink: func(_ context.Context, ev consumer.Event) error {
+			if se, ok := ev.(spectra.Event); ok {
+				mu.Lock()
+				projected[se.Kind+"@"+se.ContractID] = se.Ledger
+				mu.Unlock()
+			}
+			return nil
+		},
+	}
+	widenedBefore := runsCount(t, src.Name, "gate_widened")
+	window := uint32(BatchLimit)
+	var tracker poisonTracker
+	var wedge wedgeTracker
+	for i := 0; i < 5 && store.cursor() < 105; i++ {
+		p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge, nil)
+	}
+
+	if got := store.cursor(); got != 105 {
+		t.Fatalf("cursor = %d, want 105 (the window must still complete)", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	want := map[string]uint32{
+		spectra.EventPTDeployed + "@" + spectra.MainnetFactory: 101,
+		spectra.EventYTDeployed + "@" + pt:                     101,
+		spectra.EventTransfer + "@" + yt:                       102,
+	}
+	for k, l := range want {
+		if got, ok := projected[k]; !ok || got != l {
+			t.Errorf("%s projected at %d (present=%v), want ledger %d; prefilters used: %v",
+				k, got, ok, l, store.filters)
+		}
+	}
+	if len(projected) != len(want) {
+		t.Errorf("projected %v, want exactly %v", projected, want)
+	}
+	if got := runsCount(t, src.Name, "gate_widened") - widenedBefore; got != 2 {
+		t.Errorf("gate_widened cycles = %v, want 2 (one held re-read per hop, then convergence)", got)
 	}
 }

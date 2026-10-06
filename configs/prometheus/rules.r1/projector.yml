@@ -359,3 +359,25 @@ groups:
             decompress the offending range, then confirm the wedge clears.
 
             Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_wedged
+
+      # Spectra's gate is a hand-kept audited set (internal/sources/spectra).
+      # A registry *_change event naming a contract outside it leaves the gate
+      # incomplete, and nothing but a code change closes that. One increment is
+      # the event, so `for: 0m`.
+      - alert: stellarindex_spectra_unlisted_infrastructure
+        expr: increase(stellarindex_spectra_unlisted_infrastructure_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: page
+          team: stellarindex
+          component: projector
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_spectra_unlisted_infrastructure
+          summary: "Spectra registry named an unaudited {{ $labels.kind }} — the gate is incomplete"
+          description: |
+            A Spectra registry *_change event named a factory, router, order
+            engine or token WASM outside the hand-kept audited set. Audit the
+            new id, add it in internal/sources/spectra/events.go, then replay
+            the source.
+
+            Runbook: docs/operations/runbooks/projector.md#stellarindex_spectra_unlisted_infrastructure
