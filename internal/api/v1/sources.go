@@ -20,6 +20,41 @@ type SourcesStatsReader interface {
 	GetSourceVolumeHistory7d(ctx context.Context) ([]timescale.SourceVolumeBucket, error)
 }
 
+// sourcesStatsAtReader is what the TTL cache adds to SourcesStatsReader:
+// each read also returns the fill time of the slot it served, so
+// handleSources stamps as_of with the data's vintage instead of now.
+type sourcesStatsAtReader interface {
+	GetSourceStatsAt(ctx context.Context) ([]timescale.SourceStats, time.Time, error)
+	GetSourceVolumeHistory24hAt(ctx context.Context) ([]timescale.SourceVolumeBucket, time.Time, error)
+	GetSourceVolumeHistory7dAt(ctx context.Context) ([]timescale.SourceVolumeBucket, time.Time, error)
+}
+
+// sourcesStatsAt adapts r to sourcesStatsAtReader; an uncached reader's
+// reads report a zero fill time, which stamps as_of now.
+func sourcesStatsAt(r SourcesStatsReader) sourcesStatsAtReader {
+	if at, ok := r.(sourcesStatsAtReader); ok {
+		return at
+	}
+	return liveSourcesStats{r}
+}
+
+type liveSourcesStats struct{ SourcesStatsReader }
+
+func (l liveSourcesStats) GetSourceStatsAt(ctx context.Context) ([]timescale.SourceStats, time.Time, error) {
+	rows, err := l.GetSourceStats(ctx)
+	return rows, time.Time{}, err
+}
+
+func (l liveSourcesStats) GetSourceVolumeHistory24hAt(ctx context.Context) ([]timescale.SourceVolumeBucket, time.Time, error) {
+	rows, err := l.GetSourceVolumeHistory24h(ctx)
+	return rows, time.Time{}, err
+}
+
+func (l liveSourcesStats) GetSourceVolumeHistory7dAt(ctx context.Context) ([]timescale.SourceVolumeBucket, time.Time, error) {
+	rows, err := l.GetSourceVolumeHistory7d(ctx)
+	return rows, time.Time{}, err
+}
+
 // VolumeBucket is one wire-shape hour bucket on the per-source
 // 24h sparkline. Hour is RFC 3339; volume_usd is numeric-stringified
 // to preserve precision through the JSON boundary; trade_count is the
@@ -234,20 +269,26 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 	historyBySource := map[string][]VolumeBucket{}
 	lowerBound := map[string]bool{}
 	history7dBySource := map[string][]VolumeBucket{}
-	if includeStats && s.sourcesStats != nil {
+	var vintage dataVintage
+	var reads sourcesStatsAtReader
+	if s.sourcesStats != nil {
+		reads = sourcesStatsAt(s.sourcesStats)
+	}
+	if includeStats && reads != nil {
 		// 8s ceiling on the stats fan-out — same pattern as
 		// /v1/markets and /v1/pools. Soft-fail
 		// already serves the registry without stats on error,
 		// so a deadline just degrades gracefully rather than
 		// hanging the whole sources listing on a cold cache.
 		statsCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-		got, err := s.sourcesStats.GetSourceStats(statsCtx)
+		got, at, err := reads.GetSourceStatsAt(statsCtx)
 		cancel()
 		if err != nil {
 			s.logger.Warn("source stats", "err", err)
 			partial = true
 			// Soft-fail: serve the registry without stats.
 		} else {
+			vintage.note(at)
 			for _, ss := range got {
 				vol := ""
 				if ss.VolumeUSD24h.Valid {
@@ -264,27 +305,29 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 			}
 		}
 	}
-	if includeSparkline && s.sourcesStats != nil {
+	if includeSparkline && reads != nil {
 		// Same 8s ceiling as the stats fan-out above.
 		sparkCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-		buckets, err := s.sourcesStats.GetSourceVolumeHistory24h(sparkCtx)
+		buckets, at, err := reads.GetSourceVolumeHistory24hAt(sparkCtx)
 		cancel()
 		if err != nil {
 			s.logger.Warn("source volume history", "err", err)
 			partial = true
 		} else {
+			vintage.note(at)
 			historyBySource = buildSourceVolumeHistory(buckets, 24)
 			markXLMUnpriced(lowerBound, buckets)
 		}
 	}
-	if includeSparkline7d && s.sourcesStats != nil {
+	if includeSparkline7d && reads != nil {
 		sparkCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-		buckets, err := s.sourcesStats.GetSourceVolumeHistory7d(sparkCtx)
+		buckets, at, err := reads.GetSourceVolumeHistory7dAt(sparkCtx)
 		cancel()
 		if err != nil {
 			s.logger.Warn("source volume history 7d", "err", err)
 			partial = true
 		} else {
+			vintage.note(at)
 			history7dBySource = buildSourceVolumeHistory(buckets, 24*7)
 			markXLMUnpriced(lowerBound, buckets)
 		}
@@ -321,5 +364,5 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	writeJSON(w, out, Flags{Degraded: partial})
+	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: Flags{Degraded: partial}})
 }

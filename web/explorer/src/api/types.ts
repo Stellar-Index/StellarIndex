@@ -7792,7 +7792,10 @@ export interface components {
         };
         /** @description Every 2xx JSON response carries these, except the session-cookie customer-dashboard operations: magic-link and passkey sign-in under /auth, the /dashboard operations, and POST /account/admin/lookup. Those return the bare resource object documented on each operation. The API-key /account/* operations and SEP-10 are enveloped. */
         EnvelopeMeta: {
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description When the data in this response was computed. A surface served from a cache stamps the time that cache entry was filled, so an unchanged payload replays a byte-identical body (and ETag) until the next refill; an uncached surface stamps the time it built the response.
+             */
             as_of: string;
             /**
              * Format: date-time

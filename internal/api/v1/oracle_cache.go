@@ -134,11 +134,19 @@ func (c *CachedOracleReader) LatestOracleUpdatesForAsset(ctx context.Context, as
 // (e.g. [native, crypto:XLM] and [crypto:XLM, native] both share the
 // same cache slot).
 func (c *CachedOracleReader) LatestOracleUpdatesForAssets(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error) {
+	rows, _, err := c.LatestOracleUpdatesForAssetsAt(ctx, assets, sourceFilter)
+	return rows, err
+}
+
+// LatestOracleUpdatesForAssetsAt is LatestOracleUpdatesForAssets plus the
+// served entry's fill time; zero on an uncached (ttl<=0) read.
+func (c *CachedOracleReader) LatestOracleUpdatesForAssetsAt(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, time.Time, error) {
 	if c.ttl <= 0 {
-		return c.upstream.LatestOracleUpdatesForAssets(ctx, assets, sourceFilter)
+		rows, err := c.upstream.LatestOracleUpdatesForAssets(ctx, assets, sourceFilter)
+		return rows, time.Time{}, err
 	}
 	if len(assets) == 0 {
-		return nil, nil
+		return nil, time.Time{}, nil
 	}
 	keys := make([]string, len(assets))
 	for i, a := range assets {
@@ -164,6 +172,13 @@ func (c *CachedOracleReader) LatestOracleUpdatesForAssets(ctx context.Context, a
 // is that this call has no per-request dimensions, so it occupies exactly
 // one slot.)
 func (c *CachedOracleReader) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpdate, error) {
+	rows, _, err := c.LatestOracleStreamsAt(ctx)
+	return rows, err
+}
+
+// LatestOracleStreamsAt is LatestOracleStreams plus the served entry's
+// fill time.
+func (c *CachedOracleReader) LatestOracleStreamsAt(ctx context.Context) ([]canonical.OracleUpdate, time.Time, error) {
 	// A single key under the same 3 s TTL + single-flight the other reads
 	// already use: one scan per TTL window, concurrent callers coalesce,
 	// and errors are never cached (fetch drops the entry on failure).
@@ -197,16 +212,16 @@ func (c *CachedOracleReader) fetch(
 	ctx context.Context,
 	op, key string,
 	upstream func(context.Context) ([]canonical.OracleUpdate, error),
-) ([]canonical.OracleUpdate, error) {
+) ([]canonical.OracleUpdate, time.Time, error) {
 	c.mu.Lock()
 	e, ok := c.entries[key]
 
 	// (A) Fresh hit.
 	if ok && e.flight == nil && time.Since(e.at) < c.ttl {
-		out := e.updates
+		out, at := e.updates, e.at
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("oracle", op, "hit").Inc()
-		return out, nil
+		return out, at, nil
 	}
 
 	// (B)/(C) No usable value: join the running fill, or start one.
@@ -235,11 +250,11 @@ func (c *CachedOracleReader) fetch(
 	select {
 	case <-flight:
 		if entry.err != nil {
-			return nil, entry.err
+			return nil, time.Time{}, entry.err
 		}
-		return entry.updates, nil
+		return entry.updates, entry.at, nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, time.Time{}, ctx.Err()
 	}
 }
 

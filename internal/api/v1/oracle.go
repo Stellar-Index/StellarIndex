@@ -36,6 +36,13 @@ type OracleReader interface {
 	LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpdate, error)
 }
 
+// oracleAtReader is what the TTL cache adds to OracleReader: each read also
+// returns the served entry's fill time, which the handlers stamp as as_of.
+type oracleAtReader interface {
+	LatestOracleUpdatesForAssetsAt(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, time.Time, error)
+	LatestOracleStreamsAt(ctx context.Context) ([]canonical.OracleUpdate, time.Time, error)
+}
+
 // oracleAssetCandidates expands the user-facing asset identifier
 // into every key form the oracle layer might have stored under.
 //
@@ -301,8 +308,16 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 
 	olCtx, olCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer olCancel()
-	updates, err := reader.LatestOracleUpdatesForAssets(
-		olCtx, s.oracleAssetCandidates(asset), source)
+	var vintage dataVintage
+	var updates []canonical.OracleUpdate
+	if at, ok := reader.(oracleAtReader); ok {
+		var filled time.Time
+		updates, filled, err = at.LatestOracleUpdatesForAssetsAt(olCtx, s.oracleAssetCandidates(asset), source)
+		vintage.note(filled)
+	} else {
+		updates, err = reader.LatestOracleUpdatesForAssets(olCtx, s.oracleAssetCandidates(asset), source)
+		vintage.note(time.Time{})
+	}
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -337,7 +352,7 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, oracleReadingFrom(u))
 	}
-	writeJSON(w, rows, Flags{})
+	writeEnvelope(w, Envelope{Data: rows, AsOf: vintage.asOf()})
 }
 
 // handleOracleStreams serves GET /v1/oracle/streams[?include_unmapped=true].
@@ -372,7 +387,17 @@ func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 	// cold-cache scans of 7d × 80 oracle streams can take 5-10s.
 	osCtx, osCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer osCancel()
-	updates, err := reader.LatestOracleStreams(osCtx)
+	var vintage dataVintage
+	var updates []canonical.OracleUpdate
+	var err error
+	if at, ok := reader.(oracleAtReader); ok {
+		var filled time.Time
+		updates, filled, err = at.LatestOracleStreamsAt(osCtx)
+		vintage.note(filled)
+	} else {
+		updates, err = reader.LatestOracleStreams(osCtx)
+		vintage.note(time.Time{})
+	}
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -413,7 +438,7 @@ func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, oracleReadingFrom(u))
 	}
-	writeJSON(w, rows, Flags{})
+	writeEnvelope(w, Envelope{Data: rows, AsOf: vintage.asOf()})
 }
 
 // oracleReadingFrom converts canonical.OracleUpdate → wire shape,
