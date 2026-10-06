@@ -36,7 +36,7 @@ alert was deaf for 18 h.
 
 Almost always preceded by a disk-full or out-of-memory event during
 a write to `/var/lib/prometheus/metrics2/chunks_head/`. Same root
-cause family as `redis-write-blocked-disk-full` (see that runbook).
+cause family as [`cache.md#stellarindex_redis_writes_blocked`](cache.md#stellarindex_redis_writes_blocked) (see that runbook).
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -54,7 +54,7 @@ ssh root@136.243.90.96 df -h /var/lib/prometheus
 If `journalctl` shows `corruption in head chunk file …/chunks_head/000NNN`
 go to **Mitigation A**. If it shows out-of-memory / WAL replay panic,
 go to **Mitigation B**. If `df` shows > 95 % full, treat as
-`redis-write-blocked-disk-full` first (free disk, then retry).
+[`cache.md#stellarindex_redis_writes_blocked`](cache.md#stellarindex_redis_writes_blocked) first (free disk, then retry).
 
 ## Mitigation A — head-chunk corruption (≤ 5 min)
 

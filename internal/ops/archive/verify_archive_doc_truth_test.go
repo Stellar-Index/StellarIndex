@@ -15,14 +15,14 @@ import (
 // R1-only). A doc that claims a local comparison promises a security
 // property Tier D doesn't have.
 //
-// multi-region-topology.md is a living architecture doc, corrected in place.
+// ha-plan.md is a living architecture doc, corrected in place.
 // ADR-0016's Decision and Invariant state the peer-only mechanism.
 func TestDoc_TierDDescribedAsPeerOnly_RLT304(t *testing.T) {
 	t.Parallel()
 
-	topology := readRepoFile(t, "docs/architecture/infrastructure/multi-region-topology.md")
+	topology := readRepoFile(t, "docs/architecture/ha-plan.md")
 	if strings.Contains(topology, "against the local view") || strings.Contains(topology, "against the local chain") {
-		t.Error("multi-region-topology.md: Tier D is described as comparing against a local ledger " +
+		t.Error("ha-plan.md: Tier D is described as comparing against a local ledger " +
 			"hash, but verifyArchivePeers (verify_archive.go) never reads one — it only cross-compares " +
 			"peers against each other (RLT-304)")
 	}

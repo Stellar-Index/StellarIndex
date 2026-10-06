@@ -747,7 +747,7 @@ transport *in addition to* chat. See
 for the provisioning step that arms it.
 
 `prometheus_down` is the disk-full / TSDB-corruption family — same
-root cause as `redis-write-blocked-disk-full`. Doesn't have its own
+root cause as [`cache.md#stellarindex_redis_writes_blocked`](runbooks/cache.md#stellarindex_redis_writes_blocked). Doesn't have its own
 Prometheus rule (Prometheus can't alert on its own absence — that's
 what `deadmansswitch` is for); the runbook lives under the catalog
 because the *recovery* needs documenting and the apt-shipped

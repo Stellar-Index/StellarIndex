@@ -10,8 +10,7 @@ Where each kind of data lives, what "retention" means here, and the
 capacity facts for r1. The decision of record is
 [ADR-0034](../adr/0034-tiered-clickhouse-architecture.md); the ingest
 and re-derive paths are in [ingest-pipeline.md](ingest-pipeline.md).
-Read this before recommending a trim, a retention change or a move of a
-read path between tiers.
+Read before recommending a trim, a retention change or a read-path move.
 
 ## The tiers
 
@@ -72,9 +71,6 @@ and `backfill -source soroban-events` are still present. When that
 work runs, it also purges the orphan `ingestion_cursors` rows of
 deleted subsources and reverts trades-chunk tuning
 (`max_locks_per_transaction`) that no longer applies.
-
-The original plan said to drop and rebuild `trades` with a retention
-window. That was overtaken: see the next section.
 
 ## Retention: what is kept, and what "retention-scoped" means
 
@@ -151,10 +147,9 @@ zpool: data
   parity:    ONE drive. At DEGRADED there is ZERO remaining redundancy.
 ```
 
-This fact has drifted before. It is raidz1, not raidz2: the 2026-07-17
-live review saw raidz1, the measured footprint (~16.8 T) cannot fit the
-~13.85 TB that raidz2 leaves on these drives, and the pool reported
-18.3 TB total in 2026-08. The authority is `zfs_data_pool_type` in
+This fact has drifted before. It is raidz1, not raidz2: the measured
+footprint (~16.8 T) cannot fit the ~13.85 TB that raidz2 leaves on these
+drives. The authority is `zfs_data_pool_type` in
 `configs/ansible/inventory/r1.example.yml`; `scripts/ci/lint-docs.sh`
 §18 lints r1-scoped files against it. OpenZFS on r1 is a local 2.3.4
 build (`apt-mark hold`). All four bays are in use.
@@ -189,17 +184,14 @@ R1 can offer R2/R3 Tier B only.
 
 | Move | What | Status |
 |---|---|---|
-| A | Drop `/srv/history-archive` `bucket/` + `transactions/` + `results/` + `scp/` (~7.1 TB) | Executed 2026-05-21. Rebuild from SDF by `stellar-archivist mirror` takes 4-10 h if ever needed |
-| B | Drop `/srv/history-archive` entirely | Rejected: violates ADR-0017 contracts 3+4 and loses Tier B |
-| C | raidz2 → raidz1 | Not a lever: the pool is already raidz1, so there is no parity left to trade |
-| D | ADR-0027 cold tier + bulk trim of `galexie-archive` | Executed 2026-07-26: 780 partitions below ledger 49,984,000 deleted, 1.07 TB reclaimed against a ~3.5 TB estimate. Early history is sparse; most bytes sit in the Soroban era, so assume the same shape for any "trim old data" estimate. The trim deletes an object only after the matching AWS object HEADs OK. ADR-0043 §2 accepts the `aws-public-blockchain` dependency for `[64000, 49983999]` |
-| E | Retention on `trades` | Forbidden (see Retention). Est. 50-100 GB anyway |
+| A | Drop `/srv/history-archive` `bucket/` + `transactions/` + `results/` + `scp/` (~7.1 TB) | Done. Rebuild from SDF by `stellar-archivist mirror` takes 4-10 h if ever needed |
+| B, C, E | Drop `/srv/history-archive` entirely; raidz2 to raidz1; retention on `trades` | Rejected or not a lever: B violates ADR-0017 contracts 3+4 and loses Tier B; the pool is already raidz1; E is forbidden (see Retention) |
+| D | ADR-0027 cold tier + bulk trim of `galexie-archive` | Done: 780 partitions below ledger 49,984,000 deleted, 1.07 TB reclaimed. Early history is sparse; most bytes sit in the Soroban era. The trim deletes an object only after the matching AWS object HEADs OK; ADR-0043 §2 accepts the `aws-public-blockchain` dependency for `[64000, 49983999]` |
 | F | Re-enable trades compression job 1000 + tighter compression | Available: ~50-150 GB, CPU cost only. Job 1000 was disabled to stop decompress-on-write storms during heavy backfills |
-| G | Decode pre-Soroban classic issuance into our own observer tables | The space half is spent (Move D); the mission half stands: it is the only way to own that history, now read from `aws-public-blockchain` |
+| G | Decode pre-Soroban classic issuance into our own observer tables | Mission work, not capacity: the only way to own that history, now read from `aws-public-blockchain` |
 
 The Move D trim deletes only from `galexie-archive`
 (`internal/ops/archive/trim_galexie_archive.go`, `S3BucketArchive`; its
 MinIO identity is scoped to that bucket), never `galexie-live`.
 
-What remains: Move F, ZSTD recompression, and a second server. Move G
-is mission work, not capacity.
+Capacity levers left: Move F, ZSTD recompression, and a second server.

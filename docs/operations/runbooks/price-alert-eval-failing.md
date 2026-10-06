@@ -98,7 +98,7 @@ psql "$STELLARINDEX_POSTGRES_DSN" -c 'SELECT count(*) FROM price_alerts;'
 
 | Underlying error | Likely cause | Mitigation |
 | ---------------- | ------------ | ---------- |
-| connection refused / timeout | Postgres down / failover | Wait for recovery; check `postgres-ping-failing` |
+| connection refused / timeout | Postgres down / failover | Wait for recovery; check [`postgres.md#stellarindex_postgres_ping_failing`](postgres.md#stellarindex_postgres_ping_failing) |
 | `permission denied for table price_alerts` | Migration applied as superuser | `ALTER TABLE price_alerts OWNER TO stellarindex` (migrations/README rule 7) |
 | statement timeout | DB under load | Check DB load; alert auto-resolves once queries complete |
 
@@ -129,7 +129,7 @@ Capture for the postmortem: the underlying error class, whether the
 
 - `internal/pricealerts/` — the evaluator package.
 - `internal/api/v1/dashboardpricealerts/` — the CRUD surface.
-- Sibling alert: `postgres-ping-failing` (the broader "aggregator can't
+- Sibling alert: [`postgres.md#stellarindex_postgres_ping_failing`](postgres.md#stellarindex_postgres_ping_failing) (the broader "aggregator can't
   reach Postgres" signal).
 
 ## Changelog

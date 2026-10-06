@@ -180,8 +180,7 @@ parses every SQL literal so a new one-direction CAGG read fails CI).
 A classic market and its SAC-wrapped twin (`native/USDC-GA5Z…` vs
 `<XLM SAC>/<USDC SAC>`) are different venues. Merging them is a liquidity
 decision, not completeness: a thin pool beside a deep book sets the bar's
-extremes. Live example (2026-06-02, `GQX-GD7TC72O…`): 660 book prints,
-$140; 1 pool print, $0.60, at 13.10 vs the book's 9.54 — a +37.32% high.
+extremes: r1 measured a +37.32% high from one $0.60 pool print beside $140 of book prints.
 Migration 0115's `usd_volume >= 0.01` floor does not stop it ($0.60 is
 60× the floor).
 
@@ -193,10 +192,6 @@ constituents (`internal/api/v1/ohlc_fiat_combine.go`,
 both). Shipped 2026-09-05 for both the series (launch-plan row 1.15) and
 the point path (row 1.14), keeping point/series parity (C1-024).
 
-- **Reach.** Over the year to 2026-09-05: 132 markets with a SAC-quoted
-  leg, 1,916,996 prints. 24 assets were reachable already; 43 had
-  SAC-only USD depth ($14,630,761.46; the largest $6,375,518.23 over
-  129,925 prints) and were served nothing.
 - **Established vs held-back.** Classic spellings are established; SAC
   spellings are held back. A held-back spelling is suppressed for a
   bucket an established spelling answered, and for **no other bucket** —
@@ -204,9 +199,7 @@ the point path (row 1.14), keeping point/series parity (C1-024).
   volume beside book data. All established spellings are read before any
   held-back one (`assertSACQuotedSeriesReadLast`).
 - **Per bucket, never per response.** A per-response first-hit rule makes
-  the constituent set depend on the window, and would have served the
-  3,356 pool-only days (671,712 prints, $175,962,608.19) as quiet. Per
-  bucket, a bar renders identically in every window that contains it.
+  the constituent set depend on the window. Per bucket, a bar renders identically in every window that contains it.
 - **Point path at a stated grain.** "The point window is its own bucket"
   holds only when the window is one bucket, so the point gate runs per
   bucket at `fiatPointGateInterval` = 1m, the finest series interval.

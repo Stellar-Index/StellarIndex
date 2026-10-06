@@ -1385,7 +1385,6 @@ else
     deploy/monitoring/rule-tests/infra_test.yml
     docs/architecture/ha-plan.md
     docs/architecture/storage-considerations.md
-    docs/architecture/infrastructure/multi-region-topology.md
     docs/operations/r1-deployment-state.md
     docs/operations/r3-deployment-state.md
     docs/operations/self-hosting.md

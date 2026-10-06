@@ -3262,7 +3262,7 @@ var TradeInsertOutcomeTotal = prometheus.NewCounterVec(
 var DexTradeUnitRatioTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_dex_trade_unit_ratio_total",
-		Help: "On-chain DEX trades landed with base_amount == quote_amount (both nonzero) — the signature of the 2026-07-07 Phoenix decoder field-mapping bug that silently collapsed 237k trades to a 1:1 price for months. Labels: source. CEX/FX (ledger==0) excluded — they scale amounts differently. A sustained stream from one source (not an occasional hit) indicates a decoder bug; see runbook dex-trade-unit-ratio.md.",
+		Help: "On-chain DEX trades landed with base_amount == quote_amount (both nonzero) — the signature of the 2026-07-07 Phoenix decoder field-mapping bug that silently collapsed 237k trades to a 1:1 price for months. Labels: source. CEX/FX (ledger==0) excluded — they scale amounts differently. A sustained stream from one source (not an occasional hit) indicates a decoder bug; see runbook dex.md#stellarindex_dex_trade_unit_ratio_detected.",
 	},
 	[]string{"source"},
 )
@@ -5262,7 +5262,7 @@ var MarketsSkippedRowsTotal = prometheus.NewCounter(
 var DEXTradeNonstandardDecimalsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_dex_trade_nonstandard_decimals_total",
-		Help: "DEX trades observed for a Soroban token whose on-chain decimals() != 7 — the served price for pairs involving this asset is silently skewed by 10^(7-decimals). Labels: source, asset (C-strkey). Any non-zero value is an unmitigated mispricing landmine; see runbook dex-nonstandard-decimals.md.",
+		Help: "DEX trades observed for a Soroban token whose on-chain decimals() != 7 — the served price for pairs involving this asset is silently skewed by 10^(7-decimals). Labels: source, asset (C-strkey). Any non-zero value is an unmitigated mispricing landmine; see runbook dex.md#dex-nonstandard-decimals.",
 	},
 	[]string{"source", "asset"},
 )
@@ -5302,7 +5302,7 @@ var DecimalsGuardSweepLastSuccessUnix = prometheus.NewGauge(
 var PriceServeDeclinedNonstandardDecimalsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_serve_declined_nonstandard_decimals_total",
-		Help: "HISTORICAL, permanently zero since 2026-07-10: price-surface requests declined for a confirmed non-7-decimal pair leg. The decline guard was replaced by read-time decimals normalization (runbook dex-nonstandard-decimals.md); retained one release for dashboard continuity.",
+		Help: "HISTORICAL, permanently zero since 2026-07-10: price-surface requests declined for a confirmed non-7-decimal pair leg. The decline guard was replaced by read-time decimals normalization (runbook dex.md#dex-nonstandard-decimals); retained one release for dashboard continuity.",
 	},
 	[]string{"asset"},
 )
@@ -5398,7 +5398,7 @@ var NonstandardDecimalsPartialAliasFamilyTotal = prometheus.NewCounter(
 var NonstandardDecimalsLockstepMismatchTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_nonstandard_decimals_lockstep_mismatch_total",
-		Help: "Observations that the lake's on-chain decimals() and the nonstandard_decimals_assets projection disagree for one asset. Labels: site (guard_reconcile = repaired at aggregation time; asset_detail/asset_listing/rwa_contract/lending_reserve = valuation refused at request time), asset (C-strkey, populated for guard_reconcile only — request-driven sites leave it empty to bound cardinality). Expected 0; see runbook dex-nonstandard-decimals.md.",
+		Help: "Observations that the lake's on-chain decimals() and the nonstandard_decimals_assets projection disagree for one asset. Labels: site (guard_reconcile = repaired at aggregation time; asset_detail/asset_listing/rwa_contract/lending_reserve = valuation refused at request time), asset (C-strkey, populated for guard_reconcile only — request-driven sites leave it empty to bound cardinality). Expected 0; see runbook dex.md#dex-nonstandard-decimals.",
 	},
 	[]string{"site", "asset"},
 )

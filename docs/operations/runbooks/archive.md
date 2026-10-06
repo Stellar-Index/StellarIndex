@@ -30,11 +30,11 @@ Archive alerts: archive completeness, SDF archive divergence and publish, Galexi
 - [`stellarindex_host_swap_activity`](#stellarindex_host_swap_activity)
 - [`stellarindex_galexie_archive_mirror_stale`](#stellarindex_galexie_archive_mirror_stale)
 
-## Shared context: `archive.md` alerts
+## Shared context: Archive completeness alerts
 
 _Source page `archive.md`: status draft, last verified 2026-10-05._
 
-Alerts from `deploy/monitoring/rules/archive-completeness.yml` and `configs/prometheus/rules.r1/archive-completeness.yml`. The daily `archive-completeness.timer` / `archive-completeness.service` verifies the cross-anchor archive and fills gaps from a nine-source fallback chain. Policy: [ADR-0017](../../adr/0017-archive-completeness-invariants.md); operational overview: [archive.md](../archive-completeness.md).
+Alerts from `deploy/monitoring/rules/archive-completeness.yml` and `configs/prometheus/rules.r1/archive-completeness.yml`. The daily `archive-completeness.timer` / `archive-completeness.service` verifies the cross-anchor archive and fills gaps from a nine-source fallback chain. Policy: [ADR-0017](../../adr/0017-archive-completeness-invariants.md); operational overview: [archive-completeness.md](../archive-completeness.md).
 
 ### At a glance
 
@@ -93,7 +93,7 @@ Patterns:
    ssh r1 'jq ".missing" /tmp/completeness-report.json | head'
    ssh r1 'stellarindex-ops archive-completeness verify -from LO -to HI -workers 8'
    ```
-   For the missing checkpoints, see [archive.md](../archive-completeness.md) for the bootstrap step that addresses the gap.
+   For the missing checkpoints, see [archive-completeness.md](../archive-completeness.md) for the bootstrap step that addresses the gap.
 4. **Verify** `archive_completeness_last_success_timestamp` updates to now; alert clears within one eval cycle (1 min).
 
 **False positives** R2/R3 alerting while R1 is fine: R2/R3 scrape R1's metrics endpoint for the cross-anchor timestamp, so a broken federation scrape (firewall, DNS) shows stale. Check R1's local timestamp; if fresh, escalate to the metrics-federation runbook.
@@ -664,7 +664,7 @@ matching `mc ls` / `mc stat` / `mc admin info` against that bucket.
   is inert on r1 (stellar-core removed 2026-04-23, no active archive
   publisher). Retained for Phase-3 validator rollout.
 
-## Shared context: `archive.md` alerts
+## Shared context: Galexie archive alerts
 
 _Source page `archive.md`: status current, severity P1 | P3, last verified 2026-10-06._
 
@@ -998,7 +998,7 @@ stdout are checked separately.
 
 ## Related
 
-**`archive.md` alerts**
+**Archive completeness and divergence alerts**
 
 - [backup-offsite](backup-offsite.md): off-site backup alerts.
 
@@ -1021,9 +1021,9 @@ stdout are checked separately.
 - `db-disk-full.md` — staging-dir disk-full variant.
 - ADR-0004 (three-validator + independent archives).
 
-**`archive.md` alerts**
+**Galexie archive alerts**
 
-- ADR-0016 (R1 = full mirror), ADR-0027 (hot floor + trim, `docs/operations/lcm-cache-tiering.md`), [archive-files-missing](archive.md#stellarindex_archive_files_missing), [bootstrap-archival-node](bootstrap-archival-node.md), [galexie-archive-mirror](archive.md#stellarindex_archive_files_missing).
+- ADR-0016 (R1 = full mirror), ADR-0027 (hot floor + trim, `docs/operations/lcm-cache-tiering.md`), [archive-files-missing](archive.md#stellarindex_archive_files_missing), [bootstrap-archival-node](bootstrap-archival-node.md), [galexie-archive-mirror](archive.md#stellarindex_galexie_archive_mirror_stale).
 
 **stellarindex_galexie_archive_mirror_stale**
 

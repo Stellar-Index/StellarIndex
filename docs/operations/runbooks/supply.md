@@ -749,7 +749,7 @@ Capture for the postmortem:
   cross-check worker (Stellar Dashboard + CoinGecko references +
   `stellarindex_supply_divergence_ratio` / `_total` / `_duration_seconds`).
 
-## Shared context: `supply.md` alerts
+## Shared context: Supply refresh alerts
 
 _Source page `supply.md`: status living, severity P2, last verified 2026-10-06._
 
@@ -840,7 +840,7 @@ Mitigation (15 min):
    watched_classic_assets = [
        "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
        "EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
-       # ... full list per docs/operations/supply.md
+       # ... full list per docs/operations/supply-snapshot.md
    ]
    watched_sep41_contracts = []
    sdf_reserve_accounts = ["GA..."]
@@ -1024,7 +1024,7 @@ False positive: a single failure during an intense re-derive that the next daily
 
 Script: `configs/ansible/roles/archival-node/files/run-ch-supply.sh`; unit: `templates/systemd/ch-supply.service.j2`. Sibling failed-unit alert: [`verify-archive.md#stellarindex_verify_archive_unit_failed`](verify-archive.md#stellarindex_verify_archive_unit_failed). Architecture: `docs/architecture/storage-considerations.md#supply-flows-in-the-lake`.
 
-## Shared context: `supply.md` alerts
+## Shared context: Supply snapshot alerts
 
 _Source page `supply.md`: status living, severity P3, last verified 2026-10-06._
 
@@ -1183,7 +1183,7 @@ curl -s http://localhost:9465/metrics | grep stellarindex_aggregator_supply_refr
 
 Path B does NOT silence this alert. It clears the sibling aggregator `_never_initialized` alert and populates the goroutine-path metrics tracked by [supply.md#stellarindex_aggregator_supply_refresh_stalled](supply.md#stellarindex_aggregator_supply_refresh_stalled). If a deployment intentionally runs Path B exclusively, silence this textfile-path alert; `_stale` cannot fire there (its series is absent), so no silence is needed for it.
 
-Why neither path is the default: the supply pipeline ships dormant by design. The operator-managed `reserve_balances_stroops` config is the source of truth for SDF reserves (subtracted from total to get circulating); without it the writer would emit nonsense, so the gate forces operator review before first publish. Wiring guide: [docs/operations/supply.md](../supply-snapshot.md).
+Why neither path is the default: the supply pipeline ships dormant by design. The operator-managed `reserve_balances_stroops` config is the source of truth for SDF reserves (subtracted from total to get circulating); without it the writer would emit nonsense, so the gate forces operator review before first publish. Wiring guide: [docs/operations/supply-snapshot.md](../supply-snapshot.md).
 
 Verify (within `max(36 h, aggregator_refresh_cadence)`):
 
@@ -1429,13 +1429,13 @@ None known. A failed run is never promoted to clean.
 - `internal/divergence/supply.go` — the worker; the reference clients
   + threshold live here.
 
-**`supply.md` alerts**
+**Supply snapshot alerts**
 
 - [`supply.md#stellarindex_supply_snapshot_never_initialized`](supply.md#stellarindex_supply_snapshot_never_initialized): the timer-path never-initialized alert (the sibling of `_never_initialized` here).
 - `supply.md#stellarindex_supply_snapshot_stale`: systemd-timer-path equivalent (different metric, different expectation).
 - ADR-0011 (three-domain supply algorithm), ADR-0021, ADR-0022, ADR-0023: algorithms and observer designs the refresher consumes.
 
-**`supply.md` alerts**
+**Supply cross-check alerts**
 
 - `supply.md#stellarindex_supply_cross_check_divergence` - when the value itself looks wrong (classic vs SAC divergence).
 - `postgres.md#stellarindex_timescale_connections_saturated` - Postgres reachability.

@@ -726,7 +726,7 @@ role and reapplying (`--check --diff` first) — **never** a live-only
 - HA plan §3.3 — Patroni topology (**design only — NOT deployed on r1**, see
   `docs/architecture/ha-plan.md` §2.1).
 - ADR-0050 / `docs/architecture/ha-plan.md` §1 — no cross-region
-  Postgres replication; the older `multi-region-topology.md` §5 is superseded.
+  Postgres replication.
 - [`postgres.md#stellarindex_postgres_ping_failing`](postgres.md#stellarindex_postgres_ping_failing),
   [`db-disk-full.md`](db-disk-full.md), [`infra.md#stellarindex_timescale_backup_none_24h`](infra.md#stellarindex_timescale_backup_none_24h),
   [`meta.md#stellarindex_redis_exporter_down`](meta.md#stellarindex_redis_exporter_down).

@@ -38,12 +38,11 @@ rational arithmetic (ADR-0003). Everything is served through a public
   ledger by the daily verdict, within what it holds.
 - **Value truth:** `verify-served-values` reconciles flagship served
   numbers against independent sources (SDF, Stellar Expert).
-  `verify-usd-volume` checks the denominator under most of them. The
-  standing usd-volume alerts only measure coverage (is the column
-  non-NULL). This check tests the exact tiers' value: where either leg
-  is USD-pegged, `usd_volume` must equal `pegged_leg / 10^decimals`
-  exactly. The FX/anchor-estimated tiers are only measured until a
-  production distribution exists to calibrate against.
+  `verify-usd-volume` checks the denominator under most of them: where
+  either leg is USD-pegged, `usd_volume` must equal
+  `pegged_leg / 10^decimals` exactly (the standing alerts only measure
+  non-NULL coverage). The FX/anchor-estimated tiers are only measured
+  until a production distribution exists to calibrate against.
 - **Contract truth:** `openapi/stellar-index.v1.yaml`; handlers, SDK and
   explorer types are machine-reconciled against it.
 
