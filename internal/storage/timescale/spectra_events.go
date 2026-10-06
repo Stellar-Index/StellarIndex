@@ -315,6 +315,10 @@ func isSpectraDiscovery(kind string) bool {
 	switch SpectraEventKind(kind) {
 	case SpectraPTDeployed, SpectraYTDeployed, SpectraPTAdded:
 		return true
+	case SpectraPTMinted, SpectraRedeem, SpectraYieldUpdated, SpectraTransfer,
+		SpectraWrap, SpectraUnwrap, SpectraDeposit, SpectraWithdraw,
+		SpectraOrderRegistered, SpectraOrderFilled, SpectraOrderCancelled:
+		return false
 	}
 	return false
 }
