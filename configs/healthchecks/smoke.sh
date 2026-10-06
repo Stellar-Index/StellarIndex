@@ -60,10 +60,18 @@ METRIC_OUT="$TEXTFILE_DIR/api_smoke.prom"
 # (dead timer, fresh host, unwritable directory), which a plain
 # `time() - last_run` comparison can never see, because an absent
 # series is an empty vector.
+# The tmp is removed on every exit path (failed chmod/mv, SIGTERM from a
+# systemd timeout) so none accumulates in the node_exporter directory; its
+# name never ends in .prom, so the collector cannot read a partial file.
+SMOKE_TMP=""
+trap '[ -z "$SMOKE_TMP" ] || rm -f "$SMOKE_TMP"' EXIT
+trap 'exit 143' TERM INT HUP
+
 emit_metric() {
   local failures="$1" tmp
   [ "$TEXTFILE_DIR" != "/dev/null" ] || return 0
   if mkdir -p "$TEXTFILE_DIR" 2>/dev/null && tmp="$(mktemp "$METRIC_OUT.tmp.XXXXXX" 2>/dev/null)"; then
+    SMOKE_TMP="$tmp"
     {
       echo "# HELP stellarindex_api_smoke_failures Failed checks in the most recent API smoke run (0 = the whole surface passed)."
       echo "# TYPE stellarindex_api_smoke_failures gauge"
