@@ -32,9 +32,12 @@
 //   - Asset-metadata overlay (attaching SEP-1 fields to
 //     [canonical.Asset]) happens in the API handlers +
 //     aggregator, not here.
-//   - Verification of issuer ↔ home-domain ↔ stellar.toml trust
-//     chain is a post-launch concern. For now we trust the domain
-//     owner; a future ADR introduces signature verification.
+//   - SIGNING_KEY / signature verification of stellar.toml is NOT
+//     performed. Metadata is served as the issuer's domain claims it,
+//     unverified: whoever controls the home domain controls what we
+//     show. Deferred post-v1. The API's sep1_status "verified" means
+//     only that the on-chain home-domain link matched a [[CURRENCIES]]
+//     entry, not that any signature was checked.
 //
 // # Security posture
 //

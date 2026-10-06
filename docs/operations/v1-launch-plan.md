@@ -137,6 +137,7 @@ One line per item; the INV item is the authority.
 - INV-2853: caller-side supply close-timestamp fix (M4).
 - INV-2854: `/assets/native` advertises 5,553 markets but lists 100.
 - INV-2855: API auth and rate-limit review.
+- INV-2844: SEP-1 `stellar.toml` is not verified against its `SIGNING_KEY`; metadata is served as the domain claims it (`internal/metadata/doc.go`).
 - INV-2856: dependency-advisory review cadence; the monthly cadence is set in [SECURITY.md](../../SECURITY.md#dependency-advisories) and the standing review stays post-v1.
 - INV-2803: L7.3 cross-oracle divergence production coverage.
 - INV-2804: L7.6 `usd_volume` for pure-SEP-41 stables (currently an empty set); see [sac-wrappers-and-usd-volume.md](sac-wrappers-and-usd-volume.md#pure-soroban-sep-41-tokens-no-usd-pegged-quote-at-all).
