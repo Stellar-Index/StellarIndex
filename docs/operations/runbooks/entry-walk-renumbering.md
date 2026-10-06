@@ -1,6 +1,6 @@
 ---
 title: Runbook — entry-walk renumbering (intra_ledger_seq walk-version bump)
-last_verified: 2026-07-26
+last_verified: 2026-10-06
 status: draft
 severity: P2
 ---
@@ -14,7 +14,7 @@ severity: P2
 | Alert | None — this is a **deploy-time procedure**, not a paging condition. It runs once per `dispatcher.EntryWalkVersion` bump. |
 | Trigger | A release changes the order in which `dispatcher.walkLedgerEntryChanges` / `clickhouse.extractLedgerEntryChanges` emit changes, i.e. `EntryWalkVersion` is incremented. Current value: **3**: each `LedgerEntryChanges` block is walked in ledger-key order (`internal/entrywalk.Canonical`), because stellar-core leaves the order within a block to hash-map iteration and two exports of one ledger disagree. |
 | Typical MTTR | Not an incident. Budget the re-derive time for the affected range. |
-| Impact if skipped | `ledger_entries_current_v2` rows written by the OLD walk keep a position from a numbering that no longer exists, and a corrective reproject is **silently discarded** by its RMT version — no error, no metric, no retry that helps. Balance observations record `walk_version` (migration 0199), so there a re-derive under the bumped binary does land; only a renumbering shipped WITHOUT a bump strands them. |
+| Impact if skipped | `ledger_entries_current` rows written by the OLD walk keep a position from a numbering that no longer exists, and a corrective reproject is **silently discarded** by its RMT version — no error, no metric, no retry that helps. Balance observations record `walk_version` (migration 0199), so there a re-derive under the bumped binary does land; only a renumbering shipped WITHOUT a bump strands them. |
 | Impact if done WRONG | Worse than skipping. The seed writes at `MaxUint32`, which is unbeatable within its `walk_version` (a stamped re-derive under a higher version replaces it); seeding from an un-repaired source makes a stale balance **permanently unfixable**. Read the repair path in order. |
 
 ## What this is
@@ -29,7 +29,7 @@ guards compare it **across binary versions**:
   an older walk is therefore replaced by a re-derive under the new one, at
   any position. The trap below applies to these tables only when both rows
   carry the same `walk_version`, i.e. a renumbering shipped without a bump;
-- ClickHouse — `ledger_entries_current_v2`'s ReplacingMergeTree version
+- ClickHouse — `ledger_entries_current`'s ReplacingMergeTree version
   `(ledger_seq << 32) | intra_ledger_seq`.
 
 Both assume the two positions are drawn from the **same numbering**. Bumping
@@ -70,7 +70,7 @@ Two ClickHouse facts drive the whole procedure:
 | Table | Engine | Partitioning |
 | --- | --- | --- |
 | `stellar.ledger_entry_changes` (append log) | `ReplacingMergeTree(ingested_at)` | `PARTITION BY intDiv(ledger_seq, 1000000)` |
-| `stellar.ledger_entries_current` / `_v2` (current-state projection) | `ReplacingMergeTree(version)`, `version = (ledger_seq << 32) \| intra_ledger_seq` | **none — `ORDER BY (entry_type, key_xdr)` only** |
+| `stellar.ledger_entries_current` (current-state projection) | `ReplacingMergeTree(version)`, `version = (ledger_seq << 32) \| intra_ledger_seq` | **none — `ORDER BY (entry_type, key_xdr)` only** |
 
 - **"Drop the affected partitions" is not available for the projection.** It
   is unpartitioned. `DROP PARTITION` reaches only the append log.
@@ -98,6 +98,170 @@ contract-calls / SEP-41 projections and does not touch this table.) Windowed,
 under `run-heavy-job.sh`, off-peak. Idempotent-corrective, so overlapping
 windows are safe.
 
+### Lake-scale repair on r1 (partitions of `ledger_entry_changes`, "LEC")
+
+Step 1 at lake scale is `ch-backfill -write -changes-only`. The flag keeps
+only each ledger's `Ledger` and `Changes`: the `stellar.ledgers` row stays as
+the commit marker, and the rewrite of txs/ops/results/events/participants/flows
+(about 1 TiB for partitions 58-64) is skipped. `-to` is **inclusive**, but the wrapper passes
+`-to hi-1` (`scripts/ops/ordinal-rederive-chunks.sh`), so chunks do not
+overlap. An extract error skips a ledger and `backfillCoverage` then fails
+the run, so a non-zero chunk exit is a real gap.
+
+Wrapper, one partition per run (reinstall it from the repo and check its
+sha256 against the repo copy first; the 07-28 copy has no `-write`):
+
+```
+START=<lo> BAND_END=<hi+1> BUCKET=<archive bucket> EXTRA_FLAGS=-changes-only \
+  run-heavy-job.sh ord-<item>-p<N> /usr/local/sbin/ordinal-rederive-chunks.sh
+```
+
+Run a 1k-ledger dry run first to confirm the bucket resolves: call
+`stellarindex-ops ch-backfill` directly without `-write` (the wrapper always
+passes `-write`).
+
+**Which partitions.** Every P23+ partition written before `f4bebbfda` must be
+re-extracted, not just those a symptom points at: positions drifted in the
+restored-change era (`c4ab63e45..f4bebbfda`) and the drift is real in those
+partitions. Record the per-slice table below before the re-extract (step 2a)
+and after the delete and OPTIMIZE (step 6a); after must be >= before on every
+slice.
+
+Every read of `ledger_entry_changes` in the gate uses `FINAL`. Before the
+delete, old rows with old sort keys are still present, so a gate run on
+non-FINAL reads, or before the delete, proves nothing: "after >= before" and
+"restored > 0" pass even if the re-extract wrote nothing.
+
+Restored gate, over `[lo, hi]` inside one partition. Table (a), restored rows
+per 2k slice, empty slices shown as 0:
+
+```sql
+SELECT intDiv(ledger_seq, 2000) AS slice, countIf(change_type = 'restored') AS restored
+FROM stellar.ledger_entry_changes FINAL
+WHERE ledger_seq BETWEEN lo AND hi
+GROUP BY slice
+ORDER BY slice WITH FILL FROM intDiv(lo, 2000) TO intDiv(hi, 2000) + 1
+```
+
+Pass condition, one query returning the failing slices (zero rows = PASS). The
+baseline `b` is independent of the table under test: slices of the raw lake's
+`stellar.operations` with at least one `RestoreFootprint` operation from P23.
+`restored` changes exist only from P23 (LedgerEntryRestored), so earlier
+`RestoreFootprint` ops produce no `restored` rows and would fail partition 58
+forever.
+
+```sql
+SELECT b.slice, b.restore_ops, ifNull(r.restored, 0) AS restored
+FROM (SELECT intDiv(ledger_seq, 2000) AS slice, count() AS restore_ops
+      FROM stellar.operations
+      WHERE ledger_seq BETWEEN lo AND hi AND ledger_seq >= 58762517 AND op_type = 'OperationTypeRestoreFootprint'
+      GROUP BY slice) AS b
+LEFT JOIN (SELECT intDiv(ledger_seq, 2000) AS slice, countIf(change_type = 'restored') AS restored
+           FROM stellar.ledger_entry_changes FINAL
+           WHERE ledger_seq BETWEEN lo AND hi
+           GROUP BY slice) AS r USING (slice)
+WHERE ifNull(r.restored, 0) = 0
+ORDER BY b.slice
+```
+
+The baseline is a lower bound: P23 auto-restore inside `InvokeHostFunction`
+also yields `restored` rows with no `RestoreFootprint` op. The gate is
+necessary, not sufficient. Add the ledger floor, which must return a value
+`>= 58,762,517`:
+
+```sql
+SELECT minIf(ledger_seq, change_type = 'restored') FROM stellar.ledger_entry_changes FINAL
+WHERE ledger_seq BETWEEN lo AND hi
+```
+
+P23 starts at ledger 58,762,517, P20 at 50,457,424.
+
+**Four views are fed by every re-extract** (all run on `ch-backfill`'s inserts):
+
+| Target | Key / version | Effect | Action |
+| --- | --- | --- | --- |
+| `ledger_entries_current` | RMT(`L<<32 \| seq`), `(entry_type, key_xdr)`, unpartitioned | stale higher-seq row beats the new one | windowed delete + reproject (below) |
+| `ttl_live_until` | RMT(`version`), `key_hash` | same trap | windowed delete on the version range + reproject |
+| `contract_instance_changes` | RMT(`ingested_at`), `(contract_hash, ledger_seq, tx_hash, change_index)` | `change_index` shifts leave orphans | delete the old rows |
+| `contract_instance_changes_old` | RMT(`ingested_at`), `(contract_hash, ledger_seq, change_index)` | same orphans | same delete |
+
+For the two `contract_instance_changes*` deletes, exclude the 07-03 rows
+(`tx_hash = ''` and `ingested_at` on 07-03); `_old` has no `tx_hash`, so
+exclude by `ingested_at` date alone.
+
+**Per-partition cycle** (one partition per day, disk permitting):
+
+1. Precheck: `zfs list -Hp -o avail data` at least 2.0 TiB; otherwise wait for
+   the 01:45 UTC snapshot rotation. Start after the snapshot run.
+2. Re-extract with the wrapper above.
+   2a. Before it starts, run table (a) on `FINAL` and save it as the "before"
+   snapshot.
+3. Completeness gates, all before any delete, with `T` the re-extract start:
+   - the log shows `ALL CHUNKS DONE`, every chunk exited 0, no `extract ledger` errors;
+   - re-extract sanity: `SELECT count() FROM stellar.ledger_entry_changes WHERE ledger_seq BETWEEN lo AND hi AND ingested_at >= toDateTime(T)` is > 0, which proves the re-extract wrote;
+   - `uniqExact(ledger_seq)` in `stellar.ledgers` with `ingested_at >= T` equals `hi-lo+1`;
+   - per 100k window, no ledger with rows but none newer than `T`;
+   - orphan census per 100k window on `ledger_entry_changes FINAL` for rows
+     with `ingested_at < T` (minus the 07-03 `tx_hash = ''` rows). They survive
+     `FINAL` only because nothing newer shares their sort key. Expect 0 on a
+     pre-restored partition and about 45 per 1k ledgers (all `op_index = -1`)
+     on P23+. Prove on a 1k-ledger sample that each orphan has a new twin at a
+     different `change_index` and a `restored` row in its tx; any unmatched
+     orphan is a STOP.
+4. STOP, needs operator approval. Run a dry count with the identical
+   predicate as the delete and compare it to the expected old-row count:
+   `SELECT count() FROM stellar.ledger_entry_changes WHERE ledger_seq BETWEEN lo AND hi AND ingested_at < toDateTime(T) AND NOT (tx_hash = '' AND toDate(ingested_at) = '2026-07-03')`
+   (the delete's `IN PARTITION <N>` is `_partition_id = '<N>'` here). Proceed only on a match
+   and an explicit yes.
+5. Wait until no other heavy job is running (`run-heavy-job.sh` holds the
+   lock). Delete the old LEC rows:
+   `SET lightweight_deletes_sync=2; DELETE FROM stellar.ledger_entry_changes IN PARTITION <N> WHERE ledger_seq BETWEEN lo AND hi AND ingested_at < toDateTime(T) AND NOT (tx_hash = '' AND toDate(ingested_at) = '2026-07-03');`
+   The `ledger_seq` bound and the 07-03 exclusion keep the 07-03 seed rows.
+   Then run the two view deletes and reclaim with
+   `OPTIMIZE TABLE stellar.ledger_entry_changes PARTITION <N> FINAL`.
+6. Re-run the orphan census from step 3; it must now be 0.
+   6a. Run the restored gate (table (a), the pass query and the ledger floor,
+   all on `FINAL`) now, after the delete and OPTIMIZE, and compare table (a)
+   to the 2a snapshot. Any failing slice or a floor below 58,762,517 is a STOP.
+7. Wait again for no other heavy job, then repair the projection (below) and
+   verify.
+
+**Projection repair at lake scale.** Option A below, per 100k window
+ascending (a key whose latest change is in a later window keeps its higher
+version row). The reproject must read `ledger_entry_changes FINAL` and reduce
+with `argMax` over `(ledger_seq, intra_ledger_seq)`:
+
+```sql
+INSERT INTO stellar.ledger_entries_current
+    (entry_type, key_xdr, account_id, asset, balance, change_type,
+     ledger_seq, close_time, entry_xdr, intra_ledger_seq)
+SELECT entry_type, key_xdr, argMax(account_id, v), argMax(asset, v),
+       argMax(balance, v), argMax(change_type, v), argMax(ledger_seq, v),
+       argMax(close_time, v), argMax(entry_xdr, v), argMax(intra_ledger_seq, v)
+FROM (SELECT *, (ledger_seq, intra_ledger_seq) AS v
+      FROM stellar.ledger_entry_changes FINAL
+      WHERE ledger_seq >= {a} AND ledger_seq < {b})
+GROUP BY entry_type, key_xdr
+SETTINGS max_bytes_before_external_group_by = 8e9
+```
+
+`ttl_live_until` gets the same delete (`version >= a<<32 AND version < b<<32`)
+and an `argMax` reproject over its own view expressions. The side-by-side
+Option B is not used at lake scale: it re-reads every row under `FINAL`.
+
+Pause these timers for the repair (stop `X.timer` after confirming
+`X.service` is inactive) and start them again once it verifies:
+holders-rollup, cohort-rollup, creators-rollup, sponsors-rollup,
+census-rollup, issuer-flags, ch-supply, supply-snapshot,
+supply-verify-rollup, verify-network-state, verify-served-values,
+compute-completeness, compute-completeness-sdex, compute-completeness-sep41,
+verify-lake. Leave ch-live-catchup running; its writes are current-version and
+correct. A skipped supply-snapshot day is better than a wrong point.
+
+Sample checks per partition: the `argMax` reduction on 1,000 keys whose last
+change is in the partition agrees with `ledger_entries_current FINAL`, and
+`ttl_live_until FINAL` agrees with its reduction for sampled restored keys.
+
 ### 2. Rebuild the current-state projection
 
 Required only if you intend to run the **accounts** seed (step 3b) or serve
@@ -106,7 +270,7 @@ Required only if you intend to run the **accounts** seed (step 3b) or serve
 **Option A — targeted delete + reproject.** For a bounded range:
 
 ```sql
-ALTER TABLE stellar.ledger_entries_current_v2
+ALTER TABLE stellar.ledger_entries_current
   DELETE WHERE ledger_seq BETWEEN {N} AND {M};
 ```
 
@@ -114,7 +278,7 @@ then re-run the Step-2 windowed `INSERT … SELECT` from
 `deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql`:
 
 ```sql
-INSERT INTO stellar.ledger_entries_current_v2
+INSERT INTO stellar.ledger_entries_current
     (entry_type, key_xdr, account_id, asset, balance, change_type,
      ledger_seq, close_time, entry_xdr, intra_ledger_seq)
 SELECT entry_type, key_xdr, account_id, asset, balance, change_type,
@@ -211,7 +375,7 @@ GROUP BY key_xdr;
    must be dense and phase-ordered, and non-zero — a legacy row reads
    `intra_ledger_seq = 0`, which is the tell that `ch-backfill` has not
    covered it yet.
-2. **Step 2 verified?** For the same keys, `ledger_entries_current_v2 FINAL`
+2. **Step 2 verified?** For the same keys, `ledger_entries_current FINAL`
    must agree with the `argMax` reduction above. Disagreement means stale
    projection rows survived — the mutation did not complete, or the reproject
    ran before it did.
