@@ -271,6 +271,15 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	assertPolicyAbsent(t, db, ctx, "sushiswap_v3_position_events", "policy_retention")
 	assertColumnType(t, db, ctx, "sushiswap_v3_position_events", "derive_generation", "bigint")
 
+	// 0210 — spectra_events: hypertable, compression, no retention, bigint
+	// generation; spectra_markets is a plain table.
+	assertHypertableExists(t, db, ctx, "spectra_events")
+	assertCompressionEnabled(t, db, ctx, "spectra_events", true)
+	assertPolicyAttached(t, db, ctx, "spectra_events", "policy_compression")
+	assertPolicyAbsent(t, db, ctx, "spectra_events", "policy_retention")
+	assertColumnType(t, db, ctx, "spectra_events", "derive_generation", "bigint")
+	assertColumnType(t, db, ctx, "spectra_markets", "duration_s", "bigint")
+
 	// ─── Down: roll everything back ─────────────────────────────
 	// 0191's down refuses (LOUD) while any trades row has a zero leg;
 	// the two probe rows accepted above must go first.
@@ -294,6 +303,8 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	assertTableAbsent(t, db, ctx, "soroban_events")
 	assertTableAbsent(t, db, ctx, "fx_fixings")
 	assertTableAbsent(t, db, ctx, "sushiswap_v3_pools")
+	assertTableAbsent(t, db, ctx, "spectra_events")
+	assertTableAbsent(t, db, ctx, "spectra_markets")
 	for _, cagg := range []string{
 		"prices_1m", "prices_15m", "prices_1h",
 		"prices_4h", "prices_1d", "prices_1w", "prices_1mo",
