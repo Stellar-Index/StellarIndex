@@ -108,6 +108,7 @@ type stubDualVolumeReader struct {
 	soroban    string
 
 	sorobanLowerBound bool
+	sorobanErr        error
 }
 
 func (s *stubDualVolumeReader) Volume24hUSDForAsset(_ context.Context, assetKey string) (string, error) {
@@ -117,7 +118,34 @@ func (s *stubDualVolumeReader) Volume24hUSDForAsset(_ context.Context, assetKey 
 
 func (s *stubDualVolumeReader) SorobanVolume24hUSDForAsset(_ context.Context, assetKey string) (string, bool, error) {
 	s.sorobanKey = assetKey
+	if s.sorobanErr != nil {
+		return "", false, s.sorobanErr
+	}
 	return s.soroban, s.sorobanLowerBound, nil
+}
+
+// TestF2_SorobanVolumeFallbackIsLowerBound — when the trade-time Soroban
+// read fails, the plain reader's figure omits every XLM-quoted trade, so it
+// must be served flagged volume_lower_bound, never as an exact total.
+func TestF2_SorobanVolumeFallbackIsLowerBound(t *testing.T) {
+	const contractID = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
+	vol := &stubDualVolumeReader{plain: "12.5", sorobanErr: errors.New("anchor read failed")}
+	ts := startHTTPTest(t, v1.New(v1.Options{Volume: vol}).Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/assets/"+contractID)
+	body, _ := readAll(resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d: %s", resp.StatusCode, body)
+	}
+	if vol.plainKey != contractID {
+		t.Fatalf("plain reader not used as fallback; key = %q", vol.plainKey)
+	}
+	if !strings.Contains(body, `"volume_24h_usd":"12.5"`) {
+		t.Errorf("fallback volume missing; body: %s", body)
+	}
+	if !strings.Contains(body, `"volume_lower_bound":true`) {
+		t.Errorf("fallback figure must flag volume_lower_bound; body: %s", body)
+	}
 }
 
 // TestF2_SorobanAssetUsesAnchoredVolume — a pure-Soroban SEP-41 asset's

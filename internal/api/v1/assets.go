@@ -311,7 +311,7 @@ type AssetDetail struct {
 	// null means "volume reader not wired" or "lookup failed" —
 	// callers presenting the field should distinguish these.
 	VolumeUSD24h *string `json:"volume_24h_usd,omitempty"`
-	// VolumeLowerBound: VolumeUSD24h excludes trades not valued at trade time (Soroban reader only).
+	// VolumeLowerBound: VolumeUSD24h excludes trades not valued at trade time (Soroban assets only).
 	VolumeLowerBound bool `json:"volume_lower_bound,omitempty"`
 
 	// Change24hPct is the trailing-24h price change as a signed

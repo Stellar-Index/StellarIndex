@@ -269,7 +269,8 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 // trades at their own minute's XLM/USD on top of any USD-pegged legs
 // (fce3e2eef). A Soroban lookup ERROR falls back to the plain reader so a
 // transient failure of the richer path can't zero out a figure the plain
-// path could still supply. Reports whether the plain read failed.
+// path could still supply; that figure omits the XLM-legged trades, so it is
+// served flagged as a lower bound. Reports whether the plain read failed.
 func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
 	if s.volume == nil {
 		return false
@@ -298,6 +299,8 @@ func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, ass
 		return true
 	}
 	detail.VolumeUSD24h = &v
+	// The plain reader never values a Soroban asset's XLM-legged trades.
+	detail.VolumeLowerBound = asset.Type == canonical.AssetSoroban
 	return false
 }
 
