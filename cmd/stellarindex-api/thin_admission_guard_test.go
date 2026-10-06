@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
@@ -22,7 +23,7 @@ import (
 // gate chokepoints read it; a second reader is a second release rule.
 var thinAdmissionSites = map[string]map[string]bool{
 	"ThinAdmissionFrom": {
-		".:priceWithheld":                               true,
+		wiringDir + ":PriceWithheld":                    true,
 		v1ChokepointDir + ":withheldBy":                 true,
 		v1ChokepointDir + ":readPriceWithAliasesServed": true,
 	},
@@ -39,8 +40,8 @@ var thinAdmissionSites = map[string]map[string]bool{
 		v1ChokepointDir + ":thinMarketEvidence": true,
 	},
 	"Merge":     {v1ChokepointDir + ":readPriceWithAliasesServed": true},
-	"AdmitThin": {".:priceWithheld": true},
-	"Judge":     {".:priceWithheld": true},
+	"AdmitThin": {wiringDir + ":PriceWithheld": true},
+	"Judge":     {wiringDir + ":PriceWithheld": true},
 	"Fold":      {v1ChokepointDir + ":withheldBy": true},
 	// The context key is private to its file; any other reader bypasses
 	// the nil-safe accessors.
@@ -52,7 +53,7 @@ var thinAdmissionHome = filepath.Join(v1ChokepointDir, "thin_admission.go")
 
 func TestThinAdmissionIsReadOnlyAtTheChokepoint(t *testing.T) {
 	fset := token.NewFileSet()
-	files := []gateSpellingFile{{dir: ".", path: "main.go"}}
+	files := readerSeamFiles(t)
 	files = append(files, apiSourceFiles(t, apiTreeDir)...)
 	seen := map[string]bool{}
 	for _, sf := range files {
@@ -93,6 +94,9 @@ func TestThinAdmissionGuardCatchesPlantedSites(t *testing.T) {
 		{"record installed in another handler", v1ChokepointDir, `func (s *Server) h() { _, _ = WithThinAdmission(ctx, a, q, true) }`},
 		{"release spelled in a store method", ".", `func (r storePriceReader) f() { _ = pricingguard.Query{AdmitThin: true} }`},
 		{"Judge outside the chokepoint", ".", `func (r storePriceReader) f() { _ = g.Judge(ctx, a, q, "x", qy) }`},
+		{"release spelled in a wiring store method", wiringDir, `func (r StorePriceReader) f() { _ = pricingguard.Query{AdmitThin: true} }`},
+		{"Judge outside the chokepoint in wiring", wiringDir, `func (r StorePriceReader) f() { _ = g.Judge(ctx, a, q, "x", qy) }`},
+		{"chokepoint name in main.go", ".", `func PriceWithheld() { _ = g.Judge(ctx, a, q, "x", qy) }`},
 		{"Fold in another package", "../../internal/api/streaming", `func withheldBy() { _ = pricingguard.Fold(false, v, true, "x") }`},
 		{"Merge outside the flight", v1ChokepointDir, `func (s *Server) h() { adm.Merge(true, ev) }`},
 		{"context key outside its file", v1ChokepointDir, `func h() { _ = ctx.Value(thinAdmissionKey{}) }`},
@@ -159,7 +163,7 @@ func TestPriceWithheldReleasesThinUnderAdmission(t *testing.T) {
 	}
 
 	offCtx, off := v1.WithThinAdmission(context.Background(), pair.Base, pair.Quote, false)
-	if got := priceWithheld(offCtx, substance, nil, pair.Base, pair.Quote, "price_read"); got != pricingguard.WithheldThinMarket {
+	if got := wiring.PriceWithheld(offCtx, substance, nil, pair.Base, pair.Quote, "price_read"); got != pricingguard.WithheldThinMarket {
 		t.Fatalf("default: %v, want WithheldThinMarket", got)
 	}
 	if off.Admitted() || off.Evidence() == nil {
@@ -167,27 +171,27 @@ func TestPriceWithheldReleasesThinUnderAdmission(t *testing.T) {
 	}
 
 	onCtx, on := v1.WithThinAdmission(context.Background(), pair.Base, pair.Quote, true)
-	if got := priceWithheld(onCtx, substance, nil, pair.Base, pair.Quote, "price_read"); got != pricingguard.NotWithheld {
+	if got := wiring.PriceWithheld(onCtx, substance, nil, pair.Base, pair.Quote, "price_read"); got != pricingguard.NotWithheld {
 		t.Fatalf("opted in: %v, want the thin market released", got)
 	}
 	if !on.Admitted() || on.Evidence() == nil || on.Evidence().VolumeUSD != "8.57" {
 		t.Errorf("opted in: admitted=%v evidence=%+v, want the measured thin market recorded", on.Admitted(), on.Evidence())
 	}
-	if got := priceWithheld(onCtx, substance, nil, pair.Base, pair.Quote, "price_read", asOfInstant(time.Date(2021, 3, 1, 9, 0, 0, 0, time.UTC))); got != pricingguard.NotWithheld {
+	if got := wiring.PriceWithheld(onCtx, substance, nil, pair.Base, pair.Quote, "price_read", wiring.AsOfInstant(time.Date(2021, 3, 1, 9, 0, 0, 0, time.UTC))); got != pricingguard.NotWithheld {
 		t.Errorf("opted in, point in time: %v, want released", got)
 	}
 
-	if got := priceWithheld(context.Background(), substance, nil, pair.Base, pair.Quote, "price_read"); got != pricingguard.WithheldThinMarket {
+	if got := wiring.PriceWithheld(context.Background(), substance, nil, pair.Base, pair.Quote, "price_read"); got != pricingguard.WithheldThinMarket {
 		t.Errorf("no record: %v, want WithheldThinMarket", got)
 	}
 
 	otherCtx, _ := v1.WithThinAdmission(context.Background(), other, pair.Quote, true)
-	if got := priceWithheld(otherCtx, substance, nil, pair.Base, pair.Quote, "price_read"); got != pricingguard.WithheldThinMarket {
+	if got := wiring.PriceWithheld(otherCtx, substance, nil, pair.Base, pair.Quote, "price_read"); got != pricingguard.WithheldThinMarket {
 		t.Errorf("uncovered leg: %v, want withheld — an opt-in on one asset must not release another's market", got)
 	}
 
 	scam := pricingguard.NewScamGate(&flaggingScamDirectory{flagged: map[string]bool{pair.Base.Issuer: true}}, pricingguard.ScamGateOptions{})
-	if got := priceWithheld(onCtx, substance, scam, pair.Base, pair.Quote, "price_read"); got != pricingguard.WithheldFlaggedIssuer {
+	if got := wiring.PriceWithheld(onCtx, substance, scam, pair.Base, pair.Quote, "price_read"); got != pricingguard.WithheldFlaggedIssuer {
 		t.Errorf("flagged issuer: %v, want WithheldFlaggedIssuer — the opt-in releases substance only", got)
 	}
 }

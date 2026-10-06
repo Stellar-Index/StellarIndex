@@ -11,6 +11,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
@@ -39,17 +40,17 @@ func (s *aggregatorTierStore) LatestAggregatorPricesForPair(
 	}}, nil
 }
 
-func aggregatorTierReader(t *testing.T, flagged map[string]bool) (globalPriceReader, *aggregatorTierStore) {
+func aggregatorTierReader(t *testing.T, flagged map[string]bool) (wiring.GlobalPriceReader, *aggregatorTierStore) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 	store := &aggregatorTierStore{}
-	return globalPriceReader{
-		s:         store,
-		tri:       redisTriangulatedLooker{rdb: rdb},
-		pkPairFor: canonical.NewPair,
-		scam:      pricingguard.NewScamGate(&flaggingScamDirectory{flagged: flagged}, pricingguard.ScamGateOptions{}),
+	return wiring.GlobalPriceReader{
+		S:         store,
+		Tri:       wiring.RedisTriangulatedLooker{RDB: rdb},
+		PKPairFor: canonical.NewPair,
+		Scam:      pricingguard.NewScamGate(&flaggingScamDirectory{flagged: flagged}, pricingguard.ScamGateOptions{}),
 	}, store
 }
 

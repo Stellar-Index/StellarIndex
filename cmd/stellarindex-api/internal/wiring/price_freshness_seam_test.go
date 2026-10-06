@@ -1,4 +1,4 @@
-package main
+package wiring
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 )
 
 // Wave-D PFR-04 observed, correctly, that NOTHING in the repo exercised
-// storePriceReader: its `now func() time.Time` and `vwapFreshness
+// StorePriceReader: its `now func() time.Time` and `vwapFreshness
 // time.Duration` seams — which exist for no reason other than to be
 // injected by a test — were dead, so the CS-017 staleness rule had
 // enforcement tier NONE beyond runtime.
@@ -26,7 +26,7 @@ import (
 //
 // What survives is the coverage gap itself, and this closes the part of
 // it that CAN be closed here. LatestPrice is NOT unit-testable from
-// this package: storePriceReader.s is a concrete *timescale.Store with
+// this package: StorePriceReader.S is a concrete *timescale.Store with
 // an unexported db field and no injectable constructor, so exercising
 // the read end-to-end needs the testcontainers integration harness, not
 // a fake. These tests pin the two seams the CS-017 fix actually
@@ -43,7 +43,7 @@ import (
 func TestStorePriceReaderFreshnessDefault(t *testing.T) {
 	t.Parallel()
 
-	var zero storePriceReader
+	var zero StorePriceReader
 	if got := zero.freshnessWindow(); got != defaultVWAPFreshness {
 		t.Errorf("zero-value freshnessWindow() = %v, want the default %v", got, defaultVWAPFreshness)
 	}
@@ -53,12 +53,12 @@ func TestStorePriceReaderFreshnessDefault(t *testing.T) {
 			"re-opens the 200-day-old-bucket bug", defaultVWAPFreshness)
 	}
 	// A configured window must win, or the seam is decorative.
-	r := storePriceReader{vwapFreshness: 90 * time.Second}
+	r := StorePriceReader{VWAPFreshness: 90 * time.Second}
 	if got := r.freshnessWindow(); got != 90*time.Second {
 		t.Errorf("freshnessWindow() = %v, want the configured 90s", got)
 	}
 	// Zero means "unset" — the documented sentinel — not "never stale".
-	r = storePriceReader{vwapFreshness: 0}
+	r = StorePriceReader{VWAPFreshness: 0}
 	if got := r.freshnessWindow(); got != defaultVWAPFreshness {
 		t.Errorf("freshnessWindow() with an explicit 0 = %v, want the default %v — 0 is the "+
 			"unset sentinel; treating it as a zero-length window would mark EVERY "+
@@ -72,7 +72,7 @@ func TestStorePriceReaderFreshnessDefault(t *testing.T) {
 func TestStorePriceReaderClock(t *testing.T) {
 	t.Parallel()
 
-	var zero storePriceReader
+	var zero StorePriceReader
 	before := time.Now()
 	got := zero.clock()
 	if got.Before(before) || got.After(time.Now()) {
@@ -81,7 +81,7 @@ func TestStorePriceReaderClock(t *testing.T) {
 	}
 
 	fixed := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
-	r := storePriceReader{now: func() time.Time { return fixed }}
+	r := StorePriceReader{Now: func() time.Time { return fixed }}
 	if c := r.clock(); !c.Equal(fixed) {
 		t.Errorf("clock() = %v, want the injected %v", c, fixed)
 	}
@@ -102,7 +102,7 @@ func TestStorePriceReaderClock(t *testing.T) {
 //	  - `lowConfidence` short-circuits, so a low-confidence read is stale
 //	    regardless of age.
 //
-// Reproduced rather than called: storePriceReader.s is a concrete
+// Reproduced rather than called: StorePriceReader.S is a concrete
 // *timescale.Store with an unexported db field and no injectable
 // constructor, so the surrounding read needs the testcontainers
 // harness. This pins the arithmetic and the boundary; the integration
@@ -111,14 +111,14 @@ func TestStorePriceReaderStalenessBoundary(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
-	r := storePriceReader{now: func() time.Time { return now }}
+	r := StorePriceReader{Now: func() time.Time { return now }}
 
 	// Calls the REAL rule. This block used to re-implement the expression
 	// locally, which certified nothing: deleting the
 	// `> r.freshnessWindow()` term from LatestPrice left this test green
 	// while /v1/price resumed serving months-old buckets with
 	// stale=false — the CS-017 bug itself (wave-D PFR-04, caught by an
-	// adversarial review). The rule now lives in storePriceReader.
+	// adversarial review). The rule now lives in StorePriceReader.
 	// bucketIsStale so a unit test can reach it; LatestPrice calls the
 	// same method.
 	stale := r.bucketIsStale
@@ -163,7 +163,7 @@ func TestStorePriceReaderGuardedSnapshotFlagsSubstitutionStale(t *testing.T) {
 		store.trailing = append(store.trailing, headlineRow(i, "1.0"))
 	}
 	now := headlineRow(0, "1.0").Bucket.Add(time.Minute)
-	r := storePriceReader{now: func() time.Time { return now }}
+	r := StorePriceReader{Now: func() time.Time { return now }}
 
 	for _, tc := range []struct {
 		name            string

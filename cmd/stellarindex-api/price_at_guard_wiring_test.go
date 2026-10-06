@@ -78,7 +78,8 @@ var guardEntryPoints = []string{
 	"GuardServedVWAP1mConfidence", "GuardServedVWAP1mAt", "GuardServedVWAP1mSeries",
 }
 
-// TestRawPrices1mReadersPassTheGuard: every function under cmd/ that calls
+// TestRawPrices1mReadersPassTheGuard: every function under cmd/ (including a
+// binary's internal packages) that calls
 // a raw prices_1m store read must call a pricingguard entry point in the
 // same body, and be named in pricingguard's package-doc enumeration — so a
 // new raw-bucket reader cannot reach a response unguarded or undocumented.
@@ -91,6 +92,12 @@ func TestRawPrices1mReadersPassTheGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A binary's adapters live in its internal packages too.
+	internal, err := filepath.Glob(filepath.Join("..", "*", "internal", "*", "*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = append(files, internal...)
 	readers := 0
 	for _, path := range files {
 		if strings.HasSuffix(path, "_test.go") {

@@ -173,16 +173,29 @@ func emittedSurfaceLabels(t *testing.T, roots ...string) []string {
 				if !ok {
 					return true
 				}
-				idx, ok := params[calleeName(call)]
-				if !ok || idx >= len(call.Args) {
-					return true
+				// A name can carry several surface positions (pricingguard's
+				// Gate.PriceWithheld and wiring.PriceWithheld differ); one must resolve.
+				var unresolved string
+				resolved := false
+				for _, idx := range params[calleeName(call)] {
+					if idx >= len(call.Args) {
+						continue
+					}
+					switch v, how := surfaceValue(call.Args[idx], p.consts); how {
+					case "value":
+						seen[v] = true
+						resolved = true
+					case "forwarded":
+						resolved = true
+					default:
+						if unresolved == "" {
+							unresolved = v
+						}
+					}
 				}
-				switch v, how := surfaceValue(call.Args[idx], p.consts); how {
-				case "value":
-					seen[v] = true
-				case "unresolved":
+				if !resolved && unresolved != "" {
 					t.Errorf("%s: surface argument %s is neither a string constant nor a forwarded `surface` parameter",
-						fset.Position(call.Pos()), v)
+						fset.Position(call.Pos()), unresolved)
 				}
 				return true
 			})
@@ -219,16 +232,16 @@ func collectStringConsts(f *ast.File, into map[string]string) {
 }
 
 // surfaceParamIndex maps each function or method name whose `surface`
-// parameter reaches the gate metrics to that parameter's position. The
+// parameter reaches the gate metrics to that parameter's positions. The
 // seed is this package's own functions; a function elsewhere joins when
 // it forwards its `surface` parameter into one already in the set.
-func surfaceParamIndex(pkgs map[string]*surfacePackage) map[string]int {
+func surfaceParamIndex(pkgs map[string]*surfacePackage) map[string][]int {
 	type decl struct {
 		fn  *ast.FuncDecl
 		idx int
 	}
 	var decls []decl
-	out := map[string]int{}
+	out := map[string][]int{}
 	for dir, p := range pkgs {
 		seed := filepath.Base(dir) == "pricingguard"
 		for _, f := range p.files {
@@ -239,7 +252,7 @@ func surfaceParamIndex(pkgs map[string]*surfacePackage) map[string]int {
 				}
 				if idx := surfaceParam(fn); idx >= 0 {
 					if seed {
-						out[fn.Name.Name] = idx
+						out[fn.Name.Name] = appendUnique(out[fn.Name.Name], idx)
 					} else {
 						decls = append(decls, decl{fn, idx})
 					}
@@ -247,17 +260,26 @@ func surfaceParamIndex(pkgs map[string]*surfacePackage) map[string]int {
 			}
 		}
 	}
+	joined := make([]bool, len(decls))
 	for grew := true; grew; {
 		grew = false
-		for _, d := range decls {
-			if _, ok := out[d.fn.Name.Name]; ok || !forwardsSurface(d.fn, out) {
+		for i, d := range decls {
+			if joined[i] || !forwardsSurface(d.fn, out) {
 				continue
 			}
-			out[d.fn.Name.Name] = d.idx
+			joined[i] = true
+			out[d.fn.Name.Name] = appendUnique(out[d.fn.Name.Name], d.idx)
 			grew = true
 		}
 	}
 	return out
+}
+
+func appendUnique(s []int, v int) []int {
+	if slices.Contains(s, v) {
+		return s
+	}
+	return append(s, v)
 }
 
 func surfaceParam(fn *ast.FuncDecl) int {
@@ -278,14 +300,17 @@ func surfaceParam(fn *ast.FuncDecl) int {
 
 // forwardsSurface reports whether fn passes its own `surface` parameter
 // as the surface argument of a function already in reach.
-func forwardsSurface(fn *ast.FuncDecl, reach map[string]int) bool {
+func forwardsSurface(fn *ast.FuncDecl, reach map[string][]int) bool {
 	found := false
 	ast.Inspect(fn, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok || found {
 			return !found
 		}
-		if idx, ok := reach[calleeName(call)]; ok && idx < len(call.Args) {
+		for _, idx := range reach[calleeName(call)] {
+			if idx >= len(call.Args) {
+				continue
+			}
 			if id, ok := call.Args[idx].(*ast.Ident); ok && id.Name == "surface" {
 				found = true
 			}
