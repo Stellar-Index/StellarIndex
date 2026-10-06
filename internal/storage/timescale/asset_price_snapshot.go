@@ -99,31 +99,37 @@ import (
 const assetPriceSnapshotMaxAge = "15 minutes"
 
 // priceArmPickExpr names the arm that prices an asset: 'native' (XLM
-// itself, from the xlm_usd scalar), 'direct' (a USD-proxy market) or
-// 'xlm' (an XLM market triangulated through xlm_usd); NULL when none can.
+// itself, from the xlm_usd anchor), 'direct' (a USD-proxy market) or
+// 'xlm' (an XLM market triangulated through the anchor `ax` taken at that
+// market's own minute); NULL when none can.
 //
 // The arm with the NEWER observation wins. Choosing by arm order made
 // any USD print in the 7-day lookback beat an XLM market trading this
 // minute, so a days-old price was served, and fed market cap, as current.
-// A triangulated observation is as old as the older of its two legs; on
-// a tie the direct arm wins, as it has no triangulation error. Aliases
-// are those of [priceArmJoins].
+// A triangulated observation is as old as its XLM-market minute, since the
+// anchor is read as of that minute; on a tie the direct arm wins, as it has
+// no triangulation error. An XLM market with no anchor within
+// [xlmUSDAnchorMaxAge] of it cannot price, so an older direct row still
+// does. Native XLM with no fresh anchor is unpriced rather than read from
+// its own possibly week-old direct row: no fresh XLM/USD on any venue is an
+// outage, and every XLM-quoted asset is unpriced with it.
 const priceArmPickExpr = `CASE
-		      WHEN ca.asset_id = 'native' AND (SELECT vwap FROM xlm_usd) IS NOT NULL
-		        THEN 'native'
+		      WHEN ca.asset_id = 'native'
+		        THEN CASE WHEN (SELECT vwap FROM xlm_usd) IS NOT NULL THEN 'native' END
 		      WHEN direct.vwap IS NOT NULL
-		           AND (vs_xlm.vwap IS NULL
-		                OR (SELECT vwap FROM xlm_usd) IS NULL
-		                OR direct.bucket >= LEAST(vs_xlm.bucket, (SELECT bucket FROM xlm_usd)))
+		           AND (ax.vwap IS NULL OR direct.bucket >= vs_xlm.bucket)
 		        THEN 'direct'
-		      WHEN vs_xlm.vwap IS NOT NULL AND (SELECT vwap FROM xlm_usd) IS NOT NULL
+		      WHEN ax.vwap IS NOT NULL
 		        THEN 'xlm'
 		    END`
 
-// priceArmJoins attaches every arm CTE of [assetPriceArmCTEs] to the
-// spine row `ca`, then picks its arm as `pick.arm`. Shared verbatim by
-// the rollup and the detail query so the two cannot choose differently.
-const priceArmJoins = `
+// priceArmJoins attaches every arm CTE of [assetPriceArmCTEs] to the spine
+// row `ca`, the XLM/USD anchor at each asset_vs_xlm* arm's own minute as
+// `ax*` (anchorJoin renders one: the rollup joins the grid, the detail query
+// a lateral pick), then picks the arm as `pick.arm`. Shared by the rollup
+// and the detail query so the two cannot choose differently.
+func priceArmJoins(anchorJoin func(alias, ts string) string) string {
+	return `
 		  LEFT JOIN direct_usd        direct      ON direct.asset_id     = ca.asset_id
 		  LEFT JOIN direct_usd_1h     direct_1h   ON direct_1h.asset_id  = ca.asset_id
 		  LEFT JOIN direct_usd_24h    direct_24h  ON direct_24h.asset_id = ca.asset_id
@@ -132,7 +138,25 @@ const priceArmJoins = `
 		  LEFT JOIN asset_vs_xlm_1h   vs_xlm_1h   ON vs_xlm_1h.asset_id  = ca.asset_id
 		  LEFT JOIN asset_vs_xlm_24h  vs_xlm_24h  ON vs_xlm_24h.asset_id = ca.asset_id
 		  LEFT JOIN asset_vs_xlm_7d   vs_xlm_7d   ON vs_xlm_7d.asset_id  = ca.asset_id
+		  ` + anchorJoin("ax", "vs_xlm.bucket") + `
+		  ` + anchorJoin("ax_1h", "vs_xlm_1h.bucket") + `
+		  ` + anchorJoin("ax_24h", "vs_xlm_24h.bucket") + `
+		  ` + anchorJoin("ax_7d", "vs_xlm_7d.bucket") + `
 		  CROSS JOIN LATERAL (SELECT ` + priceArmPickExpr + ` AS arm) pick`
+}
+
+// xlmUSDGridJoin joins the rollup's anchor grid ([xlmUSDAnchorGridCTE]).
+func xlmUSDGridJoin(alias, ts string) string {
+	return "LEFT JOIN xlm_usd_grid " + alias + " ON " + alias + ".minute = " + ts
+}
+
+// xlmUSDLateralJoin returns a join rendering [xlmUSDAnchorAt] per row, for
+// single-asset queries where a grid scan would cost more than four probes.
+func xlmUSDLateralJoin(sac string) func(alias, ts string) string {
+	return func(alias, ts string) string {
+		return "LEFT JOIN LATERAL (" + xlmUSDAnchorAt(ts, sac) + ") " + alias + " ON true"
+	}
+}
 
 // snapshotPriceUSDExpr is the headline USD price, read through the arm
 // [priceArmPickExpr] chose. The listing's `listingPriceUSDExpr` reads it
@@ -140,7 +164,7 @@ const priceArmJoins = `
 const snapshotPriceUSDExpr = `CASE pick.arm
 		      WHEN 'native' THEN (SELECT vwap FROM xlm_usd)
 		      WHEN 'direct' THEN direct.vwap
-		      WHEN 'xlm'    THEN vs_xlm.vwap * (SELECT vwap FROM xlm_usd)
+		      WHEN 'xlm'    THEN vs_xlm.vwap * ax.vwap
 		    END`
 
 // priceChangePctExpr is the unrounded percentage change over lookback
@@ -154,9 +178,9 @@ func priceChangePctExpr(lookback string) string {
 		        THEN ((SELECT vwap FROM xlm_usd) / (SELECT vwap FROM xlm_usd_%[1]s) - 1) * 100 END
 		      WHEN 'direct' THEN CASE WHEN direct_%[1]s.vwap > 0
 		        THEN (direct.vwap / direct_%[1]s.vwap - 1) * 100 END
-		      WHEN 'xlm' THEN CASE WHEN vs_xlm_%[1]s.vwap > 0 AND (SELECT vwap FROM xlm_usd_%[1]s) > 0
-		        THEN ((vs_xlm.vwap * (SELECT vwap FROM xlm_usd))
-		            / (vs_xlm_%[1]s.vwap * (SELECT vwap FROM xlm_usd_%[1]s)) - 1) * 100 END
+		      WHEN 'xlm' THEN CASE WHEN vs_xlm_%[1]s.vwap > 0 AND ax_%[1]s.vwap > 0
+		        THEN ((vs_xlm.vwap * ax.vwap)
+		            / (vs_xlm_%[1]s.vwap * ax_%[1]s.vwap) - 1) * 100 END
 		    END`, lookback)
 }
 
@@ -232,10 +256,17 @@ const snapshotNormalizedPriceUSDExpr = `CASE WHEN nda.decimals IS NULL
 // see AssetRow.Change1hPct), else the change is NULL. A wider window
 // published a 1.5-hour move as change_1h_pct.
 const (
+	priceWindow1hLo  = `now() - INTERVAL '65 minutes'`
+	priceWindow1hHi  = `now() - INTERVAL '55 minutes'`
+	priceWindow24hLo = `now() - INTERVAL '24 hours 30 minutes'`
+	priceWindow24hHi = `now() - INTERVAL '23 hours 30 minutes'`
+	priceWindow7dLo  = `now() - INTERVAL '7 days 2 hours'`
+	priceWindow7dHi  = `now() - INTERVAL '6 days 22 hours'`
+
 	priceWindowNow = `bucket >= now() - INTERVAL '7 days'`
-	priceWindow1h  = `bucket BETWEEN now() - INTERVAL '65 minutes' AND now() - INTERVAL '55 minutes'`
-	priceWindow24h = `bucket BETWEEN now() - INTERVAL '24 hours 30 minutes' AND now() - INTERVAL '23 hours 30 minutes'`
-	priceWindow7d  = `bucket BETWEEN now() - INTERVAL '7 days 2 hours' AND now() - INTERVAL '6 days 22 hours'`
+	priceWindow1h  = `bucket BETWEEN ` + priceWindow1hLo + ` AND ` + priceWindow1hHi
+	priceWindow24h = `bucket BETWEEN ` + priceWindow24hLo + ` AND ` + priceWindow24hHi
+	priceWindow7d  = `bucket BETWEEN ` + priceWindow7dLo + ` AND ` + priceWindow7dHi
 )
 
 // unionPriceArmCTE renders the CTE pair `<name>_rows` / `<name>` for one
@@ -330,11 +361,15 @@ func assetPriceArmCTEs(asset, xlmQuoteList string) string {
 }
 
 // assetPriceCTEs is the rollup's price substrate: every asset's eight
-// arms plus the XLM/USD scalars. The `/*PUSHDOWN_*/` markers the listing
-// once carried are gone: a full all-asset recompute has nothing to
-// narrow to (same reason refreshAssetVolumeUpsert carries none). $1 is
+// arms, XLM's own USD scalars, and the anchor grid the asset_vs_xlm* arms
+// are triangulated through, reaching back to the oldest arm's window. The
+// `/*PUSHDOWN_*/` markers the listing once carried are gone: a full
+// all-asset recompute has nothing to narrow to (same reason
+// refreshAssetVolumeUpsert carries none). $1 is
 // canonical.NativeSACContractID().
-var assetPriceCTEs = assetPriceArmCTEs("", xlmQuotesBound1) + "," + xlmUSDCTEs
+var assetPriceCTEs = assetPriceArmCTEs("", xlmQuotesBound1) + "," +
+	xlmUSDNativeCTEs(nativeSACParam(1)) + "," +
+	xlmUSDAnchorGridCTE("xlm_usd_grid", priceWindow7dLo, nativeSACParam(1))
 
 // usdQuotePref ranks the USD quote forms for a pick that two forms can tie
 // on the same bucket: a true USD quote, then classic USDC, then its SAC
@@ -353,14 +388,10 @@ const (
 	xlmFormPrefOpenBound4 = `array_position(ARRAY['native', $4::text], `
 )
 
-// xlmUSDNewest orders an XLM/USD scalar pick: newest bucket, then
-// [usdQuotePref] so a same-minute USDC and fiat:USD print resolve stably.
-const xlmUSDNewest = `ORDER BY bucket DESC, ` + usdQuotePref
-
 // xlmUSDVolumeSelect is the XLM/USD scalar that converts XLM-legged volume to
 // USD: the median vwap of the minutes within 15 min of the newest print, so a
 // single thin or off-market minute cannot rescale every venue's figure. It
-// is volume-display only; price paths keep [xlmUSDNewest].
+// is volume-display only; price paths use [xlmUSDAnchorAt].
 const xlmUSDVolumeSelect = `SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY vwap) AS vwap
 		    FROM prices_1m
 		   WHERE base_asset = 'native'
@@ -379,98 +410,6 @@ const xlmUSDVolumeSelect = `SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY v
 		                      )
 		                      AND vwap IS NOT NULL
 		                      AND bucket >= now() - INTERVAL '24 hours') - INTERVAL '15 minutes'`
-
-// xlmUSDCTEs is XLM's own USD price now and at each change lookback,
-// shared by the rollup, the detail query and the native row. `bucket` is
-// the observation minute [priceArmPickExpr] ages a triangulated price by.
-const xlmUSDCTEs = `
-		xlm_usd AS (
-		  -- prices_1m doesn't carry (native, fiat:USD) rows — XLM's
-		  -- USD price is computed by the aggregator's triangulation
-		  -- worker and lives in Redis, not the materialised view.
-		  -- Mirror the aggregator's stablecoin-proxy policy in SQL
-		  -- (AGENTS.md: "stablecoin fiat-proxy is aggregator policy"
-		  -- — USDC ≈ USD): use the latest on-chain XLM/USDC vwap as
-		  -- the XLM/USD price. Circle's USDC issuer G-strkey is
-		  -- hardcoded; a future revision pulls the list from
-		  -- [trades].usd_pegged_classic_assets.
-		  --
-		  -- The 24h floor on bucket is REQUIRED, not just an
-		  -- optimisation. With no time predicate TimescaleDB cannot
-		  -- chunk-prune, so the newest-bucket LIMIT 1 across the
-		  -- 3 quote_assets must consider EVERY prices_1m chunk
-		  -- (thousands post-backfill). Warm + idle that is ~13ms,
-		  -- but the all-chunks access pattern degrades badly under
-		  -- concurrent load + cold buffers -- observed ~40s in
-		  -- pg_stat_activity during /v1/assets/{id} fan-out, the
-		  -- dominant tax on every native to USD price path
-		  -- (this query is #18 == #21). Bounded to 24h it touches
-		  -- ~1 day of chunks (~2-3ms) and stays resilient under
-		  -- load. It is also MORE correct: the unbounded form could
-		  -- surface a days-stale vwap as the *current* price.
-		  -- XLM/USDC is among the highest-volume pairs (trades
-		  -- every minute) so a 24h floor never realistically misses
-		  -- the latest. Mirrors the already-bounded
-		  -- sources_stats.go xlm_usd CTE.
-		  SELECT vwap, bucket
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND vwap IS NOT NULL
-		     AND bucket >= now() - INTERVAL '24 hours'
-		   ` + xlmUSDNewest + `
-		   LIMIT 1
-		),
-		xlm_usd_1h AS (
-		  -- 1h-ago XLM/USD via the same stablecoin-proxy policy.
-		  SELECT vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket BETWEEN now() - INTERVAL '65 minutes'
-		                   AND now() - INTERVAL '55 minutes'
-		     AND vwap IS NOT NULL
-		   ` + xlmUSDNewest + `
-		   LIMIT 1
-		),
-		xlm_usd_24h AS (
-		  -- 24h-ago XLM/USD via the same stablecoin-proxy policy
-		  -- as xlm_usd above.
-		  SELECT vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket BETWEEN now() - INTERVAL '24 hours 30 minutes'
-		                   AND now() - INTERVAL '23 hours 30 minutes'
-		     AND vwap IS NOT NULL
-		   ` + xlmUSDNewest + `
-		   LIMIT 1
-		),
-		xlm_usd_7d AS (
-		  -- 7d-ago XLM/USD via the same stablecoin-proxy policy.
-		  SELECT vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket BETWEEN now() - INTERVAL '7 days 2 hours'
-		                   AND now() - INTERVAL '6 days 22 hours'
-		     AND vwap IS NOT NULL
-		   ` + xlmUSDNewest + `
-		   LIMIT 1
-		)
-`
 
 // refreshAssetPriceSnapshotUpsert recomputes every priced asset's
 // headline price + 1h/24h/7d change + backing source count from
@@ -506,8 +445,8 @@ WITH ` + assetPriceCTEs + `,
 		  SELECT asset_id FROM asset_vs_xlm
 		  UNION
 		  -- Native XLM is priced from the xlm_usd scalar, which is not a
-		  -- per-asset arm, so it is seeded. It falls back out below if
-		  -- xlm_usd and its own direct row are both empty.
+		  -- per-asset arm, so it is seeded. It falls back out below when
+		  -- xlm_usd is empty.
 		  SELECT 'native'::text
 		),
 		derived AS (
@@ -525,7 +464,7 @@ WITH ` + assetPriceCTEs + `,
 		         WHEN pick.arm = 'direct' THEN direct.source_count
 		         WHEN pick.arm = 'xlm' THEN vs_xlm.source_count
 		    END AS source_count
-		  FROM priced_assets ca` + priceArmJoins + `
+		  FROM priced_assets ca` + priceArmJoins(xlmUSDGridJoin) + `
 		  -- Confirmed non-7-decimals tokens only; see
 		  -- snapshotNormalizedPriceUSDExpr. The table is tiny (near-zero
 		  -- confirmed offenders) and keyed on its primary key.

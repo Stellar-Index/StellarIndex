@@ -192,10 +192,10 @@ top_pair AS (
 -- CBIJ… had $730k/7d against the XLM SAC and fired this tripwire with
 -- no withheld verdict, because nothing could price it.
 --
--- The proxies are seeded explicitly because they never appear as a
--- BASE against another proxy — XLM/USD is keyed base_asset='native',
--- so the XLM SAC (and fiat:USD, and USDC's two forms) could never enter
--- priced_direct and one_hop could therefore never route THROUGH them.
+-- The proxies are seeded explicitly so one_hop can always route THROUGH
+-- them: fiat:USD and USDC's two forms never trade as a base against
+-- another proxy, and an XLM form's own USD book may be quiet in the window
+-- (or stored only USD-as-base) while assets still trade against it.
 ` + pricelessPricedCTEs + `SELECT
     v.asset_id,
     (p.asset_id IS NOT NULL)                                    AS has_price,

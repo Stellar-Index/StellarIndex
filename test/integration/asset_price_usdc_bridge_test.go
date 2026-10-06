@@ -123,6 +123,11 @@ func TestAssetPriceUSDCQuotedOnly(t *testing.T) {
 			t.Fatalf("InsertTrade: %v", err)
 		}
 	}
+	// The XLM/USD anchor drops minutes under its volume_usd floor.
+	if _, err := store.DB().ExecContext(ctx,
+		`UPDATE trades SET usd_volume = 40 WHERE base_asset = 'native' AND quote_asset = $1`, usdc.String()); err != nil {
+		t.Fatalf("stamp usd_volume: %v", err)
+	}
 	// Force the cagg refresh — the 30s policy won't fire inside the
 	// test window (mirrors trades_range_test.go).
 	if _, err := store.DB().ExecContext(ctx,

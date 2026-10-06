@@ -656,7 +656,6 @@ for pattern in "${stale_patterns[@]}"; do
     docs/design/ \
     docs/operations/ \
     docs/development/ \
-    docs/remediation-2026-07-01/ \
     2>/dev/null | grep -v "node_modules\|_archive/\|discovery/" || true)
   if [ -n "$matches" ]; then
     err "Stale reference to '$pattern' in active docs:"
