@@ -16,7 +16,7 @@
 --   (prev_ledger_hash[N] == ledger_hash[N-1]). Both are cheap queries
 --   over THIS narrow table — never an unbounded trades scan
 --   (the "no unbounded trade-scan queries" rule —
---   docs/architecture/domain-traps.md. This used to cite
+--   docs/operations/v1-launch-plan.md:2486. This used to cite
 --   `feedback_no_unbounded_trade_scan`, an agent auto-memory note that
 --   has never been in this repo; corrected 2026-09-02, #358).
 --

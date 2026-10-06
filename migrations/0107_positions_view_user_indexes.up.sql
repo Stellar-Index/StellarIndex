@@ -17,7 +17,7 @@
 --     across every pool" (migration 0045/0053). A plain
 --     `WHERE user_address = $1` would seq-scan the hypertable — the
 --     exact "no unbounded trade-scan queries" failure mode
---     docs/architecture/domain-traps.md already learned the hard
+--     docs/operations/v1-launch-plan.md:2486 already learned the hard
 --     way once (sep41_transfers, migration 0106, same shape). The
 --     original citation, `feedback_no_unbounded_trade_scan.md`, is an
 --     agent auto-memory note that has never been in this repo;
