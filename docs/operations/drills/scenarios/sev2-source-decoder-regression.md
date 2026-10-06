@@ -34,7 +34,7 @@ All sources healthy (`stellarindex_source_events_total` within ±20% of baseline
 ## Expected response
 
 - **30 min, acknowledge + diagnose** ([§2](../../sev-playbook.md#2-timelines-the-sla-promises)): acknowledge within 30 min; open `#incident-<date>-soroswap-decode`;
-  apply the `decode-errors.md` quick-diagnosis flow (source from alert label, logs grouped by error pattern, root cause #2 "Stellar protocol version bump").
+  apply the `ingestion.md#stellarindex_ingestion_decode_error` quick-diagnosis flow (source from alert label, logs grouped by error pattern, root cause #2 "Stellar protocol version bump").
 - **1 h, confirm:** check the network `protocolVersion` on the public stellar-rpc (`https://mainnet.sorobanrpc.com`, per the runbook's diagnostic command);
   same WASM hash but changed SCVal type-tag space; decoder-side not source-side because `source_events_total` still rises.
 - **4 h, mitigate:** no runtime fix (failed-decode events are not retried). Forward-fix: handle the new type-tag in `internal/scval`, add a golden-file fixture,
@@ -46,7 +46,7 @@ All sources healthy (`stellarindex_source_events_total` within ±20% of baseline
 ## Pass criteria
 
 1. Acknowledged within 30 min.
-2. Found `decode-errors.md` first try.
+2. Found `ingestion.md#stellarindex_ingestion_decode_error` first try.
 3. Linked the timing to the protocol upgrade before the leader's T+25:00 narration.
 4. Confirmed decoder-side (events still rising), not source-stopped.
 5. Did not panic or restart (SEV-2, nothing to restart).

@@ -13,7 +13,7 @@ groups:
       # routine false-positive firings for `band`, `blend`,
       # `comet`, `ecb`, `phoenix` — all of which legitimately
       # emit events sporadically (auctions, oracle pushes, FX
-      # dailies). The runbook `source-stopped.md:60-62` explicitly
+      # dailies). The runbook `ingestion.md#stellarindex_ingestion_source_stopped` explicitly
       # acknowledges "Low-volume sources during quiet windows …
       # can genuinely see zero swaps for 5+ minute stretches" and
       # recommends extending the window. Total-outage coverage is
@@ -455,7 +455,7 @@ groups:
       # Applies equally to stellarindex_ingestion_discovery_record_failures
       # and the two stellarindex_ingestion_ch_live_sink_drops* rules below
       # ("drops are normal in rare bursts … fires when dropping is
-      # continuous" — ch-live-sink.md#stellarindex_ingestion_ch_live_sink_drops).
+      # continuous" — clickhouse.md#stellarindex_ingestion_ch_live_sink_drops).
       # The marker below is what scripts/ci/lint-tripwire-window.py reads;
       # each of those rules carries its own, because a waiver covers only
       # the rule directly beneath it.
@@ -575,7 +575,7 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_discovery_drops
 
-      # lint-tripwire-window:sustained: ch-live-sink.md#stellarindex_ingestion_ch_live_sink_drops: "drops are
+      # lint-tripwire-window:sustained: clickhouse.md#stellarindex_ingestion_ch_live_sink_drops: "drops are
       # normal in rare bursts", healed by the ch-live-catchup timer; this
       # tickets only when dropping is continuous (see the Q261 note above
       # discovery_drops)

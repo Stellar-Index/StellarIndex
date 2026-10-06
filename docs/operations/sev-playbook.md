@@ -327,7 +327,7 @@ postmortem-style action-item discipline.
 ## 9. References
 
 - [alerts-catalog.md](alerts-catalog.md), [runbooks/](runbooks/)
-- GitHub Actions spending cap: when every workflow run fails with "The job was not started because an Actions budget is preventing further use", raise the limit at <https://github.com/organizations/StellarIndex/settings/billing/spending_limit> (GitHub Actions, new monthly limit); usage otherwise resets on the org billing date. Deploys and explorer/docs ships queue behind it.
+- GitHub Actions spending cap: when every workflow run fails with "The job was not started because an Actions budget is preventing further use", raise the limit at <https://github.com/organizations/Stellar-Index/settings/billing/spending_limit> (GitHub Actions, new monthly limit); usage otherwise resets on the org billing date. Deploys and explorer/docs ships queue behind it.
 - [HA plan](../architecture/ha-plan.md); [ADR-0006](../adr/0006-timescaledb-for-price-time-series.md); [ADR-0007](../adr/0007-redis-cache-schema.md)
 
 ---

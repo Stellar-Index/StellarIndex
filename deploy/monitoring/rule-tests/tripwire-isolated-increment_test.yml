@@ -51,7 +51,7 @@
 # discovery_record_failures, ch_live_sink_drops, ch_live_sink_drops_sustained
 # and stellar archive_publish_fail share the `for: W` / `[W]` shape but
 # describe themselves as SUSTAINED signals ("and continued doing so for 10
-# minutes"; ch-live-sink.md#stellarindex_ingestion_ch_live_sink_drops: "drops are normal in rare bursts … this
+# minutes"; clickhouse.md#stellarindex_ingestion_ch_live_sink_drops: "drops are normal in rare bursts … this
 # alert fires when dropping is continuous"; archive.md: "the alert's
 # `for: 1h` threshold filters" a retried transient). Staying silent on an
 # isolated event is their design, so the

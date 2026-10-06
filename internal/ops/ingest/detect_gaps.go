@@ -112,7 +112,7 @@ func detectGaps(args []string) error {
 		// CA2-A19-correct-9 / GH-1095: an empty (or all-one-shot)
 		// cursor table is exactly the "every live source is stalled"
 		// state this probe exists to catch — it must not read as ok.
-		// Runbooks (ingestion-lag.md, ingestion-sink.md, ledger-ingest.md)
+		// Runbooks (ingestion.md, ingestion-sink.md, ledger-ingest.md)
 		// send an operator here expecting a non-zero exit to mean
 		// something; a silent 0 buried that signal.
 		return fmt.Errorf("no live cursor (%v) found against tip %d — ingest may never have started or every live cursor was lost",
