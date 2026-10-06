@@ -164,9 +164,10 @@ var (
 	// lose drops the re-derive never writes), oracles are config-gated and
 	// share oracle_updates, sep41 owns a watched-set slice of its tables, and
 	// sushiswap_v3 shares trades and is deliberately refused as unaudited.
+	// spectra: derived spectra_markets (refreshSpectraMarket) not rebuilt by a plain DELETE.
 	knownScriptOmitsProjected = []string{
 		"blend_emitter", "redstone", "reflector-cex", "reflector-dex",
-		"reflector-fx", "sep41_supply", "sep41_transfers", "sushiswap_v3",
+		"reflector-fx", "sep41_supply", "sep41_transfers", "spectra", "sushiswap_v3",
 	}
 	// completeness' static audit list omits these (oracles are config-gated
 	// in AuditedSources; sep41 has no entry).

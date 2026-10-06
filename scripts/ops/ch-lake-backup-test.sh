@@ -328,6 +328,13 @@ MOCK_HEAVY_HELD=1 run; rc=$?
 expect_rc 75 "a held heavy lock defers the run with exit 75"
 file_empty "$TMP/queries" "a deferred run issues no BACKUP"
 prom_unstamped "a deferred run stamps nothing"
+reset
+run; rc=$?
+before="$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")"
+sleep 1
+MOCK_HEAVY_HELD=1 run; rc=$?
+expect_rc 75 "a second deferred run exits 75"
+if [[ -n "$before" ]] && [[ "$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" == "$before" ]]; then ok "a deferred run keeps the previous last-success stamp"; else bad "a deferred run keeps the previous last-success stamp"; fi
 if grep -q "deferring" "$TMP/stderr"; then ok "the deferral is logged"; else bad "the deferral is logged"; fi
 
 echo
