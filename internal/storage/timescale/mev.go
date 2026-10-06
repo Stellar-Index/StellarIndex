@@ -20,6 +20,8 @@ import (
 // notionals. With no anchor minute within xlmUSDAnchorMaxAge of the trade
 // the leg stays empty — never re-marked at a stale or later rate — as do
 // token/token legs with no XLM side. $3 is the network's native-XLM SAC.
+//
+//nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var tradesForArbScanQuery = `
         WITH ` + xlmUSDAnchorGridCTE("xlm_usd_grid", "$1::timestamptz", "$3::text") + `,
         scan AS (
