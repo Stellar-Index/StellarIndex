@@ -407,17 +407,7 @@ func (r *LateTradeRefresher) flush(ctx context.Context, rateLimited bool) (next 
 	r.mu.Unlock()
 	defer r.publishOverdueLocked(policies)
 
-	var errs []error
-	gens := make(map[string]int64, len(durable))
-	for _, d := range durable {
-		if w := policies[d.View]; w.HasPolicy && !w.Unbounded {
-			r.viewLocked(d.View).widen(d.From, d.To, d.FirstSeen)
-			gens[d.View] = d.Gen
-			continue
-		}
-		// Not ours to refresh: nothing would ever clear it.
-		errs = append(errs, r.clearDurable(ctx, d.View, d.Gen, guard))
-	}
+	gens, errs := r.adoptDurable(ctx, durable, policies, guard)
 
 	refreshed := 0
 	prices1mWaiting := false // held or failed: the twaps built on it wait
@@ -448,6 +438,23 @@ func (r *LateTradeRefresher) flush(ctx context.Context, rateLimited bool) (next 
 		obs.LateTradeCAGGRefreshTotal.WithLabelValues("ok").Inc()
 	}
 	return next, errors.Join(errs...)
+}
+
+// adoptDurable widens each bounded view's window with its durable row and
+// returns the row's gen per view; a row for a view with no bounded policy is
+// cleared at once. Needs r.flushMu.
+func (r *LateTradeRefresher) adoptDurable(ctx context.Context, durable []timescale.CAGGLateRefreshWindow, policies map[string]timescale.CAGGRefreshWindow, guard lateClearGuard) (gens map[string]int64, errs []error) {
+	gens = make(map[string]int64, len(durable))
+	for _, d := range durable {
+		if w := policies[d.View]; w.HasPolicy && !w.Unbounded {
+			r.viewLocked(d.View).widen(d.From, d.To, d.FirstSeen)
+			gens[d.View] = d.Gen
+			continue
+		}
+		// Not ours to refresh: nothing would ever clear it.
+		errs = append(errs, r.clearDurable(ctx, d.View, d.Gen, guard))
+	}
+	return gens, errs
 }
 
 // clearDurable deletes view's durable row at gen, unless a late write was in
