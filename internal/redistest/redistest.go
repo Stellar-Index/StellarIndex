@@ -44,5 +44,5 @@ func Run(t testing.TB) *Server {
 // freed ephemeral port.
 func (s *Server) Kill() {
 	s.down.Store(true)
-	s.Miniredis.Close()
+	s.Close()
 }
