@@ -45,17 +45,12 @@ import (
 //
 // # Ledger_entry_changes fidelity: BOTH available and unavailable eras
 //
-// research §3.2: real per-op ledger_entry_changes fidelity currently
-// starts at ~ledger 61,996,000 — ALREADY PAST the P23 boundary
-// (58,762,517) this package's backfill command hard-clamps to. That
-// means, as of this writing, EVERY op in this decode surface's
-// addressable range will find zero usable entry changes — not
-// because nothing happened, but because Phase 0 (a separate,
-// operator-scheduled `ch-backfill` over [38115806, 61999000]) hasn't
-// run yet. Once it does, ledger_entry_changes gains real fidelity for
-// the entire P18-onward range these ops need (AMMs didn't exist
-// before P18, so LP correctness needs nothing earlier). The functions
-// below are written and tested to be correct for BOTH eras:
+// research §3.2: per-op ledger_entry_changes fidelity natively starts
+// at ~ledger 61,996,000, past the P23 boundary (58,762,517) this
+// package's backfill command hard-clamps to. Phase 0 (ch-backfill over
+// [38115806, 61999000]) is done, so the addressable range has real
+// fidelity; the functions below stay correct for BOTH eras so a window
+// that lacks it is reported, not guessed:
 //   - Fidelity absent: ErrEntryChangesUnavailable / (nil, nil,
 //     "no CAP-0038 liquidation" for AllowTrust/SetTrustLineFlags),
 //     counted and logged by the caller — NEVER a guessed amount.

@@ -110,13 +110,10 @@ const classicMovementsWindowDeadline = 20 * time.Minute
 // empty-changes case is indistinguishable from "no liquidation
 // happened," which is by far the common case, so treating it as
 // "checked, none found" during the fidelity-absent era would
-// silently under-report CAP-0038 liquidations). As of this writing,
-// EVERY window this command can address (hard-clamped below P23,
-// 58,762,517) predates ledger_entry_changes' current per-op fidelity
-// floor (~61,996,000, research §3.2) — Phase 0's `ch-backfill` is a
-// separate, operator-scheduled prerequisite that closes this gap;
-// until it runs, every LP op reports unavailable and every CAP-0038
-// check is skipped, both counted and logged, never guessed.
+// silently under-report CAP-0038 liquidations). Phase 0 backfilled
+// ledger_entry_changes over the whole addressable range, so the probe
+// should find fidelity; a window where it doesn't is counted and
+// logged, never guessed.
 //
 // Deliberately does NOT reuse ch-rebuild's generic
 // pipeline.HandleEvent write path: classicmovements.MovementEvent is
@@ -347,7 +344,7 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 		fmt.Printf("\nNOTE: %d claim/clawback ops had no resolvable create row (recognizable ADR-0047 D4 incompleteness — see stderr for the per-op log). Re-running once the create's own range has been backfilled resolves these on a subsequent pass; ClickHouse's ReplacingMergeTree makes that safe.\n", totalUnresolved)
 	}
 	if totalLPUnavailable > 0 || totalCAP0038Skipped > 0 {
-		fmt.Printf("\nNOTE: %d LiquidityPoolDeposit/Withdraw ops and %d AllowTrust/SetTrustLineFlags checks were skipped for lack of ledger_entry_changes fidelity in this range (research §3.2 — Phase 0's ch-backfill hasn't reached it yet). Re-running this same range after Phase 0 backfills it resolves these; ClickHouse's ReplacingMergeTree makes that safe.\n",
+		fmt.Printf("\nNOTE: %d LiquidityPoolDeposit/Withdraw ops and %d AllowTrust/SetTrustLineFlags checks were skipped for lack of ledger_entry_changes fidelity in this range (research §3.2). Re-running this same range once ledger_entry_changes covers it resolves these; ClickHouse's ReplacingMergeTree makes that safe.\n",
 			totalLPUnavailable, totalCAP0038Skipped)
 	}
 	if totalVerifyMismatches > 0 {
@@ -684,7 +681,7 @@ func classicMovementsDecodeEntryChangesSurface(winCtx context.Context, chAddr st
 	// Only bother building the claimable_balance-created index when
 	// the window has fidelity at all — CAP-0038 ops are skipped
 	// entirely below when it doesn't, so this would otherwise be
-	// wasted work on every window until Phase 0 lands.
+	// wasted work on a window without it.
 	cbChanges := map[classicMovementOpKey][]classicmovements.EntryChangeXDR{}
 	if fidelityPresent {
 		if cerr := clickhouse.StreamEntryChanges(winCtx, chAddr, wlo, whi, "claimable_balance", func(ec clickhouse.EntryChange) error {
