@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/redis/go-redis/v9"
@@ -11,6 +12,7 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -120,6 +122,29 @@ type listCachePayload[T any] struct {
 	NextCursor string `json:"next"`
 }
 
+// readListCache is the shared Redis read path; it records hit, miss, or
+// error (read failure or undecodable payload) on APICacheOpsTotal.
+func readListCache[T any](ctx context.Context, rdb redis.UniversalClient, log *slog.Logger, cache, op string, key fmt.Stringer) ([]T, string, bool) {
+	raw, err := rdb.Get(ctx, key.String()).Bytes()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			obs.APICacheOpsTotal.WithLabelValues(cache, op, "miss").Inc()
+			return nil, "", false
+		}
+		obs.APICacheOpsTotal.WithLabelValues(cache, op, "error").Inc()
+		log.Warn("list cache read failed", "cache", cache, "op", op, "key", key, "err", err)
+		return nil, "", false
+	}
+	var p listCachePayload[T]
+	if jerr := json.Unmarshal(raw, &p); jerr != nil {
+		obs.APICacheOpsTotal.WithLabelValues(cache, op, "error").Inc()
+		log.Warn("list cache decode failed", "cache", cache, "op", op, "key", key)
+		return nil, "", false
+	}
+	obs.APICacheOpsTotal.WithLabelValues(cache, op, "hit").Inc()
+	return p.Items, p.NextCursor, true
+}
+
 type CachedAssetReader struct {
 	Inner v1.AssetReader
 	RDB   redis.UniversalClient
@@ -151,14 +176,8 @@ func (r CachedAssetReader) ListAssets(ctx context.Context, cursor string, limit 
 		return r.Inner.ListAssets(ctx, cursor, limit)
 	}
 	cacheKey := cachekeys.AssetsList(cursor, limit)
-	if raw, err := r.RDB.Get(ctx, cacheKey.String()).Bytes(); err == nil {
-		var p listCachePayload[v1.AssetDetail]
-		if jerr := json.Unmarshal(raw, &p); jerr == nil {
-			return p.Items, p.NextCursor, nil
-		}
-		r.Log.Warn("assets cache decode failed", "key", cacheKey)
-	} else if !errors.Is(err, redis.Nil) {
-		r.Log.Warn("assets cache read failed", "key", cacheKey, "err", err)
+	if items, next, ok := readListCache[v1.AssetDetail](ctx, r.RDB, r.Log, "assets_redis", "list_assets", cacheKey); ok {
+		return items, next, nil
 	}
 
 	items, next, err := r.Inner.ListAssets(ctx, cursor, limit)
