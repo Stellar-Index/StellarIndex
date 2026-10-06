@@ -42,7 +42,7 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	from := fs.Uint("from", 0, "First ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "Last ledger sequence (inclusive, required)")
-	only := fs.String("source", "", "Limit to one source (soroswap|aquarius|phoenix|comet|sushiswap_v3|upshift|sdex); default: all")
+	only := fs.String("source", "", "Limit to one source (soroswap|aquarius|phoenix|comet|sushiswap_v3|upshift|spectra|sdex); default: all")
 	maxList := fs.Int("max-list", 50, "Max gap ledgers to print per source")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (the sdex re-derive reads the lake's operations; factory preseeds read its contract_events)")
 	if err := fs.Parse(args); err != nil {

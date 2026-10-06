@@ -3,7 +3,7 @@ title: Spectra WASM audit
 last_verified: 2026-10-06
 status: string-checked — 8 hashes, one per contract role, no upgrade seen; lake lineage to ledger 64,716,536
 source: spectra
-backfill_safe: false
+backfill_safe: true
 ---
 
 # Spectra WASM audit
@@ -19,9 +19,9 @@ checks every gated contract against ([runbook](../runbooks/wasm-drift.md)).
 whole observed life (nothing was upgraded in place). Each hash carries the
 event-kind literals its role is expected to emit, and every
 `(contract, topic[0])` pair observed on chain matches the lake's own
-`topics_xdr` byte for byte. `BackfillSafe` is **not** changed by this log; the
-source is not wired yet (INV-2044) and the flag stays `false` until a
-separate change decides.
+`topics_xdr` byte for byte. On that basis the source is
+`Backfill: BackfillPerWASM`: a replay passes the gate only while every
+active hash is one of the eight below.
 
 No `stellarindex-ops wasm-history` walk was run; lineage comes from the
 lake's `stellar.contract_instance_changes`.

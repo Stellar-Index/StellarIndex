@@ -58,7 +58,8 @@ var Registry = map[string]Metadata{
 
 	// Spectra yield-tokenisation markets: ClassRouter because PT/YT swaps and
 	// wraps are derivative of the underlying IBT, so they never feed a price.
-	"spectra": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillUnsafe},
+	// All eight WASM hashes audited (docs/operations/wasm-audits/spectra.md).
+	"spectra": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM},
 
 	// ─── On-chain oracles ────────────────────────────────────────
 	// Excluded from VWAP by default — they publish already-aggregated

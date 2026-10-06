@@ -10,12 +10,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
@@ -41,6 +43,19 @@ var gatedProbeTopics = map[string][]string{
 	sushiswap_v3.SourceName:  {sushiswap_v3.TopicSymbolSwap},
 	upshift.SourceName:       {upshift.TopicSymbolDeposit},
 	defindex.SourceName:      {defindex.TopicPrefixStrategy, defindex.TopicSymbolDeposit},
+	spectra.SourceName:       {scval.MustEncodeSymbol(spectra.EventPTMinted)},
+}
+
+// registryOnlySeed is how the warm admits registryOnlyContract. Spectra's
+// gate also needs the role its warm restores from spectra_markets: a bare
+// protocol_contracts row has none and fails closed by design.
+func registryOnlySeed(source string) contractid.Option {
+	if source == spectra.SourceName {
+		return contractid.WithAttrSeed(map[string]contractid.Attrs{
+			registryOnlyContract: {spectra.AttrRole: string(spectra.RolePT)},
+		})
+	}
+	return contractid.WithSeed([]string{registryOnlyContract})
 }
 
 func probeEvent(source string) events.Event {
@@ -73,18 +88,18 @@ func calibrateProbe(t *testing.T, source string) {
 	if meta.NewDecoder().Matches(ev) {
 		t.Fatalf("%s: the BARE decoder already admits %s — the probe is not identity-gated", source, registryOnlyContract)
 	}
-	if !meta.NewDecoder(contractid.WithSeed([]string{registryOnlyContract})).Matches(ev) {
+	if !meta.NewDecoder(registryOnlySeed(source)).Matches(ev) {
 		t.Fatalf("%s: a decoder seeded with %s still rejects the probe — its topics no longer classify", source, registryOnlyContract)
 	}
 }
 
 // warmedLike builds the options map the way pipeline.GatedRegistryOptions
 // does for a protocol_contracts table holding exactly one extra row per
-// gated source: a WithSeed of the loaded ids.
+// gated source: a WithSeed of the loaded ids (plus spectra's market role).
 func warmedLike() map[string][]contractid.Option {
 	out := map[string][]contractid.Option{}
 	for _, name := range pipeline.GatedSourceNames() {
-		out[name] = []contractid.Option{contractid.WithSeed([]string{registryOnlyContract})}
+		out[name] = []contractid.Option{registryOnlySeed(name)}
 	}
 	return out
 }

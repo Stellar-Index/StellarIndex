@@ -90,8 +90,9 @@ func TestRegistration_SourceMetadata(t *testing.T) {
 	if meta.AmountDecimals != 0 {
 		t.Errorf("AmountDecimals = %d, want 0 (decimals are per market)", meta.AmountDecimals)
 	}
-	if meta.BackfillSafe() {
-		t.Error("BackfillSafe is true without a WASM audit page")
+	// The replay gate checks each active hash against audited_wasm.json.
+	if meta.Backfill != external.BackfillPerWASM {
+		t.Errorf("Backfill = %v, want BackfillPerWASM (docs/operations/wasm-audits/spectra.md)", meta.Backfill)
 	}
 }
 

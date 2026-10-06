@@ -16,6 +16,7 @@ import (
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -163,6 +164,18 @@ var gatedSources = map[string]GatedMeta{
 		Genesis:     sushiswap_v3.FactoryGenesisLedger,
 		NewDecoder: func(opts ...contractid.Option) dispatcher.Decoder {
 			return sushiswap_v3.NewDecoder(opts...)
+		},
+	},
+	spectra.SourceName: {
+		// Factory-anchored (ADR-0035): pt_deployed admits a PT, which then
+		// admits its YT. CuratedSet is the decoder's own hand-kept seed: the
+		// registry, IBTs, router, order engines and the PTs/YTs listed so far.
+		Factories:   []string{spectra.MainnetFactory},
+		CreationSym: spectra.EventPTDeployed,
+		Genesis:     spectra.GenesisLedger,
+		CuratedSet:  spectraCuratedSet(),
+		NewDecoder: func(opts ...contractid.Option) dispatcher.Decoder {
+			return spectra.NewDecoder(opts...)
 		},
 	},
 	upshift.SourceName: {
@@ -392,7 +405,14 @@ func gatedRegistryOptions(
 	if err != nil {
 		return nil, err
 	}
-	extra := map[string][]contractid.Option{sushiswap_v3.SourceName: sushiOpts}
+	spectraOpts, err := spectraMarketOptions(ctx, store, logger)
+	if err != nil {
+		return nil, err
+	}
+	extra := map[string][]contractid.Option{
+		sushiswap_v3.SourceName: sushiOpts,
+		spectra.SourceName:      spectraOpts,
+	}
 	for source, meta := range gatedSources {
 		ids, err := store.LoadProtocolContracts(ctx, source)
 		if err != nil {
@@ -459,6 +479,40 @@ func gatedRegistryOptions(
 		out[source] = opts
 	}
 	return out, nil
+}
+
+func spectraCuratedSet() []string {
+	return append(spectra.MainnetGatedSet(), append([]string{spectra.MainnetRouter}, spectra.MainnetOrderEngines...)...)
+}
+
+// spectraMarketStore is the spectra_markets seam; *timescale.Store
+// implements it. Optional, as sushiswapPoolStore is.
+type spectraMarketStore interface {
+	SpectraMarkets(ctx context.Context) ([]timescale.SpectraMarket, error)
+}
+
+// spectraMarketOptions restores each recorded market's PT and YT roles so a
+// market found after the hand-kept list survives a restart: a bare
+// protocol_contracts row carries no role and fails closed. The sink writes
+// the table, so no attribute hook is installed.
+func spectraMarketOptions(ctx context.Context, store protocolContractStore, logger *slog.Logger) ([]contractid.Option, error) {
+	ms, ok := store.(spectraMarketStore)
+	if !ok {
+		return nil, nil
+	}
+	rows, err := ms.SpectraMarkets(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("gated registry warm %s markets: %w", spectra.SourceName, err)
+	}
+	seed := make(map[string]contractid.Attrs, 2*len(rows))
+	for _, m := range rows {
+		seed[m.PT] = contractid.Attrs{spectra.AttrRole: string(spectra.RolePT)}
+		if m.YT != "" {
+			seed[m.YT] = contractid.Attrs{spectra.AttrRole: string(spectra.RoleYT), spectra.AttrMarketPT: m.PT}
+		}
+	}
+	logger.Info("spectra market table loaded", "markets", len(rows))
+	return []contractid.Option{contractid.WithAttrSeed(seed)}, nil
 }
 
 // sushiswapPoolStore is the sushiswap_v3_pools seam; *timescale.Store
