@@ -320,3 +320,137 @@ holding hundreds of millions of dollars, and it would have reported a
 number far closer to $4.03B while being worth less than nothing.
 Under-reporting is strictly better, and the funnel now makes the
 under-reporting legible instead of silent.
+
+## Moved from the launch plan: what stands between the served total and the $4.087B a third party reports
+
+Moved verbatim from `docs/operations/v1-launch-plan.md` lines 95-224 (pre-cut sha `52aacb972`). Live inventory items INV-0846, INV-0848, INV-0849 and INV-0874 cite this evidence.
+
+
+> **UPDATE 2026-09-16 evening — three lines moved, and one of them was
+> ours all along.** Everything below this box was true when written and
+> two of its figures are now superseded. Served reference total is
+> **$2,535,764,187.91** across **29 assets / 18 issuers** (was
+> $2,533,472,871.25 / 16 / 6), verified live after v0.86.0.
+>
+> **1. A commodity line opened.** Matrixdock's XAUm is bound and priced
+> at **$4,599,642.93** — the first commodity row on this surface with an
+> independent price at all. matrixdock.com names the contract itself; the
+> deployed wasm is source-verified against the issuer's own GitHub; the
+> listing directory names the same address. `by_class` now carries four
+> of the five declared classes.
+>
+> **2. `stock` appears for the first time, and it was OUR bug.** The
+> "WisdomTree — NO ATTESTATION" line below said four issuers were refused
+> at R2 because no stellar.toml had been fetched. The real cause was that
+> `stellar.wisdomtree.com` serves a REAL SEP-1 whose `ACCOUNTS` array
+> ends with an unterminated string on line 20, and a whole-document parse
+> threw away all eighteen of its well-formed `[[CURRENCIES]]` tables.
+> Section recovery (v0.86.0) reads them; **12 assets are now admitted**
+> — 8 bond, 3 stock, 1 commodity — carrying 7,023,543 tokens across
+> roughly 30,000 trustlines each. The thirteenth, `CRDT`, stays out
+> because its issuer is the one named on the broken line and is in no
+> directory. The three lookalike domains (`wisdomtree.bond` ×2,
+> `wisdomtree.co.com`) are directory-flagged `malicious` and stay
+> refused.
+>
+> **This was the only line in the whole reconciliation that was a
+> coverage failure of ours rather than a refusal, a missing price, or a
+> figure with no on-chain basis.** It is closed.
+>
+> **3. A measurement error worth recording.** The first pass reported
+> WisdomTree as holding zero supply on Stellar. It does not: Horizon's
+> `/assets` record has no `amount` or `num_accounts` field, so reading
+> them returns 0.00 for every asset and reads exactly like an absence.
+> Verify a bulk probe on a known case first — BENJI's
+> `balances.authorized` is 435,910,656.4479976 and matches our published
+> figure to the digit.
+>
+> **What did NOT move.** All 12 WisdomTree assets are unpriced: only
+> WTGX is in the independent listing directory, and the RWA surface's
+> classic arm does not read listing prices (the contract arm does, and
+> `/v1/assets` has its own listing-valuation path). That is a real
+> internal inconsistency — the same published price values a contract row
+> and not a classic one — worth about **$2.3M** today against a directory
+> that holds **33 classic rows, all 33 priced**, versus 17 contract rows.
+> Two-thirds of an independent price source goes unread. Not fixed here;
+> it is the largest remaining *correctness* item on this surface even
+> though it is a rounding error on the total.
+>
+> **rwa.xyz (2026-09-17): "Distributed Asset Value" $3,275,441,791**, excluding its own $359.5M
+> stablecoin class and $78.2M "represented". Per issuer against ours: Spiko 1,572 vs 1,543;
+> Ondo 536 vs 536; Franklin 523 vs 436 (FOCGX + gBENJI unpriced); **Realiz 500 vs 0** (the
+> VuMe line below); RedSwan 72; WisdomTree 40 (12 admitted, unpriced); Centrifuge / Figure /
+> Rivool / NYALA / Liqvid / MB / Bitbond ≈113 (no primary-source binding); Etherfuse and
+> Matrixdock agree. Two-thirds of the gap is one contract.
+>
+> **The $4B question is settled by the four lines below and this does not
+> change it.** Two of the four are deliberate refusals, one is a price
+> that exists nowhere, and one is a long tail. Nothing found today
+> suggests the target is reachable on verifiable evidence.
+
+
+Measured 2026-09-15 against that dashboard's own SQL, the issuers' own APIs and
+our own lake. Every line reconciles to on-chain Stellar state; none of them is a
+number anyone invented, and we agree wherever both sides measure — one issuer
+within 5.2%, another within 1.0%, a third within 0.01%. The gap is OUR coverage,
+so it is written down here rather than re-derived.
+
+| line | their figure | ours, and what stands in the way |
+|---|---:|---|
+| One issuer's tokenized funds | $1,659.3M | **CLOSED 2026-09-15.** $395.2M was published; the other $1,182.3M was four share classes of an overnight swap fund held out because the class vocabulary had no true word for it. `fund` now exists on the contract arm and all four are bound. |
+| A private-credit platform, 24 deal contracts | $548.1M | **CLOSED — the supply half is done and verified; the price half does not exist.** Storage-derived supply now serves for **all 24**, summing to **548,113,042.88 tokens**, matching the independent measurement to the unit, where every one of them previously reported `0` because they emit no SEP-41 events. What cannot be had is a price. Verified 2026-09-16, not inferred: none of the 24 appears in the curated account directory, none in the independent listing directory, and they carry **no on-chain METADATA key at all** — 15 of the 24 share the storage symbol `PC000`, which the publishing seed explicitly states must not be treated as an identifier. The external figure for this line comes from a CSV the dashboard's author uploads: its query (dune.com/queries/6961846, "Mcap by Month by Company", by @stellar) values `stellar.token_balances` × `close_usd` from **`dune.stellar.dataset_asset_prices`**, and takes membership and class from **`dune.stellar.dataset_recognized_assets`**. `dune.<team>.dataset_<name>` is Dune's CSV-upload namespace (docs.dune.com/web-app/upload-data: "upload any csv file … queryable via the schema dune.team_name.dataset_name"). For these 24 contracts the dashboard's figure is `548113042.8799999` against our supply of 548,113,042.88 tokens — identical to the token, so the uploaded `close_usd` is **1.00**, par. The same query also hard-codes `EUTBL` on 2026-05-17 as the literal `503334541.7` and divides `deJTRSY`/`deJAAA` by `100000000000` on that day. Publishing a supply without a price is honest and adds **$0**; inventing one is the thing this whole surface exists not to do. |
+| **"Realiz" — VuMe Bond 2030** (`CBUBVYRK…2VJ4`, code `TPT30`) | $558.8M | **CORRECTED 2026-09-17: this line is a bond contract, not a real-estate issuer, and the refusal stands on the contract's own facts.** The address came from rwa.xyz (which carries it at par, $500,000,000; Dune at 1.1174 from the same uploaded CSV). On chain: deployed 2026-02-23 by `GCUTJSAK…`, an account whose `home_domain` is **`lobstr.co`** — a retail wallet; wasm **unverified**; **5 invocations and 8 events in its entire life; 4 storage entries**; 500,000,000 tokens (18dp) minted in two events; never traded; no SEP-1 (realiz.io serves 404 for `stellar.toml`); in no directory. Nothing on-chain or at realiz.io ties the contract to Realiz — only the two aggregators do, and they share a curation. This one line is **61% of the gap to rwa.xyz's $3.275B**; take it out and rwa.xyz reads $2.775B, within 1% of what an issuer-NAV source plus long-tail identity bindings reach. Publishing $500M on it is the exact claim this surface exists to refuse. |
+| Real estate (rwa.xyz: RedSwan, 7 assets) | $71.7M | Measured 2026-09-16: **15 issuers on Stellar declare a `realestate` anchor. 13 are in the curated directory and all 13 are scam-flagged** (`serial SCAM Counterfeiter`, `SCAM`, `malicious`); the other 2 are in no directory. Zero are clean and recognised. rwa.xyz appears to carry this bucket as "represented" ($78.2M) rather than distributed. Reachable only with a primary-source binding for the real issuer. |
+| A money-fund issuer's other three tokens | $82.0M | **We hold the supply for all three** (they are classic assets, already in the lake, reconciling to an independent source within 0.26%). Blocked on an independent PRICE: only the flagship is in the listing directory, and the other three have no oracle feed. |
+| Everything else | ≈$241M | Price feeds and supply bases we do not have, spread thin. |
+
+Two figures worth keeping separate: **what is on Stellar** and **what we can
+publish a defensible number for**. This index only ever publishes the second.
+After the vocabulary change the served reference total is **$2,533,472,871.25**
+(measured live, 2026-09-16). The remaining ~$1.5B is: a class whose entire
+declared population on this chain is scam-flagged, a class of token with no
+independent price in existence, three tokens whose supply we hold and whose
+price we cannot source, and a long tail of feeds. None of it is a coverage
+failure to be fixed by trying harder, and two of the four are things this index
+refuses on purpose.
+
+One question is upstream of all of it and is the maintainer's: **the external
+figure measures LOCATION, not ownership.** Its query sums
+`trustline_balance + liquidity_pool_balance + contract_balance` with no issuer,
+treasury or distributor exclusion, so minted-but-unsold inventory sitting in an
+issuer's own address counts at full face value. Our classic arm excludes the
+issuer's balance (ADR-0011 Algorithm 2, `issuer_exclusion`); our contract arm,
+today, does not — it sums issuance, and `BasisSEP41TotalOnly` says so. Whether
+the headline should be measured by location or by ownership decides whether
+$4B is the right target at all. Publishing both, with a holder-concentration
+column, is the option that needs no one to choose in the dark.
+
+**DECIDED — measurement basis and the two policy calls.**
+
+- **Basis: publish both.** The headline is ownership-basis on the classic arm
+  only (issuer/treasury excluded where we can identify it); the contract arm is
+  still total-only (`BasisSEP41TotalOnly`) until the gaps below are closed. A
+  location-basis figure will be shown beside the headline so a reader can
+  reconcile to any third party; it is not yet served. Neither replaces the
+  other. $4B is therefore not a target: the comparable location figure is what
+  we reconcile against, and the gap lines above are explained, not chased.
+- **TPT30 bond line (~$559M): declined.** It is a bond contract with no on-chain
+  tie to its claimed issuer (see the VuMe row); of the real-estate class proper,
+  13 of 15 are scam-flagged and the other 2 are in no directory. Re-open only
+  with a primary-source binding.
+- **Private credit (~$548M): supply served, price withheld.** No price exists;
+  a supply without a price adds $0 and is not valued at par.
+- **Remaining engineering (not a decision):**
+  - Compute and serve a location-basis total (every holder balance, no
+    issuer/treasury exclusion) next to the ownership headline, on the API and
+    the RWA page.
+  - Contract arm (`BasisSEP41TotalOnly`, `internal/supply/sep41.go`): the
+    per-contract exclusion list already exists as `[supply].per_asset_locked_sets`.
+    What is missing: (1) track the SEP-41 admin balance (`set_admin`);
+    `StorageSEP41SupplyReader` returns `AdminBalance=0`
+    (`storage_sep41_reader.go`), which is why the basis is total-only;
+    (2) configure `per_asset_locked_sets` entries for the RWA contracts'
+    issuer/treasury holders, after the `sac_wrappers` observability
+    prerequisite noted at `internal/config/config.go`; or (3) add a
+    holder-concentration column.
+

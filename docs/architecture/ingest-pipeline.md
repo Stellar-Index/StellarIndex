@@ -313,3 +313,7 @@ against `mainnet.sorobanrpc.com`. That is fine because RPC and the LCM
 carry byte-identical `xdr.ContractEvent` payloads. Integration tests that
 need Galexie use a MinIO testcontainer seeded with a recorded `.xdr.zst`,
 never a live RPC call.
+
+## The sep41 zero-writer hole (2026-07-13 to 2026-07-27)
+
+After the sole-writer deploy at ledger 63,419,139 (2026-07-13) the dispatcher skipped the sep41 domain while the projector never registered the sep41 sources: `BuildRegistry` builds only from `enabled_sources` and the sep41 names were not in `KnownSources`, so no config could carry them. Both sep41 tables froze at ledger 63,419,138 (249k mismatched ledgers). Fixed in `ae7a082d` (registry always attempts sep41 from the watched set, plus a regression test pinning the production shape). Catch-up used `projected-rebuild -source sep41_supply -from 63419138 -write -allow-live-overlap`. Lesson: when a domain moves to one writer, a test must build the registry the way production does. Source: `git show 52aacb972:docs/operations/v1-launch-plan.md`, lines 3822-3832.

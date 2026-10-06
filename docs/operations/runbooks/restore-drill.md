@@ -162,3 +162,7 @@ Known false positive (inverse): a capacity refusal (exit 2) writes neither evide
 - `infra.md#stellarindex_timescale_backup_none_24h`: the backup chain itself; `infra.md#stellarindex_zfs_pool_low_space`: the drill restores onto the shared pool, hence the backup-derived capacity floor.
 - `ch-schema-restore.md`: the ClickHouse half of a restore; the optional CH re-derive stage exercises the same path.
 - `docs/adr/0043-backup-and-restore-strategy.md`: §1 (repo2, drilled monthly), §3 (drill logging is append-only evidence).
+
+## Why the scheduled drill never ran until 2026-09
+
+Three blockers stacked, each hidden by the one before. `PrivateTmp=true` hid the `/var/tmp` drill dataset inside the service namespace (`226/NAMESPACE`, before `ExecStart`). `NoNewPrivileges=true` then blocked `sudo` dropping privilege to postgres. Then pgbackrest-as-postgres could not traverse `/var/lib/stellarindex`. The dataset moved to the postgres-owned `/srv/restore-drill` and the drill runs on its own unit. Every passing record before that came from manual runs, which have no namespace. A unit test that runs the script outside systemd cannot see any of the three. Source: `git show 52aacb972:docs/operations/v1-launch-plan.md`, lines 1270-1280.
