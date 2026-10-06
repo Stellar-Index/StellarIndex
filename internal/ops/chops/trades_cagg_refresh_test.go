@@ -137,6 +137,25 @@ func TestRefreshTradesCAGGsOverLedgers_EveryViewInOrderCoveringTheEdgeBuckets(t 
 	}
 }
 
+// A late trade lands in a bucket older than prices_1m's 15-minute policy
+// start_offset (migration 0187): only this explicit refresh reaches it.
+func TestRefreshTradesCAGGsOverLedgers_LateTradeBucketOlderThanPolicyLookback(t *testing.T) {
+	f := &fakeTradesCAGGStore{
+		from: testCAGGNow.Add(-40 * time.Minute),
+		to:   testCAGGNow.Add(-35 * time.Minute),
+	}
+	if err := refreshTradesCAGGsOverLedgers(context.Background(), f, 62_000_000, 62_000_100, testCAGGNow, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	w, ok := f.windows["prices_1m"]
+	if !ok {
+		t.Fatalf("prices_1m not refreshed; refreshed %v", f.refreshed)
+	}
+	if w[0].After(f.from) || w[1].Before(f.to) {
+		t.Errorf("prices_1m window [%s,%s] does not cover the late span [%s,%s]", w[0], w[1], f.from, f.to)
+	}
+}
+
 // A view built on a failed one would re-materialise from stale input.
 func TestRefreshTradesCAGGsOverLedgers_StopsAtTheFirstFailure(t *testing.T) {
 	f := &fakeTradesCAGGStore{from: time.Unix(1_700_000_000, 0), to: time.Unix(1_700_100_000, 0), failView: "prices_1m"}
