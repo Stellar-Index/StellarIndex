@@ -1734,7 +1734,7 @@ var getAssetBySlugSQL = `
 		             first_seen_ledger, last_seen_ledger, observation_count
 		        FROM classic_assets
 		       WHERE COALESCE(slug, code) = $1
-		          OR asset_id = $1
+		          OR asset_id = ANY($3::text[])
 		      UNION ALL
 		      SELECT d.contract_id AS asset_id,
 		             NULL::text    AS code,
@@ -1744,7 +1744,7 @@ var getAssetBySlugSQL = `
 		             d.last_seen_ledger,
 		             d.event_count  AS observation_count
 		        FROM discovered_assets d
-		       WHERE d.contract_id = $1
+		       WHERE d.contract_id = ANY($3::text[])
 		         AND EXISTS (SELECT 1 FROM asset_volume_24h v WHERE v.asset_id = d.contract_id)
 		         AND NOT EXISTS (SELECT 1 FROM classic_assets c WHERE c.asset_id = d.contract_id)
 		    ) u
@@ -1821,9 +1821,9 @@ var getAssetBySlugSQL = `
 // GetAssetBySlug looks up by friendly slug (USDC, AQUA, EURC),
 // canonical asset_id (USDC-GA5Z…), OR raw code with case-insensitive
 // retry — see the SQL's WHERE clause + the handler's case-fallback
-// for the full input-shape table.
+// for the full input-shape table; asset_id matches every alias form.
 func (s *Store) GetAssetBySlug(ctx context.Context, slug string) (AssetRow, error) {
-	r, err := scanAssetRow(s.db.QueryRowContext(ctx, getAssetBySlugSQL, slug, canonical.NativeSACContractID()))
+	r, err := scanAssetRow(s.db.QueryRowContext(ctx, getAssetBySlugSQL, slug, canonical.NativeSACContractID(), assetAliasArray(slug)))
 	if err != nil {
 		// Surface sql.ErrNoRows unwrapped so handler errors.Is checks
 		// keep matching; scanAssetRow wraps with %w which preserves it.
