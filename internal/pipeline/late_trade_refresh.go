@@ -293,6 +293,7 @@ func (r *LateTradeRefresher) flush(ctx context.Context, rateLimited bool) (next 
 			errs = append(errs, err)
 		case viewRefreshed:
 			refreshed++
+		case viewSkipped:
 		}
 		if out == viewHeld || out == viewFailed {
 			prices1mWaiting = prices1mWaiting || c.Name == "prices_1m"
