@@ -80,6 +80,13 @@ func SnapshotEntryRow(post *xdr.LedgerEntry, closeTime time.Time) (LedgerEntryCh
 	}, true
 }
 
+// isSnapshotSeedRow reports whether a ledger_entry_changes row has
+// SnapshotEntryRow's shape. Live rows never match: a fee-phase `state` row
+// carries its tx hash, and an eviction (also tx-less) is `removed`.
+func isSnapshotSeedRow(txHash string, opIndex int32, changeType string) bool {
+	return txHash == "" && opIndex == -1 && changeType == "state"
+}
+
 // entryBackfillChunk bounds each INSERT batch so a large backfill streams in
 // fixed-memory chunks rather than one giant batch.
 const entryBackfillChunk = 20_000

@@ -208,12 +208,13 @@ func keyHoldsNativeLumens(entryType, keyXDR string, sac xdr.ContractId) (bool, e
 
 // foldPreimageLumens resolves each pending key to its state as of t.Ledger
 // from the first change after it: a `state` or `restored` row carries that
-// state, a `created` row means the key did not exist yet.
+// state, a `created` row means the key did not exist yet. Snapshot seed rows
+// are skipped: they hold an entry's post-state, never a pre-image.
 func (r *NetworkStateReader) foldPreimageLumens(ctx context.Context, t *LumenTally, sac xdr.ContractId, pending []string) error {
 	if len(pending) == 0 {
 		return nil
 	}
-	const q = `SELECT key_xdr, entry_type, change_type, balance, entry_xdr
+	const q = `SELECT key_xdr, entry_type, change_type, balance, entry_xdr, tx_hash, op_index
 		FROM stellar.ledger_entry_changes
 		WHERE ledger_seq > ? AND entry_type IN (?) AND key_xdr IN (?)
 		ORDER BY ledger_seq, intra_ledger_seq`
@@ -227,12 +228,13 @@ func (r *NetworkStateReader) foldPreimageLumens(ctx context.Context, t *LumenTal
 		open[k] = true
 	}
 	for rows.Next() {
-		var key, entryType, changeType, entryXDR string
+		var key, entryType, changeType, entryXDR, txHash string
 		var balance int64
-		if err := rows.Scan(&key, &entryType, &changeType, &balance, &entryXDR); err != nil {
+		var opIndex int32
+		if err := rows.Scan(&key, &entryType, &changeType, &balance, &entryXDR, &txHash, &opIndex); err != nil {
 			return fmt.Errorf("clickhouse: lumen conservation: scan pre-image: %w", err)
 		}
-		if !open[key] {
+		if !open[key] || isSnapshotSeedRow(txHash, opIndex, changeType) {
 			continue
 		}
 		delete(open, key)
