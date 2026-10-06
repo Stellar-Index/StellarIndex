@@ -218,7 +218,10 @@ the tracked issue above, not CI.
   carries a `runbook_url` that `scripts/ci/lint-runbook-annotations.py`
   and `scripts/ci/lint-alerts-catalog.py` check.
 
-- No ad-hoc alerts; everything flows from an SLO.
+- Only the burn-rate alerts in `slo.yml` derive from an SLO. The other
+  rules in `configs/prometheus/rules.r1/` are per-subsystem symptom
+  alerts (freshness, ingest, storage, infra); each still needs a
+  runbook and passes the same lints.
 
 ### 3.2. Runbooks, not tribal knowledge
 

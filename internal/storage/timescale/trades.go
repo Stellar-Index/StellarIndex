@@ -110,13 +110,12 @@ type USDVolumeFXResolver interface {
 // return (false) on stale data, in which case the column stays
 // NULL.
 //
-// Everything else — including a pure SEP-41/SEP-41 pair where
-// neither leg is XLM nor USD-pegged — returns nil and the column
-// stays NULL — neither over-claiming USD-equivalence on unknown
+// Everything else — including a SEP-41/SEP-41 pair with no priced
+// leg (neither XLM, USD-pegged, nor a recent resolver USD price) —
+// returns nil and the column stays NULL — neither over-claiming USD-equivalence on unknown
 // quotes (would mislead downstream sums) nor silently dropping the
 // trade itself (the row still inserts; only the USD column goes
-// NULL). Valuing a pure SEP-41/SEP-41 leg needs a per-token oracle —
-// separate work, matching the boundary
+// NULL). No oracle price feeds usd_volume — separate work, matching the boundary
 // [Store.SorobanVolume24hUSDForAsset] documents for its query-time
 // equivalent.
 // LOCKSTEP: [ClassifyUSDVolumeTier] (below) mirrors this waterfall — same
