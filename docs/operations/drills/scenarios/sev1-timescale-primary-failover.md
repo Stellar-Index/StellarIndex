@@ -43,7 +43,7 @@ All services up, `/v1/readyz` ok, 14:30 UTC Tuesday, routine traffic. Oncall and
   disk-full on `pgdata` (runbook root cause #1); decide failover (promote replica, repair primary later)
   vs fix-in-place, with stated rationale.
 - **30 min, mitigate:** replica serving, either by promotion per the runbook (manual) or by freeing space
-  and restarting. Disk relief is pool-level ([zfs-pool-full.md](../../runbooks/zfs-pool-full.md)); never `drop_chunks`
+  and restarting. Disk relief is pool-level ([infra.md#stellarindex_zfs_pool_low_space](../../runbooks/infra.md#stellarindex_zfs_pool_low_space)); never `drop_chunks`
   on data tables ([db-disk-full.md](../../runbooks/db-disk-full.md)).
 - **1 h, communicate:** status page *Investigating, Identified, Mitigated*; customer post; update every 15 min.
 - **24 h:** postmortem per [§6](../../sev-playbook.md#6-after-the-incident), action items with owner and due date.

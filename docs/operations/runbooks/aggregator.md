@@ -221,7 +221,7 @@ runuser -u postgres -- psql -d stellarindex -c \
 | fx_quotes state | Cause | Action |
 | --- | --- | --- |
 | Fresh (< 2 h) | Snap-rule logic bug, FX healthy | File an issue; check recent commits to the triangulation snap path and `FXQuoteAtOrBefore`; check API and aggregator agree on `external.FXSources()` |
-| Stale (2 h - 7 d) | massive worker lagging / poll failures | `stellarindex_external_fx_feed_stale` should also fire; follow [fx-feed-stale.md](fx-feed-stale.md) |
+| Stale (2 h - 7 d) | massive worker lagging / poll failures | `stellarindex_external_fx_feed_stale` should also fire; follow [external-pollers.md](external-pollers.md#stellarindex_external_fx_feed_stale) |
 | Older than 7 d | Beyond snap lookback, every snap misses | As above; chains are dry, expect `chains_dry` too |
 | No rows | Worker never ran (fresh deploy / key missing) | Check `MASSIVE_API_KEY` in `/etc/default/stellarindex` (worker is in the API binary, NOT the indexer) |
 

@@ -503,7 +503,7 @@ ssh root@<host> "journalctl -u stellarindex-aggregator -n 200 --output=cat | gre
 
 1. Source quoting the asset is stopped: no new trade, aggregator has nothing fresh, API serves the last trade with aging `observed_at`. Signal: `stellarindex_source_last_event_unix{source=<X>}` frozen; `stellarindex_ingestion_source_stopped` may fire (it uses `for: 15m`, so it can lag this alert). Also compare `stellarindex_source_last_insert_unix` (both on the indexer at `127.0.0.1:9464`): events advancing while inserts are frozen is the stuck-cursor / duplicate-flood signature, see `cursor-stuck.md`, `ingestion-duplicate-flood.md` and the `stellarindex_serving_insert_frozen` alert. Fix: `source-stopped.md`.
 2. Aggregator running but not writing CAGGs / hot cache (CAGG refresh jobs failing: schedule misfire, SQL error in the window function). Signal: `stellarindex_timescale_cagg_stale`. Fix: `cagg-stale.md`.
-3. Aggregator running but the pair has had no VWAP write for over 120 s. The gauge is emitted at the end of every tick for every configured pair (`internal/aggregate/orchestrator/orchestrator.go` `emitStalenessGauges`, reset on each VWAP cache write); not request-driven, no `change()` in the rule, so a reading > 120 s means the pair genuinely was not published. Causes: pair not clearing the `min_usd_volume` publication gate (`$10k`/window in `/etc/stellarindex.toml`), empty windows, outlier filtering dropping everything, anomaly freeze engaged. Signal: `stellarindex_aggregator_empty_windows_total` climbing; freeze alerts (`anomaly.md#stellarindex_anomaly_freeze_engaged`); `fx-feed-stale.md` for fiat legs.
+3. Aggregator running but the pair has had no VWAP write for over 120 s. The gauge is emitted at the end of every tick for every configured pair (`internal/aggregate/orchestrator/orchestrator.go` `emitStalenessGauges`, reset on each VWAP cache write); not request-driven, no `change()` in the rule, so a reading > 120 s means the pair genuinely was not published. Causes: pair not clearing the `min_usd_volume` publication gate (`$10k`/window in `/etc/stellarindex.toml`), empty windows, outlier filtering dropping everything, anomaly freeze engaged. Signal: `stellarindex_aggregator_empty_windows_total` climbing; freeze alerts (`anomaly.md#stellarindex_anomaly_freeze_engaged`); `external-pollers.md` for fiat legs.
 4. Pair that no longer trades on-chain (long-tail asset, last trade days ago): data reality, not a bug. Only configured pair bases carry this gauge, so long-tail classic assets can never fire this alert; their staleness shows via the API `stale` flag and the sla-probe / served-value-drift alerts. Consider de-listing or flagging `stale=true`.
 5. Binary version skew: aggregator and API/indexer on different builds after a partial deploy (`stellarindex_binary_version_skew`). Signal: `-version` of `/usr/local/bin/stellarindex-aggregator` differs from `/usr/local/bin/stellarindex-api`. Fix: `binary-version-skew.md`.
 
@@ -593,7 +593,7 @@ curl -s http://localhost:9090/api/v1/query --data-urlencode \
 
 **False positives.** Right after a deploy with a NEW interval (gauge carries the old cadence until the next restart stamps the new one): self-clears within one sweep. Prometheus down or API scrape failing: `time() - gauge` keeps growing on stale samples; check `up{job="stellarindex-api"}` first.
 
-**Related.** [login_code_lockout_table_growing](api.md#stellarindex_login_code_lockout_table_growing); [worker-panicked](worker-panicked.md); [`stellarindex_auth_reaper_last_sweep_unix`](../../reference/metrics/README.md#stellarindex_auth_reaper_last_sweep_unix).
+**Related.** [login_code_lockout_table_growing](api.md#stellarindex_login_code_lockout_table_growing); [worker-panicked](infra.md#stellarindex_worker_panicked); [`stellarindex_auth_reaper_last_sweep_unix`](../../reference/metrics/README.md#stellarindex_auth_reaper_last_sweep_unix).
 
 ## stellarindex_magic_link_token_table_growing
 
@@ -861,7 +861,7 @@ Almost every refusal is a failed reserve read (`DEXTVLCache.Refresh` keeps the p
 - Not genuine: pin to the last good upstream commit. Set `EXTRA_FLAGS=-url https://github.com/stellar-expert/public-directory/archive/<commit>.tar.gz -sha256 <hex digest of that tarball>` in `/etc/default/directory-sync`, then `systemctl start directory-sync`. The pinned snapshot restores the tags; the churn ceiling still applies.
 - Do NOT re-run with `-accept-churn` to get past a refusal unless the upstream mass change is confirmed genuine (it removes the per-run ceiling on prunes, new flags and un-flags). Do NOT silence this alert: it is the only signal that a flagged issuer is priced again.
 
-**Related** [stellarindex_scam_gate_fail_open](#stellarindex_scam_gate_fail_open); [systemd-unit-failed](systemd-unit-failed.md) (a failed or refused `directory-sync` run).
+**Related** [stellarindex_scam_gate_fail_open](#stellarindex_scam_gate_fail_open); [systemd-unit-failed](infra.md#stellarindex_systemd_unit_failed) (a failed or refused `directory-sync` run).
 
 ## stellarindex_failed_auth_rate_high
 

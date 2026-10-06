@@ -48,7 +48,7 @@ API_BASE_URL=https://api.stellarindex.io bash scripts/dev/r1-smoke.sh
 
 **Verify** Re-run manually to confirm the failure is current; after the fix `stellarindex_api_smoke_failures` returns to 0 at the next timer firing (5 min).
 
-Related: `sla-probe-unit-failed.md` (latency/freshness counterpart), `healthcheck-ping-undelivered.md` (read before trusting a Healthchecks.io "down" email for this check).
+Related: `sla-probe-unit-failed.md` (latency/freshness counterpart), `healthcheck-ping.md` (read before trusting a Healthchecks.io "down" email for this check).
 
 ## stellarindex_api_smoke_stale
 
@@ -92,7 +92,7 @@ Present-but-old timestamp = frozen file (unit not completing, or directory went 
 
 **False positives** Fresh deploy: series absent until the first run lands (plus `for: 5m`); force a run, do not silence. One skipped firing (`RandomizedDelaySec=30s`) does not trip the six-miss threshold.
 
-Related: `sla-probe-stale.md`, `data-freshness.md#stellarindex_data_freshness_watchdog_silent` (frozen-textfile pattern), `healthcheck-ping-undelivered.md` (the other reason Healthchecks.io goes quiet).
+Related: `sla-probe-stale.md`, `data-freshness.md#stellarindex_data_freshness_watchdog_silent` (frozen-textfile pattern), `healthcheck-ping.md` (the other reason Healthchecks.io goes quiet).
 
 ## Related
 

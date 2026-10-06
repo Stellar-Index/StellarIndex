@@ -38,7 +38,7 @@ tests:
               team: stellarindex
               component: external-poller
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/chainlink-feed-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_chainlink_feed_stale
               summary: "Chainlink feed crypto:BTC/fiat:USD has returned no current round in 30+ min"
               description: |
                 The Chainlink ingest poller has written no current round
@@ -55,7 +55,7 @@ tests:
               team: stellarindex
               component: external-poller
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/chainlink-feed-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_chainlink_feed_stale
               summary: "Chainlink feed fiat:JPY/fiat:USD has returned no current round in 30+ min"
               description: |
                 The Chainlink ingest poller has written no current round

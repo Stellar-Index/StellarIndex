@@ -30,7 +30,7 @@ tests:
               team: stellarindex
               component: aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_ladder_write_failures
               summary: "Durable ADR-0019 freeze-ladder write failed on mark_hold (P3)"
               description: |
                 A durable freeze-ladder write (migration 0119) did not
@@ -43,7 +43,7 @@ tests:
 
                 Check the aggregator's Postgres connectivity and confirm
                 migration 0119 is applied in this environment.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_ladder_write_failures
 
   - interval: 30s
     name: no ladder write failures never fires
@@ -69,14 +69,14 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-lifecycle.md#stellarindex_api_freeze_lookup_failing
               summary: "API freeze-marker lookups are failing (P3)"
               description: |
                 The API failed to read freeze markers for 5+ minutes, so
                 /v1/price responses are served with `frozen_checked=false`
                 and a frozen pair may be published as live. Check API to
                 Redis connectivity.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-lifecycle.md#stellarindex_api_freeze_lookup_failing
 
   - interval: 30s
     name: no API freeze lookup failures never fires
@@ -105,7 +105,7 @@ tests:
               team: stellarindex
               component: aggregator
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_operator_unfreeze_rate
               summary: "Operators are manually unfreezing at a rising rate (P3)"
               description: |
                 Three or more freezes were cleared via `stellarindex-ops
@@ -115,7 +115,7 @@ tests:
                 the calibration is producing freezes that need repeated
                 manual correction — the durable fix is a threshold or
                 baseline change, not more unfreezes.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_operator_unfreeze_rate
 
   # ── auto-released freezes (mode="auto") never trip the operator rule ─
   - interval: 30s

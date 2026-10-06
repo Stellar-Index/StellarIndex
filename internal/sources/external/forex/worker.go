@@ -506,7 +506,7 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 // maxHeldRateAge bounds how long [servedSnapshot] keeps serving a rate
 // that no refresh has re-confirmed. It mirrors the fx_quotes read path's
 // own bound (fxQuotesSnapLookback in internal/storage/timescale, the
-// "7-day forex-snap lookback" of docs/operations/runbooks/fx-feed-stale.md)
+// "7-day forex-snap lookback" of docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_feed_stale)
 // so the in-memory feed and the table go dark for a ticker at the same
 // age rather than the cache serving a rate the table has already given
 // up on.

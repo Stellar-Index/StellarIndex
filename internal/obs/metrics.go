@@ -5423,7 +5423,7 @@ var NonstandardDecimalsLockstepMismatchTotal = prometheus.NewCounterVec(
 var HashdbAppendTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_hashdb_append_total",
-		Help: "Indexer hashdb.Append outcomes per ledger, labelled by outcome (ok|error). error means the drift detector is silently not recording — see the hashdb-drift-detected runbook.",
+		Help: "Indexer hashdb.Append outcomes per ledger, labelled by outcome (ok|error). error means the drift detector is silently not recording — see the hashdb runbook.",
 	},
 	[]string{"outcome"},
 )
@@ -5496,14 +5496,14 @@ var HashdbVerifyRunDurationSeconds = prometheus.NewHistogramVec(
 // (ledger sequence) is unbounded per-region cardinality, which
 // Prometheus labels must never be. `stellarindex_hashdb_drift_total
 // > 0` is the alert condition (see
-// docs/operations/runbooks/hashdb-drift-detected.md); the per-run
+// docs/operations/runbooks/hashdb.md); the per-run
 // breakdown lives in HashdbVerifyRunsTotal{outcome="drift"} and the
 // loudly-logged WARN/ERROR line (which does name the drifted
 // sequences) at the point of detection.
 var HashdbDriftTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_hashdb_drift_total",
-		Help: "Cumulative count of ledgers hashdb's periodic verify sweep found drifted (recorded hash != freshly-observed hash). Any nonzero value means upstream history was rewritten or our lake object is corrupted — see the hashdb-drift-detected runbook.",
+		Help: "Cumulative count of ledgers hashdb's periodic verify sweep found drifted (recorded hash != freshly-observed hash). Any nonzero value means upstream history was rewritten or our lake object is corrupted — see the hashdb runbook.",
 	},
 )
 

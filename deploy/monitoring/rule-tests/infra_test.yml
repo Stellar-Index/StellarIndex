@@ -53,7 +53,7 @@ tests:
               team: stellarindex
               component: infra
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/host-down.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_host_down
               summary: "Host  unreachable"
               description: |
                 node_exporter on  hasn't scraped in 2+ min.
@@ -113,7 +113,7 @@ tests:
               component: infra
               alert_family: zfs_pool_capacity
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_zfs_pool_low_space
               summary: "ZFS data pool free space low (2% of capacity free)"
               description: |
                 Under 7 % of the ZFS data pool's capacity is free (on r1's raidz1
@@ -133,7 +133,7 @@ tests:
               component: infra
               alert_family: zfs_pool_capacity
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_zfs_pool_critical_space
               summary: "ZFS data pool CRITICALLY low (2% of capacity free) (SEV-1)"
               description: |
                 Under 3.5 % of the ZFS data pool's capacity is free (on r1's
@@ -170,7 +170,7 @@ tests:
               component: infra
               alert_family: zfs_pool_capacity
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_zfs_pool_low_space
               summary: "ZFS data pool free space low (6.486% of capacity free)"
               description: |
                 Under 7 % of the ZFS data pool's capacity is free (on r1's raidz1
@@ -213,7 +213,7 @@ tests:
               team: stellarindex
               component: infra
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-thermal.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_nvme_thermal_throttle
               summary: "NVMe nvme2n1 at 75°C"
               description: |
                 Enterprise NVMe spec'd to 70 °C. Above this it throttles IO →
@@ -245,7 +245,7 @@ tests:
               team: stellarindex
               component: infra
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_nvme_smart_warn
               summary: "NVMe nvme1n1 logged new controller errors"
               description: |
                 The drive's error-information log grew — an IO error, command
@@ -280,7 +280,7 @@ tests:
               team: stellarindex
               component: infra
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/md-array-degraded.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_md_array_degraded
               summary: "mdadm array md1 on r1:9100 has a failed member disk"
               description: |
                 node_md_disks reports a disk in the `failed` state for
@@ -315,7 +315,7 @@ tests:
               team: stellarindex
               component: infra
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/filesystem-readonly.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_filesystem_readonly
               summary: "Filesystem / on r1:9100 is READ-ONLY"
               description: |
                 / (/dev/md1) has been
@@ -344,14 +344,14 @@ tests:
               team: stellarindex
               component: infra
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_nvme_critical_warning
               summary: "NVMe nvme0n1 reports a critical warning (1)"
               description: |
                 The drive controller's own critical_warning bitmask is
                 nonzero on nvme0n1 — the strongest signal this
                 alert set has, direct from the drive rather than inferred
                 from wear/spare/media counters. `smartctl -a` the device and
-                treat as the other nvme-smart.md alerts.
+                treat as the other infra.md#stellarindex_nvme_smart_warn alerts.
 
   # ── continuous WAL archiving holds the 5-min RPO between backups ──
   # 600s threshold; 14d max observed on r1 was 82s, well under it.
@@ -373,15 +373,15 @@ tests:
               team: stellarindex
               component: infra
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_wal_archive_stale
               summary: "WAL archiving on r1:9100 is 11m 40s behind"
               description: |
                 The newest archived WAL segment is over 10 minutes old.
                 Continuous WAL archiving into repo1 (and repo2) is what holds
                 the 5-min RPO between full pgBackRest backups — see
-                backup-failed.md's Step 4. Check
+                infra.md#stellarindex_timescale_backup_none_24h's Step 4. Check
                 `pg_stat_archiver.failed_count` and repo1's free space
-                (`zfs-pool-full.md`) first.
+                (`infra.md#stellarindex_zfs_pool_low_space`) first.
 
   # ── T583: no rule existed on node_textfile_scrape_error ────────────
   # Pins that a sustained textfile-collector parse error rings after
@@ -409,7 +409,7 @@ tests:
               team: stellarindex
               component: infra
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-scrape-error.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_textfile_scrape_error
               summary: "node_exporter textfile collector on r1:9100 has a scrape error"
               description: |
                 node_textfile_scrape_error{instance="r1:9100"} = 1
@@ -446,7 +446,7 @@ tests:
               name: ch-live-catchup.service
               state: failed
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/systemd-unit-failed.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_systemd_unit_failed
               summary: "systemd unit ch-live-catchup.service is in failed state"
               description: |
                 ch-live-catchup.service has been failing for 15m+, either

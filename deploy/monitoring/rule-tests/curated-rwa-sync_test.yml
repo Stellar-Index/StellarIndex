@@ -32,7 +32,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/curated-rwa-sync-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/curated-rwa-sync.md#stellarindex_curated_rwa_sync_stale
               summary: "the curated RWA sync has not recorded a run in ≥ 30h (cadence daily) — the curated arm will read unavailable at 48h"
               description: |
                 No curated-rwa-sync run has stamped `last_run_unix` in over 30
@@ -64,7 +64,7 @@ tests:
               team: stellarindex
               component: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/curated-rwa-sync-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/curated-rwa-sync.md#stellarindex_curated_rwa_sync_stale
               summary: "the curated RWA sync has not recorded a run in ≥ 30h (cadence daily) — the curated arm will read unavailable at 48h"
               description: |
                 No curated-rwa-sync run has stamped `last_run_unix` in over 30
@@ -124,7 +124,7 @@ tests:
               component: api
               curator: dune:stellar
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/curated-rwa-sync-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/curated-rwa-sync.md#stellarindex_curated_rwa_sync_refused
               summary: "the curated RWA sync is refusing to run — DUNE_API_KEY is not set on this host"
               description: |
                 The most recent curated-rwa-sync run exited without reading
@@ -160,7 +160,7 @@ tests:
               component: api
               curator: dune:stellar
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/curated-rwa-sync-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/curated-rwa-sync.md#stellarindex_curated_rwa_published_stale
               summary: "the curator's published RWA total has not been re-executed in ≥ 72h — /v1/rwa/assets serves it stale and drops it at 7 days"
               description: |
                 The curated-rwa-sync run is reading the curator's public total

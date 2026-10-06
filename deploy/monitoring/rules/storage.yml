@@ -843,7 +843,7 @@ groups:
           component: storage
           alert_family: "timescale_backup_age/{{ $labels.stanza }}"
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_timescale_backup_failed
           summary: "pgBackRest stanza {{ $labels.stanza }} last backup {{ $value | humanizeDuration }} ago"
           description: |
             Backup has missed at least one expected daily cycle (no completed
@@ -861,7 +861,7 @@ groups:
           component: storage
           alert_family: "timescale_backup_age/{{ $labels.stanza }}"
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_timescale_backup_none_24h
           summary: "No successful Postgres backup in > 24 h (SEV-1)"
           description: |
             RPO breach. At 24h+ without a backup we exceed the documented
@@ -894,7 +894,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_pgbackrest_backup_metrics_absent
           summary: "pgbackrest_exporter on {{ $labels.instance }} is up but reports no stanza — backup alerts are blind"
           description: |
             The exporter answers scrapes (up == 1) but has emitted no
@@ -926,7 +926,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_pgbackrest_backup_unit_failed
           summary: "pgbackrest-backup.service failed on {{ $labels.instance }}"
           description: |
             The nightly pgBackRest unit exited non-zero. The freshness
@@ -1379,7 +1379,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_nvme_wear_high
           summary: "NVMe {{ $labels.device }} at {{ $value | humanizePercentage }} rated write endurance"
           description: |
             Rated endurance consumed on {{ $labels.device }}. Not urgent at
@@ -1394,7 +1394,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_nvme_spare_low
           summary: "NVMe {{ $labels.device }} spare blocks down to {{ $value | humanizePercentage }}"
           description: |
             The drive is consuming its reserve block pool, which is a
@@ -1409,7 +1409,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_nvme_media_errors
           summary: "NVMe {{ $labels.device }} reported {{ $value }} new media errors in 24h"
           description: |
             Uncorrected media errors on a ZFS member. ZFS will surface

@@ -120,7 +120,7 @@ ssh root@val-01 "journalctl -u stellar-core -n 200 --no-pager \
 ## Related
 
 - `core-lag.md` — when losing peers escalates to losing sync.
-- `host-down.md` — if the host hosting stellar-core is down,
+- `infra.md#stellarindex_host_down` — if the host hosting stellar-core is down,
   peers-low is redundant (the bigger problem).
 - ADR-0004 (three-validator aspiration).
 

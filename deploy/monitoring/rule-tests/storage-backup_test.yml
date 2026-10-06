@@ -67,7 +67,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_pgbackrest_backup_metrics_absent
               summary: "pgbackrest_exporter on localhost:9854 is up but reports no stanza — backup alerts are blind"
               description: |
                 The exporter answers scrapes (up == 1) but has emitted no
@@ -104,7 +104,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_pgbackrest_backup_metrics_absent
               summary: "pgbackrest_exporter on localhost:9854 is up but reports no stanza — backup alerts are blind"
               description: |
                 The exporter answers scrapes (up == 1) but has emitted no
@@ -173,7 +173,7 @@ tests:
               component: storage
               alert_family: timescale_backup_age/stellarindex
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_timescale_backup_none_24h
               summary: "No successful Postgres backup in > 24 h (SEV-1)"
               description: |
                 RPO breach. At 24h+ without a backup we exceed the documented
@@ -188,7 +188,7 @@ tests:
               component: storage
               alert_family: timescale_backup_age/stellarindex
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_timescale_backup_failed
               summary: "pgBackRest stanza stellarindex last backup 1d 3h 46m 40s ago"
               description: |
                 Backup has missed at least one expected daily cycle (no completed
@@ -219,7 +219,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_pgbackrest_backup_unit_failed
               summary: "pgbackrest-backup.service failed on r1:9100"
               description: |
                 The nightly pgBackRest unit exited non-zero. The freshness

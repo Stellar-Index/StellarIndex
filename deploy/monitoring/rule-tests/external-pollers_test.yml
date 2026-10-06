@@ -65,7 +65,7 @@ tests:
               team: stellarindex
               component: external-poller
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-rate-rejected.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_rate_rejections
               summary: "forex sanity band is rejecting upstream rates (deviation)"
               description: |
                 The forex worker refused more than 2 upstream rates in 3 h

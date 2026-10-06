@@ -81,7 +81,7 @@ Patterns:
 ## stellarindex_archive_files_missing
 
 **Severity** P2 (ticket). MTTR 5-15 min (next daily run refills); 1-4 h manual after the fallback chain is exhausted.
-**Trigger** `archive_files_missing > 0` for 4h. Only `archive="cross-anchor"` can appear today (`internal/archivecompleteness/report.go`: `Report.Primary` is nil, so no `galexie-archive` series); Galexie's own archive is covered by [galexie-archive-contiguity](galexie-archive-contiguity.md) and [galexie-archive-tip-lag](galexie-archive-tip-lag.md). The daily timer must still be alive (`archive_completeness_last_success_timestamp` within 26 h); if older, go to [stale](#stellarindex_archive_completeness_stale).
+**Trigger** `archive_files_missing > 0` for 4h. Only `archive="cross-anchor"` can appear today (`internal/archivecompleteness/report.go`: `Report.Primary` is nil, so no `galexie-archive` series); Galexie's own archive is covered by [galexie-archive](galexie-archive.md#stellarindex_galexie_archive_gap) and [tip-lag](galexie-archive.md#stellarindex_galexie_archive_tip_lag_high). The daily timer must still be alive (`archive_completeness_last_success_timestamp` within 26 h); if older, go to [stale](#stellarindex_archive_completeness_stale).
 **Impact** `flags.reduced_redundancy = true` on API responses while the gap persists; rate data still served correctly from CAGGs. Status page may show Degraded performance if R1 is affected; it stays "Operational" if only R2/R3 are affected.
 
 **Diagnose** (5 min)
@@ -114,7 +114,7 @@ do
 done'
 ```
 
-Most of the chain `200` and few checkpoints missing: a per-checkpoint 404 the chain did not resolve last pass; do step 1. Whole chain unreachable: egress/DNS incident on the host, not an archive incident; triage [host-down](host-down.md) / [all-ingestion-down](all-ingestion-down.md) first, the next daily run refills on its own.
+Most of the chain `200` and few checkpoints missing: a per-checkpoint 404 the chain did not resolve last pass; do step 1. Whole chain unreachable: egress/DNS incident on the host, not an archive incident; triage [host-down](infra.md#stellarindex_host_down) / [all-ingestion-down](all-ingestion-down.md) first, the next daily run refills on its own.
 
 **Fix** (15 min)
 

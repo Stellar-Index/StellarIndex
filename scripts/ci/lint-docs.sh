@@ -1391,10 +1391,8 @@ else
     docs/operations/self-hosting.md
     docs/operations/multi-region-cutover.md
     docs/operations/lcm-cache-tiering.md
-    docs/operations/runbooks/zfs-degraded.md
-    docs/operations/runbooks/zfs-pool-full.md
+    docs/operations/runbooks/infra.md
     docs/operations/runbooks/zfs-snapshots.md
-    docs/operations/runbooks/nvme-smart.md
     docs/operations/runbooks/db-disk-full.md
     configs/ansible/inventory/r3.example.yml
   )
@@ -1403,7 +1401,7 @@ else
   r1_topology_must_state=(
     configs/prometheus/rules.r1/infra.yml
     deploy/monitoring/rules/infra.yml
-    docs/operations/runbooks/zfs-degraded.md
+    docs/operations/runbooks/infra.md
     docs/operations/r1-deployment-state.md
     docs/architecture/storage-considerations.md
   )

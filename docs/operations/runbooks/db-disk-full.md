@@ -22,7 +22,7 @@ severity: P1
 - `/var/lib/postgresql` mount < 10 % (or < 20 % for warning)
   sustained 1 min (or 10 min for warning).
 - Postgres logs: `could not extend file ... No space left on device`.
-- `stellarindex_zfs_pool_low_space` / `zfs-pool-full.md` firing at
+- `stellarindex_zfs_pool_low_space` / `infra.md#stellarindex_zfs_pool_low_space` firing at
   the same time — expected, because every ZFS dataset on r1 shares
   the `data` pool's free space, so `node_filesystem_avail_bytes` is
   (near-)identical across the postgres, clickhouse, minio, and
@@ -69,7 +69,7 @@ du -sh /var/lib/pgbackrest
    MinIO galexie-archive, pgBackRest repo1, or stale ZFS snapshots.
    Because all datasets share the pool, Postgres reports "its" disk
    full even when Postgres grew by nothing.
-   - Mitigation: `zfs-pool-full.md` — that runbook owns the
+   - Mitigation: `infra.md#stellarindex_zfs_pool_low_space` — that runbook owns the
      pool-level relief levers.
 
 3. **WAL fill-up.** A long-running transaction prevents WAL
@@ -103,11 +103,11 @@ du -sh /var/lib/pgbackrest
 > a disk-full response). Do NOT "adjust the retention interval" and do
 > NOT `drop_chunks` on data tables — that destroys served history to
 > buy hours of runway. Space relief on r1 is **pool-level**: follow
-> `zfs-pool-full.md` (stale ZFS snapshots, pgBackRest repo pruning,
+> `infra.md#stellarindex_zfs_pool_low_space` (stale ZFS snapshots, pgBackRest repo pruning,
 > ZSTD recompression of ClickHouse tables).
 
 - [ ] Step 1 — **create headroom NOW**, at the pool level. Don't
-      investigate first. Follow `zfs-pool-full.md`'s relief levers
+      investigate first. Follow `infra.md#stellarindex_zfs_pool_low_space`'s relief levers
       (snapshots / pgBackRest repo / recompression). A quick
       `CHECKPOINT;` (`runuser -u postgres -- psql -d stellarindex -c
       "CHECKPOINT;"`) lets WAL recycle sooner but frees little.
@@ -116,7 +116,7 @@ du -sh /var/lib/pgbackrest
       `/var/lib/postgresql` is a dataset on r1's fixed raidz1 `data`
       pool, and r1 is explicitly **not hardware-upgradeable**
       (ADR-0027; ha-plan §"Headroom levers"). No PVC to expand, no
-      5th drive. Software-only relief per `zfs-pool-full.md`.
+      5th drive. Software-only relief per `infra.md#stellarindex_zfs_pool_low_space`.
 
 - [ ] Step 3 — once green again, investigate why the pool filled:
       compression lag, snapshot accumulation, an unwindowed backfill,
@@ -146,7 +146,7 @@ du -sh /var/lib/pgbackrest
 
 ## Related
 
-- `zfs-pool-full.md` — the pool-level view of the same space; on r1
+- `infra.md#stellarindex_zfs_pool_low_space` — the pool-level view of the same space; on r1
   the two alerts fire together and that runbook owns the relief levers.
 - `node-root-disk-full.md` — the ROOT fs (where the Postgres log
   lives) has separate alerts; a log flood shows up there, not here.
@@ -166,7 +166,7 @@ du -sh /var/lib/pgbackrest
   surviving retention policy is `api_usage_events`. Removed the k8s
   PVC-expansion path (no k8s; `/var/lib/postgresql` is a ZFS dataset
   on the fixed raidz1 `data` pool, r1 not hardware-upgradeable per
-  ADR-0027) — space relief redirected to `zfs-pool-full.md`.
+  ADR-0027) — space relief redirected to `infra.md#stellarindex_zfs_pool_low_space`.
   pgBackRest reframed as local repo1 on the same pool (no staging
   upload). Commands use r1 shapes (`ssh root@136.243.90.96`,
   `runuser -u postgres -- psql -d stellarindex`); log path corrected

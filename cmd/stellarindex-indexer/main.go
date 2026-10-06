@@ -2725,7 +2725,7 @@ func hashDBVerifyPass(
 		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("drift").Observe(dur)
 		obs.HashdbDriftTotal.Add(float64(countNewDrift(res, seenDrifted)))
 		// Loud: this is the ledger-63332650-class incident — see
-		// docs/operations/runbooks/hashdb-drift-detected.md.
+		// docs/operations/runbooks/hashdb.md.
 		logger.Error("hashdb DRIFT DETECTED — upstream history rewritten or lake object corrupted",
 			"from", from, "to", to,
 			"verified", res.Verified, "drifted", res.Drifted,

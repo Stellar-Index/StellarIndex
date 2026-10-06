@@ -1701,7 +1701,7 @@ value (`internal/archivecompleteness.HashDBWindowVerifier`).
 When to look at it: `drift` means the sweep found at least one
 ledger whose current bytes don't match what the indexer originally
 recorded — see `stellarindex_hashdb_drift_total` and the
-`hashdb-drift-detected` runbook, this is the serious case.  `error`
+`hashdb` runbook, this is the serious case.  `error`
 means the sweep itself couldn't complete (bucket unreachable, hashdb
 file I/O error) — the detector went blind, not "found nothing". A
 healthy, opted-in region should show a steady `ok` rate at roughly
@@ -1735,7 +1735,7 @@ was ledger 63332650 (2026-07-08). This is the metric
 `configs/prometheus/rules.r1/hashdb.yml`); the drifted sequences
 themselves are only in the indexer's ERROR-level "hashdb DRIFT
 DETECTED" log line, not on the metric (cardinality). See the
-`hashdb-drift-detected` runbook for the full investigation +
+`hashdb` runbook for the full investigation +
 mitigation path.
 
 ## Oracle layer (indexer binary, reflector + future sources)
@@ -4588,7 +4588,7 @@ goroutine panics and is swallowed so the process stays up. **When to look:**
 any increment means that worker is DEAD until the owning unit restarts —
 `worker.Recover` does not restart it. Alert: `stellarindex_worker_panicked`
 (page). Before this metric a recovered panic was one log line and nothing
-else (#368 M4). See runbooks/worker-panicked.md.
+else (#368 M4). See runbooks/infra.md#stellarindex_worker_panicked.
 
 ### `stellarindex_explorer_swr_refresh_total`
 
@@ -4847,7 +4847,7 @@ by the weekly `galexie-mirror-verify.timer` (archival-node role, tag
 `ops-jobs`). The file is rewritten only when a comparison completes, so a
 failing run leaves the previous verdict and its stamp in place. Alerted
 on by `deploy/monitoring/rules/galexie-archive.yml`; runbook
-`docs/operations/runbooks/galexie-archive-upstream-divergence.md`.
+`docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_archive_upstream_divergence`.
 
 ### `galexie_archive_upstream_objects`
 

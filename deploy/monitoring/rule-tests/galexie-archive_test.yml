@@ -60,7 +60,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_archive_tip_lag_metric_stale
               summary: "galexie-archive tip-lag not measured (probe failing or no success >30m)"
               description: |
                 Either the last tip-lag run could not read a bucket tip
@@ -111,7 +111,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-catchup-refused.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_catchup_refused
               summary: "galexie captive core is refusing catchup (invalid local state)"
               description: |
                 The galexie captive core has logged catchup refusals ('invalid
@@ -172,7 +172,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-catchup-refused.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_catchup_probe_degraded
               summary: "galexie catchup-refusal probe is not producing usable metrics"
               description: |
                 galexie-catchup-probe.timer is not producing a usable
@@ -228,7 +228,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-catchup-refused.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_catchup_probe_degraded
               summary: "galexie catchup-refusal probe is not producing usable metrics"
               description: |
                 galexie-catchup-probe.timer is not producing a usable
@@ -282,7 +282,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-catchup-refused.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_catchup_probe_degraded
               summary: "galexie catchup-refusal probe is not producing usable metrics"
               description: |
                 galexie-catchup-probe.timer is not producing a usable
@@ -325,7 +325,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-catchup-refused.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_catchup_probe_degraded
               summary: "galexie catchup-refusal probe is not producing usable metrics"
               description: |
                 galexie-catchup-probe.timer is not producing a usable
@@ -374,7 +374,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-contiguity.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_archive_gap
               summary: "galexie-archive has 1 unexpected partition gap(s)/overlap(s)"
               description: |
                 galexie_archive_unexpected_gaps = 1 — the durable
@@ -424,7 +424,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-contiguity.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_archive_scan_degraded
               summary: "galexie-archive contiguity scan is not producing a usable verdict"
               description: |
                 The hourly partition scan is not producing a usable
@@ -479,7 +479,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-contiguity.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_archive_scan_degraded
               summary: "galexie-archive contiguity scan is not producing a usable verdict"
               description: |
                 The hourly partition scan is not producing a usable
@@ -517,7 +517,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-contiguity.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_archive_scan_degraded
               summary: "galexie-archive contiguity scan is not producing a usable verdict"
               description: |
                 The hourly partition scan is not producing a usable
@@ -589,7 +589,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-upstream-divergence.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_archive_upstream_divergence
               summary: "2 galexie-archive object(s) differ from the upstream dataset"
               description: |
                 The last galexie-mirror-verify run found mirrored objects whose
@@ -647,7 +647,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-upstream-divergence.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_archive_upstream_check_stale
               summary: "galexie mirror vs upstream comparison has not completed in 15 days"
               description: |
                 galexie-mirror-verify writes galexie_archive_upstream.prom only
@@ -674,7 +674,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-upstream-divergence.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_archive_upstream_check_stale
               summary: "galexie mirror vs upstream comparison has not completed in 15 days"
               description: |
                 galexie-mirror-verify writes galexie_archive_upstream.prom only
