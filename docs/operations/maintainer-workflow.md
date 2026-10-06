@@ -159,6 +159,21 @@ arrangement in the launch plan's process addenda,
 work" still applies (an issue filed instead of a PR is fine, a pushed branch
 nobody can see is not).
 
+## Reading an instrument
+
+Check an instrument against a known case before trusting its verdict, and
+when two measurements disagree, suspect your own first.
+
+- A gate passes on its literal line, not its exit code: `ALL REQUIRED CHECKS
+  PASSED` from `make prepush`, `ALL CHECKS PASSED` from `verify.sh`, the
+  failure count from `r1-smoke.sh`. Piping a gate through `tee`, `head` or
+  `sed` reports the pipe's status, not the gate's.
+- A systemd oneshot's `Result` is the PREVIOUS run's, and `is-active` is
+  non-zero while it runs; use `wait_for_oneshot` in
+  `scripts/ops/ops-verdict.sh`.
+- The agent shell is zsh, so `$VAR` does not word-split.
+- State a measurement with its units and the command that produced it.
+
 ---
 
 _This file is hand-maintained. If a fact here is no longer true, update it in

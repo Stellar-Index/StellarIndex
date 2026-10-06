@@ -4,51 +4,44 @@ A protocol explorer and API for the Stellar network: complete, verified,
 per-protocol on-chain data captured from a certified raw ledger lake and
 served through a public REST + SSE API. Go, Apache-2.0, pre-v1.
 
-This file is rules. Reference material lives elsewhere and is linked at
-the bottom — read that when you need to know *why*; read this before you
-write anything.
+This file is rules. Each rule names the lint or test that enforces it; the few
+that have none are kept because breaking them is unrecoverable. Reference
+material is linked at the bottom.
 
 ## Commands
 
 ```sh
-make help              # every target
-make dev               # local dependency stack (TimescaleDB + Redis + MinIO) in docker-compose
-                       # the app binaries run on the HOST; there is no API or ClickHouse service
+make help              # every target, with its description
+make dev               # dependency stack (TimescaleDB + Redis + MinIO); app binaries run on the HOST
 make test              # unit tests, ~2 min
 make test-integration  # spins its own containers via testcontainers-go; needs Docker
 make check             # fast read-only edit-loop feedback; not push clearance
-make prepush           # THE pre-push gate: clean HEAD, strict checks, selected integration
-make verify            # underlying sequential gate used by prepush
+make lint-changed      # the lints for the files you changed
 ```
 
 - **CI on the pull request is the landing gate.** Every change lands as a PR that merges only when
   CI is green. Locally, run `make lint-changed` and `make check` before pushing; that is the whole
-  local requirement. Don't hold a push for `make prepush` or `make verify`: CI runs the same checks
-  and the integration lanes in parallel, and local gates were the landing bottleneck.
-- ALWAYS run `make lint-changed` before committing; `make hooks` makes it a pre-commit hook.
-- Run `make prepush` only when CI cannot answer the question: CI is down or billing-capped, or you
-  need a local repro of a CI failure. It needs its literal `ALL REQUIRED CHECKS PASSED`, runs in the
-  BACKGROUND (it can exceed 10 minutes), and never runs two at once or beside heavy agent work.
-  Profiles: [docs/contributing/local-verification.md](docs/contributing/local-verification.md).
+  local requirement.
+- ALWAYS run `make lint-changed` before committing. `make hooks` installs it as the pre-commit hook
+  (`scripts/dev/install-hooks.sh`).
+- Run `make prepush` only when CI cannot answer the question (CI down or billing-capped, or a local
+  repro of a CI failure). It needs its literal `ALL REQUIRED CHECKS PASSED` and runs in the
+  BACKGROUND. Profiles: [docs/contributing/local-verification.md](docs/contributing/local-verification.md).
 - A red check on `main` blocks every PR's CI. Fix `main` first rather than working around it.
 - ALWAYS re-run all three generators together after editing `openapi/stellar-index.v1.yaml`:
-  `make docs-api && make docs-postman && make web-generate-api`. Two of them have silently
-  drifted onto main before.
-- NEVER write a command that needs manual network access during development. If one does, that
-  is a bug.
-- ALWAYS check `CAPABILITY-INVENTORY.md` before writing a utility. Rebuilding an existing
-  primitive is this repo's largest single source of maintenance debt.
-- To check a live deployment: `bash scripts/dev/r1-smoke.sh` (or
-  `API_BASE_URL=https://api.stellarindex.io bash scripts/dev/r1-smoke.sh`). Exit code is the
-  number of failed assertions.
+  `make docs-api && make docs-postman && make web-generate-api`. Enforced by
+  `scripts/ci/lint-docs.sh` (API reference) and the Postman and TS-types drift jobs in `ci.yml`.
+- Check a live deployment with `bash scripts/dev/r1-smoke.sh` (`API_BASE_URL=https://api.stellarindex.io`
+  for production). Exit code is the number of failed assertions.
 
 ## Money — invariant 1 (ADR-0003), the rule we reject PRs over
 
-Token amounts, reserves, prices and supplies are `canonical.Amount` (a `*big.Int` wrapper) in Go, `NUMERIC` in Postgres, and
-decimal **strings** in JSON. JSON numbers are IEEE 754 doubles and lose precision above 2^53.
+Token amounts, reserves, prices and supplies are `canonical.Amount` (a `*big.Int` wrapper) in Go,
+`NUMERIC` in Postgres, and decimal **strings** in JSON. JSON numbers are IEEE 754 doubles and lose
+precision above 2^53.
 
 ```go
-// NEVER — truncates silently above 2^63 and is our most expensive recurring bug
+// NEVER — truncates silently above 2^63; our costliest recurring bug (scripts/ci/lint-i128.sh)
 amount := int64(parts.Lo)
 
 // ALWAYS — the canonical helpers carry the full 128 bits
@@ -57,101 +50,88 @@ amount := canonical.FromUInt128Parts(uint64(p.Hi), uint64(p.Lo)) // u128
 ```
 
 - NEVER compare or accumulate money in `float64`. Use `*big.Int` or `*big.Rat`.
+  `scripts/ci/lint-migrations.sh` rejects float money columns; Go code has no lint, and a wrong
+  served number cannot be recalled.
 - ALWAYS render a partial total as a lower bound, never as a total: set the response's
-  `lower_bound` flag and name what was excluded, as `/v1/protocols`'s `tvl_total` does.
-- NEVER make a number faster by making it less true. An honest slow answer beats a fast wrong one.
+  `lower_bound` flag and name what was excluded, as `/v1/protocols`'s `tvl_total` does
+  (`internal/api/v1/dex_tvl_identity_internal_test.go`).
 
 ## Architectural invariants (ADR-backed; long-form in `docs/adr/`)
 
 The bracketed number is the invariant's stable id. Ten documents and one runtime
 error string cite "AGENTS.md invariant N" — do not renumber these.
 
-- **[2]** **NEVER integrate via Horizon** (ADR-0001). We do not run it, ingest from it, or proxy to it.
-  If a protocol's only path to us is Horizon, we do not integrate it.
+- **[2]** **NEVER integrate via Horizon** (ADR-0001). We do not run it, ingest from it, or proxy to
+  it. If a protocol's only path to us is Horizon, we do not integrate it.
+  `lint-imports.sh` rule C/no-horizon.
 - **[6]** **NEVER ingest via stellar-rpc.** Production ingest is
   `Galexie MinIO → internal/ledgerstream → internal/dispatcher → internal/sources/<venue>/decode`.
-  A new source with an `rpc *stellarrpc.Client` field, a `BackfillRange` or a `StreamLive` method
-  is wrong. stellar-rpc survives only for the `rpc-probe` diagnostic and fixture capture.
-- **[3]** **ALWAYS use S3-compatible storage, never Galexie's local filesystem backend** (ADR-0002).
-  That backend silently drops per-object metadata and warns about multi-process writes in its own
-  docstring.
-- **[7]** **ONE writer per data domain** (ADR-0031/0032). A **projected** Soroban source is written by
-  `internal/projector` and only by it; adding one means a case in
-  `projector/registry.go::buildSource` AND an arm in `pipeline/sink.go::IsProjectedEvent`.
-  NOT every Soroban source is projected — `band` (ContractCall-derived), `soroswap_router`
-  (log-only), `sdex`, the external CEX/FX connectors and the supply observers deliberately
-  write through the dispatcher instead. `IsProjectedEvent`'s default branch is the list.
+  A source with an `rpc *stellarrpc.Client` field, a `BackfillRange` or a `StreamLive` method is
+  wrong. stellar-rpc survives only for `rpc-probe` and fixture capture.
+  `lint-imports.sh` rule A/no-rpc-in-ingest.
+- **[3]** **ALWAYS use S3-compatible storage, never Galexie's local filesystem backend**
+  (ADR-0002). That backend silently drops per-object metadata; a lake written through it cannot
+  be repaired. No lint.
+- **[7]** **ONE writer per data domain** (ADR-0031/0032). A **projected** Soroban source is written
+  by `internal/projector` and only by it; adding one means a case in
+  `projector/registry.go::buildSource` AND an arm in `pipeline/sink.go::IsProjectedEvent`
+  (`internal/pipeline/sole_writer_test.go`). `band`, `soroswap_router`, `sdex`, the external
+  CEX/FX connectors and the supply observers write through the dispatcher instead;
+  `IsProjectedEvent`'s default branch is the list.
 - **[7]** **Catch-up depends on which side of that line you are on.** A projected domain uses
-  `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger>`; a
-  non-projected one uses `ch-rebuild` (`-sdex`, `-contract-calls`). NEVER add a bespoke
-  `<source>-backfill` subcommand — those were deleted in ADR-0032 Phase 5. `-sep41` is
-  projected, so `ch-rebuild -sep41` would be a second writer; `ch-rebuild -write` refuses a
-  range the live projector is still inside. Decision table:
-  [docs/architecture/ingest-pipeline.md](docs/architecture/ingest-pipeline.md#the-replay-decision-rule).
-- **[8]** **ClickHouse is the raw lake; Postgres is the SERVED tier** (ADR-0034) — the recent working set,
-  not the full archive. "100% coverage" means the ClickHouse substrate captured everything; the
-  served tier is verified faithful only within what it holds. `/v1/coverage` publishes both axes:
-  `lake_complete` is the archive's genesis-to-tip claim, `complete` is additionally gated by the
-  projection window. "Retention-scoped" means scoped to what has been PROJECTED — NOT a database
-  drop policy.
-- **[8]** **NEVER put a retention policy on `trades`.** Migration 0031 removed the old 90-day one and
-  storage is not a constraint. A `drop_after` on `trades` is drift — remove it.
+  `stellarindex-ops projector-replay`; a non-projected one uses `ch-rebuild` (`-sdex`,
+  `-contract-calls`). NEVER add a bespoke `<source>-backfill` subcommand: it is a second writer.
+  `backfill` and `ch-rebuild -write` refuse projected sources and live ranges
+  (`TestBackfill_RefusesProjectedSources`, `internal/ops/chops/ch_rebuild_test.go`). Decision
+  table: [docs/architecture/ingest-pipeline.md](docs/architecture/ingest-pipeline.md#the-replay-decision-rule).
+- **[8]** **ClickHouse is the raw lake; Postgres is the SERVED tier** (ADR-0034) — the recent
+  working set, not the full archive. `/v1/coverage` publishes both axes: `lake_complete` is the
+  archive's genesis-to-tip claim, `complete` is additionally gated by the projection window.
+- **[8]** **NEVER put a retention policy on `trades`.** Storage is not a constraint
+  (`internal/storage/timescale/retention_policy_test.go`).
 - **[4]** **`internal/` is private, `pkg/` is the public SemVer surface** (ADR-0005). One Go module.
-- **[5]** **NEVER put a validator key on disk unencrypted** (ADR-0004).
+  `lint-imports.sh` rule L/pkg-purity.
+- **[5]** **NEVER put a validator key on disk unencrypted** (ADR-0004). No lint; a leaked key
+  cannot be un-leaked.
 
 ## Domain rules that will catch you out
 
-Full evidence for each: [docs/architecture/domain-traps.md](docs/architecture/domain-traps.md).
+Evidence for each: [docs/architecture/domain-traps.md](docs/architecture/domain-traps.md).
 
 - **ALWAYS key an asset on `(code, issuer)`, a SAC address, or `native` — NEVER on code alone.**
-  Code alone is an impersonation vector; a scam token can claim `USDC`.
+  A scam token can claim `USDC` (`internal/api/v1/oracle_identity_gate_test.go`).
 - **ALWAYS loop `canonical.AssetAliases` on every asset-id read path.** XLM has three disjoint
-  identities (`native`, `crypto:XLM`, its SAC) and they are different venue populations. A read
-  path that handles one silently under-reports.
+  identities (`native`, `crypto:XLM`, its SAC); handling one silently under-reports
+  (`internal/canonical/alias_registry_test.go`).
 - **ALWAYS correlate a Soroswap `SwapEvent` with the immediately-following `SyncEvent`** by
-  `(ledger, tx_hash, op_index)`. `SwapEvent` carries no post-state reserves.
-- **ALWAYS group all 8 Phoenix events** to reconstruct one swap. It emits one event per field.
-- **ALWAYS gate a decoder on contract identity, never on topic alone** (ADR-0035). Comet uses a
-  shared `("POOL", <event>)` topic across every pool contract; any Balancer-v1 deployment looks
-  identical on the wire.
-- **ALWAYS type-test a SEP-41 `transfer` body before `MustI128()`** — it is either a bare `i128`
-  or a map carrying `amount` + `to_muxed_id`.
-- **NEVER assume off-chain amount scaling is uniform.** On-chain uses per-asset decimals, CEX and
-  aggregators use 10^8, FX uses 10^6. Read the per-source `Decimals` field.
-- **NEVER drop an unmapped oracle symbol.** Record it verbatim as `raw:<symbol>`. Raw rows are
-  record-layer only: NEVER let one reach VWAP, a pair leg or a supply key — filter on
-  `Asset.IsMapped()` or `asset NOT LIKE 'raw:%'`.
-- **NEVER normalise a stablecoin at ingest.** Store the real pair; the aggregator maps
-  `USDT→USD` at compute time. Eager normalisation hides a depeg.
-- **NEVER auto-populate `internal/currency` from an external aggregator.** It is a hand-vetted
-  trust surface; adding a currency is a code change.
+  `(ledger, tx_hash, op_index)` (`internal/sources/soroswap/adapter_test.go`).
+- **ALWAYS group all 8 Phoenix events** to reconstruct one swap
+  (`TestDecoder_Decode_completesAfterEighthField`).
+- **ALWAYS gate a decoder on contract identity, never on topic alone** (ADR-0035). Comet's
+  `("POOL", <event>)` topic is shared by every Balancer-v1 deployment. Each source's
+  `adapter_test.go` carries a foreign-contract gate test.
+- **ALWAYS type-test a SEP-41 `transfer` body before `MustI128()`** — it is a bare `i128` or a map
+  carrying `amount` + `to_muxed_id` (`FuzzTransferAmount`, `FuzzTransferBodyShapes`).
+- **NEVER assume off-chain amount scaling is uniform.** CEX and aggregators use 10^8, FX 10^6;
+  read the per-source `Decimals` field (`internal/sources/external/amount_scale_test.go`).
+- **NEVER drop an unmapped oracle symbol.** Record it verbatim as `raw:<symbol>`, and NEVER let a
+  raw row reach VWAP, a pair leg or a supply key (`internal/canonical/asset_raw_test.go`,
+  `internal/aggregate/mev/cascade_raw_test.go`).
+- **NEVER normalise a stablecoin at ingest.** Store the real pair; the aggregator maps `USDT→USD`
+  at compute time. No lint: eager normalisation hides a depeg, and no static check can tell it
+  from a legitimate pair.
 - **ALWAYS gate a Soroban backfill behind a per-WASM-hash decoder audit.** Contracts upgrade in
-  place: live ingest sees only current WASM, backfill sees every prior version.
-- **ALWAYS decode by map field name and dispatch on `topic[0]`** — never by field position or
-  contract address.
+  place; backfill sees every prior version
+  (`ch_rebuild_backfillsafe_test.go`).
+- **ALWAYS collapse `stellar.operations` and `stellar.transactions` on their identity before
+  aggregating** — they are `ReplacingMergeTree` and hold rows twice
+  (`scripts/ci/lint-lake-dedup.sh`; [docs/contributing/lake-reads.md](docs/contributing/lake-reads.md)).
 
 ## Working style
 
 - Dry and concise. No preambles, no flattery. Comments explain *why*, not *what*.
-- Smallest PR that advances one thing. NEVER "ship and clean up later".
-- ALWAYS state a measurement with its units and the command that produced it. A performance claim
-  without a number is not a claim.
-- NEVER report a gate as passing on its exit code alone. Require `ALL REQUIRED CHECKS PASSED` from
-  `make prepush`, `ALL CHECKS PASSED` from `verify.sh`, or the failure count from `r1-smoke.sh`.
-  NEVER pipe a gate through `tee`, `head` or `sed` —
-  you then read the pipe's status, not the gate's.
-- **ALWAYS check an instrument against a known case before trusting its verdict**, and when two
-  measurements disagree suspect your own first. `stellar.operations` and `stellar.transactions`
-  are `ReplacingMergeTree`, so an unmerged recent partition can hold a row twice: count with
-  `FINAL` or `uniqExact` on the sort key; a oneshot's `Result` is the PREVIOUS run's and
-  `is-active` is non-zero while it runs (use `wait_for_oneshot` in `scripts/ops/ops-verdict.sh`); this shell is zsh, so `$VAR`
-  does not word-split.
-- ALWAYS check for prior art before starting on a symptom: `gh pr list --state all --search`,
-  `git branch -r | grep`, the runbook, and the backlog. Record the result in the PR body.
-- Every pushed branch gets a PR in the same session. A branch with no PR is not work, it is loss.
-- Commit messages: see [CONTRIBUTING.md](CONTRIBUTING.md#commit-messages).
-- NEVER add a `CHANGELOG.md` entry in a PR; `[Unreleased]` is generated at the release cut and the file
-  keeps only the newest five releases ([CONTRIBUTING.md §Changelog](CONTRIBUTING.md#changelog)).
+- Smallest PR that advances one thing. Every pushed branch gets a PR in the same session.
+- Commit messages, prior art and the changelog policy: [CONTRIBUTING.md](CONTRIBUTING.md#commit-messages).
 
 ## Where the reference material is
 
@@ -159,6 +139,7 @@ Full evidence for each: [docs/architecture/domain-traps.md](docs/architecture/do
 |---|---|
 | [docs/architecture/overview.md](docs/architecture/overview.md) | The system, its flows, and what lives in which directory |
 | [docs/architecture/domain-traps.md](docs/architecture/domain-traps.md) | The evidence behind the domain rules above |
+| [CAPABILITY-INVENTORY.md](CAPABILITY-INVENTORY.md) | Existing primitives — search it before writing a utility |
 | [docs/contributing/task-recipes.md](docs/contributing/task-recipes.md) | "Add a source", "add an endpoint", "recover from disaster" |
 | [docs/contributing/procedures/](docs/contributing/procedures/) | Nine step-by-step procedures with gate checklists |
 | [docs/adr/](docs/adr/) | Decisions and their rationale (numbered, immutable) |

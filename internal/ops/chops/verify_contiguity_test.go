@@ -131,7 +131,7 @@ func TestECFloorSegments(t *testing.T) {
 		wantHasPending, wantHasGated                               bool
 	}{
 		{
-			// The exact scenario documented in AGENTS.md: range straddles the
+			// The motivating scenario: range straddles the
 			// known live-ingest floor.
 			name: "floor-strictly-inside-range",
 			from: 62_000_000, to: 64_000_000, ecFloor: 63_050_000,
