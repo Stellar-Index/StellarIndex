@@ -9,7 +9,7 @@ status: superseded by ADR-0050 / [ha-plan.md](../ha-plan.md) (2026-08-21) — ra
 > **DEPLOYMENT STATE (audit 2026-07-16):** the 3-region topology below is a
 > **ratified DESIGN, not the deployed reality.** Only **R1** is provisioned
 > (R2/R3 inventory files are absent; `deploy.yml`'s region enum is `[r1]`;
-> `docs/architecture/r2-r3-bringup.md` is the bringup plan). Read this doc as
+> [`../ha-plan.md`](../ha-plan.md) §10 is the roadmap). Read this doc as
 > the target architecture, not a description of what runs today.
 
 # Multi-Region Topology
@@ -428,8 +428,9 @@ whole.
 This topology is ~3× the single-region cost envelope. HA plan §12's
 $5–8 k/month baseline now becomes **$15–24 k/month** at steady
 state, minus whatever cloud DR we drop in favour of a full third
-physical region. Hardware CapEx is 3× the per-node BOM in
-[archival-node-spec.md](archival-node-spec.md) §4 = ~$55 k one-time.
+physical region. The per-node hardware BOM was retired from
+[archival-node-spec.md](archival-node-spec.md); the ~$55 k one-time CapEx
+figure is the old 3× estimate and is not current.
 
 Trade we're making: **3× cost for ~100× availability improvement**
 over single-region + cloud DR. A single region colo outage causes
