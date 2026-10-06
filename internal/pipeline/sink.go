@@ -95,7 +95,7 @@ const (
 // mode from the projector config booleans. Extracted here (rather than
 // inlined in cmd/stellarindex-indexer) so the foot-gun-closure
 // invariant is unit-testable: for EVERY combination of these two
-// booleans, a sep41 event is written exactly once (see
+// booleans, a sole-writer source's event is written exactly once (see
 // TestSinkModeForProjector_SoleWriterInvariant).
 //
 //   - projector disabled → SinkModeAll: the events-goroutine is the
