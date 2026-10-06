@@ -2,7 +2,6 @@ package v1
 
 import (
 	"context"
-	"fmt"
 	"math/big"
 	"sync"
 	"time"
@@ -186,5 +185,6 @@ func floorRatio6(r *big.Rat) string {
 	scaled := new(big.Int).Mul(r.Num(), big.NewInt(1_000_000))
 	scaled.Quo(scaled, r.Denom())
 	q, m := new(big.Int).QuoRem(scaled, big.NewInt(1_000_000), new(big.Int))
-	return fmt.Sprintf("%s.%06d", q, m.Int64())
+	// m+1e6 renders "1dddddd"; dropping the lead digit zero-pads without narrowing m.
+	return q.String() + "." + new(big.Int).Add(m, big.NewInt(1_000_000)).String()[1:]
 }
