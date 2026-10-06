@@ -377,6 +377,31 @@ runuser -u postgres -- psql -d stellarindex -c \
 
 A row that stays put across several schedule intervals is the failing case above: refresh by hand over `[from_ts, to_ts]`, `prices_1m` first. The refresher clears the row on its next success. Only the indexer deletes rows; do not delete one by hand unless that view has been refreshed over its window.
 
+### Catching up a late-trade backlog
+
+When the windows are unknown (a SIGKILL, or late trades written before the refresher existed), size the backlog from Timescale's invalidation log, then refresh non-forced, which re-materialises only the buckets the log names:
+
+```sh
+# 1. Size it. Read-only. One line per trades cagg: bounded ranges, their hull and
+#    summed span; open-ended=2 is normal (the never-refreshed edges of history).
+#    source-log counts writes no refresh has moved into the per-view logs yet.
+#    A `below-floor` line names a view's ranges a non-forced run refuses (below).
+#    The last line gives the ledgers that cover every other pending range.
+stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml -size
+
+# 2. Catch up under the heavy-job wrapper. Each view is refreshed in day-sized
+#    CALLs that commit one by one, so no lock on prices_1m is held for the run.
+/usr/local/sbin/run-heavy-job.sh trades-cagg-catchup \
+  stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml \
+    -force=false -from <from> -to <to>
+
+# 3. Verify: re-run -size; every view should show ranges=0 outside the policies'
+#    own trailing windows.
+stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml -size
+```
+
+Step 2 ends with the same `prices_1m`-against-`trades` drift sample as the forced form. Drift there means rows changed without an invalidation (a retention drop, a `prices_1m` that was never materialised over the range): use the forced form over that range instead. The floor is `prices_1m`'s earliest materialised bucket. Below it a `prices_1m` retention drop emptied the minute rows, even after the policy is disarmed again, and logged invalidations against `twap_1h` / `twap_1d`; a non-forced twap refresh there would recompute those buckets from nothing. So `-force=false` refuses before any refresh when a twap window reaches below the floor, and the error names the window, the floor and the first trade time it accepts (the floor plus half of `twap_1d`'s minimum window). `-size` prints each view's ranges below that time on a `below-floor` line and leaves them out of the catch-up ledgers. A dropped stretch can also sit above the floor, once a forced run over older history moved the earliest bucket down. So before any refresh, `-force=false` also compares `trades` with `prices_1m` over every minute a twap bucket it would recompute reads (less the minutes its own `prices_1m` step rebuilds), a day at a time, and refuses on the first disagreement, printing the pairs. `-size` runs the same comparison over its catch-up, prints a `prices_1m gap` line for the newest disagreeing day, and moves the floor past it, so everything below is `below-floor`. Refresh those ranges with the forced form, which rebuilds `prices_1m` from `trades` first, and keep the retention policy disarmed while it runs. Both forms refuse the twaps while that policy is armed. A piece that fails with `55P03` raced the policy job over the same view; re-run step 2, since refreshing an already-materialised range is a no-op.
+
 ## Related
 
 - [config-assertion-failed](config-assertion-failed.md): the same monitoring-of-monitoring shape one layer out, and the alert that catches codified-but-not-applied config.

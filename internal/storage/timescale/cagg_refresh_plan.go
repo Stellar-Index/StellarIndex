@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -126,9 +127,10 @@ func RefreshPieces(st CAGGRefreshStep) []CAGGRefreshStep {
 // every window left unrefreshed. A view built on prices_1m is refused
 // while that view's retention policy is armed: it could drop the minute
 // rows this run just rebuilt before the view reads them, and migration
-// 0156 requires the policy disarmed for this refresh.
+// 0156 requires the policy disarmed for this refresh. Non-forced too: each
+// drop logs an invalidation against the view, which it would then apply.
 func RunCAGGRefreshStep(ctx context.Context, s CAGGStepRefresher, st CAGGRefreshStep, prices1mRetentionArmed bool) error {
-	if st.Force && st.View != prices1mView && prices1mRetentionArmed {
+	if prices1mRetentionArmed && slices.Contains(CAGGsOnPrices1m, st.View) {
 		return fmt.Errorf("refused: prices_1m's retention policy is armed, and %s is materialised from prices_1m; "+
 			"disarm it as migrations/0156_prices_1m_retention.up.sql states, confirm, and re-run", st.View)
 	}
