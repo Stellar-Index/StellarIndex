@@ -28,7 +28,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 68 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 261 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 262 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -170,6 +170,7 @@ signal lands.
 | `stellarindex_node_root_disk_warning` | same | < 20 % | ticket | [node-root-disk-warning](runbooks/infra.md#stellarindex_node_root_disk_warning) |
 | (no active alert — surfaced via API log) | `forex: fx_quotes persist failed` log line — runtime symptom of an unapplied schema migration | repeating every ~5 min | P3 | [fx-history-missing](runbooks/data-freshness.md#fx-history-missing) |
 | `stellarindex_worker_panicked` | `increase(stellarindex_worker_panics_total[10m])` | > 0 — a background worker panicked and is stopped until its unit restarts (#368 M4) | page | [infra](runbooks/infra.md#stellarindex_worker_panicked) |
+| `stellarindex_node_reboot_required` | `node_reboot_required` | == 1 for 7d (needrestart is list-only, so a pending reboot is never applied automatically) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#applying-pending-service-restarts-maintenance-step) |
 | `stellarindex_postgres_ping_failing` | `rate(stellarindex_postgres_ping_total{outcome="error"}[5m])` | > 0.5/s for > 2 min — indexer pool wedged (F-0151) | page | [postgres-ping-failing](runbooks/postgres.md#stellarindex_postgres_ping_failing) |
 | `stellarindex_timescale_connections_saturated` | `pg_stat_activity_count / pg_settings_max_connections * 100` | > 80 % for > 5 min | ticket | [pg-conns-saturated](runbooks/postgres.md#stellarindex_timescale_connections_saturated) |
 | `stellarindex_timescale_lock_table_pressure` | `sum by (instance)(pg_locks_count) / on (instance)(pg_settings_max_locks_per_transaction * pg_settings_max_connections)` | > 70 % for > 5 min | ticket | [pg-conns-saturated](runbooks/postgres.md#stellarindex_timescale_lock_table_pressure) |

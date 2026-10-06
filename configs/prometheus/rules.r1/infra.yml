@@ -581,3 +581,26 @@ groups:
             this fill rate the 3.5 % critical floor (write stalls across
             ClickHouse, MinIO and Postgres) follows within days. Find what
             is filling the pool and reclaim before the floors fire.
+
+      # needrestart is list-only, so security updates no longer restart
+      # services: the host keeps running superseded libraries until a
+      # reboot. Ticket-only with a 7d `for` — a reboot of a single-box
+      # node is a scheduled maintenance decision, never a page.
+      - alert: stellarindex_node_reboot_required
+        expr: node_reboot_required == 1
+        for: 7d
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#applying-pending-service-restarts-maintenance-step
+          summary: "{{ $labels.instance }} has needed a reboot for 7d+ (running superseded libraries or kernel)"
+          description: |
+            node_reboot_required has been 1 for a week: an unattended
+            security update installed something that only a reboot (or a
+            service restart) applies. needrestart is list-only here, so
+            nothing restarts services for us. Schedule a maintenance
+            window and see the needrestart maintenance notes in the
+            ops-job-stalled runbook before rebooting a node that is
+            running heavy jobs.
