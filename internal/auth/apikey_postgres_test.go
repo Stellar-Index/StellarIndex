@@ -691,11 +691,13 @@ func TestPostgresValidator_CacheHit_CarriesEmailVerifiedAt(t *testing.T) {
 
 // TestPostgresValidator_ActiveDecisionMatchesPlatformIsActive is the
 // COR-14 drift guard (NOT a red-before-fix test: the refactor it guards
-// is behaviour-preserving by construction). It pins that the hot path's
-// accept/reject decision agrees with [platform.APIKey.IsActive] across
-// the revoked / expired / boundary matrix, so a future change to the
-// platform predicate that this validator does not inherit fails here
-// instead of silently authenticating a dead credential.
+// is behaviour-preserving by construction). It pins that every path that
+// decides on a key's revoked/expired fields — the Postgres read, the
+// validator's cache hit and the Redis validator — agrees with
+// [platform.APIKey.IsActive] across the revoked / expired / boundary
+// matrix, so a future change to the platform predicate that one of them
+// does not inherit fails here instead of silently authenticating a dead
+// credential.
 func TestPostgresValidator_ActiveDecisionMatchesPlatformIsActive(t *testing.T) {
 	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
@@ -732,6 +734,64 @@ func TestPostgresValidator_ActiveDecisionMatchesPlatformIsActive(t *testing.T) {
 					authenticated, err, want)
 			}
 		})
+	}
+
+	for _, tc := range cases {
+		t.Run("cache hit: "+tc.name, func(t *testing.T) {
+			keys, accounts, rdb := newStubs()
+			v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
+				Keys: keys, Accounts: accounts, Cache: rdb, Now: func() time.Time { return now },
+			})
+			plaintext := "sip_isactive_cache_" + tc.name
+			// Postgres holds a LIVE key, so a cache hit that wrongly accepts
+			// or falls through authenticates and a wrong reject fails Lookup.
+			seedKey(keys, plaintext, seedActiveAccount(accounts, "isactive-cache").ID, platform.APIKeyTierAPIKey, 100)
+			seedRecord(t, rdb, plaintext, tc.revokedAt, tc.expiresAt)
+
+			_, err := v.Lookup(context.Background(), plaintext)
+			authenticated := err == nil
+			want := platform.APIKey{RevokedAt: tc.revokedAt, ExpiresAt: tc.expiresAt}.IsActive(now)
+			if authenticated != want {
+				t.Fatalf("cache-hit Lookup authenticated = %v (err %v), but platform.APIKey.IsActive = %v",
+					authenticated, err, want)
+			}
+		})
+		t.Run("redis validator: "+tc.name, func(t *testing.T) {
+			_, _, rdb := newStubs()
+			v := auth.NewRedisAPIKeyValidator(rdb, auth.WithClock(func() time.Time { return now }))
+			plaintext := "sip_isactive_redis_" + tc.name
+			seedRecord(t, rdb, plaintext, tc.revokedAt, tc.expiresAt)
+
+			_, err := v.Lookup(context.Background(), plaintext)
+			authenticated := err == nil
+			want := platform.APIKey{RevokedAt: tc.revokedAt, ExpiresAt: tc.expiresAt}.IsActive(now)
+			if authenticated != want {
+				t.Fatalf("Redis Lookup authenticated = %v (err %v), but platform.APIKey.IsActive = %v",
+					authenticated, err, want)
+			}
+		})
+	}
+}
+
+// seedRecord writes a canonical `apikey:` record, the one cache row that
+// carries revoked_at, under plaintext's hash.
+func seedRecord(t *testing.T, rdb redis.Cmdable, plaintext string, revokedAt, expiresAt time.Time) {
+	t.Helper()
+	body, err := json.Marshal(auth.APIKeyRecord{
+		KeyID:           "kid_isactive",
+		Identifier:      "signup-0011223344556677",
+		Tier:            auth.TierAPIKey,
+		RateLimitPerMin: 60,
+		PermissionsAll:  true,
+		RevokedAt:       revokedAt,
+		ExpiresAt:       expiresAt,
+	})
+	if err != nil {
+		t.Fatalf("marshal record: %v", err)
+	}
+	if err := rdb.Set(context.Background(),
+		cachekeys.APIKey(hexHashOf(plaintext)).String(), body, time.Hour).Err(); err != nil {
+		t.Fatalf("seed cache: %v", err)
 	}
 }
 

@@ -207,12 +207,15 @@ self_rel="scripts/ci/lint-metric-refs.sh"
 # "emitted". A metric documented in a `// TODO emit stellarindex_foo`
 # Go comment or a `# HELP stellarindex_foo` .prom header is NOT a
 # producer — the real emitter is a `Name:`/struct literal (Go) or the
-# bare metric line (.prom), neither of which is a comment. Go uses `//`,
-# shell + Prometheus textfile (.prom) use `#`. Trailing comments are
-# stripped too, not just full-comment lines.
+# bare metric line (.prom), neither of which is a comment. Go uses `//`
+# and `/* */`, shell + Prometheus textfile (.prom) use `#`. Trailing
+# comments are stripped too, not just full-comment lines.
+#
+# Go is scanned left to right with string and rune literals kept whole, so
+# a `/*` or `//` inside a string ("/v1/*", "https://…") opens no comment.
 strip_comments() {
   case "$1" in
-    *.go)        sed -E 's://.*$::' "$1" ;;
+    *.go)        perl -0pe 's{("(?:\\.|[^"\\\n])*"|`[^`]*`|\x27(?:\\.|[^\x27\\\n])*\x27)|//[^\n]*|/\*.*?\*/}{defined $1 ? $1 : " "}gse' "$1" ;;
     *.sh|*.prom) sed -E 's:#.*$::' "$1" ;;
     *)           cat "$1" ;;
   esac
