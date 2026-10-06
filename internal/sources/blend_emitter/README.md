@@ -130,7 +130,7 @@ audit doc's "WASM timeline" section for the correction.
 - `internal/pipeline/sink.go` — `HandleEvent` persists `DistributeEvent` / `DropEvent` / `SwapConfigEvent`; `IsProjectedEvent` claims all three (this is a projected Soroban source, ADR-0031/0032).
 - `internal/projector/registry.go` — `buildSource` registers the same gated decoder for the projector's catch-up path.
 - `internal/sources/external/registry.go` — `Registry["blend_emitter"]`: `Class: ClassLending` (same family as `blend` — protocol-emissions plumbing, not an independent market), `IncludeInVWAP: false` (never publishes a price), `BackfillSafe: true` (audited 2026-07-10, see above).
-- `cmd/stellarindex-ops/reconciliation_catalogue.go` — a `reconSource` entry so the ADR-0033 completeness verdict covers this source (`contractIDs: []string{blend_emitter.MainnetEmitter}`, matching the CCTP/comet precedent for a small curated contract set).
+- `internal/ops/chops/reconciliation_catalogue.go` — a `reconSource` entry so the ADR-0033 completeness verdict covers this source (`contractIDs: []string{blend_emitter.MainnetEmitter}`, matching the CCTP/comet precedent for a small curated contract set).
 - Storage: `blend_emitter_events` hypertable, migration
   [`0096_create_blend_emitter_events`](../../../migrations/0096_create_blend_emitter_events.up.sql).
 
