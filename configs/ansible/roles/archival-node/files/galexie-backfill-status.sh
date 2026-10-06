@@ -1,17 +1,19 @@
 #!/bin/bash
 # Pretty status snapshot for the galexie backfill. Run standalone or
 # with "watch -n 5 galexie-backfill-status" for a live view.
+# shellcheck disable=SC2059  # ANSI colour vars are deliberately in the printf formats
 set -u
 CYAN="\033[36m"; YELLOW="\033[33m"; GREEN="\033[32m"; RED="\033[31m"
 MAGENTA="\033[35m"; BLUE="\033[34m"; RESET="\033[0m"; BOLD="\033[1m"
 LOG=/var/log/galexie-backfill.log
+
+now_epoch=$(date +%s)
 
 # ─── Start time ─────────────────────────────────────────────
 start_line=$(head -1 $LOG 2>/dev/null)
 start_ts=$(echo "$start_line" | grep -oE "^time=\"[^\"]+\"" | sed "s/time=//;s/\"//g" | head -1)
 if [ -n "$start_ts" ]; then
     start_epoch=$(date -d "$start_ts" +%s 2>/dev/null || echo "")
-    now_epoch=$(date +%s)
     if [ -n "$start_epoch" ]; then
         elapsed_s=$((now_epoch - start_epoch))
         elapsed_h=$((elapsed_s / 3600))
