@@ -36,15 +36,18 @@ func InstallNetworkPassphrase(p string) {
 	if p == "" {
 		installedPassphrase.Store(nil)
 		installedNativeSAC.Store(nil)
+		networkBaseRegistry.Store(nil)
 		return
 	}
 	installedPassphrase.Store(&p)
 	sac, err := NativeAsset().sacContractIDOn(p)
 	if err != nil {
 		installedNativeSAC.Store(nil)
+		networkBaseRegistry.Store(nil)
 		return
 	}
 	installedNativeSAC.Store(&sac)
+	networkBaseRegistry.Store(&AliasRegistry{families: baseAliasFamiliesFor(sac)})
 }
 
 // installedNativeSAC caches the native-XLM SAC derived from the installed
