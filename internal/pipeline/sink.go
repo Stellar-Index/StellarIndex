@@ -96,7 +96,7 @@ const (
 // inlined in cmd/stellarindex-indexer) so the foot-gun-closure
 // invariant is unit-testable: for EVERY combination of these two
 // booleans, a sep41 event is written exactly once (see
-// TestSinkModeForProjector_Sep41SoleWriterInvariant).
+// TestSinkModeForProjector_SoleWriterInvariant).
 //
 //   - projector disabled → SinkModeAll: the events-goroutine is the
 //     ONLY writer, so it must persist every class (including sep41).

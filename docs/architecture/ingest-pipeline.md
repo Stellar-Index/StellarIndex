@@ -126,8 +126,9 @@ the specs with `Projector` set in `internal/pipeline/source_spec.go`. Everything
   covers `pipeline.ProjectorStallBound` (15 min),
   checked by `pipeline.VerifySoleWriterCAGGCoverage`. Low lag is not
   enough: a lake hole stalls the projector and a shorter lookback never
-  materialises the late rows. `sep41` is projector-only whatever the
-  flag says (`pipeline.IsSoleWriterProjected`).
+  materialises the late rows. Sole-writer sources (`SoleWriter: true` in
+  `internal/pipeline/source_spec.go`: `sep41`, `rozo`) are projector-only
+  whatever the flag says (`pipeline.IsSoleWriterProjected`).
 - Every projected write is an upsert guarded by
   `derive_generation <= EXCLUDED.derive_generation` (migrations 0110,
   0141). Live ingest writes generation 0; re-derives stamp higher.
