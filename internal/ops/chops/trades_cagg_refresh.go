@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -36,13 +37,15 @@ type tradesCAGGStore interface {
 	RefreshContinuousAggregate(ctx context.Context, viewName string, from, to time.Time) error
 	RefreshContinuousAggregateForced(ctx context.Context, viewName string, from, to time.Time) error
 	Prices1mRetentionArmed(ctx context.Context) (bool, error)
+	Prices1mEarliestBucket(ctx context.Context) (time.Time, error)
 	tradesDriftStore
 }
 
 // tradesCAGGSizer is the slice of *timescale.Store -size needs.
 type tradesCAGGSizer interface {
-	CAGGInvalidationBacklogs(ctx context.Context, views []string) ([]timescale.CAGGInvalidationBacklog, error)
+	CAGGInvalidationBacklogs(ctx context.Context, views []string, cutoff time.Time) ([]timescale.CAGGInvalidationBacklog, error)
 	TradeLedgersInTimeRange(ctx context.Context, from, to time.Time) (uint32, uint32, error)
+	Prices1mEarliestBucket(ctx context.Context) (time.Time, error)
 }
 
 type tradesCAGGRefreshArgs struct {
@@ -61,6 +64,10 @@ func parseTradesCAGGRefreshArgs(args []string) (tradesCAGGRefreshArgs, error) {
 	size := fs.Bool("size", false, "read-only: print each view's pending invalidation ranges and the ledgers to pass for a -force=false catch-up")
 	if err := fs.Parse(args); err != nil {
 		return tradesCAGGRefreshArgs{}, err
+	}
+	// `-force false` sets -force and leaves "false" here, so it would run forced.
+	if fs.NArg() > 0 {
+		return tradesCAGGRefreshArgs{}, fmt.Errorf("unexpected argument %q; write a boolean flag as -force=false", fs.Arg(0))
 	}
 	if *cfgPath == "" {
 		return tradesCAGGRefreshArgs{}, errors.New("-config is required")
@@ -107,59 +114,144 @@ func tradesCAGGRefresh(args []string) error {
 
 // sizeTradesCAGGBacklog prints, per [timescale.TradesCAGGs] view, the
 // invalidation ranges a non-forced refresh would re-materialise, then
-// their hull as the -from/-to ledgers that cover it.
+// their hull as the -from/-to ledgers that cover it. A range that starts
+// before [tradesCAGGNonForcedFloor] is left out of that hull and printed
+// on its own: the non-forced run refuses it ([refuseTwapsBelowPrices1mFloor]).
 func sizeTradesCAGGBacklog(ctx context.Context, s tradesCAGGSizer, out io.Writer) error {
 	views := make([]string, len(timescale.TradesCAGGs))
 	for i, c := range timescale.TradesCAGGs {
 		views[i] = c.Name
 	}
-	backlogs, err := s.CAGGInvalidationBacklogs(ctx, views)
+	earliest, err := s.Prices1mEarliestBucket(ctx)
+	noFloor := errors.Is(err, timescale.ErrNotFound)
+	if err != nil && !noFloor {
+		return err
+	}
+	floor := tradesCAGGNonForcedFloor(earliest)
+	if noFloor {
+		floor = time.Time{}
+	}
+	backlogs, err := s.CAGGInvalidationBacklogs(ctx, views, floor)
 	if err != nil {
 		return err
 	}
-	var lo, hi time.Time
-	widen := func(n int64, from, to time.Time) {
-		if n == 0 {
+	type hull struct{ lo, hi time.Time }
+	widen := func(h *hull, from, to time.Time) {
+		if from.IsZero() {
 			return
 		}
-		if lo.IsZero() || from.Before(lo) {
-			lo = from
+		if h.lo.IsZero() || from.Before(h.lo) {
+			h.lo = from
 		}
-		if hi.IsZero() || to.After(hi) {
-			hi = to
+		if h.hi.IsZero() || to.After(h.hi) {
+			h.hi = to
 		}
 	}
+	var catchUp hull
+	below := make([]hull, len(backlogs))
 	ts := func(n int64, t time.Time) string {
 		if n == 0 {
 			return "-"
 		}
 		return t.UTC().Format(time.RFC3339)
 	}
-	for _, b := range backlogs {
-		widen(b.Ranges, b.From, b.To)
-		widen(b.SourceRanges, b.SourceFrom, b.SourceTo)
+	for i, b := range backlogs {
+		if noFloor {
+			// No minute rows at all: nothing is safe to refresh non-forced.
+			if b.Ranges > 0 {
+				widen(&below[i], b.From, b.To)
+			}
+			if b.SourceRanges > 0 {
+				widen(&below[i], b.SourceFrom, b.SourceTo)
+			}
+		} else {
+			widen(&below[i], b.BelowFrom, b.BelowTo)
+			widen(&catchUp, b.AboveFrom, b.AboveTo)
+		}
 		if _, err := fmt.Fprintf(out, "%s %s ranges=%d span=%s from=%s to=%s open-ended=%d source-log=%d\n",
 			tradesCAGGPendingPrefix, b.View, b.Ranges, b.Span, ts(b.Ranges, b.From), ts(b.Ranges, b.To),
 			b.OpenEnded, b.SourceRanges); err != nil {
 			return err
 		}
 	}
-	if lo.IsZero() {
-		_, err := fmt.Fprintf(out, "%s none: no bounded invalidation range on any trades aggregate\n", tradesCAGGPendingPrefix)
+	for i, h := range below {
+		if h.lo.IsZero() {
+			continue
+		}
+		why := "prices_1m holds no materialised bucket"
+		if !noFloor {
+			why = "starts before " + floor.UTC().Format(time.RFC3339) + ", where twap windows reach below prices_1m's earliest bucket " +
+				earliest.UTC().Format(time.RFC3339)
+		}
+		if _, err := fmt.Fprintf(out, "%s %s below-floor from=%s to=%s: %s, so -force=false refuses it; refresh it with -force=true\n",
+			tradesCAGGPendingPrefix, backlogs[i].View, h.lo.UTC().Format(time.RFC3339), h.hi.UTC().Format(time.RFC3339), why); err != nil {
+			return err
+		}
+	}
+	if catchUp.lo.IsZero() {
+		msg := "none: no bounded invalidation range on any trades aggregate"
+		if slices.ContainsFunc(below, func(h hull) bool { return !h.lo.IsZero() }) {
+			msg = "catch-up none: every bounded range is below-floor"
+		}
+		_, err := fmt.Fprintf(out, "%s %s\n", tradesCAGGPendingPrefix, msg)
 		return err
 	}
-	hull := "[" + lo.UTC().Format(time.RFC3339) + "," + hi.UTC().Format(time.RFC3339) + "]"
+	lo, hi := catchUp.lo, catchUp.hi
+	hullStr := "[" + lo.UTC().Format(time.RFC3339) + "," + hi.UTC().Format(time.RFC3339) + "]"
 	fromLedger, toLedger, err := s.TradeLedgersInTimeRange(ctx, lo, hi)
 	if errors.Is(err, timescale.ErrNotFound) {
-		_, err = fmt.Fprintf(out, "%s hull=%s holds no trades; refresh it by ts, not by ledger\n", tradesCAGGPendingPrefix, hull)
+		_, err = fmt.Fprintf(out, "%s hull=%s holds no trades; refresh it by ts, not by ledger\n", tradesCAGGPendingPrefix, hullStr)
 		return err
 	}
 	if err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(out, "%s hull=%s ledgers=[%d,%d] catch-up: -force=false -from %d -to %d\n",
-		tradesCAGGPendingPrefix, hull, fromLedger, toLedger, fromLedger, toLedger)
+		tradesCAGGPendingPrefix, hullStr, fromLedger, toLedger, fromLedger, toLedger)
 	return err
+}
+
+// tradesCAGGNonForcedFloor is the earliest trade time a -force=false run
+// may start at: every twap window it plans ([tradesCAGGRefreshWindow])
+// then starts at or after prices_1m's earliest materialised bucket.
+func tradesCAGGNonForcedFloor(prices1mEarliest time.Time) time.Time {
+	var pad time.Duration
+	for _, c := range timescale.TradesCAGGs {
+		if slices.Contains(timescale.CAGGsOnPrices1m, c.Name) {
+			pad = max(pad, c.MinWindow/2)
+		}
+	}
+	return prices1mEarliest.Add(pad)
+}
+
+// refuseTwapsBelowPrices1mFloor refuses a non-forced plan whose twap
+// window starts before prices_1m's earliest materialised bucket. Below
+// it a past retention drop (migration 0156) emptied the minute rows, even
+// once disarmed again, and a non-forced twap refresh recomputes every
+// invalidated bucket there from them; the forced plan rebuilds prices_1m
+// from trades first.
+func refuseTwapsBelowPrices1mFloor(ctx context.Context, s tradesCAGGStore, plan []timescale.CAGGRefreshStep, from, to uint32) error {
+	earliest, err := s.Prices1mEarliestBucket(ctx)
+	if errors.Is(err, timescale.ErrNotFound) {
+		return fmt.Errorf("refused: -force=false over ledgers [%d,%d]: prices_1m holds no materialised bucket, so %s would be "+
+			"recomputed from no minute rows; re-run with -force=true, which rebuilds prices_1m from trades first",
+			from, to, strings.Join(timescale.CAGGsOnPrices1m, "/"))
+	}
+	if err != nil {
+		return err
+	}
+	for _, st := range plan {
+		if !slices.Contains(timescale.CAGGsOnPrices1m, st.View) || !st.From.Before(earliest) {
+			continue
+		}
+		return fmt.Errorf("refused: -force=false over ledgers [%d,%d]: the %s window [%s, %s) starts before prices_1m's earliest "+
+			"materialised bucket %s, and below it the minute rows were dropped by retention or never materialised; a non-forced %s "+
+			"refresh would recompute its buckets there from them. Re-run with -force=true, which rebuilds prices_1m from trades "+
+			"over the range first (keep its retention disarmed), or narrow -from to a ledger whose first trade is at or after %s",
+			from, to, st.View, st.From.UTC().Format(time.RFC3339), st.To.UTC().Format(time.RFC3339),
+			earliest.UTC().Format(time.RFC3339), st.View, tradesCAGGNonForcedFloor(earliest).UTC().Format(time.RFC3339))
+	}
+	return nil
 }
 
 // refreshTradesCAGGsOverLedgers refreshes every [timescale.TradesCAGGs]
@@ -190,6 +282,11 @@ func refreshTradesCAGGsOverLedgers(ctx context.Context, s tradesCAGGStore, from,
 	plan := timescale.PlanCAGGRefresh(timescale.TradesCAGGs, func(c timescale.CAGGSpec) (time.Time, time.Time) {
 		return tradesCAGGRefreshWindow(tsFrom, tsTo, c.MinWindow)
 	})
+	if !force {
+		if err := refuseTwapsBelowPrices1mFloor(ctx, s, plan, from, to); err != nil {
+			return err
+		}
+	}
 	for _, st := range plan {
 		st.Force = st.Force && force
 		if err := timescale.RunCAGGRefreshStep(ctx, s, st, armed); err != nil {

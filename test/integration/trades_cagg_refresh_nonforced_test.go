@@ -48,10 +48,13 @@ func TestTradesCAGGRefresh_NonForcedRebuildsOnlyInvalidatedBuckets(t *testing.T)
 	}
 
 	day := func(d, h int) time.Time { return time.Date(2025, 3, d, h, 0, 0, 0, time.UTC) }
+	// Older history, so the non-forced run's twap windows start after
+	// prices_1m's earliest bucket; otherwise it refuses.
+	seedCAGGTrade(t, ctx, db, 60_990_000, 0, time.Date(2025, 2, 20, 12, 0, 0, 0, time.UTC), 5)
 	seedCAGGTrade(t, ctx, db, 61_000_000, 0, day(10, 12), 10)
 	seedCAGGTrade(t, ctx, db, 61_000_500, 0, day(12, 12), 20)
 	seedCAGGTrade(t, ctx, db, 61_001_000, 0, day(14, 12), 30)
-	run("-from", "61000000", "-to", "61001000")
+	run("-from", "60990000", "-to", "61001000")
 	if out := run("-size"); !strings.Contains(out, "trades-cagg-refresh: pending none:") {
 		t.Fatalf("control: -size after a forced refresh = %q, want nothing pending", out)
 	}
@@ -123,6 +126,125 @@ func TestTradesCAGGRefresh_NonForcedRebuildsOnlyInvalidatedBuckets(t *testing.T)
 
 	if out := run("-size"); !strings.Contains(out, "trades-cagg-refresh: pending none:") {
 		t.Errorf("-size after the catch-up = %q, want nothing pending", out)
+	}
+}
+
+// TestTradesCAGGRefresh_NonForcedRefusesBelowDroppedPrices1m pins the
+// drop-then-disarm case: prices_1m's retention dropped its old minute rows
+// and is disarmed again, so the armed check passes, yet a non-forced run
+// over that history would recompute twap_1d from the one minute a late
+// trade re-materialises. It must refuse, and -size must keep that range
+// out of its catch-up line.
+func TestTradesCAGGRefresh_NonForcedRefusesBelowDroppedPrices1m(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	cfgPath := filepath.Join(t.TempDir(), "stellarindex.toml")
+	if err := os.WriteFile(cfgPath, []byte(fmt.Sprintf("[storage]\npostgres_dsn = %q\n", dsn)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) (string, error) {
+		t.Helper()
+		return captureStdout(t, func() error {
+			return chops.Run(append([]string{"trades-cagg-refresh", "-config", cfgPath}, args...))
+		})
+	}
+	mustRun := func(args ...string) string {
+		t.Helper()
+		out, err := run(args...)
+		if err != nil {
+			t.Fatalf("trades-cagg-refresh %v: %v\n%s", args, err, out)
+		}
+		return out
+	}
+	twapTrades := func(bucket time.Time) int {
+		t.Helper()
+		var n int
+		if err := db.QueryRowContext(ctx,
+			`SELECT coalesce(sum(trade_count), 0) FROM twap_1d WHERE bucket = $1`, bucket).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	old := time.Date(2024, 1, 10, 12, 0, 0, 0, time.UTC)
+	seedCAGGTrade(t, ctx, db, 50_000_000, 0, old, 10)
+	seedCAGGTrade(t, ctx, db, 50_000_000, 1, old.Add(30*time.Minute), 10)
+	seedCAGGTrade(t, ctx, db, 61_000_000, 0, time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC), 20)
+	seedCAGGTrade(t, ctx, db, 61_000_400, 0, time.Date(2025, 3, 5, 12, 0, 0, 0, time.UTC), 30)
+	mustRun("-from", "50000000", "-to", "50000000")
+	mustRun("-from", "61000000", "-to", "61000400")
+	oldDay := time.Date(2024, 1, 10, 0, 0, 0, 0, time.UTC)
+	if got := twapTrades(oldDay); got != 2 {
+		t.Fatalf("control: twap_1d[2024-01-10] trade_count = %d after the forced refresh, want 2", got)
+	}
+
+	// What the armed policy does on its run; the policy itself stays
+	// disarmed, as migration 0156 ships it and as the operator leaves it.
+	var dropped int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM drop_chunks('prices_1m', older_than => '2024-06-01'::timestamptz)`).Scan(&dropped); err != nil {
+		t.Fatal(err)
+	}
+	var oldMinutes int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM prices_1m WHERE bucket < '2024-06-01'`).Scan(&oldMinutes); err != nil {
+		t.Fatal(err)
+	}
+	if dropped == 0 || oldMinutes != 0 {
+		t.Fatalf("control: drop_chunks dropped %d chunk(s), %d old minute row(s) left; want the 2024 minutes gone", dropped, oldMinutes)
+	}
+	var armed bool
+	if err := db.QueryRowContext(ctx, `SELECT coalesce(bool_or(scheduled), false) FROM timescaledb_information.jobs
+		 WHERE proc_name = 'policy_retention' AND hypertable_name = 'prices_1m'`).Scan(&armed); err != nil {
+		t.Fatal(err)
+	}
+	if armed {
+		t.Fatal("control: prices_1m's retention policy is armed; this case is the disarmed one")
+	}
+
+	// Late trades: one into the dropped history, one above the floor.
+	seedCAGGTrade(t, ctx, db, 50_000_001, 0, old.Add(time.Hour), 5)
+	seedCAGGTrade(t, ctx, db, 61_000_300, 0, time.Date(2025, 3, 4, 13, 0, 0, 0, time.UTC), 7)
+
+	// The drop logged twap_1d's invalidation from the dropped chunk's start;
+	// the late 2024 trade, and the never-refreshed stretch between the two
+	// forced runs, sit below the floor too.
+	size := mustRun("-size")
+	for _, want := range []string{
+		"trades-cagg-refresh: pending twap_1d below-floor from=2023-11-09T00:00:00Z to=2025-02-27T23:59:59Z: starts before 2025-03-03T00:00:00Z, " +
+			"where twap windows reach below prices_1m's earliest bucket 2025-03-01T12:00:00Z, so -force=false refuses it; refresh it with -force=true\n",
+		"trades-cagg-refresh: pending prices_1m below-floor from=2024-01-10T13:00:00Z to=",
+		"trades-cagg-refresh: pending hull=[2025-03-04T13:00:00Z,2025-03-04T13:00:00Z] ledgers=[61000300,61000300] catch-up: -force=false -from 61000300 -to 61000300\n",
+	} {
+		if !strings.Contains(size, want) {
+			t.Errorf("-size output lacks %q:\n%s", want, size)
+		}
+	}
+	out, err := run("-force=false", "-from", "50000000", "-to", "50000001")
+	if err == nil || !strings.Contains(err.Error(), "the twap_1h window [2024-01-10T10:30:00Z, 2024-01-10T14:30:00Z)") ||
+		!strings.Contains(err.Error(), "starts before prices_1m's earliest materialised bucket 2025-03-01T12:00:00Z") {
+		t.Errorf("non-forced over the dropped range: err = %v, want a refusal naming the twap window and the floor\n%s", err, out)
+	}
+	if got := twapTrades(oldDay); got != 2 {
+		t.Errorf("twap_1d[2024-01-10] trade_count = %d after the refusal, want 2: it was recomputed from the emptied minute rows", got)
+	}
+
+	// The catch-up -size suggested passes the guard.
+	if out := mustRun("-force=false", "-from", "61000300", "-to", "61000300"); !strings.Contains(out, " forced=false ") {
+		t.Errorf("no non-forced success line for the suggested catch-up: %q", out)
+	}
+
+	// The remedy: forced rebuilds prices_1m from trades, then the twaps.
+	mustRun("-from", "50000000", "-to", "50000001")
+	if got := twapTrades(oldDay); got != 3 {
+		t.Errorf("twap_1d[2024-01-10] trade_count = %d after the forced remedy, want 3", got)
 	}
 }
 

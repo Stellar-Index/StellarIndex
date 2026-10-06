@@ -370,6 +370,21 @@ func (s *Store) RefreshContinuousAggregateForced(ctx context.Context, viewName s
 	return s.refreshCAGG(ctx, viewName, from, to, CAGGRefreshTimeout(to.Sub(from)), true)
 }
 
+// Prices1mEarliestBucket returns prices_1m's earliest materialised bucket
+// (the view is materialized_only, migration 0172), [ErrNotFound] when it
+// holds none. Below it, minute rows were dropped or never materialised.
+func (s *Store) Prices1mEarliestBucket(ctx context.Context) (time.Time, error) {
+	var b time.Time
+	err := s.db.QueryRowContext(ctx, `SELECT bucket FROM prices_1m ORDER BY bucket LIMIT 1`).Scan(&b)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, ErrNotFound
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("timescale: Prices1mEarliestBucket: %w", err)
+	}
+	return b, nil
+}
+
 // Prices1mRetentionArmed reports whether migration 0156's retention
 // policy on prices_1m is scheduled. It matches on the view name, as that
 // migration requires; no policy reads as not armed.

@@ -766,6 +766,9 @@ Subcommands:
                           one committed day-sized CALL at a time; -size is
                           read-only and prints each view's pending ranges
                           and the -from/-to ledgers that cover them.
+                          -force=false refuses a range whose twap windows
+                          reach below prices_1m's earliest bucket (a past
+                          retention drop); -size lists those as below-floor.
   ch-supply -config PATH -from N -to N [-ch-addr H:P] [-top N] [-final] [-seed-flows]
                           Derive every token's total supply from the lake by
                           summing CAP-67 classic + SEP-41 mint/burn/clawback

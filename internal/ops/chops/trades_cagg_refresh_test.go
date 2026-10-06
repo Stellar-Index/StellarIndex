@@ -16,13 +16,16 @@ import (
 )
 
 type fakeTradesCAGGStore struct {
-	from, to  time.Time
-	spanErr   error
-	failView  string
-	armed     bool
-	refreshed []string
-	forced    map[string]bool
-	windows   map[string][2]time.Time
+	from, to time.Time
+	spanErr  error
+	failView string
+	armed    bool
+	// earliest is prices_1m's earliest bucket; zero puts no floor in the way.
+	earliest    time.Time
+	earliestErr error
+	refreshed   []string
+	forced      map[string]bool
+	windows     map[string][2]time.Time
 	// driftAt, when set, is a minute where prices_1m disagrees with trades.
 	driftAt  time.Time
 	compared [][2]time.Time
@@ -50,6 +53,10 @@ func (f *fakeTradesCAGGStore) LedgerRangeToTimeRange(context.Context, uint32, ui
 
 func (f *fakeTradesCAGGStore) Prices1mRetentionArmed(context.Context) (bool, error) {
 	return f.armed, nil
+}
+
+func (f *fakeTradesCAGGStore) Prices1mEarliestBucket(context.Context) (time.Time, error) {
+	return f.earliest, f.earliestErr
 }
 
 func (f *fakeTradesCAGGStore) RefreshContinuousAggregate(_ context.Context, view string, from, to time.Time) error {
@@ -266,6 +273,7 @@ func TestParseTradesCAGGRefreshArgs(t *testing.T) {
 		{"size takes no range", []string{"-config", "c", "-size", "-from", "1"}, tradesCAGGRefreshArgs{}, "takes only -config, not -from"},
 		{"size takes no force", []string{"-config", "c", "-size", "-force=false"}, tradesCAGGRefreshArgs{}, "takes only -config, not -force"},
 		{"no config", []string{"-from", "1", "-to", "2"}, tradesCAGGRefreshArgs{}, "-config is required"},
+		{"spaced bool", []string{"-config", "c", "-from", "1", "-to", "2", "-force", "false"}, tradesCAGGRefreshArgs{}, `unexpected argument "false"`},
 		{"no range", []string{"-config", "c", "-force=false"}, tradesCAGGRefreshArgs{}, "-from and -to are required"},
 		{"inverted range", []string{"-config", "c", "-from", "3", "-to", "2"}, tradesCAGGRefreshArgs{}, "-from and -to are required"},
 		{"range past uint32", []string{"-config", "c", "-from", "1", "-to", "4294967296"}, tradesCAGGRefreshArgs{}, "-from and -to are required"},
@@ -332,12 +340,22 @@ func TestRefreshTradesCAGGsOverLedgers_NonForcedRefusesTwapsWhileRetentionIsArme
 }
 
 type fakeTradesCAGGSizer struct {
-	backlogs   []timescale.CAGGInvalidationBacklog
-	ledgersErr error
-	asked      [2]time.Time
+	backlogs    []timescale.CAGGInvalidationBacklog
+	ledgersErr  error
+	asked       [2]time.Time
+	earliest    time.Time
+	earliestErr error
+	cutoff      time.Time
 }
 
-func (f *fakeTradesCAGGSizer) CAGGInvalidationBacklogs(_ context.Context, views []string) ([]timescale.CAGGInvalidationBacklog, error) {
+func (f *fakeTradesCAGGSizer) Prices1mEarliestBucket(context.Context) (time.Time, error) {
+	return f.earliest, f.earliestErr
+}
+
+// CAGGInvalidationBacklogs splits each log's hull at cutoff, as the
+// store splits each entry.
+func (f *fakeTradesCAGGSizer) CAGGInvalidationBacklogs(_ context.Context, views []string, cutoff time.Time) ([]timescale.CAGGInvalidationBacklog, error) {
+	f.cutoff = cutoff
 	out := make([]timescale.CAGGInvalidationBacklog, 0, len(views))
 	for _, v := range views {
 		b := timescale.CAGGInvalidationBacklog{View: v}
@@ -346,9 +364,46 @@ func (f *fakeTradesCAGGSizer) CAGGInvalidationBacklogs(_ context.Context, views 
 				b = fb
 			}
 		}
+		widen := func(lo, hi *time.Time, from, to time.Time) {
+			if lo.IsZero() || from.Before(*lo) {
+				*lo = from
+			}
+			if hi.IsZero() || to.After(*hi) {
+				*hi = to
+			}
+		}
+		for _, r := range []struct {
+			n        int64
+			from, to time.Time
+		}{{b.Ranges, b.From, b.To}, {b.SourceRanges, b.SourceFrom, b.SourceTo}} {
+			if r.n == 0 {
+				continue
+			}
+			if r.from.Before(cutoff) {
+				b.Below += r.n
+				widen(&b.BelowFrom, &b.BelowTo, r.from, minTime(r.to, cutoff))
+			}
+			if !r.to.Before(cutoff) {
+				widen(&b.AboveFrom, &b.AboveTo, maxTime(r.from, cutoff), r.to)
+			}
+		}
 		out = append(out, b)
 	}
 	return out, nil
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }
 
 func (f *fakeTradesCAGGSizer) TradeLedgersInTimeRange(_ context.Context, from, to time.Time) (uint32, uint32, error) {
@@ -398,5 +453,96 @@ func TestSizeTradesCAGGBacklog(t *testing.T) {
 	if err := sizeTradesCAGGBacklog(context.Background(), &fakeTradesCAGGSizer{}, &out); err != nil ||
 		!strings.HasSuffix(out.String(), "trades-cagg-refresh: pending none: no bounded invalidation range on any trades aggregate\n") {
 		t.Errorf("nothing pending: err = %v, out %q", err, out.String())
+	}
+}
+
+// A drop-then-disarm: retention emptied prices_1m below its earliest
+// bucket and is disarmed again. A non-forced run whose twap windows reach
+// below that bucket refuses before any CALL; one starting at the floor runs.
+func TestRefreshTradesCAGGsOverLedgers_NonForcedRefusesTwapWindowsBelowPrices1mFloor(t *testing.T) {
+	earliest := time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)
+	floor := tradesCAGGNonForcedFloor(earliest)
+	if want := earliest.Add(36 * time.Hour); !floor.Equal(want) {
+		t.Fatalf("floor = %s, want %s: twap_1d's half MinWindow past the earliest bucket", floor, want)
+	}
+	for _, c := range []struct {
+		name    string
+		from    time.Time
+		force   bool
+		wantErr string
+	}{
+		{"below the floor", floor.Add(-time.Second), false, "the twap_1d window [2025-02-28T23:59:59Z"},
+		{"far below", time.Date(2024, 1, 10, 0, 0, 0, 0, time.UTC), false, "narrow -from to a ledger whose first trade is at or after 2025-03-02T12:00:00Z"},
+		{"at the floor", floor, false, ""},
+		{"forced below", time.Date(2024, 1, 10, 0, 0, 0, 0, time.UTC), true, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeTradesCAGGStore{from: c.from, to: c.from.Add(time.Hour), earliest: earliest}
+			var out bytes.Buffer
+			err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, c.force, testCAGGNow, &out)
+			if c.wantErr == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.wantErr) || !strings.Contains(err.Error(), "-force=true") {
+				t.Fatalf("err = %v, want a refusal containing %q and naming -force=true", err, c.wantErr)
+			}
+			if len(f.refreshed) != 0 {
+				t.Errorf("refreshed %v before refusing", f.refreshed)
+			}
+		})
+	}
+
+	f := &fakeTradesCAGGStore{from: floor, to: floor.Add(time.Hour), earliestErr: timescale.ErrNotFound}
+	err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, false, testCAGGNow, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "prices_1m holds no materialised bucket") || len(f.refreshed) != 0 {
+		t.Fatalf("empty prices_1m: err = %v, refreshed %v; want a refusal before any CALL", err, f.refreshed)
+	}
+}
+
+// -size leaves ranges below the floor out of the catch-up and names them.
+func TestSizeTradesCAGGBacklog_RangesBelowPrices1mFloor(t *testing.T) {
+	d := func(day int) time.Time { return time.Date(2025, 3, day, 0, 0, 0, 0, time.UTC) }
+	f := &fakeTradesCAGGSizer{earliest: d(10), backlogs: []timescale.CAGGInvalidationBacklog{
+		{View: "prices_1m", Ranges: 1, From: d(20), To: d(21)},
+		// A retention drop's invalidation, and one straddling the floor.
+		{View: "twap_1d", Ranges: 2, From: d(1), To: d(15), SourceRanges: 1, SourceFrom: d(2), SourceTo: d(5)},
+	}}
+	var out bytes.Buffer
+	if err := sizeTradesCAGGBacklog(context.Background(), f, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"trades-cagg-refresh: pending twap_1d below-floor from=2025-03-01T00:00:00Z to=2025-03-11T12:00:00Z: starts before " +
+			"2025-03-11T12:00:00Z, where twap windows reach below prices_1m's earliest bucket 2025-03-10T00:00:00Z, so -force=false " +
+			"refuses it; refresh it with -force=true\n",
+		"trades-cagg-refresh: pending hull=[2025-03-11T12:00:00Z,2025-03-21T00:00:00Z] ledgers=[61000000,61500000] catch-up: -force=false -from 61000000 -to 61500000\n",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q in:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "prices_1m below-floor") {
+		t.Errorf("flagged prices_1m, whose range is above the floor:\n%s", out.String())
+	}
+	if f.asked != [2]time.Time{d(11).Add(12 * time.Hour), d(21)} {
+		t.Errorf("catch-up ledgers looked up over %v, want [floor, 03-21]", f.asked)
+	}
+
+	out.Reset()
+	f.backlogs = f.backlogs[1:]
+	f.backlogs[0].To = d(9)
+	if err := sizeTradesCAGGBacklog(context.Background(), f, &out); err != nil ||
+		!strings.HasSuffix(out.String(), "trades-cagg-refresh: pending catch-up none: every bounded range is below-floor\n") {
+		t.Errorf("all below the floor: err = %v, out %q", err, out.String())
+	}
+
+	out.Reset()
+	f.earliestErr = timescale.ErrNotFound
+	if err := sizeTradesCAGGBacklog(context.Background(), f, &out); err != nil ||
+		!strings.Contains(out.String(), "twap_1d below-floor from=2025-03-01T00:00:00Z to=2025-03-09T00:00:00Z: prices_1m holds no materialised bucket") {
+		t.Errorf("empty prices_1m: err = %v, out %q", err, out.String())
 	}
 }
