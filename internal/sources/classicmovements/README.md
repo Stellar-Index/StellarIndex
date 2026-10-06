@@ -234,22 +234,16 @@ per-op-type:**
   when the probe finds zero fidelity for the window, rather than
   quietly under-reporting liquidations.
 
-**Current era**: as of this writing, `ledger_entry_changes`' real
-per-op fidelity starts at ~ledger 61,996,000 (research §3.2) —
-ALREADY PAST the P23 boundary (58,762,517) this command hard-clamps
-to. Every window this decode surface can address today therefore
-reports `LP entry-changes N/A` for 100% of LP ops and skips 100% of
-CAP-0038 checks, honestly and by design — confirmed against REAL
-mainnet LP deposit/withdraw op bytes in `real_bytes_test.go`'s
+**Current era**: `ledger_entry_changes`' native per-op fidelity starts
+at ~ledger 61,996,000 (research §3.2), past the P23 boundary
+(58,762,517) this command hard-clamps to; Phase 0's `ch-backfill` over
+`[38115806, 61999000]` is done, so addressable windows have real
+fidelity. A window without it still reports `LP entry-changes N/A` and
+skips CAP-0038 checks, honestly (see `real_bytes_test.go`'s
 `TestRealBytes_liquidityPoolDeposit_entryChangesUnavailable` /
-`_liquidityPoolWithdraw_entryChangesUnavailable`, and against a live
-end-to-end run through `stellarindex-ops classic-movements-backfill`
-over real r1 ClickHouse data during implementation. Phase 0's
-separate, operator-scheduled `ch-backfill` over `[38115806,
-61999000]` is the prerequisite that flips this; once it lands, the
-SAME code correctly derives real amounts with no further changes —
-re-running an already-processed range is safe (ClickHouse's
-ReplacingMergeTree absorbs the duplicate insert).
+`_liquidityPoolWithdraw_entryChangesUnavailable`). Re-running an
+already-processed range is safe (ClickHouse's ReplacingMergeTree
+absorbs the duplicate insert).
 
 ## Files
 
