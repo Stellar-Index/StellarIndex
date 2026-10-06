@@ -279,7 +279,8 @@ func TestPlanHasSorobanDecoder(t *testing.T) {
 		{name: "sdex only", sources: []string{"sdex"}, want: false},
 		{name: "aquarius alone", sources: []string{"aquarius"}, want: true},
 		{name: "defindex alone", sources: []string{"defindex"}, want: true},
-		{name: "soroban-events pseudo", sources: []string{"soroban-events"}, want: true},
+		// Not a decoder: gateSourcePolicy skips the raw-event cursor before the gate.
+		{name: "soroban-events pseudo", sources: []string{"soroban-events"}, want: false},
 		{name: "mixed sdex + Soroban DEXes", sources: []string{"aquarius", "comet", "phoenix", "sdex", "soroswap"}, want: true},
 		{name: "empty", sources: nil, want: false},
 		{name: "unknown decoder", sources: []string{"some-future-source"}, want: false},
@@ -846,10 +847,10 @@ func contains(s, sub string) bool {
 }
 
 // TestNewDataGapGateContext_HasDeadline is the RLT-409 regression: the
-// data-gap gate queries (FindSorobanEventsLedgerGaps / the classic
-// gate) must run under a bounded context, not the raw SIGINT/SIGTERM
-// rootCtx, because the unpruned fallback scan they can take can wedge
-// resume-stalled indefinitely with no deadline to bound it.
+// data-gap gate queries (the per-decoder and classic gap scans) must
+// run under a bounded context, not the raw SIGINT/SIGTERM rootCtx,
+// because a full-table scan can wedge resume-stalled indefinitely with
+// no deadline to bound it.
 func TestNewDataGapGateContext_HasDeadline(t *testing.T) {
 	rootCtx := context.Background()
 	if _, ok := rootCtx.Deadline(); ok {
@@ -923,6 +924,7 @@ func TestGateSourcePolicySkipsRefusedCursors(t *testing.T) {
 		{sources: []string{"aquarius"}, rangeFrom: 10, rangeTo: 20},
 		{sources: []string{"band"}, rangeFrom: 10, rangeTo: 20},
 		{sources: []string{"sdex"}, skip: true, skipReason: "earlier reason"},
+		{sources: []string{SorobanEventsPseudoSource}, rangeFrom: 10, rangeTo: 20},
 	}
 	got := gateSourcePolicy(plans, config.Config{})
 	if !got[0].skip || !strings.Contains(got[0].skipReason, "not BackfillSafe") {
@@ -936,6 +938,9 @@ func TestGateSourcePolicySkipsRefusedCursors(t *testing.T) {
 	}
 	if got[3].skipReason != "earlier reason" {
 		t.Errorf("an existing skip reason must be kept, got %q", got[3].skipReason)
+	}
+	if !got[4].skip || !strings.Contains(got[4].skipReason, "soroban-events landing-zone cursor") {
+		t.Errorf("raw soroban-events cursor must be skipped, not gated on soroban_events: skip=%v reason=%q", got[4].skip, got[4].skipReason)
 	}
 	if plans[0].skip {
 		t.Error("gateSourcePolicy must not mutate its input")

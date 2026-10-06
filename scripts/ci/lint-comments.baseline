@@ -1745,8 +1745,6 @@ internal/ops/chops/usd_volume_restamp_xlmbase.go	#372
 internal/ops/chops/usd_volume_restamp_xlmbase.go	#372
 internal/ops/chops/usd_volume_restamp_xlmbase.go	#372
 internal/ops/chops/usd_volume_restamp_xlmbase.go	2026-09-03
-internal/ops/chops/verify_recognition.go	#803
-internal/ops/chops/verify_recognition.go	2026-08-04
 internal/ops/chops/verify_reconciliation.go	#1093
 internal/ops/chops/verify_reconciliation.go	#1093
 internal/ops/chops/verify_reconciliation.go	RLT-416
@@ -1821,7 +1819,6 @@ internal/ops/ingest/reap_cursors.go	2026-05-06
 internal/ops/ingest/reap_cursors.go	2026-09-03
 internal/ops/ingest/resume_stalled.go	2026-05-26
 internal/ops/ingest/resume_stalled.go	2026-08-14
-internal/ops/ingest/resume_stalled.go	F-0020
 internal/ops/ingest/resume_stalled.go	F-0020
 internal/ops/ingest/resume_stalled.go	INV-3
 internal/ops/ingest/resume_stalled.go	RLT-409

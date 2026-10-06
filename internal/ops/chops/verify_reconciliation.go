@@ -22,12 +22,14 @@ import (
 //
 // Two oracles for "should have produced", by source class:
 //
-//   - Soroban trade sources (soroswap, aquarius, phoenix, comet) —
-//     re-derive by running the real decoder over soroban_events
-//     (deterministic recomputation). Correlation sources reconcile
-//     correctly because each logical record's events share one
-//     (ledger, tx, op).
-//   - SDEX — predates Soroban, so there is no soroban_events to
+//   - Soroban sources — re-derive by running the real decoder over the
+//     ClickHouse lake's contract_events (deterministic recomputation), the
+//     same expected side compute-completeness -ch publishes
+//     ([expectedProjection]). Correlation sources reconcile correctly
+//     because each logical record's events share one (ledger, tx, op).
+//     The event-less ContractCall sources (band, soroswap-router) re-derive
+//     from the lake's InvokeContract ops.
+//   - SDEX — predates Soroban, so there are no contract events to
 //     re-derive from. Re-derive from the ClickHouse lake's operations
 //     through the SDEX decoder and the served write filter (Validate +
 //     primary-key de-dup), gated on the lake substrate covering the
@@ -44,7 +46,7 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 	to := fs.Uint("to", 0, "Last ledger sequence (inclusive, required)")
 	only := fs.String("source", "", "Limit to one source (soroswap|aquarius|phoenix|comet|sushiswap_v3|upshift|sdex); default: all")
 	maxList := fs.Int("max-list", 50, "Max gap ledgers to print per source")
-	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (the sdex re-derive reads the lake's operations; factory preseeds read its contract_events)")
+	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (every re-derive reads the lake: contract_events, and operations for sdex and the ContractCall sources)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -104,52 +106,22 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 			continue
 		}
 
-		// Re-derive once per source (bucketed by EventKind), or fetch the
-		// SDEX census; the per-target diff below projects the kinds for
-		// each table.
-		var byKind map[string]map[uint32]int
-		var censusExpected map[uint32]int
-		if src.census {
-			c, blind, cerr := sdexProjectionExpected(ctx, *chAddr, lo, hi)
-			if cerr != nil {
-				return fmt.Errorf("%s: %w", src.name, cerr)
-			}
-			censusExpected = c
-			if blind.Any() {
-				anyGaps = true
-				fmt.Fprintf(os.Stderr, "verify-reconciliation: %-28s %s\n", src.name, blind.Detail())
-			}
-		} else {
-			// Factory-anchored sources (ADR-0035): seed the gate registry
-			// from the factory's creation events [genesis, lo) before the
-			// re-derive, so a custom -from sub-range doesn't drop the events
-			// of children deployed before the range (false-delta guard).
-			pblind, perr := preseedFactoryChildren(ctx, clickhouse.ReconcileEventStreamer{Addr: *chAddr}, src, lo)
-			if perr != nil {
-				return fmt.Errorf("%s: %w", src.name, perr)
-			}
-			bk, blind, derr := completeness.ReDeriveOutputCountsByKind(ctx, store, src.dec, src.contractIDs, src.topic0Syms, lo, hi)
-			if derr != nil {
-				return fmt.Errorf("%s: re-derive: %w", src.name, derr)
-			}
-			blind = blind.Merge(pblind)
-			byKind = bk
-			// C4-059: rows the re-derive could not decode are dropped from
-			// the EXPECTED side, and the projector dropped them from the
-			// ACTUAL side for the same reason — so the per-ledger diff below
-			// is structurally blind there and would report OK. Report it as a
-			// mismatch so the command exits non-zero.
-			if blind.Any() {
-				anyGaps = true
-				fmt.Fprintf(os.Stderr, "verify-reconciliation: %-28s %s\n", src.name, blind.Detail())
-			}
+		expectedFor, blind, eerr := verifyReconExpected(ctx, *chAddr, src, lo, hi)
+		if eerr != nil {
+			return fmt.Errorf("%s: %w", src.name, eerr)
+		}
+		// C4-059: rows the re-derive could not decode are dropped from the
+		// EXPECTED side, and the projector dropped them from the ACTUAL side
+		// for the same reason — so the per-ledger diff below is structurally
+		// blind there and would report OK. Report it as a mismatch so the
+		// command exits non-zero.
+		if blind.Any() {
+			anyGaps = true
+			fmt.Fprintf(os.Stderr, "verify-reconciliation: %-28s %s\n", src.name, blind.Detail())
 		}
 
 		for _, tgt := range src.targets {
-			expected := censusExpected
-			if !src.census {
-				expected = completeness.SumKinds(byKind, tgt.kinds...)
-			}
+			expected := expectedFor(tgt)
 			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), lo, hi)
 			if aerr != nil {
 				return fmt.Errorf("%s/%s: actual counts: %w", src.name, tgt.table, aerr)
@@ -190,6 +162,26 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 		return fmt.Errorf("projection reconciliation found mismatches — see above (ADR-0033 Claim 2b)")
 	}
 	return nil
+}
+
+// verifyReconExpected returns a source's per-target expected rows from the
+// lake. SDEX goes through sdexProjectionExpected, which also refuses a range
+// whose lake substrate is not contiguous; every other source takes the same
+// expected side compute-completeness -ch publishes.
+func verifyReconExpected(ctx context.Context, chAddr string, src reconSource, lo, hi uint32) (func(reconTarget) map[uint32]int, completeness.BlindSpots, error) {
+	if src.census {
+		expected, blind, err := sdexProjectionExpected(ctx, chAddr, lo, hi)
+		if err != nil {
+			return nil, completeness.BlindSpots{}, err
+		}
+		return func(reconTarget) map[uint32]int { return expected }, blind, nil
+	}
+	streamer := clickhouse.ReconcileEventStreamer{Addr: chAddr, NeedOpArgs: src.needsOpArgs, NeedStateWriteKeys: src.needsStateWriteKeys}
+	expectedFor, blind, err := expectedProjection(ctx, streamer, chAddr, src, lo, hi)
+	if err != nil {
+		return nil, completeness.BlindSpots{}, fmt.Errorf("re-derive: %w", err)
+	}
+	return expectedFor, blind, nil
 }
 
 func sumCounts(m map[uint32]int) int {
