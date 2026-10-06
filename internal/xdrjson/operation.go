@@ -74,6 +74,21 @@ var opTypeNameByEnumString = func() map[string]string {
 	return m
 }()
 
+var opTypeEnumStringByName = func() map[string]string {
+	m := make(map[string]string, len(opTypeName))
+	for t, name := range opTypeName {
+		m[name] = t.String()
+	}
+	return m
+}()
+
+// OpTypeEnumString maps a snake_case wire name back to the lake's stored
+// op_type enum string; ok is false for a name outside the controlled vocabulary.
+func OpTypeEnumString(name string) (string, bool) {
+	s, ok := opTypeEnumStringByName[name]
+	return s, ok
+}
+
 // OpTypeNameFromEnumString returns the same snake_case wire name OpTypeName
 // gives its enum, but from the lake's stored CamelCase enum string (GH-1136:
 // the /v1/operations directory and op_type_stats served this via a naive

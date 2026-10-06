@@ -189,6 +189,14 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 			_, err := r.RecentOperations(ctx, 5, cursor)
 			return err
 		},
+		"RecentOperationsOfType(first page)": func() error {
+			_, err := r.RecentOperationsOfType(ctx, 5, chstore.ExplorerCursor{}, []string{"OperationTypePayment", "OperationTypeClawback"})
+			return err
+		},
+		"RecentOperationsOfType(cursor)": func() error {
+			_, err := r.RecentOperationsOfType(ctx, 5, cursor, []string{"OperationTypePayment"})
+			return err
+		},
 		"OperationTypeStats": func() error {
 			_, err := r.OperationTypeStats(ctx, 0)
 			return err

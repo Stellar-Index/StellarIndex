@@ -121,6 +121,11 @@ func (r *capReader) OperationsByLedger(ctx context.Context, _ uint32, _ int) ([]
 	return nil, nil
 }
 
+func (r *capReader) RecentOperationsOfType(ctx context.Context, _ int, _ clickhouse.ExplorerCursor, _ []string) (clickhouse.OpTypePage, error) {
+	r.probe.record(ctx)
+	return clickhouse.OpTypePage{}, nil
+}
+
 func (r *capReader) RecentOperations(ctx context.Context, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error) {
 	r.probe.record(ctx)
 	return nil, nil

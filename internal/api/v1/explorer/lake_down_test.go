@@ -43,6 +43,10 @@ func (downReader) OperationsByLedger(context.Context, uint32, int) ([]clickhouse
 	return nil, errLakeDown
 }
 
+func (downReader) RecentOperationsOfType(context.Context, int, clickhouse.ExplorerCursor, []string) (clickhouse.OpTypePage, error) {
+	return clickhouse.OpTypePage{}, errLakeDown
+}
+
 func (downReader) RecentOperations(context.Context, int, clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error) {
 	return nil, errLakeDown
 }
