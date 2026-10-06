@@ -41,9 +41,10 @@ import (
 //     not walked — they are not transaction-scoped and carry no tx_hash;
 //     dispatcher.walkLedgerEntryChanges makes the identical choice.
 //   - A FOURTH phase records the ledger's state-archival EVICTIONS (evicted:
-//     the LCM's evicted-keys list) as `removed` rows, mirroring
-//     dispatcher.walkEvictedKeys. An evicted entry appears in no tx's meta,
-//     so without it ledger_entries_current keeps its last write as live.
+//     the LCM's evicted-keys list) as `removed` rows, but only temporary
+//     entries and TTL keys: a persistent entry or contract code is archived
+//     and restorable, so it stays live. Skipped keys still take their walk
+//     position, keeping intra_ledger_seq aligned with dispatcher.walkEvictedKeys.
 //
 // Within each LedgerEntryChanges block the changes are walked in
 // entrywalk.Canonical order (by ledger key), not as the export lists them:
@@ -55,8 +56,8 @@ import (
 // op_index. change_index is a monotonic per-TRANSACTION counter (stable
 // across re-ingest → idempotent under the ReplacingMergeTree) and continues
 // across the two phases for a given tx, so a tx's fee change keeps
-// change_index 0. Resilient: a change that won't marshal is skipped, never
-// fatal.
+// change_index 0. Resilient: a change that won't marshal is skipped and
+// counted, never fatal, and still takes its intra_ledger_seq position.
 //
 // intra_ledger_seq is the per-LEDGER position. Unlike change_index it is
 // monotonic over the whole ledger's canonical walk, so it uniquely orders
@@ -72,14 +73,16 @@ func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransactio
 	emitterFor := func(i int) func(int, xdr.LedgerEntryChange) {
 		txHash := hex.EncodeToString(txs[i].Result.TransactionHash[:])
 		return func(opIndex int, c xdr.LedgerEntryChange) {
+			pos := entryChangeSeq
+			entryChangeSeq++
 			row, ok := entryChangeRow(seq, closeTime, txHash, int32(opIndex), changeIdx[i], c)
 			if !ok {
+				ext.EntryChangesUnencodable++
 				return
 			}
-			row.IntraLedgerSeq = entryChangeSeq
+			row.IntraLedgerSeq = pos
 			ext.Changes = append(ext.Changes, row)
 			changeIdx[i]++
-			entryChangeSeq++
 		}
 	}
 
@@ -130,12 +133,14 @@ func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransactio
 // tx_hash and op_index -1, with change_index counting within that group.
 // A persistent entry or contract code is archived, not deleted (it moves to
 // the hot archive and stays restorable), so its last live row stays current;
-// it still takes its walk position so later rows match the dispatcher's.
+// every key, written or not, takes its walk position so later rows match the
+// dispatcher's, which advances its position for every key it walks.
 func emitEvictions(ext *LedgerExtract, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time, intraSeq uint32) {
 	var changeIdx uint32
 	for i := range evicted {
+		pos := intraSeq
+		intraSeq++
 		if isArchivedOnEviction(evicted[i]) {
-			intraSeq++
 			continue
 		}
 		row, ok := entryChangeRow(seq, closeTime, "", -1, changeIdx, xdr.LedgerEntryChange{
@@ -143,12 +148,12 @@ func emitEvictions(ext *LedgerExtract, evicted []xdr.LedgerKey, seq uint32, clos
 			Removed: &evicted[i],
 		})
 		if !ok {
+			ext.EntryChangesUnencodable++
 			continue
 		}
-		row.IntraLedgerSeq = intraSeq
+		row.IntraLedgerSeq = pos
 		ext.Changes = append(ext.Changes, row)
 		changeIdx++
-		intraSeq++
 	}
 }
 

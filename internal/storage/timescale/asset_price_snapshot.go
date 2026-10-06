@@ -8,6 +8,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // asset_price_snapshot — the per-asset headline-price rollup behind the
@@ -338,8 +340,8 @@ func unionPriceArmCTE(name, quotes, window, asset string) string {
 // aggregator's stablecoin-proxy policy, in its classic and SAC forms
 // because Soroban venues carry the SAC id) and `asset_vs_xlm*` against
 // XLM in both identity forms ([xlmQuotes]). TestProxyQuoteLists_Lockstep
-// pins both IN-lists. xlmQuoteList is [xlmQuotes] for the snapshot writer
-// and [xlmQuotesBound] for reads.
+// pins both IN-lists. xlmQuoteList is an [xlmQuotesBound] form; the
+// caller binds the network's native SAC at that placeholder.
 func assetPriceArmCTEs(asset, xlmQuoteList string) string {
 	arms := make([]string, 0, 8)
 	for _, arm := range []struct{ name, quotes string }{
@@ -363,10 +365,11 @@ func assetPriceArmCTEs(asset, xlmQuoteList string) string {
 // are triangulated through, reaching back to the oldest arm's window. The
 // `/*PUSHDOWN_*/` markers the listing once carried are gone: a full
 // all-asset recompute has nothing to narrow to (same reason
-// refreshAssetVolumeUpsert carries none).
-var assetPriceCTEs = assetPriceArmCTEs("", xlmQuotes) + "," +
-	xlmUSDNativeCTEs("'"+nativeXLMSAC+"'") + "," +
-	xlmUSDAnchorGridCTE("xlm_usd_grid", priceWindow7dLo, "'"+nativeXLMSAC+"'")
+// refreshAssetVolumeUpsert carries none). $1 is
+// canonical.NativeSACContractID().
+var assetPriceCTEs = assetPriceArmCTEs("", xlmQuotesBound1) + "," +
+	xlmUSDNativeCTEs(nativeSACParam(1)) + "," +
+	xlmUSDAnchorGridCTE("xlm_usd_grid", priceWindow7dLo, nativeSACParam(1))
 
 // usdQuotePref ranks the USD quote forms for a pick that two forms can tie
 // on the same bucket: a true USD quote, then classic USDC, then its SAC
@@ -508,8 +511,8 @@ func pruneRollup(ctx context.Context, tx *sql.Tx, upserted int64, prune, pruneEx
 }
 
 // execRowCount runs an upsert and returns how many rows it wrote.
-func execRowCount(ctx context.Context, tx *sql.Tx, q string) (int64, error) {
-	res, err := tx.ExecContext(ctx, q)
+func execRowCount(ctx context.Context, tx *sql.Tx, q string, args ...any) (int64, error) {
+	res, err := tx.ExecContext(ctx, q, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -574,7 +577,7 @@ func (s *Store) RefreshAssetListingRollups(ctx context.Context) error {
 	if err := pruneRollup(ctx, tx, volN, refreshAssetVolumePrune, refreshAssetVolumePruneExpired); err != nil {
 		return fmt.Errorf("timescale: RefreshAssetListingRollups volume prune: %w", err)
 	}
-	priceN, err := execRowCount(ctx, tx, refreshAssetPriceSnapshotUpsert)
+	priceN, err := execRowCount(ctx, tx, refreshAssetPriceSnapshotUpsert, canonical.NativeSACContractID())
 	if err != nil {
 		return fmt.Errorf("timescale: RefreshAssetListingRollups price upsert: %w", err)
 	}

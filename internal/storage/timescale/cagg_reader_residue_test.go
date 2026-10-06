@@ -74,8 +74,8 @@ func TestCanonLastPriceIsTieBroken(t *testing.T) {
 var untiedBucketPickRE = regexp.MustCompile(`ORDER BY (?:p\.)?bucket DESC(?:[ \t]*\n\s*|[ \t]+)LIMIT 1`)
 
 // multiFormQuoteRE matches a quote set holding several forms of one
-// asset: USD's (literal or usdProxyQuotes) or XLM's (xlmQuotes).
-var multiFormQuoteRE = regexp.MustCompile(`'fiat:USD'|\busdProxyQuotes\b|\bxlmQuotes\b`)
+// asset: USD's (literal or usdProxyQuotes) or XLM's (xlmQuotesBound*).
+var multiFormQuoteRE = regexp.MustCompile(`'fiat:USD'|\busdProxyQuotes\b|\bxlmQuotesBound\w*`)
 
 // TestUSDQuotePicksAreTieBroken pins GH-702 item 2 for the price readers:
 // USDC and fiat:USD (or two XLM or peg forms) can print in the same

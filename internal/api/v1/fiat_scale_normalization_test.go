@@ -187,6 +187,58 @@ func TestFiatVWAPUniformOnChainUnchanged(t *testing.T) {
 	}
 }
 
+// TestAliasVWAPMixedScaleNormalized is the non-fiat twin of
+// TestFiatVWAPMixedScaleNormalized. The alias walk reads ONE pair, which in
+// practice carries one venue class, but nothing in the type stopped a pair
+// that mixed 7dp and 8dp sources from being summed raw: the same fixture
+// keyed under native/USDC-classic served 0.1181818181 (CEX over-weighted
+// 10×) with a base_volume of incommensurable integers. The window must be
+// lifted once, exactly as on the fiat path.
+func TestAliasVWAPMixedScaleNormalized(t *testing.T) {
+	usdc, _ := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	xlmNative, _ := canonical.ParseAsset("native")
+	pair, _ := canonical.NewPair(xlmNative, usdc)
+	t0 := scaleNormBucketStart()
+	xlm := func(n int64, dec int) *big.Int { return new(big.Int).Mul(big.NewInt(n), scaleNormPow10(dec)) }
+
+	reader := &stubHistoryReader{trades: []canonical.Trade{
+		scaleNormTrade("sdex", pair, 1, t0, xlm(1000, 7), xlm(100, 7)),
+		scaleNormTrade("binance", pair, 2, t0.Add(5*time.Minute), xlm(1000, 8), xlm(120, 8)),
+	}}
+	ts := httpTestServer(t, v1.New(v1.Options{History: reader}))
+	resp := mustGet(t, ts.URL+"/v1/vwap?base=native&quote="+usdc.String()+"&breakdown=source"+scaleNormWindow())
+	if resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("vwap status = %d, want 200: %s", resp.StatusCode, body)
+	}
+	var out struct {
+		Data v1.VWAPResult `json:"data"`
+	}
+	mustDecode(t, resp, &out)
+	got := out.Data
+
+	if got.Price != scaleNormWantVWAP {
+		t.Errorf("vwap price = %q, want %q; %q is the raw sum with the 8dp leg over-weighted 10×",
+			got.Price, scaleNormWantVWAP, scaleNormPreFixVWAP)
+	}
+	if got.BaseVolume != scaleNormWantBaseVolume {
+		t.Errorf("base_volume = %q, want %q (2000 XLM at the common 8dp scale)",
+			got.BaseVolume, scaleNormWantBaseVolume)
+	}
+	if got.BaseVolumeDecimals == nil || *got.BaseVolumeDecimals != 8 {
+		t.Errorf("base_volume_decimals = %v, want 8", got.BaseVolumeDecimals)
+	}
+	// The breakdown reads the same lifted window: both legs are 1000 XLM,
+	// weighted by quote share (100 vs 120 USDC).
+	wantWeight := map[string]string{"sdex": "0.4545454545", "binance": "0.5454545454"}
+	for _, src := range got.Breakdown.Buckets[0].Sources {
+		if src.BaseVolume != "100000000000" || src.Weight != wantWeight[src.Source] {
+			t.Errorf("%s breakdown = base %s weight %s, want 100000000000 / %s",
+				src.Source, src.BaseVolume, src.Weight, wantWeight[src.Source])
+		}
+	}
+}
+
 // TestVWAPStatesVolumeScale pins that /v1/vwap names the smallest-unit scale
 // its base_volume/quote_volume are in. The same 2000 XLM serves as
 // 200000000000 in a mixed CEX+on-chain fiat window and 20000000000 in an
@@ -251,6 +303,17 @@ func TestVWAPStatesVolumeScale(t *testing.T) {
 			query: "base=native&quote=" + usdc.String(),
 			trades: map[string][]canonical.Trade{
 				fiatParityPairKey(onchainPair): {scaleNormTrade("unregistered-venue", onchainPair, 1, t0, xlm(1000, 7), xlm(100, 7))},
+			},
+			wantDecimals: "null",
+		},
+		{
+			name:  "unregistered source beside a registered one",
+			query: "base=native&quote=" + usdc.String(),
+			trades: map[string][]canonical.Trade{
+				fiatParityPairKey(onchainPair): {
+					scaleNormTrade("sdex", onchainPair, 1, t0, xlm(1000, 7), xlm(100, 7)),
+					scaleNormTrade("unregistered-venue", onchainPair, 2, t0.Add(time.Minute), xlm(1000, 7), xlm(100, 7)),
+				},
 			},
 			wantDecimals: "null",
 		},

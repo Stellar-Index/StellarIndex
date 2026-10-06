@@ -695,7 +695,7 @@ Subcommands:
                           day-keyed census behind fast /v1/contracts).
                           Timer mode recomputes today + missing days;
                           -backfill walks from the lake's first event.
-  ch-backfill -config PATH -from N -to N [-bucket NAME] [-ch-addr H:P] [-flush-every N] [-parallel N] (-write | -dry-run)
+  ch-backfill -config PATH -from N -to N [-bucket NAME] [-ch-addr H:P] [-flush-every N] [-parallel N] [-changes-only] (-write | -dry-run)
                           ADR-0034 Phase 2: structurally decode [from,to]
                           from galexie into the ClickHouse stellar.* Tier-1
                           tables (ledgers/txs/ops/op_results/contract_events).
@@ -703,7 +703,10 @@ Subcommands:
                           (ReplacingMergeTree), so re-running a range is safe.
                           -parallel N runs N concurrent range-walkers (each
                           its own Sink) — the throughput unlock for the full
-                          historic backfill.
+                          historic backfill. -to is INCLUSIVE.
+                          -changes-only writes just the ledgers row (commit
+                          marker) and ledger_entry_changes: re-derives entry
+                          ordinals without rewriting the other tables.
   ch-gate -config PATH -from N -to N [-bucket NAME] [-ch-addr H:P] [-project-to TIP]
                           ADR-0034 Phase 2 §6 gates over a backfilled range:
                           recompute the census + structural extract from

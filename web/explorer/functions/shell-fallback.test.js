@@ -71,7 +71,7 @@ if (cases.length === 0) {
 
 // GH-916: every response this handler returns must carry the security
 // headers `public/_headers` declares for its route family — `/embed/*`
-// gets ALLOWALL + `frame-ancestors *`, everything else gets the `/*`
+// gets `frame-ancestors *` and no X-Frame-Options, everything else gets the `/*`
 // block's DENY + no frame-ancestors. Parse both blocks out of the real
 // `public/_headers` file (not a hand-copied second vocabulary) so this
 // test fails the moment the static rules and the Function's mirrored
@@ -116,6 +116,12 @@ const EMBED_HEADERS = withoutCacheControl(parseHeadersBlock('/embed/*'));
 if (DEFAULT_HEADERS['X-Frame-Options'] === EMBED_HEADERS['X-Frame-Options']) {
   throw new Error(
     'public/_headers /* and /embed/* blocks have the same X-Frame-Options — parse bug or the fixture no longer distinguishes them',
+  );
+}
+
+if ('X-Frame-Options' in EMBED_HEADERS) {
+  throw new Error(
+    'public/_headers /embed/* must not set X-Frame-Options (ALLOWALL is invalid)',
   );
 }
 

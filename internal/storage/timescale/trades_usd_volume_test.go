@@ -451,9 +451,9 @@ func TestTradeUSDVolume_Phase2_ResolverError(t *testing.T) {
 func TestTradeUSDVolume_L76XLMBaseAnchor(t *testing.T) {
 	t.Parallel()
 	xlm := canonical.NativeAsset()
-	xlmSAC, err := canonical.NewSorobanAsset(nativeXLMSAC)
+	xlmSAC, err := canonical.NewSorobanAsset(canonical.XLMSacContractID)
 	if err != nil {
-		t.Fatalf("NewSorobanAsset(nativeXLMSAC): %v", err)
+		t.Fatalf("NewSorobanAsset(XLM SAC): %v", err)
 	}
 	pureSEP41, err := canonical.NewSorobanAsset("CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7")
 	if err != nil {
@@ -573,9 +573,9 @@ func TestTradeUSDVolume_XLMBaseLegBeatsABridgedQuotePrice(t *testing.T) {
 func TestTradeUSDVolume_XLMLegIsOrientationSymmetric(t *testing.T) {
 	t.Parallel()
 	xlm := canonical.NativeAsset()
-	xlmSAC, err := canonical.NewSorobanAsset(nativeXLMSAC)
+	xlmSAC, err := canonical.NewSorobanAsset(canonical.XLMSacContractID)
 	if err != nil {
-		t.Fatalf("NewSorobanAsset(nativeXLMSAC): %v", err)
+		t.Fatalf("NewSorobanAsset(XLM SAC): %v", err)
 	}
 	aqua, err := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
 	if err != nil {
@@ -709,9 +709,9 @@ func TestTradeUSDVolume_L76OutOfScope(t *testing.T) {
 // plus a representative negative.
 func TestIsXLMAsset(t *testing.T) {
 	t.Parallel()
-	xlmSAC, err := canonical.NewSorobanAsset(nativeXLMSAC)
+	xlmSAC, err := canonical.NewSorobanAsset(canonical.XLMSacContractID)
 	if err != nil {
-		t.Fatalf("NewSorobanAsset(nativeXLMSAC): %v", err)
+		t.Fatalf("NewSorobanAsset(XLM SAC): %v", err)
 	}
 	otherSAC, err := canonical.NewSorobanAsset("CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7")
 	if err != nil {
@@ -1030,7 +1030,7 @@ func TestBaseAnchorEligible(t *testing.T) {
 		want  bool
 	}{
 		"native XLM": {canonical.NativeAsset(), true},
-		"XLM SAC":    {canonical.Asset{Type: canonical.AssetSoroban, ContractID: nativeXLMSAC}, true},
+		"XLM SAC":    {canonical.Asset{Type: canonical.AssetSoroban, ContractID: canonical.XLMSacContractID}, true},
 		"classic":    {classic, true},
 		// Pure SEP-41 IS eligible: the base anchor values it from a raw
 		// VWAP ratio, in which the token's own decimals cancel — see

@@ -97,7 +97,7 @@ func TestXLMUSDAnchor_ShapesShareOnePopulation(t *testing.T) {
 // minute up to xlmUSDAnchorMaxAge before that bound still seeds the fill.
 func TestXLMUSDAnchor_RollupGridReachesOldestArm(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(assetPriceCTEs, xlmUSDAnchorGridCTE("xlm_usd_grid", priceWindow7dLo, "'"+nativeXLMSAC+"'")) {
+	if !strings.Contains(assetPriceCTEs, xlmUSDAnchorGridCTE("xlm_usd_grid", priceWindow7dLo, nativeSACParam(1))) {
 		t.Error("rollup does not build its anchor grid from the 7d arm's lower bound")
 	}
 	if !strings.Contains(refreshAssetPriceSnapshotUpsert, priceArmJoins(xlmUSDGridJoin)) {

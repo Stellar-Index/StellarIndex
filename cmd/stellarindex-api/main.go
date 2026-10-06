@@ -67,6 +67,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	"github.com/Stellar-Index/StellarIndex/internal/accounterasure"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
@@ -336,23 +337,23 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 
 	// Build readiness-check set. Each implements v1.ReadyChecker.
 	checks := []v1.ReadyChecker{
-		storeChecker{s: store},
+		wiring.StoreChecker{S: store},
 		// REC-06 (audit-2026-08-14): assert the applied schema head is
 		// at least what this binary was built against. Critical, so a
 		// migrations-skipped/binary-swap mismatch drains the backend
 		// (503) instead of serving stale data behind a 200. A dirty row
 		// alone is no longer sufficient here — see the checker's doc.
-		v1.NewSchemaVersionChecker(schemaChecker{db: store.DB()}),
+		v1.NewSchemaVersionChecker(wiring.SchemaChecker{DB: store.DB()}),
 		// GH-1159: non-critical sibling that surfaces a dirty row as a
 		// readyz "degraded" flag for operators to `force` without
 		// draining the fleet over a migration that rolled back cleanly.
-		v1.NewSchemaDirtyChecker(schemaChecker{db: store.DB()}),
+		v1.NewSchemaDirtyChecker(wiring.SchemaChecker{DB: store.DB()}),
 		// ADR-0015: unguarded CAGG readers depend on materialized_only;
 		// drain if an out-of-band ALTER makes a view serve its open bucket.
 		v1.NewClosedBucketChecker(store),
 	}
 	if rdb != nil {
-		checks = append(checks, redisChecker{rdb: rdb})
+		checks = append(checks, wiring.RedisChecker{RDB: rdb})
 	}
 
 	// SEP-1 payloads are populated by `stellarindex-ops sep1-refresh`
@@ -691,12 +692,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// 30 s cache stays inside the oracle push interval and absorbs
 	// polling fan-out. Falls back to direct-store reads when Redis
 	// is missing.
-	var oracleReader v1.OracleReader = storeOracleReader{s: store}
+	var oracleReader v1.OracleReader = wiring.StoreOracleReader{S: store}
 	if rdb != nil {
-		oracleReader = cachedOracleReader{
-			inner: oracleReader,
-			rdb:   rdb,
-			log:   logger.With("component", "oracle-cache"),
+		oracleReader = wiring.CachedOracleReader{
+			Inner: oracleReader,
+			RDB:   rdb,
+			Log:   logger.With("component", "oracle-cache"),
 		}
 		logger.Info("oracle reader wrapped with Redis cache",
 			"ttl", cachekeys.OracleLatestTTL.String())
@@ -718,18 +719,18 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// 14-day-window aggregations over the trades hypertable
 	// (~450-500 ms cold), so a 60 s cache absorbs polling fan-out
 	// without delaying new-listing surfacing more than once-a-minute.
-	var assetReader v1.AssetReader = storeAssetReader{s: store, listingHomeDomains: homeDomainLookup.listing, detailHomeDomainLookup: homeDomainLookup.detail}
-	var marketsReader v1.MarketsReader = storeMarketsReader{s: store}
+	var assetReader v1.AssetReader = wiring.StoreAssetReader{S: store, ListingHomeDomains: homeDomainLookup.listing, DetailHomeDomainLookup: homeDomainLookup.detail}
+	var marketsReader v1.MarketsReader = wiring.StoreMarketsReader{S: store}
 	if rdb != nil {
-		assetReader = cachedAssetReader{
-			inner: assetReader,
-			rdb:   rdb,
-			log:   logger.With("component", "assets-cache"),
+		assetReader = wiring.CachedAssetReader{
+			Inner: assetReader,
+			RDB:   rdb,
+			Log:   logger.With("component", "assets-cache"),
 		}
-		marketsReader = cachedMarketsReader{
-			inner: marketsReader,
-			rdb:   rdb,
-			log:   logger.With("component", "markets-cache"),
+		marketsReader = wiring.CachedMarketsReader{
+			Inner: marketsReader,
+			RDB:   rdb,
+			Log:   logger.With("component", "markets-cache"),
 		}
 		logger.Info("catalogue readers wrapped with Redis cache",
 			"ttl", cachekeys.CatalogueListTTL.String())
@@ -1337,13 +1338,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// HistoryReader methods pass through. Cold fill is detached
 		// so it outlives the handler's 8s ceiling and warms the
 		// cache for the status page's 2-min poll.
-		History: v1.NewCachedHistoryReader(storeHistoryReader{s: store}, 2*time.Minute),
+		History: v1.NewCachedHistoryReader(wiring.StoreHistoryReader{S: store}, 2*time.Minute),
 		// Coverage-floor probe behind the empty-window signal. Not part
 		// of HistoryReader: it is consulted only when a serving read
 		// came back empty, has its own TTL memo in the handler layer,
 		// and reads a different question (when does this pair START)
 		// than any serving method answers.
-		CoverageFloor: storeCoverageFloorReader{s: store},
+		CoverageFloor: wiring.StoreCoverageFloorReader{S: store},
 		// Wrap with a 30s TTL cache. /v1/markets and /v1/pools both
 		// scan ~24h of the trades hypertable on every hit (5-10s
 		// each); the explorer hits them on every page load. 30s
@@ -2800,22 +2801,6 @@ func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset, quote
 	return a.svc.LookupCachedPairVerdict(ctx, pair)
 }
 
-// storeChecker adapts *timescale.Store to the v1.ReadyChecker
-// interface so /readyz can include it in the dependency poll.
-//
-// Postgres is critical — every request that returns trade /
-// aggregate / supply data reads from Timescale. There's no
-// fallback path; a Postgres outage really does mean the API
-// can't serve. Critical()==true so /readyz returns 503 when
-// Postgres is unreachable.
-type storeChecker struct{ s *timescale.Store }
-
-func (c storeChecker) Name() string   { return "postgres" }
-func (c storeChecker) Critical() bool { return true }
-func (c storeChecker) Ping(ctx context.Context) error {
-	return c.s.DB().PingContext(ctx)
-}
-
 // nonstandardDecimalsRefreshTimeout bounds each nonstandard-decimals cache
 // load, the blocking startup one included.
 const nonstandardDecimalsRefreshTimeout = 30 * time.Second
@@ -2844,48 +2829,6 @@ func (k nonstandardDecimalsChecker) Ping(context.Context) error {
 		return errors.New("nonstandard-decimals cache has not loaded yet")
 	}
 	return nil
-}
-
-// schemaChecker adapts the golang-migrate schema_migrations
-// bookkeeping row to v1.SchemaVersionReader for the REC-06 head
-// assertion (audit-2026-08-14). It reads over the store's *sql.DB —
-// the stellarindex-migrate binary owns writes; the API only reads —
-// keeping the raw SQL in this binary layer, mirroring storeChecker.
-type schemaChecker struct{ db *sql.DB }
-
-func (c schemaChecker) SchemaMigrationVersion(ctx context.Context) (uint, bool, error) {
-	var version uint
-	var dirty bool
-	// schema_migrations holds a single row (golang-migrate). No row =
-	// no migrations applied = version 0.
-	err := c.db.QueryRowContext(ctx, `SELECT version, dirty FROM schema_migrations LIMIT 1`).Scan(&version, &dirty)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, false, nil
-	}
-	if err != nil {
-		return 0, false, err
-	}
-	return version, dirty, nil
-}
-
-// redisChecker adapts redis.UniversalClient to the v1.ReadyChecker
-// interface. Redis is non-critical at API layer — cache misses
-// fall back to Timescale per ADR-0007, so a Redis outage degrades
-// latency (every read becomes a Timescale query instead of a
-// Redis read) but does NOT break correctness. UniversalClient
-// (vs typed Client) lets the same adapter work against both the
-// dev single-node and production Sentinel-backed FailoverClient.
-//
-// F-1275 (codex audit-2026-05-13): Critical()==false so a Redis
-// outage produces a 200 with status="degraded" from /v1/readyz
-// instead of a 503; HAProxy keeps the backend in service while
-// operators see the degradation in the response body.
-type redisChecker struct{ rdb redis.UniversalClient }
-
-func (c redisChecker) Name() string   { return "redis" }
-func (c redisChecker) Critical() bool { return false }
-func (c redisChecker) Ping(ctx context.Context) error {
-	return c.rdb.Ping(ctx).Err()
 }
 
 // clickhouseChecker adapts *clickhouse.ExplorerReader to the
@@ -2953,27 +2896,6 @@ func clickhouseReadyChecks(addr string, er *clickhouse.ExplorerReader, dialErr e
 	return []v1.ReadyChecker{clickhouseChecker{r: er}}
 }
 
-// storeAssetReader adapts *timescale.Store to v1.AssetReader. Keeps
-// the typed boundary: the store returns canonical.Asset; the API
-// layer owns the wire-shape conversion to v1.AssetDetail.
-//
-// listingHomeDomains (listing page) and detailHomeDomainLookup (GetAsset)
-// are the two surface lookups from newHomeDomainLookups. An issuer with
-// no known domain is absent / returns ("", false); the AssetDetail then
-// has HomeDomain==nil and the overlay handler stamps
-// sep1_status="not_fetched" for that case.
-type storeAssetReader struct {
-	s                      *timescale.Store
-	listingHomeDomains     func(ctx context.Context, issuers []string) map[string]string
-	detailHomeDomainLookup func(ctx context.Context, issuer string) (string, bool)
-}
-
-// homeDomainLookups is the ADR-0021 home-domain chain (observation, then
-// the operator-static map) split by surface. The listing has no live
-// on-chain read, so it takes the whole chain. The asset-detail surfaces
-// run v1's live ClickHouse AccountEntry read, which must outrank the
-// static map: detail carries only the observation layer, and static is
-// handed to v1 to consult after that read.
 type homeDomainLookups struct {
 	listing func(ctx context.Context, issuers []string) map[string]string
 	detail  func(ctx context.Context, issuer string) (string, bool)
@@ -2985,488 +2907,6 @@ func newHomeDomainLookups(live *metadata.LCMHomeDomainResolver, static func(issu
 		listing: metadata.ChainedHomeDomainBatch(live, static, warnFn),
 		detail:  metadata.ObservedHomeDomainLookup(live, warnFn),
 		static:  metadata.StaticHomeDomainFallback(live, static, warnFn),
-	}
-}
-
-// ClassicAssetBySlug satisfies v1's optional classicSlugResolver
-// capability — /v1/assets/{slug} resolution for the migration-0134
-// public slugs. Pure delegation to the store.
-func (r storeAssetReader) ClassicAssetBySlug(ctx context.Context, slug string) (string, string, bool, error) {
-	return r.s.ClassicAssetBySlug(ctx, slug)
-}
-
-func (r storeAssetReader) ListAssets(ctx context.Context, cursor string, limit int) ([]v1.AssetDetail, string, error) {
-	assets, next, err := r.s.DistinctAssets(ctx, cursor, limit)
-	if err != nil {
-		return nil, "", err
-	}
-	return assetsToDetails(ctx, assets, r.listingHomeDomains), next, nil
-}
-
-// assetsToDetails resolves a listing page's issuer home domains in one
-// batch read, then maps each asset through assetToDetail.
-func assetsToDetails(ctx context.Context, assets []canonical.Asset, homeDomains func(ctx context.Context, issuers []string) map[string]string) []v1.AssetDetail {
-	var lookup func(ctx context.Context, issuer string) (string, bool)
-	if homeDomains != nil {
-		seen := make(map[string]bool, len(assets))
-		issuers := make([]string, 0, len(assets))
-		for _, a := range assets {
-			if a.Issuer != "" && !seen[a.Issuer] {
-				seen[a.Issuer] = true
-				issuers = append(issuers, a.Issuer)
-			}
-		}
-		domains := homeDomains(ctx, issuers)
-		lookup = func(_ context.Context, issuer string) (string, bool) {
-			d, ok := domains[issuer]
-			return d, ok
-		}
-	}
-	out := make([]v1.AssetDetail, len(assets))
-	for i, a := range assets {
-		out[i] = assetToDetail(ctx, a, lookup)
-	}
-	return out
-}
-
-func (r storeAssetReader) GetAsset(ctx context.Context, a canonical.Asset) (v1.AssetDetail, error) {
-	has, err := r.s.HasAsset(ctx, a)
-	if err != nil {
-		return v1.AssetDetail{}, err
-	}
-	if !has {
-		return v1.AssetDetail{}, v1.ErrAssetNotFound
-	}
-	detail := assetToDetail(ctx, a, r.detailHomeDomainLookup)
-
-	// Best-effort F2 enrichment from the per-asset stats lookup
-	// — same data the /v1/coins listing carries. Failures here
-	// don't break the detail response; the field stays null and
-	// the rest of the body still serves cleanly. The proper
-	// supply pipeline (asset_supply_history) will overwrite
-	// these when it has a snapshot — populateF2Fields runs
-	// AFTER us in the handler stack.
-	if stats, err := r.s.LatestAssetStats(ctx, a.String()); err == nil {
-		if detail.VolumeUSD24h == nil && stats.Volume24hUSD != nil {
-			detail.VolumeUSD24h = stats.Volume24hUSD
-		}
-		if detail.CirculatingSupply == nil && stats.CirculatingSupply != nil {
-			detail.CirculatingSupply = stats.CirculatingSupply
-		}
-		if detail.MarketCapUSD == nil && stats.MarketCapUSD != nil {
-			detail.MarketCapUSD = stats.MarketCapUSD
-		}
-	}
-	return detail, nil
-}
-
-// storeMarketsReader adapts *timescale.Store to v1.MarketsReader.
-// Translates timescale.Market (typed Pair) to v1.Market (string
-// wire shape) so the API layer owns its own schema.
-type storeMarketsReader struct{ s *timescale.Store }
-
-func (r storeMarketsReader) DistinctPairsExt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
-	rows, next, err := r.s.DistinctPairsExt(ctx, cursor, limit, order)
-	if err != nil {
-		return nil, "", err
-	}
-	out := make([]v1.Market, len(rows))
-	for i, m := range rows {
-		out[i] = v1.Market{
-			Base:          m.Pair.Base.String(),
-			Quote:         m.Pair.Quote.String(),
-			LastTradeAt:   v1.WireTime(m.LastTradeAt),
-			BucketCloseAt: v1.WireTime(m.BucketCloseAt),
-			TradeCount24h: m.TradeCount24h,
-			Volume24hUSD:  m.Volume24hUSD,
-			LastPrice:     m.LastPrice,
-		}
-	}
-	return out, next, nil
-}
-
-func (r storeMarketsReader) SourceMarkets(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
-	rows, next, err := r.s.SourceMarkets(ctx, source, cursor, limit, order)
-	if err != nil {
-		return nil, "", err
-	}
-	out := make([]v1.Market, len(rows))
-	for i, m := range rows {
-		out[i] = v1.Market{
-			Base:          m.Pair.Base.String(),
-			Quote:         m.Pair.Quote.String(),
-			LastTradeAt:   v1.WireTime(m.LastTradeAt),
-			BucketCloseAt: v1.WireTime(m.BucketCloseAt),
-			TradeCount24h: m.TradeCount24h,
-			Volume24hUSD:  m.Volume24hUSD,
-			LastPrice:     m.LastPrice,
-		}
-	}
-	return out, next, nil
-}
-
-func (r storeMarketsReader) AssetMarkets(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
-	rows, next, err := r.s.AssetMarkets(ctx, asset, cursor, limit, order)
-	if err != nil {
-		return nil, "", err
-	}
-	out := make([]v1.Market, len(rows))
-	for i, m := range rows {
-		out[i] = v1.Market{
-			Base:          m.Pair.Base.String(),
-			Quote:         m.Pair.Quote.String(),
-			LastTradeAt:   v1.WireTime(m.LastTradeAt),
-			BucketCloseAt: v1.WireTime(m.BucketCloseAt),
-			TradeCount24h: m.TradeCount24h,
-			Volume24hUSD:  m.Volume24hUSD,
-			LastPrice:     m.LastPrice,
-		}
-	}
-	return out, next, nil
-}
-
-func (r storeMarketsReader) AllPools(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Pool, string, error) {
-	rows, next, err := r.s.AllPools(ctx, filter, cursor, limit, order)
-	if err != nil {
-		return nil, "", err
-	}
-	out := make([]v1.Pool, len(rows))
-	for i, p := range rows {
-		out[i] = v1.Pool{
-			Source:        p.Source,
-			Base:          p.Pair.Base.String(),
-			Quote:         p.Pair.Quote.String(),
-			LastTradeAt:   v1.WireTime(p.LastTradeAt),
-			TradeCount24h: p.TradeCount24h,
-			Volume24hUSD:  p.Volume24hUSD,
-			LastPrice:     p.LastPrice,
-		}
-	}
-	return out, next, nil
-}
-
-func (r storeMarketsReader) PairMarket(ctx context.Context, base, quote canonical.Asset) (v1.Market, bool, error) {
-	m, ok, err := r.s.PairMarket(ctx, base, quote)
-	if err != nil || !ok {
-		return v1.Market{}, ok, err
-	}
-	return v1.Market{
-		Base:          m.Pair.Base.String(),
-		Quote:         m.Pair.Quote.String(),
-		LastTradeAt:   v1.WireTime(m.LastTradeAt),
-		BucketCloseAt: v1.WireTime(m.BucketCloseAt),
-		TradeCount24h: m.TradeCount24h,
-		Volume24hUSD:  m.Volume24hUSD,
-		LastPrice:     m.LastPrice,
-	}, true, nil
-}
-
-func (r storeMarketsReader) GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]string) (map[string][]timescale.PairVolumePoint, error) {
-	return r.s.GetPairsVolumeHistory24hBatch(ctx, pairs)
-}
-
-func (r storeMarketsReader) FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error) {
-	return r.s.FirstTradeBatch(ctx, pairs)
-}
-
-// storeOracleReader adapts *timescale.Store to v1.OracleReader.
-type storeOracleReader struct{ s *timescale.Store }
-
-func (r storeOracleReader) LatestOracleUpdatesForAsset(ctx context.Context, asset canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error) {
-	return r.s.LatestOracleUpdatesForAsset(ctx, asset, sourceFilter)
-}
-
-func (r storeOracleReader) LatestOracleUpdatesForAssets(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error) {
-	return r.s.LatestOracleUpdatesForAssets(ctx, assets, sourceFilter)
-}
-
-func (r storeOracleReader) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpdate, error) {
-	return r.s.LatestOracleStreams(ctx)
-}
-
-// cachedOracleReader wraps an inner OracleReader with a Redis
-// read-through cache. The inner DISTINCT ON (source) sort is
-// expensive (~580 ms p95 on R1's oracle_updates volume); the
-// reading only refreshes every 1–5 minutes, so a 30 s Redis
-// entry absorbs the polling fan-out without delaying customer-
-// facing freshness in any meaningful way.
-//
-// Cache miss: hit the inner reader, then SET. Cache hit: deserialise
-// and skip the DB. Errors on either side fall through to the inner
-// reader — never fail open.
-type cachedOracleReader struct {
-	inner v1.OracleReader
-	rdb   redis.UniversalClient
-	log   *slog.Logger
-}
-
-func (r cachedOracleReader) LatestOracleUpdatesForAsset(ctx context.Context, asset canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error) {
-	return r.LatestOracleUpdatesForAssets(ctx, []canonical.Asset{asset}, sourceFilter)
-}
-
-func (r cachedOracleReader) LatestOracleUpdatesForAssets(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error) {
-	if r.rdb == nil {
-		return r.inner.LatestOracleUpdatesForAssets(ctx, assets, sourceFilter)
-	}
-
-	keys := make([]string, len(assets))
-	for i, a := range assets {
-		keys[i] = a.String()
-	}
-	cacheKey := cachekeys.OracleLatest(keys, sourceFilter)
-
-	raw, err := r.rdb.Get(ctx, cacheKey.String()).Bytes()
-	switch {
-	case err == nil:
-		var out []canonical.OracleUpdate
-		if jerr := json.Unmarshal(raw, &out); jerr == nil {
-			return out, nil
-		} else {
-			// Bad payload — log and re-read; don't fail the request
-			// on a cache deserialisation glitch.
-			r.log.Warn("oracle cache decode failed; falling through to DB",
-				"key", cacheKey, "err", jerr)
-		}
-	case errors.Is(err, redis.Nil):
-		// miss — proceed to DB
-	default:
-		r.log.Warn("oracle cache read failed; falling through to DB",
-			"key", cacheKey, "err", err)
-	}
-
-	updates, err := r.inner.LatestOracleUpdatesForAssets(ctx, assets, sourceFilter)
-	if err != nil {
-		return nil, err
-	}
-	if buf, jerr := json.Marshal(updates); jerr == nil {
-		if serr := r.rdb.Set(ctx, cacheKey.String(), buf, cachekeys.OracleLatestTTL).Err(); serr != nil {
-			r.log.Warn("oracle cache write failed", "key", cacheKey, "err", serr)
-		}
-	}
-	return updates, nil
-}
-
-// LatestOracleStreams pass-through — the underlying scan is one
-// query against oracle_updates with DISTINCT ON. Cheap enough to
-// skip the cache layer at this volume; revisit if the page becomes
-// a hot endpoint.
-func (r cachedOracleReader) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpdate, error) {
-	return r.inner.LatestOracleStreams(ctx)
-}
-
-// cachedAssetReader / cachedMarketsReader — Redis read-through
-// caches for the catalogue list endpoints. Same shape as
-// cachedOracleReader: deserialise on hit, hit-the-DB-then-SET on
-// miss, fall through on error. Single-asset / single-pair lookups
-// pass through unchanged — they're already fast and benefit less
-// from caching.
-
-type listCachePayload[T any] struct {
-	Items      []T    `json:"items"`
-	NextCursor string `json:"next"`
-}
-
-type cachedAssetReader struct {
-	inner v1.AssetReader
-	rdb   redis.UniversalClient
-	log   *slog.Logger
-}
-
-// ClassicAssetBySlug forwards the optional classicSlugResolver
-// capability through the cache wrapper — a wrapping reader that
-// swallowed it would silently 400 every slug URL in production while
-// tests against the bare reader stayed green (the exact
-// capability-erasure bug class the mutation audit flagged). Uncached:
-// the lookup is a single unique-index point read.
-func (r cachedAssetReader) ClassicAssetBySlug(ctx context.Context, slug string) (string, string, bool, error) {
-	res, ok := r.inner.(interface {
-		ClassicAssetBySlug(ctx context.Context, slug string) (string, string, bool, error)
-	})
-	if !ok {
-		return "", "", false, nil
-	}
-	return res.ClassicAssetBySlug(ctx, slug)
-}
-
-func (r cachedAssetReader) GetAsset(ctx context.Context, a canonical.Asset) (v1.AssetDetail, error) {
-	return r.inner.GetAsset(ctx, a)
-}
-
-func (r cachedAssetReader) ListAssets(ctx context.Context, cursor string, limit int) ([]v1.AssetDetail, string, error) {
-	if r.rdb == nil {
-		return r.inner.ListAssets(ctx, cursor, limit)
-	}
-	cacheKey := cachekeys.AssetsList(cursor, limit)
-	if raw, err := r.rdb.Get(ctx, cacheKey.String()).Bytes(); err == nil {
-		var p listCachePayload[v1.AssetDetail]
-		if jerr := json.Unmarshal(raw, &p); jerr == nil {
-			return p.Items, p.NextCursor, nil
-		}
-		r.log.Warn("assets cache decode failed", "key", cacheKey)
-	} else if !errors.Is(err, redis.Nil) {
-		r.log.Warn("assets cache read failed", "key", cacheKey, "err", err)
-	}
-
-	items, next, err := r.inner.ListAssets(ctx, cursor, limit)
-	if err != nil {
-		return nil, "", err
-	}
-	if buf, jerr := json.Marshal(listCachePayload[v1.AssetDetail]{Items: items, NextCursor: next}); jerr == nil {
-		if serr := r.rdb.Set(ctx, cacheKey.String(), buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
-			r.log.Warn("assets cache write failed", "key", cacheKey, "err", serr)
-		}
-	}
-	return items, next, nil
-}
-
-type cachedMarketsReader struct {
-	inner v1.MarketsReader
-	rdb   redis.UniversalClient
-	log   *slog.Logger
-}
-
-// FirstTradeBatch delegates uncached: inception timestamps are
-// immutable once set, the call is already gated behind an opt-in
-// include param, and the underlying MIN is index-assisted.
-func (r cachedMarketsReader) FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error) {
-	return r.inner.FirstTradeBatch(ctx, pairs)
-}
-
-func (r cachedMarketsReader) PairMarket(ctx context.Context, base, quote canonical.Asset) (v1.Market, bool, error) {
-	return r.inner.PairMarket(ctx, base, quote)
-}
-
-// GetPairsVolumeHistory24hBatch — pass-through. The query runs at
-// page granularity (max 500 pairs) and the result depends on the
-// 24h time window; not worth caching since invalidation tracks
-// every minute boundary.
-func (r cachedMarketsReader) GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]string) (map[string][]timescale.PairVolumePoint, error) {
-	return r.inner.GetPairsVolumeHistory24hBatch(ctx, pairs)
-}
-
-func (r cachedMarketsReader) AllPools(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Pool, string, error) {
-	// Pools queries are heavy (group by source × pair); cache
-	// follows the same TTL as the markets list. Cache key
-	// includes the filter so pools-with-DEX-filter, pools-by-pair,
-	// and unfiltered pools don't collide.
-	if r.rdb == nil {
-		return r.inner.AllPools(ctx, filter, cursor, limit, order)
-	}
-	cacheKey := cachekeys.MarketsListPools(cursor, limit, marketsOrderKey(order), filter.Sources, filter.Base, filter.Quote, filter.Asset)
-	if raw, err := r.rdb.Get(ctx, cacheKey.String()).Bytes(); err == nil {
-		var p listCachePayload[v1.Pool]
-		if jerr := json.Unmarshal(raw, &p); jerr == nil {
-			return p.Items, p.NextCursor, nil
-		}
-		r.log.Warn("pools cache decode failed", "key", cacheKey)
-	} else if !errors.Is(err, redis.Nil) {
-		r.log.Warn("pools cache read failed", "key", cacheKey, "err", err)
-	}
-	items, next, err := r.inner.AllPools(ctx, filter, cursor, limit, order)
-	if err != nil {
-		return nil, "", err
-	}
-	if buf, jerr := json.Marshal(listCachePayload[v1.Pool]{Items: items, NextCursor: next}); jerr == nil {
-		if serr := r.rdb.Set(ctx, cacheKey.String(), buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
-			r.log.Warn("pools cache write failed", "key", cacheKey, "err", serr)
-		}
-	}
-	return items, next, nil
-}
-
-func (r cachedMarketsReader) SourceMarkets(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
-	// Per-source markets share the same cache shape as
-	// DistinctPairsExt but partition by source so a source's pool
-	// list isn't aliased with the global one.
-	if r.rdb == nil {
-		return r.inner.SourceMarkets(ctx, source, cursor, limit, order)
-	}
-	cacheKey := cachekeys.MarketsListBySource(cursor, limit, marketsOrderKey(order), source)
-	if raw, err := r.rdb.Get(ctx, cacheKey.String()).Bytes(); err == nil {
-		var p listCachePayload[v1.Market]
-		if jerr := json.Unmarshal(raw, &p); jerr == nil {
-			return p.Items, p.NextCursor, nil
-		}
-		r.log.Warn("source-markets cache decode failed", "key", cacheKey)
-	} else if !errors.Is(err, redis.Nil) {
-		r.log.Warn("source-markets cache read failed", "key", cacheKey, "err", err)
-	}
-
-	items, next, err := r.inner.SourceMarkets(ctx, source, cursor, limit, order)
-	if err != nil {
-		return nil, "", err
-	}
-	if buf, jerr := json.Marshal(listCachePayload[v1.Market]{Items: items, NextCursor: next}); jerr == nil {
-		if serr := r.rdb.Set(ctx, cacheKey.String(), buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
-			r.log.Warn("source-markets cache write failed", "key", cacheKey, "err", serr)
-		}
-	}
-	return items, next, nil
-}
-
-func (r cachedMarketsReader) AssetMarkets(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
-	// Per-asset markets share the same cache shape as
-	// DistinctPairsExt but partition by asset so an asset's
-	// involvement list isn't aliased with the global one.
-	if r.rdb == nil {
-		return r.inner.AssetMarkets(ctx, asset, cursor, limit, order)
-	}
-	cacheKey := cachekeys.MarketsListByAsset(cursor, limit, marketsOrderKey(order), asset)
-	if raw, err := r.rdb.Get(ctx, cacheKey.String()).Bytes(); err == nil {
-		var p listCachePayload[v1.Market]
-		if jerr := json.Unmarshal(raw, &p); jerr == nil {
-			return p.Items, p.NextCursor, nil
-		}
-		r.log.Warn("asset-markets cache decode failed", "key", cacheKey)
-	} else if !errors.Is(err, redis.Nil) {
-		r.log.Warn("asset-markets cache read failed", "key", cacheKey, "err", err)
-	}
-
-	items, next, err := r.inner.AssetMarkets(ctx, asset, cursor, limit, order)
-	if err != nil {
-		return nil, "", err
-	}
-	if buf, jerr := json.Marshal(listCachePayload[v1.Market]{Items: items, NextCursor: next}); jerr == nil {
-		if serr := r.rdb.Set(ctx, cacheKey.String(), buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
-			r.log.Warn("asset-markets cache write failed", "key", cacheKey, "err", serr)
-		}
-	}
-	return items, next, nil
-}
-
-func (r cachedMarketsReader) DistinctPairsExt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
-	if r.rdb == nil {
-		return r.inner.DistinctPairsExt(ctx, cursor, limit, order)
-	}
-	cacheKey := cachekeys.MarketsListOrdered(cursor, limit, marketsOrderKey(order))
-	if raw, err := r.rdb.Get(ctx, cacheKey.String()).Bytes(); err == nil {
-		var p listCachePayload[v1.Market]
-		if jerr := json.Unmarshal(raw, &p); jerr == nil {
-			return p.Items, p.NextCursor, nil
-		}
-		r.log.Warn("markets cache decode failed", "key", cacheKey)
-	} else if !errors.Is(err, redis.Nil) {
-		r.log.Warn("markets cache read failed", "key", cacheKey, "err", err)
-	}
-
-	items, next, err := r.inner.DistinctPairsExt(ctx, cursor, limit, order)
-	if err != nil {
-		return nil, "", err
-	}
-	if buf, jerr := json.Marshal(listCachePayload[v1.Market]{Items: items, NextCursor: next}); jerr == nil {
-		if serr := r.rdb.Set(ctx, cacheKey.String(), buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
-			r.log.Warn("markets cache write failed", "key", cacheKey, "err", serr)
-		}
-	}
-	return items, next, nil
-}
-
-func marketsOrderKey(o timescale.MarketsOrder) string {
-	switch o {
-	case timescale.MarketsOrderVolume24hDesc:
-		return "vol_desc"
-	default:
-		return "pair"
 	}
 }
 
@@ -3714,163 +3154,6 @@ func (g globalPriceReader) LookupTriangulated(ctx context.Context, base, quote c
 		return "", time.Time{}, false, err
 	}
 	return v.Value, v.ObservedAt, true, nil
-}
-
-// storeHistoryReader adapts *timescale.Store to v1.HistoryReader.
-// Pure passthrough: the store already returns []canonical.Trade
-// ordered by ts ASC, which is exactly what the handler expects.
-type storeHistoryReader struct{ s *timescale.Store }
-
-func (r storeHistoryReader) TradesInRange(ctx context.Context, pair canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
-	return r.s.TradesInRange(ctx, pair, from, to, limit)
-}
-
-func (r storeHistoryReader) TradesInRangeAfter(ctx context.Context, pair canonical.Pair, from, to, afterTs time.Time, afterLedger uint32, afterTxHash, afterSource string, afterOpIndex uint32, limit int) ([]canonical.Trade, error) {
-	return r.s.TradesInRangeAfter(ctx, pair, from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
-}
-
-func (r storeHistoryReader) TradesInRangeAfterFromSource(ctx context.Context, pair canonical.Pair, source string, from, to, afterTs time.Time, afterLedger uint32, afterTxHash, afterSource string, afterOpIndex uint32, limit int) ([]canonical.Trade, error) {
-	return r.s.TradesInRangeAfterFromSource(ctx, pair, source, from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
-}
-
-// LatestTradePerSource adapts [timescale.Store.LatestTradePerSource]
-// to the v1.HistoryReader interface. Pure passthrough: the store
-// already does the DISTINCT ON (source) work in SQL.
-func (r storeHistoryReader) LatestTradePerSource(ctx context.Context, pair canonical.Pair, sourceFilter string) ([]canonical.Trade, error) {
-	return r.s.LatestTradePerSource(ctx, pair, sourceFilter)
-}
-
-// HistoryPoints adapts [timescale.Store.HistoryPoints] to the
-// v1.HistoryReader interface. Translates the storage-side
-// timescale.HistoryGranularity string-typed enum back to plain
-// strings for the v1 type, and the rich timescale.HistoryPoint to
-// the v1 wire-shape variant. Unknown granularities propagate as
-// v1.ErrUnknownGranularity (handler turns into 400).
-func (r storeHistoryReader) HistoryPoints(ctx context.Context, pair canonical.Pair, granularity string, limit int) ([]v1.HistoryPoint, error) {
-	g := timescale.HistoryGranularity(granularity)
-	if err := g.Validate(); err != nil {
-		return nil, v1.ErrUnknownGranularity
-	}
-	rows, err := r.s.HistoryPoints(ctx, pair, g, limit)
-	if err != nil {
-		return nil, err
-	}
-	return convertHistoryPoints(rows), nil
-}
-
-// HistoryPointsInRange adapts [timescale.Store.HistoryPointsInRange]
-// to the v1.HistoryReader interface. Same translation rules as
-// [storeHistoryReader.HistoryPoints]; passes the from/to window
-// through to the storage layer.
-func (r storeHistoryReader) HistoryPointsInRange(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time, limit int) ([]v1.HistoryPoint, error) {
-	g := timescale.HistoryGranularity(granularity)
-	if err := g.Validate(); err != nil {
-		return nil, v1.ErrUnknownGranularity
-	}
-	rows, err := r.s.HistoryPointsInRange(ctx, pair, g, from, to, limit)
-	if err != nil {
-		return nil, err
-	}
-	return convertHistoryPoints(rows), nil
-}
-
-// storeCoverageFloorReader adapts *timescale.Store to
-// v1.CoverageFloorReader. Separate from [storeHistoryReader] on
-// purpose: the serving reader is wrapped in a 2-minute SWR cache whose
-// keying is per-method, while the floor has its own TTL memo in the
-// handler layer keyed by the pair's alias-canonical identity — layering
-// one over the other would cache the same answer twice under different
-// keys. Translates the string-typed granularity to the storage enum;
-// an unknown value surfaces as the store's own validation error, which
-// the handler renders as "no signal".
-type storeCoverageFloorReader struct{ s *timescale.Store }
-
-func (r storeCoverageFloorReader) EarliestBucket(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error) {
-	return r.s.EarliestBucket(ctx, pair, timescale.HistoryGranularity(granularity), from, to)
-}
-
-func (r storeCoverageFloorReader) EarliestBucketAsStored(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error) {
-	return r.s.EarliestBucketAsStored(ctx, pair, timescale.HistoryGranularity(granularity), from, to)
-}
-
-func (r storeCoverageFloorReader) EarliestBucketLiteralQuote(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error) {
-	return r.s.EarliestBucketLiteralQuote(ctx, pair, timescale.HistoryGranularity(granularity), from, to)
-}
-
-// TWAPPointsInRange adapts [timescale.Store.TWAPPointsInRange] to the
-// v1.HistoryReader interface. Only 1h / 1d have a TWAP CAGG
-// (migration 0081); any other granularity propagates as
-// v1.ErrUnknownGranularity (handler turns into 400).
-func (r storeHistoryReader) TWAPPointsInRange(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time, limit int) ([]v1.HistoryPoint, error) {
-	g := timescale.HistoryGranularity(granularity)
-	if !timescale.TWAPGranularitySupported(g) {
-		return nil, v1.ErrUnknownGranularity
-	}
-	rows, err := r.s.TWAPPointsInRange(ctx, pair, g, from, to, limit)
-	if err != nil {
-		return nil, err
-	}
-	return convertHistoryPoints(rows), nil
-}
-
-// OHLCSeries adapts [timescale.Store.OHLCSeries] /
-// [timescale.Store.OHLCSeriesReBucketed] to the v1.HistoryReader
-// interface. The interval → view decision is [timescale.OHLCRoutes]:
-// a native row reads its own CAGG, a folded row re-buckets a finer
-// one (5m/30m from prices_1m, 2h/4h/12h from prices_1h, 3d from
-// prices_1d, 2w from prices_1w). Nothing is decided here, so the
-// reader cannot route an interval the store's fold allow-list has
-// not declared — the drift that 500d 2h/12h/3d/2w. Unknown
-// intervals propagate as v1.ErrUnknownGranularity.
-func (r storeHistoryReader) OHLCSeries(ctx context.Context, pair canonical.Pair, interval string, from, to time.Time, limit int) ([]v1.OHLCSeriesBar, error) {
-	route, ok := timescale.OHLCRouteFor(interval)
-	if !ok {
-		return nil, v1.ErrUnknownGranularity
-	}
-	var (
-		bars []timescale.OHLCBar
-		err  error
-	)
-	if route.Folded() {
-		bars, err = r.s.OHLCSeriesReBucketed(ctx, pair, route.Source, route.Fold, from, to, limit)
-	} else {
-		bars, err = r.s.OHLCSeries(ctx, pair, route.Native, from, to, limit)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return convertOHLCBars(bars), nil
-}
-
-func convertOHLCBars(bars []timescale.OHLCBar) []v1.OHLCSeriesBar {
-	out := make([]v1.OHLCSeriesBar, len(bars))
-	for i, b := range bars {
-		out[i] = v1.OHLCSeriesBar{
-			T:       v1.WireTime(b.Bucket),
-			O:       b.Open,
-			H:       b.High,
-			L:       b.Low,
-			C:       b.Close,
-			VBase:   b.BaseVolume,
-			VQuote:  b.QuoteVolume,
-			N:       b.TradeCount,
-			Sources: b.Sources,
-		}
-	}
-	return out
-}
-
-func convertHistoryPoints(rows []timescale.HistoryPoint) []v1.HistoryPoint {
-	out := make([]v1.HistoryPoint, len(rows))
-	for i, row := range rows {
-		out[i] = v1.HistoryPoint{
-			Bucket:    row.Bucket,
-			VWAP:      row.VWAP,
-			VolumeUSD: row.VolumeUSD,
-			Sources:   row.Sources,
-		}
-	}
-	return out
 }
 
 // storePriceReader adapts *timescale.Store to v1.PriceReader.
@@ -4288,56 +3571,6 @@ func (r storePriceReader) RecentClosedVWAP1mExists(ctx context.Context, base, qu
 		return false, err
 	}
 	return r.s.RecentClosedVWAP1mExists(ctx, pair)
-}
-
-// assetToDetail converts canonical.Asset → v1.AssetDetail. Nullable
-// fields become nil pointers when empty so the JSON omits them.
-//
-// homeDomainLookup populates HomeDomain for classic assets whose
-// issuer has a known home_domain (one of the homeDomainLookups). When
-// one is known, the
-// SEP-1 overlay handler downstream resolves stellar.toml and fills the
-// overlay fields; otherwise HomeDomain stays nil and the handler
-// stamps sep1_status="not_fetched". Pass nil for the lookup if the
-// caller doesn't have one (tests + scaffolding paths).
-//
-// SAC-wrapped classics + Soroban tokens have no issuer in the
-// classic sense — HomeDomain stays nil; sep1_status falls through
-// to "not_applicable" via the handler.
-func assetToDetail(ctx context.Context, a canonical.Asset, homeDomainLookup func(ctx context.Context, issuer string) (string, bool)) v1.AssetDetail {
-	d := v1.AssetDetail{
-		AssetID: a.String(),
-		Type:    string(a.Type),
-		Code:    a.Code,
-		// Classic + native are 7 by protocol (stroops). Soroban tokens get
-		// their real on-chain decimals() overlaid by the v1 handler
-		// (applyTokenDecimals, reading the lake's instance METADATA).
-		Decimals:   7,
-		Sep1Status: "not_applicable",
-	}
-	if a.Issuer != "" {
-		v := a.Issuer
-		d.Issuer = &v
-		// Classic asset with a known issuer — try the curated lookup
-		// to populate HomeDomain. The handler's overlay logic takes
-		// over from here: with HomeDomain set + s.meta wired,
-		// applySep1Overlay runs and stamps the resulting status; with
-		// HomeDomain set + s.meta nil, the handler stamps "not_fetched".
-		if homeDomainLookup != nil {
-			if hd, ok := homeDomainLookup(ctx, a.Issuer); ok {
-				d.HomeDomain = &hd
-				// Clear the "not_applicable" so the handler's overlay
-				// logic kicks in. The handler stamps the right value
-				// based on overlay outcome.
-				d.Sep1Status = ""
-			}
-		}
-	}
-	if a.ContractID != "" {
-		v := a.ContractID
-		d.ContractID = &v
-	}
-	return d
 }
 
 // metadataStoreLookup adapts *timescale.Store to

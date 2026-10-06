@@ -97,9 +97,8 @@ const DefaultStaleComponentLedgers uint32 = 1000
 // unverified figure at the current ledger fabricates freshness on
 // the market-cap/FDV surface).
 //
-// 24 h is deliberately generous: the live-PHO dormancy that motivated
-// F-1320 sat ~1000-1300 ledgers (~2 h) behind, an order of magnitude
-// inside this horizon, so genuinely quiet assets are unaffected. An
+// 24 h is deliberately generous: the longest dormant run measured on
+// pubnet is ~4 h (~2,900 ledgers), so quiet assets are unaffected. An
 // operator watching an asset dormant for longer than a day either
 // raises this bound (or its per-asset stale threshold) deliberately,
 // or accepts a supply gap rather than a fresh-looking stale number.

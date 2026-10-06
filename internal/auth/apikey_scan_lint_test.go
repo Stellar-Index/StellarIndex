@@ -18,7 +18,7 @@ import (
 // where something names it, and a control that exists but is never
 // invoked is its own finding class (K023). `go test ./...` runs in
 // every gate this repo has, so the ban holds even where verify.sh and
-// ci.yml's import-checks job are not run.
+// ci.yml's repo-gates job are not run.
 //
 // It does not skip when bash is missing: a skipped control reports
 // green over nothing.

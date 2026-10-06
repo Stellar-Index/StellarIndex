@@ -140,8 +140,8 @@ below), and every matching rule applies.
   and Tailwind.
 
 `/_next/static/*` adds 1-year `Cache-Control: immutable` (CF default; explicit
-for Netlify). `/embed/*` sends `X-Frame-Options: ALLOWALL` and a CSP with
-`frame-ancestors *`, which overrides the inherited `DENY`.
+for Netlify). `/embed/*` sends a CSP with `frame-ancestors *` (no X-Frame-Options of its
+own); browsers ignore the inherited `DENY` when a CSP frame-ancestors is present.
 
 **No CSP reporting**, by decision: a hosted collector would be the first
 runtime third party, and `/client-errors` logs only the explorer's own beacon

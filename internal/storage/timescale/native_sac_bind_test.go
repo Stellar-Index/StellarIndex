@@ -145,3 +145,31 @@ func assertPlaceholdersMatchArgs(t *testing.T, sql string, nargs int) {
 		}
 	}
 }
+
+// The asset_price_snapshot writer prices asset-vs-XLM arms against the
+// installed network's SAC too, not the pubnet literal.
+func TestNativeSACIsBound_PriceSnapshotWriter(t *testing.T) {
+	installTestnetForBind(t)
+	store, conn := newScriptedStore(t,
+		scriptedResult{}, scriptedResult{},
+		scriptedResult{rowsAffected: 1}, scriptedResult{rowsAffected: 1},
+		scriptedResult{rowsAffected: 1}, scriptedResult{rowsAffected: 1},
+	)
+	if err := store.RefreshAssetVolume24h(context.Background()); err != nil {
+		t.Fatalf("RefreshAssetVolume24h: %v", err)
+	}
+	for _, st := range conn.stmts {
+		if !strings.Contains(st.sql, "INSERT INTO asset_price_snapshot") {
+			continue
+		}
+		assertPlaceholdersMatchArgs(t, st.sql, len(st.args))
+		if got := st.arg(t, 1); got != testnetNativeSACForBind {
+			t.Fatalf("snapshot writer $1 = %v, want the testnet SAC %s", got, testnetNativeSACForBind)
+		}
+		if strings.Contains(st.sql, canonical.XLMSacContractID) {
+			t.Fatal("snapshot writer still embeds the pubnet XLM SAC literal")
+		}
+		return
+	}
+	t.Fatal("no asset_price_snapshot upsert issued")
+}

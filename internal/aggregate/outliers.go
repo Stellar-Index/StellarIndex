@@ -128,7 +128,7 @@ func keepIfVolumeMajority(trades []canonical.Trade, validIdx, kept []int, scaleO
 	}
 	vol := trades
 	if scaleOf != nil {
-		vol = NormalizeAmountScale(trades, scaleOf)
+		vol = NormalizeAmountScale(trades, scaleOf).Trades()
 	}
 	total, keptVol := new(big.Int), new(big.Int)
 	for _, i := range validIdx {

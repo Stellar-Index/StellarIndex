@@ -221,7 +221,7 @@ func FuzzVWAP(f *testing.F) {
 			}
 		}
 
-		got, err := VWAP(trades)
+		got, err := VWAPOf(trades)
 		if valid == 0 {
 			if !errors.Is(err, ErrNoTrades) || got != nil {
 				t.Fatalf("VWAP with no valid trade = (%v, %v), want ErrNoTrades", got, err)
@@ -754,7 +754,8 @@ func FuzzNormalizeAmountScale(f *testing.F) {
 		trades := fuzzTrades(data)
 		orig := cloneTrades(trades)
 		decs := map[string]int{"a": int(da % 39), "b": int(db % 39), "c": int(dc % 39)}
-		got := NormalizeAmountScale(trades, func(s string) int { return decs[s] })
+		window := NormalizeAmountScale(trades, func(s string) int { return decs[s] })
+		got := window.Trades()
 		if !sameTrades(trades, orig) {
 			t.Fatal("input trades mutated")
 		}
@@ -766,6 +767,9 @@ func FuzzNormalizeAmountScale(f *testing.F) {
 			if decs[tr.Source] > maxDec {
 				maxDec = decs[tr.Source]
 			}
+		}
+		if window.Decimals() != maxDec {
+			t.Fatalf("Decimals() = %d, want the window's max scale %d", window.Decimals(), maxDec)
 		}
 		realQ, realB := new(big.Rat), new(big.Rat)
 		for i, tr := range trades {
@@ -789,7 +793,7 @@ func FuzzNormalizeAmountScale(f *testing.F) {
 			}
 		}
 		if realB.Sign() > 0 {
-			v, err := VWAP(got)
+			v, err := VWAP(window)
 			if err != nil {
 				t.Fatalf("VWAP: %v", err)
 			}

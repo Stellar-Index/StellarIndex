@@ -171,12 +171,12 @@ defer_check() {
 }
 
 # verify.sh ↔ CI parity (W5-ci-6). The #1 cause of "green locally, red in CI"
-# is this gate drifting behind CI's import-checks job. This deterministic
+# is this gate drifting behind CI's repo-gates job. This deterministic
 # meta-check (no network) fails fast if CI runs a scripts/ci gate that the
 # steps below do not mirror — so a lint added to CI obligates adding it here.
 # The self-test runs first (the gate is only as trustworthy as its fixtures).
 echo "=== verify↔CI parity self-test ===" && ./scripts/ci/check-verify-parity-test.sh
-echo "=== verify.sh ↔ CI import-checks parity ===" && ./scripts/ci/check-verify-parity.sh
+echo "=== verify.sh ↔ CI repo-gates parity ===" && ./scripts/ci/check-verify-parity.sh
 echo "=== self-test runners self-test ===" && ./scripts/ci/check-selftest-runners-test.sh
 echo "=== every scripts/ci self-test has a runner ===" && ./scripts/ci/check-selftest-runners.sh
 echo "=== CI meta-gate coverage ===" && ./scripts/ci/ci-meta-gate-coverage-test.sh
@@ -424,7 +424,7 @@ echo "=== ClickHouse client auth ===" && python3 ./scripts/ci/lint-ch-client-aut
 # The metric-refs SELF-test (does the guard still detect a dead ref?)
 # needs neither promtool nor the monitoring stack, so it runs
 # unconditionally — outside the promtool branch above, which would
-# otherwise skip it on any machine that HAS promtool. CI's import-checks
+# otherwise skip it on any machine that HAS promtool. CI's repo-gates
 # job runs it, so verify.sh must too or check-verify-parity fails.
 echo "=== Metric refs self-test ===" && ./scripts/ci/lint-metric-refs-test.sh
 echo "=== Unit-failed baseline self-test ===" && ./scripts/ci/lint-unit-failed-baseline-test.sh
@@ -636,7 +636,7 @@ lane_d() { # everything else
     echo "=== Ansible pubnet example checksum parity self-test ===" && ./scripts/ci/ansible-pubnet-checksum-parity-test.sh
     echo "=== Ansible keepalived healthcheck self-test ===" && ./scripts/ci/ansible-keepalived-healthcheck-test.sh
     echo "=== HAProxy http-request timeout self-test ===" && ./scripts/ci/haproxy-http-request-timeout-test.sh
-    # CI's import-checks job runs these gate scripts too; verify.sh must mirror
+    # CI's repo-gates job runs these gate scripts too; verify.sh must mirror
     # them or it issues a green CI won't honour (W5-ci-6, enforced by the parity
     # check above). All are deterministic + network-free.
     echo "=== Migration backward-compat ===" && ./scripts/ci/lint-migration-compat.sh
@@ -648,6 +648,7 @@ lane_d() { # everything else
     echo "=== Public-dataset drift-verdict self-test ===" && ./scripts/ci/check-public-dataset-test.sh
     echo "=== Fleet release-drift verdict self-test ===" && ./scripts/ci/check-fleet-release-drift-test.sh
     echo "=== zfs-snapshot job self-test ===" && ./scripts/ci/zfs-snapshot-test.sh
+    echo "=== ordinal-rederive-chunks wrapper self-test ===" && ./scripts/ci/ordinal-rederive-chunks-test.sh
     # The behavioural twin above pins HOW the job snapshots; this pins WHICH
     # datasets it is given (NS03 — the Galexie LCM archive the other two
     # tiers are derived from had none). Renders the role template, so the
@@ -657,7 +658,7 @@ lane_d() { # everything else
     # behavioural half runs the task file with ansible and needs GNU tar on the
     # target (unarchive --diff). macOS ships bsdtar — point it at a container
     # via DEPLOY_SYNC_CONNECTION/DEPLOY_SYNC_HOST (see the script header) or
-    # let CI's ansible-check job (ubuntu) run it. Graceful-skip only when the
+    # let CI's toolchain-gates job (ubuntu) run it. Graceful-skip only when the
     # tools are missing, same convention as promtool below.
     if command -v ansible-playbook >/dev/null 2>&1 && { [ -n "${DEPLOY_SYNC_CONNECTION:-}" ] || grep -q 'GNU tar' <<<"$(tar --version 2>/dev/null)"; }; then
         echo "=== Deploy migrations-sync self-test ===" && ./scripts/ci/deploy-sync-test.sh
@@ -666,7 +667,7 @@ lane_d() { # everything else
     fi
     echo "=== Baseline-growth tripwire self-test ===" && ./scripts/ci/lint-baseline-growth-test.sh
     echo "=== Config-apply gate self-test ===" && ./scripts/ci/config-apply-gate-test.sh
-    # Two import-checks gates that landed (#287, #305) without their verify.sh
+    # Two repo-gates gates that landed (#287, #305) without their verify.sh
     # twin — check-verify-parity was red on main for everyone until added here.
     echo "=== Public-dataset drift decision-core self-test ===" && ./scripts/ci/check-public-dataset-test.sh
     echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-test.sh

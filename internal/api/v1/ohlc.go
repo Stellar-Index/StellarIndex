@@ -43,7 +43,7 @@ const ohlcDefaultOutlierSigma = 4.0
 //
 // BaseVolumeDecimals / QuoteVolumeDecimals state that scale on the wire,
 // so a consumer renders asset units as volume / 10^decimals rather than
-// guessing a constant. A fiat-quoted window is lifted to ONE common scale
+// guessing a constant. Every point window is lifted to ONE common scale
 // by [aggregate.NormalizeAmountScale] before the sums are taken, and the
 // stated value is that lift target — resolved by
 // [commonAmountScaleDecimals] over the PRE-outlier-filter population, the
@@ -224,7 +224,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	// second copy of this fetch that used to live in this file
 	// (`ohlcTradesWithStablecoinFallback`) is gone.
 	const maxTradesForOHLC = 10000
-	trades, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTradesForOHLC)
+	window, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTradesForOHLC)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -241,34 +241,22 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 
 	// The volume sums below are only meaningful with a scale attached, and
 	// the scale is per-SOURCE (7dp on-chain, 8 CEX, 6 FX — CS-040). It is
-	// resolved HERE, over the population as fetched, because that is the
-	// population [aggregate.NormalizeAmountScale] lifted to a single
-	// common scale inside [Server.fiatCombinedTrades] — the lift target is
-	// the maximum source scale over exactly this slice.
-	//
-	// Not after FilterOutliers. The filter drops trades; it does not
-	// un-lift the ones it keeps. In a window whose only max-scale venue is
-	// an aberrant CEX print, the surviving on-chain rows are still
-	// carrying that venue's ×10, so a post-filter maximum states 7 for
-	// integers that are at 8 and hands the consumer the F096 tenfold error
-	// back through a narrower door.
-	//
-	// Nothing is re-normalized here: NormalizeAmountScale keys off Source,
-	// not off the amounts, so a second pass over an already-lifted slice
-	// would lift it a second time.
-	volumeDecimals := commonAmountScaleDecimals(trades)
+	// resolved over the window as fetched: the window carries its lift
+	// target through the outlier filter, and an unregistered source the
+	// filter drops still set the scale its survivors were lifted to.
+	volumeDecimals := commonAmountScaleDecimals(window)
 
 	// Capture the pre-filter length so Truncated reflects whether the
 	// WINDOW hit the cap — not whether the post-outlier-filter slice
 	// happens to equal it. Mirrors vwap.go; computing it after
 	// FilterOutliers would yield false negatives whenever the filter
 	// dropped any trade. See G2-05.
-	preFilter := len(trades)
-	if trades, ok = filterOHLCOutliers(w, r, trades, sigma); !ok {
+	preFilter := window.Len()
+	if window, ok = filterOHLCOutliers(w, r, window, sigma); !ok {
 		return
 	}
 
-	bar, ok := s.computeOHLCSingleBar(w, r, pair, from, to, trades)
+	bar, ok := s.computeOHLCSingleBar(w, r, pair, from, to, window.Trades())
 	if !ok {
 		return
 	}
@@ -295,21 +283,21 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 // withheld them — including a contested window whose trim would have
 // discarded most of its base volume. Returns ok=false when it has
 // already written the response.
-func filterOHLCOutliers(w http.ResponseWriter, r *http.Request, trades []canonical.Trade, sigma float64) ([]canonical.Trade, bool) {
+func filterOHLCOutliers(w http.ResponseWriter, r *http.Request, window aggregate.ScaledWindow, sigma float64) (aggregate.ScaledWindow, bool) {
 	if sigma <= 0 {
-		return trades, true
+		return window, true
 	}
-	pre := len(trades)
-	trades = aggregate.FilterOutliers(trades, sigma)
-	if pre > 0 && len(trades) == 0 {
+	pre := window.Len()
+	window = window.FilterOutliers(sigma)
+	if pre > 0 && window.Len() == 0 {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/all-filtered",
 			"All trades filtered as outliers", http.StatusUnprocessableEntity,
 			fmt.Sprintf("outlier_sigma=%v removed all %d trades in window; relax the threshold or pass outlier_sigma=0 for the unfiltered bar",
 				sigma, pre))
-		return nil, false
+		return aggregate.ScaledWindow{}, false
 	}
-	return trades, true
+	return window, true
 }
 
 // computeOHLCSingleBar folds the single-bar path's compute-and-normalize
@@ -356,24 +344,12 @@ func (s *Server) computeOHLCSingleBar(
 }
 
 // commonAmountScaleDecimals is the smallest-unit scale a window's volume
-// sums end up in: the MAXIMUM per-source scale present, which is the lift
-// target [aggregate.NormalizeAmountScale] resolves over the same slice
-// (max, so every lift is an exact integer multiply and nothing is divided
-// — ADR-0003).
+// sums are in: the lift target [aggregate.NormalizeAmountScale] chose, the
+// MAXIMUM per-source scale present (max, so every lift is an exact integer
+// multiply and nothing is divided — ADR-0003).
 //
-// Call it over the slice the lift was applied to, never over a subset: a
-// filter that drops the max-scale trades does not un-lift the ones it
-// keeps, so a subset's maximum can be smaller than the scale the surviving
-// integers are actually in (finding F096).
-//
-// A window nothing lifted — the non-fiat branch of
-// [Server.tradesInRangeWithStablecoinFallback] reads ONE pair and merges
-// nothing — is homogeneous in practice: a pair spelling is written by one
-// venue class, the same property the series arm measured over 129,854
-// spellings for [barScaleDecimals]. Were one ever mixed, its raw sum is
-// already incommensurable and no read-time scale can repair it; max is
-// then the conservative statement, since it renders the smaller number
-// rather than inflating the market.
+// Call it over the window as fetched, not after the outlier filter: the
+// registry check below must see every source the lift was resolved over.
 //
 // Zero for an empty window, which never reaches the wire — ComputeOHLC
 // 404s on ErrNoTrades first.
@@ -389,17 +365,14 @@ func (s *Server) computeOHLCSingleBar(
 // the opposite population — an unregistered on-chain DEX at 7 decimals
 // would be reported at 8. An unrecognised source is scale-unknown, not
 // scale-8 (GH-1285).
-func commonAmountScaleDecimals(trades []canonical.Trade) int {
-	scale := 0
+func commonAmountScaleDecimals(window aggregate.ScaledWindow) int {
+	trades := window.Trades()
 	for i := range trades {
 		if !external.Registered(trades[i].Source) {
 			return ohlcBarScaleUnknown
 		}
-		if d := amountScaleDecimalsFor(trades[i].Source); d > scale {
-			scale = d
-		}
 	}
-	return scale
+	return window.Decimals()
 }
 
 // parseOHLCOutlierSigma parses the optional ?outlier_sigma=N query

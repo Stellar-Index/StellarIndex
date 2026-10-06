@@ -656,7 +656,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 // [IsProjectedEvent] (guarded by TestSoleWriter_SubsetOfProjected).
 // A source is added here only after its full-history re-derive lands
 // AND it enters the compute-completeness catalogue
-// (cmd/stellarindex-ops/reconciliation_catalogue.go), so an
+// (internal/ops/chops/reconciliation_catalogue.go), so an
 // undetected projector regression can't silently lose rows the
 // dispatcher used to double-write. Today that is only the sep41
 // domain (TASK #16b, 2026-07-06 re-derive + f457f2a4 catalogue

@@ -36,6 +36,7 @@ func chBackfill(args []string) error {
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	flushEvery := fs.Int("flush-every", 500, "flush to ClickHouse every N ledgers (per worker)")
 	parallel := fs.Int("parallel", 1, "number of concurrent range-walkers")
+	changesOnly := fs.Bool("changes-only", false, "write only the ledgers row (the per-ledger commit marker) and ledger_entry_changes; skips txs/ops/results/participants/events/supply flows. For re-deriving entry-change ordinals without rewriting the other Tier-1 tables")
 	heartbeat := fs.String("heartbeat", "", "node_exporter textfile path for the liveness/progress gauges (C6-020). Empty = "+opsutil.DefaultTextfileDir+"/ops_job_ch_backfill.prom when that directory exists (r1), otherwise no heartbeat at all")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -73,6 +74,8 @@ func chBackfill(args []string) error {
 	sinkDesc := fmt.Sprintf("ClickHouse %s", *chAddr)
 	if dryRun {
 		sinkDesc = "DRY RUN (decode only, nothing written)"
+	} else if *changesOnly {
+		sinkDesc += " (ledgers + ledger_entry_changes only)"
 	}
 	fmt.Fprintf(os.Stderr, "ch-backfill: streaming ledgers %d..%d from %q -> %s (%d worker(s))\n",
 		*from, *to, streamBucket, sinkDesc, len(chunks))
@@ -84,7 +87,7 @@ func chBackfill(args []string) error {
 	for i, chunk := range chunks {
 		i, chunk := i, chunk // capture
 		g.Go(func() error {
-			return chBackfillChunk(gctx, i, chunk, lsCfg, passphrase, *chAddr, *flushEvery, dryRun, prog.record)
+			return chBackfillChunk(gctx, i, chunk, lsCfg, passphrase, *chAddr, *flushEvery, dryRun, *changesOnly, prog.record)
 		})
 	}
 	walkErr := g.Wait()
@@ -260,7 +263,7 @@ func chBackfillChunk(
 	lsCfg ledgerstream.Config,
 	passphrase, chAddr string,
 	flushEvery int,
-	dryRun bool,
+	dryRun, changesOnly bool,
 	logProgress func(workerIdx int, seq uint32),
 ) error {
 	var sink *clickhouse.Sink
@@ -280,6 +283,9 @@ func chBackfillChunk(
 				fmt.Fprintf(os.Stderr, "ch-backfill: worker %d extract ledger %d: %v\n", idx, lcm.LedgerSequence(), eerr)
 				return nil
 			}
+			if changesOnly {
+				ext = changesOnlyExtract(ext)
+			}
 			if sink != nil {
 				if aerr := sink.Add(ctx, ext); aerr != nil {
 					return aerr // a ClickHouse write failure is fatal; retry the range
@@ -298,4 +304,12 @@ func chBackfillChunk(
 	// Clean completion: flush the chunk's tail before Close so the final
 	// partial batch lands.
 	return sink.Flush(ctx)
+}
+
+// changesOnlyExtract keeps an extract's ledgers row and ledger entry changes
+// and drops everything else. The ledgers row stays because Sink.Flush writes
+// it last as the per-ledger commit marker for the changes. Built from an empty
+// value so a table added to LedgerExtract later is excluded, not rewritten.
+func changesOnlyExtract(e clickhouse.LedgerExtract) clickhouse.LedgerExtract {
+	return clickhouse.LedgerExtract{Ledger: e.Ledger, Changes: e.Changes}
 }

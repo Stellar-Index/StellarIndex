@@ -103,9 +103,8 @@ All times UTC, taken from commit timestamps. Customer-record time
 ## What went poorly
 
 - The rotation offer and notification were not run in the same release
-  cycle as the fix, as §6.5 now requires. The customer-facing record
-  says no customer action was required while its own follow-up says
-  `X-API-Key` customers should be offered rotation.
+  cycle as the fix, as §6.5 now requires; the measurement that showed
+  no `X-API-Key` customer in scope came a month later.
 - The incident record was filed 19 days after the fix.
 - The recorded retention scan covered `email=` and `postgres://`. No
   scan for logged `X-API-Key` values is recorded.
@@ -134,22 +133,26 @@ Per [`sev-playbook.md` §6.6](../sev-playbook.md#66-personal-data-breach-notific
 A postmortem is not complete until every item has an owner and a due
 date (§6.2). Due dates are set at ratification unless stated.
 
-- [ ] Offer targeted key rotation to every `X-API-Key`-authenticated
-      customer in the exposure window and notify them why, per
-      [`runbooks/credential-exposure-redaction-fix.md`](../runbooks/credential-exposure-redaction-fix.md)
-      step 4; then close the customer-record checkbox — maintainer —
-      due before 2026-10-02, when `scripts/ci/lint-docs.sh` §15 fails
-      on the still-unchecked box — issue: not yet filed.
+- [x] Offer targeted key rotation to every `X-API-Key`-authenticated
+      customer in the exposure window — **no customer in scope**:
+      measured 2026-10-02, the only pre-fix key that authenticated in
+      the window belongs to the internal `launch-verify-agent` account
+      and was used once, at creation. Evidence: the closed checkbox in
+      the [incident record](../../../internal/incidents/data/2026-09-02-log-store-credential-pii-exposure.md).
+- [x] Correct the customer-facing record — it now states the measured
+      "no customer in scope" finding instead of an unevidenced "no
+      action required"; same incident record.
 - [ ] Notify customers whose email was looked up by staff in the
-      window (runbook step 4, PII) — maintainer — issue: not yet filed.
+      window (runbook step 4, PII). Not evidenced either way: the
+      incident record measures `X-API-Key` use only. Open (INV-2772).
 - [ ] Complete and record the §6.6 assessment above (decision,
-      reasoning, what was sent to whom) — maintainer — issue: not yet
-      filed.
+      reasoning, what was sent to whom). Open (INV-2772).
 - [ ] Scan Loki's retention window for logged `X-API-Key` values and
-      record the count — maintainer — issue: not yet filed.
-- [ ] Correct the customer-facing record: it says no customer action
-      was required while rotation is outstanding — maintainer — issue:
-      not yet filed.
+      record the count. Open (INV-2772); the recorded scan covered
+      `email=` and `postgres://` only.
+- [ ] Ratify this postmortem: set the incident record's `postmortem:`
+      front-matter field and give each open item an owner and due date
+      (§6.2). Open (INV-2772).
 - [x] Allow-list-shaped query redaction and credential header deletes
       on the site logger — `f07866b70`.
 - [x] The same filter on the global logger — `766a03c02`.

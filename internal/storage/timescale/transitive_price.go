@@ -57,12 +57,6 @@ const usdProxyQuotes = `'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34
 	'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
 	'fiat:USD'`
 
-// xlmQuotes are XLM in both identity forms — the classic 'native' and
-// its Stellar Asset Contract (pubnet literal here; reads bind [xlmQuotesBound]).
-// A VWAP against these is a price in XLM and needs multiplying by
-// xlm_usd.
-const xlmQuotes = `'native', '` + nativeXLMSAC + `'`
-
 // transitiveHopCandidates bounds how many ranked hops
 // TransitiveUSDPriceCandidates returns: enough that a thin top hop cannot
 // hide a sound one behind it, few enough that the caller's per-hop gating

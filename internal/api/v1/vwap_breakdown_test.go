@@ -123,10 +123,13 @@ func TestVWAPBreakdown_MixedDecimalsWeightsNormalised(t *testing.T) {
 		if ratOf(t, s.Weight).Cmp(big.NewRat(1, 2)) != 0 {
 			t.Errorf("%s weight = %s, want 0.5 after scale normalisation", s.Source, s.Weight)
 		}
-		want := map[string]string{"soroswap": "100", "binance": "1000"}[s.Source]
-		if s.QuoteVolume != want {
-			t.Errorf("%s quote_volume = %s, want raw %s", s.Source, s.QuoteVolume, want)
+		// Lifted to the window's 8dp scale, the units of the headline sums.
+		if s.QuoteVolume != "1000" {
+			t.Errorf("%s quote_volume = %s, want 1000 at 8dp", s.Source, s.QuoteVolume)
 		}
+	}
+	if res.QuoteVolume != "2000" {
+		t.Errorf("quote_volume = %s, want 2000 (the sources sum to it)", res.QuoteVolume)
 	}
 }
 

@@ -40,7 +40,7 @@ func vwapText(t *testing.T, trades []canonical.Trade) string {
 	if len(trades) == 0 {
 		return "<empty>"
 	}
-	v, err := VWAP(trades)
+	v, err := VWAPOf(trades)
 	if err != nil {
 		t.Fatalf("VWAP: %v", err)
 	}

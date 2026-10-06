@@ -92,7 +92,7 @@ func TestPriceArms_UnionBothDirectionsAndPickByRecency(t *testing.T) {
 	usdList := strings.Join(strings.Fields(usdProxyQuotes), " ")
 	fold := func(q string) string { return strings.Join(strings.Fields(sqlWithoutComments(q)), " ") }
 	for name, c := range map[string]struct{ q, arms, joins string }{
-		"rollup": {refreshAssetPriceSnapshotUpsert, assetPriceArmCTEs("", xlmQuotes), priceArmJoins(xlmUSDGridJoin)},
+		"rollup": {refreshAssetPriceSnapshotUpsert, assetPriceArmCTEs("", xlmQuotesBound1), priceArmJoins(xlmUSDGridJoin)},
 		"detail": {
 			getAssetBySlugSQL, assetPriceArmCTEs("(SELECT asset_id FROM chosen)", xlmQuotesBound(2)),
 			priceArmJoins(xlmUSDLateralJoin("$2::text")),

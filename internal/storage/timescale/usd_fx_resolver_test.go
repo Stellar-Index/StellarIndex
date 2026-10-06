@@ -574,7 +574,7 @@ func TestBridgeViaXLM_XLMIsBaseCase(t *testing.T) {
 	}
 	for name, asset := range map[string]canonical.Asset{
 		"native": canonical.NativeAsset(),
-		"sac":    {Type: canonical.AssetSoroban, ContractID: nativeXLMSAC},
+		"sac":    {Type: canonical.AssetSoroban, ContractID: canonical.XLMSacContractID},
 	} {
 		rate, err := r.bridgeViaXLM(context.Background(), asset, time.Now())
 		if err != nil {

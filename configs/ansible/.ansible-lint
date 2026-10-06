@@ -1,6 +1,6 @@
 # ansible-lint configuration (CID-3, audit-2026-08-14)
 #
-# The CI ansible-lint step (.github/workflows/ci.yml, job `ansible-check`)
+# The CI ansible-lint step (.github/workflows/ci.yml, job `toolchain-gates`)
 # runs `ansible-lint --profile moderate roles/ playbooks/ tasks/` from this
 # directory. It previously ended in `|| true`, which silently swallowed the
 # exit code so the REQUIRED check was permanently green even on real
