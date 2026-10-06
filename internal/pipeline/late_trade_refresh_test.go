@@ -674,6 +674,46 @@ func TestObservingTradeWriter_SameHourSkipsTheUpsertUntilAFlush(t *testing.T) {
 	}
 }
 
+// slowStub is a write that takes d on clock.
+type slowStub struct {
+	stubTradeWriter
+	clock *lateClock
+	d     time.Duration
+}
+
+func (s slowStub) InsertTrade(context.Context, canonical.Trade) error {
+	s.clock.advance(s.d)
+	return nil
+}
+
+// A trade on time when its write starts but late when it commits must be
+// recorded durably, so a refresher started after a restart refreshes it.
+func TestObservingTradeWriter_WriteThatTurnsLateIsRecorded(t *testing.T) {
+	f := &fakeLateCAGGStore{}
+	clock := &lateClock{t: lateTestNow}
+	r := newTestLateRefresher(f)
+	r.now = clock.now
+	if err := r.Prime(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// prices_1m coverage = 15m - 30s - 1m - 5m = 8m30s.
+	trade := canonical.Trade{Source: "sdex", Ledger: 1, Timestamp: lateTestNow.Add(-8 * time.Minute)}
+	w := observingTradeWriter{tradeWriter: slowStub{clock: clock, d: 6 * time.Minute}, late: r}
+	if err := w.InsertTrade(context.Background(), trade); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.durableViews(); !slices.Contains(got, "prices_1m") {
+		t.Fatalf("durable rows after a write that turned late = %v, want prices_1m's", got)
+	}
+
+	fresh := newTestLateRefresher(f)
+	fresh.now = clock.now
+	flushOK(t, fresh)
+	if calls := f.snapshot(); len(calls) == 0 || calls[0].view != "prices_1m" {
+		t.Fatalf("restarted refresher refreshed %v, want prices_1m first", viewsOf(calls))
+	}
+}
+
 // A flush that refreshes and would clear while a recorded write is still
 // uncommitted must keep the row: that write lands after the refresh ran.
 func TestLateTradeRefresh_InFlightWriteKeepsItsDurableRow(t *testing.T) {
