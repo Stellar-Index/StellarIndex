@@ -2,7 +2,6 @@ package chops
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -46,13 +45,20 @@ const creatorsRollupLockPath = "/var/lib/stellarindex/ch-creators-rollup.lock"
 // ch-creators-rollup` invocation can otherwise race a concurrent one on
 // those same tables. See acquireRollupLock (rollup_lock.go).
 func chCreatorsRollup(args []string) error {
-	fs := flag.NewFlagSet("ch-creators-rollup", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("ch-creators-rollup")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	cfgPath := fs.String("config", "", "Path to TOML config file — supplies stellar.movements_floor_ledger, the network's P23 boundary the two creation arms split at (default: the pubnet boundary)")
 	lockPath := fs.String("lock-file", creatorsRollupLockPath,
 		"path to the exclusive advisory lock serializing this run against the timer or a second concurrent invocation")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if err := gate.RequireStatedMode(); err != nil {
+		return fmt.Errorf("ch-creators-rollup: %w", err)
+	}
+	if !gate.Banner() {
+		fmt.Fprintln(os.Stderr, "ch-creators-rollup: DRY RUN — would recompute the account-creator league table and EXCHANGE it live; pass -write to apply")
+		return nil
 	}
 
 	unlock, err := acquireRollupLock("ch-creators-rollup", *lockPath)

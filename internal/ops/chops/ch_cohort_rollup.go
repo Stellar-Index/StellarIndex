@@ -2,7 +2,6 @@ package chops
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -67,7 +66,7 @@ const cohortRollupLockPath = "/var/lib/stellarindex/ch-cohort-rollup.lock"
 // reason ch-creators-rollup and ch-holders-rollup do: see
 // acquireRollupLock (rollup_lock.go).
 func chCohortRollup(args []string) error {
-	fs := flag.NewFlagSet("ch-cohort-rollup", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("ch-cohort-rollup")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required — the DeFi position snapshot is read from Postgres)")
 	lockPath := fs.String("lock-file", cohortRollupLockPath,
@@ -77,6 +76,13 @@ func chCohortRollup(args []string) error {
 	}
 	if *cfgPath == "" {
 		return errors.New("-config is required")
+	}
+	if err := gate.RequireStatedMode(); err != nil {
+		return fmt.Errorf("ch-cohort-rollup: %w", err)
+	}
+	if !gate.Banner() {
+		fmt.Fprintln(os.Stderr, "ch-cohort-rollup: DRY RUN — would recompute the creator and sponsor cohort tables and EXCHANGE them live; pass -write to apply")
+		return nil
 	}
 
 	unlock, err := acquireRollupLock("ch-cohort-rollup", *lockPath)

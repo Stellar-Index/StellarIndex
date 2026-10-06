@@ -123,9 +123,9 @@ var subcommandClasses = map[string]subcommandClass{
 	"ch-cap67-movements":           gate(),
 	"ch-entry-history":             gate(),
 	"ch-holders-rollup":            gate(),
-	"ch-creators-rollup":           pending("CH creators board TRUNCATE, fill, EXCHANGE on every run"),
-	"ch-sponsors-rollup":           pending("CH sponsors board rebuild on every run"),
-	"ch-cohort-rollup":             pending("CH cohort tables rebuild on every run"),
+	"ch-creators-rollup":           gate(),
+	"ch-sponsors-rollup":           gate(),
+	"ch-cohort-rollup":             gate(),
 	"ch-participant-backfill":      gate(),
 	"ch-recognition":               ro(),
 	"verify-recognition":           ro(),
@@ -152,9 +152,6 @@ var subcommandClasses = map[string]subcommandClass{
 // writer.
 var pinnedPendingGate = []string{
 	"backfill-index",
-	"ch-cohort-rollup",
-	"ch-creators-rollup",
-	"ch-sponsors-rollup",
 	"ch-supply",
 	"classic-movements-backfill",
 	"compute-completeness",

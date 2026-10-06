@@ -1,7 +1,6 @@
 package chops
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -35,12 +34,19 @@ const sponsorsRollupLockPath = "/var/lib/stellarindex/ch-sponsors-rollup.lock"
 // reason ch-creators-rollup and ch-holders-rollup do: see
 // acquireRollupLock (rollup_lock.go).
 func chSponsorsRollup(args []string) error {
-	fs := flag.NewFlagSet("ch-sponsors-rollup", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("ch-sponsors-rollup")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	lockPath := fs.String("lock-file", sponsorsRollupLockPath,
 		"path to the exclusive advisory lock serializing this run against the timer or a second concurrent invocation")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if err := gate.RequireStatedMode(); err != nil {
+		return fmt.Errorf("ch-sponsors-rollup: %w", err)
+	}
+	if !gate.Banner() {
+		fmt.Fprintln(os.Stderr, "ch-sponsors-rollup: DRY RUN — would recompute the sponsor league table and EXCHANGE it live; pass -write to apply")
+		return nil
 	}
 
 	unlock, err := acquireRollupLock("ch-sponsors-rollup", *lockPath)

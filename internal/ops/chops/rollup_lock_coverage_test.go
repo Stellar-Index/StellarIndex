@@ -31,13 +31,13 @@ func TestRollupCLIsSerializeOnTheirLock(t *testing.T) {
 		{
 			name: "ch-creators-rollup",
 			run: func(lockFile string) error {
-				return chCreatorsRollup([]string{"-lock-file", lockFile})
+				return chCreatorsRollup([]string{"-write", "-lock-file", lockFile})
 			},
 		},
 		{
 			name: "ch-sponsors-rollup",
 			run: func(lockFile string) error {
-				return chSponsorsRollup([]string{"-lock-file", lockFile})
+				return chSponsorsRollup([]string{"-write", "-lock-file", lockFile})
 			},
 		},
 		{
@@ -45,7 +45,7 @@ func TestRollupCLIsSerializeOnTheirLock(t *testing.T) {
 			run: func(lockFile string) error {
 				// -config only needs to be non-empty: the lock is taken
 				// before the config file is ever opened.
-				return chCohortRollup([]string{"-lock-file", lockFile, "-config", "/nonexistent-config.toml"})
+				return chCohortRollup([]string{"-write", "-lock-file", lockFile, "-config", "/nonexistent-config.toml"})
 			},
 		},
 	} {
