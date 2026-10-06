@@ -686,8 +686,13 @@ type DivergenceRefresher interface {
 //
 // coverage is how much of the window the value read; nil when unknown
 // (a composite does not track its legs').
+//
+// PublishFrozenBucket is called instead, once, for a bucket a freeze
+// refused, so a frozen series is not silent on the stream. frozenSince is
+// the end of the freeze's first refused bucket; zero when unknown.
 type StreamPublisher interface {
 	PublishClosedBucket(ctx context.Context, pair canonical.Pair, window time.Duration, valueDecimal string, observedAt time.Time, coverage *cachekeys.WindowCoverage) error
+	PublishFrozenBucket(ctx context.Context, pair canonical.Pair, window time.Duration, observedAt, frozenSince time.Time) error
 }
 
 // DefaultWindows is the built-in window set — three buckets
@@ -1417,6 +1422,9 @@ func (o *Orchestrator) refreshPairWindow(
 		return err
 	}
 	_, frozen := o.frozenThisTick[frozenTickKey(pair, window)]
+	if frozen && pub == nil {
+		o.streamFrozenOnce(ctx, pair, window, bucketEnd, o.freezeStates[stateKey].FiredAt)
+	}
 	d := decidedBucket{end: bucketEnd, published: pub, frozen: frozen}
 	if ref, ok := o.currentCompositeReference(pair, window); ok {
 		d.compositeRef = &ref
@@ -1808,27 +1816,6 @@ func (o *Orchestrator) flushHeldDirect(ctx context.Context) {
 	}
 }
 
-// streamBucketOnce publishes a served closed bucket to the stream the
-// first time any writer serves it. The SSE contract (ADR-0015, openapi
-// price/stream) promises byte-identical payloads across subscribers and
-// regions on the same (asset, quote, window), so the event is stamped
-// with the bucket it covers, not the tick's jittered clock, and a
-// replaying tick does not re-emit it.
-func (o *Orchestrator) streamBucketOnce(
-	ctx context.Context, pair canonical.Pair, window time.Duration, value string, bucketEnd time.Time,
-	coverage *cachekeys.WindowCoverage,
-) {
-	k := pair.String() + ":" + window.String()
-	if last, ok := o.streamedBuckets[k]; ok && last.Equal(bucketEnd) {
-		return
-	}
-	if o.streamedBuckets == nil {
-		o.streamedBuckets = make(map[string]time.Time)
-	}
-	o.streamedBuckets[k] = bucketEnd
-	o.publishToStream(ctx, pair, window, value, bucketEnd, coverage)
-}
-
 // replayDecidedBucket re-applies an already-decided closed bucket on a
 // later tick inside the same bucket: the same value is republished (the
 // shared key may since hold a composite) and the per-tick state the
@@ -2010,31 +1997,6 @@ func (o *Orchestrator) keepFrozenVWAPAlive(ctx context.Context, pair canonical.P
 		o.logger.Debug("freeze: LKG VWAP TTL refresh failed",
 			"pair", pair.String(), "window", window, "key", key, "err", err)
 	}
-}
-
-// publishToStream fans the closed-bucket event out to the
-// configured StreamPublisher (Redis pub/sub in production). Pure
-// best-effort: never returns an error — failures log + increment
-// the per-outcome counter. The VWAP cache write upstream is the
-// source of truth; the stream is enrichment for SSE subscribers.
-func (o *Orchestrator) publishToStream(
-	ctx context.Context,
-	pair canonical.Pair,
-	window time.Duration,
-	value string,
-	observedAt time.Time,
-	coverage *cachekeys.WindowCoverage,
-) {
-	if o.cfg.StreamPublisher == nil {
-		return
-	}
-	if err := o.cfg.StreamPublisher.PublishClosedBucket(ctx, pair, window, value, observedAt, coverage); err != nil {
-		obs.AggregatorStreamPublishTotal.WithLabelValues("error").Inc()
-		o.logger.Warn("stream publish failed",
-			"pair", pair.String(), "window", window, "err", err)
-		return
-	}
-	obs.AggregatorStreamPublishTotal.WithLabelValues("ok").Inc()
 }
 
 // evaluateAndMaybeFreeze runs the anomaly check on a fresh VWAP

@@ -9,6 +9,12 @@ import "time"
 // by both the aggregator and the API.
 const DefaultChannel = "stellarindex:closed-bucket:v1"
 
+// KindFrozen marks a [ClosedBucketEvent] that stands in for a bucket a
+// freeze refused: it carries the bucket's identity and no value. The
+// empty Kind is a published price, so events from producers that predate
+// the field still decode as prices.
+const KindFrozen = "frozen"
+
 // ClosedBucketEvent is the JSON wire shape published per
 // successful (pair, window) VWAP cache write. Carries the minimum
 // the API-side subscriber needs to reconstruct the SSE topic and
@@ -56,4 +62,13 @@ type ClosedBucketEvent struct {
 	// unknown (a triangulated composite).
 	Truncated   *bool      `json:"truncated,omitempty"`
 	CoveredFrom *time.Time `json:"covered_from,omitempty"`
+
+	// Kind is empty for a published price and [KindFrozen] for a refused
+	// bucket, which has no ValueDecimal, Truncated or CoveredFrom.
+	Kind string `json:"kind,omitempty"`
+
+	// FrozenSince is the end of the first bucket the freeze refused; set
+	// only on a [KindFrozen] event, and absent when the producer does not
+	// know when the freeze engaged.
+	FrozenSince *time.Time `json:"frozen_since,omitempty"`
 }

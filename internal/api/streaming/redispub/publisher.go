@@ -96,6 +96,36 @@ func (p *Publisher) PublishClosedBucket(
 			ev.CoveredFrom = &from
 		}
 	}
+	return p.send(ctx, ev)
+}
+
+// PublishFrozenBucket implements
+// `orchestrator.StreamPublisher.PublishFrozenBucket`: a [KindFrozen]
+// event naming the bucket a freeze refused, with no value. A zero
+// frozenSince is sent as unknown.
+func (p *Publisher) PublishFrozenBucket(
+	ctx context.Context,
+	pair canonical.Pair,
+	window time.Duration,
+	observedAt, frozenSince time.Time,
+) error {
+	ev := ClosedBucketEvent{
+		Asset:         pair.Base.String(),
+		Quote:         pair.Quote.String(),
+		WindowSeconds: int64(window / time.Second),
+		ObservedAt:    observedAt.UTC(),
+		ProducerID:    p.producer,
+		Kind:          KindFrozen,
+	}
+	if !frozenSince.IsZero() {
+		since := frozenSince.UTC()
+		ev.FrozenSince = &since
+	}
+	return p.send(ctx, ev)
+}
+
+// send PUBLISHes ev on the configured channel.
+func (p *Publisher) send(ctx context.Context, ev ClosedBucketEvent) error {
 	body, err := json.Marshal(ev)
 	if err != nil {
 		// JSON encoding of a fully-typed struct should never fail;
