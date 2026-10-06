@@ -759,6 +759,7 @@ find docs/architecture docs/operations docs/design docs/contributing \
       docs/operations/evidence/*|docs/operations/postmortems/*|\
       docs/operations/incidents/*|docs/operations/notes/*|\
       docs/operations/wasm-audits/*|\
+      docs/operations/runbooks/completeness-incomplete.md|\
       *-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md)
         continue ;;
       docs/operations/*|docs/contributing/*|docs/protocols/*|docs/methodology/*)
@@ -1146,7 +1147,7 @@ if [ -d docs/operations/runbooks ]; then
   for r in docs/operations/runbooks/*.md; do
     fname="${r##*/}"
     case "$fname" in
-      _template.md|README.md|bootstrap-archival-node.md|first-archival-node-deployment.md|deadmansswitch.md|post-phase0-deploy-sequence.md|consolidated-deploy-plan-2026-07-18.md|phase-a-capacity-relief-2026-07-18.md|off-site-backup-plan.md) continue ;;
+      _template.md|README.md|completeness-incomplete.md|bootstrap-archival-node.md|first-archival-node-deployment.md|deadmansswitch.md|post-phase0-deploy-sequence.md|consolidated-deploy-plan-2026-07-18.md|phase-a-capacity-relief-2026-07-18.md|off-site-backup-plan.md) continue ;;
     esac
     # Look for a reference in alerts-catalog, sev-playbook, or peer runbooks.
     if ! grep -qrF "runbooks/$fname" docs/operations/ 2>/dev/null; then
@@ -1177,7 +1178,7 @@ if [ -d docs/operations/runbooks ]; then
   for r in docs/operations/runbooks/*.md; do
     fname="${r##*/}"
     case "$fname" in
-      _template.md|README.md|bootstrap-archival-node.md|first-archival-node-deployment.md|deadmansswitch.md|post-phase0-deploy-sequence.md|consolidated-deploy-plan-2026-07-18.md|phase-a-capacity-relief-2026-07-18.md|off-site-backup-plan.md) continue ;;
+      _template.md|README.md|completeness-incomplete.md|bootstrap-archival-node.md|first-archival-node-deployment.md|deadmansswitch.md|post-phase0-deploy-sequence.md|consolidated-deploy-plan-2026-07-18.md|phase-a-capacity-relief-2026-07-18.md|off-site-backup-plan.md) continue ;;
       dr-activation.md|sev-status-page-update.md|operator-unblock-2026-05-08.md) continue ;;
     esac
     if ! grep -q "^## At a glance" "$r" 2>/dev/null; then

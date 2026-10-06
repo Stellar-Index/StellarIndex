@@ -52,7 +52,7 @@ tests:
               team: stellarindex
               component: deploy
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md#stellarindex_binary_version_probe_stale
               summary: "Binary version-skew probe has not reported in 90m — the timer may be dead"
               description: |
                 stellarindex_binary_version.prom has not been rewritten, or
@@ -90,7 +90,7 @@ tests:
               instance: r1:9100
               job: node_exporter
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md#stellarindex_binary_version_probe_stale
               summary: "Binary version-skew probe has not reported in 90m — the timer may be dead"
               description: |
                 stellarindex_binary_version.prom has not been rewritten, or

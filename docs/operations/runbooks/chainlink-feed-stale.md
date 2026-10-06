@@ -54,7 +54,7 @@ observation of a price that was not published at that time.
    | ------- | ------- | ------ |
    | `stale` | The proxy's latest `updatedAt` is older than the feed's budget. Chainlink has paused, deprecated or retired the feed, or the budget is set tighter than the heartbeat. | Check the feed on data.chain.link. If it is retired, remove it from `[external.chainlink].feed_map`, or move to the replacement proxy. If the heartbeat changed, set `max_age_hours` from the new heartbeat. Never widen the budget just to silence the alert. |
    | `carried_forward` | `answeredInRound < roundId`: the aggregator carried an old answer forward. | Usually transient. If it persists, treat it like `stale`. |
-   | `error` | RPC failure, decode failure, decimals refusal or projection failure. | Read the WARN line's `err`. For a decimals refusal, see [chainlink-feed-decimals](chainlink-feed-decimals.md). For RPC errors, see [external-poller-stale](external-poller-stale.md). |
+   | `error` | RPC failure, decode failure, decimals refusal or projection failure. | Read the WARN line's `err`. For a decimals refusal, see [chainlink-feed-decimals](divergence.md#stellarindex_chainlink_feed_decimals_mismatch). For RPC errors, see [external-poller-stale](external-poller-stale.md). |
    | only `0` samples | The gauge is seeded but no poll has run for this pair. | Check that the indexer is ticking the chainlink poller (`stellarindex_external_poller_polls_total{source="chainlink"}`). |
 
 ## Resolution
@@ -66,6 +66,6 @@ the last round must not be re-served as current.
 ## Related
 
 - [external-poller-stale](external-poller-stale.md) — the whole poller has stopped succeeding.
-- [chainlink-feed-decimals](chainlink-feed-decimals.md) — a feed refused for a scale disagreement.
-- [oracle-stale](oracle-stale.md) — per-asset oracle publication age.
+- [chainlink-feed-decimals](divergence.md#stellarindex_chainlink_feed_decimals_mismatch) — a feed refused for a scale disagreement.
+- [oracle-stale](divergence.md#stellarindex_oracle_stale) — per-asset oracle publication age.
 - `internal/sources/external/chainlink/poller.go` — `checkRoundCurrent`, `recordFeedOutcome`.

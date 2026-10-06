@@ -30,7 +30,7 @@ tests:
               team: stellarindex
               component: cache
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-replication.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache.md#stellarindex_redis_replication_broken
               summary: "Redis master cache1:6379 missing replicas"
               description: |
                 Master reports 1 connected replicas, fewer than the
@@ -66,7 +66,7 @@ tests:
               team: stellarindex
               component: cache
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache.md#stellarindex_redis_write_rejected_oom
               summary: "Redis cache1:6379 rejecting writes (OOM)"
               description: |
                 Redis is refusing writes outright rather than degrading —
@@ -94,7 +94,7 @@ tests:
               team: stellarindex
               component: cache
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache.md#stellarindex_redis_write_rejected_oom
               summary: "Redis cache1:6379 rejecting writes (READONLY)"
               description: |
                 Redis is refusing writes outright rather than degrading —
@@ -122,7 +122,7 @@ tests:
               team: stellarindex
               component: cache
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache.md#stellarindex_redis_write_rejected_oom
               summary: "Redis cache1:6379 rejecting writes (NOREPLICAS)"
               description: |
                 Redis is refusing writes outright rather than degrading —

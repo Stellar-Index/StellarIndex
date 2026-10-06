@@ -11,7 +11,7 @@ import (
 // pins the runbook's "Retiring a source" section (both exit mechanisms)
 // and the alert annotation that links to it, so either regressing away.
 const (
-	dataSourceStaleRunbookPath = "docs/operations/runbooks/data-source-stale.md"
+	dataSourceStaleRunbookPath = "docs/operations/runbooks/data-freshness.md"
 	dataFreshnessRulesPath     = "configs/prometheus/rules.r1/data-freshness.yml"
 )
 
@@ -57,7 +57,7 @@ func TestDataFreshnessAlert_LinksToRetiringASource(t *testing.T) {
 	}
 	block, _, _ := strings.Cut(after, "\n      - alert:")
 
-	if !strings.Contains(block, "data-source-stale.md#retiring-a-source") {
+	if !strings.Contains(block, "data-freshness.md#retiring-a-source") {
 		t.Errorf("%s: stellarindex_data_source_stale's annotations do not link "+
 			"to the runbook's 'Retiring a source' section — a retired source's "+
 			"permanent ticket has no path back to the fix (#1347)", dataFreshnessRulesPath)

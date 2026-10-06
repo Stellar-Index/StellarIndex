@@ -77,7 +77,7 @@ Key signals:
   gauges on `:3000/metrics` — `go_goroutines`, `go_memstats_*` — are the
   in-process signal.)
 - [ ] Step 3 — if all routes slow + postgres connections saturated → jump to `pg-conns-saturated.md`.
-- [ ] Step 4 — if all routes slow + Redis latency high → check Redis health (RDB BGSAVE blocked? memory saturated?); jump to `redis-master-down.md` family.
+- [ ] Step 4 — if all routes slow + Redis latency high → check Redis health (RDB BGSAVE blocked? memory saturated?); jump to `cache.md` family.
 - [ ] Verification: the 5m slow fraction back under the trip point (1.44 %) —
   equivalently `histogram_quantile(0.95, ...)` on the SLO routes back
   < 0.20 s — sustained ≥ 5 min. The alert itself resolves only once the 1h

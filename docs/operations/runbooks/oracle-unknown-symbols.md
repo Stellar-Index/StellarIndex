@@ -277,7 +277,7 @@ turns out to matter commercially.
 - Companion runbook (whole-event decode failures, a *different* cause
   since capture-totality): [decode-errors](decode-errors.md).
 - Companion runbook (a stored row whose asset text will not parse on
-  read): [oracle-stream-rows-unparsed](oracle-stream-rows-unparsed.md).
+  read): [oracle-stream-rows-unparsed](divergence.md#stellarindex_oracle_stream_rows_unparsed).
 - Feed registries: ADR-0010 (fiat), ADR-0014 (crypto), ADR-0028 (RWA);
   `internal/sources/redstone/README.md` §RWA feeds.
 

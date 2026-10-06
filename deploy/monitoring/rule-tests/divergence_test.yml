@@ -37,7 +37,7 @@ tests:
               team: stellarindex
               component: divergence
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_price_divergence_warning
               summary: "coingecko 6% off our price on its worst pair"
               description: |
                 Our price differs from reference coingecko by > 5 %
@@ -91,7 +91,7 @@ tests:
               team: stellarindex
               component: divergence
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_price_divergence_critical
               summary: "coingecko 15% off our price on its worst pair (critical)"
               description: |
                 Divergence > 10 % from reference coingecko on at
@@ -148,7 +148,7 @@ tests:
               team: stellarindex
               component: divergence
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_oracle_stale
               summary: "Oracle reflector-dex stale for XLM"
               description: |
                 reflector-dex hasn't published a price for XLM
@@ -204,7 +204,7 @@ tests:
               team: stellarindex
               component: divergence
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_oracle_stale
               summary: "Oracle reflector-dex stale for XLM"
               description: |
                 reflector-dex hasn't published a price for XLM
@@ -256,7 +256,7 @@ tests:
               team: stellarindex
               component: divergence
             exp_annotations:
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_oracle_stale"
               summary: "Oracle reflector-dex stale for XLM"
               description: |
                 reflector-dex hasn't published a price for XLM
@@ -274,7 +274,7 @@ tests:
               team: stellarindex
               component: divergence
             exp_annotations:
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_oracle_stale"
               summary: "Oracle reflector-dex stale for XLM"
               description: |
                 reflector-dex hasn't published a price for XLM
@@ -323,7 +323,7 @@ tests:
               team: stellarindex
               component: divergence
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_oracle_stale
               summary: "Oracle reflector-cex stale for crypto:XLM"
               description: |
                 reflector-cex hasn't published a price for crypto:XLM
@@ -392,7 +392,7 @@ tests:
               team: stellarindex
               component: divergence
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_oracle_stale
               summary: "Oracle reflector-cex stale for crypto:DAI"
               description: |
                 reflector-cex hasn't published a price for crypto:DAI
@@ -448,7 +448,7 @@ tests:
               team: stellarindex
               component: divergence
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-refresh-error-dominant.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_divergence_refresh_error_dominant
               summary: "Divergence-cache refresh failing more often than succeeding (P3)"
               description: |
                 More refresh_error outcomes than ok over the last 5 min for
@@ -509,7 +509,7 @@ tests:
               team: stellarindex
               component: divergence
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-reference.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_divergence_no_reference
               summary: "Divergence checker running blind — no reference responded (P3)"
               description: |
                 For 30+ min more pairs received zero reference responses than got a
@@ -565,7 +565,7 @@ tests:
               team: stellarindex
               component: divergence
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-ok-outcomes.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_divergence_no_ok_outcomes
               summary: "Divergence checker wired but produced no healthy comparison in 45 min (P3)"
               description: |
                 The divergence refresher is wired, yet no pair has recorded an
@@ -601,7 +601,7 @@ tests:
               team: stellarindex
               component: divergence
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-ok-outcomes.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_divergence_no_ok_outcomes
               summary: "Divergence checker wired but produced no healthy comparison in 45 min (P3)"
               description: |
                 The divergence refresher is wired, yet no pair has recorded an
@@ -671,7 +671,7 @@ tests:
               team: stellarindex
               component: divergence
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stream-rows-unparsed.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_oracle_stream_rows_unparsed
               summary: "Oracle rows dropped from the served stream — unparseable asset (reflector)"
               description: |
                 LatestOracleStreams could not parse the stored canonical
@@ -741,7 +741,7 @@ tests:
               team: stellarindex
               component: divergence
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-reference.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_divergence_reference_failing
               summary: "Divergence reference coingecko failing most lookups (P3)"
               description: |
                 More than half of coingecko's divergence lookups
@@ -807,7 +807,7 @@ tests:
               team: stellarindex
               component: divergence
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-reference.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_divergence_pair_below_quorum
               summary: "Divergence detection disarmed for native/fiat:USD — below reference quorum (P3)"
               description: |
                 Every divergence refresh of native/fiat:USD for 60+ min had

@@ -25,7 +25,7 @@ Redis is never sharded: the keyspace lives on a single primary. Config validatio
 
 - Capacity ceiling is one primary's `maxmemory`; moving to Cluster later is a one-time migration. `stellarindex_redis_memory_saturated` (`deploy/monitoring/rules/cache.yml`) fires above 90% for 5 minutes.
 - All writes go to the primary; acceptable because the aggregator's bulk refresh tolerates throughput limits.
-- A 2-1 Sentinel partition lets only the larger side promote; `docs/operations/runbooks/redis-master-down.md` covers it.
+- A 2-1 Sentinel partition lets only the larger side promote; `docs/operations/runbooks/cache.md#stellarindex_redis_master_down` covers it.
 
 ## Evidence
 

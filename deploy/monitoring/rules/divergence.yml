@@ -20,7 +20,7 @@ groups:
           team: stellarindex
           component: divergence
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_price_divergence_warning
           summary: "{{ $labels.reference }} {{ $value | humanizePercentage }} off our price on its worst pair"
           description: |
             Our price differs from reference {{ $labels.reference }} by > 5 %
@@ -36,7 +36,7 @@ groups:
           team: stellarindex
           component: divergence
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_price_divergence_critical
           summary: "{{ $labels.reference }} {{ $value | humanizePercentage }} off our price on its worst pair (critical)"
           description: |
             Divergence > 10 % from reference {{ $labels.reference }} on at
@@ -77,7 +77,7 @@ groups:
           team: stellarindex
           component: divergence
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stream-rows-unparsed.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_oracle_stream_rows_unparsed
           summary: "Oracle rows dropped from the served stream — unparseable {{ $labels.field }} ({{ $labels.source }})"
           description: |
             LatestOracleStreams could not parse the stored canonical
@@ -153,7 +153,7 @@ groups:
           team: stellarindex
           component: divergence
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_oracle_stale
           summary: "Oracle {{ $labels.source }} stale for {{ $labels.asset }}"
           description: |
             {{ $labels.source }} hasn't published a price for {{ $labels.asset }}
@@ -186,7 +186,7 @@ groups:
           team: stellarindex
           component: divergence
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-refresh-error-dominant.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_divergence_refresh_error_dominant
           summary: "Divergence-cache refresh failing more often than succeeding (P3)"
           description: |
             More refresh_error outcomes than ok over the last 5 min for
@@ -216,7 +216,7 @@ groups:
           team: stellarindex
           component: divergence
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-reference.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_divergence_no_reference
           summary: "Divergence checker running blind — no reference responded (P3)"
           description: |
             For 30+ min more pairs received zero reference responses than got a
@@ -244,7 +244,7 @@ groups:
           team: stellarindex
           component: divergence
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-ok-outcomes.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_divergence_no_ok_outcomes
           summary: "Divergence checker wired but produced no healthy comparison in 45 min (P3)"
           description: |
             The divergence refresher is wired, yet no pair has recorded an
@@ -272,7 +272,7 @@ groups:
           team: stellarindex
           component: divergence
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-reference.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_divergence_reference_failing
           summary: "Divergence reference {{ $labels.reference }} failing most lookups (P3)"
           description: |
             More than half of {{ $labels.reference }}'s divergence lookups
@@ -297,7 +297,7 @@ groups:
           team: stellarindex
           component: divergence
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-reference.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_divergence_pair_below_quorum
           summary: "Divergence detection disarmed for {{ $labels.pair }} — below reference quorum (P3)"
           description: |
             Every divergence refresh of {{ $labels.pair }} for 60+ min had
@@ -323,7 +323,7 @@ groups:
           team: stellarindex
           component: divergence
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/chainlink-feed-decimals.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_chainlink_feed_decimals_mismatch
           summary: "Chainlink feed {{ $labels.pair }} ({{ $labels.consumer }}) refused — configured decimals disagree with decimals()"
           description: |
             {{ $labels.consumer }}'s Chainlink reader has refused
@@ -347,7 +347,7 @@ groups:
           team: stellarindex
           component: divergence
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/chainlink-feed-decimals.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_chainlink_feed_decimals_verify_failed
           summary: "Chainlink feed {{ $labels.pair }} ({{ $labels.consumer }}) decimals() verification failing"
           description: |
             {{ $labels.consumer }}'s decimals() RPC call for

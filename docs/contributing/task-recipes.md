@@ -112,7 +112,7 @@ contracts upgrade in place").
 
 ### "Investigate a price divergence"
 
-Start at [docs/operations/runbooks/price-divergence.md](../../docs/operations/runbooks/price-divergence.md).
+Start at [docs/operations/runbooks/divergence.md](../../docs/operations/runbooks/divergence.md).
 Aggregator-layer alerts (silent / outlier-storm / class-drop-spike)
 have their own runbooks under the same directory; see
 [docs/architecture/aggregation-plan.md](../../docs/architecture/aggregation-plan.md)
