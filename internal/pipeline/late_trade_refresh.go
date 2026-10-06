@@ -424,9 +424,7 @@ func (r *LateTradeRefresher) flush(ctx context.Context, rateLimited bool) (next 
 			refreshed++
 		case viewSkipped, viewCovered:
 		}
-		if gen, ok := gens[c.Name]; ok && (out == viewRefreshed || out == viewCovered) {
-			errs = append(errs, r.clearDurable(ctx, c.Name, gen, guard))
-		}
+		errs = append(errs, r.clearSettled(ctx, c.Name, out, gens, guard))
 		if out == viewHeld || out == viewFailed {
 			prices1mWaiting = prices1mWaiting || c.Name == "prices_1m"
 		}
@@ -455,6 +453,17 @@ func (r *LateTradeRefresher) adoptDurable(ctx context.Context, durable []timesca
 		errs = append(errs, r.clearDurable(ctx, d.View, d.Gen, guard))
 	}
 	return gens, errs
+}
+
+// clearSettled clears view's durable row when its refresh succeeded or its
+// policy covers the window; any other outcome keeps the row, returning nil.
+// Needs r.flushMu.
+func (r *LateTradeRefresher) clearSettled(ctx context.Context, view string, out viewOutcome, gens map[string]int64, guard lateClearGuard) error {
+	gen, ok := gens[view]
+	if !ok || (out != viewRefreshed && out != viewCovered) {
+		return nil
+	}
+	return r.clearDurable(ctx, view, gen, guard)
 }
 
 // clearDurable deletes view's durable row at gen, unless a late write was in
