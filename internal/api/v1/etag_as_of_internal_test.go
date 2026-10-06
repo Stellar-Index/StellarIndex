@@ -203,3 +203,16 @@ func TestDiagnosticsIngestion_AsOfIsBuildTime(t *testing.T) {
 	assertAsOf(t, serveThrough(t, h, target, ""), at)
 	assertUnchangedPayloadAnswers304(t, h, target)
 }
+
+// A carried-forward figure keeps its own computed time: the envelope must
+// agree with data.tvl.as_of, not report the cycle that carried it.
+func TestProtocolTVL_CarriedForwardAsOfIsFigureTime(t *testing.T) {
+	name := protocolRegistry[0].Name
+	c := NewDEXTVLCache(DEXTVLSources{})
+	figure := filledAt().Add(-10 * time.Minute)
+	c.snapshot = map[string]ProtocolTVLView{name: {TVLUSD: "1", AsOf: figure.Format(time.RFC3339)}}
+	c.carried = map[string]bool{name: true}
+	c.fetchedAt = filledAt()
+	h := New(Options{DEXTVL: c}).Handler()
+	assertAsOf(t, serveThrough(t, h, "/v1/protocols/"+name+"/tvl", ""), figure)
+}

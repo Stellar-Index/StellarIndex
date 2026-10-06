@@ -145,7 +145,7 @@ type DEXTVLProtocolSnapshot struct {
 	TVL            ProtocolTVLView
 	Pools          []DEXTVLPoolView
 	CarriedForward bool
-	// FetchedAt is the refresh cycle this entry was read from.
+	// FetchedAt is when this entry's figure was computed (TVL.AsOf).
 	FetchedAt time.Time
 }
 
