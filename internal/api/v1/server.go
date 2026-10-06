@@ -2481,10 +2481,8 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// split off /v1/assets (LC-001). /v1/assets is Stellar-only.
 	s.mux.HandleFunc("GET /v1/external/assets", s.handleExternalAssetList)
 	s.mux.HandleFunc("GET /v1/external/assets/{slug}", s.handleExternalAssetGet)
-	// /v1/assets/verified must register before /v1/assets/{asset_id}
-	// — Go 1.22+ ServeMux picks the more-specific pattern, but
-	// listing the static path first keeps the precedence obvious
-	// to anyone reading the mount order.
+	// ServeMux already prefers the static /v1/assets/verified over
+	// /v1/assets/{asset_id}; mounting it first keeps that obvious.
 	s.mux.HandleFunc("GET /v1/assets/verified", s.handleAssetsVerified)
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}", s.underReview(s.handleAssetGet))
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/metadata", s.handleAssetMetadata)
@@ -2493,6 +2491,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/supply", s.underReview(s.handleAssetSupply))
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/supply/flows", s.underReview(s.handleAssetSupplyFlows))
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/holders", s.underReview(s.explorerHandler.AssetHolders))
+	s.mux.HandleFunc("GET /v1/assets/{asset_id}/movements", s.underReview(s.explorerHandler.AssetMovements))
 
 	// Current price — last-trade fallback today; VWAP path when
 	// the aggregator ships.
