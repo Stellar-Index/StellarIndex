@@ -49,6 +49,10 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
     );
   }, [markets.data]);
 
+  // A next cursor means the server holds more rows than this page: the count
+  // is a lower bound, never a total.
+  const truncated = Boolean(markets.data?.nextCursor);
+
   if (markets.isError) {
     return (
       <Panel
@@ -91,8 +95,16 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
   return (
     <Panel
       headingLevel={2}
-      title={`${matched.length} active market${matched.length === 1 ? '' : 's'}`}
-      hint="Pairs involving this coin that traded in the last 14 days"
+      title={
+        truncated
+          ? `Top ${matched.length} markets by 24h volume`
+          : `${matched.length} active market${matched.length === 1 ? '' : 's'}`
+      }
+      hint={
+        truncated
+          ? 'More pairs exist than are listed here; pairs that traded in the last 14 days'
+          : 'Pairs involving this coin that traded in the last 14 days'
+      }
       source={asExample('/v1/markets', { limit: 100 })}
       bodyClassName="-mx-4"
     >

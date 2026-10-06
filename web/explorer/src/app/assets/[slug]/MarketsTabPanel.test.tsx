@@ -12,6 +12,8 @@ const rows = [
   { base: 'native', quote: USDC, trade_count_24h: 10 },
 ] as Market[];
 
+let nextCursor: string | undefined;
+
 vi.mock('@/api/hooks', async () => {
   const actual =
     await vi.importActual<typeof import('@/api/hooks')>('@/api/hooks');
@@ -20,7 +22,7 @@ vi.mock('@/api/hooks', async () => {
     useMarkets: () => ({
       isError: false,
       isLoading: false,
-      data: { markets: rows },
+      data: { markets: rows, nextCursor },
     }),
   };
 });
@@ -51,4 +53,20 @@ describe('MarketsTabPanel side label', () => {
       expect(sideOf(/^USDC \(/)).toBe('base');
     },
   );
+});
+
+describe('MarketsTabPanel title', () => {
+  it('states an exact count when the server has no further page', () => {
+    nextCursor = undefined;
+    render(<MarketsTabPanel assetID="xlm" />);
+    expect(screen.getByText('3 active markets')).toBeTruthy();
+  });
+
+  it('never presents a truncated page as the total', () => {
+    nextCursor = 'abc';
+    render(<MarketsTabPanel assetID="xlm" />);
+    expect(screen.getByText('Top 3 markets by 24h volume')).toBeTruthy();
+    expect(screen.queryByText('3 active markets')).toBeNull();
+    nextCursor = undefined;
+  });
 });
