@@ -50,16 +50,11 @@ package timescale
 // served when the window has taker-stamped rows, omitted (with a Note)
 // when it observably has none.
 //
-// USD figures come from trades.usd_volume (or its CAGG sums), with ONE
-// deliberate exception: the 24h volume KPI + hourly series also carry the
-// XLM-denominated legs that valuation left unpriced, valued at the
-// current XLM/USD vwap, because that is source_volume_1h's documented
-// read contract (see "the source_volume_1h read contract" below) and the
-// figure the source page's own chart shows for the same source and
-// window. Everything else — every >1d figure and every per-pair surface —
-// is usd_volume only, never ad-hoc pricing; its NULL-usd trades are
-// excluded from USD sums and averages but still count toward trade
-// totals. All division is exact NUMERIC (ADR-0003); rounding is
+// Every USD figure is trade-time trades.usd_volume (or its CAGG sums),
+// never ad-hoc pricing. At 24h the XLM legs valuation left unpriced are
+// named and the figure is served as a lower bound; elsewhere NULL-usd
+// trades are excluded from USD sums and averages but still count toward
+// trade totals. All division is exact NUMERIC (ADR-0003); rounding is
 // round(x, 2) — never a float literal.
 
 import (
@@ -118,12 +113,12 @@ func dexWindowSQL(windowDays int, col string) string {
 // sum_usd_priced: valuing the XLM legs at today's XLM/USD would make a
 // historical window move with spot. The unpriced XLM is reported
 // (dexXLMLegUnvalued) so the figure is served as a named lower bound,
-// the same rule sourceVolumeHistory applies. The stroop divisor is
-// spelled 10000000 because assertDEXNumericSafe rejects exponent literals.
+// the same rule sourceVolumeHistory applies.
 const dexPricedUSD = "COALESCE(sum(sum_usd_priced),0)"
 
 // dexXLMLegUnvalued is the unpriced XLM amount excluded from dexPricedUSD,
-// or the empty string when there is none.
+// or the empty string when there is none. The stroop divisor is spelled
+// 10000000 because assertDEXNumericSafe rejects exponent literals.
 const dexXLMLegUnvalued = `COALESCE(CASE WHEN COALESCE(sum(sum_xlm_base),0) + COALESCE(sum(sum_xlm_quote),0) > 0
 		         THEN round((COALESCE(sum(sum_xlm_base),0) + COALESCE(sum(sum_xlm_quote),0))
 		           / 10000000::numeric, 7)::text END, '')`
