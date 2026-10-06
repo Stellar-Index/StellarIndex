@@ -148,8 +148,9 @@ Known false-positive patterns:
 ## Related
 
 - [stellar-stack-version-lag runbook](stellar-stack-version-lag.md): the proactive signal the decode alert backstops. [Protocol upgrades](../protocol-upgrades.md): the upgrade procedure. [Alerts catalog](../alerts-catalog.md).
+- [cursor-stuck](#stellarindex_ingestion_cursor_stuck): the per-SOURCE cursor ticket. It cannot fire for `source="ledgerstream"` (no `source_enabled` series to join against), which is the gap [ledger_stalled](#stellarindex_ingestion_ledger_stalled) fills.
 - `source-stopped.md`: adjacent alert when events stop flowing entirely.
 - [all-ingestion-down.md](all-ingestion-down.md): where to route when Galexie / MinIO (the actual upstream) is the problem, and the sibling page for "no events from ANY source"; that one covers the CEX/FX side going quiet too, this one covers the ledger path specifically.
-- `rpc-lag` (see [stellar-node.md](stellar-node.md)): only relevant if your deployment routes through stellar-rpc (r1 doesn't).
+- `rpc-lag` (see [stellar-node.md](stellar-node.md#stellarindex_stellar_rpc_lag)): only relevant if your deployment routes through stellar-rpc (r1 doesn't).
 - [infra.md#stellarindex_systemd_unit_failed](infra.md#stellarindex_systemd_unit_failed): ticket, 15 m; will not fire while the unit is restart-looping inside its StartLimit budget.
 - Implementation: `cmd/stellarindex-indexer/main.go` (`processAndPersistCursor`, `recordCursorMetric`), `internal/ledgerstream/`.

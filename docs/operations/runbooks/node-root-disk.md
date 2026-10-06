@@ -9,7 +9,7 @@ severity: P1
 
 Three alerts on the host's ~49 G root filesystem (everything else on r1 is a ZFS dataset on the multi-TB `data` pool). Rules in `deploy/monitoring/rules/storage.yml` (multi-host source copy) and `configs/prometheus/rules.r1/storage.yml` (the single-host overlay r1 actually loads from `/etc/prometheus/rules.r1/*.yml` per `configs/prometheus/prometheus.r1.yml`; identical rules).
 
-Why root matters: if it fills, Redis MISCONF blocks every cache write (`/v1/price` 404s), Postgres can't write its log and crashes, journald corrupts. Incident class: 2026-05-10 SEV-2 (`internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`), 2026-06-11 ClickHouse log-channel wedge (`internal/incidents/data/2026-06-11-clickhouse-log-channel-wedge-root-full.md`, root filled at ~3.8 GB/min, healthy to full in ~5 min), 2026-08-05 recurrence to 81 % (rsyslog duplicate of the API access log, see `15-log-discipline.yml`).
+Why root matters: if it fills, Redis MISCONF blocks every cache write (`/v1/price` 404s), Postgres can't write its log and crashes, journald corrupts. Incident class: 2026-05-10 SEV-2 (`internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`), 2026-05-13, 2026-06-11 ClickHouse log-channel wedge (`internal/incidents/data/2026-06-11-clickhouse-log-channel-wedge-root-full.md`, root filled at ~3.8 GB/min, healthy to full in ~5 min), 2026-08-05 recurrence to 81 % (rsyslog duplicate of the API access log, see `15-log-discipline.yml`).
 
 The static thresholds are too slow for a log-flood, hence the trend alert. Order of firing on a fast fill: filling_fast, then warning/full. If `filling_fast` fires, follow its section first.
 

@@ -217,5 +217,6 @@ False positive: **steady traffic growth**. As customer adoption grows, baseline 
 ## Related
 
 - `api.md#stellarindex_api_error_rate_critical` / `api.md#stellarindex_api_latency_p95_high` (the `runbook_url` targets) and `api.md#stellarindex_api_down`; for the latency family also `api.md#stellarindex_api_cache_miss_rate_high` and `pg-conns-saturated.md` as common upstream causes. `api.md#stellarindex_api_error_rate_critical` still uses HA hostnames (`api-01`, `api-XX`); on r1 run its commands locally.
+- Escalation chain for both families: [burn_slow](#stellarindex_slo_availability_burn_slow) (ticket) -> [burn_medium](#stellarindex_slo_availability_burn_medium) (30m + 6h at 6x, page) -> [burn_fast](#stellarindex_slo_availability_burn_fast) (P1); latency: [slow](#stellarindex_slo_latency_burn_slow) -> [medium](#stellarindex_slo_latency_burn_medium) -> [fast](#stellarindex_slo_latency_burn_fast).
 - `wire-paging.md`: confirm the `chat-page` receiver actually reaches a human.
 - ADR-0008: HA topology + availability target (multi-region decision amended by ADR-0050 / `docs/architecture/ha-plan.md`). ADR-0009: API latency budget allocation (separate from the availability budget).

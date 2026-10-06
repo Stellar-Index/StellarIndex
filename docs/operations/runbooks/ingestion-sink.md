@@ -2,7 +2,7 @@
 title: Runbook — ingestion persistence (insert errors, backpressure, duplicate flood, undrained rows)
 last_verified: 2026-10-06
 status: living
-severity: P2
+severity: ticket (P2 for insert_errors, persist_drop, duplicate_flood; P3 for backpressure)
 ---
 
 # Runbook — ingestion persistence alerts
@@ -15,7 +15,7 @@ Loss model since ADR-0041 (2026-07-06): infrastructure faults on a write are NOT
 
 | Alert | Severity | Meaning |
 | ----- | -------- | ------- |
-| [`stellarindex_ingestion_insert_errors`](#stellarindex_ingestion_insert_errors) (+ `stellarindex_ingestion_persist_drop`, `stellarindex_ingestion_trustline_observation_drop`) | P2 (`severity: ticket`, `for: 5m`) | events failing to persist: genuine loss |
+| [`stellarindex_ingestion_insert_errors`](#stellarindex_ingestion_insert_errors) (+ `stellarindex_ingestion_persist_drop`, `stellarindex_ingestion_trustline_observation_drop`) | P2 (`severity: ticket`); `for: 5m` for insert_errors, `for: 0m` for persist_drop and trustline_observation_drop | events failing to persist: genuine loss |
 | [`stellarindex_ingestion_trade_insert_backpressure`](#stellarindex_ingestion_trade_insert_backpressure) | P3 ticket, 10 min | trade sink retrying: Postgres unreachable, ingest intentionally stalled |
 | [`stellarindex_ingestion_duplicate_flood`](#stellarindex_ingestion_duplicate_flood) | P2 ticket, `for: 10m` | trades stop landing new rows though cursor and decoder look healthy |
 | [`stellarindex_ingestion_sink_undrained_rows`](#stellarindex_ingestion_sink_undrained_rows) | ticket, `for: 0m` | shutdown drain abandoned buffered rows the cursor had already passed |

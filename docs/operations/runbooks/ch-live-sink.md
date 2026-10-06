@@ -7,7 +7,7 @@ severity: P3 (ticket); P2 page when drops sustain 1h
 
 # Runbook — ClickHouse live-sink alerts
 
-The indexer's real-time ClickHouse dual-sink (ADR-0034 / ADR-0041) writes each ledger twice: `clickhouse.ExtractLedger` feeds the lake's live edge and `dispatcher.CensusLedger` feeds the `ledger_ingest_log` substrate record. All alerts here read `stellarindex_ch_live_sink_*` counters, rules in `deploy/monitoring/rules/ingestion.yml` and `configs/prometheus/rules.r1/ingestion.yml`. Served pricing is unaffected by all of them (the Postgres served tier is written by an independent path).
+The indexer's real-time ClickHouse dual-sink (ADR-0034 / ADR-0041) writes each ledger twice: `clickhouse.ExtractLedger` feeds the lake's live edge and `dispatcher.CensusLedger` feeds the `ledger_ingest_log` substrate record. All alerts here read `stellarindex_ch_live_sink_*` counters, rules in `deploy/monitoring/rules/ingestion.yml` and `configs/prometheus/rules.r1/ingestion.yml`. Served pricing is unaffected by drops and errors (the Postgres served tier is written by an independent path). Under `read_undercount` it is not: the projector reads CH `contract_events`, so projected Soroban sources (soroswap, aquarius, phoenix), and so DEX pricing, under-read the short ledgers until replayed.
 
 Check which `outcome`/counter fired before acting; the remedies differ:
 
