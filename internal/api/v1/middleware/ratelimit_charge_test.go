@@ -6,9 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
-
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
@@ -189,13 +186,7 @@ func TestChargeRateLimit_SingleBucketMiddlewareChargesToo(t *testing.T) {
 // Both halves run inside ONE request so that it is the handler-side
 // charge, not the middleware's base charge, that meets each state.
 func TestChargeRateLimit_FollowsTheLimitersFailurePolicy(t *testing.T) {
-	// A Redis that is down before the client ever dials it — see
-	// TestRateLimit_FailsOpenOnRedisError for why it is built this way.
-	mr := miniredis.RunT(t)
-	addr := mr.Addr()
-	mr.Close()
-	rdb := redis.NewClient(&redis.Options{Addr: addr, MaxRetries: -1})
-	t.Cleanup(func() { _ = rdb.Close() })
+	rdb := newDownRedis(t)
 
 	clock := newManualClock()
 	b := ratelimit.New(rdb, 100, time.Minute, ratelimit.WithClock(clock.now))
