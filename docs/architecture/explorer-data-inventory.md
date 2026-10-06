@@ -104,7 +104,7 @@ Pulse banner, trade tape (`GET /v1/observations/stream`), movers and volume lead
 
 ### 7.2-7.3 Assets (`/assets`, `/assets/[slug]`; plan: coins)
 Directory and detail serve from `GET /v1/assets`, `/v1/assets/{asset_id}` (+ `/metadata`, `/supply`, `/supply/flows`, `/holders`), `/v1/assets/verified`, `/v1/external/assets`, `/v1/price` (closed bucket plus `confidence_factors`), `/v1/price/tip`, `/v1/price/changes`, `/v1/chart`, `/v1/ohlc`, `/v1/vwap`, `/v1/twap`, `/v1/history` (`?source=` per-source overlay, on-chain venues only), `/v1/history/since-inception`, `/v1/changes/{entity_type}/{id}`, `/v1/pairs`, `/v1/markets`, `/v1/sdex/orderbook`, `/v1/contracts/{contract_id}/transfers`. Tabs: overview, chart, markets, history, supply, issuer (classic only), liquidity, oracles, on-chain, API. The volatility band is computed client-side from `/v1/ohlc` bars (INV-1087); per-source overlay is INV-1086. Detail pages are keyed `(code, issuer)`, SAC or `native`, never code alone; the bare-code slug belongs to a hand-vetted `internal/currency/data/seed.yaml` entry (§18 q7).
-Gaps: `/v1/spread`, `/v1/slippage`, `/v1/volatility`, supply history and breakdown by algorithm component (SDF reserves, locked, claimable, LP), SEP-41 mint/burn/clawback timeline, trustline-growth and holder-count history, annotation `events`, cross-protocol comparison, multi-asset `?compare=` (needs composition), TWAP on the chart (deferred), `/v1/coins/{slug}/stats` (24h volume, trades, high/low, dominant pair). Asset-page slices under INV-2138: A1 (INV-2140) and A2 (INV-2141), movements and entry-changes views, open pending Ash's v1 call and the sizing brief (see [pre-p23-classic-movements-research.md](pre-p23-classic-movements-research.md)).
+Gaps: `/v1/spread`, `/v1/slippage`, `/v1/volatility`, supply history and breakdown by algorithm component (SDF reserves, locked, claimable, LP), SEP-41 mint/burn/clawback timeline, trustline-growth and holder-count history, annotation `events`, cross-protocol comparison, multi-asset `?compare=` (needs composition), TWAP on the chart (deferred), `/v1/coins/{slug}/stats` (24h volume, trades, high/low, dominant pair). Asset-page slices under INV-2138: A1 (INV-2140) and A2 (INV-2141), movements and entry-changes views, open pending Ash's v1 call and the sizing brief (operation inventory: [classicmovements README](../../internal/sources/classicmovements/README.md)).
 
 ### 7.4 Pair (`/markets/[pair]`)
 VWAP line, per-venue candles, live tape (`observations/stream?asset=&quote=`), VWAP/TWAP on a chosen window, triangulation path with bucket timestamp for indirect pairs (the convert engine, `/convert/{from}/{to}`). Why per-venue: one aggregated view is insufficient for researchers. Gaps: `/v1/pairs/{base}/{quote}/venues`, `/spread` (arbitrage signal), `/liquidity-flow`, a "routed via Soroswap" tape badge (§7.9.1).
@@ -138,7 +138,7 @@ Serves `GET /v1/issuers`, `/v1/issuers/{g_strkey}` from `issuers` and `classic_a
 `GET /v1/tx/{hash}` (header, per-op breakdown, status). Gaps: `/tx/{hash}/trades`, `/events`, `/changes` (LedgerEntry diff), path-payment route diagram.
 
 ### 7.16 Account (`/accounts/[g]`)
-The account page is the lifetime authority on an account (programme INV-2128; coverage in [coverage-matrix.md](coverage-matrix.md)). Serves `GET /v1/accounts`, `/v1/accounts/{g}`, `/transactions`, `/operations`, `/movements`, `/positions` (cross-protocol DeFi positions: Blend, LP shares, vault shares), `/trades`, `/activity`, `/graph`, `/graph/history`, `/graph/cohort`, plus `/v1/accounts/stats|creators|sponsors`, `/v1/directory`. Pre-P23 classic movements come from the lake reconstruction in [pre-p23-classic-movements-research.md](pre-p23-classic-movements-research.md). `/v1/accounts/{g}` also serves the account's trustlines and offers inline, so a separate `/trustlines` is not needed. Gap: `/accounts/{g}/flow` (asset in/out chart).
+The account page is the lifetime authority on an account (programme INV-2128; coverage in [coverage-matrix.md](coverage-matrix.md)). Serves `GET /v1/accounts`, `/v1/accounts/{g}`, `/transactions`, `/operations`, `/movements`, `/positions` (cross-protocol DeFi positions: Blend, LP shares, vault shares), `/trades`, `/activity`, `/graph`, `/graph/history`, `/graph/cohort`, plus `/v1/accounts/stats|creators|sponsors`, `/v1/directory`. Pre-P23 classic movements come from the lake reconstruction of [ADR-0047](../adr/0047-pre-p23-classic-movement-reconstruction.md). `/v1/accounts/{g}` also serves the account's trustlines and offers inline, so a separate `/trustlines` is not needed. Gap: `/accounts/{g}/flow` (asset in/out chart).
 
 ### 7.17-7.19 Path payments, anomalies, divergences
 - `/path-payments` (heatmap, recent, success rate): gap, no endpoint and no `path_payments` observer.
@@ -186,22 +186,22 @@ Created by migrations 0017-0026 from this plan. Migration 0152 dropped six table
 WASM history ships over the ClickHouse lake (`wasm_lake_reader.go`) rather than Postgres tables.
 
 ### 9.2 `freeze_events` (live, 0018)
-`asset_id`, `quote_id`, `frozen_at`, `frozen_at_ledger`, `reason` (`single_source` | `divergence` | `outlier_storm` | `manual`), `frozen_value`, `recovered_at`, `recovered_at_ledger`, `detail` jsonb. Hypertable, 30-day chunks; partial index `freeze_events_status_idx` on `(frozen_at DESC) WHERE recovered_at IS NULL`. Written by the freeze `EventSink` on clear-to-firing and firing-to-clear transitions, idempotent on the currently firing row (Redis state alone has no history); powers `/v1/anomalies`.
+Hypertable, 30-day chunks: one row per freeze with its `reason` and recovery stamps, written by the freeze `EventSink` on each clear/firing transition. Columns: migration 0018.
 
 ### 9.3 `divergence_observations` (live, 0019)
-`asset_id`, `quote_id`, `reference` (`chainlink`, `coingecko`, `reflector-cex`, `reflector-fx`, `reflector-dex`, `redstone`, `band`), `observed_at`, `observed_at_ledger`, `our_price`, `ref_price`, `delta_pct`, `status` (`clear` | `firing`). Hypertable, 7-day chunks. Written by `internal/divergence/worker.go` per comparison; the Redis firing flag alone loses the historical deltas that post-mortems need.
+Hypertable, 7-day chunks: one row per comparison against a reference feed, written by `internal/divergence/worker.go`; the Redis firing flag alone loses the deltas a post-mortem needs. Columns: migration 0019.
 
 ### 9.4 `decoder_stats_5m` (live, 0020)
 `bucket`, `source`, `events_seen`, `decode_errors`, `orphan_events`, `last_ledger`. 5-minute rollup flushed from `dispatcher.Stats()` (`internal/dispatcher/statsflush`). Hypertable, 7-day chunks.
 
 ### 9.5 `mev_events` (live, 0021); `tvl_observations` (dropped, 0152)
-`mev_events`: `event_id` uuid PK, `detected_at`, `detected_at_ledger`, `kind` (`sandwich` | `oracle_deviation` | `liquidation_cascade` | `wash_trade`), `asset_id`, `quote_id`, `tx_hashes` text[], `accounts` text[], `detail` jsonb, `profit_usd`; indexes `mev_events_detected_idx`, `mev_events_kind_idx`. `tvl_observations` `(protocol_slug, observed_at, observed_at_ledger, tvl_usd, pool_count, breakdown)`: the TVL ticker (sum `reserve_a x price_a + reserve_b x price_b` per protocol each 1-minute aggregator tick from `lp_reserve_observations` and `prices_1m`) was never built.
+`mev_events` is written by `internal/aggregate/mev/` (§11.4); columns: migration 0021. `tvl_observations` had no writer and was dropped by 0152.
 
 ### 9.6 `change_summary_5m` (live, 0022)
 `entity_type` (`coin` | `protocol` | `pair` | `source`), `entity_id`, `refreshed_at`, `current_value`, `h1_value`/`h1_delta_pct`, `h24_*`, `d7_*`, `d30_*`, `ath_value`/`ath_at`, `atl_value`/`atl_at`, `streak_direction`, `streak_days`, `acceleration` (`increasing` | `flat` | `decreasing`). Refreshed every 5 minutes by `internal/aggregate/changesummary`. Decision: one endpoint (`/v1/changes/{entity_type}/{id}`) powers every delta strip on the site. Cost is O(N) per refresh over about 10k assets, 10 protocols, 200 pairs, 30 sources, which is trivial.
 
 ### 9.7 `classic_assets`, `issuers` (live, 0023); `anchors` (dropped)
-`classic_assets`: `asset_id` PK, `code`, `issuer_g_strkey`, `slug` UNIQUE, `first_seen_at`/`_ledger`, `last_seen_at`/`_ledger`, `observation_count`; index `classic_assets_issuer_idx`; slugs populated by migration 0134. `issuers`: `g_strkey` PK, `home_domain`, `auth_required`, `auth_revocable`, `auth_immutable`, `auth_clawback`, `sep1_resolved_at`, `sep1_payload` jsonb, `creation_ledger`; index `issuers_home_domain_idx`. Writers: `internal/storage/timescale/asset_registry.go`. `anchors` was dropped; SEP-1 metadata is served from `internal/metadata`.
+`classic_assets` holds one row per `(code, issuer)` with a UNIQUE `slug` (populated by migration 0134); `issuers` holds auth flags and the SEP-1 payload. Columns: migration 0023. `anchors` had no writer and was dropped by 0152.
 
 ### 9.8 `classic_asset_stats_5m` (dropped)
 Always empty; the stats were moved onto a `prices_1m` UNION CTE (commit `2f06533a`).
@@ -299,7 +299,7 @@ UX decisions log (do not re-litigate): one unified asset namespace, no separate 
 | INV-1088 DeFindex vault auto-discovery | blocked, follow-up after v1 curated allowlist (§7.9.1) |
 | INV-1092 Albedo + Lobstr wallets | blocked, post-v1 (§7.24) |
 | INV-1093 history-scale browse/filter (Phase N2) | blocked, post-launch (§7.21) |
-| Asset-page slices INV-2140/INV-2141 (A1/A2 movements and entry-changes views, under INV-2138; account-page program is INV-2128) | open, see [pre-p23-classic-movements-research.md](pre-p23-classic-movements-research.md) |
+| Asset-page slices INV-2140/INV-2141 (A1/A2 movements and entry-changes views, under INV-2138; account-page program is INV-2128) | open, see [classicmovements README](../../internal/sources/classicmovements/README.md) and ADR-0047 |
 | API and panel gaps | §6, §7, §10 |
 
 ## 20. Cross-references

@@ -20,7 +20,7 @@ import (
 //
 // Stateful since Phase 3: claiming or clawing back a
 // CreateClaimableBalance needs that create's Asset/Amount, which
-// neither op carries directly (only the BalanceId — research §2's
+// neither op carries directly (only the BalanceId — the inventory's
 // "b+own-index" path). balances is an in-RUN index (populated as
 // this Decoder's own Decode calls observe 'claimable_balance_create'
 // movements — see decodeOp's caller in Decode below) that resolves
@@ -34,7 +34,7 @@ import (
 // The in-memory index is BOUNDED at maxCBIndexEntries (FIFO eviction,
 // oldest create evicted first) — a genesis-to-P23 run in a single
 // invocation would otherwise accumulate on the order of the full
-// CreateClaimableBalance row count (research §5: ~1.5B) before ever
+// CreateClaimableBalance row count (~1.5B, sampled) before ever
 // being claimed, which is what drove an earlier OOM. Eviction is safe
 // because a miss here is not data loss: ResolveBalance failing just
 // means the pending entry falls through to

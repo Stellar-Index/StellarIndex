@@ -139,7 +139,7 @@ func crossRegionCheck(args []string) error { //nolint:funlen,gocognit,gocyclo //
 		_, _ = fmt.Fprintf(os.Stdout,
 			"cross-region-check: only %d region configured; consistency check needs ≥ 2 regions.\n"+
 				"This is the pre-launch posture (R2/R3 not yet deployed). Returning success.\n"+
-				"Track R2/R3 bringup in docs/architecture/r2-r3-bringup.md.\n",
+				"Track R2/R3 bringup in docs/architecture/ha-plan.md §10.\n",
 			len(regions))
 		return nil
 	}

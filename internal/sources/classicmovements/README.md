@@ -17,10 +17,64 @@ ADR-0047 D1's original Postgres `classic_movements` hypertable
 classic-movements-backfill` opens no Postgres connection at all
 ("no Postgres in the loop," ADR-0048 D2).
 
-See [docs/adr/0047-pre-p23-classic-movement-reconstruction.md](../../../docs/adr/0047-pre-p23-classic-movement-reconstruction.md),
-[docs/adr/0048-serve-by-query-shape.md](../../../docs/adr/0048-serve-by-query-shape.md),
-and [docs/architecture/pre-p23-classic-movements-research.md](../../../docs/architecture/pre-p23-classic-movements-research.md)
-for the full decision + evidence base.
+See [docs/adr/0047-pre-p23-classic-movement-reconstruction.md](../../../docs/adr/0047-pre-p23-classic-movement-reconstruction.md)
+and [docs/adr/0048-serve-by-query-shape.md](../../../docs/adr/0048-serve-by-query-shape.md)
+for the decisions. The evidence they rest on is below.
+
+## Protocol boundaries
+
+First ledger per protocol, read from `stellar.ledgers` on r1:
+
+| Protocol | First ledger | First close (UTC) |
+| --- | --- | --- |
+| P17 (CAP-0035 `SetTrustLineFlags`) | 35,687,508 | 2021-06-01 |
+| P18 (CAP-0038 liquidity pools) | 38,115,806 | 2021-11-03 |
+| P20 (Soroban) | 50,457,424 | 2024-02-20 |
+| **P23 (unified CAP-67 events)** | **58,762,517** | **2025-09-03** |
+
+From P23 every classic movement emits a CAP-67 event that `sep41_transfers`
+decodes, so this package stops there. Per-op `ledger_entry_changes`
+fidelity natively starts at about ledger 61,996,000 (2026-04-06); below it
+the table held only a periodic `state` census until the ADR-0047 Phase 0
+backfill over `[38115806, 61999000]` filled it. Lake state (INV-1073,
+2026-10-02): `ledger_entry_changes` holds 163.86B rows over ledgers
+3..64,730,073 and verify-lake reports zero deficiency; the Phase C backfill
+has run (INV-1251, #2018).
+
+## Volume
+
+Pre-P23 (ledger < 58,762,517) is exactly 20,297,622,756 operations
+(`sum(op_count)` over `stellar.ledgers`). The per-type split is sampled from
+seven 20,000-ledger windows (ledgers 3M, 10M, 20M, 30M, 40M, 50M, 57M), so
+it is order-of-magnitude only. Top rows: `ManageSellOffer` ~5.4B,
+`Payment` ~4.0B, `ManageBuyOffer` ~3.8B, `PathPaymentStrictReceive` ~2.6B,
+`CreateClaimableBalance` ~1.5B, `ClaimClaimableBalance` ~1.3B. Offers are
+SDEX territory, so the new rows are about 7-8B (ADR-0047: archive 10-11B).
+
+## Operation inventory
+
+All 27 `xdr.OperationType`s; 15 move value. Path key: **(a)** op body
+alone, after the success code; **(b)** body + result (amounts live in the
+result); **(c)** `ledger_entry_changes` before/after deltas are the only
+truth; **(b+own-index)** body + result correlated against a record this
+package derived earlier.
+
+| Operations | Path | Note |
+| --- | --- | --- |
+| `CreateAccount`, `Payment`, `CreateClaimableBalance`, `Clawback` | (a) | Result is a bare code; `CreateClaimableBalance` returns its `BalanceId` |
+| `PathPaymentStrictReceive`, `PathPaymentStrictSend`, `AccountMerge` | (b) | `Last.Amount` is exact; `SendMax`/`DestMin` are bounds; merge amount is `SourceAccountBalance` |
+| `ClaimClaimableBalance`, `ClawbackClaimableBalance` | (b+own-index) | Body carries only `BalanceId` (Q5) |
+| `LiquidityPoolDeposit`, `LiquidityPoolWithdraw` | (c) only | Result has no data fields; truth is the pool entry's reserves |
+| `AllowTrust`, `SetTrustLineFlags` | (c), rare | CAP-0038: revoking LP-share trustlines redeems into two new claimable balances |
+| `ManageSellOffer`, `ManageBuyOffer`, `CreatePassiveSellOffer` | (b) | Trades, decoded by `sdex`; not a movement here |
+| `SetOptions`, `ChangeTrust`, `ManageData`, `BumpSequence`, sponsorship ops | none | Reserve or metadata changes, not balances |
+| `Inflation` | (a) if seen | Disabled since ~P12; out of scope |
+| `InvokeHostFunction`, `ExtendFootprintTtl`, `RestoreFootprint` | none | Soroban; covered by event decoders |
+
+Fees are not movement rows (ADR-0047 D3): they accumulate in the fee pool
+with no counterparty and are served from `stellar.transactions.fee_charged`.
+`stellar-etl`'s effects code descends from Horizon's processors, so this
+package builds on `go-stellar-sdk/ingest` instead (ADR-0001).
 
 ## What this ingests (Phases 1-4 — complete)
 
@@ -40,7 +94,7 @@ for the full decision + evidence base.
 
 `Payment`/`CreateAccount`/`CreateClaimableBalance`/`Clawback`
 reconstruct from the operation **body** alone once the operation
-**result**'s success code is confirmed (research §2 path (a)) — none
+**result**'s success code is confirmed (inventory path (a)) — none
 need `ledger_entry_changes`. The two path-payment types and
 `AccountMerge` reconstruct from the operation **result** (path (b)):
 a path payment moves two assets, so it emits two legs: `leg_index` 0
@@ -54,7 +108,7 @@ types). Both legs' `attributes` carry `send_asset`/`send_amount`,
 `dest_asset`/`dest_amount` and the `from`/`to` accounts. `AccountMerge`'s amount is
 `AccountMergeResult.SourceAccountBalance` — never derivable from the
 body, which carries only the destination. `ClaimClaimableBalance`/
-`ClawbackClaimableBalance` reconstruct via research's "b+own-index"
+`ClawbackClaimableBalance` reconstruct via the inventory's "b+own-index"
 path: neither op carries an asset/amount, only a `BalanceId`,
 resolved against the `CreateClaimableBalance` row this package itself
 derived earlier — see Q5. Every kind above except the path payments
@@ -74,7 +128,7 @@ union, OR an inner union whose own code is a failure) decodes to
 | `AllowTrust` / `SetTrustLineFlags` (CAP-0038 edge only) | `OperationTypeAllowTrust` / `OperationTypeSetTrustLineFlags` | `liquidity_pool_withdraw` + `claimable_balance_create` | 0 rows (common case) or 4 rows (revocation-triggered liquidation: one `liquidity_pool_withdraw` at leg_index 0/1 and one `claimable_balance_create` at leg_index 2/3, one pair per pool asset) |
 
 `LiquidityPoolDeposit`/`Withdraw` results are bare success codes with
-zero data fields (research §2 path (c)) — the only ground truth is
+zero data fields (inventory path (c)) — the only ground truth is
 the pool's `LiquidityPoolEntryConstantProduct` `ReserveA`/`ReserveB`
 before vs. after the op, which lives ONLY in `ledger_entry_changes`.
 The CAP-0038 trustline-revocation auto-liquidation edge case is the
@@ -187,7 +241,7 @@ the whole range.
 **Memory-scaling caveat**: the in-run index is bounded at
 `maxCBIndexEntries` (8,000,000, ~3 GB; FIFO eviction — oldest create
 evicted first) rather than growing without limit; unbounded growth across the
-full `CreateClaimableBalance` row count (research §5: ~1.5B) is what
+full `CreateClaimableBalance` row count (~1.5B, sampled; see Volume) is what
 drove an earlier OOM. Eviction is safe — a miss just falls through to
 the ClickHouse fallback (`FindClaimableBalanceCreates`), same as a
 create outside this run's range entirely — but operators should still
@@ -235,7 +289,7 @@ per-op-type:**
   quietly under-reporting liquidations.
 
 **Current era**: `ledger_entry_changes`' native per-op fidelity starts
-at ~ledger 61,996,000 (research §3.2), past the P23 boundary
+at ~ledger 61,996,000 (see Protocol boundaries), past the P23 boundary
 (58,762,517) this command hard-clamps to; Phase 0's `ch-backfill` over
 `[38115806, 61999000]` is done, so addressable windows have real
 fidelity. A window without it still reports `LP entry-changes N/A` and

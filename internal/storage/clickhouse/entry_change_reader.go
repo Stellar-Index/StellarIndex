@@ -134,7 +134,7 @@ func StreamEntryChanges(ctx context.Context, addr string, from, to uint32, entry
 // (op_index >= 0) ledger_entry_changes rows exist for [from,to] —
 // the window-level fidelity probe ADR-0047 Phase 4 needs before
 // trusting an "empty per-op group" signal from StreamEntryChanges.
-// Mirrors research §3.2's exact boundary-probe shape: a cheap
+// Mirrors the boundary probe in internal/sources/classicmovements/README.md (Protocol boundaries): a cheap
 // countIf(op_index >= 0) over a bounded range, run once per window
 // rather than per-op.
 //

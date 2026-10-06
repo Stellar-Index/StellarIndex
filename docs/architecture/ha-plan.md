@@ -457,6 +457,7 @@ operator fixes it. Today r1 is a single point of failure for everything.
 - `archival-node/tasks/23-local-prometheus.yml` is an optional
   single-host scrape path (`run_local_prometheus`, default false).
 - No distributed tracing.
+- No exporter publishes Galexie export lag in ledgers: an export that falls behind the network but keeps advancing does not alert; only a stop does.
 
 **Planned (role `configs/ansible/roles/prometheus/`):** two independent
 Prometheus + Alertmanager hosts (`prometheus_pair`). Each scrapes every
@@ -633,6 +634,7 @@ wanted (§11).
 - [ ] DR drill: fail over to another region, serve for 1 h, fail back.
 - [ ] Every alert has a runbook link.
 - [ ] SEV-1 and SEV-2 playbooks rehearsed as a tabletop.
+- [ ] Pre-flip gate for a new region: `scripts/dev/verify-cross-region.sh` and `stellarindex-ops cross-region-check` show byte-identical closed-bucket VWAPs, then hold DNS for a 24 h clean window.
 
 The load-test and restore items can be pulled forward on a single box.
 

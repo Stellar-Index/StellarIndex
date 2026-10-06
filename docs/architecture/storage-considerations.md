@@ -197,18 +197,6 @@ R1 can offer R2/R3 Tier B only.
 | F | Re-enable trades compression job 1000 + tighter compression | Available: ~50-150 GB, CPU cost only. Job 1000 was disabled to stop decompress-on-write storms during heavy backfills |
 | G | Decode pre-Soroban classic issuance into our own observer tables | The space half is spent (Move D); the mission half stands: it is the only way to own that history, now read from `aws-public-blockchain` |
 
-Operator constraints that ranked these moves (May 2026; Moves A and D
-have since executed):
-
-| Constraint | A | D | B | C |
-|---|---|---|---|---|
-| No decoder/backfill re-runs, don't lose sync data | ok | ok | ok | ok |
-| Can't expand the server | ok | ok | ok | ok |
-| Don't rely on others | ok (SDF only on DR rebuild) | steady-state `aws-public-blockchain` dep (now accepted, ADR-0043 §2) | n/a | ok |
-| Honesty | ok (ADR-0016) | ok (ADR-0027) | violates ADR-0017 contracts 3+4 | ok |
-| Reversibility | 7 d ZFS snapshot | partial | low | low (pool destroy) |
-| Operational risk | low | medium | high | medium-high |
-
 The Move D trim deletes only from `galexie-archive`
 (`internal/ops/archive/trim_galexie_archive.go`, `S3BucketArchive`; its
 MinIO identity is scoped to that bucket), never `galexie-live`.

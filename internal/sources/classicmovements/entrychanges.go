@@ -17,7 +17,7 @@ import (
 // ─── Phase 4 (entry-changes half): LiquidityPoolDeposit/Withdraw + ──
 // ─── the CAP-0038 trustline-revocation auto-liquidation edge case ───
 //
-// ADR-0047 D3 Phase 4 / research §2 path (c): LiquidityPoolDepositResult
+// ADR-0047 D3 Phase 4 / inventory path (c): LiquidityPoolDepositResult
 // and LiquidityPoolWithdrawResult are BARE success/failure codes with
 // zero data fields — the only ground truth for the two amounts
 // exchanged is the pool's LiquidityPoolEntryConstantProduct
@@ -45,7 +45,7 @@ import (
 //
 // # Ledger_entry_changes fidelity: BOTH available and unavailable eras
 //
-// research §3.2: per-op ledger_entry_changes fidelity natively starts
+// README boundaries: per-op ledger_entry_changes fidelity natively starts
 // at ~ledger 61,996,000, past the P23 boundary (58,762,517) this
 // package's backfill command hard-clamps to. Phase 0 (ch-backfill over
 // [38115806, 61999000]) is done, so the addressable range has real

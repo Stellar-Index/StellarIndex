@@ -344,7 +344,7 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 		fmt.Printf("\nNOTE: %d claim/clawback ops had no resolvable create row (recognizable ADR-0047 D4 incompleteness — see stderr for the per-op log). Re-running once the create's own range has been backfilled resolves these on a subsequent pass; ClickHouse's ReplacingMergeTree makes that safe.\n", totalUnresolved)
 	}
 	if totalLPUnavailable > 0 || totalCAP0038Skipped > 0 {
-		fmt.Printf("\nNOTE: %d LiquidityPoolDeposit/Withdraw ops and %d AllowTrust/SetTrustLineFlags checks were skipped for lack of ledger_entry_changes fidelity in this range (research §3.2). Re-running this same range once ledger_entry_changes covers it resolves these; ClickHouse's ReplacingMergeTree makes that safe.\n",
+		fmt.Printf("\nNOTE: %d LiquidityPoolDeposit/Withdraw ops and %d AllowTrust/SetTrustLineFlags checks were skipped for lack of ledger_entry_changes fidelity in this range (see internal/sources/classicmovements/README.md, Protocol boundaries). Re-running this same range once ledger_entry_changes covers it resolves these; ClickHouse's ReplacingMergeTree makes that safe.\n",
 			totalLPUnavailable, totalCAP0038Skipped)
 	}
 	if totalVerifyMismatches > 0 {

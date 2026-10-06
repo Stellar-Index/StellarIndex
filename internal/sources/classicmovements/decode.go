@@ -272,7 +272,7 @@ func baseAccountAddress(m xdr.MuxedAccount) (string, error) {
 
 // ─── Phase 2: PathPaymentStrictReceive / PathPaymentStrictSend ────
 //
-// ADR-0047 D3 Phase 2 / research §2 path (b): a path payment moves
+// ADR-0047 D3 Phase 2 / inventory path (b): a path payment moves
 // TWO assets, so both op types emit two 'path_payment' legs per op —
 // the same shape as the two-asset LP ops (entrychanges.go):
 //   - leg_index 0: the SOURCE leg, FromAddress only — what actually
@@ -484,7 +484,7 @@ func pathPaymentStrictReceiveSourceAmount(sendAsset xdr.Asset, offers []xdr.Clai
 //
 // ADR-0047 D3 Phase 3. Four op types, three reconstruction paths:
 //   - CreateClaimableBalance: path (a) — the CREATED BalanceId comes
-//     back in the result (research §2), everything else from the
+//     back in the result (README inventory), everything else from the
 //     body. No correlation needed for this op itself.
 //   - ClaimClaimableBalance / ClawbackClaimableBalance: path
 //     (b+own-index) — neither op's body nor result carries an
@@ -700,7 +700,7 @@ func (d *Decoder) decodeClawbackClaimableBalance(ledger uint32, closedAt time.Ti
 
 // decodeClawback reconstructs a 'clawback' movement for the plain
 // Clawback op (NOT ClawbackClaimableBalance, handled above): holder
-// -> issuer, asset destroyed (research §2 path (a) — Asset/From/
+// -> issuer, asset destroyed (inventory path (a) — Asset/From/
 // Amount are all in the body; ClawbackResult is a bare code).
 //
 // FromAddress is body.From (the holder whose asset is clawed back) —
@@ -772,7 +772,7 @@ func claimableBalanceIDHex(id xdr.ClaimableBalanceId) (string, error) {
 // ─── Phase 4 (op-only half): AccountMerge ──────────────────────────
 //
 // ADR-0047 D3 Phase 4. AccountMerge doesn't need ledger_entry_changes
-// (research §2 path (b)): the exact amount merged is in the RESULT,
+// (inventory path (b)): the exact amount merged is in the RESULT,
 // not the body — AccountMergeOp carries no amount field at all, only
 // the destination; core computes and reports the source account's
 // full native balance at merge time via
@@ -783,7 +783,7 @@ func claimableBalanceIDHex(id xdr.ClaimableBalanceId) (string, error) {
 
 // decodeAccountMerge reconstructs an 'account_merge' movement: the
 // merging (source) account -> the destination account, for the
-// account's FULL native balance (research §2 path (b): the amount is
+// account's FULL native balance (inventory path (b): the amount is
 // in AccountMergeResult.SourceAccountBalance, never derivable from
 // the body).
 func decodeAccountMerge(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {

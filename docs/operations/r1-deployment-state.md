@@ -374,7 +374,7 @@ All fixed in the role; kept so the lessons survive:
   the ansible role); F-1265 (1-year `prices_1m` backfill per
   [backfill-procedure.md](backfill-procedure.md)); F-1267 (p95 over SLA
   target; needs multi-region cutover per
-  [r2-r3-bringup.md](../architecture/r2-r3-bringup.md)).
+  [ha-plan.md §10](../architecture/ha-plan.md#10-roadmap-and-launch-checklist)).
 
 ### F-1223 Caddyfile roll
 
