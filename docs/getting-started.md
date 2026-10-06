@@ -108,7 +108,7 @@ working.
 
 > **This flow does not work against `api.stellarindex.io` today.**
 > `/v1/auth/sep10/challenge` and `/v1/auth/sep10/token` both answer
-> `503 sep10-unavailable`: the verifier is implemented, but the hosted
+> `404 sep10-unavailable` (unless `[api.sep10]` is configured): the verifier is implemented, but the hosted
 > deployment has no SEP-10 signing seed provisioned. Use the API key
 > flow above.
 >

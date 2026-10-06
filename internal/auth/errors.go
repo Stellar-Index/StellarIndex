@@ -8,7 +8,7 @@ import "errors"
 //	ErrForbidden          → 403 (caller's creds are valid but lack scope)
 //	ErrTokenExpired       → 401 with WWW-Authenticate hint
 //	ErrTokenMalformed     → 400 (the token isn't even decodable)
-//	ErrNotImplemented     → 503 (validator stub; not configured yet)
+//	ErrNotImplemented     → 404 sep10-unavailable (validator stub; not configured)
 //
 // Code outside this package should compare via [errors.Is], not
 // string match — wrappers add context but preserve sentinels.

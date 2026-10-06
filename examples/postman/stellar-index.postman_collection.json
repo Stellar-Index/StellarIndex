@@ -41522,7 +41522,7 @@
                   "request": {
                     "name": "SEP-10 Web Auth — issue a challenge transaction.",
                     "description": {
-                      "content": "Returns a Stellar challenge transaction the client must sign\nwith its account secret key. Per SEP-10 §3.2 the response\ncarries the unsigned XDR + the network passphrase the\nchallenge was crafted for. Unauthenticated by design.\n\n**Not enabled on the hosted deployment.** The server-side\nverifier is implemented, but `api.stellarindex.io` has no\nsigning seed provisioned, so this route answers `503\nsep10-unavailable`. Enabling it is an operator action, not a\ncode change: set the `STELLARINDEX_SEP10_SEED` (server signing\nS-strkey) and `STELLARINDEX_SEP10_JWT_SECRET` (≥32 bytes)\nenvironment variables — their names are configurable via\n`[api.sep10] seed_env` / `jwt_secret_env` — on a deployment\nthat already has Redis, which the replay guard requires.\n\nNote also that a JWT from `/v1/auth/sep10/token` is only\nhonoured on other routes when the deployment sets\n`auth_mode = \"sep10\"`, which turns OFF `sip_*` API keys. Do\nnot plan on holding both credentials at once.\n",
+                      "content": "Returns a Stellar challenge transaction the client must sign\nwith its account secret key. Per SEP-10 §3.2 the response\ncarries the unsigned XDR + the network passphrase the\nchallenge was crafted for. Unauthenticated by design.\n\n**Not enabled on the hosted deployment.** The server-side\nverifier is implemented, but `api.stellarindex.io` has no\nsigning seed provisioned, so this route answers `404\nsep10-unavailable` (non-retryable) unless `[api.sep10]` is configured. Enabling it is an operator action, not a\ncode change: set the `STELLARINDEX_SEP10_SEED` (server signing\nS-strkey) and `STELLARINDEX_SEP10_JWT_SECRET` (≥32 bytes)\nenvironment variables — their names are configurable via\n`[api.sep10] seed_env` / `jwt_secret_env` — on a deployment\nthat already has Redis, which the replay guard requires.\n\nNote also that a JWT from `/v1/auth/sep10/token` is only\nhonoured on other routes when the deployment sets\n`auth_mode = \"sep10\"`, which turns OFF `sip_*` API keys. Do\nnot plan on holding both credentials at once.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -41651,7 +41651,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
+                      "name": "Not found.",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -41684,8 +41684,8 @@
                         "method": "GET",
                         "body": {}
                       },
-                      "status": "Service Unavailable",
-                      "code": 503,
+                      "status": "Not Found",
+                      "code": 404,
                       "header": [
                         {
                           "key": "Content-Type",
@@ -41713,7 +41713,7 @@
                   "request": {
                     "name": "SEP-10 Web Auth — exchange a signed challenge for a JWT.",
                     "description": {
-                      "content": "Accepts a signed challenge transaction and returns a JWT\nbearing the authenticated G-strkey. Per SEP-10 §3.3 the body\ncarries `{transaction: <base64-XDR>}`. Unauthenticated by\ndesign — the SEP-10 protocol IS the authentication.\n\n**Not enabled on the hosted deployment** — answers `503\nsep10-unavailable` for the same reason as\n`/v1/auth/sep10/challenge`, which carries the operator\nconfiguration this route needs.\n",
+                      "content": "Accepts a signed challenge transaction and returns a JWT\nbearing the authenticated G-strkey. Per SEP-10 §3.3 the body\ncarries `{transaction: <base64-XDR>}`. Unauthenticated by\ndesign — the SEP-10 protocol IS the authentication.\n\n**Not enabled on the hosted deployment** — answers `404\nsep10-unavailable` for the same reason as\n`/v1/auth/sep10/challenge`, which carries the operator\nconfiguration this route needs.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -41900,6 +41900,55 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
+                      "name": "Not found.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "auth",
+                            "sep10",
+                            "token"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": []
+                        },
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "POST",
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"transaction\": \"<string>\"\n}",
+                          "options": {
+                            "raw": {
+                              "headerFamily": "json",
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Not Found",
+                      "code": 404,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"span\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"fx_leg_unavailable\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
                       "name": "Challenge time-bounds expired; request a fresh challenge.",
                       "originalRequest": {
                         "url": {
@@ -41938,55 +41987,6 @@
                       },
                       "status": "Gone",
                       "code": 410,
-                      "header": [
-                        {
-                          "key": "Content-Type",
-                          "value": "application/problem+json"
-                        }
-                      ],
-                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"span\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"fx_leg_unavailable\"\n}",
-                      "cookie": [],
-                      "_postman_previewlanguage": "json"
-                    },
-                    {
-                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
-                      "originalRequest": {
-                        "url": {
-                          "path": [
-                            "auth",
-                            "sep10",
-                            "token"
-                          ],
-                          "host": [
-                            "{{baseUrl}}"
-                          ],
-                          "query": [],
-                          "variable": []
-                        },
-                        "header": [
-                          {
-                            "key": "Content-Type",
-                            "value": "application/json"
-                          },
-                          {
-                            "key": "Accept",
-                            "value": "application/problem+json"
-                          }
-                        ],
-                        "method": "POST",
-                        "body": {
-                          "mode": "raw",
-                          "raw": "{\n  \"transaction\": \"<string>\"\n}",
-                          "options": {
-                            "raw": {
-                              "headerFamily": "json",
-                              "language": "json"
-                            }
-                          }
-                        }
-                      },
-                      "status": "Service Unavailable",
-                      "code": 503,
                       "header": [
                         {
                           "key": "Content-Type",

@@ -10970,8 +10970,8 @@ paths:
 
         **Not enabled on the hosted deployment.** The server-side
         verifier is implemented, but `api.stellarindex.io` has no
-        signing seed provisioned, so this route answers `503
-        sep10-unavailable`. Enabling it is an operator action, not a
+        signing seed provisioned, so this route answers `404
+        sep10-unavailable` (non-retryable) unless `[api.sep10]` is configured. Enabling it is an operator action, not a
         code change: set the `STELLARINDEX_SEP10_SEED` (server signing
         S-strkey) and `STELLARINDEX_SEP10_JWT_SECRET` (≥32 bytes)
         environment variables — their names are configurable via
@@ -11014,7 +11014,7 @@ paths:
                       data: { $ref: "#/components/schemas/SEP10Challenge" }
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
-        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /auth/sep10/token:
     post:
@@ -11028,7 +11028,7 @@ paths:
         carries `{transaction: <base64-XDR>}`. Unauthenticated by
         design — the SEP-10 protocol IS the authentication.
 
-        **Not enabled on the hosted deployment** — answers `503
+        **Not enabled on the hosted deployment** — answers `404
         sep10-unavailable` for the same reason as
         `/v1/auth/sep10/challenge`, which carries the operator
         configuration this route needs.
@@ -11078,7 +11078,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
-        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   # ───────────────────────── Network explorer (ADR-0038) ─────────────────────
   # Read the certified ClickHouse Tier-1 lake (full chain to genesis). Results

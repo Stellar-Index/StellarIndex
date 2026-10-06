@@ -2651,7 +2651,7 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 //
 // Behaviour by configuration:
 //   - SEP-10 unconfigured (no seed_env / jwt_secret_env): buildSEP10Validator
-//     errors "not configured"; we wire the Noop (503 on /v1/auth/sep10/*) so
+//     errors "not configured"; we wire the Noop (404 sep10-unavailable on /v1/auth/sep10/*) so
 //     the binary still boots — the common r1 auth_mode=apikey_optional case.
 //   - SEP-10 configured + Redis available: the guarded validator, in EVERY
 //     auth_mode.
@@ -2679,7 +2679,7 @@ func resolveSEP10Validator(
 		if authMode == "sep10" {
 			return nil, fmt.Errorf("sep10 validator: %w (auth_mode=sep10 requires it)", err)
 		}
-		logger.Warn("sep10 validator not wired; /v1/auth/sep10/* will return 503",
+		logger.Warn("sep10 validator not wired; /v1/auth/sep10/* will return 404 sep10-unavailable",
 			"err", err)
 		return auth.NoopSEP10Validator{}, nil
 	}

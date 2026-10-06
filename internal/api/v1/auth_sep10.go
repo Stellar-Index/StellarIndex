@@ -50,12 +50,12 @@ const sep10UnavailableDetail = "no SEP-10 validator is wired on this deployment,
 	"\"sep10 validator not wired\" names the one that failed. Then switch auth_mode to sep10 — which " +
 	"turns sip_* API keys OFF, since a deployment verifies one credential type or the other, never both."
 
-// writeSEP10Unavailable answers the 503 that says SEP-10 is not
+// writeSEP10Unavailable answers the 404 that says SEP-10 is not
 // offered here.
 func writeSEP10Unavailable(w http.ResponseWriter, r *http.Request) {
 	writeProblem(w, r,
 		sep10UnavailableType,
-		"SEP-10 not configured", http.StatusServiceUnavailable,
+		"SEP-10 not configured", http.StatusNotFound,
 		sep10UnavailableDetail)
 }
 
@@ -162,7 +162,7 @@ type sep10TokenResponse struct {
 //   - 401 — signature wrong / no signers / wrong account
 //     (auth.ErrUnauthorized)
 //   - 410 — challenge time-bounds expired (auth.ErrTokenExpired)
-//   - 503 — validator not wired
+//   - 404 — validator not wired (sep10-unavailable)
 //   - 500 — anything else
 func (s *Server) handleSEP10Token(w http.ResponseWriter, r *http.Request) {
 	if s.sep10 == nil {
@@ -243,7 +243,7 @@ func (s *Server) writeSEP10VerifyError(w http.ResponseWriter, r *http.Request, e
 		// returns ErrNotImplemented. Pre-fix this fell through to
 		// the default branch and surfaced as 500 + "Internal
 		// error" — misleading because it's a deployment config
-		// state, not a server crash. Surfacing it as 503 with a
+		// state, not a server crash. Surfacing it as a non-retryable 404 with a
 		// detail makes the operator-side fix obvious.
 		writeSEP10Unavailable(w, r)
 	default:
