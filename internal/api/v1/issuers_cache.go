@@ -107,18 +107,26 @@ func (c *CachedIssuersReader) ListIssuerAssets(ctx context.Context, gStrkey stri
 // the scan, not by LIMIT, so a per-limit key would let a caller sweeping
 // `?limit=` force one uncollapsed upstream scan per value.
 func (c *CachedIssuersReader) ListIssuers(ctx context.Context, limit int) ([]timescale.IssuerSummary, error) {
+	list, _, err := c.ListIssuersAt(ctx, limit)
+	return list, err
+}
+
+// ListIssuersAt is ListIssuers plus the served entry's fill time; zero on
+// an uncached (ttl<=0) read.
+func (c *CachedIssuersReader) ListIssuersAt(ctx context.Context, limit int) ([]timescale.IssuerSummary, time.Time, error) {
 	if c.ttl <= 0 {
-		return c.upstream.ListIssuers(ctx, limit)
+		list, err := c.upstream.ListIssuers(ctx, limit)
+		return list, time.Time{}, err
 	}
 	key := newCacheKey("ListIssuers").int(IssuersListMaxLimit).build()
-	list, err := c.fetchList(ctx, key, func(ctx context.Context) ([]timescale.IssuerSummary, error) {
+	list, at, err := c.fetchList(ctx, key, func(ctx context.Context) ([]timescale.IssuerSummary, error) {
 		return c.upstream.ListIssuers(ctx, IssuersListMaxLimit)
 	})
 	if err != nil || limit <= 0 || limit >= len(list) {
-		return list, err
+		return list, at, err
 	}
 	// Cap capacity so a caller's append cannot write into the shared entry.
-	return list[:limit:limit], nil
+	return list[:limit:limit], at, nil
 }
 
 // fetchList is the TTL + single-flight loop. Mirrors
@@ -132,16 +140,16 @@ func (c *CachedIssuersReader) fetchList(
 	ctx context.Context,
 	key string,
 	upstream func(context.Context) ([]timescale.IssuerSummary, error),
-) ([]timescale.IssuerSummary, error) {
+) ([]timescale.IssuerSummary, time.Time, error) {
 	c.mu.Lock()
 	e, ok := c.entries[key]
 
 	// (A) Fresh hit.
 	if ok && e.flight == nil && time.Since(e.at) < c.ttl {
-		out := e.list
+		out, at := e.list, e.at
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("issuers", "list_issuers", "hit").Inc()
-		return out, nil
+		return out, at, nil
 	}
 
 	// (B)/(C) No fresh value: join the running fill, or take the slot
@@ -166,20 +174,20 @@ func (c *CachedIssuersReader) fetchList(
 	select {
 	case <-ch:
 		c.mu.Lock()
-		list, err := entry.list, entry.err
+		list, at, err := entry.list, entry.at, entry.err
 		c.mu.Unlock()
 		if err != nil {
 			if !leader {
 				obs.APICacheOpsTotal.WithLabelValues("issuers", "list_issuers", "miss").Inc()
 			}
-			return nil, err
+			return nil, time.Time{}, err
 		}
 		if !leader {
 			obs.APICacheOpsTotal.WithLabelValues("issuers", "list_issuers", "hit").Inc()
 		}
-		return list, nil
+		return list, at, nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, time.Time{}, ctx.Err()
 	}
 }
 

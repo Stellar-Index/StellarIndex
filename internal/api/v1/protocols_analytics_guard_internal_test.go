@@ -50,7 +50,7 @@ func TestProtoDetailRefresh_FastFailKeepsGoodEntry(t *testing.T) {
 
 	// The SWR read path serves the kept entry STALE (it kicks another
 	// degraded rebuild, which again must not displace it).
-	view, stale, ok := srv.cachedProtocolDetail(context.Background(), key, degradedBuild)
+	view, _, stale, ok := srv.cachedProtocolDetail(context.Background(), key, degradedBuild)
 	if !ok || !stale {
 		t.Fatalf("cachedProtocolDetail = stale %v ok %v, want stale serve of the kept entry", stale, ok)
 	}

@@ -173,7 +173,8 @@ func TestColdFill_Issuers_LeaderCancelSparesWaiter(t *testing.T) {
 		return []timescale.IssuerSummary{{GStrkey: "GISSUER"}}, nil
 	}
 	get := func(ctx context.Context) ([]timescale.IssuerSummary, error) {
-		return c.fetchList(ctx, "k", upstream)
+		rows, _, err := c.fetchList(ctx, "k", upstream)
+		return rows, err
 	}
 	assertLeaderCancelSparesWaiter(t, g, get,
 		func(v []timescale.IssuerSummary) bool { return len(v) == 1 && v[0].GStrkey == "GISSUER" })
@@ -257,13 +258,13 @@ func TestColdFill_SourcesStats_LeaderCancelSparesWaiter(t *testing.T) {
 func TestColdFill_PanicIsAnErrorAndDoesNotWedge(t *testing.T) {
 	c := NewCachedIssuersReader(nil, time.Minute)
 	boom := func(context.Context) ([]timescale.IssuerSummary, error) { panic("boom") }
-	if _, err := c.fetchList(context.Background(), "k", boom); !errors.Is(err, errCacheFillPanicked) {
+	if _, _, err := c.fetchList(context.Background(), "k", boom); !errors.Is(err, errCacheFillPanicked) {
 		t.Fatalf("err = %v, want errCacheFillPanicked", err)
 	}
 	ok := func(context.Context) ([]timescale.IssuerSummary, error) {
 		return []timescale.IssuerSummary{{GStrkey: "G"}}, nil
 	}
-	got, err := c.fetchList(context.Background(), "k", ok)
+	got, _, err := c.fetchList(context.Background(), "k", ok)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("retry after panic = %+v, %v; want a fresh fill", got, err)
 	}

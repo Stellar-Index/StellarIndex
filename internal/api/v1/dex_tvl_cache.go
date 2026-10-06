@@ -272,10 +272,17 @@ func (c *DEXTVLCache) Protocol(name string) (DEXTVLProtocolSnapshot, bool) {
 	if !ok {
 		return DEXTVLProtocolSnapshot{}, false
 	}
+	// The entry's own computed time: a carried-forward figure is older
+	// than the cycle that carried it.
+	at, err := time.Parse(time.RFC3339, view.AsOf)
+	if err != nil {
+		at = c.fetchedAt
+	}
 	return DEXTVLProtocolSnapshot{
 		TVL:            view,
 		Pools:          c.pools[name],
 		CarriedForward: c.carried[name],
+		FetchedAt:      at,
 	}, true
 }
 

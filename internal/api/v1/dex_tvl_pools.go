@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"net/http"
 	"sort"
+	"time"
 )
 
 // Per-leg exclusion reasons on the DEX TVL drill-down (#338). A reserve
@@ -144,6 +145,8 @@ type DEXTVLProtocolSnapshot struct {
 	TVL            ProtocolTVLView
 	Pools          []DEXTVLPoolView
 	CarriedForward bool
+	// FetchedAt is when this entry's figure was computed (TVL.AsOf).
+	FetchedAt time.Time
 }
 
 // tvlLegInput is one reserve leg as a reader delivers it, before
@@ -331,7 +334,12 @@ func (s *Server) handleProtocolTVL(w http.ResponseWriter, r *http.Request) {
 	if view.Pools == nil {
 		view.Pools = []DEXTVLPoolView{}
 	}
-	writeJSON(w, view, Flags{Stale: snap.CarriedForward, Degraded: snap.CarriedForward}, meta.Name)
+	writeEnvelope(w, Envelope{
+		Data:    view,
+		AsOf:    WireTime(snap.FetchedAt.UTC()),
+		Sources: []string{meta.Name},
+		Flags:   Flags{Stale: snap.CarriedForward, Degraded: snap.CarriedForward},
+	})
 }
 
 // dexTVLNotDerivedReason explains a 404 on a KNOWN protocol: the

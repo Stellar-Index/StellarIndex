@@ -23,6 +23,12 @@ type IssuersReader interface {
 	ListIssuers(ctx context.Context, limit int) ([]timescale.IssuerSummary, error)
 }
 
+// issuersAtReader is what the TTL cache adds to IssuersReader: the list
+// read also returns the served entry's fill time, stamped as as_of.
+type issuersAtReader interface {
+	ListIssuersAt(ctx context.Context, limit int) ([]timescale.IssuerSummary, time.Time, error)
+}
+
 // IssuerListEntry is the wire shape of one row in /v1/issuers.
 // Compact summary suitable for the issuer-directory page.
 //
@@ -142,7 +148,17 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 	// 8s ceiling — same pattern as the cold-path series.
 	listCtx, listCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer listCancel()
-	rows, err := s.Issuers.ListIssuers(listCtx, limit)
+	var vintage dataVintage
+	var rows []timescale.IssuerSummary
+	var err error
+	if at, ok := s.Issuers.(issuersAtReader); ok {
+		var filled time.Time
+		rows, filled, err = at.ListIssuersAt(listCtx, limit)
+		vintage.note(filled)
+	} else {
+		rows, err = s.Issuers.ListIssuers(listCtx, limit)
+		vintage.note(time.Time{})
+	}
 	if err != nil {
 		if clientAborted(r, err) {
 			// Client went away mid-query — e.g. concurrent callers
@@ -211,7 +227,7 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 			ScamReason:            reason,
 		}
 	}
-	writeJSON(w, out, Flags{})
+	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf()})
 }
 
 // handleIssuer serves GET /v1/issuers/{g_strkey}.

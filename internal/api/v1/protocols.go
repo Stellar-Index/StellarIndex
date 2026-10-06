@@ -69,17 +69,17 @@ func (s *Server) protoDetailInitLocked() {
 // live on Server, lazy-init'd) so it never leaks across test instances.
 // ok=false only when the caller's context is cancelled (or the build
 // produced no cacheable entry) on the cold path.
-func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build func(context.Context) ProtocolDetailView) (view ProtocolDetailView, stale, ok bool) {
+func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build func(context.Context) ProtocolDetailView) (view ProtocolDetailView, at time.Time, stale, ok bool) {
 	s.protoDetailMu.Lock()
 	s.protoDetailInitLocked()
 	if e, has := s.protoDetailCache[key]; has {
 		if time.Since(e.at) < protocolDetailTTL {
 			s.protoDetailMu.Unlock()
-			return e.view, false, true
+			return e.view, e.at, false, true
 		}
 		s.protoDetailRefreshLocked(key, build) //nolint:contextcheck // intentional detach — the rebuild must outlive this request (see protoDetailRefreshLocked)
 		s.protoDetailMu.Unlock()
-		return e.view, true, true
+		return e.view, e.at, true, true
 	}
 	done := s.protoDetailRefreshLocked(key, build) //nolint:contextcheck // intentional detach — a request that times out must not kill the fill
 	s.protoDetailMu.Unlock()
@@ -88,9 +88,9 @@ func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build fun
 		s.protoDetailMu.Lock()
 		e, has := s.protoDetailCache[key]
 		s.protoDetailMu.Unlock()
-		return e.view, false, has
+		return e.view, e.at, false, has
 	case <-ctx.Done():
-		return ProtocolDetailView{}, false, false
+		return ProtocolDetailView{}, time.Time{}, false, false
 	}
 }
 
@@ -821,7 +821,7 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	// name-only key would let a ?days=7 hit serve the cached 90d view (or
 	// vice versa). The no-param default builds the same key as an explicit
 	// days=90, so the common path stays a single cached entry.
-	view, stale, ok := s.cachedProtocolDetail(ctx, protocolDetailCacheKey(meta.Name, windowDays), s.protocolDetailBuilder(meta, windowDays))
+	view, builtAt, stale, ok := s.cachedProtocolDetail(ctx, protocolDetailCacheKey(meta.Name, windowDays), s.protocolDetailBuilder(meta, windowDays))
 	if !ok {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/protocol-detail-timeout",
@@ -845,7 +845,8 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	// verdictsStale alone is a fresh read of an old audit verdict and stays
 	// cacheable.
 	degraded := stale || (view.Analytics != nil && view.Analytics.Status != protocolAnalyticsOK)
-	writeJSON(w, view, Flags{Stale: staleFlag, Degraded: degraded})
+	// as_of is the build time, so a re-served entry replays byte-identical.
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(builtAt.UTC()), Flags: Flags{Stale: staleFlag, Degraded: degraded}})
 }
 
 // protocolDetailBuilder returns the one build closure both the request
