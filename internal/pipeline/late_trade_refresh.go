@@ -49,12 +49,12 @@ type lateTradeCAGGStore interface {
 //
 // Before a late write, its writer records the window durably (migration
 // 0211); every flush unions those rows in, and Run flushes once at start,
-// so a window survives a crash. After the write commits, the writer calls
-// ObserveTrades / ObserveEvent, which widens the in-memory window and
-// kicks Run. Run refreshes it
-// once per debounce interval, one refresh in flight at a time, and each
-// view at most once per its own policy's schedule_interval, so a long
-// catch-up costs a refresh per interval rather than per batch. A failed
+// so a window survives a crash. After the write commits, the writer
+// records any trade the write's own duration made late, then calls
+// ObserveTrades, which widens the in-memory window and kicks Run. Run
+// refreshes it once per debounce interval, one refresh in flight at a
+// time, and each view at most once per its own policy's schedule_interval,
+// so a long catch-up costs a refresh per interval rather than per batch. A failed
 // refresh is logged, counted, kept pending and retried with backoff;
 // ingest never waits on it, and one view's failure does not hold the
 // others. FlushOnShutdown refreshes what is left once the writers have
@@ -179,11 +179,10 @@ func (r *LateTradeRefresher) ObservingSink(sink func(context.Context, consumer.E
 			return err
 		}
 		defer end()
-		err = sink(ctx, ev)
-		if err == nil {
-			r.ObserveTrades(t)
+		if err := sink(ctx, ev); err != nil {
+			return err
 		}
-		return err
+		return r.committed(ctx, []canonical.Trade{t})
 	}
 }
 
@@ -205,14 +204,77 @@ var lateTradeViewNames = func() []string {
 	return out
 }()
 
-// beginWrite durably records the late trades' hour hull before they are
-// written; call end once the write has returned. Without a late trade it
-// records nothing and end is a no-op.
+// beginWrite durably records the hour hull of the trades already late
+// before they are written; call end once the write has returned, and
+// committed once it has succeeded. Without a late trade it records nothing
+// and end is a no-op.
 func (r *LateTradeRefresher) beginWrite(ctx context.Context, trades []canonical.Trade) (end func(), err error) {
+	found, err := r.recordLate(ctx, trades, true)
+	if !found {
+		return func() {}, err
+	}
+	end = func() {
+		r.mu.Lock()
+		r.inflight--
+		r.mu.Unlock()
+	}
+	if err != nil {
+		end()
+		return nil, err
+	}
+	return end, nil
+}
+
+// committed observes a successful write's trades and durably records any
+// its own duration made late: they were on time at beginWrite, and memory
+// alone dies with the process. A failed record fails the write, so its
+// retry, or a restart's redelivery, records them.
+func (r *LateTradeRefresher) committed(ctx context.Context, trades []canonical.Trade) error {
+	r.ObserveTrades(trades...)
+	_, err := r.recordLate(ctx, trades, false)
+	return err
+}
+
+// recordLate durably records the hour hull of the trades late now, unless a
+// record since the last flush already covers it. With inflight, a late
+// trade also counts the write as in flight until the caller ends it.
+func (r *LateTradeRefresher) recordLate(ctx context.Context, trades []canonical.Trade, inflight bool) (found bool, err error) {
 	r.mu.Lock()
+	lo, hi, found := r.lateHourHullLocked(trades)
+	if !found {
+		r.mu.Unlock()
+		return false, nil
+	}
+	if inflight {
+		r.inflight++
+	}
+	r.entered++
+	epoch := r.coverEpoch
+	covered := r.covered && !lo.Before(r.coverLo) && !hi.After(r.coverHi)
+	r.mu.Unlock()
+	if covered {
+		return true, nil
+	}
+	if err := r.store.RecordCAGGLateRefreshWindow(ctx, timescale.CAGGLateFamilyTrades, lateTradeViewNames, lo, hi); err != nil {
+		return true, fmt.Errorf("record late-trade cagg window: %w", err)
+	}
+	r.mu.Lock()
+	if r.coverEpoch == epoch {
+		if !r.covered || lo.Before(r.coverLo) {
+			r.coverLo = lo
+		}
+		if !r.covered || hi.After(r.coverHi) {
+			r.coverHi = hi
+		}
+		r.covered = true
+	}
+	r.mu.Unlock()
+	return true, nil
+}
+
+// lateHourHullLocked is the hour-aligned hull of the trades late now. Needs r.mu.
+func (r *LateTradeRefresher) lateHourHullLocked(trades []canonical.Trade) (lo, hi time.Time, found bool) {
 	cutoff := r.now().Add(-r.lateAfter)
-	var lo, hi time.Time
-	found := false
 	for i := range trades {
 		ts := trades[i].Timestamp
 		if !ts.Before(cutoff) {
@@ -227,39 +289,9 @@ func (r *LateTradeRefresher) beginWrite(ctx context.Context, trades []canonical.
 		found = true
 	}
 	if !found {
-		r.mu.Unlock()
-		return func() {}, nil
+		return lo, hi, false
 	}
-	lo, hi = lo.Truncate(time.Hour), hi.Truncate(time.Hour).Add(time.Hour)
-	r.inflight++
-	r.entered++
-	epoch := r.coverEpoch
-	covered := r.covered && !lo.Before(r.coverLo) && !hi.After(r.coverHi)
-	r.mu.Unlock()
-	end = func() {
-		r.mu.Lock()
-		r.inflight--
-		r.mu.Unlock()
-	}
-	if covered {
-		return end, nil
-	}
-	if err := r.store.RecordCAGGLateRefreshWindow(ctx, timescale.CAGGLateFamilyTrades, lateTradeViewNames, lo, hi); err != nil {
-		end()
-		return nil, fmt.Errorf("record late-trade cagg window: %w", err)
-	}
-	r.mu.Lock()
-	if r.coverEpoch == epoch {
-		if !r.covered || lo.Before(r.coverLo) {
-			r.coverLo = lo
-		}
-		if !r.covered || hi.After(r.coverHi) {
-			r.coverHi = hi
-		}
-		r.covered = true
-	}
-	r.mu.Unlock()
-	return end, nil
+	return lo.Truncate(time.Hour), hi.Truncate(time.Hour).Add(time.Hour), true
 }
 
 // lateClearGuard is the write-ahead state a flush read its durable rows under.
@@ -706,9 +738,10 @@ func (r *LateTradeRefresher) writer(store *timescale.Store) tradeWriter {
 	return observingTradeWriter{tradeWriter: store, late: r}
 }
 
-// observingTradeWriter records every late trade write before it and
-// reports every one that succeeded. A failed record fails the write, so
-// the sink's retry covers it.
+// observingTradeWriter records every late trade write before it, and again
+// after it if the write ran long enough to make more trades late, and
+// reports every one that succeeded. A failed record fails the write, so the
+// sink's retry covers it.
 type observingTradeWriter struct {
 	tradeWriter
 	late *LateTradeRefresher
@@ -720,11 +753,10 @@ func (w observingTradeWriter) BatchInsertTrades(ctx context.Context, trades []ca
 		return err
 	}
 	defer end()
-	err = w.tradeWriter.BatchInsertTrades(ctx, trades)
-	if err == nil {
-		w.late.ObserveTrades(trades...)
+	if err := w.tradeWriter.BatchInsertTrades(ctx, trades); err != nil {
+		return err
 	}
-	return err
+	return w.late.committed(ctx, trades)
 }
 
 func (w observingTradeWriter) InsertTrade(ctx context.Context, t canonical.Trade) error {
@@ -733,9 +765,8 @@ func (w observingTradeWriter) InsertTrade(ctx context.Context, t canonical.Trade
 		return err
 	}
 	defer end()
-	err = w.tradeWriter.InsertTrade(ctx, t)
-	if err == nil {
-		w.late.ObserveTrades(t)
+	if err := w.tradeWriter.InsertTrade(ctx, t); err != nil {
+		return err
 	}
-	return err
+	return w.late.committed(ctx, []canonical.Trade{t})
 }
