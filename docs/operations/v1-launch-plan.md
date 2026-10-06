@@ -137,6 +137,7 @@ One line per item; the INV item is the authority.
 - INV-2853: caller-side supply close-timestamp fix (M4).
 - INV-2854: `/assets/native` advertises 5,553 markets but lists 100.
 - INV-2855: API auth and rate-limit review.
+- INV-2844: SEP-1 `stellar.toml` is not verified against its `SIGNING_KEY`; metadata is served as the domain claims it (`internal/metadata/doc.go`).
 - INV-2856: dependency-advisory review cadence.
 - INV-2857, INV-2858: operator decisions on peg-set thresholds and served-tier retention (Ash).
 - INV-2859: instrument the Redis read-through caches (`cache_ops_total` covers only in-memory caches).
