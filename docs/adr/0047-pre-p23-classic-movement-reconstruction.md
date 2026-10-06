@@ -13,7 +13,7 @@ superseded_by: null
 
 Since Protocol 23 every classic asset movement emits a CAP-67 event we already capture; before it, payments, path payments, merges, claimable balances, clawbacks and LP deposits and withdrawals are reconstructed nowhere, and Horizon is banned (ADR-0001).
 An explorer must cover that history; 11 of the 15 value-moving operation types reconstruct from `stellar.operations` and `stellar.operation_results` alone, and LP operations also need `ledger_entry_changes`.
-Evidence: `docs/architecture/pre-p23-classic-movements-research.md`.
+Evidence: `internal/sources/classicmovements/README.md` (protocol boundaries, operation inventory).
 
 ## Decision
 

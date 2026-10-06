@@ -426,7 +426,7 @@ func TestDecoder_pathPayment_senderLegCarriesSendAsset(t *testing.T) {
 // TestDecoder_pathPaymentStrictReceive_direct_noOffers covers the
 // degenerate SendAsset==DestAsset case: no order book / pool
 // crossed, so the source amount consumed equals exactly what was
-// delivered (research §2 path (b), the len(Offers)==0 branch).
+// delivered (inventory path (b), the len(Offers)==0 branch).
 func TestDecoder_pathPaymentStrictReceive_direct_noOffers(t *testing.T) {
 	fromAddr, _ := mkAccount(t, 0x50)
 	destAddr, _ := mkAccount(t, 0x51)

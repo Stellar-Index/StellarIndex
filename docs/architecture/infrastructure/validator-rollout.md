@@ -1,363 +1,145 @@
 ---
 title: Validator Rollout — 1 → 3 Full Validators as one Tier-1 Organisation
-last_verified: 2026-05-03
-status: superseded — the infrastructure shape (stretched Patroni, cross-region etcd) is superseded by [ADR-0050](../../adr/0050-multi-region-ha-architecture.md); the validator-operations sequence (key ceremonies, quorum-set phasing) below is still accepted; the launch v1 ships archival-only, see [ADR-0004](../../adr/0004-tier1-validator-aspiration.md)
+last_verified: 2026-10-06
+status: accepted for the validator-operations sequence (phases, quorum sets, key ceremony); not started — v1 ships archival-only per [ADR-0004](../../adr/0004-tier1-validator-aspiration.md). Region and replication shape come from [ADR-0050](../../adr/0050-multi-region-ha-architecture.md) and [ha-plan.md](../ha-plan.md).
 ---
 
 # Validator Rollout — 1 → 3, as one Tier-1 Org
 
-> ⛔ **SUPERSEDED in its infrastructure shape by ADR-0050 / [`../ha-plan.md`](../ha-plan.md) (2026-08-21). Do not implement the topology from this doc.** Phases C/D below join R2 and R3 to a **stretched Patroni cluster** with a 5-node cross-region etcd — exactly what [ADR-0050](../../adr/0050-multi-region-ha-architecture.md) §Decision rejects ("no cross-region Postgres replication and no stretched Patroni cluster"; Model B is independent per-region ingest, determinism not replication). Two more corrections of fact: **R1 is Hetzner FSN1 (Falkenstein), not London** (`infrastructure/archival-node-spec.md` status line), and Phase A's `stellar-rpc` co-residency **never ran on r1** — stellar-rpc was removed 2026-04-23 and is not in the ingest path (AGENTS.md "stellar-rpc is NOT in our production ingest path"; `internal/ledgerstream` → `internal/dispatcher`). The **validator aspiration itself** (three geographically-separated full validators, HSM-held keys) is [ADR-0004](../../adr/0004-tier1-validator-aspiration.md) and is unchanged; only the database/rpc topology below is superseded. Read the phase table for the validator-operations sequence, not for the deployment shape.
+One Stellar Index organisation, three full validators in three regions,
+brought up one at a time. The first node runs as a non-voting archival node
+so problems surface without multi-node coordination; validators 2 and 3 add
+no new shape. Each region is independent (ADR-0050 Model B): standing up a
+validator in R2 is "deploy another region", never "join a cluster".
 
-**Owner:** the maintainer.
-**Extends:** [ADR-0004 Tier-1 validator aspiration](../../adr/0004-tier1-validator-aspiration.md).
-**Relates to:** [archival-node-spec.md](archival-node-spec.md),
-[multi-region-topology.md](multi-region-topology.md).
-
-This doc locks the phased rollout: **one Stellar Index organisation,
-three full validators, geographically separated, brought up one at a
-time.** We launch with one node in syncing state so we can shake out
-bugs without multi-node coordination; the architecture is designed
-so dropping in node 2 and node 3 adds no new shape — just more of
-the same.
+Changing the aspiration itself (for example, never promoting past
+archival) needs a superseding ADR; this page cannot downgrade ADR-0004.
 
 ---
 
-## 1. What "Tier-1 Organisation" actually means
+## 1. What a Tier-1 organisation is
 
-Per SDF's `stellar-docs/docs/validators/tier-1-orgs.mdx`:
+Per SDF's `stellar-docs/docs/validators/tier-1-orgs.mdx`, one organisation
+running **≥ 3 full validators** (voting, not watchers), **geographically
+separated**, each publishing an **independent history archive**, voting as
+one org. Our three validators are one org-vote, share one ceremony
+procedure, and are listed once.
 
-A Tier-1 Organisation is a **single organisation** running:
+## 2. Scope boundary
 
-- **≥ 3 full validators** — not archival watchers; voting members of
-  SCP.
-- **Geographically separated** — different regions / different
-  upstream networks.
-- **Independent history archives** — each validator publishes to
-  storage it independently controls.
-- **Org-level identity** — the three validators vote as one org in
-  network trust decisions (via the SDF-maintained T1 Orgs list).
-
-So: **Stellar Index = 1 org. We operate 3 validators. They're our
-three validators, not three peer orgs' validators.** This matters
-for:
-
-- Quorum sets: our three nodes aren't independent trust anchors;
-  they're the same org. SDF treats them as one org-vote.
-- Key ceremony: all three validator keys trace to the same HSM
-  backup ceremony and operational procedures.
-- Compliance: the T1 Orgs listing names `Stellar Index` once, not
-  three times.
-
----
-
-## 2. Why we launch with 1 validator (not 3 on day one)
-
-The conservative path:
-
-1. **Shake out hardware + software config with a single node.**
-   Three nodes hitting the same rare bug triples the firefighting
-   cost.
-2. **Measure real catchup times** on one node before committing to
-   three colo contracts. Numbers in
-   [archival-node-spec.md](archival-node-spec.md) §3.3.3 are
-   extrapolations until we measure.
-3. **Validate the archive + Galexie + stellar-rpc co-resident
-   pattern** under real pubnet load. Adversarial audit §6d flagged
-   this specifically.
-4. **Establish the Vault / HSM / backup pipelines on one host**
-   before we multiply them.
-
-Launching with three simultaneously is achievable but high-risk
-inside the initial build window. The single-node phase is not optional —
-it's a quality gate.
+No pricing or API property depends on validator status. A validator adds an
+SCP vote, a public history archive and T1 eligibility; it adds no data to
+aggregation, no API capability and no key beyond the validator key. If we
+never promote, the API works identically.
 
 ---
 
 ## 3. Rollout phases
 
-### Phase A — Week 2–3: One archival node, **non-voting**
+### Phase A — one archival node, non-voting
 
-- Hardware: 1× node per [archival-node-spec.md](archival-node-spec.md).
-- Role: archival full node. `NODE_IS_VALIDATOR=false`.
-- Region: R1 (London).
-- Quorum set: mirrors SDF's recommended quorum for a non-validating
-  node (SDF × 3, LOBSTR, Satoshipay, Franklin Templeton) — we
-  **depend on** the existing network, we don't yet contribute to it.
-- Running: stellar-core in `CATCHUP_RECENT` (live), then promote to
-  `CATCHUP_COMPLETE` once full archive mirrored.
-- Publishing: starts publishing our history archive to our own
-  MinIO (`history-archive/`) immediately. Anyone can read our
-  archive; SDF doesn't have to ratify anything yet.
+- `NODE_IS_VALIDATOR=false` on R1, quorum set mirroring SDF's recommended
+  set for a non-validating node. Publish our history archive from day one.
 
-**Exit criteria (Phase A → Phase B):**
+**Exit criteria (A → B):**
 
-- [ ] Node has been live and synced for ≥ 7 consecutive days.
-- [ ] Galexie + stellar-rpc + stellarindex-indexer all ingest from
-      this node with zero gaps.
-- [ ] Archive cross-checks (against SDF + 2 other T1 orgs' public
-      archives) show hash parity.
-- [ ] Measured memory footprint, catchup duration, NVMe throughput
-      against the spec's estimates. Adjust procurement for nodes
-      2–3 based on real numbers.
+- [ ] Live and synced for ≥ 7 consecutive days.
+- [ ] Galexie and `stellarindex-indexer` ingest from it with zero gaps.
+- [ ] Archive cross-checks against SDF and two other T1 orgs show hash
+      parity.
+- [ ] Memory, catchup duration and NVMe throughput measured against
+      [archival-node-spec.md](archival-node-spec.md).
 
-### Phase B — Week 4–5: Promote to validator, still 1 node
+### Phase B — promote to validator, still one node
 
-- Key ceremony: generate `NODE_SEED` on YubiHSM-2, witnessed by
-  the maintainer + @alex, shamir-split backup to two safes.
-- Config: `NODE_IS_VALIDATOR=true`, `NODE_SEED` resolved via the
-  HSM signer daemon (never on disk).
-- Register with SDF: submit our validator public key to the
-  `stellar.toml` of `stellarindex.io` + the
-  `stellar-docs/validators/tier-1-orgs.mdx` addition PR (when we
-  have 3 validators). For now we're a standalone validator.
-- Announce on `#validators` Discord so other operators can weight
-  us in their quorum sets.
+- Key ceremony (§5); `NODE_IS_VALIDATOR=true`; `NODE_SEED` resolved through
+  the HSM signer daemon, never on disk (ADR-0004).
+- Publish the public key in `stellarindex.io`'s `stellar.toml` and announce
+  on SDF's `#validators` channel. One validator is not a T1 org.
 
-**Note:** a single validator is **not** a T1 org. It's a validator.
-T1 status requires 3 validators. Phase B gives us the operational
-muscle memory.
+**Exit criteria (B → C):**
 
-**Exit criteria (Phase B → Phase C):**
+- [ ] Voted correctly on 100 % of ledgers for 14 consecutive days.
+- [ ] No incident involving the validator key or HSM.
+- [ ] Archive cross-check green for 14 days.
+- [ ] Rehearsed: HSM failure, validator-key rotation, core upgrade.
 
-- [ ] Voted correctly on 100% of ledgers for 14 consecutive days.
-- [ ] No incidents involving the validator key or HSM.
-- [ ] Archive cross-check stayed green for 14 days.
-- [ ] Runbook rehearsals complete for: HSM failure, validator-key
-      rotation, core upgrade.
+### Phase C — validator 2 in R2
 
-### Phase C — Week 6–7: Deploy validator 2 in R2 (Ashburn)
+Fresh key on a second HSM (never shared key material), same
+`NODE_HOME_DOMAIN=stellarindex.io`, and validator 1 added to its org
+sub-quorum. Exit criteria as for Phase B.
 
-- Hardware: 1× identical node, shipped to R2 colo.
-- Key ceremony: second validator key, fresh on a second YubiHSM.
-  Different key material than validator 1 — never the same key.
-- Config: `NODE_IS_VALIDATOR=true`, distinct `NODE_SEED`,
-  `NODE_HOME_DOMAIN=stellarindex.io` (same as validator 1; signals
-  "same org").
-- Quorum set of validator 2: same shape as validator 1's, except
-  it adds validator 1 to its "stellarindex org" sub-quorum.
-- Our quorum sub-quorum now has 2 members; SCP expects us to
-  weight it as an org.
-- Application-layer: **superseded** — this doc previously said R2
-  joins a stretched Patroni cluster as sync replica; per
-  [ADR-0050](../../adr/0050-multi-region-ha-architecture.md) (Model B),
-  R2 instead runs independent per-region ingest with no cross-region
-  Postgres replication. See [ha-plan.md](../ha-plan.md#1-decisions-that-still-bind).
+### Phase D — validator 3 in R3
 
-**Exit criteria (Phase C → Phase D):** same as Phase B, applied to
-validator 2.
+Same pattern. The org now has three validators with independent archives.
 
-### Phase D — Week 8: Deploy validator 3 in R3 (Singapore)
+### Phase E — apply for Tier-1 listing
 
-- Same pattern as Phase C.
-- Application-layer: **superseded** — this doc previously said R3
-  joins Patroni as an async replica with etcd growing to 5 nodes
-  across regions; per [ADR-0050](../../adr/0050-multi-region-ha-architecture.md)
-  R3 runs the same independent per-region ingest as R2, with no
-  stretched Patroni cluster or cross-region etcd.
-- Our org now has three validators in three regions with
-  independent archives.
+After all three voted correctly with matching archives for ≥ 14 days, open
+a PR to `stellar/stellar-docs` adding Stellar Index with the three public
+keys and archive URLs. A refusal is not service-affecting; re-apply in 90
+days.
 
-### Phase E — Week 9: Apply for SDF Tier-1 listing
+### Phase F — steady state
 
-- Precondition: all three validators voted correctly, their
-  archives matched, and we published for ≥ 14 days.
-- Action: open a PR to `stellar/stellar-docs` adding
-  "Stellar Index" to the Tier-1 Orgs table, citing our 3 validators'
-  public keys + public archive URLs.
-- SDF reviews. Typical turnaround days to weeks.
-
-### Phase F — post-launch: steady state
-
-- 3 validators, 3 regions, 1 org, T1-listed.
-- Ongoing work: protocol upgrades on the "3-of-4" rhythm, yearly
-  validator-key rotations, quarterly HSM backup audits.
+Protocol upgrades one region at a time; yearly key rotation; quarterly HSM
+backup audits.
 
 ---
 
-## 4. Quorum set shape per phase
+## 4. Quorum set shape
 
-**Phase A (archival non-voting):** we don't have a quorum set in the
-"our vote" sense — we just follow the network. Our quorum is the set
-we *trust* for our own ledger close decisions, same shape as any
-other non-validating node:
+- **A and B:** the same set we follow (SDF × 3 plus the T1 orgs, threshold
+  67 %); in B we also vote.
+- **C onward:** each of our validators nests a `stellarindex.io`
+  sub-quorum holding our own validators. At two members it is weaker than a
+  three-validator org, which is why the T1 application waits for Phase D.
 
-```
-THRESHOLD_PERCENT = 67
-[QUORUM_SET]
-  # SDF
-  [[validators]] publickey = "GCG..." home_domain = "stellar.org"
-  [[validators]] publickey = "GDC..." home_domain = "stellar.org"
-  [[validators]] publickey = "GBC..." home_domain = "stellar.org"
-  # T1 orgs
-  [[validators]] publickey = "GAZ..." home_domain = "lobstr.co"
-  [[validators]] publickey = "GBF..." home_domain = "lobstrco.com"
-  [[validators]] publickey = "GD6..." home_domain = "satoshipay.io"
-  # ... etc
-```
-
-**Phase B (one Stellar Index validator):** same quorum set we follow,
-with us now voting. SDF + T1s + us = still one-vote-each.
-
-**Phase C (two Stellar Index validators):** we're now an `org`. Each
-of our two validators includes a sub-quorum for the `stellarindex.io`
-home domain:
-
-```
-[[quorumSet]] threshold_percent=67
-  [[validators]] home_domain="stellar.org" ...             # 3 SDF
-  [[validators]] home_domain="lobstr.co" ...
-  [[validators]] home_domain="stellarindex.io"
-    [[validators]] publickey="G..." # validator 1
-    [[validators]] publickey="G..." # validator 2
-  ... other T1 orgs
-```
-
-At 2 validators, our org's sub-quorum has effective strength
-slightly less than a 3-validator org — some downstream voters will
-weight it less. This is why we don't promote to T1 listing until
-we have 3.
-
-**Phase D+ (three Stellar Index validators):** the `stellarindex.io`
-sub-quorum contains all three; T1-compliant.
-
-The exact TOML shapes land as PRs against `configs/validators/`
-when each phase ships.
+The TOML for each phase lands in `configs/validators/` when that phase
+ships.
 
 ---
 
-## 5. Key ceremony — specific procedures
+## 5. Key ceremony
 
-Apply at Phase B, C, D (once per validator).
+Once per validator, at Phases B, C and D.
 
-### 5.1 Materials
+**Materials:** a factory-reset YubiHSM 2; an offline ceremony laptop
+imaged from a known-good ISO; two operators; a self-recorded witness
+camera; pre-printed Shamir share forms.
 
-- Fresh YubiHSM-2, factory-reset, in an antistatic bag.
-- Dedicated "ceremony" laptop, offline, freshly imaged from a known-
-  good ISO.
-- Two operators (the maintainer + @alex minimum).
-- Witness camera (self-recorded, stored with the backup).
-- Pre-printed Shamir-backup forms.
+1. Boot the laptop air-gapped.
+2. Generate the ed25519 key on the HSM
+   (`yubihsm-shell generate asymmetric ed25519`). Export only the public
+   key; the private key never leaves the HSM.
+3. Both operators sign off the public key and fingerprint.
+4. Split the HSM backup into 3 Shamir shares, threshold 2, on sealed forms;
+   store each in a separate safe at a different site.
+5. Wipe the laptop; install the HSM in the validator host.
+6. Point stellar-core's `NODE_SEED` at the signer daemon
+   (`unix:///var/run/stellarindex-signer.sock`).
+7. File the public key and ceremony log (no secret material) in
+   `configs/validators/<name>/ceremony.txt`.
 
-### 5.2 Steps
-
-1. Power up ceremony laptop offline. Airgapped.
-2. Generate the keypair on the HSM via
-   `yubihsm-shell generate asymmetric ed25519`. Public key exported;
-   private key **never** leaves the HSM.
-3. Record the public key + fingerprint; two operators sign off.
-4. Generate Shamir split of the HSM backup (3 shares, threshold 2);
-   print on sealed forms.
-5. Store each share in a separate safe (different physical
-   locations — at least one bank-deposit-box-equivalent).
-6. Wipe the ceremony laptop.
-7. Install the HSM in the validator host's USB slot.
-8. `stellar-core` config: `NODE_SEED` → HSM signer daemon at
-   `unix:///var/run/stellarindex-signer.sock`.
-9. Sign-off: both operators attest the ceremony completed correctly.
-10. File the public-key record + ceremony log in
-    `configs/validators/<name>/ceremony.txt` (public-key + metadata
-    only; no secret material).
-
-### 5.3 Recovery
-
-If an HSM fails: reconstruct from any 2 of the 3 Shamir shares
-onto a replacement HSM. Operators responsible for the safes
-rendezvous, reconstruct, re-install. RTO goal: < 48 h.
-
-If a validator key is **suspected** compromised: emergency rotation.
-
-- Broadcast on `#validators` Discord that the key is being rotated.
-- Generate new keypair (new ceremony).
-- Update our `stellar.toml` + any quorum-set references.
-- Peers update their config.
+**HSM failure:** rebuild from any 2 of 3 shares onto a replacement HSM;
+target under 48 h. **Suspected compromise:** announce on `#validators`, run
+a new ceremony, update `stellar.toml` and quorum-set references.
 
 ---
 
-## 6. What has to be right on day one to make the rollout trivial
+## 6. Open questions
 
-Design-time work that pays back at Phase C/D:
+1. **HSM model:** YubiHSM 2, Nitrokey HSM 2 or a cloud KMS. Lead time is
+   2–6 weeks (ADR-0004); buy a spare before Phase B so it is not on the
+   critical path.
 
-- **Every config is Ansible-templated, not hand-edited.** Node
-  identity (home domain, HSM socket path, quorum-set TOML) is the
-  only per-node diff. `ansible-playbook deploy-validator.yml --limit r2`
-  should stand up validator 2 identically to validator 1 without a
-  human retyping config.
-- **Observability is region-aware from day one.** Prometheus labels
-  include `region=r1|r2|r3`. A dashboard that works for 1 node
-  still works for 3 without renaming panels.
-- **Archive cross-check runs even with 1 validator.** It compares
-  our archive against SDF + LOBSTR + Satoshipay. At 3 validators
-  it additionally compares our three archives against each other.
-  Same script, different config.
-- **Application layer ships multi-region-ready.** **Superseded** —
-  this doc previously described Patroni + Timescale + Redis
-  following a stretched cross-region design; per
-  [ADR-0050](../../adr/0050-multi-region-ha-architecture.md) (Model B)
-  each region runs independent per-region ingest, no cross-region
-  Postgres replication. Standing up R2 is "deploy another independent
-  region", not "join a cluster."
-- **Runbooks are region-agnostic.** Runbook says "the affected
-  region's Postgres primary"; works whether there are 1 or 3 regions.
+## 7. Launch-day definition of done
 
----
+- [ ] Phase A complete (one archival node syncing and ingesting).
+- [ ] Phase B complete — optional for public launch.
+- [ ] Phases C–D queued with hosts ordered.
+- [ ] Runbooks for HSM failure, key rotation and quorum-set change reviewed.
+- [ ] Monitoring covers archive cross-check and per-validator correctness.
 
-## 7. Scope boundary — what validator status does NOT change
-
-Our pricing service does not depend on validator status for any
-correctness property. A validator adds:
-
-- A vote in SCP (contribution to the network).
-- Publication of a history archive (public good).
-- Eligibility for T1 listing (trust signal).
-
-It does not add:
-
-- Any new data fed to our aggregation engine.
-- Any new API capability.
-- Any new private-key requirement beyond the validator key itself
-  (operational keys are separate).
-
-If we never promoted past archival, the price API would work
-identically. Validator is a **network contribution**, not a
-serving requirement.
-
----
-
-## 8. Risks + mitigations
-
-| Risk | Phase | Mitigation |
-| ---- | ----- | ---------- |
-| HSM procurement delay | B | buy spare HSMs in Week 1 to avoid critical-path dependency |
-| Validator key compromise | B–F | HSM-only, ceremonies logged, rotation procedure rehearsed |
-| Hash divergence between our 3 archives | D+ | cross-check job, P1 alert, corrective re-mirror |
-| SDF denies T1 listing | E | not service-breaking; we keep running 3 validators, re-apply in 90 days |
-| Bad protocol upgrade | anytime | follow SDF's "3-of-4" upgrade rhythm; emergency rollback documented |
-| Regional outage during Phase C–D | C/D | we're running 1 active region; outages degrade to "offline" without split-brain because there's only one cluster member |
-| the maintainer unavailable for ceremony | B–D | @alex + one external witness can stand in; ceremony procedure is documented |
-
----
-
-## 9. ADR reminder
-
-This rollout plan sits within ADR-0004's commitment (three Tier-1
-validators post-launch). If the plan changes — specifically, if we
-decide to **never** promote to a full T1 org (e.g. operational
-burden exceeds benefit) — that requires a **superseding ADR**.
-This doc alone cannot downgrade ADR-0004.
-
----
-
-## 10. Launch-day definition of done
-
-- [ ] Phase A complete (1 archival node syncing + ingesting).
-- [ ] Phase B complete (1 validator voting) — **can go to public
-      launch without this, purely operational decision.**
-- [ ] Phases C–D queued with hardware + colo contracts signed.
-- [ ] Runbooks for HSM failure + key rotation + quorum-set change
-      reviewed.
-- [ ] Monitoring covers archive cross-check + per-validator
-      correctness.
-
-Launch can happen at the end of Phase A with pure-archival status.
-Phases B–F happen in the 3 months after launch. We are not
-required to be a T1 org on the launch date.
+Launch can happen at the end of Phase A; B–F follow over the next months.
