@@ -91,7 +91,8 @@ type lateViewState struct {
 
 // LateTradeRefresherOptions configures [NewLateTradeRefresher].
 type LateTradeRefresherOptions struct {
-	Logger *slog.Logger // nil = slog.Default()
+	Logger   *slog.Logger  // nil = slog.Default()
+	Debounce time.Duration // 0 = one minute
 }
 
 // NewLateTradeRefresher returns a refresher over store; Run drives it.
@@ -100,11 +101,15 @@ func NewLateTradeRefresher(store lateTradeCAGGStore, opts LateTradeRefresherOpti
 	if logger == nil {
 		logger = slog.Default()
 	}
+	debounce := opts.Debounce
+	if debounce <= 0 {
+		debounce = lateTradeRefreshDebounce
+	}
 	return &LateTradeRefresher{
 		store:      store,
 		logger:     logger,
 		now:        time.Now,
-		debounce:   lateTradeRefreshDebounce,
+		debounce:   debounce,
 		maxBackoff: lateTradeRefreshMaxBackoff,
 		kick:       make(chan struct{}, 1),
 		views:      make(map[string]*lateViewState, len(timescale.TradesCAGGs)),

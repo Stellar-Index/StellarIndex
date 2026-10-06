@@ -40,7 +40,7 @@ func TestLateTradeRefresh_MaterialisesTradeOlderThanPolicyLookback(t *testing.T)
 	lateTS := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
 	bucket := lateTS.Truncate(time.Minute)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	late := pipeline.NewLateTradeRefresher(store, pipeline.LateTradeRefresherOptions{Logger: logger})
+	late := pipeline.NewLateTradeRefresher(store, pipeline.LateTradeRefresherOptions{Logger: logger, Debounce: time.Second})
 	runCtx, stop := context.WithCancel(ctx)
 	runDone := make(chan struct{})
 	go func() { defer close(runDone); late.Run(runCtx) }()
@@ -60,7 +60,7 @@ func TestLateTradeRefresh_MaterialisesTradeOlderThanPolicyLookback(t *testing.T)
 		<-runDone
 	})
 
-	// The refresher debounces for a minute before its first flush.
+	// Run's first flush waits out the one-second debounce.
 	const q = `SELECT vwap::text, volume::text, trade_count FROM prices_1m
 	            WHERE base_asset = $1 AND quote_asset = $2 AND bucket = $3`
 	var vwap, volume string
