@@ -8,19 +8,19 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 // newSeedHarness wires a projector over a store with NO projector cursor — a
 // newly-registered source's first cycles — and records every ledger the sink
 // receives.
-func newSeedHarness(t *testing.T, name string, rows []sorobanevents.Row, tip uint32) (*wedgeHarness, func() []uint32) {
+func newSeedHarness(t *testing.T, name string, evs []events.Event, tip uint32) (*wedgeHarness, func() []uint32) {
 	t.Helper()
 	var (
 		mu   sync.Mutex
 		seen []uint32
 	)
-	h := newWedgeHarness(t, name, rows, tip, func(ev consumer.Event) error {
+	h := newWedgeHarness(t, name, evs, tip, func(ev consumer.Event) error {
 		mu.Lock()
 		defer mu.Unlock()
 		if le, ok := ev.(ledgerEvent); ok {
@@ -41,7 +41,7 @@ func newSeedHarness(t *testing.T, name string, rows []sorobanevents.Row, tip uin
 // pre-history BatchLimit ledgers per Interval (~89 h on mainnet).
 func TestCycle_NoCursorSeedsAtFirstEvent(t *testing.T) {
 	const first, second, tip = 50_000_000, 50_000_010, 50_000_020
-	h, seen := newSeedHarness(t, "seed-first-event", []sorobanevents.Row{lakeRow(first, 1), lakeRow(second, 2)}, tip)
+	h, seen := newSeedHarness(t, "seed-first-event", []events.Event{lakeEvent(first, 1), lakeEvent(second, 2)}, tip)
 
 	h.cycle()
 
@@ -74,7 +74,7 @@ func TestCycle_NoCursorNoEventsSeedsAtTip(t *testing.T) {
 // past ledgers that are not yet durable.
 func TestCycle_NoCursorSeekBoundedByTip(t *testing.T) {
 	const tip = 50_000_000
-	h, seen := newSeedHarness(t, "seed-beyond-tip", []sorobanevents.Row{lakeRow(tip+5, 1)}, tip)
+	h, seen := newSeedHarness(t, "seed-beyond-tip", []events.Event{lakeEvent(tip+5, 1)}, tip)
 
 	h.cycle()
 
@@ -89,8 +89,8 @@ func TestCycle_NoCursorSeekBoundedByTip(t *testing.T) {
 // A failed seek degrades to the lossless crawl from ledger 0, and is not
 // retried every cycle.
 func TestCycle_NoCursorSeekFailureFallsBackToCrawl(t *testing.T) {
-	h, _ := newSeedHarness(t, "seed-seek-fails", []sorobanevents.Row{lakeRow(50_000_000, 1)}, 50_000_010)
-	h.store.seekErr = errors.New("seek unavailable")
+	h, _ := newSeedHarness(t, "seed-seek-fails", []events.Event{lakeEvent(50_000_000, 1)}, 50_000_010)
+	h.events.seekErr = errors.New("seek unavailable")
 
 	h.cycle()
 
@@ -99,8 +99,8 @@ func TestCycle_NoCursorSeekFailureFallsBackToCrawl(t *testing.T) {
 	}
 	h.store.haveCursor = false
 	h.cycle()
-	if h.store.seeks != 1 {
-		t.Fatalf("seeks = %d, want 1 (fallback is remembered)", h.store.seeks)
+	if h.events.seeks != 1 {
+		t.Fatalf("seeks = %d, want 1 (fallback is remembered)", h.events.seeks)
 	}
 }
 
@@ -108,14 +108,14 @@ func TestCycle_NoCursorSeekFailureFallsBackToCrawl(t *testing.T) {
 // first event's write is being retried) reuse the seed.
 func TestSeedFromLedger_SeeksOnce(t *testing.T) {
 	const first = 50_000_000
-	h, _ := newSeedHarness(t, "seed-once", []sorobanevents.Row{lakeRow(first, 1)}, first+10)
+	h, _ := newSeedHarness(t, "seed-once", []events.Event{lakeEvent(first, 1)}, first+10)
 
 	for i := 0; i < 3; i++ {
 		if got := h.proj.seedFromLedger(context.Background(), h.src, h.lake); got != first {
 			t.Fatalf("seed #%d = %d, want %d", i, got, first)
 		}
 	}
-	if h.store.seeks != 1 {
-		t.Fatalf("seeks = %d, want 1", h.store.seeks)
+	if h.events.seeks != 1 {
+		t.Fatalf("seeks = %d, want 1", h.events.seeks)
 	}
 }

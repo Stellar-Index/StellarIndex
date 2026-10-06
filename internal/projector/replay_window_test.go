@@ -10,7 +10,6 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -44,16 +43,11 @@ func newReplayHarness(t *testing.T, source string, cursor uint32, windows map[st
 		projectorCursor: cursor,
 		haveCursor:      true,
 		tipLedger:       cursor + 5, // lagging, but nothing to project
-		rows:            []sorobanevents.Row{},
 		dirtyWindows:    windows,
 	}
 	src := Source{Name: source, Decoder: &ledgerEchoDecoder{}}
-	p := &Projector{
-		store:    store,
-		logger:   discardLog(),
-		sink:     func(context.Context, consumer.Event) error { return nil },
-		registry: Registry{Sources: []Source{src}},
-	}
+	p, _ := newLakeEventsProjector(store, &fakeEvents{}, func(context.Context, consumer.Event) error { return nil })
+	p.registry = Registry{Sources: []Source{src}}
 	return p, store, src
 }
 
@@ -64,7 +58,7 @@ func runCycleThenRefresh(p *Projector, src Source) {
 	window := uint32(BatchLimit)
 	var tracker poisonTracker
 	var wedge wedgeTracker
-	p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge, nil)
+	p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge, p.newSourceLake())
 	p.refreshReplayWindows(context.Background())
 }
 
@@ -273,7 +267,7 @@ func TestReplayWindow_RunStartsTheWatcher(t *testing.T) {
 	window := uint32(BatchLimit)
 	var tracker poisonTracker
 	var wedge wedgeTracker
-	p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge, nil)
+	p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge, p.newSourceLake())
 	obs.ProjectorReplayWindowActive.WithLabelValues(source).Set(0)
 
 	ctx, cancel := context.WithCancel(context.Background())

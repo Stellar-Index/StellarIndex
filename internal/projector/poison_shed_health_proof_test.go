@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 // TestCycle_PoisonRowWithNoSinkHealthProofHoldsUntilTheNoProgressBudget is the
@@ -35,7 +35,7 @@ func TestCycle_PoisonRowWithNoSinkHealthProofHoldsUntilTheNoProgressBudget(t *te
 	// One row, and it is poison: nothing else commits, so this cycle has NO
 	// evidence the sink is healthy. A bad migration and a genuinely bad row
 	// look identical from here, and the safe reading is the pessimistic one.
-	h := newWedgeHarness(t, source, []sorobanevents.Row{lakeRow(101, 1)}, 105, func(consumer.Event) error {
+	h := newWedgeHarness(t, source, []events.Event{lakeEvent(101, 1)}, 105, func(consumer.Event) error {
 		return notNullViolation()
 	})
 
@@ -75,7 +75,7 @@ func TestCycle_PoisonRowWithNoSinkHealthProofHoldsUntilTheNoProgressBudget(t *te
 // this arm exists for is unchanged.
 func TestCycle_PoisonRowWithSinkHealthProofShedsOnCycleOne(t *testing.T) {
 	const source = "rlt131-with-health-proof"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 
 	h := newWedgeHarness(t, source, rows, 105, func(ev consumer.Event) error {
 		if ev.(ledgerEvent).ledger == 101 {

@@ -51,7 +51,7 @@ func TestCycle_StreamErrorPublishesLag(t *testing.T) {
 	}
 
 	h.store.tipLedger = 250
-	h.store.streamErr = errors.New("pq: connection reset")
+	h.events.streamErr = errors.New("pq: connection reset")
 	h.cycle()
 
 	if h.store.cursor() != 100 {

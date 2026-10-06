@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 )
 
 // TestCycle_SinkPanicIsShedLikeAPermanentFault pins the projector side of
@@ -18,7 +18,7 @@ import (
 // every cycle for the whole quarantine budget (Q053).
 func TestCycle_SinkPanicIsShedLikeAPermanentFault(t *testing.T) {
 	const source = "q053-sink-panic"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 	beforePermanent := decodedCount(t, source, "sink_permanent")
 	beforeRetry := decodedCount(t, source, "sink_retry")
 

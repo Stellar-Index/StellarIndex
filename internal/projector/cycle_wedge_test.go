@@ -2,8 +2,12 @@ package projector
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -32,17 +36,13 @@ type fakeStore struct {
 	projectorCursor uint32 // last_ledger for ("projector", src)
 	haveCursor      bool
 	tipLedger       uint32 // last_ledger for ("ledgerstream", "")
-	rows            []sorobanevents.Row
-	upserts         int
+	// rows back the soroban_events read, used only when the projector has
+	// no lake source (soroban_events mode).
+	rows    []sorobanevents.Row
+	upserts int
 
-	// seeks counts FirstSorobanEventLedger calls; seekErr fails them.
-	seeks   int
-	seekErr error
-
-	// cursorErr fails the ("projector", src) cursor read; streamErr fails
-	// StreamSorobanEvents.
+	// cursorErr fails the ("projector", src) cursor read.
 	cursorErr error
-	streamErr error
 
 	// dirtyWindows / dirtyErr back ProjectionDirtyWindows — the
 	// operator-recorded projector-replay rewind windows the
@@ -123,11 +123,7 @@ func (f *fakeStore) StreamSorobanEvents(_ context.Context, from, to uint32,
 ) error {
 	f.mu.Lock()
 	rows := append([]sorobanevents.Row(nil), f.rows...)
-	streamErr := f.streamErr
 	f.mu.Unlock()
-	if streamErr != nil {
-		return streamErr
-	}
 	for _, r := range rows {
 		if r.Ledger < from || r.Ledger > to {
 			continue
@@ -146,10 +142,6 @@ func (f *fakeStore) FirstSorobanEventLedger(_ context.Context, from, to uint32,
 ) (uint32, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.seeks++
-	if f.seekErr != nil {
-		return 0, false, f.seekErr
-	}
 	var first uint32
 	found := false
 	for _, r := range f.rows {
@@ -164,6 +156,105 @@ func (f *fakeStore) cursor() uint32 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.projectorCursor
+}
+
+// fakeEvents is an in-memory [eventSource]. StreamEvents and FirstEventLedger
+// serve the events in [from, to] that pass the contract-id prefilter, as the
+// lake reads do (topic filters are ignored); OpenLake hands back lake, or
+// fails when it is nil.
+type fakeEvents struct {
+	mu  sync.Mutex
+	evs []events.Event
+	// filters records each StreamEvents call's contract-id prefilter.
+	filters [][]string
+	// seeks counts FirstEventLedger calls; seekErr fails them.
+	seeks   int
+	seekErr error
+	// streamErr fails StreamEvents.
+	streamErr error
+	lake      *fakeLake
+}
+
+func (f *fakeEvents) StreamEvents(_ context.Context, from, to uint32, contractIDs, _, _ []string,
+	_ bool, fn func(events.Event) error,
+) error {
+	f.mu.Lock()
+	f.filters = append(f.filters, slices.Clone(contractIDs))
+	evs := f.matching(from, to, contractIDs)
+	streamErr := f.streamErr
+	f.mu.Unlock()
+	if streamErr != nil {
+		return streamErr
+	}
+	for _, ev := range evs {
+		if err := fn(ev); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (f *fakeEvents) FirstEventLedger(_ context.Context, from, to uint32, contractIDs, _, _ []string) (uint32, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seeks++
+	if f.seekErr != nil {
+		return 0, false, f.seekErr
+	}
+	var first uint32
+	found := false
+	for _, ev := range f.matching(from, to, contractIDs) {
+		if !found || ev.Ledger < first {
+			first, found = ev.Ledger, true
+		}
+	}
+	return first, found, nil
+}
+
+func (f *fakeEvents) OpenLake(context.Context) (lakeReader, error) {
+	if f.lake == nil {
+		return nil, errors.New("fakeEvents: no lake")
+	}
+	return f.lake, nil
+}
+
+// matching must be called with f.mu held.
+func (f *fakeEvents) matching(from, to uint32, contractIDs []string) []events.Event {
+	var out []events.Event
+	for _, ev := range f.evs {
+		if ev.Ledger < from || ev.Ledger > to {
+			continue
+		}
+		if len(contractIDs) > 0 && !slices.Contains(contractIDs, ev.ContractID) {
+			continue
+		}
+		out = append(out, ev)
+	}
+	return out
+}
+
+func (f *fakeEvents) add(evs ...events.Event) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.evs = append(f.evs, evs...)
+}
+
+// lakeEvent builds a contract event keyed by (ledger, tag): tag sets the tx
+// hash's first byte and the event index, so two tags never collide.
+func lakeEvent(ledger uint32, tag byte) events.Event {
+	txHash := make([]byte, 32)
+	txHash[0] = tag
+	txHash[1] = byte(ledger)
+	return events.Event{
+		Type:           "contract",
+		Ledger:         ledger,
+		LedgerClosedAt: time.Unix(int64(ledger), 0).UTC().Format(time.RFC3339),
+		ContractID:     "CTEST0000000000000000000000000000000000000000000000000000",
+		TxHash:         hex.EncodeToString(txHash),
+		EventIndex:     int(tag),
+		Topic:          []string{base64.StdEncoding.EncodeToString([]byte{0x00, 0x00, 0x00, 0x0f})},
+		Value:          base64.StdEncoding.EncodeToString([]byte{0x00}),
+	}
 }
 
 // lakeRow builds a soroban_events row that Reconstruct accepts: non-empty
@@ -186,40 +277,58 @@ func lakeRow(ledger uint32, tag byte) sorobanevents.Row {
 	}
 }
 
-// wedgeHarness wires a projector over the fake store with a sink whose error
-// is chosen per event ledger.
+// openLake is a lake whose watermark never clamps the ledgerstream tip.
+func openLake() *fakeLake { return &fakeLake{wm: math.MaxUint32} }
+
+// newLakeEventsProjector is a projector in CH feed-switch mode over store and
+// the in-memory lake source evs, plus that source's lake connection.
+func newLakeEventsProjector(store eventStore, evs *fakeEvents, sink SinkFunc) (*Projector, *sourceLake) {
+	if evs.lake == nil {
+		evs.lake = openLake()
+	}
+	p := &Projector{store: store, lakeEvents: evs, logger: discardLog(), sink: sink}
+	return p, p.newSourceLake()
+}
+
+// wedgeHarness wires a projector in CH feed-switch mode over the fake store
+// and an in-memory lake, with a sink whose error is chosen per event ledger.
 type wedgeHarness struct {
 	store   *fakeStore
+	events  *fakeEvents
 	proj    *Projector
 	src     Source
 	window  uint32
 	tracker poisonTracker
 	wedge   wedgeTracker
-	// lake is the source's CH lake connection, nil unless a test sets it
-	// (e.g. a CH feed-switch watermark test); cycleOneSource only reads it
-	// when proj.chAddr is non-empty.
+	// lake is the source's CH lake connection; sorobanEventsMode clears it.
 	lake *sourceLake
 }
 
-func newWedgeHarness(t *testing.T, name string, rows []sorobanevents.Row, tip uint32, sink func(ev consumer.Event) error) *wedgeHarness {
+func newWedgeHarness(t *testing.T, name string, evs []events.Event, tip uint32, sink func(ev consumer.Event) error) *wedgeHarness {
 	t.Helper()
 	store := &fakeStore{
 		projectorCursor: 100,
 		haveCursor:      true,
 		tipLedger:       tip,
-		rows:            rows,
 	}
-	p := &Projector{
-		store:  store,
-		logger: discardLog(),
-		sink:   func(_ context.Context, ev consumer.Event) error { return sink(ev) },
-	}
+	fe := &fakeEvents{evs: evs}
+	p, lake := newLakeEventsProjector(store, fe, func(_ context.Context, ev consumer.Event) error { return sink(ev) })
 	return &wedgeHarness{
 		store:  store,
+		events: fe,
 		proj:   p,
 		src:    Source{Name: name, Decoder: &ledgerEchoDecoder{}},
 		window: BatchLimit,
+		lake:   lake,
 	}
+}
+
+// sorobanEventsMode switches the harness to the legacy soroban_events read
+// over rows, for the tests that pin that path.
+func (h *wedgeHarness) sorobanEventsMode(rows ...sorobanevents.Row) {
+	h.proj.lakeEvents = nil
+	h.lake = nil
+	h.store.rows = rows
 }
 
 func (h *wedgeHarness) cycle() {
@@ -283,7 +392,7 @@ func (*decodeErrDecoder) Decode(events.Event) ([]consumer.Event, error) {
 // advance the cursor to the window's end.
 func TestCycle_ValidationErrorDoesNotWedge(t *testing.T) {
 	const source = "cor11-validation"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 	before := decodedCount(t, source, "sink_permanent")
 
 	h := newWedgeHarness(t, source, rows, 105, func(ev consumer.Event) error {
@@ -321,7 +430,7 @@ func TestCycle_ValidationErrorDoesNotWedge(t *testing.T) {
 // poison_shed_health_proof_test.go.
 func TestCycle_ValidationErrorStillAdvancesAcrossCycles(t *testing.T) {
 	const source = "cor11-validation-repeat"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 	h := newWedgeHarness(t, source, rows, 105, func(ev consumer.Event) error {
 		if ev.(ledgerEvent).ledger == 101 {
 			return fmt.Errorf("%w: tx_hash %q is not 64 hex chars", canonical.ErrInvalidOracle, "deadbeef")
@@ -337,8 +446,8 @@ func TestCycle_ValidationErrorStillAdvancesAcrossCycles(t *testing.T) {
 	// Tip moves on; the source must keep tracking it.
 	h.store.mu.Lock()
 	h.store.tipLedger = 205
-	h.store.rows = append(h.store.rows, lakeRow(150, 3))
 	h.store.mu.Unlock()
+	h.events.add(lakeEvent(150, 3))
 
 	h.cycle()
 	if got := h.store.cursor(); got != 205 {
@@ -362,7 +471,7 @@ func TestCycle_NegativeSEP41AmountQuarantinesAfterBudget(t *testing.T) {
 	const source = "cor01-negative-amount"
 	// Ledger 101 is poison; 102 commits fine — that success is the sink-health
 	// proof that lets the short budget apply.
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 	beforeQuarantined := decodedCount(t, source, "sink_quarantined")
 
 	h := newWedgeHarness(t, source, rows, 105, func(ev consumer.Event) error {
@@ -403,7 +512,7 @@ func TestCycle_NegativeSEP41AmountQuarantinesAfterBudget(t *testing.T) {
 // database is down is the C2-1 loss this projector exists to prevent.
 func TestCycle_InfraErrorRetriesForever(t *testing.T) {
 	const source = "infra-retry-forever"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 	beforeQuarantined := decodedCount(t, source, "sink_quarantined")
 
 	h := newWedgeHarness(t, source, rows, 105, func(consumer.Event) error {
@@ -429,7 +538,7 @@ func TestCycle_InfraErrorRetriesForever(t *testing.T) {
 // and the row commits — nothing is skipped.
 func TestCycle_DeadlockRetriesBeforeQuarantine(t *testing.T) {
 	const source = "deadlock-retry"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 	beforeQuarantined := decodedCount(t, source, "sink_quarantined")
 
 	beforeOK := decodedCount(t, source, "ok")
@@ -469,7 +578,7 @@ func TestCycle_DeadlockRetriesBeforeQuarantine(t *testing.T) {
 // visibly instead of quarantining the whole window.
 func TestCycle_GlobalFailureDoesNotShedRows(t *testing.T) {
 	const source = "global-failure-stalls"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2), lakeRow(103, 3)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2), lakeEvent(103, 3)}
 	beforeQuarantined := decodedCount(t, source, "sink_quarantined")
 
 	h := newWedgeHarness(t, source, rows, 105, func(consumer.Event) error {
@@ -505,7 +614,7 @@ func TestCycle_GlobalFailureDoesNotShedRows(t *testing.T) {
 // a quarantine, never an advance-past-loss).
 func TestCycle_SinkBudgetExhaustionShrinksWindowAndHoldsCursor(t *testing.T) {
 	const source = "sink-budget-shrink"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 	beforeQuarantined := decodedCount(t, source, "sink_quarantined")
 
 	h := newWedgeHarness(t, source, rows, 2000, func(consumer.Event) error {
@@ -569,24 +678,20 @@ func TestCycle_SinkBudgetExhaustionShrinksWindowAndHoldsCursor(t *testing.T) {
 // invisible at the run level.
 func TestCycle_DecoderRegressionMarksRunDegradedNotOK(t *testing.T) {
 	const source = "data6-decode-regression"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	evs := &fakeEvents{evs: []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}}
 
 	beforeOK := runsCount(t, source, "ok")
 	beforeDegraded := runsCount(t, source, "decode_degraded")
 	beforeDecodeErr := decodedCount(t, source, "decode_error")
 
-	store := &fakeStore{projectorCursor: 100, haveCursor: true, tipLedger: 105, rows: rows}
-	p := &Projector{
-		store:  store,
-		logger: discardLog(),
-		sink:   func(context.Context, consumer.Event) error { return nil },
-	}
+	store := &fakeStore{projectorCursor: 100, haveCursor: true, tipLedger: 105}
+	p, lake := newLakeEventsProjector(store, evs, func(context.Context, consumer.Event) error { return nil })
 	src := Source{Name: source, Decoder: &decodeErrDecoder{}}
 	window := uint32(BatchLimit)
 	var tracker poisonTracker
 	var wedge wedgeTracker
 
-	p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge, nil)
+	p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge, lake)
 
 	// The cursor still advances past the broken class (poison-row escape /
 	// COR-11 — do NOT re-wedge a sole-writer source on a deterministic fault).
@@ -625,7 +730,7 @@ func wedgeGauge(t *testing.T, source string) float64 {
 // only makes the terminal stall observable/alertable.
 func TestCycle_FlooredDeadlineStallSetsAndClearsWedgeGauge(t *testing.T) {
 	const source = "wedge-floor-stall"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 
 	// Every write fast-fails with the deadline the projector sees once cycleCtx
 	// is spent mid-batch; the parent context below is born expired so
@@ -677,7 +782,7 @@ func TestCycle_FlooredDeadlineStallSetsAndClearsWedgeGauge(t *testing.T) {
 // deadline (capped), and an advancing cycle must reset it.
 func TestCycle_FloorStallEscalatesCycleBudget(t *testing.T) {
 	const source = "wedge-budget-escalation"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 
 	var remaining time.Duration
 	h := newWedgeHarness(t, source, rows, 2000, func(consumer.Event) error { return context.DeadlineExceeded })
@@ -716,7 +821,7 @@ func TestCycle_FloorStallEscalatesCycleBudget(t *testing.T) {
 // bottoms out. Guards against paging on the healthy shrink ramp.
 func TestCycle_NonFlooredDeadlineDoesNotWedge(t *testing.T) {
 	const source = "wedge-still-shrinking"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 
 	h := newWedgeHarness(t, source, rows, 2000, func(consumer.Event) error {
 		return context.DeadlineExceeded
@@ -745,7 +850,7 @@ func TestCycle_NonFlooredDeadlineDoesNotWedge(t *testing.T) {
 // counts as ok.
 func TestCycle_HealthyRowsUnaffected(t *testing.T) {
 	const source = "healthy-baseline"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 	before := decodedCount(t, source, "ok")
 
 	h := newWedgeHarness(t, source, rows, 104, func(consumer.Event) error { return nil })
@@ -769,8 +874,8 @@ func TestCycle_HealthyRowsUnaffected(t *testing.T) {
 // exactly once.
 func TestCycle_AdjacentDuplicateRowsDecodeOnce(t *testing.T) {
 	// Three copies of one row followed by a distinct second row.
-	dup := lakeRow(101, 1)
-	rows := []sorobanevents.Row{dup, dup, dup, lakeRow(102, 2)}
+	dup := lakeEvent(101, 1)
+	rows := []events.Event{dup, dup, dup, lakeEvent(102, 2)}
 
 	var emitted int
 	h := newWedgeHarness(t, "dup-test", rows, 200, func(consumer.Event) error {
@@ -806,7 +911,7 @@ func TestCycle_I128OverflowGetsItsOwnOutcomeNotSinkPermanent(t *testing.T) {
 	const source = "rlt131-i128-overflow"
 	// Ledger 101 overflows; 102 commits — the sink-health proof, so the row is
 	// shed on cycle one and the counters land in the same cycle.
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 	i128Before := decodedCount(t, source, "sink_i128_overflow")
 	permBefore := decodedCount(t, source, "sink_permanent")
 	okBefore := decodedCount(t, source, "ok")
@@ -841,7 +946,7 @@ func TestCycle_I128OverflowGetsItsOwnOutcomeNotSinkPermanent(t *testing.T) {
 // poison row and stops meaning anything.
 func TestCycle_OrdinaryPoisonRowIsNotCountedAsAnI128Overflow(t *testing.T) {
 	const source = "rlt131-i128-negative-control"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 	i128Before := decodedCount(t, source, "sink_i128_overflow")
 	permBefore := decodedCount(t, source, "sink_permanent")
 
