@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 // heldRowWarning is the per-row line under test; the per-cycle
@@ -24,7 +24,7 @@ const heldRowWarning = "sink failure — holding cursor for retry (NOT advancing
 // Interval and buried the ERROR lines an operator needs (RLT-142).
 func TestCycle_HeldRowWarningIsThrottled(t *testing.T) {
 	const source = "rlt142-held-row-log"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 
 	h := newWedgeHarness(t, source, rows, 105, func(ev consumer.Event) error {
 		if ev.(ledgerEvent).ledger == 101 {

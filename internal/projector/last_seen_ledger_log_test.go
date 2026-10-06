@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 // TestCycle_LogsLastSeenLedger pins T119: the cycle-summary "projector
@@ -17,7 +17,7 @@ import (
 // until this the variable was tracked and never referenced by any log call.
 func TestCycle_LogsLastSeenLedger(t *testing.T) {
 	const source = "t119-last-seen-ledger"
-	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
 
 	h := newWedgeHarness(t, source, rows, 105, func(_ consumer.Event) error { return nil })
 	var logs bytes.Buffer

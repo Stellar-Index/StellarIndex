@@ -8,7 +8,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
@@ -51,7 +50,7 @@ func (*invalidTradeDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
 // asserted below; the anti-wedge property is the second one.
 func TestCycle_DroppedTradeIsNotReportedOK(t *testing.T) {
 	const source = "rlt132-dropped-trade"
-	rows := []sorobanevents.Row{lakeRow(101, 1)}
+	rows := []events.Event{lakeEvent(101, 1)}
 	okBefore := decodedCount(t, source, "ok")
 	permBefore := decodedCount(t, source, "sink_permanent")
 	retryBefore := decodedCount(t, source, "sink_retry")

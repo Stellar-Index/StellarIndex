@@ -1,7 +1,6 @@
 package projector
 
 import (
-	"context"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -15,9 +14,7 @@ import (
 func watermarkHarness(t *testing.T, name string, ledgerstreamTip, watermark uint32) *wedgeHarness {
 	t.Helper()
 	h := newWedgeHarness(t, name, nil, ledgerstreamTip, func(consumer.Event) error { return nil })
-	h.proj.chAddr = "clickhouse.invalid:9000"
-	fake := &fakeLake{wm: watermark}
-	h.lake = &sourceLake{open: func(context.Context) (lakeReader, error) { return fake, nil }}
+	h.events.lake.wm = watermark
 	return h
 }
 
