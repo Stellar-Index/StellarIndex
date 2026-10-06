@@ -10,6 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/redistest"
 )
 
 // The signup throttle mirrors ratelimit.Bucket's dwell clock (REL-06)
@@ -100,18 +101,16 @@ func TestRedisSignupIPThrottle_AbortedAttemptsStillCountTowardTheCap(t *testing.
 // detach from the BACKEND's failure. A genuinely broken Redis still has
 // to arm the clock and fail closed past the window (F-0049 / F-0149).
 func TestRedisSignupIPThrottle_RealOutageStillFailsClosed(t *testing.T) {
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
+	mr := redistest.Run(t)
 	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
-	tt := auth.NewRedisSignupIPThrottle(rdb, auth.SignupIPThrottleOptions{
+	tt := auth.NewRedisSignupIPThrottle(mr.Client, auth.SignupIPThrottleOptions{
 		Max:    5,
 		Window: time.Hour,
 		NowFn:  func() time.Time { return now },
 	})
 	const ip = "203.0.113.12"
 
-	mr.Close() // real transport failure from here on
+	mr.Kill() // real transport failure from here on
 
 	err := tt.CheckIP(context.Background(), ip)
 	if err == nil || errors.Is(err, auth.ErrThrottleUnavailable) {

@@ -113,7 +113,7 @@ func TestRateLimitBySubject_RealRedisOutageStillFailsClosed(t *testing.T) {
 
 	h := middleware.RateLimitBySubject(b, nil, nil, nil)(okHandler())
 
-	mr.Close() // every take from here on is a real transport failure
+	mr.Kill() // every take from here on is a real transport failure
 
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/price?asset=native", nil))

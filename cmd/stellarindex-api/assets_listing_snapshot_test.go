@@ -8,10 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
-
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/redistest"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -107,12 +105,10 @@ func (s *snapshotStubReader) GetAssetTradeCount24h(context.Context, string) (int
 	return 0, nil
 }
 
-func newTestSnapshots(t *testing.T) (*assetsListingSnapshots, *miniredis.Miniredis) {
+func newTestSnapshots(t *testing.T) (*assetsListingSnapshots, *redistest.Server) {
 	t.Helper()
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
-	return newAssetsListingSnapshots(rdb, discardLogger()), mr
+	mr := redistest.Run(t)
+	return newAssetsListingSnapshots(mr.Client, discardLogger()), mr
 }
 
 func snapshotRows() []timescale.AssetRow {
@@ -235,7 +231,7 @@ func TestSeedAssetListingsColdRedisDegradesToTodaysBehaviour(t *testing.T) {
 // beyond the caller's budget: seed nothing and serve normally.
 func TestSeedAssetListingsUnreachableRedisDegrades(t *testing.T) {
 	snaps, mr := newTestSnapshots(t)
-	mr.Close() // Redis goes away before the boot seed runs.
+	mr.Kill() // Redis goes away before the boot seed runs.
 
 	up := &snapshotStubReader{}
 	reader := v1.NewCachedAssetsReader(up, 2*time.Minute)
