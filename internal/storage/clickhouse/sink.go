@@ -249,6 +249,12 @@ type LedgerExtract struct {
 	// each evicted entry's last write stays current. Same in-memory-only
 	// treatment as the counts above.
 	EvictedKeysUnreadable int
+
+	// EntryChangesUnencodable counts entry changes (tx-phase or eviction)
+	// that could not be re-marshalled and so wrote no row; each still took
+	// its intra_ledger_seq position. Unreachable on XDR-decoded input, which
+	// rejects every invalid enum and union arm.
+	EntryChangesUnencodable int
 }
 
 // ErrBufferFull is returned by [Sink.Add] when the in-memory buffer is already

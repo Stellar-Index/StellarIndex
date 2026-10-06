@@ -451,3 +451,82 @@ func TestEntryWalkParity_EvictedKeysAreRecordedByBothWalkers(t *testing.T) {
 		}
 	}
 }
+
+// TestEntryWalkParity_UnencodableChangeKeepsItsPosition: the dispatcher gives
+// every walked change a position whether or not any decoder can use it, so a
+// change the lake cannot encode must still consume its position — in the tx
+// phases and in the eviction phase — or every later lake row shifts down by
+// one against the live walk. Type 99 is not a LedgerEntryType, which XDR
+// decoding rejects, so only a hand-built ledger can carry it.
+func TestEntryWalkParity_UnencodableChangeKeepsItsPosition(t *testing.T) {
+	const ledger = 4714
+	lcm := buildParityLedger(t, ledger, []parityTx{
+		{seed: 0xA1, success: true, fee: []int64{990}, apply: []int64{500}},
+	})
+	badType := xdr.LedgerEntryType(99)
+	proc := &lcm.V2.TxProcessing[0]
+	proc.FeeProcessing = append(xdr.LedgerEntryChanges{{
+		Type:    xdr.LedgerEntryChangeTypeLedgerEntryUpdated,
+		Updated: &xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: badType}},
+	}}, proc.FeeProcessing...)
+	cid := xdr.ContractId{0xE4}
+	tempKey := xdr.LedgerKey{
+		Type: xdr.LedgerEntryTypeContractData,
+		ContractData: &xdr.LedgerKeyContractData{
+			Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &cid},
+			Key:        xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance},
+			Durability: xdr.ContractDataDurabilityTemporary,
+		},
+	}
+	ttlKey := xdr.LedgerKey{Type: xdr.LedgerEntryTypeTtl, Ttl: &xdr.LedgerKeyTtl{KeyHash: xdr.Hash{0xE5}}}
+	lcm.V2.EvictedKeys = []xdr.LedgerKey{{Type: badType}, tempKey, ttlKey}
+
+	spy := &walkSpy{}
+	d := dispatcher.New()
+	d.AddEntryDecoder(spy)
+	if _, err := d.ProcessLedger(lcm, parityPassphrase); err != nil {
+		t.Fatalf("dispatcher.ProcessLedger: %v", err)
+	}
+	ext, err := clickhouse.ExtractLedger(lcm, parityPassphrase)
+	if err != nil {
+		t.Fatalf("clickhouse.ExtractLedger: %v", err)
+	}
+	if ext.EntryChangesUnencodable != 2 {
+		t.Errorf("EntryChangesUnencodable = %d, want 2 (one tx-phase change, one evicted key)", ext.EntryChangesUnencodable)
+	}
+
+	live := append(append([]walkStep{}, spy.tx.steps...), spy.ev.steps...)
+	lake := make([]walkStep, 0, len(ext.Changes))
+	for _, row := range ext.Changes {
+		lake = append(lake, walkStep{Seq: row.IntraLedgerSeq, TxHash: row.TxHash, OpIndex: row.OpIndex, Balance: row.Balance, KeyXDR: row.KeyXDR})
+	}
+	// Position 0 is the unencodable fee change, 3 the unencodable evicted key.
+	wantSeqs := []uint32{1, 2, 4, 5}
+	if len(live) != len(wantSeqs) || len(lake) != len(wantSeqs) {
+		t.Fatalf("walked: dispatcher %d, lake %d, want %d each\n  dispatcher: %v\n  lake:       %v",
+			len(live), len(lake), len(wantSeqs), live, lake)
+	}
+	for i, want := range wantSeqs {
+		if live[i] != lake[i] || lake[i].Seq != want {
+			t.Errorf("step %d: dispatcher %s, lake %s, want seq %d", i, live[i], lake[i], want)
+		}
+	}
+}
+
+// walkSpy records both shapes in one decoder: the dispatcher hands a change to
+// the first decoder that matches it.
+type walkSpy struct {
+	tx spyDecoder
+	ev evictionSpy
+}
+
+func (s *walkSpy) Name() string { return "parity-walk-spy" }
+
+func (s *walkSpy) Matches(xdr.LedgerEntryChange) bool { return true }
+
+func (s *walkSpy) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.Event, error) {
+	if ctx.Change.Removed != nil {
+		return s.ev.Decode(ctx)
+	}
+	return s.tx.Decode(ctx)
+}

@@ -97,6 +97,8 @@ func TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric(t *testing.T) {
 			obs.ChLiveSinkReadUndercountTotal.WithLabelValues("soroban_fee_meta_unsupported")),
 		"evicted_keys_unreadable": testutil.ToFloat64(
 			obs.ChLiveSinkReadUndercountTotal.WithLabelValues("evicted_keys_unreadable")),
+		"entry_changes_unencodable": testutil.ToFloat64(
+			obs.ChLiveSinkReadUndercountTotal.WithLabelValues("entry_changes_unencodable")),
 	}
 
 	ext := clickhouse.LedgerExtract{
@@ -106,6 +108,7 @@ func TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric(t *testing.T) {
 		EntryMetaUnsupported:      1,
 		SorobanFeeMetaUnsupported: 4,
 		EvictedKeysUnreadable:     1,
+		EntryChangesUnencodable:   5,
 	}
 	recordCHLiveSinkUndercount(ext, logger)
 
@@ -115,6 +118,7 @@ func TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric(t *testing.T) {
 		"entry_meta_unsupported":       before["entry_meta_unsupported"] + 1,
 		"soroban_fee_meta_unsupported": before["soroban_fee_meta_unsupported"] + 4,
 		"evicted_keys_unreadable":      before["evicted_keys_unreadable"] + 1,
+		"entry_changes_unencodable":    before["entry_changes_unencodable"] + 5,
 	}
 	for kind, w := range want {
 		if got := testutil.ToFloat64(obs.ChLiveSinkReadUndercountTotal.WithLabelValues(kind)); got != w {
