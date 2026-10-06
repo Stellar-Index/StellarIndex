@@ -683,8 +683,11 @@ type DivergenceRefresher interface {
 // Nil = no fan-out. Acceptable when no API binary is subscribed
 // (e.g. local dev). Tests substitute a fake that records
 // invocations.
+//
+// coverage is how much of the window the value read; nil when unknown
+// (a composite does not track its legs').
 type StreamPublisher interface {
-	PublishClosedBucket(ctx context.Context, pair canonical.Pair, window time.Duration, valueDecimal string, observedAt time.Time) error
+	PublishClosedBucket(ctx context.Context, pair canonical.Pair, window time.Duration, valueDecimal string, observedAt time.Time, coverage *cachekeys.WindowCoverage) error
 }
 
 // DefaultWindows is the built-in window set — three buckets
@@ -755,11 +758,12 @@ type decidedBucket struct {
 // publishedBucket is what a published closed bucket wrote, kept so a
 // replaying tick republishes the scored value rather than a re-fetch.
 type publishedBucket struct {
-	value  string
-	score  confidence.Score
-	confOK bool
-	edge   aggregate.Quote
-	leg    legRef
+	value    string
+	coverage cachekeys.WindowCoverage
+	score    confidence.Score
+	confOK   bool
+	edge     aggregate.Quote
+	leg      legRef
 }
 
 // DefaultInterval is the built-in tick cadence. 30s matches the
@@ -838,6 +842,9 @@ type Orchestrator struct {
 	// prevVWAPBucketEnd is the closed-bucket end each prevVWAPs entry was
 	// published for: the observed-at stamp a re-seeded held value must carry.
 	prevVWAPBucketEnd map[string]time.Time
+	// prevVWAPCoverage is the window coverage of each prevVWAPs entry, so
+	// a freeze reseed restores the held value with its own coverage.
+	prevVWAPCoverage map[string]cachekeys.WindowCoverage
 
 	// frozenPrevVWAPs is the SHADOW comparator for pairs whose bucket was
 	// REFUSED by the freeze lifecycle (2026-08-24, the XLM/GBP ratchet +
@@ -1090,6 +1097,7 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 		prevVWAPs:         make(map[string]*big.Rat, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
 		prevVWAPAt:        make(map[string]time.Time, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
 		prevVWAPBucketEnd: make(map[string]time.Time, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		prevVWAPCoverage:  make(map[string]cachekeys.WindowCoverage, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
 		frozenPrevVWAPs:   make(map[string]*big.Rat),
 		lastWriteAt:       make(map[string]time.Time, len(cfg.Pairs)),
 		lastComposites:    make(map[string]compositeSample, len(cfg.Triangulations)*max(len(cfg.Windows), 1)),
@@ -1420,6 +1428,14 @@ func (o *Orchestrator) refreshPairWindow(
 	return nil
 }
 
+// noteEmptyWindow counts one window that produced no price.
+func (o *Orchestrator) noteEmptyWindow() {
+	o.mu.Lock()
+	o.emptyWindows++
+	o.mu.Unlock()
+	obs.AggregatorEmptyWindowsTotal.Inc()
+}
+
 // decideBucket is the first evaluation of one closed bucket: fetch
 // [bucketEnd-window, bucketEnd), filter, VWAP, the Phase 1 and Phase 2
 // freeze steps, and — when the bucket clears them — the publish. Returns
@@ -1433,7 +1449,7 @@ func (o *Orchestrator) decideBucket(
 	now time.Time,
 ) (*publishedBucket, error) {
 	from := bucketEnd.Add(-window)
-	trades, tradeUSD, proxied, err := o.fetchForTarget(ctx, pair, from, bucketEnd)
+	trades, tradeUSD, proxied, coverage, err := o.fetchForTarget(ctx, pair, from, bucketEnd)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s %v: %w", pair.String(), window, err)
 	}
@@ -1477,10 +1493,7 @@ func (o *Orchestrator) decideBucket(
 	}
 	recordWindowStageVolume(pair, window, "outlier", trades)
 	if len(trades) == 0 {
-		o.mu.Lock()
-		o.emptyWindows++
-		o.mu.Unlock()
-		obs.AggregatorEmptyWindowsTotal.Inc()
+		o.noteEmptyWindow()
 		return o.unpricedBucket(ctx, pair, window, now)
 	}
 
@@ -1498,10 +1511,7 @@ func (o *Orchestrator) decideBucket(
 	vwap, err := o.computeNormalizedVWAP(trades, pair)
 	if err != nil {
 		if errors.Is(err, aggregate.ErrNoTrades) {
-			o.mu.Lock()
-			o.emptyWindows++
-			o.mu.Unlock()
-			obs.AggregatorEmptyWindowsTotal.Inc()
+			o.noteEmptyWindow()
 			return o.unpricedBucket(ctx, pair, window, now)
 		}
 		return nil, fmt.Errorf("vwap %s %v: %w", pair.String(), window, err)
@@ -1581,9 +1591,10 @@ func (o *Orchestrator) decideBucket(
 	// parse the string back to a decimal. Float encoding is prohibited
 	// on this path per ADR-0003.
 	pub := &publishedBucket{
-		value:  formatRatFixed(vwap, 12),
-		score:  conf.Score,
-		confOK: confOK,
+		value:    formatRatFixed(vwap, 12),
+		coverage: coverage,
+		score:    conf.Score,
+		confOK:   confOK,
 		// Only a published bucket becomes a router edge / reference leg:
 		// frozen, dropped, empty and below-floor buckets returned above,
 		// which is how a dust pair stays out of the cross-rate graph
@@ -1601,6 +1612,7 @@ func (o *Orchestrator) decideBucket(
 	// compares against; keeping the pinned value here as the sole
 	// comparator was the auto-unfreeze ratchet (see frozenPrevVWAPs).
 	o.setComparator(stateKey, vwap, now, bucketEnd)
+	o.prevVWAPCoverage[stateKey] = coverage
 	return pub, nil
 }
 
@@ -1625,6 +1637,7 @@ func (o *Orchestrator) ageComparator(stateKey string, now time.Time) {
 	delete(o.prevVWAPs, stateKey)
 	delete(o.prevVWAPAt, stateKey)
 	delete(o.prevVWAPBucketEnd, stateKey)
+	delete(o.prevVWAPCoverage, stateKey)
 }
 
 // heldDirect is a triangulation target's priced direct bucket awaiting
@@ -1705,10 +1718,12 @@ func (o *Orchestrator) serveDirect(
 	key := cachekeys.VWAP(pair.Base, pair.Quote, window)
 	provKey := cachekeys.VWAPProvenance(pair.Base, pair.Quote, window)
 	atKey := cachekeys.VWAPObservedAt(pair.Base, pair.Quote, window)
+	covKey := cachekeys.VWAPCoverage(pair.Base, pair.Quote, window)
 	ttl := o.vwapTTL(window)
 	if _, err := o.cache.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.Del(ctx, provKey.String())
 		p.Set(ctx, atKey.String(), cachekeys.FormatVWAPObservedAt(bucketEnd), ttl)
+		p.Set(ctx, covKey.String(), cachekeys.FormatVWAPCoverage(pub.coverage), ttl)
 		p.Set(ctx, key.String(), pub.value, ttl)
 		return nil
 	}); err != nil {
@@ -1734,7 +1749,8 @@ func (o *Orchestrator) serveDirect(
 	// Pair-level write clock for `stellarindex_price_staleness_seconds`
 	// (F-1306).
 	o.recordPairWrite(pair, now)
-	o.streamBucketOnce(ctx, pair, window, pub.value, bucketEnd)
+	coverage := pub.coverage
+	o.streamBucketOnce(ctx, pair, window, pub.value, bucketEnd, &coverage)
 	return nil
 }
 
@@ -1800,6 +1816,7 @@ func (o *Orchestrator) flushHeldDirect(ctx context.Context) {
 // replaying tick does not re-emit it.
 func (o *Orchestrator) streamBucketOnce(
 	ctx context.Context, pair canonical.Pair, window time.Duration, value string, bucketEnd time.Time,
+	coverage *cachekeys.WindowCoverage,
 ) {
 	k := pair.String() + ":" + window.String()
 	if last, ok := o.streamedBuckets[k]; ok && last.Equal(bucketEnd) {
@@ -1809,7 +1826,7 @@ func (o *Orchestrator) streamBucketOnce(
 		o.streamedBuckets = make(map[string]time.Time)
 	}
 	o.streamedBuckets[k] = bucketEnd
-	o.publishToStream(ctx, pair, window, value, bucketEnd)
+	o.publishToStream(ctx, pair, window, value, bucketEnd, coverage)
 }
 
 // replayDecidedBucket re-applies an already-decided closed bucket on a
@@ -1938,7 +1955,7 @@ func frozenTickKey(pair canonical.Pair, window time.Duration) string {
 
 // keepFrozenVWAPAlive extends the TTL of the last-known-good VWAP
 // key for (pair, window) and of every qualifier written beside it — the
-// observed-at stamp, the triangulated-provenance marker, the
+// observed-at stamp, the window coverage, the triangulated-provenance marker, the
 // composite quality-flags meta and the confidence score — so all of them survive for at least as
 // long as the freeze marker (F-1345, G13-03). The value is not
 // rewritten, so the stamp keeps saying when it was observed; the API
@@ -1975,6 +1992,7 @@ func (o *Orchestrator) keepFrozenVWAPAlive(ctx context.Context, pair canonical.P
 	atKey := cachekeys.VWAPObservedAt(pair.Base, pair.Quote, window)
 	provKey := cachekeys.VWAPProvenance(pair.Base, pair.Quote, window)
 	metaKey := cachekeys.VWAPCompositeMeta(pair.Base, pair.Quote, window)
+	covKey := cachekeys.VWAPCoverage(pair.Base, pair.Quote, window)
 	// The score cached at the LKG's publish describes the LKG, so it lives
 	// exactly as long as the held value (ADR-0019: confidence on every
 	// published price, frozen included). The refused bucket's score is
@@ -1985,6 +2003,7 @@ func (o *Orchestrator) keepFrozenVWAPAlive(ctx context.Context, pair canonical.P
 		p.Expire(ctx, atKey.String(), ttl)
 		p.Expire(ctx, provKey.String(), ttl)
 		p.Expire(ctx, metaKey.String(), ttl)
+		p.Expire(ctx, covKey.String(), ttl)
 		p.Expire(ctx, confKey.String(), ttl)
 		return nil
 	}); err != nil {
@@ -2004,11 +2023,12 @@ func (o *Orchestrator) publishToStream(
 	window time.Duration,
 	value string,
 	observedAt time.Time,
+	coverage *cachekeys.WindowCoverage,
 ) {
 	if o.cfg.StreamPublisher == nil {
 		return
 	}
-	if err := o.cfg.StreamPublisher.PublishClosedBucket(ctx, pair, window, value, observedAt); err != nil {
+	if err := o.cfg.StreamPublisher.PublishClosedBucket(ctx, pair, window, value, observedAt, coverage); err != nil {
 		obs.AggregatorStreamPublishTotal.WithLabelValues("error").Inc()
 		o.logger.Warn("stream publish failed",
 			"pair", pair.String(), "window", window, "err", err)
@@ -2179,49 +2199,27 @@ func distinctSourceCount(trades []canonical.Trade) int {
 // `proxied` holds the IDs of the trades rewritten from a backer pair,
 // so the published leg can report how much of it was priced in a
 // stablecoin at par (see [legRef]'s proxyShare). nil when the proxy is off.
-// fetchTradesDetectTruncation wraps the store fetch with the per-query
-// cap and bumps AggregatorWindowTruncatedTotal (+ a WARN) when the
-// returned row count hits the cap — i.e. the window held more trades
-// than `MaxTradesPerWindow` and the VWAP is computed over only the
-// newest `cap` of them. `target` is the aggregation target (for the log
-// line); `fetch` is the actual pair queried (== target for the direct
-// path, a stablecoin-backer pair under proxy expansion).
-func (o *Orchestrator) fetchTradesDetectTruncation(
-	ctx context.Context, target, fetch canonical.Pair, from, to time.Time,
-) ([]canonical.Trade, error) {
-	t, err := o.store.TradesInRange(ctx, fetch, from, to, o.cfg.MaxTradesPerWindow)
-	if err != nil {
-		return nil, err
-	}
-	if len(t) >= o.cfg.MaxTradesPerWindow {
-		obs.AggregatorWindowTruncatedTotal.Inc()
-		o.logger.Warn("trade window truncated at MaxTradesPerWindow — VWAP over newest-N slice only",
-			"target", target.String(),
-			"fetch_pair", fetch.String(),
-			"cap", o.cfg.MaxTradesPerWindow,
-			"from", from.UTC(),
-			"to", to.UTC(),
-		)
-	}
-	return t, nil
-}
-
+//
+// `coverage` is truncated when any source pair's read hit the row cap;
+// its CoveredFrom is the newest of those reads' oldest trades, after
+// which every source pair's trades are all present.
 func (o *Orchestrator) fetchForTarget(
 	ctx context.Context,
 	target canonical.Pair,
 	from, to time.Time,
-) (trades []canonical.Trade, tradeUSD map[string]*big.Rat, proxied map[string]struct{}, err error) {
+) (trades []canonical.Trade, tradeUSD map[string]*big.Rat, proxied map[string]struct{}, coverage cachekeys.WindowCoverage, err error) {
 	if !o.cfg.EnableStablecoinFiatProxy {
-		t, err := o.fetchTradesDetectTruncation(ctx, target, target, from, to)
+		t, coveredFrom, err := o.fetchTradesDetectTruncation(ctx, target, target, from, to)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, coverage, err
 		}
-		return t, usdVolumeForPairPerTrade(target, t, o.cfg.USDPeggedClassicAssets, o.cfg.USDPeggedSorobanAssets), nil, nil
+		usd := usdVolumeForPairPerTrade(target, t, o.cfg.USDPeggedClassicAssets, o.cfg.USDPeggedSorobanAssets)
+		return t, usd, nil, widenCoverage(coverage, coveredFrom), nil
 	}
 
 	sources, err := aggregate.ExpandTargetPairWithClassicPegs(target, o.cfg.USDPeggedClassicAssets)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("expand target %s: %w", target.String(), err)
+		return nil, nil, nil, coverage, fmt.Errorf("expand target %s: %w", target.String(), err)
 	}
 
 	var merged []canonical.Trade
@@ -2229,7 +2227,7 @@ func (o *Orchestrator) fetchForTarget(
 	tradeUSD = map[string]*big.Rat{}
 	proxied = map[string]struct{}{}
 	for _, src := range sources {
-		batch, ferr := o.fetchTradesDetectTruncation(ctx, target, src, from, to)
+		batch, coveredFrom, ferr := o.fetchTradesDetectTruncation(ctx, target, src, from, to)
 		if ferr != nil {
 			o.logger.Warn("stablecoin-expansion fetch failed",
 				"target", target.String(),
@@ -2239,6 +2237,7 @@ func (o *Orchestrator) fetchForTarget(
 			fetchErrs = append(fetchErrs, fmt.Errorf("%s: %w", src.String(), ferr))
 			continue
 		}
+		coverage = widenCoverage(coverage, coveredFrom)
 		// Per-trade USD value against the SOURCE pair's quote-decimal
 		// convention — captured BEFORE the rewrite below blurs the
 		// original 7-vs-8 decimal.
@@ -2258,9 +2257,9 @@ func (o *Orchestrator) fetchForTarget(
 	// One failing leg is tolerated; every leg failing means nothing was
 	// read, and reporting that as an empty window hides a store outage.
 	if len(fetchErrs) == len(sources) {
-		return nil, nil, nil, fmt.Errorf("all %d source pairs failed: %w", len(sources), errors.Join(fetchErrs...))
+		return nil, nil, nil, coverage, fmt.Errorf("all %d source pairs failed: %w", len(sources), errors.Join(fetchErrs...))
 	}
-	return merged, tradeUSD, proxied, nil
+	return merged, tradeUSD, proxied, coverage, nil
 }
 
 // usdVolumeForPairPerTrade returns a per-trade.ID() → exact USD-value

@@ -8,7 +8,8 @@ import (
 
 // FuzzWrapUnwrapByName asserts wrap/unwrap decode {shares, vault_shares} by
 // field NAME at full i128 width, in either Map order, and that a body
-// missing a named field is refused rather than zero-filled.
+// missing a named field, or carrying a negative amount, is refused rather
+// than zero-filled or written.
 //
 // Generative run:
 // go test -run=^$ -fuzz=^FuzzWrapUnwrapByName$ -fuzztime=60s -parallel=2 ./internal/sources/spectra/
@@ -28,12 +29,19 @@ func FuzzWrapUnwrapByName(f *testing.F) {
 		if reverse {
 			names, vals = []string{"vault_shares", "shares"}, []xdr.ScVal{fuzzI128(vh, vl), fuzzI128(sh, sl)}
 		}
-		topics, kind := []string{TopicSymbolWrap, cT, rT}, EventWrap
+		topics, kind := []string{sym(EventWrap), cT, rT}, EventWrap
 		if unwrap {
-			topics, kind = []string{TopicSymbolUnwrap, cT, rT, oT}, EventUnwrap
+			topics, kind = []string{sym(EventUnwrap), cT, rT, oT}, EventUnwrap
 		}
 
-		got := decodeOneFuzz(t, fuzzEvent(topics, fuzzB64(t, fuzzMap(names, vals)), op, evIdx))
+		ev := fuzzEvent(topics, fuzzB64(t, fuzzMap(names, vals)), op, evIdx)
+		if shares.Sign() < 0 || vault.Sign() < 0 {
+			if _, err := NewDecoder().Decode(ev); err == nil {
+				t.Fatalf("negative shares/vault_shares %s/%s decoded; must be refused", shares, vault)
+			}
+			return
+		}
+		got := decodeOneFuzz(t, ev)
 		if got.Kind != kind {
 			t.Fatalf("kind = %s, want %s", got.Kind, kind)
 		}

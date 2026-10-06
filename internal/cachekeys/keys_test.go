@@ -266,6 +266,31 @@ func TestVWAPObservedAt(t *testing.T) {
 	}
 }
 
+// TestVWAPCoverage pins the coverage sibling's wire shape and its value
+// encoding, which the aggregator and the API share across binaries.
+func TestVWAPCoverage(t *testing.T) {
+	xlm := canonical.NativeAsset()
+	gbp := canonical.Asset{Type: canonical.AssetFiat, Code: "GBP"}
+
+	got := cachekeys.VWAPCoverage(xlm, gbp, time.Hour)
+	if want := cachekeys.VWAP(xlm, gbp, time.Hour).String() + ":coverage"; got.String() != want {
+		t.Errorf("VWAPCoverage = %q, want %q", got.String(), want)
+	}
+
+	from := time.Date(2026, 7, 25, 10, 3, 0, 500, time.FixedZone("x", 3600))
+	for _, c := range []cachekeys.WindowCoverage{{}, {Truncated: true, CoveredFrom: from}} {
+		back, err := cachekeys.ParseVWAPCoverage(cachekeys.FormatVWAPCoverage(c))
+		if err != nil || back.Truncated != c.Truncated || !back.CoveredFrom.Equal(c.CoveredFrom) {
+			t.Errorf("round trip of %+v = (%+v, %v)", c, back, err)
+		}
+	}
+	for _, raw := range []string{"", "0.124200000000", "true"} {
+		if _, err := cachekeys.ParseVWAPCoverage(raw); err == nil {
+			t.Errorf("ParseVWAPCoverage(%q) succeeded; an unreadable value must not read as complete", raw)
+		}
+	}
+}
+
 // TestConfidence pins the wire shape + ConfidenceTTL parity with
 // VWAPTTL. The score is meaningless once the underlying VWAP
 // expires, so the two TTLs must move together.

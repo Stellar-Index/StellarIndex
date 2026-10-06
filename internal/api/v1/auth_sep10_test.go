@@ -37,15 +37,15 @@ func (s *stubSEP10Validator) VerifyJWT(ctx context.Context, jwt string) (auth.Su
 	return s.verifyJWT(ctx, jwt)
 }
 
-// TestSEP10Challenge_NoValidator_503 — without a validator wired
-// the endpoint returns a 503 with the expected error type.
-func TestSEP10Challenge_NoValidator_503(t *testing.T) {
+// TestSEP10Challenge_NoValidator_404 — without a validator wired
+// the endpoint returns a 404 with the expected error type.
+func TestSEP10Challenge_NoValidator_404(t *testing.T) {
 	srv := v1.New(v1.Options{}) // no SEP10
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/auth/sep10/challenge?account=GBLAH")
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
 	}
 	body, _ := readAll(resp)
 	if !strings.Contains(body, "sep10-unavailable") {
@@ -125,15 +125,15 @@ func TestSEP10Challenge_HappyPath(t *testing.T) {
 	}
 }
 
-// TestSEP10Token_NoValidator_503 — without a validator wired the
-// endpoint returns 503.
-func TestSEP10Token_NoValidator_503(t *testing.T) {
+// TestSEP10Token_NoValidator_404 — without a validator wired the
+// endpoint returns 404.
+func TestSEP10Token_NoValidator_404(t *testing.T) {
 	srv := v1.New(v1.Options{})
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustPostJSON(t, ts.URL+"/v1/auth/sep10/token", `{"transaction":"X"}`)
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
 	}
 }
 
@@ -286,7 +286,7 @@ func TestSEP10Token_VerificationFailed_401(t *testing.T) {
 }
 
 // TestSEP10Unavailable_TellsTheCallerWhatToDoInstead pins the BODY of
-// the 503, not just its code.
+// the 404, not just its code.
 //
 // Four separate branches produce this answer — no validator wired on
 // either route, and ErrNotImplemented surfacing from Challenge or
@@ -358,8 +358,8 @@ func TestSEP10Unavailable_TellsTheCallerWhatToDoInstead(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ts := startHTTPTest(t, v1.New(tc.opts).Handler())
 			resp := tc.call(t, ts.URL)
-			if resp.StatusCode != http.StatusServiceUnavailable {
-				t.Fatalf("status = %d, want 503", resp.StatusCode)
+			if resp.StatusCode != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404", resp.StatusCode)
 			}
 			body, _ := readAll(resp)
 
@@ -374,7 +374,7 @@ func TestSEP10Unavailable_TellsTheCallerWhatToDoInstead(t *testing.T) {
 				t.Fatalf("type = %q, want .../sep10-unavailable", prob.Type)
 			}
 			if prob.Detail == "" {
-				t.Fatal("the 503 carries an empty detail — the code is all the caller gets")
+				t.Fatal("the 404 carries an empty detail — the code is all the caller gets")
 			}
 			details[tc.name] = prob.Detail
 
@@ -418,7 +418,7 @@ func TestSEP10Unavailable_TellsTheCallerWhatToDoInstead(t *testing.T) {
 			continue
 		}
 		if got != first {
-			t.Errorf("the 503 body differs by branch — %q says:\n  %s\n%q says:\n  %s",
+			t.Errorf("the 404 body differs by branch — %q says:\n  %s\n%q says:\n  %s",
 				firstName, first, tc.name, got)
 		}
 	}

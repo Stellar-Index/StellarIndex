@@ -12,6 +12,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -77,6 +78,7 @@ func (p *Publisher) PublishClosedBucket(
 	window time.Duration,
 	valueDecimal string,
 	observedAt time.Time,
+	coverage *cachekeys.WindowCoverage,
 ) error {
 	ev := ClosedBucketEvent{
 		Asset:         pair.Base.String(),
@@ -85,6 +87,14 @@ func (p *Publisher) PublishClosedBucket(
 		ValueDecimal:  valueDecimal,
 		ObservedAt:    observedAt.UTC(),
 		ProducerID:    p.producer,
+	}
+	if coverage != nil {
+		truncated := coverage.Truncated
+		ev.Truncated = &truncated
+		if truncated {
+			from := coverage.CoveredFrom.UTC()
+			ev.CoveredFrom = &from
+		}
 	}
 	body, err := json.Marshal(ev)
 	if err != nil {

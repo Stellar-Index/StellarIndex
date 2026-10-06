@@ -243,7 +243,7 @@ export default function SDKPage() {
           />
           <Mode
             term="SEP-10 — not available here"
-            def="Implemented at /v1/auth/sep10/{challenge,token}, but this deployment has no signing seed provisioned, so both routes answer 503 sep10-unavailable. Use an API key. Where an operator does enable SEP-10, the JWT goes in Options.APIKey and replaces API keys rather than joining them: a deployment verifies one credential type or the other, never both."
+            def="Implemented at /v1/auth/sep10/{challenge,token}, but this deployment has no signing seed provisioned, so both routes answer 404 sep10-unavailable unless [api.sep10] is configured. Use an API key. Where an operator does enable SEP-10, the JWT goes in Options.APIKey and replaces API keys rather than joining them: a deployment verifies one credential type or the other, never both."
           />
         </dl>
       </section>

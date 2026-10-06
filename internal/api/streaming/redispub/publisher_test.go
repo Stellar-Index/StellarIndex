@@ -78,7 +78,7 @@ func TestPublishClosedBucket_StampsProducerID(t *testing.T) {
 	pair := nativeUSD(t)
 	producerOf := func(p *redispub.Publisher, cache *fakeRedis, i int) string {
 		t.Helper()
-		if err := p.PublishClosedBucket(context.Background(), pair, 5*time.Minute, "0.1", time.Now()); err != nil {
+		if err := p.PublishClosedBucket(context.Background(), pair, 5*time.Minute, "0.1", time.Now(), nil); err != nil {
 			t.Fatalf("PublishClosedBucket: %v", err)
 		}
 		var ev redispub.ClosedBucketEvent
@@ -113,7 +113,7 @@ func TestPublishClosedBucket_RoundTrip(t *testing.T) {
 	}
 	observedAt := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
 
-	if err := p.PublishClosedBucket(context.Background(), pair, 5*time.Minute, "0.123456789012", observedAt); err != nil {
+	if err := p.PublishClosedBucket(context.Background(), pair, 5*time.Minute, "0.123456789012", observedAt, nil); err != nil {
 		t.Fatalf("PublishClosedBucket: %v", err)
 	}
 	if got := len(cache.calls); got != 1 {
@@ -156,7 +156,7 @@ func TestPublishClosedBucket_PropagatesError(t *testing.T) {
 		t.Fatalf("NewPublisher: %v", err)
 	}
 
-	err = p.PublishClosedBucket(context.Background(), pair, time.Hour, "1.0", time.Now())
+	err = p.PublishClosedBucket(context.Background(), pair, time.Hour, "1.0", time.Now(), nil)
 	if err == nil {
 		t.Fatal("expected error from PublishClosedBucket")
 	}

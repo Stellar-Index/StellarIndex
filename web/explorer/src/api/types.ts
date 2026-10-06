@@ -4663,8 +4663,8 @@ export interface paths {
          *
          *     **Not enabled on the hosted deployment.** The server-side
          *     verifier is implemented, but `api.stellarindex.io` has no
-         *     signing seed provisioned, so this route answers `503
-         *     sep10-unavailable`. Enabling it is an operator action, not a
+         *     signing seed provisioned, so this route answers `404
+         *     sep10-unavailable` (non-retryable) unless `[api.sep10]` is configured. Enabling it is an operator action, not a
          *     code change: set the `STELLARINDEX_SEP10_SEED` (server signing
          *     S-strkey) and `STELLARINDEX_SEP10_JWT_SECRET` (≥32 bytes)
          *     environment variables — their names are configurable via
@@ -4701,7 +4701,7 @@ export interface paths {
          *     carries `{transaction: <base64-XDR>}`. Unauthenticated by
          *     design — the SEP-10 protocol IS the authentication.
          *
-         *     **Not enabled on the hosted deployment** — answers `503
+         *     **Not enabled on the hosted deployment** — answers `404
          *     sep10-unavailable` for the same reason as
          *     `/v1/auth/sep10/challenge`, which carries the operator
          *     configuration this route needs.
@@ -11483,6 +11483,13 @@ export interface components {
             observed_at: string;
             /** @description Window size for vwap/twap; omitted for last_trade. */
             window_seconds?: number;
+            /** @description Present only when the value was served from the aggregator's rolling-window VWAP (a frozen pair's held value, the cache fallback, and `price_update` events on `/v1/price/stream`) and its coverage is known. Same meaning as `/v1/vwap`'s `truncated`: true when the window's trade read hit the server's row cap, so the oldest trades are missing and the value is NOT the full-window VWAP; see `covered_from`. False means the whole window was read. Absent means unknown (a triangulated composite does not track its legs' coverage) or not a rolling-window value. */
+            truncated?: boolean;
+            /**
+             * Format: date-time
+             * @description Present only with `truncated: true`. Every trade after this instant is in the value; trades at or before it may be missing. With stablecoin-proxy legs it is the newest of the capped legs' cut-off points.
+             */
+            covered_from?: string;
             /** @description Decimal string, quote units per 1 USD. Present only on a closed-surface USD-anchored fiat cross (`/v1/price`, `/v1/price/batch`, SEP-40): the vendor FX fixing the USD leg was converted at, verbatim. The fixing is the bar with the greatest close at or before the USD bucket's end minus 3 h, within the 76 h lookback, so the answer is the same whenever and wherever it is read. `/v1/price/tip` converts at the live rate and omits it. */
             fx_rate?: string;
             /**
@@ -15123,7 +15130,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of price_update (and price_frozen / price_withheld) events. */
+            /** @description SSE stream of price_update (and price_frozen / price_withheld) events. A `price_update` carries `truncated` (and `covered_from` when true) under the same contract as the Price schema; both are absent when coverage is unknown. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -23770,7 +23777,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
-            503: components["responses"]["ServiceUnavailable"];
+            404: components["responses"]["NotFound"];
         };
     };
     createSep10Token: {
@@ -23827,6 +23834,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            404: components["responses"]["NotFound"];
             /** @description Challenge time-bounds expired; request a fresh challenge. */
             410: {
                 headers: {
@@ -23836,7 +23844,6 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            503: components["responses"]["ServiceUnavailable"];
         };
     };
     listLedgers: {

@@ -72,7 +72,7 @@ func bridgedFrame(t *testing.T) map[string]any {
 		t.Fatal(err)
 	}
 	bucketEnd := time.Now().UTC().Truncate(time.Minute)
-	if err := pub.PublishClosedBucket(ctx, pair, 5*time.Minute, "0.159608357106", bucketEnd); err != nil {
+	if err := pub.PublishClosedBucket(ctx, pair, 5*time.Minute, "0.159608357106", bucketEnd, nil); err != nil {
 		t.Fatalf("PublishClosedBucket: %v", err)
 	}
 	deadline := time.Now().Add(time.Second)

@@ -2651,7 +2651,7 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 //
 // Behaviour by configuration:
 //   - SEP-10 unconfigured (no seed_env / jwt_secret_env): buildSEP10Validator
-//     errors "not configured"; we wire the Noop (503 on /v1/auth/sep10/*) so
+//     errors "not configured"; we wire the Noop (404 sep10-unavailable on /v1/auth/sep10/*) so
 //     the binary still boots — the common r1 auth_mode=apikey_optional case.
 //   - SEP-10 configured + Redis available: the guarded validator, in EVERY
 //     auth_mode.
@@ -2674,12 +2674,12 @@ func resolveSEP10Validator(
 	if err != nil {
 		// auth_mode=sep10 makes this a hard failure — we MUST have a
 		// validator to bootstrap auth at all. Otherwise log + carry on
-		// with a Noop so the handlers return 503 specifically for
+		// with a Noop so the handlers return 404 specifically for
 		// /v1/auth/sep10/* without taking down the rest of the API.
 		if authMode == "sep10" {
 			return nil, fmt.Errorf("sep10 validator: %w (auth_mode=sep10 requires it)", err)
 		}
-		logger.Warn("sep10 validator not wired; /v1/auth/sep10/* will return 503",
+		logger.Warn("sep10 validator not wired; /v1/auth/sep10/* will return 404 sep10-unavailable",
 			"err", err)
 		return auth.NoopSEP10Validator{}, nil
 	}
@@ -2963,6 +2963,7 @@ func (r redisConfidenceLooker) LookupConfidence(ctx context.Context, asset, quot
 //   - cachekeys.VWAP(base, quote, window) — the value
 //   - cachekeys.VWAPProvenance(...)        — the marker
 //   - cachekeys.VWAPObservedAt(...)        — when the value was observed
+//   - cachekeys.VWAPCoverage(...)          — how much of the window it read
 //
 // Per the marker contract, "triangulated" means the aggregator's
 // triangulation worker wrote this value (vs. the direct per-pair
@@ -2983,13 +2984,14 @@ func (r redisTriangulatedLooker) LookupTriangulatedVWAP(
 	if r.rdb == nil {
 		return v1.CachedVWAP{}, false, nil
 	}
-	// One MGET: the aggregator writes value, marker and stamp in one
+	// One MGET: the aggregator writes value, marker, stamp and coverage in one
 	// MULTI/EXEC, and separate GETs could straddle a write and pair a
 	// value with another write's provenance or stamp.
 	valKey := cachekeys.VWAP(base, quote, window)
 	provKey := cachekeys.VWAPProvenance(base, quote, window)
 	atKey := cachekeys.VWAPObservedAt(base, quote, window)
-	got, err := r.rdb.MGet(ctx, valKey.String(), provKey.String(), atKey.String()).Result()
+	covKey := cachekeys.VWAPCoverage(base, quote, window)
+	got, err := r.rdb.MGet(ctx, valKey.String(), provKey.String(), atKey.String(), covKey.String()).Result()
 	if err != nil {
 		return v1.CachedVWAP{}, false, fmt.Errorf("vwap cache mget %s: %w", valKey, err)
 	}
@@ -3005,11 +3007,18 @@ func (r redisTriangulatedLooker) LookupTriangulatedVWAP(
 	// A missing marker means a direct VWAP (per the marker contract):
 	// found=true, isTriangulated=false — served, but not labelled triangulated.
 	prov, _ := got[1].(string)
-	return v1.CachedVWAP{
+	out := v1.CachedVWAP{
 		Value:        val,
 		Triangulated: prov == cachekeys.VWAPProvenanceTriangulated,
 		ObservedAt:   observedAt,
-	}, true, nil
+	}
+	// Absent or unreadable coverage stays unknown, never "complete".
+	if rawCov, ok := got[3].(string); ok {
+		if c, err := cachekeys.ParseVWAPCoverage(rawCov); err == nil {
+			out.Coverage = &c
+		}
+	}
+	return out, true, nil
 }
 
 // LookupCompositeMeta reads the router quality-flags blob the

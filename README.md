@@ -157,7 +157,7 @@ These are the architectural commitments that bind every PR. See
   `/v1/version`; `/metrics` is loopback-only, never public).
   SEP-10 web auth (`/v1/auth/sep10/*`) is code-shipped but not enabled
   on the hosted deployment — without a server signing seed it answers
-  503. Behind CORS, a subject-aware rate limit (anon-IP + key-tier), a
+  404 `sep10-unavailable`. Behind CORS, a subject-aware rate limit (anon-IP + key-tier), a
   trusted-proxy CIDR allow-list, and per-route Cache-Control with
   CDN-tier `s-maxage`.
 - **Aggregation engine** — VWAP/TWAP orchestrator with closed-bucket

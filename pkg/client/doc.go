@@ -49,7 +49,7 @@
 //   - **SEP-10** — implemented server-side at
 //     `/v1/auth/sep10/{challenge,token}`, but NOT available on the
 //     hosted deployment: api.stellarindex.io has no signing seed
-//     provisioned, so both routes answer 503 `sep10-unavailable`.
+//     provisioned, so both routes answer 404 `sep10-unavailable` unless [api.sep10] is configured.
 //     Do not build against it there.
 //
 //     On a deployment that does configure it, a JWT is passed as

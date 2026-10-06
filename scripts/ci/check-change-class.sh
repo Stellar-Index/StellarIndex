@@ -48,7 +48,11 @@
 # .github/workflows/ci.yml's preflight job):
 #   integration  — internal/**, cmd/stellarindex-ops/**, migrations/**,
 #                  scripts/ops/**, test/integration/**, test/harness/**,
-#                  go.mod
+#                  go.mod, go.sum, Makefile, scripts/ci/integration-shard.sh,
+#                  .github/workflows/ci.yml, deploy/clickhouse/*.sql,
+#                  configs/ansible/roles/redis-sentinel/templates/users.acl.j2
+#                  (the shard script and the ClickHouse/Redis integration
+#                  tests read these directly)
 #   go           — any *.go file, go.mod, go.sum, openapi/** (Go spec-parity
 #                  tests read the spec directly), and the go:embed inputs
 #                  (internal/sources/external/binance/pairs.yaml,
@@ -78,7 +82,7 @@
 set -euo pipefail
 
 class_integration() {
-  grep -E '^(internal/|cmd/stellarindex-ops/|migrations/|scripts/ops/|test/(integration|harness)/)|^go\.mod$'
+  grep -E '^(internal/|cmd/stellarindex-ops/|migrations/|scripts/ops/|test/(integration|harness)/)|^go\.mod$|^go\.sum$|^Makefile$|^scripts/ci/integration-shard\.sh$|^\.github/workflows/ci\.yml$|^deploy/clickhouse/[^/]+\.sql$|^configs/ansible/roles/redis-sentinel/templates/users\.acl\.j2$'
 }
 
 class_go() {

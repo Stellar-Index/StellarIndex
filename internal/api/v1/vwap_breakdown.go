@@ -209,8 +209,8 @@ func vwapBucket(b *vwapBucketTrades, adjust func(*big.Rat) *big.Rat) VWAPBreakdo
 	for _, s := range bySrc {
 		sources = append(sources, s)
 	}
-	// Rank by weight, not raw quote volume: raw volumes are per-source
-	// scale on a non-fiat fetch and would misorder an 8- vs 7-decimal venue.
+	// Rank by weight, the exact quote-volume share; b.post is at the
+	// window's one scale, so this orders the same as the volumes shown.
 	weightOf := func(src string) *big.Rat {
 		if w := weights[src]; w != nil {
 			return w

@@ -20,7 +20,7 @@ func TestNoopAPIKeyValidator_FailLoud(t *testing.T) {
 
 // TestNoopSEP10Validator_FailLoud — same story for the SEP-10
 // stub. All three protocol functions return ErrNotImplemented;
-// the middleware translates that to 503 so an operator sees the
+// the middleware translates that to 404 so an operator sees the
 // misconfiguration on the first failed request rather than
 // discovering it from a security audit later.
 func TestNoopSEP10Validator_FailLoud(t *testing.T) {
