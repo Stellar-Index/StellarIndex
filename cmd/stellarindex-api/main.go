@@ -2674,7 +2674,7 @@ func resolveSEP10Validator(
 	if err != nil {
 		// auth_mode=sep10 makes this a hard failure — we MUST have a
 		// validator to bootstrap auth at all. Otherwise log + carry on
-		// with a Noop so the handlers return 503 specifically for
+		// with a Noop so the handlers return 404 specifically for
 		// /v1/auth/sep10/* without taking down the rest of the API.
 		if authMode == "sep10" {
 			return nil, fmt.Errorf("sep10 validator: %w (auth_mode=sep10 requires it)", err)

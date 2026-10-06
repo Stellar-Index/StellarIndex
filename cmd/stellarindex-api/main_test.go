@@ -210,16 +210,16 @@ func TestBuildAPIKeyValidator_BothFlagStates(t *testing.T) {
 // client at phase 1, "rebuild" behind an `if !isNoop` guard that was never
 // true at phase 2) meant a CONFIGURED SEP-10 deployment NEVER got the guarded
 // (replay-protected) validator — it either refused to boot (auth_mode=sep10)
-// or silently 503'd every SEP-10 endpoint (Noop), and the rebuild's failure
+// or silently 404'd every SEP-10 endpoint (Noop), and the rebuild's failure
 // branch was a latent fail-open. This asserts the corrected wiring:
 //
 //   - configured (seed+jwt env) + Redis      → *sep10.Validator (GUARDED),
 //     in every auth_mode. (Pre-fix: Noop — this case is the red one.)
 //   - configured + NO Redis + auth_mode=sep10 → hard error (ErrReplayGuardUnavailable);
 //     never a guard-free validator.
-//   - configured + NO Redis + other mode      → Noop (503), binary still boots.
+//   - configured + NO Redis + other mode      → Noop (404), binary still boots.
 //   - configured + NO account lake            → same policy via ErrAccountLoaderUnavailable.
-//   - unconfigured (no seed/jwt env)          → Noop (503), binary still boots
+//   - unconfigured (no seed/jwt env)          → Noop (404), binary still boots
 //     (the common r1 auth_mode=apikey_optional case).
 func TestResolveSEP10Validator_WiringByConfiguration(t *testing.T) {
 	server, err := keypair.Random()
@@ -259,7 +259,7 @@ func TestResolveSEP10Validator_WiringByConfiguration(t *testing.T) {
 				t.Fatalf("mode=%s: got %T, want *sep10.Validator (guarded, replay-protected)", mode, v)
 			}
 			if _, isNoop := v.(auth.NoopSEP10Validator); isNoop {
-				t.Fatalf("mode=%s: a configured deployment WITH Redis must not get the Noop (503) validator", mode)
+				t.Fatalf("mode=%s: a configured deployment WITH Redis must not get the Noop (404) validator", mode)
 			}
 		}
 	})
@@ -285,7 +285,7 @@ func TestResolveSEP10Validator_WiringByConfiguration(t *testing.T) {
 			t.Fatalf("must degrade to Noop (not abort boot) outside auth_mode=sep10: %v", err)
 		}
 		if _, ok := v.(auth.NoopSEP10Validator); !ok {
-			t.Errorf("got %T, want auth.NoopSEP10Validator (503 on SEP-10 endpoints, never guard-free)", v)
+			t.Errorf("got %T, want auth.NoopSEP10Validator (404 on SEP-10 endpoints, never guard-free)", v)
 		}
 	})
 

@@ -1374,7 +1374,7 @@ type Options struct {
 	// SEP10, when non-nil, backs GET /v1/auth/sep10/challenge and
 	// POST /v1/auth/sep10/token. Production wiring: an
 	// auth/sep10.Validator constructed from the binary's signing
-	// seed + JWT secret config. Nil makes both endpoints return 503
+	// seed + JWT secret config. Nil makes both endpoints return 404
 	// (the binary didn't wire one — typically because the seed/
 	// secret config is absent in this deployment).
 	SEP10 auth.SEP10Validator
