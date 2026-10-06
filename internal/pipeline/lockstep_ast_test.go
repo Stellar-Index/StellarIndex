@@ -51,6 +51,7 @@ var notProjectedEvents = map[string]string{
 // exhaustiveness guard below stays a real signal rather than being
 // loosened wholesale.
 var notSunkEvents = map[string]string{
+	"spectra.Event":                  "INV-2044 slice 4: decoder only, not yet registered with the dispatcher or projector, so Event never reaches HandleEvent. Unwired until INV-2044 slice 6; REMOVE this entry then and add the sink arm.",
 	"classicmovements.MovementEvent": "ADR-0047 D2: historical-only, lake-derived, pre-P23 classic-movement reconstruction. Its Decoder is never registered with the live dispatcher (nothing to decode live — the P23 boundary is a hard upper bound), so MovementEvent never flows through HandleEvent. The sole writer is `stellarindex-ops classic-movements-backfill` (internal/ops/chops), which streams clickhouse.ClassicOp -> classicmovements.Decoder -> timescale.Store.BatchInsertClassicMovements directly, bypassing pipeline.HandleEvent entirely.",
 }
 
