@@ -3516,7 +3516,7 @@ paths:
                             quote_id:           { type: string, description: "Primary quote paired with asset_id; omitted with it." }
                             tx_hashes:          { type: array, items: { type: string } }
                             accounts:           { type: array, items: { type: string } }
-                            detail:             { type: object, description: "Pattern evidence: every kind carries assets, sources and a note, plus its own legs / roles / oracle refs / fills." }
+                            detail:             { type: object, description: "Pattern evidence: every kind carries assets, sources and a note, plus its own legs / roles / oracle refs / fills. `notional_usd` sums the legs' trade-time USD value; `notional_usd_lower_bound: true` means at least one leg had none and was left out, so the notional is a lower bound." }
                             profit_usd:         { type: [string, "null"], description: "Reserved attacker-profit estimate; null for every kind (profit is not estimated, and trade notional is in detail.notional_usd)." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -19768,6 +19768,9 @@ components:
             multiplication for non-USD on-chain quotes is L2.2
             phase 2, post-launch. The schema is forward-compatible:
             phase 2 lands additively without a wire-shape change.
+        volume_lower_bound:
+          type: boolean
+          description: "True when `volume_24h_usd` excludes trades that could not be valued at trade time: no trade-time `usd_volume`, and no XLM leg with an XLM/USD anchor within an hour of the trade. They are never valued at today's price, so the figure is a lower bound. Set only for Soroban (`C…`) assets; absent when nothing was excluded."
         # ─── Coin-overlay listing fields (assets.go applyCoinExtensionFields
         # + projectCatalogueRow) — populated on listing/detail surfaces when
         # the CoinsReader is wired; null/absent otherwise. Documented
@@ -21320,6 +21323,9 @@ components:
         volume_24h_usd:
           type: [string, "null"]
           description: "Trailing-24h USD volume summed from prices_1m. Decimal string. Null when no USD-equivalent trades."
+        volume_lower_bound:
+          type: boolean
+          description: "Set only when the request sets `?source=`. True when `volume_24h_usd` excludes this venue's trades that carry no trade-time `usd_volume`; they are never valued at today's price, so the figure is a lower bound. Absent when nothing was excluded."
         last_price:
           type: [string, "null"]
           description: "Most recent quote-per-base price observed for this pair within the trailing 24h: across every source, or that source's own when the request sets `?source=`. Decimal string. Null when none was observed."
@@ -21354,7 +21360,8 @@ components:
         quote:           { type: string }
         last_trade_at:   { type: string, format: date-time }
         trade_count_24h: { type: integer }
-        volume_24h_usd:  { type: [string, "null"], description: "Decimal string. Null when no USD-equivalent trades." }
+        volume_24h_usd:  { type: [string, "null"], description: "Sum of trade-time `usd_volume` on this venue over the trailing 24h. Decimal string. Null when no USD-equivalent trades." }
+        volume_lower_bound: { type: boolean, description: "True when `volume_24h_usd` excludes trades that carry no trade-time `usd_volume`; they are never valued at today's price, so the figure is a lower bound. Absent when nothing was excluded." }
         last_price:      { type: [string, "null"], description: "Most recent quote-per-base price observed on THIS venue. Decimal string." }
       required: [source, base, quote, last_trade_at, trade_count_24h]
 

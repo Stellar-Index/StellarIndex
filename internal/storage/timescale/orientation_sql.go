@@ -25,11 +25,6 @@ const (
 	xlmQuotesBound4 = "'native', $4::text"
 )
 
-// xlmNativeAssetIn renders `col IN ('native', $n::text)`.
-func xlmNativeAssetIn(col string, n int) string {
-	return col + " IN (" + xlmQuotesBound(n) + ")"
-}
-
 // stablecoinInListSQL renders canonical.StablecoinCodes as a sorted,
 // single-quoted SQL IN-list (e.g. "'DAI', 'EURC', …"). Sorted so the
 // generated query string is stable (plan cache + golden tests). The

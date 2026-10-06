@@ -79,8 +79,10 @@ type Candidate struct {
 	QuoteID          string   // primary quote → mev_events.quote_id; "" for cross-asset kinds
 	Legs             []Leg
 	NotionalUSD      string // summed USD volume across legs ("" when none priced)
-	Dedup            string // explicit dedup key; "" → kind:tx:taker
-	Detail           any    // per-kind evidence payload (marshalled to mev_events.detail); nil → arbDetail
+	// NotionalLowerBound: NotionalUSD left out at least one unpriced leg.
+	NotionalLowerBound bool
+	Dedup              string // explicit dedup key; "" → kind:tx:taker
+	Detail             any    // per-kind evidence payload (marshalled to mev_events.detail); nil → arbDetail
 }
 
 // DedupKey is the deterministic idempotency key persisted to
@@ -190,17 +192,19 @@ func buildArbCandidate(trades []canonical.Trade, usdVolume []string, idxs []int)
 	sort.SliceStable(legs, func(a, b int) bool { return legs[a].before(legs[b].OpRef) })
 
 	first := trades[kept[0]]
+	notional, lowerBound := sumUSD(usdVolume, kept)
 	c := Candidate{
-		Kind:             KindArbitrage,
-		Ledger:           first.Ledger,
-		DetectedAtLedger: first.Ledger,
-		Timestamp:        first.Timestamp.UTC(),
-		TxHash:           first.TxHash,
-		Taker:            first.Taker,
-		Assets:           sortedKeys(assetSet),
-		Sources:          sortedKeys(sourceSet),
-		Legs:             legs,
-		NotionalUSD:      sumUSD(usdVolume, kept),
+		Kind:               KindArbitrage,
+		Ledger:             first.Ledger,
+		DetectedAtLedger:   first.Ledger,
+		Timestamp:          first.Timestamp.UTC(),
+		TxHash:             first.TxHash,
+		Taker:              first.Taker,
+		Assets:             sortedKeys(assetSet),
+		Sources:            sortedKeys(sourceSet),
+		Legs:               legs,
+		NotionalUSD:        notional,
+		NotionalLowerBound: lowerBound,
 	}
 	return c, true
 }
@@ -287,23 +291,26 @@ func sortedKeys(m map[string]struct{}) []string {
 // sumUSD adds the parallel USD-volume entries for the group's legs
 // with exact decimal arithmetic. Returns "" when no leg carried a USD
 // valuation (so the field is omitted downstream rather than reported
-// as a misleading 0); otherwise a 2dp decimal string.
-func sumUSD(usdVolume []string, idxs []int) string {
+// as a misleading 0); otherwise a 2dp decimal string. lowerBound is true
+// when a non-empty sum left out an unpriced leg.
+func sumUSD(usdVolume []string, idxs []int) (notional string, lowerBound bool) {
 	total := new(big.Rat)
-	priced := false
+	priced, unpriced := false, false
 	for _, i := range idxs {
 		if i >= len(usdVolume) || usdVolume[i] == "" {
+			unpriced = true
 			continue
 		}
 		v, ok := new(big.Rat).SetString(usdVolume[i])
 		if !ok {
+			unpriced = true
 			continue
 		}
 		total.Add(total, v)
 		priced = true
 	}
 	if !priced {
-		return ""
+		return "", false
 	}
-	return total.FloatString(2)
+	return total.FloatString(2), unpriced
 }

@@ -129,19 +129,9 @@ func TestNoBespokeUSDProxyList(t *testing.T) {
 			t.Fatal(err)
 		}
 		src := string(b)
-		// The volume-only scalar moves to trade-time usd_volume with the
-		// volume read paths; it is not a price anchor.
-		skipFrom, skipTo := -1, -1
-		if i := strings.Index(src, "const xlmUSDVolumeSelect = `"); i >= 0 {
-			skipFrom = i
-			skipTo = i + len("const xlmUSDVolumeSelect = `") + strings.Index(src[i+len("const xlmUSDVolumeSelect = `"):], "`")
-		}
 		for _, m := range inList.FindAllStringSubmatchIndex(src, -1) {
 			list := strings.Join(strings.Fields(src[m[2]:m[3]]), " ")
 			if !strings.Contains(list, "USDC-GA5Z") && !strings.Contains(list, "'fiat:USD'") && !strings.Contains(list, "CCW67TSZ") {
-				continue
-			}
-			if m[0] >= skipFrom && m[0] < skipTo {
 				continue
 			}
 			if list != want {

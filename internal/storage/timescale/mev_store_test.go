@@ -168,7 +168,7 @@ func TestTradesForArbScanQueryShape(t *testing.T) {
 	}
 	if !strings.Contains(q, xlmUSDAnchorGridCTE("xlm_usd_grid", "$1::timestamptz", "$3::text")) ||
 		!strings.Contains(q, xlmUSDGridJoin("xa", "date_trunc('minute', t.ts)")) ||
-		strings.Contains(q, xlmUSDVolumeSelect) {
+		strings.Contains(q, "percentile_disc") {
 		t.Errorf("the XLM-leg fallback must read the shared anchor at the trade's own minute, never the current scalar:\n%s", q)
 	}
 	if strings.Contains(q, mevXLMSAC) || !strings.Contains(q, "IN ('native', $3::text)") {

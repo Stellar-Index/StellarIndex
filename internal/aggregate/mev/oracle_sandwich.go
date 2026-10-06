@@ -22,16 +22,17 @@ const oracleSandwichNote = "One account traded an asset in transactions on BOTH 
 // oracleSandwichDetail is the mev_events.detail payload for an
 // oracle_sandwich candidate.
 type oracleSandwichDetail struct {
-	OracleSource   string       `json:"oracle_source"`
-	OracleContract string       `json:"oracle_contract,omitempty"`
-	OracleTxHash   string       `json:"oracle_tx_hash"`
-	OracleTxIndex  uint32       `json:"oracle_tx_index"`
-	Asset          string       `json:"asset"`
-	Quote          string       `json:"quote,omitempty"`
-	Account        string       `json:"account"`
-	Legs           []OrderedLeg `json:"legs"` // nearest before + after trades
-	NotionalUSD    string       `json:"notional_usd,omitempty"`
-	Note           string       `json:"note"`
+	OracleSource       string       `json:"oracle_source"`
+	OracleContract     string       `json:"oracle_contract,omitempty"`
+	OracleTxHash       string       `json:"oracle_tx_hash"`
+	OracleTxIndex      uint32       `json:"oracle_tx_index"`
+	Asset              string       `json:"asset"`
+	Quote              string       `json:"quote,omitempty"`
+	Account            string       `json:"account"`
+	Legs               []OrderedLeg `json:"legs"` // nearest before + after trades
+	NotionalUSD        string       `json:"notional_usd,omitempty"`
+	NotionalLowerBound bool         `json:"notional_usd_lower_bound,omitempty"`
+	Note               string       `json:"note"`
 }
 
 // DetectOracleSandwiches scans for trades bracketing an on-chain
@@ -134,35 +135,37 @@ func buildOracleSandwichCandidate(trades []canonical.Trade, usdVolume []string, 
 		orderedLegFrom(trades[before], txIdx, "before"),
 		orderedLegFrom(trades[after], txIdx, "after"),
 	}
-	notional := sumUSD(usdVolume, involved)
+	notional, lowerBound := sumUSD(usdVolume, involved)
 	tb := trades[before]
 	c := Candidate{
-		Kind:             KindOracleSandwich,
-		Ledger:           o.Ledger,
-		DetectedAtLedger: o.Ledger,
-		Timestamp:        tb.Timestamp.UTC(),
-		TxHash:           o.TxHash,
-		Taker:            taker,
-		TxHashes:         []string{tb.TxHash, o.TxHash, trades[after].TxHash},
-		Accounts:         []string{taker},
-		Assets:           []string{normAsset(o.Asset)},
-		AssetID:          normAsset(o.Asset),
-		QuoteID:          o.Quote,
-		Sources:          distinctSources(trades, involved),
-		NotionalUSD:      notional,
+		Kind:               KindOracleSandwich,
+		Ledger:             o.Ledger,
+		DetectedAtLedger:   o.Ledger,
+		Timestamp:          tb.Timestamp.UTC(),
+		TxHash:             o.TxHash,
+		Taker:              taker,
+		TxHashes:           []string{tb.TxHash, o.TxHash, trades[after].TxHash},
+		Accounts:           []string{taker},
+		Assets:             []string{normAsset(o.Asset)},
+		AssetID:            normAsset(o.Asset),
+		QuoteID:            o.Quote,
+		Sources:            distinctSources(trades, involved),
+		NotionalUSD:        notional,
+		NotionalLowerBound: lowerBound,
 		Dedup: KindOracleSandwich + ":" + o.TxHash + ":" + strconv.FormatUint(uint64(o.OpIndex), 10) +
 			":" + taker + ":" + normAsset(o.Asset),
 		Detail: oracleSandwichDetail{
-			OracleSource:   o.Source,
-			OracleContract: o.ContractID,
-			OracleTxHash:   o.TxHash,
-			OracleTxIndex:  oIdx,
-			Asset:          o.Asset,
-			Quote:          o.Quote,
-			Account:        taker,
-			Legs:           legs,
-			NotionalUSD:    notional,
-			Note:           oracleSandwichNote,
+			OracleSource:       o.Source,
+			OracleContract:     o.ContractID,
+			OracleTxHash:       o.TxHash,
+			OracleTxIndex:      oIdx,
+			Asset:              o.Asset,
+			Quote:              o.Quote,
+			Account:            taker,
+			Legs:               legs,
+			NotionalUSD:        notional,
+			NotionalLowerBound: lowerBound,
+			Note:               oracleSandwichNote,
 		},
 	}
 	return c, true
