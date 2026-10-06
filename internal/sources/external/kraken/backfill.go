@@ -126,12 +126,7 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 		// caller's actual requested start; detect the gap there.
 		var depthErr error
 		if firstPage {
-			if earliestTs, ok := candles[0].openTimeSec(); ok && earliestTs > requestedSinceSec+intervalSec {
-				depthErr = fmt.Errorf("kraken.Backfill: %w: requested from %s but the venue's earliest available candle is %s",
-					ErrDepthExceeded,
-					time.Unix(requestedSinceSec, 0).UTC().Format(time.RFC3339),
-					time.Unix(earliestTs, 0).UTC().Format(time.RFC3339))
-			}
+			depthErr = checkServingHorizon(candles[0], requestedSinceSec, intervalSec)
 			firstPage = false
 		}
 
@@ -145,12 +140,12 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 				break
 			}
 			closeTs := openTs + intervalSec - 1
-			trade, err := krakenCandleToTrade(c, symbol, pair, closeTs, granularity)
-			if errors.Is(err, errZeroVolume) || errors.Is(err, ErrDustTrade) {
-				continue
-			}
+			trade, skip, err := convertCandle(c, symbol, pair, closeTs, granularity)
 			if err != nil {
 				return out, fmt.Errorf("kraken.Backfill: candle %v: %w", c, err)
+			}
+			if skip {
+				continue
 			}
 			out = append(out, trade)
 		}
@@ -171,6 +166,29 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 		}
 	}
 	return out, nil
+}
+
+// checkServingHorizon returns ErrDepthExceeded when the first candle opens
+// later than the requested start by more than one interval.
+func checkServingHorizon(first krakenCandle, requestedSinceSec, intervalSec int64) error {
+	earliestTs, ok := first.openTimeSec()
+	if !ok || earliestTs <= requestedSinceSec+intervalSec {
+		return nil
+	}
+	return fmt.Errorf("kraken.Backfill: %w: requested from %s but the venue's earliest available candle is %s",
+		ErrDepthExceeded,
+		time.Unix(requestedSinceSec, 0).UTC().Format(time.RFC3339),
+		time.Unix(earliestTs, 0).UTC().Format(time.RFC3339))
+}
+
+// convertCandle reports skip=true for zero-volume and dust candles, which
+// are expected; any other conversion failure is returned as an error.
+func convertCandle(c krakenCandle, symbol string, pair canonical.Pair, closeTs int64, granularity time.Duration) (trade canonical.Trade, skip bool, err error) {
+	trade, err = krakenCandleToTrade(c, symbol, pair, closeTs, granularity)
+	if errors.Is(err, errZeroVolume) || errors.Is(err, ErrDustTrade) {
+		return trade, true, nil
+	}
+	return trade, false, err
 }
 
 // restBase returns the REST URL. When Endpoint is a ws:// URL (the
