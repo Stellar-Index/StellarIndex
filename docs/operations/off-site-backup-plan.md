@@ -24,6 +24,21 @@ Back up by recovery time, not by re-derivability:
 
 **Footprint:** ≈ 18.9 TB at rest (lake 16.1 TB + repo2 2.75 TB + config), incremental after the first sync. **Peak ≈ 35 TB** while a rolling lake full runs: `ch-lake-backup.sh` removes the previous chain only after the new full is `BACKUP_CREATED`, so two lake fulls coexist — and on B2 the removed chain stays billed until the lifecycle rule purges it (see [Provider](#provider)). Size every figure from `system.parts.bytes_on_disk` / `zfs get logicalused`; ZFS `used` (9.42 T for the lake) is compressed and understates an upload by ≈ 1.45×.
 
+## Failure ladder
+
+Targets: **4 h to serving**, **24 h to full history** (fallback if unreachable: 24 h / 72 h). "Not measured" means no drill behind the number.
+
+| Tier | Lost | Restores from (today) | Time | Runbook |
+|---|---|---|---|---|
+| 1. Process or service down | A unit, data intact | Restart in place | minutes (estimate) | [`postgres.md`](runbooks/postgres.md#stellarindex_timescale_primary_down) §B |
+| 2. Bad write or deletion | Recent data on one dataset | Local ZFS snapshot (Postgres 7 d, ClickHouse 3 d), then pgBackRest repo1 | not measured | [`zfs-snapshots.md`](runbooks/zfs-snapshots.md) |
+| 3. Postgres data dir lost | Served tier | pgBackRest repo1 (local); repo2 (AWS S3 eu-central-1 today, moving to B2) if the box is also gone | repo1 ~9-10 min; repo2 ~47-49 min, restore only, excluding WAL replay (measured, drills 2026-09-03 and 2026-09-15) | [`postgres.md`](runbooks/postgres.md#stellarindex_timescale_primary_down) §D, [`restore-drills.md`](drills/restore-drills.md) |
+| 4. r1 lost, standby survives | Primary box | r2/r3 replica, traffic cutover | not measured (HA standby not deployed) | [`dr-activation.md`](runbooks/dr-activation.md), [`postgres.md`](runbooks/postgres.md#stellarindex_timescale_primary_down) §E |
+| 5. All boxes lost | Postgres and the ClickHouse lake | Postgres from repo2; the lake has NO off-site copy yet (B2 lake copy is unfunded and not running), so history falls back to tier 6 | Postgres restore ~47-49 min (measured, excluding WAL replay); lake from a B2 copy would be ~4 h at 10 Gbps, ~36 h at 1 Gbps (estimate, once it exists) | [`ch-lake-backup.md`](runbooks/ch-lake-backup.md#restore) |
+| 6. Every copy lost | Lake and its backups | Re-ingest the raw archive from the SDF public bucket (an owned raw copy, once one exists, replaces this pull) | ~1-2 weeks (estimate, not measured) | [`galexie-backfill.md`](galexie-backfill.md), [`archive-completeness.md`](archive-completeness.md) |
+
+Against the targets: only the Postgres restore in tier 3 is measured to meet 4 h to serving (excluding WAL replay). Tiers 1 and 2 are likely but unmeasured, and tier 4 is unknown because the standby is not deployed. Today, tier 5 history falls back to tier 6 (~1-2 weeks), which misses 24 h; it can meet 24 h only once the off-site lake copy exists and the link is 10 Gbps.
+
 ## Provider
 
 **Backblaze B2 for every off-site copy we own: the ClickHouse lake (§4) and pgBackRest repo2 (§2).** The raw Galexie archive has no off-site copy; SDF's public AWS bucket is its upstream.
