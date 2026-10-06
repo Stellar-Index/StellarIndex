@@ -2122,8 +2122,23 @@ func TestTick_SoroswapRouterTradeNeverContributesToVWAP(t *testing.T) {
 // recordingStreamPublisher captures PublishClosedBucket calls for
 // L3.9 fan-out tests. Implements [StreamPublisher].
 type recordingStreamPublisher struct {
-	calls []recordedPublish
-	err   error
+	calls  []recordedPublish
+	frozen []recordedFrozen
+	err    error
+}
+
+type recordedFrozen struct {
+	pair        canonical.Pair
+	window      time.Duration
+	observedAt  time.Time
+	frozenSince time.Time
+}
+
+func (r *recordingStreamPublisher) PublishFrozenBucket(
+	_ context.Context, pair canonical.Pair, window time.Duration, observedAt, frozenSince time.Time,
+) error {
+	r.frozen = append(r.frozen, recordedFrozen{pair: pair, window: window, observedAt: observedAt, frozenSince: frozenSince})
+	return r.err
 }
 
 type recordedPublish struct {

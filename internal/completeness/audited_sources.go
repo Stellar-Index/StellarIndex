@@ -11,8 +11,8 @@ import (
 // (internal/ops/chops/reconciliation_catalogue.go).
 var staticAuditedSources = []string{
 	"aquarius", "blend", "blend_backstop", "blend_emitter", "cctp", "comet", "defindex",
-	"phoenix", "rozo", "sdex", "sorocredit", "soroswap", "soroswap-router", "sushiswap_v3",
-	"upshift",
+	"phoenix", "rozo", "sdex", "sorocredit", "soroswap", "soroswap-router", "spectra",
+	"sushiswap_v3", "upshift",
 }
 
 // AuditedSources returns, sorted, every source compute-completeness publishes a

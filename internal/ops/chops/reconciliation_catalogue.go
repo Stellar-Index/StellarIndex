@@ -38,6 +38,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/trustlines"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
@@ -529,6 +530,24 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			firehoseTopics: true, // share `transfer`
 			targets: []reconTarget{
 				{"upshift_vault_events", "", []string{upshift.EventKind}},
+			},
+		},
+		{
+			// spectra — ADR-0035 factory-anchored (pt_deployed admits a PT,
+			// the PT's yt_deployed its YT) plus the hand-kept set. The static
+			// contractIDs (regateSource unions the protocol_contracts
+			// children in) let ch-rebuild read PT/YT `transfer` rows, a
+			// firehose topic, by contract; factories/creationSym preseed a
+			// sub-range re-derive. One decoded event is one row.
+			name:           spectra.SourceName,
+			genesis:        spectra.GenesisLedger,
+			dec:            spectra.NewDecoder(),
+			contractIDs:    append(spectra.MainnetGatedSet(), spectra.MainnetInfrastructure...),
+			firehoseTopics: true,
+			factories:      []string{spectra.MainnetFactory},
+			creationSym:    spectra.EventPTDeployed,
+			targets: []reconTarget{
+				{"spectra_events", "", []string{spectra.EventKind}},
 			},
 		},
 		{

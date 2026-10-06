@@ -8,7 +8,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
@@ -16,21 +15,24 @@ import (
 )
 
 // verifyRecognition implements ADR-0033 Claim 2a (recognition): it
-// pulls every distinct (contract_id, topic_0_sym) shape present in
-// soroban_events over a ledger range and runs each through the
-// production decoder chain's Matches(). Any shape no decoder claims is
-// a recognition gap — an on-chain event we would silently drop, which
-// is exactly what a WASM upgrade that adds a topic looks like.
+// pulls every distinct (contract_id, topic_0_sym) shape in the ClickHouse
+// lake's contract_events over a ledger range and runs each through the
+// production decoder chain. Any shape no decoder claims is a recognition
+// gap — an on-chain event we would silently drop, which is exactly what a
+// WASM upgrade that adds a topic looks like.
 //
-// Exit code is non-zero when any gap exists, so cron / CI can gate on
-// it. Uses the same dispatcher the indexer builds from
-// ingestion.enabled_sources, so the verdict reflects what r1 actually
-// handles — not a hand-maintained topic list that could drift.
+// The scan is computeRecognitionGapsCH, the same census compute-completeness
+// -ch publishes as recognition_ok, so the two cannot disagree. Exit code is
+// non-zero when any gap exists, or when the range read no shapes at all, so
+// cron / CI can gate on it. Uses the same dispatcher the indexer builds from
+// ingestion.enabled_sources, so the verdict reflects what the deployment
+// actually handles — not a hand-maintained topic list that could drift.
 func verifyRecognition(args []string) error {
 	fs := flag.NewFlagSet("verify-recognition", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	from := fs.Uint("from", 0, "First ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "Last ledger sequence (inclusive, required)")
+	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (the event shapes come from the lake's contract_events)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -66,35 +68,12 @@ func verifyRecognition(args []string) error {
 		return err
 	}
 
-	disp, err := buildCensusDispatcher(cfg, gatedOpts, seedOpt)
+	gaps, err := computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, uint32(*from), uint32(*to), seedOpt)
 	if err != nil {
-		return err
+		return fmt.Errorf("recognition scan: %w", err)
 	}
-
-	samples, err := store.DistinctSorobanTopicSamples(ctx, uint32(*from), uint32(*to))
-	if err != nil {
-		return fmt.Errorf("distinct topic samples: %w", err)
-	}
-	fmt.Fprintf(os.Stderr, "verify-recognition: %d distinct (contract, topic) shape(s) in ledgers [%d, %d]\n",
-		len(samples), *from, *to)
-
-	// Zero shapes is a BROKEN CHECK, not a clean range: no samples means
-	// no gaps means "OK — every on-chain event shape is recognized",
-	// asserting recognition coverage over a window it read nothing from.
-	// Reachable for any pre-Soroban range and for every range once
-	// soroban_events is retention-dropped or decommissioned (BACKLOG
-	// #803). Same fail-closed posture verify-hashchain already takes
-	// (cold audit 2026-08-04).
-	if len(samples) == 0 {
-		return fmt.Errorf(
-			"verify-recognition read 0 event shapes in ledgers [%d, %d] — "+
-				"the source table is empty for this range; refusing to certify recognition coverage vacuously",
-			*from, *to)
-	}
-
-	gaps := completeness.AuditRecognition(samples, disp)
 	if len(gaps) == 0 {
-		fmt.Fprintln(os.Stderr, "verify-recognition: OK — every on-chain event shape is recognized by a decoder")
+		fmt.Fprintf(os.Stderr, "verify-recognition: OK — every on-chain event shape in ledgers [%d, %d] is recognized by a decoder\n", *from, *to)
 		return nil
 	}
 

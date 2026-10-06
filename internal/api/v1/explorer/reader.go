@@ -292,6 +292,10 @@ type ExplorerReader interface {
 	SACAssetFromEvents(ctx context.Context, contractID string) (string, bool, error)
 	AccountsUnspendable(ctx context.Context, accountIDs []string) (map[string]bool, error)
 	AccountMovements(ctx context.Context, address string, limit int, cur clickhouse.AccountMovementCursor, filter clickhouse.AccountMovementFilter) ([]clickhouse.AccountMovementRow, error)
+	AssetMovements(ctx context.Context, asset string, limit int, cur clickhouse.AccountMovementCursor, maxLedger uint32) ([]clickhouse.AssetMovementRow, error)
+	// AssetMovementsBackfilledThru is the ledger movements_by_asset's history
+	// copy is verified through; 0 = only rows since its MV was created.
+	AssetMovementsBackfilledThru(ctx context.Context) (uint32, error)
 	// Cap67MovementsWatermark is the highest ledger the cap67 movement
 	// derive (inventory #1) has completed through — 0 when the feed
 	// isn't provisioned. The movements handler floors its Postgres tail

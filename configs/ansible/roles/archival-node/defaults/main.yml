@@ -764,6 +764,12 @@ stellarindex_enabled_sources:
   # and nothing fails loudly in between. A CI gate for that invariant is
   # being built separately; this entry is the immediate fix.
   - "upshift"
+
+  # spectra — factory-anchored (pt_deployed admits a PT, its yt_deployed the
+  # YT) plus a hand-kept set; all eight WASM hashes are audited
+  # (docs/operations/wasm-audits/spectra.md). A new projector starts at
+  # genesis 63,778,088 and walks history itself.
+  - "spectra"
 # The declared counterpart of the list above: every source whose decoder
 # has shipped (it is in internal/config/validate.go's KnownSources) but
 # which we deliberately do NOT run yet — a work-in-progress, or one
@@ -788,8 +794,7 @@ stellarindex_enabled_sources:
 # coverage_pct=0, watermark_ledger=genesis-1 on /v1/coverage — the
 # permanently-red row that teaches everyone to ignore the board. Deferring
 # the source means deferring the claim about it too.
-stellarindex_sources_not_yet_enabled:
-  spectra: "wiring only; enable + seed + replay is a follow-up PR (WASM backfill audit gate)"
+stellarindex_sources_not_yet_enabled: {}
 
 # Earliest ledger to backfill from on a fresh install (no persisted
 # cursor yet). 0 = refuse to start without a cursor — operator must

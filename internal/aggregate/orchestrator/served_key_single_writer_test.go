@@ -59,6 +59,13 @@ func (s *recordingStream) PublishClosedBucket(
 	return nil
 }
 
+func (s *recordingStream) PublishFrozenBucket(
+	_ context.Context, pair canonical.Pair, _ time.Duration, observedAt, _ time.Time,
+) error {
+	s.events = append(s.events, streamEvent{pair.String(), "frozen", observedAt})
+	return nil
+}
+
 // A pair that is both a direct pair and a triangulation target has one
 // writer per tick on its served key. Two ticks inside one closed bucket —
 // the deciding tick and a replaying one — must never write the direct

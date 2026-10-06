@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 
@@ -20,14 +19,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
+	"github.com/Stellar-Index/StellarIndex/internal/redistest"
 )
 
-func newRLRedis(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
+func newRLRedis(t *testing.T) (*redis.Client, *redistest.Server) {
 	t.Helper()
-	mr := miniredis.RunT(t)
-	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = c.Close() })
-	return c, mr
+	s := redistest.Run(t)
+	return s.Client, s
 }
 
 // newDownRedis returns a client whose every dial fails, in one attempt.

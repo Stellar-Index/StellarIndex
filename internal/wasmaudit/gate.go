@@ -25,7 +25,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -233,9 +232,6 @@ func ContractSet(ctx context.Context, d Deps, source string, tip uint32) ([]stri
 		add(blend_backstop.MainnetBackstopV2, blend_backstop.MainnetBackstopV1)
 	case soroswap_router.SourceName:
 		add(soroswap_router.MainnetRouter)
-	case spectra.SourceName:
-		add(spectra.MainnetGatedSet()...)
-		add(spectra.MainnetInfrastructure...)
 	case reflector.SourceDEX:
 		add(d.Oracle.Reflector.DEXContract)
 	case reflector.SourceCEX:

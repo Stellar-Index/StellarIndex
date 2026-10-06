@@ -325,6 +325,14 @@ func (s *stubExplorerReader) AccountMovements(_ context.Context, _ string, _ int
 	return s.movements, s.err
 }
 
+func (s *stubExplorerReader) AssetMovements(_ context.Context, _ string, _ int, _ clickhouse.AccountMovementCursor, _ uint32) ([]clickhouse.AssetMovementRow, error) {
+	return nil, s.err
+}
+
+func (s *stubExplorerReader) AssetMovementsBackfilledThru(context.Context) (uint32, error) {
+	return 0, s.err
+}
+
 // AccountSponsors mirrors the real reader's contract: a snapshot with no
 // covered span is not servable, however many board rows it carries.
 func (s *stubExplorerReader) AccountSponsors(_ context.Context, limit int, account string) (clickhouse.AccountSponsors, bool, error) {

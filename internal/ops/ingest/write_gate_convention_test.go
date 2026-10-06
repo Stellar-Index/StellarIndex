@@ -61,7 +61,7 @@ func TestPreviewPathsNeverReachTheStore(t *testing.T) {
 		if curated == "" {
 			t.Skip("no curated-only gated source in the registry")
 		}
-		got, err := seedOneGatedSource(ctx, store, false, curated, 100)
+		got, err := seedOneGatedSource(ctx, lakeSeedStore{Store: store}, false, curated, 100)
 		if err != nil {
 			t.Fatalf("preview of %s returned %v, want nil", curated, err)
 		}

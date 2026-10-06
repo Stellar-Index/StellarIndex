@@ -846,10 +846,10 @@ func contains(s, sub string) bool {
 }
 
 // TestNewDataGapGateContext_HasDeadline is the RLT-409 regression: the
-// data-gap gate queries (FindSorobanEventsLedgerGaps / the classic
-// gate) must run under a bounded context, not the raw SIGINT/SIGTERM
-// rootCtx, because the unpruned fallback scan they can take can wedge
-// resume-stalled indefinitely with no deadline to bound it.
+// data-gap gate queries (the per-decoder and classic gap scans) must
+// run under a bounded context, not the raw SIGINT/SIGTERM rootCtx,
+// because a full-table scan can wedge resume-stalled indefinitely with
+// no deadline to bound it.
 func TestNewDataGapGateContext_HasDeadline(t *testing.T) {
 	rootCtx := context.Background()
 	if _, ok := rootCtx.Deadline(); ok {
@@ -939,6 +939,36 @@ func TestGateSourcePolicySkipsRefusedCursors(t *testing.T) {
 	}
 	if plans[0].skip {
 		t.Error("gateSourcePolicy must not mutate its input")
+	}
+}
+
+// TestGateSourcePolicyRawSorobanEvents pins that a raw soroban-events
+// cursor is skipped only when projection reads the ClickHouse lake; with it
+// off the projector reads Postgres soroban_events, so the gap is real.
+func TestGateSourcePolicyRawSorobanEvents(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		chSource bool
+		wantSkip bool
+	}{
+		{"clickhouse projector source on", true, true},
+		{"clickhouse projector source off", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var cfg config.Config
+			cfg.Storage.ClickHouseProjectorSource = tc.chSource
+			plans := []stalledCursorPlan{{sources: []string{SorobanEventsPseudoSource}, rangeFrom: 10, rangeTo: 20}}
+			got := gateSourcePolicy(plans, cfg)[0]
+			if got.skip != tc.wantSkip || got.skipRawSorobanEvents != tc.wantSkip {
+				t.Fatalf("skip=%v raw=%v, want %v", got.skip, got.skipRawSorobanEvents, tc.wantSkip)
+			}
+			if tc.wantSkip && !strings.Contains(got.skipReason, "soroban-events landing-zone cursor") {
+				t.Errorf("skip needs a reason, got %q", got.skipReason)
+			}
+			if !tc.wantSkip && got.skipReason != "" {
+				t.Errorf("must take the previous gate path, got reason %q", got.skipReason)
+			}
+		})
 	}
 }
 

@@ -98,7 +98,10 @@ func NewSubscriber(cache RedisSubscriber, channel string, hub Hub, logger *slog.
 // claim reports whether ev is the first event for its bucket on topic,
 // recording it if so. A repeat of the newest bucket (a second aggregator,
 // a restart overlap) or an older one (a delayed or replayed message) is
-// refused, so each topic carries one frame per bucket, in order.
+// refused, so each topic carries one frame per bucket, in order. Kind is
+// deliberately not part of the key: a bucket is either priced or frozen,
+// and keying on it would let a delayed frame for an older bucket follow a
+// newer one of the other kind.
 func (s *Subscriber) claim(topic string, ev *ClosedBucketEvent, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -292,22 +295,45 @@ func (s *Subscriber) handleMessage(payload []byte) {
 		obs.APIStreamSubscribeTotal.WithLabelValues(outcomeDuplicate).Inc()
 		return
 	}
-	// Fan out the DOCUMENTED envelope shape built from the validated
-	// struct (cold audit 2026-08-03: the raw ClosedBucketEvent shape
-	// shared zero field names with the /price/stream OpenAPI example,
-	// and the two producers emitted incompatible shapes). Building from
-	// the validated struct also keeps the sanitization property: any
-	// attacker-injected extra fields in the raw payload are dropped
-	// here.
-	//
-	// as_of is ObservedAt: the end of the closed 1-minute bucket the
-	// orchestrator decided the window at (refreshPairWindow), over
-	// [ObservedAt-window, ObservedAt). Deriving it from the event rather
-	// than the local clock keeps every subscriber's payload byte-identical
-	// (ADR-0015), as streampublish does for its 60 s series.
-	// It is also the dedupe key in [Subscriber.claim]: refreshPairWindow
-	// publishes once per closed bucket.
-	sanitized, err := json.Marshal(closedBucketEnvelope{
+	eventType, sanitized, err := sseFrame(&ev)
+	if err != nil {
+		// Marshalling a fully-typed, already-decoded struct cannot
+		// fail; defensive for static analysis only.
+		obs.APIStreamSubscribeTotal.WithLabelValues(outcomeMalformed).Inc()
+		s.logger.Warn("redispub: re-marshal validated event", "err", err)
+		return
+	}
+	s.hub.Publish(topic, eventType, sanitized)
+	obs.APIStreamSubscribeTotal.WithLabelValues(outcomeOK).Inc()
+}
+
+// sseFrame renders a validated event as its /v1/price/stream frame: a
+// price_update carrying the DOCUMENTED envelope shape, or a price_frozen
+// carrying the shape the 60-second series' price_frozen uses. Building from
+// the validated struct, not the raw payload, drops any extra fields an
+// attacker injected.
+//
+// as_of is ObservedAt: the end of the closed 1-minute bucket the
+// orchestrator decided the window at (refreshPairWindow), over
+// [ObservedAt-window, ObservedAt). Deriving it from the event rather
+// than the local clock keeps every subscriber's payload byte-identical
+// (ADR-0015), as streampublish does for its 60 s series.
+func sseFrame(ev *ClosedBucketEvent) (eventType string, data []byte, err error) {
+	if ev.Kind == KindFrozen {
+		data, err = json.Marshal(frozenBucketEnvelope{
+			Data: frozenBucketWireData{
+				AssetID:       ev.Asset,
+				Quote:         ev.Quote,
+				ObservedAt:    wiretime.Time(ev.ObservedAt),
+				WindowSeconds: ev.WindowSeconds,
+				FrozenSince:   (*wiretime.Time)(ev.FrozenSince),
+			},
+			AsOf:  wiretime.Time(ev.ObservedAt),
+			Flags: frozenFlags{Frozen: true, FrozenChecked: true},
+		})
+		return "price_frozen", data, err
+	}
+	data, err = json.Marshal(closedBucketEnvelope{
 		Data: closedBucketWireData{
 			AssetID:       ev.Asset,
 			Quote:         ev.Quote,
@@ -320,15 +346,7 @@ func (s *Subscriber) handleMessage(payload []byte) {
 		},
 		AsOf: wiretime.Time(ev.ObservedAt),
 	})
-	if err != nil {
-		// Marshalling a fully-typed, already-decoded struct cannot
-		// fail; defensive for static analysis only.
-		obs.APIStreamSubscribeTotal.WithLabelValues(outcomeMalformed).Inc()
-		s.logger.Warn("redispub: re-marshal validated event", "err", err)
-		return
-	}
-	s.hub.Publish(topic, "price_update", sanitized)
-	obs.APIStreamSubscribeTotal.WithLabelValues(outcomeOK).Inc()
+	return "price_update", data, err
 }
 
 // closedBucketEnvelope is the SSE wire shape fanned out to
@@ -352,6 +370,28 @@ type closedBucketWireData struct {
 	WindowSeconds int64          `json:"window_seconds"`
 	Truncated     *bool          `json:"truncated,omitempty"`
 	CoveredFrom   *wiretime.Time `json:"covered_from,omitempty"`
+}
+
+// frozenBucketEnvelope is the price_frozen frame. The aggregator is the
+// freeze's author, so frozen is a checked verdict; stale is not evaluated
+// on this path and is absent.
+type frozenBucketEnvelope struct {
+	Data  frozenBucketWireData `json:"data"`
+	AsOf  wiretime.Time        `json:"as_of"`
+	Flags frozenFlags          `json:"flags"`
+}
+
+type frozenBucketWireData struct {
+	AssetID       string         `json:"asset_id"`
+	Quote         string         `json:"quote"`
+	ObservedAt    wiretime.Time  `json:"observed_at"`
+	WindowSeconds int64          `json:"window_seconds"`
+	FrozenSince   *wiretime.Time `json:"frozen_since,omitempty"`
+}
+
+type frozenFlags struct {
+	Frozen        bool `json:"frozen"`
+	FrozenChecked bool `json:"frozen_checked"`
 }
 
 const (
@@ -414,10 +454,32 @@ func validateEvent(ev *ClosedBucketEvent, now time.Time) error {
 	if ev.ObservedAt.Before(now.Add(-observedAtMaxAge)) {
 		return fmt.Errorf("%w: %s", errObservedAtStale, ev.ObservedAt.Format(time.RFC3339))
 	}
-	if _, err := parseValueDecimal(ev.ValueDecimal); err != nil {
-		return err
+	switch ev.Kind {
+	case "":
+		if _, err := parseValueDecimal(ev.ValueDecimal); err != nil {
+			return err
+		}
+		if ev.FrozenSince != nil {
+			return errors.New("frozen_since on a price event")
+		}
+		return validateCoverage(ev)
+	case KindFrozen:
+		return validateFrozen(ev)
+	default:
+		return fmt.Errorf("unknown kind %q", ev.Kind)
 	}
-	return validateCoverage(ev)
+}
+
+// validateFrozen rejects a frozen event carrying any part of a value, or
+// a frozen_since after the bucket it stands in for.
+func validateFrozen(ev *ClosedBucketEvent) error {
+	if ev.ValueDecimal != "" || ev.Truncated != nil || ev.CoveredFrom != nil {
+		return errors.New("frozen event carries a value")
+	}
+	if ev.FrozenSince != nil && (ev.FrozenSince.IsZero() || ev.FrozenSince.After(ev.ObservedAt)) {
+		return fmt.Errorf("frozen_since %s not at or before observed_at", ev.FrozenSince.Format(time.RFC3339))
+	}
+	return nil
 }
 
 // validateCoverage rejects a covered_from that is not the truncation

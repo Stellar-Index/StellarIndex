@@ -525,6 +525,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/assets/{asset_id}/movements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every movement of one asset, newest first.
+         * @description The movement archive (`stellar.account_movements`) re-keyed by asset
+         *     (`stellar.movements_by_asset`): one entry per movement, with `from`
+         *     and `to` (a side the decoder does not attribute — a claimable-balance
+         *     create, a liquidity-pool leg — is omitted). Keyset-paged with
+         *     `?cursor=` (echo back `next_cursor`).
+         *
+         *     `asset_id` is folded to the id the archive stores: `XLM`,
+         *     `crypto:XLM` and the native SAC read as `native`; `CODE:ISSUER` and a
+         *     classic asset's SAC address read as `CODE-ISSUER`; any other `C…`
+         *     contract id is a Soroban token read as itself. Off-chain ids
+         *     (`fiat:`, `crypto:` other than XLM, `rwa:`) return 400.
+         *
+         *     CEILING: the feed ends at `through_ledger`, the CAP-67 movement
+         *     derive's watermark (or just below P23, ledger 58,762,517, when the
+         *     derive has never run or its watermark cannot be read — the response
+         *     is then `flags.degraded`). It has no recent tail: movements above the
+         *     watermark appear as the derive follows the tip. Kind scope matches
+         *     `/accounts/{g_strkey}/movements` and `coverage_note` names it.
+         *
+         *     LOWER BOUND: until the operator verifies the asset-keyed copy's
+         *     history backfill, the copy holds only movements written since it was
+         *     created, so `lower_bound` is true and older pages end early.
+         *     `/accounts/{g_strkey}/movements` serves each account's full archive.
+         *     Amounts are integer strings in the asset's smallest unit (ADR-0003),
+         *     scaled by `decimals` when known.
+         */
+        get: operations["getAssetMovements"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/price": {
         parameters: {
             query?: never;
@@ -986,7 +1030,7 @@ export interface paths {
          *       `as_of`); `flags` / `sources` are present only when the
          *       publishing path evaluated them — absent flags mean "not
          *       evaluated", never "fresh". The aggregator's 300 / 3600 /
-         *       86400 series carry neither.
+         *       86400 series carry neither on `price_update`.
          *     - The 60-second series (`window_seconds=60`, operator-configured
          *       pairs) carries `flags.stale`, and `flags.frozen_checked: true`
          *       when the ADR-0019 freeze marker was read for every spelling
@@ -999,6 +1043,16 @@ export interface paths {
          *       would have carried) — because that
          *       bucket is the value the freeze refused (`/v1/price` serves
          *       the held value or refuses instead).
+         *     - The aggregator's 300 / 3600 / 86400 series do the same: a
+         *       bucket the ADR-0019 anomaly freeze refused is published as a
+         *       `price_frozen` event in place of its `price_update`, once per
+         *       bucket, with the same `data` fields and no `price`, plus
+         *       `frozen_since` — the `observed_at` of the first bucket the
+         *       freeze refused (absent when the aggregator does not know it).
+         *       `flags` is `{"frozen": true, "frozen_checked": true}`; `stale`
+         *       is not evaluated on these series and is absent. A frozen
+         *       series is therefore never silent: heartbeats alone mean no
+         *       bucket closed, not a freeze.
          *     - `observed_at` and `as_of` are both the END of the closed
          *       1-minute bucket the event was computed at, so they are
          *       equal on every event. `price` is the VWAP over
@@ -7659,9 +7713,8 @@ export interface components {
          *       answer 503 `price-unavailable` and `/v1/price/batch` omits
          *       the row, rather than publish the refused bucket. Only fires
          *       on `/v1/price`, `/v1/price/batch`, `/v1/oracle/lastprice` +
-         *       `/v1/oracle/x_last_price`, and on the 60-second
-         *       `/v1/price/stream` series' `price_frozen` event (which
-         *       carries no value); tip, observations and the `/v1/assets`
+         *       `/v1/oracle/x_last_price`, and on `/v1/price/stream`'s
+         *       `price_frozen` event (which carries no value); tip, observations and the `/v1/assets`
          *       price columns ignore freeze.
          *     - `frozen_checked` — true only when the freeze marker was
          *       actually read (looker wired and the read succeeded). When
@@ -14414,6 +14467,109 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    getAssetMovements: {
+        parameters: {
+            query?: {
+                /** @description Maximum movements to return (1-200, default 25). Out-of-range values return 400. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's next_cursor. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
+                 *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
+                 *     validated per SEP-23. The handler is strict — short symbols
+                 *     like `XLM` or `USDC` are NOT accepted here; use `native` or
+                 *     the full `<code>-<G…>` form.
+                 * @example native
+                 */
+                asset_id: components["parameters"]["AssetIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The asset's movement feed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "movements": [
+                     *           {
+                     *             "ledger": 64802900,
+                     *             "ledger_close_time": "2026-10-06T14:02:29Z",
+                     *             "tx_hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
+                     *             "op_index": 0,
+                     *             "leg_index": 0,
+                     *             "movement_kind": "transfer",
+                     *             "from": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "to": "GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N",
+                     *             "amount": "1000000000000",
+                     *             "decimals": 7,
+                     *             "provenance": "cap67_derived"
+                     *           }
+                     *         ],
+                     *         "next_cursor": "64802900.be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36.0.0",
+                     *         "through_ledger": 64802921,
+                     *         "lower_bound": true,
+                     *         "coverage_note": "movements through ledger 64802921 from the movement archive derived from the CAP-67 event lake (derive progress, not a verified completeness verdict); …"
+                     *       },
+                     *       "as_of": "2026-10-06T14:03:31Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "degraded": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            asset: string;
+                            movements: {
+                                /** Format: int64 */
+                                ledger: number;
+                                /** Format: date-time */
+                                ledger_close_time: string;
+                                tx_hash: string;
+                                /** Format: int64 */
+                                op_index: number;
+                                /** Format: int64 */
+                                leg_index: number;
+                                movement_kind: string;
+                                from?: string;
+                                to?: string;
+                                /** @description Integer amount in the asset's smallest unit (ADR-0003). */
+                                amount: string;
+                                /** @description Scale of amount; omitted when unresolved. */
+                                decimals?: number;
+                                provenance: string;
+                                attributes?: {
+                                    [key: string]: unknown;
+                                };
+                            }[];
+                            next_cursor?: string;
+                            /**
+                             * Format: int64
+                             * @description Newest ledger this feed may serve.
+                             */
+                            through_ledger: number;
+                            /** @description True while the asset-keyed history backfill is unverified: older history may be missing. */
+                            lower_bound: boolean;
+                            coverage_note: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     getPrice: {
         parameters: {
             query: {
@@ -15155,6 +15311,10 @@ export interface operations {
                      *     id: 0198a4203f100002
                      *     event: price_update
                      *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159701882234","price_type":"vwap","observed_at":"2026-05-05T14:36:00Z","window_seconds":300},"as_of":"2026-05-05T14:36:00Z"}
+                     *
+                     *     id: 0198a4203f100003
+                     *     event: price_frozen
+                     *     data: {"data":{"asset_id":"native","quote":"fiat:USD","observed_at":"2026-05-05T14:37:00Z","window_seconds":300,"frozen_since":"2026-05-05T14:37:00Z"},"as_of":"2026-05-05T14:37:00Z","flags":{"frozen":true,"frozen_checked":true}}
                      */
                     "text/event-stream": string;
                 };

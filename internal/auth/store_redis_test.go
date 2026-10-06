@@ -8,21 +8,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/redistest"
 )
 
 // newTestStore wires miniredis + a store with a fixed clock and a
 // deterministic entropy source. The entropy source emits an
 // incrementing byte pattern so generated KeyIDs / plaintexts are
 // reproducible.
-func newTestStore(t *testing.T) (*RedisAPIKeyStore, *miniredis.Miniredis, time.Time) {
+func newTestStore(t *testing.T) (*RedisAPIKeyStore, *redistest.Server, time.Time) {
 	t.Helper()
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
+	mr := redistest.Run(t)
 
 	now := time.Date(2026, 4, 27, 18, 0, 0, 0, time.UTC)
 	var counter byte
@@ -33,7 +31,7 @@ func newTestStore(t *testing.T) (*RedisAPIKeyStore, *miniredis.Miniredis, time.T
 		}
 		return len(b), nil
 	}
-	s := NewRedisAPIKeyStore(rdb,
+	s := NewRedisAPIKeyStore(mr.Client,
 		WithStoreClock(fixedClock(now)),
 		withRandRead(deterministic))
 	return s, mr, now
@@ -186,9 +184,7 @@ func TestRedisAPIKeyStore_CreatePropagatesExpiry(t *testing.T) {
 // load-bearing: a caller that ignores the error must not be able
 // to surface a key that was never stored.
 func TestRedisAPIKeyStore_CreateRedisFailureDoesNotLeakPlaintext(t *testing.T) {
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
+	mr := redistest.Run(t)
 
 	now := time.Date(2026, 4, 27, 18, 0, 0, 0, time.UTC)
 	var counter byte
@@ -199,11 +195,11 @@ func TestRedisAPIKeyStore_CreateRedisFailureDoesNotLeakPlaintext(t *testing.T) {
 		}
 		return len(b), nil
 	}
-	store := NewRedisAPIKeyStore(rdb,
+	store := NewRedisAPIKeyStore(mr.Client,
 		WithStoreClock(fixedClock(now)),
 		withRandRead(deterministic))
 
-	mr.Close() // simulate Redis outage
+	mr.Kill() // simulate Redis outage
 
 	rec, plaintext, err := store.Create(context.Background(), CreateAPIKeyRequest{
 		Identifier: "owner-doomed",

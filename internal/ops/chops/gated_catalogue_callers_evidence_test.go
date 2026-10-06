@@ -90,7 +90,7 @@ func TestCatalogueConsumers_WarmBeforeAnythingReadsTheDecoders(t *testing.T) {
 			file:     "verify_reconciliation.go",
 			fn:       "verifyReconciliation",
 			warm:     "warmCatalogueGates(ctx, store, slog.Default(), catalogue)",
-			firstUse: "preseedFactoryChildren(",
+			firstUse: "verifyReconExpected(",
 			why:      "same comparison, operator-invoked: it would report a mismatch that is not in the data",
 		},
 		{

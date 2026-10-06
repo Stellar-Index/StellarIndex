@@ -170,7 +170,7 @@ func TestSDEXProjectionOracles_RouteThroughTheServedProjection(t *testing.T) {
 	}
 	for file, fn := range map[string]string{
 		"ch_reproject.go":          "chReproject",
-		"verify_reconciliation.go": "verifyReconciliation",
+		"verify_reconciliation.go": "verifyReconExpected",
 		"compute_completeness.go":  "reconcileSourceProjection",
 	} {
 		body := funcBodyFrom(mustRead(t, file), fn)
