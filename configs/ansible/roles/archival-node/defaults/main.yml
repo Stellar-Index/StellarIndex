@@ -788,7 +788,8 @@ stellarindex_enabled_sources:
 # coverage_pct=0, watermark_ledger=genesis-1 on /v1/coverage — the
 # permanently-red row that teaches everyone to ignore the board. Deferring
 # the source means deferring the claim about it too.
-stellarindex_sources_not_yet_enabled: {}
+stellarindex_sources_not_yet_enabled:
+  spectra: "wiring only; enable + seed + replay is a follow-up PR (WASM backfill audit gate)"
 
 # Earliest ledger to backfill from on a fresh install (no persisted
 # cursor yet). 0 = refuse to start without a cursor — operator must

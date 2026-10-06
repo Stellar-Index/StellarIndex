@@ -23,7 +23,7 @@ go-lines internal/config/config.go 2494
 go-lines internal/dispatcher/dispatcher.go 2234
 go-lines internal/obs/metrics.go 5981
 go-lines internal/ops/chops/compute_completeness.go 2818
-go-lines internal/pipeline/sink.go 2684
+go-lines internal/pipeline/sink.go 2687
 go-lines internal/storage/clickhouse/explorer_reader.go 3145
 go-lines internal/storage/timescale/aggregates.go 2644
 go-lines internal/storage/timescale/asset_catalogue.go 2414

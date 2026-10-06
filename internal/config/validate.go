@@ -52,6 +52,7 @@ var KnownSources = map[string]struct{}{
 	"rozo":            {},
 	"sorocredit":      {},
 	"sushiswap_v3":    {},
+	"spectra":         {},
 	"upshift":         {},
 }
 

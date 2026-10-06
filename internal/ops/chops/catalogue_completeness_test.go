@@ -179,6 +179,11 @@ var projRoutes = []projRoute{
 	// persist arm and need no route.
 	{typeName: "upshift.Event", table: "upshift_vault_events", kind: "upshift.vault_event", disp: reconciledByKind},
 
+	// ── spectra ──
+	// Not yet enabled: lint-source-enablement.sh refuses a catalogue entry
+	// for a deferred source, so the claim is deferred with it.
+	{typeName: "spectra.Event", table: "spectra_events", disp: noReconcile, reason: "not yet enabled; the reconSource entry lands with the enable (INV-2044)"},
+
 	// ── blend (five kinds across four tables) ──
 	{typeName: "blend.NewAuctionEvent", table: "blend_auctions", disp: reconciledByKind},
 	{typeName: "blend.FillAuctionEvent", table: "blend_auctions", disp: reconciledByKind},

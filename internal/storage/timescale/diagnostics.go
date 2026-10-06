@@ -771,6 +771,8 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 //	                                 four literal source 'sorocredit'.
 //	upshift_vault_events           — Upshift vault deposit/withdraw/…;
 //	                                 literal source 'upshift'.
+//	spectra_events                 — Spectra registry/market events;
+//	                                 literal source 'spectra'.
 //
 // [TestSeedSourceEntryCountsFoldsEveryPerSourceHypertable] holds this
 // list in lockstep with DefaultGapDetectorTargets: a per-source table
@@ -932,6 +934,8 @@ const seedSourceEntryCountsSQL = `
             SELECT 'sorocredit'         AS source, count(*) AS c FROM credit_events
             UNION ALL
             SELECT 'upshift'            AS source, count(*) AS c FROM upshift_vault_events
+            UNION ALL
+            SELECT 'spectra'            AS source, count(*) AS c FROM spectra_events
         ) u
         GROUP BY source
         ON CONFLICT (source) DO UPDATE

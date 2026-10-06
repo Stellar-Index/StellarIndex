@@ -49,6 +49,8 @@ tests:
         values: '31x120'
       - series: 'stellarindex_wasm_drift_source_unaudited{job="node_exporter", instance="r1:9100", source="upshift"}'
         values: '1x120'
+      - series: 'stellarindex_wasm_drift_source_unaudited{job="node_exporter", instance="r1:9100", source="spectra"}'
+        values: '1x120'
     alert_rule_test:
       - eval_time: 90m
         alertname: stellarindex_wasm_drift

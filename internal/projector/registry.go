@@ -21,6 +21,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
@@ -132,6 +133,7 @@ var KnownProjectorSources = map[string]struct{}{
 	aquarius.SourceName:        {},
 	phoenix.SourceName:         {},
 	sushiswap_v3.SourceName:    {},
+	spectra.SourceName:         {},
 	upshift.SourceName:         {},
 	comet.SourceName:           {},
 	blend.SourceName:           {},
@@ -188,6 +190,18 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 			Decoder:         sushiDec,
 			ContractIDsFunc: sushiDec.GatedContractSet,
 			Genesis:         sushiswap_v3.FactoryGenesisLedger,
+		}, true, nil
+	case spectra.SourceName:
+		// ADR-0035: factory-anchored plus a hand-kept set. The prefilter is the
+		// decoder's own gate set, re-read each cycle because it grows in-stream
+		// (pt_deployed admits a PT, the PT's yt_deployed its YT); no topic
+		// exclusion, since PT/YT `transfer` rows are kept.
+		spectraDec := spectra.NewDecoder(gated[spectra.SourceName]...)
+		return Source{
+			Name:            spectra.SourceName,
+			Decoder:         spectraDec,
+			ContractIDsFunc: spectraDec.GatedContractSet,
+			Genesis:         spectra.GenesisLedger,
 		}, true, nil
 	case upshift.SourceName:
 		// ADR-0035/0040: contract-gated (curated set — the vaults have no

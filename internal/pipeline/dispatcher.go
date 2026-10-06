@@ -53,6 +53,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/trustlines"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
@@ -74,6 +75,7 @@ var SorobanSourceNames = []string{
 	comet.SourceName,
 	sushiswap_v3.SourceName,
 	upshift.SourceName,
+	spectra.SourceName,
 	reflector.SourceDEX,
 	reflector.SourceCEX,
 	reflector.SourceFX,
@@ -149,6 +151,8 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 			decoders = append(decoders, sushiswap_v3.NewDecoder(gated[sushiswap_v3.SourceName]...))
 		case upshift.SourceName:
 			decoders = append(decoders, upshift.NewDecoder(gated[upshift.SourceName]...))
+		case spectra.SourceName:
+			decoders = append(decoders, spectra.NewDecoder(gated[spectra.SourceName]...))
 		case reflector.SourceDEX:
 			if oracle.Reflector.DEXContract == "" {
 				return nil, fmt.Errorf(
