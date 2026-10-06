@@ -244,27 +244,84 @@ func TestWebhookPublishSitesAreGated(t *testing.T) {
 
 // webhookPublishAndGate reports whether body calls X.Publish with a
 // platform.WebhookEvent* argument, and whether it asks a pricingguard.Gate.
+// A call through a method value (send := pub.Publish; send(...)) publishes
+// too. The gate side stays call-only: a bare reference asks nothing.
 func webhookPublishAndGate(body *ast.BlockStmt) (publishes, gated bool) {
+	senders := publishMethodValues(body)
 	ast.Inspect(body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		switch sel.Sel.Name {
-		case "PriceWithheld", "PriceWithholding", "PriceWithholdingAt":
-			gated = true
-		case "Publish", "PublishOnce":
-			for _, arg := range call.Args {
-				if a, ok := arg.(*ast.SelectorExpr); ok && strings.HasPrefix(a.Sel.Name, "WebhookEvent") {
-					publishes = true
-				}
+		switch fun := call.Fun.(type) {
+		case *ast.SelectorExpr:
+			switch fun.Sel.Name {
+			case "PriceWithheld", "PriceWithholding", "PriceWithholdingAt":
+				gated = true
+			case "Publish", "PublishOnce":
+				publishes = publishes || passesWebhookEvent(call)
 			}
+		case *ast.Ident:
+			publishes = publishes || (senders[fun.Name] && passesWebhookEvent(call))
 		}
 		return true
 	})
 	return publishes, gated
+}
+
+// publishMethodValues returns the locals body binds to a Publish or
+// PublishOnce method value.
+func publishMethodValues(body *ast.BlockStmt) map[string]bool {
+	out := map[string]bool{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || len(as.Lhs) != len(as.Rhs) {
+			return true
+		}
+		for i, rhs := range as.Rhs {
+			sel, ok := rhs.(*ast.SelectorExpr)
+			id, isIdent := as.Lhs[i].(*ast.Ident)
+			if ok && isIdent && (sel.Sel.Name == "Publish" || sel.Sel.Name == "PublishOnce") {
+				out[id.Name] = true
+			}
+		}
+		return true
+	})
+	return out
+}
+
+func passesWebhookEvent(call *ast.CallExpr) bool {
+	for _, arg := range call.Args {
+		if a, ok := arg.(*ast.SelectorExpr); ok && strings.HasPrefix(a.Sel.Name, "WebhookEvent") {
+			return true
+		}
+	}
+	return false
+}
+
+// TestWebhookPublishScanCatchesMethodValues pins that a publish is seen
+// however the publisher is spelled, and that the gate is only a call.
+func TestWebhookPublishScanCatchesMethodValues(t *testing.T) {
+	cases := []struct {
+		name                   string
+		src                    string
+		wantPublish, wantGated bool
+	}{
+		{"direct call", `pub.Publish(ctx, platform.WebhookEventAnomalyFreeze, p)`, true, false},
+		{"method value", `send := pub.PublishOnce; send(ctx, platform.WebhookEventDivergenceFiring, k, p)`, true, false},
+		{"publisher alias", `q := pub; q.Publish(ctx, platform.WebhookEventAnomalyFreeze, p)`, true, false},
+		{"gated", `if g.PriceWithheld(ctx, a, b, "x") { return }; pub.Publish(ctx, platform.WebhookEventAnomalyFreeze, p)`, true, true},
+		{"bare gate reference is not a gate", `_ = g.PriceWithheld; pub.Publish(ctx, platform.WebhookEventAnomalyFreeze, p)`, true, false},
+		{"non-webhook publish", `send := stream.Publish; send(ctx, "channel", p)`, false, false},
+	}
+	for _, c := range cases {
+		f, err := parser.ParseFile(token.NewFileSet(), "planted.go", "package p\nfunc f() {\n"+c.src+"\n}", 0)
+		if err != nil {
+			t.Fatalf("parse %q: %v", c.src, err)
+		}
+		pub, gated := webhookPublishAndGate(f.Decls[0].(*ast.FuncDecl).Body)
+		if pub != c.wantPublish || gated != c.wantGated {
+			t.Errorf("%s: publishes=%v gated=%v, want %v %v", c.name, pub, gated, c.wantPublish, c.wantGated)
+		}
+	}
 }

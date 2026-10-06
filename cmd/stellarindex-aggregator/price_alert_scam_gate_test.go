@@ -145,20 +145,15 @@ func TestPriceAlertSeamIsGated(t *testing.T) {
 	}
 }
 
-// readsClosedVWAPBucket reports whether fn calls a store read returning a
-// closed 1m VWAP bucket.
+// readsClosedVWAPBucket reports whether fn references a store read
+// returning a closed 1m VWAP bucket on any receiver. A method value
+// (f := r.store.LatestClosedVWAP1mForPair) or a store alias
+// (st := r.store; st.LatestClosedVWAP1mForPair(...)) reads the same bucket.
 func readsClosedVWAPBucket(fn *ast.FuncDecl) bool {
 	found := false
 	ast.Inspect(fn, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
+		sel, ok := n.(*ast.SelectorExpr)
 		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		if inner, ok := sel.X.(*ast.SelectorExpr); !ok || inner.Sel.Name != "store" {
 			return true
 		}
 		if strings.Contains(sel.Sel.Name, "ClosedVWAP") {
@@ -170,7 +165,32 @@ func readsClosedVWAPBucket(fn *ast.FuncDecl) bool {
 	return found
 }
 
+// TestClosedVWAPBucketScanCatchesMethodValues pins that the seam scan sees
+// a read however it is spelled, not only as r.store.X(...).
+func TestClosedVWAPBucketScanCatchesMethodValues(t *testing.T) {
+	cases := []struct {
+		name, src string
+		want      bool
+	}{
+		{"direct call", `func (r R) f() { r.store.LatestClosedVWAP1mForPair(ctx, a, b) }`, true},
+		{"method value", `func (r R) f() { g := r.store.LatestClosedVWAP1mForPair; g(ctx, a, b) }`, true},
+		{"method passed as an argument", `func (r R) f() { apply(r.store.RecentClosedVWAP1mForPair) }`, true},
+		{"store alias", `func (r R) f() { st := r.store; st.LatestClosedVWAP1mForPair(ctx, a, b) }`, true},
+		{"unrelated store read", `func (r R) f() { r.store.LatestTrade(ctx, a, b) }`, false},
+	}
+	for _, c := range cases {
+		f, err := parser.ParseFile(token.NewFileSet(), "planted.go", "package p\n"+c.src, 0)
+		if err != nil {
+			t.Fatalf("parse %q: %v", c.src, err)
+		}
+		if got := readsClosedVWAPBucket(f.Decls[0].(*ast.FuncDecl)); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 // callsWithholdingChokepoint reports whether fn asks a pricingguard.Gate.
+// Call-only on purpose: a bare reference to PriceWithheld asks nothing.
 func callsWithholdingChokepoint(fn *ast.FuncDecl) bool {
 	found := false
 	ast.Inspect(fn, func(n ast.Node) bool {

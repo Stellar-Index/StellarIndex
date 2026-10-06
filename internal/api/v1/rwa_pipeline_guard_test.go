@@ -7,6 +7,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -84,7 +85,8 @@ func TestRWAContractPipelineMatchesTheAssetsListing(t *testing.T) {
 func assertRWAPipelineMatchesListing(t *testing.T, file, fn string) {
 	t.Helper()
 	listing := serverCallsIn(t, "assets.go", "buildAssetListPage")
-	rwa := serverCallsIn(t, file, fn)
+	// Call-only: a bare reference to a listing step does not run it.
+	rwa := stepNames(serverStepsInFile(parseGoFile(t, file), fn), true)
 	if len(listing) == 0 || len(rwa) == 0 {
 		t.Fatalf("parsed no calls (listing=%v %s=%v) — the guard is not reading what it thinks", listing, fn, rwa)
 	}
@@ -148,14 +150,17 @@ func TestDirectoryTagsPrecedeTheListingValuationArm(t *testing.T) {
 	for _, file := range packageGoFiles(t) {
 		parsed := parseGoFile(t, file)
 		for _, fn := range funcNamesIn(parsed) {
-			calls := serverCallsInFile(parsed, fn)
-			tagAt := slices.Index(calls, tags)
-			valAt := slices.Index(calls, valuation)
-			if tagAt < 0 || valAt < 0 {
+			steps := serverStepsInFile(parsed, fn)
+			calls := stepNames(steps, false)
+			if !slices.Contains(calls, tags) || !slices.Contains(calls, valuation) {
 				continue
 			}
 			checked++
-			if tagAt > valAt {
+			// The arm counts from its first reference, a method value
+			// included; the tags only from a call, which is what fills them.
+			tagAt := slices.Index(steps, serverStep{name: tags, call: true})
+			valAt := slices.Index(calls, valuation)
+			if tagAt < 0 || tagAt > valAt {
 				t.Errorf("%s:%s calls %s at step %d but %s only at step %d — "+
 					"the valuation arm reads the tags that call writes, so its scam refusal is dead.\n"+
 					"calls: %v", file, fn, valuation, valAt, tags, tagAt, calls)
@@ -212,8 +217,9 @@ func funcNamesIn(parsed *ast.File) []string {
 	return out
 }
 
-// serverCallsIn returns, in source order, the names of the `s.<name>(…)`
-// method calls made in one function of one file in this package.
+// serverCallsIn returns, in source order, the names of the Server methods
+// one function of one file in this package reaches through s: calls, and
+// method values (see serverStepsInFile).
 func serverCallsIn(t *testing.T, file, fn string) []string {
 	t.Helper()
 	return serverCallsInFile(parseGoFile(t, file), fn)
@@ -222,32 +228,155 @@ func serverCallsIn(t *testing.T, file, fn string) []string {
 // serverCallsInFile is serverCallsIn over an already-parsed file.
 func serverCallsInFile(parsed *ast.File, fn string) []string {
 	var out []string
+	for _, st := range serverStepsInFile(parsed, fn) {
+		out = append(out, st.name)
+	}
+	return out
+}
+
+// serverStep is one Server method a function reaches through s or a
+// local alias of it (srv := s). call is false for a method value
+// (f := s.gate), which runs the method when f is called.
+type serverStep struct {
+	name string
+	call bool
+}
+
+// stepNames returns the names of steps, only the calls when callsOnly.
+func stepNames(steps []serverStep, callsOnly bool) []string {
+	var out []string
+	for _, st := range steps {
+		if st.call || !callsOnly {
+			out = append(out, st.name)
+		}
+	}
+	return out
+}
+
+// serverStepsInFile returns fn's Server-method steps in source order.
+// Field reads through s (s.logger.Warn, s.AssetsReader) are not steps;
+// a non-call reference is one only when it names a Server method.
+func serverStepsInFile(parsed *ast.File, fn string) []serverStep {
+	var out []serverStep
 	for _, decl := range parsed.Decls {
 		fd, ok := decl.(*ast.FuncDecl)
-		if !ok || fd.Name.Name != fn {
+		if !ok || fd.Name.Name != fn || fd.Body == nil {
 			continue
 		}
+		recv := serverAliases(fd.Body)
+		calls := calledSelectors(fd.Body)
 		ast.Inspect(fd.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
+			sel, ok := n.(*ast.SelectorExpr)
 			if !ok {
 				return true
 			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok {
+			if id, ok := sel.X.(*ast.Ident); !ok || !recv[id.Name] {
 				return true
 			}
-			ident, ok := sel.X.(*ast.Ident)
-			if !ok || ident.Name != "s" {
-				return true
+			if calls[sel] || serverMethods()[sel.Sel.Name] {
+				out = append(out, serverStep{name: sel.Sel.Name, call: calls[sel]})
 			}
-			// Field reads through s (s.logger.Warn, s.AssetsReader.X)
-			// are not pipeline steps; only direct s.method(…) calls are.
-			if strings.Contains(sel.Sel.Name, ".") {
-				return true
-			}
-			out = append(out, sel.Sel.Name)
 			return true
 		})
 	}
 	return out
+}
+
+// calledSelectors returns every selector body calls directly (x.M(...)).
+func calledSelectors(body *ast.BlockStmt) map[*ast.SelectorExpr]bool {
+	out := map[*ast.SelectorExpr]bool{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+				out[sel] = true
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// serverAliases returns s plus every local body binds to it (srv := s).
+func serverAliases(body *ast.BlockStmt) map[string]bool {
+	out := map[string]bool{"s": true}
+	ast.Inspect(body, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || len(as.Lhs) != len(as.Rhs) {
+			return true
+		}
+		for i, rhs := range as.Rhs {
+			src, ok := rhs.(*ast.Ident)
+			dst, isIdent := as.Lhs[i].(*ast.Ident)
+			if ok && isIdent && src.Name == "s" {
+				out[dst.Name] = true
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// serverMethods is the method set of *Server, parsed once: it is what
+// tells a method value (s.gate) from a field read (s.logger).
+var serverMethods = sync.OnceValue(func() map[string]bool {
+	out := map[string]bool{}
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		panic(err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.SkipObjectResolution)
+		if err != nil {
+			panic(err)
+		}
+		for _, decl := range f.Decls {
+			if fd, ok := decl.(*ast.FuncDecl); ok && fd.Recv != nil && receiverIsServer(fd.Recv) {
+				out[fd.Name.Name] = true
+			}
+		}
+	}
+	return out
+})
+
+func receiverIsServer(recv *ast.FieldList) bool {
+	if len(recv.List) != 1 {
+		return false
+	}
+	t := recv.List[0].Type
+	if star, ok := t.(*ast.StarExpr); ok {
+		t = star.X
+	}
+	id, ok := t.(*ast.Ident)
+	return ok && id.Name == "Server"
+}
+
+// TestServerStepScanCatchesMethodValues pins that a pipeline step is seen
+// however s is spelled, and that a field read is not a step.
+func TestServerStepScanCatchesMethodValues(t *testing.T) {
+	const arm = "applyListingValuations"
+	cases := []struct {
+		name, src string
+		want      []serverStep
+	}{
+		{"direct call", `func (s *Server) f() { s.applyListingValuations(ctx, rows) }`, []serverStep{{arm, true}}},
+		{"method value", `func (s *Server) f() { g := s.applyListingValuations; g(ctx, rows) }`, []serverStep{{arm, false}}},
+		{"server alias", `func (s *Server) f() { srv := s; srv.applyListingValuations(ctx, rows) }`, []serverStep{{arm, true}}},
+		{"field reads", `func (s *Server) f() { s.logger.Warn("x"); use(s.logger) }`, nil},
+	}
+	for _, c := range cases {
+		parsed, err := parser.ParseFile(token.NewFileSet(), "planted.go", "package v1\n"+c.src, 0)
+		if err != nil {
+			t.Fatalf("parse %q: %v", c.src, err)
+		}
+		if got := serverStepsInFile(parsed, "f"); !slices.Equal(got, c.want) {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+	if !serverMethods()[arm] || serverMethods()["logger"] {
+		t.Fatal("the Server method set is wrong — the scan cannot tell a method value from a field")
+	}
 }
