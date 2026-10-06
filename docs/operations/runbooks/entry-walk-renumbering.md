@@ -123,12 +123,48 @@ passes `-write`).
 **Which partitions.** Every P23+ partition written before `f4bebbfda` must be
 re-extracted, not just those a symptom points at: positions drifted in the
 restored-change era (`c4ab63e45..f4bebbfda`) and the drift is real in those
-partitions. Per partition, in 2k-ledger slices, count the restored rows
-(`SELECT countIf(change_type = 'restored') FROM stellar.ledger_entry_changes
-WHERE ledger_seq >= a AND ledger_seq < b`) before and after.
-Restored gate (pass condition): on every 2k-ledger slice where the network
-had restores, the count is above 0, and the first restored row is at
-`ledger_seq >= 58,762,517`.
+partitions. Record the per-slice table below before and after the
+re-extract; after must be >= before on every slice.
+
+Restored gate, over `[lo, hi]` inside one partition. Table (a), restored rows
+per 2k slice, empty slices shown as 0:
+
+```sql
+SELECT intDiv(ledger_seq, 2000) AS slice, countIf(change_type = 'restored') AS restored
+FROM stellar.ledger_entry_changes
+WHERE ledger_seq BETWEEN lo AND hi
+GROUP BY slice
+ORDER BY slice WITH FILL FROM intDiv(lo, 2000) TO intDiv(hi, 2000) + 1
+```
+
+Pass condition, one query returning the failing slices (zero rows = PASS). The
+baseline `b` is independent of the table under test: slices of the raw lake's
+`stellar.operations` with at least one `RestoreFootprint` operation.
+
+```sql
+SELECT b.slice, b.restore_ops, ifNull(r.restored, 0) AS restored
+FROM (SELECT intDiv(ledger_seq, 2000) AS slice, count() AS restore_ops
+      FROM stellar.operations
+      WHERE ledger_seq BETWEEN lo AND hi AND op_type = 'OperationTypeRestoreFootprint'
+      GROUP BY slice) AS b
+LEFT JOIN (SELECT intDiv(ledger_seq, 2000) AS slice, countIf(change_type = 'restored') AS restored
+           FROM stellar.ledger_entry_changes
+           WHERE ledger_seq BETWEEN lo AND hi
+           GROUP BY slice) AS r USING (slice)
+WHERE ifNull(r.restored, 0) = 0
+ORDER BY b.slice
+```
+
+The baseline is a lower bound: P23 auto-restore inside `InvokeHostFunction`
+also yields `restored` rows with no `RestoreFootprint` op. The gate is
+necessary, not sufficient. Add the ledger floor, which must return a value
+`>= 58,762,517`:
+
+```sql
+SELECT minIf(ledger_seq, change_type = 'restored') FROM stellar.ledger_entry_changes
+WHERE ledger_seq BETWEEN lo AND hi
+```
+
 P23 starts at ledger 58,762,517, P20 at 50,457,424.
 
 **Four views are fed by every re-extract** (all run on `ch-backfill`'s inserts):
@@ -163,7 +199,7 @@ exclude by `ingested_at` date alone.
 4. STOP, needs operator approval. Run a dry count with the identical
    predicate as the delete and compare it to the expected old-row count:
    `SELECT count() FROM stellar.ledger_entry_changes WHERE ledger_seq BETWEEN lo AND hi AND ingested_at < toDateTime(T) AND NOT (tx_hash = '' AND toDate(ingested_at) = '2026-07-03')`
-   (add `AND partition` scoping as the delete will). Proceed only on a match
+   (the delete's `IN PARTITION <N>` is `_partition_id = '<N>'` here). Proceed only on a match
    and an explicit yes.
 5. Wait until no other heavy job is running (`run-heavy-job.sh` holds the
    lock). Delete the old LEC rows:
