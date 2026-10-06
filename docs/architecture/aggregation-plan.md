@@ -66,7 +66,7 @@ every `interval_seconds` (default 30):
    boundary. Eligibility needs `min_usd_volume` (default 10,000 USD);
    `max_trades_per_window` (default 10,000) bounds the scan.
 5. **Freeze / confidence** (ADR-0019) — see
-   [anomaly-freeze-and-confidence.md](anomaly-freeze-and-confidence.md).
+   [oracle-manipulation-defense.md](oracle-manipulation-defense.md#freeze-layer-9).
 6. Result to Redis at `vwap:<base>:<quote>:<window-seconds>`, TTL equal to
    the window; triangulated cross-pairs carry a `:provenance` marker.
 

@@ -7,7 +7,6 @@ related:
   - scripts/ci/render-sla-proof.sh
   - test/load/scenarios/06-mixed-realistic.js
   - docs/architecture/ha-plan.md §7.3
-  - docs/architecture/launch-readiness-backlog.md L5.* / L6.*
 ---
 
 # SLA proof procedure

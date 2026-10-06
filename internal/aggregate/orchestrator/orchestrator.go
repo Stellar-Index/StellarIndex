@@ -353,8 +353,7 @@ type Config struct {
 	// floor cannot be verified. See dropForMinUSDVolume.
 	//
 	// Default 0 = filter off. Production deployments stamp 10_000
-	// (== $10k in window) per the AggregateConfig default, matching
-	// L2.1 in `docs/architecture/launch-readiness-backlog.md`.
+	// (== $10k in window) per the AggregateConfig default.
 	MinUSDVolume float64
 
 	// OutlierSigmaThreshold, when > 0, drops trades whose

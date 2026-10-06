@@ -35,9 +35,9 @@ import (
 
 const (
 	adr0019Path = "../../../docs/adr/0019-anomaly-response-and-confidence-scoring.md"
-	// The formulas, factor constants and bootstrap gate live here; ADR-0019
-	// links to it for them.
-	adr0019DetailPath = "../../../docs/architecture/anomaly-freeze-and-confidence.md"
+	// The formulas, factor constants and bootstrap gate live here
+	// (#confidence-score); ADR-0019 links to it for them.
+	adr0019DetailPath = "../../../docs/architecture/oracle-manipulation-defense.md"
 )
 
 // squashWhitespace collapses every run of whitespace (spaces,

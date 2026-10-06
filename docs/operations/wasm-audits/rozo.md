@@ -249,7 +249,7 @@ for operator follow-up if RozoAI disputes it.
 - Procedure: [`README.md`](README.md)
 - Decoder source: [`internal/sources/rozo/{events,decode}.go`](../../../internal/sources/rozo/)
 - Source-package README: [`internal/sources/rozo/README.md`](../../../internal/sources/rozo/README.md)
-- Architecture: [`docs/architecture/rozo-stellar-coverage.md`](../../architecture/rozo-stellar-coverage.md)
+- Architecture: [`docs/protocols/rozo.md`](../../protocols/rozo.md)
 - Schema-evolution stance: [`docs/architecture/ingest-pipeline.md#contract-schema-evolution`](../../architecture/ingest-pipeline.md#contract-schema-evolution)
 - Backfill gate: `internal/sources/external/registry.go` — `Registry["rozo"].BackfillSafe`
 - Upstream contracts: <https://github.com/RozoAI/rozo-intents-contracts>

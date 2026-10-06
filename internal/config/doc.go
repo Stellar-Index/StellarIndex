@@ -34,5 +34,4 @@
 //
 // See:
 //   - docs/reference/config/README.md — generated reference.
-//   - docs/architecture/repo-hygiene-plan.md §1 — doc-code round-trip rule.
 package config

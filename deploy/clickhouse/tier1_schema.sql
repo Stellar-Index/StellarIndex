@@ -422,8 +422,8 @@ ORDER BY (contract_id, ledger_seq, tx_hash, op_index, event_index);
 -- the event's natural key (ledger_seq, tx_hash, op_index, event_index),
 -- not just sum row counts.
 --
--- events uses uniqCombined(17), NOT uniqExact (2026-07-09 incident /
--- docs/architecture/contract-events-daily-redesign.md). uniqExact's state
+-- events uses uniqCombined(17), NOT uniqExact (2026-07-09 incident).
+-- uniqExact's state
 -- is a literal hash SET that grows ~16 bytes per distinct event and is
 -- UNBOUNDED for a hot contract+day+event_type+topic group — on r1 this
 -- grew large enough that background merges of the AggregatingMergeTree
@@ -443,8 +443,9 @@ ORDER BY (contract_id, ledger_seq, tx_hash, op_index, event_index);
 -- survey for the full evidence chain.
 --
 -- Historical fill (run ONCE after creating, off-peak, windowed by
--- ledger_seq on a large existing lake — see the redesign doc's runbook
--- for the run-heavy-job-wrapped windowed form):
+-- ledger_seq on a large existing lake — see
+-- deploy/clickhouse/contract_events_daily_v2.sql for the run-heavy-job-wrapped
+-- windowed form):
 --   INSERT INTO stellar.contract_events_daily
 --   SELECT toDate(close_time) AS day, contract_id, event_type,
 --          topic_0_sym, if(topic_0_sym = '', topics_xdr[2], '') AS t1_xdr,
@@ -465,8 +466,7 @@ ORDER BY (contract_id, ledger_seq, tx_hash, op_index, event_index);
 --   -- gracefully fall back to the raw scan.
 -- The uniqCombined swap ships as a side-by-side v2 build so r1 never runs
 -- with the fast path down — see
--- deploy/clickhouse/contract_events_daily_v2.sql and
--- docs/architecture/contract-events-daily-redesign.md for the exact,
+-- deploy/clickhouse/contract_events_daily_v2.sql for the exact,
 -- tested apply sequence (this file's canonical CREATE below is what a
 -- FRESH deployment gets automatically; r1 needs the v2 runbook because
 -- IF NOT EXISTS is a no-op against its already-existing v1 table).

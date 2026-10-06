@@ -124,8 +124,7 @@ const (
 	// complementing the classic trustline-driven mints/burns
 	// already tracked by the SEP-41 supply observer per ADR-0023).
 	// Design + per-protocol event schemas at
-	// docs/architecture/cctp-stellar-coverage.md and
-	// docs/architecture/rozo-stellar-coverage.md.
+	// docs/protocols/cctp.md and docs/protocols/rozo.md.
 	ClassBridge Class = "bridge"
 )
 

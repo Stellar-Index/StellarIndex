@@ -621,9 +621,8 @@ func TestClickHouseAccountMovementsRoundTrip(t *testing.T) {
 }
 
 // TestClickHouseProtocolDailyActivityDedup is a regression test for the
-// contract_events_daily uniqExact→uniqCombined(17) redesign
-// (docs/architecture/contract-events-daily-redesign.md, 2026-07-09
-// incident): the whole point of using a uniq*-family aggregate (rather than
+// contract_events_daily uniqExact→uniqCombined(17) redesign: the whole
+// point of using a uniq*-family aggregate (rather than
 // a plain SummingMergeTree / countState()) is that a duplicate insert of the
 // SAME natural key (ledger_seq, tx_hash, op_index, event_index) — a
 // live-sink retry or a ch-rebuild re-derive re-inserting a range — does NOT

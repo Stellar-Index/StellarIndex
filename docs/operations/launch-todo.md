@@ -15,9 +15,7 @@ status: superseded — see v1-launch-plan.md
 Compiled 2026-06-30. Operator decisions then: push to launch; multi-region is
 committed (ADR-0008 / ADR-0016, 99.99% uptime claim, coverage-matrix S9.1;
 active/active is still v2, R2/R3 serve + delegate-trust); CoinGecko goes to a
-paid plan. Detail tracker (L-numbers):
-[`launch-readiness-backlog.md`](../architecture/launch-readiness-backlog.md);
-rationale: [`docs/adr/`](../adr/). `[OPS]` = operator-scale (heavy / touches
+paid plan. Rationale: [`docs/adr/`](../adr/). `[OPS]` = operator-scale (heavy / touches
 prod data); `[code]` = ordinary change.
 
 ## CURRENT STATUS (2026-06-30; the task sections below remain the P3/P4 scope)
@@ -165,5 +163,5 @@ fires daily); `sla-probe.timer` active; Blend `BackfillSafe=true`
 (coverage-matrix S3.6). coverage-matrix X1.5's "completeness cron timer not
 installed" means the *source*-completeness timer (P0-2, now installed), not
 the *archive*-completeness timer. Many architecture docs are dated snapshots
-(e.g. `stellar-focus-refactor-plan` "Proposed" while units A-C shipped):
+(a plan marked "Proposed" while its units shipped):
 stamp current status.
