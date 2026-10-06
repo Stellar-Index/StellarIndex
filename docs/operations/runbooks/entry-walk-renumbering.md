@@ -98,14 +98,14 @@ contract-calls / SEP-41 projections and does not touch this table.) Windowed,
 under `run-heavy-job.sh`, off-peak. Idempotent-corrective, so overlapping
 windows are safe.
 
-### Lake-scale repair on r1 (partitions of `ledger_entry_changes`)
+### Lake-scale repair on r1 (partitions of `ledger_entry_changes`, "LEC")
 
 Step 1 at lake scale is `ch-backfill -write -changes-only`. The flag keeps
 only each ledger's `Ledger` and `Changes`: the `stellar.ledgers` row stays as
 the commit marker, and the rewrite of txs/ops/results/events/participants/flows
-(about 1 TiB for partitions 58-64) is skipped. `-to` is **inclusive**, so
-adjacent wrapper chunks overlap by one ledger; harmless, the writes are
-idempotent. An extract error skips a ledger and `backfillCoverage` then fails
+(about 1 TiB for partitions 58-64) is skipped. `-to` is **inclusive**, but the wrapper passes
+`-to hi-1` (`scripts/ops/ordinal-rederive-chunks.sh`), so chunks do not
+overlap. An extract error skips a ledger and `backfillCoverage` then fails
 the run, so a non-zero chunk exit is a real gap.
 
 Wrapper, one partition per run (reinstall it from the repo and check its
@@ -116,7 +116,9 @@ START=<lo> BAND_END=<hi+1> BUCKET=<archive bucket> EXTRA_FLAGS=-changes-only \
   run-heavy-job.sh ord-<item>-p<N> /usr/local/sbin/ordinal-rederive-chunks.sh
 ```
 
-Run a 1k-ledger `-dry-run` first to confirm the bucket resolves.
+Run a 1k-ledger dry run first to confirm the bucket resolves: call
+`stellarindex-ops ch-backfill` directly without `-write` (the wrapper always
+passes `-write`).
 
 **Which partitions.** Every P23+ partition written before `f4bebbfda` must be
 re-extracted, not just those a symptom points at: positions drifted in the
@@ -124,6 +126,9 @@ restored-change era (`c4ab63e45..f4bebbfda`) and the drift is real in those
 partitions. Per partition, in 2k-ledger slices, count the restored rows
 (`SELECT countIf(change_type = 'restored') FROM stellar.ledger_entry_changes
 WHERE ledger_seq >= a AND ledger_seq < b`) before and after.
+Restored gate (pass condition): on every 2k-ledger slice where the network
+had restores, the count is above 0, and the first restored row is at
+`ledger_seq >= 58,762,517`.
 P23 starts at ledger 58,762,517, P20 at 50,457,424.
 
 **Four views are fed by every re-extract** (all run on `ch-backfill`'s inserts):
@@ -155,9 +160,20 @@ exclude by `ingested_at` date alone.
      on P23+. Prove on a 1k-ledger sample that each orphan has a new twin at a
      different `change_index` and a `restored` row in its tx; any unmatched
      orphan is a STOP.
-4. Delete the old LEC rows (`lightweight_deletes_sync=2`, `IN PARTITION`,
-   `ingested_at < T`), then the two view deletes; reclaim with `OPTIMIZE`.
-5. Repair the projection (below), then verify.
+4. STOP, needs operator approval. Run a dry count with the identical
+   predicate as the delete and compare it to the expected old-row count:
+   `SELECT count() FROM stellar.ledger_entry_changes WHERE ledger_seq BETWEEN lo AND hi AND ingested_at < toDateTime(T) AND NOT (tx_hash = '' AND toDate(ingested_at) = '2026-07-03')`
+   (add `AND partition` scoping as the delete will). Proceed only on a match
+   and an explicit yes.
+5. Wait until no other heavy job is running (`run-heavy-job.sh` holds the
+   lock). Delete the old LEC rows:
+   `SET lightweight_deletes_sync=2; DELETE FROM stellar.ledger_entry_changes IN PARTITION <N> WHERE ledger_seq BETWEEN lo AND hi AND ingested_at < toDateTime(T) AND NOT (tx_hash = '' AND toDate(ingested_at) = '2026-07-03');`
+   The `ledger_seq` bound and the 07-03 exclusion keep the 07-03 seed rows.
+   Then run the two view deletes and reclaim with
+   `OPTIMIZE TABLE stellar.ledger_entry_changes PARTITION <N> FINAL`.
+6. Re-run the orphan census from step 3; it must now be 0.
+7. Wait again for no other heavy job, then repair the projection (below) and
+   verify.
 
 **Projection repair at lake scale.** Option A below, per 100k window
 ascending (a key whose latest change is in a later window keeps its higher
