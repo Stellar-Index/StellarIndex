@@ -1,0 +1,16 @@
+{
+  "contract_id": "CCUGRASBWD5SXDYMS7NM437FQ7KNKHFX74D2VRJVTRU4J2TWDMURUW3V",
+  "role": "registry",
+  "market_decimals": null,
+  "wasm_hash": "54c79aac3d2a971fb8d11e7cbbab87ee2a4be10b60b48bb21e1d6254affe5bf3",
+  "ledger": 63778178,
+  "tx_hash": "df72289e24e9a57bd2b8650a5ddd8b66873cf368769190a0d7aa15e0ea1fa2ba",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-08-03T09:54:43Z",
+  "topics": [
+    "AAAADwAAAA1yb3V0ZXJfY2hhbmdlAAAA"
+  ],
+  "value": "AAAAEQAAAAEAAAACAAAADwAAAANuZXcAAAAAEgAAAAF76O2ma36mhMQ+xWV+UEAj+RQS29Q4ETf+N09MhRpDVwAAAA8AAAADb2xkAAAAABIAAAABe+jtpmt+poTEPsVlflBAI/kUEtvUOBE3/jdPTIUaQ1c=",
+  "event_name": "router_change"
+}

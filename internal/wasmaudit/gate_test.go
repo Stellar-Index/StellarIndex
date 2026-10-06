@@ -245,7 +245,7 @@ func TestContractSet_EveryPerWASMSourceResolves(t *testing.T) {
 	oracle.Reflector.DEXContract, oracle.Reflector.CEXContract, oracle.Reflector.FXContract = "CD", "CC", "CF"
 	oracle.Redstone.AdapterContract, oracle.Band.StandardReferenceContract = "CR", "CB"
 	m := mustLoad(t)
-	for _, s := range []string{"cctp", "rozo", "sorocredit", "blend_backstop", "soroswap-router", "reflector-dex", "reflector-cex", "reflector-fx", "redstone", "band", "comet", "blend_emitter", "upshift"} {
+	for _, s := range []string{"cctp", "rozo", "sorocredit", "blend_backstop", "soroswap-router", "reflector-dex", "reflector-cex", "reflector-fx", "redstone", "band", "comet", "blend_emitter", "upshift", "spectra"} {
 		got, err := ContractSet(context.Background(), Deps{Oracle: oracle}, s, 1)
 		if err != nil || len(got) == 0 {
 			t.Errorf("%s: %v contracts, err %v", s, got, err)

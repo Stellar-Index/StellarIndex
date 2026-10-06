@@ -15,6 +15,14 @@
     "audited": "2026-05-26",
     "doc": "docs/operations/wasm-audits/cctp.md"
   },
+  "0e8d68e206d66b087a2e0b64430356aec834ff906260e057180702d74d6f81f4": {
+    "sources": [
+      "spectra"
+    ],
+    "role": "deJTRSY-wrapper",
+    "audited": "2026-10-06",
+    "doc": "docs/operations/wasm-audits/spectra.md"
+  },
   "11329c2469455f5a3815af1383c0cdddb69215b1668a17ef097516cde85da988": {
     "sources": [
       "defindex"
@@ -23,6 +31,14 @@
     "audited": "2026-05-19",
     "doc": "docs/operations/wasm-audits/defindex.md"
   },
+  "11b4bacca38f670e792b7a1bbd6c6888f9e572c06e1def9cc5adf9294403bbb2": {
+    "sources": [
+      "spectra"
+    ],
+    "role": "blend-wrapper",
+    "audited": "2026-10-06",
+    "doc": "docs/operations/wasm-audits/spectra.md"
+  },
   "13b158655e40396957537bf1c528c6542b315930c1c9e0df640f57293c8af2ca": {
     "sources": [
       "phoenix"
@@ -30,6 +46,14 @@
     "role": "pool",
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "1452052c3c9ed3297b82a02e99baafb0c9ba5209f03ad941e6427c3aae5b07f7": {
+    "sources": [
+      "spectra"
+    ],
+    "role": "router",
+    "audited": "2026-10-06",
+    "doc": "docs/operations/wasm-audits/spectra.md"
   },
   "167ab414a226427de34c19947ef9c5cf38c6c0ed91ecf9392f7cef3278ff506c": {
     "sources": [
@@ -63,6 +87,14 @@
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
+  "20ec1744c3f9e2c840c714b4ad2dc42d844d2eb7c164ced8c685cf267516b0f0": {
+    "sources": [
+      "spectra"
+    ],
+    "role": "order-engine",
+    "audited": "2026-10-06",
+    "doc": "docs/operations/wasm-audits/spectra.md"
+  },
   "2bbb91c58cb8432fd40446e80188a25e7c07dc2edc853e885d65cafbbbf19581": {
     "sources": [
       "phoenix"
@@ -86,6 +118,14 @@
     "role": "factory",
     "audited": "2026-04-22",
     "doc": "docs/operations/wasm-audits/blend.md"
+  },
+  "3bcf316f76a9c5db718ccd6e2292cad70d8e8ce4371dfa0a2a7fdd86b8749ffd": {
+    "sources": [
+      "spectra"
+    ],
+    "role": "pt",
+    "audited": "2026-10-06",
+    "doc": "docs/operations/wasm-audits/spectra.md"
   },
   "41ae735d2312f50975f5b7c70c3f71c2a0785113014dc24e474c3f3688e6224f": {
     "sources": [
@@ -143,6 +183,14 @@
     "role": "pool",
     "audited": "2026-04-30",
     "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "54c79aac3d2a971fb8d11e7cbbab87ee2a4be10b60b48bb21e1d6254affe5bf3": {
+    "sources": [
+      "spectra"
+    ],
+    "role": "registry",
+    "audited": "2026-10-06",
+    "doc": "docs/operations/wasm-audits/spectra.md"
   },
   "56638944de087f45f3c9fd441204747ab91cc95331d4bde92811bec61bd12722": {
     "sources": [
@@ -215,6 +263,14 @@
     "role": "stake-tombstone",
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "763ea32c344f79bbce87d814f55b3328b831237443084e726caf8b8e4ac2b4a7": {
+    "sources": [
+      "spectra"
+    ],
+    "role": "factory",
+    "audited": "2026-10-06",
+    "doc": "docs/operations/wasm-audits/spectra.md"
   },
   "77bdc0a993960faa2b0dac7b43a5160d6ed745ee787573c2f0ad8d00d4806366": {
     "sources": [
@@ -399,6 +455,14 @@
     "role": "pool",
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "daeb931b9507440b6dc4f73256ac33c6089964f5d035f7eec5fcedc10e732c8e": {
+    "sources": [
+      "spectra"
+    ],
+    "role": "yt",
+    "audited": "2026-10-06",
+    "doc": "docs/operations/wasm-audits/spectra.md"
   },
   "df88820e231ad8f3027871e5dd3cf45491d7b7735e785731466bfc2946008608": {
     "sources": [

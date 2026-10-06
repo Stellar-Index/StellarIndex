@@ -1,0 +1,17 @@
+{
+  "contract_id": "CCKNOCLH6QILGS6GYZWMQ6JCHWC2D75OCI5RLBPCUF7FJTONNSCZZAC5",
+  "role": "order_engine",
+  "market_decimals": null,
+  "wasm_hash": "20ec1744c3f9e2c840c714b4ad2dc42d844d2eb7c164ced8c685cf267516b0f0",
+  "ledger": 64547666,
+  "tx_hash": "6f3a4be4810946399a1b740ccc20c4de03c057df966d9ebf6c85c0f54cf2d6ca",
+  "op_index": 0,
+  "event_index": 3,
+  "ledger_closed_at": "2026-09-21T20:55:08Z",
+  "topics": [
+    "AAAADwAAABhhZG1pbl90cmFuc2Zlcl9jb21wbGV0ZWQ=",
+    "AAAAEgAAAAGowPVrqL39qAz6gAMr+ZnkCpXCvWbrP7Opao7l7mYVnQ=="
+  ],
+  "value": "AAAAEQAAAAEAAAABAAAADwAAAA5wcmV2aW91c19hZG1pbgAAAAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo=",
+  "event_name": "admin_transfer_completed"
+}

@@ -1,0 +1,16 @@
+{
+  "contract_id": "CAAOR5F43GSQZYJESHIVLGZBMHMH3UVJMSBEHFKCUBKOUQSZMQC5UCMK",
+  "role": "pt",
+  "market_decimals": 7,
+  "wasm_hash": "3bcf316f76a9c5db718ccd6e2292cad70d8e8ce4371dfa0a2a7fdd86b8749ffd",
+  "ledger": 63783310,
+  "tx_hash": "40fa3a0345a99cc9f6b3601b74a2d97144eec91936ca47004f43fe841d7a44ee",
+  "op_index": 0,
+  "event_index": 2,
+  "ledger_closed_at": "2026-08-03T17:59:06Z",
+  "topics": [
+    "AAAADwAAAAlwdF9taW50ZWQAAAA="
+  ],
+  "value": "AAAAEQAAAAEAAAADAAAADwAAAAZjYWxsZXIAAAAAABIAAAAAAAAAAJovmvVGl4o2X6sTeIxd+eulvvp97zlWCE+aU/YQs1qKAAAADwAAAAhyZWNlaXZlcgAAABIAAAAAAAAAAJovmvVGl4o2X6sTeIxd+eulvvp97zlWCE+aU/YQs1qKAAAADwAAAAZzaGFyZXMAAAAAAAoAAAAAAAAAAAAAAAAACKvW",
+  "event_name": "pt_minted"
+}

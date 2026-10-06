@@ -1,0 +1,16 @@
+{
+  "contract_id": "CCUGRASBWD5SXDYMS7NM437FQ7KNKHFX74D2VRJVTRU4J2TWDMURUW3V",
+  "role": "registry",
+  "market_decimals": null,
+  "wasm_hash": "54c79aac3d2a971fb8d11e7cbbab87ee2a4be10b60b48bb21e1d6254affe5bf3",
+  "ledger": 63782624,
+  "tx_hash": "dc730b2a132e66dd2e773c44bf3a9a01d69955592cbe454f6f054731b1123051",
+  "op_index": 0,
+  "event_index": 5,
+  "ledger_closed_at": "2026-08-03T16:54:43Z",
+  "topics": [
+    "AAAADwAAAAhwdF9hZGRlZA=="
+  ],
+  "value": "AAAAEQAAAAEAAAABAAAADwAAAAJwdAAAAAAAEgAAAAEA6PS82aUM4SSR0VWbIWHYfdKpZIJDlUKgVOpCWWQF2g==",
+  "event_name": "pt_added"
+}

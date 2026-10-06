@@ -1,0 +1,17 @@
+{
+  "contract_id": "CC2CEV23OQVGALHWQTKA26DYQTDNS7XJSL75EHTLHKZH6W3HJAEUKKB7",
+  "role": "order_engine",
+  "market_decimals": null,
+  "wasm_hash": "20ec1744c3f9e2c840c714b4ad2dc42d844d2eb7c164ced8c685cf267516b0f0",
+  "ledger": 63778288,
+  "tx_hash": "d10fa1a0e09d97f4b2397a36621083c055dd75070a9a30f0ad80c9e00485d5f0",
+  "op_index": 0,
+  "event_index": 4,
+  "ledger_closed_at": "2026-08-03T10:05:06Z",
+  "topics": [
+    "AAAADwAAAB5saW1pdF9vcmRlcl9lbmdpbmVfaW5pdGlhbGl6ZWQAAA==",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo="
+  ],
+  "value": "AAAAEQAAAAEAAAADAAAADwAAAA1mZWVfY29sbGVjdG9yAAAAAAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWooAAAAPAAAACGZlZV9yYXRlAAAACgAAAAAAAAAAAAAAAAAAAAAAAAAPAAAACHJlZ2lzdHJ5AAAAEgAAAAGoaIJBsPsrjwyX2s5v5YfU1Ry3/weqxTWcacTqdhspGg==",
+  "event_name": "limit_order_engine_initialized"
+}

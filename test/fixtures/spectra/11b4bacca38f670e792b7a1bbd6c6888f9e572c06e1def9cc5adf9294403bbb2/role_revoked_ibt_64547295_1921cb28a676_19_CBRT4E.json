@@ -1,0 +1,18 @@
+{
+  "contract_id": "CBRT4E5AH23GMRQI7H6HQW54HMDMK4C23OO2CEN5OHWEOSRYBQZCMYBC",
+  "role": "ibt",
+  "market_decimals": 7,
+  "wasm_hash": "11b4bacca38f670e792b7a1bbd6c6888f9e572c06e1def9cc5adf9294403bbb2",
+  "ledger": 64547295,
+  "tx_hash": "1921cb28a6762052e0e718ace0d903be9b4b1b26ec3033c99d8f7f5c7898b7ef",
+  "op_index": 0,
+  "event_index": 19,
+  "ledger_closed_at": "2026-09-21T20:24:13Z",
+  "topics": [
+    "AAAADwAAAAxyb2xlX3Jldm9rZWQ=",
+    "AAAADwAAAAZQQVVTRVIAAA==",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo="
+  ],
+  "value": "AAAAEQAAAAEAAAABAAAADwAAAAZjYWxsZXIAAAAAABIAAAAAAAAAAJovmvVGl4o2X6sTeIxd+eulvvp97zlWCE+aU/YQs1qK",
+  "event_name": "role_revoked"
+}

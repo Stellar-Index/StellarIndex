@@ -1,0 +1,17 @@
+{
+  "contract_id": "CAUKKZSHKNCP44C2CLNNDMI4H5JF4EJUJ7CRZR2Z7NTLI2N6BE2SRBYP",
+  "role": "yt",
+  "market_decimals": 13,
+  "wasm_hash": "daeb931b9507440b6dc4f73256ac33c6089964f5d035f7eec5fcedc10e732c8e",
+  "ledger": 63812795,
+  "tx_hash": "6dbb49828778058bff42403d5c74d0687ba40750b7c2b7f664db18a075b72d3a",
+  "op_index": 0,
+  "event_index": 1,
+  "ledger_closed_at": "2026-08-05T16:02:17Z",
+  "topics": [
+    "AAAADwAAAARidXJu",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo="
+  ],
+  "value": "AAAAEQAAAAEAAAABAAAADwAAAAZhbW91bnQAAAAAAAoAAAAAAAAAAAAACRhOcqAA",
+  "event_name": "burn"
+}

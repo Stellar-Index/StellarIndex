@@ -1,0 +1,19 @@
+{
+  "contract_id": "CBRT4E5AH23GMRQI7H6HQW54HMDMK4C23OO2CEN5OHWEOSRYBQZCMYBC",
+  "role": "ibt",
+  "market_decimals": 7,
+  "wasm_hash": "11b4bacca38f670e792b7a1bbd6c6888f9e572c06e1def9cc5adf9294403bbb2",
+  "ledger": 63785018,
+  "tx_hash": "16be0ee7541c372cc3d277efb8f77ace2a2ec63a9c77e9fc97229e707303a0ac",
+  "op_index": 0,
+  "event_index": 2,
+  "ledger_closed_at": "2026-08-03T20:39:03Z",
+  "topics": [
+    "AAAADwAAAAh3aXRoZHJhdw==",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo=",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo=",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo="
+  ],
+  "value": "AAAAEQAAAAEAAAACAAAADwAAAAZhc3NldHMAAAAAAAoAAAAAAAAAAAAAAAAAAFjLAAAADwAAAAZzaGFyZXMAAAAAAAoAAAAAAAAAAAAAAAAAAE4g",
+  "event_name": "withdraw"
+}

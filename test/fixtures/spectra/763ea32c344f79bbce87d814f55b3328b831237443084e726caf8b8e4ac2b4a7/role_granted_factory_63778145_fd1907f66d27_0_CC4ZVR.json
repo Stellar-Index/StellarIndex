@@ -1,0 +1,18 @@
+{
+  "contract_id": "CC4ZVRIYM33M5FVAUDFWK7JXO3PWIVSKKEBXVEEC5E6KPYISXIMLUJCP",
+  "role": "factory",
+  "market_decimals": null,
+  "wasm_hash": "763ea32c344f79bbce87d814f55b3328b831237443084e726caf8b8e4ac2b4a7",
+  "ledger": 63778145,
+  "tx_hash": "fd1907f66d2729eae1d60e6c17dadd82092613f88052c0ee9d8e65ec38f99326",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-08-03T09:51:33Z",
+  "topics": [
+    "AAAADwAAAAxyb2xlX2dyYW50ZWQ=",
+    "AAAADwAAAAdVUEdSQURFAA==",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo="
+  ],
+  "value": "AAAAEQAAAAEAAAABAAAADwAAAAZjYWxsZXIAAAAAABIAAAAAAAAAAJovmvVGl4o2X6sTeIxd+eulvvp97zlWCE+aU/YQs1qK",
+  "event_name": "role_granted"
+}

@@ -1,0 +1,18 @@
+{
+  "contract_id": "CBRT4E5AH23GMRQI7H6HQW54HMDMK4C23OO2CEN5OHWEOSRYBQZCMYBC",
+  "role": "ibt",
+  "market_decimals": 7,
+  "wasm_hash": "11b4bacca38f670e792b7a1bbd6c6888f9e572c06e1def9cc5adf9294403bbb2",
+  "ledger": 63780144,
+  "tx_hash": "f1eca289164d35ff907d8e2ae56a06320366e3ed2d79f1222881890251bdf1e6",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-08-03T13:00:33Z",
+  "topics": [
+    "AAAADwAAAAxyb2xlX2dyYW50ZWQ=",
+    "AAAADwAAAAZQQVVTRVIAAA==",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo="
+  ],
+  "value": "AAAAEQAAAAEAAAABAAAADwAAAAZjYWxsZXIAAAAAABIAAAAAAAAAAJovmvVGl4o2X6sTeIxd+eulvvp97zlWCE+aU/YQs1qK",
+  "event_name": "role_granted"
+}

@@ -1,0 +1,16 @@
+{
+  "contract_id": "CCUGRASBWD5SXDYMS7NM437FQ7KNKHFX74D2VRJVTRU4J2TWDMURUW3V",
+  "role": "registry",
+  "market_decimals": null,
+  "wasm_hash": "54c79aac3d2a971fb8d11e7cbbab87ee2a4be10b60b48bb21e1d6254affe5bf3",
+  "ledger": 63778155,
+  "tx_hash": "79683f438c5d8b1b42ca80c32ba7ffb3e72225f22c3c0ef3f4c37df3a7f0e8fb",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-08-03T09:52:31Z",
+  "topics": [
+    "AAAADwAAAA5mYWN0b3J5X2NoYW5nZQAA"
+  ],
+  "value": "AAAAEQAAAAEAAAACAAAADwAAAANuZXcAAAAAEgAAAAG5msUYZvbOlqCgy2V9N3bfZFZKUQN6kILpPKfhEroYugAAAA8AAAADb2xkAAAAABIAAAABuZrFGGb2zpagoMtlfTd232RWSlEDepCC6Tyn4RK6GLo=",
+  "event_name": "factory_change"
+}

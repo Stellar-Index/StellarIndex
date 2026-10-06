@@ -1,0 +1,18 @@
+{
+  "contract_id": "CAHPZLEH6O6WJPICJAVRLCTYCAYDN52F4SM6IX3XJKWYSAASSHGZEZBO",
+  "role": "ibt",
+  "market_decimals": 18,
+  "wasm_hash": "0e8d68e206d66b087a2e0b64430356aec834ff906260e057180702d74d6f81f4",
+  "ledger": 64453013,
+  "tx_hash": "a973b0ee7a9effc665f5e92fbc4e9fe88cb4b1f4acceb06dca807f354cf0a2af",
+  "op_index": 0,
+  "event_index": 1,
+  "ledger_closed_at": "2026-09-16T08:33:49Z",
+  "topics": [
+    "AAAADwAAAAR3cmFw",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo=",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo="
+  ],
+  "value": "AAAAEQAAAAEAAAACAAAADwAAAAZzaGFyZXMAAAAAAAoAAAAAAAAAACmiJBr2LAAAAAAADwAAAAx2YXVsdF9zaGFyZXMAAAAKAAAAAAAAAAApoiQa9iwAAA==",
+  "event_name": "wrap"
+}
