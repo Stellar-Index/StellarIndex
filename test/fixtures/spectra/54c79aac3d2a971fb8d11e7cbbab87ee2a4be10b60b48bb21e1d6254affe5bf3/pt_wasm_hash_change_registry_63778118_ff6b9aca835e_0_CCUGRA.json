@@ -1,0 +1,16 @@
+{
+  "contract_id": "CCUGRASBWD5SXDYMS7NM437FQ7KNKHFX74D2VRJVTRU4J2TWDMURUW3V",
+  "role": "registry",
+  "market_decimals": null,
+  "wasm_hash": "54c79aac3d2a971fb8d11e7cbbab87ee2a4be10b60b48bb21e1d6254affe5bf3",
+  "ledger": 63778118,
+  "tx_hash": "ff6b9aca835eadd4fb12d93f39e4294f512db10252d49091574b886b9f45ac8a",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-08-03T09:49:02Z",
+  "topics": [
+    "AAAADwAAABNwdF93YXNtX2hhc2hfY2hhbmdlAA=="
+  ],
+  "value": "AAAAEQAAAAEAAAACAAAADwAAAANuZXcAAAAADQAAACA7zzFvdqnF23GMzW4iksrXDY6M5Dcd+goqf92GuHSf/QAAAA8AAAADb2xkAAAAAA0AAAAgO88xb3apxdtxjM1uIpLK1w2OjOQ3HfoKKn/dhrh0n/0=",
+  "event_name": "pt_wasm_hash_change"
+}

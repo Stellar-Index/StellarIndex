@@ -25,6 +25,7 @@ and a current-only decoder silently produces wrong trades.
 - `soroswap.md` — Soroswap audit (in progress).
 - `sushiswap_v3.md` — SushiSwap V3 factory + 58 pools, four hashes string-checked from the lake's instance lineage.
 - `upshift.md` — Upshift earnUSDC / earnXLM vaults, one hash string-checked from the lake's instance lineage.
+- `spectra.md` — Spectra registry, factory, router, order engines, PTs, YTs and wrappers, 8 hashes string-checked from the lake's instance lineage.
 - (`aquarius.md`, `phoenix.md`, `comet.md`, `reflector-{dex,cex,fx}.md`,
   `redstone.md`, `band.md` — to land per source.)
 

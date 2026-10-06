@@ -1,0 +1,16 @@
+{
+  "contract_id": "CAAOR5F43GSQZYJESHIVLGZBMHMH3UVJMSBEHFKCUBKOUQSZMQC5UCMK",
+  "role": "pt",
+  "market_decimals": 7,
+  "wasm_hash": "3bcf316f76a9c5db718ccd6e2292cad70d8e8ce4371dfa0a2a7fdd86b8749ffd",
+  "ledger": 63783681,
+  "tx_hash": "a52383fad529a48b79c1e5df766d26149080e80c6d5f4b1f91a2e88d8010e758",
+  "op_index": 0,
+  "event_index": 1,
+  "ledger_closed_at": "2026-08-03T18:33:46Z",
+  "topics": [
+    "AAAADwAAAA15aWVsZF91cGRhdGVkAAAA"
+  ],
+  "value": "AAAAEQAAAAEAAAACAAAADwAAAAR1c2VyAAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWooAAAAPAAAADHlpZWxkX2luX2lidAAAAAoAAAAAAAAAAAAAAAAAAAAC",
+  "event_name": "yield_updated"
+}

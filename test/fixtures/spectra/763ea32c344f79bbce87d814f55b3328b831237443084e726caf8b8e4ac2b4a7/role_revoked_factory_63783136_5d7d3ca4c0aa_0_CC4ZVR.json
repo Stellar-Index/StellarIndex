@@ -1,0 +1,18 @@
+{
+  "contract_id": "CC4ZVRIYM33M5FVAUDFWK7JXO3PWIVSKKEBXVEEC5E6KPYISXIMLUJCP",
+  "role": "factory",
+  "market_decimals": null,
+  "wasm_hash": "763ea32c344f79bbce87d814f55b3328b831237443084e726caf8b8e4ac2b4a7",
+  "ledger": 63783136,
+  "tx_hash": "5d7d3ca4c0aa571db1ff6592f78badcba29eff750e98405550f60cf821b3839b",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-08-03T17:42:51Z",
+  "topics": [
+    "AAAADwAAAAxyb2xlX3Jldm9rZWQ=",
+    "AAAADwAAAAdVUEdSQURFAA==",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo="
+  ],
+  "value": "AAAAEQAAAAEAAAABAAAADwAAAAZjYWxsZXIAAAAAABIAAAAAAAAAAJovmvVGl4o2X6sTeIxd+eulvvp97zlWCE+aU/YQs1qK",
+  "event_name": "role_revoked"
+}

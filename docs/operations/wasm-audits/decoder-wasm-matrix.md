@@ -45,6 +45,22 @@ Role-aware: factories don't emit pool events, routers don't emit pair events.
 | blend    | backstop | 1 | 1 | 0 | emits `gulp_emissions` |
 | **TOTAL** |        | **52** | **50** | **2** | 96% match rate; 100% if we discount the false negative |
 
+## Later lake-checked sources
+
+Not part of the 52-WASM walk above: string-checked from the lake's
+`contract_code` bytes, with the topics byte-checked against `topics_xdr`.
+
+| Source | Role | WASMs | OK | Missing | Notes |
+|---|---|---:|---:|---:|---|
+| spectra | registry | 1 | 1 | 0 | `pt_added`, `factory_change`, ... — [spectra.md](spectra.md) |
+| spectra | factory | 1 | 1 | 0 | `pt_deployed`, `factory_initialized` |
+| spectra | router | 1 | 1 | 0 | `execute_completed` present, never emitted |
+| spectra | order-engine | 1 | 1 | 0 | `order_registered`, `order_filled`, `order_cancelled` |
+| spectra | pt | 1 | 1 | 0 | `pt_minted`, `redeem`, `yield_updated`, `yt_deployed` |
+| spectra | yt | 1 | 1 | 0 | no `role_*` literals; the YT emits none |
+| spectra | blend-wrapper | 1 | 1 | 0 | `deposit`, `withdraw` |
+| spectra | deJTRSY-wrapper | 1 | 1 | 0 | `wrap`; `mint` literal absent (packed symbol; no `mint` event on chain) |
+
 ## Caveat — `SymbolSmall` packing
 
 Soroban packs event-topic Symbols of **≤ 9 characters** inline into a single

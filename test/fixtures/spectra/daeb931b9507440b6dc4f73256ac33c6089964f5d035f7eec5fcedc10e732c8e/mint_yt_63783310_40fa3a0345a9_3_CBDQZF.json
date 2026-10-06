@@ -1,0 +1,17 @@
+{
+  "contract_id": "CBDQZFWY735RH3PQLNK4BIOO7DTJY4ZQWK5YDFCZ7EIL5DAO2567TORX",
+  "role": "yt",
+  "market_decimals": 7,
+  "wasm_hash": "daeb931b9507440b6dc4f73256ac33c6089964f5d035f7eec5fcedc10e732c8e",
+  "ledger": 63783310,
+  "tx_hash": "40fa3a0345a99cc9f6b3601b74a2d97144eec91936ca47004f43fe841d7a44ee",
+  "op_index": 0,
+  "event_index": 3,
+  "ledger_closed_at": "2026-08-03T17:59:06Z",
+  "topics": [
+    "AAAADwAAAARtaW50",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo="
+  ],
+  "value": "AAAAEQAAAAEAAAABAAAADwAAAAZhbW91bnQAAAAAAAoAAAAAAAAAAAAAAAAACKvW",
+  "event_name": "mint"
+}

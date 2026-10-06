@@ -1,0 +1,19 @@
+{
+  "contract_id": "CBRT4E5AH23GMRQI7H6HQW54HMDMK4C23OO2CEN5OHWEOSRYBQZCMYBC",
+  "role": "ibt",
+  "market_decimals": 7,
+  "wasm_hash": "11b4bacca38f670e792b7a1bbd6c6888f9e572c06e1def9cc5adf9294403bbb2",
+  "ledger": 63782614,
+  "tx_hash": "5eaeea223b428500743d81b59b3a89b4adf7cac7e219574063ae583845a30eb2",
+  "op_index": 0,
+  "event_index": 3,
+  "ledger_closed_at": "2026-08-03T16:53:46Z",
+  "topics": [
+    "AAAADwAAAAdkZXBvc2l0AA==",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo=",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo=",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo="
+  ],
+  "value": "AAAAEQAAAAEAAAACAAAADwAAAAZhc3NldHMAAAAAAAoAAAAAAAAAAAAAAAAAD0JAAAAADwAAAAZzaGFyZXMAAAAAAAoAAAAAAAAAAAAAAAAADWzy",
+  "event_name": "deposit"
+}

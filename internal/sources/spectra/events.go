@@ -72,6 +72,16 @@ var MainnetContracts = map[string]ContractMeta{
 	"CAHPZLEH6O6WJPICJAVRLCTYCAYDN52F4SM6IX3XJKWYSAASSHGZEZBO": {RoleIBT, 18},
 }
 
+// MainnetInfrastructure is the factory, router and order engines (v0 and
+// current) found in the lake. They are audited with the roster but not part
+// of the curated trust root above until the factory gate lands.
+var MainnetInfrastructure = []string{
+	"CC4ZVRIYM33M5FVAUDFWK7JXO3PWIVSKKEBXVEEC5E6KPYISXIMLUJCP", // factory
+	"CB56R3NGNN7KNBGEH3CWK7SQIAR7SFAS3PKDQEJX7Y3U6TEFDJBVPY7F", // router
+	"CC2CEV23OQVGALHWQTKA26DYQTDNS7XJSL75EHTLHKZH6W3HJAEUKKB7", // order engine v0
+	"CCKNOCLH6QILGS6GYZWMQ6JCHWC2D75OCI5RLBPCUF7FJTONNSCZZAC5", // order engine
+}
+
 // MainnetGatedSet returns the sorted contract ids, derived from
 // [MainnetContracts] so the gate and the metadata cannot drift.
 func MainnetGatedSet() []string {

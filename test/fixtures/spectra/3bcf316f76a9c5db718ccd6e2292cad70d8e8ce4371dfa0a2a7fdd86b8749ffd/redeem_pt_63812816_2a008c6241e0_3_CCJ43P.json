@@ -1,0 +1,16 @@
+{
+  "contract_id": "CCJ43PIDUBSVX4FAI3MJJTFWC3ZXLECARFNJUOUUTKHB5JP32Q75LVPN",
+  "role": "pt",
+  "market_decimals": 13,
+  "wasm_hash": "3bcf316f76a9c5db718ccd6e2292cad70d8e8ce4371dfa0a2a7fdd86b8749ffd",
+  "ledger": 63812816,
+  "tx_hash": "2a008c6241e08a5d4788f173055d5fb98bdc86f2d427c2495947be935d14c7b0",
+  "op_index": 0,
+  "event_index": 3,
+  "ledger_closed_at": "2026-08-05T16:04:17Z",
+  "topics": [
+    "AAAADwAAAAZyZWRlZW0AAA=="
+  ],
+  "value": "AAAAEQAAAAEAAAADAAAADwAAAAVvd25lcgAAAAAAABIAAAAAAAAAAJovmvVGl4o2X6sTeIxd+eulvvp97zlWCE+aU/YQs1qKAAAADwAAAAhyZWNlaXZlcgAAABIAAAAAAAAAAJovmvVGl4o2X6sTeIxd+eulvvp97zlWCE+aU/YQs1qKAAAADwAAAAZzaGFyZXMAAAAAAAoAAAAAAAAAAAAACRhOcqAA",
+  "event_name": "redeem"
+}

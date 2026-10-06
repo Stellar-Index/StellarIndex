@@ -23,10 +23,18 @@
 #               resolved (default: "unknown-wasm-hash").
 #   MAX_PAGES   getEvents pages per contract (default: 40).
 #
+# Lake mode (history older than the RPC's ~7 days): set LAKE_SSH to a host
+# running ClickHouse (native port 9300, read-only SELECTs) and the events
+# are exported from stellar.contract_events instead; the emitting
+# contract's hash comes from stellar.contract_instance_changes. One
+# fixture per (wasm_hash, kind) for the earliest event, plus the
+# LAKE_PICKS exemplars (ledger:tx12:event_index) the golden tests cite.
+# Fixtures also carry op_index and event_index.
+#   LAKE_SSH=root@136.243.90.96 scripts/dev/capture-spectra-fixtures.sh
+#
 # Contract ids: PT/YT/IBT are from Spectra's operator API
-# (app.spectra.finance/api/v1/stellar/pools); the registry from
-# docs/protocols/spectra.md. Factory and LimitOrderEngine ids are
-# unpublished, so pt_deployed and order events are not captured here.
+# (app.spectra.finance/api/v1/stellar/pools); the registry, factory, order
+# engines, router and Blend wrappers from the lake (docs/protocols/spectra.md).
 
 set -euo pipefail
 
@@ -42,6 +50,10 @@ WASM_HASH="${WASM_HASH:-unknown-wasm-hash}"
 # own transfer/mint/burn shape.
 CONTRACTS="
 registry|CCUGRASBWD5SXDYMS7NM437FQ7KNKHFX74D2VRJVTRU4J2TWDMURUW3V|
+factory|CC4ZVRIYM33M5FVAUDFWK7JXO3PWIVSKKEBXVEEC5E6KPYISXIMLUJCP|
+router|CB56R3NGNN7KNBGEH3CWK7SQIAR7SFAS3PKDQEJX7Y3U6TEFDJBVPY7F|
+order_engine|CC2CEV23OQVGALHWQTKA26DYQTDNS7XJSL75EHTLHKZH6W3HJAEUKKB7|
+order_engine|CCKNOCLH6QILGS6GYZWMQ6JCHWC2D75OCI5RLBPCUF7FJTONNSCZZAC5|
 pt|CAAOR5F43GSQZYJESHIVLGZBMHMH3UVJMSBEHFKCUBKOUQSZMQC5UCMK|7
 yt|CBDQZFWY735RH3PQLNK4BIOO7DTJY4ZQWK5YDFCZ7EIL5DAO2567TORX|7
 ibt|CBRT4E5AH23GMRQI7H6HQW54HMDMK4C23OO2CEN5OHWEOSRYBQZCMYBC|7
@@ -70,6 +82,61 @@ command -v python3 >/dev/null || { echo "python3 not found" >&2; exit 127; }
 fixture_capture_setup_outdir spectra
 FIXTURE_ROOT="$(dirname "$OUT_DIR")"
 rmdir "$OUT_DIR" 2>/dev/null || true
+
+# Exemplars beyond the earliest-per-kind: pt_deployed at three durations
+# (90d, 30d, 180d), pt_minted by an EOA and by the order engine, a redeem,
+# an order's register/fill/cancel, a Blend wrapper deposit/withdraw and the
+# second limit_order_engine_change.
+LAKE_PICKS="${LAKE_PICKS:-63782624:dc730b2a132e:6 64453034:e896e7e581db:6 64453038:8f0b4559a79b:6 63812811:f2b685315023:2 64347726:c94f952f9867:20 63812816:2a008c6241e0:3 64347726:c94f952f9867:4 64347726:c94f952f9867:23 64347750:6ea1aaca35d6:0 64270260:1ffd3ba58efb:3 64270260:1ffd3ba58efb:8 63780164:ae5298ae3817:0}"
+
+if [[ -n "${LAKE_SSH:-}" ]]; then
+  python3 - "$LAKE_SSH" "$FIXTURE_ROOT" "$CONTRACTS" "$LAKE_PICKS" <<'PY'
+import base64, json, os, subprocess, sys
+host, root, contracts, picks = sys.argv[1:5]
+rows = [l.split("|") for l in contracts.splitlines() if l.strip()]
+role = {c: (r, d) for r, c, d in rows}
+hexid = {c: base64.b32decode(c + "=" * (-len(c) % 8))[1:33].hex() for c in role}
+want = {(a, b, int(d)) for a, b, d in (p.split(":") for p in picks.split())}
+
+def lake(sql):
+    out = subprocess.run(["ssh", host, "clickhouse-client --port 9300 --max_execution_time 120 --max_threads 2"],
+                         input=sql, capture_output=True, text=True, check=True).stdout
+    return [json.loads(l) for l in out.splitlines() if l]
+
+ids = ",".join("'%s'" % c for c in role)
+hs = ",".join("'%s'" % h for h in hexid.values())
+# Executable hash per contract; refuse a contract that ran more than one.
+hashes = {}
+for r in lake("SELECT contract_hash, groupUniqArray(wasm_hash) w FROM stellar.contract_instance_changes "
+              "WHERE contract_hash IN (%s) AND ledger_seq BETWEEN 63700000 AND 99000000 "
+              "GROUP BY contract_hash FORMAT JSONEachRow" % hs):
+    if len(r["w"]) != 1:
+        sys.exit("contract %s ran %d wasm hashes; audit each before exporting" % (r["contract_hash"], len(r["w"])))
+    hashes[r["contract_hash"]] = r["w"][0]
+evs = lake("SELECT ledger_seq, toString(close_time) ct, tx_hash, op_index, event_index, contract_id, topic_0_sym, topics_xdr, data_xdr "
+           "FROM stellar.contract_events WHERE contract_id IN (%s) AND ledger_seq BETWEEN 63700000 AND 99000000 "
+           "AND in_successful_call = 1 ORDER BY ledger_seq, op_index, event_index FORMAT JSONEachRow" % ids)
+seen, n = set(), 0
+for e in evs:
+    c = e["contract_id"]
+    h = hashes[hexid[c]]
+    pick = (str(e["ledger_seq"]), e["tx_hash"][:12], e["event_index"]) in want
+    if (h, e["topic_0_sym"]) in seen and not pick:
+        continue
+    seen.add((h, e["topic_0_sym"]))
+    r, d = role[c]
+    fx = {"contract_id": c, "role": r, "market_decimals": int(d) if d else None, "wasm_hash": h,
+          "ledger": e["ledger_seq"], "tx_hash": e["tx_hash"], "op_index": e["op_index"], "event_index": e["event_index"],
+          "ledger_closed_at": e["ct"].replace(" ", "T") + "Z", "topics": e["topics_xdr"], "value": e["data_xdr"],
+          "event_name": e["topic_0_sym"]}
+    os.makedirs("%s/%s" % (root, h), exist_ok=True)
+    name = "%s/%s/%s_%s_%d_%s_%d_%s.json" % (root, h, e["topic_0_sym"], r, e["ledger_seq"], e["tx_hash"][:12], e["event_index"], c[:6])
+    open(name, "w").write(json.dumps(fx, indent=2) + "\n")
+    n += 1
+print("lake export: %d fixture(s) under %s" % (n, root))
+PY
+  exit 0
+fi
 
 # rpc_retry is rpc() retried while the reply is not JSON (public RPCs
 # answer rate limits with plain text).

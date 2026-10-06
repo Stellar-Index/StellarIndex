@@ -1,0 +1,18 @@
+{
+  "contract_id": "CCKNOCLH6QILGS6GYZWMQ6JCHWC2D75OCI5RLBPCUF7FJTONNSCZZAC5",
+  "role": "order_engine",
+  "market_decimals": null,
+  "wasm_hash": "20ec1744c3f9e2c840c714b4ad2dc42d844d2eb7c164ced8c685cf267516b0f0",
+  "ledger": 63798657,
+  "tx_hash": "271e0e723e4ef6ff48b73cb94cca9edd7f96b83791b8cdbe5df6f2fda4264c62",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-08-04T17:57:28Z",
+  "topics": [
+    "AAAADwAAAA9vcmRlcl9jYW5jZWxsZWQA",
+    "AAAAEgAAAAAAAAAAPPWzm5vmlbxCt3F91P6nNpUIsxkm8eanExx3TrrZHII=",
+    "AAAADQAAACDVZtyJg+Sx2qCCt+AqEdOcS97AvkEOGD9DENOeZS4neg=="
+  ],
+  "value": "AAAAEQAAAAEAAAAA",
+  "event_name": "order_cancelled"
+}

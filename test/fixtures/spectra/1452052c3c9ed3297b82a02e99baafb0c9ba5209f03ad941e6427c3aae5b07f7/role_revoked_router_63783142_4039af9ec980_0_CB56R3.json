@@ -1,0 +1,18 @@
+{
+  "contract_id": "CB56R3NGNN7KNBGEH3CWK7SQIAR7SFAS3PKDQEJX7Y3U6TEFDJBVPY7F",
+  "role": "router",
+  "market_decimals": null,
+  "wasm_hash": "1452052c3c9ed3297b82a02e99baafb0c9ba5209f03ad941e6427c3aae5b07f7",
+  "ledger": 63783142,
+  "tx_hash": "4039af9ec9806a78e2291603f3c9a781a141437e3ea99f0203665df464c4c7a0",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-08-03T17:43:24Z",
+  "topics": [
+    "AAAADwAAAAxyb2xlX3Jldm9rZWQ=",
+    "AAAADwAAAAZQQVVTRVIAAA==",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo="
+  ],
+  "value": "AAAAEQAAAAEAAAABAAAADwAAAAZjYWxsZXIAAAAAABIAAAAAAAAAAJovmvVGl4o2X6sTeIxd+eulvvp97zlWCE+aU/YQs1qK",
+  "event_name": "role_revoked"
+}

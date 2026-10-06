@@ -1,0 +1,18 @@
+{
+  "contract_id": "CAHPZLEH6O6WJPICJAVRLCTYCAYDN52F4SM6IX3XJKWYSAASSHGZEZBO",
+  "role": "ibt",
+  "market_decimals": 18,
+  "wasm_hash": "0e8d68e206d66b087a2e0b64430356aec834ff906260e057180702d74d6f81f4",
+  "ledger": 64453085,
+  "tx_hash": "f4e7ced4395fa124ce43a335d7ea0729e3152b601bd2141d65fb6cbd7e69af4c",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-09-16T08:40:34Z",
+  "topics": [
+    "AAAADwAAAAh0cmFuc2Zlcg==",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo=",
+    "AAAAEgAAAAHirsrZ+OCeBzQGYAC+T/szLjXce+3128Ko+zPkdSe2yg=="
+  ],
+  "value": "AAAACgAAAAAAAAAADeC2s6dkAAA=",
+  "event_name": "transfer"
+}

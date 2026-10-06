@@ -1,0 +1,18 @@
+{
+  "contract_id": "CAAOR5F43GSQZYJESHIVLGZBMHMH3UVJMSBEHFKCUBKOUQSZMQC5UCMK",
+  "role": "pt",
+  "market_decimals": 7,
+  "wasm_hash": "3bcf316f76a9c5db718ccd6e2292cad70d8e8ce4371dfa0a2a7fdd86b8749ffd",
+  "ledger": 63783160,
+  "tx_hash": "9a6055d9e74e70e03b350c1a8fe61b082bb53785ab336643d94025ea02293af7",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-08-03T17:45:03Z",
+  "topics": [
+    "AAAADwAAAAxyb2xlX3Jldm9rZWQ=",
+    "AAAADwAAAAZQQVVTRVIAAA==",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo="
+  ],
+  "value": "AAAAEQAAAAEAAAABAAAADwAAAAZjYWxsZXIAAAAAABIAAAAAAAAAAJovmvVGl4o2X6sTeIxd+eulvvp97zlWCE+aU/YQs1qK",
+  "event_name": "role_revoked"
+}

@@ -1,0 +1,16 @@
+{
+  "contract_id": "CCUGRASBWD5SXDYMS7NM437FQ7KNKHFX74D2VRJVTRU4J2TWDMURUW3V",
+  "role": "registry",
+  "market_decimals": null,
+  "wasm_hash": "54c79aac3d2a971fb8d11e7cbbab87ee2a4be10b60b48bb21e1d6254affe5bf3",
+  "ledger": 63778126,
+  "tx_hash": "0c6130726abc17c76b611e45685e7923500e43dd2344ead0a785818c54fbb725",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-08-03T09:49:47Z",
+  "topics": [
+    "AAAADwAAABRmZWVfY29sbGVjdG9yX2NoYW5nZQ=="
+  ],
+  "value": "AAAAEQAAAAEAAAACAAAADwAAAANuZXcAAAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWooAAAAPAAAAA29sZAAAAAASAAAAAAAAAACaL5r1RpeKNl+rE3iMXfnrpb76fe85VghPmlP2ELNaig==",
+  "event_name": "fee_collector_change"
+}

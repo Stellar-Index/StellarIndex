@@ -1,0 +1,18 @@
+{
+  "contract_id": "CAHPZLEH6O6WJPICJAVRLCTYCAYDN52F4SM6IX3XJKWYSAASSHGZEZBO",
+  "role": "ibt",
+  "market_decimals": 18,
+  "wasm_hash": "0e8d68e206d66b087a2e0b64430356aec834ff906260e057180702d74d6f81f4",
+  "ledger": 64453084,
+  "tx_hash": "2f7007d3fb235985854da183fe011373de2d31a84dba45620972a5c30c774930",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-09-16T08:40:28Z",
+  "topics": [
+    "AAAADwAAAAdhcHByb3ZlAA==",
+    "AAAAEgAAAAAAAAAAmi+a9UaXijZfqxN4jF3566W++n3vOVYIT5pT9hCzWoo=",
+    "AAAAEgAAAAHirsrZ+OCeBzQGYAC+T/szLjXce+3128Ko+zPkdSe2yg=="
+  ],
+  "value": "AAAAEQAAAAEAAAACAAAADwAAAAZhbW91bnQAAAAAAAoAAAAAAAAAAA3gtrOnZAAAAAAADwAAABFsaXZlX3VudGlsX2xlZGdlcgAAAAAAAAMD141j",
+  "event_name": "approve"
+}
