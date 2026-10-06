@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/metadata"
@@ -84,7 +85,7 @@ func TestHomeDomainLookup_ObservedAbsenceBeatsStatic(t *testing.T) {
 		{unwatched, "operator.example.com"},
 	}
 	for _, tc := range cases {
-		d := assetToDetail(context.Background(), canonical.Asset{Type: canonical.AssetClassic, Code: "TST", Issuer: tc.issuer}, lookup)
+		d := wiring.AssetToDetail(context.Background(), canonical.Asset{Type: canonical.AssetClassic, Code: "TST", Issuer: tc.issuer}, lookup)
 		got := ""
 		if d.HomeDomain != nil {
 			got = *d.HomeDomain
@@ -122,7 +123,7 @@ func TestAssetsToDetails_OneBatchReadPerPage(t *testing.T) {
 		{Type: canonical.AssetNative},
 	}
 	want := []string{"", onChain, onChain, "operator.example.com", ""}
-	got := assetsToDetails(context.Background(), assets, hdl.listing)
+	got := wiring.AssetsToDetails(context.Background(), assets, hdl.listing)
 	if batchCalls != 1 {
 		t.Fatalf("observation batch reads=%d for %d rows, want 1", batchCalls, len(assets))
 	}
@@ -161,7 +162,7 @@ type lookupAssetReader struct {
 }
 
 func (r lookupAssetReader) GetAsset(ctx context.Context, a canonical.Asset) (v1.AssetDetail, error) {
-	return assetToDetail(ctx, a, r.lookup), nil
+	return wiring.AssetToDetail(ctx, a, r.lookup), nil
 }
 
 func (r lookupAssetReader) ListAssets(context.Context, string, int) ([]v1.AssetDetail, string, error) {
