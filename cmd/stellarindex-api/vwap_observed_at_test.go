@@ -12,6 +12,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
@@ -80,7 +81,7 @@ func TestVWAPCacheServesTheValuesObservationTime(t *testing.T) {
 				t.Fatalf("seed observed_at: %v", err)
 			}
 
-			opts := v1.Options{Prices: priceMissReader{}, Triangulated: redisTriangulatedLooker{rdb: rdb}}
+			opts := v1.Options{Prices: priceMissReader{}, Triangulated: wiring.RedisTriangulatedLooker{RDB: rdb}}
 			if tc.frozen {
 				opts.Freeze = markFrozen(ctx, t, rdb, xlm, gbp, window, held)
 			}

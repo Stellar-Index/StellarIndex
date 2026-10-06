@@ -1,4 +1,4 @@
-package main
+package wiring
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// headlineVWAPStore is a globalPriceStore returning canned rows so the
+// headlineVWAPStore is a GlobalPriceStore returning canned rows so the
 // headline tier's guard handling is testable without a database.
 type headlineVWAPStore struct {
 	latest   timescale.Vwap1mRow
@@ -39,8 +39,8 @@ func headlineRow(minutesAgo int, vwap string) timescale.Vwap1mRow {
 	}
 }
 
-func headlineReader(store headlineVWAPStore) globalPriceReader {
-	return globalPriceReader{s: store, pkPairFor: canonical.NewPair}
+func headlineReader(store headlineVWAPStore) GlobalPriceReader {
+	return GlobalPriceReader{S: store, PKPairFor: canonical.NewPair}
 }
 
 // The GlobalAssetView headline has no stale flag, so a bucket the guard

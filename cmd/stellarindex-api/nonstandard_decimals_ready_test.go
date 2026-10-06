@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -27,7 +28,7 @@ func (r *toggleDecimalsReader) LoadNonstandardDecimalsAssets(context.Context) ([
 // constructed after it can observe a cold cache.
 func TestPrimeNonstandardDecimalsCache_LoadsBeforeReturning(t *testing.T) {
 	cache := v1.NewNonstandardDecimalsCache(&toggleDecimalsReader{}, nil)
-	check := primeNonstandardDecimalsCache(context.Background(), cache, discardLogger())
+	check := wiring.PrimeNonstandardDecimalsCache(context.Background(), cache, discardLogger())
 
 	if d, ok := cache.Lookup(offenderContract); !ok || d != 6 {
 		t.Fatalf("Lookup after prime = (%d, %v), want (6, true)", d, ok)
@@ -45,7 +46,7 @@ func TestPrimeNonstandardDecimalsCache_LoadsBeforeReturning(t *testing.T) {
 func TestNonstandardDecimalsChecker_NotReadyUntilFirstLoad(t *testing.T) {
 	reader := &toggleDecimalsReader{err: errors.New("pg down")}
 	cache := v1.NewNonstandardDecimalsCache(reader, nil)
-	check := primeNonstandardDecimalsCache(context.Background(), cache, discardLogger())
+	check := wiring.PrimeNonstandardDecimalsCache(context.Background(), cache, discardLogger())
 
 	if err := check.Ping(context.Background()); err == nil {
 		t.Fatal("Ping on a never-loaded cache = nil, want not-ready")
@@ -105,11 +106,11 @@ func TestRun_PrimesNonstandardDecimalsCacheBeforeServing(t *testing.T) {
 	})
 
 	if !primePos.IsValid() {
-		t.Fatal("run() never does `checks = append(checks, primeNonstandardDecimalsCache(...))`: the cache's first load is not synchronised with serving")
+		t.Fatal("run() never does `checks = append(checks, wiring.PrimeNonstandardDecimalsCache(...))`: the cache's first load is not synchronised with serving")
 	}
 	for _, r := range funcLits {
 		if primePos >= r[0] && primePos < r[1] {
-			t.Fatalf("primeNonstandardDecimalsCache at %s runs inside a func literal; it must run inline", fset.Position(primePos))
+			t.Fatalf("wiring.PrimeNonstandardDecimalsCache at %s runs inside a func literal; it must run inline", fset.Position(primePos))
 		}
 	}
 	if !readyChecksPos.IsValid() || primePos > readyChecksPos {
@@ -137,7 +138,7 @@ func findFuncBody(file *ast.File, name string) *ast.BlockStmt {
 }
 
 // primeAppendedToChecks returns the position of the prime call when a is
-// `checks = append(checks, primeNonstandardDecimalsCache(...))`.
+// `checks = append(checks, wiring.PrimeNonstandardDecimalsCache(...))`.
 func primeAppendedToChecks(a *ast.AssignStmt) token.Pos {
 	if len(a.Lhs) != 1 || len(a.Rhs) != 1 {
 		return token.NoPos
@@ -157,7 +158,11 @@ func primeAppendedToChecks(a *ast.AssignStmt) token.Pos {
 		if !ok {
 			continue
 		}
-		if fn, ok := inner.Fun.(*ast.Ident); ok && fn.Name == "primeNonstandardDecimalsCache" {
+		fn, ok := inner.Fun.(*ast.SelectorExpr)
+		if !ok {
+			continue
+		}
+		if pkg, ok := fn.X.(*ast.Ident); ok && pkg.Name == "wiring" && fn.Sel.Name == "PrimeNonstandardDecimalsCache" {
 			return inner.Pos()
 		}
 	}

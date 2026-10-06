@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -60,11 +61,11 @@ func TestDialClickHouseAtBoot_LateClickHouseIsWiredAndReadsHealthy(t *testing.T)
 		t.Fatalf("got (%p, %d calls), want (%p, 3)", got, calls, want)
 	}
 
-	checks := clickhouseReadyChecks("127.0.0.1:9300", nil, err)
+	checks := wiring.ClickhouseReadyChecks("127.0.0.1:9300", nil, err, clickhouseBootDialBudget)
 	if len(checks) != 1 {
 		t.Fatalf("registered %d checks, want 1", len(checks))
 	}
-	if c, ok := checks[0].(clickhouseChecker); !ok || c.dialErr != nil {
+	if c, ok := checks[0].(wiring.ClickhouseChecker); !ok || c.DialErr != nil {
 		t.Fatalf("a dial that recovered inside the window registered the failed-dial checker: %#v", checks[0])
 	}
 }

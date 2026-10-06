@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 )
 
 // TestClickhouseReadyChecks_ConfiguredButUnreachableStillPublishes: the
@@ -18,7 +20,7 @@ import (
 // nothing paged.
 func TestClickhouseReadyChecks_ConfiguredButUnreachableStillPublishes(t *testing.T) {
 	dialErr := errors.New("dial tcp 127.0.0.1:9000: connect: connection refused")
-	checks := clickhouseReadyChecks("localhost:9000", nil, dialErr)
+	checks := wiring.ClickhouseReadyChecks("localhost:9000", nil, dialErr, clickhouseBootDialBudget)
 	if len(checks) != 1 {
 		t.Fatalf("a configured but unreachable ClickHouse registered %d readiness check(s), want 1 — with none, the gauge is never published and the == 0 alert has nothing to match", len(checks))
 	}
@@ -45,7 +47,7 @@ func TestClickhouseReadyChecks_ConfiguredButUnreachableStillPublishes(t *testing
 // publish nothing rather than a 0 — a 0 there pages for a component the
 // host does not run.
 func TestClickhouseReadyChecks_UnconfiguredPublishesNothing(t *testing.T) {
-	if got := clickhouseReadyChecks("", nil, nil); len(got) != 0 {
+	if got := wiring.ClickhouseReadyChecks("", nil, nil, clickhouseBootDialBudget); len(got) != 0 {
 		t.Fatalf("an unconfigured ClickHouse registered %d readiness check(s), want 0", len(got))
 	}
 }

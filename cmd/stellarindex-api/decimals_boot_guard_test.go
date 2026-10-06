@@ -7,7 +7,7 @@ package main
 // that publishes prices. The API sits behind `/v1/readyz`, so RLT-366's
 // original fatal-on-boot version (make run() return an error) was
 // replaced by Q198's synchronous prime + critical readiness check
-// (primeNonstandardDecimalsCache, see nonstandard_decimals_ready_test.go):
+// (wiring.PrimeNonstandardDecimalsCache, see nonstandard_decimals_ready_test.go):
 // a failed first load now keeps the process up but red, instead of
 // putting systemd into a restart loop on a Postgres blip.
 //
@@ -52,7 +52,7 @@ func TestNonstandardDecimalsCacheInitialRefreshIsNotFatal(t *testing.T) {
 			t.Errorf("main.go:%d — run() aborts startup directly on a failed "+
 				"nonstandardDecimalsCache.Refresh again. That was reverted (RLT-366 -> Q198): "+
 				"it puts systemd into a restart loop on a Postgres blip. Cold-cache safety "+
-				"belongs in the critical readiness check (primeNonstandardDecimalsCache), not "+
+				"belongs in the critical readiness check (wiring.PrimeNonstandardDecimalsCache), not "+
 				"a fatal return here.", fset.Position(ifStmt.Pos()).Line)
 		}
 		return true
