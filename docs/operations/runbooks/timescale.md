@@ -376,6 +376,30 @@ journalctl -u stellarindex-indexer --since -2h | grep -E 'late-trade cagg (refre
 
 Each `abandoned` line carries `view`, `trades_from` and `trades_to`; refresh each view over that window as above, `prices_1m` first. Nothing else will: no policy reaches those buckets. A crash or SIGKILL skips the flush and leaves no line at all; after one that followed an outage, refresh the trades caggs over the outage window by hand.
 
+### Catching up a late-trade backlog
+
+When the windows are unknown (a SIGKILL, or late trades written before the refresher existed), size the backlog from Timescale's invalidation log, then refresh non-forced, which re-materialises only the buckets the log names:
+
+```sh
+# 1. Size it. Read-only. One line per trades cagg: bounded ranges, their hull and
+#    summed span; open-ended=2 is normal (the never-refreshed edges of history).
+#    source-log counts writes no refresh has moved into the per-view logs yet.
+#    The last line gives the ledgers that cover every pending range.
+stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml -size
+
+# 2. Catch up under the heavy-job wrapper. Each view is refreshed in day-sized
+#    CALLs that commit one by one, so no lock on prices_1m is held for the run.
+/usr/local/sbin/run-heavy-job.sh trades-cagg-catchup \
+  stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml \
+    -force=false -from <from> -to <to>
+
+# 3. Verify: re-run -size; every view should show ranges=0 outside the policies'
+#    own trailing windows.
+stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml -size
+```
+
+Step 2 ends with the same `prices_1m`-against-`trades` drift sample as the forced form. Drift there means rows changed without an invalidation (a retention drop, a `prices_1m` that was never materialised over the range): use the forced form over that range instead. Before step 2, compare the `twap_1h` / `twap_1d` ranges with `prices_1m`'s: twap ranges older than any `prices_1m` range are invalidations a `prices_1m` retention drop logged, and a non-forced twap refresh over them recomputes those buckets from the emptied minute rows. Keep `-from` above them. The command refuses the twaps while that retention policy is armed. A piece that fails with `55P03` raced the policy job over the same view; re-run step 2, since refreshing an already-materialised range is a no-op.
+
 ## Related
 
 - [config-assertion-failed](config-assertion-failed.md): the same monitoring-of-monitoring shape one layer out, and the alert that catches codified-but-not-applied config.

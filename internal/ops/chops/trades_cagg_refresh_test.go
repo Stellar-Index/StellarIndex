@@ -112,7 +112,7 @@ func TestRefreshTradesCAGGsOverLedgers_EveryViewInOrderCoveringTheEdgeBuckets(t 
 		to:   time.Date(2025, 5, 14, 12, 0, 0, 0, time.UTC),
 	}
 	var out bytes.Buffer
-	if err := refreshTradesCAGGsOverLedgers(context.Background(), f, 61_000_000, 61_999_999, testCAGGNow, &out); err != nil {
+	if err := refreshTradesCAGGsOverLedgers(context.Background(), f, 61_000_000, 61_999_999, true, testCAGGNow, &out); err != nil {
 		t.Fatal(err)
 	}
 	var want []string
@@ -144,7 +144,7 @@ func TestRefreshTradesCAGGsOverLedgers_LateTradeBucketOlderThanPolicyLookback(t 
 		from: testCAGGNow.Add(-40 * time.Minute),
 		to:   testCAGGNow.Add(-35 * time.Minute),
 	}
-	if err := refreshTradesCAGGsOverLedgers(context.Background(), f, 62_000_000, 62_000_100, testCAGGNow, &bytes.Buffer{}); err != nil {
+	if err := refreshTradesCAGGsOverLedgers(context.Background(), f, 62_000_000, 62_000_100, true, testCAGGNow, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	w, ok := f.windows["prices_1m"]
@@ -160,7 +160,7 @@ func TestRefreshTradesCAGGsOverLedgers_LateTradeBucketOlderThanPolicyLookback(t 
 func TestRefreshTradesCAGGsOverLedgers_StopsAtTheFirstFailure(t *testing.T) {
 	f := &fakeTradesCAGGStore{from: time.Unix(1_700_000_000, 0), to: time.Unix(1_700_100_000, 0), failView: "prices_1m"}
 	var out bytes.Buffer
-	err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, testCAGGNow, &out)
+	err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, true, testCAGGNow, &out)
 	if err == nil || !strings.Contains(err.Error(), "prices_1m") {
 		t.Fatalf("err = %v, want the prices_1m failure", err)
 	}
@@ -171,7 +171,7 @@ func TestRefreshTradesCAGGsOverLedgers_StopsAtTheFirstFailure(t *testing.T) {
 
 func TestRefreshTradesCAGGsOverLedgers_EmptyRangeIsAnError(t *testing.T) {
 	f := &fakeTradesCAGGStore{spanErr: timescale.ErrNotFound}
-	err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, testCAGGNow, &bytes.Buffer{})
+	err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, true, testCAGGNow, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "no trades in ledgers [1,2]") {
 		t.Fatalf("err = %v, want a refusal", err)
 	}
@@ -190,7 +190,7 @@ func TestRefreshTradesCAGGsOverLedgers_ForcesPrices1mOverEveryTwapWindow(t *test
 		from: time.Date(2025, 3, 10, 12, 0, 0, 0, time.UTC),
 		to:   time.Date(2025, 3, 10, 12, 30, 0, 0, time.UTC),
 	}
-	if err := refreshTradesCAGGsOverLedgers(context.Background(), f, 61_000_000, 61_000_100, testCAGGNow, &bytes.Buffer{}); err != nil {
+	if err := refreshTradesCAGGsOverLedgers(context.Background(), f, 61_000_000, 61_000_100, true, testCAGGNow, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(timescale.CAGGsOnPrices1m) == 0 {
@@ -226,7 +226,7 @@ func TestRefreshTradesCAGGsOverLedgers_ForcesPrices1mOverEveryTwapWindow(t *test
 func TestRefreshTradesCAGGsOverLedgers_RefusesTwapsWhilePrices1mRetentionIsArmed(t *testing.T) {
 	f := &fakeTradesCAGGStore{from: time.Unix(1_700_000_000, 0), to: time.Unix(1_700_100_000, 0), armed: true}
 	var out bytes.Buffer
-	err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, testCAGGNow, &out)
+	err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, true, testCAGGNow, &out)
 	if err == nil || !strings.Contains(err.Error(), "retention policy is armed") {
 		t.Fatalf("err = %v, want a refusal naming the armed retention policy", err)
 	}
@@ -240,5 +240,163 @@ func TestRefreshTradesCAGGsOverLedgers_RefusesTwapsWhilePrices1mRetentionIsArmed
 	}
 	if out.Len() != 0 {
 		t.Errorf("printed a success line on refusal: %q", out.String())
+	}
+}
+
+func TestParseTradesCAGGRefreshArgs(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		args    []string
+		want    tradesCAGGRefreshArgs
+		wantErr string
+	}{
+		{
+			"default is forced",
+			[]string{"-config", "c", "-from", "1", "-to", "2"},
+			tradesCAGGRefreshArgs{cfgPath: "c", from: 1, to: 2, force: true},
+			"",
+		},
+		{
+			"non-forced",
+			[]string{"-config", "c", "-from", "1", "-to", "2", "-force=false"},
+			tradesCAGGRefreshArgs{cfgPath: "c", from: 1, to: 2},
+			"",
+		},
+		{"size", []string{"-config", "c", "-size"}, tradesCAGGRefreshArgs{cfgPath: "c", size: true}, ""},
+		{"size takes no range", []string{"-config", "c", "-size", "-from", "1"}, tradesCAGGRefreshArgs{}, "takes only -config, not -from"},
+		{"size takes no force", []string{"-config", "c", "-size", "-force=false"}, tradesCAGGRefreshArgs{}, "takes only -config, not -force"},
+		{"no config", []string{"-from", "1", "-to", "2"}, tradesCAGGRefreshArgs{}, "-config is required"},
+		{"no range", []string{"-config", "c", "-force=false"}, tradesCAGGRefreshArgs{}, "-from and -to are required"},
+		{"inverted range", []string{"-config", "c", "-from", "3", "-to", "2"}, tradesCAGGRefreshArgs{}, "-from and -to are required"},
+		{"range past uint32", []string{"-config", "c", "-from", "1", "-to", "4294967296"}, tradesCAGGRefreshArgs{}, "-from and -to are required"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := parseTradesCAGGRefreshArgs(c.args)
+			if c.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+					t.Fatalf("err = %v, want one containing %q", err, c.wantErr)
+				}
+				return
+			}
+			if err != nil || got != c.want {
+				t.Fatalf("got %+v, %v; want %+v", got, err, c.want)
+			}
+		})
+	}
+}
+
+// -force=false runs the forced plan's views, order and windows, with no
+// CALL forced: only the buckets the invalidation log names are rebuilt.
+func TestRefreshTradesCAGGsOverLedgers_NonForcedForcesNothing(t *testing.T) {
+	span := func() *fakeTradesCAGGStore {
+		return &fakeTradesCAGGStore{
+			from: time.Date(2025, 3, 10, 12, 0, 0, 0, time.UTC),
+			to:   time.Date(2025, 3, 14, 12, 0, 0, 0, time.UTC),
+		}
+	}
+	forced, plain := span(), span()
+	if err := refreshTradesCAGGsOverLedgers(context.Background(), forced, 1, 2, true, testCAGGNow, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := refreshTradesCAGGsOverLedgers(context.Background(), plain, 1, 2, false, testCAGGNow, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(plain.refreshed, forced.refreshed) {
+		t.Fatalf("non-forced refreshed %v, want the forced order %v", plain.refreshed, forced.refreshed)
+	}
+	for _, v := range plain.refreshed {
+		if plain.forced[v] {
+			t.Errorf("%s was refreshed with force => true under -force=false", v)
+		}
+		if plain.windows[v] != forced.windows[v] {
+			t.Errorf("%s window %v, want the forced plan's %v", v, plain.windows[v], forced.windows[v])
+		}
+	}
+	if !strings.Contains(out.String(), " forced=false ") {
+		t.Errorf("success line does not say the run was non-forced: %q", out.String())
+	}
+}
+
+func TestRefreshTradesCAGGsOverLedgers_NonForcedRefusesTwapsWhileRetentionIsArmed(t *testing.T) {
+	f := &fakeTradesCAGGStore{from: time.Unix(1_700_000_000, 0), to: time.Unix(1_700_100_000, 0), armed: true}
+	err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, false, testCAGGNow, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "retention policy is armed") {
+		t.Fatalf("err = %v, want a refusal naming the armed retention policy", err)
+	}
+	for _, v := range timescale.CAGGsOnPrices1m {
+		if _, ok := f.windows[v]; ok {
+			t.Errorf("%s was refreshed non-forced while prices_1m's retention is armed", v)
+		}
+	}
+}
+
+type fakeTradesCAGGSizer struct {
+	backlogs   []timescale.CAGGInvalidationBacklog
+	ledgersErr error
+	asked      [2]time.Time
+}
+
+func (f *fakeTradesCAGGSizer) CAGGInvalidationBacklogs(_ context.Context, views []string) ([]timescale.CAGGInvalidationBacklog, error) {
+	out := make([]timescale.CAGGInvalidationBacklog, 0, len(views))
+	for _, v := range views {
+		b := timescale.CAGGInvalidationBacklog{View: v}
+		for _, fb := range f.backlogs {
+			if fb.View == v {
+				b = fb
+			}
+		}
+		out = append(out, b)
+	}
+	return out, nil
+}
+
+func (f *fakeTradesCAGGSizer) TradeLedgersInTimeRange(_ context.Context, from, to time.Time) (uint32, uint32, error) {
+	f.asked = [2]time.Time{from, to}
+	return 61_000_000, 61_500_000, f.ledgersErr
+}
+
+func TestSizeTradesCAGGBacklog(t *testing.T) {
+	d := func(day int) time.Time { return time.Date(2025, 3, day, 0, 0, 0, 0, time.UTC) }
+	f := &fakeTradesCAGGSizer{backlogs: []timescale.CAGGInvalidationBacklog{
+		{View: "prices_1m", Ranges: 2, From: d(12), To: d(13), Span: 2 * time.Hour, OpenEnded: 2},
+		{
+			View: "prices_1d", Ranges: 1, From: d(11), To: d(12), Span: 24 * time.Hour, OpenEnded: 2,
+			SourceRanges: 1, SourceFrom: d(14), SourceTo: d(15),
+		},
+	}}
+	var out bytes.Buffer
+	if err := sizeTradesCAGGBacklog(context.Background(), f, &out); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if len(lines) != len(timescale.TradesCAGGs)+1 {
+		t.Fatalf("%d lines, want one per trades aggregate plus the hull:\n%s", len(lines), out.String())
+	}
+	for _, want := range []string{
+		"trades-cagg-refresh: pending prices_1m ranges=2 span=2h0m0s from=2025-03-12T00:00:00Z to=2025-03-13T00:00:00Z open-ended=2 source-log=0",
+		"trades-cagg-refresh: pending prices_1d ranges=1 span=24h0m0s from=2025-03-11T00:00:00Z to=2025-03-12T00:00:00Z open-ended=2 source-log=1",
+		"trades-cagg-refresh: pending twap_1d ranges=0 span=0s from=- to=- open-ended=0 source-log=0",
+		"trades-cagg-refresh: pending hull=[2025-03-11T00:00:00Z,2025-03-15T00:00:00Z] ledgers=[61000000,61500000] catch-up: -force=false -from 61000000 -to 61500000",
+	} {
+		if !slices.Contains(lines, want) {
+			t.Errorf("missing line %q in:\n%s", want, out.String())
+		}
+	}
+	// The source log's unmoved entries widen the hull: every view inherits them.
+	if f.asked != [2]time.Time{d(11), d(15)} {
+		t.Errorf("ledgers looked up over %v, want the hull [03-11, 03-15]", f.asked)
+	}
+
+	out.Reset()
+	f.ledgersErr = timescale.ErrNotFound
+	if err := sizeTradesCAGGBacklog(context.Background(), f, &out); err != nil || !strings.Contains(out.String(), "holds no trades") {
+		t.Errorf("hull with no trades: err = %v, out %q", err, out.String())
+	}
+
+	out.Reset()
+	if err := sizeTradesCAGGBacklog(context.Background(), &fakeTradesCAGGSizer{}, &out); err != nil ||
+		!strings.HasSuffix(out.String(), "trades-cagg-refresh: pending none: no bounded invalidation range on any trades aggregate\n") {
+		t.Errorf("nothing pending: err = %v, out %q", err, out.String())
 	}
 }

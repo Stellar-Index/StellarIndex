@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -26,6 +27,9 @@ const tradesCAGGRefreshVerb = "trades-cagg-refresh"
 // tradesCAGGRefreshedPrefix starts the success line the command prints.
 const tradesCAGGRefreshedPrefix = "trades-cagg-refresh: refreshed"
 
+// tradesCAGGPendingPrefix starts each line -size prints.
+const tradesCAGGPendingPrefix = "trades-cagg-refresh: pending"
+
 // tradesCAGGStore is the slice of *timescale.Store the refresh needs.
 type tradesCAGGStore interface {
 	LedgerRangeToTimeRange(ctx context.Context, fromLedger, toLedger uint32) (time.Time, time.Time, error)
@@ -35,18 +39,56 @@ type tradesCAGGStore interface {
 	tradesDriftStore
 }
 
-func tradesCAGGRefresh(args []string) error {
+// tradesCAGGSizer is the slice of *timescale.Store -size needs.
+type tradesCAGGSizer interface {
+	CAGGInvalidationBacklogs(ctx context.Context, views []string) ([]timescale.CAGGInvalidationBacklog, error)
+	TradeLedgersInTimeRange(ctx context.Context, from, to time.Time) (uint32, uint32, error)
+}
+
+type tradesCAGGRefreshArgs struct {
+	cfgPath  string
+	from, to uint32
+	force    bool
+	size     bool
+}
+
+func parseTradesCAGGRefreshArgs(args []string) (tradesCAGGRefreshArgs, error) {
 	fs := flag.NewFlagSet(tradesCAGGRefreshVerb, flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	from := fs.Uint("from", 0, "first ledger of the rewritten range (inclusive, required)")
 	to := fs.Uint("to", 0, "last ledger of the rewritten range (inclusive, required)")
+	force := fs.Bool("force", true, "recompute every bucket in the window; false re-materialises only the buckets Timescale's invalidation log names")
+	size := fs.Bool("size", false, "read-only: print each view's pending invalidation ranges and the ledgers to pass for a -force=false catch-up")
 	if err := fs.Parse(args); err != nil {
+		return tradesCAGGRefreshArgs{}, err
+	}
+	if *cfgPath == "" {
+		return tradesCAGGRefreshArgs{}, errors.New("-config is required")
+	}
+	if *size {
+		var extra []string
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "config" && f.Name != "size" {
+				extra = append(extra, "-"+f.Name)
+			}
+		})
+		if len(extra) > 0 {
+			return tradesCAGGRefreshArgs{}, fmt.Errorf("-size reads every pending range and takes only -config, not %s", strings.Join(extra, " "))
+		}
+		return tradesCAGGRefreshArgs{cfgPath: *cfgPath, size: true}, nil
+	}
+	if *from == 0 || *to < *from || *to > uint(^uint32(0)) {
+		return tradesCAGGRefreshArgs{}, fmt.Errorf("-from and -to are required, with 0 < -from <= -to <= %d", ^uint32(0))
+	}
+	return tradesCAGGRefreshArgs{cfgPath: *cfgPath, from: uint32(*from), to: uint32(*to), force: *force}, nil
+}
+
+func tradesCAGGRefresh(args []string) error {
+	a, err := parseTradesCAGGRefreshArgs(args)
+	if err != nil {
 		return err
 	}
-	if *cfgPath == "" || *from == 0 || *to < *from || *to > uint(^uint32(0)) {
-		return fmt.Errorf("-config, -from and -to are required, with 0 < -from <= -to <= %d", ^uint32(0))
-	}
-	cfg, err := config.LoadWithEnv(*cfgPath)
+	cfg, err := config.LoadWithEnv(a.cfgPath)
 	if err != nil {
 		return err
 	}
@@ -57,13 +99,74 @@ func tradesCAGGRefresh(args []string) error {
 		return err
 	}
 	defer func() { _ = store.Close() }()
-	return refreshTradesCAGGsOverLedgers(ctx, store, uint32(*from), uint32(*to), time.Now(), os.Stdout)
+	if a.size {
+		return sizeTradesCAGGBacklog(ctx, store, os.Stdout)
+	}
+	return refreshTradesCAGGsOverLedgers(ctx, store, a.from, a.to, a.force, time.Now(), os.Stdout)
+}
+
+// sizeTradesCAGGBacklog prints, per [timescale.TradesCAGGs] view, the
+// invalidation ranges a non-forced refresh would re-materialise, then
+// their hull as the -from/-to ledgers that cover it.
+func sizeTradesCAGGBacklog(ctx context.Context, s tradesCAGGSizer, out io.Writer) error {
+	views := make([]string, len(timescale.TradesCAGGs))
+	for i, c := range timescale.TradesCAGGs {
+		views[i] = c.Name
+	}
+	backlogs, err := s.CAGGInvalidationBacklogs(ctx, views)
+	if err != nil {
+		return err
+	}
+	var lo, hi time.Time
+	widen := func(n int64, from, to time.Time) {
+		if n == 0 {
+			return
+		}
+		if lo.IsZero() || from.Before(lo) {
+			lo = from
+		}
+		if hi.IsZero() || to.After(hi) {
+			hi = to
+		}
+	}
+	ts := func(n int64, t time.Time) string {
+		if n == 0 {
+			return "-"
+		}
+		return t.UTC().Format(time.RFC3339)
+	}
+	for _, b := range backlogs {
+		widen(b.Ranges, b.From, b.To)
+		widen(b.SourceRanges, b.SourceFrom, b.SourceTo)
+		if _, err := fmt.Fprintf(out, "%s %s ranges=%d span=%s from=%s to=%s open-ended=%d source-log=%d\n",
+			tradesCAGGPendingPrefix, b.View, b.Ranges, b.Span, ts(b.Ranges, b.From), ts(b.Ranges, b.To),
+			b.OpenEnded, b.SourceRanges); err != nil {
+			return err
+		}
+	}
+	if lo.IsZero() {
+		_, err := fmt.Fprintf(out, "%s none: no bounded invalidation range on any trades aggregate\n", tradesCAGGPendingPrefix)
+		return err
+	}
+	hull := "[" + lo.UTC().Format(time.RFC3339) + "," + hi.UTC().Format(time.RFC3339) + "]"
+	fromLedger, toLedger, err := s.TradeLedgersInTimeRange(ctx, lo, hi)
+	if errors.Is(err, timescale.ErrNotFound) {
+		_, err = fmt.Fprintf(out, "%s hull=%s holds no trades; refresh it by ts, not by ledger\n", tradesCAGGPendingPrefix, hull)
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(out, "%s hull=%s ledgers=[%d,%d] catch-up: -force=false -from %d -to %d\n",
+		tradesCAGGPendingPrefix, hull, fromLedger, toLedger, fromLedger, toLedger)
+	return err
 }
 
 // refreshTradesCAGGsOverLedgers refreshes every [timescale.TradesCAGGs]
 // view, in its order (twap_* after prices_1m), over the time span of the
 // trades now stored in [from, to], stopping at the first failure: a later
-// view may be built on the one that failed.
+// view may be built on the one that failed. Non-forced, each view
+// re-materialises only the buckets its invalidation log names.
 //
 // No trades in the range is an error, not a no-op: the caller has just
 // rewritten it, so an empty range means the time span of whatever was
@@ -72,7 +175,7 @@ func tradesCAGGRefresh(args []string) error {
 // A refresh that returned is not yet proof the aggregates are right, so
 // it succeeds only once prices_1m agrees with `trades` over sampled
 // windows of the span ([checkTradesPrices1mDrift]).
-func refreshTradesCAGGsOverLedgers(ctx context.Context, s tradesCAGGStore, from, to uint32, now time.Time, out io.Writer) error {
+func refreshTradesCAGGsOverLedgers(ctx context.Context, s tradesCAGGStore, from, to uint32, force bool, now time.Time, out io.Writer) error {
 	tsFrom, tsTo, err := s.LedgerRangeToTimeRange(ctx, from, to)
 	if errors.Is(err, timescale.ErrNotFound) {
 		return fmt.Errorf("no trades in ledgers [%d,%d], so the time span to refresh is unknown; if this range was rewritten, refresh the trades continuous aggregates over it by hand", from, to)
@@ -88,6 +191,7 @@ func refreshTradesCAGGsOverLedgers(ctx context.Context, s tradesCAGGStore, from,
 		return tradesCAGGRefreshWindow(tsFrom, tsTo, c.MinWindow)
 	})
 	for _, st := range plan {
+		st.Force = st.Force && force
 		if err := timescale.RunCAGGRefreshStep(ctx, s, st, armed); err != nil {
 			return fmt.Errorf("refresh %s over ledgers [%d,%d]: %w", st.View, from, to, err)
 		}
@@ -98,8 +202,8 @@ func refreshTradesCAGGsOverLedgers(ctx context.Context, s tradesCAGGStore, from,
 	}
 	// drift-windows=0 is a span wholly inside prices_1m's live refresh
 	// window, which its own policy owns.
-	_, err = fmt.Fprintf(out, "%s [%d,%d] ts=[%s,%s] views=%d drift-windows=%d\n", tradesCAGGRefreshedPrefix,
-		from, to, tsFrom.UTC().Format(time.RFC3339), tsTo.UTC().Format(time.RFC3339), len(timescale.TradesCAGGs), checked)
+	_, err = fmt.Fprintf(out, "%s [%d,%d] ts=[%s,%s] views=%d forced=%t drift-windows=%d\n", tradesCAGGRefreshedPrefix,
+		from, to, tsFrom.UTC().Format(time.RFC3339), tsTo.UTC().Format(time.RFC3339), len(timescale.TradesCAGGs), force, checked)
 	return err
 }
 

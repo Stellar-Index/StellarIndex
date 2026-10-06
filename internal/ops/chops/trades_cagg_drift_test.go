@@ -26,7 +26,7 @@ func TestRefreshTradesCAGGsOverLedgers_FailsWhenPrices1mDriftsFromTrades(t *test
 		t.Run(name, func(t *testing.T) {
 			f := &fakeTradesCAGGStore{from: from, to: to, driftAt: at}
 			var out bytes.Buffer
-			err := refreshTradesCAGGsOverLedgers(context.Background(), f, 61_000_000, 61_999_999, testCAGGNow, &out)
+			err := refreshTradesCAGGsOverLedgers(context.Background(), f, 61_000_000, 61_999_999, true, testCAGGNow, &out)
 			if err == nil || !strings.Contains(err.Error(), "prices_1m disagrees with trades in 1 of 8 sampled window(s)") {
 				t.Fatalf("err = %v, want the drift in 1 of 8 windows reported as a failure", err)
 			}
@@ -48,7 +48,7 @@ func TestRefreshTradesCAGGsOverLedgers_ReportsTheWindowsItChecked(t *testing.T) 
 	from := time.Date(2025, 3, 10, 12, 0, 30, 0, time.UTC)
 	f := &fakeTradesCAGGStore{from: from, to: from.Add(40 * 24 * time.Hour)}
 	var out bytes.Buffer
-	if err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, testCAGGNow, &out); err != nil {
+	if err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, true, testCAGGNow, &out); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.compared) != tradesDriftSamples {
