@@ -96,5 +96,4 @@ duration, any 5xx.
 
 ## Cross-references
 
-- [`multi-region-topology.md`](../architecture/infrastructure/multi-region-topology.md) — Model A design intent (superseded).
 - [`rollback.md`](rollback.md) — failure-mode rollback procedures.

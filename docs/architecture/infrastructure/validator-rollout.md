@@ -41,14 +41,7 @@ never promote, the API works identically.
 - `NODE_IS_VALIDATOR=false` on R1, quorum set mirroring SDF's recommended
   set for a non-validating node. Publish our history archive from day one.
 
-**Exit criteria (A → B):**
-
-- [ ] Live and synced for ≥ 7 consecutive days.
-- [ ] Galexie and `stellarindex-indexer` ingest from it with zero gaps.
-- [ ] Archive cross-checks against SDF and two other T1 orgs show hash
-      parity.
-- [ ] Memory, catchup duration and NVMe throughput measured against
-      [archival-node-spec.md](archival-node-spec.md).
+**Exit (A → B):** live and synced ≥ 7 days, zero ingest gaps, archive cross-checks at hash parity with SDF and two other T1 orgs, resource use measured against [archival-node-spec.md](archival-node-spec.md).
 
 ### Phase B — promote to validator, still one node
 
@@ -57,12 +50,7 @@ never promote, the API works identically.
 - Publish the public key in `stellarindex.io`'s `stellar.toml` and announce
   on SDF's `#validators` channel. One validator is not a T1 org.
 
-**Exit criteria (B → C):**
-
-- [ ] Voted correctly on 100 % of ledgers for 14 consecutive days.
-- [ ] No incident involving the validator key or HSM.
-- [ ] Archive cross-check green for 14 days.
-- [ ] Rehearsed: HSM failure, validator-key rotation, core upgrade.
+**Exit (B → C):** voted correctly on 100 % of ledgers for 14 days, no key or HSM incident, archive cross-check green 14 days, rehearsed HSM failure, key rotation and core upgrade.
 
 ### Phase C — validator 2 in R2
 

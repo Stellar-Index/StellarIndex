@@ -67,7 +67,7 @@ replica.
 
 | Service | State | Notes |
 |---|---|---|
-| postgresql@15-main | {{TBD}} | Patroni-managed; **async** replica of R1's primary (160-200ms RTT forces async per multi-region-topology.md). |
+| postgresql@15-main | {{TBD}} | Patroni-managed; **async** replica of R1's primary (160-200ms RTT forces async per ha-plan.md). |
 | galexie | {{TBD}} | Reads from Vultr Object Storage `s3://{{bucket}}` (configured in `r3.yml`); writes galexie-live to local MinIO. |
 | stellarindex-indexer | {{TBD}} | Reads local MinIO for galexie-live + Vultr Object Storage for galexie-archive. |
 | stellarindex-aggregator | {{TBD}} | Standby (R1 is leader at launch; failover scenarios elect R2 ahead of R3 per Patroni priority). |

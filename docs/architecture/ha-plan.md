@@ -145,6 +145,16 @@ wanted once R2 provides cross-region failover is open (§11).
 R2 and R3 have the same shape. The explorer accepts one extra
 transatlantic round trip per lake-backed page; the API does not.
 
+Region notes that hold under this shape:
+
+- Stellar-core nodes are SCP peers, never primary/replica; "primary" means
+  the Timescale writer only. Duplicate cross-node ingest is a no-op on the
+  trade key `(ledger, tx_hash, op_index, ts)`.
+- Tier D (R2/R3, weekly) cross-compares checkpoint hashes from ~6 Tier-1
+  archives against each other. It catches forks, not local byte drift (Tier B, R1).
+- Edge failover: Cloudflare geo steering, `/readyz` check every 15 s, a region
+  is pulled after 3 failures, DNS TTL 60 s.
+
 ---
 
 ## 3. Component by component

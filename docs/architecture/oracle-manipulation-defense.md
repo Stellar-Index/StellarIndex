@@ -234,20 +234,7 @@ published the spike; its value carries no weight here (Layer 2).
 | Production-quality divergence coverage for the Phase 3 factor | wired; coverage tuning post-launch | — |
 | SEP-50 (NFT) decoder | none exists; out of current scope | INV-1095 |
 
-Adversarial exercises, each with its pass condition:
-
-1. **Thin-pool simulation** — a synthetic 50% spike in a small DEX pool
-   (captive-core replay against synthetic ledgers): outlier storm fires
-   within one bucket, VWAP barely moves, `flags.divergence_warning` flips.
-2. **Single-source compromise** — a stub venue returning price ×2: the
-   storm fires, the σ-filter excludes the source, the runbook walks an
-   operator through disabling it.
-3. **Coordinated multi-source attack** — divergence monitoring fires,
-   operators notice within minutes, the response is flagged rather than
-   silently wrong.
-4. **External-oracle compromise** — point an oracle source at a
-   manipulated value: our VWAP does not change; confidence may drop via the
-   cross-oracle factor and the divergence warning may fire.
+Adversarial exercises (INV-1123), each with its pass condition: a thin-pool spike (outlier storm fires within one bucket, VWAP barely moves); a single-source compromise (the sigma filter excludes it, the runbook disables it); a coordinated multi-source attack (divergence fires, response flagged not silent); an external-oracle compromise (our VWAP unchanged, confidence may drop via the cross-oracle factor).
 
 ## SEP-40: what we serve and why there is no generic reader
 
@@ -299,43 +286,12 @@ enrichment hint for operator triage only.
 
 ### Lake census
 
-Run 2026-07-10 against r1's `stellar.contract_events` over ClickHouse
-HTTP (`:8123`, read-only `SELECT` via file + scp): 12,393,496,593 rows,
-ledgers 2 → 63,407,342, 2m06s under `max_threads=2,
-max_memory_usage=8GiB`. `topic_0_sym` is a decoded plaintext column
+A one-off scan of r1's `stellar.contract_events` (12.4 billion rows, ledgers
+2 to 63,407,342, 2026-07-10) on the decoded `topic_0_sym` column
 (`DistinctTopicShapes`, `internal/storage/clickhouse/recognition.go`),
-so the scan is one narrow column:
-
-```sql
-WHERE topic_0_sym IN ('price','prices','lastprice','last_price',
-  'x_last_price','set_price','update_price','price_update','new_price',
-  'oracle','Oracle','ORACLE','feed','PriceData','resolution',
-  'write_prices','relay','force_relay','REFLECTOR','REDSTONE','rate',
-  'rates','set_rate','symbol_rates','StandardReference','update','base',
-  'decimals','assets')
--- grouped by (contract_id, topic_0_sym)
-```
-
-Known contracts excluded: Reflector DEX
-`CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M`, CEX
-`CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN`, FX
-`CBKGPWGKSKZF52CFHMTRR23TBWTPMRDIYZ4O2P5VS65BMHYH4DXMCJZC`; RedStone
-Adapter `CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG`; Band
-StandardReference `CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M`
-(zero events, confirming Band emits none).
-
-Candidates, none a live un-ingested oracle:
-
-| Contract / pattern | Events | Seen | Verdict |
-|---|---|---|---|
-| `CCWKKEQTMGBNLHDKSYWFOA4IFFR2GT6FRYSHIXQQGNVB64AQHCFXLL4S` (`update`: `doc_id`, `ipfs_cid`) | 2,237 | 2026-02-15 → 07-08 | false positive: beef traceability |
-| `CAHDGXF64LG4PA45PPCDFQYRYWH3X33G7JJFGJTKMFMQIFUKNBONLGHD` (`update`, supply-chain IDs) | 250 | 2025-11-18 → 11-25 | false positive |
-| `CDFMV3EI2FEGKHQYZXFSKPBEXO2MXKRMQRXK5SM4DVWWHMGEJTH6JVK2` (string `price`) | 151 | 2025-05-14 → 05-23 | dormant test oracle |
-| 11 RedStone-Adapter-shaped contracts | 27 (2–4 each) | 2025-09-08 → 2026-05-13 | test deployments |
-| 2 rational-price contracts (`price_update`: `price_num`/`price_den`) | 2 | 2026-06-04 | tests |
-| 2 developer oracles (`asset`/`oracle`/`added`/`enabled`) | 2–3 each | 2026-03 and 2026-06 | tests |
-
-Verdict: no sustained un-ingested SEP-40 oracle existed at census time,
+filtered to oracle-shaped topics with the ingested Reflector, RedStone and
+Band contracts excluded. All six candidate patterns were false positives or
+dormant test deployments. No sustained un-ingested SEP-40 oracle existed,
 which reaffirmed the ADR-0045 deferral. Scope limit: the census only sees
 event-emitting contracts. `stellar.operations.body_xdr` has no plaintext
 function-name column, so a Band-alike that emits nothing is invisible to
@@ -347,9 +303,7 @@ Option (b) of the three considered ((a) and (c) are under Rejected
 options): `internal/canonical/discovery` (see its `doc.go`) extends the
 SEP-41 sniffer. Both halves are **sighting-only**: they write `discovered_assets`
 and never decode, attribute or emit `canonical.OracleUpdate`
-(ADR-0035). An operator triages each sighting (`stellarindex-ops discovery`) — 2 of
-the census's 6 candidate patterns were false positives and none was a
-live oracle — and a confirmed oracle follows
+(ADR-0035). An operator triages each sighting (`stellarindex-ops discovery`) and a confirmed oracle follows
 [add-onchain-source.md](../contributing/add-onchain-source.md): contract
 identity gating, every-event completeness, a per-WASM audit before
 backfill is enabled.
