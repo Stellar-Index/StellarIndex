@@ -430,8 +430,6 @@ Companion runbooks (the checks whose emails this qualifies):
 
 - [`stellarindex_healthcheck_ping_undelivered`](#stellarindex_healthcheck_ping_undelivered)
 
-### stellarindex_healthcheck_ping_undelivered
-
 Trips (identical in `deploy/monitoring/rules/healthcheck-ping.yml` and
 `configs/prometheus/rules.r1/healthcheck-ping.yml`), severity `ticket`:
 

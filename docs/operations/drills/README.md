@@ -30,7 +30,7 @@ response.
 | [sev1-timescale-primary-failover](scenarios/sev1-timescale-primary-failover.md) | storage, disk-full | `postgres.md` | yes (single node) |
 | [sev1-patroni-failover](scenarios/sev1-patroni-failover.md) | storage, Patroni failover | `postgres.md`, `postgres.md` | no: unvalidated draft |
 | [sev1-anomaly-freeze-stuck](scenarios/sev1-anomaly-freeze-stuck.md) | aggregator | `anomaly.md#stellarindex_anomaly_freeze_engaged` | yes |
-| [sev2-source-decoder-regression](scenarios/sev2-source-decoder-regression.md) | ingest | `decode-errors.md` | yes |
+| [sev2-source-decoder-regression](scenarios/sev2-source-decoder-regression.md) | ingest | `ingestion.md#stellarindex_ingestion_decode_error` | yes |
 | [sev2-redis-sentinel-failover](scenarios/sev2-redis-sentinel-failover.md) | cache, master swap | `cache.md` | no: role exists (ADR-0024), not deployed |
 
 ## Tabletop protocol (monthly)
@@ -74,7 +74,7 @@ are tracked; a new drill keeps its writeup file until then.
 
 Done in the drill PRs: `postgres.md` quick-diagnosis leads with `/v1/readyz`;
 sev-playbook §5.3 internal-channel template cross-linked from its mitigation;
-`decode-errors.md` mitigation notes elevated `flags.divergence_warning` when
+`ingestion.md#stellarindex_ingestion_decode_error` mitigation notes elevated `flags.divergence_warning` when
 `stellarindex_aggregator_class_drop_spike` fires; Patroni scenario drafted.
 Withdrawn: the quarterly drill that runs `drop_chunks` on staging. The old SEV-1
 mitigation (`drop_chunks('prices_1m', '30 days')`, ~120 GB freed) is no longer
