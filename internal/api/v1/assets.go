@@ -302,11 +302,8 @@ type AssetDetail struct {
 	// cap is derived from it and the response is flagged stale. INTERNAL.
 	SupplyStale bool `json:"-"`
 
-	// VolumeUSD24h is the trailing-24h USD-denominated trade
-	// volume across every pair this asset participates in (as base
-	// OR quote). Sourced from the prices_1m CAGG. Per Freighter V2
-	// scope ("24h Trading Volume aggregate across indexed
-	// markets").
+	// VolumeUSD24h is the trailing-24h USD trade volume across every pair
+	// this asset trades in (as base OR quote), per Freighter V2 scope.
 	//
 	// String-typed for the same reason as the supply / market-cap
 	// fields: NUMERIC sums don't fit a fixed-width Go type cleanly.
@@ -314,6 +311,8 @@ type AssetDetail struct {
 	// null means "volume reader not wired" or "lookup failed" —
 	// callers presenting the field should distinguish these.
 	VolumeUSD24h *string `json:"volume_24h_usd,omitempty"`
+	// VolumeLowerBound: VolumeUSD24h excludes trades not valued at trade time (Soroban reader only).
+	VolumeLowerBound bool `json:"volume_lower_bound,omitempty"`
 
 	// Change24hPct is the trailing-24h price change as a signed
 	// percentage with two fractional digits (e.g. "+1.27", "-0.05",

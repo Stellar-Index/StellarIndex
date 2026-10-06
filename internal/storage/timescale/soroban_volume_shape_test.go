@@ -9,48 +9,28 @@ import (
 )
 
 // TestSorobanVolume24hUSDQueryShape guards the XLM-anchored per-asset
-// USD-volume query (fce3e2eef). The load-bearing properties — a bounded 24h
-// window (never an unbounded walk), the USD-pegged discriminator, and the
-// XLM base+quote anchor legs — must not silently regress; a full-behaviour
-// check lives in the integration suite (TestSorobanVolume24hUSD_*).
+// USD-volume query. The load-bearing properties — a bounded 24h window, a
+// per-trade valuation, the XLM leg at its own minute's anchor (never a
+// current-window scalar) and the excluded-trade count — must not silently
+// regress; behaviour lives in the integration suite (TestSorobanVolume24hUSD_*,
+// TestXLMLegVolume_TradeTimeNeverSpot).
 func TestSorobanVolume24hUSDQueryShape(t *testing.T) {
-	// Whitespace-collapsed so the pins below match SQL, not its layout.
 	q := strings.Join(strings.Fields(sorobanVolume24hUSDQuery), " ")
-
-	// Bounded on BOTH the anchor CTE and the outer scan — the whole point
-	// is a cheap 24h read, not a full prices_1m history walk.
-	if strings.Count(q, "bucket >= now() - INTERVAL '24 hours'") < 2 {
-		t.Error("query missing the 24h lower bound on the anchor CTE and/or the outer scan")
+	for _, pin := range []struct{ sub, why string }{
+		{"FROM trades WHERE (base_asset = $1 OR quote_asset = $1) AND ts >= now() - INTERVAL '24 hours'", "asset as base OR quote, index-usable 24h ts bound"},
+		{"WHERE t.bucket >= now() - INTERVAL '24 hours' AND t.bucket <= now() - INTERVAL '1 minute'", "closed 1-minute buckets of the last 24h"},
+		{"COALESCE(t.usd_volume, CASE", "per-trade valuation: usd_volume, else the XLM leg"},
+		{"WHEN t.base_asset IN ('native', $2::text) THEN (t.base_amount / 1e7::numeric) * xa.vwap", "XLM-base leg (native + SAC) at the trade's anchor"},
+		{"WHEN t.quote_asset IN ('native', $2::text) THEN (t.quote_amount / 1e7::numeric) * xa.vwap", "XLM-quote leg (native + SAC) at the trade's anchor"},
+		{"LEFT JOIN xlm_usd_grid xa ON xa.minute = t.bucket", "anchor joined at the trade's own minute"},
+		{"count(*) FILTER (WHERE usd IS NULL)", "excluded trades counted for the lower-bound flag"},
+		{"COALESCE(sum(usd), 0)", "empty asset returns 0, not NULL"},
+	} {
+		if !strings.Contains(q, pin.sub) {
+			t.Errorf("query lost %s: missing %q", pin.why, pin.sub)
+		}
 	}
-	if !strings.Contains(q, "AND bucket <= now() - INTERVAL '1 minute'") {
-		t.Error("query missing the closed-bucket `bucket <= now() - 1 minute` upper bound on the outer scan")
-	}
-
-	// Valued per trade: the insert-time usd_volume, else the XLM leg. An
-	// either/or on a prices_1m row's volume_usd drops the unvalued trades
-	// of a partly-valued bucket.
-	if !strings.Contains(q, "COALESCE(usd_volume, CASE") {
-		t.Error("query must value each trade as COALESCE(usd_volume, <XLM leg>)")
-	}
-	if strings.Contains(q, "volume_usd >") {
-		t.Error("query must not pick a valuation from a prices_1m row's volume_usd")
-	}
-	if !strings.Contains(q, "(SELECT vwap FROM xlm_usd)") {
-		t.Error("query missing the xlm_usd anchor multiplication")
-	}
-	// The XLM leg is valued off BOTH stored directions: native (or its SAC)
-	// as base (base_amount) and as quote (quote_amount).
-	if !strings.Contains(q, "WHEN base_asset IN ('native', $2::text)") {
-		t.Error("query missing the XLM-base-leg branch (native + SAC)")
-	}
-	if !strings.Contains(q, "WHEN quote_asset IN ('native', $2::text)") {
-		t.Error("query missing the XLM-quote-leg branch (native + SAC)")
-	}
-	// Asset participates as either side; result floored to a definite "0".
-	if !strings.Contains(q, "FROM trades WHERE (base_asset = $1 OR quote_asset = $1) AND ts >= now() - INTERVAL '24 hours'") {
-		t.Error("query must read the asset's trades as base OR quote, bounded by an index-usable 24h ts bound")
-	}
-	if !strings.Contains(q, "COALESCE(sum(") {
-		t.Error("query must COALESCE the sum so an empty asset returns 0, not NULL")
+	if strings.Contains(q, "percentile_disc") {
+		t.Error("query values XLM legs with a current-window scalar")
 	}
 }

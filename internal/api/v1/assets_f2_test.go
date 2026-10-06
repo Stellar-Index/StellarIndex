@@ -106,6 +106,8 @@ type stubDualVolumeReader struct {
 	sorobanKey string
 	plain      string
 	soroban    string
+
+	sorobanLowerBound bool
 }
 
 func (s *stubDualVolumeReader) Volume24hUSDForAsset(_ context.Context, assetKey string) (string, error) {
@@ -113,9 +115,9 @@ func (s *stubDualVolumeReader) Volume24hUSDForAsset(_ context.Context, assetKey 
 	return s.plain, nil
 }
 
-func (s *stubDualVolumeReader) SorobanVolume24hUSDForAsset(_ context.Context, assetKey string) (string, error) {
+func (s *stubDualVolumeReader) SorobanVolume24hUSDForAsset(_ context.Context, assetKey string) (string, bool, error) {
 	s.sorobanKey = assetKey
-	return s.soroban, nil
+	return s.soroban, s.sorobanLowerBound, nil
 }
 
 // TestF2_SorobanAssetUsesAnchoredVolume — a pure-Soroban SEP-41 asset's
@@ -139,6 +141,15 @@ func TestF2_SorobanAssetUsesAnchoredVolume(t *testing.T) {
 	}
 	if vol.sorobanKey != contractID {
 		t.Errorf("SorobanVolume24hUSDForAsset key = %q, want %q", vol.sorobanKey, contractID)
+	}
+	if strings.Contains(body, `"volume_lower_bound"`) {
+		t.Errorf("nothing excluded; volume_lower_bound must be absent; body: %s", body)
+	}
+	partial := &stubDualVolumeReader{plain: "0", soroban: "98765.43", sorobanLowerBound: true}
+	resp = mustGet(t, startHTTPTest(t, v1.New(v1.Options{Volume: partial}).Handler()).URL+"/v1/assets/"+contractID)
+	body, _ = readAll(resp)
+	if !strings.Contains(body, `"volume_lower_bound":true`) {
+		t.Errorf("excluded trades must flag volume_lower_bound; body: %s", body)
 	}
 	if vol.plainKey != "" {
 		t.Errorf("plain Volume24hUSDForAsset should NOT be called for a Soroban asset; got key %q", vol.plainKey)

@@ -10989,6 +10989,8 @@ export interface components {
              *     phase 2 lands additively without a wire-shape change.
              */
             volume_24h_usd?: string | null;
+            /** @description True when `volume_24h_usd` excludes trades that could not be valued at trade time: no trade-time `usd_volume`, and no XLM leg with an XLM/USD anchor within an hour of the trade. They are never valued at today's price, so the figure is a lower bound. Set only for Soroban (`C…`) assets; absent when nothing was excluded. */
+            volume_lower_bound?: boolean;
             /** @description Catalogue slug when the asset has a verified-currency identity (e.g. "usdc"). */
             slug?: string;
             /**
@@ -12328,6 +12330,8 @@ export interface components {
             trade_count_24h: number;
             /** @description Trailing-24h USD volume summed from prices_1m. Decimal string. Null when no USD-equivalent trades. */
             volume_24h_usd?: string | null;
+            /** @description Set only when the request sets `?source=`. True when `volume_24h_usd` excludes this venue's trades that carry no trade-time `usd_volume`; they are never valued at today's price, so the figure is a lower bound. Absent when nothing was excluded. */
+            volume_lower_bound?: boolean;
             /** @description Most recent quote-per-base price observed for this pair within the trailing 24h: across every source, or that source's own when the request sets `?source=`. Decimal string. Null when none was observed. */
             last_price?: string | null;
             /**
@@ -12351,8 +12355,10 @@ export interface components {
             /** Format: date-time */
             last_trade_at: string;
             trade_count_24h: number;
-            /** @description Decimal string. Null when no USD-equivalent trades. */
+            /** @description Sum of trade-time `usd_volume` on this venue over the trailing 24h. Decimal string. Null when no USD-equivalent trades. */
             volume_24h_usd?: string | null;
+            /** @description True when `volume_24h_usd` excludes trades that carry no trade-time `usd_volume`; they are never valued at today's price, so the figure is a lower bound. Absent when nothing was excluded. */
+            volume_lower_bound?: boolean;
             /** @description Most recent quote-per-base price observed on THIS venue. Decimal string. */
             last_price?: string | null;
         };
@@ -16553,7 +16559,7 @@ export interface operations {
                             quote_id?: string;
                             tx_hashes?: string[];
                             accounts?: string[];
-                            /** @description Pattern evidence: every kind carries assets, sources and a note, plus its own legs / roles / oracle refs / fills. */
+                            /** @description Pattern evidence: every kind carries assets, sources and a note, plus its own legs / roles / oracle refs / fills. `notional_usd` sums the legs' trade-time USD value; `notional_usd_lower_bound: true` means at least one leg had none and was left out, so the notional is a lower bound. */
                             detail?: Record<string, never>;
                             /** @description Reserved attacker-profit estimate; null for every kind (profit is not estimated, and trade notional is in detail.notional_usd). */
                             profit_usd?: string | null;

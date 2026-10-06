@@ -104,7 +104,7 @@ type VolumeReader interface {
 // convention + assetKey shape as VolumeReader; a reader that doesn't
 // implement it leaves Soroban assets on the plain path.
 type SorobanVolumeReader interface {
-	SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (string, error)
+	SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (usd string, lowerBound bool, err error)
 }
 
 // applyF2Fields populates the F2 supply / market-cap / FDV fields
@@ -266,7 +266,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 // (it only sees the insert-time usd_volume, which XLM-quoted Soroban
 // trades never populate), so when the reader exposes the XLM-anchored
 // [SorobanVolumeReader] variant we use it — it values the XLM-legged
-// trades through the on-chain XLM/USD VWAP on top of any USD-pegged legs
+// trades at their own minute's XLM/USD on top of any USD-pegged legs
 // (fce3e2eef). A Soroban lookup ERROR falls back to the plain reader so a
 // transient failure of the richer path can't zero out a figure the plain
 // path could still supply. Reports whether the plain read failed.
@@ -277,9 +277,10 @@ func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, ass
 	assetKey := asset.String()
 	if asset.Type == canonical.AssetSoroban {
 		if sv, ok := s.volume.(SorobanVolumeReader); ok {
-			v, err := sv.SorobanVolume24hUSDForAsset(ctx, assetKey)
+			v, lowerBound, err := sv.SorobanVolume24hUSDForAsset(ctx, assetKey)
 			if err == nil {
 				detail.VolumeUSD24h = &v
+				detail.VolumeLowerBound = lowerBound
 				return false
 			}
 			if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {

@@ -64,11 +64,12 @@ type StoredEvent = domain.MEVStoredEvent
 // arbDetail is the JSON shape persisted to mev_events.detail for an
 // arbitrage event — the evidence a reader needs to verify the cycle.
 type arbDetail struct {
-	Assets      []string `json:"assets"`
-	Sources     []string `json:"sources"`
-	Legs        []Leg    `json:"legs"`
-	NotionalUSD string   `json:"notional_usd,omitempty"`
-	Note        string   `json:"note"`
+	Assets             []string `json:"assets"`
+	Sources            []string `json:"sources"`
+	Legs               []Leg    `json:"legs"`
+	NotionalUSD        string   `json:"notional_usd,omitempty"`
+	NotionalLowerBound bool     `json:"notional_usd_lower_bound,omitempty"`
+	Note               string   `json:"note"`
 }
 
 // storedFrom converts a detected Candidate into its persistence form,
@@ -84,7 +85,9 @@ func storedFrom(c Candidate) (StoredEvent, error) {
 			Sources:     c.Sources,
 			Legs:        c.Legs,
 			NotionalUSD: c.NotionalUSD,
-			Note:        "Atomic cyclic trade by one taker in a single transaction — an arbitrage signature. Detection is structural; profit is not estimated (leg direction is ambiguous in the served rows).",
+
+			NotionalLowerBound: c.NotionalLowerBound,
+			Note:               "Atomic cyclic trade by one taker in a single transaction — an arbitrage signature. Detection is structural; profit is not estimated (leg direction is ambiguous in the served rows).",
 		}
 	}
 	dj, err := detailWithAssets(detail, c)

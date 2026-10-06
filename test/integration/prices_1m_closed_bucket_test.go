@@ -115,7 +115,7 @@ func TestTrailing24hVolume_ExcludesInProgressMinute(t *testing.T) {
 	if got["Volume24hUSDForAsset"], err = store.Volume24hUSDForAsset(ctx, asset); err != nil {
 		t.Fatal(err)
 	}
-	if got["SorobanVolume24hUSDForAsset"], err = store.SorobanVolume24hUSDForAsset(ctx, asset); err != nil {
+	if got["SorobanVolume24hUSDForAsset"], _, err = store.SorobanVolume24hUSDForAsset(ctx, asset); err != nil {
 		t.Fatal(err)
 	}
 	row, err := store.LatestAssetStats(ctx, asset)
