@@ -35,8 +35,9 @@
 //   - SIGNING_KEY / signature verification of stellar.toml is NOT
 //     performed. Metadata is served as the issuer's domain claims it,
 //     unverified: whoever controls the home domain controls what we
-//     show. Deferred post-v1; the issuer ↔ home-domain
-//     trust chain is likewise unchecked.
+//     show. Deferred post-v1. The API's sep1_status "verified" means
+//     only that the on-chain home-domain link matched a [[CURRENCIES]]
+//     entry, not that any signature was checked.
 //
 // # Security posture
 //
