@@ -11543,8 +11543,35 @@ paths:
 
         A `ledger` query parameter is refused with 400: one ledger's
         operations are `GET /v1/ledgers/{seq}/operations` (ADR-0018).
+
+        `?type=` restricts the listing to one or more operation types. The
+        lake cannot index by type, so each filtered page scans at most 5,000
+        ledgers below its anchor (the tip, or the cursor). A filtered page can
+        therefore hold FEWER than `limit` operations, or none, and still carry
+        `next_cursor`: keep paging until `next_cursor` is absent. Filtered
+        pages omit `op_type_stats`.
       parameters:
         - { name: cursor, in: query, description: Opaque keyset cursor for the next older page., schema: { type: string } }
+        - name: type
+          in: query
+          description: |
+            Operation types to keep, comma-separated and/or repeated
+            (e.g. `type=payment,path_payment_strict_send`). Each must be a
+            snake_case type as served in `operations[].type`; any other value
+            is a 400.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [create_account, payment, path_payment_strict_receive, path_payment_strict_send,
+                manage_sell_offer, manage_buy_offer, create_passive_sell_offer, set_options,
+                change_trust, allow_trust, account_merge, inflation, manage_data, bump_sequence,
+                create_claimable_balance, claim_claimable_balance, begin_sponsoring_future_reserves,
+                end_sponsoring_future_reserves, revoke_sponsorship, clawback, clawback_claimable_balance,
+                set_trust_line_flags, liquidity_pool_deposit, liquidity_pool_withdraw,
+                invoke_host_function, extend_footprint_ttl, restore_footprint]
         - { name: limit, in: query, description: "Page size: default 50, cap 200 (400 above).", schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:
         "200":
@@ -11587,10 +11614,10 @@ paths:
                         properties:
                           ledger: { type: integer, description: "Always 0: the directory spans ledgers." }
                           operations: { type: array, items: { $ref: "#/components/schemas/Operation" } }
-                          next_cursor: { type: string, description: "Opaque cursor for the next older page; absent on the last page." }
+                          next_cursor: { type: string, description: "Opaque cursor for the next older page; absent on the last page. With `type`, present on a short or empty page until the scan reaches genesis." }
                           op_type_stats:
                             type: array
-                            description: "First page only: per-op-type counts over the trailing ~24h."
+                            description: "First unfiltered page only: per-op-type counts over the trailing ~24h."
                             items:
                               type: object
                               properties:

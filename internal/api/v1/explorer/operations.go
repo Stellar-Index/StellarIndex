@@ -679,8 +679,23 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	opTypes, ok := h.parseOpTypes(w, r)
+	if !ok {
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
+
+	if len(opTypes) > 0 {
+		out, err := h.buildOperationsOfType(ctx, limit, cur, opTypes)
+		if err != nil {
+			h.writeOperationsPageError(ctx, w, r, err)
+			return
+		}
+		_, stale, _ := h.lakeTip(ctx)
+		h.writeJSONAt(w, out, stale, out.CoverageNote != "", time.Time{})
+		return
+	}
 
 	// The first page (no cursor) is the hot, cacheable path — same for every
 	// caller between ledgers regardless of the requested limit. Serve it
@@ -715,34 +730,39 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 	// skip the op-type stats), so they're built inline on the request path.
 	out, err := h.buildOperationsDirectory(ctx, limit, cur)
 	if err != nil {
-		if h.ClientAborted(r, err) {
-			return
-		}
-		// A cursor so deep that the bounded read hits its row ceiling is
-		// the CALLER's fault, not ours, and an identical retry is refused
-		// identically — so it must not be dressed up as retryable (#484).
-		// The cursor is a publicly mintable dotted decimal, which is why
-		// this path exists at all.
-		if errors.Is(err, clickhouse.ErrOperationsCursorTooDeep) {
-			h.Logger.Warn("explorer RecentOperations refused a too-deep cursor")
-			h.WriteProblem(w, r, "https://api.stellarindex.io/errors/cursor-too-deep",
-				"Cursor too deep", http.StatusBadRequest,
-				"the supplied cursor would require scanning an unbounded portion of the table; page forward from a more recent cursor, or use /v1/ledgers/{seq}/operations to address a specific ledger")
-			return
-		}
-		if retryableColdMiss(ctx, err) {
-			h.Logger.Warn("explorer RecentOperations deadline exceeded")
-			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/operations-timeout",
-				"Operations query timed out")
-			return
-		}
-		h.Logger.Error("explorer RecentOperations failed", "err", err)
-		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
-			"Internal error", http.StatusInternalServerError, "")
+		h.writeOperationsPageError(ctx, w, r, err)
 		return
 	}
 	_, stale, _ := h.lakeTip(ctx)
 	h.writeJSONAt(w, out, stale, out.CoverageNote != "", time.Time{})
+}
+
+// writeOperationsPageError answers a failed uncached /v1/operations page.
+func (h *Handler) writeOperationsPageError(ctx context.Context, w http.ResponseWriter, r *http.Request, err error) {
+	if h.ClientAborted(r, err) {
+		return
+	}
+	// A cursor so deep that the bounded read hits its row ceiling is
+	// the CALLER's fault, not ours, and an identical retry is refused
+	// identically — so it must not be dressed up as retryable (#484).
+	// The cursor is a publicly mintable dotted decimal, which is why
+	// this path exists at all.
+	if errors.Is(err, clickhouse.ErrOperationsCursorTooDeep) {
+		h.Logger.Warn("explorer RecentOperations refused a too-deep cursor")
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/cursor-too-deep",
+			"Cursor too deep", http.StatusBadRequest,
+			"the supplied cursor would require scanning an unbounded portion of the table; page forward from a more recent cursor, or use /v1/ledgers/{seq}/operations to address a specific ledger")
+		return
+	}
+	if retryableColdMiss(ctx, err) {
+		h.Logger.Warn("explorer RecentOperations deadline exceeded")
+		h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/operations-timeout",
+			"Operations query timed out")
+		return
+	}
+	h.Logger.Error("explorer RecentOperations failed", "err", err)
+	h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
+		"Internal error", http.StatusInternalServerError, "")
 }
 
 // opsDirCached serves the cached max-page first-page view. A fresh entry is
@@ -805,15 +825,7 @@ func (h *Handler) buildOperationsDirectory(ctx context.Context, limit int, cur c
 	if err != nil {
 		return OperationsView{}, err
 	}
-	out := OperationsView{Operations: make([]OpView, len(rows))}
-	for i, o := range rows {
-		out.Operations[i] = opViewLight(o) // directory = summary; body fields on the detail views
-	}
-	out.CoverageNote = h.stampTxOutcomes(ctx, out.Operations, rows)
-	if n := len(rows); n == limit {
-		last := rows[n-1]
-		out.NextCursor = encodeCursor(last.Seq, last.TxIndex, last.OpIndex)
-	}
+	out := h.lightOperationsView(ctx, rows, limit)
 	// Op-type stats are best-effort context — a failure here shouldn't
 	// fail the listing (only attached on the first page to keep paging
 	// responses lean).
@@ -823,6 +835,59 @@ func (h *Handler) buildOperationsDirectory(ctx context.Context, limit int, cur c
 		out.opTypeStatsStale = !fresh
 	}
 	return out, nil
+}
+
+// lightOperationsView builds a directory page's summary views, stamps their
+// parent-transaction outcomes, and sets next_cursor when the page is full.
+func (h *Handler) lightOperationsView(ctx context.Context, rows []clickhouse.OpRow, limit int) OperationsView {
+	out := OperationsView{Operations: make([]OpView, len(rows))}
+	for i, o := range rows {
+		out.Operations[i] = opViewLight(o) // directory = summary; body fields on the detail views
+	}
+	out.CoverageNote = h.stampTxOutcomes(ctx, out.Operations, rows)
+	if n := len(rows); n == limit {
+		last := rows[n-1]
+		out.NextCursor = encodeCursor(last.Seq, last.TxIndex, last.OpIndex)
+	}
+	return out
+}
+
+// buildOperationsOfType assembles one type-filtered directory page. The read
+// scans a bounded ledger span, so a short page still continues below that
+// span (cursor `<floor>.0.0`) until the scan reaches genesis.
+func (h *Handler) buildOperationsOfType(ctx context.Context, limit int, cur clickhouse.ExplorerCursor, opTypes []string) (OperationsView, error) {
+	page, err := h.Reader.RecentOperationsOfType(ctx, limit, cur, opTypes)
+	if err != nil {
+		return OperationsView{}, err
+	}
+	out := h.lightOperationsView(ctx, page.Rows, limit)
+	if out.NextCursor == "" && page.ScannedFrom > 0 {
+		out.NextCursor = encodeCursor(page.ScannedFrom, 0, 0)
+	}
+	return out, nil
+}
+
+// parseOpTypes reads `?type=` (comma-separated and/or repeated snake_case op
+// types) into the lake's op_type enum strings, deduplicated. Absent → nil.
+func (h *Handler) parseOpTypes(w http.ResponseWriter, r *http.Request) ([]string, bool) {
+	var out []string
+	seen := map[string]bool{}
+	for _, raw := range r.URL.Query()["type"] {
+		for _, name := range strings.Split(raw, ",") {
+			enum, ok := xdrjson.OpTypeEnumString(strings.TrimSpace(name))
+			if !ok {
+				h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-parameter",
+					"Invalid parameter", http.StatusBadRequest,
+					"type must be one or more snake_case operation types (e.g. payment,manage_sell_offer)")
+				return nil, false
+			}
+			if !seen[enum] {
+				seen[enum] = true
+				out = append(out, enum)
+			}
+		}
+	}
+	return out, true
 }
 
 // refreshOpsDirectory kicks ONE detached rebuild of the max-page first page
